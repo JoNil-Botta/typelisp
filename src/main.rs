@@ -7,12 +7,14 @@ mod ast;
 mod backend;
 mod ir;
 mod lexer;
+mod lower;
 mod optimizer;
 mod parser;
 mod runtime;
 mod typechecker;
 mod types;
 
+use lower::lower_program;
 use parser::parse;
 use typechecker::TypeChecker;
 
@@ -25,6 +27,8 @@ fn print_usage() {
     eprintln!("    typelisp check <file.tl>       Type check");
     eprintln!("    typelisp compile <file.tl>     Generate assembly");
     eprintln!("    typelisp run <file.tl>         Compile and execute");
+    eprintln!();
+    eprintln!("    --emit-ir                      Emit intermediate representation");
     eprintln!();
     eprintln!("Options for compile:");
     eprintln!("    -o <file>                      Output assembly file");
@@ -94,13 +98,17 @@ fn main() {
             }
             let file = PathBuf::from(&args[2]);
             let mut output = None;
+            let mut emit_ir = false;
 
-            // Parse -o flag
+            // Parse -o and --emit-ir flags
             let mut i = 3;
             while i < args.len() {
                 if args[i] == "-o" && i + 1 < args.len() {
                     output = Some(PathBuf::from(&args[i + 1]));
                     i += 2;
+                } else if args[i] == "--emit-ir" {
+                    emit_ir = true;
+                    i += 1;
                 } else {
                     eprintln!("Warning: unknown flag: {}", args[i]);
                     i += 1;
@@ -112,11 +120,18 @@ fn main() {
             let mut tc = TypeChecker::new();
             tc.check_program(&prog).expect("Type checking failed");
 
-            let asm = generate_placeholder_asm(&prog);
-
-            let output_path = output.unwrap_or_else(|| file.with_extension("s"));
-            fs::write(&output_path, asm).expect("Failed to write output");
-            println!("Generated: {}", output_path.display());
+            if emit_ir {
+                let ir_prog = lower_program(&prog);
+                let ir_text = format!("{:#?}", ir_prog);
+                let output_path = output.unwrap_or_else(|| file.with_extension("ir"));
+                fs::write(&output_path, ir_text).expect("Failed to write output");
+                println!("Generated: {}", output_path.display());
+            } else {
+                let asm = generate_placeholder_asm(&prog);
+                let output_path = output.unwrap_or_else(|| file.with_extension("s"));
+                fs::write(&output_path, asm).expect("Failed to write output");
+                println!("Generated: {}", output_path.display());
+            }
         }
         "run" => {
             if args.len() < 3 {

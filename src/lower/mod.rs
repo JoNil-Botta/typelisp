@@ -1,6 +1,6 @@
 use crate::ast;
 use crate::ir;
-use crate::ir::{IrBuilder, Value, Instruction, Function, Program, VarId};
+use crate::ir::{Function, Instruction, IrBuilder, Program, Value, VarId};
 use crate::types::Type;
 use std::collections::HashMap;
 
@@ -12,7 +12,12 @@ pub fn lower_program(prog: &ast::Program) -> Program {
 
     for decl in &prog.decls {
         match decl {
-            ast::Decl::DefFn { name, params, ret, body } => {
+            ast::Decl::DefFn {
+                name,
+                params,
+                ret,
+                body,
+            } => {
                 let func = lower_function(name, params, ret.clone(), body);
                 functions.push(func);
             }
@@ -29,7 +34,11 @@ pub fn lower_program(prog: &ast::Program) -> Program {
         }
     }
 
-    Program { functions, globals, externs }
+    Program {
+        functions,
+        globals,
+        externs,
+    }
 }
 
 /// Infer a rough type for an expression (used for globals when type isn't annotated)
@@ -75,7 +84,10 @@ fn lower_function(
     // Create Alloc for each parameter, map param name to the alloc'd var
     for (param_name, param_ty) in params {
         let var = builder.fresh_var();
-        builder.emit(Instruction::Alloc { var, ty: param_ty.clone() });
+        builder.emit(Instruction::Alloc {
+            var,
+            ty: param_ty.clone(),
+        });
         env.insert(param_name.clone(), var);
         ir_params.push((var, param_ty.clone()));
         locals.push((var, param_ty.clone()));
@@ -134,7 +146,11 @@ fn lower_expr(
             // We don't know the exact type here, so use I64 as default for Var lookups
             // In a fully typed lowering, we'd carry type info through the AST
             let ty = Type::I64;
-            builder.emit(Instruction::Mov { dst, src: Value::Var(src), ty: ty.clone() });
+            builder.emit(Instruction::Mov {
+                dst,
+                src: Value::Var(src),
+                ty: ty.clone(),
+            });
             locals.push((dst, ty));
             dst
         }
@@ -153,7 +169,11 @@ fn lower_expr(
             locals.push((dst, ty));
             dst
         }
-        ast::Expr::If { cond, then_branch, else_branch } => {
+        ast::Expr::If {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
             let cond_var = lower_expr(cond, builder, env, locals);
             let dst = builder.fresh_var();
             let ty = Type::I64; // We could try to infer, but default to I64 for now
@@ -171,13 +191,21 @@ fn lower_expr(
             // Then block
             builder.finish_block(&true_label);
             let then_var = lower_expr(then_branch, builder, env, locals);
-            builder.emit(Instruction::Mov { dst, src: Value::Var(then_var), ty: ty.clone() });
+            builder.emit(Instruction::Mov {
+                dst,
+                src: Value::Var(then_var),
+                ty: ty.clone(),
+            });
             builder.emit(Instruction::Jump(merge_label.clone()));
 
             // Else block
             builder.finish_block(&false_label);
             let else_var = lower_expr(else_branch, builder, env, locals);
-            builder.emit(Instruction::Mov { dst, src: Value::Var(else_var), ty: ty.clone() });
+            builder.emit(Instruction::Mov {
+                dst,
+                src: Value::Var(else_var),
+                ty: ty.clone(),
+            });
             builder.emit(Instruction::Jump(merge_label.clone()));
 
             // Merge block
@@ -277,7 +305,7 @@ fn map_binop(op: &ast::BinOp) -> (ir::BinOp, Type) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::{Expr, Literal, BinOp as AstBinOp};
+    use crate::ast::{BinOp as AstBinOp, Expr, Literal};
     use crate::ir::{Instruction, Value};
 
     #[test]
@@ -300,25 +328,29 @@ mod tests {
         assert_eq!(entry.label, "entry");
         // Expected: Alloc (none), Mov(1), Mov(2), BinOp, Return
         let instrs = &entry.instructions;
-        assert!(matches!(&instrs[instrs.len()-2], Instruction::BinOp { .. }), "expected BinOp");
-        assert!(matches!(&instrs[instrs.len()-1], Instruction::Return(_)), "expected Return");
+        assert!(
+            matches!(&instrs[instrs.len() - 2], Instruction::BinOp { .. }),
+            "expected BinOp"
+        );
+        assert!(
+            matches!(&instrs[instrs.len() - 1], Instruction::Return(_)),
+            "expected Return"
+        );
     }
 
     #[test]
     fn test_lower_program_with_function() {
         let ast_prog = ast::Program {
-            decls: vec![
-                ast::Decl::DefFn {
-                    name: "add1".into(),
-                    params: vec![("x".into(), Type::I64)],
-                    ret: Type::I64,
-                    body: Expr::Binary {
-                        op: AstBinOp::Add,
-                        lhs: Box::new(Expr::Var("x".into())),
-                        rhs: Box::new(Expr::Literal(Literal::Int(1))),
-                    },
-                }
-            ]
+            decls: vec![ast::Decl::DefFn {
+                name: "add1".into(),
+                params: vec![("x".into(), Type::I64)],
+                ret: Type::I64,
+                body: Expr::Binary {
+                    op: AstBinOp::Add,
+                    lhs: Box::new(Expr::Var("x".into())),
+                    rhs: Box::new(Expr::Literal(Literal::Int(1))),
+                },
+            }],
         };
 
         let ir_prog = lower_program(&ast_prog);
@@ -334,10 +366,16 @@ mod tests {
         let func = lower_function("main", &[], Type::Bool, &body);
         let entry = &func.blocks[0];
         let instrs = &entry.instructions;
-        assert!(matches!(
-            &instrs[0],
-            Instruction::Mov { src: Value::ConstBool(true), .. }
-        ), "expected Mov from ConstBool(true)");
+        assert!(
+            matches!(
+                &instrs[0],
+                Instruction::Mov {
+                    src: Value::ConstBool(true),
+                    ..
+                }
+            ),
+            "expected Mov from ConstBool(true)"
+        );
     }
 
     #[test]
@@ -352,6 +390,9 @@ mod tests {
         assert_eq!(func.blocks.len(), 4);
 
         let entry = &func.blocks[0];
-        assert!(matches!(&entry.instructions[entry.instructions.len()-1], Instruction::Branch { .. }));
+        assert!(matches!(
+            &entry.instructions[entry.instructions.len() - 1],
+            Instruction::Branch { .. }
+        ));
     }
 }

@@ -443,7 +443,12 @@ impl FnLowerer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast;
     use crate::parser::parse;
+
+    // ------------------------------------------------------------------
+    // Existing tests
+    // ------------------------------------------------------------------
 
     #[test]
     fn test_lower_simple_function() {
@@ -585,5 +590,623 @@ mod tests {
         let ir = lower_program(&prog);
         let display = format!("{}", ir);
         assert!(display.contains("function add"));
+    }
+
+    // ------------------------------------------------------------------
+    // New comprehensive tests — Issue #23
+    // ------------------------------------------------------------------
+
+    // ---- Literals ------------------------------------------------------
+
+    #[test]
+    fn test_lower_float_literal() {
+        let prog = parse(
+            r#"
+            (define (get_pi) : f64 3.14)
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        assert_eq!(ir.functions.len(), 1);
+
+        let has_const_f64 = ir.functions[0].blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                if let Instruction::Return(Some(Value::ConstF64(v))) = i {
+                    (*v - 3.14).abs() < f64::EPSILON
+                } else {
+                    false
+                }
+            })
+        });
+        assert!(has_const_f64);
+    }
+
+    #[test]
+    fn test_lower_char_literal() {
+        // Char literal parsing from text is quirky; construct AST directly.
+        let prog = ast::Program {
+            decls: vec![ast::Decl::DefFn {
+                name: "get_a".into(),
+                params: vec![("x".into(), Type::Char)],
+                ret: Type::Char,
+                body: ast::Expr::Literal(ast::Literal::Char('a')),
+            }],
+        };
+        let ir = lower_program(&prog);
+        assert_eq!(ir.functions.len(), 1);
+
+        let has_const_i8 = ir.functions[0].blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                if let Instruction::Return(Some(Value::ConstI8(v))) = i {
+                    *v == 'a' as i8
+                } else {
+                    false
+                }
+            })
+        });
+        assert!(has_const_i8);
+    }
+
+    #[test]
+    fn test_lower_bool_literal() {
+        let prog = parse(
+            r#"
+            (define (get_true) : bool true)
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        assert_eq!(ir.functions.len(), 1);
+
+        let has_const_bool = ir.functions[0].blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                if let Instruction::Return(Some(Value::ConstBool(v))) = i {
+                    *v
+                } else {
+                    false
+                }
+            })
+        });
+        assert!(has_const_bool);
+    }
+
+    #[test]
+    fn test_lower_unit_literal() {
+        let prog = parse(
+            r#"
+            (define (noop) : i64 unit)
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        assert_eq!(ir.functions.len(), 1);
+
+        let has_const_unit = ir.functions[0].blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                if let Instruction::Return(Some(Value::ConstUnit)) = i {
+                    true
+                } else {
+                    false
+                }
+            })
+        });
+        assert!(has_const_unit);
+    }
+
+    #[test]
+    fn test_lower_string_literal_stub() {
+        // String literals are not yet supported in IR; lowerer returns ConstUnit.
+        let prog = parse(
+            r#"
+            (define (get_str) : i64 "hello")
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        assert_eq!(ir.functions.len(), 1);
+
+        let has_unit_return = ir.functions[0].blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                if let Instruction::Return(Some(Value::ConstUnit)) = i {
+                    true
+                } else {
+                    false
+                }
+            })
+        });
+        assert!(has_unit_return);
+    }
+
+    // ---- Expressions ---------------------------------------------------
+
+    #[test]
+    fn test_lower_unary_neg() {
+        // Unary operators are not yet parsed from text; construct AST directly.
+        let prog = ast::Program {
+            decls: vec![ast::Decl::DefFn {
+                name: "negate".into(),
+                params: vec![("x".into(), Type::I64)],
+                ret: Type::I64,
+                body: ast::Expr::Unary {
+                    op: ast::UnOp::Neg,
+                    expr: Box::new(ast::Expr::Var("x".into())),
+                },
+            }],
+        };
+        let ir = lower_program(&prog);
+        assert_eq!(ir.functions.len(), 1);
+
+        let has_unop = ir.functions[0].blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                if let Instruction::UnOp { op: UnOp::Neg, .. } = i {
+                    true
+                } else {
+                    false
+                }
+            })
+        });
+        assert!(has_unop);
+    }
+
+    #[test]
+    fn test_lower_unary_not() {
+        let prog = ast::Program {
+            decls: vec![ast::Decl::DefFn {
+                name: "invert".into(),
+                params: vec![("b".into(), Type::Bool)],
+                ret: Type::Bool,
+                body: ast::Expr::Unary {
+                    op: ast::UnOp::Not,
+                    expr: Box::new(ast::Expr::Var("b".into())),
+                },
+            }],
+        };
+        let ir = lower_program(&prog);
+        assert_eq!(ir.functions.len(), 1);
+
+        let has_unop = ir.functions[0].blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                if let Instruction::UnOp { op: UnOp::Not, .. } = i {
+                    true
+                } else {
+                    false
+                }
+            })
+        });
+        assert!(has_unop);
+    }
+
+    #[test]
+    fn test_lower_begin() {
+        let prog = parse(
+            r#"
+            (define (seq [x : i64]) : i64
+              (begin
+                (set! x (+ x 1))
+                (set! x (+ x 1))
+                x))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        assert_eq!(ir.functions.len(), 1);
+
+        // Begin should produce multiple binops and stores, returning the last expr.
+        let binop_count = ir.functions[0].blocks.iter().fold(0, |acc, b| {
+            acc + b
+                .instructions
+                .iter()
+                .filter(|i| matches!(i, Instruction::BinOp { .. }))
+                .count()
+        });
+        assert!(binop_count >= 2);
+
+        let store_count = ir.functions[0].blocks.iter().fold(0, |acc, b| {
+            acc + b
+                .instructions
+                .iter()
+                .filter(|i| matches!(i, Instruction::Store { .. }))
+                .count()
+        });
+        assert!(store_count >= 2);
+    }
+
+    #[test]
+    fn test_lower_set() {
+        let prog = parse(
+            r#"
+            (define (inc [x : i64]) : i64
+              (begin
+                (set! x (+ x 1))
+                x))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        assert_eq!(ir.functions.len(), 1);
+
+        let has_store = ir.functions[0].blocks.iter().any(|b| {
+            b.instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::Store { .. }))
+        });
+        assert!(has_store);
+    }
+
+    #[test]
+    fn test_lower_ann_stripped() {
+        // Type annotations should be stripped and the inner expression lowered.
+        let prog = parse(
+            r#"
+            (define (get_val) : i64 (ann 42 : i64))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        assert_eq!(ir.functions.len(), 1);
+
+        let has_const_42 = ir.functions[0].blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                if let Instruction::Return(Some(Value::ConstI64(42))) = i {
+                    true
+                } else {
+                    false
+                }
+            })
+        });
+        assert!(has_const_42);
+    }
+
+    // ---- Functions -----------------------------------------------------
+
+    #[test]
+    fn test_lower_multiple_params() {
+        let prog = parse(
+            r#"
+            (define (add3 [a : i64] [b : i64] [c : i64]) : i64
+              (+ (+ a b) c))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        assert_eq!(ir.functions.len(), 1);
+        assert_eq!(ir.functions[0].name, "add3");
+        assert_eq!(ir.functions[0].params.len(), 3);
+    }
+
+    #[test]
+    fn test_lower_void_return() {
+        let prog = parse(
+            r#"
+            (define (say_hi [x : i64]) : i64
+              unit)
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        assert_eq!(ir.functions.len(), 1);
+        assert_eq!(ir.functions[0].ret, Type::I64);
+
+        let has_unit_ret = ir.functions[0].blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                if let Instruction::Return(Some(Value::ConstUnit)) = i {
+                    true
+                } else {
+                    false
+                }
+            })
+        });
+        assert!(has_unit_ret);
+    }
+
+    #[test]
+    fn test_lower_no_params() {
+        let prog = parse(
+            r#"
+            (define (answer) : i64 42)
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        assert_eq!(ir.functions.len(), 1);
+        assert_eq!(ir.functions[0].name, "answer");
+        assert!(ir.functions[0].params.is_empty());
+    }
+
+    // ---- Edge Cases ----------------------------------------------------
+
+    #[test]
+    fn test_lower_unknown_var_becomes_global() {
+        let prog = ast::Program {
+            decls: vec![ast::Decl::DefFn {
+                name: "use_global".into(),
+                params: vec![],
+                ret: Type::I64,
+                body: ast::Expr::Var("unknown_global".into()),
+            }],
+        };
+        let ir = lower_program(&prog);
+        assert_eq!(ir.functions.len(), 1);
+
+        let has_global = ir.functions[0].blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                if let Instruction::Return(Some(Value::Global(name))) = i {
+                    name == "unknown_global"
+                } else {
+                    false
+                }
+            })
+        });
+        assert!(has_global);
+    }
+
+    #[test]
+    fn test_lower_nested_if() {
+        let prog = parse(
+            r#"
+            (define (clamp [x : i64]) : i64
+              (if (< x 0)
+                0
+                (if (> x 100)
+                  100
+                  x)))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        assert_eq!(ir.functions.len(), 1);
+
+        let branch_count = ir.functions[0].blocks.iter().fold(0, |acc, b| {
+            acc + b
+                .instructions
+                .iter()
+                .filter(|i| matches!(i, Instruction::Branch { .. }))
+                .count()
+        });
+        assert_eq!(branch_count, 2);
+
+        let phi_count = ir.functions[0].blocks.iter().fold(0, |acc, b| {
+            acc + b
+                .instructions
+                .iter()
+                .filter(|i| matches!(i, Instruction::Phi { .. }))
+                .count()
+        });
+        assert_eq!(phi_count, 2);
+    }
+
+    #[test]
+    fn test_lower_nested_calls() {
+        let prog = parse(
+            r#"
+            (define (f [x : i64]) : i64 (+ x 1))
+            (define (g [x : i64]) : i64 (f (f x)))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        assert_eq!(ir.functions.len(), 2);
+        assert_eq!(ir.functions[1].name, "g");
+
+        let call_count = ir.functions[1].blocks.iter().fold(0, |acc, b| {
+            acc + b
+                .instructions
+                .iter()
+                .filter(|i| matches!(i, Instruction::Call { .. }))
+                .count()
+        });
+        assert_eq!(call_count, 2);
+    }
+
+    #[test]
+    fn test_lower_complex_control_flow() {
+        let prog = parse(
+            r#"
+            (define (foo [n : i64]) : i64
+              (let ([acc : i64 0])
+                (begin
+                  (if (> n 0)
+                    (set! acc n)
+                    unit)
+                  (while (> acc 0)
+                    (set! acc (- acc 1)))
+                  acc)))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        assert_eq!(ir.functions.len(), 1);
+
+        let has_branch = ir.functions[0].blocks.iter().any(|b| {
+            b.instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::Branch { .. }))
+        });
+        assert!(has_branch);
+
+        let has_jump = ir.functions[0].blocks.iter().any(|b| {
+            b.instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::Jump(..)))
+        });
+        assert!(has_jump);
+
+        let has_phi = ir.functions[0].blocks.iter().any(|b| {
+            b.instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::Phi { .. }))
+        });
+        assert!(has_phi);
+    }
+
+    #[test]
+    fn test_lower_global_float() {
+        let prog = parse(
+            r#"
+            (define pi 3.14)
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        assert_eq!(ir.globals.len(), 1);
+        assert_eq!(ir.globals[0].0, "pi");
+        assert!(
+            matches!(ir.globals[0].2, Some(Value::ConstF64(v)) if (v - 3.14).abs() < f64::EPSILON)
+        );
+    }
+
+    #[test]
+    fn test_lower_global_bool() {
+        let prog = parse(
+            r#"
+            (define flag true)
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        assert_eq!(ir.globals.len(), 1);
+        assert_eq!(ir.globals[0].0, "flag");
+        assert_eq!(ir.globals[0].2, Some(Value::ConstBool(true)));
+    }
+
+    #[test]
+    fn test_lower_global_unit() {
+        let prog = parse(
+            r#"
+            (define nothing unit)
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        assert_eq!(ir.globals.len(), 1);
+        assert_eq!(ir.globals[0].0, "nothing");
+        assert_eq!(ir.globals[0].2, Some(Value::ConstUnit));
+    }
+
+    // ---- Stubs (currently unimplemented in lowerer) --------------------
+
+    #[test]
+    fn test_lower_tuple_stub() {
+        // Tuple lowering is stubbed to ConstUnit.
+        let prog = parse(
+            r#"
+            (define (make_pair [a : i64] [b : bool]) : (Tuple i64 bool)
+              (tuple a b))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        assert_eq!(ir.functions.len(), 1);
+
+        let has_unit_ret = ir.functions[0].blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                if let Instruction::Return(Some(Value::ConstUnit)) = i {
+                    true
+                } else {
+                    false
+                }
+            })
+        });
+        assert!(has_unit_ret);
+    }
+
+    #[test]
+    fn test_lower_array_stub() {
+        // Array lowering is stubbed to ConstUnit.
+        let prog = parse(
+            r#"
+            (define (make_arr) : (Array i64 3)
+              (array 1 2 3))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        assert_eq!(ir.functions.len(), 1);
+
+        let has_unit_ret = ir.functions[0].blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                if let Instruction::Return(Some(Value::ConstUnit)) = i {
+                    true
+                } else {
+                    false
+                }
+            })
+        });
+        assert!(has_unit_ret);
+    }
+
+    #[test]
+    fn test_lower_lambda_stub() {
+        // Lambda lowering is stubbed to ConstUnit.
+        let prog = parse(
+            r#"
+            (define (get_fn) : (-> i64 i64)
+              (lambda ([x : i64]) : i64 x))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        assert_eq!(ir.functions.len(), 1);
+
+        let has_unit_ret = ir.functions[0].blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                if let Instruction::Return(Some(Value::ConstUnit)) = i {
+                    true
+                } else {
+                    false
+                }
+            })
+        });
+        assert!(has_unit_ret);
+    }
+
+    #[test]
+    fn test_lower_tuple_ref_stub() {
+        // Tuple-ref lowering is stubbed to ConstUnit.
+        let prog = parse(
+            r#"
+            (define (first [t : (Tuple i64 bool)]) : i64
+              (tuple-ref t 0))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        assert_eq!(ir.functions.len(), 1);
+
+        let has_unit_ret = ir.functions[0].blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                if let Instruction::Return(Some(Value::ConstUnit)) = i {
+                    true
+                } else {
+                    false
+                }
+            })
+        });
+        assert!(has_unit_ret);
+    }
+
+    #[test]
+    fn test_lower_array_ref_stub() {
+        // Array-ref lowering is stubbed to ConstUnit.
+        let prog = parse(
+            r#"
+            (define (first [a : (Array i64 3)]) : i64
+              (array-ref a 0))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        assert_eq!(ir.functions.len(), 1);
+
+        let has_unit_ret = ir.functions[0].blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                if let Instruction::Return(Some(Value::ConstUnit)) = i {
+                    true
+                } else {
+                    false
+                }
+            })
+        });
+        assert!(has_unit_ret);
     }
 }

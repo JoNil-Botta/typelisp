@@ -44,66 +44,66 @@ impl Optimizer {
                         let lhs_val = Self::resolve_value(lhs, &constants);
                         let rhs_val = Self::resolve_value(rhs, &constants);
 
-                        if let (Some(l), Some(r)) = (lhs_val, rhs_val) {
-                            if let Some(result) = Self::eval_binop(*op, l, r) {
-                                let dst_id = *dst;
-                                let result_ty = result.ty().unwrap_or_else(|| ty.clone());
-                                let result_clone = result.clone();
-                                *instr = Instruction::Mov {
-                                    dst: dst_id,
-                                    src: result,
-                                    ty: result_ty,
-                                };
-                                constants.insert(dst_id, result_clone);
-                                changed = true;
-                                continue;
-                            }
+                        if let (Some(l), Some(r)) = (lhs_val, rhs_val)
+                            && let Some(result) = Self::eval_binop(*op, l, r)
+                        {
+                            let dst_id = *dst;
+                            let result_ty = result.ty().unwrap_or_else(|| ty.clone());
+                            let result_clone = result.clone();
+                            *instr = Instruction::Mov {
+                                dst: dst_id,
+                                src: result,
+                                ty: result_ty,
+                            };
+                            constants.insert(dst_id, result_clone);
+                            changed = true;
+                            continue;
                         }
 
-                        if let Value::Var(v) = lhs {
-                            if let Some(c) = constants.get(v) {
-                                *lhs = c.clone();
-                                changed = true;
-                            }
+                        if let Value::Var(v) = lhs
+                            && let Some(c) = constants.get(v)
+                        {
+                            *lhs = c.clone();
+                            changed = true;
                         }
-                        if let Value::Var(v) = rhs {
-                            if let Some(c) = constants.get(v) {
-                                *rhs = c.clone();
-                                changed = true;
-                            }
+                        if let Value::Var(v) = rhs
+                            && let Some(c) = constants.get(v)
+                        {
+                            *rhs = c.clone();
+                            changed = true;
                         }
                     }
                     Instruction::UnOp { dst, op, src, ty } => {
                         let src_val = Self::resolve_value(src, &constants);
-                        if let Some(s) = src_val {
-                            if let Some(result) = Self::eval_unop(*op, s) {
-                                let dst_id = *dst;
-                                let result_ty = result.ty().unwrap_or_else(|| ty.clone());
-                                let result_clone = result.clone();
-                                *instr = Instruction::Mov {
-                                    dst: dst_id,
-                                    src: result,
-                                    ty: result_ty,
-                                };
-                                constants.insert(dst_id, result_clone);
-                                changed = true;
-                                continue;
-                            }
+                        if let Some(s) = src_val
+                            && let Some(result) = Self::eval_unop(*op, s)
+                        {
+                            let dst_id = *dst;
+                            let result_ty = result.ty().unwrap_or_else(|| ty.clone());
+                            let result_clone = result.clone();
+                            *instr = Instruction::Mov {
+                                dst: dst_id,
+                                src: result,
+                                ty: result_ty,
+                            };
+                            constants.insert(dst_id, result_clone);
+                            changed = true;
+                            continue;
                         }
 
-                        if let Value::Var(v) = src {
-                            if let Some(c) = constants.get(v) {
-                                *src = c.clone();
-                                changed = true;
-                            }
+                        if let Value::Var(v) = src
+                            && let Some(c) = constants.get(v)
+                        {
+                            *src = c.clone();
+                            changed = true;
                         }
                     }
                     Instruction::Mov { dst, src, .. } => {
-                        if let Value::Var(v) = src {
-                            if let Some(c) = constants.get(v) {
-                                *src = c.clone();
-                                changed = true;
-                            }
+                        if let Value::Var(v) = src
+                            && let Some(c) = constants.get(v)
+                        {
+                            *src = c.clone();
+                            changed = true;
                         }
                         constants.insert(*dst, src.clone());
                     }
@@ -317,17 +317,18 @@ impl Optimizer {
                         }
                     }
                     // Similarly for lhs being 0 in addition
-                    if let Value::ConstI64(n) = lhs {
-                        if *op == BinOp::Add && *n == 0 {
-                            replacements.push((
-                                idx,
-                                Instruction::Mov {
-                                    dst: *dst,
-                                    src: rhs.clone(),
-                                    ty: ty.clone(),
-                                },
-                            ));
-                        }
+                    if let Value::ConstI64(n) = lhs
+                        && *op == BinOp::Add
+                        && *n == 0
+                    {
+                        replacements.push((
+                            idx,
+                            Instruction::Mov {
+                                dst: *dst,
+                                src: rhs.clone(),
+                                ty: ty.clone(),
+                            },
+                        ));
                     }
                 }
             }
@@ -354,15 +355,14 @@ impl Optimizer {
                 }
 
                 // Then, record new copies
-                if let Instruction::Mov { dst, src, .. } = instr {
-                    if let Value::Var(_)
+                if let Instruction::Mov { dst, src, .. } = instr
+                    && let Value::Var(_)
                     | Value::ConstI64(_)
                     | Value::ConstI32(_)
                     | Value::ConstBool(_)
                     | Value::ConstF64(_) = src
-                    {
-                        copies.insert(*dst, src.clone());
-                    }
+                {
+                    copies.insert(*dst, src.clone());
                 }
             }
         }
@@ -373,11 +373,11 @@ impl Optimizer {
     fn substitute_copies(instr: &mut Instruction, copies: &HashMap<VarId, Value>) -> bool {
         let mut changed = false;
         let mut substitute = |val: &mut Value| {
-            if let Value::Var(v) = val {
-                if let Some(replacement) = copies.get(v) {
-                    *val = replacement.clone();
-                    changed = true;
-                }
+            if let Value::Var(v) = val
+                && let Some(replacement) = copies.get(v)
+            {
+                *val = replacement.clone();
+                changed = true;
             }
         };
 

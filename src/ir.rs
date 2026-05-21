@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use crate::types::Type;
+use std::fmt;
 
 /// Intermediate Representation using a simple 3-address code form.
 /// This is lowered from the AST and is the input to the optimizer and backend.
@@ -203,5 +204,199 @@ impl Value {
             Value::ConstUnit => Some(Type::Unit),
             Value::Var(_) | Value::Global(_) => None, // Need type context
         }
+    }
+}
+
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Value::ConstI64(n) => write!(f, "{}", n),
+            Value::ConstI32(n) => write!(f, "{}", n),
+            Value::ConstI8(n) => write!(f, "{}", n),
+            Value::ConstF64(n) => write!(f, "{}", n),
+            Value::ConstBool(b) => write!(f, "{}", b),
+            Value::ConstUnit => write!(f, "unit"),
+            Value::Var(v) => write!(f, "%{}", v),
+            Value::Global(g) => write!(f, "@{}", g),
+        }
+    }
+}
+
+impl fmt::Display for BinOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            BinOp::Add => "add",
+            BinOp::Sub => "sub",
+            BinOp::Mul => "mul",
+            BinOp::Div => "div",
+            BinOp::Mod => "mod",
+            BinOp::Eq => "eq",
+            BinOp::Ne => "ne",
+            BinOp::Lt => "lt",
+            BinOp::Le => "le",
+            BinOp::Gt => "gt",
+            BinOp::Ge => "ge",
+            BinOp::And => "and",
+            BinOp::Or => "or",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+impl fmt::Display for UnOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            UnOp::Neg => "neg",
+            UnOp::Not => "not",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+impl fmt::Display for Instruction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Instruction::BinOp {
+                dst, op, lhs, rhs, ..
+            } => {
+                write!(f, "  %{} = {} {}, {}", dst, op, lhs, rhs)
+            }
+            Instruction::UnOp { dst, op, src, .. } => {
+                write!(f, "  %{} = {} {}", dst, op, src)
+            }
+            Instruction::Mov { dst, src, .. } => {
+                write!(f, "  %{} = mov {}", dst, src)
+            }
+            Instruction::Load { dst, src, .. } => {
+                write!(f, "  %{} = load {}", dst, src)
+            }
+            Instruction::Store { dst, src, .. } => {
+                write!(f, "  store {}, {}", dst, src)
+            }
+            Instruction::AddrOf { dst, src } => {
+                write!(f, "  %{} = addrof %{{{}}}", dst, src)
+            }
+            Instruction::Call {
+                dst, func, args, ..
+            } => {
+                if let Some(d) = dst {
+                    write!(f, "  %{} = call {}", d, func)?;
+                } else {
+                    write!(f, "  call {}", func)?;
+                }
+                write!(f, "(")?;
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", arg)?;
+                }
+                write!(f, ")")
+            }
+            Instruction::CallIndirect {
+                dst, func, args, ..
+            } => {
+                if let Some(d) = dst {
+                    write!(f, "  %{} = call_indirect {}", d, func)?;
+                } else {
+                    write!(f, "  call_indirect {}", func)?;
+                }
+                write!(f, "(")?;
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", arg)?;
+                }
+                write!(f, ")")
+            }
+            Instruction::Branch {
+                cond,
+                true_label,
+                false_label,
+            } => {
+                write!(f, "  br {}, {}, {}", cond, true_label, false_label)
+            }
+            Instruction::Jump(label) => {
+                write!(f, "  jmp {}", label)
+            }
+            Instruction::Return(Some(v)) => {
+                write!(f, "  ret {}", v)
+            }
+            Instruction::Return(None) => {
+                write!(f, "  ret")
+            }
+            Instruction::Label(label) => {
+                write!(f, "{}:", label)
+            }
+            Instruction::Alloc { var, ty } => {
+                write!(f, "  alloc %{} : {}", var, ty)
+            }
+            Instruction::Gep {
+                dst,
+                base,
+                offset,
+                elem_ty,
+            } => {
+                write!(f, "  %{} = gep {}, {} : {}", dst, base, offset, elem_ty)
+            }
+            Instruction::Phi { dst, incoming, ty } => {
+                write!(f, "  %{} = phi : {}", dst, ty)?;
+                for (val, label) in incoming {
+                    write!(f, " [{}, {}]", val, label)?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+impl fmt::Display for BasicBlock {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "{}:", self.label)?;
+        for instr in &self.instructions {
+            writeln!(f, "{}", instr)?;
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for Function {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "function {}(", self.name)?;
+        for (i, (var, ty)) in self.params.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "%{} : {}", var, ty)?;
+        }
+        writeln!(f, ") -> {} {{", self.ret)?;
+        writeln!(f, "  // locals")?;
+        for (var, ty) in &self.locals {
+            writeln!(f, "  // %{} : {}", var, ty)?;
+        }
+        for block in &self.blocks {
+            write!(f, "{}", block)?;
+        }
+        writeln!(f, "}}")
+    }
+}
+
+impl fmt::Display for Program {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (name, ty, val) in &self.globals {
+            if let Some(v) = val {
+                writeln!(f, "global {} : {} = {}", name, ty, v)?;
+            } else {
+                writeln!(f, "global {} : {}", name, ty)?;
+            }
+        }
+        for (name, ty) in &self.externs {
+            writeln!(f, "extern {} : {}", name, ty)?;
+        }
+        for func in &self.functions {
+            write!(f, "{}", func)?;
+        }
+        Ok(())
     }
 }

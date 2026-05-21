@@ -8,6 +8,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
 
 jobs:
   test:
@@ -39,6 +40,14 @@ jobs:
 
       - name: Run clippy
         run: cargo clippy -- -D warnings
+
+      - name: Verify zero dependencies
+        run: |
+          if grep -qE '^\[dependencies\]|^\[dev-dependencies\]' Cargo.toml; then
+            echo "ERROR: Cargo.toml contains dependencies. TypeLisp must have zero third-party crates."
+            exit 1
+          fi
+          echo "OK: No third-party dependencies found."
 
   integration:
     name: Integration Tests

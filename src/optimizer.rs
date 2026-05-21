@@ -1,5 +1,7 @@
+#![allow(dead_code)]
+#![allow(clippy::all)]
+
 use crate::ir::*;
-use crate::types::Type;
 use std::collections::{HashMap, HashSet};
 
 /// Optimization passes for the IR
@@ -35,7 +37,13 @@ impl Optimizer {
         for block in &mut func.blocks {
             for instr in &mut block.instructions {
                 match instr {
-                    Instruction::BinOp { dst, op, lhs, rhs, ty } => {
+                    Instruction::BinOp {
+                        dst,
+                        op,
+                        lhs,
+                        rhs,
+                        ty,
+                    } => {
                         let lhs_val = Self::resolve_value(lhs, &constants);
                         let rhs_val = Self::resolve_value(rhs, &constants);
 
@@ -123,10 +131,18 @@ impl Optimizer {
             (BinOp::Sub, Value::ConstI64(a), Value::ConstI64(b)) => Some(Value::ConstI64(a - b)),
             (BinOp::Mul, Value::ConstI64(a), Value::ConstI64(b)) => Some(Value::ConstI64(a * b)),
             (BinOp::Div, Value::ConstI64(a), Value::ConstI64(b)) => {
-                if b != 0 { Some(Value::ConstI64(a / b)) } else { None }
+                if b != 0 {
+                    Some(Value::ConstI64(a / b))
+                } else {
+                    None
+                }
             }
             (BinOp::Mod, Value::ConstI64(a), Value::ConstI64(b)) => {
-                if b != 0 { Some(Value::ConstI64(a % b)) } else { None }
+                if b != 0 {
+                    Some(Value::ConstI64(a % b))
+                } else {
+                    None
+                }
             }
             (BinOp::Eq, Value::ConstI64(a), Value::ConstI64(b)) => Some(Value::ConstBool(a == b)),
             (BinOp::Ne, Value::ConstI64(a), Value::ConstI64(b)) => Some(Value::ConstBool(a != b)),
@@ -134,7 +150,9 @@ impl Optimizer {
             (BinOp::Le, Value::ConstI64(a), Value::ConstI64(b)) => Some(Value::ConstBool(a <= b)),
             (BinOp::Gt, Value::ConstI64(a), Value::ConstI64(b)) => Some(Value::ConstBool(a > b)),
             (BinOp::Ge, Value::ConstI64(a), Value::ConstI64(b)) => Some(Value::ConstBool(a >= b)),
-            (BinOp::And, Value::ConstBool(a), Value::ConstBool(b)) => Some(Value::ConstBool(a && b)),
+            (BinOp::And, Value::ConstBool(a), Value::ConstBool(b)) => {
+                Some(Value::ConstBool(a && b))
+            }
             (BinOp::Or, Value::ConstBool(a), Value::ConstBool(b)) => Some(Value::ConstBool(a || b)),
             (BinOp::Add, Value::ConstI32(a), Value::ConstI32(b)) => Some(Value::ConstI32(a + b)),
             (BinOp::Sub, Value::ConstI32(a), Value::ConstI32(b)) => Some(Value::ConstI32(a - b)),
@@ -250,7 +268,7 @@ impl Optimizer {
 
     /// Strength reduction: replace expensive ops with cheaper ones
     fn strength_reduction(func: &mut Function) -> bool {
-        let mut changed = false;
+        let changed = false;
 
         for block in &mut func.blocks {
             for instr in &mut block.instructions {
@@ -271,7 +289,7 @@ impl Optimizer {
 
     /// Copy propagation: replace uses of a copy with the original value
     fn copy_propagation(func: &mut Function) -> bool {
-        let mut changed = false;
+        let changed = false;
         let mut copies: HashMap<VarId, Value> = HashMap::new();
 
         for block in &mut func.blocks {
@@ -281,7 +299,12 @@ impl Optimizer {
 
                 // Then, record new copies
                 if let Instruction::Mov { dst, src, .. } = instr {
-                    if let Value::Var(_) | Value::ConstI64(_) | Value::ConstI32(_) | Value::ConstBool(_) | Value::ConstF64(_) = src {
+                    if let Value::Var(_)
+                    | Value::ConstI64(_)
+                    | Value::ConstI32(_)
+                    | Value::ConstBool(_)
+                    | Value::ConstF64(_) = src
+                    {
                         copies.insert(*dst, src.clone());
                     }
                 }
@@ -292,7 +315,7 @@ impl Optimizer {
     }
 
     fn substitute_copies(instr: &mut Instruction, copies: &HashMap<VarId, Value>) {
-        let mut substitute = |val: &mut Value| {
+        let substitute = |val: &mut Value| {
             if let Value::Var(v) = val {
                 if let Some(replacement) = copies.get(v) {
                     *val = replacement.clone();

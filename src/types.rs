@@ -70,6 +70,7 @@ impl fmt::Display for Type {
 
 impl Type {
     /// Size in bytes for x86_64
+    #[allow(dead_code)]
     pub fn size(&self) -> usize {
         match self {
             Type::I64 | Type::U64 | Type::F64 => 8,
@@ -85,6 +86,7 @@ impl Type {
     }
 
     /// Alignment in bytes
+    #[allow(dead_code)]
     pub fn align(&self) -> usize {
         match self {
             Type::I64 | Type::U64 | Type::F64 => 8,
@@ -117,14 +119,23 @@ impl Type {
     pub fn is_integer(&self) -> bool {
         matches!(
             self,
-            Type::I64 | Type::I32 | Type::I16 | Type::I8 | Type::U64 | Type::U32 | Type::U16 | Type::U8
+            Type::I64
+                | Type::I32
+                | Type::I16
+                | Type::I8
+                | Type::U64
+                | Type::U32
+                | Type::U16
+                | Type::U8
         )
     }
 
+    #[allow(dead_code)]
     pub fn is_signed(&self) -> bool {
         matches!(self, Type::I64 | Type::I32 | Type::I16 | Type::I8)
     }
 
+    #[allow(dead_code)]
     pub fn is_float(&self) -> bool {
         matches!(self, Type::F64 | Type::F32)
     }

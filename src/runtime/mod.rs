@@ -1,12 +1,11 @@
 /// Runtime support for TypeLisp programs
-/// 
+///
 /// This module provides the minimal runtime needed for compiled programs:
 /// - Memory allocation
 /// - Garbage collection (future)
 /// - Print functions
 /// - Error handling
-
-use std::alloc::{alloc, dealloc, Layout};
+use std::alloc::{Layout, alloc, dealloc};
 use std::ffi::c_void;
 
 /// Allocate memory

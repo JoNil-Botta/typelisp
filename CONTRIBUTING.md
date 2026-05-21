@@ -20,6 +20,8 @@ This keeps the project simple, auditable, and free from supply-chain risk. If yo
 - `cargo fmt` — format your code
 - `cargo clippy` — fix warnings
 - `cargo test` — ensure tests pass
+- `cargo check` — ensure zero compiler warnings (CI will fail on warnings)
+- Verify `Cargo.toml` has no `[dependencies]` or `[dev-dependencies]` sections (CI will fail if any are present)
 
 ## Picking Work
 

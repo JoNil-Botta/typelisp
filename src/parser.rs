@@ -22,16 +22,17 @@ pub struct Parser<'a> {
 impl<'a> Parser<'a> {
     pub fn new(input: &'a str) -> Result<Self, ParseError> {
         let mut lexer = Lexer::new(input);
-        let current = lexer.next_token().map_err(|e| ParseError {
-            msg: e.to_string(),
-        })?;
+        let current = lexer
+            .next_token()
+            .map_err(|e| ParseError { msg: e.to_string() })?;
         Ok(Parser { lexer, current })
     }
 
     fn advance(&mut self) -> Result<(), ParseError> {
-        self.current = self.lexer.next_token().map_err(|e| ParseError {
-            msg: e.to_string(),
-        })?;
+        self.current = self
+            .lexer
+            .next_token()
+            .map_err(|e| ParseError { msg: e.to_string() })?;
         Ok(())
     }
 
@@ -201,7 +202,7 @@ impl<'a> Parser<'a> {
                             _ => {
                                 return Err(ParseError {
                                     msg: "array size must be integer".into(),
-                                })
+                                });
                             }
                         };
                         self.advance()?;
@@ -371,7 +372,7 @@ impl<'a> Parser<'a> {
                     _ => {
                         return Err(ParseError {
                             msg: "tuple-ref index must be integer".into(),
-                        })
+                        });
                     }
                 };
                 self.advance()?;
@@ -478,7 +479,9 @@ mod tests {
         let prog = parse("(define (add [a : i64] [b : i64]) : i64 (+ a b))").unwrap();
         assert_eq!(prog.decls.len(), 1);
         match &prog.decls[0] {
-            Decl::DefFn { name, params, ret, .. } => {
+            Decl::DefFn {
+                name, params, ret, ..
+            } => {
                 assert_eq!(name, "add");
                 assert_eq!(params.len(), 2);
                 assert_eq!(ret, &Type::I64);

@@ -39,6 +39,7 @@ pub enum BinOp {
 
 /// Unary operators
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum UnOp {
     Neg,
     Not,
@@ -47,6 +48,7 @@ pub enum UnOp {
 
 /// Pattern for destructuring bindings
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 pub enum Pattern {
     Var(Symbol, Option<Type>),
     Tuple(Vec<Pattern>),
@@ -70,10 +72,7 @@ pub enum Decl {
         body: Expr,
     },
     /// (extern name [: (-> ... ret)])
-    Extern {
-        name: Symbol,
-        ty: Type,
-    },
+    Extern { name: Symbol, ty: Type },
 }
 
 /// Expressions
@@ -90,15 +89,10 @@ pub enum Expr {
         rhs: Box<Expr>,
     },
     /// Unary operation: (- expr)
-    Unary {
-        op: UnOp,
-        expr: Box<Expr>,
-    },
+    #[allow(dead_code)]
+    Unary { op: UnOp, expr: Box<Expr> },
     /// Function application: (f arg1 arg2 ...)
-    Call {
-        func: Box<Expr>,
-        args: Vec<Expr>,
-    },
+    Call { func: Box<Expr>, args: Vec<Expr> },
     /// If expression: (if cond then else)
     If {
         cond: Box<Expr>,
@@ -119,31 +113,19 @@ pub enum Expr {
     /// Tuple construction: (tuple e1 e2 ...)
     Tuple(Vec<Expr>),
     /// Tuple access: (tuple-ref expr index)
-    TupleRef {
-        expr: Box<Expr>,
-        index: usize,
-    },
+    TupleRef { expr: Box<Expr>, index: usize },
     /// Array construction: (array e1 e2 ...)
     Array(Vec<Expr>),
     /// Array access: (array-ref expr index)
-    ArrayRef {
-        expr: Box<Expr>,
-        index: Box<Expr>,
-    },
+    ArrayRef { expr: Box<Expr>, index: Box<Expr> },
     /// While loop: (while cond body)
-    While {
-        cond: Box<Expr>,
-        body: Box<Expr>,
-    },
+    While { cond: Box<Expr>, body: Box<Expr> },
     /// Begin / sequence: (begin e1 e2 ...)
     Begin(Vec<Expr>),
     /// Set! for mutable variables: (set! name expr)
     Set(Symbol, Box<Expr>),
     /// Type annotation: (ann expr : type)
-    Ann {
-        expr: Box<Expr>,
-        ty: Type,
-    },
+    Ann { expr: Box<Expr>, ty: Type },
 }
 
 /// A complete program
@@ -153,14 +135,17 @@ pub struct Program {
 }
 
 impl Expr {
+    #[allow(dead_code)]
     pub fn unit() -> Self {
         Expr::Literal(Literal::Unit)
     }
 
+    #[allow(dead_code)]
     pub fn int(n: i64) -> Self {
         Expr::Literal(Literal::Int(n))
     }
 
+    #[allow(dead_code)]
     pub fn bool(b: bool) -> Self {
         Expr::Literal(Literal::Bool(b))
     }

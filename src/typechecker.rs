@@ -23,9 +23,18 @@ impl TypeChecker {
     pub fn new() -> Self {
         let mut globals = HashMap::new();
         // Built-in externals
-        globals.insert("print".into(), Type::Func(vec![Type::I64], Box::new(Type::Unit)));
-        globals.insert("print-bool".into(), Type::Func(vec![Type::Bool], Box::new(Type::Unit)));
-        globals.insert("print-float".into(), Type::Func(vec![Type::F64], Box::new(Type::Unit)));
+        globals.insert(
+            "print".into(),
+            Type::Func(vec![Type::I64], Box::new(Type::Unit)),
+        );
+        globals.insert(
+            "print-bool".into(),
+            Type::Func(vec![Type::Bool], Box::new(Type::Unit)),
+        );
+        globals.insert(
+            "print-float".into(),
+            Type::Func(vec![Type::F64], Box::new(Type::Unit)),
+        );
         TypeChecker {
             env: vec![globals],
             func_ret: None,
@@ -74,7 +83,12 @@ impl TypeChecker {
                     };
                     self.bind(name.clone(), inferred);
                 }
-                Decl::DefFn { name, params, ret, body } => {
+                Decl::DefFn {
+                    name,
+                    params,
+                    ret,
+                    body: _,
+                } => {
                     let func_ty = Type::Func(
                         params.iter().map(|(_, t)| t.clone()).collect(),
                         Box::new(ret.clone()),
@@ -89,7 +103,13 @@ impl TypeChecker {
 
         // Second pass: check function bodies
         for decl in &prog.decls {
-            if let Decl::DefFn { name, params, ret, body } = decl {
+            if let Decl::DefFn {
+                name,
+                params,
+                ret,
+                body,
+            } = decl
+            {
                 self.push_scope();
                 for (param, ty) in params {
                     self.bind(param.clone(), ty.clone());
@@ -124,11 +144,9 @@ impl TypeChecker {
                 Literal::String(_) => Ok(Type::Var("String".into())), // Not fully supported yet
                 Literal::Unit => Ok(Type::Unit),
             },
-            Expr::Var(name) => {
-                self.lookup(name).ok_or_else(|| TypeError {
-                    msg: format!("unbound variable: {}", name),
-                })
-            }
+            Expr::Var(name) => self.lookup(name).ok_or_else(|| TypeError {
+                msg: format!("unbound variable: {}", name),
+            }),
             Expr::Binary { op, lhs, rhs } => {
                 let lhs_ty = self.check_expr(lhs)?;
                 let rhs_ty = self.check_expr(rhs)?;
@@ -156,10 +174,7 @@ impl TypeChecker {
                     BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
                         if !self.types_equal(&lhs_ty, &rhs_ty) {
                             return Err(TypeError {
-                                msg: format!(
-                                    "comparison type mismatch: {} and {}",
-                                    lhs_ty, rhs_ty
-                                ),
+                                msg: format!("comparison type mismatch: {} and {}", lhs_ty, rhs_ty),
                             });
                         }
                         Ok(Type::Bool)
@@ -248,7 +263,11 @@ impl TypeChecker {
                     }),
                 }
             }
-            Expr::If { cond, then_branch, else_branch } => {
+            Expr::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
                 let cond_ty = self.check_expr(cond)?;
                 if cond_ty != Type::Bool {
                     return Err(TypeError {
@@ -411,10 +430,7 @@ impl TypeChecker {
                 let expr_ty = self.check_expr(expr)?;
                 if !self.types_equal(ty, &expr_ty) {
                     return Err(TypeError {
-                        msg: format!(
-                            "type annotation mismatch: expected {}, got {}",
-                            ty, expr_ty
-                        ),
+                        msg: format!("type annotation mismatch: expected {}, got {}", ty, expr_ty),
                     });
                 }
                 Ok(ty.clone())
@@ -427,7 +443,10 @@ impl TypeChecker {
             (Type::Var(_), _) | (_, Type::Var(_)) => true, // Type variables unify with anything
             (Type::Func(a_args, a_ret), Type::Func(b_args, b_ret)) => {
                 a_args.len() == b_args.len()
-                    && a_args.iter().zip(b_args.iter()).all(|(a, b)| self.types_equal(a, b))
+                    && a_args
+                        .iter()
+                        .zip(b_args.iter())
+                        .all(|(a, b)| self.types_equal(a, b))
                     && self.types_equal(a_ret, b_ret)
             }
             (Type::Tuple(a), Type::Tuple(b)) => {
@@ -453,18 +472,24 @@ mod tests {
 
     #[test]
     fn test_typecheck_function() {
-        let prog = parse(r#"
+        let prog = parse(
+            r#"
             (define (add [a : i64] [b : i64]) : i64 (+ a b))
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         let mut tc = TypeChecker::new();
         assert!(tc.check_program(&prog).is_ok());
     }
 
     #[test]
     fn test_typecheck_error() {
-        let prog = parse(r#"
+        let prog = parse(
+            r#"
             (define (bad [a : i64] [b : bool]) : i64 (+ a b))
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         let mut tc = TypeChecker::new();
         assert!(tc.check_program(&prog).is_err());
     }

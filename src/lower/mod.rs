@@ -141,7 +141,9 @@ fn lower_expr(
             dst
         }
         ast::Expr::Var(name) => {
-            let src = *env.get(name).unwrap_or_else(|| panic!("unbound variable: {}", name));
+            let src = *env
+                .get(name)
+                .unwrap_or_else(|| panic!("unbound variable: {}", name));
             let dst = builder.fresh_var();
             // We don't know the exact type here, so use I64 as default for Var lookups
             // In a fully typed lowering, we'd carry type info through the AST

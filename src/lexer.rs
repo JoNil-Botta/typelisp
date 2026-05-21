@@ -29,11 +29,11 @@ pub enum Token {
     // Special
     Unit,
     Colon,
-    Arrow,      // ->
-    Quote,      // '
-    Backtick,   // `
-    Comma,      // ,
-    CommaAt,    // ,@
+    Arrow,    // ->
+    Quote,    // '
+    Backtick, // `
+    Comma,    // ,
+    CommaAt,  // ,@
     Dot,
 
     // Identifier
@@ -92,6 +92,7 @@ impl fmt::Display for LexerError {
 }
 
 pub struct Lexer<'a> {
+    #[allow(dead_code)]
     input: &'a str,
     chars: std::str::Chars<'a>,
     current: Option<char>,
@@ -167,7 +168,7 @@ impl<'a> Lexer<'a> {
                             msg: "unterminated string escape".into(),
                             line: self.line,
                             col: self.col,
-                        })
+                        });
                     }
                 }
                 self.advance();
@@ -198,7 +199,7 @@ impl<'a> Lexer<'a> {
                         msg: "unterminated character literal".into(),
                         line: self.line,
                         col: self.col,
-                    })
+                    });
                 }
             };
             self.advance();
@@ -280,7 +281,21 @@ impl<'a> Lexer<'a> {
         s.push(first);
 
         while let Some(c) = self.peek() {
-            if c.is_alphanumeric() || c == '_' || c == '-' || c == '!' || c == '?' || c == '+' || c == '*' || c == '/' || c == '=' || c == '<' || c == '>' || c == '$' || c == '%' || c == '&' {
+            if c.is_alphanumeric()
+                || c == '_'
+                || c == '-'
+                || c == '!'
+                || c == '?'
+                || c == '+'
+                || c == '*'
+                || c == '/'
+                || c == '='
+                || c == '<'
+                || c == '>'
+                || c == '$'
+                || c == '%'
+                || c == '&'
+            {
                 s.push(c);
                 self.advance();
             } else {
@@ -404,25 +419,31 @@ mod tests {
     fn test_basic_tokens() {
         let mut lexer = Lexer::new("(define x 42)");
         let tokens = lexer.tokenize().unwrap();
-        assert_eq!(tokens, vec![
-            Token::LParen,
-            Token::Define,
-            Token::Ident("x".into()),
-            Token::Int(42),
-            Token::RParen,
-        ]);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::LParen,
+                Token::Define,
+                Token::Ident("x".into()),
+                Token::Int(42),
+                Token::RParen,
+            ]
+        );
     }
 
     #[test]
     fn test_types() {
         let mut lexer = Lexer::new("(-> i64 i64)");
         let tokens = lexer.tokenize().unwrap();
-        assert_eq!(tokens, vec![
-            Token::LParen,
-            Token::Arrow,
-            Token::Ident("i64".into()),
-            Token::Ident("i64".into()),
-            Token::RParen,
-        ]);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::LParen,
+                Token::Arrow,
+                Token::Ident("i64".into()),
+                Token::Ident("i64".into()),
+                Token::RParen,
+            ]
+        );
     }
 }

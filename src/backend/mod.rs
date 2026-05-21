@@ -1,6 +1,7 @@
-use crate::ir::{Program, Function, Instruction, Value, BinOp as IrBinOp, UnOp as IrUnOp, VarId};
+#![allow(dead_code)]
+
+use crate::ir::{BinOp as IrBinOp, Function, Instruction, Program, UnOp as IrUnOp, Value, VarId};
 use crate::types::Type;
-use std::fmt::Write;
 
 /// x86_64 assembly code generator
 /// Target: Linux, System V AMD64 ABI
@@ -85,13 +86,23 @@ impl X86_64Backend {
                         self.emit(&format!("    mov {}, {}(%rbp)", param_regs[i], offset));
                     }
                     Type::I32 | Type::U32 => {
-                        self.emit(&format!("    movl {}d, {}(%rbp)", &param_regs[i][1..], offset));
+                        self.emit(&format!(
+                            "    movl {}d, {}(%rbp)",
+                            &param_regs[i][1..],
+                            offset
+                        ));
                     }
                     Type::I8 | Type::U8 | Type::Bool => {
-                        self.emit(&format!("    movb {}b, {}(%rbp)", &param_regs[i][1..], offset));
+                        self.emit(&format!(
+                            "    movb {}b, {}(%rbp)",
+                            &param_regs[i][1..],
+                            offset
+                        ));
                     }
                     Type::F64 => {
-                        let xmm_reg = ["%xmm0", "%xmm1", "%xmm2", "%xmm3", "%xmm4", "%xmm5", "%xmm6", "%xmm7"];
+                        let xmm_reg = [
+                            "%xmm0", "%xmm1", "%xmm2", "%xmm3", "%xmm4", "%xmm5", "%xmm6", "%xmm7",
+                        ];
                         if i < xmm_reg.len() {
                             self.emit(&format!("    movsd {}, {}(%rbp)", xmm_reg[i], offset));
                         }
@@ -157,7 +168,13 @@ impl X86_64Backend {
                     _ => {}
                 }
             }
-            Instruction::BinOp { dst, op, lhs, rhs, ty } => {
+            Instruction::BinOp {
+                dst,
+                op,
+                lhs,
+                rhs,
+                ty,
+            } => {
                 let dst_offset = self.var_offsets[dst];
                 self.load_value(lhs, "%rax", ty);
                 self.load_value(rhs, "%rcx", ty);
@@ -237,7 +254,9 @@ impl X86_64Backend {
 
                 self.emit(&format!("    movq %rax, {}(%rbp)", dst_offset));
             }
-            Instruction::Call { dst, func, args, .. } => {
+            Instruction::Call {
+                dst, func, args, ..
+            } => {
                 let param_regs = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
                 for (i, arg) in args.iter().enumerate() {
                     if i < 6 {
@@ -252,7 +271,11 @@ impl X86_64Backend {
                     self.emit(&format!("    movq %rax, {}(%rbp)", dst_offset));
                 }
             }
-            Instruction::Branch { cond, true_label, false_label } => {
+            Instruction::Branch {
+                cond,
+                true_label,
+                false_label,
+            } => {
                 self.load_value(cond, "%rax", &Type::Bool);
                 self.emit("    testq %rax, %rax");
                 self.emit(&format!("    jnz {}", true_label));

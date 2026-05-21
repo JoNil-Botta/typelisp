@@ -1,8 +1,9 @@
+#![allow(dead_code)]
+
 use crate::types::Type;
 
 /// Intermediate Representation using a simple 3-address code form.
 /// This is lowered from the AST and is the input to the optimizer and backend.
-
 pub type VarId = u32;
 pub type Label = String;
 
@@ -59,28 +60,13 @@ pub enum Instruction {
         ty: Type,
     },
     /// Copy: dst = src
-    Mov {
-        dst: VarId,
-        src: Value,
-        ty: Type,
-    },
+    Mov { dst: VarId, src: Value, ty: Type },
     /// Load from memory: dst = *src
-    Load {
-        dst: VarId,
-        src: Value,
-        ty: Type,
-    },
+    Load { dst: VarId, src: Value, ty: Type },
     /// Store to memory: *dst = src
-    Store {
-        dst: Value,
-        src: Value,
-        ty: Type,
-    },
+    Store { dst: Value, src: Value, ty: Type },
     /// Get address of a variable: dst = &src
-    AddrOf {
-        dst: VarId,
-        src: VarId,
-    },
+    AddrOf { dst: VarId, src: VarId },
     /// Function call: dst = call func(args...)
     Call {
         dst: Option<VarId>,
@@ -108,10 +94,7 @@ pub enum Instruction {
     /// Label marker
     Label(Label),
     /// Allocate stack space for a local variable
-    Alloc {
-        var: VarId,
-        ty: Type,
-    },
+    Alloc { var: VarId, ty: Type },
     /// Get element pointer: dst = base[offset]
     Gep {
         dst: VarId,

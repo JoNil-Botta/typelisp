@@ -187,7 +187,10 @@ fn generate_placeholder_asm(prog: &ast::Program) -> String {
     asm.push_str("    .globl main\n\n");
 
     // Check if there's a main function defined
-    let has_main = prog.decls.iter().any(|d| matches!(d, ast::Decl::DefFn { name, .. } if name == "main"));
+    let has_main = prog
+        .decls
+        .iter()
+        .any(|d| matches!(d, ast::Decl::DefFn { name, .. } if name == "main"));
 
     if has_main {
         asm.push_str("    # TODO: Call user-defined main\n");

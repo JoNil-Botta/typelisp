@@ -9,6 +9,12 @@ Thanks for your interest! This is a learning project — all contributions welco
 3. Build: `cargo build`
 4. Run tests: `cargo test`
 
+## Zero Dependencies Rule
+
+**TypeLisp uses only Rust `std`. No third-party crates allowed.**
+
+This keeps the project simple, auditable, and free from supply-chain risk. If you need functionality that isn't in std, implement it.
+
 ## Before Submitting
 
 - `cargo fmt` — format your code

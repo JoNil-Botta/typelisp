@@ -7,6 +7,7 @@ A typed Lisp/Scheme dialect with a custom x86_64 backend and optimizer.
 - **Typed**: Every expression has a known type at compile time. No runtime type tagging.
 - **Simple**: Minimal syntax, minimal runtime, minimal magic.
 - **Fast**: Compiles directly to x86_64 assembly. No bytecode VM, no interpreter.
+- **Zero dependencies**: Built with Rust `std` only. No third-party crates.
 - **Educational**: Small enough to understand the whole compiler in a weekend.
 
 ## Quick Start

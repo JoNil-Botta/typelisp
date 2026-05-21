@@ -270,44 +270,63 @@ impl Optimizer {
         for block in &mut func.blocks {
             let mut replacements: Vec<(usize, Instruction)> = Vec::new();
             for (idx, instr) in block.instructions.iter().enumerate() {
-                if let Instruction::BinOp { op, rhs, dst, lhs, ty } = instr {
+                if let Instruction::BinOp {
+                    op,
+                    rhs,
+                    dst,
+                    lhs,
+                    ty,
+                } = instr
+                {
                     if let Value::ConstI64(n) = rhs {
                         // x * 1 -> x
                         if *op == BinOp::Mul && *n == 1 {
-                            replacements.push((idx, Instruction::Mov {
-                                dst: *dst,
-                                src: lhs.clone(),
-                                ty: ty.clone(),
-                            }));
+                            replacements.push((
+                                idx,
+                                Instruction::Mov {
+                                    dst: *dst,
+                                    src: lhs.clone(),
+                                    ty: ty.clone(),
+                                },
+                            ));
                             continue;
                         }
                         // x * 0 -> 0
                         if *op == BinOp::Mul && *n == 0 {
-                            replacements.push((idx, Instruction::Mov {
-                                dst: *dst,
-                                src: Value::ConstI64(0),
-                                ty: ty.clone(),
-                            }));
+                            replacements.push((
+                                idx,
+                                Instruction::Mov {
+                                    dst: *dst,
+                                    src: Value::ConstI64(0),
+                                    ty: ty.clone(),
+                                },
+                            ));
                             continue;
                         }
                         // x + 0 -> x
                         if *op == BinOp::Add && *n == 0 {
-                            replacements.push((idx, Instruction::Mov {
-                                dst: *dst,
-                                src: lhs.clone(),
-                                ty: ty.clone(),
-                            }));
+                            replacements.push((
+                                idx,
+                                Instruction::Mov {
+                                    dst: *dst,
+                                    src: lhs.clone(),
+                                    ty: ty.clone(),
+                                },
+                            ));
                             continue;
                         }
                     }
                     // Similarly for lhs being 0 in addition
                     if let Value::ConstI64(n) = lhs {
                         if *op == BinOp::Add && *n == 0 {
-                            replacements.push((idx, Instruction::Mov {
-                                dst: *dst,
-                                src: rhs.clone(),
-                                ty: ty.clone(),
-                            }));
+                            replacements.push((
+                                idx,
+                                Instruction::Mov {
+                                    dst: *dst,
+                                    src: rhs.clone(),
+                                    ty: ty.clone(),
+                                },
+                            ));
                         }
                     }
                 }
@@ -404,10 +423,10 @@ impl Optimizer {
 
 #[cfg(test)]
 mod tests {
+    use crate::ir::{Instruction, Value};
     use crate::lower::lower_program;
     use crate::optimizer::Optimizer;
     use crate::parser::parse;
-    use crate::ir::{Instruction, Value};
 
     fn optimize(source: &str) -> crate::ir::Program {
         let prog = parse(source).unwrap();

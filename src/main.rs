@@ -15,6 +15,7 @@ mod typechecker;
 mod types;
 
 use lower::lower_program;
+use optimizer::Optimizer;
 use parser::parse;
 use typechecker::TypeChecker;
 
@@ -121,12 +122,15 @@ fn main() {
             tc.check_program(&prog).expect("Type checking failed");
 
             if emit_ir {
-                let ir_prog = lower_program(&prog);
+                let mut ir_prog = lower_program(&prog);
+                Optimizer::optimize(&mut ir_prog);
                 let ir_text = format!("{:#?}", ir_prog);
                 let output_path = output.unwrap_or_else(|| file.with_extension("ir"));
                 fs::write(&output_path, ir_text).expect("Failed to write output");
                 println!("Generated: {}", output_path.display());
             } else {
+                let mut ir_prog = lower_program(&prog);
+                Optimizer::optimize(&mut ir_prog);
                 let asm = generate_placeholder_asm(&prog);
                 let output_path = output.unwrap_or_else(|| file.with_extension("s"));
                 fs::write(&output_path, asm).expect("Failed to write output");

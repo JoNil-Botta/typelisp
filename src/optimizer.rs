@@ -1,6 +1,3 @@
-#![allow(dead_code)]
-#![allow(clippy::all)]
-
 use crate::ir::*;
 use std::collections::{HashMap, HashSet};
 
@@ -47,66 +44,66 @@ impl Optimizer {
                         let lhs_val = Self::resolve_value(lhs, &constants);
                         let rhs_val = Self::resolve_value(rhs, &constants);
 
-                        if let (Some(l), Some(r)) = (lhs_val, rhs_val) {
-                            if let Some(result) = Self::eval_binop(*op, l, r) {
-                                let dst_id = *dst;
-                                let result_ty = result.ty().unwrap_or_else(|| ty.clone());
-                                let result_clone = result.clone();
-                                *instr = Instruction::Mov {
-                                    dst: dst_id,
-                                    src: result,
-                                    ty: result_ty,
-                                };
-                                constants.insert(dst_id, result_clone);
-                                changed = true;
-                                continue;
-                            }
+                        if let (Some(l), Some(r)) = (lhs_val, rhs_val)
+                            && let Some(result) = Self::eval_binop(*op, l, r)
+                        {
+                            let dst_id = *dst;
+                            let result_ty = result.ty().unwrap_or_else(|| ty.clone());
+                            let result_clone = result.clone();
+                            *instr = Instruction::Mov {
+                                dst: dst_id,
+                                src: result,
+                                ty: result_ty,
+                            };
+                            constants.insert(dst_id, result_clone);
+                            changed = true;
+                            continue;
                         }
 
-                        if let Value::Var(v) = lhs {
-                            if let Some(c) = constants.get(v) {
-                                *lhs = c.clone();
-                                changed = true;
-                            }
+                        if let Value::Var(v) = lhs
+                            && let Some(c) = constants.get(v)
+                        {
+                            *lhs = c.clone();
+                            changed = true;
                         }
-                        if let Value::Var(v) = rhs {
-                            if let Some(c) = constants.get(v) {
-                                *rhs = c.clone();
-                                changed = true;
-                            }
+                        if let Value::Var(v) = rhs
+                            && let Some(c) = constants.get(v)
+                        {
+                            *rhs = c.clone();
+                            changed = true;
                         }
                     }
                     Instruction::UnOp { dst, op, src, ty } => {
                         let src_val = Self::resolve_value(src, &constants);
-                        if let Some(s) = src_val {
-                            if let Some(result) = Self::eval_unop(*op, s) {
-                                let dst_id = *dst;
-                                let result_ty = result.ty().unwrap_or_else(|| ty.clone());
-                                let result_clone = result.clone();
-                                *instr = Instruction::Mov {
-                                    dst: dst_id,
-                                    src: result,
-                                    ty: result_ty,
-                                };
-                                constants.insert(dst_id, result_clone);
-                                changed = true;
-                                continue;
-                            }
+                        if let Some(s) = src_val
+                            && let Some(result) = Self::eval_unop(*op, s)
+                        {
+                            let dst_id = *dst;
+                            let result_ty = result.ty().unwrap_or_else(|| ty.clone());
+                            let result_clone = result.clone();
+                            *instr = Instruction::Mov {
+                                dst: dst_id,
+                                src: result,
+                                ty: result_ty,
+                            };
+                            constants.insert(dst_id, result_clone);
+                            changed = true;
+                            continue;
                         }
 
-                        if let Value::Var(v) = src {
-                            if let Some(c) = constants.get(v) {
-                                *src = c.clone();
-                                changed = true;
-                            }
+                        if let Value::Var(v) = src
+                            && let Some(c) = constants.get(v)
+                        {
+                            *src = c.clone();
+                            changed = true;
                         }
                     }
                     Instruction::Mov { dst, src, .. } => {
-                        if let Value::Var(v) = src {
-                            if let Some(c) = constants.get(v) {
-                                *src = c.clone();
-                                changed = true;
-                            }
+                        if let Value::Var(v) = src
+                            && let Some(c) = constants.get(v)
+                        {
+                            *src = c.clone();
+                            changed = true;
                         }
                         constants.insert(*dst, src.clone());
                     }
@@ -268,19 +265,76 @@ impl Optimizer {
 
     /// Strength reduction: replace expensive ops with cheaper ones
     fn strength_reduction(func: &mut Function) -> bool {
-        let changed = false;
+        let mut changed = false;
 
         for block in &mut func.blocks {
-            for instr in &mut block.instructions {
-                if let Instruction::BinOp { op, rhs, .. } = instr {
-                    // x * 2 -> x + x, x * 1 -> x, etc.
+            let mut replacements: Vec<(usize, Instruction)> = Vec::new();
+            for (idx, instr) in block.instructions.iter().enumerate() {
+                if let Instruction::BinOp {
+                    op,
+                    rhs,
+                    dst,
+                    lhs,
+                    ty,
+                } = instr
+                {
                     if let Value::ConstI64(n) = rhs {
-                        if *op == BinOp::Mul && *n == 2 {
-                            // Could be replaced with shift or add
-                            // For now, just mark as changed for future passes
+                        // x * 1 -> x
+                        if *op == BinOp::Mul && *n == 1 {
+                            replacements.push((
+                                idx,
+                                Instruction::Mov {
+                                    dst: *dst,
+                                    src: lhs.clone(),
+                                    ty: ty.clone(),
+                                },
+                            ));
+                            continue;
+                        }
+                        // x * 0 -> 0
+                        if *op == BinOp::Mul && *n == 0 {
+                            replacements.push((
+                                idx,
+                                Instruction::Mov {
+                                    dst: *dst,
+                                    src: Value::ConstI64(0),
+                                    ty: ty.clone(),
+                                },
+                            ));
+                            continue;
+                        }
+                        // x + 0 -> x
+                        if *op == BinOp::Add && *n == 0 {
+                            replacements.push((
+                                idx,
+                                Instruction::Mov {
+                                    dst: *dst,
+                                    src: lhs.clone(),
+                                    ty: ty.clone(),
+                                },
+                            ));
+                            continue;
                         }
                     }
+                    // Similarly for lhs being 0 in addition
+                    if let Value::ConstI64(n) = lhs
+                        && *op == BinOp::Add
+                        && *n == 0
+                    {
+                        replacements.push((
+                            idx,
+                            Instruction::Mov {
+                                dst: *dst,
+                                src: rhs.clone(),
+                                ty: ty.clone(),
+                            },
+                        ));
+                    }
                 }
+            }
+            for (idx, new_instr) in replacements {
+                block.instructions[idx] = new_instr;
+                changed = true;
             }
         }
 
@@ -289,24 +343,26 @@ impl Optimizer {
 
     /// Copy propagation: replace uses of a copy with the original value
     fn copy_propagation(func: &mut Function) -> bool {
-        let changed = false;
+        let mut changed = false;
         let mut copies: HashMap<VarId, Value> = HashMap::new();
 
         for block in &mut func.blocks {
             for instr in &mut block.instructions {
                 // First, try to substitute any Var uses with known copies
-                Self::substitute_copies(instr, &copies);
+                let subs = Self::substitute_copies(instr, &copies);
+                if subs {
+                    changed = true;
+                }
 
                 // Then, record new copies
-                if let Instruction::Mov { dst, src, .. } = instr {
-                    if let Value::Var(_)
+                if let Instruction::Mov { dst, src, .. } = instr
+                    && let Value::Var(_)
                     | Value::ConstI64(_)
                     | Value::ConstI32(_)
                     | Value::ConstBool(_)
                     | Value::ConstF64(_) = src
-                    {
-                        copies.insert(*dst, src.clone());
-                    }
+                {
+                    copies.insert(*dst, src.clone());
                 }
             }
         }
@@ -314,12 +370,14 @@ impl Optimizer {
         changed
     }
 
-    fn substitute_copies(instr: &mut Instruction, copies: &HashMap<VarId, Value>) {
-        let substitute = |val: &mut Value| {
-            if let Value::Var(v) = val {
-                if let Some(replacement) = copies.get(v) {
-                    *val = replacement.clone();
-                }
+    fn substitute_copies(instr: &mut Instruction, copies: &HashMap<VarId, Value>) -> bool {
+        let mut changed = false;
+        let mut substitute = |val: &mut Value| {
+            if let Value::Var(v) = val
+                && let Some(replacement) = copies.get(v)
+            {
+                *val = replacement.clone();
+                changed = true;
             }
         };
 
@@ -358,6 +416,56 @@ impl Optimizer {
                 }
             }
             _ => {}
+        }
+        changed
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ir::{Instruction, Value};
+    use crate::lower::lower_program;
+    use crate::optimizer::Optimizer;
+    use crate::parser::parse;
+
+    fn optimize(source: &str) -> crate::ir::Program {
+        let prog = parse(source).unwrap();
+        let mut ir = lower_program(&prog);
+        Optimizer::optimize(&mut ir);
+        ir
+    }
+
+    #[test]
+    fn test_constant_folding() {
+        let source = r#"
+(define (main) : i64
+  (+ 1 2))
+"#;
+        let ir = optimize(source);
+        let func = &ir.functions[0];
+        let entry = &func.blocks[0];
+        // After optimization, the (+ 1 2) should be folded to ConstI64(3)
+        // The Return should contain the constant directly
+        let last = entry.instructions.last().unwrap();
+        match last {
+            Instruction::Return(Some(Value::ConstI64(3))) => {}
+            _ => panic!("Expected Return(ConstI64(3)), got {:?}", last),
+        }
+    }
+
+    #[test]
+    fn test_strength_reduction_mul_zero() {
+        let source = r#"
+(define (main) : i64
+  (* 42 0))
+"#;
+        let ir = optimize(source);
+        let func = &ir.functions[0];
+        let entry = &func.blocks[0];
+        let last = entry.instructions.last().unwrap();
+        match last {
+            Instruction::Return(Some(Value::ConstI64(0))) => {}
+            _ => panic!("Expected Return(ConstI64(0)), got {:?}", last),
         }
     }
 }

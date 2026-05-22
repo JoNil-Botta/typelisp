@@ -350,3 +350,32 @@ pub fn generate_assembly(program: &Program) -> String {
     let mut backend = X86_64Backend::new();
     backend.generate(program)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::*;
+
+    #[test]
+    fn test_backend_simple_main() {
+        let program = Program {
+            functions: vec![Function {
+                name: "main".to_string(),
+                params: vec![],
+                ret: Type::I64,
+                locals: vec![],
+                blocks: vec![BasicBlock {
+                    label: "entry".to_string(),
+                    instructions: vec![Instruction::Return(Some(Value::ConstI64(3)))],
+                }],
+                entry: "entry".to_string(),
+            }],
+            globals: vec![],
+            externs: vec![],
+        };
+        let asm = generate_assembly(&program);
+        println!("{}", asm);
+        assert!(asm.contains("main:"));
+        assert!(asm.contains("movq $3, %rax"));
+    }
+}

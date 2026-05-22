@@ -1849,23 +1849,16 @@ impl X86_64Backend {
             return;
         }
 
+        // Load the dereferenced value into the full 64-bit register, extending
+        // narrower types so the stored stack slot is well-defined (signed types
+        // sign-extend, unsigned/bool/char zero-extend — e.g. a `char` byte is
+        // loaded with `movzbq`). The full register is then spilled width-first.
+        self.load_memory_value("(%r10)", "%rax", ty);
         match ty.size() {
-            8 => {
-                self.emit("    movq (%r10), %rax");
-                self.emit(&format!("    movq %rax, {}(%rbp)", dst_offset));
-            }
-            4 => {
-                self.emit("    movl (%r10), %eax");
-                self.emit(&format!("    movl %eax, {}(%rbp)", dst_offset));
-            }
-            2 => {
-                self.emit("    movw (%r10), %ax");
-                self.emit(&format!("    movw %ax, {}(%rbp)", dst_offset));
-            }
-            1 => {
-                self.emit("    movb (%r10), %al");
-                self.emit(&format!("    movb %al, {}(%rbp)", dst_offset));
-            }
+            8 => self.emit(&format!("    movq %rax, {}(%rbp)", dst_offset)),
+            4 => self.emit(&format!("    movl %eax, {}(%rbp)", dst_offset)),
+            2 => self.emit(&format!("    movw %ax, {}(%rbp)", dst_offset)),
+            1 => self.emit(&format!("    movb %al, {}(%rbp)", dst_offset)),
             _ => {}
         }
     }
@@ -3969,6 +3962,42 @@ mod tests {
         assert!(!asm.contains("call _tl_array_length"), "asm:\n{}", asm);
         assert!(!asm.contains("tl_oob_abort:"), "asm:\n{}", asm);
         assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_string_ref_bounds_check_traps_via_call() {
+        // `string-ref` emits an UNSIGNED bounds compare, a conditional branch and
+        // a Call to the abort runtime on the out-of-bounds path, then loads a
+        // single byte zero-extended into the char result.
+        let asm = compile_ok(r#"(define (f [s : String] [i : i64]) : char (string-ref s i))"#);
+
+        // Unsigned compare for the bounds check (`setb`, NOT the signed `setl`).
+        assert!(asm.contains("setb %al"), "asm:\n{}", asm);
+        assert!(!asm.contains("setl %al"), "asm:\n{}", asm);
+        // A conditional branch decides in-bounds vs out-of-bounds.
+        assert!(asm.contains("jnz "), "asm:\n{}", asm);
+        // The out-of-bounds trap is a Call (survives DCE) to the abort symbol,
+        // whose self-contained body is emitted in this same unit.
+        assert!(asm.contains("    call tl_oob_abort"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_oob_abort:"), "asm:\n{}", asm);
+        // The indexed byte is loaded through the computed pointer and
+        // zero-extended into the full register (`movzbq`), as befits a char.
+        assert!(asm.contains("(%r10)"), "asm:\n{}", asm);
+        assert!(asm.contains("movzbq"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_string_ref_byte_load_does_not_sign_extend() {
+        // A char load must zero-extend (`movzbq`), never sign-extend (`movsbq`),
+        // so high-bit bytes (>= 0x80) read back as positive byte values.
+        let asm = compile_ok(r#"(define (f [s : String] [i : i64]) : char (string-ref s i))"#);
+        assert!(asm.contains("movzbq"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("movsbq (%r10)"),
+            "char byte load must not sign-extend; asm:\n{}",
+            asm
+        );
     }
 
     #[test]

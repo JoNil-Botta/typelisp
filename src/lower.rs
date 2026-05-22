@@ -252,6 +252,7 @@ impl FnLowerer {
             // an inline fat `{ ptr, len }` value, yielding a pointer to it.
             ast::Expr::MakeArray { elem_ty, len } => self.lower_make_array(elem_ty, len),
             ast::Expr::ArrayRef { expr, index } => self.lower_array_ref(expr, index),
+            ast::Expr::StringRef { expr, index } => self.lower_string_ref(expr, index),
             // Tuple, Array (literal), Lambda — stubbed to unit for now
             ast::Expr::Tuple(_) | ast::Expr::Array(_) | ast::Expr::Lambda { .. } => {
                 Value::ConstUnit
@@ -895,6 +896,102 @@ impl FnLowerer {
             ty: elem_ty.clone(),
         });
         self.record_local(result, elem_ty);
+        Value::Var(result)
+    }
+
+    /// Lower `(string-ref s i)` / `(char-at s i)`: the bounds-checked byte at
+    /// index `i` of String `s`, yielded as a `char`. This mirrors the dynamic
+    /// `array-ref` lowering exactly — extract the fat `{ ptr, len }` fields,
+    /// emit an UNSIGNED `idx u< len` compare (so negative indices wrap to huge
+    /// unsigned values and also fail), branch to an abort block that emits a
+    /// `Call tl_oob_abort` (a Call is the only form that survives DCE, since the
+    /// optimizer's `has_side_effects` ignores Load/Gep), then on the in-bounds
+    /// path `Gep` over the data pointer and `Load` a single byte. The byte load
+    /// is typed `Char` (1 byte), which the backend zero-extends (`movzbq`).
+    fn lower_string_ref(&mut self, s: &ast::Expr, index: &ast::Expr) -> Value {
+        let str_val = self.lower_expr(s);
+        // Defensive: anything that isn't a String value can't be indexed. The
+        // typechecker rejects this, so just yield unit rather than miscompile.
+        if !matches!(self.value_type(&str_val), Type::String) {
+            return Value::ConstUnit;
+        }
+
+        let idx_val = self.lower_expr(index);
+        let idx_u_val = self.cast_value(idx_val.clone(), Type::U64);
+        let idx_offset_val = self.cast_value(idx_val, Type::I64);
+
+        // Load len (offset 8) from the fat string value.
+        let len_ptr = self.gep_byte(&str_val, STRING_LEN_OFFSET);
+        let len = self.builder.fresh_var();
+        self.builder.emit(Instruction::Load {
+            dst: len,
+            src: Value::Var(len_ptr),
+            ty: Type::I64,
+        });
+        self.record_local(len, Type::I64);
+
+        // Unsigned bounds check: in_bounds = (idx u< len). Both operands are
+        // reinterpreted to U64 via `Cast` (not `Mov`, which copy-prop would fold
+        // back to the signed operand and silently weaken the check) so the
+        // backend selects the unsigned condition code (`setb`).
+        let len_u_val = self.cast_value(Value::Var(len), Type::U64);
+        let in_bounds = self.builder.fresh_var();
+        self.builder.emit(Instruction::BinOp {
+            dst: in_bounds,
+            op: BinOp::Lt,
+            lhs: idx_u_val,
+            rhs: len_u_val,
+            ty: Type::Bool,
+        });
+        self.record_local(in_bounds, Type::Bool);
+
+        let ok_label = self.builder.fresh_label("str_bounds_ok");
+        let fail_label = self.builder.fresh_label("str_bounds_fail");
+        self.builder.emit(Instruction::Branch {
+            cond: Value::Var(in_bounds),
+            true_label: ok_label.clone(),
+            false_label: fail_label.clone(),
+        });
+
+        // Out-of-bounds block: call the shared abort runtime, then (defensively)
+        // jump to the ok block. The call diverges so control never returns.
+        self.builder.finish_block(&fail_label);
+        self.builder.emit(Instruction::Call {
+            dst: None,
+            func: "tl_oob_abort".into(),
+            args: vec![],
+            ty: Type::Unit,
+        });
+        self.builder.emit(Instruction::Jump(ok_label.clone()));
+
+        // In-bounds block: load the data pointer, compute the byte address, and
+        // load one byte as a `char`.
+        self.builder.finish_block(&ok_label);
+        let data_ptr = self.gep_byte(&str_val, STRING_PTR_OFFSET);
+        let buf = self.builder.fresh_var();
+        self.builder.emit(Instruction::Load {
+            dst: buf,
+            src: Value::Var(data_ptr),
+            ty: Type::U64,
+        });
+        self.record_local(buf, Type::U64);
+
+        let byte_ptr = self.builder.fresh_var();
+        self.builder.emit(Instruction::Gep {
+            dst: byte_ptr,
+            base: Value::Var(buf),
+            offset: idx_offset_val,
+            elem_ty: Type::Char,
+        });
+        self.record_local(byte_ptr, Type::U64);
+
+        let result = self.builder.fresh_var();
+        self.builder.emit(Instruction::Load {
+            dst: result,
+            src: Value::Var(byte_ptr),
+            ty: Type::Char,
+        });
+        self.record_local(result, Type::Char);
         Value::Var(result)
     }
 
@@ -2322,6 +2419,79 @@ mod tests {
                 to_ty: Type::I64,
                 ..
             }
+        )));
+    }
+
+    #[test]
+    fn test_lower_string_ref_bounds_checks_with_call_trap() {
+        // `string-ref` mirrors dynamic `array-ref`: an unsigned bounds compare,
+        // a Branch, a Call to the abort runtime (so DCE can't drop it), then a
+        // Gep over a char element + a single-byte (char) Load.
+        let prog = parse("(define (f [s : String] [i : i64]) : char (string-ref s i))").unwrap();
+        let ir = lower_program(&prog);
+        let instrs = all_instrs(&ir);
+
+        // Unsigned compare: a Lt BinOp over U64-typed operands (the Cast to U64
+        // of both operands forces the backend's unsigned condition code).
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::BinOp {
+                op: BinOp::Lt,
+                ty: Type::Bool,
+                ..
+            }
+        )));
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::Cast {
+                to_ty: Type::U64,
+                ..
+            }
+        )));
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Branch { .. }))
+        );
+
+        // The out-of-bounds trap is a Call (not a Load/Gep) so it survives DCE.
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::Call { func, dst: None, .. } if func == "tl_oob_abort"
+        )));
+
+        // The byte address is computed via Gep over a char (1-byte) element, and
+        // the result is a single-byte char Load.
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::Gep {
+                elem_ty: Type::Char,
+                ..
+            }
+        )));
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Load { ty: Type::Char, .. }))
+        );
+    }
+
+    #[test]
+    fn test_lower_string_ref_reads_len_field_for_bounds() {
+        // The bounds check reads the fat string's len field (an i64 Load) rather
+        // than calling a runtime length helper.
+        let prog = parse(r#"(define (f) : char (string-ref "hello" 0))"#).unwrap();
+        let ir = lower_program(&prog);
+        let instrs = all_instrs(&ir);
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Load { ty: Type::I64, .. })),
+            "expected an i64 Load of the len field"
+        );
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::Call { func, dst: None, .. } if func == "tl_oob_abort"
         )));
     }
 

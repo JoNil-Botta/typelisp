@@ -626,6 +626,24 @@ impl TypeChecker {
                     )),
                 }
             }
+            Expr::StringRef { expr, index } => {
+                // `(string-ref s i)` / `(char-at s i)` : `(-> String i64 char)`.
+                let str_ty = self.check_expr(expr)?;
+                if str_ty != Type::String {
+                    return Err(TypeError::at(
+                        format!("string-ref requires String, got {}", str_ty),
+                        expr.span(),
+                    ));
+                }
+                let idx_ty = self.check_expr(index)?;
+                if !idx_ty.is_integer() {
+                    return Err(TypeError::at(
+                        format!("string index must be integer, got {}", idx_ty),
+                        index.span(),
+                    ));
+                }
+                Ok(Type::Char)
+            }
             Expr::While { cond, body } => {
                 let cond_ty = self.check_expr(cond)?;
                 if cond_ty != Type::Bool {
@@ -1456,5 +1474,54 @@ mod tests {
         // it must keep type-checking.
         let src = "(define (f [a : (Array i64 3)]) : i64 (array-ref a 0))";
         assert!(check(src).is_ok());
+    }
+
+    // ------------------------------------------------------------------
+    // String indexing — `string-ref` / `char-at` (Issue #13)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_typecheck_string_ref_yields_char() {
+        // `(string-ref s i)` : `(-> String i64 char)`. Feeding the result to
+        // `print-char` (which expects a `char`) proves the inferred type.
+        let src = "(define (f [s : String] [i : i64]) : unit (print-char (string-ref s i)))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_char_at_is_alias_for_string_ref() {
+        let src = "(define (f [s : String] [i : i64]) : unit (print-char (char-at s i)))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_string_ref_requires_string() {
+        // The collection argument must be a String, not an array or scalar.
+        let src = "(define (f [a : (Array i64)] [i : i64]) : unit (print-char (string-ref a i)))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg.contains("string-ref requires String"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_string_ref_index_must_be_integer() {
+        let src = r#"(define (f) : unit (print-char (string-ref "hi" true)))"#;
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg.contains("string index must be integer"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_string_ref_result_is_not_i64() {
+        // The result is a `char`, so using it where an `i64` is required (the
+        // function's declared return) is a type error.
+        let src = r#"(define (f) : i64 (string-ref "hi" 0))"#;
+        assert!(check(src).is_err());
     }
 }

@@ -1189,19 +1189,26 @@ impl X86_64Backend {
                 // comparison instruction selection. `bool`/`char` are treated as
                 // unsigned magnitudes.
                 let signed = operand_ty.is_signed();
+                let suffix = Self::int_instruction_suffix(&operand_ty);
+                let lhs_reg = Self::gpr_sized("%rax", &operand_ty);
+                let rhs_reg = Self::gpr_sized("%rcx", &operand_ty);
 
                 self.load_value(lhs, "%rax", &operand_ty);
                 self.load_value(rhs, "%rcx", &operand_ty);
 
                 match op {
                     IrBinOp::Add if operand_ty.is_integer() => {
-                        self.emit("    addq %rcx, %rax");
+                        self.emit(&format!("    add{} {}, {}", suffix, rhs_reg, lhs_reg));
                     }
                     IrBinOp::Sub if operand_ty.is_integer() => {
-                        self.emit("    subq %rcx, %rax");
+                        self.emit(&format!("    sub{} {}, {}", suffix, rhs_reg, lhs_reg));
                     }
                     IrBinOp::Mul if operand_ty.is_integer() => {
-                        self.emit("    imulq %rcx, %rax");
+                        if operand_ty.size() == 1 {
+                            self.emit("    imulq %rcx, %rax");
+                        } else {
+                            self.emit(&format!("    imul{} {}, {}", suffix, rhs_reg, lhs_reg));
+                        }
                     }
                     IrBinOp::Div if operand_ty.is_integer() => {
                         if signed {
@@ -1224,39 +1231,39 @@ impl X86_64Backend {
                         }
                         self.emit("    movq %rdx, %rax");
                     }
-                    // Bitwise operators work on every integer (and bool) width;
-                    // the low bits are identical regardless of register width,
-                    // so a single 64-bit form is correct.
+                    // Bitwise/logical operators work on every integer and bool
+                    // width. Emit the natural width so upper-byte state cannot
+                    // affect flags or obscure the generated assembly.
                     IrBinOp::BitAnd | IrBinOp::And => {
-                        self.emit("    andq %rcx, %rax");
+                        self.emit(&format!("    and{} {}, {}", suffix, rhs_reg, lhs_reg));
                     }
                     IrBinOp::BitOr | IrBinOp::Or => {
-                        self.emit("    orq %rcx, %rax");
+                        self.emit(&format!("    or{} {}, {}", suffix, rhs_reg, lhs_reg));
                     }
                     IrBinOp::BitXor => {
-                        self.emit("    xorq %rcx, %rax");
+                        self.emit(&format!("    xor{} {}, {}", suffix, rhs_reg, lhs_reg));
                     }
                     // Shifts take the count in %cl (the low byte of %rcx, where
                     // the rhs already lives). Left shift is the same for signed
                     // and unsigned; right shift is arithmetic (`sar`) for signed
                     // operands and logical (`shr`) for unsigned.
                     IrBinOp::Shl => {
-                        self.emit("    shlq %cl, %rax");
+                        self.emit(&format!("    shl{} %cl, {}", suffix, lhs_reg));
                     }
                     IrBinOp::Shr => {
                         if signed {
-                            self.emit("    sarq %cl, %rax");
+                            self.emit(&format!("    sar{} %cl, {}", suffix, lhs_reg));
                         } else {
-                            self.emit("    shrq %cl, %rax");
+                            self.emit(&format!("    shr{} %cl, {}", suffix, lhs_reg));
                         }
                     }
                     IrBinOp::Eq => {
-                        self.emit("    cmpq %rcx, %rax");
+                        self.emit(&format!("    cmp{} {}, {}", suffix, rhs_reg, lhs_reg));
                         self.emit("    sete %al");
                         self.emit("    movzbq %al, %rax");
                     }
                     IrBinOp::Ne => {
-                        self.emit("    cmpq %rcx, %rax");
+                        self.emit(&format!("    cmp{} {}, {}", suffix, rhs_reg, lhs_reg));
                         self.emit("    setne %al");
                         self.emit("    movzbq %al, %rax");
                     }
@@ -1266,7 +1273,7 @@ impl X86_64Backend {
                     // unsigned arms emitted *nothing*, silently dropping the
                     // comparison.
                     IrBinOp::Lt => {
-                        self.emit("    cmpq %rcx, %rax");
+                        self.emit(&format!("    cmp{} {}, {}", suffix, rhs_reg, lhs_reg));
                         self.emit(if signed {
                             "    setl %al"
                         } else {
@@ -1275,7 +1282,7 @@ impl X86_64Backend {
                         self.emit("    movzbq %al, %rax");
                     }
                     IrBinOp::Le => {
-                        self.emit("    cmpq %rcx, %rax");
+                        self.emit(&format!("    cmp{} {}, {}", suffix, rhs_reg, lhs_reg));
                         self.emit(if signed {
                             "    setle %al"
                         } else {
@@ -1284,7 +1291,7 @@ impl X86_64Backend {
                         self.emit("    movzbq %al, %rax");
                     }
                     IrBinOp::Gt => {
-                        self.emit("    cmpq %rcx, %rax");
+                        self.emit(&format!("    cmp{} {}, {}", suffix, rhs_reg, lhs_reg));
                         self.emit(if signed {
                             "    setg %al"
                         } else {
@@ -1293,7 +1300,7 @@ impl X86_64Backend {
                         self.emit("    movzbq %al, %rax");
                     }
                     IrBinOp::Ge => {
-                        self.emit("    cmpq %rcx, %rax");
+                        self.emit(&format!("    cmp{} {}, {}", suffix, rhs_reg, lhs_reg));
                         self.emit(if signed {
                             "    setge %al"
                         } else {
@@ -1890,6 +1897,24 @@ impl X86_64Backend {
             "%r10" => "%r10b",
             "%r11" => "%r11b",
             _ => reg,
+        }
+    }
+
+    fn gpr_sized<'a>(reg: &'a str, ty: &Type) -> &'a str {
+        match ty.size() {
+            1 => Self::gpr8(reg),
+            2 => Self::gpr16(reg),
+            4 => Self::gpr32(reg),
+            _ => reg,
+        }
+    }
+
+    fn int_instruction_suffix(ty: &Type) -> &'static str {
+        match ty.size() {
+            1 => "b",
+            2 => "w",
+            4 => "l",
+            _ => "q",
         }
     }
 
@@ -2840,6 +2865,61 @@ mod tests {
         assert!(asm_gt.contains("seta %al"), "asm:\n{}", asm_gt);
         let asm_ge = compile_ok("(define (f [a : u32] [b : u32]) : bool (>= a b))");
         assert!(asm_ge.contains("setae %al"), "asm:\n{}", asm_ge);
+    }
+
+    #[test]
+    fn test_compile_i32_add_uses_32_bit_instruction() {
+        let asm = compile_ok("(define (f [a : i32] [b : i32]) : i32 (+ a b))");
+        assert!(asm.contains("addl %ecx, %eax"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("addq %rcx, %rax"),
+            "i32 add must not use 64-bit add; asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_compile_i32_mul_uses_32_bit_instruction() {
+        let asm = compile_ok("(define (f [a : i32] [b : i32]) : i32 (* a b))");
+        assert!(asm.contains("imull %ecx, %eax"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("imulq %rcx, %rax"),
+            "i32 mul must not use 64-bit imul; asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_compile_i16_bit_and_uses_16_bit_instruction() {
+        let asm = compile_ok("(define (f [a : i16] [b : i16]) : i16 (bit-and a b))");
+        assert!(asm.contains("andw %cx, %ax"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("andq %rcx, %rax"),
+            "i16 bit-and must not use 64-bit and; asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_compile_i8_compare_uses_8_bit_cmp() {
+        let asm = compile_ok("(define (f [a : i8] [b : i8]) : bool (< a b))");
+        assert!(asm.contains("cmpb %cl, %al"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("cmpq %rcx, %rax"),
+            "i8 comparison must not use 64-bit cmp; asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_compile_u8_shift_uses_8_bit_instruction() {
+        let asm = compile_ok("(define (f [a : u8] [b : u8]) : u8 (shl a b))");
+        assert!(asm.contains("shlb %cl, %al"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("shlq %cl, %rax"),
+            "u8 shift must not use 64-bit shl; asm:\n{}",
+            asm
+        );
     }
 
     #[test]

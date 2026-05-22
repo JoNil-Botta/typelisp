@@ -74,6 +74,14 @@ pub struct VariantDef {
     pub fields: Vec<Type>,
 }
 
+/// A named, typed field of a `defstruct`. Fields are ordered; their byte
+/// offsets and the struct's total size are computed by the `StructRegistry`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FieldDef {
+    pub name: Symbol,
+    pub ty: Type,
+}
+
 /// Top-level declarations
 #[derive(Debug, Clone, PartialEq)]
 pub enum Decl {
@@ -97,6 +105,8 @@ pub enum Decl {
         name: Symbol,
         variants: Vec<VariantDef>,
     },
+    /// (defstruct Name (field1 Ty1) (field2 Ty2) ...)
+    DefStruct { name: Symbol, fields: Vec<FieldDef> },
     /// (import "path") — a directive consumed by the module-graph loader, not a
     /// codegen declaration. The string is the import path as written, resolved
     /// relative to the importing file by the loader. Import decls are stripped
@@ -182,6 +192,9 @@ pub enum Expr {
         scrutinee: Box<Expr>,
         arms: Vec<(Pattern, Expr)>,
     },
+    /// Struct field access: `(struct-get s field)`. Reads the named field of the
+    /// struct value `s`.
+    StructGet { expr: Box<Expr>, field: Symbol },
 }
 
 /// A complete program
@@ -328,5 +341,97 @@ impl EnumRegistry {
             }
         }
         max_extent.div_ceil(8) * 8
+    }
+}
+
+/// A registry of all `defstruct` declarations in a program, used by both the
+/// typechecker (for constructor/field-access typing) and the lowerer (for
+/// memory layout). Built once from the program's `Decl::DefStruct`s. A struct
+/// is like an enum with a single, untagged "variant": named fields laid out
+/// inline, each naturally aligned, with no tag word.
+#[derive(Debug, Clone, Default)]
+pub struct StructRegistry {
+    /// struct name -> its ordered fields.
+    structs: HashMap<Symbol, Vec<FieldDef>>,
+}
+
+impl StructRegistry {
+    /// Build the registry from a program's `defstruct` declarations.
+    pub fn from_program(prog: &Program) -> Self {
+        let mut reg = StructRegistry::default();
+        for decl in &prog.decls {
+            if let Decl::DefStruct { name, fields } = decl {
+                reg.structs.insert(name.clone(), fields.clone());
+            }
+        }
+        reg
+    }
+
+    pub fn is_struct(&self, name: &str) -> bool {
+        self.structs.contains_key(name)
+    }
+
+    /// The ordered fields of a struct, if declared.
+    pub fn fields(&self, struct_name: &str) -> Option<&[FieldDef]> {
+        self.structs.get(struct_name).map(|f| f.as_slice())
+    }
+
+    /// Look up a field by name within a struct, returning its declared index
+    /// (position in the field list) and its type. `None` if the struct has no
+    /// such field.
+    pub fn lookup_field(&self, struct_name: &str, field: &str) -> Option<(usize, &Type)> {
+        let fields = self.structs.get(struct_name)?;
+        fields
+            .iter()
+            .enumerate()
+            .find(|(_, f)| f.name == field)
+            .map(|(i, f)| (i, &f.ty))
+    }
+
+    /// Resolve a parsed type so any `Type::Var(name)` naming a declared struct
+    /// becomes `Type::Struct(name)`. Recurses through compound types so struct
+    /// names nested in tuples/arrays/function types are resolved too. Mirrors
+    /// `EnumRegistry::resolve_type`; the two run in sequence at the call sites.
+    pub fn resolve_type(&self, ty: &Type) -> Type {
+        match ty {
+            Type::Var(name) if self.is_struct(name) => Type::Struct(name.clone()),
+            Type::Func(args, ret) => Type::Func(
+                args.iter().map(|a| self.resolve_type(a)).collect(),
+                Box::new(self.resolve_type(ret)),
+            ),
+            Type::Tuple(elems) => Type::Tuple(elems.iter().map(|e| self.resolve_type(e)).collect()),
+            Type::Array(elem, n) => Type::Array(Box::new(self.resolve_type(elem)), *n),
+            Type::DynArray(elem) => Type::DynArray(Box::new(self.resolve_type(elem))),
+            other => other.clone(),
+        }
+    }
+
+    /// Byte offsets of a struct's fields, each naturally aligned to its own
+    /// alignment, starting at offset 0 (a struct has no tag word).
+    pub fn field_offsets(&self, fields: &[FieldDef]) -> Vec<usize> {
+        let mut offsets = Vec::with_capacity(fields.len());
+        let mut cursor = 0usize;
+        for f in fields {
+            let align = f.ty.align().max(1);
+            cursor = cursor.div_ceil(align) * align;
+            offsets.push(cursor);
+            cursor += f.ty.size();
+        }
+        offsets
+    }
+
+    /// The total inline storage size of a struct value: the end of the last
+    /// field, rounded up to 8-byte alignment. An empty struct is 8 bytes (one
+    /// pointer-sized slot) so it remains a valid, distinct heap/frame address.
+    pub fn struct_size(&self, struct_name: &str) -> usize {
+        let Some(fields) = self.structs.get(struct_name) else {
+            return 8;
+        };
+        let offsets = self.field_offsets(fields);
+        let extent = offsets
+            .last()
+            .map(|&last| last + fields.last().map(|f| f.ty.size()).unwrap_or(0))
+            .unwrap_or(0);
+        extent.div_ceil(8).max(1) * 8
     }
 }

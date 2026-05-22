@@ -19,6 +19,7 @@ struct ProgramLowerer {
     global_types: HashMap<String, Type>,
     function_types: HashMap<String, Type>,
     enums: ast::EnumRegistry,
+    structs: ast::StructRegistry,
 }
 
 impl ProgramLowerer {
@@ -30,11 +31,19 @@ impl ProgramLowerer {
             global_types: HashMap::new(),
             function_types: HashMap::new(),
             enums: ast::EnumRegistry::default(),
+            structs: ast::StructRegistry::default(),
         }
+    }
+
+    /// Resolve a parsed type so any `Type::Var` naming a declared enum or struct
+    /// becomes the nominal `Type::Enum`/`Type::Struct`. Chains both registries.
+    fn resolve_type(&self, ty: &Type) -> Type {
+        self.structs.resolve_type(&self.enums.resolve_type(ty))
     }
 
     fn lower(&mut self, prog: &ast::Program) -> Program {
         self.enums = ast::EnumRegistry::from_program(prog);
+        self.structs = ast::StructRegistry::from_program(prog);
 
         for decl in &prog.decls {
             match decl {
@@ -44,24 +53,32 @@ impl ProgramLowerer {
                     self.function_types.insert(
                         name.clone(),
                         Type::Func(
-                            params
-                                .iter()
-                                .map(|(_, ty)| self.enums.resolve_type(ty))
-                                .collect(),
-                            Box::new(self.enums.resolve_type(ret)),
+                            params.iter().map(|(_, ty)| self.resolve_type(ty)).collect(),
+                            Box::new(self.resolve_type(ret)),
                         ),
                     );
                 }
                 ast::Decl::Extern { name, ty } => {
                     self.function_types
-                        .insert(name.clone(), self.enums.resolve_type(ty));
+                        .insert(name.clone(), self.resolve_type(ty));
                 }
                 ast::Decl::Def { name, ty, value } => {
                     let val_ty = ty
                         .as_ref()
-                        .map(|ty| self.enums.resolve_type(ty))
+                        .map(|ty| self.resolve_type(ty))
                         .unwrap_or_else(|| infer_literal_type(value));
                     self.global_types.insert(name.clone(), val_ty);
+                }
+                // A struct constructor `Name : (-> field-tys... Name)` is bound
+                // as a callable so a construction `(Name v..)` lowers through the
+                // struct path in `lower_call` (the head names a known struct).
+                ast::Decl::DefStruct { name, fields } => {
+                    let field_tys: Vec<Type> =
+                        fields.iter().map(|f| self.resolve_type(&f.ty)).collect();
+                    self.function_types.insert(
+                        name.clone(),
+                        Type::Func(field_tys, Box::new(Type::Struct(name.clone()))),
+                    );
                 }
                 ast::Decl::DefEnum { .. } => {}
                 // Imports are stripped by the loader before lowering; defensive.
@@ -81,6 +98,7 @@ impl ProgramLowerer {
                         &self.function_types,
                         &self.global_types,
                         &self.enums,
+                        &self.structs,
                     );
                     let (_func, _result_var) = fn_lowerer.lower_expr_to_fn(value, &val_ty);
 
@@ -97,17 +115,19 @@ impl ProgramLowerer {
                 } => {
                     let params: Vec<(String, Type)> = params
                         .iter()
-                        .map(|(n, t)| (n.clone(), self.enums.resolve_type(t)))
+                        .map(|(n, t)| (n.clone(), self.resolve_type(t)))
                         .collect();
-                    let ret = self.enums.resolve_type(ret);
+                    let ret = self.resolve_type(ret);
                     let func = self.lower_function(name, &params, &ret, body);
                     self.functions.push(func);
                 }
                 ast::Decl::Extern { name, ty } => {
-                    self.externs
-                        .push((name.clone(), self.enums.resolve_type(ty)));
+                    self.externs.push((name.clone(), self.resolve_type(ty)));
                 }
                 ast::Decl::DefEnum { .. } => {}
+                // Struct decls carry no runtime value; the constructor is bound
+                // above and lowered at its use sites.
+                ast::Decl::DefStruct { .. } => {}
                 // Imports are stripped by the loader before lowering; defensive.
                 ast::Decl::Import(_) => {}
             }
@@ -134,6 +154,7 @@ impl ProgramLowerer {
             &self.function_types,
             &self.global_types,
             &self.enums,
+            &self.structs,
         );
         fn_lowerer.lower_body(body, ret)
     }
@@ -199,6 +220,7 @@ struct FnLowerer {
     global_types: HashMap<String, Type>,
     function_types: HashMap<String, Type>,
     enums: ast::EnumRegistry,
+    structs: ast::StructRegistry,
     params: Vec<(VarId, Type)>,
     locals: Vec<(VarId, Type)>,
     /// The enclosing function's (resolved) return type. Drives heap promotion:
@@ -214,6 +236,7 @@ enum AggKind {
     Enum,
     String,
     DynArray,
+    Struct,
 }
 
 /// Whether a value of aggregate `kind` can escape the current function via its
@@ -236,16 +259,31 @@ enum AggKind {
 ///
 /// Nesting (`Tuple`/`Array`/`DynArray` and enum variant fields) is matched so a
 /// value returned inside an aggregate is also promoted.
-fn type_kind_escapes_via_return(ret: &Type, kind: AggKind, enums: &ast::EnumRegistry) -> bool {
+fn type_kind_escapes_via_return(
+    ret: &Type,
+    kind: AggKind,
+    enums: &ast::EnumRegistry,
+    structs: &ast::StructRegistry,
+) -> bool {
     let mut seen_enums = HashSet::new();
-    type_kind_escapes_via_return_inner(ret, kind, enums, &mut seen_enums)
+    let mut seen_structs = HashSet::new();
+    type_kind_escapes_via_return_inner(
+        ret,
+        kind,
+        enums,
+        structs,
+        &mut seen_enums,
+        &mut seen_structs,
+    )
 }
 
 fn type_kind_escapes_via_return_inner(
     ty: &Type,
     kind: AggKind,
     enums: &ast::EnumRegistry,
+    structs: &ast::StructRegistry,
     seen_enums: &mut HashSet<String>,
+    seen_structs: &mut HashSet<String>,
 ) -> bool {
     match ty {
         Type::Enum(name) => {
@@ -258,23 +296,62 @@ fn type_kind_escapes_via_return_inner(
             let found = enums.variants(name).is_some_and(|variants| {
                 variants.iter().any(|variant| {
                     variant.fields.iter().any(|field| {
-                        let field = enums.resolve_type(field);
-                        type_kind_escapes_via_return_inner(&field, kind, enums, seen_enums)
+                        let field = structs.resolve_type(&enums.resolve_type(field));
+                        type_kind_escapes_via_return_inner(
+                            &field,
+                            kind,
+                            enums,
+                            structs,
+                            seen_enums,
+                            seen_structs,
+                        )
                     })
                 })
             });
             seen_enums.remove(name);
             found
         }
+        Type::Struct(name) => {
+            if kind == AggKind::Struct {
+                return true;
+            }
+            if !seen_structs.insert(name.clone()) {
+                return false;
+            }
+            let found = structs.fields(name).is_some_and(|fields| {
+                fields.iter().any(|field| {
+                    let field = structs.resolve_type(&enums.resolve_type(&field.ty));
+                    type_kind_escapes_via_return_inner(
+                        &field,
+                        kind,
+                        enums,
+                        structs,
+                        seen_enums,
+                        seen_structs,
+                    )
+                })
+            });
+            seen_structs.remove(name);
+            found
+        }
         Type::String => kind == AggKind::String,
         Type::DynArray(elem) => {
             kind == AggKind::DynArray
-                || type_kind_escapes_via_return_inner(elem, kind, enums, seen_enums)
+                || type_kind_escapes_via_return_inner(
+                    elem,
+                    kind,
+                    enums,
+                    structs,
+                    seen_enums,
+                    seen_structs,
+                )
         }
-        Type::Tuple(elems) => elems
-            .iter()
-            .any(|elem| type_kind_escapes_via_return_inner(elem, kind, enums, seen_enums)),
-        Type::Array(elem, _) => type_kind_escapes_via_return_inner(elem, kind, enums, seen_enums),
+        Type::Tuple(elems) => elems.iter().any(|elem| {
+            type_kind_escapes_via_return_inner(elem, kind, enums, structs, seen_enums, seen_structs)
+        }),
+        Type::Array(elem, _) => {
+            type_kind_escapes_via_return_inner(elem, kind, enums, structs, seen_enums, seen_structs)
+        }
         Type::Func(_, _) => false,
         _ => false,
     }
@@ -288,6 +365,7 @@ impl FnLowerer {
         function_types: &HashMap<String, Type>,
         global_types: &HashMap<String, Type>,
         enums: &ast::EnumRegistry,
+        structs: &ast::StructRegistry,
     ) -> Self {
         let mut builder = IrBuilder::new("entry");
         let mut vars = HashMap::new();
@@ -313,10 +391,17 @@ impl FnLowerer {
             global_types: global_types.clone(),
             function_types: function_types.clone(),
             enums: enums.clone(),
+            structs: structs.clone(),
             params: ir_params,
             locals: Vec::new(),
             ret: ret.clone(),
         }
+    }
+
+    /// Resolve a parsed type so any `Type::Var` naming a declared enum or struct
+    /// becomes the nominal `Type::Enum`/`Type::Struct`. Chains both registries.
+    fn resolve_type(&self, ty: &Type) -> Type {
+        self.structs.resolve_type(&self.enums.resolve_type(ty))
     }
 
     /// Lower a function body and produce a complete IR Function.
@@ -377,6 +462,7 @@ impl FnLowerer {
             ast::Expr::ArrayRef { expr, index } => self.lower_array_ref(expr, index),
             ast::Expr::ArraySet { expr, index, value } => self.lower_array_set(expr, index, value),
             ast::Expr::StringRef { expr, index } => self.lower_string_ref(expr, index),
+            ast::Expr::StructGet { expr, field } => self.lower_struct_get(expr, field),
             // Tuple, Array (literal), Lambda — stubbed to unit for now
             ast::Expr::Tuple(_) | ast::Expr::Array(_) | ast::Expr::Lambda { .. } => {
                 Value::ConstUnit
@@ -592,7 +678,13 @@ impl FnLowerer {
     ) -> Value {
         for (name, ty, value) in bindings {
             let val = self.lower_expr(value);
-            let binding_ty = ty.clone().unwrap_or_else(|| self.value_type(&val));
+            // Resolve a declared binding type so a `Type::Var` naming an enum or
+            // struct becomes the nominal type; otherwise fall back to the
+            // lowered value's recorded type.
+            let binding_ty = ty
+                .as_ref()
+                .map(|t| self.resolve_type(t))
+                .unwrap_or_else(|| self.value_type(&val));
 
             let var = self.builder.fresh_var();
             self.builder.emit(Instruction::Alloc {
@@ -654,6 +746,16 @@ impl FnLowerer {
             let enum_name = enum_name.to_string();
             let arg_vals: Vec<Value> = args.iter().map(|a| self.lower_expr(a)).collect();
             return self.lower_construct(&enum_name, tag, &arg_vals);
+        }
+
+        // A call whose head names a struct builds a struct value rather than
+        // dispatching to a function.
+        if let ast::Expr::Var(name) = func.unspan()
+            && self.structs.is_struct(name)
+        {
+            let struct_name = name.clone();
+            let arg_vals: Vec<Value> = args.iter().map(|a| self.lower_expr(a)).collect();
+            return self.lower_construct_struct(&struct_name, &arg_vals);
         }
 
         // Fat-value length builtins are not runtime calls: lower the argument
@@ -882,7 +984,8 @@ impl FnLowerer {
         let enum_ty = Type::Enum(enum_name.to_string());
 
         // Heap-promote when an enum value can escape via the function's return.
-        let promote = type_kind_escapes_via_return(&self.ret, AggKind::Enum, &self.enums);
+        let promote =
+            type_kind_escapes_via_return(&self.ret, AggKind::Enum, &self.enums, &self.structs);
         let base_val = self.reserve_aggregate_storage(size, enum_ty.clone(), promote);
 
         // Store the tag at offset 0.
@@ -895,10 +998,7 @@ impl FnLowerer {
 
         // Store each payload field at its (resolved) byte offset.
         let raw_fields: Vec<Type> = self.enums.lookup_variant_fields(enum_name, tag).to_vec();
-        let field_tys: Vec<Type> = raw_fields
-            .iter()
-            .map(|t| self.enums.resolve_type(t))
-            .collect();
+        let field_tys: Vec<Type> = raw_fields.iter().map(|t| self.resolve_type(t)).collect();
         let offsets = self.enums.field_offsets(&field_tys);
         for ((arg, off), fty) in args.iter().zip(offsets.iter()).zip(field_tys.iter()) {
             let field_ptr = self.gep_byte(&base_val, *off);
@@ -912,6 +1012,76 @@ impl FnLowerer {
         base_val
     }
 
+    /// Construct a struct value: reserve inline field storage (no tag — a struct
+    /// is a single untagged record), store each field at its byte offset, and
+    /// yield a pointer to the storage (the runtime representation of a struct
+    /// value). Mirrors `lower_construct` for enums but with no tag word, so the
+    /// first field begins at offset 0. Uses only Alloc/AddrOf/Gep/Store (frame)
+    /// or Call/Gep/Store (heap-promoted) — no new IR.
+    fn lower_construct_struct(&mut self, struct_name: &str, args: &[Value]) -> Value {
+        let size = self.structs.struct_size(struct_name);
+        let struct_ty = Type::Struct(struct_name.to_string());
+
+        // Heap-promote when a struct value can escape via the function's return.
+        let promote =
+            type_kind_escapes_via_return(&self.ret, AggKind::Struct, &self.enums, &self.structs);
+        let base_val = self.reserve_aggregate_storage(size, struct_ty, promote);
+
+        // Store each field at its (resolved) byte offset.
+        let fields: Vec<ast::FieldDef> = self
+            .structs
+            .fields(struct_name)
+            .map(|f| f.to_vec())
+            .unwrap_or_default();
+        let field_tys: Vec<Type> = fields.iter().map(|f| self.resolve_type(&f.ty)).collect();
+        let offsets = self.structs.field_offsets(&fields);
+        for ((arg, off), fty) in args.iter().zip(offsets.iter()).zip(field_tys.iter()) {
+            let field_ptr = self.gep_byte(&base_val, *off);
+            self.builder.emit(Instruction::Store {
+                dst: Value::Var(field_ptr),
+                src: arg.clone(),
+                ty: fty.clone(),
+            });
+        }
+
+        base_val
+    }
+
+    /// Lower `(struct-get s field)`: compute the field's byte offset within the
+    /// struct value `s` points at, `Gep` to the field address, and `Load` the
+    /// field at its declared type. Mirrors how enum payload fields are read in a
+    /// `match` arm — only Gep/Load, no new IR.
+    fn lower_struct_get(&mut self, s: &ast::Expr, field: &str) -> Value {
+        let s_val = self.lower_expr(s);
+        let struct_name = match self.value_type(&s_val) {
+            Type::Struct(name) => name,
+            // Defensive: the typechecker rejects non-struct values here.
+            _ => return Value::ConstUnit,
+        };
+
+        let fields: Vec<ast::FieldDef> = self
+            .structs
+            .fields(&struct_name)
+            .map(|f| f.to_vec())
+            .unwrap_or_default();
+        let offsets = self.structs.field_offsets(&fields);
+        let Some(idx) = fields.iter().position(|f| f.name == field) else {
+            return Value::ConstUnit;
+        };
+        let fty = self.resolve_type(&fields[idx].ty);
+        let off = offsets[idx];
+
+        let field_ptr = self.gep_byte(&s_val, off);
+        let result = self.builder.fresh_var();
+        self.builder.emit(Instruction::Load {
+            dst: result,
+            src: Value::Var(field_ptr),
+            ty: fty.clone(),
+        });
+        self.record_local(result, fty);
+        Value::Var(result)
+    }
+
     /// Construct an immutable string literal value: reserve 16 bytes of inline
     /// fat-string storage `{ ptr, len }`, store the data pointer (a `ConstStr`
     /// the backend interns into `.rodata`) at offset 0, store the byte length at
@@ -921,7 +1091,8 @@ impl FnLowerer {
     /// values are built (`lower_construct`).
     fn lower_string_literal(&mut self, text: &str) -> Value {
         // Heap-promote when a string value can escape via the function's return.
-        let promote = type_kind_escapes_via_return(&self.ret, AggKind::String, &self.enums);
+        let promote =
+            type_kind_escapes_via_return(&self.ret, AggKind::String, &self.enums, &self.structs);
         let base_val = self.reserve_aggregate_storage(STRING_FAT_SIZE, Type::String, promote);
 
         // Store the data pointer at offset 0. `ConstStr` is materialized by the
@@ -952,7 +1123,7 @@ impl FnLowerer {
     /// values and string literals are built (`lower_construct`) — only
     /// Alloc/AddrOf/Gep/Store/Call, no new IR shape.
     fn lower_make_array(&mut self, elem_ty: &Type, len: &ast::Expr) -> Value {
-        let elem_ty = self.enums.resolve_type(elem_ty);
+        let elem_ty = self.resolve_type(elem_ty);
         let elem_size = elem_ty.size() as i64;
         let len_raw = self.lower_expr(len);
         let len_val = self.cast_value(len_raw, Type::I64);
@@ -983,7 +1154,8 @@ impl FnLowerer {
         // heap-promoted only when a dynamic array can escape via the function's
         // return, so a non-escaping local array keeps its fat value on the frame.
         let arr_ty = Type::DynArray(Box::new(elem_ty));
-        let promote = type_kind_escapes_via_return(&self.ret, AggKind::DynArray, &self.enums);
+        let promote =
+            type_kind_escapes_via_return(&self.ret, AggKind::DynArray, &self.enums, &self.structs);
         let base_val = self.reserve_aggregate_storage(DYN_ARRAY_FAT_SIZE, arr_ty, promote);
 
         // Store the element-buffer pointer at offset 0.
@@ -1433,10 +1605,8 @@ impl FnLowerer {
                             .expect("typechecked variant exists");
                         (o.to_string(), t, f.to_vec())
                     };
-                    let field_tys: Vec<Type> = raw_fields
-                        .iter()
-                        .map(|t| self.enums.resolve_type(t))
-                        .collect();
+                    let field_tys: Vec<Type> =
+                        raw_fields.iter().map(|t| self.resolve_type(t)).collect();
                     let offsets = self.enums.field_offsets(&field_tys);
 
                     let arm_label = self.builder.fresh_label("match_arm");
@@ -3624,5 +3794,162 @@ mod tests {
             0,
             "wildcard-only scalar match must not compute a tag pointer"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // Structs / records — Issue #18
+    // ------------------------------------------------------------------
+
+    const POINT: &str = "(defstruct Point (x i64) (y i64))";
+
+    #[test]
+    fn test_struct_registry_layout() {
+        // Point { x:i64, y:i64 }: fields at offsets 0 and 8, total 16 bytes (no
+        // tag word, unlike an enum).
+        let prog = parse(POINT).unwrap();
+        let reg = ast::StructRegistry::from_program(&prog);
+        let fields = reg.fields("Point").unwrap();
+        let offsets = reg.field_offsets(fields);
+        assert_eq!(offsets, vec![0, 8]);
+        assert_eq!(reg.struct_size("Point"), 16);
+        assert_eq!(reg.lookup_field("Point", "y").map(|(i, _)| i), Some(1));
+    }
+
+    #[test]
+    fn test_struct_registry_mixed_alignment() {
+        // { a:i8, b:i64 }: b is 8-aligned, so a is at 0 and b at 8; size 16.
+        let prog = parse("(defstruct M (a i8) (b i64))").unwrap();
+        let reg = ast::StructRegistry::from_program(&prog);
+        let fields = reg.fields("M").unwrap();
+        assert_eq!(reg.field_offsets(fields), vec![0, 8]);
+        assert_eq!(reg.struct_size("M"), 16);
+    }
+
+    #[test]
+    fn test_lower_struct_construct_emits_storage_and_field_stores() {
+        // (Point 3 4) in a non-returning position -> a frame Alloc + AddrOf for
+        // the 16-byte storage, two Geps (one per field) and two field Stores. No
+        // tag store (a struct has no tag).
+        let src = format!("{POINT}\n(define (main) : i64 (begin (Point 3 4) 0))");
+        let prog = parse(&src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().position(|f| f.name == "main").unwrap();
+
+        // One stack-storage Alloc, sized to the 16-byte struct.
+        assert!(
+            ir.functions[f]
+                .blocks
+                .iter()
+                .any(|b| b.instructions.iter().any(|i| matches!(
+                    i,
+                    Instruction::Alloc { ty: Type::Array(elem, 16), .. } if **elem == Type::I8
+                ))),
+            "expected a 16-byte storage Alloc"
+        );
+        assert_eq!(
+            count(&ir, f, |i| matches!(i, Instruction::AddrOf { .. })),
+            1
+        );
+        // Two field Geps (x at 0, y at 8) — no tag Gep.
+        assert_eq!(count(&ir, f, |i| matches!(i, Instruction::Gep { .. })), 2);
+
+        // Both field values are stored as i64.
+        for v in [3i64, 4i64] {
+            assert!(
+                ir.functions[f]
+                    .blocks
+                    .iter()
+                    .any(|b| b.instructions.iter().any(|i| matches!(
+                        i,
+                        Instruction::Store { src: Value::ConstI64(c), ty: Type::I64, .. } if *c == v
+                    ))),
+                "expected a field Store of ConstI64({})",
+                v
+            );
+        }
+    }
+
+    #[test]
+    fn test_lower_struct_get_emits_gep_and_load_at_offset() {
+        // `(struct-get p y)` reads field y (offset 8): a Gep to byte offset 8
+        // over the struct pointer, then an i64 Load.
+        let src = format!("{POINT}\n(define (gety [p : Point]) : i64 (struct-get p y))");
+        let prog = parse(&src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().position(|f| f.name == "gety").unwrap();
+
+        // A Gep to the field's byte offset (8).
+        assert!(
+            ir.functions[f]
+                .blocks
+                .iter()
+                .any(|b| b.instructions.iter().any(|i| matches!(
+                    i,
+                    Instruction::Gep {
+                        offset: Value::ConstI64(8),
+                        ..
+                    }
+                ))),
+            "expected a Gep to byte offset 8 for field y"
+        );
+        // An i64 Load of the field.
+        assert!(
+            ir.functions[f].blocks.iter().any(|b| b
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::Load { ty: Type::I64, .. }))),
+            "expected an i64 Load of the field"
+        );
+    }
+
+    #[test]
+    fn test_lower_struct_get_first_field_at_offset_zero() {
+        // Field x is the first field, at offset 0 (no tag word).
+        let src = format!("{POINT}\n(define (getx [p : Point]) : i64 (struct-get p x))");
+        let prog = parse(&src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().position(|f| f.name == "getx").unwrap();
+        assert!(
+            ir.functions[f]
+                .blocks
+                .iter()
+                .any(|b| b.instructions.iter().any(|i| matches!(
+                    i,
+                    Instruction::Gep {
+                        offset: Value::ConstI64(0),
+                        ..
+                    }
+                ))),
+            "expected a Gep to byte offset 0 for the first field"
+        );
+    }
+
+    #[test]
+    fn test_lower_returned_struct_is_heap_allocated() {
+        // When the enclosing function RETURNS the struct, its constructor
+        // storage is heap-promoted: a `Call tl_alloc` replaces the frame Alloc +
+        // AddrOf pair so the returned pointer outlives the frame (#85).
+        let src = format!("{POINT}\n(define (mk) : Point (Point 1 2))");
+        let prog = parse(&src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().position(|f| f.name == "mk").unwrap();
+
+        assert_eq!(
+            count(&ir, f, |i| matches!(i, Instruction::Alloc { .. })),
+            0,
+            "escaping struct storage must NOT be a frame Alloc"
+        );
+        assert_eq!(
+            count(&ir, f, |i| matches!(i, Instruction::AddrOf { .. })),
+            0,
+            "escaping struct storage must NOT take a frame address"
+        );
+        let alloc_calls = ir.functions[f]
+            .blocks
+            .iter()
+            .flat_map(|b| &b.instructions)
+            .filter(|i| matches!(i, Instruction::Call { func, .. } if func == "tl_alloc"))
+            .count();
+        assert_eq!(alloc_calls, 1, "expected one storage tl_alloc Call");
     }
 }

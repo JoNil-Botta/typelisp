@@ -443,12 +443,19 @@ fn validate_unit_value(
 }
 
 fn is_pointer_sized_type(ty: &Type) -> bool {
-    // An enum value is a pointer to its inline tagged storage; a string and a
-    // dynamic array are pointers to their inline `{ptr,len}` storage. All are
-    // pointer-sized like I64/U64/function pointers.
+    // An enum value is a pointer to its inline tagged storage; a struct is a
+    // pointer to its inline field storage; a string and a dynamic array are
+    // pointers to their inline `{ptr,len}` storage. All are pointer-sized like
+    // I64/U64/function pointers.
     matches!(
         ty,
-        Type::I64 | Type::U64 | Type::Func(_, _) | Type::Enum(_) | Type::String | Type::DynArray(_)
+        Type::I64
+            | Type::U64
+            | Type::Func(_, _)
+            | Type::Enum(_)
+            | Type::Struct(_)
+            | Type::String
+            | Type::DynArray(_)
     )
 }
 
@@ -471,6 +478,7 @@ fn is_backend_abi_value_type(ty: &Type) -> bool {
             | Type::Func(_, _)
             | Type::DynArray(_)
             | Type::Enum(_)
+            | Type::Struct(_)
     )
 }
 
@@ -1598,6 +1606,7 @@ impl X86_64Backend {
                 | Type::U64
                 | Type::Func(_, _)
                 | Type::Enum(_)
+                | Type::Struct(_)
                 | Type::String
                 | Type::DynArray(_) => {
                     if int_param < param_regs.len() {
@@ -4776,6 +4785,53 @@ mod tests {
         assert!(!asm.contains("tl_alloc:"), "asm:\n{}", asm);
         // Frame allocation still materializes the storage address via leaq.
         assert!(asm.contains("leaq"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    // ------------------------------------------------------------------
+    // Structs / records — Issue #18
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_compile_struct_field_access_no_todo() {
+        // Reading a field of a struct *parameter* compiles to a Gep+Load over
+        // the struct pointer with no unhandled instructions.
+        let asm = compile_ok(
+            "(defstruct Point (x i64) (y i64))\n\
+             (define (getx [p : Point]) : i64 (struct-get p x))",
+        );
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_returned_struct_is_heap_allocated() {
+        // A function whose return type is the struct heap-promotes the
+        // constructor storage through the runtime bump allocator so the returned
+        // pointer outlives the frame (#85). The 16-byte storage is requested and
+        // the field values are stored into it.
+        let asm = compile_ok(
+            "(defstruct Point (x i64) (y i64))\n\
+             (define (mk) : Point (Point 1 2))",
+        );
+        assert!(asm.contains("    call tl_alloc"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        // The 16-byte struct storage size is requested from the allocator.
+        assert!(asm.contains("$16"), "asm:\n{}", asm);
+        // Field values are stored into the heap storage.
+        assert!(asm.contains("movq $1,"), "asm:\n{}", asm);
+        assert!(asm.contains("movq $2,"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_struct_roundtrip_construct_then_read_no_todo() {
+        // Construct a struct in a local and read a field back: the full
+        // construct + access path lowers to memory ops the backend handles.
+        let asm = compile_ok(
+            "(defstruct Point (x i64) (y i64))\n\
+             (define (main) : i64 \
+               (let ([p : Point (Point 10 20)]) (struct-get p y)))",
+        );
         assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
     }
 }

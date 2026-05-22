@@ -122,13 +122,17 @@ impl<'a> Parser<'a> {
                 self.advance()?;
                 self.parse_defenum()
             }
+            Token::Ident(s) if s == "defstruct" => {
+                self.advance()?;
+                self.parse_defstruct()
+            }
             Token::Import => {
                 self.advance()?;
                 self.parse_import()
             }
             _ => Err(ParseError {
                 msg: format!(
-                    "expected define, extern, defenum or import, got {:?}",
+                    "expected define, extern, defenum, defstruct or import, got {:?}",
                     self.current
                 ),
                 span: self.span(),
@@ -242,6 +246,32 @@ impl<'a> Parser<'a> {
             });
         }
         Ok(Decl::DefEnum { name, variants })
+    }
+
+    /// Parse `(defstruct Name (field1 Ty1) (field2 Ty2) ...)`. The leading `(`
+    /// and `defstruct` ident have already been consumed. Each field is a
+    /// `(field-name type)` pair.
+    fn parse_defstruct(&mut self) -> Result<Decl, ParseError> {
+        let name = self.expect_ident()?;
+        let mut fields = Vec::new();
+        while self.current != Token::RParen {
+            self.expect(Token::LParen)?;
+            let fname = self.expect_ident()?;
+            let fty = self.parse_type()?;
+            self.expect(Token::RParen)?;
+            fields.push(FieldDef {
+                name: fname,
+                ty: fty,
+            });
+        }
+        self.expect(Token::RParen)?;
+        if fields.is_empty() {
+            return Err(ParseError {
+                msg: format!("defstruct '{}' must declare at least one field", name),
+                span: self.span(),
+            });
+        }
+        Ok(Decl::DefStruct { name, fields })
     }
 
     fn parse_type(&mut self) -> Result<Type, ParseError> {
@@ -507,6 +537,14 @@ impl<'a> Parser<'a> {
                 self.advance()?;
                 let end = self.expect_rparen_span()?;
                 (Expr::TupleRef { expr, index }, end)
+            }
+            Token::Ident(s) if s == "struct-get" => {
+                // (struct-get s field)
+                self.advance()?;
+                let expr = Box::new(self.parse_expr()?);
+                let field = self.expect_ident()?;
+                let end = self.expect_rparen_span()?;
+                (Expr::StructGet { expr, field }, end)
             }
             Token::Ident(s) if s == "array" => {
                 self.advance()?;
@@ -924,6 +962,76 @@ mod tests {
                 assert_eq!(arms[0].0, Pattern::Literal(Literal::Bool(true)));
             }
             other => panic!("expected Match, got {:?}", other),
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Structs / records — Issue #18
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_defstruct() {
+        let prog = parse("(defstruct Point (x i64) (y i64))").unwrap();
+        assert_eq!(prog.decls.len(), 1);
+        match &prog.decls[0] {
+            Decl::DefStruct { name, fields } => {
+                assert_eq!(name, "Point");
+                assert_eq!(fields.len(), 2);
+                assert_eq!(fields[0].name, "x");
+                assert_eq!(fields[0].ty, Type::I64);
+                assert_eq!(fields[1].name, "y");
+                assert_eq!(fields[1].ty, Type::I64);
+            }
+            other => panic!("expected DefStruct, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_defstruct_mixed_field_types() {
+        let prog = parse("(defstruct Mixed (a i64) (b bool) (c f64))").unwrap();
+        match &prog.decls[0] {
+            Decl::DefStruct { fields, .. } => {
+                assert_eq!(fields[0].ty, Type::I64);
+                assert_eq!(fields[1].ty, Type::Bool);
+                assert_eq!(fields[2].ty, Type::F64);
+            }
+            other => panic!("expected DefStruct, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_defstruct_empty_is_error() {
+        assert!(parse("(defstruct Empty)").is_err());
+    }
+
+    #[test]
+    fn test_parse_struct_get() {
+        let prog = parse("(define (f [p : Point]) : i64 (struct-get p x))").unwrap();
+        let body = match &prog.decls[0] {
+            Decl::DefFn { body, .. } => body.unspan(),
+            other => panic!("expected DefFn, got {:?}", other),
+        };
+        match body {
+            Expr::StructGet { field, .. } => assert_eq!(field, "x"),
+            other => panic!("expected StructGet, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_struct_construction_is_call() {
+        // `(Point 1 2)` parses as a call whose head names the struct; the
+        // lowerer/typechecker recognise the struct name and build a value.
+        let prog = parse("(define (f) : Point (Point 1 2))").unwrap();
+        let body = match &prog.decls[0] {
+            Decl::DefFn { body, .. } => body.unspan(),
+            other => panic!("expected DefFn, got {:?}", other),
+        };
+        match body {
+            Expr::Call { func, args } => {
+                assert_eq!(func.unspan(), &Expr::Var("Point".into()));
+                assert_eq!(args.len(), 2);
+            }
+            other => panic!("expected Call, got {:?}", other),
         }
     }
 }

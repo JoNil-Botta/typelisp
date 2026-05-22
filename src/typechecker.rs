@@ -34,6 +34,7 @@ pub struct TypeChecker {
     env: Vec<HashMap<String, Type>>,
     func_ret: Option<Type>,
     enums: EnumRegistry,
+    structs: StructRegistry,
 }
 
 impl TypeChecker {
@@ -97,7 +98,15 @@ impl TypeChecker {
             env: vec![globals],
             func_ret: None,
             enums: EnumRegistry::default(),
+            structs: StructRegistry::default(),
         }
+    }
+
+    /// Resolve a parsed type so that any `Type::Var` naming a declared enum or
+    /// struct becomes the corresponding nominal `Type::Enum`/`Type::Struct`.
+    /// Chains both registries (a name resolves to whichever declared it).
+    fn resolve_type(&self, ty: &Type) -> Type {
+        self.structs.resolve_type(&self.enums.resolve_type(ty))
     }
 
     fn lookup(&self, name: &str) -> Option<Type> {
@@ -122,9 +131,10 @@ impl TypeChecker {
     }
 
     pub fn check_program(&mut self, prog: &Program) -> Result<(), TypeError> {
-        // Build the enum registry up front so declared types and constructors
-        // can be resolved/registered in the first pass.
+        // Build the enum and struct registries up front so declared types and
+        // constructors can be resolved/registered in the first pass.
         self.enums = EnumRegistry::from_program(prog);
+        self.structs = StructRegistry::from_program(prog);
 
         // Recursive enums (a variant whose payload references the enum itself,
         // directly or via a compound type) require heap indirection and are out
@@ -156,11 +166,7 @@ impl TypeChecker {
         for decl in &prog.decls {
             if let Decl::DefEnum { name, variants } = decl {
                 for v in variants {
-                    let fields: Vec<Type> = v
-                        .fields
-                        .iter()
-                        .map(|t| self.enums.resolve_type(t))
-                        .collect();
+                    let fields: Vec<Type> = v.fields.iter().map(|t| self.resolve_type(t)).collect();
                     let ctor_ty = if fields.is_empty() {
                         Type::Enum(name.clone())
                     } else {
@@ -171,12 +177,47 @@ impl TypeChecker {
             }
         }
 
+        // Recursive structs (a field whose type references the struct itself,
+        // directly or via a compound type) require heap indirection and are out
+        // of scope for this slice (deferred). Reject them rather than looping
+        // forever computing the inline layout.
+        for decl in &prog.decls {
+            if let Decl::DefStruct { name, fields } = decl {
+                for f in fields {
+                    if type_mentions_struct(&self.resolve_type(&f.ty), name) {
+                        return Err(TypeError::at(
+                            format!(
+                                "recursive struct '{}' (field '{}') is not yet supported \
+                                 (needs heap indirection)",
+                                name, f.name
+                            ),
+                            Span::default(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        // Register struct constructors as callable functions: a struct `Name`
+        // with fields `f1:T1 .. fn:Tn` is bound as `Name : (-> T1 .. Tn Name)`,
+        // so a construction `(Name v1 .. vn)` type-checks through the ordinary
+        // call path (arity + per-argument checks come for free), exactly like an
+        // enum variant constructor.
+        for decl in &prog.decls {
+            if let Decl::DefStruct { name, fields } = decl {
+                let field_tys: Vec<Type> =
+                    fields.iter().map(|f| self.resolve_type(&f.ty)).collect();
+                let ctor_ty = Type::Func(field_tys, Box::new(Type::Struct(name.clone())));
+                self.bind(name.clone(), ctor_ty);
+            }
+        }
+
         // First pass: collect all declarations
         for decl in &prog.decls {
             match decl {
                 Decl::Def { name, ty, value } => {
                     let inferred = if let Some(ty) = ty {
-                        let ty = self.enums.resolve_type(ty);
+                        let ty = self.resolve_type(ty);
                         let val_ty = self.check_expr(value)?;
                         if !self.types_equal(&ty, &val_ty) {
                             return Err(TypeError::at(
@@ -212,6 +253,13 @@ impl TypeChecker {
                             value.span(),
                         ));
                     }
+                    if type_contains_struct_value(&inferred) {
+                        return Err(TypeError::at(
+                            "global definitions with struct values are not yet supported \
+                             because struct constructors currently produce stack-owned storage",
+                            value.span(),
+                        ));
+                    }
                     self.bind(name.clone(), inferred);
                 }
                 Decl::DefFn {
@@ -222,7 +270,7 @@ impl TypeChecker {
                     // only binds the function signature.
                     body: _,
                 } => {
-                    let ret = self.enums.resolve_type(ret);
+                    let ret = self.resolve_type(ret);
                     // Returning enum / String / DynArray values is now supported:
                     // the lowerer heap-promotes (via `tl_alloc`) the storage for
                     // aggregate constructors that can escape via `return`, so the
@@ -232,16 +280,13 @@ impl TypeChecker {
                     // *global* initializers / *extern* values are still rejected
                     // (those storage paths are not yet heap-promoted).
                     let func_ty = Type::Func(
-                        params
-                            .iter()
-                            .map(|(_, t)| self.enums.resolve_type(t))
-                            .collect(),
+                        params.iter().map(|(_, t)| self.resolve_type(t)).collect(),
                         Box::new(ret),
                     );
                     self.bind(name.clone(), func_ty);
                 }
                 Decl::Extern { name, ty } => {
-                    let ty = self.enums.resolve_type(ty);
+                    let ty = self.resolve_type(ty);
                     if type_contains_enum(&ty) {
                         return Err(TypeError::at(
                             "extern declarations involving enum values are not yet supported",
@@ -251,6 +296,9 @@ impl TypeChecker {
                     self.bind(name.clone(), ty);
                 }
                 Decl::DefEnum { .. } => {}
+                // Struct constructors were registered above (as `Name`
+                // functions); the declaration itself emits no value here.
+                Decl::DefStruct { .. } => {}
                 // Import directives are stripped by the module-graph loader
                 // before typecheck; this arm is defensive (no codegen effect).
                 Decl::Import(_) => {}
@@ -268,9 +316,9 @@ impl TypeChecker {
             {
                 self.push_scope();
                 for (param, ty) in params {
-                    self.bind(param.clone(), self.enums.resolve_type(ty));
+                    self.bind(param.clone(), self.resolve_type(ty));
                 }
-                let ret = self.enums.resolve_type(ret);
+                let ret = self.resolve_type(ret);
                 let old_ret = self.func_ret.clone();
                 self.func_ret = Some(ret.clone());
                 let body_ty = self.check_expr(body)?;
@@ -481,7 +529,7 @@ impl TypeChecker {
                 self.push_scope();
                 for (name, ty, value) in bindings {
                     let val_ty = self.check_expr(value)?;
-                    let ty = ty.as_ref().map(|t| self.enums.resolve_type(t));
+                    let ty = ty.as_ref().map(|t| self.resolve_type(t));
                     let binding_ty = if let Some(expected) = &ty {
                         if !self.types_equal(expected, &val_ty) {
                             return Err(TypeError::at(
@@ -532,6 +580,13 @@ impl TypeChecker {
                     return Err(TypeError::at(
                         "lambdas returning dynamic-array values are not yet supported \
                          because the fat array value is stack-owned storage",
+                        body.span(),
+                    ));
+                }
+                if type_contains_struct_value(&ret_ty) {
+                    return Err(TypeError::at(
+                        "lambdas returning struct values are not yet supported \
+                         because struct constructors currently produce stack-owned storage",
                         body.span(),
                     ));
                 }
@@ -596,7 +651,7 @@ impl TypeChecker {
                 Ok(Type::Array(Box::new(first_ty), elems.len()))
             }
             Expr::MakeArray { elem_ty, len } => {
-                let elem_ty = self.enums.resolve_type(elem_ty);
+                let elem_ty = self.resolve_type(elem_ty);
                 let len_ty = self.check_expr(len)?;
                 if !len_ty.is_integer() {
                     return Err(TypeError::at(
@@ -719,7 +774,7 @@ impl TypeChecker {
                 Ok(Type::Unit)
             }
             Expr::Ann { expr, ty } => {
-                let ty = self.enums.resolve_type(ty);
+                let ty = self.resolve_type(ty);
                 let expr_ty = self.check_expr(expr)?;
                 if !self.types_equal(&ty, &expr_ty) {
                     return Err(TypeError::at(
@@ -730,8 +785,26 @@ impl TypeChecker {
                 Ok(ty)
             }
             Expr::Match { scrutinee, arms } => self.check_match(scrutinee, arms, span),
+            Expr::StructGet { expr, field } => {
+                // `(struct-get s field)`: `s` must be a struct value declaring
+                // `field`; the result is the field's declared type.
+                let s_ty = self.check_expr(expr)?;
+                let Type::Struct(name) = &s_ty else {
+                    return Err(TypeError::at(
+                        format!("struct-get requires a struct value, got {}", s_ty),
+                        expr.span(),
+                    ));
+                };
+                match self.structs.lookup_field(name, field) {
+                    Some((_idx, fty)) => Ok(fty.clone()),
+                    None => Err(TypeError::at(
+                        format!("struct '{}' has no field '{}'", name, field),
+                        span,
+                    )),
+                }
+            }
             Expr::Cast { expr, ty } => {
-                let ty = self.enums.resolve_type(ty);
+                let ty = self.resolve_type(ty);
                 let expr_ty = self.check_expr(expr)?;
                 // Casts are only defined between scalar number-like types
                 // (integers and `char`, which is an 8-bit code unit here).
@@ -1017,6 +1090,21 @@ fn type_mentions_enum(ty: &Type, name: &str) -> bool {
     }
 }
 
+/// Whether `ty` (after resolution) refers to the struct named `name`, directly
+/// or nested inside a compound type. Used to reject recursive structs.
+fn type_mentions_struct(ty: &Type, name: &str) -> bool {
+    match ty {
+        Type::Struct(n) => n == name,
+        Type::Func(args, ret) => {
+            args.iter().any(|a| type_mentions_struct(a, name)) || type_mentions_struct(ret, name)
+        }
+        Type::Tuple(elems) => elems.iter().any(|e| type_mentions_struct(e, name)),
+        Type::Array(elem, _) => type_mentions_struct(elem, name),
+        Type::DynArray(elem) => type_mentions_struct(elem, name),
+        _ => false,
+    }
+}
+
 fn type_contains_enum(ty: &Type) -> bool {
     match ty {
         Type::Enum(_) => true,
@@ -1058,6 +1146,22 @@ fn type_contains_dyn_array_value(ty: &Type) -> bool {
         }
         Type::Tuple(elems) => elems.iter().any(type_contains_dyn_array_value),
         Type::Array(elem, _) => type_contains_dyn_array_value(elem),
+        _ => false,
+    }
+}
+
+/// Whether `ty` is (or nests) a struct value. A struct constructor's inline
+/// field storage is built in a stack slot of the *current* function (unless
+/// heap-promoted for a function `return`, per #85), so — like an enum
+/// constructor or string literal — it must not escape via a global initializer
+/// or a lambda return (that would dangle). Struct *parameters* are fine: the
+/// caller owns the storage.
+fn type_contains_struct_value(ty: &Type) -> bool {
+    match ty {
+        Type::Struct(_) => true,
+        Type::Tuple(elems) => elems.iter().any(type_contains_struct_value),
+        Type::Array(elem, _) => type_contains_struct_value(elem),
+        Type::DynArray(elem) => type_contains_struct_value(elem),
         _ => false,
     }
 }
@@ -1720,5 +1824,119 @@ mod tests {
         // function's declared return) is a type error.
         let src = r#"(define (f) : i64 (string-ref "hi" 0))"#;
         assert!(check(src).is_err());
+    }
+
+    // ------------------------------------------------------------------
+    // Structs / records — Issue #18
+    // ------------------------------------------------------------------
+
+    const POINT: &str = "(defstruct Point (x i64) (y i64))";
+
+    #[test]
+    fn test_typecheck_struct_construct_and_access_well_typed() {
+        // Construct with correct field types and read a field back as i64.
+        let src = format!(
+            "{POINT}\n(define (f [p : Point]) : i64 \
+               (+ (struct-get p x) (struct-get p y)))"
+        );
+        assert!(check(&src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_struct_construct_returns_struct_type() {
+        // A construction `(Point 1 2)` annotated as Point type-checks; returning
+        // it is accepted (heap-promoted, like enums/strings).
+        let src = format!("{POINT}\n(define (mk) : Point (Point 1 2))");
+        assert!(check(&src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_struct_constructor_arity_checked() {
+        // Point takes two i64s; one argument is an arity error via the call path.
+        let src = format!("{POINT}\n(define (f) : Point (Point 1))");
+        assert!(check(&src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_struct_constructor_arg_type_checked() {
+        // Field types are checked: a bool where an i64 is expected is an error.
+        let src = format!("{POINT}\n(define (f) : Point (Point 1 true))");
+        assert!(check(&src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_struct_field_access_returns_field_type() {
+        // A struct with a bool field: `struct-get` of that field is a bool, so
+        // feeding it to a bool-returning function type-checks.
+        let src = "(defstruct Flagged (n i64) (ok bool))\n\
+                   (define (f [s : Flagged]) : bool (struct-get s ok))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_struct_field_access_wrong_use_is_err() {
+        // `(struct-get p x)` is an i64; using it where a bool is required fails.
+        let src = format!("{POINT}\n(define (f [p : Point]) : bool (struct-get p x))");
+        assert!(check(&src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_struct_unknown_field_is_err() {
+        let src = format!("{POINT}\n(define (f [p : Point]) : i64 (struct-get p z))");
+        let err = check(&src).unwrap_err();
+        assert!(err.msg.contains("has no field 'z'"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_struct_get_requires_struct() {
+        // `struct-get` on a non-struct value (an i64) is rejected.
+        let src = "(define (f [n : i64]) : i64 (struct-get n x))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg.contains("requires a struct value"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_unknown_struct_is_unbound() {
+        // Referencing an undeclared struct as a constructor is an unbound var.
+        let src = "(define (f) : i64 (struct-get (Nope 1) x))";
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_struct_param_is_allowed() {
+        // Struct *parameters* are fine: the caller owns the storage.
+        let src = format!("{POINT}\n(define (getx [p : Point]) : i64 (struct-get p x))");
+        assert!(check(&src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_struct_global_is_rejected() {
+        // A global initialized to a struct value is rejected (stack-owned
+        // constructor storage), mirroring the enum/string global guard.
+        let src = format!("{POINT}\n(define origin (Point 0 0))");
+        let err = check(&src).unwrap_err();
+        assert!(err.msg.contains("struct values"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_recursive_struct_rejected() {
+        let src = "(defstruct Node (next Node) (val i64))\n\
+                   (define (f [n : Node]) : i64 (struct-get n val))";
+        let err = check(src).unwrap_err();
+        assert!(err.msg.contains("recursive struct"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_struct_field_of_struct_type() {
+        // A struct field whose type is another (non-recursive) struct resolves
+        // to a nominal struct type and type-checks.
+        let src = "(defstruct Inner (a i64))\n\
+                   (defstruct Outer (inner Inner) (b i64))\n\
+                   (define (f [o : Outer]) : i64 (struct-get o b))";
+        assert!(check(src).is_ok());
     }
 }

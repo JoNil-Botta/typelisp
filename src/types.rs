@@ -44,6 +44,13 @@ pub enum Type {
     /// pointer to its inline `{ tag, payload }` storage, so it is pointer-sized
     /// everywhere it flows through the IR.
     Enum(String),
+    /// Nominal record type declared with `(defstruct Name (field Ty) ...)`.
+    /// Carries only the struct's name; the field layout (names, types, byte
+    /// offsets, total size) lives in the typechecker/lowerer's `StructRegistry`.
+    /// As a *value* a struct is always a pointer to its inline field storage, so
+    /// it is pointer-sized everywhere it flows through the IR — exactly like an
+    /// enum, but with no tag (a struct is a single, untagged record).
+    Struct(String),
     /// Type variable for polymorphism / inference
     Var(String),
 }
@@ -82,6 +89,7 @@ impl fmt::Display for Type {
             Type::Array(ty, n) => write!(f, "(Array {} {})", ty, n),
             Type::DynArray(ty) => write!(f, "(Array {})", ty),
             Type::Enum(name) => write!(f, "{}", name),
+            Type::Struct(name) => write!(f, "{}", name),
             Type::Var(name) => write!(f, "'{}'", name),
         }
     }
@@ -105,6 +113,8 @@ impl Type {
             Type::DynArray(_) => 8,
             // An enum *value* is a pointer to its inline tagged storage.
             Type::Enum(_) => 8,
+            // A struct *value* is a pointer to its inline field storage.
+            Type::Struct(_) => 8,
             // A string *value* is a pointer to its inline `{ ptr, len }` storage.
             Type::String => 8,
             Type::Var(_) => panic!("cannot compute size of type variable"),
@@ -124,6 +134,7 @@ impl Type {
             Type::Array(ty, _) => ty.align(),
             Type::DynArray(_) => 8,
             Type::Enum(_) => 8,
+            Type::Struct(_) => 8,
             Type::String => 8,
             Type::Var(_) => panic!("cannot compute alignment of type variable"),
         }

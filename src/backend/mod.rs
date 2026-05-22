@@ -584,7 +584,7 @@ impl X86_64Backend {
     pub fn new() -> Self {
         X86_64Backend {
             output: String::new(),
-    
+
             stack_size: 0,
             var_offsets: HashMap::new(),
             var_types: HashMap::new(),
@@ -2762,6 +2762,22 @@ mod tests {
     }
 
     #[test]
+    fn test_compile_surface_function_pointer_param_call() {
+        let asm = compile_ok(
+            r#"
+            (define (apply1 [f : (-> i64 i64)] [x : i64]) : i64
+              (f x))
+            "#,
+        );
+        assert!(asm.contains("_tl_apply1:"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq -16(%rbp), %rdi"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq -8(%rbp), %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("    call *%rax"), "asm:\n{}", asm);
+        assert!(!asm.contains("    call _tl_f"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
     fn test_compile_indirect_call_through_function_pointer_param() {
         let program = Program {
             functions: vec![Function {
@@ -4082,6 +4098,55 @@ mod tests {
         );
         assert!(asm.contains("    call tl_alloc"), "asm:\n{}", asm);
         assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    // ------------------------------------------------------------------
+    // Heap promotion of escaping aggregates — refs #13/#45
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_compile_returned_enum_constructor_is_heap_allocated() {
+        // A function whose return type is the enum heap-promotes the constructor
+        // storage: it is allocated through the runtime bump allocator (whose body
+        // is emitted in this same unit) rather than carved from the frame, so the
+        // returned pointer outlives the epilogue's frame teardown.
+        let asm = compile_ok(
+            "(defenum Shape (Circle i64) (Square i64) (Nothing))\n\
+             (define (mk) : Shape (Circle 7))",
+        );
+
+        // Storage comes from tl_alloc, not a frame slot + leaq.
+        assert!(asm.contains("    call tl_alloc"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        // The 16-byte enum storage size is requested from the allocator.
+        assert!(asm.contains("$16"), "asm:\n{}", asm);
+        // The payload (7) is stored into the heap storage through a pointer.
+        assert!(asm.contains("movq $7,"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_returned_string_is_heap_allocated() {
+        // A `String`-returning function heap-promotes the fat-string storage.
+        let asm = compile_ok(r#"(define (mk) : String "hi")"#);
+        assert!(asm.contains("    call tl_alloc"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_local_enum_not_returned_uses_no_alloc_runtime() {
+        // When the function does NOT return an aggregate, its local enum keeps
+        // frame allocation: no allocator runtime is emitted at all.
+        let asm = compile_ok(
+            "(defenum Shape (Circle i64) (Square i64) (Nothing))\n\
+             (define (main) : i64 (begin (Circle 7) 0))",
+        );
+        assert!(!asm.contains("    call tl_alloc"), "asm:\n{}", asm);
+        assert!(!asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        // Frame allocation still materializes the storage address via leaq.
+        assert!(asm.contains("leaq"), "asm:\n{}", asm);
         assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
     }
 }

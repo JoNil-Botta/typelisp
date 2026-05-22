@@ -883,6 +883,8 @@ impl FnLowerer {
         if let ast::Expr::Var(name) = func.unspan()
             && (name == "substring" || name == "string-slice")
             && args.len() == 3
+            && !self.vars.contains_key(name)
+            && !self.function_types.contains_key(name)
         {
             return self.lower_substring(&args[0], &args[1], &args[2]);
         }
@@ -2738,6 +2740,38 @@ mod tests {
             .flat_map(|b| b.instructions.iter())
             .any(|i| matches!(i, Instruction::Call { func, .. } if func == "tl_substring"));
         assert!(calls_substring, "string-slice should call tl_substring");
+    }
+
+    #[test]
+    fn test_lower_user_defined_substring_shadows_builtin() {
+        // User functions may shadow builtin names. A surface `substring`
+        // function with three arguments must lower as an ordinary direct call,
+        // not as the builtin string-slice runtime helper.
+        let prog = parse(
+            "(define (substring [n : i64] [a : i64] [b : i64]) : i64 (+ (+ n a) b))
+             (define (f) : i64 (substring 1 2 3))",
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().find(|f| f.name == "f").unwrap();
+        let instrs: Vec<&Instruction> = f
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .collect();
+
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Call { func, .. } if func == "substring")),
+            "expected ordinary call to user-defined substring"
+        );
+        assert!(
+            !instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Call { func, .. } if func == "tl_substring")),
+            "user-defined substring must not lower to builtin runtime"
+        );
     }
 
     // ---- Expressions ---------------------------------------------------

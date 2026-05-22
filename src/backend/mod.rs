@@ -5115,6 +5115,23 @@ mod tests {
     }
 
     #[test]
+    fn test_compile_user_defined_substring_shadows_builtin() {
+        // User-defined functions may shadow builtin names. A surface function
+        // named `substring` must call the mangled TypeLisp symbol and must not
+        // emit the backend substring runtime.
+        let asm = compile_ok(
+            r#"
+            (define (substring [n : i64] [a : i64] [b : i64]) : i64
+              (+ (+ n a) b))
+            (define (main) : i64 (substring 1 2 3))
+            "#,
+        );
+        assert!(asm.contains("_tl_substring:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call _tl_substring"), "asm:\n{}", asm);
+        assert!(!asm.contains("\ntl_substring:\n"), "asm:\n{}", asm);
+    }
+
+    #[test]
     fn test_escape_string_bytes_escapes_specials() {
         // Quote, backslash, newline and a non-printable byte are escaped so the
         // assembler reproduces the exact bytes.

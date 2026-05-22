@@ -107,6 +107,12 @@ fn type_lisp_programs_compile_link_and_run() {
             stdout: "true\nfalse\nfalse\ntrue\n",
             deps: &[],
         },
+        Case {
+            name: "substring",
+            exit_code: 33,
+            stdout: "",
+            deps: &[],
+        },
         // Multi-file program (#44): entry imports a helper module and calls a
         // function defined there; exercises the module-graph loader end to end.
         Case {
@@ -237,6 +243,12 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             name: "string_eq",
             exit_code: 0,
             stdout: "true\nfalse\nfalse\ntrue\n",
+            deps: &[],
+        },
+        Case {
+            name: "substring",
+            exit_code: 33,
+            stdout: "",
             deps: &[],
         },
         Case {

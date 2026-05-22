@@ -527,9 +527,15 @@ impl FnLowerer {
             ast::BinOp::Shr => BinOp::Shr,
         };
 
-        // Operand type drives instruction width/signedness. Prefer a concrete
-        // (non-default) operand type from either side.
-        let operand_ty = self.binop_operand_type(&lhs_val, &rhs_val);
+        // Operand type drives instruction width/signedness. Arithmetic and
+        // comparisons already typecheck same-width operands; bitwise and shift
+        // operators use the left operand as the result-width anchor while the
+        // backend loads the right operand at its own width.
+        let lhs_ty = self.value_type(&lhs_val);
+        let operand_ty = match ir_op {
+            BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => lhs_ty,
+            _ => self.binop_operand_type(&lhs_val, &rhs_val),
+        };
 
         // The *value* produced by the op: comparisons/logical ops yield bool,
         // everything else yields the operand type.
@@ -3454,6 +3460,35 @@ mod tests {
         let op = first_binop(&ir);
         assert_eq!(op, Some(BinOp::Shr));
         assert_ne!(op, Some(BinOp::Sub), "shr must not lower to Sub");
+    }
+
+    #[test]
+    fn test_lower_mixed_width_bitwise_and_shift_preserve_lhs_width() {
+        // Bitwise and shift operators accept integer operands and return the
+        // lhs type. A narrow rhs must not accidentally become the IR result
+        // width.
+        let cases = [
+            (
+                "(define (f [x : i64] [mask : u8]) : i64 (bit-and x mask))",
+                BinOp::BitAnd,
+            ),
+            (
+                "(define (f [x : i64] [count : u8]) : i64 (shl x count))",
+                BinOp::Shl,
+            ),
+        ];
+
+        for (src, expected_op) in cases {
+            let prog = parse(src).unwrap();
+            let ir = lower_program(&prog);
+            let binop = ir.functions[0].blocks.iter().find_map(|b| {
+                b.instructions.iter().find_map(|i| match i {
+                    Instruction::BinOp { op, ty, .. } => Some((*op, ty.clone())),
+                    _ => None,
+                })
+            });
+            assert_eq!(binop, Some((expected_op, Type::I64)));
+        }
     }
 
     #[test]

@@ -1829,8 +1829,21 @@ impl X86_64Backend {
                 let lhs_reg = Self::gpr_sized("%rax", &operand_ty);
                 let rhs_reg = Self::gpr_sized("%rcx", &operand_ty);
 
+                let rhs_load_ty = if matches!(
+                    op,
+                    IrBinOp::BitAnd
+                        | IrBinOp::BitOr
+                        | IrBinOp::BitXor
+                        | IrBinOp::Shl
+                        | IrBinOp::Shr
+                ) {
+                    self.value_type(rhs).unwrap_or_else(|| operand_ty.clone())
+                } else {
+                    operand_ty.clone()
+                };
+
                 self.load_value(lhs, "%rax", &operand_ty);
-                self.load_value(rhs, "%rcx", &operand_ty);
+                self.load_value(rhs, "%rcx", &rhs_load_ty);
 
                 match op {
                     IrBinOp::Add if operand_ty.is_integer() => {
@@ -2548,6 +2561,9 @@ impl X86_64Backend {
                 self.value_type(lhs)
                     .or_else(|| self.value_type(rhs))
                     .unwrap_or_else(|| result_ty.clone())
+            }
+            IrBinOp::BitAnd | IrBinOp::BitOr | IrBinOp::BitXor | IrBinOp::Shl | IrBinOp::Shr => {
+                self.value_type(lhs).unwrap_or_else(|| result_ty.clone())
             }
             _ => result_ty.clone(),
         }
@@ -3800,6 +3816,52 @@ mod tests {
         assert!(
             !asm.contains("addq %rcx, %rax"),
             "shl must not emit addq; asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_compile_mixed_width_shift_uses_lhs_width_and_rhs_count_width() {
+        // The shift result has the lhs width, while the count is loaded at its
+        // own declared width before %cl is consumed by the shift instruction.
+        let asm = compile_ok("(define (f [x : i64] [count : u8]) : i64 (shl x count))");
+        assert!(
+            asm.contains("    movzbq -9(%rbp), %rcx"),
+            "u8 shift count must be byte-loaded into rcx:\n{}",
+            asm
+        );
+        assert!(asm.contains("    shlq %cl, %rax"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("    shlb %cl, %al"),
+            "shift must keep lhs/result width:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("    movq -9(%rbp), %rcx"),
+            "u8 count must not be read as an i64 stack slot:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_compile_mixed_width_bitwise_uses_lhs_width_and_rhs_width() {
+        // Mixed-width bitwise operations return the lhs type. The rhs still
+        // needs a correctly-sized load so a narrow slot is not read as i64.
+        let asm = compile_ok("(define (f [x : i64] [mask : u8]) : i64 (bit-and x mask))");
+        assert!(
+            asm.contains("    movzbq -9(%rbp), %rcx"),
+            "u8 rhs must be byte-loaded into rcx:\n{}",
+            asm
+        );
+        assert!(asm.contains("    andq %rcx, %rax"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("    andb %cl, %al"),
+            "bitwise op must keep lhs/result width:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("    movq -9(%rbp), %rcx"),
+            "u8 rhs must not be read as an i64 stack slot:\n{}",
             asm
         );
     }

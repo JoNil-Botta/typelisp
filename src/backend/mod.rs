@@ -1206,17 +1206,17 @@ impl X86_64Backend {
 
                 match (src, ty) {
                     (Value::ConstI64(n), _) => {
-                        self.emit(&format!("    movq ${}, {}(%rbp)", n, dst_offset));
+                        self.store_integer_immediate(*n as i128, dst_offset, ty);
                     }
                     (Value::ConstI32(n), _) => {
-                        self.emit(&format!("    movl ${}, {}(%rbp)", n, dst_offset));
+                        self.store_integer_immediate(*n as i128, dst_offset, ty);
                     }
                     (Value::ConstI8(n), _) => {
-                        self.emit(&format!("    movb ${}, {}(%rbp)", n, dst_offset));
+                        self.store_integer_immediate(*n as i128, dst_offset, ty);
                     }
                     (Value::ConstBool(b), _) => {
                         let n = if *b { 1 } else { 0 };
-                        self.emit(&format!("    movb ${}, {}(%rbp)", n, dst_offset));
+                        self.store_integer_immediate(n, dst_offset, ty);
                     }
                     (Value::ConstF64(n), _) => {
                         // Load float from constant pool (simplified)
@@ -1524,17 +1524,17 @@ impl X86_64Backend {
                         }
                     }
                     Value::ConstI64(n) => {
-                        self.emit(&format!("    movq ${}, {}(%rbp)", n, dst_offset));
+                        self.store_integer_immediate(*n as i128, dst_offset, ty);
                     }
                     Value::ConstI32(n) => {
-                        self.emit(&format!("    movl ${}, {}(%rbp)", n, dst_offset));
+                        self.store_integer_immediate(*n as i128, dst_offset, ty);
                     }
                     Value::ConstI8(n) => {
-                        self.emit(&format!("    movb ${}, {}(%rbp)", n, dst_offset));
+                        self.store_integer_immediate(*n as i128, dst_offset, ty);
                     }
                     Value::ConstBool(b) => {
                         let n = if *b { 1 } else { 0 };
-                        self.emit(&format!("    movb ${}, {}(%rbp)", n, dst_offset));
+                        self.store_integer_immediate(n, dst_offset, ty);
                     }
                     _ => {}
                 }
@@ -1868,6 +1868,16 @@ impl X86_64Backend {
             4 => self.emit(&format!("    movl {}, {}(%rbp)", Self::gpr32(reg), offset)),
             2 => self.emit(&format!("    movw {}, {}(%rbp)", Self::gpr16(reg), offset)),
             1 => self.emit(&format!("    movb {}, {}(%rbp)", Self::gpr8(reg), offset)),
+            _ => {}
+        }
+    }
+
+    fn store_integer_immediate(&mut self, value: i128, offset: i32, ty: &Type) {
+        match ty.size() {
+            8 => self.emit(&format!("    movq ${}, {}(%rbp)", value, offset)),
+            4 => self.emit(&format!("    movl ${}, {}(%rbp)", value, offset)),
+            2 => self.emit(&format!("    movw ${}, {}(%rbp)", value, offset)),
+            1 => self.emit(&format!("    movb ${}, {}(%rbp)", value, offset)),
             _ => {}
         }
     }
@@ -3155,6 +3165,76 @@ mod tests {
         assert!(
             !asm.contains("divq %rcx"),
             "u8 modulo must not use 64-bit div; asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_compile_mov_const_i64_to_i8_uses_8_bit_store() {
+        let program = Program {
+            functions: vec![Function {
+                name: "f".into(),
+                params: vec![],
+                ret: Type::I8,
+                locals: vec![(0, Type::I8)],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![
+                        Instruction::Mov {
+                            dst: 0,
+                            src: Value::ConstI64(7),
+                            ty: Type::I8,
+                        },
+                        Instruction::Return(Some(Value::Var(0))),
+                    ],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![],
+        };
+        let asm = generate_assembly(&program).expect("narrow immediate mov should compile");
+        assert!(asm.contains("movb $7, -1(%rbp)"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("movq $7, -1(%rbp)"),
+            "i8 immediate mov must not use 64-bit store; asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_compile_store_const_i64_to_i16_uses_16_bit_store() {
+        let program = Program {
+            functions: vec![Function {
+                name: "f".into(),
+                params: vec![],
+                ret: Type::Unit,
+                locals: vec![(0, Type::I16)],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![
+                        Instruction::Alloc {
+                            var: 0,
+                            ty: Type::I16,
+                        },
+                        Instruction::Store {
+                            dst: Value::Var(0),
+                            src: Value::ConstI64(300),
+                            ty: Type::I16,
+                        },
+                        Instruction::Return(None),
+                    ],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![],
+        };
+        let asm = generate_assembly(&program).expect("narrow immediate store should compile");
+        assert!(asm.contains("movw $300, -2(%rbp)"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("movq $300, -2(%rbp)"),
+            "i16 immediate store must not use 64-bit store; asm:\n{}",
             asm
         );
     }

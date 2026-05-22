@@ -703,6 +703,29 @@ impl FnLowerer {
             return Value::Var(dst);
         }
 
+        // `(string->int s)` parses the decimal string `s` to an i64. The operand
+        // is a pointer to inline fat `{ ptr, len }` storage; extract the data
+        // pointer (offset 0) and length (offset 8) and dispatch to the
+        // emit-on-demand runtime `tl_string_to_int(ptr, len) -> i64`. As with
+        // `tl_string_eq`, a `Call` (not an inline parse loop) is used so the
+        // computation survives DCE — the optimizer treats `Load`/`Gep` as pure.
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "string->int"
+            && args.len() == 1
+        {
+            let s = self.lower_expr(&args[0]);
+            let (ptr, len) = self.load_string_fields(&s);
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: "tl_string_to_int".to_string(),
+                args: vec![Value::Var(ptr), Value::Var(len)],
+                ty: Type::I64,
+            });
+            self.record_local(dst, Type::I64);
+            return Value::Var(dst);
+        }
+
         // Evaluate arguments left-to-right
         let arg_vals: Vec<Value> = args.iter().map(|a| self.lower_expr(a)).collect();
 
@@ -1958,6 +1981,46 @@ mod tests {
             "tl_string_eq takes ptr/len for both operands"
         );
         assert_eq!(*ty, Type::Bool, "string-eq yields a bool");
+
+        // Both the data-pointer (U64) and length (I64) fields are loaded.
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Load { ty: Type::U64, .. })),
+            "expected a Load of the U64 data-pointer field"
+        );
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Load { ty: Type::I64, .. })),
+            "expected a Load of the I64 length field"
+        );
+    }
+
+    #[test]
+    fn test_lower_string_to_int_extracts_fields_and_calls_runtime() {
+        // `(string->int s)` lowers to: extract the operand's data pointer (U64)
+        // and length (I64) fields, then a `Call tl_string_to_int` with the two
+        // args, whose result is an i64. A `Call` (not an inline parse loop) is
+        // used so the conversion survives DCE.
+        let prog = parse(r#"(define (p) : i64 (string->int "42"))"#).unwrap();
+        let ir = lower_program(&prog);
+        let instrs: Vec<&Instruction> = ir.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .collect();
+
+        // The runtime helper is called by name with two arguments.
+        let call = instrs.iter().find_map(|i| match i {
+            Instruction::Call { func, args, ty, .. } if func == "tl_string_to_int" => {
+                Some((args, ty))
+            }
+            _ => None,
+        });
+        let (args, ty) = call.expect("expected a Call to tl_string_to_int");
+        assert_eq!(args.len(), 2, "tl_string_to_int takes the operand ptr/len");
+        assert_eq!(*ty, Type::I64, "string->int yields an i64");
 
         // Both the data-pointer (U64) and length (I64) fields are loaded.
         assert!(

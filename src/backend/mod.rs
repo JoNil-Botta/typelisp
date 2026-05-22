@@ -28,6 +28,11 @@ pub struct X86_64Backend {
     /// (libc-free, syscall-free) byte-comparison runtime into the program's
     /// `.s`. Set when `(string-eq a b)` / `(string=? a b)` is lowered.
     needs_string_eq_runtime: bool,
+    /// Whether the program references the decimal-parse helper
+    /// `tl_string_to_int` and the backend must therefore emit the self-contained
+    /// (libc-free, syscall-free) parse runtime into the program's `.s`. Set when
+    /// `(string->int s)` is lowered.
+    needs_string_to_int_runtime: bool,
     return_ty: Type,
     /// VarIds that are function parameters of the function currently being
     /// generated. Their `Alloc` instructions are no-ops because the parameter
@@ -594,6 +599,7 @@ impl X86_64Backend {
             needs_alloc_runtime: false,
             needs_oob_runtime: false,
             needs_string_eq_runtime: false,
+            needs_string_to_int_runtime: false,
             return_ty: Type::Unit,
             param_vars: HashSet::new(),
             current_fn: String::new(),
@@ -612,6 +618,7 @@ impl X86_64Backend {
         self.needs_alloc_runtime = Self::needs_alloc_runtime(program);
         self.needs_oob_runtime = Self::needs_oob_runtime(program);
         self.needs_string_eq_runtime = Self::needs_string_eq_runtime(program);
+        self.needs_string_to_int_runtime = Self::needs_string_to_int_runtime(program);
         let needs_print_runtime = !self.runtime_print_names.is_empty();
         if needs_print_runtime {
             self.generate_print_runtime_data();
@@ -639,7 +646,8 @@ impl X86_64Backend {
             let defined_inline = Self::is_defined_print_runtime_symbol(&symbol)
                 || (self.needs_alloc_runtime && symbol == "tl_alloc")
                 || (self.needs_oob_runtime && symbol == "tl_oob_abort")
-                || (self.needs_string_eq_runtime && symbol == "tl_string_eq");
+                || (self.needs_string_eq_runtime && symbol == "tl_string_eq")
+                || (self.needs_string_to_int_runtime && symbol == "tl_string_to_int");
             if !defined_inline {
                 self.emit(&format!("    .extern {}", symbol));
             }
@@ -661,6 +669,9 @@ impl X86_64Backend {
         }
         if self.needs_string_eq_runtime {
             self.generate_string_eq_runtime_functions();
+        }
+        if self.needs_string_to_int_runtime {
+            self.generate_string_to_int_runtime_functions();
         }
 
         // Generate functions
@@ -780,6 +791,33 @@ impl X86_64Backend {
             .externs
             .iter()
             .any(|(name, _)| name == "tl_string_eq");
+        referenced_in_calls || referenced_in_externs
+    }
+
+    /// Whether the program references the decimal-parse helper
+    /// `tl_string_to_int` (through a direct `Call` or an `extern` declaration)
+    /// and does not define its own. When true the backend emits the
+    /// self-contained parse runtime into the program's `.s` so the symbol
+    /// resolves without linking libc.
+    fn needs_string_to_int_runtime(program: &Program) -> bool {
+        let defines_own = program
+            .functions
+            .iter()
+            .any(|f| f.name == "tl_string_to_int");
+        if defines_own {
+            return false;
+        }
+        let referenced_in_calls = program.functions.iter().any(|func| {
+            func.blocks.iter().any(|block| {
+                block.instructions.iter().any(|instr| {
+                    matches!(instr, Instruction::Call { func, .. } if func == "tl_string_to_int")
+                })
+            })
+        });
+        let referenced_in_externs = program
+            .externs
+            .iter()
+            .any(|(name, _)| name == "tl_string_to_int");
         referenced_in_calls || referenced_in_externs
     }
 
@@ -1144,6 +1182,57 @@ impl X86_64Backend {
         self.emit("    ret");
         self.emit(".L_tl_string_eq_false:");
         self.emit("    xorq %rax, %rax");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    /// Emit the self-contained decimal-parse helper
+    /// `tl_string_to_int(ptr, len) -> i64`.
+    ///
+    /// ABI (System V): `ptr` in `%rdi`, `len` in `%rsi`; the parsed i64 leaves
+    /// in `%rax`. The routine skips a single optional leading `-` (recording the
+    /// sign), then accumulates `acc = acc*10 + (byte - '0')` over the remaining
+    /// bytes via an `imul`-by-10 loop (the inverse of `tl_print_i64`'s
+    /// divide-by-10 digit loop) and negates the accumulator if a sign was seen.
+    /// An empty string yields 0. Non-digit bytes and overflow are NOT validated
+    /// (deferred): a stray byte contributes `(byte - 48)` to the running total,
+    /// matching the documented best-effort decimal parse. It is pure (only reads
+    /// the operand buffer; no `syscall`, no libc, no writes), so it is safe to
+    /// emit unconditionally when referenced.
+    fn generate_string_to_int_runtime_functions(&mut self) {
+        self.emit("    .globl tl_string_to_int");
+        self.emit("tl_string_to_int:");
+        // acc = 0 (%rax accumulates the result), neg = 0 (%r8 records the sign).
+        self.emit("    xorq %rax, %rax");
+        self.emit("    xorq %r8, %r8");
+        // Empty string -> 0.
+        self.emit("    testq %rsi, %rsi");
+        self.emit("    jz .L_tl_string_to_int_done");
+        // Optional leading '-' (45): set neg, advance the cursor, drop one byte.
+        self.emit("    movzbl (%rdi), %ecx");
+        self.emit("    cmpb $45, %cl");
+        self.emit("    jne .L_tl_string_to_int_loop");
+        self.emit("    movq $1, %r8");
+        self.emit("    incq %rdi");
+        self.emit("    decq %rsi");
+        self.emit(".L_tl_string_to_int_loop:");
+        // No bytes left -> apply the sign and return.
+        self.emit("    testq %rsi, %rsi");
+        self.emit("    jz .L_tl_string_to_int_apply_sign");
+        // acc = acc*10 + (byte - '0').
+        self.emit("    imulq $10, %rax, %rax");
+        self.emit("    movzbl (%rdi), %ecx");
+        self.emit("    subq $48, %rcx");
+        self.emit("    addq %rcx, %rax");
+        // Advance the cursor, decrement the remaining count, repeat.
+        self.emit("    incq %rdi");
+        self.emit("    decq %rsi");
+        self.emit("    jmp .L_tl_string_to_int_loop");
+        self.emit(".L_tl_string_to_int_apply_sign:");
+        self.emit("    testq %r8, %r8");
+        self.emit("    jz .L_tl_string_to_int_done");
+        self.emit("    negq %rax");
+        self.emit(".L_tl_string_to_int_done:");
         self.emit("    ret");
         self.emit("");
     }
@@ -2277,6 +2366,11 @@ impl X86_64Backend {
             // referenced by its raw runtime symbol so it resolves to itself
             // rather than being mangled to `_tl_tl_string_eq`.
             "tl_string_eq".into()
+        } else if name == "tl_string_to_int" && self.needs_string_to_int_runtime {
+            // The backend-provided decimal-parse helper, like `tl_string_eq`, is
+            // referenced by its raw runtime symbol so it resolves to itself
+            // rather than being mangled to `_tl_tl_string_to_int`.
+            "tl_string_to_int".into()
         } else {
             Self::mangle_name(name)
         }
@@ -3963,6 +4057,60 @@ mod tests {
         // A program that never compares strings must not emit the helper.
         let asm = compile_ok(r#"(define (main) : i64 (string-length "hi"))"#);
         assert!(!asm.contains("tl_string_eq"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_string_to_int_emits_runtime_and_calls_it() {
+        // `(string->int s)` calls the emit-on-demand `tl_string_to_int` helper
+        // and the backend defines that helper inline (gated like `tl_string_eq`).
+        let asm = compile_ok(r#"(define (main) : i64 (string->int "42"))"#);
+
+        // The runtime function is emitted and globally visible.
+        assert!(asm.contains("    .globl tl_string_to_int"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_string_to_int:"), "asm:\n{}", asm);
+
+        // The call site dispatches to the raw runtime symbol (not mangled).
+        assert!(asm.contains("    call tl_string_to_int"), "asm:\n{}", asm);
+        assert!(!asm.contains("_tl_tl_string_to_int"), "asm:\n{}", asm);
+        assert!(!asm.contains("_tl_string_to_int:"), "asm:\n{}", asm);
+
+        // The helper is a pure decimal parse: it skips an optional '-' (45),
+        // accumulates via an imul-by-10 loop, and subtracts '0' (48) per digit —
+        // and crucially NO syscall (it neither allocates nor writes).
+        assert!(asm.contains("    cmpb $45, %cl"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_string_to_int_loop:"), "asm:\n{}", asm);
+        assert!(asm.contains("    imulq $10, %rax, %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("    subq $48, %rcx"), "asm:\n{}", asm);
+        let conv_section = asm
+            .split("tl_string_to_int:")
+            .nth(1)
+            .expect("tl_string_to_int body");
+        let conv_body = conv_section
+            .split("\n_start:")
+            .next()
+            .unwrap_or(conv_section);
+        assert!(
+            !conv_body.contains("syscall"),
+            "tl_string_to_int must be syscall-free:\n{}",
+            conv_body
+        );
+
+        // The helper is not declared `.extern` (it is defined in this unit).
+        assert!(
+            !asm.contains("    .extern tl_string_to_int"),
+            "asm:\n{}",
+            asm
+        );
+
+        // No instruction selection fell through to a TODO stub.
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_no_string_to_int_means_no_runtime() {
+        // A program that never parses strings must not emit the helper.
+        let asm = compile_ok(r#"(define (main) : i64 (string-length "hi"))"#);
+        assert!(!asm.contains("tl_string_to_int"), "asm:\n{}", asm);
     }
 
     #[test]

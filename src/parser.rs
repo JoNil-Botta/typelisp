@@ -603,9 +603,15 @@ impl<'a> Parser<'a> {
                 (Expr::Match { scrutinee, arms }, end)
             }
             _ => {
-                // Function call or binary operator
-                let op = self.try_parse_binop();
-                if let Some(op) = op {
+                // Unary operator, binary operator, or function call. Unary is
+                // tried first: `not`/`neg`/`bit-not` are distinct identifiers
+                // from the binary `bit-and`/`bit-or`/`bit-xor` spellings, so
+                // there is no collision.
+                if let Some(op) = self.try_parse_unop() {
+                    let expr = Box::new(self.parse_expr()?);
+                    let end = self.expect_rparen_span()?;
+                    (Expr::Unary { op, expr }, end)
+                } else if let Some(op) = self.try_parse_binop() {
                     let lhs = Box::new(self.parse_expr()?);
                     let rhs = Box::new(self.parse_expr()?);
                     let end = self.expect_rparen_span()?;
@@ -703,6 +709,26 @@ impl<'a> Parser<'a> {
         if op.is_some() {
             // Don't advance here - we need to consume it in parse_list_expr
             // Actually we do need to advance since we're consuming the operator
+            let _ = self.advance();
+        }
+        op
+    }
+
+    /// Recognize a prefix unary operator at the head of a list:
+    /// `not` (boolean), `neg` (numeric negation), `bit-not` (one's
+    /// complement). Returns `None` (leaving the cursor untouched) for anything
+    /// else, so the caller falls through to binary-op / call parsing.
+    fn try_parse_unop(&mut self) -> Option<UnOp> {
+        let op = match &self.current {
+            Token::Ident(s) => match s.as_str() {
+                "not" => Some(UnOp::Not),
+                "neg" => Some(UnOp::Neg),
+                "bit-not" => Some(UnOp::BitNot),
+                _ => None,
+            },
+            _ => None,
+        };
+        if op.is_some() {
             let _ = self.advance();
         }
         op
@@ -1032,6 +1058,69 @@ mod tests {
                 assert_eq!(args.len(), 2);
             }
             other => panic!("expected Call, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_not_is_unary() {
+        // `(not b)` parses as a unary `Not`, not a call to a `not` function.
+        let prog = parse("(define (f [b : bool]) : bool (not b))").unwrap();
+        let body = match &prog.decls[0] {
+            Decl::DefFn { body, .. } => body.unspan(),
+            other => panic!("expected DefFn, got {:?}", other),
+        };
+        match body {
+            Expr::Unary { op, expr } => {
+                assert_eq!(*op, UnOp::Not);
+                assert_eq!(expr.unspan(), &Expr::Var("b".into()));
+            }
+            other => panic!("expected Unary Not, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_neg_and_bit_not_are_unary() {
+        // `neg` and `bit-not` share the unary parse path with `not`.
+        let prog = parse("(define (f [n : i64]) : i64 (neg n))").unwrap();
+        match prog.decls[0] {
+            Decl::DefFn { ref body, .. } => match body.unspan() {
+                Expr::Unary { op, .. } => assert_eq!(*op, UnOp::Neg),
+                other => panic!("expected Unary Neg, got {:?}", other),
+            },
+            ref other => panic!("expected DefFn, got {:?}", other),
+        }
+
+        let prog = parse("(define (f [n : i64]) : i64 (bit-not n))").unwrap();
+        match prog.decls[0] {
+            Decl::DefFn { ref body, .. } => match body.unspan() {
+                Expr::Unary { op, .. } => assert_eq!(*op, UnOp::BitNot),
+                other => panic!("expected Unary BitNot, got {:?}", other),
+            },
+            ref other => panic!("expected DefFn, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_and_or_are_binary() {
+        // `(and a b)` / `(or a b)` parse as strict binary logical operators.
+        for (src, want) in [
+            (
+                "(define (f [a : bool] [b : bool]) : bool (and a b))",
+                BinOp::And,
+            ),
+            (
+                "(define (f [a : bool] [b : bool]) : bool (or a b))",
+                BinOp::Or,
+            ),
+        ] {
+            let prog = parse(src).unwrap();
+            match prog.decls[0] {
+                Decl::DefFn { ref body, .. } => match body.unspan() {
+                    Expr::Binary { op, .. } => assert_eq!(*op, want),
+                    other => panic!("expected Binary, got {:?}", other),
+                },
+                ref other => panic!("expected DefFn, got {:?}", other),
+            }
         }
     }
 }

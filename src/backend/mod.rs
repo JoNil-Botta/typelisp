@@ -4369,6 +4369,42 @@ mod tests {
         );
     }
 
+    // --- boolean logic ops from source text (Issue #27) ---
+
+    #[test]
+    fn test_compile_not_from_source_emits_xor() {
+        // `(not b)` flows parse -> lower -> codegen and emits an 8-bit `xor $1`.
+        let asm = compile_ok("(define (f [b : bool]) : bool (not b))");
+        assert!(asm.contains("xorb $1, %al"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_and_from_source_emits_and() {
+        // `(and a b)` over canonical 0/1 bools is a bitwise `and` on the 8-bit
+        // registers (bitwise == logical for canonical bools).
+        let asm = compile_ok("(define (f [a : bool] [b : bool]) : bool (and a b))");
+        assert!(asm.contains("andb"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_or_from_source_emits_or() {
+        let asm = compile_ok("(define (f [a : bool] [b : bool]) : bool (or a b))");
+        assert!(asm.contains("orb"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_bool_equality_emits_setcc() {
+        // `(= a b)` over two bools compiles via the comparison path: `cmp` then
+        // a `set` byte-setting instruction producing a 0/1 bool.
+        let asm = compile_ok("(define (f [a : bool] [b : bool]) : bool (= a b))");
+        assert!(asm.contains("cmp"), "expected cmp; asm:\n{}", asm);
+        assert!(asm.contains("sete"), "expected sete; asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
     #[test]
     fn test_compile_cast_truncate_to_i8() {
         // Narrowing cast i64 -> i8: load source then store only the low byte.

@@ -3826,6 +3826,82 @@ mod tests {
         assert_eq!(unop, Some((UnOp::BitNot, Type::I32)));
     }
 
+    /// Find the (single) UnOp in a function's IR, if any.
+    fn first_unop(ir: &Program) -> Option<UnOp> {
+        ir.functions[0].blocks.iter().find_map(|b| {
+            b.instructions.iter().find_map(|i| match i {
+                Instruction::UnOp { op, .. } => Some(*op),
+                _ => None,
+            })
+        })
+    }
+
+    // ------------------------------------------------------------------
+    // Boolean logic ops (not / and / or, bool equality) — Issue #27
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_lower_not_from_text_is_unop_not() {
+        // `(not b)` now parses from text and lowers to a boolean UnOp::Not.
+        let prog = parse("(define (f [b : bool]) : bool (not b))").unwrap();
+        let ir = lower_program(&prog);
+        let unop = ir.functions[0].blocks.iter().find_map(|b| {
+            b.instructions.iter().find_map(|i| match i {
+                Instruction::UnOp { op, ty, .. } => Some((*op, ty.clone())),
+                _ => None,
+            })
+        });
+        assert_eq!(unop, Some((UnOp::Not, Type::Bool)));
+    }
+
+    #[test]
+    fn test_lower_and_maps_to_and() {
+        let prog = parse("(define (f [a : bool] [b : bool]) : bool (and a b))").unwrap();
+        let ir = lower_program(&prog);
+        assert_eq!(first_binop(&ir), Some(BinOp::And));
+    }
+
+    #[test]
+    fn test_lower_or_maps_to_or() {
+        let prog = parse("(define (f [a : bool] [b : bool]) : bool (or a b))").unwrap();
+        let ir = lower_program(&prog);
+        assert_eq!(first_binop(&ir), Some(BinOp::Or));
+    }
+
+    #[test]
+    fn test_lower_and_or_result_is_bool() {
+        // The value produced by a logical op is a bool, kept canonical 0/1.
+        for (src, want) in [
+            (
+                "(define (f [a : bool] [b : bool]) : bool (and a b))",
+                BinOp::And,
+            ),
+            (
+                "(define (f [a : bool] [b : bool]) : bool (or a b))",
+                BinOp::Or,
+            ),
+        ] {
+            let prog = parse(src).unwrap();
+            let ir = lower_program(&prog);
+            let binop = ir.functions[0].blocks.iter().find_map(|b| {
+                b.instructions.iter().find_map(|i| match i {
+                    Instruction::BinOp { op, ty, .. } => Some((*op, ty.clone())),
+                    _ => None,
+                })
+            });
+            assert_eq!(binop, Some((want, Type::Bool)));
+        }
+    }
+
+    #[test]
+    fn test_lower_bool_equality_maps_to_eq() {
+        // `(= a b)` over two bools lowers to BinOp::Eq yielding a bool.
+        let prog = parse("(define (f [a : bool] [b : bool]) : bool (= a b))").unwrap();
+        let ir = lower_program(&prog);
+        assert_eq!(first_binop(&ir), Some(BinOp::Eq));
+        assert!(first_unop(&ir).is_none());
+    }
+
     #[test]
     fn test_lower_binop_width_threaded_from_params() {
         // The BinOp `ty` must reflect the real operand width (u32 here), not the

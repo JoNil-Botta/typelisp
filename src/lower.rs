@@ -229,6 +229,11 @@ struct FnLowerer {
     /// an aggregate constructor is heap-allocated only when a value of its kind
     /// can reach this return type (see `type_kind_escapes_via_return`).
     ret: Type,
+    /// Force aggregate constructors in the current lowering context onto the
+    /// heap even when the function return type would not otherwise require it.
+    /// Used when storing aggregate values into dynamic-array buffers, because
+    /// the buffer may be owned by the caller rather than this frame.
+    force_heap_aggregate_storage: bool,
 }
 
 /// The kind of escaping aggregate whose constructor storage may be
@@ -359,6 +364,13 @@ fn type_kind_escapes_via_return_inner(
     }
 }
 
+fn dyn_array_elem_is_aggregate_pointer(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::Enum(_) | Type::Struct(_) | Type::String | Type::DynArray(_)
+    )
+}
+
 impl FnLowerer {
     fn new(
         name: &str,
@@ -397,6 +409,7 @@ impl FnLowerer {
             params: ir_params,
             locals: Vec::new(),
             ret: ret.clone(),
+            force_heap_aggregate_storage: false,
         }
     }
 
@@ -624,6 +637,11 @@ impl FnLowerer {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    fn should_heap_promote_aggregate(&self, kind: AggKind) -> bool {
+        self.force_heap_aggregate_storage
+            || type_kind_escapes_via_return(&self.ret, kind, &self.enums, &self.structs)
     }
 
     /// Recover the type of a binary op's operands, preferring a concrete
@@ -997,9 +1015,10 @@ impl FnLowerer {
     ///     whose returned pointer is the storage address. A heap pointer outlives
     ///     the frame, so the value may safely escape via `return`.
     ///
-    /// Heap promotion is applied only when the constructed value can reach the
-    /// enclosing function's `return` (see `escapes_via_return`), so non-escaping
-    /// local aggregates keep the cheaper frame allocation.
+    /// Heap promotion is applied when the constructed value can reach the
+    /// enclosing function's `return` (see `escapes_via_return`) or when a
+    /// lowering context, such as `array-set!` into an aggregate dynamic array,
+    /// explicitly forces heap storage.
     fn reserve_aggregate_storage(&mut self, size: usize, storage_ty: Type, promote: bool) -> Value {
         if promote {
             // base = tl_alloc(size) : a heap pointer to `size` bytes. The
@@ -1044,9 +1063,9 @@ impl FnLowerer {
         let size = self.enum_storage_size(enum_name);
         let enum_ty = Type::Enum(enum_name.to_string());
 
-        // Heap-promote when an enum value can escape via the function's return.
-        let promote =
-            type_kind_escapes_via_return(&self.ret, AggKind::Enum, &self.enums, &self.structs);
+        // Heap-promote when an enum value can escape via the function's return,
+        // or when the current store context may outlive this frame.
+        let promote = self.should_heap_promote_aggregate(AggKind::Enum);
         let base_val = self.reserve_aggregate_storage(size, enum_ty.clone(), promote);
 
         // Store the tag at offset 0.
@@ -1107,9 +1126,9 @@ impl FnLowerer {
         let field_tys: Vec<Type> = fields.iter().map(|f| f.ty.clone()).collect();
         let size = ast::StructRegistry::struct_size_for_types(&field_tys);
 
-        // Heap-promote when a struct value can escape via the function's return.
-        let promote =
-            type_kind_escapes_via_return(&self.ret, AggKind::Struct, &self.enums, &self.structs);
+        // Heap-promote when a struct value can escape via the function's return,
+        // or when the current store context may outlive this frame.
+        let promote = self.should_heap_promote_aggregate(AggKind::Struct);
         let base_val = self.reserve_aggregate_storage(size, struct_ty, promote);
 
         // Store each field at its (resolved) byte offset.
@@ -1165,9 +1184,9 @@ impl FnLowerer {
     /// Call/Gep/Store (heap-promoted) — no new IR shape, mirroring how enum
     /// values are built (`lower_construct`).
     fn lower_string_literal(&mut self, text: &str) -> Value {
-        // Heap-promote when a string value can escape via the function's return.
-        let promote =
-            type_kind_escapes_via_return(&self.ret, AggKind::String, &self.enums, &self.structs);
+        // Heap-promote when a string value can escape via the function's return,
+        // or when the current store context may outlive this frame.
+        let promote = self.should_heap_promote_aggregate(AggKind::String);
         let base_val = self.reserve_aggregate_storage(STRING_FAT_SIZE, Type::String, promote);
 
         // Store the data pointer at offset 0. `ConstStr` is materialized by the
@@ -1227,10 +1246,10 @@ impl FnLowerer {
         // Reserve the fat-array `{ ptr, len }` storage (16 bytes). The element
         // buffer is always heap (`buf` above); the *fat value* itself is
         // heap-promoted only when a dynamic array can escape via the function's
-        // return, so a non-escaping local array keeps its fat value on the frame.
+        // return or an aggregate-array store context, so ordinary non-escaping
+        // local arrays keep their fat value on the frame.
         let arr_ty = Type::DynArray(Box::new(elem_ty));
-        let promote =
-            type_kind_escapes_via_return(&self.ret, AggKind::DynArray, &self.enums, &self.structs);
+        let promote = self.should_heap_promote_aggregate(AggKind::DynArray);
         let base_val = self.reserve_aggregate_storage(DYN_ARRAY_FAT_SIZE, arr_ty, promote);
 
         // Store the element-buffer pointer at offset 0.
@@ -1379,8 +1398,20 @@ impl FnLowerer {
 
         // Evaluate the stored value before the bounds check (matching ordinary
         // left-to-right argument evaluation order; the value has no dependence
-        // on the bounds outcome).
-        let store_val = self.lower_expr(value);
+        // on the bounds outcome). Aggregate elements are stored as pointers in
+        // the heap buffer, and that buffer may belong to a caller-owned array
+        // parameter. Force any aggregate constructors in the stored expression to
+        // use heap storage so the saved pointer cannot dangle after this frame
+        // returns.
+        let store_val = if dyn_array_elem_is_aggregate_pointer(&elem_ty) {
+            let previous = self.force_heap_aggregate_storage;
+            self.force_heap_aggregate_storage = true;
+            let value = self.lower_expr(value);
+            self.force_heap_aggregate_storage = previous;
+            value
+        } else {
+            self.lower_expr(value)
+        };
 
         // Load len (offset 8) from the fat value.
         let len_ptr = self.gep_byte(&arr_val, DYN_ARRAY_LEN_OFFSET);
@@ -4105,10 +4136,13 @@ mod tests {
     }
 
     #[test]
-    fn test_lower_array_set_enum_geps_and_stores_pointer() {
+    fn test_lower_array_set_enum_geps_and_stores_heap_pointer() {
         // `(array-set! a i (Circle 3))` over `(Array Shape)`: the element address
         // is a Gep whose elem_ty is the ENUM (stride 8), and the stored value is
         // the constructed enum POINTER, written with a Store typed as the enum.
+        // Because `a` may be caller-owned, the direct constructor is heap-
+        // promoted even though this function returns unit; otherwise the caller
+        // could read a dangling pointer from its array after `f` returns.
         let src = format!(
             "{SHAPE}\n(define (f [a : (Array Shape)] [i : i64]) : unit (array-set! a i (Circle 3)))"
         );
@@ -4135,6 +4169,20 @@ mod tests {
                     Instruction::Store { ty: Type::Enum(n), .. } if n == "Shape"
                 ))),
             "the stored element value is an enum pointer (Store typed as the enum)"
+        );
+        assert_eq!(
+            count(&ir, f, |i| matches!(i, Instruction::AddrOf { .. })),
+            0,
+            "stored aggregate element must not take a frame address"
+        );
+        assert_eq!(
+            count(&ir, f, |i| matches!(
+                i,
+                Instruction::Call { func, args, .. }
+                    if func == "tl_alloc" && args == &[Value::ConstI64(16)]
+            )),
+            1,
+            "stored aggregate element must be heap-promoted"
         );
         // The bounds-check trap is still present.
         assert!(

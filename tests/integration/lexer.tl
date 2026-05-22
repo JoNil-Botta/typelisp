@@ -116,11 +116,11 @@
 
 ;; Lex the sample `"12 + (34)"`, store the tokens as real `Token` aggregates,
 ;; then read the first token back out of the array and project it with
-;; `token-tag` — proving a `Token` round-trips through `(Array Token)`.
-;; Tokens: TInt(12) TPlus TLParen TInt(34) TRParen => first token is TInt, so
-;; reading token 0 back and tagging it yields 1.
+;; `token-tag`, proving a `Token` round-trips through `(Array Token)` while
+;; preserving the integration contract that `main` returns the token count.
+;; Tokens: TInt(12) TPlus TLParen TInt(34) TRParen => count 5; first token is
+;; TInt, so `token-tag` yields 1 and the adjustment adds 0.
 (define (main) : i64
   (let ([toks : (Array Token) (make-array Token 16)])
-    (begin
-      (lex "12 + (34)" toks)
-      (token-tag (array-ref toks 0)))))
+    (let ([count : i64 (lex "12 + (34)" toks)])
+      (+ count (- (token-tag (array-ref toks 0)) 1)))))

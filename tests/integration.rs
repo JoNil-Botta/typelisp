@@ -59,6 +59,11 @@ fn type_lisp_programs_compile_link_and_run() {
             stdout: "",
         },
         Case {
+            name: "tl_alloc",
+            exit_code: 0,
+            stdout: "",
+        },
+        Case {
             name: "many_args",
             exit_code: 36,
             stdout: "",

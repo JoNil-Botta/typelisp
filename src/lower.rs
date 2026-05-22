@@ -648,15 +648,8 @@ impl FnLowerer {
     fn lower_match(&mut self, scrutinee: &ast::Expr, arms: &[(ast::Pattern, ast::Expr)]) -> Value {
         let scrut = self.lower_expr(scrutinee);
 
-        // A `Literal` pattern in any arm means this is a scalar match; the
-        // dispatch value is then the scrutinee itself rather than a loaded tag.
-        let is_scalar = arms
-            .iter()
-            .any(|(p, _)| matches!(p, ast::Pattern::Literal(_)));
-
-        let dispatch_val = if is_scalar {
-            scrut.clone()
-        } else {
+        let scrut_ty = self.value_type(&scrut);
+        let dispatch_val = if matches!(scrut_ty, Type::Enum(_)) {
             // Enum: load the tag (offset 0).
             let tag_ptr = self.gep_byte(&scrut, 0);
             let tag_val = self.builder.fresh_var();
@@ -667,6 +660,11 @@ impl FnLowerer {
             });
             self.record_local(tag_val, Type::I64);
             Value::Var(tag_val)
+        } else {
+            // Scalar: dispatch on the scrutinee value itself. This includes
+            // wildcard-only scalar matches, which typecheck without literal
+            // arms and must not be mistaken for enum tag dispatch.
+            scrut.clone()
         };
 
         let merge_label = self.builder.fresh_label("match_end");
@@ -2066,5 +2064,26 @@ mod tests {
             })
         });
         assert!(cmp_const_42, "expected an Eq against ConstI64(42)");
+    }
+
+    #[test]
+    fn test_lower_scalar_wildcard_only_match_does_not_load_tag() {
+        // Regression: a scalar match with only `_` has no literal arm, but it is
+        // still scalar and must not lower as an enum tag load from the integer.
+        let src = "(define (f [n : i64]) : i64 (match n [_ 0]))";
+        let prog = parse(src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().position(|f| f.name == "f").unwrap();
+
+        assert_eq!(
+            count(&ir, f, |i| matches!(i, Instruction::Load { .. })),
+            0,
+            "wildcard-only scalar match must not load a tag"
+        );
+        assert_eq!(
+            count(&ir, f, |i| matches!(i, Instruction::Gep { .. })),
+            0,
+            "wildcard-only scalar match must not compute a tag pointer"
+        );
     }
 }

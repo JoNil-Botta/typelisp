@@ -632,6 +632,12 @@ impl FnLowerer {
         let arg_vals: Vec<Value> = args.iter().map(|a| self.lower_expr(a)).collect();
 
         let (func_name, ret_ty) = match func.unspan() {
+            // A local binding shadows any top-level function of the same name.
+            // If it has function type, call through the value in that slot.
+            ast::Expr::Var(name) if self.vars.contains_key(name) => {
+                let func_val = self.lower_expr(func);
+                return self.lower_indirect_call(func_val, arg_vals);
+            }
             ast::Expr::Var(name) => {
                 let ret_ty = match self.function_types.get(name) {
                     Some(Type::Func(_, ret)) => (**ret).clone(),
@@ -640,17 +646,8 @@ impl FnLowerer {
                 (name.clone(), ret_ty)
             }
             _ => {
-                // Indirect call through expression
                 let func_val = self.lower_expr(func);
-                let dst = self.builder.fresh_var();
-                self.builder.emit(Instruction::CallIndirect {
-                    dst: Some(dst),
-                    func: func_val,
-                    args: arg_vals,
-                    ty: Type::Unit,
-                });
-                self.record_local(dst, Type::Unit);
-                return Value::Var(dst);
+                return self.lower_indirect_call(func_val, arg_vals);
             }
         };
 
@@ -668,6 +665,33 @@ impl FnLowerer {
         self.builder.emit(Instruction::Call {
             dst: Some(dst),
             func: func_name,
+            args: arg_vals,
+            ty: ret_ty.clone(),
+        });
+        self.record_local(dst, ret_ty);
+        Value::Var(dst)
+    }
+
+    fn lower_indirect_call(&mut self, func_val: Value, arg_vals: Vec<Value>) -> Value {
+        let ret_ty = match self.value_type(&func_val) {
+            Type::Func(_, ret) => *ret,
+            _ => Type::Unit,
+        };
+
+        if ret_ty == Type::Unit {
+            self.builder.emit(Instruction::CallIndirect {
+                dst: None,
+                func: func_val,
+                args: arg_vals,
+                ty: Type::Unit,
+            });
+            return Value::ConstUnit;
+        }
+
+        let dst = self.builder.fresh_var();
+        self.builder.emit(Instruction::CallIndirect {
+            dst: Some(dst),
+            func: func_val,
             args: arg_vals,
             ty: ret_ty.clone(),
         });
@@ -1424,6 +1448,41 @@ mod tests {
                 .any(|i| matches!(i, Instruction::Call { func, .. } if func == "a"))
         });
         assert!(calls_a, "expected b to emit a direct Call to a");
+    }
+
+    #[test]
+    fn test_lower_function_pointer_param_call_is_indirect() {
+        let prog = parse(
+            r#"
+            (define (apply1 [f : (-> i64 i64)] [x : i64]) : i64
+              (f x))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let apply = &ir.functions[0];
+        let indirect = apply.blocks.iter().find_map(|blk| {
+            blk.instructions.iter().find_map(|i| match i {
+                Instruction::CallIndirect {
+                    dst: Some(dst),
+                    func,
+                    args,
+                    ty,
+                } => Some((*dst, func.clone(), args.clone(), ty.clone())),
+                _ => None,
+            })
+        });
+        assert_eq!(
+            indirect,
+            Some((2, Value::Var(0), vec![Value::Var(1)], Type::I64))
+        );
+
+        let has_direct_f_call = apply.blocks.iter().any(|blk| {
+            blk.instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::Call { func, .. } if func == "f"))
+        });
+        assert!(!has_direct_f_call);
     }
 
     #[test]

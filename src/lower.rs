@@ -13,6 +13,7 @@ struct ProgramLowerer {
     functions: Vec<Function>,
     globals: Vec<(String, Type, Option<Value>)>,
     externs: Vec<(String, Type)>,
+    function_types: HashMap<String, Type>,
 }
 
 impl ProgramLowerer {
@@ -21,16 +22,38 @@ impl ProgramLowerer {
             functions: Vec::new(),
             globals: Vec::new(),
             externs: Vec::new(),
+            function_types: HashMap::new(),
         }
     }
 
     fn lower(&mut self, prog: &ast::Program) -> Program {
         for decl in &prog.decls {
             match decl {
+                ast::Decl::DefFn {
+                    name, params, ret, ..
+                } => {
+                    self.function_types.insert(
+                        name.clone(),
+                        Type::Func(
+                            params.iter().map(|(_, ty)| ty.clone()).collect(),
+                            Box::new(ret.clone()),
+                        ),
+                    );
+                }
+                ast::Decl::Extern { name, ty } => {
+                    self.function_types.insert(name.clone(), ty.clone());
+                }
+                ast::Decl::Def { .. } => {}
+            }
+        }
+
+        for decl in &prog.decls {
+            match decl {
                 ast::Decl::Def { name, ty, value } => {
                     let val_ty = ty.clone().unwrap_or_else(|| infer_literal_type(value));
                     // Lower the global initializer as an anonymous function
-                    let fn_lowerer = FnLowerer::new("__global_init", &[], &val_ty);
+                    let fn_lowerer =
+                        FnLowerer::new("__global_init", &[], &val_ty, &self.function_types);
                     let (_func, _result_var) = fn_lowerer.lower_expr_to_fn(value, &val_ty);
 
                     // Replace the generated function name with a proper init approach
@@ -67,7 +90,7 @@ impl ProgramLowerer {
         ret: &Type,
         body: &ast::Expr,
     ) -> Function {
-        let fn_lowerer = FnLowerer::new(name, params, ret);
+        let fn_lowerer = FnLowerer::new(name, params, ret, &self.function_types);
         fn_lowerer.lower_body(body, ret)
     }
 }
@@ -105,6 +128,7 @@ struct FnLowerer {
     /// This lets `value_type` recover the true width of a `Value::Var` instead
     /// of defaulting to `i64`, which is essential for width-correct codegen.
     var_types: HashMap<VarId, Type>,
+    function_types: HashMap<String, Type>,
     params: Vec<(VarId, Type)>,
     locals: Vec<(VarId, Type)>,
     #[allow(dead_code)]
@@ -112,7 +136,12 @@ struct FnLowerer {
 }
 
 impl FnLowerer {
-    fn new(name: &str, params: &[(String, Type)], ret: &Type) -> Self {
+    fn new(
+        name: &str,
+        params: &[(String, Type)],
+        ret: &Type,
+        function_types: &HashMap<String, Type>,
+    ) -> Self {
         let mut builder = IrBuilder::new("entry");
         let mut vars = HashMap::new();
         let mut var_types = HashMap::new();
@@ -134,6 +163,7 @@ impl FnLowerer {
             builder,
             vars,
             var_types,
+            function_types: function_types.clone(),
             params: ir_params,
             locals: Vec::new(),
             ret: ret.clone(),
@@ -254,20 +284,13 @@ impl FnLowerer {
             _ => operand_ty.clone(),
         };
 
-        // For comparisons we still want the backend to know the operand
-        // width/signedness, so the IR `ty` carries the operand type for those.
-        let instr_ty = match ir_op {
-            BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => operand_ty,
-            _ => result_ty.clone(),
-        };
-
         let dst = self.builder.fresh_var();
         self.builder.emit(Instruction::BinOp {
             dst,
             op: ir_op,
             lhs: lhs_val,
             rhs: rhs_val,
-            ty: instr_ty,
+            ty: result_ty.clone(),
         });
         self.record_local(dst, result_ty.clone());
         Value::Var(dst)
@@ -454,7 +477,13 @@ impl FnLowerer {
         let arg_vals: Vec<Value> = args.iter().map(|a| self.lower_expr(a)).collect();
 
         let (func_name, ret_ty) = match func {
-            ast::Expr::Var(name) => (name.clone(), Type::Unit),
+            ast::Expr::Var(name) => {
+                let ret_ty = match self.function_types.get(name) {
+                    Some(Type::Func(_, ret)) => (**ret).clone(),
+                    _ => Type::Unit,
+                };
+                (name.clone(), ret_ty)
+            }
             _ => {
                 // Indirect call through expression
                 let func_val = self.lower_expr(func);
@@ -565,6 +594,54 @@ mod tests {
                 .any(|i| matches!(i, Instruction::BinOp { .. }))
         });
         assert!(has_binop);
+    }
+
+    #[test]
+    fn test_lower_float_param_binary_type() {
+        let prog = parse(
+            r#"
+            (define (addf [a : f64] [b : f64]) : f64 (+ a b))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let has_f64_add = ir.functions[0].blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                matches!(
+                    i,
+                    Instruction::BinOp {
+                        op: BinOp::Add,
+                        ty: Type::F64,
+                        ..
+                    }
+                )
+            })
+        });
+        assert!(has_f64_add);
+    }
+
+    #[test]
+    fn test_lower_float_comparison_result_type() {
+        let prog = parse(
+            r#"
+            (define (ltf [a : f64] [b : f64]) : bool (< a b))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let has_bool_cmp = ir.functions[0].blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                matches!(
+                    i,
+                    Instruction::BinOp {
+                        op: BinOp::Lt,
+                        ty: Type::Bool,
+                        ..
+                    }
+                )
+            })
+        });
+        assert!(has_bool_cmp);
     }
 
     #[test]
@@ -1090,6 +1167,32 @@ mod tests {
                 .count()
         });
         assert_eq!(call_count, 2);
+    }
+
+    #[test]
+    fn test_lower_direct_call_return_type() {
+        let prog = parse(
+            r#"
+            (define (id_f64 [x : f64]) : f64 x)
+            (define (main) : f64 (id_f64 1.5))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let main = &ir.functions[1];
+        let has_f64_call = main.blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                matches!(
+                    i,
+                    Instruction::Call {
+                        func,
+                        ty: Type::F64,
+                        ..
+                    } if func == "id_f64"
+                )
+            })
+        });
+        assert!(has_f64_call);
     }
 
     #[test]

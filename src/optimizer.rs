@@ -169,6 +169,12 @@ impl Optimizer {
             (BinOp::Sub, Value::ConstF64(a), Value::ConstF64(b)) => Some(Value::ConstF64(a - b)),
             (BinOp::Mul, Value::ConstF64(a), Value::ConstF64(b)) => Some(Value::ConstF64(a * b)),
             (BinOp::Div, Value::ConstF64(a), Value::ConstF64(b)) => Some(Value::ConstF64(a / b)),
+            (BinOp::Eq, Value::ConstF64(a), Value::ConstF64(b)) => Some(Value::ConstBool(a == b)),
+            (BinOp::Ne, Value::ConstF64(a), Value::ConstF64(b)) => Some(Value::ConstBool(a != b)),
+            (BinOp::Lt, Value::ConstF64(a), Value::ConstF64(b)) => Some(Value::ConstBool(a < b)),
+            (BinOp::Le, Value::ConstF64(a), Value::ConstF64(b)) => Some(Value::ConstBool(a <= b)),
+            (BinOp::Gt, Value::ConstF64(a), Value::ConstF64(b)) => Some(Value::ConstBool(a > b)),
+            (BinOp::Ge, Value::ConstF64(a), Value::ConstF64(b)) => Some(Value::ConstBool(a >= b)),
             _ => None,
         }
     }

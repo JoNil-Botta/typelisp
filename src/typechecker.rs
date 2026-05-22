@@ -181,6 +181,13 @@ impl TypeChecker {
                             value.span(),
                         ));
                     }
+                    if type_contains_dyn_array_value(&inferred) {
+                        return Err(TypeError::at(
+                            "global definitions with dynamic-array values are not yet supported \
+                             because the fat array value is stack-owned storage",
+                            value.span(),
+                        ));
+                    }
                     self.bind(name.clone(), inferred);
                 }
                 Decl::DefFn {
@@ -201,6 +208,13 @@ impl TypeChecker {
                         return Err(TypeError::at(
                             "functions returning string values are not yet supported \
                              because string literals currently produce stack-owned storage",
+                            body.span(),
+                        ));
+                    }
+                    if type_contains_dyn_array_value(&ret) {
+                        return Err(TypeError::at(
+                            "functions returning dynamic-array values are not yet supported \
+                             because the fat array value is stack-owned storage",
                             body.span(),
                         ));
                     }
@@ -367,6 +381,28 @@ impl TypeChecker {
                 }
             }
             Expr::Call { func, args } => {
+                // `(array-length a)` / `(length a)` over a dynamic array are
+                // builtins over the fat value's `len` field, yielding an i64.
+                // Handled here (not via a fixed-signature global) so the element
+                // type stays free. `length` is overloaded: on a String it falls
+                // through to the registered `(-> String i64)` builtin below;
+                // `array-length` requires a dynamic array.
+                if let Expr::Var(name) = func.unspan()
+                    && (name == "array-length" || name == "length")
+                    && args.len() == 1
+                {
+                    let arg_ty = self.check_expr(&args[0])?;
+                    if let Type::DynArray(_) = arg_ty {
+                        return Ok(Type::I64);
+                    }
+                    if name == "array-length" {
+                        return Err(TypeError::at(
+                            format!("{} requires a dynamic array, got {}", name, arg_ty),
+                            args[0].span(),
+                        ));
+                    }
+                    // `length` on a non-array: defer to the String builtin.
+                }
                 let func_ty = self.check_expr(func)?;
                 match func_ty {
                     Type::Func(param_tys, ret_ty) => {
@@ -476,6 +512,13 @@ impl TypeChecker {
                         body.span(),
                     ));
                 }
+                if type_contains_dyn_array_value(&ret_ty) {
+                    return Err(TypeError::at(
+                        "lambdas returning dynamic-array values are not yet supported \
+                         because the fat array value is stack-owned storage",
+                        body.span(),
+                    ));
+                }
                 if !self.types_equal(&ret_ty, &body_ty) {
                     return Err(TypeError::at(
                         format!(
@@ -536,6 +579,27 @@ impl TypeChecker {
                 }
                 Ok(Type::Array(Box::new(first_ty), elems.len()))
             }
+            Expr::MakeArray { elem_ty, len } => {
+                let elem_ty = self.enums.resolve_type(elem_ty);
+                let len_ty = self.check_expr(len)?;
+                if !len_ty.is_integer() {
+                    return Err(TypeError::at(
+                        format!("make-array length must be integer, got {}", len_ty),
+                        len.span(),
+                    ));
+                }
+                if !is_dyn_array_elem_supported(&elem_ty) {
+                    return Err(TypeError::at(
+                        format!(
+                            "make-array element type {} is not yet supported \
+                             (dynamic arrays currently hold scalar elements)",
+                            elem_ty
+                        ),
+                        span,
+                    ));
+                }
+                Ok(Type::DynArray(Box::new(elem_ty)))
+            }
             Expr::ArrayRef { expr, index } => {
                 let arr_ty = self.check_expr(expr)?;
                 let idx_ty = self.check_expr(index)?;
@@ -546,7 +610,7 @@ impl TypeChecker {
                     ));
                 }
                 match arr_ty {
-                    Type::Array(elem_ty, _) => Ok(*elem_ty),
+                    Type::Array(elem_ty, _) | Type::DynArray(elem_ty) => Ok(*elem_ty),
                     _ => Err(TypeError::at(
                         format!("array-ref requires array type, got {}", arr_ty),
                         expr.span(),
@@ -865,6 +929,7 @@ impl TypeChecker {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|(a, b)| self.types_equal(a, b))
             }
             (Type::Array(a, an), Type::Array(b, bn)) => an == bn && self.types_equal(a, b),
+            (Type::DynArray(a), Type::DynArray(b)) => self.types_equal(a, b),
             _ => a == b,
         }
     }
@@ -880,6 +945,7 @@ fn type_mentions_enum(ty: &Type, name: &str) -> bool {
         }
         Type::Tuple(elems) => elems.iter().any(|e| type_mentions_enum(e, name)),
         Type::Array(elem, _) => type_mentions_enum(elem, name),
+        Type::DynArray(elem) => type_mentions_enum(elem, name),
         _ => false,
     }
 }
@@ -890,6 +956,7 @@ fn type_contains_enum(ty: &Type) -> bool {
         Type::Func(args, ret) => args.iter().any(type_contains_enum) || type_contains_enum(ret),
         Type::Tuple(elems) => elems.iter().any(type_contains_enum),
         Type::Array(elem, _) => type_contains_enum(elem),
+        Type::DynArray(elem) => type_contains_enum(elem),
         _ => false,
     }
 }
@@ -905,8 +972,35 @@ fn type_contains_string_value(ty: &Type) -> bool {
         Type::String => true,
         Type::Tuple(elems) => elems.iter().any(type_contains_string_value),
         Type::Array(elem, _) => type_contains_string_value(elem),
+        Type::DynArray(elem) => type_contains_string_value(elem),
         _ => false,
     }
+}
+
+/// Whether `ty` is (or nests) a dynamic array value. The fat `{ ptr, len }`
+/// value is built in a stack slot of the *current* function (only the element
+/// buffer it points at is heap-allocated via `tl_alloc`), so — like an enum
+/// constructor or string literal — it must not escape via a global initializer
+/// or a function/lambda return (the fat value would dangle). Dynamic-array
+/// *parameters* are fine: the caller owns the fat value's storage.
+fn type_contains_dyn_array_value(ty: &Type) -> bool {
+    match ty {
+        Type::DynArray(_) => true,
+        Type::Func(args, ret) => {
+            args.iter().any(type_contains_dyn_array_value) || type_contains_dyn_array_value(ret)
+        }
+        Type::Tuple(elems) => elems.iter().any(type_contains_dyn_array_value),
+        Type::Array(elem, _) => type_contains_dyn_array_value(elem),
+        _ => false,
+    }
+}
+
+/// Whether a dynamic array may hold elements of `ty`. This slice supports
+/// scalar element types (integers, bool, char, f64) — exactly the types the
+/// backend can `Load`/`Store` through a computed element address. Nested
+/// arrays, tuples, enums and strings are deferred (see #13).
+fn is_dyn_array_elem_supported(ty: &Type) -> bool {
+    ty.is_integer() || matches!(ty, Type::Bool | Type::Char | Type::F64)
 }
 
 #[cfg(test)]
@@ -1232,5 +1326,84 @@ mod tests {
         let src = r#"(define greeting "hello")"#;
         let err = check(src).unwrap_err();
         assert!(err.msg.contains("string values"), "got: {}", err.msg);
+    }
+
+    // ------------------------------------------------------------------
+    // Dynamic arrays — Issue #13
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_typecheck_make_array_yields_dyn_array() {
+        // `(make-array i64 n)` : (Array i64). A function taking the result and
+        // reading its length type-checks.
+        let src = "(define (f [n : i64]) : i64 (length (make-array i64 n)))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_make_array_length_must_be_integer() {
+        let src = "(define (f) : i64 (length (make-array i64 true)))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg.contains("length must be integer"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_array_ref_on_dyn_array_yields_elem() {
+        let src = "(define (f [a : (Array i64)] [i : i64]) : i64 (array-ref a i))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_array_ref_index_must_be_integer() {
+        let src = "(define (f [a : (Array i64)]) : i64 (array-ref a true))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg.contains("index must be integer"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_length_requires_dyn_array() {
+        let src = "(define (f [n : i64]) : i64 (array-length n))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg.contains("requires a dynamic array"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_dyn_array_return_is_rejected() {
+        // Returning a dynamic-array value is not yet supported (stack-owned fat
+        // value), like returning an enum or string.
+        let src = "(define (mk [n : i64]) : (Array i64) (make-array i64 n))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg.contains("returning dynamic-array values"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_dyn_array_param_is_allowed() {
+        // Dynamic-array parameters are fine: the caller owns the fat value.
+        let src = "(define (sum [a : (Array i64)] [len : i64]) : i64 (array-ref a 0))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_fixed_array_still_works() {
+        // The pre-existing fixed-size `(Array elem N)` type and `array-ref` over
+        // it must keep type-checking.
+        let src = "(define (f [a : (Array i64 3)]) : i64 (array-ref a 0))";
+        assert!(check(src).is_ok());
     }
 }

@@ -273,18 +273,24 @@ impl<'a> Parser<'a> {
                     Token::Ident(s) if s == "Array" => {
                         self.advance()?;
                         let ty = self.parse_type()?;
-                        let size = match &self.current {
-                            Token::Int(n) => *n as usize,
-                            _ => {
-                                return Err(ParseError {
-                                    msg: "array size must be integer".into(),
-                                    span: self.span(),
-                                });
+                        // `(Array elem N)` is a fixed-size array; `(Array elem)`
+                        // (no size) is a dynamic, runtime-sized array.
+                        match &self.current {
+                            Token::Int(n) => {
+                                let size = *n as usize;
+                                self.advance()?;
+                                self.expect(Token::RParen)?;
+                                Ok(Type::Array(Box::new(ty), size))
                             }
-                        };
-                        self.advance()?;
-                        self.expect(Token::RParen)?;
-                        Ok(Type::Array(Box::new(ty), size))
+                            Token::RParen => {
+                                self.advance()?;
+                                Ok(Type::DynArray(Box::new(ty)))
+                            }
+                            _ => Err(ParseError {
+                                msg: "array size must be integer".into(),
+                                span: self.span(),
+                            }),
+                        }
                     }
                     _ => Err(ParseError {
                         msg: format!("expected type constructor, got {:?}", self.current),
@@ -482,6 +488,14 @@ impl<'a> Parser<'a> {
                 }
                 let end = self.expect_rparen_span()?;
                 (Expr::Array(elems), end)
+            }
+            Token::Ident(s) if s == "make-array" => {
+                // (make-array elem-ty len)
+                self.advance()?;
+                let elem_ty = self.parse_type()?;
+                let len = Box::new(self.parse_expr()?);
+                let end = self.expect_rparen_span()?;
+                (Expr::MakeArray { elem_ty, len }, end)
             }
             Token::Ident(s) if s == "array-ref" => {
                 self.advance()?;

@@ -33,6 +33,11 @@ pub enum Type {
     Tuple(Vec<Type>),
     /// Fixed-size array: (Array type size)
     Array(Box<Type>, usize),
+    /// Dynamic (runtime-sized) array: `(Array type)`. As a *value* it is a
+    /// pointer to its inline fat `{ ptr, len }` representation (16 bytes: a
+    /// `tl_alloc`'d element buffer pointer + an i64 element count), so — like an
+    /// enum or string — it is pointer-sized everywhere it flows through the IR.
+    DynArray(Box<Type>),
     /// Nominal sum type (tagged union) declared with `(defenum Name ...)`.
     /// Carries only the enum's name; the variant layout lives in the
     /// typechecker/lowerer's `EnumRegistry`. As a *value* an enum is always a
@@ -75,6 +80,7 @@ impl fmt::Display for Type {
                 write!(f, ")")
             }
             Type::Array(ty, n) => write!(f, "(Array {} {})", ty, n),
+            Type::DynArray(ty) => write!(f, "(Array {})", ty),
             Type::Enum(name) => write!(f, "{}", name),
             Type::Var(name) => write!(f, "'{}'", name),
         }
@@ -94,6 +100,9 @@ impl Type {
             Type::Func(_, _) => 8, // function pointer
             Type::Tuple(elems) => elems.iter().map(|e| e.size()).sum(),
             Type::Array(ty, n) => ty.size() * n,
+            // A dynamic-array *value* is a pointer to its inline `{ ptr, len }`
+            // storage.
+            Type::DynArray(_) => 8,
             // An enum *value* is a pointer to its inline tagged storage.
             Type::Enum(_) => 8,
             // A string *value* is a pointer to its inline `{ ptr, len }` storage.
@@ -113,6 +122,7 @@ impl Type {
             Type::Func(_, _) => 8,
             Type::Tuple(elems) => elems.iter().map(|e| e.align()).max().unwrap_or(1),
             Type::Array(ty, _) => ty.align(),
+            Type::DynArray(_) => 8,
             Type::Enum(_) => 8,
             Type::String => 8,
             Type::Var(_) => panic!("cannot compute alignment of type variable"),
@@ -168,3 +178,10 @@ pub const STRING_FAT_SIZE: usize = 16;
 pub const STRING_PTR_OFFSET: usize = 0;
 /// Byte offset of the length field within the fat-string storage.
 pub const STRING_LEN_OFFSET: usize = 8;
+
+/// Size in bytes of a dynamic array's inline fat `{ ptr, len }` value.
+pub const DYN_ARRAY_FAT_SIZE: usize = 16;
+/// Byte offset of the element-buffer pointer within the fat array value.
+pub const DYN_ARRAY_PTR_OFFSET: usize = 0;
+/// Byte offset of the i64 element count within the fat array value.
+pub const DYN_ARRAY_LEN_OFFSET: usize = 8;

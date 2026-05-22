@@ -142,6 +142,10 @@ pub enum Expr {
     TupleRef { expr: Box<Expr>, index: usize },
     /// Array construction: (array e1 e2 ...)
     Array(Vec<Expr>),
+    /// Dynamic-array construction: `(make-array elem-ty len)`. Allocates a
+    /// runtime-sized buffer of `len` elements of type `elem-ty` via `tl_alloc`
+    /// and yields a fat `{ ptr, len }` array value.
+    MakeArray { elem_ty: Type, len: Box<Expr> },
     /// Array access: (array-ref expr index)
     ArrayRef { expr: Box<Expr>, index: Box<Expr> },
     /// While loop: (while cond body)
@@ -273,6 +277,7 @@ impl EnumRegistry {
             ),
             Type::Tuple(elems) => Type::Tuple(elems.iter().map(|e| self.resolve_type(e)).collect()),
             Type::Array(elem, n) => Type::Array(Box::new(self.resolve_type(elem)), *n),
+            Type::DynArray(elem) => Type::DynArray(Box::new(self.resolve_type(elem))),
             other => other.clone(),
         }
     }

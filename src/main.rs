@@ -36,6 +36,14 @@ fn parse_or_exit(source: &str, file: &str) -> Program {
     }
 }
 
+fn typecheck_or_exit(prog: &Program, source: &str, file: &str) {
+    let mut tc = TypeChecker::new();
+    if let Err(e) = tc.check_program(prog) {
+        eprint!("{}", format_diagnostic(&e.to_diagnostic(), source, file));
+        std::process::exit(1);
+    }
+}
+
 fn print_usage() {
     eprintln!("typelisp — A typed Lisp/Scheme dialect with x86_64 backend");
     eprintln!();
@@ -99,14 +107,8 @@ fn main() {
             let file = PathBuf::from(&args[2]);
             let source = fs::read_to_string(&file).expect("Failed to read file");
             let prog = parse_or_exit(&source, &file.display().to_string());
-            let mut tc = TypeChecker::new();
-            match tc.check_program(&prog) {
-                Ok(()) => println!("Type checking passed!"),
-                Err(e) => {
-                    eprintln!("Type error: {}", e);
-                    std::process::exit(1);
-                }
-            }
+            typecheck_or_exit(&prog, &source, &file.display().to_string());
+            println!("Type checking passed!");
         }
         "compile" => {
             if args.len() < 3 {
@@ -135,8 +137,7 @@ fn main() {
 
             let source = fs::read_to_string(&file).expect("Failed to read file");
             let prog = parse_or_exit(&source, &file.display().to_string());
-            let mut tc = TypeChecker::new();
-            tc.check_program(&prog).expect("Type checking failed");
+            typecheck_or_exit(&prog, &source, &file.display().to_string());
 
             if emit_ir {
                 let mut ir_prog = lower_program(&prog);
@@ -169,8 +170,7 @@ fn main() {
             let file = PathBuf::from(&args[2]);
             let source = fs::read_to_string(&file).expect("Failed to read file");
             let prog = parse_or_exit(&source, &file.display().to_string());
-            let mut tc = TypeChecker::new();
-            tc.check_program(&prog).expect("Type checking failed");
+            typecheck_or_exit(&prog, &source, &file.display().to_string());
 
             let mut ir_prog = lower_program(&prog);
             Optimizer::optimize(&mut ir_prog);

@@ -56,6 +56,12 @@ impl<'a> Parser<'a> {
         self.current_span
     }
 
+    fn expect_rparen_span(&mut self) -> Result<Span, ParseError> {
+        let span = self.span();
+        self.expect(Token::RParen)?;
+        Ok(span)
+    }
+
     fn advance(&mut self) -> Result<(), ParseError> {
         let next = self.lexer.next_spanned().map_err(|e| ParseError {
             msg: e.msg.clone(),
@@ -258,40 +264,41 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_expr(&mut self) -> Result<Expr, ParseError> {
+        let span = self.span();
         match &self.current {
             Token::Int(n) => {
                 let val = *n;
                 self.advance()?;
-                Ok(Expr::Literal(Literal::Int(val)))
+                Ok(Expr::spanned(Expr::Literal(Literal::Int(val)), span))
             }
             Token::Float(n) => {
                 let val = *n;
                 self.advance()?;
-                Ok(Expr::Literal(Literal::Float(val)))
+                Ok(Expr::spanned(Expr::Literal(Literal::Float(val)), span))
             }
             Token::Bool(b) => {
                 let val = *b;
                 self.advance()?;
-                Ok(Expr::Literal(Literal::Bool(val)))
+                Ok(Expr::spanned(Expr::Literal(Literal::Bool(val)), span))
             }
             Token::Char(c) => {
                 let val = *c;
                 self.advance()?;
-                Ok(Expr::Literal(Literal::Char(val)))
+                Ok(Expr::spanned(Expr::Literal(Literal::Char(val)), span))
             }
             Token::String(s) => {
                 let val = s.clone();
                 self.advance()?;
-                Ok(Expr::Literal(Literal::String(val)))
+                Ok(Expr::spanned(Expr::Literal(Literal::String(val)), span))
             }
             Token::Unit => {
                 self.advance()?;
-                Ok(Expr::Literal(Literal::Unit))
+                Ok(Expr::spanned(Expr::Literal(Literal::Unit), span))
             }
             Token::Ident(s) => {
                 let name = s.clone();
                 self.advance()?;
-                Ok(Expr::Var(name))
+                Ok(Expr::spanned(Expr::Var(name), span))
             }
             Token::LParen => self.parse_list_expr(),
             _ => Err(ParseError {
@@ -302,20 +309,24 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_list_expr(&mut self) -> Result<Expr, ParseError> {
+        let start = self.span();
         self.expect(Token::LParen)?;
 
-        match &self.current {
+        let (expr, end) = match &self.current {
             Token::If => {
                 self.advance()?;
                 let cond = Box::new(self.parse_expr()?);
                 let then_branch = Box::new(self.parse_expr()?);
                 let else_branch = Box::new(self.parse_expr()?);
-                self.expect(Token::RParen)?;
-                Ok(Expr::If {
-                    cond,
-                    then_branch,
-                    else_branch,
-                })
+                let end = self.expect_rparen_span()?;
+                (
+                    Expr::If {
+                        cond,
+                        then_branch,
+                        else_branch,
+                    },
+                    end,
+                )
             }
             Token::Let => {
                 self.advance()?;
@@ -336,8 +347,8 @@ impl<'a> Parser<'a> {
                 }
                 self.advance()?; // consume RParen
                 let body = Box::new(self.parse_expr()?);
-                self.expect(Token::RParen)?;
-                Ok(Expr::Let { bindings, body })
+                let end = self.expect_rparen_span()?;
+                (Expr::Let { bindings, body }, end)
             }
             Token::Lambda => {
                 self.advance()?;
@@ -359,15 +370,15 @@ impl<'a> Parser<'a> {
                     None
                 };
                 let body = Box::new(self.parse_expr()?);
-                self.expect(Token::RParen)?;
-                Ok(Expr::Lambda { params, ret, body })
+                let end = self.expect_rparen_span()?;
+                (Expr::Lambda { params, ret, body }, end)
             }
             Token::While => {
                 self.advance()?;
                 let cond = Box::new(self.parse_expr()?);
                 let body = Box::new(self.parse_expr()?);
-                self.expect(Token::RParen)?;
-                Ok(Expr::While { cond, body })
+                let end = self.expect_rparen_span()?;
+                (Expr::While { cond, body }, end)
             }
             Token::Begin => {
                 self.advance()?;
@@ -375,23 +386,23 @@ impl<'a> Parser<'a> {
                 while self.current != Token::RParen {
                     exprs.push(self.parse_expr()?);
                 }
-                self.advance()?;
-                Ok(Expr::Begin(exprs))
+                let end = self.expect_rparen_span()?;
+                (Expr::Begin(exprs), end)
             }
             Token::Set => {
                 self.advance()?;
                 let name = self.expect_ident()?;
                 let value = Box::new(self.parse_expr()?);
-                self.expect(Token::RParen)?;
-                Ok(Expr::Set(name, value))
+                let end = self.expect_rparen_span()?;
+                (Expr::Set(name, value), end)
             }
             Token::Ann => {
                 self.advance()?;
                 let expr = Box::new(self.parse_expr()?);
                 self.expect(Token::Colon)?;
                 let ty = self.parse_type()?;
-                self.expect(Token::RParen)?;
-                Ok(Expr::Ann { expr, ty })
+                let end = self.expect_rparen_span()?;
+                (Expr::Ann { expr, ty }, end)
             }
             Token::Ident(s) if s == "cast" => {
                 // (cast expr : ty)
@@ -399,8 +410,8 @@ impl<'a> Parser<'a> {
                 let expr = Box::new(self.parse_expr()?);
                 self.expect(Token::Colon)?;
                 let ty = self.parse_type()?;
-                self.expect(Token::RParen)?;
-                Ok(Expr::Cast { expr, ty })
+                let end = self.expect_rparen_span()?;
+                (Expr::Cast { expr, ty }, end)
             }
             Token::Ident(s) if s == "tuple" => {
                 self.advance()?;
@@ -408,8 +419,8 @@ impl<'a> Parser<'a> {
                 while self.current != Token::RParen {
                     elems.push(self.parse_expr()?);
                 }
-                self.advance()?;
-                Ok(Expr::Tuple(elems))
+                let end = self.expect_rparen_span()?;
+                (Expr::Tuple(elems), end)
             }
             Token::Ident(s) if s == "tuple-ref" => {
                 self.advance()?;
@@ -424,8 +435,8 @@ impl<'a> Parser<'a> {
                     }
                 };
                 self.advance()?;
-                self.expect(Token::RParen)?;
-                Ok(Expr::TupleRef { expr, index })
+                let end = self.expect_rparen_span()?;
+                (Expr::TupleRef { expr, index }, end)
             }
             Token::Ident(s) if s == "array" => {
                 self.advance()?;
@@ -433,15 +444,15 @@ impl<'a> Parser<'a> {
                 while self.current != Token::RParen {
                     elems.push(self.parse_expr()?);
                 }
-                self.advance()?;
-                Ok(Expr::Array(elems))
+                let end = self.expect_rparen_span()?;
+                (Expr::Array(elems), end)
             }
             Token::Ident(s) if s == "array-ref" => {
                 self.advance()?;
                 let expr = Box::new(self.parse_expr()?);
                 let index = Box::new(self.parse_expr()?);
-                self.expect(Token::RParen)?;
-                Ok(Expr::ArrayRef { expr, index })
+                let end = self.expect_rparen_span()?;
+                (Expr::ArrayRef { expr, index }, end)
             }
             _ => {
                 // Function call or binary operator
@@ -449,8 +460,8 @@ impl<'a> Parser<'a> {
                 if let Some(op) = op {
                     let lhs = Box::new(self.parse_expr()?);
                     let rhs = Box::new(self.parse_expr()?);
-                    self.expect(Token::RParen)?;
-                    Ok(Expr::Binary { op, lhs, rhs })
+                    let end = self.expect_rparen_span()?;
+                    (Expr::Binary { op, lhs, rhs }, end)
                 } else {
                     // Function call
                     let func = Box::new(self.parse_expr()?);
@@ -458,11 +469,13 @@ impl<'a> Parser<'a> {
                     while self.current != Token::RParen {
                         args.push(self.parse_expr()?);
                     }
-                    self.advance()?;
-                    Ok(Expr::Call { func, args })
+                    let end = self.expect_rparen_span()?;
+                    (Expr::Call { func, args }, end)
                 }
             }
-        }
+        };
+
+        Ok(Expr::spanned(expr, start.merge(&end)))
     }
 
     fn try_parse_binop(&mut self) -> Option<BinOp> {
@@ -516,7 +529,8 @@ mod tests {
             Decl::Def { name, ty, value } => {
                 assert_eq!(name, "x");
                 assert_eq!(*ty, Some(Type::I64));
-                assert_eq!(*value, Expr::Literal(Literal::Int(42)));
+                assert_eq!(value.unspan(), &Expr::Literal(Literal::Int(42)));
+                assert_eq!(value.span(), Span::new(1, 17, 1, 19));
             }
             _ => panic!("expected Def"),
         }
@@ -535,6 +549,23 @@ mod tests {
                 assert_eq!(ret, &Type::I64);
             }
             _ => panic!("expected DefFn"),
+        }
+    }
+
+    #[test]
+    fn test_parse_expression_nodes_carry_spans() {
+        let prog = parse("(define (add [a : i64] [b : i64]) : i64 (+ a b))").unwrap();
+        let body = match &prog.decls[0] {
+            Decl::DefFn { body, .. } => body,
+            _ => panic!("expected DefFn"),
+        };
+        assert_eq!(body.span(), Span::new(1, 41, 1, 48));
+        match body.unspan() {
+            Expr::Binary { lhs, rhs, .. } => {
+                assert_eq!(lhs.span(), Span::new(1, 44, 1, 45));
+                assert_eq!(rhs.span(), Span::new(1, 46, 1, 47));
+            }
+            other => panic!("expected binary body, got {:?}", other),
         }
     }
 

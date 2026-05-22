@@ -427,6 +427,10 @@ impl X86_64Backend {
         let xmm_regs = [
             "%xmm0", "%xmm1", "%xmm2", "%xmm3", "%xmm4", "%xmm5", "%xmm6", "%xmm7",
         ];
+        // System V AMD64: integer and floating-point arguments consume
+        // *independent* register sequences, so we track two counters. Each
+        // argument register is written at the width of its declared type so a
+        // narrow parameter does not clobber adjacent slots.
         let mut int_param = 0;
         let mut float_param = 0;
         for (var, ty) in &func.params {
@@ -725,6 +729,8 @@ impl X86_64Backend {
                             self.emit("    subsd %xmm0, %xmm1");
                             self.emit("    movapd %xmm1, %xmm0");
                         }
+                        // Logical/bitwise complement are not defined on f64 and
+                        // are rejected by validation/typechecking before codegen.
                         IrUnOp::Not | IrUnOp::BitNot => {}
                     }
                     self.store_xmm_value("%xmm0", dst_offset);
@@ -1012,6 +1018,8 @@ impl X86_64Backend {
                 self.store_gpr_value("%rax", dst_offset, result_ty);
                 return;
             }
+            // Integer-only operators (modulo, logical and bitwise/shift) are
+            // not defined on f64 and are rejected by validation before codegen.
             IrBinOp::Mod
             | IrBinOp::And
             | IrBinOp::Or
@@ -1049,6 +1057,9 @@ impl X86_64Backend {
         }
     }
 
+    /// Map a 64-bit register name (e.g. `%rax`) to its 32-bit sub-register
+    /// (`%eax`). A `movl` into the 32-bit form zero-extends into the full
+    /// 64-bit register on x86_64.
     fn gpr32(reg: &str) -> &str {
         match reg {
             "%rax" => "%eax",
@@ -1082,6 +1093,8 @@ impl X86_64Backend {
         }
     }
 
+    /// Map a 64-bit register name to its 8-bit (low byte) sub-register
+    /// (`%rax`->`%al`).
     fn gpr8(reg: &str) -> &str {
         match reg {
             "%rax" => "%al",

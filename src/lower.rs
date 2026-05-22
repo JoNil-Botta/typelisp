@@ -4142,4 +4142,106 @@ mod tests {
             .count();
         assert_eq!(alloc_calls, 1, "expected one storage tl_alloc Call");
     }
+
+    #[test]
+    fn test_lower_string_payload_variant_construct_stores_pointer() {
+        // GAP (1): constructing a String-payload variant stores the String value
+        // (an 8-byte pointer to inline `{ ptr, len }` storage) into the variant's
+        // payload slot at offset 8 (just past the tag). The enum storage is sized
+        // for the largest payload, here tag(8) + String pointer(8) = 16 bytes.
+        let src = "(defenum Token (TIdent String) (TEnd))\n\
+                   (define (mk [s : String]) : Token (TIdent s))";
+        let prog = parse(src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().position(|f| f.name == "mk").unwrap();
+
+        // Returned enum is heap-promoted: a `tl_alloc(16)` for the enum storage.
+        let has_enum_alloc = ir.functions[f].blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                matches!(
+                    i,
+                    Instruction::Call { func, args, .. }
+                        if func == "tl_alloc" && args == &[Value::ConstI64(16)]
+                )
+            })
+        });
+        assert!(
+            has_enum_alloc,
+            "expected a tl_alloc(16) for the enum storage"
+        );
+
+        // The String payload is stored (as a `String`-typed value, i.e. the
+        // pointer) at payload offset 8 — preceded by a Gep to offset 8.
+        let stores_string_payload = ir.functions[f]
+            .blocks
+            .iter()
+            .flat_map(|b| &b.instructions)
+            .any(|i| {
+                matches!(
+                    i,
+                    Instruction::Store {
+                        ty: Type::String,
+                        ..
+                    }
+                )
+            });
+        assert!(
+            stores_string_payload,
+            "expected the String payload to be stored into the variant slot"
+        );
+        let geps_payload_offset = ir.functions[f].blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                matches!(
+                    i,
+                    Instruction::Gep {
+                        offset: Value::ConstI64(8),
+                        ..
+                    }
+                )
+            })
+        });
+        assert!(geps_payload_offset, "expected a Gep to payload offset 8");
+    }
+
+    #[test]
+    fn test_lower_struct_payload_variant_heap_allocs_enum_and_struct() {
+        // GAP (1), "or other aggregate": returning a variant whose payload is a
+        // struct heap-promotes BOTH the enum storage and the nested struct (the
+        // escape analysis recurses into the enum's variant fields). Without the
+        // size/align fix this previously panicked computing the layout of the
+        // unresolved nominal payload type.
+        let src = "(defstruct Pos (line i64) (col i64))\n\
+                   (defenum Tok (TPos Pos) (TEnd))\n\
+                   (define (mk [l : i64]) : Tok (TPos (Pos l 7)))";
+        let prog = parse(src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().position(|f| f.name == "mk").unwrap();
+
+        // Two heap allocations: the inner Pos struct and the outer Tok enum.
+        let alloc_calls = count(
+            &ir,
+            f,
+            |i| matches!(i, Instruction::Call { func, .. } if func == "tl_alloc"),
+        );
+        assert_eq!(
+            alloc_calls, 2,
+            "expected tl_alloc for both the enum and the nested struct payload"
+        );
+        // Neither escaping aggregate uses a frame `Array<i8>` storage slot
+        // (scalars such as the `l` param may still use a frame Alloc, but the
+        // aggregate storage must be heap, not an inline byte buffer).
+        let frame_agg_slots = count(&ir, f, |i| {
+            matches!(
+                i,
+                Instruction::Alloc {
+                    ty: Type::Array(elem, _),
+                    ..
+                } if **elem == Type::I8
+            )
+        });
+        assert_eq!(
+            frame_agg_slots, 0,
+            "escaping aggregates must not use frame byte-buffer storage"
+        );
+    }
 }

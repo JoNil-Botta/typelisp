@@ -117,7 +117,17 @@ impl Type {
             Type::Struct(_) => 8,
             // A string *value* is a pointer to its inline `{ ptr, len }` storage.
             Type::String => 8,
-            Type::Var(_) => panic!("cannot compute size of type variable"),
+            // An unresolved nominal name (a `defstruct`/`defenum` type that has
+            // not yet been resolved to `Type::Struct`/`Type::Enum`) is, like
+            // every aggregate, represented as an 8-byte pointer to inline
+            // storage. Layout queries can reach such a `Var` for an enum
+            // variant payload whose type names another aggregate (e.g.
+            // `(defenum T (V Pos))` with `Pos` a struct), since enum layout is
+            // computed over the raw declared field types. Treating it as
+            // pointer-sized keeps layout total and consistent with the concrete
+            // nominal cases above. (A true generic type variable never reaches
+            // codegen layout — the language is monomorphic.)
+            Type::Var(_) => 8,
         }
     }
 
@@ -136,7 +146,10 @@ impl Type {
             Type::Enum(_) => 8,
             Type::Struct(_) => 8,
             Type::String => 8,
-            Type::Var(_) => panic!("cannot compute alignment of type variable"),
+            // See the matching `size()` arm: an unresolved nominal name is an
+            // 8-byte pointer to inline storage, 8-byte aligned like every other
+            // aggregate value.
+            Type::Var(_) => 8,
         }
     }
 

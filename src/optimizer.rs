@@ -151,6 +151,17 @@ impl Optimizer {
                 Some(Value::ConstBool(a && b))
             }
             (BinOp::Or, Value::ConstBool(a), Value::ConstBool(b)) => Some(Value::ConstBool(a || b)),
+            // Bitwise/shift folding on i64 constants. Shifts mask the amount to
+            // 0..63 to match the x86_64 hardware behaviour the backend emits.
+            (BinOp::BitAnd, Value::ConstI64(a), Value::ConstI64(b)) => Some(Value::ConstI64(a & b)),
+            (BinOp::BitOr, Value::ConstI64(a), Value::ConstI64(b)) => Some(Value::ConstI64(a | b)),
+            (BinOp::BitXor, Value::ConstI64(a), Value::ConstI64(b)) => Some(Value::ConstI64(a ^ b)),
+            (BinOp::Shl, Value::ConstI64(a), Value::ConstI64(b)) => {
+                Some(Value::ConstI64(a.wrapping_shl(b as u32 & 63)))
+            }
+            (BinOp::Shr, Value::ConstI64(a), Value::ConstI64(b)) => {
+                Some(Value::ConstI64(a.wrapping_shr(b as u32 & 63)))
+            }
             (BinOp::Add, Value::ConstI32(a), Value::ConstI32(b)) => Some(Value::ConstI32(a + b)),
             (BinOp::Sub, Value::ConstI32(a), Value::ConstI32(b)) => Some(Value::ConstI32(a - b)),
             (BinOp::Mul, Value::ConstI32(a), Value::ConstI32(b)) => Some(Value::ConstI32(a * b)),
@@ -174,6 +185,8 @@ impl Optimizer {
             (UnOp::Neg, Value::ConstI32(a)) => Some(Value::ConstI32(-a)),
             (UnOp::Neg, Value::ConstF64(a)) => Some(Value::ConstF64(-a)),
             (UnOp::Not, Value::ConstBool(a)) => Some(Value::ConstBool(!a)),
+            (UnOp::BitNot, Value::ConstI64(a)) => Some(Value::ConstI64(!a)),
+            (UnOp::BitNot, Value::ConstI32(a)) => Some(Value::ConstI32(!a)),
             _ => None,
         }
     }
@@ -219,6 +232,7 @@ impl Optimizer {
             }
             Instruction::UnOp { src, .. } => Self::add_value_uses(src, used),
             Instruction::Mov { src, .. } => Self::add_value_uses(src, used),
+            Instruction::Cast { src, .. } => Self::add_value_uses(src, used),
             Instruction::Load { src, .. } => Self::add_value_uses(src, used),
             Instruction::Store { dst, src, .. } => {
                 Self::add_value_uses(dst, used);
@@ -394,6 +408,7 @@ impl Optimizer {
             }
             Instruction::UnOp { src, .. } => substitute(src),
             Instruction::Mov { src, .. } => substitute(src),
+            Instruction::Cast { src, .. } => substitute(src),
             Instruction::Load { src, .. } => substitute(src),
             Instruction::Store { dst, src, .. } => {
                 substitute(dst);

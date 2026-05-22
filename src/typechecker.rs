@@ -211,30 +211,19 @@ impl TypeChecker {
                     name,
                     params,
                     ret,
-                    body,
+                    // The body is checked in the second pass below; this pass
+                    // only binds the function signature.
+                    body: _,
                 } => {
                     let ret = self.enums.resolve_type(ret);
-                    if type_contains_enum(&ret) {
-                        return Err(TypeError::at(
-                            "functions returning enum values are not yet supported \
-                             because enum constructors currently produce stack-owned storage",
-                            body.span(),
-                        ));
-                    }
-                    if type_contains_string_value(&ret) {
-                        return Err(TypeError::at(
-                            "functions returning string values are not yet supported \
-                             because string literals currently produce stack-owned storage",
-                            body.span(),
-                        ));
-                    }
-                    if type_contains_dyn_array_value(&ret) {
-                        return Err(TypeError::at(
-                            "functions returning dynamic-array values are not yet supported \
-                             because the fat array value is stack-owned storage",
-                            body.span(),
-                        ));
-                    }
+                    // Returning enum / String / DynArray values is now supported:
+                    // the lowerer heap-promotes (via `tl_alloc`) the storage for
+                    // aggregate constructors that can escape via `return`, so the
+                    // returned pointer outlives the frame instead of dangling
+                    // (see `type_kind_escapes_via_return` in src/lower.rs). The
+                    // former hard rejections here have been lifted. Escapes via
+                    // *global* initializers / *extern* values are still rejected
+                    // (those storage paths are not yet heap-promoted).
                     let func_ty = Type::Func(
                         params
                             .iter()
@@ -1198,14 +1187,14 @@ mod tests {
     }
 
     #[test]
-    fn test_typecheck_enum_return_is_rejected() {
+    fn test_typecheck_enum_return_is_accepted() {
+        // Returning an enum value is now accepted: the lowerer heap-promotes the
+        // constructor storage so the returned pointer outlives the frame. This
+        // was previously a hard rejection ("returning enum values are not yet
+        // supported"); that guard has been lifted (heap-promote escaping
+        // aggregates, refs #13/#45).
         let src = format!("{SHAPE}\n(define (mk) : Shape (Circle 1))");
-        let err = check(&src).unwrap_err();
-        assert!(
-            err.msg.contains("returning enum values"),
-            "got: {}",
-            err.msg
-        );
+        assert!(check(&src).is_ok());
     }
 
     #[test]
@@ -1464,16 +1453,13 @@ mod tests {
     }
 
     #[test]
-    fn test_typecheck_string_return_is_rejected() {
-        // Returning a string is not yet supported (stack-owned storage), like
-        // returning an enum.
+    fn test_typecheck_string_return_is_accepted() {
+        // Returning a string is now accepted: the lowerer heap-promotes the fat
+        // string storage so the returned pointer outlives the frame. This was
+        // previously a hard rejection ("returning string values are not yet
+        // supported"); that guard has been lifted (refs #13/#45).
         let src = r#"(define (mk) : String "hi")"#;
-        let err = check(src).unwrap_err();
-        assert!(
-            err.msg.contains("returning string values"),
-            "got: {}",
-            err.msg
-        );
+        assert!(check(src).is_ok());
     }
 
     #[test]
@@ -1535,16 +1521,14 @@ mod tests {
     }
 
     #[test]
-    fn test_typecheck_dyn_array_return_is_rejected() {
-        // Returning a dynamic-array value is not yet supported (stack-owned fat
-        // value), like returning an enum or string.
+    fn test_typecheck_dyn_array_return_is_accepted() {
+        // Returning a dynamic-array value is now accepted: the lowerer
+        // heap-promotes the fat `{ ptr, len }` value (the element buffer was
+        // already heap) so the returned pointer outlives the frame. This was
+        // previously a hard rejection ("returning dynamic-array values are not
+        // yet supported"); that guard has been lifted (refs #13/#45).
         let src = "(define (mk [n : i64]) : (Array i64) (make-array i64 n))";
-        let err = check(src).unwrap_err();
-        assert!(
-            err.msg.contains("returning dynamic-array values"),
-            "got: {}",
-            err.msg
-        );
+        assert!(check(src).is_ok());
     }
 
     #[test]

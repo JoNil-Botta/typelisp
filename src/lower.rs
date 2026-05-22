@@ -4,7 +4,7 @@ use crate::types::{
     DYN_ARRAY_FAT_SIZE, DYN_ARRAY_LEN_OFFSET, DYN_ARRAY_PTR_OFFSET, STRING_FAT_SIZE,
     STRING_LEN_OFFSET, STRING_PTR_OFFSET, Type,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Lowers a typed AST program into IR.
 pub fn lower_program(prog: &ast::Program) -> Program {
@@ -201,8 +201,83 @@ struct FnLowerer {
     enums: ast::EnumRegistry,
     params: Vec<(VarId, Type)>,
     locals: Vec<(VarId, Type)>,
-    #[allow(dead_code)]
+    /// The enclosing function's (resolved) return type. Drives heap promotion:
+    /// an aggregate constructor is heap-allocated only when a value of its kind
+    /// can reach this return type (see `type_kind_escapes_via_return`).
     ret: Type,
+}
+
+/// The kind of escaping aggregate whose constructor storage may be
+/// heap-promoted so the value can be returned without dangling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AggKind {
+    Enum,
+    String,
+    DynArray,
+}
+
+/// Whether a value of aggregate `kind` can escape the current function via its
+/// `return` — i.e. whether the (resolved) return type `ret` is, or structurally
+/// nests, that aggregate kind. Returned enum types are expanded through the
+/// registry, so payload aggregates are promoted too: returning `(Box "hi")`
+/// must heap-promote both the outer enum storage and the inner string fat value.
+/// This is the conservative, sound escape rule used to decide heap promotion of
+/// constructor storage:
+///
+///   * SOUND: a frame-allocated aggregate can never reach a `Return` whose type
+///     does not contain that aggregate kind, so leaving such constructors on the
+///     frame can never return a dangling pointer. We only ever heap-promote when
+///     the return type *can* carry the kind out of the frame.
+///   * SELECTIVE: a function returning `i64` keeps all its local aggregates on
+///     the frame; even a function returning `String` keeps its local *enum*
+///     constructors on the frame (different kind). The conservativeness is that
+///     within a function that *does* return a given kind, *all* constructors of
+///     that kind are promoted, including ones that happen not to escape.
+///
+/// Nesting (`Tuple`/`Array`/`DynArray` and enum variant fields) is matched so a
+/// value returned inside an aggregate is also promoted.
+fn type_kind_escapes_via_return(ret: &Type, kind: AggKind, enums: &ast::EnumRegistry) -> bool {
+    let mut seen_enums = HashSet::new();
+    type_kind_escapes_via_return_inner(ret, kind, enums, &mut seen_enums)
+}
+
+fn type_kind_escapes_via_return_inner(
+    ty: &Type,
+    kind: AggKind,
+    enums: &ast::EnumRegistry,
+    seen_enums: &mut HashSet<String>,
+) -> bool {
+    match ty {
+        Type::Enum(name) => {
+            if kind == AggKind::Enum {
+                return true;
+            }
+            if !seen_enums.insert(name.clone()) {
+                return false;
+            }
+            let found = enums.variants(name).is_some_and(|variants| {
+                variants.iter().any(|variant| {
+                    variant.fields.iter().any(|field| {
+                        let field = enums.resolve_type(field);
+                        type_kind_escapes_via_return_inner(&field, kind, enums, seen_enums)
+                    })
+                })
+            });
+            seen_enums.remove(name);
+            found
+        }
+        Type::String => kind == AggKind::String,
+        Type::DynArray(elem) => {
+            kind == AggKind::DynArray
+                || type_kind_escapes_via_return_inner(elem, kind, enums, seen_enums)
+        }
+        Type::Tuple(elems) => elems
+            .iter()
+            .any(|elem| type_kind_escapes_via_return_inner(elem, kind, enums, seen_enums)),
+        Type::Array(elem, _) => type_kind_escapes_via_return_inner(elem, kind, enums, seen_enums),
+        Type::Func(_, _) => false,
+        _ => false,
+    }
 }
 
 impl FnLowerer {
@@ -722,32 +797,68 @@ impl FnLowerer {
         Value::Var(dst)
     }
 
-    /// Construct an enum value: reserve inline `{ tag, payload }` storage,
-    /// store the variant tag, store each payload field at its byte offset, and
-    /// yield a pointer to the storage (the runtime representation of an enum
-    /// value). Uses only Alloc/AddrOf/Gep/Store — no new IR.
-    fn lower_construct(&mut self, enum_name: &str, tag: usize, args: &[Value]) -> Value {
-        let size = self.enums.enum_size(enum_name);
-        let enum_ty = Type::Enum(enum_name.to_string());
-
+    /// Reserve `size` bytes of inline aggregate storage and yield a
+    /// pointer-typed (`storage_ty`) `Value::Var` to it.
+    ///
+    /// Storage placement is selected by `promote`:
+    ///   - `promote == false`: a **frame** slot — emit `Alloc` (an i8 array of
+    ///     exact `size`) then `AddrOf` to materialize its address. This is the
+    ///     historical behavior; the value lives only for the current frame.
+    ///   - `promote == true`: the **heap** — emit `Call tl_alloc(size)` (the same
+    ///     runtime bump allocator `lower_make_array` uses for element buffers),
+    ///     whose returned pointer is the storage address. A heap pointer outlives
+    ///     the frame, so the value may safely escape via `return`.
+    ///
+    /// Heap promotion is applied only when the constructed value can reach the
+    /// enclosing function's `return` (see `escapes_via_return`), so non-escaping
+    /// local aggregates keep the cheaper frame allocation.
+    fn reserve_aggregate_storage(&mut self, size: usize, storage_ty: Type, promote: bool) -> Value {
+        if promote {
+            // base = tl_alloc(size) : a heap pointer to `size` bytes. The
+            // returned pointer *is* the storage address, so no Alloc/AddrOf
+            // pair is needed; downstream Gep/Store operate on it unchanged.
+            let base = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(base),
+                func: "tl_alloc".into(),
+                args: vec![Value::ConstI64(size as i64)],
+                ty: storage_ty.clone(),
+            });
+            self.record_local(base, storage_ty);
+            return Value::Var(base);
+        }
         // Reserve `size` bytes of inline storage as an i8 array (align 1, exact
         // size) so the backend allocates the right number of bytes.
         let slot = self.builder.fresh_var();
-        let storage_ty = Type::Array(Box::new(Type::I8), size);
+        let slot_ty = Type::Array(Box::new(Type::I8), size);
         self.builder.emit(Instruction::Alloc {
             var: slot,
-            ty: storage_ty.clone(),
+            ty: slot_ty.clone(),
         });
-        self.record_local(slot, storage_ty);
+        self.record_local(slot, slot_ty);
 
-        // base = &slot : pointer to the storage.
+        // base = &slot : pointer to the frame storage.
         let base = self.builder.fresh_var();
         self.builder.emit(Instruction::AddrOf {
             dst: base,
             src: slot,
         });
-        self.record_local(base, enum_ty.clone());
-        let base_val = Value::Var(base);
+        self.record_local(base, storage_ty);
+        Value::Var(base)
+    }
+
+    /// Construct an enum value: reserve inline `{ tag, payload }` storage,
+    /// store the variant tag, store each payload field at its byte offset, and
+    /// yield a pointer to the storage (the runtime representation of an enum
+    /// value). Uses only Alloc/AddrOf/Gep/Store (frame) or Call/Gep/Store
+    /// (heap-promoted) — no new IR.
+    fn lower_construct(&mut self, enum_name: &str, tag: usize, args: &[Value]) -> Value {
+        let size = self.enums.enum_size(enum_name);
+        let enum_ty = Type::Enum(enum_name.to_string());
+
+        // Heap-promote when an enum value can escape via the function's return.
+        let promote = type_kind_escapes_via_return(&self.ret, AggKind::Enum, &self.enums);
+        let base_val = self.reserve_aggregate_storage(size, enum_ty.clone(), promote);
 
         // Store the tag at offset 0.
         let tag_ptr = self.gep_byte(&base_val, 0);
@@ -780,27 +891,13 @@ impl FnLowerer {
     /// fat-string storage `{ ptr, len }`, store the data pointer (a `ConstStr`
     /// the backend interns into `.rodata`) at offset 0, store the byte length at
     /// offset 8, and yield a pointer to the storage (the runtime representation
-    /// of a string value). Uses only Alloc/AddrOf/Gep/Store — no new IR shape,
-    /// mirroring how enum values are built (`lower_construct`).
+    /// of a string value). Uses only Alloc/AddrOf/Gep/Store (frame) or
+    /// Call/Gep/Store (heap-promoted) — no new IR shape, mirroring how enum
+    /// values are built (`lower_construct`).
     fn lower_string_literal(&mut self, text: &str) -> Value {
-        // Reserve the fat-string storage as an i8 array (align 1, exact size) so
-        // the backend allocates exactly 16 bytes.
-        let slot = self.builder.fresh_var();
-        let storage_ty = Type::Array(Box::new(Type::I8), STRING_FAT_SIZE);
-        self.builder.emit(Instruction::Alloc {
-            var: slot,
-            ty: storage_ty.clone(),
-        });
-        self.record_local(slot, storage_ty);
-
-        // base = &slot : the String-typed pointer to the fat storage.
-        let base = self.builder.fresh_var();
-        self.builder.emit(Instruction::AddrOf {
-            dst: base,
-            src: slot,
-        });
-        self.record_local(base, Type::String);
-        let base_val = Value::Var(base);
+        // Heap-promote when a string value can escape via the function's return.
+        let promote = type_kind_escapes_via_return(&self.ret, AggKind::String, &self.enums);
+        let base_val = self.reserve_aggregate_storage(STRING_FAT_SIZE, Type::String, promote);
 
         // Store the data pointer at offset 0. `ConstStr` is materialized by the
         // backend as the address of the literal's interned `.rodata` bytes.
@@ -856,25 +953,13 @@ impl FnLowerer {
         });
         self.record_local(buf, Type::U64);
 
-        // Reserve the fat-array storage as an i8 array (align 1, exact size) so
-        // the backend allocates exactly 16 bytes.
-        let slot = self.builder.fresh_var();
-        let storage_ty = Type::Array(Box::new(Type::I8), DYN_ARRAY_FAT_SIZE);
-        self.builder.emit(Instruction::Alloc {
-            var: slot,
-            ty: storage_ty.clone(),
-        });
-        self.record_local(slot, storage_ty);
-
-        // base = &slot : the DynArray-typed pointer to the fat storage.
-        let base = self.builder.fresh_var();
-        self.builder.emit(Instruction::AddrOf {
-            dst: base,
-            src: slot,
-        });
+        // Reserve the fat-array `{ ptr, len }` storage (16 bytes). The element
+        // buffer is always heap (`buf` above); the *fat value* itself is
+        // heap-promoted only when a dynamic array can escape via the function's
+        // return, so a non-escaping local array keeps its fat value on the frame.
         let arr_ty = Type::DynArray(Box::new(elem_ty));
-        self.record_local(base, arr_ty);
-        let base_val = Value::Var(base);
+        let promote = type_kind_escapes_via_return(&self.ret, AggKind::DynArray, &self.enums);
+        let base_val = self.reserve_aggregate_storage(DYN_ARRAY_FAT_SIZE, arr_ty, promote);
 
         // Store the element-buffer pointer at offset 0.
         let ptr_field = self.gep_byte(&base_val, DYN_ARRAY_PTR_OFFSET);
@@ -2959,6 +3044,191 @@ mod tests {
             })
         });
         assert!(stores_payload, "expected a payload Store of ConstI64(7)");
+    }
+
+    // ------------------------------------------------------------------
+    // Heap promotion of escaping aggregates — refs #13/#45
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_lower_returned_enum_constructor_is_heap_allocated() {
+        // When the enclosing function RETURNS the enum, its constructor storage
+        // is heap-promoted: a `Call tl_alloc` (sized to the enum) replaces the
+        // frame `Alloc` + `AddrOf` pair, so the returned pointer outlives the
+        // frame. The tag/payload Stores are unchanged (they go through Geps).
+        let src = format!("{SHAPE}\n(define (mk) : Shape (Circle 7))");
+        let prog = parse(&src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().position(|f| f.name == "mk").unwrap();
+
+        // No frame Alloc / AddrOf for the storage — it lives on the heap.
+        assert_eq!(
+            count(&ir, f, |i| matches!(i, Instruction::Alloc { .. })),
+            0,
+            "escaping enum storage must NOT be a frame Alloc"
+        );
+        assert_eq!(
+            count(&ir, f, |i| matches!(i, Instruction::AddrOf { .. })),
+            0,
+            "escaping enum storage must NOT take a frame address"
+        );
+
+        // Exactly one tl_alloc Call provides the storage, sized to the enum.
+        let alloc_calls = ir.functions[f]
+            .blocks
+            .iter()
+            .flat_map(|b| &b.instructions)
+            .filter_map(|i| match i {
+                Instruction::Call { func, args, .. } if func == "tl_alloc" => Some(args.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(alloc_calls.len(), 1, "expected one storage tl_alloc Call");
+        assert_eq!(
+            alloc_calls[0],
+            vec![Value::ConstI64(16)],
+            "expected tl_alloc to request the 16-byte enum storage"
+        );
+
+        // Tag (0) and payload (7) are still stored through the (heap) base.
+        assert_eq!(count(&ir, f, |i| matches!(i, Instruction::Gep { .. })), 2);
+        let stores_payload = ir.functions[f].blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                matches!(
+                    i,
+                    Instruction::Store {
+                        src: Value::ConstI64(7),
+                        ..
+                    }
+                )
+            })
+        });
+        assert!(stores_payload, "expected a payload Store of ConstI64(7)");
+    }
+
+    #[test]
+    fn test_lower_returned_string_is_heap_allocated() {
+        // A `String`-returning function heap-promotes the fat-string storage:
+        // `Call tl_alloc(16)` instead of a frame Alloc + AddrOf.
+        let src = r#"(define (mk) : String "hi")"#;
+        let prog = parse(src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().position(|f| f.name == "mk").unwrap();
+
+        assert_eq!(
+            count(&ir, f, |i| matches!(i, Instruction::Alloc { .. })),
+            0,
+            "escaping string storage must NOT be a frame Alloc"
+        );
+        let has_alloc16 = ir.functions[f].blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                matches!(
+                    i,
+                    Instruction::Call { func, args, .. }
+                        if func == "tl_alloc" && args == &[Value::ConstI64(16)]
+                )
+            })
+        });
+        assert!(
+            has_alloc16,
+            "expected tl_alloc(16) for the fat-string storage"
+        );
+    }
+
+    #[test]
+    fn test_lower_returned_enum_payload_string_is_heap_allocated() {
+        // Returning an enum with a String payload must promote both pieces:
+        // the outer enum storage and the nested fat-string storage. Otherwise
+        // the returned heap enum would point at string metadata in this frame.
+        let src = r#"
+            (defenum Box (Boxed String))
+            (define (mk) : Box (Boxed "hi"))
+        "#;
+        let prog = parse(src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().position(|f| f.name == "mk").unwrap();
+
+        assert_eq!(
+            count(&ir, f, |i| matches!(i, Instruction::Alloc { .. })),
+            0,
+            "escaping enum payload string storage must NOT be a frame Alloc"
+        );
+        assert_eq!(
+            count(&ir, f, |i| matches!(i, Instruction::Call { func, args, .. }
+                    if func == "tl_alloc" && args == &[Value::ConstI64(16)])),
+            2,
+            "expected tl_alloc(16) for both enum storage and string storage"
+        );
+    }
+
+    #[test]
+    fn test_lower_returned_dyn_array_fat_value_is_heap_allocated() {
+        // The element buffer was always heap; returning the array additionally
+        // heap-promotes the fat `{ ptr, len }` value. So there are TWO tl_alloc
+        // Calls (buffer + fat value) and NO frame Alloc for the fat value.
+        let src = "(define (mk [n : i64]) : (Array i64) (make-array i64 n))";
+        let prog = parse(src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().position(|f| f.name == "mk").unwrap();
+
+        // The only frame Alloc is the parameter slot for `n`; the fat value is
+        // NOT a frame Alloc.
+        let alloc_count = count(&ir, f, |i| matches!(i, Instruction::Alloc { .. }));
+        assert_eq!(
+            alloc_count, 1,
+            "only the `n` parameter slot should be a frame Alloc (fat value is heap)"
+        );
+
+        let tl_alloc_calls = count(
+            &ir,
+            f,
+            |i| matches!(i, Instruction::Call { func, .. } if func == "tl_alloc"),
+        );
+        assert_eq!(
+            tl_alloc_calls, 2,
+            "expected two tl_alloc Calls: element buffer + heap-promoted fat value"
+        );
+        // The fat value's heap request is the 16-byte fat-array storage.
+        let has_alloc16 = ir.functions[f].blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                matches!(
+                    i,
+                    Instruction::Call { func, args, .. }
+                        if func == "tl_alloc" && args == &[Value::ConstI64(16)]
+                )
+            })
+        });
+        assert!(has_alloc16, "expected tl_alloc(16) for the fat-array value");
+    }
+
+    #[test]
+    fn test_lower_non_escaping_local_aggregate_stays_on_frame() {
+        // Selectivity: a function whose return type is NOT an aggregate keeps its
+        // local enum constructor on the frame (Alloc + AddrOf), with no tl_alloc.
+        let src = format!("{SHAPE}\n(define (main) : i64 (begin (Circle 7) 0))");
+        let prog = parse(&src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().position(|f| f.name == "main").unwrap();
+
+        assert_eq!(
+            count(&ir, f, |i| matches!(i, Instruction::Alloc { .. })),
+            1,
+            "non-escaping enum storage stays a frame Alloc"
+        );
+        assert_eq!(
+            count(&ir, f, |i| matches!(i, Instruction::AddrOf { .. })),
+            1,
+            "non-escaping enum storage takes a frame address"
+        );
+        assert_eq!(
+            count(
+                &ir,
+                f,
+                |i| matches!(i, Instruction::Call { func, .. } if func == "tl_alloc")
+            ),
+            0,
+            "non-escaping enum storage must NOT be heap-allocated"
+        );
     }
 
     #[test]

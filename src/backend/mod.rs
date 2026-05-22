@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::ir::{
     BasicBlock, BinOp as IrBinOp, Function, Instruction, Label, Program, UnOp as IrUnOp, Value,
     VarId,
@@ -11,7 +9,6 @@ use std::collections::{HashMap, HashSet};
 /// Target: Linux, System V AMD64 ABI
 pub struct X86_64Backend {
     output: String,
-    label_counter: u32,
     stack_size: i32,
     var_offsets: HashMap<VarId, i32>,
     var_types: HashMap<VarId, Type>,
@@ -211,7 +208,7 @@ fn validate_function(func: &Function, global_types: &HashMap<String, Type>) -> R
                         return unsupported("missing return value for non-unit function");
                     }
                 }
-                Instruction::Label(_) | Instruction::Jump(_) => {}
+                Instruction::Jump(_) => {}
                 // `if`/`while` control flow — now codegen'd.
                 Instruction::Branch { cond, .. } => {
                     check_operand(cond, global_types)
@@ -592,7 +589,7 @@ impl X86_64Backend {
     pub fn new() -> Self {
         X86_64Backend {
             output: String::new(),
-            label_counter: 0,
+
             stack_size: 0,
             var_offsets: HashMap::new(),
             var_types: HashMap::new(),
@@ -1440,9 +1437,6 @@ impl X86_64Backend {
 
     fn generate_instruction(&mut self, instr: &Instruction) {
         match instr {
-            Instruction::Label(label) => {
-                self.emit(&format!("{}:", self.block_label(label)));
-            }
             // Parameter slots are materialized by the prologue; their Alloc is a
             // no-op here. (Non-parameter Allocs are rejected by validation.)
             Instruction::Alloc { .. } => {}
@@ -2404,12 +2398,6 @@ impl X86_64Backend {
         )
     }
 
-    fn fresh_label(&mut self, prefix: &str) -> String {
-        let label = format!("{}.{}", prefix, self.label_counter);
-        self.label_counter += 1;
-        label
-    }
-
     /// Qualify a bare IR block label (e.g. `then.0`) with the current function's
     /// mangled symbol so it matches the emitted block label `{fn}.{block}:`.
     fn block_label(&self, label: &str) -> String {
@@ -2510,32 +2498,6 @@ mod tests {
         assert!(asm.contains("_start:"));
         assert!(asm.contains("    call main"));
         assert!(asm.contains("    movq $60, %rax"));
-    }
-
-    #[test]
-    fn test_compile_inline_label_uses_qualified_symbol() {
-        let program = Program {
-            functions: vec![Function {
-                name: "main".to_string(),
-                params: vec![],
-                ret: Type::I64,
-                locals: vec![],
-                blocks: vec![BasicBlock {
-                    label: "entry".to_string(),
-                    instructions: vec![
-                        Instruction::Label("manual".to_string()),
-                        Instruction::Return(Some(Value::ConstI64(0))),
-                    ],
-                }],
-                entry: "entry".to_string(),
-            }],
-            globals: vec![],
-            externs: vec![],
-        };
-        let asm = generate_assembly(&program).expect("inline label should compile");
-        assert!(asm.contains("main.manual:"), "asm:\n{}", asm);
-        assert!(!asm.contains("\nmanual:"), "asm:\n{}", asm);
-        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
     }
 
     #[test]
@@ -4284,6 +4246,55 @@ mod tests {
         );
         assert!(asm.contains("    call tl_alloc"), "asm:\n{}", asm);
         assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    // ------------------------------------------------------------------
+    // Heap promotion of escaping aggregates — refs #13/#45
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_compile_returned_enum_constructor_is_heap_allocated() {
+        // A function whose return type is the enum heap-promotes the constructor
+        // storage: it is allocated through the runtime bump allocator (whose body
+        // is emitted in this same unit) rather than carved from the frame, so the
+        // returned pointer outlives the epilogue's frame teardown.
+        let asm = compile_ok(
+            "(defenum Shape (Circle i64) (Square i64) (Nothing))\n\
+             (define (mk) : Shape (Circle 7))",
+        );
+
+        // Storage comes from tl_alloc, not a frame slot + leaq.
+        assert!(asm.contains("    call tl_alloc"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        // The 16-byte enum storage size is requested from the allocator.
+        assert!(asm.contains("$16"), "asm:\n{}", asm);
+        // The payload (7) is stored into the heap storage through a pointer.
+        assert!(asm.contains("movq $7,"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_returned_string_is_heap_allocated() {
+        // A `String`-returning function heap-promotes the fat-string storage.
+        let asm = compile_ok(r#"(define (mk) : String "hi")"#);
+        assert!(asm.contains("    call tl_alloc"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_local_enum_not_returned_uses_no_alloc_runtime() {
+        // When the function does NOT return an aggregate, its local enum keeps
+        // frame allocation: no allocator runtime is emitted at all.
+        let asm = compile_ok(
+            "(defenum Shape (Circle i64) (Square i64) (Nothing))\n\
+             (define (main) : i64 (begin (Circle 7) 0))",
+        );
+        assert!(!asm.contains("    call tl_alloc"), "asm:\n{}", asm);
+        assert!(!asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        // Frame allocation still materializes the storage address via leaq.
+        assert!(asm.contains("leaq"), "asm:\n{}", asm);
         assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
     }
 }

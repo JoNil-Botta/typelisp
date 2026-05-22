@@ -633,6 +633,39 @@ impl TypeChecker {
                     )),
                 }
             }
+            Expr::ArraySet { expr, index, value } => {
+                // `(array-set! arr i v)` : `(-> (Array T) i64 T Unit)`. The store
+                // mirrors `array-ref`'s read: same array/index requirements, plus
+                // the stored value's type must match the element type.
+                let arr_ty = self.check_expr(expr)?;
+                let idx_ty = self.check_expr(index)?;
+                if !idx_ty.is_integer() {
+                    return Err(TypeError::at(
+                        format!("array index must be integer, got {}", idx_ty),
+                        index.span(),
+                    ));
+                }
+                let elem_ty = match arr_ty {
+                    Type::Array(elem_ty, _) | Type::DynArray(elem_ty) => *elem_ty,
+                    _ => {
+                        return Err(TypeError::at(
+                            format!("array-set! requires array type, got {}", arr_ty),
+                            expr.span(),
+                        ));
+                    }
+                };
+                let val_ty = self.check_expr(value)?;
+                if !self.types_equal(&elem_ty, &val_ty) {
+                    return Err(TypeError::at(
+                        format!(
+                            "array-set! value type mismatch: array holds {}, got {}",
+                            elem_ty, val_ty
+                        ),
+                        value.span(),
+                    ));
+                }
+                Ok(Type::Unit)
+            }
             Expr::StringRef { expr, index } => {
                 // `(string-ref s i)` / `(char-at s i)` : `(-> String i64 char)`.
                 let str_ty = self.check_expr(expr)?;
@@ -1553,6 +1586,54 @@ mod tests {
             "got: {}",
             err.msg
         );
+    }
+
+    // ------------------------------------------------------------------
+    // Aggregate mutation — `array-set!` (Issues #13/#18)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_typecheck_array_set_yields_unit() {
+        // `(array-set! a i v)` : `(-> (Array T) i64 T Unit)`.
+        let src = "(define (f [a : (Array i64)] [i : i64] [v : i64]) : unit (array-set! a i v))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_array_set_index_must_be_integer() {
+        let src = "(define (f [a : (Array i64)] [v : i64]) : unit (array-set! a true v))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg.contains("index must be integer"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_array_set_value_must_match_element() {
+        // Storing a `bool` into an `(Array i64)` is rejected.
+        let src = "(define (f [a : (Array i64)] [i : i64]) : unit (array-set! a i true))";
+        let err = check(src).unwrap_err();
+        assert!(err.msg.contains("value type mismatch"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_array_set_requires_array() {
+        let src = "(define (f [n : i64] [v : i64]) : unit (array-set! n 0 v))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg.contains("array-set! requires array type"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_array_set_on_fixed_array_works() {
+        // Fixed-size `(Array elem N)` is also accepted by the typechecker.
+        let src = "(define (f [a : (Array i64 3)] [v : i64]) : unit (array-set! a 0 v))";
+        assert!(check(src).is_ok());
     }
 
     #[test]

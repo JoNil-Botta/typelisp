@@ -375,6 +375,7 @@ impl FnLowerer {
             // an inline fat `{ ptr, len }` value, yielding a pointer to it.
             ast::Expr::MakeArray { elem_ty, len } => self.lower_make_array(elem_ty, len),
             ast::Expr::ArrayRef { expr, index } => self.lower_array_ref(expr, index),
+            ast::Expr::ArraySet { expr, index, value } => self.lower_array_set(expr, index, value),
             ast::Expr::StringRef { expr, index } => self.lower_string_ref(expr, index),
             // Tuple, Array (literal), Lambda — stubbed to unit for now
             ast::Expr::Tuple(_) | ast::Expr::Array(_) | ast::Expr::Lambda { .. } => {
@@ -1101,6 +1102,111 @@ impl FnLowerer {
         });
         self.record_local(result, elem_ty);
         Value::Var(result)
+    }
+
+    /// Lower `(array-set! a i v)`. The store-side mirror of `lower_array_ref`:
+    /// for a *dynamic* array the access is bounds-checked with the identical
+    /// UNSIGNED `idx u< len` comparison (so negative indices wrap to huge
+    /// unsigned values and also fail), branches to an abort block that emits a
+    /// `Call tl_oob_abort` (the trap must be a Call: the optimizer's
+    /// `has_side_effects` ignores Load/Gep, so a bare address computation would
+    /// be dropped by DCE — a Call survives), then on the in-bounds path computes
+    /// the element address via `Gep` over the buffer pointer and `Store`s the
+    /// value in place. The `Store` itself is a side-effecting instruction, so it
+    /// too survives DCE. No new allocation: the mutation hits the heap buffer the
+    /// fat value already owns. Evaluates to Unit.
+    fn lower_array_set(&mut self, arr: &ast::Expr, index: &ast::Expr, value: &ast::Expr) -> Value {
+        let arr_val = self.lower_expr(arr);
+        let arr_ty = self.value_type(&arr_val);
+        // Only *dynamic* arrays are lowered here, exactly like `array-ref`:
+        // fixed-size `(Array elem N)` value/stack arrays have a separate inline
+        // layout that is still deferred, so fall through to a Unit value.
+        let elem_ty = match &arr_ty {
+            Type::DynArray(e) => (**e).clone(),
+            _ => return Value::ConstUnit,
+        };
+
+        let idx_val = self.lower_expr(index);
+        let idx_u_val = self.cast_value(idx_val.clone(), Type::U64);
+        let idx_offset_val = self.cast_value(idx_val, Type::I64);
+
+        // Evaluate the stored value before the bounds check (matching ordinary
+        // left-to-right argument evaluation order; the value has no dependence
+        // on the bounds outcome).
+        let store_val = self.lower_expr(value);
+
+        // Load len (offset 8) from the fat value.
+        let len_ptr = self.gep_byte(&arr_val, DYN_ARRAY_LEN_OFFSET);
+        let len = self.builder.fresh_var();
+        self.builder.emit(Instruction::Load {
+            dst: len,
+            src: Value::Var(len_ptr),
+            ty: Type::I64,
+        });
+        self.record_local(len, Type::I64);
+
+        // Unsigned bounds check: in_bounds = (idx u< len). Both operands are
+        // reinterpreted to U64 via `Cast` (NOT `Mov`, which copy-prop would fold
+        // back to the signed operand and silently weaken the check) so the
+        // backend selects the unsigned condition code (`setb`).
+        let len_u_val = self.cast_value(Value::Var(len), Type::U64);
+        let in_bounds = self.builder.fresh_var();
+        self.builder.emit(Instruction::BinOp {
+            dst: in_bounds,
+            op: BinOp::Lt,
+            lhs: idx_u_val,
+            rhs: len_u_val,
+            ty: Type::Bool,
+        });
+        self.record_local(in_bounds, Type::Bool);
+
+        let ok_label = self.builder.fresh_label("set_bounds_ok");
+        let fail_label = self.builder.fresh_label("set_bounds_fail");
+        self.builder.emit(Instruction::Branch {
+            cond: Value::Var(in_bounds),
+            true_label: ok_label.clone(),
+            false_label: fail_label.clone(),
+        });
+
+        // Out-of-bounds block: call the abort runtime, then (defensively) jump
+        // to the ok block. The call diverges at runtime so control never returns.
+        self.builder.finish_block(&fail_label);
+        self.builder.emit(Instruction::Call {
+            dst: None,
+            func: "tl_oob_abort".into(),
+            args: vec![],
+            ty: Type::Unit,
+        });
+        self.builder.emit(Instruction::Jump(ok_label.clone()));
+
+        // In-bounds block: load the buffer pointer, compute the element address,
+        // and store the value through it (in place).
+        self.builder.finish_block(&ok_label);
+        let buf_ptr = self.gep_byte(&arr_val, DYN_ARRAY_PTR_OFFSET);
+        let buf = self.builder.fresh_var();
+        self.builder.emit(Instruction::Load {
+            dst: buf,
+            src: Value::Var(buf_ptr),
+            ty: Type::U64,
+        });
+        self.record_local(buf, Type::U64);
+
+        let elem_ptr = self.builder.fresh_var();
+        self.builder.emit(Instruction::Gep {
+            dst: elem_ptr,
+            base: Value::Var(buf),
+            offset: idx_offset_val,
+            elem_ty: elem_ty.clone(),
+        });
+        self.record_local(elem_ptr, Type::U64);
+
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(elem_ptr),
+            src: store_val,
+            ty: elem_ty,
+        });
+
+        Value::ConstUnit
     }
 
     /// Lower `(string-ref s i)` / `(char-at s i)`: the bounds-checked byte at
@@ -2756,6 +2862,82 @@ mod tests {
                 .iter()
                 .any(|i| matches!(i, Instruction::Load { ty: Type::I64, .. }))
         );
+    }
+
+    #[test]
+    fn test_lower_array_set_bounds_checks_then_stores() {
+        // `array-set!` is the store-side mirror of `array-ref`: an unsigned
+        // bounds compare, a Branch, a Call to the abort runtime (so DCE can't
+        // drop it), then a Gep + Store of the element (in place).
+        let prog =
+            parse("(define (f [a : (Array i64)] [i : i64] [v : i64]) : unit (array-set! a i v))")
+                .unwrap();
+        let ir = lower_program(&prog);
+        let instrs = all_instrs(&ir);
+
+        // Unsigned compare: a Lt BinOp over U64-typed operands.
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::BinOp {
+                op: BinOp::Lt,
+                ty: Type::Bool,
+                ..
+            }
+        )));
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Branch { .. }))
+        );
+
+        // The out-of-bounds trap is a Call (not a Store/Gep) so it survives DCE.
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::Call { func, dst: None, .. } if func == "tl_oob_abort"
+        )));
+
+        // The element address is computed via Gep over an i64 element type, and
+        // the value is written with a Store (not a Load — this is the mutation).
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::Gep {
+                elem_ty: Type::I64,
+                ..
+            }
+        )));
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Store { ty: Type::I64, .. }))
+        );
+    }
+
+    #[test]
+    fn test_lower_array_set_widens_narrow_index() {
+        // A narrow (i32) index is widened both for the unsigned bounds compare
+        // (Cast to U64) and for address scaling (Cast to I64), like `array-ref`.
+        let prog =
+            parse("(define (f [a : (Array i64)] [i : i32] [v : i64]) : unit (array-set! a i v))")
+                .unwrap();
+        let ir = lower_program(&prog);
+        let instrs = all_instrs(&ir);
+
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::Cast {
+                from_ty: Type::I32,
+                to_ty: Type::U64,
+                ..
+            }
+        )));
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::Cast {
+                from_ty: Type::I32,
+                to_ty: Type::I64,
+                ..
+            }
+        )));
     }
 
     #[test]

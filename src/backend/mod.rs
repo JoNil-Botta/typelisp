@@ -4627,6 +4627,32 @@ mod tests {
     }
 
     #[test]
+    fn test_compile_array_set_bounds_check_then_stores_in_place() {
+        // `array-set!` is the store-side mirror of `array-ref`: an unsigned
+        // bounds compare (`setb`, not signed `setl`), a conditional branch, a
+        // Call to the abort runtime on the out-of-bounds path, then a Gep to the
+        // element address and a `mov`-to-memory store of the value (in place).
+        let asm = compile_ok(
+            "(define (f [a : (Array i64)] [i : i64] [v : i64]) : unit (array-set! a i v))",
+        );
+
+        // Unsigned compare for the bounds check (`setb`, not the signed `setl`).
+        assert!(asm.contains("setb %al"), "asm:\n{}", asm);
+        assert!(!asm.contains("setl %al"), "asm:\n{}", asm);
+        // A conditional branch decides in-bounds vs out-of-bounds.
+        assert!(asm.contains("jnz "), "asm:\n{}", asm);
+        // The out-of-bounds trap is a Call (survives DCE) to the abort symbol.
+        assert!(asm.contains("    call tl_oob_abort"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_oob_abort:"), "asm:\n{}", asm);
+        // The element address is formed by scaling the index (Gep), then the
+        // value is written through the computed pointer in %r10 — a store to
+        // memory, not a load from it.
+        assert!(asm.contains("imulq $8"), "asm:\n{}", asm);
+        assert!(asm.contains("%rax, (%r10)"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
     fn test_compile_oob_abort_runtime_writes_to_fd2_and_exits() {
         // The emitted abort runtime writes a message to fd 2 (write syscall) and
         // terminates the process (exit syscall, status 134), zero-dependency.

@@ -109,6 +109,13 @@ fn type_lisp_programs_compile_link_and_run() {
             stdout: "",
             deps: &["modules_helper.tl"],
         },
+        // Enum definition, constructor, and pattern matching end to end.
+        Case {
+            name: "enum_match",
+            exit_code: 42,
+            stdout: "",
+            deps: &[],
+        },
     ];
 
     for case in cases {

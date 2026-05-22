@@ -4,7 +4,7 @@ use crate::types::{
     DYN_ARRAY_FAT_SIZE, DYN_ARRAY_LEN_OFFSET, DYN_ARRAY_PTR_OFFSET, STRING_FAT_SIZE,
     STRING_LEN_OFFSET, STRING_PTR_OFFSET, Type,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Lowers a typed AST program into IR.
 pub fn lower_program(prog: &ast::Program) -> Program {
@@ -218,8 +218,11 @@ enum AggKind {
 
 /// Whether a value of aggregate `kind` can escape the current function via its
 /// `return` — i.e. whether the (resolved) return type `ret` is, or structurally
-/// nests, that aggregate kind. This is the conservative, sound escape rule used
-/// to decide heap promotion of constructor storage:
+/// nests, that aggregate kind. Returned enum types are expanded through the
+/// registry, so payload aggregates are promoted too: returning `(Box "hi")`
+/// must heap-promote both the outer enum storage and the inner string fat value.
+/// This is the conservative, sound escape rule used to decide heap promotion of
+/// constructor storage:
 ///
 ///   * SOUND: a frame-allocated aggregate can never reach a `Return` whose type
 ///     does not contain that aggregate kind, so leaving such constructors on the
@@ -231,29 +234,48 @@ enum AggKind {
 ///     within a function that *does* return a given kind, *all* constructors of
 ///     that kind are promoted, including ones that happen not to escape.
 ///
-/// Nesting (`Tuple`/`Array`/`DynArray`/`Func` ret) is matched so a value
-/// returned inside an aggregate is also promoted; this mirrors the typechecker's
-/// `type_contains_*` predicates that previously gated the hard rejection.
-fn type_kind_escapes_via_return(ret: &Type, kind: AggKind) -> bool {
-    match kind {
-        AggKind::Enum => type_contains_kind(ret, &|t| matches!(t, Type::Enum(_))),
-        AggKind::String => type_contains_kind(ret, &|t| matches!(t, Type::String)),
-        AggKind::DynArray => type_contains_kind(ret, &|t| matches!(t, Type::DynArray(_))),
-    }
+/// Nesting (`Tuple`/`Array`/`DynArray` and enum variant fields) is matched so a
+/// value returned inside an aggregate is also promoted.
+fn type_kind_escapes_via_return(ret: &Type, kind: AggKind, enums: &ast::EnumRegistry) -> bool {
+    let mut seen_enums = HashSet::new();
+    type_kind_escapes_via_return_inner(ret, kind, enums, &mut seen_enums)
 }
 
-/// Structural search: does `ty` (or a type it nests) satisfy `pred`?
-fn type_contains_kind(ty: &Type, pred: &dyn Fn(&Type) -> bool) -> bool {
-    if pred(ty) {
-        return true;
-    }
+fn type_kind_escapes_via_return_inner(
+    ty: &Type,
+    kind: AggKind,
+    enums: &ast::EnumRegistry,
+    seen_enums: &mut HashSet<String>,
+) -> bool {
     match ty {
-        Type::Func(args, ret) => {
-            args.iter().any(|a| type_contains_kind(a, pred)) || type_contains_kind(ret, pred)
+        Type::Enum(name) => {
+            if kind == AggKind::Enum {
+                return true;
+            }
+            if !seen_enums.insert(name.clone()) {
+                return false;
+            }
+            let found = enums.variants(name).is_some_and(|variants| {
+                variants.iter().any(|variant| {
+                    variant.fields.iter().any(|field| {
+                        let field = enums.resolve_type(field);
+                        type_kind_escapes_via_return_inner(&field, kind, enums, seen_enums)
+                    })
+                })
+            });
+            seen_enums.remove(name);
+            found
         }
-        Type::Tuple(elems) => elems.iter().any(|e| type_contains_kind(e, pred)),
-        Type::Array(elem, _) => type_contains_kind(elem, pred),
-        Type::DynArray(elem) => type_contains_kind(elem, pred),
+        Type::String => kind == AggKind::String,
+        Type::DynArray(elem) => {
+            kind == AggKind::DynArray
+                || type_kind_escapes_via_return_inner(elem, kind, enums, seen_enums)
+        }
+        Type::Tuple(elems) => elems
+            .iter()
+            .any(|elem| type_kind_escapes_via_return_inner(elem, kind, enums, seen_enums)),
+        Type::Array(elem, _) => type_kind_escapes_via_return_inner(elem, kind, enums, seen_enums),
+        Type::Func(_, _) => false,
         _ => false,
     }
 }
@@ -685,6 +707,12 @@ impl FnLowerer {
         let arg_vals: Vec<Value> = args.iter().map(|a| self.lower_expr(a)).collect();
 
         let (func_name, ret_ty) = match func.unspan() {
+            // A local binding shadows any top-level function of the same name.
+            // If it has function type, call through the value in that slot.
+            ast::Expr::Var(name) if self.vars.contains_key(name) => {
+                let func_val = self.lower_expr(func);
+                return self.lower_indirect_call(func_val, arg_vals);
+            }
             ast::Expr::Var(name) => {
                 let ret_ty = match self.function_types.get(name) {
                     Some(Type::Func(_, ret)) => (**ret).clone(),
@@ -693,17 +721,8 @@ impl FnLowerer {
                 (name.clone(), ret_ty)
             }
             _ => {
-                // Indirect call through expression
                 let func_val = self.lower_expr(func);
-                let dst = self.builder.fresh_var();
-                self.builder.emit(Instruction::CallIndirect {
-                    dst: Some(dst),
-                    func: func_val,
-                    args: arg_vals,
-                    ty: Type::Unit,
-                });
-                self.record_local(dst, Type::Unit);
-                return Value::Var(dst);
+                return self.lower_indirect_call(func_val, arg_vals);
             }
         };
 
@@ -721,6 +740,33 @@ impl FnLowerer {
         self.builder.emit(Instruction::Call {
             dst: Some(dst),
             func: func_name,
+            args: arg_vals,
+            ty: ret_ty.clone(),
+        });
+        self.record_local(dst, ret_ty);
+        Value::Var(dst)
+    }
+
+    fn lower_indirect_call(&mut self, func_val: Value, arg_vals: Vec<Value>) -> Value {
+        let ret_ty = match self.value_type(&func_val) {
+            Type::Func(_, ret) => *ret,
+            _ => Type::Unit,
+        };
+
+        if ret_ty == Type::Unit {
+            self.builder.emit(Instruction::CallIndirect {
+                dst: None,
+                func: func_val,
+                args: arg_vals,
+                ty: Type::Unit,
+            });
+            return Value::ConstUnit;
+        }
+
+        let dst = self.builder.fresh_var();
+        self.builder.emit(Instruction::CallIndirect {
+            dst: Some(dst),
+            func: func_val,
             args: arg_vals,
             ty: ret_ty.clone(),
         });
@@ -758,7 +804,6 @@ impl FnLowerer {
             self.record_local(base, storage_ty);
             return Value::Var(base);
         }
-
         // Reserve `size` bytes of inline storage as an i8 array (align 1, exact
         // size) so the backend allocates the right number of bytes.
         let slot = self.builder.fresh_var();
@@ -789,7 +834,7 @@ impl FnLowerer {
         let enum_ty = Type::Enum(enum_name.to_string());
 
         // Heap-promote when an enum value can escape via the function's return.
-        let promote = type_kind_escapes_via_return(&self.ret, AggKind::Enum);
+        let promote = type_kind_escapes_via_return(&self.ret, AggKind::Enum, &self.enums);
         let base_val = self.reserve_aggregate_storage(size, enum_ty.clone(), promote);
 
         // Store the tag at offset 0.
@@ -828,7 +873,7 @@ impl FnLowerer {
     /// values are built (`lower_construct`).
     fn lower_string_literal(&mut self, text: &str) -> Value {
         // Heap-promote when a string value can escape via the function's return.
-        let promote = type_kind_escapes_via_return(&self.ret, AggKind::String);
+        let promote = type_kind_escapes_via_return(&self.ret, AggKind::String, &self.enums);
         let base_val = self.reserve_aggregate_storage(STRING_FAT_SIZE, Type::String, promote);
 
         // Store the data pointer at offset 0. `ConstStr` is materialized by the
@@ -890,7 +935,7 @@ impl FnLowerer {
         // heap-promoted only when a dynamic array can escape via the function's
         // return, so a non-escaping local array keeps its fat value on the frame.
         let arr_ty = Type::DynArray(Box::new(elem_ty));
-        let promote = type_kind_escapes_via_return(&self.ret, AggKind::DynArray);
+        let promote = type_kind_escapes_via_return(&self.ret, AggKind::DynArray, &self.enums);
         let base_val = self.reserve_aggregate_storage(DYN_ARRAY_FAT_SIZE, arr_ty, promote);
 
         // Store the element-buffer pointer at offset 0.
@@ -1488,6 +1533,41 @@ mod tests {
                 .any(|i| matches!(i, Instruction::Call { func, .. } if func == "a"))
         });
         assert!(calls_a, "expected b to emit a direct Call to a");
+    }
+
+    #[test]
+    fn test_lower_function_pointer_param_call_is_indirect() {
+        let prog = parse(
+            r#"
+            (define (apply1 [f : (-> i64 i64)] [x : i64]) : i64
+              (f x))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let apply = &ir.functions[0];
+        let indirect = apply.blocks.iter().find_map(|blk| {
+            blk.instructions.iter().find_map(|i| match i {
+                Instruction::CallIndirect {
+                    dst: Some(dst),
+                    func,
+                    args,
+                    ty,
+                } => Some((*dst, func.clone(), args.clone(), ty.clone())),
+                _ => None,
+            })
+        });
+        assert_eq!(
+            indirect,
+            Some((2, Value::Var(0), vec![Value::Var(1)], Type::I64))
+        );
+
+        let has_direct_f_call = apply.blocks.iter().any(|blk| {
+            blk.instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::Call { func, .. } if func == "f"))
+        });
+        assert!(!has_direct_f_call);
     }
 
     #[test]
@@ -2989,6 +3069,32 @@ mod tests {
         assert!(
             has_alloc16,
             "expected tl_alloc(16) for the fat-string storage"
+        );
+    }
+
+    #[test]
+    fn test_lower_returned_enum_payload_string_is_heap_allocated() {
+        // Returning an enum with a String payload must promote both pieces:
+        // the outer enum storage and the nested fat-string storage. Otherwise
+        // the returned heap enum would point at string metadata in this frame.
+        let src = r#"
+            (defenum Box (Boxed String))
+            (define (mk) : Box (Boxed "hi"))
+        "#;
+        let prog = parse(src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().position(|f| f.name == "mk").unwrap();
+
+        assert_eq!(
+            count(&ir, f, |i| matches!(i, Instruction::Alloc { .. })),
+            0,
+            "escaping enum payload string storage must NOT be a frame Alloc"
+        );
+        assert_eq!(
+            count(&ir, f, |i| matches!(i, Instruction::Call { func, args, .. }
+                    if func == "tl_alloc" && args == &[Value::ConstI64(16)])),
+            2,
+            "expected tl_alloc(16) for both enum storage and string storage"
         );
     }
 

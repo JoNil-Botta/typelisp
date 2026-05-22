@@ -2800,6 +2800,22 @@ mod tests {
     }
 
     #[test]
+    fn test_compile_surface_function_pointer_param_call() {
+        let asm = compile_ok(
+            r#"
+            (define (apply1 [f : (-> i64 i64)] [x : i64]) : i64
+              (f x))
+            "#,
+        );
+        assert!(asm.contains("_tl_apply1:"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq -16(%rbp), %rdi"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq -8(%rbp), %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("    call *%rax"), "asm:\n{}", asm);
+        assert!(!asm.contains("    call _tl_f"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
     fn test_compile_indirect_call_through_function_pointer_param() {
         let program = Program {
             functions: vec![Function {

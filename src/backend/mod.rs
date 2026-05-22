@@ -22,6 +22,10 @@ pub struct X86_64Backend {
     /// backend must therefore emit the self-contained allocator runtime
     /// (mmap arena + bump pointer) into the program's `.s`.
     needs_alloc_runtime: bool,
+    /// Whether the program references the out-of-bounds abort `tl_oob_abort`
+    /// (emitted by array bounds checks) and the backend must emit the
+    /// self-contained abort runtime (write to fd 2 + `exit`) into the `.s`.
+    needs_oob_runtime: bool,
     return_ty: Type,
     /// VarIds that are function parameters of the function currently being
     /// generated. Their `Alloc` instructions are no-ops because the parameter
@@ -363,12 +367,12 @@ fn validate_unit_value(
 }
 
 fn is_pointer_sized_type(ty: &Type) -> bool {
-    // An enum value is a pointer to its inline tagged storage and a string
-    // value is a pointer to its inline `{ptr,len}` storage, so both are
+    // An enum value is a pointer to its inline tagged storage; a string and a
+    // dynamic array are pointers to their inline `{ptr,len}` storage. All are
     // pointer-sized like I64/U64/function pointers.
     matches!(
         ty,
-        Type::I64 | Type::U64 | Type::Func(_, _) | Type::Enum(_) | Type::String
+        Type::I64 | Type::U64 | Type::Func(_, _) | Type::Enum(_) | Type::String | Type::DynArray(_)
     )
 }
 
@@ -574,6 +578,7 @@ impl X86_64Backend {
             address_vars: HashSet::new(),
             runtime_print_names: HashSet::new(),
             needs_alloc_runtime: false,
+            needs_oob_runtime: false,
             return_ty: Type::Unit,
             param_vars: HashSet::new(),
             current_fn: String::new(),
@@ -590,6 +595,7 @@ impl X86_64Backend {
         self.generate_globals(&program.globals);
         self.runtime_print_names = Self::runtime_print_names(program);
         self.needs_alloc_runtime = Self::needs_alloc_runtime(program);
+        self.needs_oob_runtime = Self::needs_oob_runtime(program);
         let needs_print_runtime = !self.runtime_print_names.is_empty();
         if needs_print_runtime {
             self.generate_print_runtime_data();
@@ -599,6 +605,9 @@ impl X86_64Backend {
         }
         self.intern_strings(program);
         self.generate_string_rodata();
+        if self.needs_oob_runtime {
+            self.generate_oob_runtime_data();
+        }
 
         self.emit("    .text");
         self.emit("    .globl main");
@@ -612,7 +621,8 @@ impl X86_64Backend {
             // helpers and the bump allocator) must not also be declared
             // `.extern` — they are defined in this same translation unit.
             let defined_inline = Self::is_defined_print_runtime_symbol(&symbol)
-                || (self.needs_alloc_runtime && symbol == "tl_alloc");
+                || (self.needs_alloc_runtime && symbol == "tl_alloc")
+                || (self.needs_oob_runtime && symbol == "tl_oob_abort");
             if !defined_inline {
                 self.emit(&format!("    .extern {}", symbol));
             }
@@ -628,6 +638,9 @@ impl X86_64Backend {
         }
         if self.needs_alloc_runtime {
             self.generate_alloc_runtime_functions();
+        }
+        if self.needs_oob_runtime {
+            self.generate_oob_runtime_functions();
         }
 
         // Generate functions
@@ -700,6 +713,29 @@ impl X86_64Backend {
             })
         });
         let referenced_in_externs = program.externs.iter().any(|(name, _)| name == "tl_alloc");
+        referenced_in_calls || referenced_in_externs
+    }
+
+    /// Whether the program references the out-of-bounds abort `tl_oob_abort`
+    /// (emitted by dynamic-array bounds checks) and does not define its own.
+    /// When true the backend emits the self-contained abort runtime so the
+    /// symbol resolves without linking libc.
+    fn needs_oob_runtime(program: &Program) -> bool {
+        let defines_own = program.functions.iter().any(|f| f.name == "tl_oob_abort");
+        if defines_own {
+            return false;
+        }
+        let referenced_in_calls = program.functions.iter().any(|func| {
+            func.blocks.iter().any(|block| {
+                block.instructions.iter().any(|instr| {
+                    matches!(instr, Instruction::Call { func, .. } if func == "tl_oob_abort")
+                })
+            })
+        });
+        let referenced_in_externs = program
+            .externs
+            .iter()
+            .any(|(name, _)| name == "tl_oob_abort");
         referenced_in_calls || referenced_in_externs
     }
 
@@ -995,6 +1031,38 @@ impl X86_64Backend {
         self.emit("");
     }
 
+    /// The abort message written to fd 2 (stderr) on an out-of-bounds access.
+    fn generate_oob_runtime_data(&mut self) {
+        self.emit("    .section .rodata");
+        self.emit(".L_tl_oob_msg:");
+        self.emit("    .ascii \"tl: array index out of bounds\\n\"");
+        self.emit("    .set .L_tl_oob_msg_len, . - .L_tl_oob_msg");
+        self.emit("");
+    }
+
+    /// Emit the self-contained out-of-bounds abort `tl_oob_abort()`. It writes a
+    /// diagnostic to fd 2 via the `write(2)` syscall, then terminates the process
+    /// with the conventional "aborted" status 134 via the `exit(2)` syscall. It
+    /// is zero-dependency (no libc) and never returns. Bounds-checked array
+    /// accesses `Call` this symbol on the out-of-bounds path; because it is a
+    /// `Call` the optimizer's dead-code elimination cannot drop the check.
+    fn generate_oob_runtime_functions(&mut self) {
+        self.emit("    .globl tl_oob_abort");
+        self.emit("tl_oob_abort:");
+        // write(2 /*fd=stderr*/, msg, len). syscall number 1; args rdi/rsi/rdx.
+        self.emit("    movq $1, %rax");
+        self.emit("    movq $2, %rdi");
+        self.emit("    leaq .L_tl_oob_msg(%rip), %rsi");
+        self.emit("    movq $.L_tl_oob_msg_len, %rdx");
+        self.emit("    syscall");
+        // exit(134). syscall number 60; status in rdi. 134 = 128 + SIGABRT(6),
+        // the conventional status for an aborted process.
+        self.emit("    movq $60, %rax");
+        self.emit("    movq $134, %rdi");
+        self.emit("    syscall");
+        self.emit("");
+    }
+
     fn generate_globals(&mut self, globals: &[(String, Type, Option<Value>)]) {
         if globals.is_empty() {
             return;
@@ -1112,7 +1180,12 @@ impl X86_64Backend {
         for (var, ty) in &func.params {
             let offset = self.var_offsets[var];
             match ty {
-                Type::I64 | Type::U64 | Type::Func(_, _) | Type::Enum(_) | Type::String => {
+                Type::I64
+                | Type::U64
+                | Type::Func(_, _)
+                | Type::Enum(_)
+                | Type::String
+                | Type::DynArray(_) => {
                     if int_param < param_regs.len() {
                         self.emit(&format!(
                             "    movq {}, {}(%rbp)",
@@ -2060,6 +2133,9 @@ impl X86_64Backend {
             // program defines its own `tl_alloc`, `needs_alloc_runtime` is
             // false and the call is mangled like any other user function.
             "tl_alloc".into()
+        } else if name == "tl_oob_abort" && self.needs_oob_runtime {
+            // The backend-provided abort runtime resolves to its raw symbol.
+            "tl_oob_abort".into()
         } else {
             Self::mangle_name(name)
         }
@@ -3506,5 +3582,97 @@ mod tests {
         // assembler reproduces the exact bytes.
         let rendered = X86_64Backend::escape_string_bytes("a\"b\\c\n\u{7}");
         assert_eq!(rendered, "\"a\\\"b\\\\c\\n\\007\"");
+    }
+
+    // ------------------------------------------------------------------
+    // Dynamic arrays — Issue #13
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_compile_make_array_calls_alloc_and_stores_ptr_len() {
+        // `(make-array i64 n)` allocates the element buffer via tl_alloc and
+        // stores the buffer pointer + element count into the fat value.
+        let asm = compile_ok("(define (f [n : i64]) : i64 (begin (make-array i64 n) 0))");
+
+        // The element buffer is allocated through the runtime bump allocator,
+        // whose self-contained body is emitted in this same unit.
+        assert!(asm.contains("    call tl_alloc"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        // The byte count is the element count scaled by sizeof(i64) = 8, then
+        // passed to the allocator in %rdi.
+        assert!(asm.contains("$8, %rcx"), "asm:\n{}", asm);
+        assert!(asm.contains("imulq %rcx, %rax"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("movq -16(%rbp), %rdi") || asm.contains(", %rdi"),
+            "asm:\n{}",
+            asm
+        );
+        // No instruction selection fell through to a TODO stub.
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_array_ref_bounds_check_traps_via_call() {
+        // `array-ref` emits an unsigned bounds compare, a conditional branch and
+        // a Call to the abort runtime on the out-of-bounds path, then a Gep +
+        // Load of the element.
+        let asm = compile_ok("(define (f [a : (Array i64)] [i : i64]) : i64 (array-ref a i))");
+
+        // Unsigned compare for the bounds check (`setb`, not the signed `setl`).
+        assert!(asm.contains("setb %al"), "asm:\n{}", asm);
+        assert!(!asm.contains("setl %al"), "asm:\n{}", asm);
+        // A conditional branch decides in-bounds vs out-of-bounds.
+        assert!(asm.contains("jnz "), "asm:\n{}", asm);
+        // The out-of-bounds trap is a Call (survives DCE) to the abort symbol,
+        // whose self-contained body is emitted in this same unit.
+        assert!(asm.contains("    call tl_oob_abort"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_oob_abort:"), "asm:\n{}", asm);
+        // The element address is formed by scaling the index and adding it to
+        // the buffer pointer (Gep), then the element is loaded via the pointer.
+        assert!(asm.contains("imulq $8"), "asm:\n{}", asm);
+        assert!(asm.contains("(%r10)"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_oob_abort_runtime_writes_to_fd2_and_exits() {
+        // The emitted abort runtime writes a message to fd 2 (write syscall) and
+        // terminates the process (exit syscall, status 134), zero-dependency.
+        let asm = compile_ok("(define (f [a : (Array i64)] [i : i64]) : i64 (array-ref a i))");
+
+        assert!(asm.contains("tl_oob_abort:"), "asm:\n{}", asm);
+        // write(2, msg, len): fd 2 in %rdi, message label loaded RIP-relative.
+        assert!(asm.contains("movq $2, %rdi"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_oob_msg"), "asm:\n{}", asm);
+        // The two syscalls (write then exit) are present.
+        assert!(asm.matches("    syscall").count() >= 2, "asm:\n{}", asm);
+        // exit(134) via syscall 60.
+        assert!(asm.contains("movq $60, %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("movq $134, %rdi"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_length_reads_len_field_not_a_call() {
+        // `(length a)` loads the fat value's len field; there is no runtime call
+        // to a `length`/`array-length` symbol, and no abort runtime is emitted
+        // (no bounds check on a bare length read).
+        let asm = compile_ok("(define (f [a : (Array i64)]) : i64 (length a))");
+
+        assert!(!asm.contains("call _tl_length"), "asm:\n{}", asm);
+        assert!(!asm.contains("call _tl_array_length"), "asm:\n{}", asm);
+        assert!(!asm.contains("tl_oob_abort:"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_make_array_then_length_round_trips() {
+        // End-to-end through the surface language: allocate then read length.
+        let asm = compile_ok(
+            "(define (f [n : i64]) : i64 \
+               (let ([a : (Array i64) (make-array i64 n)]) (length a)))",
+        );
+        assert!(asm.contains("    call tl_alloc"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
     }
 }

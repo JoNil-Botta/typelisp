@@ -1,6 +1,9 @@
 use crate::ast;
 use crate::ir::*;
-use crate::types::{STRING_FAT_SIZE, STRING_LEN_OFFSET, STRING_PTR_OFFSET, Type};
+use crate::types::{
+    DYN_ARRAY_FAT_SIZE, DYN_ARRAY_LEN_OFFSET, DYN_ARRAY_PTR_OFFSET, STRING_FAT_SIZE,
+    STRING_LEN_OFFSET, STRING_PTR_OFFSET, Type,
+};
 use std::collections::HashMap;
 
 /// Lowers a typed AST program into IR.
@@ -245,11 +248,15 @@ impl FnLowerer {
             ast::Expr::Set(name, expr) => self.lower_set(name, expr),
             ast::Expr::Ann { expr, .. } => self.lower_expr(expr),
             ast::Expr::Cast { expr, ty } => self.lower_cast(expr, ty),
-            // Tuple, Array, Lambda — stubbed to unit for now
+            // A dynamic-array constructor allocates an element buffer and builds
+            // an inline fat `{ ptr, len }` value, yielding a pointer to it.
+            ast::Expr::MakeArray { elem_ty, len } => self.lower_make_array(elem_ty, len),
+            ast::Expr::ArrayRef { expr, index } => self.lower_array_ref(expr, index),
+            // Tuple, Array (literal), Lambda — stubbed to unit for now
             ast::Expr::Tuple(_) | ast::Expr::Array(_) | ast::Expr::Lambda { .. } => {
                 Value::ConstUnit
             }
-            ast::Expr::TupleRef { .. } | ast::Expr::ArrayRef { .. } => Value::ConstUnit,
+            ast::Expr::TupleRef { .. } => Value::ConstUnit,
             ast::Expr::Spanned { expr, .. } => self.lower_expr(expr),
         }
     }
@@ -524,6 +531,27 @@ impl FnLowerer {
             return self.lower_construct(&enum_name, tag, &arg_vals);
         }
 
+        // `(array-length a)` / `(length a)` over a dynamic array are builtins,
+        // not runtime calls: load the `len` field (offset 8) of the fat storage.
+        // Checked before the string `length` handler so a dynamic-array argument
+        // takes the array path.
+        if let ast::Expr::Var(name) = func.unspan()
+            && (name == "array-length" || name == "length")
+            && args.len() == 1
+            && matches!(self.expr_type(&args[0]), Type::DynArray(_))
+        {
+            let arr = self.lower_expr(&args[0]);
+            let len_ptr = self.gep_byte(&arr, DYN_ARRAY_LEN_OFFSET);
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Load {
+                dst,
+                src: Value::Var(len_ptr),
+                ty: Type::I64,
+            });
+            self.record_local(dst, Type::I64);
+            return Value::Var(dst);
+        }
+
         // `(string-length s)` / `(length s)` are builtins, not runtime calls:
         // load the `len` field (offset 8) of the string's fat storage.
         if let ast::Expr::Var(name) = func.unspan()
@@ -687,6 +715,228 @@ impl FnLowerer {
         });
 
         base_val
+    }
+
+    /// Construct a dynamic-array value: reserve 16 bytes of inline fat
+    /// `{ ptr, len }` storage, allocate an element buffer of `len * sizeof(elem)`
+    /// bytes via the runtime bump allocator `tl_alloc`, store the buffer pointer
+    /// at offset 0 and the element count at offset 8, then yield a pointer to the
+    /// storage (the runtime representation of a dynamic array). Mirrors how enum
+    /// values and string literals are built (`lower_construct`) — only
+    /// Alloc/AddrOf/Gep/Store/Call, no new IR shape.
+    fn lower_make_array(&mut self, elem_ty: &Type, len: &ast::Expr) -> Value {
+        let elem_ty = self.enums.resolve_type(elem_ty);
+        let elem_size = elem_ty.size() as i64;
+        let len_val = self.lower_expr(len);
+
+        // byte_count = len * sizeof(elem). Computed in i64 so it feeds tl_alloc.
+        let byte_count = self.builder.fresh_var();
+        self.builder.emit(Instruction::BinOp {
+            dst: byte_count,
+            op: BinOp::Mul,
+            lhs: len_val.clone(),
+            rhs: Value::ConstI64(elem_size),
+            ty: Type::I64,
+        });
+        self.record_local(byte_count, Type::I64);
+
+        // buf = tl_alloc(byte_count) : the heap element buffer pointer.
+        let buf = self.builder.fresh_var();
+        self.builder.emit(Instruction::Call {
+            dst: Some(buf),
+            func: "tl_alloc".into(),
+            args: vec![Value::Var(byte_count)],
+            ty: Type::U64,
+        });
+        self.record_local(buf, Type::U64);
+
+        // Reserve the fat-array storage as an i8 array (align 1, exact size) so
+        // the backend allocates exactly 16 bytes.
+        let slot = self.builder.fresh_var();
+        let storage_ty = Type::Array(Box::new(Type::I8), DYN_ARRAY_FAT_SIZE);
+        self.builder.emit(Instruction::Alloc {
+            var: slot,
+            ty: storage_ty.clone(),
+        });
+        self.record_local(slot, storage_ty);
+
+        // base = &slot : the DynArray-typed pointer to the fat storage.
+        let base = self.builder.fresh_var();
+        self.builder.emit(Instruction::AddrOf {
+            dst: base,
+            src: slot,
+        });
+        let arr_ty = Type::DynArray(Box::new(elem_ty));
+        self.record_local(base, arr_ty);
+        let base_val = Value::Var(base);
+
+        // Store the element-buffer pointer at offset 0.
+        let ptr_field = self.gep_byte(&base_val, DYN_ARRAY_PTR_OFFSET);
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(ptr_field),
+            src: Value::Var(buf),
+            ty: Type::U64,
+        });
+
+        // Store the element count at offset 8.
+        let len_field = self.gep_byte(&base_val, DYN_ARRAY_LEN_OFFSET);
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(len_field),
+            src: len_val,
+            ty: Type::I64,
+        });
+
+        base_val
+    }
+
+    /// Lower `(array-ref a i)`. For a *dynamic* array the access is bounds
+    /// -checked: emit an UNSIGNED comparison `i u< len` (which also catches
+    /// negative indices, since they wrap to huge unsigned values), branch to an
+    /// abort block on out-of-bounds that emits a `Call tl_oob_abort` (the trap
+    /// MUST be a `Call` — the optimizer's `has_side_effects` omits Load/Gep, so
+    /// only a Call survives DCE), then on the in-bounds path compute the element
+    /// address via `Gep` over the buffer pointer and `Load` the element.
+    fn lower_array_ref(&mut self, arr: &ast::Expr, index: &ast::Expr) -> Value {
+        let arr_ty = self.expr_type(arr);
+        // Only *dynamic* arrays are lowered here. Fixed-size `(Array elem N)`
+        // value/stack arrays are still stubbed (their inline layout is a
+        // separate, deferred slice), so fall through to a unit value as before.
+        let elem_ty = match &arr_ty {
+            Type::DynArray(e) => (**e).clone(),
+            _ => return Value::ConstUnit,
+        };
+
+        let arr_val = self.lower_expr(arr);
+        let idx_val = self.lower_expr(index);
+
+        // Load len (offset 8) from the fat value.
+        let len_ptr = self.gep_byte(&arr_val, DYN_ARRAY_LEN_OFFSET);
+        let len = self.builder.fresh_var();
+        self.builder.emit(Instruction::Load {
+            dst: len,
+            src: Value::Var(len_ptr),
+            ty: Type::I64,
+        });
+        self.record_local(len, Type::I64);
+
+        // Unsigned bounds check: in_bounds = (idx u< len). The operands are
+        // reinterpreted as U64 via `Cast` so the backend selects the unsigned
+        // condition code (`setb`) — negative indices wrap to large unsigned
+        // values and so also fail the check. `Cast` (not `Mov`) is used because
+        // the optimizer's copy propagation would substitute a `Mov` away,
+        // restoring the signed operand and silently weakening the check.
+        let idx_u = self.builder.fresh_var();
+        self.builder.emit(Instruction::Cast {
+            dst: idx_u,
+            src: idx_val.clone(),
+            from_ty: Type::I64,
+            to_ty: Type::U64,
+        });
+        self.record_local(idx_u, Type::U64);
+        let len_u = self.builder.fresh_var();
+        self.builder.emit(Instruction::Cast {
+            dst: len_u,
+            src: Value::Var(len),
+            from_ty: Type::I64,
+            to_ty: Type::U64,
+        });
+        self.record_local(len_u, Type::U64);
+        let in_bounds = self.builder.fresh_var();
+        self.builder.emit(Instruction::BinOp {
+            dst: in_bounds,
+            op: BinOp::Lt,
+            lhs: Value::Var(idx_u),
+            rhs: Value::Var(len_u),
+            ty: Type::Bool,
+        });
+        self.record_local(in_bounds, Type::Bool);
+
+        let ok_label = self.builder.fresh_label("bounds_ok");
+        let fail_label = self.builder.fresh_label("bounds_fail");
+        self.builder.emit(Instruction::Branch {
+            cond: Value::Var(in_bounds),
+            true_label: ok_label.clone(),
+            false_label: fail_label.clone(),
+        });
+
+        // Out-of-bounds block: call the abort runtime, then (defensively) jump
+        // to the ok block. The call diverges at runtime so control never returns.
+        self.builder.finish_block(&fail_label);
+        self.builder.emit(Instruction::Call {
+            dst: None,
+            func: "tl_oob_abort".into(),
+            args: vec![],
+            ty: Type::Unit,
+        });
+        self.builder.emit(Instruction::Jump(ok_label.clone()));
+
+        // In-bounds block: load the buffer pointer, compute the element address,
+        // and load the element.
+        self.builder.finish_block(&ok_label);
+        let buf_ptr = self.gep_byte(&arr_val, DYN_ARRAY_PTR_OFFSET);
+        let buf = self.builder.fresh_var();
+        self.builder.emit(Instruction::Load {
+            dst: buf,
+            src: Value::Var(buf_ptr),
+            ty: Type::U64,
+        });
+        self.record_local(buf, Type::U64);
+
+        let elem_ptr = self.builder.fresh_var();
+        self.builder.emit(Instruction::Gep {
+            dst: elem_ptr,
+            base: Value::Var(buf),
+            offset: idx_val,
+            elem_ty: elem_ty.clone(),
+        });
+        self.record_local(elem_ptr, Type::U64);
+
+        let result = self.builder.fresh_var();
+        self.builder.emit(Instruction::Load {
+            dst: result,
+            src: Value::Var(elem_ptr),
+            ty: elem_ty.clone(),
+        });
+        self.record_local(result, elem_ty);
+        Value::Var(result)
+    }
+
+    /// Best-effort static type of an AST expression, sufficient to dispatch
+    /// array operations (which need to know if the array is dynamic and its
+    /// element type). The program has already type-checked, so this only needs
+    /// to resolve the cases that flow into `array-ref`/`make-array`/`length`.
+    fn expr_type(&self, expr: &ast::Expr) -> Type {
+        match expr.unspan() {
+            ast::Expr::Var(name) => self
+                .vars
+                .get(name)
+                .and_then(|v| self.var_types.get(v))
+                .cloned()
+                .unwrap_or_else(|| match self.function_types.get(name) {
+                    Some(Type::Func(_, ret)) => (**ret).clone(),
+                    _ => Type::I64,
+                }),
+            ast::Expr::MakeArray { elem_ty, .. } => {
+                Type::DynArray(Box::new(self.enums.resolve_type(elem_ty)))
+            }
+            ast::Expr::Ann { ty, .. } => self.enums.resolve_type(ty),
+            ast::Expr::Cast { ty, .. } => self.enums.resolve_type(ty),
+            ast::Expr::Let { body, .. } => self.expr_type(body),
+            ast::Expr::Begin(exprs) => exprs
+                .last()
+                .map(|e| self.expr_type(e))
+                .unwrap_or(Type::Unit),
+            ast::Expr::Call { func, .. } => {
+                if let ast::Expr::Var(name) = func.unspan() {
+                    match self.function_types.get(name) {
+                        Some(Type::Func(_, ret)) => return (**ret).clone(),
+                        _ => return Type::I64,
+                    }
+                }
+                Type::I64
+            }
+            _ => Type::I64,
+        }
     }
 
     /// Emit `dst = gep base, byte_offset : i8` — a pointer `byte_offset` bytes
@@ -1844,6 +2094,134 @@ mod tests {
             })
         });
         assert!(has_unit_ret);
+    }
+
+    // ------------------------------------------------------------------
+    // Dynamic arrays — Issue #13
+    // ------------------------------------------------------------------
+
+    fn all_instrs(ir: &Program) -> Vec<&Instruction> {
+        ir.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .collect()
+    }
+
+    #[test]
+    fn test_lower_make_array_allocates_and_builds_fat_value() {
+        // `(make-array i64 n)` calls tl_alloc(n * 8), reserves 16-byte fat
+        // storage, and stores the buffer pointer + element count.
+        let prog = parse("(define (f [n : i64]) : i64 (begin (make-array i64 n) 0))").unwrap();
+        let ir = lower_program(&prog);
+        let instrs = all_instrs(&ir);
+
+        // Element-buffer size is computed as n * sizeof(i64) = n * 8.
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::BinOp {
+                op: BinOp::Mul,
+                rhs: Value::ConstI64(8),
+                ..
+            }
+        )));
+
+        // The buffer is allocated via the runtime bump allocator.
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::Call { func, .. } if func == "tl_alloc"
+        )));
+
+        // 16-byte fat-array storage is reserved.
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::Alloc { ty: Type::Array(elem, 16), .. } if **elem == Type::I8
+        )));
+
+        // The element count is stored as an i64 (the len field).
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Store { ty: Type::I64, .. }))
+        );
+    }
+
+    #[test]
+    fn test_lower_make_array_scales_by_element_size() {
+        // A u32 element array scales the byte count by 4.
+        let prog = parse("(define (f [n : i64]) : i64 (begin (make-array u32 n) 0))").unwrap();
+        let ir = lower_program(&prog);
+        assert!(all_instrs(&ir).iter().any(|i| matches!(
+            i,
+            Instruction::BinOp {
+                op: BinOp::Mul,
+                rhs: Value::ConstI64(4),
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn test_lower_array_ref_bounds_checks_with_call_trap() {
+        // `array-ref` on a dynamic array emits an unsigned bounds compare, a
+        // Branch, a Call to the abort runtime (so DCE can't drop it), then a
+        // Gep + Load of the element.
+        let prog = parse("(define (f [a : (Array i64)] [i : i64]) : i64 (array-ref a i))").unwrap();
+        let ir = lower_program(&prog);
+        let instrs = all_instrs(&ir);
+
+        // Unsigned compare: a Lt BinOp over U64-typed operands.
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::BinOp {
+                op: BinOp::Lt,
+                ty: Type::Bool,
+                ..
+            }
+        )));
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Branch { .. }))
+        );
+
+        // The out-of-bounds trap is a Call (not a Load/Gep) so it survives DCE.
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::Call { func, dst: None, .. } if func == "tl_oob_abort"
+        )));
+
+        // The element address is computed via Gep over an i64 element type.
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::Gep {
+                elem_ty: Type::I64,
+                ..
+            }
+        )));
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Load { ty: Type::I64, .. }))
+        );
+    }
+
+    #[test]
+    fn test_lower_length_reads_len_field_not_a_call() {
+        // `(length a)` / `(array-length a)` load the fat value's len field; they
+        // are not runtime calls.
+        let prog = parse("(define (f [a : (Array i64)]) : i64 (length a))").unwrap();
+        let ir = lower_program(&prog);
+        let instrs = all_instrs(&ir);
+        assert!(!instrs.iter().any(|i| matches!(
+            i,
+            Instruction::Call { func, .. } if func == "length" || func == "array-length"
+        )));
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Load { ty: Type::I64, .. }))
+        );
     }
 
     // ------------------------------------------------------------------

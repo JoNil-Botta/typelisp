@@ -1087,7 +1087,7 @@ impl X86_64Backend {
     fn generate_instruction(&mut self, instr: &Instruction) {
         match instr {
             Instruction::Label(label) => {
-                self.emit(&format!("{}:", label));
+                self.emit(&format!("{}:", self.block_label(label)));
             }
             // Parameter slots are materialized by the prologue; their Alloc is a
             // no-op here. (Non-parameter Allocs are rejected by validation.)
@@ -1503,6 +1503,10 @@ impl X86_64Backend {
                 self.emit("    addq %rcx, %rax");
                 self.store_gpr_value("%rax", dst_offset, &dst_ty);
             }
+            // Phi nodes are lowered to predecessor moves by `eliminate_phis`
+            // before instruction selection. If one reaches this point, there is
+            // no standalone assembly instruction to emit for it.
+            Instruction::Phi { .. } => {}
             Instruction::Return(val) => {
                 if let Some(v) = val {
                     let ret_ty = self.return_ty.clone();
@@ -1516,10 +1520,6 @@ impl X86_64Backend {
                 self.emit("    mov %rbp, %rsp");
                 self.emit("    pop %rbp");
                 self.emit("    ret");
-            }
-            _ => {
-                // TODO: implement remaining instructions
-                self.emit(&format!("    # TODO: {:?}", instr));
             }
         }
     }
@@ -2019,6 +2019,32 @@ mod tests {
         assert!(asm.contains("_start:"));
         assert!(asm.contains("    call main"));
         assert!(asm.contains("    movq $60, %rax"));
+    }
+
+    #[test]
+    fn test_compile_inline_label_uses_qualified_symbol() {
+        let program = Program {
+            functions: vec![Function {
+                name: "main".to_string(),
+                params: vec![],
+                ret: Type::I64,
+                locals: vec![],
+                blocks: vec![BasicBlock {
+                    label: "entry".to_string(),
+                    instructions: vec![
+                        Instruction::Label("manual".to_string()),
+                        Instruction::Return(Some(Value::ConstI64(0))),
+                    ],
+                }],
+                entry: "entry".to_string(),
+            }],
+            globals: vec![],
+            externs: vec![],
+        };
+        let asm = generate_assembly(&program).expect("inline label should compile");
+        assert!(asm.contains("main.manual:"), "asm:\n{}", asm);
+        assert!(!asm.contains("\nmanual:"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
     }
 
     #[test]

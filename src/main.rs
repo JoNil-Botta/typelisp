@@ -5,12 +5,14 @@ use std::process::Command;
 
 mod ast;
 mod backend;
+mod diagnostic;
 mod ir;
 mod lexer;
 mod lower;
 mod optimizer;
 mod parser;
 mod runtime;
+mod span;
 mod typechecker;
 mod types;
 

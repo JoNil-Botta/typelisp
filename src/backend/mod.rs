@@ -1372,27 +1372,9 @@ impl X86_64Backend {
                         self.emit(&format!("    movabsq ${:#x}, %rax", n.to_bits()));
                         self.emit(&format!("    movq %rax, {}(%rbp)", dst_offset));
                     }
-                    (Value::Var(src_var), _) => {
-                        let src_offset = self.var_offsets[src_var];
-                        match ty.size() {
-                            8 => {
-                                self.emit(&format!("    movq {}(%rbp), %rax", src_offset));
-                                self.emit(&format!("    movq %rax, {}(%rbp)", dst_offset));
-                            }
-                            4 => {
-                                self.emit(&format!("    movl {}(%rbp), %eax", src_offset));
-                                self.emit(&format!("    movl %eax, {}(%rbp)", dst_offset));
-                            }
-                            2 => {
-                                self.emit(&format!("    movw {}(%rbp), %ax", src_offset));
-                                self.emit(&format!("    movw %ax, {}(%rbp)", dst_offset));
-                            }
-                            1 => {
-                                self.emit(&format!("    movb {}(%rbp), %al", src_offset));
-                                self.emit(&format!("    movb %al, {}(%rbp)", dst_offset));
-                            }
-                            _ => {}
-                        }
+                    (Value::Var(_) | Value::Global(_) | Value::ConstStr(_), _) => {
+                        self.load_value(src, "%rax", ty);
+                        self.store_gpr_value("%rax", dst_offset, ty);
                     }
                     _ => {}
                 }
@@ -1650,27 +1632,10 @@ impl X86_64Backend {
                 }
 
                 match src {
-                    Value::Var(_) => {
+                    Value::Var(_) | Value::Global(_) | Value::ConstStr(_) => {
                         // Round-trip through a register sized to the value.
-                        match ty.size() {
-                            8 => {
-                                self.load_value(src, "%rax", ty);
-                                self.emit(&format!("    movq %rax, {}(%rbp)", dst_offset));
-                            }
-                            4 => {
-                                self.load_value(src, "%rax", ty);
-                                self.emit(&format!("    movl %eax, {}(%rbp)", dst_offset));
-                            }
-                            2 => {
-                                self.load_value(src, "%rax", ty);
-                                self.emit(&format!("    movw %ax, {}(%rbp)", dst_offset));
-                            }
-                            1 => {
-                                self.load_value(src, "%rax", ty);
-                                self.emit(&format!("    movb %al, {}(%rbp)", dst_offset));
-                            }
-                            _ => {}
-                        }
+                        self.load_value(src, "%rax", ty);
+                        self.store_gpr_value("%rax", dst_offset, ty);
                     }
                     Value::ConstI64(n) => {
                         self.store_integer_immediate(*n as i128, dst_offset, ty);
@@ -2461,6 +2426,48 @@ mod tests {
         );
         assert!(
             asm.contains("    movsd _tl_pi(%rip), %xmm0"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_stores_i64_global_into_local() {
+        // A global used as a let initializer lowers to Store { src: Global, ... }.
+        // The backend must materialize that source instead of silently leaving
+        // the local slot uninitialized.
+        let asm = compile_ok(
+            r#"
+            (define answer 41)
+            (define (main) : i64
+              (let ([x : i64 answer])
+                (+ x 1)))
+            "#,
+        );
+        assert!(
+            asm.contains("    movq _tl_answer(%rip), %rax"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(asm.contains("    addq %rcx, %rax"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_phi_can_select_i64_global() {
+        // Phi elimination inserts Mov instructions in predecessor blocks. When
+        // one incoming value is global, Mov must load it just like Return/Call
+        // operands do.
+        let asm = compile_ok(
+            r#"
+            (define fallback 9)
+            (define (choose [c : bool]) : i64
+              (if c fallback 2))
+            "#,
+        );
+        assert!(
+            asm.contains("    movq _tl_fallback(%rip), %rax"),
             "asm:\n{}",
             asm
         );

@@ -14,6 +14,7 @@ mod runtime;
 mod typechecker;
 mod types;
 
+use backend::generate_assembly;
 use lower::lower_program;
 use optimizer::Optimizer;
 use parser::parse;
@@ -131,7 +132,13 @@ fn main() {
             } else {
                 let mut ir_prog = lower_program(&prog);
                 Optimizer::optimize(&mut ir_prog);
-                let asm = generate_placeholder_asm(&prog);
+                let asm = match generate_assembly(&ir_prog) {
+                    Ok(asm) => asm,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        std::process::exit(1);
+                    }
+                };
                 let output_path = output.unwrap_or_else(|| file.with_extension("s"));
                 fs::write(&output_path, asm).expect("Failed to write output");
                 println!("Generated: {}", output_path.display());
@@ -149,7 +156,15 @@ fn main() {
             let mut tc = TypeChecker::new();
             tc.check_program(&prog).expect("Type checking failed");
 
-            let asm = generate_placeholder_asm(&prog);
+            let mut ir_prog = lower_program(&prog);
+            Optimizer::optimize(&mut ir_prog);
+            let asm = match generate_assembly(&ir_prog) {
+                Ok(asm) => asm,
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            };
             let asm_path = file.with_extension("s");
             fs::write(&asm_path, asm).expect("Failed to write assembly");
 
@@ -198,29 +213,4 @@ fn main() {
             std::process::exit(1);
         }
     }
-}
-
-fn generate_placeholder_asm(prog: &ast::Program) -> String {
-    let mut asm = String::new();
-    asm.push_str("    .text\n");
-    asm.push_str("    .globl main\n\n");
-
-    // Check if there's a main function defined
-    let has_main = prog
-        .decls
-        .iter()
-        .any(|d| matches!(d, ast::Decl::DefFn { name, .. } if name == "main"));
-
-    if has_main {
-        asm.push_str("    # TODO: Call user-defined main\n");
-    }
-
-    asm.push_str("main:\n");
-    asm.push_str("    push %rbp\n");
-    asm.push_str("    mov %rsp, %rbp\n");
-    asm.push_str("    xor %eax, %eax\n");
-    asm.push_str("    pop %rbp\n");
-    asm.push_str("    ret\n");
-
-    asm
 }

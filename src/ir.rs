@@ -197,6 +197,11 @@ impl IrBuilder {
         self.current_block.instructions.push(instr);
     }
 
+    /// The label of the block currently being built.
+    pub fn current_label(&self) -> &str {
+        &self.current_block.label
+    }
+
     pub fn finish_block(&mut self, next_label: &str) {
         let block = std::mem::replace(
             &mut self.current_block,

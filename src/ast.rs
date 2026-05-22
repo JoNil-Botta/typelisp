@@ -1,5 +1,6 @@
 use crate::span::Span;
 use crate::types::Type;
+use std::collections::HashMap;
 
 /// Unique identifier for variables, functions, etc.
 pub type Symbol = String;
@@ -49,11 +50,24 @@ pub enum UnOp {
 
 /// Pattern for destructuring bindings
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
 pub enum Pattern {
+    #[allow(dead_code)]
     Var(Symbol, Option<Type>),
+    #[allow(dead_code)]
     Tuple(Vec<Pattern>),
+    /// Irrefutable wildcard: `_`.
     Wildcard,
+    /// Variant pattern: `(Variant binding...)` or a nullary `Variant`.
+    /// The bindings name the variant's payload fields positionally.
+    Variant { name: Symbol, bindings: Vec<Symbol> },
+}
+
+/// A variant of a `defenum`: a constructor name and its (ordered) payload
+/// field types. A nullary variant has an empty `fields` list.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VariantDef {
+    pub name: Symbol,
+    pub fields: Vec<Type>,
 }
 
 /// Top-level declarations
@@ -74,6 +88,11 @@ pub enum Decl {
     },
     /// (extern name [: (-> ... ret)])
     Extern { name: Symbol, ty: Type },
+    /// (defenum Name (Variant Ty...) (Variant2 ...) ...)
+    DefEnum {
+        name: Symbol,
+        variants: Vec<VariantDef>,
+    },
 }
 
 /// Expressions
@@ -133,6 +152,11 @@ pub enum Expr {
     /// asserts a type), `cast` converts the value to `ty`, truncating or
     /// sign/zero-extending integers as needed.
     Cast { expr: Box<Expr>, ty: Type },
+    /// Pattern match: (match scrutinee [pattern body] ...)
+    Match {
+        scrutinee: Box<Expr>,
+        arms: Vec<(Pattern, Expr)>,
+    },
 }
 
 /// A complete program
@@ -176,5 +200,107 @@ impl Expr {
     #[allow(dead_code)]
     pub fn bool(b: bool) -> Self {
         Expr::Literal(Literal::Bool(b))
+    }
+}
+
+/// The size in bytes of an enum's tag, stored at offset 0 of every value.
+pub const ENUM_TAG_SIZE: usize = 8;
+
+/// A registry of all `defenum` declarations in a program, used by both the
+/// typechecker (for constructor/variant typing) and the lowerer (for memory
+/// layout). Built once from the program's `Decl::DefEnum`s.
+#[derive(Debug, Clone, Default)]
+pub struct EnumRegistry {
+    /// enum name -> its ordered variants.
+    enums: HashMap<Symbol, Vec<VariantDef>>,
+    /// variant name -> (owning enum name, tag index). Variant names are assumed
+    /// globally unique across enums (a later enhancement could qualify them).
+    variants: HashMap<Symbol, (Symbol, usize)>,
+}
+
+impl EnumRegistry {
+    /// Build the registry from a program's `defenum` declarations.
+    pub fn from_program(prog: &Program) -> Self {
+        let mut reg = EnumRegistry::default();
+        for decl in &prog.decls {
+            if let Decl::DefEnum { name, variants } = decl {
+                for (tag, v) in variants.iter().enumerate() {
+                    reg.variants.insert(v.name.clone(), (name.clone(), tag));
+                }
+                reg.enums.insert(name.clone(), variants.clone());
+            }
+        }
+        reg
+    }
+
+    pub fn is_enum(&self, name: &str) -> bool {
+        self.enums.contains_key(name)
+    }
+
+    pub fn variants(&self, enum_name: &str) -> Option<&[VariantDef]> {
+        self.enums.get(enum_name).map(|v| v.as_slice())
+    }
+
+    /// Look up a variant by name, returning its owning enum, tag and field types.
+    pub fn lookup_variant(&self, variant: &str) -> Option<(&str, usize, &[Type])> {
+        let (enum_name, tag) = self.variants.get(variant)?;
+        let fields = &self.enums.get(enum_name)?[*tag].fields;
+        Some((enum_name.as_str(), *tag, fields.as_slice()))
+    }
+
+    /// The payload field types of an enum's `tag`-th variant.
+    pub fn lookup_variant_fields(&self, enum_name: &str, tag: usize) -> &[Type] {
+        self.enums
+            .get(enum_name)
+            .and_then(|vs| vs.get(tag))
+            .map(|v| v.fields.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Resolve a parsed type so that any `Type::Var(name)` naming a declared
+    /// enum becomes `Type::Enum(name)`. Recurses through compound types so enum
+    /// names nested in tuples/arrays/function types are resolved too.
+    pub fn resolve_type(&self, ty: &Type) -> Type {
+        match ty {
+            Type::Var(name) if self.is_enum(name) => Type::Enum(name.clone()),
+            Type::Func(args, ret) => Type::Func(
+                args.iter().map(|a| self.resolve_type(a)).collect(),
+                Box::new(self.resolve_type(ret)),
+            ),
+            Type::Tuple(elems) => Type::Tuple(elems.iter().map(|e| self.resolve_type(e)).collect()),
+            Type::Array(elem, n) => Type::Array(Box::new(self.resolve_type(elem)), *n),
+            other => other.clone(),
+        }
+    }
+
+    /// Byte offsets of a variant's payload fields, the first starting just after
+    /// the tag. Each field is naturally aligned to its own alignment.
+    pub fn field_offsets(&self, fields: &[Type]) -> Vec<usize> {
+        let mut offsets = Vec::with_capacity(fields.len());
+        let mut cursor = ENUM_TAG_SIZE;
+        for f in fields {
+            let align = f.align().max(1);
+            cursor = cursor.div_ceil(align) * align;
+            offsets.push(cursor);
+            cursor += f.size();
+        }
+        offsets
+    }
+
+    /// The total inline storage size of an enum value: tag plus the largest
+    /// variant payload, rounded up to 8-byte alignment.
+    pub fn enum_size(&self, enum_name: &str) -> usize {
+        let Some(variants) = self.enums.get(enum_name) else {
+            return ENUM_TAG_SIZE;
+        };
+        let mut max_extent = ENUM_TAG_SIZE;
+        for v in variants {
+            let offsets = self.field_offsets(&v.fields);
+            if let Some(&last) = offsets.last() {
+                let extent = last + v.fields.last().map(|f| f.size()).unwrap_or(0);
+                max_extent = max_extent.max(extent);
+            }
+        }
+        max_extent.div_ceil(8) * 8
     }
 }

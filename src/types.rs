@@ -28,6 +28,12 @@ pub enum Type {
     Tuple(Vec<Type>),
     /// Fixed-size array: (Array type size)
     Array(Box<Type>, usize),
+    /// Nominal sum type (tagged union) declared with `(defenum Name ...)`.
+    /// Carries only the enum's name; the variant layout lives in the
+    /// typechecker/lowerer's `EnumRegistry`. As a *value* an enum is always a
+    /// pointer to its inline `{ tag, payload }` storage, so it is pointer-sized
+    /// everywhere it flows through the IR.
+    Enum(String),
     /// Type variable for polymorphism / inference
     Var(String),
 }
@@ -63,6 +69,7 @@ impl fmt::Display for Type {
                 write!(f, ")")
             }
             Type::Array(ty, n) => write!(f, "(Array {} {})", ty, n),
+            Type::Enum(name) => write!(f, "{}", name),
             Type::Var(name) => write!(f, "'{}'", name),
         }
     }
@@ -81,6 +88,8 @@ impl Type {
             Type::Func(_, _) => 8, // function pointer
             Type::Tuple(elems) => elems.iter().map(|e| e.size()).sum(),
             Type::Array(ty, n) => ty.size() * n,
+            // An enum *value* is a pointer to its inline tagged storage.
+            Type::Enum(_) => 8,
             Type::Var(_) => panic!("cannot compute size of type variable"),
         }
     }
@@ -96,6 +105,7 @@ impl Type {
             Type::Func(_, _) => 8,
             Type::Tuple(elems) => elems.iter().map(|e| e.align()).max().unwrap_or(1),
             Type::Array(ty, _) => ty.align(),
+            Type::Enum(_) => 8,
             Type::Var(_) => panic!("cannot compute alignment of type variable"),
         }
     }

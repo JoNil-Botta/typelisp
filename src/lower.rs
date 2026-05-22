@@ -14,6 +14,7 @@ struct ProgramLowerer {
     globals: Vec<(String, Type, Option<Value>)>,
     externs: Vec<(String, Type)>,
     function_types: HashMap<String, Type>,
+    enums: ast::EnumRegistry,
 }
 
 impl ProgramLowerer {
@@ -23,10 +24,13 @@ impl ProgramLowerer {
             globals: Vec::new(),
             externs: Vec::new(),
             function_types: HashMap::new(),
+            enums: ast::EnumRegistry::default(),
         }
     }
 
     fn lower(&mut self, prog: &ast::Program) -> Program {
+        self.enums = ast::EnumRegistry::from_program(prog);
+
         for decl in &prog.decls {
             match decl {
                 ast::Decl::DefFn {
@@ -35,15 +39,19 @@ impl ProgramLowerer {
                     self.function_types.insert(
                         name.clone(),
                         Type::Func(
-                            params.iter().map(|(_, ty)| ty.clone()).collect(),
-                            Box::new(ret.clone()),
+                            params
+                                .iter()
+                                .map(|(_, ty)| self.enums.resolve_type(ty))
+                                .collect(),
+                            Box::new(self.enums.resolve_type(ret)),
                         ),
                     );
                 }
                 ast::Decl::Extern { name, ty } => {
-                    self.function_types.insert(name.clone(), ty.clone());
+                    self.function_types
+                        .insert(name.clone(), self.enums.resolve_type(ty));
                 }
-                ast::Decl::Def { .. } => {}
+                ast::Decl::Def { .. } | ast::Decl::DefEnum { .. } => {}
             }
         }
 
@@ -52,8 +60,13 @@ impl ProgramLowerer {
                 ast::Decl::Def { name, ty, value } => {
                     let val_ty = ty.clone().unwrap_or_else(|| infer_literal_type(value));
                     // Lower the global initializer as an anonymous function
-                    let fn_lowerer =
-                        FnLowerer::new("__global_init", &[], &val_ty, &self.function_types);
+                    let fn_lowerer = FnLowerer::new(
+                        "__global_init",
+                        &[],
+                        &val_ty,
+                        &self.function_types,
+                        &self.enums,
+                    );
                     let (_func, _result_var) = fn_lowerer.lower_expr_to_fn(value, &val_ty);
 
                     // Replace the generated function name with a proper init approach
@@ -67,12 +80,19 @@ impl ProgramLowerer {
                     ret,
                     body,
                 } => {
-                    let func = self.lower_function(name, params, ret, body);
+                    let params: Vec<(String, Type)> = params
+                        .iter()
+                        .map(|(n, t)| (n.clone(), self.enums.resolve_type(t)))
+                        .collect();
+                    let ret = self.enums.resolve_type(ret);
+                    let func = self.lower_function(name, &params, &ret, body);
                     self.functions.push(func);
                 }
                 ast::Decl::Extern { name, ty } => {
-                    self.externs.push((name.clone(), ty.clone()));
+                    self.externs
+                        .push((name.clone(), self.enums.resolve_type(ty)));
                 }
+                ast::Decl::DefEnum { .. } => {}
             }
         }
 
@@ -90,7 +110,7 @@ impl ProgramLowerer {
         ret: &Type,
         body: &ast::Expr,
     ) -> Function {
-        let fn_lowerer = FnLowerer::new(name, params, ret, &self.function_types);
+        let fn_lowerer = FnLowerer::new(name, params, ret, &self.function_types, &self.enums);
         fn_lowerer.lower_body(body, ret)
     }
 }
@@ -129,6 +149,7 @@ struct FnLowerer {
     /// of defaulting to `i64`, which is essential for width-correct codegen.
     var_types: HashMap<VarId, Type>,
     function_types: HashMap<String, Type>,
+    enums: ast::EnumRegistry,
     params: Vec<(VarId, Type)>,
     locals: Vec<(VarId, Type)>,
     #[allow(dead_code)]
@@ -141,6 +162,7 @@ impl FnLowerer {
         params: &[(String, Type)],
         ret: &Type,
         function_types: &HashMap<String, Type>,
+        enums: &ast::EnumRegistry,
     ) -> Self {
         let mut builder = IrBuilder::new("entry");
         let mut vars = HashMap::new();
@@ -164,6 +186,7 @@ impl FnLowerer {
             vars,
             var_types,
             function_types: function_types.clone(),
+            enums: enums.clone(),
             params: ir_params,
             locals: Vec::new(),
             ret: ret.clone(),
@@ -190,7 +213,16 @@ impl FnLowerer {
     fn lower_expr(&mut self, expr: &ast::Expr) -> Value {
         match expr.unspan() {
             ast::Expr::Literal(lit) => self.lower_literal(lit),
-            ast::Expr::Var(name) => self.lower_var(name),
+            ast::Expr::Var(name) => {
+                // A bare reference to a nullary variant constructs that value.
+                if let Some((enum_name, tag, fields)) = self.enums.lookup_variant(name)
+                    && fields.is_empty()
+                {
+                    let enum_name = enum_name.to_string();
+                    return self.lower_construct(&enum_name, tag, &[]);
+                }
+                self.lower_var(name)
+            }
             ast::Expr::Binary { op, lhs, rhs } => self.lower_binary(*op, lhs, rhs),
             ast::Expr::Unary { op, expr } => self.lower_unary(*op, expr),
             ast::Expr::If {
@@ -202,6 +234,7 @@ impl FnLowerer {
             ast::Expr::While { cond, body } => self.lower_while(cond, body),
             ast::Expr::Begin(exprs) => self.lower_begin(exprs),
             ast::Expr::Call { func, args } => self.lower_call(func, args),
+            ast::Expr::Match { scrutinee, arms } => self.lower_match(scrutinee, arms),
             ast::Expr::Set(name, expr) => self.lower_set(name, expr),
             ast::Expr::Ann { expr, .. } => self.lower_expr(expr),
             ast::Expr::Cast { expr, ty } => self.lower_cast(expr, ty),
@@ -474,6 +507,16 @@ impl FnLowerer {
     }
 
     fn lower_call(&mut self, func: &ast::Expr, args: &[ast::Expr]) -> Value {
+        // A call whose head names a variant constructor builds an enum value
+        // rather than dispatching to a function.
+        if let ast::Expr::Var(name) = func.unspan()
+            && let Some((enum_name, tag, _fields)) = self.enums.lookup_variant(name)
+        {
+            let enum_name = enum_name.to_string();
+            let arg_vals: Vec<Value> = args.iter().map(|a| self.lower_expr(a)).collect();
+            return self.lower_construct(&enum_name, tag, &arg_vals);
+        }
+
         // Evaluate arguments left-to-right
         let arg_vals: Vec<Value> = args.iter().map(|a| self.lower_expr(a)).collect();
 
@@ -509,6 +552,213 @@ impl FnLowerer {
         });
         self.record_local(dst, ret_ty);
         Value::Var(dst)
+    }
+
+    /// Construct an enum value: reserve inline `{ tag, payload }` storage,
+    /// store the variant tag, store each payload field at its byte offset, and
+    /// yield a pointer to the storage (the runtime representation of an enum
+    /// value). Uses only Alloc/AddrOf/Gep/Store — no new IR.
+    fn lower_construct(&mut self, enum_name: &str, tag: usize, args: &[Value]) -> Value {
+        let size = self.enums.enum_size(enum_name);
+        let enum_ty = Type::Enum(enum_name.to_string());
+
+        // Reserve `size` bytes of inline storage as an i8 array (align 1, exact
+        // size) so the backend allocates the right number of bytes.
+        let slot = self.builder.fresh_var();
+        let storage_ty = Type::Array(Box::new(Type::I8), size);
+        self.builder.emit(Instruction::Alloc {
+            var: slot,
+            ty: storage_ty.clone(),
+        });
+        self.record_local(slot, storage_ty);
+
+        // base = &slot : pointer to the storage.
+        let base = self.builder.fresh_var();
+        self.builder.emit(Instruction::AddrOf {
+            dst: base,
+            src: slot,
+        });
+        self.record_local(base, enum_ty.clone());
+        let base_val = Value::Var(base);
+
+        // Store the tag at offset 0.
+        let tag_ptr = self.gep_byte(&base_val, 0);
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(tag_ptr),
+            src: Value::ConstI64(tag as i64),
+            ty: Type::I64,
+        });
+
+        // Store each payload field at its (resolved) byte offset.
+        let raw_fields: Vec<Type> = self.enums.lookup_variant_fields(enum_name, tag).to_vec();
+        let field_tys: Vec<Type> = raw_fields
+            .iter()
+            .map(|t| self.enums.resolve_type(t))
+            .collect();
+        let offsets = self.enums.field_offsets(&field_tys);
+        for ((arg, off), fty) in args.iter().zip(offsets.iter()).zip(field_tys.iter()) {
+            let field_ptr = self.gep_byte(&base_val, *off);
+            self.builder.emit(Instruction::Store {
+                dst: Value::Var(field_ptr),
+                src: arg.clone(),
+                ty: fty.clone(),
+            });
+        }
+
+        base_val
+    }
+
+    /// Emit `dst = gep base, byte_offset : i8` — a pointer `byte_offset` bytes
+    /// into the storage `base` points at. The i8 element type makes the Gep
+    /// offset a raw byte count.
+    fn gep_byte(&mut self, base: &Value, byte_offset: usize) -> VarId {
+        let dst = self.builder.fresh_var();
+        self.builder.emit(Instruction::Gep {
+            dst,
+            base: base.clone(),
+            offset: Value::ConstI64(byte_offset as i64),
+            elem_ty: Type::I8,
+        });
+        self.record_local(dst, Type::U64);
+        dst
+    }
+
+    /// Lower `(match scrutinee [pat body] ...)` using the existing `if`
+    /// template: load the scrutinee's tag, then for each variant arm emit a
+    /// tag-equality `Eq` plus a `Branch`, binding payload fields via `Gep` and
+    /// `Load` in the matched arm. A `Phi` in the merge block selects the arm
+    /// result. A wildcard arm becomes the final fall-through.
+    fn lower_match(&mut self, scrutinee: &ast::Expr, arms: &[(ast::Pattern, ast::Expr)]) -> Value {
+        let scrut = self.lower_expr(scrutinee);
+
+        // Load the tag (offset 0).
+        let tag_ptr = self.gep_byte(&scrut, 0);
+        let tag_val = self.builder.fresh_var();
+        self.builder.emit(Instruction::Load {
+            dst: tag_val,
+            src: Value::Var(tag_ptr),
+            ty: Type::I64,
+        });
+        self.record_local(tag_val, Type::I64);
+
+        let merge_label = self.builder.fresh_label("match_end");
+        let mut incoming: Vec<(Value, Label)> = Vec::new();
+        let mut result_ty = Type::Unit;
+
+        let n = arms.len();
+        for (i, (pat, body)) in arms.iter().enumerate() {
+            let is_last = i + 1 == n;
+            match pat {
+                ast::Pattern::Wildcard => {
+                    // Irrefutable: lower the body in the current block and jump
+                    // to the merge.
+                    let val = self.lower_expr(body);
+                    let arm_block = self.current_block_label();
+                    if self.value_type(&val) != Type::Unit {
+                        result_ty = self.value_type(&val);
+                    }
+                    incoming.push((val, arm_block));
+                    self.builder.emit(Instruction::Jump(merge_label.clone()));
+                    break;
+                }
+                ast::Pattern::Variant { name, bindings } => {
+                    let (_owner, tag, raw_fields) = {
+                        let (o, t, f) = self
+                            .enums
+                            .lookup_variant(name)
+                            .expect("typechecked variant exists");
+                        (o.to_string(), t, f.to_vec())
+                    };
+                    let field_tys: Vec<Type> = raw_fields
+                        .iter()
+                        .map(|t| self.enums.resolve_type(t))
+                        .collect();
+                    let offsets = self.enums.field_offsets(&field_tys);
+
+                    let arm_label = self.builder.fresh_label("match_arm");
+                    let next_label = self.builder.fresh_label("match_next");
+
+                    // tag == this_tag ?
+                    let cmp = self.builder.fresh_var();
+                    self.builder.emit(Instruction::BinOp {
+                        dst: cmp,
+                        op: BinOp::Eq,
+                        lhs: Value::Var(tag_val),
+                        rhs: Value::ConstI64(tag as i64),
+                        ty: Type::Bool,
+                    });
+                    self.record_local(cmp, Type::Bool);
+                    self.builder.emit(Instruction::Branch {
+                        cond: Value::Var(cmp),
+                        true_label: arm_label.clone(),
+                        false_label: next_label.clone(),
+                    });
+
+                    // Arm block: bind payload fields, lower the body.
+                    self.builder.finish_block(&arm_label);
+                    for ((binding, off), fty) in
+                        bindings.iter().zip(offsets.iter()).zip(field_tys.iter())
+                    {
+                        let field_ptr = self.gep_byte(&scrut, *off);
+                        let loaded = self.builder.fresh_var();
+                        self.builder.emit(Instruction::Load {
+                            dst: loaded,
+                            src: Value::Var(field_ptr),
+                            ty: fty.clone(),
+                        });
+                        self.record_local(loaded, fty.clone());
+                        // Give the binding a real stack slot so nested control
+                        // flow can read it.
+                        let slot = self.builder.fresh_var();
+                        self.builder.emit(Instruction::Alloc {
+                            var: slot,
+                            ty: fty.clone(),
+                        });
+                        self.builder.emit(Instruction::Store {
+                            dst: Value::Var(slot),
+                            src: Value::Var(loaded),
+                            ty: fty.clone(),
+                        });
+                        self.record_local(slot, fty.clone());
+                        self.vars.insert(binding.clone(), slot);
+                    }
+                    let val = self.lower_expr(body);
+                    let arm_end = self.current_block_label();
+                    if self.value_type(&val) != Type::Unit {
+                        result_ty = self.value_type(&val);
+                    }
+                    incoming.push((val, arm_end));
+                    self.builder.emit(Instruction::Jump(merge_label.clone()));
+
+                    // Continue testing in the next block.
+                    self.builder.finish_block(&next_label);
+                    if is_last {
+                        // Exhaustive match guarantees this is unreachable, but
+                        // we still need a terminator into the merge.
+                        self.builder.emit(Instruction::Jump(merge_label.clone()));
+                    }
+                }
+                _ => {
+                    // Other patterns are rejected by the typechecker.
+                }
+            }
+        }
+
+        // Merge block with a phi selecting the taken arm's result.
+        self.builder.finish_block(&merge_label);
+        let phi_dst = self.builder.fresh_var();
+        self.builder.emit(Instruction::Phi {
+            dst: phi_dst,
+            incoming,
+            ty: result_ty.clone(),
+        });
+        self.record_local(phi_dst, result_ty);
+        Value::Var(phi_dst)
+    }
+
+    /// The label of the block currently being built.
+    fn current_block_label(&self) -> Label {
+        self.builder.current_label().to_string()
     }
 
     fn lower_set(&mut self, name: &str, expr: &ast::Expr) -> Value {
@@ -1520,5 +1770,147 @@ mod tests {
             })
         });
         assert_eq!(cast, Some((Type::I64, Type::I8)));
+    }
+
+    // ------------------------------------------------------------------
+    // Sum types + pattern matching — Issue #41
+    // ------------------------------------------------------------------
+
+    fn count<F: Fn(&Instruction) -> bool>(ir: &Program, fn_idx: usize, pred: F) -> usize {
+        ir.functions[fn_idx].blocks.iter().fold(0, |acc, b| {
+            acc + b.instructions.iter().filter(|i| pred(i)).count()
+        })
+    }
+
+    const SHAPE: &str = "(defenum Shape (Circle i64) (Square i64) (Nothing))";
+
+    #[test]
+    fn test_lower_constructor_emits_alloc_tag_and_payload_store() {
+        // (Circle 7) -> Alloc storage, AddrOf base, Gep+Store tag, Gep+Store payload.
+        let src = format!("{SHAPE}\n(define (mk) : Shape (Circle 7))");
+        let prog = parse(&src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().position(|f| f.name == "mk").unwrap();
+
+        // One stack-storage Alloc for the enum value.
+        let alloc_count = count(&ir, f, |i| matches!(i, Instruction::Alloc { .. }));
+        assert_eq!(alloc_count, 1, "expected one storage Alloc");
+
+        // AddrOf to get a pointer to the storage.
+        assert_eq!(
+            count(&ir, f, |i| matches!(i, Instruction::AddrOf { .. })),
+            1
+        );
+
+        // Two Geps: tag slot + payload slot.
+        assert_eq!(count(&ir, f, |i| matches!(i, Instruction::Gep { .. })), 2);
+
+        // The tag (0 for Circle) is stored as an i64.
+        let stores_tag = ir.functions[f].blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                matches!(
+                    i,
+                    Instruction::Store {
+                        src: Value::ConstI64(0),
+                        ty: Type::I64,
+                        ..
+                    }
+                )
+            })
+        });
+        assert!(stores_tag, "expected a tag Store of ConstI64(0)");
+
+        // The payload value 7 is stored.
+        let stores_payload = ir.functions[f].blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                matches!(
+                    i,
+                    Instruction::Store {
+                        src: Value::ConstI64(7),
+                        ..
+                    }
+                )
+            })
+        });
+        assert!(stores_payload, "expected a payload Store of ConstI64(7)");
+    }
+
+    #[test]
+    fn test_lower_match_emits_tag_load_eq_branch_phi() {
+        // A 3-arm match (2 variant arms + nullary) over a 3-variant enum:
+        //   - one tag Load
+        //   - one Eq + Branch per refutable (variant) arm => 3 Eq, 3 Branch
+        //   - exactly one Phi selecting the result
+        let src = format!(
+            "{SHAPE}\n(define (area [s : Shape]) : i64 \
+               (match s [(Circle r) (* r r)] [(Square w) (* w w)] [Nothing 0]))"
+        );
+        let prog = parse(&src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().position(|f| f.name == "area").unwrap();
+
+        // Tag load (offset 0). There is one Load for the tag plus one per bound
+        // payload field (Circle r, Square w) => 3 Loads total.
+        let load_count = count(&ir, f, |i| matches!(i, Instruction::Load { .. }));
+        assert_eq!(load_count, 3, "expected tag Load + 2 payload Loads");
+
+        // One Eq comparison and one Branch per variant arm (3 of each).
+        assert_eq!(
+            count(&ir, f, |i| matches!(
+                i,
+                Instruction::BinOp { op: BinOp::Eq, .. }
+            )),
+            3,
+            "expected one tag-Eq per variant arm"
+        );
+        assert_eq!(
+            count(&ir, f, |i| matches!(i, Instruction::Branch { .. })),
+            3,
+            "expected one Branch per variant arm"
+        );
+
+        // Exactly one Phi merges the arm results.
+        assert_eq!(
+            count(&ir, f, |i| matches!(i, Instruction::Phi { .. })),
+            1,
+            "expected one result Phi"
+        );
+    }
+
+    #[test]
+    fn test_lower_match_wildcard_falls_through() {
+        // [_ 0] arm: no Eq/Branch for the wildcard; only the Circle arm tests.
+        let src = format!(
+            "{SHAPE}\n(define (area [s : Shape]) : i64 \
+               (match s [(Circle r) r] [_ 0]))"
+        );
+        let prog = parse(&src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().position(|f| f.name == "area").unwrap();
+
+        assert_eq!(
+            count(&ir, f, |i| matches!(
+                i,
+                Instruction::BinOp { op: BinOp::Eq, .. }
+            )),
+            1,
+            "wildcard arm should not emit a tag comparison"
+        );
+        assert_eq!(count(&ir, f, |i| matches!(i, Instruction::Phi { .. })), 1);
+    }
+
+    #[test]
+    fn test_lower_match_no_const_unit_stub() {
+        // Regression: match/constructor must not lower to the old ConstUnit stub.
+        let src = format!("{SHAPE}\n(define (mk) : Shape (Circle 1))");
+        let prog = parse(&src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().position(|f| f.name == "mk").unwrap();
+        let returns_unit = ir.functions[f].blocks.iter().any(|b| {
+            b.instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::Return(Some(Value::ConstUnit))))
+        });
+        assert!(!returns_unit, "constructor must not return ConstUnit");
     }
 }

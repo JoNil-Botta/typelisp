@@ -33,6 +33,7 @@ impl fmt::Display for TypeError {
 pub struct TypeChecker {
     env: Vec<HashMap<String, Type>>,
     func_ret: Option<Type>,
+    enums: EnumRegistry,
 }
 
 impl TypeChecker {
@@ -54,6 +55,7 @@ impl TypeChecker {
         TypeChecker {
             env: vec![globals],
             func_ret: None,
+            enums: EnumRegistry::default(),
         }
     }
 
@@ -79,13 +81,63 @@ impl TypeChecker {
     }
 
     pub fn check_program(&mut self, prog: &Program) -> Result<(), TypeError> {
+        // Build the enum registry up front so declared types and constructors
+        // can be resolved/registered in the first pass.
+        self.enums = EnumRegistry::from_program(prog);
+
+        // Recursive enums (a variant whose payload references the enum itself,
+        // directly or via a compound type) require heap indirection and are out
+        // of scope for this slice (deferred to #13). Reject them with a clear
+        // diagnostic rather than miscompiling.
+        for decl in &prog.decls {
+            if let Decl::DefEnum { name, variants } = decl {
+                for v in variants {
+                    for f in &v.fields {
+                        if type_mentions_enum(&self.enums.resolve_type(f), name) {
+                            return Err(TypeError::at(
+                                format!(
+                                    "recursive enum '{}' (variant '{}') is not yet supported \
+                                     (needs heap indirection, see #13)",
+                                    name, v.name
+                                ),
+                                Span::default(),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Register enum constructors as callable functions: a variant with
+        // fields `(-> field... EnumName)`, a nullary variant just `EnumName`.
+        // This makes constructor calls type-check through the ordinary call
+        // path (arity + per-argument checks come for free).
+        for decl in &prog.decls {
+            if let Decl::DefEnum { name, variants } = decl {
+                for v in variants {
+                    let fields: Vec<Type> = v
+                        .fields
+                        .iter()
+                        .map(|t| self.enums.resolve_type(t))
+                        .collect();
+                    let ctor_ty = if fields.is_empty() {
+                        Type::Enum(name.clone())
+                    } else {
+                        Type::Func(fields, Box::new(Type::Enum(name.clone())))
+                    };
+                    self.bind(v.name.clone(), ctor_ty);
+                }
+            }
+        }
+
         // First pass: collect all declarations
         for decl in &prog.decls {
             match decl {
                 Decl::Def { name, ty, value } => {
                     let inferred = if let Some(ty) = ty {
+                        let ty = self.enums.resolve_type(ty);
                         let val_ty = self.check_expr(value)?;
-                        if !self.types_equal(ty, &val_ty) {
+                        if !self.types_equal(&ty, &val_ty) {
                             return Err(TypeError::at(
                                 format!(
                                     "type mismatch in definition of '{}': expected {}, got {}",
@@ -94,7 +146,7 @@ impl TypeChecker {
                                 value.span(),
                             ));
                         }
-                        ty.clone()
+                        ty
                     } else {
                         self.check_expr(value)?
                     };
@@ -107,14 +159,18 @@ impl TypeChecker {
                     body: _,
                 } => {
                     let func_ty = Type::Func(
-                        params.iter().map(|(_, t)| t.clone()).collect(),
-                        Box::new(ret.clone()),
+                        params
+                            .iter()
+                            .map(|(_, t)| self.enums.resolve_type(t))
+                            .collect(),
+                        Box::new(self.enums.resolve_type(ret)),
                     );
                     self.bind(name.clone(), func_ty);
                 }
                 Decl::Extern { name, ty } => {
-                    self.bind(name.clone(), ty.clone());
+                    self.bind(name.clone(), self.enums.resolve_type(ty));
                 }
+                Decl::DefEnum { .. } => {}
             }
         }
 
@@ -129,15 +185,16 @@ impl TypeChecker {
             {
                 self.push_scope();
                 for (param, ty) in params {
-                    self.bind(param.clone(), ty.clone());
+                    self.bind(param.clone(), self.enums.resolve_type(ty));
                 }
+                let ret = self.enums.resolve_type(ret);
                 let old_ret = self.func_ret.clone();
                 self.func_ret = Some(ret.clone());
                 let body_ty = self.check_expr(body)?;
                 self.func_ret = old_ret;
                 self.pop_scope();
 
-                if !self.types_equal(ret, &body_ty) {
+                if !self.types_equal(&ret, &body_ty) {
                     return Err(TypeError::at(
                         format!(
                             "function '{}' return type mismatch: expected {}, got {}",
@@ -319,7 +376,8 @@ impl TypeChecker {
                 self.push_scope();
                 for (name, ty, value) in bindings {
                     let val_ty = self.check_expr(value)?;
-                    let binding_ty = if let Some(expected) = ty {
+                    let ty = ty.as_ref().map(|t| self.enums.resolve_type(t));
+                    let binding_ty = if let Some(expected) = &ty {
                         if !self.types_equal(expected, &val_ty) {
                             return Err(TypeError::at(
                                 format!(
@@ -463,21 +521,24 @@ impl TypeChecker {
                 Ok(Type::Unit)
             }
             Expr::Ann { expr, ty } => {
+                let ty = self.enums.resolve_type(ty);
                 let expr_ty = self.check_expr(expr)?;
-                if !self.types_equal(ty, &expr_ty) {
+                if !self.types_equal(&ty, &expr_ty) {
                     return Err(TypeError::at(
                         format!("type annotation mismatch: expected {}, got {}", ty, expr_ty),
                         span,
                     ));
                 }
-                Ok(ty.clone())
+                Ok(ty)
             }
+            Expr::Match { scrutinee, arms } => self.check_match(scrutinee, arms, span),
             Expr::Cast { expr, ty } => {
+                let ty = self.enums.resolve_type(ty);
                 let expr_ty = self.check_expr(expr)?;
                 // Casts are only defined between scalar number-like types
                 // (integers and `char`, which is an 8-bit code unit here).
                 let castable = |t: &Type| t.is_integer() || matches!(t, Type::Char);
-                if !castable(&expr_ty) || !castable(ty) {
+                if !castable(&expr_ty) || !castable(&ty) {
                     return Err(TypeError::at(
                         format!(
                             "cast requires integer/char source and target, got {} -> {}",
@@ -486,10 +547,140 @@ impl TypeChecker {
                         span,
                     ));
                 }
-                Ok(ty.clone())
+                Ok(ty)
             }
             Expr::Spanned { expr, .. } => self.check_expr(expr),
         }
+    }
+
+    fn check_match(
+        &mut self,
+        scrutinee: &Expr,
+        arms: &[(Pattern, Expr)],
+        span: Span,
+    ) -> Result<Type, TypeError> {
+        let scrut_ty = self.check_expr(scrutinee)?;
+        let enum_name = match &scrut_ty {
+            Type::Enum(n) => n.clone(),
+            other => {
+                return Err(TypeError::at(
+                    format!("match scrutinee must be an enum type, got {}", other),
+                    scrutinee.span(),
+                ));
+            }
+        };
+        if arms.is_empty() {
+            return Err(TypeError::at("match must have at least one arm", span));
+        }
+
+        let variant_count = self
+            .enums
+            .variants(&enum_name)
+            .map(|v| v.len())
+            .unwrap_or(0);
+
+        let mut result_ty: Option<Type> = None;
+        let mut covered: Vec<bool> = vec![false; variant_count];
+        let mut has_wildcard = false;
+
+        for (pat, body) in arms {
+            self.push_scope();
+            match pat {
+                Pattern::Wildcard => {
+                    has_wildcard = true;
+                }
+                Pattern::Variant { name, bindings } => {
+                    let (owner, tag, fields) =
+                        self.enums.lookup_variant(name).ok_or_else(|| {
+                            TypeError::at(
+                                format!("unknown variant '{}' in match", name),
+                                body.span(),
+                            )
+                        })?;
+                    if owner != enum_name {
+                        let owner = owner.to_string();
+                        self.pop_scope();
+                        return Err(TypeError::at(
+                            format!(
+                                "variant '{}' belongs to enum {}, not {}",
+                                name, owner, enum_name
+                            ),
+                            body.span(),
+                        ));
+                    }
+                    if bindings.len() != fields.len() {
+                        let nfields = fields.len();
+                        self.pop_scope();
+                        return Err(TypeError::at(
+                            format!(
+                                "variant '{}' binds {} fields but pattern has {}",
+                                name,
+                                nfields,
+                                bindings.len()
+                            ),
+                            body.span(),
+                        ));
+                    }
+                    let field_tys: Vec<Type> = fields.to_vec();
+                    for (b, fty) in bindings.iter().zip(field_tys.iter()) {
+                        self.bind(b.clone(), fty.clone());
+                    }
+                    covered[tag] = true;
+                }
+                // Var/Tuple patterns are not supported in `match` arms yet.
+                other => {
+                    self.pop_scope();
+                    return Err(TypeError::at(
+                        format!("unsupported match pattern: {:?}", other),
+                        body.span(),
+                    ));
+                }
+            }
+            let body_ty = self.check_expr(body)?;
+            self.pop_scope();
+
+            match &result_ty {
+                None => result_ty = Some(body_ty),
+                Some(expected) => {
+                    if !self.types_equal(expected, &body_ty) {
+                        return Err(TypeError::at(
+                            format!(
+                                "match arms have different types: {} and {}",
+                                expected, body_ty
+                            ),
+                            body.span(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        // Exhaustiveness: every variant must be covered, or a wildcard present.
+        if !has_wildcard {
+            let missing: Vec<String> = self
+                .enums
+                .variants(&enum_name)
+                .map(|vs| {
+                    vs.iter()
+                        .enumerate()
+                        .filter(|(i, _)| !covered[*i])
+                        .map(|(_, v)| v.name.clone())
+                        .collect()
+                })
+                .unwrap_or_default();
+            if !missing.is_empty() {
+                return Err(TypeError::at(
+                    format!(
+                        "non-exhaustive match on {}: missing variant(s) {}",
+                        enum_name,
+                        missing.join(", ")
+                    ),
+                    span,
+                ));
+            }
+        }
+
+        Ok(result_ty.unwrap_or(Type::Unit))
     }
 
     fn types_equal(&self, a: &Type, b: &Type) -> bool {
@@ -509,6 +700,20 @@ impl TypeChecker {
             (Type::Array(a, an), Type::Array(b, bn)) => an == bn && self.types_equal(a, b),
             _ => a == b,
         }
+    }
+}
+
+/// Whether `ty` (after enum resolution) refers to the enum named `name`,
+/// directly or nested inside a compound type. Used to reject recursive enums.
+fn type_mentions_enum(ty: &Type, name: &str) -> bool {
+    match ty {
+        Type::Enum(n) => n == name,
+        Type::Func(args, ret) => {
+            args.iter().any(|a| type_mentions_enum(a, name)) || type_mentions_enum(ret, name)
+        }
+        Type::Tuple(elems) => elems.iter().any(|e| type_mentions_enum(e, name)),
+        Type::Array(elem, _) => type_mentions_enum(elem, name),
+        _ => false,
     }
 }
 
@@ -575,5 +780,110 @@ mod tests {
             rendered
         );
         assert!(rendered.contains("^^^^^^^"), "got:\n{}", rendered);
+    }
+
+    // ------------------------------------------------------------------
+    // Sum types + pattern matching — Issue #41
+    // ------------------------------------------------------------------
+
+    fn check(src: &str) -> Result<(), TypeError> {
+        let prog = parse(src).unwrap();
+        let mut tc = TypeChecker::new();
+        tc.check_program(&prog)
+    }
+
+    const SHAPE: &str = "(defenum Shape (Circle i64) (Square i64) (Nothing))";
+
+    #[test]
+    fn test_typecheck_match_well_typed() {
+        let src = format!(
+            "{SHAPE}\n(define (area [s : Shape]) : i64 \
+               (match s [(Circle r) (* r r)] [(Square w) (* w w)] [Nothing 0]))"
+        );
+        assert!(check(&src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_match_wildcard_is_exhaustive() {
+        let src = format!(
+            "{SHAPE}\n(define (area [s : Shape]) : i64 \
+               (match s [(Circle r) r] [_ 0]))"
+        );
+        assert!(check(&src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_nullary_constructor() {
+        let src = format!("{SHAPE}\n(define (n) : Shape Nothing)");
+        assert!(check(&src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_constructor_arity_checked() {
+        // Circle takes one i64; calling with none is an arity error via the
+        // ordinary call path.
+        let src = format!("{SHAPE}\n(define (c) : Shape (Circle))");
+        assert!(check(&src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_constructor_arg_type_checked() {
+        let src = format!("{SHAPE}\n(define (c) : Shape (Circle true))");
+        assert!(check(&src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_match_unknown_variant_is_err() {
+        let src = format!(
+            "{SHAPE}\n(define (area [s : Shape]) : i64 \
+               (match s [(Circle r) r] [(Triangle x) x] [Nothing 0]))"
+        );
+        let err = check(&src).unwrap_err();
+        assert!(err.msg.contains("unknown variant"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_match_arm_type_mismatch_is_err() {
+        let src = format!(
+            "{SHAPE}\n(define (area [s : Shape]) : i64 \
+               (match s [(Circle r) r] [(Square w) true] [Nothing 0]))"
+        );
+        let err = check(&src).unwrap_err();
+        assert!(err.msg.contains("different types"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_match_non_exhaustive_is_err() {
+        let src = format!(
+            "{SHAPE}\n(define (area [s : Shape]) : i64 \
+               (match s [(Circle r) r]))"
+        );
+        let err = check(&src).unwrap_err();
+        assert!(err.msg.contains("non-exhaustive"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_match_binding_arity_is_err() {
+        // Circle has one payload field; binding two is an error.
+        let src = format!(
+            "{SHAPE}\n(define (area [s : Shape]) : i64 \
+               (match s [(Circle a b) 0] [_ 1]))"
+        );
+        let err = check(&src).unwrap_err();
+        assert!(err.msg.contains("binds"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_match_on_non_enum_is_err() {
+        let src = "(define (f [x : i64]) : i64 (match x [_ 0]))";
+        let err = check(src).unwrap_err();
+        assert!(err.msg.contains("must be an enum"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_recursive_enum_rejected() {
+        let src = "(defenum List (Cons i64 List) (Nil))\n(define (f [l : List]) : i64 0)";
+        let err = check(src).unwrap_err();
+        assert!(err.msg.contains("recursive enum"), "got: {}", err.msg);
     }
 }

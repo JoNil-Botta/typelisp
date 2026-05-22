@@ -45,6 +45,12 @@ pub struct X86_64Backend {
     /// itself calls `tl_alloc`, so its presence also forces the bump-allocator
     /// runtime to be emitted.
     needs_int_to_string_runtime: bool,
+    /// Whether the program references the message-abort helper `tl_abort` and
+    /// the backend must therefore emit the self-contained abort runtime (write
+    /// the caller-supplied message to fd 2 + `exit`) into the program's `.s`.
+    /// Set when `(panic msg)` / `(error msg)` is lowered. Unlike the fixed-text
+    /// `tl_oob_abort`, `tl_abort` takes a `(ptr, len)` message argument.
+    needs_abort_runtime: bool,
     return_ty: Type,
     /// VarIds that are function parameters of the function currently being
     /// generated. Their `Alloc` instructions are no-ops because the parameter
@@ -695,6 +701,7 @@ impl X86_64Backend {
             needs_string_eq_runtime: false,
             needs_string_to_int_runtime: false,
             needs_int_to_string_runtime: false,
+            needs_abort_runtime: false,
             return_ty: Type::Unit,
             param_vars: HashSet::new(),
             current_fn: String::new(),
@@ -720,6 +727,7 @@ impl X86_64Backend {
         self.needs_string_eq_runtime = Self::needs_string_eq_runtime(program);
         self.needs_string_to_int_runtime = Self::needs_string_to_int_runtime(program);
         self.needs_int_to_string_runtime = Self::needs_int_to_string_runtime(program);
+        self.needs_abort_runtime = Self::needs_abort_runtime(program);
         // The int->string runtime allocates its digit buffer and fat value via a
         // raw `tl_alloc` call, so its presence forces the raw allocator runtime
         // to be emitted even when IR calls to a user-defined TypeLisp function
@@ -754,7 +762,8 @@ impl X86_64Backend {
                 || (self.needs_oob_runtime && symbol == "tl_oob_abort")
                 || (self.needs_string_eq_runtime && symbol == "tl_string_eq")
                 || (self.needs_string_to_int_runtime && symbol == "tl_string_to_int")
-                || (self.needs_int_to_string_runtime && symbol == "tl_int_to_string");
+                || (self.needs_int_to_string_runtime && symbol == "tl_int_to_string")
+                || (self.needs_abort_runtime && symbol == "tl_abort");
             if !defined_inline {
                 self.emit(&format!("    .extern {}", symbol));
             }
@@ -782,6 +791,9 @@ impl X86_64Backend {
         }
         if self.needs_int_to_string_runtime {
             self.generate_int_to_string_runtime_functions();
+        }
+        if self.needs_abort_runtime {
+            self.generate_abort_runtime_functions();
         }
 
         // Generate functions
@@ -966,6 +978,27 @@ impl X86_64Backend {
             .externs
             .iter()
             .any(|(name, _)| name == "tl_int_to_string");
+        referenced_in_calls || referenced_in_externs
+    }
+
+    /// Whether the program references the message-abort helper `tl_abort`
+    /// (through a direct `Call` or an `extern` declaration) and does not define
+    /// its own. When true the backend emits the self-contained abort runtime
+    /// into the program's `.s` so the symbol resolves without linking libc.
+    /// Emitted on demand by `(panic msg)` / `(error msg)`.
+    fn needs_abort_runtime(program: &Program) -> bool {
+        let defines_own = program.functions.iter().any(|f| f.name == "tl_abort");
+        if defines_own {
+            return false;
+        }
+        let referenced_in_calls = program.functions.iter().any(|func| {
+            func.blocks.iter().any(|block| {
+                block.instructions.iter().any(
+                    |instr| matches!(instr, Instruction::Call { func, .. } if func == "tl_abort"),
+                )
+            })
+        });
+        let referenced_in_externs = program.externs.iter().any(|(name, _)| name == "tl_abort");
         referenced_in_calls || referenced_in_externs
     }
 
@@ -1284,6 +1317,36 @@ impl X86_64Backend {
         self.emit("    movq $2, %rdi");
         self.emit("    leaq .L_tl_oob_msg(%rip), %rsi");
         self.emit("    movq $.L_tl_oob_msg_len, %rdx");
+        self.emit("    syscall");
+        // exit(134). syscall number 60; status in rdi. 134 = 128 + SIGABRT(6),
+        // the conventional status for an aborted process.
+        self.emit("    movq $60, %rax");
+        self.emit("    movq $134, %rdi");
+        self.emit("    syscall");
+        self.emit("");
+    }
+
+    /// Emit the self-contained message-abort helper `tl_abort(ptr, len)`. It
+    /// writes the caller-supplied message buffer to fd 2 (stderr) via the
+    /// `write(2)` syscall, then terminates the process with the conventional
+    /// "aborted" status 134 via the `exit(2)` syscall. Unlike the fixed-text
+    /// `tl_oob_abort`, the message comes from the operand `(ptr, len)`, so no
+    /// rodata is emitted. It is zero-dependency (no libc) and never returns.
+    /// `(panic msg)` / `(error msg)` `Call` this symbol; because it is a `Call`
+    /// the optimizer's dead-code elimination cannot drop it.
+    ///
+    /// ABI (System V): `ptr` in `%rdi`, `len` in `%rsi`. The `write(2)` syscall
+    /// wants fd in `%rdi`, buf in `%rsi`, count in `%rdx`, so the operands are
+    /// shuffled (`%rdx <- len`, `%rsi <- ptr`, `%rdi <- 2`) before the syscall.
+    fn generate_abort_runtime_functions(&mut self) {
+        self.emit("    .globl tl_abort");
+        self.emit("tl_abort:");
+        // write(2 /*fd=stderr*/, ptr, len). syscall number 1; args rdi/rsi/rdx.
+        // Move len (rsi) -> rdx before clobbering rsi with ptr (rdi).
+        self.emit("    movq %rsi, %rdx");
+        self.emit("    movq %rdi, %rsi");
+        self.emit("    movq $2, %rdi");
+        self.emit("    movq $1, %rax");
         self.emit("    syscall");
         // exit(134). syscall number 60; status in rdi. 134 = 128 + SIGABRT(6),
         // the conventional status for an aborted process.
@@ -2610,6 +2673,11 @@ impl X86_64Backend {
         } else if name == "tl_oob_abort" && self.needs_oob_runtime {
             // The backend-provided abort runtime resolves to its raw symbol.
             "tl_oob_abort".into()
+        } else if name == "tl_abort" && self.needs_abort_runtime {
+            // The backend-provided message-abort runtime (emitted on demand by
+            // `panic`/`error`) resolves to its raw symbol rather than being
+            // mangled to `_tl_tl_abort`.
+            "tl_abort".into()
         } else if name == "tl_string_eq" && self.needs_string_eq_runtime {
             // The backend-provided string-equality helper, like `tl_alloc`, is
             // referenced by its raw runtime symbol so it resolves to itself
@@ -4465,6 +4533,81 @@ mod tests {
         // A program that never compares strings must not emit the helper.
         let asm = compile_ok(r#"(define (main) : i64 (string-length "hi"))"#);
         assert!(!asm.contains("tl_string_eq"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_panic_emits_abort_runtime_and_calls_it() {
+        // `(panic msg)` calls the emit-on-demand `tl_abort` helper and the
+        // backend defines that helper inline (gated like `tl_string_eq`).
+        let asm = compile_ok(r#"(define (main) : unit (panic "boom"))"#);
+
+        // The runtime function is emitted and globally visible.
+        assert!(asm.contains("    .globl tl_abort"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_abort:"), "asm:\n{}", asm);
+
+        // The call site dispatches to the raw runtime symbol (not mangled).
+        assert!(asm.contains("    call tl_abort"), "asm:\n{}", asm);
+        assert!(!asm.contains("_tl_tl_abort"), "asm:\n{}", asm);
+        assert!(!asm.contains("_tl_abort:"), "asm:\n{}", asm);
+
+        // The helper writes the caller's message to fd 2 and exits: a `write(2)`
+        // setup (fd 2 in %rdi) followed by a syscall, then `exit(134)` (status
+        // 134 in %rdi) followed by a syscall. The abort body therefore DOES
+        // contain syscalls (unlike the pure string helpers).
+        let abort_section = asm.split("tl_abort:").nth(1).expect("tl_abort body");
+        let abort_body = abort_section
+            .split("\n    .globl ")
+            .next()
+            .unwrap_or(abort_section)
+            .split("\n_start:")
+            .next()
+            .unwrap_or(abort_section);
+        assert!(
+            abort_body.contains("movq $2, %rdi"),
+            "tl_abort writes to fd 2:\n{}",
+            abort_body
+        );
+        assert!(
+            abort_body.contains("movq $1, %rax"),
+            "tl_abort uses the write syscall (number 1):\n{}",
+            abort_body
+        );
+        assert!(
+            abort_body.contains("movq $60, %rax"),
+            "tl_abort uses the exit syscall (number 60):\n{}",
+            abort_body
+        );
+        assert!(
+            abort_body.contains("movq $134, %rdi"),
+            "tl_abort exits with status 134:\n{}",
+            abort_body
+        );
+        assert!(
+            abort_body.matches("syscall").count() >= 2,
+            "tl_abort issues a write and an exit syscall:\n{}",
+            abort_body
+        );
+
+        // The helper is not declared `.extern` (it is defined in this unit).
+        assert!(!asm.contains("    .extern tl_abort"), "asm:\n{}", asm);
+
+        // No instruction selection fell through to a TODO stub.
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_error_aliases_panic_abort_runtime() {
+        // `(error msg)` emits and calls the same `tl_abort` runtime as `panic`.
+        let asm = compile_ok(r#"(define (main) : unit (error "boom"))"#);
+        assert!(asm.contains("tl_abort:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call tl_abort"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_no_panic_means_no_abort_runtime() {
+        // A program that never panics must not emit the `tl_abort` helper.
+        let asm = compile_ok(r#"(define (main) : i64 (string-length "hi"))"#);
+        assert!(!asm.contains("tl_abort"), "asm:\n{}", asm);
     }
 
     #[test]

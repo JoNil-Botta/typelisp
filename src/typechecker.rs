@@ -94,6 +94,19 @@ impl TypeChecker {
             "int->string".into(),
             Type::Func(vec![Type::I64], Box::new(Type::String)),
         );
+        // `(panic msg)` / `(error msg)` -> write `msg` to fd 2 (stderr) then
+        // terminate the process. It never returns; its type is `(-> String unit)`
+        // so a `(panic ...)` expression yields unit and can appear wherever a
+        // unit-valued expression is expected (e.g. an `if` branch reporting bad
+        // lexer input). `error` is an alias with identical behavior.
+        globals.insert(
+            "panic".into(),
+            Type::Func(vec![Type::String], Box::new(Type::Unit)),
+        );
+        globals.insert(
+            "error".into(),
+            Type::Func(vec![Type::String], Box::new(Type::Unit)),
+        );
         TypeChecker {
             env: vec![globals],
             func_ret: None,
@@ -1649,6 +1662,53 @@ mod tests {
         // The result is a String, not an i64; using it where an i64 is required
         // (a function's i64 return) is a mismatch.
         let src = "(define (f) : i64 (int->string 5))";
+        assert!(check(src).is_err());
+    }
+
+    // ------------------------------------------------------------------
+    // panic / error — Issue #45
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_typecheck_panic_is_unit() {
+        // `(panic msg)` : `(-> String unit)` — a string-literal message yields
+        // unit, so it type-checks as the body of a unit-returning function.
+        let src = r#"(define (f) : unit (panic "bad input"))"#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_error_alias_is_unit() {
+        // `error` is the alias of `panic` with identical `(-> String unit)` type.
+        let src = r#"(define (f) : unit (error "bad input"))"#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_panic_on_param() {
+        // A String *parameter* is a valid panic message (the caller owns it).
+        let src = "(define (f [m : String]) : unit (panic m))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_panic_arg_type_checked() {
+        // The message must be a String; an i64 operand is rejected.
+        let src = "(define (f) : unit (panic 42))";
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_panic_arity_checked() {
+        // `panic` is unary; a second argument is an arity error.
+        let src = r#"(define (f) : unit (panic "a" "b"))"#;
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_panic_result_not_i64() {
+        // The result is unit, not i64 — using it where i64 is expected fails.
+        let src = r#"(define (f) : i64 (panic "boom"))"#;
         assert!(check(src).is_err());
     }
 

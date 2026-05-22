@@ -868,6 +868,29 @@ impl FnLowerer {
             return Value::Var(dst);
         }
 
+        // `(panic msg)` / `(error msg)` writes `msg` to fd 2 then terminates the
+        // process — the lexer's unrecoverable-error primitive (refs #45). The
+        // operand is a pointer to inline fat `{ ptr, len }` storage; extract the
+        // data pointer (offset 0) and byte length (offset 8) and dispatch to the
+        // emit-on-demand runtime `tl_abort(ptr, len)`, which never returns. A
+        // `Call` (with `dst: None`, like the `tl_oob_abort` trap) is used so the
+        // abort survives DCE — the optimizer treats `Load`/`Gep` as pure. The
+        // expression yields unit.
+        if let ast::Expr::Var(name) = func.unspan()
+            && (name == "panic" || name == "error")
+            && args.len() == 1
+        {
+            let s = self.lower_expr(&args[0]);
+            let (ptr, len) = self.load_string_fields(&s);
+            self.builder.emit(Instruction::Call {
+                dst: None,
+                func: "tl_abort".to_string(),
+                args: vec![Value::Var(ptr), Value::Var(len)],
+                ty: Type::Unit,
+            });
+            return Value::ConstUnit;
+        }
+
         // Evaluate arguments left-to-right
         let arg_vals: Vec<Value> = args.iter().map(|a| self.lower_expr(a)).collect();
 
@@ -2302,6 +2325,63 @@ mod tests {
                 .any(|i| matches!(i, Instruction::Load { ty: Type::I64, .. })),
             "expected a Load of the I64 length field"
         );
+    }
+
+    #[test]
+    fn test_lower_panic_extracts_fields_and_calls_abort() {
+        // `(panic msg)` lowers to: extract the operand's data pointer (U64) and
+        // length (I64) fields, then a `Call tl_abort` with the two args. The
+        // call has no destination (it never returns) and ty unit; a `Call` (not
+        // an inline write loop) is used so it survives DCE.
+        let prog = parse(r#"(define (f) : unit (panic "boom"))"#).unwrap();
+        let ir = lower_program(&prog);
+        let instrs: Vec<&Instruction> = ir.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .collect();
+
+        let call = instrs.iter().find_map(|i| match i {
+            Instruction::Call {
+                func,
+                args,
+                ty,
+                dst,
+                ..
+            } if func == "tl_abort" => Some((args, ty, dst)),
+            _ => None,
+        });
+        let (args, ty, dst) = call.expect("expected a Call to tl_abort");
+        assert_eq!(args.len(), 2, "tl_abort takes the message ptr and len");
+        assert_eq!(*ty, Type::Unit, "panic yields unit");
+        assert!(dst.is_none(), "the abort call has no destination");
+
+        // Both the data-pointer (U64) and length (I64) fields are loaded.
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Load { ty: Type::U64, .. })),
+            "expected a Load of the U64 data-pointer field"
+        );
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Load { ty: Type::I64, .. })),
+            "expected a Load of the I64 length field"
+        );
+    }
+
+    #[test]
+    fn test_lower_error_aliases_panic() {
+        // `(error msg)` lowers identically to `(panic msg)` — a `Call tl_abort`.
+        let prog = parse(r#"(define (f) : unit (error "boom"))"#).unwrap();
+        let ir = lower_program(&prog);
+        let has_abort = ir.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .any(|i| matches!(i, Instruction::Call { func, .. } if func == "tl_abort"));
+        assert!(has_abort, "error should lower to a Call tl_abort");
     }
 
     #[test]

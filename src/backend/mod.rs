@@ -5216,6 +5216,33 @@ mod tests {
     }
 
     #[test]
+    fn test_compile_array_of_enum_set_then_ref_uses_pointer_stride() {
+        // Dynamic array of an AGGREGATE (enum) element. Each element is a pointer
+        // (8 bytes), so the element address scales by 8 (`imulq $8`) — the same
+        // stride as an i64 array, driven by Type::size, not hardcoded. The set
+        // stores a pointer through the computed address (`%rax, (%r10)`) and the
+        // ref loads a pointer back; both still go through the bounds-check trap.
+        let asm = compile_ok(
+            "(defenum Shape (Circle i64) (Square i64) (Nothing))\n\
+             (define (f [a : (Array Shape)] [i : i64]) : i64 \
+               (begin \
+                 (array-set! a i (Circle 3)) \
+                 (match (array-ref a i) [(Circle r) r] [(Square s) s] [Nothing 0])))",
+        );
+
+        // Pointer-sized element stride.
+        assert!(asm.contains("imulq $8"), "asm:\n{}", asm);
+        // The store writes a pointer through the computed element address.
+        assert!(asm.contains("%rax, (%r10)"), "asm:\n{}", asm);
+        // The element is read back through the computed pointer (the ref Load).
+        assert!(asm.contains("(%r10)"), "asm:\n{}", asm);
+        // Bounds-check trap remains intact for the aggregate-element accesses.
+        assert!(asm.contains("    call tl_oob_abort"), "asm:\n{}", asm);
+        assert!(asm.contains("setb %al"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
     fn test_compile_oob_abort_runtime_writes_to_fd2_and_exits() {
         // The emitted abort runtime writes a message to fd 2 (write syscall) and
         // terminates the process (exit syscall, status 134), zero-dependency.

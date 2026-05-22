@@ -57,7 +57,7 @@ fn lexer_tl_compiles_to_assembly() {
         asm
     );
 
-    // The dynamic token-tag array is heap-allocated through the runtime.
+    // The dynamic token array is heap-allocated through the runtime.
     assert!(
         asm.contains("call tl_alloc"),
         "lexer assembly does not allocate its token array via tl_alloc:\n{}",
@@ -97,7 +97,6 @@ fn lexer_tl_compiles_to_assembly() {
         "_tl_single_token:",
         "_tl_ident_end:",
         "_tl_ident_token:",
-        "_tl_first_ident:",
         "_tl_ident_text_length:",
     ] {
         assert!(

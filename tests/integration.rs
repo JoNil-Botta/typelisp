@@ -129,10 +129,10 @@ fn type_lisp_programs_compile_link_and_run() {
             deps: &[],
         },
         // Self-hosting (#27, phase 4): a tokenizer written in TypeLisp itself.
-        // Lexes "foo + (12)" into 5 tokens — TIdent("foo") TPlus TLParen
-        // TInt(12) TRParen — and slices the first identifier's text out of the
-        // source with `substring`, yielding a real `(TIdent "foo")` token.
-        // `main` returns token count (5) + first-ident text length (3) = 8.
+        // Lexes "foo + (12)" into 5 tokens: TIdent("foo") TPlus TLParen
+        // TInt(12) TRParen. The first token is read back from `(Array Token)`
+        // and its substring-sliced text is projected out of `(TIdent "foo")`.
+        // `main` returns token count (5) + identifier text length (3) = 8.
         Case {
             name: "lexer",
             exit_code: 8,
@@ -268,8 +268,8 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         },
         // Self-hosting (#27, phase 4): the TypeLisp tokenizer, also exercised
         // through the explicit compile -> as -> ld -> run pipeline. Lexes
-        // "foo + (12)" into 5 tokens and slices the first identifier's text via
-        // `substring`; `main` returns 5 + 3 = 8.
+        // "foo + (12)" into 5 tokens and reads the first identifier token back
+        // from `(Array Token)`; `main` returns 5 + 3 = 8.
         Case {
             name: "lexer",
             exit_code: 8,

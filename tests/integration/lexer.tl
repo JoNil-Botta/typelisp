@@ -1,13 +1,13 @@
-;; lexer.tl — A tokenizer written in TypeLisp itself.
+;; lexer.tl - A tokenizer written in TypeLisp itself.
 ;;
-;; This is the first compiler front-end component authored *in* TypeLisp, the
+;; This is the first compiler front-end component authored in TypeLisp, the
 ;; opening slice of the self-hosting milestone (#27, phase 4). It scans a
 ;; hardcoded source String character-by-character and produces a token stream,
-;; proving the language primitives — String indexing (`string-ref`,
+;; proving the language primitives - String indexing (`string-ref`,
 ;; `string-length`), `substring` (#104), `char`->`i64` casts and comparison,
 ;; `defenum` + `match` with String-payload variants (#101), `while`/`let`/
-;; `set!`/`begin`, and a dynamic `(Array i64)` — compose into the scanning loop
-;; a real lexer needs.
+;; `set!`/`begin`, and a dynamic array of `Token` aggregates (`(Array Token)`)
+;; - compose into the scanning loop a real lexer needs.
 ;;
 ;; Token grammar handled this slice (a tiny arithmetic + identifier surface):
 ;;   identifiers (an ASCII letter or `_`, then letters/digits/`_`),
@@ -16,21 +16,13 @@
 ;; An unexpected character aborts the program via the `panic` builtin (#45),
 ;; exactly as a real lexer reports malformed input.
 ;;
-;; Identifiers carry their text: when the scanner sees a letter it records the
-;; start index, advances over the identifier run, and slices the lexeme out of
-;; the source with `substring`, producing a real `(TIdent text)` token — the
-;; String-payload enum variant (#101) constructed, returned across a function
-;; boundary (heap-promoted), and projected back out in a `match` arm. This is
-;; the substring (#104) + String-payload variant (#101) composition a usable
-;; lexer needs.
+;; Token stream representation (refs #13/#27/#41): the scanner records each
+;; emitted token as a real `Token` value in a dynamic `(Array Token)`. Identifier
+;; tokens carry a `String` payload sliced out of the source with `substring`, so
+;; `array-ref` can read back a `(TIdent text)` token whose payload is still
+;; projectable through `match`.
 ;;
-;; Deferred — current language gaps, recorded as self-hosting signal:
-;;   - Tokens are recorded as numeric *tags* in an `(Array i64)` rather than as
-;;     `Token` aggregates, because dynamic arrays of enum payloads do not lower
-;;     yet (#106). The full `Token` enum — including the `(TIdent String)`
-;;     payload variant — is still constructed and `match`ed on the identifier
-;;     path, and its tag recorded in the stream; the identifier text is returned
-;;     to `main` through a separate `(TIdent text)`-valued helper.
+;; Deferred - current language gaps, recorded as self-hosting signal:
 ;;   - Digit char literals: `#\0` lexes as NUL (the `\0` escape), so digit and
 ;;     whitespace classification compares the char's `i64` code point against
 ;;     ASCII constants rather than against char literals.
@@ -43,10 +35,8 @@
   (TRParen)
   (TEnd))
 
-;; Numeric tag for a token kind, so a token stream can be recorded in a dynamic
-;; i64 array (arrays of enum aggregates do not lower yet, #106). Exercises
-;; `match` over every variant of the Token enum, including the String-payload
-;; `TIdent` variant whose payload is bound but unused here.
+;; Numeric tag for a token kind. Exercises `match` over every variant of the
+;; Token enum, including the String-payload `TIdent` variant.
 (define (token-tag [t : Token]) : i64
   (match t
     [(TIdent _) 0]
@@ -65,7 +55,7 @@
   (and (>= (code c) 48) (<= (code c) 57)))
 
 ;; `c` is an ASCII letter (A-Z == 65..90, a-z == 97..122) or `_` (95): the set
-;; of characters that may *start* an identifier.
+;; of characters that may start an identifier.
 (define (is-alpha [c : char]) : bool
   (let ([k : i64 (code c)])
     (or (= k 95)
@@ -112,9 +102,7 @@
       j)))
 
 ;; Slice the identifier lexeme [start, end) out of `src` and wrap it in a real
-;; `(TIdent text)` token. This is the capability a real lexer needs: the
-;; substring (#104) of the source becomes the String payload of the token
-;; (#101), constructed here and returned to the caller (heap-promoted).
+;; `(TIdent text)` token.
 (define (ident-token [src : String] [start : i64] [end : i64]) : Token
   (TIdent (substring src start (- end start))))
 
@@ -130,12 +118,12 @@
     [(TRParen) 0]
     [(TEnd) 0]))
 
-;; Lex `src`, recording each token's numeric tag into `tags` (which must be
-;; large enough to hold every token) and returning the token count. The loop
-;; is exactly the shape of a real lexer: a cursor over the input, a whitespace
-;; skip, multi-char accumulation for integers, an identifier run sliced out
-;; with `substring` into a real `(TIdent text)` token, and single-char tokens.
-(define (lex [src : String] [tags : (Array i64)]) : i64
+;; Lex `src`, recording each emitted `Token` value into `toks` (which must be
+;; large enough to hold every token plus the TEnd sentinel) and returning the
+;; token count. The loop is exactly the shape of a real lexer: a cursor over the
+;; input, a whitespace skip, multi-char accumulation for integers, an identifier
+;; run sliced out with `substring`, and single-char tokens.
+(define (lex [src : String] [toks : (Array Token)]) : i64
   (let ([i : i64 0]
         [n : i64 (string-length src)]
         [count : i64 0])
@@ -145,12 +133,11 @@
           (if (is-space c)
               (set! i (+ i 1))
               (if (is-alpha c)
-                  ;; Accumulate a run of identifier chars into one TIdent token,
-                  ;; slicing the lexeme out of the source with `substring`.
+                  ;; Accumulate a run of identifier chars into one TIdent token.
                   (let ([start : i64 i]
                         [end : i64 (ident-end src i n)])
                     (begin
-                      (array-set! tags count (token-tag (ident-token src start end)))
+                      (array-set! toks count (ident-token src start end))
                       (set! count (+ count 1))
                       (set! i end)))
                   (if (is-digit c)
@@ -161,46 +148,24 @@
                             (begin
                               (set! acc (+ (* acc 10) (digit-value (string-ref src i))))
                               (set! i (+ i 1))))
-                          (array-set! tags count (token-tag (TInt acc)))
+                          (array-set! toks count (TInt acc))
                           (set! count (+ count 1))))
                       (begin
-                        (array-set! tags count (token-tag (single-token c)))
+                        (array-set! toks count (single-token c))
                         (set! count (+ count 1))
                         (set! i (+ i 1))))))))
       ;; A real lexer terminates the stream; record the sentinel too.
-      (array-set! tags count (token-tag TEnd))
+      (array-set! toks count TEnd)
       count)))
-
-;; Scan the first identifier token out of `src` and return it as a real
-;; `(TIdent text)` value, skipping any leading non-identifier characters.
-;; Returns `TEnd` if the source holds no identifier. This drives the substring
-;; + String-payload path end to end: the returned token carries the identifier
-;; text sliced from the source.
-(define (first-ident [src : String]) : Token
-  (let ([i : i64 0]
-        [n : i64 (string-length src)]
-        [result : Token TEnd]
-        [done : i64 0])
-    (begin
-      ;; `done` is an i64 flag (0 = keep scanning, 1 = found): there is no
-      ;; boolean `not`/`=` on bool today, so the loop guard tests it as an int.
-      (while (and (< i n) (= done 0))
-        (let ([c : char (string-ref src i)])
-          (if (is-alpha c)
-              (let ([end : i64 (ident-end src i n)])
-                (begin
-                  (set! result (ident-token src i end))
-                  (set! done 1)))
-              (set! i (+ i 1)))))
-      result)))
 
 ;; Lex the sample `"foo + (12)"`:
 ;;   - Full token stream (excluding the TEnd sentinel): TIdent("foo") TPlus
 ;;     TLParen TInt(12) TRParen => 5 tokens.
-;;   - The first identifier is "foo", whose text length is 3.
+;;   - Token 0 is read back out of `(Array Token)` as `(TIdent "foo")`, whose
+;;     text length is 3.
 ;; main returns 5 + 3 = 8, an observable result an execution test can check
-;; that depends on BOTH the token count AND the substring-sliced identifier.
+;; that depends on both the token count and the substring-sliced identifier.
 (define (main) : i64
-  (let ([tags : (Array i64) (make-array i64 16)])
-    (+ (lex "foo + (12)" tags)
-       (ident-text-length (first-ident "foo + (12)")))))
+  (let ([toks : (Array Token) (make-array Token 16)])
+    (let ([count : i64 (lex "foo + (12)" toks)])
+      (+ count (ident-text-length (array-ref toks 0))))))

@@ -17,6 +17,7 @@ pub struct X86_64Backend {
     var_types: HashMap<VarId, Type>,
     global_types: HashMap<String, Type>,
     address_vars: HashSet<VarId>,
+    runtime_print_names: HashSet<String>,
     return_ty: Type,
     /// VarIds that are function parameters of the function currently being
     /// generated. Their `Alloc` instructions are no-ops because the parameter
@@ -511,6 +512,7 @@ impl X86_64Backend {
             var_types: HashMap::new(),
             global_types: HashMap::new(),
             address_vars: HashSet::new(),
+            runtime_print_names: HashSet::new(),
             return_ty: Type::Unit,
             param_vars: HashSet::new(),
             current_fn: String::new(),
@@ -524,6 +526,11 @@ impl X86_64Backend {
         }
 
         self.generate_globals(&program.globals);
+        self.runtime_print_names = Self::runtime_print_names(program);
+        let needs_print_runtime = !self.runtime_print_names.is_empty();
+        if needs_print_runtime {
+            self.generate_print_runtime_data();
+        }
 
         self.emit("    .text");
         self.emit("    .globl main");
@@ -532,9 +539,20 @@ impl X86_64Backend {
 
         // Generate extern declarations
         for (name, _) in &program.externs {
-            self.emit(&format!("    .extern {}", Self::mangle_name(name)));
+            let symbol = self.call_symbol(name);
+            if !Self::is_defined_print_runtime_symbol(&symbol) {
+                self.emit(&format!("    .extern {}", symbol));
+            }
+        }
+        if needs_print_runtime {
+            self.emit("    .extern printf");
+            self.emit("    .extern fflush");
         }
         self.emit("");
+
+        if needs_print_runtime {
+            self.generate_print_runtime_functions();
+        }
 
         // Generate functions
         for func in &program.functions {
@@ -556,6 +574,128 @@ impl X86_64Backend {
         self.emit("    syscall");
 
         self.output.clone()
+    }
+
+    fn runtime_print_names(program: &Program) -> HashSet<String> {
+        let defined_functions: HashSet<&str> = program
+            .functions
+            .iter()
+            .map(|func| func.name.as_str())
+            .collect();
+        let mut names = HashSet::new();
+
+        for func in &program.functions {
+            for block in &func.blocks {
+                for instr in &block.instructions {
+                    if let Instruction::Call { func, .. } = instr
+                        && Self::runtime_symbol(func).is_some()
+                        && !defined_functions.contains(func.as_str())
+                    {
+                        names.insert(func.clone());
+                    }
+                }
+            }
+        }
+
+        for (name, _) in &program.externs {
+            if Self::runtime_symbol(name).is_some() && !defined_functions.contains(name.as_str()) {
+                names.insert(name.clone());
+            }
+        }
+
+        names
+    }
+
+    fn generate_print_runtime_data(&mut self) {
+        self.emit("    .section .rodata");
+        self.emit(".L_tl_bool_true:");
+        self.emit("    .ascii \"true\\n\"");
+        self.emit(".L_tl_bool_false:");
+        self.emit("    .ascii \"false\\n\"");
+        self.emit(".L_tl_fmt_f64:");
+        self.emit("    .asciz \"%.17g\\n\"");
+        self.emit("");
+    }
+
+    fn generate_print_runtime_functions(&mut self) {
+        self.emit("    .globl tl_print_i64");
+        self.emit("tl_print_i64:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    sub $48, %rsp");
+        self.emit("    leaq -1(%rbp), %rsi");
+        self.emit("    movb $10, (%rsi)");
+        self.emit("    movq $1, %rcx");
+        self.emit("    movq %rdi, %rax");
+        self.emit("    cmpq $0, %rax");
+        self.emit("    jne .L_tl_print_i64_nonzero");
+        self.emit("    movb $48, -2(%rbp)");
+        self.emit("    leaq -2(%rbp), %rsi");
+        self.emit("    movq $2, %rdx");
+        self.emit("    jmp .L_tl_print_i64_write");
+        self.emit(".L_tl_print_i64_nonzero:");
+        self.emit("    movq $0, %r8");
+        self.emit("    cmpq $0, %rax");
+        self.emit("    jge .L_tl_print_i64_abs_ready");
+        self.emit("    negq %rax");
+        self.emit("    movq $1, %r8");
+        self.emit(".L_tl_print_i64_abs_ready:");
+        self.emit("    movq $10, %r9");
+        self.emit(".L_tl_print_i64_digit_loop:");
+        self.emit("    xorq %rdx, %rdx");
+        self.emit("    divq %r9");
+        self.emit("    addb $48, %dl");
+        self.emit("    decq %rsi");
+        self.emit("    movb %dl, (%rsi)");
+        self.emit("    incq %rcx");
+        self.emit("    testq %rax, %rax");
+        self.emit("    jne .L_tl_print_i64_digit_loop");
+        self.emit("    testq %r8, %r8");
+        self.emit("    jz .L_tl_print_i64_len_ready");
+        self.emit("    decq %rsi");
+        self.emit("    movb $45, (%rsi)");
+        self.emit("    incq %rcx");
+        self.emit(".L_tl_print_i64_len_ready:");
+        self.emit("    movq %rcx, %rdx");
+        self.emit(".L_tl_print_i64_write:");
+        self.emit("    movq $1, %rax");
+        self.emit("    movq $1, %rdi");
+        self.emit("    syscall");
+        self.emit("    mov %rbp, %rsp");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+
+        self.emit("    .globl tl_print_bool");
+        self.emit("tl_print_bool:");
+        self.emit("    testb %dil, %dil");
+        self.emit("    jz .L_tl_print_bool_false");
+        self.emit("    leaq .L_tl_bool_true(%rip), %rsi");
+        self.emit("    movq $5, %rdx");
+        self.emit("    jmp .L_tl_print_bool_write");
+        self.emit(".L_tl_print_bool_false:");
+        self.emit("    leaq .L_tl_bool_false(%rip), %rsi");
+        self.emit("    movq $6, %rdx");
+        self.emit(".L_tl_print_bool_write:");
+        self.emit("    movq $1, %rax");
+        self.emit("    movq $1, %rdi");
+        self.emit("    syscall");
+        self.emit("    ret");
+        self.emit("");
+
+        self.emit("    .globl tl_print_f64");
+        self.emit("tl_print_f64:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    leaq .L_tl_fmt_f64(%rip), %rdi");
+        self.emit("    movb $1, %al");
+        self.emit("    call printf");
+        self.emit("    xor %edi, %edi");
+        self.emit("    call fflush");
+        self.emit("    mov %rbp, %rsp");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
     }
 
     fn generate_globals(&mut self, globals: &[(String, Type, Option<Value>)]) {
@@ -1000,7 +1140,7 @@ impl X86_64Backend {
                 ty,
             } => {
                 self.load_call_args(args);
-                self.emit(&format!("    call {}", Self::mangle_name(func)));
+                self.emit(&format!("    call {}", self.call_symbol(func)));
                 self.store_call_result(dst, ty);
             }
             Instruction::CallIndirect {
@@ -1495,6 +1635,27 @@ impl X86_64Backend {
         }
     }
 
+    fn call_symbol(&self, name: &str) -> String {
+        if self.runtime_print_names.contains(name) {
+            Self::runtime_symbol(name).unwrap_or_else(|| Self::mangle_name(name))
+        } else {
+            Self::mangle_name(name)
+        }
+    }
+
+    fn runtime_symbol(name: &str) -> Option<String> {
+        match name {
+            "print" => Some("tl_print_i64".into()),
+            "print-bool" => Some("tl_print_bool".into()),
+            "print-float" => Some("tl_print_f64".into()),
+            _ => None,
+        }
+    }
+
+    fn is_defined_print_runtime_symbol(symbol: &str) -> bool {
+        matches!(symbol, "tl_print_i64" | "tl_print_bool" | "tl_print_f64")
+    }
+
     fn fresh_label(&mut self, prefix: &str) -> String {
         let label = format!("{}.{}", prefix, self.label_counter);
         self.label_counter += 1;
@@ -1626,6 +1787,62 @@ mod tests {
             "unexpected error: {}",
             err
         );
+    }
+
+    #[test]
+    fn test_compile_builtin_print_runtime_calls() {
+        let asm = compile_ok(
+            r#"
+            (define (main) : i64
+              (begin
+                (print 42)
+                (print-bool true)
+                0))
+            "#,
+        );
+        assert!(asm.contains("    call tl_print_i64"), "asm:\n{}", asm);
+        assert!(asm.contains("    call tl_print_bool"), "asm:\n{}", asm);
+        assert!(!asm.contains("    call _tl_print"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_print_i64:"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_print_bool:"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_bool_true:"), "asm:\n{}", asm);
+        assert!(asm.contains("    syscall"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_builtin_print_float_runtime_call() {
+        let asm = compile_ok(
+            r#"
+            (define (main) : i64
+              (begin
+                (print-float 3.5)
+                0))
+            "#,
+        );
+        assert!(asm.contains("    call tl_print_f64"), "asm:\n{}", asm);
+        assert!(!asm.contains("    call _tl_print_float"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_print_f64:"), "asm:\n{}", asm);
+        assert!(asm.contains("    .extern printf"), "asm:\n{}", asm);
+        assert!(asm.contains("    .extern fflush"), "asm:\n{}", asm);
+        assert!(asm.contains("    .asciz \"%.17g\\n\""), "asm:\n{}", asm);
+        assert!(asm.contains("    call printf"), "asm:\n{}", asm);
+        assert!(asm.contains("    call fflush"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
+    fn test_user_defined_print_uses_typelisp_symbol() {
+        let asm = compile_ok(
+            r#"
+            (define (print [x : i64]) : i64 (+ x 1))
+            (define (main) : i64 (print 41))
+            "#,
+        );
+        assert!(asm.contains("_tl_print:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call _tl_print"), "asm:\n{}", asm);
+        assert!(!asm.contains("    call tl_print_i64"), "asm:\n{}", asm);
+        assert!(!asm.contains("tl_print_i64:"), "asm:\n{}", asm);
     }
 
     #[test]

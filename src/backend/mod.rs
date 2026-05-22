@@ -1436,18 +1436,20 @@ impl X86_64Backend {
                 }
 
                 self.load_value(src, "%rax", ty);
+                let suffix = Self::int_instruction_suffix(ty);
+                let reg = Self::gpr_sized("%rax", ty);
 
                 match op {
                     IrUnOp::Neg => {
-                        self.emit("    negq %rax");
+                        self.emit(&format!("    neg{} {}", suffix, reg));
                     }
                     // Logical not on a 0/1 bool: flip the low bit.
                     IrUnOp::Not => {
-                        self.emit("    xorq $1, %rax");
+                        self.emit(&format!("    xor{} $1, {}", suffix, reg));
                     }
                     // Bitwise complement (one's complement) on an integer.
                     IrUnOp::BitNot => {
-                        self.emit("    notq %rax");
+                        self.emit(&format!("    not{} {}", suffix, reg));
                     }
                 }
 
@@ -2133,6 +2135,37 @@ mod tests {
         let mut ir = lower_program(&prog);
         Optimizer::optimize(&mut ir);
         generate_assembly(&ir).expect_err("backend should reject this program")
+    }
+
+    fn compile_unop_param(op: UnOp, ty: Type) -> String {
+        let program = Program {
+            functions: vec![Function {
+                name: "f".into(),
+                params: vec![(0, ty.clone())],
+                ret: ty.clone(),
+                locals: vec![(1, ty.clone())],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![
+                        Instruction::Alloc {
+                            var: 0,
+                            ty: ty.clone(),
+                        },
+                        Instruction::UnOp {
+                            dst: 1,
+                            op,
+                            src: Value::Var(0),
+                            ty,
+                        },
+                        Instruction::Return(Some(Value::Var(1))),
+                    ],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![],
+        };
+        generate_assembly(&program).expect("unary op should compile")
     }
 
     #[test]
@@ -3034,6 +3067,39 @@ mod tests {
         assert!(
             !asm.contains("shlq %cl, %rax"),
             "u8 shift must not use 64-bit shl; asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_compile_i32_neg_uses_32_bit_instruction() {
+        let asm = compile_unop_param(UnOp::Neg, Type::I32);
+        assert!(asm.contains("negl %eax"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("negq %rax"),
+            "i32 neg must not use 64-bit neg; asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_compile_i16_bit_not_uses_16_bit_instruction() {
+        let asm = compile_unop_param(UnOp::BitNot, Type::I16);
+        assert!(asm.contains("notw %ax"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("notq %rax"),
+            "i16 bit-not must not use 64-bit not; asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_compile_bool_not_uses_8_bit_instruction() {
+        let asm = compile_unop_param(UnOp::Not, Type::Bool);
+        assert!(asm.contains("xorb $1, %al"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("xorq $1, %rax"),
+            "bool not must not use 64-bit xor; asm:\n{}",
             asm
         );
     }

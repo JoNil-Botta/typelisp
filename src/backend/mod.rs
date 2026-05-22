@@ -224,37 +224,53 @@ impl X86_64Backend {
 
         // Move parameters to stack slots
         let param_regs = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
-        for (i, (var, ty)) in func.params.iter().enumerate() {
-            if i < 6 {
-                let offset = self.var_offsets[var];
-                match ty {
-                    Type::I64 | Type::U64 | Type::Func(_, _) => {
-                        self.emit(&format!("    mov {}, {}(%rbp)", param_regs[i], offset));
-                    }
-                    Type::I32 | Type::U32 => {
+        let xmm_regs = [
+            "%xmm0", "%xmm1", "%xmm2", "%xmm3", "%xmm4", "%xmm5", "%xmm6", "%xmm7",
+        ];
+        let mut int_param = 0;
+        let mut float_param = 0;
+        for (var, ty) in &func.params {
+            let offset = self.var_offsets[var];
+            match ty {
+                Type::I64 | Type::U64 | Type::Func(_, _) => {
+                    if int_param < param_regs.len() {
                         self.emit(&format!(
-                            "    movl {}d, {}(%rbp)",
-                            &param_regs[i][1..],
-                            offset
+                            "    mov {}, {}(%rbp)",
+                            param_regs[int_param], offset
                         ));
                     }
-                    Type::I8 | Type::U8 | Type::Bool => {
-                        self.emit(&format!(
-                            "    movb {}b, {}(%rbp)",
-                            &param_regs[i][1..],
-                            offset
-                        ));
-                    }
-                    Type::F64 => {
-                        let xmm_reg = [
-                            "%xmm0", "%xmm1", "%xmm2", "%xmm3", "%xmm4", "%xmm5", "%xmm6", "%xmm7",
-                        ];
-                        if i < xmm_reg.len() {
-                            self.emit(&format!("    movsd {}, {}(%rbp)", xmm_reg[i], offset));
-                        }
-                    }
-                    _ => {}
+                    int_param += 1;
                 }
+                Type::I32 | Type::U32 => {
+                    if int_param < param_regs.len() {
+                        self.emit(&format!(
+                            "    movl {}, {}(%rbp)",
+                            Self::gpr32(param_regs[int_param]),
+                            offset
+                        ));
+                    }
+                    int_param += 1;
+                }
+                Type::I8 | Type::U8 | Type::Bool => {
+                    if int_param < param_regs.len() {
+                        self.emit(&format!(
+                            "    movb {}, {}(%rbp)",
+                            Self::gpr8(param_regs[int_param]),
+                            offset
+                        ));
+                    }
+                    int_param += 1;
+                }
+                Type::F64 => {
+                    if float_param < xmm_regs.len() {
+                        self.emit(&format!(
+                            "    movsd {}, {}(%rbp)",
+                            xmm_regs[float_param], offset
+                        ));
+                    }
+                    float_param += 1;
+                }
+                _ => {}
             }
         }
 
@@ -853,6 +869,14 @@ mod tests {
         assert!(asm.contains("divsd %xmm1, %xmm0"), "asm:\n{}", asm);
         assert!(asm.contains("movq %rax, %xmm0"), "asm:\n{}", asm);
         assert!(asm.contains("movsd %xmm0,"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_mixed_integer_and_float_params_use_independent_abi_registers() {
+        let asm = compile_ok("(define (second [n : i64] [x : f64]) : f64 x)");
+        assert!(asm.contains("    mov %rdi, -8(%rbp)"), "asm:\n{}", asm);
+        assert!(asm.contains("    movsd %xmm0, -16(%rbp)"), "asm:\n{}", asm);
+        assert!(!asm.contains("    movsd %xmm1, -16(%rbp)"), "asm:\n{}", asm);
     }
 
     // ---- Graceful rejection of out-of-scope constructs -----------------

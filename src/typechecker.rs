@@ -1005,7 +1005,16 @@ impl TypeChecker {
                             body.span(),
                         ));
                     }
-                    let field_tys: Vec<Type> = fields.to_vec();
+                    // Resolve each payload field type before binding so a
+                    // nominal payload (a struct/enum named in the `defenum`,
+                    // parsed as `Type::Var`) becomes its concrete
+                    // `Type::Struct`/`Type::Enum`. Without this the bound
+                    // variable stays an unresolved type variable and downstream
+                    // operations that require a concrete aggregate (e.g.
+                    // `struct-get` on a struct payload) wrongly reject it. The
+                    // lowerer already resolves these types the same way.
+                    let field_tys: Vec<Type> =
+                        fields.iter().map(|t| self.resolve_type(t)).collect();
                     for (b, fty) in bindings.iter().zip(field_tys.iter()) {
                         self.bind(b.clone(), fty.clone());
                     }
@@ -1341,6 +1350,57 @@ mod tests {
     fn test_typecheck_nullary_constructor() {
         let src = format!("{SHAPE}\n(define (n) : i64 (match Nothing [Nothing 1] [_ 0]))");
         assert!(check(&src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_string_payload_variant_construct_return_match() {
+        // GAP (1): an enum variant whose payload is a `String` is constructible
+        // (`(TIdent s)`), returnable from a function (heap-promoted), and the
+        // payload binds back out at type `String` in a `match` arm so a
+        // String-only operation (`string-length`) type-checks. Unblocks lexer
+        // identifier/keyword tokens.
+        let src = "(defenum Token (TIdent String) (TEnd))\n\
+                   (define (mk [s : String]) : Token (TIdent s))\n\
+                   (define (idlen [t : Token]) : i64 \
+                     (match t [(TIdent s) (string-length s)] [(TEnd) 0]))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_string_payload_match_binds_string_type() {
+        // The bound payload is exactly a `String`, so using it where an i64 is
+        // required (the arm body's type) is rejected — i.e. the binding is not
+        // an opaque type variable that unifies with anything.
+        let src = "(defenum Token (TIdent String) (TEnd))\n\
+                   (define (bad [t : Token]) : i64 \
+                     (match t [(TIdent s) s] [(TEnd) 0]))";
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_struct_payload_variant_match_struct_get() {
+        // GAP (1), "or other aggregate": a variant payload that is a *struct*
+        // (a nominal name in the `defenum`, parsed as `Type::Var`) must resolve
+        // to its concrete `Type::Struct` when bound in a `match` arm, so
+        // `struct-get` on the bound payload type-checks. Previously the binding
+        // kept its unresolved `Type::Var("Pos")` and `struct-get` wrongly
+        // reported "requires a struct value".
+        let src = "(defstruct Pos (line i64) (col i64))\n\
+                   (defenum Tok (TPos Pos) (TEnd))\n\
+                   (define (line-of [t : Tok]) : i64 \
+                     (match t [(TPos p) (struct-get p line)] [(TEnd) -1]))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_struct_payload_variant_construct_and_return() {
+        // Constructing a struct-payload variant and returning it type-checks
+        // (both the enum and the nested struct are heap-promoted by the
+        // lowerer when the value escapes via the return).
+        let src = "(defstruct Pos (line i64) (col i64))\n\
+                   (defenum Tok (TPos Pos) (TEnd))\n\
+                   (define (mk [l : i64]) : Tok (TPos (Pos l 7)))";
+        assert!(check(src).is_ok());
     }
 
     #[test]

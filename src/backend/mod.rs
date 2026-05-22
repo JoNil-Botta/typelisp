@@ -34,7 +34,7 @@ pub struct X86_64Backend {
 /// against a local's stack slot) over integer/bool/char/f64 scalars.
 ///
 /// Constructs that are lowered but NOT yet selected to assembly (f32 values,
-/// address/GEP pointer arithmetic and `Global` operands)
+/// pointer dereferences through computed addresses and `Global` operands)
 /// are rejected here with a clear message instead of being silently
 /// miscompiled (they would otherwise fall through to a `# TODO` comment and
 /// produce wrong code).
@@ -140,7 +140,8 @@ fn validate_function(func: &Function) -> Result<(), String> {
                 // (parameter `Alloc`s are prologue no-ops); `Store`/`Load` move
                 // between the local's slot and a register. Only direct
                 // variable-slot addresses are supported (`Value::Var`); general
-                // pointer/computed addresses are deferred to the GEP/array work.
+                // pointer/computed-address dereferences are deferred to the
+                // array/aggregate memory work.
                 Instruction::Alloc { .. } => {}
                 Instruction::Load { src, .. } => {
                     match src {
@@ -171,8 +172,47 @@ fn validate_function(func: &Function) -> Result<(), String> {
                         check_operand(arg).map_err(|w| unsupported_value(&func.name, &w))?;
                     }
                 }
-                Instruction::AddrOf { .. } => return unsupported("address-of"),
-                Instruction::Gep { .. } => return unsupported("get-element-pointer"),
+                Instruction::AddrOf { dst, src } => {
+                    if !var_types.contains_key(src) {
+                        return unsupported("address-of unknown local");
+                    }
+                    let Some(dst_ty) = var_types.get(dst) else {
+                        return unsupported("address-of destination has no stack slot");
+                    };
+                    if !is_pointer_sized_type(dst_ty) {
+                        return unsupported("address-of destination is not pointer-sized");
+                    }
+                }
+                Instruction::Gep {
+                    dst,
+                    base,
+                    offset,
+                    elem_ty,
+                } => {
+                    let Some(dst_ty) = var_types.get(dst) else {
+                        return unsupported("gep destination has no stack slot");
+                    };
+                    if !is_pointer_sized_type(dst_ty) {
+                        return unsupported("gep destination is not pointer-sized");
+                    }
+                    let Some(base_ty) = validate_value_type(base, &var_types) else {
+                        return unsupported("gep base has unknown type");
+                    };
+                    if !is_pointer_sized_type(&base_ty) {
+                        return unsupported("gep base is not pointer-sized");
+                    }
+                    let Some(offset_ty) = validate_value_type(offset, &var_types) else {
+                        return unsupported("gep offset has unknown type");
+                    };
+                    if !offset_ty.is_integer() {
+                        return unsupported("gep offset is not an integer");
+                    }
+                    if !is_sized_backend_type(elem_ty) {
+                        return unsupported("gep element type has unsupported size");
+                    }
+                    check_operand(base).map_err(|w| unsupported_value(&func.name, &w))?;
+                    check_operand(offset).map_err(|w| unsupported_value(&func.name, &w))?;
+                }
             }
         }
     }
@@ -203,6 +243,19 @@ fn validate_value_type(val: &Value, var_types: &HashMap<VarId, Type>) -> Option<
         Value::ConstUnit => Some(Type::Unit),
         Value::Var(var) => var_types.get(var).cloned(),
         Value::Global(_) => None,
+    }
+}
+
+fn is_pointer_sized_type(ty: &Type) -> bool {
+    matches!(ty, Type::I64 | Type::U64 | Type::Func(_, _))
+}
+
+fn is_sized_backend_type(ty: &Type) -> bool {
+    match ty {
+        Type::F32 | Type::Var(_) | Type::Unit => false,
+        Type::Tuple(elems) => elems.iter().all(is_sized_backend_type) && ty.size() > 0,
+        Type::Array(elem, len) => *len > 0 && is_sized_backend_type(elem),
+        _ => true,
     }
 }
 
@@ -900,6 +953,32 @@ impl X86_64Backend {
                     _ => {}
                 }
             }
+            Instruction::AddrOf { dst, src } => {
+                let src_offset = self.var_offsets[src];
+                let dst_offset = self.var_offsets[dst];
+                let dst_ty = self.var_types.get(dst).cloned().unwrap_or(Type::U64);
+                self.emit(&format!("    leaq {}(%rbp), %rax", src_offset));
+                self.store_gpr_value("%rax", dst_offset, &dst_ty);
+            }
+            Instruction::Gep {
+                dst,
+                base,
+                offset,
+                elem_ty,
+            } => {
+                let dst_offset = self.var_offsets[dst];
+                let dst_ty = self.var_types.get(dst).cloned().unwrap_or(Type::U64);
+                let base_ty = self.value_type(base).unwrap_or(Type::U64);
+                let offset_ty = self.value_type(offset).unwrap_or(Type::I64);
+                self.load_value(base, "%rax", &base_ty);
+                self.load_value(offset, "%rcx", &offset_ty);
+                let elem_size = elem_ty.size();
+                if elem_size > 1 {
+                    self.emit(&format!("    imulq ${}, %rcx", elem_size));
+                }
+                self.emit("    addq %rcx, %rax");
+                self.store_gpr_value("%rax", dst_offset, &dst_ty);
+            }
             Instruction::Return(val) => {
                 if let Some(v) = val {
                     let ret_ty = self.return_ty.clone();
@@ -1358,6 +1437,70 @@ mod tests {
             "err: {}",
             err
         );
+    }
+
+    #[test]
+    fn test_compile_address_of_local_slot() {
+        let program = Program {
+            functions: vec![Function {
+                name: "addr".into(),
+                params: vec![],
+                ret: Type::U64,
+                locals: vec![(0, Type::I64), (1, Type::U64)],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![
+                        Instruction::AddrOf { dst: 1, src: 0 },
+                        Instruction::Return(Some(Value::Var(1))),
+                    ],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![],
+        };
+        let asm = generate_assembly(&program).expect("address-of should compile");
+        assert!(asm.contains("    leaq -8(%rbp), %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %rax, -16(%rbp)"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_gep_scales_offset_by_element_size() {
+        let program = Program {
+            functions: vec![Function {
+                name: "gep".into(),
+                params: vec![],
+                ret: Type::U64,
+                locals: vec![(0, Type::U64), (1, Type::U64)],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![
+                        Instruction::Mov {
+                            dst: 0,
+                            src: Value::ConstI64(1000),
+                            ty: Type::U64,
+                        },
+                        Instruction::Gep {
+                            dst: 1,
+                            base: Value::Var(0),
+                            offset: Value::ConstI64(3),
+                            elem_ty: Type::I64,
+                        },
+                        Instruction::Return(Some(Value::Var(1))),
+                    ],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![],
+        };
+        let asm = generate_assembly(&program).expect("gep should compile");
+        assert!(asm.contains("    movq -8(%rbp), %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $3, %rcx"), "asm:\n{}", asm);
+        assert!(asm.contains("    imulq $8, %rcx"), "asm:\n{}", asm);
+        assert!(asm.contains("    addq %rcx, %rax"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
     }
 
     #[test]

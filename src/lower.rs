@@ -13,6 +13,7 @@ struct ProgramLowerer {
     functions: Vec<Function>,
     globals: Vec<(String, Type, Option<Value>)>,
     externs: Vec<(String, Type)>,
+    function_types: HashMap<String, Type>,
 }
 
 impl ProgramLowerer {
@@ -21,16 +22,37 @@ impl ProgramLowerer {
             functions: Vec::new(),
             globals: Vec::new(),
             externs: Vec::new(),
+            function_types: HashMap::new(),
         }
     }
 
     fn lower(&mut self, prog: &ast::Program) -> Program {
         for decl in &prog.decls {
             match decl {
+                ast::Decl::DefFn {
+                    name, params, ret, ..
+                } => {
+                    self.function_types.insert(
+                        name.clone(),
+                        Type::Func(
+                            params.iter().map(|(_, ty)| ty.clone()).collect(),
+                            Box::new(ret.clone()),
+                        ),
+                    );
+                }
+                ast::Decl::Extern { name, ty } => {
+                    self.function_types.insert(name.clone(), ty.clone());
+                }
+                ast::Decl::Def { .. } => {}
+            }
+        }
+
+        for decl in &prog.decls {
+            match decl {
                 ast::Decl::Def { name, ty, value } => {
                     let val_ty = ty.clone().unwrap_or_else(|| infer_literal_type(value));
                     // Lower the global initializer as an anonymous function
-                    let fn_lowerer = FnLowerer::new("__global_init", &[], &val_ty);
+                    let fn_lowerer = FnLowerer::new("__global_init", &[], &val_ty, &self.function_types);
                     let (_func, _result_var) = fn_lowerer.lower_expr_to_fn(value, &val_ty);
 
                     // Replace the generated function name with a proper init approach
@@ -67,7 +89,7 @@ impl ProgramLowerer {
         ret: &Type,
         body: &ast::Expr,
     ) -> Function {
-        let fn_lowerer = FnLowerer::new(name, params, ret);
+        let fn_lowerer = FnLowerer::new(name, params, ret, &self.function_types);
         fn_lowerer.lower_body(body, ret)
     }
 }
@@ -101,6 +123,8 @@ struct FnLowerer {
     name: String,
     builder: IrBuilder,
     vars: HashMap<String, VarId>,
+    var_types: HashMap<VarId, Type>,
+    function_types: HashMap<String, Type>,
     params: Vec<(VarId, Type)>,
     locals: Vec<(VarId, Type)>,
     #[allow(dead_code)]
@@ -108,9 +132,15 @@ struct FnLowerer {
 }
 
 impl FnLowerer {
-    fn new(name: &str, params: &[(String, Type)], ret: &Type) -> Self {
+    fn new(
+        name: &str,
+        params: &[(String, Type)],
+        ret: &Type,
+        function_types: &HashMap<String, Type>,
+    ) -> Self {
         let mut builder = IrBuilder::new("entry");
         let mut vars = HashMap::new();
+        let mut var_types = HashMap::new();
         let mut ir_params = Vec::new();
 
         for (param_name, param_ty) in params {
@@ -121,12 +151,15 @@ impl FnLowerer {
             });
             ir_params.push((var, param_ty.clone()));
             vars.insert(param_name.clone(), var);
+            var_types.insert(var, param_ty.clone());
         }
 
         FnLowerer {
             name: name.to_string(),
             builder,
             vars,
+            var_types,
+            function_types: function_types.clone(),
             params: ir_params,
             locals: Vec::new(),
             ret: ret.clone(),
@@ -199,15 +232,6 @@ impl FnLowerer {
         let lhs_val = self.lower_expr(lhs);
         let rhs_val = self.lower_expr(rhs);
 
-        // Infer the result type from the operands
-        let ty = match (&lhs_val, &rhs_val) {
-            (Value::ConstI64(_), _) | (_, Value::ConstI64(_)) => Type::I64,
-            (Value::ConstF64(_), _) | (_, Value::ConstF64(_)) => Type::F64,
-            (Value::ConstI32(_), _) | (_, Value::ConstI32(_)) => Type::I32,
-            (Value::ConstBool(_), _) | (_, Value::ConstBool(_)) => Type::Bool,
-            _ => Type::I64, // Default
-        };
-
         let ir_op = match op {
             ast::BinOp::Add => BinOp::Add,
             ast::BinOp::Sub => BinOp::Sub,
@@ -229,24 +253,48 @@ impl FnLowerer {
             ast::BinOp::Shr => BinOp::Sub,
         };
 
+        let lhs_ty = self.infer_type(&lhs_val);
+        let rhs_ty = self.infer_type(&rhs_val);
+        let operand_ty = if lhs_ty == Type::F64 || rhs_ty == Type::F64 {
+            Type::F64
+        } else if lhs_ty == Type::I32 || rhs_ty == Type::I32 {
+            Type::I32
+        } else if lhs_ty == Type::Bool || rhs_ty == Type::Bool {
+            Type::Bool
+        } else {
+            Type::I64
+        };
+        let result_ty = match ir_op {
+            BinOp::Eq
+            | BinOp::Ne
+            | BinOp::Lt
+            | BinOp::Le
+            | BinOp::Gt
+            | BinOp::Ge
+            | BinOp::And
+            | BinOp::Or => Type::Bool,
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => operand_ty,
+        };
+
         let dst = self.builder.fresh_var();
         self.builder.emit(Instruction::BinOp {
             dst,
             op: ir_op,
             lhs: lhs_val,
             rhs: rhs_val,
-            ty: ty.clone(),
+            ty: result_ty.clone(),
         });
-        self.locals.push((dst, ty));
+        self.var_types.insert(dst, result_ty.clone());
+        self.locals.push((dst, result_ty));
         Value::Var(dst)
     }
 
     fn lower_unary(&mut self, op: ast::UnOp, expr: &ast::Expr) -> Value {
         let src = self.lower_expr(expr);
         let (ir_op, ty) = match op {
-            ast::UnOp::Neg => (UnOp::Neg, Type::I64),
+            ast::UnOp::Neg => (UnOp::Neg, self.infer_type(&src)),
             ast::UnOp::Not => (UnOp::Not, Type::Bool),
-            ast::UnOp::BitNot => (UnOp::Not, Type::I64),
+            ast::UnOp::BitNot => (UnOp::Not, self.infer_type(&src)),
         };
         let dst = self.builder.fresh_var();
         self.builder.emit(Instruction::UnOp {
@@ -255,6 +303,7 @@ impl FnLowerer {
             src,
             ty: ty.clone(),
         });
+        self.var_types.insert(dst, ty.clone());
         self.locals.push((dst, ty));
         Value::Var(dst)
     }
@@ -368,7 +417,13 @@ impl FnLowerer {
         let arg_vals: Vec<Value> = args.iter().map(|a| self.lower_expr(a)).collect();
 
         let (func_name, ret_ty) = match func {
-            ast::Expr::Var(name) => (name.clone(), Type::Unit),
+            ast::Expr::Var(name) => {
+                let ret_ty = match self.function_types.get(name) {
+                    Some(Type::Func(_, ret)) => (**ret).clone(),
+                    _ => Type::Unit,
+                };
+                (name.clone(), ret_ty)
+            }
             _ => {
                 // Indirect call through expression
                 let func_val = self.lower_expr(func);
@@ -391,6 +446,7 @@ impl FnLowerer {
             args: arg_vals,
             ty: ret_ty.clone(),
         });
+        self.var_types.insert(dst, ret_ty.clone());
         self.locals.push((dst, ret_ty));
         Value::Var(dst)
     }
@@ -408,7 +464,7 @@ impl FnLowerer {
         Value::ConstUnit
     }
 
-    /// Infer the Type of a Value. Only works for constants; defaults to I64 for Vars.
+    /// Infer the Type of a Value. Constants are exact; Vars use the local type map.
     fn infer_type(&self, val: &Value) -> Type {
         match val {
             Value::ConstI64(_) => Type::I64,
@@ -417,7 +473,7 @@ impl FnLowerer {
             Value::ConstF64(_) => Type::F64,
             Value::ConstBool(_) => Type::Bool,
             Value::ConstUnit => Type::Unit,
-            Value::Var(_) => Type::I64, // Default, could be refined
+            Value::Var(var) => self.var_types.get(var).cloned().unwrap_or(Type::I64),
             Value::Global(_) => Type::I64,
         }
     }

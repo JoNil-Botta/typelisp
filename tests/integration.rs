@@ -129,6 +129,206 @@ fn type_lisp_programs_compile_link_and_run() {
     }
 }
 
+#[test]
+fn type_lisp_programs_compile_link_and_run_explicit_build() {
+    let cases = [
+        Case {
+            name: "hello",
+            exit_code: 42,
+            stdout: "",
+            deps: &[],
+        },
+        Case {
+            name: "arithmetic",
+            exit_code: 47,
+            stdout: "",
+            deps: &[],
+        },
+        Case {
+            name: "factorial",
+            exit_code: 120,
+            stdout: "",
+            deps: &[],
+        },
+        Case {
+            name: "fibonacci",
+            exit_code: 13,
+            stdout: "",
+            deps: &[],
+        },
+        Case {
+            name: "control_flow",
+            exit_code: 15,
+            stdout: "",
+            deps: &[],
+        },
+        Case {
+            name: "functions",
+            exit_code: 32,
+            stdout: "",
+            deps: &[],
+        },
+        Case {
+            name: "print",
+            exit_code: 0,
+            stdout: "42\nfalse\n",
+            deps: &[],
+        },
+        Case {
+            name: "print_char",
+            exit_code: 0,
+            stdout: "A\n",
+            deps: &[],
+        },
+        Case {
+            name: "unit_functions",
+            exit_code: 7,
+            stdout: "",
+            deps: &[],
+        },
+        Case {
+            name: "unit_main",
+            exit_code: 0,
+            stdout: "",
+            deps: &[],
+        },
+        Case {
+            name: "tl_alloc",
+            exit_code: 0,
+            stdout: "",
+            deps: &[],
+        },
+        Case {
+            name: "many_args",
+            exit_code: 36,
+            stdout: "",
+            deps: &[],
+        },
+        Case {
+            name: "narrow_div_mod",
+            exit_code: 30,
+            stdout: "",
+            deps: &[],
+        },
+        Case {
+            name: "string_length",
+            exit_code: 5,
+            stdout: "",
+            deps: &[],
+        },
+        Case {
+            name: "string_eq",
+            exit_code: 0,
+            stdout: "true\nfalse\nfalse\ntrue\n",
+            deps: &[],
+        },
+        Case {
+            name: "modules_main",
+            exit_code: 30,
+            stdout: "",
+            deps: &["modules_helper.tl"],
+        },
+        Case {
+            name: "enum_match",
+            exit_code: 42,
+            stdout: "",
+            deps: &[],
+        },
+    ];
+
+    for case in cases {
+        run_case_explicit_build(&case);
+    }
+}
+
+fn run_case_explicit_build(case: &Case) {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source_path = manifest_dir
+        .join("tests")
+        .join("integration")
+        .join(format!("{}.tl", case.name));
+    let work_dir = manifest_dir
+        .join("target")
+        .join("integration-tests-explicit")
+        .join(case.name);
+    fs::create_dir_all(&work_dir).expect("create explicit build test work dir");
+    let work_path = work_dir.join(format!("{}.tl", case.name));
+    fs::copy(&source_path, &work_path).expect("copy TypeLisp program to work dir");
+
+    // Copy any imported helper modules alongside the entry file.
+    for dep in case.deps {
+        let dep_src = manifest_dir.join("tests").join("integration").join(dep);
+        let dep_dst = work_dir.join(dep);
+        if let Some(parent) = dep_dst.parent() {
+            fs::create_dir_all(parent).expect("create dep work dir");
+        }
+        fs::copy(&dep_src, &dep_dst).expect("copy imported module to work dir");
+    }
+
+    let asm_path = work_path.with_extension("s");
+    let obj_path = work_path.with_extension("o");
+    let bin_path = work_path.with_extension("");
+
+    // Compile .tl → .s using the "compile" subcommand
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("compile")
+        .arg(&work_path)
+        .output()
+        .expect("run typelisp compile");
+
+    let compile_stdout = String::from_utf8_lossy(&output.stdout);
+    let compile_stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "{} compile step failed\nstdout:\n{}\nstderr:\n{}",
+        case.name,
+        compile_stdout,
+        compile_stderr,
+    );
+
+    // Assemble .s → .o
+    let status = Command::new("as")
+        .arg(&asm_path)
+        .arg("-o")
+        .arg(&obj_path)
+        .status()
+        .expect("run assembler");
+    assert!(status.success(), "{} assembly failed", case.name);
+
+    // Link .o → binary
+    let status = Command::new("ld")
+        .arg(&obj_path)
+        .arg("-o")
+        .arg(&bin_path)
+        .arg("-dynamic-linker")
+        .arg("/lib64/ld-linux-x86-64.so.2")
+        .arg("-lc")
+        .status()
+        .expect("run linker");
+    assert!(status.success(), "{} linking failed", case.name);
+
+    // Run binary
+    let output = Command::new(&bin_path)
+        .output()
+        .expect("run compiled binary");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(case.exit_code),
+        "{} exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        case.name,
+        stdout,
+        stderr,
+    );
+    assert_eq!(
+        stdout, case.stdout,
+        "{} stdout differed\nstderr:\n{}",
+        case.name, stderr,
+    );
+}
+
 fn run_case(case: &Case) {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let source_path = manifest_dir

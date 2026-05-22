@@ -2253,4 +2253,61 @@ mod tests {
                    (define (f [o : Outer]) : i64 (struct-get o b))";
         assert!(check(src).is_ok());
     }
+
+    // --- boolean logic ops (not / and / or, bool equality) ---
+
+    #[test]
+    fn test_typecheck_not_of_bool_is_bool() {
+        // `(not b)` over a bool is well-typed and yields a bool.
+        assert!(check("(define (f [b : bool]) : bool (not b))").is_ok());
+        assert!(check("(define (f) : bool (not true))").is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_not_of_non_bool_errors() {
+        // `(not 5)` is rejected: `not` requires a bool operand.
+        let err = check("(define (f) : bool (not 5))").unwrap_err();
+        assert!(err.msg.contains("not requires bool"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_and_or_of_bools_is_bool() {
+        // `(and a b)` / `(or a b)` over bools are well-typed and yield bool.
+        assert!(check("(define (f [a : bool] [b : bool]) : bool (and a b))").is_ok());
+        assert!(check("(define (f [a : bool] [b : bool]) : bool (or a b))").is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_and_or_of_non_bool_errors() {
+        // A non-bool operand to `and`/`or` is a type error.
+        let err = check("(define (f [a : bool]) : bool (and a 1))").unwrap_err();
+        assert!(
+            err.msg.contains("logical operator requires bool"),
+            "got: {}",
+            err.msg
+        );
+        let err = check("(define (f [a : bool]) : bool (or 1 a))").unwrap_err();
+        assert!(
+            err.msg.contains("logical operator requires bool"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_bool_equality_is_bool() {
+        // Comparing two bools with `=` is well-typed and yields a bool.
+        assert!(check("(define (f [a : bool] [b : bool]) : bool (= a b))").is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_bool_equality_mixed_type_errors() {
+        // Comparing a bool to an i64 is a comparison type mismatch.
+        let err = check("(define (f [a : bool]) : bool (= a 1))").unwrap_err();
+        assert!(
+            err.msg.contains("comparison type mismatch"),
+            "got: {}",
+            err.msg
+        );
+    }
 }

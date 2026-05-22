@@ -60,6 +60,10 @@ pub enum Pattern {
     /// Variant pattern: `(Variant binding...)` or a nullary `Variant`.
     /// The bindings name the variant's payload fields positionally.
     Variant { name: Symbol, bindings: Vec<Symbol> },
+    /// Literal pattern: matches a scalar scrutinee against a constant, e.g.
+    /// `0`, `true`, `#\a`. Refutable; used when matching on a scalar
+    /// (non-enum) value rather than an enum.
+    Literal(Literal),
 }
 
 /// A variant of a `defenum`: a constructor name and its (ordered) payload

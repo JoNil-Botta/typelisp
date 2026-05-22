@@ -2827,4 +2827,30 @@ mod tests {
             asm
         );
     }
+
+    #[test]
+    fn test_backend_scalar_literal_match() {
+        // A scalar match over an i64 dispatches on the value directly: no tag
+        // load, a cmpq per literal arm, conditional jumps to qualified arm
+        // labels, and no unhandled instruction.
+        let asm = compile_ok(
+            "(define (classify [n : i64]) : i64 \
+               (match n [0 100] [1 200] [_ 0]))\n\
+             (define (main) : i64 (classify 1))",
+        );
+
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+        // Value dispatch compares against the literal constants.
+        assert!(
+            asm.contains("cmpq"),
+            "expected cmpq for literal compare; asm:\n{}",
+            asm
+        );
+        // Arms jump to fully-qualified, function-prefixed labels.
+        assert!(
+            asm.contains("jnz _tl_classify.match_arm."),
+            "expected conditional jump to arm; asm:\n{}",
+            asm
+        );
+    }
 }

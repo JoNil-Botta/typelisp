@@ -528,13 +528,29 @@ impl<'a> Parser<'a> {
         Ok(Expr::spanned(expr, start.merge(&end)))
     }
 
-    /// Parse a `match` arm pattern: `_`, a bare nullary variant `Variant`, or a
-    /// variant with positional bindings `(Variant b1 b2 ...)`.
+    /// Parse a `match` arm pattern: `_`, a scalar literal (`0`, `true`, `#\a`),
+    /// a bare nullary variant `Variant`, or a variant with positional bindings
+    /// `(Variant b1 b2 ...)`.
     fn parse_pattern(&mut self) -> Result<Pattern, ParseError> {
         match &self.current {
             Token::Ident(s) if s == "_" => {
                 self.advance()?;
                 Ok(Pattern::Wildcard)
+            }
+            Token::Int(n) => {
+                let val = *n;
+                self.advance()?;
+                Ok(Pattern::Literal(Literal::Int(val)))
+            }
+            Token::Bool(b) => {
+                let val = *b;
+                self.advance()?;
+                Ok(Pattern::Literal(Literal::Bool(val)))
+            }
+            Token::Char(c) => {
+                let val = *c;
+                self.advance()?;
+                Ok(Pattern::Literal(Literal::Char(val)))
             }
             Token::Ident(s) => {
                 let name = s.clone();
@@ -789,6 +805,39 @@ mod tests {
                         bindings: vec![]
                     }
                 );
+            }
+            other => panic!("expected Match, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_literal_patterns() {
+        let prog = parse("(define (f [n : i64]) : i64 (match n [0 10] [1 20] [_ 0]))").unwrap();
+        let body = match &prog.decls[0] {
+            Decl::DefFn { body, .. } => body.unspan(),
+            other => panic!("expected DefFn, got {:?}", other),
+        };
+        match body {
+            Expr::Match { arms, .. } => {
+                assert_eq!(arms.len(), 3);
+                assert_eq!(arms[0].0, Pattern::Literal(Literal::Int(0)));
+                assert_eq!(arms[1].0, Pattern::Literal(Literal::Int(1)));
+                assert_eq!(arms[2].0, Pattern::Wildcard);
+            }
+            other => panic!("expected Match, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_bool_and_char_literal_patterns() {
+        let prog = parse(r"(define (f [b : bool]) : i64 (match b [true 1] [_ 0]))").unwrap();
+        let body = match &prog.decls[0] {
+            Decl::DefFn { body, .. } => body.unspan(),
+            other => panic!("expected DefFn, got {:?}", other),
+        };
+        match body {
+            Expr::Match { arms, .. } => {
+                assert_eq!(arms[0].0, Pattern::Literal(Literal::Bool(true)));
             }
             other => panic!("expected Match, got {:?}", other),
         }

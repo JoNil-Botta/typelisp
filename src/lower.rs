@@ -6,6 +6,8 @@ use crate::types::{
 };
 use std::collections::{HashMap, HashSet};
 
+const ABORT_RUNTIME_SYMBOL: &str = ".L_tl_abort";
+
 /// Lowers a typed AST program into IR.
 pub fn lower_program(prog: &ast::Program) -> Program {
     let mut lowerer = ProgramLowerer::new();
@@ -879,12 +881,14 @@ impl FnLowerer {
         if let ast::Expr::Var(name) = func.unspan()
             && (name == "panic" || name == "error")
             && args.len() == 1
+            && !self.vars.contains_key(name)
+            && !self.function_types.contains_key(name)
         {
             let s = self.lower_expr(&args[0]);
             let (ptr, len) = self.load_string_fields(&s);
             self.builder.emit(Instruction::Call {
                 dst: None,
-                func: "tl_abort".to_string(),
+                func: ABORT_RUNTIME_SYMBOL.to_string(),
                 args: vec![Value::Var(ptr), Value::Var(len)],
                 ty: Type::Unit,
             });
@@ -2348,7 +2352,7 @@ mod tests {
                 ty,
                 dst,
                 ..
-            } if func == "tl_abort" => Some((args, ty, dst)),
+            } if func == ABORT_RUNTIME_SYMBOL => Some((args, ty, dst)),
             _ => None,
         });
         let (args, ty, dst) = call.expect("expected a Call to tl_abort");
@@ -2380,8 +2384,46 @@ mod tests {
             .blocks
             .iter()
             .flat_map(|b| b.instructions.iter())
-            .any(|i| matches!(i, Instruction::Call { func, .. } if func == "tl_abort"));
+            .any(|i| matches!(i, Instruction::Call { func, .. } if func == ABORT_RUNTIME_SYMBOL));
         assert!(has_abort, "error should lower to a Call tl_abort");
+    }
+
+    #[test]
+    fn test_lower_user_defined_panic_shadows_builtin() {
+        // The typechecker lets a user function named `panic` shadow the builtin.
+        // Lowering must follow that ordinary call path instead of forcing the
+        // builtin abort path.
+        let prog = parse(
+            r#"
+            (define (panic [n : i64]) : i64 n)
+            (define (f) : i64 (panic 7))
+            "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let f = ir
+            .functions
+            .iter()
+            .position(|func| func.name == "f")
+            .unwrap();
+        assert!(
+            ir.functions[f]
+                .blocks
+                .iter()
+                .flat_map(|b| b.instructions.iter())
+                .any(|i| matches!(i, Instruction::Call { func, .. } if func == "panic")),
+            "expected ordinary call to user-defined panic"
+        );
+        assert!(
+            !ir.functions[f]
+                .blocks
+                .iter()
+                .flat_map(|b| b.instructions.iter())
+                .any(
+                    |i| matches!(i, Instruction::Call { func, .. } if func == ABORT_RUNTIME_SYMBOL)
+                ),
+            "user-defined panic must not lower to the builtin abort runtime"
+        );
     }
 
     #[test]

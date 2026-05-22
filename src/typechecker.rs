@@ -60,6 +60,15 @@ impl TypeChecker {
             "print-newline".into(),
             Type::Func(vec![], Box::new(Type::Unit)),
         );
+        // `(string-length s)` / `(length s)` -> the byte length of a string.
+        globals.insert(
+            "string-length".into(),
+            Type::Func(vec![Type::String], Box::new(Type::I64)),
+        );
+        globals.insert(
+            "length".into(),
+            Type::Func(vec![Type::String], Box::new(Type::I64)),
+        );
         TypeChecker {
             env: vec![globals],
             func_ret: None,
@@ -165,6 +174,13 @@ impl TypeChecker {
                             value.span(),
                         ));
                     }
+                    if type_contains_string_value(&inferred) {
+                        return Err(TypeError::at(
+                            "global definitions with string values are not yet supported \
+                             because string literals currently produce stack-owned storage",
+                            value.span(),
+                        ));
+                    }
                     self.bind(name.clone(), inferred);
                 }
                 Decl::DefFn {
@@ -178,6 +194,13 @@ impl TypeChecker {
                         return Err(TypeError::at(
                             "functions returning enum values are not yet supported \
                              because enum constructors currently produce stack-owned storage",
+                            body.span(),
+                        ));
+                    }
+                    if type_contains_string_value(&ret) {
+                        return Err(TypeError::at(
+                            "functions returning string values are not yet supported \
+                             because string literals currently produce stack-owned storage",
                             body.span(),
                         ));
                     }
@@ -247,7 +270,7 @@ impl TypeChecker {
                 Literal::Float(_) => Ok(Type::F64),
                 Literal::Bool(_) => Ok(Type::Bool),
                 Literal::Char(_) => Ok(Type::Char),
-                Literal::String(_) => Ok(Type::Var("String".into())), // Not fully supported yet
+                Literal::String(_) => Ok(Type::String),
                 Literal::Unit => Ok(Type::Unit),
             },
             Expr::Var(name) => self
@@ -443,6 +466,13 @@ impl TypeChecker {
                     return Err(TypeError::at(
                         "lambdas returning enum values are not yet supported \
                          because enum constructors currently produce stack-owned storage",
+                        body.span(),
+                    ));
+                }
+                if type_contains_string_value(&ret_ty) {
+                    return Err(TypeError::at(
+                        "lambdas returning string values are not yet supported \
+                         because string literals currently produce stack-owned storage",
                         body.span(),
                     ));
                 }
@@ -699,7 +729,7 @@ impl TypeChecker {
             Literal::Float(_) => Type::F64,
             Literal::Bool(_) => Type::Bool,
             Literal::Char(_) => Type::Char,
-            Literal::String(_) => Type::Var("String".into()),
+            Literal::String(_) => Type::String,
             Literal::Unit => Type::Unit,
         }
     }
@@ -860,6 +890,21 @@ fn type_contains_enum(ty: &Type) -> bool {
         Type::Func(args, ret) => args.iter().any(type_contains_enum) || type_contains_enum(ret),
         Type::Tuple(elems) => elems.iter().any(type_contains_enum),
         Type::Array(elem, _) => type_contains_enum(elem),
+        _ => false,
+    }
+}
+
+/// Whether `ty` is (or nests) a `String`. A string literal's fat `{ptr,len}`
+/// storage is constructed in a stack slot of the *current* function, so —
+/// exactly like an enum constructor's storage — it must not escape via a
+/// global initializer or a function/lambda return (that would dangle). String
+/// *parameters* are fine: the caller owns the storage. This restriction is
+/// lifted once strings are heap-allocated (deferred to #13).
+fn type_contains_string_value(ty: &Type) -> bool {
+    match ty {
+        Type::String => true,
+        Type::Tuple(elems) => elems.iter().any(type_contains_string_value),
+        Type::Array(elem, _) => type_contains_string_value(elem),
         _ => false,
     }
 }
@@ -1135,5 +1180,57 @@ mod tests {
         let src = "(defenum List (Cons i64 List) (Nil))\n(define (f [l : List]) : i64 0)";
         let err = check(src).unwrap_err();
         assert!(err.msg.contains("recursive enum"), "got: {}", err.msg);
+    }
+
+    // ------------------------------------------------------------------
+    // Strings — Issue #13
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_typecheck_string_literal_has_string_type() {
+        // A function taking a String and returning its length via the builtin
+        // `string-length` type-checks: literal -> String, length -> i64.
+        let src = r#"(define (n) : i64 (string-length "hello"))"#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_length_alias() {
+        let src = r#"(define (n) : i64 (length "hi"))"#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_string_length_on_param() {
+        // String *parameters* are allowed (the caller owns the storage).
+        let src = "(define (len [s : String]) : i64 (string-length s))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_string_length_arg_type_checked() {
+        // `string-length` requires a String argument; an i64 is rejected.
+        let src = "(define (n) : i64 (string-length 42))";
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_string_return_is_rejected() {
+        // Returning a string is not yet supported (stack-owned storage), like
+        // returning an enum.
+        let src = r#"(define (mk) : String "hi")"#;
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg.contains("returning string values"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_string_global_is_rejected() {
+        let src = r#"(define greeting "hello")"#;
+        let err = check(src).unwrap_err();
+        assert!(err.msg.contains("string values"), "got: {}", err.msg);
     }
 }

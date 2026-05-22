@@ -16,11 +16,25 @@ mod span;
 mod typechecker;
 mod types;
 
+use ast::Program;
 use backend::generate_assembly;
+use diagnostic::format_diagnostic;
 use lower::lower_program;
 use optimizer::Optimizer;
 use parser::parse;
 use typechecker::TypeChecker;
+
+/// Parse `source`, or print a located diagnostic (file:line:col with a source
+/// snippet and caret) and exit. `file` is used for the diagnostic header.
+fn parse_or_exit(source: &str, file: &str) -> Program {
+    match parse(source) {
+        Ok(prog) => prog,
+        Err(e) => {
+            eprint!("{}", format_diagnostic(&e.to_diagnostic(), source, file));
+            std::process::exit(1);
+        }
+    }
+}
 
 fn print_usage() {
     eprintln!("typelisp — A typed Lisp/Scheme dialect with x86_64 backend");
@@ -73,7 +87,7 @@ fn main() {
             }
             let file = PathBuf::from(&args[2]);
             let source = fs::read_to_string(&file).expect("Failed to read file");
-            let prog = parse(&source).expect("Parsing failed");
+            let prog = parse_or_exit(&source, &file.display().to_string());
             println!("{:#?}", prog);
         }
         "check" => {
@@ -84,7 +98,7 @@ fn main() {
             }
             let file = PathBuf::from(&args[2]);
             let source = fs::read_to_string(&file).expect("Failed to read file");
-            let prog = parse(&source).expect("Parsing failed");
+            let prog = parse_or_exit(&source, &file.display().to_string());
             let mut tc = TypeChecker::new();
             match tc.check_program(&prog) {
                 Ok(()) => println!("Type checking passed!"),
@@ -120,7 +134,7 @@ fn main() {
             }
 
             let source = fs::read_to_string(&file).expect("Failed to read file");
-            let prog = parse(&source).expect("Parsing failed");
+            let prog = parse_or_exit(&source, &file.display().to_string());
             let mut tc = TypeChecker::new();
             tc.check_program(&prog).expect("Type checking failed");
 
@@ -154,7 +168,7 @@ fn main() {
             }
             let file = PathBuf::from(&args[2]);
             let source = fs::read_to_string(&file).expect("Failed to read file");
-            let prog = parse(&source).expect("Parsing failed");
+            let prog = parse_or_exit(&source, &file.display().to_string());
             let mut tc = TypeChecker::new();
             tc.check_program(&prog).expect("Type checking failed");
 

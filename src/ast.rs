@@ -325,23 +325,6 @@ impl EnumRegistry {
         }
         offsets
     }
-
-    /// The total inline storage size of an enum value: tag plus the largest
-    /// variant payload, rounded up to 8-byte alignment.
-    pub fn enum_size(&self, enum_name: &str) -> usize {
-        let Some(variants) = self.enums.get(enum_name) else {
-            return ENUM_TAG_SIZE;
-        };
-        let mut max_extent = ENUM_TAG_SIZE;
-        for v in variants {
-            let offsets = self.field_offsets(&v.fields);
-            if let Some(&last) = offsets.last() {
-                let extent = last + v.fields.last().map(|f| f.size()).unwrap_or(0);
-                max_extent = max_extent.max(extent);
-            }
-        }
-        max_extent.div_ceil(8) * 8
-    }
 }
 
 /// A registry of all `defstruct` declarations in a program, used by both the

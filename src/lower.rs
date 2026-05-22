@@ -1028,7 +1028,7 @@ impl FnLowerer {
     /// value). Uses only Alloc/AddrOf/Gep/Store (frame) or Call/Gep/Store
     /// (heap-promoted) — no new IR.
     fn lower_construct(&mut self, enum_name: &str, tag: usize, args: &[Value]) -> Value {
-        let size = self.enums.enum_size(enum_name);
+        let size = self.enum_storage_size(enum_name);
         let enum_ty = Type::Enum(enum_name.to_string());
 
         // Heap-promote when an enum value can escape via the function's return.
@@ -1058,6 +1058,28 @@ impl FnLowerer {
         }
 
         base_val
+    }
+
+    fn enum_storage_size(&self, enum_name: &str) -> usize {
+        let Some(variants) = self.enums.variants(enum_name) else {
+            return ast::ENUM_TAG_SIZE;
+        };
+
+        let mut max_extent = ast::ENUM_TAG_SIZE;
+        for variant in variants {
+            let field_tys: Vec<Type> = variant
+                .fields
+                .iter()
+                .map(|field| self.resolve_type(field))
+                .collect();
+            let offsets = self.enums.field_offsets(&field_tys);
+            if let Some(&last) = offsets.last() {
+                let extent = last + field_tys.last().map(Type::size).unwrap_or(0);
+                max_extent = max_extent.max(extent);
+            }
+        }
+
+        max_extent.div_ceil(8) * 8
     }
 
     /// Construct a struct value: reserve inline field storage (no tag — a struct

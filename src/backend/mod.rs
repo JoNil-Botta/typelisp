@@ -225,9 +225,8 @@ fn validate_function(func: &Function, global_types: &HashMap<String, Type>) -> R
                         }
                     }
                 }
-                // `let`/`set!` scalar locals and pointer values materialized by
-                // AddrOf/Gep. Non-Var addresses are still rejected because the
-                // selector only knows how to load addresses from local slots.
+                // `let`/`set!` scalar locals/globals and pointer values
+                // materialized by AddrOf/Gep.
                 Instruction::Alloc { .. } => {}
                 Instruction::Load { src, ty, .. } => {
                     match src {
@@ -245,6 +244,18 @@ fn validate_function(func: &Function, global_types: &HashMap<String, Type>) -> R
                 Instruction::Store { dst, src, ty } => {
                     match dst {
                         Value::Var(_) => {}
+                        Value::Global(name) => match global_types.get(name) {
+                            Some(global_ty) if global_ty == ty && is_loadable_global_type(ty) => {}
+                            Some(global_ty) => {
+                                return unsupported(&format!(
+                                    "store to global '{}' of type {} using {}",
+                                    name, global_ty, ty
+                                ));
+                            }
+                            None => {
+                                return unsupported(&format!("store to unknown global '{}'", name));
+                            }
+                        },
                         _ => return unsupported("store through a non-local address"),
                     }
                     if *ty == Type::Unit {
@@ -1615,9 +1626,15 @@ impl X86_64Backend {
             // `AddrOf`/`Gep` hold an address, so a Store through them writes to
             // the pointed-to memory instead of the pointer slot.
             Instruction::Store { dst, src, ty } => {
+                if let Value::Global(name) = dst {
+                    let addr = format!("{}(%rip)", Self::mangle_name(name));
+                    self.store_value_to_addr(&addr, src, ty);
+                    return;
+                }
+
                 let dst_var = match dst {
                     Value::Var(v) => *v,
-                    // Validation rejects non-Var store addresses.
+                    // Validation rejects remaining non-Var store addresses.
                     _ => return,
                 };
                 if self.is_pointer_deref_var(dst_var, ty) {
@@ -1979,12 +1996,54 @@ impl X86_64Backend {
         }
     }
 
+    fn store_value_to_addr(&mut self, addr: &str, src: &Value, ty: &Type) {
+        if *ty == Type::F64 {
+            self.load_value(src, "%xmm0", ty);
+            self.emit(&format!("    movsd %xmm0, {}", addr));
+            return;
+        }
+
+        match src {
+            Value::ConstI64(n) => self.store_integer_immediate_to_addr(*n as i128, addr, ty),
+            Value::ConstI32(n) => self.store_integer_immediate_to_addr(*n as i128, addr, ty),
+            Value::ConstI8(n) => self.store_integer_immediate_to_addr(*n as i128, addr, ty),
+            Value::ConstBool(b) => {
+                let n = if *b { 1 } else { 0 };
+                self.store_integer_immediate_to_addr(n, addr, ty);
+            }
+            _ => {
+                self.load_value(src, "%rax", ty);
+                self.store_gpr_value_to_addr("%rax", addr, ty);
+            }
+        }
+    }
+
+    fn store_gpr_value_to_addr(&mut self, reg: &str, addr: &str, ty: &Type) {
+        match ty.size() {
+            8 => self.emit(&format!("    movq {}, {}", reg, addr)),
+            4 => self.emit(&format!("    movl {}, {}", Self::gpr32(reg), addr)),
+            2 => self.emit(&format!("    movw {}, {}", Self::gpr16(reg), addr)),
+            1 => self.emit(&format!("    movb {}, {}", Self::gpr8(reg), addr)),
+            _ => {}
+        }
+    }
+
     fn store_integer_immediate(&mut self, value: i128, offset: i32, ty: &Type) {
         match ty.size() {
             8 => self.emit(&format!("    movq ${}, {}(%rbp)", value, offset)),
             4 => self.emit(&format!("    movl ${}, {}(%rbp)", value, offset)),
             2 => self.emit(&format!("    movw ${}, {}(%rbp)", value, offset)),
             1 => self.emit(&format!("    movb ${}, {}(%rbp)", value, offset)),
+            _ => {}
+        }
+    }
+
+    fn store_integer_immediate_to_addr(&mut self, value: i128, addr: &str, ty: &Type) {
+        match ty.size() {
+            8 => self.emit(&format!("    movq ${}, {}", value, addr)),
+            4 => self.emit(&format!("    movl ${}, {}", value, addr)),
+            2 => self.emit(&format!("    movw ${}, {}", value, addr)),
+            1 => self.emit(&format!("    movb ${}, {}", value, addr)),
             _ => {}
         }
     }
@@ -2461,6 +2520,32 @@ mod tests {
         );
         assert!(
             asm.contains("    movq _tl_fallback(%rip), %rax"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_set_global_i64_stores_to_data_symbol() {
+        // `set!` can target a top-level scalar binding. It lowers to a Store
+        // whose destination is Value::Global and codegen writes the data symbol.
+        let asm = compile_ok(
+            r#"
+            (define counter 0)
+            (define (main) : i64
+              (begin
+                (set! counter 5)
+                counter))
+            "#,
+        );
+        assert!(
+            asm.contains("    movq $5, _tl_counter(%rip)"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("    movq _tl_counter(%rip), %rax"),
             "asm:\n{}",
             asm
         );

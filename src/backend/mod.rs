@@ -18,6 +18,10 @@ pub struct X86_64Backend {
     global_types: HashMap<String, Type>,
     address_vars: HashSet<VarId>,
     runtime_print_names: HashSet<String>,
+    /// Whether the program references the bump allocator `tl_alloc` and the
+    /// backend must therefore emit the self-contained allocator runtime
+    /// (mmap arena + bump pointer) into the program's `.s`.
+    needs_alloc_runtime: bool,
     return_ty: Type,
     /// VarIds that are function parameters of the function currently being
     /// generated. Their `Alloc` instructions are no-ops because the parameter
@@ -515,6 +519,7 @@ impl X86_64Backend {
             global_types: HashMap::new(),
             address_vars: HashSet::new(),
             runtime_print_names: HashSet::new(),
+            needs_alloc_runtime: false,
             return_ty: Type::Unit,
             param_vars: HashSet::new(),
             current_fn: String::new(),
@@ -529,9 +534,13 @@ impl X86_64Backend {
 
         self.generate_globals(&program.globals);
         self.runtime_print_names = Self::runtime_print_names(program);
+        self.needs_alloc_runtime = Self::needs_alloc_runtime(program);
         let needs_print_runtime = !self.runtime_print_names.is_empty();
         if needs_print_runtime {
             self.generate_print_runtime_data();
+        }
+        if self.needs_alloc_runtime {
+            self.generate_alloc_runtime_data();
         }
 
         self.emit("    .text");
@@ -542,7 +551,12 @@ impl X86_64Backend {
         // Generate extern declarations
         for (name, _) in &program.externs {
             let symbol = self.call_symbol(name);
-            if !Self::is_defined_print_runtime_symbol(&symbol) {
+            // Runtime functions defined inline by the backend (the print
+            // helpers and the bump allocator) must not also be declared
+            // `.extern` — they are defined in this same translation unit.
+            let defined_inline = Self::is_defined_print_runtime_symbol(&symbol)
+                || (self.needs_alloc_runtime && symbol == "tl_alloc");
+            if !defined_inline {
                 self.emit(&format!("    .extern {}", symbol));
             }
         }
@@ -554,6 +568,9 @@ impl X86_64Backend {
 
         if needs_print_runtime {
             self.generate_print_runtime_functions();
+        }
+        if self.needs_alloc_runtime {
+            self.generate_alloc_runtime_functions();
         }
 
         // Generate functions
@@ -606,6 +623,27 @@ impl X86_64Backend {
         }
 
         names
+    }
+
+    /// Whether the program references the bump allocator `tl_alloc` (through a
+    /// direct `Call` or an `extern` declaration) and does not define its own
+    /// `tl_alloc`. When true the backend emits the self-contained allocator
+    /// runtime (an `mmap`'d arena plus a bump pointer) into the program's `.s`
+    /// so the symbol resolves without linking libc.
+    fn needs_alloc_runtime(program: &Program) -> bool {
+        let defines_own = program.functions.iter().any(|f| f.name == "tl_alloc");
+        if defines_own {
+            return false;
+        }
+        let referenced_in_calls = program.functions.iter().any(|func| {
+            func.blocks.iter().any(|block| {
+                block.instructions.iter().any(
+                    |instr| matches!(instr, Instruction::Call { func, .. } if func == "tl_alloc"),
+                )
+            })
+        });
+        let referenced_in_externs = program.externs.iter().any(|(name, _)| name == "tl_alloc");
+        referenced_in_calls || referenced_in_externs
     }
 
     fn generate_print_runtime_data(&mut self) {
@@ -728,6 +766,85 @@ impl X86_64Backend {
         self.emit("    syscall");
         self.emit("    mov %rbp, %rsp");
         self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    /// Emit the `.bss` storage backing the bump allocator: the current bump
+    /// pointer and the one-past-the-end pointer of the active `mmap` arena.
+    /// Both start zeroed; a zero `tl_arena_ptr` signals "no arena yet" and
+    /// triggers lazy `mmap` on the first allocation.
+    fn generate_alloc_runtime_data(&mut self) {
+        self.emit("    .section .bss");
+        self.emit("    .balign 8");
+        self.emit("tl_arena_ptr:");
+        self.emit("    .zero 8");
+        self.emit("tl_arena_end:");
+        self.emit("    .zero 8");
+        self.emit("");
+    }
+
+    /// Emit the self-contained bump allocator `tl_alloc(size) -> ptr`.
+    ///
+    /// ABI (System V): the byte count arrives in `%rdi`, the returned pointer
+    /// leaves in `%rax`. The allocator rounds the request up to 8 bytes, then
+    /// bumps `tl_arena_ptr` within the active arena. When the arena is empty
+    /// (lazy init) or exhausted it `mmap`s a fresh anonymous arena of
+    /// `max(ARENA_SIZE, request)` bytes via the raw `mmap` syscall (no libc).
+    /// There is no `free` and no GC: the arena lives for the whole process,
+    /// matching the README's "minimal runtime".
+    fn generate_alloc_runtime_functions(&mut self) {
+        // Arena granule: 64 MiB. `mmap` syscall number is 9; PROT_READ|PROT_WRITE
+        // = 3; MAP_PRIVATE|MAP_ANONYMOUS = 0x22; fd = -1; offset = 0. The 4th
+        // syscall argument is passed in %r10 (not %rcx) per the syscall ABI.
+        self.emit("    .globl tl_alloc");
+        self.emit("tl_alloc:");
+        // Round the requested size up to an 8-byte boundary: size = (size+7)&~7.
+        self.emit("    addq $7, %rdi");
+        self.emit("    andq $-8, %rdi");
+        // %rsi holds the (aligned) request size for the duration of the routine.
+        self.emit("    movq %rdi, %rsi");
+        // If no arena has been mapped yet (ptr == 0), go map one.
+        self.emit("    movq tl_arena_ptr(%rip), %rax");
+        self.emit("    testq %rax, %rax");
+        self.emit("    jz .L_tl_alloc_new_arena");
+        // Enough room left? new_ptr = ptr + size; if new_ptr <= end, bump.
+        self.emit("    movq %rax, %rcx");
+        self.emit("    addq %rsi, %rcx");
+        self.emit("    cmpq tl_arena_end(%rip), %rcx");
+        self.emit("    ja .L_tl_alloc_new_arena");
+        // Fast path: commit the bump and return the old pointer (already in %rax).
+        self.emit("    movq %rcx, tl_arena_ptr(%rip)");
+        self.emit("    ret");
+        self.emit(".L_tl_alloc_new_arena:");
+        // Choose arena length = max(ARENA_SIZE, aligned request). %rdx = len.
+        self.emit("    movq $0x4000000, %rdx");
+        self.emit("    cmpq %rdx, %rsi");
+        self.emit("    jbe .L_tl_alloc_len_ready");
+        self.emit("    movq %rsi, %rdx");
+        self.emit(".L_tl_alloc_len_ready:");
+        // mmap(NULL, len, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0).
+        // Preserve len and request size across the syscall (which clobbers
+        // %rcx/%r11) on the stack.
+        self.emit("    push %rdx");
+        self.emit("    push %rsi");
+        self.emit("    movq %rdx, %rsi");
+        self.emit("    xorq %rdi, %rdi");
+        self.emit("    movq $3, %rdx");
+        self.emit("    movq $0x22, %r10");
+        self.emit("    movq $-1, %r8");
+        self.emit("    xorq %r9, %r9");
+        self.emit("    movq $9, %rax");
+        self.emit("    syscall");
+        self.emit("    pop %rsi");
+        self.emit("    pop %rdx");
+        // %rax = arena base. Set end = base + len, ptr = base + size, return base.
+        self.emit("    movq %rax, %rcx");
+        self.emit("    addq %rdx, %rcx");
+        self.emit("    movq %rcx, tl_arena_end(%rip)");
+        self.emit("    movq %rax, %rcx");
+        self.emit("    addq %rsi, %rcx");
+        self.emit("    movq %rcx, tl_arena_ptr(%rip)");
         self.emit("    ret");
         self.emit("");
     }
@@ -1751,6 +1868,13 @@ impl X86_64Backend {
     fn call_symbol(&self, name: &str) -> String {
         if self.runtime_print_names.contains(name) {
             Self::runtime_symbol(name).unwrap_or_else(|| Self::mangle_name(name))
+        } else if name == "tl_alloc" && self.needs_alloc_runtime {
+            // The backend-provided bump allocator is referenced by its raw
+            // runtime symbol, not a language-level builtin alias, so it resolves
+            // to itself rather than being mangled to `_tl_tl_alloc`. When a
+            // program defines its own `tl_alloc`, `needs_alloc_runtime` is
+            // false and the call is mangled like any other user function.
+            "tl_alloc".into()
         } else {
             Self::mangle_name(name)
         }
@@ -2750,5 +2874,169 @@ mod tests {
             "expected payload gep at byte offset 8; asm:\n{}",
             asm
         );
+    }
+
+    // ------------------------------------------------------------------
+    // Runtime delivery: bump allocator `tl_alloc` (issue #13)
+    // ------------------------------------------------------------------
+
+    /// A program whose IR references `tl_alloc` (the runtime bump allocator).
+    /// `make-array` does not yet exist in the surface language, so we drive the
+    /// allocator emission from hand-built IR — the same approach used by the
+    /// `tl_*` print-runtime call sites once they reach the backend.
+    fn program_calling_tl_alloc() -> Program {
+        Program {
+            functions: vec![Function {
+                name: "main".into(),
+                params: vec![],
+                ret: Type::U64,
+                locals: vec![(0, Type::U64)],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![
+                        Instruction::Call {
+                            dst: Some(0),
+                            func: "tl_alloc".into(),
+                            args: vec![Value::ConstI64(16)],
+                            ty: Type::U64,
+                        },
+                        Instruction::Return(Some(Value::Var(0))),
+                    ],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![],
+        }
+    }
+
+    #[test]
+    fn test_alloc_runtime_emitted_when_referenced() {
+        let asm = generate_assembly(&program_calling_tl_alloc())
+            .expect("program calling tl_alloc should compile");
+
+        // The call site resolves to the raw runtime symbol, not a mangled
+        // `_tl_tl_alloc`, and the allocator body is defined in the same unit.
+        assert!(asm.contains("    call tl_alloc"), "asm:\n{}", asm);
+        assert!(!asm.contains("_tl_tl_alloc"), "asm:\n{}", asm);
+        assert!(asm.contains("    .globl tl_alloc"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+
+        // Arena state lives in `.bss` as two 8-byte pointer slots.
+        assert!(asm.contains("    .section .bss"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_arena_ptr:"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_arena_end:"), "asm:\n{}", asm);
+
+        // The request is rounded up to 8 bytes before bumping.
+        assert!(asm.contains("    addq $7, %rdi"), "asm:\n{}", asm);
+        assert!(asm.contains("    andq $-8, %rdi"), "asm:\n{}", asm);
+
+        // The bump pointer is read from / written back to the arena slot.
+        assert!(
+            asm.contains("movq tl_arena_ptr(%rip), %rax"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("movq %rcx, tl_arena_ptr(%rip)"),
+            "asm:\n{}",
+            asm
+        );
+
+        // Lazy mmap: raw mmap syscall (rax=9) with PROT_READ|PROT_WRITE (3) and
+        // MAP_PRIVATE|MAP_ANONYMOUS (0x22) in %r10, fd=-1, and a syscall.
+        assert!(asm.contains("    movq $9, %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $3, %rdx"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $0x22, %r10"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $-1, %r8"), "asm:\n{}", asm);
+        assert!(asm.contains("    syscall"), "asm:\n{}", asm);
+
+        // No unhandled instruction slipped through.
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_alloc_runtime_referenced_via_extern() {
+        // A bare `extern tl_alloc` declaration also triggers emission and must
+        // not produce a stray `.extern tl_alloc` (it is defined inline here).
+        let program = Program {
+            functions: vec![Function {
+                name: "main".into(),
+                params: vec![],
+                ret: Type::I64,
+                locals: vec![],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![Instruction::Return(Some(Value::ConstI64(0)))],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![(
+                "tl_alloc".into(),
+                Type::Func(vec![Type::U64], Box::new(Type::U64)),
+            )],
+        };
+        let asm = generate_assembly(&program).expect("extern tl_alloc should compile");
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        assert!(!asm.contains("    .extern tl_alloc"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_alloc_runtime_absent_when_unreferenced() {
+        // Programs that never touch the allocator must not carry its code or
+        // its `.bss` arena state — keeping minimal programs minimal.
+        let asm = compile_ok("(define (main) : i64 (+ 1 2))");
+        assert!(!asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        assert!(!asm.contains("tl_arena_ptr:"), "asm:\n{}", asm);
+        assert!(!asm.contains("    .section .bss"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_user_defined_tl_alloc_not_overridden() {
+        // If a program defines its own `tl_alloc`, the backend must not also
+        // emit the runtime allocator (no duplicate symbol).
+        let program = Program {
+            functions: vec![
+                Function {
+                    name: "tl_alloc".into(),
+                    params: vec![(0, Type::U64)],
+                    ret: Type::U64,
+                    locals: vec![],
+                    blocks: vec![BasicBlock {
+                        label: "entry".into(),
+                        instructions: vec![Instruction::Return(Some(Value::Var(0)))],
+                    }],
+                    entry: "entry".into(),
+                },
+                Function {
+                    name: "main".into(),
+                    params: vec![],
+                    ret: Type::U64,
+                    locals: vec![(1, Type::U64)],
+                    blocks: vec![BasicBlock {
+                        label: "entry".into(),
+                        instructions: vec![
+                            Instruction::Call {
+                                dst: Some(1),
+                                func: "tl_alloc".into(),
+                                args: vec![Value::ConstI64(8)],
+                                ty: Type::U64,
+                            },
+                            Instruction::Return(Some(Value::Var(1))),
+                        ],
+                    }],
+                    entry: "entry".into(),
+                },
+            ],
+            globals: vec![],
+            externs: vec![],
+        };
+        let asm = generate_assembly(&program).expect("user-defined tl_alloc should compile");
+        // Only the user's definition exists; no runtime arena/.bss emitted.
+        assert!(!asm.contains("tl_arena_ptr:"), "asm:\n{}", asm);
+        // The call targets the user's (mangled) function.
+        assert!(asm.contains("_tl_tl_alloc:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call _tl_tl_alloc"), "asm:\n{}", asm);
     }
 }

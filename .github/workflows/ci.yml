@@ -32,6 +32,11 @@ jobs:
       - name: Build
         run: cargo build --verbose
 
+      - name: Check native toolchain
+        run: |
+          command -v as
+          command -v ld
+
       - name: Run tests
         run: cargo test --verbose
 

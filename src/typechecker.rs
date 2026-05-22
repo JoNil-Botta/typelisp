@@ -597,19 +597,119 @@ impl TypeChecker {
         span: Span,
     ) -> Result<Type, TypeError> {
         let scrut_ty = self.check_expr(scrutinee)?;
-        let enum_name = match &scrut_ty {
-            Type::Enum(n) => n.clone(),
-            other => {
-                return Err(TypeError::at(
-                    format!("match scrutinee must be an enum type, got {}", other),
-                    scrutinee.span(),
-                ));
-            }
-        };
         if arms.is_empty() {
             return Err(TypeError::at("match must have at least one arm", span));
         }
+        match &scrut_ty {
+            Type::Enum(n) => self.check_match_enum(n.clone(), arms, span),
+            // A scalar (non-enum) scrutinee is matched by literal patterns plus
+            // a catch-all (`_`), e.g. `(match n [0 ..] [1 ..] [_ ..])`.
+            other => self.check_match_scalar(other.clone(), scrutinee, arms, span),
+        }
+    }
 
+    /// Type-check a `match` whose scrutinee is a scalar value, using literal and
+    /// wildcard patterns. Variant patterns are rejected (no enum), and the match
+    /// must end with a wildcard since the scalar value space is unbounded.
+    fn check_match_scalar(
+        &mut self,
+        scrut_ty: Type,
+        scrutinee: &Expr,
+        arms: &[(Pattern, Expr)],
+        span: Span,
+    ) -> Result<Type, TypeError> {
+        let mut result_ty: Option<Type> = None;
+        let mut has_wildcard = false;
+
+        for (pat, body) in arms {
+            if has_wildcard {
+                return Err(TypeError::at(
+                    "unreachable match arm after wildcard `_`",
+                    body.span(),
+                ));
+            }
+            self.push_scope();
+            match pat {
+                Pattern::Wildcard => has_wildcard = true,
+                Pattern::Literal(lit) => {
+                    let lit_ty = Self::literal_pattern_type(lit);
+                    // An integer literal pattern matches any integer-width
+                    // scrutinee; otherwise the literal and scrutinee types must
+                    // agree.
+                    let ok = if matches!(lit, Literal::Int(_)) {
+                        scrut_ty.is_integer()
+                    } else {
+                        self.types_equal(&scrut_ty, &lit_ty)
+                    };
+                    if !ok {
+                        self.pop_scope();
+                        return Err(TypeError::at(
+                            format!(
+                                "literal pattern of type {} does not match scrutinee type {}",
+                                lit_ty, scrut_ty
+                            ),
+                            body.span(),
+                        ));
+                    }
+                }
+                other => {
+                    self.pop_scope();
+                    return Err(TypeError::at(
+                        format!(
+                            "match on scalar type {} only allows literal or `_` patterns, got {:?}",
+                            scrut_ty, other
+                        ),
+                        scrutinee.span(),
+                    ));
+                }
+            }
+            let body_ty = self.check_expr(body)?;
+            self.pop_scope();
+
+            match &result_ty {
+                None => result_ty = Some(body_ty),
+                Some(expected) => {
+                    if !self.types_equal(expected, &body_ty) {
+                        return Err(TypeError::at(
+                            format!(
+                                "match arms have different types: {} and {}",
+                                expected, body_ty
+                            ),
+                            body.span(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        if !has_wildcard {
+            return Err(TypeError::at(
+                format!("non-exhaustive match on {}: add a `_` arm", scrut_ty),
+                span,
+            ));
+        }
+        Ok(result_ty.unwrap_or(Type::Unit))
+    }
+
+    /// The `Type` a literal pattern matches against. Integer literals report
+    /// `I64` but are accepted against any integer width by the caller.
+    fn literal_pattern_type(lit: &Literal) -> Type {
+        match lit {
+            Literal::Int(_) => Type::I64,
+            Literal::Float(_) => Type::F64,
+            Literal::Bool(_) => Type::Bool,
+            Literal::Char(_) => Type::Char,
+            Literal::String(_) => Type::Var("String".into()),
+            Literal::Unit => Type::Unit,
+        }
+    }
+
+    fn check_match_enum(
+        &mut self,
+        enum_name: String,
+        arms: &[(Pattern, Expr)],
+        span: Span,
+    ) -> Result<Type, TypeError> {
         let variant_count = self
             .enums
             .variants(&enum_name)
@@ -956,10 +1056,78 @@ mod tests {
     }
 
     #[test]
-    fn test_typecheck_match_on_non_enum_is_err() {
+    fn test_typecheck_match_scalar_with_wildcard_is_ok() {
+        // A scalar (non-enum) scrutinee is now a valid match target when an
+        // arm makes it exhaustive (here, the catch-all `_`).
         let src = "(define (f [x : i64]) : i64 (match x [_ 0]))";
+        assert!(check(src).is_ok());
+    }
+
+    // ------------------------------------------------------------------
+    // Literal patterns on scalar scrutinees — extends #41
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_typecheck_match_int_literals_well_typed() {
+        let src = "(define (classify [n : i64]) : i64 \
+                     (match n [0 100] [1 200] [_ 0]))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_match_bool_literals_well_typed() {
+        let src = "(define (f [b : bool]) : i64 (match b [true 1] [false 0]))";
+        // bool literals do not need a wildcard if both values are covered? No:
+        // exhaustiveness over scalars always requires a `_`. This match has no
+        // wildcard, so it must be rejected.
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_match_bool_literals_with_wildcard_ok() {
+        let src = "(define (f [b : bool]) : i64 (match b [true 1] [_ 0]))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_match_scalar_non_exhaustive_is_err() {
+        // No catch-all on an unbounded scalar space.
+        let src = "(define (f [n : i64]) : i64 (match n [0 1] [1 2]))";
         let err = check(src).unwrap_err();
-        assert!(err.msg.contains("must be an enum"), "got: {}", err.msg);
+        assert!(err.msg.contains("non-exhaustive"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_match_literal_type_mismatch_is_err() {
+        // A bool literal pattern against an i64 scrutinee is rejected.
+        let src = "(define (f [n : i64]) : i64 (match n [true 1] [_ 0]))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg.contains("does not match scrutinee type"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_match_scalar_arm_type_mismatch_is_err() {
+        let src = "(define (f [n : i64]) : i64 (match n [0 1] [_ true]))";
+        let err = check(src).unwrap_err();
+        assert!(err.msg.contains("different types"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_match_unreachable_after_wildcard_is_err() {
+        let src = "(define (f [n : i64]) : i64 (match n [_ 0] [1 2]))";
+        let err = check(src).unwrap_err();
+        assert!(err.msg.contains("unreachable"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_match_int_literals_narrow_width_ok() {
+        // An integer literal pattern matches any integer-width scrutinee.
+        let src = "(define (f [n : u8]) : i64 (match n [0 1] [_ 0]))";
+        assert!(check(src).is_ok());
     }
 
     #[test]

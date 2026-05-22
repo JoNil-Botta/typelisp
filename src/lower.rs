@@ -638,22 +638,34 @@ impl FnLowerer {
     }
 
     /// Lower `(match scrutinee [pat body] ...)` using the existing `if`
-    /// template: load the scrutinee's tag, then for each variant arm emit a
-    /// tag-equality `Eq` plus a `Branch`, binding payload fields via `Gep` and
-    /// `Load` in the matched arm. A `Phi` in the merge block selects the arm
-    /// result. A wildcard arm becomes the final fall-through.
+    /// template. For an *enum* scrutinee, the dispatch value is the loaded tag
+    /// (offset 0) and arms are `Variant` patterns binding payload fields via
+    /// `Gep`/`Load`. For a *scalar* scrutinee, the dispatch value is the
+    /// scrutinee value itself and arms are `Literal` patterns compared by
+    /// equality. Either way each refutable arm emits an `Eq` + `Branch`, a
+    /// wildcard arm is the final fall-through, and a `Phi` in the merge block
+    /// selects the result.
     fn lower_match(&mut self, scrutinee: &ast::Expr, arms: &[(ast::Pattern, ast::Expr)]) -> Value {
         let scrut = self.lower_expr(scrutinee);
 
-        // Load the tag (offset 0).
-        let tag_ptr = self.gep_byte(&scrut, 0);
-        let tag_val = self.builder.fresh_var();
-        self.builder.emit(Instruction::Load {
-            dst: tag_val,
-            src: Value::Var(tag_ptr),
-            ty: Type::I64,
-        });
-        self.record_local(tag_val, Type::I64);
+        let scrut_ty = self.value_type(&scrut);
+        let dispatch_val = if matches!(scrut_ty, Type::Enum(_)) {
+            // Enum: load the tag (offset 0).
+            let tag_ptr = self.gep_byte(&scrut, 0);
+            let tag_val = self.builder.fresh_var();
+            self.builder.emit(Instruction::Load {
+                dst: tag_val,
+                src: Value::Var(tag_ptr),
+                ty: Type::I64,
+            });
+            self.record_local(tag_val, Type::I64);
+            Value::Var(tag_val)
+        } else {
+            // Scalar: dispatch on the scrutinee value itself. This includes
+            // wildcard-only scalar matches, which typecheck without literal
+            // arms and must not be mistaken for enum tag dispatch.
+            scrut.clone()
+        };
 
         let merge_label = self.builder.fresh_label("match_end");
         let mut incoming: Vec<(Value, Label)> = Vec::new();
@@ -697,7 +709,7 @@ impl FnLowerer {
                     self.builder.emit(Instruction::BinOp {
                         dst: cmp,
                         op: BinOp::Eq,
-                        lhs: Value::Var(tag_val),
+                        lhs: dispatch_val.clone(),
                         rhs: Value::ConstI64(tag as i64),
                         ty: Type::Bool,
                     });
@@ -752,8 +764,50 @@ impl FnLowerer {
                         self.builder.emit(Instruction::Jump(merge_label.clone()));
                     }
                 }
+                ast::Pattern::Literal(lit) => {
+                    // Scalar match arm: compare the scrutinee value against the
+                    // literal constant, then dispatch like a variant arm. No
+                    // payload bindings.
+                    let lit_val = self.lower_literal(lit);
+
+                    let arm_label = self.builder.fresh_label("match_arm");
+                    let next_label = self.builder.fresh_label("match_next");
+
+                    // scrutinee == literal ? The backend recovers the compare
+                    // width/signedness from the operands' value types.
+                    let cmp = self.builder.fresh_var();
+                    self.builder.emit(Instruction::BinOp {
+                        dst: cmp,
+                        op: BinOp::Eq,
+                        lhs: dispatch_val.clone(),
+                        rhs: lit_val,
+                        ty: Type::Bool,
+                    });
+                    self.record_local(cmp, Type::Bool);
+                    self.builder.emit(Instruction::Branch {
+                        cond: Value::Var(cmp),
+                        true_label: arm_label.clone(),
+                        false_label: next_label.clone(),
+                    });
+
+                    // Arm block: lower the body (no bindings to install).
+                    self.builder.finish_block(&arm_label);
+                    let val = self.lower_expr(body);
+                    let arm_end = self.current_block_label();
+                    if self.value_type(&val) != Type::Unit {
+                        result_ty = self.value_type(&val);
+                    }
+                    incoming.push((val, arm_end));
+                    self.builder.emit(Instruction::Jump(merge_label.clone()));
+
+                    // Continue testing in the next block.
+                    self.builder.finish_block(&next_label);
+                    if is_last {
+                        self.builder.emit(Instruction::Jump(merge_label.clone()));
+                    }
+                }
                 _ => {
-                    // Other patterns are rejected by the typechecker.
+                    // Var/Tuple patterns are rejected by the typechecker.
                 }
             }
         }
@@ -1948,5 +2002,88 @@ mod tests {
                 .any(|i| matches!(i, Instruction::Return(Some(Value::ConstUnit))))
         });
         assert!(!returns_unit, "constructor must not return ConstUnit");
+    }
+
+    // ------------------------------------------------------------------
+    // Literal patterns on scalar scrutinees — extends #41
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_lower_scalar_match_dispatches_without_tag_load() {
+        // A scalar match compares the scrutinee value directly: no tag Load,
+        // one Eq + Branch per literal arm, one Phi. The wildcard adds neither.
+        let src = "(define (f [n : i64]) : i64 (match n [0 10] [1 20] [_ 0]))";
+        let prog = parse(src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().position(|f| f.name == "f").unwrap();
+
+        // No Load at all: the scrutinee is a value, not a tagged aggregate.
+        assert_eq!(
+            count(&ir, f, |i| matches!(i, Instruction::Load { .. })),
+            0,
+            "scalar match must not load a tag"
+        );
+        // Two literal arms => two Eq + two Branch; wildcard adds none.
+        assert_eq!(
+            count(&ir, f, |i| matches!(
+                i,
+                Instruction::BinOp { op: BinOp::Eq, .. }
+            )),
+            2,
+            "expected one Eq per literal arm"
+        );
+        assert_eq!(
+            count(&ir, f, |i| matches!(i, Instruction::Branch { .. })),
+            2,
+            "expected one Branch per literal arm"
+        );
+        assert_eq!(
+            count(&ir, f, |i| matches!(i, Instruction::Phi { .. })),
+            1,
+            "expected one result Phi"
+        );
+    }
+
+    #[test]
+    fn test_lower_scalar_match_compares_literal_constants() {
+        // The Eq's rhs must be the literal constant being matched.
+        let src = "(define (f [n : i64]) : i64 (match n [42 1] [_ 0]))";
+        let prog = parse(src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().position(|f| f.name == "f").unwrap();
+        let cmp_const_42 = ir.functions[f].blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                matches!(
+                    i,
+                    Instruction::BinOp {
+                        op: BinOp::Eq,
+                        rhs: Value::ConstI64(42),
+                        ..
+                    }
+                )
+            })
+        });
+        assert!(cmp_const_42, "expected an Eq against ConstI64(42)");
+    }
+
+    #[test]
+    fn test_lower_scalar_wildcard_only_match_does_not_load_tag() {
+        // Regression: a scalar match with only `_` has no literal arm, but it is
+        // still scalar and must not lower as an enum tag load from the integer.
+        let src = "(define (f [n : i64]) : i64 (match n [_ 0]))";
+        let prog = parse(src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().position(|f| f.name == "f").unwrap();
+
+        assert_eq!(
+            count(&ir, f, |i| matches!(i, Instruction::Load { .. })),
+            0,
+            "wildcard-only scalar match must not load a tag"
+        );
+        assert_eq!(
+            count(&ir, f, |i| matches!(i, Instruction::Gep { .. })),
+            0,
+            "wildcard-only scalar match must not compute a tag pointer"
+        );
     }
 }

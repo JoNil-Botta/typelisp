@@ -1,38 +1,68 @@
 use crate::ast::*;
+use crate::diagnostic::Diagnostic;
 use crate::lexer::{Lexer, Token};
+use crate::span::Span;
 use crate::types::Type;
 use std::fmt;
 
 #[derive(Debug, Clone)]
 pub struct ParseError {
     pub msg: String,
+    /// Source location of the offending token.
+    pub span: Span,
+}
+
+impl ParseError {
+    /// Render this error as a located `Diagnostic` (with the `E0100` parse-error
+    /// code) so the CLI can print a snippet + caret.
+    pub fn to_diagnostic(&self) -> Diagnostic {
+        Diagnostic::error(self.msg.clone(), self.span).with_code("E0100")
+    }
 }
 
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "parse error: {}", self.msg)
+        write!(
+            f,
+            "parse error at {}:{}: {}",
+            self.span.start_line, self.span.start_col, self.msg
+        )
     }
 }
 
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
     current: Token,
+    /// Span of `current`, used to locate parse errors at the offending token.
+    current_span: Span,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(input: &'a str) -> Result<Self, ParseError> {
         let mut lexer = Lexer::new(input);
-        let current = lexer
-            .next_token()
-            .map_err(|e| ParseError { msg: e.to_string() })?;
-        Ok(Parser { lexer, current })
+        let first = lexer.next_spanned().map_err(|e| ParseError {
+            msg: e.msg.clone(),
+            span: e.span(),
+        })?;
+        Ok(Parser {
+            lexer,
+            current: first.token,
+            current_span: first.span,
+        })
+    }
+
+    /// Span of the token the parser is currently positioned on.
+    fn span(&self) -> Span {
+        self.current_span
     }
 
     fn advance(&mut self) -> Result<(), ParseError> {
-        self.current = self
-            .lexer
-            .next_token()
-            .map_err(|e| ParseError { msg: e.to_string() })?;
+        let next = self.lexer.next_spanned().map_err(|e| ParseError {
+            msg: e.msg.clone(),
+            span: e.span(),
+        })?;
+        self.current = next.token;
+        self.current_span = next.span;
         Ok(())
     }
 
@@ -43,6 +73,7 @@ impl<'a> Parser<'a> {
         } else {
             Err(ParseError {
                 msg: format!("expected {:?}, got {:?}", tok, self.current),
+                span: self.span(),
             })
         }
     }
@@ -56,6 +87,7 @@ impl<'a> Parser<'a> {
             }
             _ => Err(ParseError {
                 msg: format!("expected identifier, got {:?}", self.current),
+                span: self.span(),
             }),
         }
     }
@@ -82,6 +114,7 @@ impl<'a> Parser<'a> {
             }
             _ => Err(ParseError {
                 msg: format!("expected define or extern, got {:?}", self.current),
+                span: self.span(),
             }),
         }
     }
@@ -179,6 +212,7 @@ impl<'a> Parser<'a> {
                         if args.is_empty() {
                             return Err(ParseError {
                                 msg: "function type needs at least return type".into(),
+                                span: self.span(),
                             });
                         }
                         let ret = args.pop().unwrap();
@@ -202,6 +236,7 @@ impl<'a> Parser<'a> {
                             _ => {
                                 return Err(ParseError {
                                     msg: "array size must be integer".into(),
+                                    span: self.span(),
                                 });
                             }
                         };
@@ -211,11 +246,13 @@ impl<'a> Parser<'a> {
                     }
                     _ => Err(ParseError {
                         msg: format!("expected type constructor, got {:?}", self.current),
+                        span: self.span(),
                     }),
                 }
             }
             _ => Err(ParseError {
                 msg: format!("expected type, got {:?}", self.current),
+                span: self.span(),
             }),
         }
     }
@@ -259,6 +296,7 @@ impl<'a> Parser<'a> {
             Token::LParen => self.parse_list_expr(),
             _ => Err(ParseError {
                 msg: format!("unexpected token in expression: {:?}", self.current),
+                span: self.span(),
             }),
         }
     }
@@ -381,6 +419,7 @@ impl<'a> Parser<'a> {
                     _ => {
                         return Err(ParseError {
                             msg: "tuple-ref index must be integer".into(),
+                            span: self.span(),
                         });
                     }
                 };
@@ -497,5 +536,51 @@ mod tests {
             }
             _ => panic!("expected DefFn"),
         }
+    }
+
+    #[test]
+    fn test_parse_error_carries_span() {
+        // ")" cannot start a declaration; the error must point at it.
+        // Source: "(define x 42))"  — the trailing ')' on column 14 begins a
+        // bogus decl (LParen expected).
+        let err = parse("(define x 42))").unwrap_err();
+        // The offending token is the stray ')' at column 14.
+        assert_eq!(err.span.start_line, 1);
+        assert_eq!(err.span.start_col, 14, "error: {}", err);
+    }
+
+    #[test]
+    fn test_parse_error_diagnostic_renders_caret() {
+        use crate::diagnostic::format_diagnostic;
+        // Unexpected token inside an expression: ':' where an expression is
+        // expected. Source line 1, the ':' is at column 11.
+        let src = "(define x :)";
+        let err = parse(src).unwrap_err();
+        let diag = err.to_diagnostic();
+        let rendered = format_diagnostic(&diag, src, "test.tl");
+        assert!(
+            rendered.contains("error[E0100]"),
+            "missing code; got:\n{}",
+            rendered
+        );
+        assert!(
+            rendered.contains("--> test.tl:1:"),
+            "missing location; got:\n{}",
+            rendered
+        );
+        assert!(
+            rendered.contains(" 1 | (define x :)"),
+            "missing source snippet; got:\n{}",
+            rendered
+        );
+        assert!(rendered.contains('^'), "no caret; got:\n{}", rendered);
+    }
+
+    #[test]
+    fn test_parse_error_span_on_later_line() {
+        // The bad token (an integer where a type is expected) is on line 3.
+        let src = "(define a 1)\n(define b 2)\n(define c : 3 4)";
+        let err = parse(src).unwrap_err();
+        assert_eq!(err.span.start_line, 3, "error: {}", err);
     }
 }

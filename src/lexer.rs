@@ -1,3 +1,4 @@
+use crate::span::Span;
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -78,11 +79,25 @@ impl fmt::Display for Token {
     }
 }
 
+/// A token paired with its source `Span`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpannedToken {
+    pub token: Token,
+    pub span: Span,
+}
+
 #[derive(Debug, Clone)]
 pub struct LexerError {
     pub msg: String,
     pub line: usize,
     pub col: usize,
+}
+
+impl LexerError {
+    /// The single-point `Span` where this lexer error occurred.
+    pub fn span(&self) -> Span {
+        Span::point(self.line, self.col)
+    }
 }
 
 impl fmt::Display for LexerError {
@@ -409,6 +424,40 @@ impl<'a> Lexer<'a> {
         }
         Ok(tokens)
     }
+
+    /// Like `next_token`, but also reports the source `Span` the token covers.
+    ///
+    /// The span runs from the position of the token's first character to the
+    /// position just past its last character (an exclusive end column), which
+    /// is what the diagnostic formatter's underline expects.
+    pub fn next_spanned(&mut self) -> Result<SpannedToken, LexerError> {
+        // Whitespace/comments are not part of any token, so skip them before
+        // recording the start position.
+        self.skip_whitespace();
+        let start_line = self.line;
+        let start_col = self.col;
+        let token = self.next_token()?;
+        // After reading, `self.line`/`self.col` point just past the token.
+        let span = Span::new(start_line, start_col, self.line, self.col);
+        Ok(SpannedToken { token, span })
+    }
+
+    /// Tokenize the whole input, attaching a `Span` to every token.
+    ///
+    /// Not yet used by the parser (which streams tokens via `next_spanned`),
+    /// but provided as public API for tooling and exercised by tests.
+    #[allow(dead_code)]
+    pub fn tokenize_spanned(&mut self) -> Result<Vec<SpannedToken>, LexerError> {
+        let mut tokens = Vec::new();
+        loop {
+            let tok = self.next_spanned()?;
+            if tok.token == Token::Eof {
+                break;
+            }
+            tokens.push(tok);
+        }
+        Ok(tokens)
+    }
 }
 
 #[cfg(test)]
@@ -445,5 +494,51 @@ mod tests {
                 Token::RParen,
             ]
         );
+    }
+
+    #[test]
+    fn test_spans_single_line() {
+        // "(define x 42)"
+        //  1234567890123
+        let mut lexer = Lexer::new("(define x 42)");
+        let toks = lexer.tokenize_spanned().unwrap();
+        let kinds: Vec<Token> = toks.iter().map(|t| t.token.clone()).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                Token::LParen,
+                Token::Define,
+                Token::Ident("x".into()),
+                Token::Int(42),
+                Token::RParen,
+            ]
+        );
+        // '(' at column 1, exclusive end at column 2.
+        assert_eq!(toks[0].span, Span::new(1, 1, 1, 2));
+        // "define" spans columns 2..8.
+        assert_eq!(toks[1].span, Span::new(1, 2, 1, 8));
+        // 'x' at column 9.
+        assert_eq!(toks[2].span, Span::new(1, 9, 1, 10));
+        // "42" spans columns 11..13.
+        assert_eq!(toks[3].span, Span::new(1, 11, 1, 13));
+    }
+
+    #[test]
+    fn test_spans_multi_line_and_blank_lines() {
+        // Line 1: "(a"
+        // Line 2: "" (blank)
+        // Line 3: "  bb)"
+        let src = "(a\n\n  bb)";
+        let mut lexer = Lexer::new(src);
+        let toks = lexer.tokenize_spanned().unwrap();
+        // tokens: ( a bb )
+        assert_eq!(toks[1].token, Token::Ident("a".into()));
+        assert_eq!(toks[1].span, Span::new(1, 2, 1, 3));
+        // "bb" begins on line 3 at column 3 (after two spaces).
+        assert_eq!(toks[2].token, Token::Ident("bb".into()));
+        assert_eq!(toks[2].span, Span::new(3, 3, 3, 5));
+        // closing ')' on line 3, column 5.
+        assert_eq!(toks[3].token, Token::RParen);
+        assert_eq!(toks[3].span, Span::new(3, 5, 3, 6));
     }
 }

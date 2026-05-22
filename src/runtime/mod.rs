@@ -1,10 +1,16 @@
-/// Runtime support for TypeLisp programs
-///
-/// This module provides the minimal runtime needed for compiled programs:
-/// - Memory allocation
-/// - Garbage collection (future)
-/// - Print functions
-/// - Error handling
+//! Reference runtime semantics for TypeLisp programs.
+//!
+//! IMPORTANT: these functions are compiled **into the `typelisp` compiler
+//! binary** and are **not** linked into compiled `.tl` programs. The runtime
+//! that actually ships in a compiled program is emitted as **self-contained
+//! x86_64 assembly text** by the backend (see `src/backend/mod.rs`):
+//! `tl_print_i64`/`tl_print_bool` via the `write(2)` syscall and the bump
+//! allocator `tl_alloc` over a single `mmap`'d arena — zero libc dependency
+//! (issue #13).
+//!
+//! This module is retained only as an executable reference for those
+//! semantics (allocation, printing, error handling); do not assume a compiled
+//! program calls into it.
 use std::alloc::{Layout, alloc, dealloc};
 use std::ffi::c_void;
 

@@ -57,13 +57,12 @@ as + ld → ELF binary
 | `Int` | `[-]?[0-9]+` | Decimal integer literal, default type `i64` |
 | `Float` | `[-]?[0-9]+\.[0-9]+` | `f64` literal |
 | `Bool` | `true` / `false` | |
-| `Char` | `#\\x` | Single character literal |
+| `Char` | `#x'` / `#\\x'` | Single character literal |
 | `String` | `"..."` | ASCII string literal (type `String`) |
 | `Ident` | `[a-zA-Z_][a-zA-Z0-9_!?+-=*/<>:]*` | Identifier |
 | `Unit` | `unit` | The unit value |
 | `Colon` | `:` | Type separator |
 | `Arrow` | `->` | Function return type arrow |
-| `ColonColon` | `::` | Enum variant constructor (see §5.1) |
 | `Quote` | `'` | |
 | `Backtick` | `` ` `` | |
 | `Comma` | `,` | |
@@ -73,7 +72,9 @@ as + ld → ELF binary
 
 ### 2.2 Comments
 
-TypeLisp does **not** have comment syntax. Use semicolons at the top level or inside `begin` blocks as no-ops if needed.
+Semicolon starts a line comment. The lexer skips everything from `;` through
+the next newline. Double semicolons are just two semicolon characters; the first
+one starts the comment.
 
 ### 2.3 String escapes
 
@@ -81,13 +82,18 @@ TypeLisp does **not** have comment syntax. Use semicolons at the top level or in
 |--------|---------|
 | `\\n` | Newline (LF, `0x0A`) |
 | `\\t` | Tab (`0x09`) |
+| `\\r` | Carriage return (`0x0D`) |
 | `\\\` | Backslash |
 | `\\"` | Double quote |
-| `\\0` | NUL (`0x00`) — **note:** collides with digit char literal `#\0` |
+
+Other escaped characters are accepted literally by the lexer today. For
+example, `\0` in a string is the character `0`, not a NUL byte.
 
 ### 2.4 Numeric literals and type inference
 
-Integer literals default to `i64`. They implicitly narrow to the type demanded by context (e.g., a parameter of type `i8` accepts the literal `42`). Floating-point literals are always `f64`.
+Integer literals have type `i64`. Use `(cast expr : target_type)` when a
+narrower or unsigned integer is required. Floating-point literals are always
+`f64`.
 
 ---
 
@@ -106,6 +112,7 @@ Integer literals default to `i64`. They implicitly narrow to the type demanded b
 | `u16` | 2 bytes | Unsigned 16-bit |
 | `u8`  | 1 byte  | Unsigned 8-bit |
 | `f64` | 8 bytes | IEEE-754 double precision |
+| `f32` | 4 bytes | Parsed/typechecked in some positions, rejected by backend validation |
 | `bool`| 1 byte  | `true` (1) or `false` (0) |
 | `char`| 1 byte  | Single ASCII/byte value |
 | `unit`| 0 bytes | Sentinels for "no value" (similar to `void` or `()`) |
@@ -114,23 +121,30 @@ Integer literals default to `i64`. They implicitly narrow to the type demanded b
 
 **Tuple:** `(Tuple t1 t2 ... tn)`
 - Fixed-size, heterogeneous. Layout is sequential with natural alignment per element.
-- Tuples are **not** first-class values in the backend ABI today; they exist at the IR level for GEP lowering but are not passed by value.
+- Tuple literals and `tuple-ref` parse and type-check, but tuple value
+  lowering is incomplete. Tuples are not first-class values in the backend ABI
+  today.
 
 **Fixed array:** `(Array type size)`
 - Size must be a compile-time constant.
-- Stored contiguously. Addressable via GEP.
+- Fixed-array types and literals parse and type-check, but fixed-array value
+  lowering is incomplete. Dynamic arrays are the usable array form in compiled
+  programs today.
 
-**Dynamic array:** `(Array type)` — written without a size
-- Runtime-sized, heap-allocated.
-- Fat pointer layout: `(data_ptr : u64, length : i64)` — 16 bytes total.
+**Dynamic array:** `(Array type)` - written without a size
+- Runtime-sized element buffer allocated with `tl_alloc`.
+- A dynamic-array value is a pointer to inline fat storage
+  `(data_ptr : u64, length : i64)` - 16 bytes total.
 - Not valid as a global initializer.
 
 ### 3.3 Function types
 
 `(-> arg1 arg2 ... ret)`
-- First-class function pointers exist in the type system.
+- Function pointers exist in the type system and ABI.
 - Direct calls are resolved at compile time; indirect calls through function pointer values use `call *%rax`.
-- Closures (captured environment) are **not** supported.
+- Lambda expressions parse and type-check for scalar returns, but backend
+  lowering for lambda literals is incomplete. Closures (captured environment)
+  are not supported.
 
 ### 3.4 User-defined types
 
@@ -147,20 +161,20 @@ Integer literals default to `i64`. They implicitly narrow to the type demanded b
 - Each variant has a numeric **tag** (0-based index).
 - Layout: `(tag : u64, payload ...)` — tag word + maximum payload size across all variants.
 - Nullary variants have no payload; they occupy only the tag word.
-- Pattern matching via `match` (§6.4) is exhaustive and type-checked.
+- Pattern matching via `match` (§5.13) is exhaustive and type-checked.
 - Enum values are heap-allocated when returned from functions (to avoid variable-sized stack slots).
 
 #### 3.4.2 Structs (product types)
 
 ```lisp
 (defstruct Point
-  [x : i64]
-  [y : i64])
+  (x i64)
+  (y i64))
 ```
 
 - Layout: fields stored sequentially with natural alignment per field. No tag word.
 - Constructor syntax: `(Point 10 20)` — a call-like expression.
-- Field access: `(Point-x p)` — generates a GEP+load at the field's byte offset.
+- Field access: `(struct-get p x)` — generates a GEP+load at the field's byte offset.
 - Structs are heap-allocated when returned from functions (same rule as enums).
 - Not valid as global variables.
 
@@ -171,20 +185,20 @@ There are no explicit type aliases. Identifiers naming enums or structs are reso
 ### 3.6 Type conversions (casts)
 
 ```lisp
-(cast expr target_type)
+(cast expr : target_type)
 ```
 
 - Narrowing: truncates to the target width.
 - Widening: sign-extends for signed types, zero-extends for unsigned types.
 - `char` → integer: zero-extends the byte value.
 - Integer → `char`: truncates to low byte.
-- No implicit conversions except literal narrowing.
+- No implicit conversions.
 
 ---
 
 ## 4. Top-level forms
 
-### 4.1 `(define name : type init)` — global variable
+### 4.1 `(define name [: type] init)` — global variable
 
 Declares a global variable with a constant literal initializer.
 
@@ -198,23 +212,25 @@ Example:
 (define flag : bool true)
 ```
 
-### 4.2 `(define (name [param : type] ...) : ret_type body)` — function
+### 4.2 `(define (name [param : type] ...) [: ret_type] body)` — function
 
 Defines a named function.
 
 - Parameters must be explicitly typed.
-- Return type must be explicitly typed.
+- Return type defaults to `unit` when omitted.
 - The entry point is a function named `main` with return type `i64` or `unit`. If `main` is missing, the compiler synthesizes one that returns 0.
 - Recursion is supported.
 - Varargs are **not** supported.
 
-### 4.3 `(extern "name" : (-> args ... ret))` — external symbol
+### 4.3 `(extern name : (-> args ... ret))` — external symbol
 
-Declares an external function to link against. The string `"name"` is the raw assembly symbol; no mangling is applied. Hyphens in names are preserved as-is.
+Declares an external function to link against. The name is an identifier, not a
+string. External symbols are emitted without the `_tl_` TypeLisp function
+prefix; hyphens are converted to underscores for assembler-safe symbol names.
 
 Example:
 ```lisp
-(extern "printf" : (-> i64 i64))
+(extern foreign-add : (-> i64 i64 i64))
 ```
 
 ### 4.4 `(import "path.tl")` — module import
@@ -237,10 +253,10 @@ See §3.4.
 
 | Literal | Syntax | Type |
 |---------|--------|------|
-| Integer | `42`, `-7` | `i64` (contextually narrows) |
+| Integer | `42`, `-7` | `i64` |
 | Float | `3.14`, `-0.5` | `f64` |
 | Boolean | `true`, `false` | `bool` |
-| Character | `#\a`, `#\n`, `#\t`, `#\0` | `char` |
+| Character | `#A'`, `#\n'`, `#\t'`, `#\0'` | `char` |
 | String | `"hello"` | `String` |
 | Unit | `unit` | `unit` |
 
@@ -274,24 +290,20 @@ All operators are prefix functions (or special forms):
 | `-` | integer integer → integer | Subtraction |
 | `*` | integer integer → integer | Multiplication |
 | `/` | integer integer → integer | Signed division |
-| `mod` | integer integer → integer | Signed remainder |
+| `%` | integer integer → integer | Remainder |
 | `and` | bool bool → bool | Logical AND (short-circuit: **no** — both evaluated) |
 | `or` | bool bool → bool | Logical OR (short-circuit: **no** — both evaluated) |
-| `not` | bool → bool | Logical NOT |
 | `bit-and` | integer integer → integer | Bitwise AND |
 | `bit-or` | integer integer → integer | Bitwise OR |
 | `bit-xor` | integer integer → integer | Bitwise XOR |
-| `bit-not` | integer → integer | Bitwise NOT |
-| `shl` | integer i64 → integer | Left shift |
-| `shr` | integer i64 → integer | Right shift (arithmetic for signed, logical for unsigned) |
-| `neg` | integer → integer | Unary negation |
-| `+.` | f64 f64 → f64 | Float addition |
-| `-.` | f64 f64 → f64 | Float subtraction |
-| `*.` | f64 f64 → f64 | Float multiplication |
-| `/.` | f64 f64 → f64 | Float division |
-| `neg.` | f64 → f64 | Float negation |
+| `shl` | integer integer → integer | Left shift |
+| `shr` | integer integer → integer | Right shift (arithmetic for signed, logical for unsigned) |
 
-- Integer operators propagate the operand type; i.e., `i32` + `i32` = `i32`.
+- Integer arithmetic operators require matching operand types and return that type.
+- Bitwise and shift operators accept integer operands and return the left-hand
+  operand type.
+- `+`, `-`, `*`, `/` also operate on `f64`; `%` on floating-point values is
+  rejected by backend validation.
 - Division by zero is **undefined behavior** at runtime.
 
 ### 5.5 Comparison operators
@@ -306,7 +318,7 @@ All operators are prefix functions (or special forms):
 | `>=` | integer integer → bool | Greater than or equal |
 
 - Float comparisons use the same operators; type checking disambiguates.
-- String equality: `(string-eq s1 s2)` or `s1 ? s2` (alias).
+- String equality uses `(string-eq s1 s2)` or `(string=? s1 s2)`.
 
 ### 5.6 `(if cond then else)` — conditional
 
@@ -314,11 +326,12 @@ All operators are prefix functions (or special forms):
 - Both branches must have the same type.
 - Returns the value of the taken branch.
 
-### 5.7 `(let ([name : type init] ...) body)` — local bindings
+### 5.7 `(let ([name [: type] init] ...) body)` — local bindings
 
-- Declares one or more immutable local variables.
+- Declares one or more local variables.
 - Variables are in scope for `body` and for subsequent bindings in the same `let` (sequential, not parallel).
-- Type annotation is mandatory.
+- Type annotation is optional. If omitted, the initializer type is inferred.
+- The body is a single expression; use `begin` for a multi-expression body.
 
 ### 5.8 `(begin expr ... last_expr)` — sequence
 
@@ -342,24 +355,24 @@ All operators are prefix functions (or special forms):
 - Forces `expr` to have the given type.
 - Useful for disambiguating literal types.
 
-### 5.12 `(cast expr type)` — type conversion
+### 5.12 `(cast expr : type)` — type conversion
 
 See §3.6.
 
-### 5.13 `(match scrutinee [(Variant pat ...) expr] ... [(Wildcard) expr])` — pattern matching
+### 5.13 `(match scrutinee [pattern expr] ...)` — pattern matching
 
-- `scrutinee` must be an enum value.
-- Each arm matches one variant.
-- Bindings in patterns introduce variables for payload fields.
-- The `_` wildcard matches any remaining variant (used for exhaustiveness).
+- Enum scrutinees support variant patterns such as `Red` and `(Some value)`.
+- Scalar scrutinees support literal patterns plus `_`.
+- Bindings in enum patterns introduce variables for payload fields.
+- The `_` wildcard matches any remaining value (used for exhaustiveness).
 - All arms must return the same type.
 - Enum values are heap-allocated on return from functions (see §3.4.1).
 
-### 5.14 `(lambda ([param : type] ...) : ret_type body)` — anonymous function
+### 5.14 `(lambda ([param : type] ...) [: ret_type] body)` — anonymous function
 
-- Creates a function value (pointer).
-- No closure captures — all free variables must be globals.
-- The lambda body cannot reference local variables from the enclosing scope.
+- Parses and type-checks as a function value for supported scalar returns.
+- Backend lowering for lambda literals is incomplete today.
+- No closure captures.
 
 ---
 
@@ -371,43 +384,51 @@ See §3.6.
 |---------|-----------|-------------|
 | `print` | `i64 → unit` | Print integer to stdout + newline |
 | `print-bool` | `bool → unit` | Print `true`/`false` to stdout + newline |
+| `print-float` | `f64 → unit` | Print floating-point value to stdout + newline |
 | `print-char` | `char → unit` | Print ASCII character to stdout |
+| `print-newline` | `→ unit` | Print newline to stdout |
 | `length` | `(Array t) → i64` | Get dynamic array length |
-| `make-array` | `i64 t → (Array t)` | Allocate dynamic array of given length, fill with value |
+| `length` | `String → i64` | Get string byte length |
+| `array-length` | `(Array t) → i64` | Get dynamic array length |
+| `make-array` | `type i64 → (Array type)` | Allocate dynamic array element buffer |
 | `array-ref` | `(Array t) i64 → t` | Read element (bounds checked) |
 | `array-set!` | `(Array t) i64 t → unit` | Write element (bounds checked) |
 | `string-ref` | `String i64 → char` | Read byte from string (bounds checked) |
 | `string-length` | `String → i64` | Get string byte length |
 | `string-eq` | `String String → bool` | Byte-wise string comparison |
-| `string-to-int` | `String → i64` | Parse decimal integer from string |
-| `int-to-string` | `i64 → String` | Format integer as decimal string |
+| `string=?` | `String String → bool` | Alias for `string-eq` |
+| `string->int` | `String → i64` | Parse decimal integer from string |
+| `int->string` | `i64 → String` | Format integer as decimal string |
 | `panic` | `String → unit` | Print message to stderr and abort |
+| `error` | `String → unit` | Alias for `panic` |
 
 - `array-ref`, `array-set!`, and `string-ref` perform runtime bounds checks. Out-of-bounds calls the `tl_oob_abort` runtime trap (writes to stderr and exits with code 1).
-- The `?` operator is an alias for `string-eq`.
 - The `char-at` operator is an alias for `string-ref`.
 
-### 6.2 Runtime functions (linked C implementation)
+### 6.2 Runtime functions (emitted by the backend)
 
-The compiler emits references to these runtime symbols when needed. They are implemented in C and linked against `libc`.
+The compiler emits helper routines into the generated assembly when needed.
+They are not implemented by a separate C runtime.
 
 | Symbol | Purpose |
 |--------|---------|
 | `tl_print_i64` | Print integer |
 | `tl_print_bool` | Print boolean |
+| `tl_print_f64` | Print floating-point value |
 | `tl_print_char` | Print character |
-| `tl_alloc` | Allocate heap memory (`malloc` wrapper) |
+| `tl_print_newline` | Print newline |
+| `tl_alloc` | Allocate bump-allocator memory |
 | `tl_string_eq` | String comparison |
 | `tl_string_to_int` | Parse integer |
 | `tl_int_to_string` | Format integer |
-| `tl_abort` | Print and abort (used by `panic`; NOT reentrant) |
+| `.L_tl_abort` | Print and abort (used by `panic`/`error`) |
 | `tl_oob_abort` | Bounds-check trap |
 
 ### 6.3 Builtin operator aliases
 
 | Alias | Expands to |
 |-------|------------|
-| `?` | `string-eq` |
+| `string=?` | `string-eq` |
 | `char-at` | `string-ref` |
 
 ---
@@ -422,15 +443,18 @@ The compiler emits references to these runtime symbols when needed. They are imp
 
 ### 7.2 Heap
 
-- Dynamic arrays and returned aggregates (enums, structs, strings) are heap-allocated.
-- Allocation goes through `tl_alloc` (a `malloc` wrapper).
+- Dynamic array element buffers and escaping returned aggregates (enums,
+  structs, strings, dynamic-array fat values) are heap-allocated.
+- Non-escaping aggregate fat/inline storage is usually kept in the current stack frame.
+- Allocation goes through `tl_alloc`, a backend-emitted bump allocator.
 - There is **no garbage collector** or `free`. Memory is leaked on every dynamic allocation.
 
 ### 7.3 Globals
 
 - Stored in the `.data` or `.rodata` section.
 - Mutable globals use `.data` with an initializer.
-- String literals are stored in `.rodata` as null-terminated bytes; the `String` value at runtime is a fat pointer `(ptr, len)` pointing into `.rodata`.
+- String literal bytes are stored in `.rodata`; a `String` value points to
+  inline `{ptr,len}` storage whose `ptr` field points into `.rodata`.
 
 ---
 
@@ -448,10 +472,12 @@ The compiler emits references to these runtime symbols when needed. They are imp
 - Enums with pattern matching.
 - Structs with construction and field access.
 - Dynamic arrays: `make-array`, `array-ref`, `array-set!`, `length`.
-- Strings: literals, `string-ref`, `string-length`, `string-eq`, `string-to-int`, `int-to-string`.
+- Strings: literals, `string-ref`/`char-at`, `string-length`/`length`,
+  `string-eq`/`string=?`, `string->int`, `int->string`.
 - `extern` declarations.
 - Multi-file modules via `import`.
-- Builtin `print`, `print-bool`, `print-char`, `panic`.
+- Builtin `print`, `print-bool`, `print-float`, `print-char`,
+  `print-newline`, `panic`/`error`.
 
 ### 8.2 What does NOT work (yet)
 
@@ -459,15 +485,16 @@ The compiler emits references to these runtime symbols when needed. They are imp
 |---------|--------|
 | `f32` type | Rejected by backend validation |
 | `f32` local/parameter type | Rejected by backend validation |
+| Tuple/fixed-array value lowering | Incomplete |
 | Tuple by-value return | Rejected by backend validation |
 | Struct/Enum/String globals | Rejected by backend validation |
 | Closures (capturing lambdas) | Not implemented |
 | Tail call optimization | Not implemented |
 | `struct-set!` | Not implemented |
-| `array-set!` on fixed arrays | Not implemented |
+| `array-ref` / `array-set!` on fixed arrays | Not implemented |
 | Garbage collection / `free` | Not implemented (memory leaks) |
 | Windows target | Not implemented |
-| Source locations in error messages | Not implemented (no span tracking in diagnostics) |
+| Complete source locations for all semantic errors | Partial |
 | REPL | Not implemented |
 | Package manager | Not implemented |
 | LSP / IDE support | Not implemented |
@@ -483,8 +510,9 @@ TypeLisp has one error-handling mechanism today: **panic**.
 ```
 
 - Prints the message to stderr.
-- Calls the runtime `tl_abort` function (which prints and exits).
+- Calls the private runtime helper `.L_tl_abort` (which prints and exits).
 - Panic is a terminal operation — it never returns normally.
+- `error` is an alias for `panic`.
 
 There is no `Result` or `Option` type yet. Request was filed as issue #45 (research stage).
 
@@ -501,7 +529,10 @@ Commands:
   check       Run type checker
   compile     Generate assembly (.s)
   run         Compile, assemble, link, and run binary
-  ir          Generate and print intermediate representation
+
+Options:
+  compile -o <file>       Write assembly to the given path
+  compile --emit-ir       Write the lowered and optimized IR instead of assembly
 ```
 
 ---
@@ -518,7 +549,9 @@ Commands:
 | 4th | `%rcx` | `%xmm3` |
 | 5th | `%r8` | `%xmm4` |
 | 6th | `%r9` | `%xmm5` |
-| 7th+ | Stack (8-byte aligned) | Stack |
+| 7th | Stack (8-byte aligned) | `%xmm6` |
+| 8th | Stack (8-byte aligned) | `%xmm7` |
+| 9th+ | Stack (8-byte aligned) | Stack |
 
 - Integer and float arguments consume **independent** register sequences.
 - Return value: `%rax` (integer), `%xmm0` (float).
@@ -532,10 +565,15 @@ Commands:
 | `i8`/`u8`/`bool`/`char` | 1 | 1 |
 | `i16`/`u16` | 2 | 2 |
 | `i32`/`u32` | 4 | 4 |
-| `i64`/`u64`/`f64`/`String`/`DynArray`/`Enum`/`Struct`/func ptr | 8 | 8 |
+| `i64`/`u64`/`f64`/func ptr | 8 | 8 |
+| `String`/`DynArray`/`Enum`/`Struct` values | 8 | 8 |
 
 - Structs: sequential layout with natural alignment per field. No padding minimization (fields are placed in declaration order).
 - Enums: tag word (8 bytes) + max payload size, aligned to 8 bytes.
+- `String`, dynamic-array, enum, and struct values are pointers in IR/ABI
+  slots. Their pointed-to inline storage is larger: strings and dynamic arrays
+  are 16-byte `{ptr,len}` records; structs and enum payload storage depend on
+  their declared fields.
 
 ---
 
@@ -571,21 +609,22 @@ Commands:
 ### Struct
 
 ```lisp
-(defstruct Point [x : i64] [y : i64])
+(defstruct Point (x i64) (y i64))
 
 (define (main) : i64
   (let ([p : Point (Point 3 4)])
-    (+ (Point-x p) (Point-y p))))  ; returns 7
+    (+ (struct-get p x) (struct-get p y))))  ; returns 7
 ```
 
 ### Dynamic array
 
 ```lisp
 (define (main) : i64
-  (let ([arr : (Array i64) (make-array 5 0)])
-    (array-set! arr 0 10)
-    (array-set! arr 1 20)
-    (+ (array-ref arr 0) (array-ref arr 1))))  ; returns 30
+  (let ([arr : (Array i64) (make-array i64 5)])
+    (begin
+      (array-set! arr 0 10)
+      (array-set! arr 1 20)
+      (+ (array-ref arr 0) (array-ref arr 1)))))  ; returns 30
 ```
 
 ### String operations
@@ -599,11 +638,12 @@ Commands:
 ### Extern call
 
 ```lisp
-(extern "puts" : (-> i64 i64))
+(extern tl_alloc : (-> i64 u64))
 
 (define (main) : i64
-  (puts "hello")
-  0)
+  (begin
+    (tl_alloc 16)
+    0))
 ```
 
 ---
@@ -620,15 +660,15 @@ top-level     ::= define-var
                 | defenum
                 | defstruct
 
-define-var    ::= "(" "define" ident ":" type init ")"
-define-func   ::= "(" "define" "(" ident param* ")" ":" type expr ")"
-extern-decl   ::= "(" "extern" string ":" type ")"
+define-var    ::= "(" "define" ident [":" type] expr ")"
+define-func   ::= "(" "define" "(" ident param* ")" [":" type] expr ")"
+extern-decl   ::= "(" "extern" ident ":" type ")"
 import-decl   ::= "(" "import" string ")"
 defenum       ::= "(" "defenum" ident variant+ ")"
 defstruct     ::= "(" "defstruct" ident field+ ")"
 
 param         ::= "[" ident ":" type "]"
-field         ::= "[" ident ":" type "]"
+field         ::= "(" ident type ")"
 variant       ::= "(" ident type* ")"
 
 expr          ::= literal
@@ -639,21 +679,23 @@ expr          ::= literal
                 | "(" "begin" expr+ ")"
                 | "(" "set!" ident expr ")"
                 | "(" "ann" expr ":" type ")"
-                | "(" "cast" expr type ")"
+                | "(" "cast" expr ":" type ")"
                 | "(" "match" expr match-arm+ ")"
-                | "(" "lambda" "(" param* ")" ":" type expr ")"
+                | "(" "lambda" "(" param* ")" [":" type] expr ")"
                 | "(" expr expr* ")"          ; function call
-                | "(" ident "::" ident expr* ")"  ; enum constructor
 
-binding       ::= "[" ident ":" type expr "]"
-match-arm     ::= "(" "[" ident ident* "]" expr ")"
-                | "(" "_" expr ")"
+binding       ::= "[" ident [":" type] expr "]"
+match-arm     ::= "[" pattern expr "]"
+pattern       ::= "_"
+                | literal
+                | ident
+                | "(" ident ident* ")"
 
 literal       ::= integer | float | bool | char | string | "unit"
 
 type          ::= "i64" | "i32" | "i16" | "i8"
                 | "u64" | "u32" | "u16" | "u8"
-                | "f64" | "bool" | "char" | "unit"
+                | "f64" | "f32" | "bool" | "char" | "unit"
                 | "String"
                 | "(" "Tuple" type+ ")"
                 | "(" "Array" type [integer] ")"
@@ -664,7 +706,7 @@ ident         ::= [a-zA-Z_][a-zA-Z0-9_!?+-=*/<>:]*
 integer       ::= [-]?[0-9]+
 float         ::= [-]?[0-9]+\.[0-9]+
 bool          ::= "true" | "false"
-char          ::= "#\\" .
+char          ::= "#" . "'" | "#\\" . "'"
 string        ::= \"...\"
 ```
 

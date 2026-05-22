@@ -14,6 +14,7 @@ pub struct X86_64Backend {
     var_types: HashMap<VarId, Type>,
     global_types: HashMap<String, Type>,
     address_vars: HashSet<VarId>,
+    extern_names: HashSet<String>,
     runtime_print_names: HashSet<String>,
     /// Whether the program references the bump allocator `tl_alloc` and the
     /// backend must therefore emit the self-contained allocator runtime
@@ -606,6 +607,7 @@ impl X86_64Backend {
             var_types: HashMap::new(),
             global_types: HashMap::new(),
             address_vars: HashSet::new(),
+            extern_names: HashSet::new(),
             runtime_print_names: HashSet::new(),
             needs_alloc_runtime: false,
             emits_alloc_runtime: false,
@@ -624,6 +626,10 @@ impl X86_64Backend {
         self.global_types.clear();
         for (name, ty, _) in &program.globals {
             self.global_types.insert(name.clone(), ty.clone());
+        }
+        self.extern_names.clear();
+        for (name, _) in &program.externs {
+            self.extern_names.insert(name.clone());
         }
         self.emits_alloc_runtime = false;
 
@@ -2537,9 +2543,15 @@ impl X86_64Backend {
             // The backend-provided integer-to-string helper resolves to its raw
             // runtime symbol rather than being mangled to `_tl_tl_int_to_string`.
             "tl_int_to_string".into()
+        } else if self.extern_names.contains(name) {
+            Self::extern_symbol(name)
         } else {
             Self::mangle_name(name)
         }
+    }
+
+    fn extern_symbol(name: &str) -> String {
+        name.replace('-', "_")
     }
 
     fn runtime_symbol(name: &str) -> Option<String> {
@@ -2940,6 +2952,38 @@ mod tests {
         assert!(asm.contains("    call _tl_print"), "asm:\n{}", asm);
         assert!(!asm.contains("    call tl_print_i64"), "asm:\n{}", asm);
         assert!(!asm.contains("tl_print_i64:"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_extern_call_uses_raw_symbol() {
+        let asm = compile_ok(
+            r#"
+            (extern foreign_add : (-> i64 i64 i64))
+            (define (main) : i64 (foreign_add 20 22))
+            "#,
+        );
+
+        assert!(asm.contains("    .extern foreign_add"), "asm:\n{}", asm);
+        assert!(asm.contains("    call foreign_add"), "asm:\n{}", asm);
+        assert!(!asm.contains("_tl_foreign_add"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_extern_hyphen_name_uses_asm_safe_raw_symbol() {
+        let asm = compile_ok(
+            r#"
+            (extern foreign-add : (-> i64 i64 i64))
+            (define (main) : i64 (foreign-add 20 22))
+            "#,
+        );
+
+        assert!(asm.contains("    .extern foreign_add"), "asm:\n{}", asm);
+        assert!(asm.contains("    call foreign_add"), "asm:\n{}", asm);
+        assert!(!asm.contains("_tl_foreign_add"), "asm:\n{}", asm);
+        assert!(!asm.contains("    .extern foreign-add"), "asm:\n{}", asm);
+        assert!(!asm.contains("    call foreign-add"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
     }
 
     #[test]

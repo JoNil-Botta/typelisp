@@ -435,6 +435,21 @@ impl TypeChecker {
                 }
                 Ok(ty.clone())
             }
+            Expr::Cast { expr, ty } => {
+                let expr_ty = self.check_expr(expr)?;
+                // Casts are only defined between scalar number-like types
+                // (integers and `char`, which is an 8-bit code unit here).
+                let castable = |t: &Type| t.is_integer() || matches!(t, Type::Char);
+                if !castable(&expr_ty) || !castable(ty) {
+                    return Err(TypeError {
+                        msg: format!(
+                            "cast requires integer/char source and target, got {} -> {}",
+                            expr_ty, ty
+                        ),
+                    });
+                }
+                Ok(ty.clone())
+            }
         }
     }
 

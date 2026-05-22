@@ -126,6 +126,10 @@ pub enum Expr {
     Set(Symbol, Box<Expr>),
     /// Type annotation: (ann expr : type)
     Ann { expr: Box<Expr>, ty: Type },
+    /// Width/representation cast: (cast expr : type). Unlike `ann` (which only
+    /// asserts a type), `cast` converts the value to `ty`, truncating or
+    /// sign/zero-extending integers as needed.
+    Cast { expr: Box<Expr>, ty: Type },
 }
 
 /// A complete program

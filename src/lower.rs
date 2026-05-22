@@ -101,6 +101,10 @@ struct FnLowerer {
     name: String,
     builder: IrBuilder,
     vars: HashMap<String, VarId>,
+    /// Real type of every IR variable we create (params, locals, temporaries).
+    /// This lets `value_type` recover the true width of a `Value::Var` instead
+    /// of defaulting to `i64`, which is essential for width-correct codegen.
+    var_types: HashMap<VarId, Type>,
     params: Vec<(VarId, Type)>,
     locals: Vec<(VarId, Type)>,
     #[allow(dead_code)]
@@ -111,6 +115,7 @@ impl FnLowerer {
     fn new(name: &str, params: &[(String, Type)], ret: &Type) -> Self {
         let mut builder = IrBuilder::new("entry");
         let mut vars = HashMap::new();
+        let mut var_types = HashMap::new();
         let mut ir_params = Vec::new();
 
         for (param_name, param_ty) in params {
@@ -121,12 +126,14 @@ impl FnLowerer {
             });
             ir_params.push((var, param_ty.clone()));
             vars.insert(param_name.clone(), var);
+            var_types.insert(var, param_ty.clone());
         }
 
         FnLowerer {
             name: name.to_string(),
             builder,
             vars,
+            var_types,
             params: ir_params,
             locals: Vec::new(),
             ret: ret.clone(),
@@ -167,6 +174,7 @@ impl FnLowerer {
             ast::Expr::Call { func, args } => self.lower_call(func, args),
             ast::Expr::Set(name, expr) => self.lower_set(name, expr),
             ast::Expr::Ann { expr, .. } => self.lower_expr(expr),
+            ast::Expr::Cast { expr, ty } => self.lower_cast(expr, ty),
             // Tuple, Array, Lambda — stubbed to unit for now
             ast::Expr::Tuple(_) | ast::Expr::Array(_) | ast::Expr::Lambda { .. } => {
                 Value::ConstUnit
@@ -199,15 +207,14 @@ impl FnLowerer {
         let lhs_val = self.lower_expr(lhs);
         let rhs_val = self.lower_expr(rhs);
 
-        // Infer the result type from the operands
-        let ty = match (&lhs_val, &rhs_val) {
-            (Value::ConstI64(_), _) | (_, Value::ConstI64(_)) => Type::I64,
-            (Value::ConstF64(_), _) | (_, Value::ConstF64(_)) => Type::F64,
-            (Value::ConstI32(_), _) | (_, Value::ConstI32(_)) => Type::I32,
-            (Value::ConstBool(_), _) | (_, Value::ConstBool(_)) => Type::Bool,
-            _ => Type::I64, // Default
-        };
-
+        // The IR op decides what the `ty` field means:
+        //   - comparisons (eq/ne/lt/..) produce a `bool`, but the *operand*
+        //     width/signedness drives the compare instruction selected by the
+        //     backend, so we record the operand type, not bool;
+        //   - shifts: the result type is the lhs (shifted) type; the rhs is the
+        //     shift amount.
+        // We recover the real operand type from `value_type`, which now tracks
+        // every variable's declared width instead of defaulting to i64.
         let ir_op = match op {
             ast::BinOp::Add => BinOp::Add,
             ast::BinOp::Sub => BinOp::Sub,
@@ -222,11 +229,36 @@ impl FnLowerer {
             ast::BinOp::Ge => BinOp::Ge,
             ast::BinOp::And => BinOp::And,
             ast::BinOp::Or => BinOp::Or,
-            ast::BinOp::BitAnd => BinOp::And,
-            ast::BinOp::BitOr => BinOp::Or,
-            ast::BinOp::BitXor => BinOp::Or,
-            ast::BinOp::Shl => BinOp::Add,
-            ast::BinOp::Shr => BinOp::Sub,
+            ast::BinOp::BitAnd => BinOp::BitAnd,
+            ast::BinOp::BitOr => BinOp::BitOr,
+            ast::BinOp::BitXor => BinOp::BitXor,
+            ast::BinOp::Shl => BinOp::Shl,
+            ast::BinOp::Shr => BinOp::Shr,
+        };
+
+        // Operand type drives instruction width/signedness. Prefer a concrete
+        // (non-default) operand type from either side.
+        let operand_ty = self.binop_operand_type(&lhs_val, &rhs_val);
+
+        // The *value* produced by the op: comparisons/logical ops yield bool,
+        // everything else yields the operand type.
+        let result_ty = match ir_op {
+            BinOp::Eq
+            | BinOp::Ne
+            | BinOp::Lt
+            | BinOp::Le
+            | BinOp::Gt
+            | BinOp::Ge
+            | BinOp::And
+            | BinOp::Or => Type::Bool,
+            _ => operand_ty.clone(),
+        };
+
+        // For comparisons we still want the backend to know the operand
+        // width/signedness, so the IR `ty` carries the operand type for those.
+        let instr_ty = match ir_op {
+            BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => operand_ty,
+            _ => result_ty.clone(),
         };
 
         let dst = self.builder.fresh_var();
@@ -235,18 +267,20 @@ impl FnLowerer {
             op: ir_op,
             lhs: lhs_val,
             rhs: rhs_val,
-            ty: ty.clone(),
+            ty: instr_ty,
         });
-        self.locals.push((dst, ty));
+        self.record_local(dst, result_ty.clone());
         Value::Var(dst)
     }
 
     fn lower_unary(&mut self, op: ast::UnOp, expr: &ast::Expr) -> Value {
         let src = self.lower_expr(expr);
         let (ir_op, ty) = match op {
-            ast::UnOp::Neg => (UnOp::Neg, Type::I64),
+            ast::UnOp::Neg => (UnOp::Neg, self.value_type(&src)),
             ast::UnOp::Not => (UnOp::Not, Type::Bool),
-            ast::UnOp::BitNot => (UnOp::Not, Type::I64),
+            // `bit-not` is a one's-complement on integers — distinct from the
+            // boolean `not`. Preserve the integer width of the operand.
+            ast::UnOp::BitNot => (UnOp::BitNot, self.value_type(&src)),
         };
         let dst = self.builder.fresh_var();
         self.builder.emit(Instruction::UnOp {
@@ -255,8 +289,53 @@ impl FnLowerer {
             src,
             ty: ty.clone(),
         });
-        self.locals.push((dst, ty));
+        self.record_local(dst, ty);
         Value::Var(dst)
+    }
+
+    /// Lower `(cast expr : ty)` to a `Cast` instruction carrying both the
+    /// source and target types so the backend can pick truncation vs sign/zero
+    /// extension.
+    fn lower_cast(&mut self, expr: &ast::Expr, to_ty: &Type) -> Value {
+        let src = self.lower_expr(expr);
+        let from_ty = self.value_type(&src);
+        // A no-op cast (same representation) folds to the source value.
+        if from_ty == *to_ty {
+            return src;
+        }
+        let dst = self.builder.fresh_var();
+        self.builder.emit(Instruction::Cast {
+            dst,
+            src,
+            from_ty,
+            to_ty: to_ty.clone(),
+        });
+        self.record_local(dst, to_ty.clone());
+        Value::Var(dst)
+    }
+
+    /// Record a freshly-created IR variable's type in both the function frame
+    /// (`locals`) and the lowerer's type map.
+    fn record_local(&mut self, var: VarId, ty: Type) {
+        self.var_types.insert(var, ty.clone());
+        self.locals.push((var, ty));
+    }
+
+    /// Recover the type of a binary op's operands, preferring a concrete
+    /// (non-unit) type from either side. Char operands are treated as i8 for
+    /// width purposes.
+    fn binop_operand_type(&self, lhs: &Value, rhs: &Value) -> Type {
+        let lt = self.value_type(lhs);
+        let rt = self.value_type(rhs);
+        // Prefer the more informative side: a sized integer/float over a
+        // generic i64 default, and never pick Unit.
+        match (&lt, &rt) {
+            (Type::Unit, _) => rt,
+            (_, Type::Unit) => lt,
+            // If one side is a non-i64 sized type, it carries the real width.
+            _ if lt != Type::I64 => lt,
+            _ => rt,
+        }
     }
 
     fn lower_if(
@@ -289,7 +368,14 @@ impl FnLowerer {
 
         // Merge block — phi to select result
         self.builder.finish_block(&merge_label);
-        let result_ty = self.infer_type(&then_val); // Assume branches match (type-checked)
+        // Assume branches match (type-checked); prefer a concrete type from
+        // either arm so the phi's width is right.
+        let then_ty = self.value_type(&then_val);
+        let result_ty = if then_ty == Type::Unit {
+            self.value_type(&else_val)
+        } else {
+            then_ty
+        };
         let phi_dst = self.builder.fresh_var();
         self.builder.emit(Instruction::Phi {
             dst: phi_dst,
@@ -299,7 +385,7 @@ impl FnLowerer {
             ],
             ty: result_ty.clone(),
         });
-        self.locals.push((phi_dst, result_ty));
+        self.record_local(phi_dst, result_ty);
         Value::Var(phi_dst)
     }
 
@@ -310,7 +396,7 @@ impl FnLowerer {
     ) -> Value {
         for (name, ty, value) in bindings {
             let val = self.lower_expr(value);
-            let binding_ty = ty.clone().unwrap_or_else(|| self.infer_type(&val));
+            let binding_ty = ty.clone().unwrap_or_else(|| self.value_type(&val));
 
             let var = self.builder.fresh_var();
             self.builder.emit(Instruction::Alloc {
@@ -322,7 +408,7 @@ impl FnLowerer {
                 src: val,
                 ty: binding_ty.clone(),
             });
-            self.locals.push((var, binding_ty));
+            self.record_local(var, binding_ty);
             self.vars.insert(name.clone(), var);
         }
         self.lower_expr(body)
@@ -379,7 +465,7 @@ impl FnLowerer {
                     args: arg_vals,
                     ty: Type::Unit,
                 });
-                self.locals.push((dst, Type::Unit));
+                self.record_local(dst, Type::Unit);
                 return Value::Var(dst);
             }
         };
@@ -391,14 +477,20 @@ impl FnLowerer {
             args: arg_vals,
             ty: ret_ty.clone(),
         });
-        self.locals.push((dst, ret_ty));
+        self.record_local(dst, ret_ty);
         Value::Var(dst)
     }
 
     fn lower_set(&mut self, name: &str, expr: &ast::Expr) -> Value {
         let val = self.lower_expr(expr);
         if let Some(&var) = self.vars.get(name) {
-            let ty = self.infer_type(&val);
+            // Store at the variable's declared width, not the (possibly wider)
+            // type of the RHS value.
+            let ty = self
+                .var_types
+                .get(&var)
+                .cloned()
+                .unwrap_or_else(|| self.value_type(&val));
             self.builder.emit(Instruction::Store {
                 dst: Value::Var(var),
                 src: val,
@@ -408,8 +500,10 @@ impl FnLowerer {
         Value::ConstUnit
     }
 
-    /// Infer the Type of a Value. Only works for constants; defaults to I64 for Vars.
-    fn infer_type(&self, val: &Value) -> Type {
+    /// Recover the Type of a Value. For variables, consult the recorded type
+    /// map (params/locals/temporaries all register their type), falling back
+    /// to i64 only for variables we have no record of.
+    fn value_type(&self, val: &Value) -> Type {
         match val {
             Value::ConstI64(_) => Type::I64,
             Value::ConstI32(_) => Type::I32,
@@ -417,7 +511,7 @@ impl FnLowerer {
             Value::ConstF64(_) => Type::F64,
             Value::ConstBool(_) => Type::Bool,
             Value::ConstUnit => Type::Unit,
-            Value::Var(_) => Type::I64, // Default, could be refined
+            Value::Var(v) => self.var_types.get(v).cloned().unwrap_or(Type::I64),
             Value::Global(_) => Type::I64,
         }
     }
@@ -1208,5 +1302,119 @@ mod tests {
             })
         });
         assert!(has_unit_ret);
+    }
+
+    // ------------------------------------------------------------------
+    // Bitwise / shift / cast lowering — Issue #46
+    // ------------------------------------------------------------------
+
+    /// Find the (single) BinOp in a function's IR, if any.
+    fn first_binop(ir: &Program) -> Option<BinOp> {
+        ir.functions[0].blocks.iter().find_map(|b| {
+            b.instructions.iter().find_map(|i| match i {
+                Instruction::BinOp { op, .. } => Some(*op),
+                _ => None,
+            })
+        })
+    }
+
+    #[test]
+    fn test_lower_bit_and_maps_to_bitand() {
+        let prog = parse("(define (f [a : i64] [b : i64]) : i64 (bit-and a b))").unwrap();
+        let ir = lower_program(&prog);
+        assert_eq!(first_binop(&ir), Some(BinOp::BitAnd));
+    }
+
+    #[test]
+    fn test_lower_bit_or_maps_to_bitor() {
+        let prog = parse("(define (f [a : i64] [b : i64]) : i64 (bit-or a b))").unwrap();
+        let ir = lower_program(&prog);
+        assert_eq!(first_binop(&ir), Some(BinOp::BitOr));
+    }
+
+    #[test]
+    fn test_lower_bit_xor_is_not_or() {
+        // Miscompile bug 1: bit-xor previously lowered to BinOp::Or.
+        let prog = parse("(define (f [a : i64] [b : i64]) : i64 (bit-xor a b))").unwrap();
+        let ir = lower_program(&prog);
+        let op = first_binop(&ir);
+        assert_eq!(op, Some(BinOp::BitXor));
+        assert_ne!(op, Some(BinOp::Or), "bit-xor must not lower to Or");
+    }
+
+    #[test]
+    fn test_lower_shl_is_not_add() {
+        // Miscompile bug 2: shl previously lowered to BinOp::Add.
+        let prog = parse("(define (f [a : i64] [b : i64]) : i64 (shl a b))").unwrap();
+        let ir = lower_program(&prog);
+        let op = first_binop(&ir);
+        assert_eq!(op, Some(BinOp::Shl));
+        assert_ne!(op, Some(BinOp::Add), "shl must not lower to Add");
+    }
+
+    #[test]
+    fn test_lower_shr_is_not_sub() {
+        // shr previously lowered to BinOp::Sub.
+        let prog = parse("(define (f [a : i64] [b : i64]) : i64 (shr a b))").unwrap();
+        let ir = lower_program(&prog);
+        let op = first_binop(&ir);
+        assert_eq!(op, Some(BinOp::Shr));
+        assert_ne!(op, Some(BinOp::Sub), "shr must not lower to Sub");
+    }
+
+    #[test]
+    fn test_lower_bit_not_maps_to_bitnot() {
+        // bit-not previously lowered to UnOp::Not (boolean). It must now be a
+        // distinct one's-complement op preserving the integer width.
+        // (Unary ops are not parsed from text yet; build the AST directly.)
+        let prog = ast::Program {
+            decls: vec![ast::Decl::DefFn {
+                name: "f".into(),
+                params: vec![("x".into(), Type::I32)],
+                ret: Type::I32,
+                body: ast::Expr::Unary {
+                    op: ast::UnOp::BitNot,
+                    expr: Box::new(ast::Expr::Var("x".into())),
+                },
+            }],
+        };
+        let ir = lower_program(&prog);
+        let unop = ir.functions[0].blocks.iter().find_map(|b| {
+            b.instructions.iter().find_map(|i| match i {
+                Instruction::UnOp { op, ty, .. } => Some((*op, ty.clone())),
+                _ => None,
+            })
+        });
+        assert_eq!(unop, Some((UnOp::BitNot, Type::I32)));
+    }
+
+    #[test]
+    fn test_lower_binop_width_threaded_from_params() {
+        // The BinOp `ty` must reflect the real operand width (u32 here), not the
+        // old hard-coded i64 default for var/var operands.
+        let prog = parse("(define (f [a : u32] [b : u32]) : u32 (bit-and a b))").unwrap();
+        let ir = lower_program(&prog);
+        let ty = ir.functions[0].blocks.iter().find_map(|b| {
+            b.instructions.iter().find_map(|i| match i {
+                Instruction::BinOp { ty, .. } => Some(ty.clone()),
+                _ => None,
+            })
+        });
+        assert_eq!(ty, Some(Type::U32));
+    }
+
+    #[test]
+    fn test_lower_cast_records_target_type_and_from_type() {
+        // (cast x : i8) on an i64 parameter lowers to a Cast carrying both the
+        // source (i64) and target (i8) types.
+        let prog = parse("(define (f [x : i64]) : i8 (cast x : i8))").unwrap();
+        let ir = lower_program(&prog);
+        let cast = ir.functions[0].blocks.iter().find_map(|b| {
+            b.instructions.iter().find_map(|i| match i {
+                Instruction::Cast { from_ty, to_ty, .. } => Some((from_ty.clone(), to_ty.clone())),
+                _ => None,
+            })
+        });
+        assert_eq!(cast, Some((Type::I64, Type::I8)));
     }
 }

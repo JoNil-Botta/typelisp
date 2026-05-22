@@ -33,14 +33,27 @@ pub enum BinOp {
     Le,
     Gt,
     Ge,
+    /// Logical and/or (boolean operands).
     And,
     Or,
+    /// Bitwise operators on integers.
+    BitAnd,
+    BitOr,
+    BitXor,
+    /// Shift left.
+    Shl,
+    /// Shift right. The signedness of the operand type decides whether the
+    /// backend emits an arithmetic (`sar`) or logical (`shr`) shift.
+    Shr,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum UnOp {
     Neg,
+    /// Logical not (boolean operand): flips 0/1.
     Not,
+    /// Bitwise complement (integer operand): one's complement.
+    BitNot,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -62,6 +75,15 @@ pub enum Instruction {
     },
     /// Copy: dst = src
     Mov { dst: VarId, src: Value, ty: Type },
+    /// Width/sign conversion: dst = (to_ty) src, where `src` currently has
+    /// type `from_ty`. Narrowing truncates; widening sign- or zero-extends
+    /// according to `from_ty`'s signedness.
+    Cast {
+        dst: VarId,
+        src: Value,
+        from_ty: Type,
+        to_ty: Type,
+    },
     /// Load from memory: dst = *src
     Load { dst: VarId, src: Value, ty: Type },
     /// Store to memory: *dst = src
@@ -238,6 +260,11 @@ impl fmt::Display for BinOp {
             BinOp::Ge => "ge",
             BinOp::And => "and",
             BinOp::Or => "or",
+            BinOp::BitAnd => "bitand",
+            BinOp::BitOr => "bitor",
+            BinOp::BitXor => "bitxor",
+            BinOp::Shl => "shl",
+            BinOp::Shr => "shr",
         };
         write!(f, "{}", s)
     }
@@ -248,6 +275,7 @@ impl fmt::Display for UnOp {
         let s = match self {
             UnOp::Neg => "neg",
             UnOp::Not => "not",
+            UnOp::BitNot => "bitnot",
         };
         write!(f, "{}", s)
     }
@@ -266,6 +294,14 @@ impl fmt::Display for Instruction {
             }
             Instruction::Mov { dst, src, .. } => {
                 write!(f, "  %{} = mov {}", dst, src)
+            }
+            Instruction::Cast {
+                dst,
+                src,
+                from_ty,
+                to_ty,
+            } => {
+                write!(f, "  %{} = cast {} : {} -> {}", dst, src, from_ty, to_ty)
             }
             Instruction::Load { dst, src, .. } => {
                 write!(f, "  %{} = load {}", dst, src)

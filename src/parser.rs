@@ -355,6 +355,15 @@ impl<'a> Parser<'a> {
                 self.expect(Token::RParen)?;
                 Ok(Expr::Ann { expr, ty })
             }
+            Token::Ident(s) if s == "cast" => {
+                // (cast expr : ty)
+                self.advance()?;
+                let expr = Box::new(self.parse_expr()?);
+                self.expect(Token::Colon)?;
+                let ty = self.parse_type()?;
+                self.expect(Token::RParen)?;
+                Ok(Expr::Cast { expr, ty })
+            }
             Token::Ident(s) if s == "tuple" => {
                 self.advance()?;
                 let mut elems = Vec::new();

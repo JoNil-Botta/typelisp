@@ -79,7 +79,17 @@ fn validate_function(func: &Function) -> Result<(), String> {
                     let lhs_ty = validate_value_type(lhs, &var_types).unwrap_or_else(|| ty.clone());
                     let rhs_ty = validate_value_type(rhs, &var_types).unwrap_or_else(|| ty.clone());
                     if (lhs_ty == Type::F64 || rhs_ty == Type::F64 || *ty == Type::F64)
-                        && matches!(*op, IrBinOp::Mod | IrBinOp::And | IrBinOp::Or)
+                        && matches!(
+                            *op,
+                            IrBinOp::Mod
+                                | IrBinOp::And
+                                | IrBinOp::Or
+                                | IrBinOp::BitAnd
+                                | IrBinOp::BitOr
+                                | IrBinOp::BitXor
+                                | IrBinOp::Shl
+                                | IrBinOp::Shr
+                        )
                     {
                         return unsupported("unsupported f64 binary operator");
                     }
@@ -87,11 +97,14 @@ fn validate_function(func: &Function) -> Result<(), String> {
                 Instruction::UnOp { op, src, ty, .. } => {
                     check_operand(src).map_err(|w| unsupported_value(&func.name, &w))?;
                     let src_ty = validate_value_type(src, &var_types).unwrap_or_else(|| ty.clone());
-                    if src_ty == Type::F64 && *op == IrUnOp::Not {
+                    if src_ty == Type::F64 && matches!(*op, IrUnOp::Not | IrUnOp::BitNot) {
                         return unsupported("unsupported f64 unary operator");
                     }
                 }
                 Instruction::Mov { src, .. } => {
+                    check_operand(src).map_err(|w| unsupported_value(&func.name, &w))?;
+                }
+                Instruction::Cast { src, .. } => {
                     check_operand(src).map_err(|w| unsupported_value(&func.name, &w))?;
                 }
                 Instruction::Call { args, .. } => {
@@ -397,11 +410,19 @@ impl X86_64Backend {
             self.emit(&format!("    sub ${}, %rsp", self.stack_size));
         }
 
-        // Move parameters to stack slots
+        // Move parameters to stack slots. Each argument register is written at
+        // the width of its declared type, so a narrow parameter does not clobber
+        // adjacent slots. The sub-register names differ per register
+        // (`%rdi`->`%edi`/`%di`/`%dil`), so we look them up rather than string
+        // -slicing the 64-bit name.
         let param_regs = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
         let xmm_regs = [
             "%xmm0", "%xmm1", "%xmm2", "%xmm3", "%xmm4", "%xmm5", "%xmm6", "%xmm7",
         ];
+        // System V AMD64: integer and floating-point arguments consume
+        // *independent* register sequences, so we track two counters. Each
+        // argument register is written at the width of its declared type so a
+        // narrow parameter does not clobber adjacent slots.
         let mut int_param = 0;
         let mut float_param = 0;
         for (var, ty) in &func.params {
@@ -426,7 +447,17 @@ impl X86_64Backend {
                     }
                     int_param += 1;
                 }
-                Type::I8 | Type::U8 | Type::Bool => {
+                Type::I16 | Type::U16 => {
+                    if int_param < param_regs.len() {
+                        self.emit(&format!(
+                            "    movw {}, {}(%rbp)",
+                            Self::gpr16(param_regs[int_param]),
+                            offset
+                        ));
+                    }
+                    int_param += 1;
+                }
+                Type::I8 | Type::U8 | Type::Bool | Type::Char => {
                     if int_param < param_regs.len() {
                         self.emit(&format!(
                             "    movb {}, {}(%rbp)",
@@ -504,6 +535,10 @@ impl X86_64Backend {
                                 self.emit(&format!("    movl {}(%rbp), %eax", src_offset));
                                 self.emit(&format!("    movl %eax, {}(%rbp)", dst_offset));
                             }
+                            2 => {
+                                self.emit(&format!("    movw {}(%rbp), %ax", src_offset));
+                                self.emit(&format!("    movw %ax, {}(%rbp)", dst_offset));
+                            }
                             1 => {
                                 self.emit(&format!("    movb {}(%rbp), %al", src_offset));
                                 self.emit(&format!("    movb %al, {}(%rbp)", dst_offset));
@@ -511,6 +546,28 @@ impl X86_64Backend {
                             _ => {}
                         }
                     }
+                    _ => {}
+                }
+            }
+            // Width/sign conversion. Load the source extended per its *source*
+            // type (sign-extend signed, zero-extend unsigned), which is exactly
+            // the widening semantics; for narrowing we then keep only the low
+            // `to_ty` bytes when writing the destination slot. The destination
+            // slot is sized by `to_ty` (recorded in the frame), so the store
+            // width below truncates as required.
+            Instruction::Cast {
+                dst,
+                src,
+                from_ty,
+                to_ty,
+            } => {
+                let dst_offset = self.var_offsets[dst];
+                self.load_value(src, "%rax", from_ty);
+                match to_ty.size() {
+                    8 => self.emit(&format!("    movq %rax, {}(%rbp)", dst_offset)),
+                    4 => self.emit(&format!("    movl %eax, {}(%rbp)", dst_offset)),
+                    2 => self.emit(&format!("    movw %ax, {}(%rbp)", dst_offset)),
+                    1 => self.emit(&format!("    movb %al, {}(%rbp)", dst_offset)),
                     _ => {}
                 }
             }
@@ -531,60 +588,119 @@ impl X86_64Backend {
                 self.load_value(lhs, "%rax", &operand_ty);
                 self.load_value(rhs, "%rcx", &operand_ty);
 
-                match (op, &operand_ty) {
-                    (IrBinOp::Add, t) if t.is_integer() => {
+                // Whether the operand type is signed drives division, shift and
+                // comparison instruction selection. `bool`/`char` are treated as
+                // unsigned magnitudes. For comparisons the IR `ty` carries the
+                // operand type (not bool), so `is_signed()` reflects the operands.
+                let signed = operand_ty.is_signed();
+
+                match op {
+                    IrBinOp::Add if operand_ty.is_integer() => {
                         self.emit("    addq %rcx, %rax");
                     }
-                    (IrBinOp::Sub, t) if t.is_integer() => {
+                    IrBinOp::Sub if ty.is_integer() => {
                         self.emit("    subq %rcx, %rax");
                     }
-                    (IrBinOp::Mul, t) if t.is_integer() => {
+                    IrBinOp::Mul if ty.is_integer() => {
                         self.emit("    imulq %rcx, %rax");
                     }
-                    (IrBinOp::Div, t) if t.is_integer() => {
-                        self.emit("    cqo");
-                        self.emit("    idivq %rcx");
+                    IrBinOp::Div if ty.is_integer() => {
+                        if signed {
+                            self.emit("    cqo");
+                            self.emit("    idivq %rcx");
+                        } else {
+                            // Unsigned division zero-extends the dividend into
+                            // %rdx and uses `div`.
+                            self.emit("    xorq %rdx, %rdx");
+                            self.emit("    divq %rcx");
+                        }
                     }
-                    (IrBinOp::Mod, t) if t.is_integer() => {
-                        self.emit("    cqo");
-                        self.emit("    idivq %rcx");
+                    IrBinOp::Mod if ty.is_integer() => {
+                        if signed {
+                            self.emit("    cqo");
+                            self.emit("    idivq %rcx");
+                        } else {
+                            self.emit("    xorq %rdx, %rdx");
+                            self.emit("    divq %rcx");
+                        }
                         self.emit("    movq %rdx, %rax");
                     }
-                    (IrBinOp::Eq, _) => {
+                    // Bitwise operators work on every integer (and bool) width;
+                    // the low bits are identical regardless of register width,
+                    // so a single 64-bit form is correct.
+                    IrBinOp::BitAnd | IrBinOp::And => {
+                        self.emit("    andq %rcx, %rax");
+                    }
+                    IrBinOp::BitOr | IrBinOp::Or => {
+                        self.emit("    orq %rcx, %rax");
+                    }
+                    IrBinOp::BitXor => {
+                        self.emit("    xorq %rcx, %rax");
+                    }
+                    // Shifts take the count in %cl (the low byte of %rcx, where
+                    // the rhs already lives). Left shift is the same for signed
+                    // and unsigned; right shift is arithmetic (`sar`) for signed
+                    // operands and logical (`shr`) for unsigned.
+                    IrBinOp::Shl => {
+                        self.emit("    shlq %cl, %rax");
+                    }
+                    IrBinOp::Shr => {
+                        if signed {
+                            self.emit("    sarq %cl, %rax");
+                        } else {
+                            self.emit("    shrq %cl, %rax");
+                        }
+                    }
+                    IrBinOp::Eq => {
                         self.emit("    cmpq %rcx, %rax");
                         self.emit("    sete %al");
                         self.emit("    movzbq %al, %rax");
                     }
-                    (IrBinOp::Ne, _) => {
+                    IrBinOp::Ne => {
                         self.emit("    cmpq %rcx, %rax");
                         self.emit("    setne %al");
                         self.emit("    movzbq %al, %rax");
                     }
-                    (IrBinOp::Lt, t) if t.is_signed() => {
+                    // Relational comparisons: signed types use signed condition
+                    // codes (`setl/setle/setg/setge`); unsigned types use the
+                    // unsigned codes (`setb/setbe/seta/setae`). Previously the
+                    // unsigned arms emitted *nothing*, silently dropping the
+                    // comparison.
+                    IrBinOp::Lt => {
                         self.emit("    cmpq %rcx, %rax");
-                        self.emit("    setl %al");
+                        self.emit(if signed {
+                            "    setl %al"
+                        } else {
+                            "    setb %al"
+                        });
                         self.emit("    movzbq %al, %rax");
                     }
-                    (IrBinOp::Le, t) if t.is_signed() => {
+                    IrBinOp::Le => {
                         self.emit("    cmpq %rcx, %rax");
-                        self.emit("    setle %al");
+                        self.emit(if signed {
+                            "    setle %al"
+                        } else {
+                            "    setbe %al"
+                        });
                         self.emit("    movzbq %al, %rax");
                     }
-                    (IrBinOp::Gt, t) if t.is_signed() => {
+                    IrBinOp::Gt => {
                         self.emit("    cmpq %rcx, %rax");
-                        self.emit("    setg %al");
+                        self.emit(if signed {
+                            "    setg %al"
+                        } else {
+                            "    seta %al"
+                        });
                         self.emit("    movzbq %al, %rax");
                     }
-                    (IrBinOp::Ge, t) if t.is_signed() => {
+                    IrBinOp::Ge => {
                         self.emit("    cmpq %rcx, %rax");
-                        self.emit("    setge %al");
+                        self.emit(if signed {
+                            "    setge %al"
+                        } else {
+                            "    setae %al"
+                        });
                         self.emit("    movzbq %al, %rax");
-                    }
-                    (IrBinOp::And, Type::Bool) => {
-                        self.emit("    andq %rcx, %rax");
-                    }
-                    (IrBinOp::Or, Type::Bool) => {
-                        self.emit("    orq %rcx, %rax");
                     }
                     _ => {}
                 }
@@ -601,7 +717,9 @@ impl X86_64Backend {
                             self.emit("    subsd %xmm0, %xmm1");
                             self.emit("    movapd %xmm1, %xmm0");
                         }
-                        IrUnOp::Not => {}
+                        // Logical/bitwise complement are not defined on f64 and
+                        // are rejected by validation/typechecking before codegen.
+                        IrUnOp::Not | IrUnOp::BitNot => {}
                     }
                     self.store_xmm_value("%xmm0", dst_offset);
                     return;
@@ -613,8 +731,13 @@ impl X86_64Backend {
                     IrUnOp::Neg => {
                         self.emit("    negq %rax");
                     }
+                    // Logical not on a 0/1 bool: flip the low bit.
                     IrUnOp::Not => {
                         self.emit("    xorq $1, %rax");
+                    }
+                    // Bitwise complement (one's complement) on an integer.
+                    IrUnOp::BitNot => {
+                        self.emit("    notq %rax");
                     }
                 }
 
@@ -700,6 +823,10 @@ impl X86_64Backend {
                                 self.load_value(src, "%rax", ty);
                                 self.emit(&format!("    movl %eax, {}(%rbp)", dst_offset));
                             }
+                            2 => {
+                                self.load_value(src, "%rax", ty);
+                                self.emit(&format!("    movw %ax, {}(%rbp)", dst_offset));
+                            }
                             1 => {
                                 self.load_value(src, "%rax", ty);
                                 self.emit(&format!("    movb %al, {}(%rbp)", dst_offset));
@@ -740,6 +867,10 @@ impl X86_64Backend {
                     4 => {
                         self.load_value(src, "%rax", ty);
                         self.emit(&format!("    movl %eax, {}(%rbp)", dst_offset));
+                    }
+                    2 => {
+                        self.load_value(src, "%rax", ty);
+                        self.emit(&format!("    movw %ax, {}(%rbp)", dst_offset));
                     }
                     1 => {
                         self.load_value(src, "%rax", ty);
@@ -792,13 +923,21 @@ impl X86_64Backend {
             Value::Var(v) => {
                 let offset = self.var_offsets[v];
                 // Scalar slots are 8 bytes wide. Load the value into the full
-                // 64-bit register, zero-extending narrower types so the upper
-                // bits are well-defined for the subsequent op/compare.
+                // 64-bit register, extending narrower types so the upper bits
+                // are well-defined for the subsequent op/compare. Signed types
+                // sign-extend (`movs..`); unsigned types (and bool/char)
+                // zero-extend (`movz..`) so signed/unsigned comparisons and
+                // arithmetic see correctly-extended operands.
+                let signed = ty.is_signed();
                 match ty.size() {
                     8 => self.emit(&format!("    movq {}(%rbp), {}", offset, reg)),
+                    4 if signed => self.emit(&format!("    movslq {}(%rbp), {}", offset, reg)),
                     // `movl` into the 32-bit sub-register zero-extends into the
                     // full 64-bit register on x86_64.
                     4 => self.emit(&format!("    movl {}(%rbp), {}", offset, Self::gpr32(reg))),
+                    2 if signed => self.emit(&format!("    movswq {}(%rbp), {}", offset, reg)),
+                    2 => self.emit(&format!("    movzwq {}(%rbp), {}", offset, reg)),
+                    1 if signed => self.emit(&format!("    movsbq {}(%rbp), {}", offset, reg)),
                     1 => self.emit(&format!("    movzbq {}(%rbp), {}", offset, reg)),
                     _ => {}
                 }
@@ -866,7 +1005,16 @@ impl X86_64Backend {
                 self.store_gpr_value("%rax", dst_offset, result_ty);
                 return;
             }
-            IrBinOp::Mod | IrBinOp::And | IrBinOp::Or => {}
+            // Integer-only operators (modulo, logical and bitwise/shift) are
+            // not defined on f64 and are rejected by validation before codegen.
+            IrBinOp::Mod
+            | IrBinOp::And
+            | IrBinOp::Or
+            | IrBinOp::BitAnd
+            | IrBinOp::BitOr
+            | IrBinOp::BitXor
+            | IrBinOp::Shl
+            | IrBinOp::Shr => {}
         }
 
         self.store_xmm_value("%xmm0", dst_offset);
@@ -896,28 +1044,56 @@ impl X86_64Backend {
         }
     }
 
+    /// Map a 64-bit register name (e.g. `%rax`) to its 32-bit sub-register
+    /// (`%eax`). A `movl` into the 32-bit form zero-extends into the full
+    /// 64-bit register on x86_64.
     fn gpr32(reg: &str) -> &str {
         match reg {
             "%rax" => "%eax",
             "%rcx" => "%ecx",
             "%rdx" => "%edx",
+            "%rbx" => "%ebx",
             "%rdi" => "%edi",
             "%rsi" => "%esi",
             "%r8" => "%r8d",
             "%r9" => "%r9d",
+            "%r10" => "%r10d",
+            "%r11" => "%r11d",
             _ => reg,
         }
     }
 
+    /// Map a 64-bit register name to its 16-bit sub-register (`%rax`->`%ax`).
+    fn gpr16(reg: &str) -> &str {
+        match reg {
+            "%rax" => "%ax",
+            "%rcx" => "%cx",
+            "%rdx" => "%dx",
+            "%rbx" => "%bx",
+            "%rsi" => "%si",
+            "%rdi" => "%di",
+            "%r8" => "%r8w",
+            "%r9" => "%r9w",
+            "%r10" => "%r10w",
+            "%r11" => "%r11w",
+            _ => reg,
+        }
+    }
+
+    /// Map a 64-bit register name to its 8-bit (low byte) sub-register
+    /// (`%rax`->`%al`).
     fn gpr8(reg: &str) -> &str {
         match reg {
             "%rax" => "%al",
             "%rcx" => "%cl",
             "%rdx" => "%dl",
+            "%rbx" => "%bl",
             "%rdi" => "%dil",
             "%rsi" => "%sil",
             "%r8" => "%r8b",
             "%r9" => "%r9b",
+            "%r10" => "%r10b",
+            "%r11" => "%r11b",
             _ => reg,
         }
     }
@@ -1025,6 +1201,8 @@ mod tests {
         // Mangled non-main name.
         assert!(asm.contains("_tl_add:"), "asm:\n{}", asm);
         // Prologue moves the two integer params from rdi/rsi to stack slots.
+        // (For 64-bit operands GAS infers the size, so the `q` suffix is
+        // optional; assert the register move happens regardless of suffix.)
         assert!(asm.contains("mov %rdi,"), "asm:\n{}", asm);
         assert!(asm.contains("mov %rsi,"), "asm:\n{}", asm);
         // The actual addition.
@@ -1326,5 +1504,167 @@ mod tests {
         })
         .expect_err("empty program should be rejected");
         assert!(err.contains("no functions"), "err: {}", err);
+    }
+
+    // ---- Bitwise / shift / cast / unsigned codegen (issue #46) ---------
+
+    #[test]
+    fn test_compile_bit_and() {
+        let asm = compile_ok("(define (f [a : i64] [b : i64]) : i64 (bit-and a b))");
+        assert!(asm.contains("andq %rcx, %rax"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_bit_or() {
+        let asm = compile_ok("(define (f [a : i64] [b : i64]) : i64 (bit-or a b))");
+        assert!(asm.contains("orq %rcx, %rax"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_bit_xor_emits_xor_not_or() {
+        // Miscompile bug 1: bit-xor used to emit `orq`. It must now emit `xorq`.
+        let asm = compile_ok("(define (f [a : i64] [b : i64]) : i64 (bit-xor a b))");
+        assert!(asm.contains("xorq %rcx, %rax"), "asm:\n{}", asm);
+        // The only `orq` allowed would be a bitwise-or, which this program has
+        // none of, so assert no stray `orq` instruction slipped through. Match
+        // the emitted-line form (`    orq `) to avoid matching the substring
+        // inside `xorq`.
+        assert!(
+            !asm.contains("    orq "),
+            "bit-xor must not emit orq; asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_compile_shl_emits_shift_not_add() {
+        // Miscompile bug 2: shl used to emit `addq`. It must now emit a real
+        // shift through %cl.
+        let asm = compile_ok("(define (f [a : i64] [b : i64]) : i64 (shl a b))");
+        assert!(asm.contains("shlq %cl, %rax"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("addq %rcx, %rax"),
+            "shl must not emit addq; asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_compile_shr_signed_is_arithmetic() {
+        // Signed right shift must be arithmetic (`sarq`).
+        let asm = compile_ok("(define (f [a : i64] [b : i64]) : i64 (shr a b))");
+        assert!(asm.contains("sarq %cl, %rax"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("shrq %cl, %rax"),
+            "signed shr must be arithmetic; asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_compile_shr_unsigned_is_logical() {
+        // Unsigned right shift must be logical (`shrq`).
+        let asm = compile_ok("(define (f [a : u64] [b : u64]) : u64 (shr a b))");
+        assert!(asm.contains("shrq %cl, %rax"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("sarq %cl, %rax"),
+            "unsigned shr must be logical; asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_compile_signed_comparison_uses_signed_codes() {
+        // i64 `<` keeps signed condition codes.
+        let asm = compile_ok("(define (f [a : i64] [b : i64]) : bool (< a b))");
+        assert!(asm.contains("setl %al"), "asm:\n{}", asm);
+        assert!(!asm.contains("setb %al"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_unsigned_less_emits_setb() {
+        // Previously the `is_signed()` gate dropped unsigned comparisons
+        // entirely (no `set*` emitted). They must now emit unsigned codes.
+        let asm = compile_ok("(define (f [a : u64] [b : u64]) : bool (< a b))");
+        assert!(asm.contains("setb %al"), "asm:\n{}", asm);
+        assert!(!asm.contains("setl %al"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_unsigned_relations_emit_unsigned_codes() {
+        let asm_le = compile_ok("(define (f [a : u32] [b : u32]) : bool (<= a b))");
+        assert!(asm_le.contains("setbe %al"), "asm:\n{}", asm_le);
+        let asm_gt = compile_ok("(define (f [a : u32] [b : u32]) : bool (> a b))");
+        assert!(asm_gt.contains("seta %al"), "asm:\n{}", asm_gt);
+        let asm_ge = compile_ok("(define (f [a : u32] [b : u32]) : bool (>= a b))");
+        assert!(asm_ge.contains("setae %al"), "asm:\n{}", asm_ge);
+    }
+
+    #[test]
+    fn test_compile_cast_truncate_to_i8() {
+        // Narrowing cast i64 -> i8: load source then store only the low byte.
+        let asm = compile_ok("(define (f [x : i64]) : i8 (cast x : i8))");
+        assert!(
+            asm.contains("movb %al,"),
+            "truncation expected; asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_compile_cast_widen_i8_to_i64_sign_extends() {
+        // Widening cast i8 -> i64 must sign-extend the source.
+        let asm = compile_ok("(define (f [x : i8]) : i64 (cast x : i64))");
+        assert!(
+            asm.contains("movsbq"),
+            "sign-extension expected; asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_compile_cast_widen_u8_to_i64_zero_extends() {
+        // Widening cast u8 -> i64 must zero-extend the source.
+        let asm = compile_ok("(define (f [x : u8]) : i64 (cast x : i64))");
+        assert!(
+            asm.contains("movzbq"),
+            "zero-extension expected; asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_compile_bit_not_emits_notq() {
+        // bit-not (one's complement). Unary ops are not parsed from text yet,
+        // so drive the backend from hand-built IR.
+        let program = Program {
+            functions: vec![Function {
+                name: "f".into(),
+                params: vec![(0, Type::I64)],
+                ret: Type::I64,
+                locals: vec![(1, Type::I64)],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![
+                        Instruction::Alloc {
+                            var: 0,
+                            ty: Type::I64,
+                        },
+                        Instruction::UnOp {
+                            dst: 1,
+                            op: UnOp::BitNot,
+                            src: Value::Var(0),
+                            ty: Type::I64,
+                        },
+                        Instruction::Return(Some(Value::Var(1))),
+                    ],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![],
+        };
+        let asm = generate_assembly(&program).expect("bit-not should compile");
+        assert!(asm.contains("notq %rax"), "asm:\n{}", asm);
     }
 }

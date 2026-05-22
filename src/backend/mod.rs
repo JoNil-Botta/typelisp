@@ -568,7 +568,10 @@ fn block_successors(block: &BasicBlock) -> Vec<Label> {
 /// end of the predecessor block (immediately before its terminating
 /// branch/jump), then deleting the `Phi`. `dst` already has a stack slot
 /// reserved by the function frame (the lowerer records every phi result in
-/// `func.locals`), so the copy is a plain slot write at codegen time.
+/// `func.locals`), so the copy is a plain slot write at codegen time. Multiple
+/// phi copies from the same predecessor are parallel copies: if one copy's
+/// source is another copy's destination, the source is first saved into a fresh
+/// temporary stack slot so sequential instruction selection cannot clobber it.
 ///
 /// The label recorded in a phi's incoming edge marks the *entry* of the
 /// branch region, which for nested control flow is not necessarily the block
@@ -594,6 +597,7 @@ fn eliminate_phis(func: &Function) -> Function {
     // terminator, in source order.
     let mut inserts: std::collections::HashMap<usize, Vec<Instruction>> =
         std::collections::HashMap::new();
+    let mut next_temp_var = next_available_var(&func);
 
     for merge_idx in 0..func.blocks.len() {
         let merge_label = func.blocks[merge_idx].label.clone();
@@ -635,7 +639,10 @@ fn eliminate_phis(func: &Function) -> Function {
 
     // Insert the planned copies immediately before each predecessor's
     // terminator (the last instruction, which is a Branch/Jump).
+    let mut inserts: Vec<_> = inserts.into_iter().collect();
+    inserts.sort_by_key(|(pred_idx, _)| *pred_idx);
     for (pred_idx, moves) in inserts {
+        let moves = protect_parallel_phi_sources(moves, &mut func.locals, &mut next_temp_var);
         let block = &mut func.blocks[pred_idx];
         let insert_at = if block.instructions.is_empty() {
             0
@@ -654,6 +661,59 @@ fn eliminate_phis(func: &Function) -> Function {
     }
 
     func
+}
+
+fn protect_parallel_phi_sources(
+    moves: Vec<Instruction>,
+    locals: &mut Vec<(VarId, Type)>,
+    next_temp_var: &mut VarId,
+) -> Vec<Instruction> {
+    let phi_dsts: HashSet<VarId> = moves
+        .iter()
+        .filter_map(|instr| match instr {
+            Instruction::Mov { dst, .. } => Some(*dst),
+            _ => None,
+        })
+        .collect();
+
+    let mut backups = Vec::new();
+    let mut rewritten = Vec::new();
+
+    for instr in moves {
+        match instr {
+            Instruction::Mov {
+                dst,
+                src: Value::Var(src_var),
+                ty,
+            } if src_var != dst && phi_dsts.contains(&src_var) => {
+                let tmp = *next_temp_var;
+                *next_temp_var = next_temp_var.saturating_add(1);
+                locals.push((tmp, ty.clone()));
+                backups.push(Instruction::Mov {
+                    dst: tmp,
+                    src: Value::Var(src_var),
+                    ty: ty.clone(),
+                });
+                rewritten.push(Instruction::Mov {
+                    dst,
+                    src: Value::Var(tmp),
+                    ty,
+                });
+            }
+            other => rewritten.push(other),
+        }
+    }
+
+    backups.extend(rewritten);
+    backups
+}
+
+fn next_available_var(func: &Function) -> VarId {
+    let mut next = 0;
+    for (var, _) in func.params.iter().chain(func.locals.iter()) {
+        next = next.max(var.saturating_add(1));
+    }
+    next
 }
 
 /// From the branch-region entry `start_label`, follow successor edges to the
@@ -3664,6 +3724,85 @@ mod tests {
             2,
             "asm:\n{}",
             asm
+        );
+    }
+
+    #[test]
+    fn test_phi_elimination_parallel_copies_preserve_overlapping_sources() {
+        // Multiple phis from the same predecessor are parallel copies. A swap
+        // like `%0 <- %1`, `%1 <- %0` must preserve the original `%0` and `%1`
+        // values before either destination slot is overwritten.
+        let func = Function {
+            name: "swap_phi".into(),
+            params: vec![],
+            ret: Type::I64,
+            locals: vec![(0, Type::I64), (1, Type::I64)],
+            blocks: vec![
+                BasicBlock {
+                    label: "pred".into(),
+                    instructions: vec![Instruction::Jump("merge".into())],
+                },
+                BasicBlock {
+                    label: "merge".into(),
+                    instructions: vec![
+                        Instruction::Phi {
+                            dst: 0,
+                            incoming: vec![(Value::Var(1), "pred".into())],
+                            ty: Type::I64,
+                        },
+                        Instruction::Phi {
+                            dst: 1,
+                            incoming: vec![(Value::Var(0), "pred".into())],
+                            ty: Type::I64,
+                        },
+                        Instruction::Return(Some(Value::Var(0))),
+                    ],
+                },
+            ],
+            entry: "pred".into(),
+        };
+
+        let lowered = eliminate_phis(&func);
+        assert!(lowered.locals.contains(&(2, Type::I64)));
+        assert!(lowered.locals.contains(&(3, Type::I64)));
+        assert!(
+            lowered
+                .blocks
+                .iter()
+                .flat_map(|b| &b.instructions)
+                .all(|i| !matches!(i, Instruction::Phi { .. }))
+        );
+
+        let pred = lowered
+            .blocks
+            .iter()
+            .find(|b| b.label == "pred")
+            .expect("pred block");
+        assert_eq!(
+            pred.instructions,
+            vec![
+                Instruction::Mov {
+                    dst: 2,
+                    src: Value::Var(1),
+                    ty: Type::I64,
+                },
+                Instruction::Mov {
+                    dst: 3,
+                    src: Value::Var(0),
+                    ty: Type::I64,
+                },
+                Instruction::Mov {
+                    dst: 0,
+                    src: Value::Var(2),
+                    ty: Type::I64,
+                },
+                Instruction::Mov {
+                    dst: 1,
+                    src: Value::Var(3),
+                    ty: Type::I64,
+                },
+                Instruction::Jump("merge".into()),
+            ]
         );
     }
 

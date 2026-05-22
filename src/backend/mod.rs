@@ -590,9 +590,8 @@ mod tests {
     #[test]
     fn test_reject_let_binding() {
         // `let` lowers to Alloc/Store of a non-parameter local.
-        let err = compile_err(
-            "(define (triple [x : i64]) : i64 (let ([y : i64 (+ x x)]) (+ y x)))",
-        );
+        let err =
+            compile_err("(define (triple [x : i64]) : i64 (let ([y : i64 (+ x x)]) (+ y x)))");
         assert!(err.contains("backend:"), "err: {}", err);
     }
 

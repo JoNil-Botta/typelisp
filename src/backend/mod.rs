@@ -478,6 +478,7 @@ fn is_backend_abi_value_type(ty: &Type) -> bool {
             | Type::Func(_, _)
             | Type::DynArray(_)
             | Type::Enum(_)
+            | Type::Struct(_)
     )
 }
 

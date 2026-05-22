@@ -122,6 +122,14 @@ fn type_lisp_programs_compile_link_and_run() {
             stdout: "",
             deps: &[],
         },
+        // Self-hosting (#27, phase 4): a tokenizer written in TypeLisp itself.
+        // Lexes "12 + (34)" into 5 tokens; `main` returns that count.
+        Case {
+            name: "lexer",
+            exit_code: 5,
+            stdout: "",
+            deps: &[],
+        },
     ];
 
     for case in cases {
@@ -231,6 +239,14 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         Case {
             name: "enum_match",
             exit_code: 42,
+            stdout: "",
+            deps: &[],
+        },
+        // Self-hosting (#27, phase 4): the TypeLisp tokenizer, also exercised
+        // through the explicit compile -> as -> ld -> run pipeline.
+        Case {
+            name: "lexer",
+            exit_code: 5,
             stdout: "",
             deps: &[],
         },

@@ -34,7 +34,7 @@ pub struct X86_64Backend {
 /// against a local's stack slot) over integer/bool/char/f64 scalars.
 ///
 /// Constructs that are lowered but NOT yet selected to assembly (f32 values,
-/// indirect calls #38, address/GEP pointer arithmetic and `Global` operands)
+/// address/GEP pointer arithmetic and `Global` operands)
 /// are rejected here with a clear message instead of being silently
 /// miscompiled (they would otherwise fall through to a `# TODO` comment and
 /// produce wrong code).
@@ -61,8 +61,9 @@ fn validate_function(func: &Function) -> Result<(), String> {
             "backend: function '{}' uses an unsupported construct ({}). \
              The x86_64 backend currently supports scalar arithmetic, comparisons, \
              unary/binary operators, direct function calls, recursion, control flow \
-             (if/while) and scalar let/set! locals. F32 values, indirect calls \
-             (#38), tuples, arrays, lambdas and strings are not yet wired (see #13).",
+             (if/while), indirect calls through function-pointer values and scalar \
+             let/set! locals. F32 values, tuples, arrays, lambdas and strings are \
+             not yet wired (see #13).",
             func.name, what
         ))
     };
@@ -155,9 +156,23 @@ fn validate_function(func: &Function) -> Result<(), String> {
                     }
                     check_operand(src).map_err(|w| unsupported_value(&func.name, &w))?;
                 }
+                Instruction::CallIndirect {
+                    func: target, args, ..
+                } => {
+                    match target {
+                        Value::Var(var) => {
+                            if !matches!(var_types.get(var), Some(Type::Func(_, _))) {
+                                return unsupported("indirect call through a non-function value");
+                            }
+                        }
+                        _ => return unsupported("indirect call through a non-local value"),
+                    }
+                    for arg in args {
+                        check_operand(arg).map_err(|w| unsupported_value(&func.name, &w))?;
+                    }
+                }
                 Instruction::AddrOf { .. } => return unsupported("address-of"),
                 Instruction::Gep { .. } => return unsupported("get-element-pointer"),
-                Instruction::CallIndirect { .. } => return unsupported("indirect call"),
             }
         }
     }
@@ -769,37 +784,23 @@ impl X86_64Backend {
                 args,
                 ty,
             } => {
-                let param_regs = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
-                let xmm_regs = [
-                    "%xmm0", "%xmm1", "%xmm2", "%xmm3", "%xmm4", "%xmm5", "%xmm6", "%xmm7",
-                ];
-                let mut int_arg = 0;
-                let mut float_arg = 0;
-                for arg in args {
-                    let arg_ty = self.value_type(arg).unwrap_or(Type::I64);
-                    if arg_ty == Type::F64 {
-                        if float_arg < xmm_regs.len() {
-                            self.load_value(arg, xmm_regs[float_arg], &Type::F64);
-                        }
-                        float_arg += 1;
-                    } else {
-                        if int_arg < param_regs.len() {
-                            self.load_value(arg, param_regs[int_arg], &arg_ty);
-                        }
-                        int_arg += 1;
-                    }
-                }
-
+                self.load_call_args(args);
                 self.emit(&format!("    call {}", Self::mangle_name(func)));
-
-                if let Some(dst_var) = dst {
-                    let dst_offset = self.var_offsets[dst_var];
-                    if *ty == Type::F64 {
-                        self.store_xmm_value("%xmm0", dst_offset);
-                    } else {
-                        self.store_gpr_value("%rax", dst_offset, ty);
-                    }
-                }
+                self.store_call_result(dst, ty);
+            }
+            Instruction::CallIndirect {
+                dst,
+                func,
+                args,
+                ty,
+            } => {
+                self.load_call_args(args);
+                let func_ty = self
+                    .value_type(func)
+                    .unwrap_or_else(|| Type::Func(Vec::new(), Box::new(Type::Unit)));
+                self.load_value(func, "%rax", &func_ty);
+                self.emit("    call *%rax");
+                self.store_call_result(dst, ty);
             }
             Instruction::Branch {
                 cond,
@@ -916,6 +917,40 @@ impl X86_64Backend {
             _ => {
                 // TODO: implement remaining instructions
                 self.emit(&format!("    # TODO: {:?}", instr));
+            }
+        }
+    }
+
+    fn load_call_args(&mut self, args: &[Value]) {
+        let param_regs = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
+        let xmm_regs = [
+            "%xmm0", "%xmm1", "%xmm2", "%xmm3", "%xmm4", "%xmm5", "%xmm6", "%xmm7",
+        ];
+        let mut int_arg = 0;
+        let mut float_arg = 0;
+        for arg in args {
+            let arg_ty = self.value_type(arg).unwrap_or(Type::I64);
+            if arg_ty == Type::F64 {
+                if float_arg < xmm_regs.len() {
+                    self.load_value(arg, xmm_regs[float_arg], &Type::F64);
+                }
+                float_arg += 1;
+            } else {
+                if int_arg < param_regs.len() {
+                    self.load_value(arg, param_regs[int_arg], &arg_ty);
+                }
+                int_arg += 1;
+            }
+        }
+    }
+
+    fn store_call_result(&mut self, dst: &Option<VarId>, ty: &Type) {
+        if let Some(dst_var) = dst {
+            let dst_offset = self.var_offsets[dst_var];
+            if *ty == Type::F64 {
+                self.store_xmm_value("%xmm0", dst_offset);
+            } else {
+                self.store_gpr_value("%rax", dst_offset, ty);
             }
         }
     }
@@ -1257,6 +1292,72 @@ mod tests {
         assert!(asm.contains("call _tl_inc"), "asm:\n{}", asm);
         // Argument register load for the call.
         assert!(asm.contains("%rdi"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_indirect_call_through_function_pointer_param() {
+        let program = Program {
+            functions: vec![Function {
+                name: "apply1".into(),
+                params: vec![
+                    (0, Type::Func(vec![Type::I64], Box::new(Type::I64))),
+                    (1, Type::I64),
+                ],
+                ret: Type::I64,
+                locals: vec![(2, Type::I64)],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![
+                        Instruction::CallIndirect {
+                            dst: Some(2),
+                            func: Value::Var(0),
+                            args: vec![Value::Var(1)],
+                            ty: Type::I64,
+                        },
+                        Instruction::Return(Some(Value::Var(2))),
+                    ],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![],
+        };
+        let asm = generate_assembly(&program).expect("function-pointer call should compile");
+        assert!(asm.contains("_tl_apply1:"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq -16(%rbp), %rdi"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq -8(%rbp), %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("    call *%rax"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
+    fn test_reject_indirect_call_through_non_function_value() {
+        let err = generate_assembly(&Program {
+            functions: vec![Function {
+                name: "bad".into(),
+                params: vec![(0, Type::I64)],
+                ret: Type::I64,
+                locals: vec![(1, Type::I64)],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![Instruction::CallIndirect {
+                        dst: Some(1),
+                        func: Value::Var(0),
+                        args: vec![],
+                        ty: Type::I64,
+                    }],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![],
+        })
+        .expect_err("non-function indirect call target should be rejected");
+        assert!(
+            err.contains("indirect call through a non-function value"),
+            "err: {}",
+            err
+        );
     }
 
     #[test]

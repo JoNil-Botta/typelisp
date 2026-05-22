@@ -94,6 +94,29 @@ impl TypeChecker {
             "int->string".into(),
             Type::Func(vec![Type::I64], Box::new(Type::String)),
         );
+        // `(substring s start len)` / `(string-slice s start len)` ->
+        // `(-> String i64 i64 String)` — a fresh String holding the `len` bytes
+        // of `s` beginning at byte offset `start` (a half-open `[start,
+        // start+len)` slice expressed as start+length, which is the simplest
+        // form to bounds-check). The range is bounds-checked at runtime
+        // (UNSIGNED, so a negative `start`/`len` wraps to a huge value and
+        // traps); out-of-range slices abort via `tl_oob_abort`. The lexer slices
+        // identifier/number lexemes out of the source String with this. The fat
+        // `{ ptr, len }` result is heap-allocated so it outlives the caller.
+        globals.insert(
+            "substring".into(),
+            Type::Func(
+                vec![Type::String, Type::I64, Type::I64],
+                Box::new(Type::String),
+            ),
+        );
+        globals.insert(
+            "string-slice".into(),
+            Type::Func(
+                vec![Type::String, Type::I64, Type::I64],
+                Box::new(Type::String),
+            ),
+        );
         // `(panic msg)` / `(error msg)` -> write `msg` to fd 2 (stderr) then
         // terminate the process. It never returns; its type is `(-> String unit)`
         // so a `(panic ...)` expression yields unit and can appear wherever a
@@ -1722,6 +1745,68 @@ mod tests {
         // The result is a String, not an i64; using it where an i64 is required
         // (a function's i64 return) is a mismatch.
         let src = "(define (f) : i64 (int->string 5))";
+        assert!(check(src).is_err());
+    }
+
+    // ------------------------------------------------------------------
+    // substring / string-slice — `(-> String i64 i64 String)` (refs #13/#27)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_typecheck_substring_yields_string() {
+        // `(substring s start len)` : `(-> String i64 i64 String)`. Slicing a
+        // String parameter and returning it type-checks as a String result.
+        let src = "(define (f [s : String] [a : i64] [b : i64]) : String (substring s a b))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_string_slice_alias_yields_string() {
+        // `string-slice` is the alias of `substring` with identical type.
+        let src = "(define (f [s : String] [a : i64] [b : i64]) : String (string-slice s a b))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_substring_on_literal() {
+        // A String literal slices fine (constant start/len).
+        let src = r#"(define (f) : String (substring "hello" 1 3))"#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_substring_requires_string_first_arg() {
+        // The first argument must be a String, not an i64.
+        let src = "(define (f) : String (substring 42 0 1))";
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_substring_start_must_be_integer() {
+        // The start offset must be an i64; a bool is rejected.
+        let src = r#"(define (f) : String (substring "hi" true 1))"#;
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_substring_len_must_be_integer() {
+        // The slice length must be an i64; a bool is rejected.
+        let src = r#"(define (f) : String (substring "hi" 0 true))"#;
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_substring_arity_checked() {
+        // `substring` is ternary; two arguments is an arity error.
+        let src = r#"(define (f) : String (substring "hi" 0))"#;
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_substring_result_is_not_i64() {
+        // The result is a String, not an i64; using it where an i64 is required
+        // (the function's declared return) is a type error.
+        let src = r#"(define (f) : i64 (substring "hi" 0 1))"#;
         assert!(check(src).is_err());
     }
 

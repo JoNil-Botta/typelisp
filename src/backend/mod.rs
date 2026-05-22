@@ -47,6 +47,13 @@ pub struct X86_64Backend {
     /// itself calls `tl_alloc`, so its presence also forces the bump-allocator
     /// runtime to be emitted.
     needs_int_to_string_runtime: bool,
+    /// Whether the program references the substring helper `tl_substring` and
+    /// the backend must therefore emit the self-contained (libc-free) byte-slice
+    /// runtime into the program's `.s`. Set when `(substring s start len)` /
+    /// `(string-slice ...)` is lowered. Like `tl_int_to_string` the runtime
+    /// `tl_alloc`s both the slice buffer and the 16-byte fat value, so its
+    /// presence also forces the bump-allocator runtime to be emitted.
+    needs_substring_runtime: bool,
     /// Whether the program references the message-abort helper `tl_abort` and
     /// the backend must therefore emit the self-contained abort runtime (write
     /// the caller-supplied message to fd 2 + `exit`) into the program's `.s`.
@@ -763,6 +770,7 @@ impl X86_64Backend {
             needs_string_eq_runtime: false,
             needs_string_to_int_runtime: false,
             needs_int_to_string_runtime: false,
+            needs_substring_runtime: false,
             needs_abort_runtime: false,
             return_ty: Type::Unit,
             param_vars: HashSet::new(),
@@ -789,12 +797,15 @@ impl X86_64Backend {
         self.needs_string_eq_runtime = Self::needs_string_eq_runtime(program);
         self.needs_string_to_int_runtime = Self::needs_string_to_int_runtime(program);
         self.needs_int_to_string_runtime = Self::needs_int_to_string_runtime(program);
+        self.needs_substring_runtime = Self::needs_substring_runtime(program);
         self.needs_abort_runtime = Self::needs_abort_runtime(program);
-        // The int->string runtime allocates its digit buffer and fat value via a
-        // raw `tl_alloc` call, so its presence forces the raw allocator runtime
-        // to be emitted even when IR calls to a user-defined TypeLisp function
-        // named `tl_alloc` remain mangled to `_tl_tl_alloc`.
-        self.emits_alloc_runtime = self.needs_alloc_runtime || self.needs_int_to_string_runtime;
+        // The int->string and substring runtimes allocate their buffers and fat
+        // values via a raw `tl_alloc` call, so their presence forces the raw
+        // allocator runtime to be emitted even when IR calls to a user-defined
+        // TypeLisp function named `tl_alloc` remain mangled to `_tl_tl_alloc`.
+        self.emits_alloc_runtime = self.needs_alloc_runtime
+            || self.needs_int_to_string_runtime
+            || self.needs_substring_runtime;
         let needs_print_runtime = !self.runtime_print_names.is_empty();
         if needs_print_runtime {
             self.generate_print_runtime_data();
@@ -825,6 +836,7 @@ impl X86_64Backend {
                 || (self.needs_string_eq_runtime && symbol == "tl_string_eq")
                 || (self.needs_string_to_int_runtime && symbol == "tl_string_to_int")
                 || (self.needs_int_to_string_runtime && symbol == "tl_int_to_string")
+                || (self.needs_substring_runtime && symbol == "tl_substring")
                 || (self.needs_abort_runtime && symbol == ABORT_RUNTIME_SYMBOL);
             if !defined_inline {
                 self.emit(&format!("    .extern {}", symbol));
@@ -853,6 +865,9 @@ impl X86_64Backend {
         }
         if self.needs_int_to_string_runtime {
             self.generate_int_to_string_runtime_functions();
+        }
+        if self.needs_substring_runtime {
+            self.generate_substring_runtime_functions();
         }
         if self.needs_abort_runtime {
             self.generate_abort_runtime_functions();
@@ -1040,6 +1055,29 @@ impl X86_64Backend {
             .externs
             .iter()
             .any(|(name, _)| name == "tl_int_to_string");
+        referenced_in_calls || referenced_in_externs
+    }
+
+    /// Whether the program references the substring helper `tl_substring`
+    /// (through a direct `Call` or an `extern` declaration) and does not define
+    /// its own. When true the backend emits the self-contained byte-slice runtime
+    /// into the program's `.s` so the symbol resolves without linking libc.
+    fn needs_substring_runtime(program: &Program) -> bool {
+        let defines_own = program.functions.iter().any(|f| f.name == "tl_substring");
+        if defines_own {
+            return false;
+        }
+        let referenced_in_calls = program.functions.iter().any(|func| {
+            func.blocks.iter().any(|block| {
+                block.instructions.iter().any(|instr| {
+                    matches!(instr, Instruction::Call { func, .. } if func == "tl_substring")
+                })
+            })
+        });
+        let referenced_in_externs = program
+            .externs
+            .iter()
+            .any(|(name, _)| name == "tl_substring");
         referenced_in_calls || referenced_in_externs
     }
 
@@ -1594,6 +1632,69 @@ impl X86_64Backend {
         self.emit("    movq %r12, 8(%rax)");
         // %rax already holds the fat pointer — the return value.
         self.emit("    add $72, %rsp");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    /// Emit the self-contained byte-slice helper
+    /// `tl_substring(src_ptr, start, slice_len) -> {ptr, len}`.
+    ///
+    /// ABI (System V): `src_ptr` in `%rdi`, `start` in `%rsi`, `slice_len` in
+    /// `%rdx`; the returned heap fat-value pointer leaves in `%rax`. The caller
+    /// (the lowerer) has already UNSIGNED-bounds-checked the range against the
+    /// source length, so this routine trusts `[start, start+slice_len)` to lie
+    /// within the source buffer and performs no checks of its own. It mirrors
+    /// `tl_int_to_string`'s two-`tl_alloc` shape: allocate a `slice_len`-byte
+    /// heap buffer, copy the bytes from `src_ptr + start` front-to-back, then
+    /// allocate the 16-byte fat value and store `{ data_ptr (offset 0), len
+    /// (offset 8) }`. A `slice_len` of 0 still allocates (the bump allocator
+    /// returns a valid pointer) and copies nothing, yielding a valid empty
+    /// String. The slice length and copy source survive the two `tl_alloc` calls
+    /// in callee-saved registers (`%rbx`/`%r12`/`%r13`). It heap-allocates so the
+    /// result outlives the caller's frame; it is safe to emit when referenced.
+    fn generate_substring_runtime_functions(&mut self) {
+        self.emit("    .globl tl_substring");
+        self.emit("tl_substring:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        // Preserve the callee-saved registers carrying state across the two
+        // `tl_alloc` calls. The extra push keeps %rsp 16-byte aligned at the
+        // `call` sites (3 pushes after the saved %rbp -> even total).
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    sub $8, %rsp");
+        // %rbx = copy source = src_ptr + start; %r12 = slice_len. Both survive
+        // the upcoming `tl_alloc` calls (callee-saved).
+        self.emit("    movq %rdi, %rbx");
+        self.emit("    addq %rsi, %rbx");
+        self.emit("    movq %rdx, %r12");
+        // data = tl_alloc(slice_len). The returned heap pointer is saved in %r13.
+        self.emit("    movq %r12, %rdi");
+        self.emit("    call tl_alloc");
+        self.emit("    movq %rax, %r13");
+        // Copy the `slice_len` bytes from the source (%rbx) into the heap data
+        // buffer (%r13), front to back.
+        self.emit("    movq $0, %rcx");
+        self.emit(".L_tl_substring_copy_loop:");
+        self.emit("    cmpq %r12, %rcx");
+        self.emit("    jge .L_tl_substring_copy_done");
+        self.emit("    movzbl (%rbx,%rcx), %edx");
+        self.emit("    movb %dl, (%r13,%rcx)");
+        self.emit("    incq %rcx");
+        self.emit("    jmp .L_tl_substring_copy_loop");
+        self.emit(".L_tl_substring_copy_done:");
+        // fat = tl_alloc(16); store { data_ptr (offset 0), len (offset 8) }.
+        self.emit("    movq $16, %rdi");
+        self.emit("    call tl_alloc");
+        self.emit("    movq %r13, 0(%rax)");
+        self.emit("    movq %r12, 8(%rax)");
+        // %rax already holds the fat pointer — the return value.
+        self.emit("    add $8, %rsp");
         self.emit("    pop %r13");
         self.emit("    pop %r12");
         self.emit("    pop %rbx");
@@ -2762,6 +2863,10 @@ impl X86_64Backend {
             // The backend-provided integer-to-string helper resolves to its raw
             // runtime symbol rather than being mangled to `_tl_tl_int_to_string`.
             "tl_int_to_string".into()
+        } else if name == "tl_substring" && self.needs_substring_runtime {
+            // The backend-provided byte-slice helper resolves to its raw runtime
+            // symbol rather than being mangled to `_tl_tl_substring`.
+            "tl_substring".into()
         } else if self.extern_names.contains(name) {
             Self::extern_symbol(name)
         } else {
@@ -4946,6 +5051,67 @@ mod tests {
         // A program that never converts ints to strings must not emit the helper.
         let asm = compile_ok(r#"(define (main) : i64 (string-length "hi"))"#);
         assert!(!asm.contains("tl_int_to_string"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_substring_emits_runtime_and_calls_it() {
+        // `(substring s a b)` calls the emit-on-demand `tl_substring` helper,
+        // which the backend defines inline (gated like `tl_alloc`). The result is
+        // discarded but the `Call` survives DCE (it has side effects).
+        let asm = compile_ok("(define (f [s : String]) : i64 (begin (substring s 1 3) 0))");
+
+        // The runtime function is emitted and globally visible.
+        assert!(asm.contains("    .globl tl_substring"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_substring:"), "asm:\n{}", asm);
+
+        // The call site dispatches to the raw runtime symbol (not mangled).
+        assert!(asm.contains("    call tl_substring"), "asm:\n{}", asm);
+        assert!(!asm.contains("_tl_tl_substring"), "asm:\n{}", asm);
+
+        // It heap-allocates both the slice buffer and the 16-byte fat value via
+        // the bump allocator, whose self-contained body is also emitted here.
+        assert!(asm.contains("    call tl_alloc"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $16, %rdi"), "asm:\n{}", asm);
+
+        // The runtime copies bytes in a loop (movb of one byte per iteration) and
+        // stores the fat value's data pointer (offset 0) and length (offset 8).
+        assert!(asm.contains(".L_tl_substring_copy_loop:"), "asm:\n{}", asm);
+        assert!(asm.contains("    movb %dl, (%r13,%rcx)"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %r13, 0(%rax)"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %r12, 8(%rax)"), "asm:\n{}", asm);
+
+        // The helper is not declared `.extern` (it is defined in this unit).
+        assert!(!asm.contains("    .extern tl_substring"), "asm:\n{}", asm);
+
+        // No instruction selection fell through to a TODO stub.
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_substring_bounds_check_is_unsigned_and_traps_via_call() {
+        // The range is bounds-checked with UNSIGNED compares (`setbe`, not the
+        // signed `setle`); failing either branch traps through the shared abort
+        // runtime (a Call, so it survives DCE).
+        let asm = compile_ok("(define (f [s : String]) : i64 (begin (substring s 1 3) 0))");
+
+        // Unsigned comparison for the bounds check (`setbe`, not signed `setle`).
+        assert!(asm.contains("setbe %al"), "asm:\n{}", asm);
+        assert!(!asm.contains("setle %al"), "asm:\n{}", asm);
+        // The out-of-bounds trap is a Call to the abort symbol, whose
+        // self-contained body is emitted in this same unit.
+        assert!(asm.contains("    call tl_oob_abort"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_oob_abort:"), "asm:\n{}", asm);
+        // The remaining-length `len - start` subtraction is emitted.
+        assert!(asm.contains("    subq"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_no_substring_means_no_runtime() {
+        // A program that never slices strings must not emit the helper.
+        let asm = compile_ok(r#"(define (main) : i64 (string-length "hi"))"#);
+        assert!(!asm.contains("tl_substring"), "asm:\n{}", asm);
     }
 
     #[test]

@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::ir::{
     BasicBlock, BinOp as IrBinOp, Function, Instruction, Label, Program, UnOp as IrUnOp, Value,
     VarId,
@@ -11,7 +9,6 @@ use std::collections::{HashMap, HashSet};
 /// Target: Linux, System V AMD64 ABI
 pub struct X86_64Backend {
     output: String,
-    label_counter: u32,
     stack_size: i32,
     var_offsets: HashMap<VarId, i32>,
     var_types: HashMap<VarId, Type>,
@@ -206,7 +203,7 @@ fn validate_function(func: &Function, global_types: &HashMap<String, Type>) -> R
                         return unsupported("missing return value for non-unit function");
                     }
                 }
-                Instruction::Label(_) | Instruction::Jump(_) => {}
+                Instruction::Jump(_) => {}
                 // `if`/`while` control flow — now codegen'd.
                 Instruction::Branch { cond, .. } => {
                     check_operand(cond, global_types)
@@ -587,7 +584,7 @@ impl X86_64Backend {
     pub fn new() -> Self {
         X86_64Backend {
             output: String::new(),
-            label_counter: 0,
+
             stack_size: 0,
             var_offsets: HashMap::new(),
             var_types: HashMap::new(),
@@ -1351,9 +1348,6 @@ impl X86_64Backend {
 
     fn generate_instruction(&mut self, instr: &Instruction) {
         match instr {
-            Instruction::Label(label) => {
-                self.emit(&format!("{}:", self.block_label(label)));
-            }
             // Parameter slots are materialized by the prologue; their Alloc is a
             // no-op here. (Non-parameter Allocs are rejected by validation.)
             Instruction::Alloc { .. } => {}
@@ -2310,12 +2304,6 @@ impl X86_64Backend {
         )
     }
 
-    fn fresh_label(&mut self, prefix: &str) -> String {
-        let label = format!("{}.{}", prefix, self.label_counter);
-        self.label_counter += 1;
-        label
-    }
-
     /// Qualify a bare IR block label (e.g. `then.0`) with the current function's
     /// mangled symbol so it matches the emitted block label `{fn}.{block}:`.
     fn block_label(&self, label: &str) -> String {
@@ -2416,32 +2404,6 @@ mod tests {
         assert!(asm.contains("_start:"));
         assert!(asm.contains("    call main"));
         assert!(asm.contains("    movq $60, %rax"));
-    }
-
-    #[test]
-    fn test_compile_inline_label_uses_qualified_symbol() {
-        let program = Program {
-            functions: vec![Function {
-                name: "main".to_string(),
-                params: vec![],
-                ret: Type::I64,
-                locals: vec![],
-                blocks: vec![BasicBlock {
-                    label: "entry".to_string(),
-                    instructions: vec![
-                        Instruction::Label("manual".to_string()),
-                        Instruction::Return(Some(Value::ConstI64(0))),
-                    ],
-                }],
-                entry: "entry".to_string(),
-            }],
-            globals: vec![],
-            externs: vec![],
-        };
-        let asm = generate_assembly(&program).expect("inline label should compile");
-        assert!(asm.contains("main.manual:"), "asm:\n{}", asm);
-        assert!(!asm.contains("\nmanual:"), "asm:\n{}", asm);
-        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
     }
 
     #[test]

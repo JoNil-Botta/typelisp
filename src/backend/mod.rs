@@ -309,7 +309,9 @@ fn validate_value_type(
 }
 
 fn is_pointer_sized_type(ty: &Type) -> bool {
-    matches!(ty, Type::I64 | Type::U64 | Type::Func(_, _))
+    // An enum value is a pointer to its inline tagged storage, so it is
+    // pointer-sized like I64/U64/function pointers.
+    matches!(ty, Type::I64 | Type::U64 | Type::Func(_, _) | Type::Enum(_))
 }
 
 fn is_sized_backend_type(ty: &Type) -> bool {
@@ -815,7 +817,7 @@ impl X86_64Backend {
         for (var, ty) in &func.params {
             let offset = self.var_offsets[var];
             match ty {
-                Type::I64 | Type::U64 | Type::Func(_, _) => {
+                Type::I64 | Type::U64 | Type::Func(_, _) | Type::Enum(_) => {
                     if int_param < param_regs.len() {
                         self.emit(&format!(
                             "    movq {}, {}(%rbp)",
@@ -2617,5 +2619,73 @@ mod tests {
         };
         let asm = generate_assembly(&program).expect("bit-not should compile");
         assert!(asm.contains("notq %rax"), "asm:\n{}", asm);
+    }
+
+    // ------------------------------------------------------------------
+    // Sum types + pattern matching — Issue #41
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_backend_enum_constructor_and_match() {
+        let asm = compile_ok(
+            "(defenum Shape (Circle i64) (Square i64) (Nothing))\n\
+             (define (area [s : Shape]) : i64 \
+               (match s [(Circle r) (* r r)] [(Square w) (* w w)] [Nothing 0]))\n\
+             (define (main) : i64 (area (Circle 5)))",
+        );
+
+        // No instruction fell through to the unimplemented stub.
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+
+        // Tag dispatch compares the loaded tag against each variant index.
+        assert!(asm.contains("cmpq"), "expected tag cmpq; asm:\n{}", asm);
+        // Tag immediates appear as movq $<tag> material.
+        assert!(asm.contains("movq $0,"), "asm:\n{}", asm);
+        assert!(asm.contains("movq $1,"), "asm:\n{}", asm);
+
+        // Match arms jump to fully-qualified, function-prefixed labels.
+        assert!(
+            asm.contains("_tl_area.match_arm."),
+            "expected qualified arm label; asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("jnz _tl_area.match_arm."),
+            "expected conditional jump to arm; asm:\n{}",
+            asm
+        );
+
+        // Constructor materializes the storage address (AddrOf -> leaq) and
+        // writes fields through the computed pointer.
+        assert!(
+            asm.contains("leaq"),
+            "expected leaq for AddrOf; asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("(%r10)"),
+            "expected pointer store/load through %r10; asm:\n{}",
+            asm
+        );
+
+        // The Circle payload (5) is stored by the constructor in main.
+        assert!(asm.contains("movq $5,"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_backend_match_payload_gep_offset() {
+        // The payload of Circle lives at byte offset 8 (after the i64 tag); the
+        // arm's field Load adds $8 to the base pointer.
+        let asm = compile_ok(
+            "(defenum Box (Wrap i64) (Empty))\n\
+             (define (unwrap [b : Box]) : i64 \
+               (match b [(Wrap x) x] [Empty 0]))",
+        );
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("movq $8, %rcx"),
+            "expected payload gep at byte offset 8; asm:\n{}",
+            asm
+        );
     }
 }

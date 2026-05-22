@@ -118,8 +118,12 @@ impl<'a> Parser<'a> {
                 self.advance()?;
                 self.parse_extern()
             }
+            Token::Ident(s) if s == "defenum" => {
+                self.advance()?;
+                self.parse_defenum()
+            }
             _ => Err(ParseError {
-                msg: format!("expected define or extern, got {:?}", self.current),
+                msg: format!("expected define, extern or defenum, got {:?}", self.current),
                 span: self.span(),
             }),
         }
@@ -182,6 +186,34 @@ impl<'a> Parser<'a> {
         let ty = self.parse_type()?;
         self.expect(Token::RParen)?;
         Ok(Decl::Extern { name, ty })
+    }
+
+    /// Parse `(defenum Name (Variant Ty...) (Variant2 ...) ...)`. The leading
+    /// `(` and `defenum` ident have already been consumed.
+    fn parse_defenum(&mut self) -> Result<Decl, ParseError> {
+        let name = self.expect_ident()?;
+        let mut variants = Vec::new();
+        while self.current != Token::RParen {
+            self.expect(Token::LParen)?;
+            let vname = self.expect_ident()?;
+            let mut fields = Vec::new();
+            while self.current != Token::RParen {
+                fields.push(self.parse_type()?);
+            }
+            self.advance()?; // consume the variant's RParen
+            variants.push(VariantDef {
+                name: vname,
+                fields,
+            });
+        }
+        self.expect(Token::RParen)?;
+        if variants.is_empty() {
+            return Err(ParseError {
+                msg: format!("defenum '{}' must declare at least one variant", name),
+                span: self.span(),
+            });
+        }
+        Ok(Decl::DefEnum { name, variants })
     }
 
     fn parse_type(&mut self) -> Result<Type, ParseError> {
@@ -454,6 +486,21 @@ impl<'a> Parser<'a> {
                 let end = self.expect_rparen_span()?;
                 (Expr::ArrayRef { expr, index }, end)
             }
+            Token::Ident(s) if s == "match" => {
+                // (match scrutinee [pattern body] ...)
+                self.advance()?;
+                let scrutinee = Box::new(self.parse_expr()?);
+                let mut arms = Vec::new();
+                while self.current != Token::RParen {
+                    self.expect(Token::LBracket)?;
+                    let pattern = self.parse_pattern()?;
+                    let body = self.parse_expr()?;
+                    self.expect(Token::RBracket)?;
+                    arms.push((pattern, body));
+                }
+                let end = self.expect_rparen_span()?;
+                (Expr::Match { scrutinee, arms }, end)
+            }
             _ => {
                 // Function call or binary operator
                 let op = self.try_parse_binop();
@@ -476,6 +523,39 @@ impl<'a> Parser<'a> {
         };
 
         Ok(Expr::spanned(expr, start.merge(&end)))
+    }
+
+    /// Parse a `match` arm pattern: `_`, a bare nullary variant `Variant`, or a
+    /// variant with positional bindings `(Variant b1 b2 ...)`.
+    fn parse_pattern(&mut self) -> Result<Pattern, ParseError> {
+        match &self.current {
+            Token::Ident(s) if s == "_" => {
+                self.advance()?;
+                Ok(Pattern::Wildcard)
+            }
+            Token::Ident(s) => {
+                let name = s.clone();
+                self.advance()?;
+                Ok(Pattern::Variant {
+                    name,
+                    bindings: Vec::new(),
+                })
+            }
+            Token::LParen => {
+                self.advance()?;
+                let name = self.expect_ident()?;
+                let mut bindings = Vec::new();
+                while self.current != Token::RParen {
+                    bindings.push(self.expect_ident()?);
+                }
+                self.advance()?; // consume RParen
+                Ok(Pattern::Variant { name, bindings })
+            }
+            _ => Err(ParseError {
+                msg: format!("expected pattern, got {:?}", self.current),
+                span: self.span(),
+            }),
+        }
     }
 
     fn try_parse_binop(&mut self) -> Option<BinOp> {
@@ -613,5 +693,88 @@ mod tests {
         let src = "(define a 1)\n(define b 2)\n(define c : 3 4)";
         let err = parse(src).unwrap_err();
         assert_eq!(err.span.start_line, 3, "error: {}", err);
+    }
+
+    // ------------------------------------------------------------------
+    // Sum types + pattern matching — Issue #41
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_defenum() {
+        let prog = parse("(defenum Shape (Circle f64) (Square i64) (Nothing))").unwrap();
+        assert_eq!(prog.decls.len(), 1);
+        match &prog.decls[0] {
+            Decl::DefEnum { name, variants } => {
+                assert_eq!(name, "Shape");
+                assert_eq!(variants.len(), 3);
+                assert_eq!(variants[0].name, "Circle");
+                assert_eq!(variants[0].fields, vec![Type::F64]);
+                assert_eq!(variants[1].name, "Square");
+                assert_eq!(variants[1].fields, vec![Type::I64]);
+                assert_eq!(variants[2].name, "Nothing");
+                assert!(variants[2].fields.is_empty());
+            }
+            other => panic!("expected DefEnum, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_defenum_empty_is_error() {
+        assert!(parse("(defenum Empty)").is_err());
+    }
+
+    #[test]
+    fn test_parse_match_arms_and_patterns() {
+        let prog = parse(
+            "(define (f [s : Shape]) : i64 \
+               (match s [(Circle r) 1] [(Square w) 2] [_ 3]))",
+        )
+        .unwrap();
+        let body = match &prog.decls[0] {
+            Decl::DefFn { body, .. } => body.unspan(),
+            other => panic!("expected DefFn, got {:?}", other),
+        };
+        match body {
+            Expr::Match { arms, .. } => {
+                assert_eq!(arms.len(), 3);
+                assert_eq!(
+                    arms[0].0,
+                    Pattern::Variant {
+                        name: "Circle".into(),
+                        bindings: vec!["r".into()]
+                    }
+                );
+                assert_eq!(
+                    arms[1].0,
+                    Pattern::Variant {
+                        name: "Square".into(),
+                        bindings: vec!["w".into()]
+                    }
+                );
+                assert_eq!(arms[2].0, Pattern::Wildcard);
+            }
+            other => panic!("expected Match, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_nullary_variant_pattern() {
+        let prog = parse("(define (f [c : Color]) : i64 (match c [Red 0] [_ 1]))").unwrap();
+        let body = match &prog.decls[0] {
+            Decl::DefFn { body, .. } => body.unspan(),
+            other => panic!("expected DefFn, got {:?}", other),
+        };
+        match body {
+            Expr::Match { arms, .. } => {
+                assert_eq!(
+                    arms[0].0,
+                    Pattern::Variant {
+                        name: "Red".into(),
+                        bindings: vec![]
+                    }
+                );
+            }
+            other => panic!("expected Match, got {:?}", other),
+        }
     }
 }

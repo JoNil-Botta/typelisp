@@ -130,6 +130,15 @@ fn type_lisp_programs_compile_link_and_run() {
             stdout: "",
             deps: &[],
         },
+        // refs #27/#41: a String-payload enum variant constructed, returned
+        // across a function boundary (heap-promoted), and its payload bound
+        // back out in a `match` arm. `(TIdent "hello")` -> length 5.
+        Case {
+            name: "enum_string_payload",
+            exit_code: 5,
+            stdout: "",
+            deps: &[],
+        },
     ];
 
     for case in cases {
@@ -246,6 +255,14 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         // through the explicit compile -> as -> ld -> run pipeline.
         Case {
             name: "lexer",
+            exit_code: 5,
+            stdout: "",
+            deps: &[],
+        },
+        // refs #27/#41: String-payload variant construct/return/match, also
+        // through the explicit compile -> as -> ld -> run pipeline.
+        Case {
+            name: "enum_string_payload",
             exit_code: 5,
             stdout: "",
             deps: &[],

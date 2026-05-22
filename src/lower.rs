@@ -4039,6 +4039,180 @@ mod tests {
         );
     }
 
+    // ------------------------------------------------------------------
+    // Dynamic arrays of AGGREGATE elements (enum / struct / String).
+    // An aggregate value is a pointer (8 bytes), so the element buffer holds one
+    // pointer per element: stride = 8 (driven by Type::size, NOT hardcoded), the
+    // element Gep carries the aggregate element type, and the element Store/Load
+    // move a pointer (ty = the aggregate). Refs #13/#27/#41.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_lower_make_array_of_enum_scales_by_pointer_size() {
+        // `(make-array <Enum> n)`: an enum element is pointer-sized, so the
+        // element buffer byte count scales by 8 — exactly like an i64 array, and
+        // derived from Type::size (which reports 8 for an enum), not hardcoded.
+        let src = format!("{SHAPE}\n(define (f [n : i64]) : i64 (begin (make-array Shape n) 0))");
+        let prog = parse(&src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().position(|f| f.name == "f").unwrap();
+        assert_eq!(
+            count(&ir, f, |i| matches!(
+                i,
+                Instruction::BinOp {
+                    op: BinOp::Mul,
+                    rhs: Value::ConstI64(8),
+                    ..
+                }
+            )),
+            1,
+            "enum element stride must be 8 (pointer-sized)"
+        );
+    }
+
+    #[test]
+    fn test_lower_array_set_enum_geps_and_stores_pointer() {
+        // `(array-set! a i (Circle 3))` over `(Array Shape)`: the element address
+        // is a Gep whose elem_ty is the ENUM (stride 8), and the stored value is
+        // the constructed enum POINTER, written with a Store typed as the enum.
+        let src = format!(
+            "{SHAPE}\n(define (f [a : (Array Shape)] [i : i64]) : unit (array-set! a i (Circle 3)))"
+        );
+        let prog = parse(&src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().position(|f| f.name == "f").unwrap();
+
+        assert!(
+            ir.functions[f]
+                .blocks
+                .iter()
+                .any(|b| b.instructions.iter().any(|i| matches!(
+                    i,
+                    Instruction::Gep { elem_ty: Type::Enum(n), .. } if n == "Shape"
+                ))),
+            "element Gep must carry the enum element type (stride 8)"
+        );
+        assert!(
+            ir.functions[f]
+                .blocks
+                .iter()
+                .any(|b| b.instructions.iter().any(|i| matches!(
+                    i,
+                    Instruction::Store { ty: Type::Enum(n), .. } if n == "Shape"
+                ))),
+            "the stored element value is an enum pointer (Store typed as the enum)"
+        );
+        // The bounds-check trap is still present.
+        assert!(
+            ir.functions[f]
+                .blocks
+                .iter()
+                .any(|b| b.instructions.iter().any(|i| matches!(
+                    i,
+                    Instruction::Call { func, dst: None, .. } if func == "tl_oob_abort"
+                ))),
+            "bounds-check trap must remain for aggregate-element stores"
+        );
+    }
+
+    #[test]
+    fn test_lower_array_ref_enum_geps_and_loads_pointer() {
+        // `(array-ref a i)` over `(Array Shape)`: the element Gep carries the enum
+        // element type (stride 8) and the element is Loaded typed as the enum
+        // (i.e. its pointer), so the result flows on as a real enum value.
+        let src = format!(
+            "{SHAPE}\n(define (f [a : (Array Shape)] [i : i64]) : i64 \
+             (match (array-ref a i) [(Circle r) r] [(Square s) s] [Nothing 0]))"
+        );
+        let prog = parse(&src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().position(|f| f.name == "f").unwrap();
+
+        assert!(
+            ir.functions[f]
+                .blocks
+                .iter()
+                .any(|b| b.instructions.iter().any(|i| matches!(
+                    i,
+                    Instruction::Gep { elem_ty: Type::Enum(n), .. } if n == "Shape"
+                ))),
+            "element Gep must carry the enum element type (stride 8)"
+        );
+        assert!(
+            ir.functions[f]
+                .blocks
+                .iter()
+                .any(|b| b.instructions.iter().any(|i| matches!(
+                    i,
+                    Instruction::Load { ty: Type::Enum(n), .. } if n == "Shape"
+                ))),
+            "the element is loaded as an enum pointer (Load typed as the enum)"
+        );
+    }
+
+    #[test]
+    fn test_lower_enum_stored_into_escaping_array_is_heap_promoted() {
+        // Soundness (refs #85): when the array ESCAPES via the return, a
+        // constructed enum stored into it must be heap-promoted (tl_alloc), not a
+        // frame temp — otherwise the stored pointer would dangle once the frame
+        // is gone. The escape analysis descends `DynArray(Enum) -> Enum`, so the
+        // `(Circle 3)` storage is heap, with NO frame Alloc/AddrOf for it.
+        let src = format!(
+            "{SHAPE}\n(define (mk) : (Array Shape) \
+               (let ([a (make-array Shape 1)]) (begin (array-set! a 0 (Circle 3)) a)))"
+        );
+        let prog = parse(&src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().position(|f| f.name == "mk").unwrap();
+
+        // No frame AddrOf at all: neither the constructed enum nor the (escaping)
+        // fat-array value takes a frame address — both are heap-promoted.
+        assert_eq!(
+            count(&ir, f, |i| matches!(i, Instruction::AddrOf { .. })),
+            0,
+            "an escaping array's enum element must be heap-promoted (no frame AddrOf)"
+        );
+        // tl_alloc calls: element buffer + fat-array value + the constructed enum.
+        assert_eq!(
+            count(
+                &ir,
+                f,
+                |i| matches!(i, Instruction::Call { func, .. } if func == "tl_alloc")
+            ),
+            3,
+            "expected tl_alloc for buffer + fat value + heap-promoted enum element"
+        );
+    }
+
+    #[test]
+    fn test_lower_make_array_of_struct_and_string_scale_by_pointer_size() {
+        // Structs and Strings are likewise pointer-sized elements (stride 8).
+        for elem in ["Point", "String"] {
+            let prefix = if elem == "Point" {
+                "(defstruct Point (x i64) (y i64))\n"
+            } else {
+                ""
+            };
+            let src =
+                format!("{prefix}(define (f [n : i64]) : i64 (begin (make-array {elem} n) 0))");
+            let prog = parse(&src).unwrap();
+            let ir = lower_program(&prog);
+            let f = ir.functions.iter().position(|f| f.name == "f").unwrap();
+            assert_eq!(
+                count(&ir, f, |i| matches!(
+                    i,
+                    Instruction::BinOp {
+                        op: BinOp::Mul,
+                        rhs: Value::ConstI64(8),
+                        ..
+                    }
+                )),
+                1,
+                "{elem} element stride must be 8 (pointer-sized)"
+            );
+        }
+    }
+
     #[test]
     fn test_lower_match_emits_tag_load_eq_branch_phi() {
         // A 3-arm match (2 variant arms + nullary) over a 3-variant enum:

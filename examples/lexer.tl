@@ -5,8 +5,8 @@
 ;; hardcoded source String character-by-character and produces a token stream,
 ;; proving the language primitives — String indexing (`string-ref`,
 ;; `string-length`), `char`->`i64` casts and comparison, `defenum` + `match`,
-;; `while`/`let`/`set!`/`begin`, and a dynamic `(Array i64)` — compose into the
-;; scanning loop a real lexer needs.
+;; `while`/`let`/`set!`/`begin`, and a dynamic array of `Token` AGGREGATES
+;; (`(Array Token)`) — compose into the scanning loop a real lexer needs.
 ;;
 ;; Token grammar handled this slice (a tiny arithmetic surface):
 ;;   integers (one or more decimal digits), `+`, `(`, `)`, and whitespace
@@ -14,13 +14,18 @@
 ;; An unexpected character aborts the program via the `panic` builtin (#45),
 ;; exactly as a real lexer reports malformed input.
 ;;
+;; Token stream representation (refs #13/#27/#41): the scanner now records each
+;; emitted token as a real `Token` value in a dynamic `(Array Token)` — a
+;; dynamic array of enum aggregates. Each element is a pointer to the token's
+;; inline `{ tag, payload }` storage; `array-set!` stores that pointer and
+;; `array-ref` reads it back as a `Token` that `match` can project (see
+;; `main`, which reads token 0 back out and tags it). This replaces the earlier
+;; workaround that stored numeric *tags* in an `(Array i64)` because dynamic
+;; arrays of enum payloads did not lower.
+;;
 ;; Deferred — current language gaps, recorded as self-hosting signal:
-;;   - Identifiers / keywords (`TIdent`): String-payload enum variants are not
-;;     constructible+returnable cleanly today, so identifier tokens are skipped.
-;;   - Tokens are recorded as numeric *tags* in an `(Array i64)` rather than as
-;;     `Token` aggregates, because dynamic arrays of enum payloads do not lower
-;;     yet. The `Token` enum and its `match`-based projections are still
-;;     exercised on every emitted token.
+;;   - Identifiers / keywords (`TIdent`): a String-payload variant token kind is
+;;     not added to this slice's grammar yet, so identifier tokens are skipped.
 ;;   - Digit char literals: `#\0` lexes as NUL (the `\0` escape), so digit and
 ;;     whitespace classification compares the char's `i64` code point against
 ;;     ASCII constants rather than against char literals.
@@ -32,9 +37,9 @@
   (TRParen)
   (TEnd))
 
-;; Numeric tag for a token kind, so a token stream can be recorded in a dynamic
-;; i64 array (arrays of enum aggregates do not lower yet). Exercises `match`
-;; over every variant of the Token enum.
+;; Numeric tag for a token kind. Exercises `match` over every variant of the
+;; Token enum, and is used to project a `Token` read back out of the token
+;; array (proving the aggregate round-trips through `(Array Token)`).
 (define (token-tag [t : Token]) : i64
   (match t
     [(TInt _) 1]
@@ -76,11 +81,13 @@
                 (panic "lexer: unexpected character")
                 TEnd)))))
 
-;; Lex `src`, recording each token's numeric tag into `tags` (which must be
-;; large enough to hold every token) and returning the token count. The loop
-;; is exactly the shape of a real lexer: a cursor over the input, a whitespace
-;; skip, multi-char accumulation for integers, and single-char tokens.
-(define (lex [src : String] [tags : (Array i64)]) : i64
+;; Lex `src`, recording each emitted `Token` value into `toks` (which must be
+;; large enough to hold every token plus the TEnd sentinel) and returning the
+;; token count. The loop is exactly the shape of a real lexer: a cursor over the
+;; input, a whitespace skip, multi-char accumulation for integers, and
+;; single-char tokens. Each `(array-set! toks count <Token>)` stores a real
+;; constructed `Token` aggregate into the `(Array Token)`.
+(define (lex [src : String] [toks : (Array Token)]) : i64
   (let ([i : i64 0]
         [n : i64 (string-length src)]
         [count : i64 0])
@@ -97,18 +104,23 @@
                         (begin
                           (set! acc (+ (* acc 10) (digit-value (string-ref src i))))
                           (set! i (+ i 1))))
-                      (array-set! tags count (token-tag (TInt acc)))
+                      (array-set! toks count (TInt acc))
                       (set! count (+ count 1))))
                   (begin
-                    (array-set! tags count (token-tag (single-token c)))
+                    (array-set! toks count (single-token c))
                     (set! count (+ count 1))
                     (set! i (+ i 1)))))))
       ;; A real lexer terminates the stream; record the sentinel too.
-      (array-set! tags count (token-tag TEnd))
+      (array-set! toks count TEnd)
       count)))
 
-;; Lex the sample `"12 + (34)"` and return the token count (excluding the
-;; TEnd sentinel). Tokens: TInt(12) TPlus TLParen TInt(34) TRParen => 5.
+;; Lex the sample `"12 + (34)"`, store the tokens as real `Token` aggregates,
+;; then read the first token back out of the array and project it with
+;; `token-tag` — proving a `Token` round-trips through `(Array Token)`.
+;; Tokens: TInt(12) TPlus TLParen TInt(34) TRParen => first token is TInt, so
+;; reading token 0 back and tagging it yields 1.
 (define (main) : i64
-  (let ([tags : (Array i64) (make-array i64 16)])
-    (lex "12 + (34)" tags)))
+  (let ([toks : (Array Token) (make-array Token 16)])
+    (begin
+      (lex "12 + (34)" toks)
+      (token-tag (array-ref toks 0)))))

@@ -1211,12 +1211,35 @@ fn type_contains_struct_value(ty: &Type) -> bool {
     }
 }
 
-/// Whether a dynamic array may hold elements of `ty`. This slice supports
-/// scalar element types (integers, bool, char, f64) — exactly the types the
-/// backend can `Load`/`Store` through a computed element address. Nested
-/// arrays, tuples, enums and strings are deferred (see #13).
+/// Whether a dynamic array may hold elements of `ty` (after nominal
+/// resolution). Two element categories are supported:
+///
+/// * Scalars (integers, bool, char, f64) — stored inline by value; the backend
+///   `Load`/`Store`s them through a computed element address at their natural
+///   width.
+/// * Aggregates (enum, struct, String, and nested dynamic arrays) — each is a
+///   pointer-sized value (8 bytes; see `Type::size`), so the element buffer
+///   holds one *pointer per element*. `array-set!` stores that pointer and
+///   `array-ref` loads it back typed as the aggregate element type. Stride and
+///   Load/Store width both come from `Type::size`, which already reports 8 for
+///   these, so no representation is special-cased here. This lets a dynamic
+///   array hold, e.g., a real `Token` stream (refs #13/#27/#41).
+///
+/// Still deferred: fixed-size nested `(Array T N)`, tuples, `f32`, and
+/// unresolved type variables (`Type::Var`) — their inline/by-value element
+/// layout is a separate slice.
 fn is_dyn_array_elem_supported(ty: &Type) -> bool {
-    ty.is_integer() || matches!(ty, Type::Bool | Type::Char | Type::F64)
+    ty.is_integer()
+        || matches!(
+            ty,
+            Type::Bool
+                | Type::Char
+                | Type::F64
+                | Type::Enum(_)
+                | Type::Struct(_)
+                | Type::String
+                | Type::DynArray(_)
+        )
 }
 
 #[cfg(test)]
@@ -1943,6 +1966,92 @@ mod tests {
         // Fixed-size `(Array elem N)` is also accepted by the typechecker.
         let src = "(define (f [a : (Array i64 3)] [v : i64]) : unit (array-set! a 0 v))";
         assert!(check(src).is_ok());
+    }
+
+    // ------------------------------------------------------------------
+    // Dynamic arrays of AGGREGATE elements (enum / struct / String).
+    // An aggregate value is a pointer (8 bytes), so the element buffer holds
+    // one pointer per element; the typechecker now accepts these element types
+    // in make-array/array-ref/array-set! (refs #13/#27/#41).
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_typecheck_make_array_of_enum_ok() {
+        // `(make-array <Enum> n)` type-checks; the result is `(Array <Enum>)`.
+        let src =
+            format!("{SHAPE}\n(define (f [n : i64]) : i64 (array-length (make-array Shape n)))");
+        assert!(check(&src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_make_array_of_struct_ok() {
+        let src =
+            format!("{POINT}\n(define (f [n : i64]) : i64 (array-length (make-array Point n)))");
+        assert!(check(&src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_make_array_of_string_ok() {
+        let src = "(define (f [n : i64]) : i64 (array-length (make-array String n)))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_array_set_enum_element_ok() {
+        // Storing a constructed enum value into an `(Array <Enum>)` is accepted.
+        let src = format!(
+            "{SHAPE}\n(define (f [a : (Array Shape)] [i : i64]) : unit (array-set! a i (Circle 3)))"
+        );
+        assert!(check(&src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_array_set_enum_element_wrong_type_rejected() {
+        // The stored value is still checked against the element type: a `bool`
+        // does not match the enum element type.
+        let src = format!(
+            "{SHAPE}\n(define (f [a : (Array Shape)] [i : i64]) : unit (array-set! a i true))"
+        );
+        let err = check(&src).unwrap_err();
+        assert!(err.msg.contains("value type mismatch"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_array_ref_enum_element_returns_enum_usable_in_match() {
+        // `array-ref` over `(Array <Enum>)` yields the element ENUM type, so the
+        // result can be `match`ed and a payload bound back out (the lexer's
+        // "read the i-th token then dispatch on its variant" pattern).
+        let src = format!(
+            "{SHAPE}\n(define (f [a : (Array Shape)] [i : i64]) : i64 \
+             (match (array-ref a i) [(Circle r) r] [(Square s) s] [Nothing 0]))"
+        );
+        assert!(check(&src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_array_ref_struct_element_returns_struct_usable_in_field_access() {
+        // `array-ref` over `(Array <Struct>)` yields the element STRUCT type, so
+        // a field can be read off the result.
+        let src = format!(
+            "{POINT}\n(define (f [a : (Array Point)] [i : i64]) : i64 \
+             (struct-get (array-ref a i) x))"
+        );
+        assert!(check(&src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_make_array_of_enum_via_let_construct_match() {
+        // End-to-end: build an enum array, store a constructed variant, read it
+        // back, and match on it — the full lexer-token-stream usage pattern.
+        let src = format!(
+            "{SHAPE}\n(define (main) : i64 \
+             (let ([arr (make-array Shape 2)]) \
+               (begin \
+                 (array-set! arr 0 (Circle 7)) \
+                 (array-set! arr 1 Nothing) \
+                 (match (array-ref arr 0) [(Circle r) r] [(Square s) s] [Nothing 0]))))"
+        );
+        assert!(check(&src).is_ok());
     }
 
     #[test]

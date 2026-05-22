@@ -148,6 +148,9 @@ pub enum Expr {
     MakeArray { elem_ty: Type, len: Box<Expr> },
     /// Array access: (array-ref expr index)
     ArrayRef { expr: Box<Expr>, index: Box<Expr> },
+    /// String byte indexing: `(string-ref s i)` / `(char-at s i)`. Returns the
+    /// byte at index `i` of String `s` as a `char`, bounds-checked at runtime.
+    StringRef { expr: Box<Expr>, index: Box<Expr> },
     /// While loop: (while cond body)
     While { cond: Box<Expr>, body: Box<Expr> },
     /// Begin / sequence: (begin e1 e2 ...)

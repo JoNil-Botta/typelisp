@@ -504,6 +504,14 @@ impl<'a> Parser<'a> {
                 let end = self.expect_rparen_span()?;
                 (Expr::ArrayRef { expr, index }, end)
             }
+            Token::Ident(s) if s == "string-ref" || s == "char-at" => {
+                // (string-ref s i) / (char-at s i)
+                self.advance()?;
+                let expr = Box::new(self.parse_expr()?);
+                let index = Box::new(self.parse_expr()?);
+                let end = self.expect_rparen_span()?;
+                (Expr::StringRef { expr, index }, end)
+            }
             Token::Ident(s) if s == "match" => {
                 // (match scrutinee [pattern body] ...)
                 self.advance()?;

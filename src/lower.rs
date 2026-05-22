@@ -548,6 +548,37 @@ impl FnLowerer {
             return self.load_fat_len(&fat, len_offset);
         }
 
+        // `(string-eq a b)` / `(string=? a b)` compare two strings byte-wise.
+        // Each operand is a pointer to inline fat `{ ptr, len }` storage; extract
+        // the data pointer (offset 0) and length (offset 8) of both operands and
+        // dispatch to the emit-on-demand runtime `tl_string_eq(a_ptr, a_len,
+        // b_ptr, b_len) -> i64 (0/1)`. A `Call` (not an inline Load/Gep loop) is
+        // used so the byte comparison is never dropped by DCE — the optimizer's
+        // `has_side_effects` treats `Load`/`Gep` as pure, but a `Call` survives.
+        if let ast::Expr::Var(name) = func.unspan()
+            && (name == "string-eq" || name == "string=?")
+            && args.len() == 2
+        {
+            let a = self.lower_expr(&args[0]);
+            let b = self.lower_expr(&args[1]);
+            let (a_ptr, a_len) = self.load_string_fields(&a);
+            let (b_ptr, b_len) = self.load_string_fields(&b);
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: "tl_string_eq".to_string(),
+                args: vec![
+                    Value::Var(a_ptr),
+                    Value::Var(a_len),
+                    Value::Var(b_ptr),
+                    Value::Var(b_len),
+                ],
+                ty: Type::Bool,
+            });
+            self.record_local(dst, Type::Bool);
+            return Value::Var(dst);
+        }
+
         // Evaluate arguments left-to-right
         let arg_vals: Vec<Value> = args.iter().map(|a| self.lower_expr(a)).collect();
 
@@ -894,6 +925,32 @@ impl FnLowerer {
         });
         self.record_local(dst, to_ty);
         Value::Var(dst)
+    }
+
+    /// Extract the `(data_ptr, len)` fields of a string fat value. `s` is a
+    /// pointer to inline `{ ptr, len }` storage; load the data pointer (offset
+    /// 0, U64) and the byte length (offset 8, I64) and return the two result
+    /// vars. Used to feed `tl_string_eq`.
+    fn load_string_fields(&mut self, s: &Value) -> (VarId, VarId) {
+        let ptr_field = self.gep_byte(s, STRING_PTR_OFFSET);
+        let ptr_dst = self.builder.fresh_var();
+        self.builder.emit(Instruction::Load {
+            dst: ptr_dst,
+            src: Value::Var(ptr_field),
+            ty: Type::U64,
+        });
+        self.record_local(ptr_dst, Type::U64);
+
+        let len_field = self.gep_byte(s, STRING_LEN_OFFSET);
+        let len_dst = self.builder.fresh_var();
+        self.builder.emit(Instruction::Load {
+            dst: len_dst,
+            src: Value::Var(len_field),
+            ty: Type::I64,
+        });
+        self.record_local(len_dst, Type::I64);
+
+        (ptr_dst, len_dst)
     }
 
     /// Emit `dst = gep base, byte_offset : i8` — a pointer `byte_offset` bytes
@@ -1531,6 +1588,48 @@ mod tests {
             instrs
                 .iter()
                 .any(|i| matches!(i, Instruction::Load { ty: Type::I64, .. }))
+        );
+    }
+
+    #[test]
+    fn test_lower_string_eq_extracts_fields_and_calls_runtime() {
+        // `(string-eq a b)` lowers to: extract each operand's data pointer
+        // (U64) and length (I64) fields, then a `Call tl_string_eq` with the
+        // four args, whose result is a bool. A `Call` (not an inline loop) is
+        // used so the byte comparison survives DCE.
+        let prog = parse(r#"(define (eqp) : bool (string-eq "hi" "hi"))"#).unwrap();
+        let ir = lower_program(&prog);
+        let instrs: Vec<&Instruction> = ir.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .collect();
+
+        // The runtime helper is called by name with four arguments.
+        let call = instrs.iter().find_map(|i| match i {
+            Instruction::Call { func, args, ty, .. } if func == "tl_string_eq" => Some((args, ty)),
+            _ => None,
+        });
+        let (args, ty) = call.expect("expected a Call to tl_string_eq");
+        assert_eq!(
+            args.len(),
+            4,
+            "tl_string_eq takes ptr/len for both operands"
+        );
+        assert_eq!(*ty, Type::Bool, "string-eq yields a bool");
+
+        // Both the data-pointer (U64) and length (I64) fields are loaded.
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Load { ty: Type::U64, .. })),
+            "expected a Load of the U64 data-pointer field"
+        );
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Load { ty: Type::I64, .. })),
+            "expected a Load of the I64 length field"
         );
     }
 

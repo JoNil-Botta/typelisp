@@ -147,9 +147,14 @@ fn validate_function(func: &Function, global_types: &HashMap<String, Type>) -> R
                         return unsupported("unsupported f64 unary operator");
                     }
                 }
-                Instruction::Mov { src, .. } => {
-                    check_operand(src, global_types)
-                        .map_err(|w| unsupported_value(&func.name, &w))?;
+                Instruction::Mov { src, ty, .. } => {
+                    if *ty == Type::Unit {
+                        validate_unit_value(src, &var_types, global_types)
+                            .map_err(|w| unsupported_value(&func.name, &w))?;
+                    } else {
+                        check_operand(src, global_types)
+                            .map_err(|w| unsupported_value(&func.name, &w))?;
+                    }
                 }
                 Instruction::Cast {
                     src,
@@ -170,10 +175,20 @@ fn validate_function(func: &Function, global_types: &HashMap<String, Type>) -> R
                     }
                 }
                 Instruction::Return(Some(v)) => {
-                    check_operand(v, global_types)
-                        .map_err(|w| unsupported_value(&func.name, &w))?;
+                    if func.ret == Type::Unit {
+                        validate_unit_value(v, &var_types, global_types)
+                            .map_err(|w| unsupported_value(&func.name, &w))?;
+                    } else {
+                        check_operand(v, global_types)
+                            .map_err(|w| unsupported_value(&func.name, &w))?;
+                    }
                 }
-                Instruction::Return(None) | Instruction::Label(_) | Instruction::Jump(_) => {}
+                Instruction::Return(None) => {
+                    if func.ret != Type::Unit {
+                        return unsupported("missing return value for non-unit function");
+                    }
+                }
+                Instruction::Label(_) | Instruction::Jump(_) => {}
                 // `if`/`while` control flow — now codegen'd.
                 Instruction::Branch { cond, .. } => {
                     check_operand(cond, global_types)
@@ -181,31 +196,46 @@ fn validate_function(func: &Function, global_types: &HashMap<String, Type>) -> R
                 }
                 // `if` result selection — eliminated to predecessor copies before
                 // codegen (see `eliminate_phis`).
-                Instruction::Phi { incoming, .. } => {
+                Instruction::Phi { incoming, ty, .. } => {
                     for (val, _) in incoming {
-                        check_operand(val, global_types)
-                            .map_err(|w| unsupported_value(&func.name, &w))?;
+                        if *ty == Type::Unit {
+                            validate_unit_value(val, &var_types, global_types)
+                                .map_err(|w| unsupported_value(&func.name, &w))?;
+                        } else {
+                            check_operand(val, global_types)
+                                .map_err(|w| unsupported_value(&func.name, &w))?;
+                        }
                     }
                 }
                 // `let`/`set!` scalar locals and pointer values materialized by
                 // AddrOf/Gep. Non-Var addresses are still rejected because the
                 // selector only knows how to load addresses from local slots.
                 Instruction::Alloc { .. } => {}
-                Instruction::Load { src, .. } => {
+                Instruction::Load { src, ty, .. } => {
                     match src {
                         Value::Var(_) => {}
                         _ => return unsupported("load through a non-local address"),
                     }
-                    check_operand(src, global_types)
-                        .map_err(|w| unsupported_value(&func.name, &w))?;
+                    if *ty == Type::Unit {
+                        validate_unit_value(src, &var_types, global_types)
+                            .map_err(|w| unsupported_value(&func.name, &w))?;
+                    } else {
+                        check_operand(src, global_types)
+                            .map_err(|w| unsupported_value(&func.name, &w))?;
+                    }
                 }
-                Instruction::Store { dst, src, .. } => {
+                Instruction::Store { dst, src, ty } => {
                     match dst {
                         Value::Var(_) => {}
                         _ => return unsupported("store through a non-local address"),
                     }
-                    check_operand(src, global_types)
-                        .map_err(|w| unsupported_value(&func.name, &w))?;
+                    if *ty == Type::Unit {
+                        validate_unit_value(src, &var_types, global_types)
+                            .map_err(|w| unsupported_value(&func.name, &w))?;
+                    } else {
+                        check_operand(src, global_types)
+                            .map_err(|w| unsupported_value(&func.name, &w))?;
+                    }
                 }
                 Instruction::CallIndirect {
                     func: target, args, ..
@@ -305,6 +335,18 @@ fn validate_value_type(
         Value::ConstUnit => Some(Type::Unit),
         Value::Var(var) => var_types.get(var).cloned(),
         Value::Global(name) => global_types.get(name).cloned(),
+    }
+}
+
+fn validate_unit_value(
+    val: &Value,
+    var_types: &HashMap<VarId, Type>,
+    global_types: &HashMap<String, Type>,
+) -> Result<(), String> {
+    match validate_value_type(val, var_types, global_types) {
+        Some(Type::Unit) => Ok(()),
+        Some(ty) => Err(format!("unit-typed value expected, got {}", ty)),
+        None => Err("unit-typed value has unknown type".into()),
     }
 }
 
@@ -1972,6 +2014,40 @@ mod tests {
         assert!(asm.contains("tl_print_newline:"), "asm:\n{}", asm);
         assert!(asm.contains("    movb %dil, -1(%rbp)"), "asm:\n{}", asm);
         assert!(asm.contains("    movb $10, -1(%rbp)"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_unit_return_function() {
+        let asm = compile_ok(
+            r#"
+            (define (noop) : unit unit)
+            (define (main) : i64
+              (begin
+                (noop)
+                7))
+            "#,
+        );
+        assert!(asm.contains("_tl_noop:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call _tl_noop"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_unit_phi_and_store_are_noops() {
+        let asm = compile_ok(
+            r#"
+            (define (branch_unit [b : bool]) : unit
+              (if b unit unit))
+            (define (main) : i64
+              (begin
+                (let ([x : unit unit]) x)
+                (branch_unit true)
+                0))
+            "#,
+        );
+        assert!(asm.contains("_tl_branch_unit:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call _tl_branch_unit"), "asm:\n{}", asm);
         assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
     }
 

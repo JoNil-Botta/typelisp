@@ -54,6 +54,11 @@ fn type_lisp_programs_compile_link_and_run() {
             stdout: "A\n",
         },
         Case {
+            name: "unit_functions",
+            exit_code: 7,
+            stdout: "",
+        },
+        Case {
             name: "many_args",
             exit_code: 36,
             stdout: "",

@@ -876,6 +876,17 @@ impl FnLowerer {
             return Value::Var(dst);
         }
 
+        // `(substring s start len)` / `(string-slice s start len)` extracts the
+        // `len` bytes of String `s` beginning at byte offset `start` into a fresh
+        // heap-allocated String. The range is bounds-checked at runtime; see
+        // `lower_substring`.
+        if let ast::Expr::Var(name) = func.unspan()
+            && (name == "substring" || name == "string-slice")
+            && args.len() == 3
+        {
+            return self.lower_substring(&args[0], &args[1], &args[2]);
+        }
+
         // `(panic msg)` / `(error msg)` writes `msg` to fd 2 then terminates the
         // process — the lexer's unrecoverable-error primitive (refs #45). The
         // operand is a pointer to inline fat `{ ptr, len }` storage; extract the
@@ -1537,6 +1548,130 @@ impl FnLowerer {
         });
         self.record_local(result, Type::Char);
         Value::Var(result)
+    }
+
+    /// Lower `(substring s start len)` / `(string-slice s start len)`: a fresh
+    /// heap String holding the `len` bytes of String `s` starting at byte offset
+    /// `start` (a half-open `[start, start+len)` slice expressed as
+    /// start+length). The range is bounds-checked at runtime with two UNSIGNED
+    /// comparisons (so a negative `start` or `len` wraps to a huge unsigned value
+    /// and also traps), staged so the second never has to reason about the
+    /// `start + len` sum overflowing:
+    ///
+    /// 1. `start u<= s_len` — the start lies within (or at the end of) the
+    ///    source.
+    /// 2. `len u<= s_len - start` — the slice fits in what remains. The
+    ///    subtraction is computed only on the path where (1) held, so `s_len -
+    ///    start` is non-negative.
+    ///
+    /// As with `string-ref` the operands are reinterpreted to U64 via `Cast`
+    /// (not `Mov`, which copy-prop would fold back to the signed operand and
+    /// silently weaken the check). Either check failing branches to a block that
+    /// emits `Call tl_oob_abort` (a `Call` is the only form that survives DCE).
+    /// On success the actual byte copy + fat-value allocation is delegated to the
+    /// emit-on-demand runtime `tl_substring(src_ptr, start, slice_len) ->
+    /// {ptr, len}`, which `tl_alloc`s a `slice_len` buffer, copies the bytes from
+    /// `src_ptr + start`, then `tl_alloc`s the 16-byte fat value (mirroring
+    /// `tl_int_to_string`) so the result outlives the frame. The source length is
+    /// not passed — the range was already validated above. A
+    /// `Call` (not an inline copy loop) keeps the slice alive through DCE.
+    /// An empty slice (`slice_len == 0`) still yields a valid heap pointer.
+    fn lower_substring(
+        &mut self,
+        s: &ast::Expr,
+        start: &ast::Expr,
+        slice_len: &ast::Expr,
+    ) -> Value {
+        let str_val = self.lower_expr(s);
+        // Defensive: anything that isn't a String value can't be sliced. The
+        // typechecker rejects this, so just yield unit rather than miscompile.
+        if !matches!(self.value_type(&str_val), Type::String) {
+            return Value::ConstUnit;
+        }
+
+        let (s_ptr, s_len) = self.load_string_fields(&str_val);
+
+        let start_raw = self.lower_expr(start);
+        let start_i64 = self.cast_value(start_raw, Type::I64);
+        let len_raw = self.lower_expr(slice_len);
+        let len_i64 = self.cast_value(len_raw, Type::I64);
+
+        // Check 1: start u<= s_len (unsigned, so a negative start wraps high and
+        // also fails).
+        let start_u = self.cast_value(start_i64.clone(), Type::U64);
+        let s_len_u = self.cast_value(Value::Var(s_len), Type::U64);
+        let start_ok = self.builder.fresh_var();
+        self.builder.emit(Instruction::BinOp {
+            dst: start_ok,
+            op: BinOp::Le,
+            lhs: start_u.clone(),
+            rhs: s_len_u,
+            ty: Type::Bool,
+        });
+        self.record_local(start_ok, Type::Bool);
+
+        let rem_label = self.builder.fresh_label("substr_start_ok");
+        let fail_label = self.builder.fresh_label("substr_bounds_fail");
+        let copy_label = self.builder.fresh_label("substr_ok");
+        self.builder.emit(Instruction::Branch {
+            cond: Value::Var(start_ok),
+            true_label: rem_label.clone(),
+            false_label: fail_label.clone(),
+        });
+
+        // start_ok block: rem = s_len - start (non-negative here); then
+        // check 2: slice_len u<= rem.
+        self.builder.finish_block(&rem_label);
+        let rem = self.builder.fresh_var();
+        self.builder.emit(Instruction::BinOp {
+            dst: rem,
+            op: BinOp::Sub,
+            lhs: Value::Var(s_len),
+            rhs: start_i64.clone(),
+            ty: Type::I64,
+        });
+        self.record_local(rem, Type::I64);
+        let rem_u = self.cast_value(Value::Var(rem), Type::U64);
+        let len_u = self.cast_value(len_i64.clone(), Type::U64);
+        let len_ok = self.builder.fresh_var();
+        self.builder.emit(Instruction::BinOp {
+            dst: len_ok,
+            op: BinOp::Le,
+            lhs: len_u,
+            rhs: rem_u,
+            ty: Type::Bool,
+        });
+        self.record_local(len_ok, Type::Bool);
+        self.builder.emit(Instruction::Branch {
+            cond: Value::Var(len_ok),
+            true_label: copy_label.clone(),
+            false_label: fail_label.clone(),
+        });
+
+        // Out-of-bounds block: call the shared abort runtime, then (defensively)
+        // jump to the ok block. The call diverges so control never returns.
+        self.builder.finish_block(&fail_label);
+        self.builder.emit(Instruction::Call {
+            dst: None,
+            func: "tl_oob_abort".into(),
+            args: vec![],
+            ty: Type::Unit,
+        });
+        self.builder.emit(Instruction::Jump(copy_label.clone()));
+
+        // In-bounds block: build the result via the runtime helper, which copies
+        // `slice_len` bytes from `s_ptr + start` into a fresh heap buffer and
+        // wraps it in a heap-allocated fat `{ ptr, len }` value.
+        self.builder.finish_block(&copy_label);
+        let dst = self.builder.fresh_var();
+        self.builder.emit(Instruction::Call {
+            dst: Some(dst),
+            func: "tl_substring".to_string(),
+            args: vec![Value::Var(s_ptr), start_i64, len_i64],
+            ty: Type::String,
+        });
+        self.record_local(dst, Type::String);
+        Value::Var(dst)
     }
 
     fn load_fat_len(&mut self, fat: &Value, len_offset: usize) -> Value {
@@ -2516,6 +2651,93 @@ mod tests {
         let (args, ty) = call.expect("expected a Call to tl_int_to_string");
         assert_eq!(args.len(), 1, "int->string takes the single i64 operand");
         assert_eq!(*ty, Type::String, "int->string yields a String");
+    }
+
+    #[test]
+    fn test_lower_substring_extracts_fields_bounds_checks_and_calls_runtime() {
+        // `(substring s a b)` lowers to: extract s's `{ptr,len}` fields, two
+        // UNSIGNED bounds checks (`a u<= len`, then `b u<= len - a`), an OOB trap
+        // via `Call tl_oob_abort`, and finally `Call tl_substring(ptr, a, b)`
+        // yielding a String.
+        let prog =
+            parse("(define (f [s : String] [a : i64] [b : i64]) : String (substring s a b))")
+                .unwrap();
+        let ir = lower_program(&prog);
+        let instrs: Vec<&Instruction> = ir.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .collect();
+
+        // The slice runtime is called by name with three args, yielding a String.
+        let call = instrs.iter().find_map(|i| match i {
+            Instruction::Call { func, args, ty, .. } if func == "tl_substring" => Some((args, ty)),
+            _ => None,
+        });
+        let (args, ty) = call.expect("expected a Call to tl_substring");
+        assert_eq!(
+            args.len(),
+            3,
+            "tl_substring takes the source ptr, start, and slice length"
+        );
+        assert_eq!(*ty, Type::String, "substring yields a String");
+
+        // The out-of-bounds range traps through the shared abort runtime (a Call
+        // is the only form that survives DCE).
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Call { func, .. } if func == "tl_oob_abort")),
+            "expected a Call to tl_oob_abort on the OOB path"
+        );
+
+        // Two UNSIGNED `Le` compares implement the staged bounds check.
+        let le_count = instrs
+            .iter()
+            .filter(|i| matches!(i, Instruction::BinOp { op: BinOp::Le, .. }))
+            .count();
+        assert!(
+            le_count >= 2,
+            "expected two unsigned `<=` bounds compares, got {}",
+            le_count
+        );
+
+        // The remaining-length subtraction `len - start` is emitted.
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::BinOp { op: BinOp::Sub, .. })),
+            "expected a `len - start` subtraction"
+        );
+
+        // The bounds operands are reinterpreted to U64 via Cast (not Mov, which
+        // copy-prop would fold back to the signed operand and weaken the check).
+        assert!(
+            instrs.iter().any(|i| matches!(
+                i,
+                Instruction::Cast {
+                    to_ty: Type::U64,
+                    ..
+                }
+            )),
+            "expected a Cast to U64 for the unsigned bounds check"
+        );
+    }
+
+    #[test]
+    fn test_lower_string_slice_alias_calls_same_runtime() {
+        // `string-slice` is the alias of `substring`; it lowers to the same
+        // `tl_substring` runtime call.
+        let prog =
+            parse("(define (f [s : String] [a : i64] [b : i64]) : String (string-slice s a b))")
+                .unwrap();
+        let ir = lower_program(&prog);
+        let calls_substring = ir.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .any(|i| matches!(i, Instruction::Call { func, .. } if func == "tl_substring"));
+        assert!(calls_substring, "string-slice should call tl_substring");
     }
 
     // ---- Expressions ---------------------------------------------------

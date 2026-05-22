@@ -409,13 +409,19 @@ impl StructRegistry {
     /// Byte offsets of a struct's fields, each naturally aligned to its own
     /// alignment, starting at offset 0 (a struct has no tag word).
     pub fn field_offsets(&self, fields: &[FieldDef]) -> Vec<usize> {
+        let field_tys: Vec<Type> = fields.iter().map(|f| self.resolve_type(&f.ty)).collect();
+        Self::field_offsets_for_types(&field_tys)
+    }
+
+    /// Byte offsets for an already-resolved ordered field type list.
+    pub fn field_offsets_for_types(fields: &[Type]) -> Vec<usize> {
         let mut offsets = Vec::with_capacity(fields.len());
         let mut cursor = 0usize;
-        for f in fields {
-            let align = f.ty.align().max(1);
+        for ty in fields {
+            let align = ty.align().max(1);
             cursor = cursor.div_ceil(align) * align;
             offsets.push(cursor);
-            cursor += f.ty.size();
+            cursor += ty.size();
         }
         offsets
     }
@@ -423,14 +429,21 @@ impl StructRegistry {
     /// The total inline storage size of a struct value: the end of the last
     /// field, rounded up to 8-byte alignment. An empty struct is 8 bytes (one
     /// pointer-sized slot) so it remains a valid, distinct heap/frame address.
+    #[cfg(test)]
     pub fn struct_size(&self, struct_name: &str) -> usize {
         let Some(fields) = self.structs.get(struct_name) else {
             return 8;
         };
-        let offsets = self.field_offsets(fields);
+        let field_tys: Vec<Type> = fields.iter().map(|f| self.resolve_type(&f.ty)).collect();
+        Self::struct_size_for_types(&field_tys)
+    }
+
+    /// Total inline storage size for an already-resolved ordered field type list.
+    pub fn struct_size_for_types(fields: &[Type]) -> usize {
+        let offsets = Self::field_offsets_for_types(fields);
         let extent = offsets
             .last()
-            .map(|&last| last + fields.last().map(|f| f.ty.size()).unwrap_or(0))
+            .map(|&last| last + fields.last().map(Type::size).unwrap_or(0))
             .unwrap_or(0);
         extent.div_ceil(8).max(1) * 8
     }

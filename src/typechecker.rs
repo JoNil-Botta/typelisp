@@ -78,6 +78,14 @@ impl TypeChecker {
             "string=?".into(),
             Type::Func(vec![Type::String, Type::String], Box::new(Type::Bool)),
         );
+        // `(string->int s)` -> the i64 the decimal string `s` denotes. Skips an
+        // optional leading `-`, then accumulates `acc*10 + (c - '0')` over the
+        // remaining bytes. Non-digit bytes and overflow are not yet validated
+        // (deferred); the conversion is the lexer's numeric-literal primitive.
+        globals.insert(
+            "string->int".into(),
+            Type::Func(vec![Type::String], Box::new(Type::I64)),
+        );
         TypeChecker {
             env: vec![globals],
             func_ret: None,
@@ -1416,6 +1424,42 @@ mod tests {
     fn test_typecheck_string_eq_result_not_i64() {
         // The result is bool, not i64 — using it where i64 is expected fails.
         let src = r#"(define (n) : i64 (string-eq "a" "a"))"#;
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_string_to_int_is_i64() {
+        // `(string->int s)` : `(-> String i64)` — parsing a string literal
+        // type-checks where an i64 is expected.
+        let src = r#"(define (n) : i64 (string->int "42"))"#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_string_to_int_on_param() {
+        // A String *parameter* parses fine (the caller owns the storage).
+        let src = "(define (parse [s : String]) : i64 (string->int s))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_string_to_int_arg_type_checked() {
+        // The argument must be a String; an i64 operand is rejected.
+        let src = "(define (n) : i64 (string->int 42))";
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_string_to_int_arity_checked() {
+        // `string->int` is unary; a second argument is an arity error.
+        let src = r#"(define (n) : i64 (string->int "1" "2"))"#;
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_string_to_int_result_not_bool() {
+        // The result is i64, not bool — using it where bool is expected fails.
+        let src = r#"(define (n) : bool (string->int "1"))"#;
         assert!(check(src).is_err());
     }
 

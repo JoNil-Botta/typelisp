@@ -247,6 +247,9 @@ impl TypeChecker {
                     self.bind(name.clone(), ty);
                 }
                 Decl::DefEnum { .. } => {}
+                // Import directives are stripped by the module-graph loader
+                // before typecheck; this arm is defensive (no codegen effect).
+                Decl::Import(_) => {}
             }
         }
 
@@ -1078,6 +1081,45 @@ mod tests {
         "#,
         )
         .unwrap();
+        let mut tc = TypeChecker::new();
+        assert!(tc.check_program(&prog).is_err());
+    }
+
+    /// Concatenate two parsed modules into one `Program`, stripping imports,
+    /// mirroring what the module-graph loader produces (module `a` first).
+    fn concat_modules(a: &str, b: &str) -> Program {
+        let mut decls: Vec<Decl> = Vec::new();
+        for src in [a, b] {
+            for d in parse(src).unwrap().decls {
+                if !matches!(d, Decl::Import(_)) {
+                    decls.push(d);
+                }
+            }
+        }
+        Program { decls }
+    }
+
+    #[test]
+    fn test_typecheck_cross_module_call_ok() {
+        // Module b defines a function that calls a function defined in module a.
+        // The concatenated program must typecheck (first pass registers both
+        // top-level names before bodies are checked).
+        let prog = concat_modules(
+            "(define (a [x : i64]) : i64 (+ x 1))",
+            "(import \"a.tl\")\n(define (b) : i64 (a 41))",
+        );
+        let mut tc = TypeChecker::new();
+        assert!(tc.check_program(&prog).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_cross_module_call_wrong_type_errors() {
+        // Calling module a's i64 function with a bool argument is a type error
+        // even across module boundaries.
+        let prog = concat_modules(
+            "(define (a [x : i64]) : i64 (+ x 1))",
+            "(import \"a.tl\")\n(define (b) : i64 (a true))",
+        );
         let mut tc = TypeChecker::new();
         assert!(tc.check_program(&prog).is_err());
     }

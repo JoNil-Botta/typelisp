@@ -9,6 +9,7 @@ mod diagnostic;
 mod ir;
 mod lexer;
 mod lower;
+mod module;
 mod optimizer;
 mod parser;
 mod runtime;
@@ -20,6 +21,7 @@ use ast::Program;
 use backend::generate_assembly;
 use diagnostic::format_diagnostic;
 use lower::lower_program;
+use module::{FsSource, LoadError, load_program};
 use optimizer::Optimizer;
 use parser::parse;
 use typechecker::TypeChecker;
@@ -41,6 +43,43 @@ fn typecheck_or_exit(prog: &Program, source: &str, file: &str) {
     if let Err(e) = tc.check_program(prog) {
         eprint!("{}", format_diagnostic(&e.to_diagnostic(), source, file));
         std::process::exit(1);
+    }
+}
+
+/// Load the module graph rooted at `entry`, concatenating all imported modules
+/// into one `Program`, or print a diagnostic and exit. Returns the combined
+/// program plus the entry module's `(path, source)` for downstream diagnostics.
+///
+/// Cross-module diagnostics (a type error pointing at the right *imported*
+/// file) are deferred to a later chunk (`file_id` on `Span`); the typecheck
+/// stage currently renders against the entry source. Parse errors, however,
+/// already point at the correct module because the loader carries the failing
+/// module's path + source.
+fn load_or_exit(entry: &PathBuf) -> (Program, String) {
+    match load_program(entry, &FsSource) {
+        Ok((prog, _entry_canon)) => {
+            let entry_source = fs::read_to_string(entry).expect("Failed to read file");
+            (prog, entry_source)
+        }
+        Err(LoadError::Io { path, source }) => {
+            eprintln!("Error: cannot read module '{}': {}", path.display(), source);
+            std::process::exit(1);
+        }
+        Err(LoadError::Parse {
+            path,
+            source_text,
+            error,
+        }) => {
+            eprint!(
+                "{}",
+                format_diagnostic(
+                    &error.to_diagnostic(),
+                    &source_text,
+                    &path.display().to_string()
+                )
+            );
+            std::process::exit(1);
+        }
     }
 }
 
@@ -105,8 +144,7 @@ fn main() {
                 std::process::exit(1);
             }
             let file = PathBuf::from(&args[2]);
-            let source = fs::read_to_string(&file).expect("Failed to read file");
-            let prog = parse_or_exit(&source, &file.display().to_string());
+            let (prog, source) = load_or_exit(&file);
             typecheck_or_exit(&prog, &source, &file.display().to_string());
             println!("Type checking passed!");
         }
@@ -135,8 +173,7 @@ fn main() {
                 }
             }
 
-            let source = fs::read_to_string(&file).expect("Failed to read file");
-            let prog = parse_or_exit(&source, &file.display().to_string());
+            let (prog, source) = load_or_exit(&file);
             typecheck_or_exit(&prog, &source, &file.display().to_string());
 
             if emit_ir {
@@ -168,8 +205,7 @@ fn main() {
                 std::process::exit(1);
             }
             let file = PathBuf::from(&args[2]);
-            let source = fs::read_to_string(&file).expect("Failed to read file");
-            let prog = parse_or_exit(&source, &file.display().to_string());
+            let (prog, source) = load_or_exit(&file);
             typecheck_or_exit(&prog, &source, &file.display().to_string());
 
             let mut ir_prog = lower_program(&prog);

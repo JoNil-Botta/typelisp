@@ -122,8 +122,15 @@ impl<'a> Parser<'a> {
                 self.advance()?;
                 self.parse_defenum()
             }
+            Token::Import => {
+                self.advance()?;
+                self.parse_import()
+            }
             _ => Err(ParseError {
-                msg: format!("expected define, extern or defenum, got {:?}", self.current),
+                msg: format!(
+                    "expected define, extern, defenum or import, got {:?}",
+                    self.current
+                ),
                 span: self.span(),
             }),
         }
@@ -186,6 +193,27 @@ impl<'a> Parser<'a> {
         let ty = self.parse_type()?;
         self.expect(Token::RParen)?;
         Ok(Decl::Extern { name, ty })
+    }
+
+    /// Parse `(import "path")`. The leading `(` and `import` keyword have
+    /// already been consumed. The path is a plain string literal, resolved by
+    /// the module-graph loader relative to the importing file.
+    fn parse_import(&mut self) -> Result<Decl, ParseError> {
+        let path = match &self.current {
+            Token::String(s) => {
+                let p = s.clone();
+                self.advance()?;
+                p
+            }
+            _ => {
+                return Err(ParseError {
+                    msg: format!("expected import path string, got {:?}", self.current),
+                    span: self.span(),
+                });
+            }
+        };
+        self.expect(Token::RParen)?;
+        Ok(Decl::Import(path))
     }
 
     /// Parse `(defenum Name (Variant Ty...) (Variant2 ...) ...)`. The leading
@@ -656,6 +684,30 @@ mod tests {
             }
             _ => panic!("expected Def"),
         }
+    }
+
+    #[test]
+    fn test_parse_import() {
+        let prog = parse("(import \"a.tl\")").unwrap();
+        assert_eq!(prog.decls.len(), 1);
+        match &prog.decls[0] {
+            Decl::Import(path) => assert_eq!(path, "a.tl"),
+            other => panic!("expected Import, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_import_then_define() {
+        let prog = parse("(import \"a.tl\")\n(define (b) : i64 (a))").unwrap();
+        assert_eq!(prog.decls.len(), 2);
+        assert!(matches!(&prog.decls[0], Decl::Import(p) if p == "a.tl"));
+        assert!(matches!(&prog.decls[1], Decl::DefFn { name, .. } if name == "b"));
+    }
+
+    #[test]
+    fn test_parse_import_requires_string() {
+        // A bare identifier where the path string is expected is a parse error.
+        assert!(parse("(import foo)").is_err());
     }
 
     #[test]

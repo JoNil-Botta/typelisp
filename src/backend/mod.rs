@@ -15,6 +15,7 @@ pub struct X86_64Backend {
     stack_size: i32,
     var_offsets: HashMap<VarId, i32>,
     var_types: HashMap<VarId, Type>,
+    address_vars: HashSet<VarId>,
     return_ty: Type,
     /// VarIds that are function parameters of the function currently being
     /// generated. Their `Alloc` instructions are no-ops because the parameter
@@ -136,12 +137,9 @@ fn validate_function(func: &Function) -> Result<(), String> {
                         check_operand(val).map_err(|w| unsupported_value(&func.name, &w))?;
                     }
                 }
-                // `let`/`set!` scalar locals. `Alloc` reserves a stack slot
-                // (parameter `Alloc`s are prologue no-ops); `Store`/`Load` move
-                // between the local's slot and a register. Only direct
-                // variable-slot addresses are supported (`Value::Var`); general
-                // pointer/computed-address dereferences are deferred to the
-                // array/aggregate memory work.
+                // `let`/`set!` scalar locals and pointer values materialized by
+                // AddrOf/Gep. Non-Var addresses are still rejected because the
+                // selector only knows how to load addresses from local slots.
                 Instruction::Alloc { .. } => {}
                 Instruction::Load { src, .. } => {
                     match src {
@@ -414,6 +412,7 @@ impl X86_64Backend {
             stack_size: 0,
             var_offsets: HashMap::new(),
             var_types: HashMap::new(),
+            address_vars: HashSet::new(),
             return_ty: Type::Unit,
             param_vars: HashSet::new(),
             current_fn: String::new(),
@@ -473,6 +472,7 @@ impl X86_64Backend {
         self.stack_size = 0;
         self.var_offsets.clear();
         self.var_types.clear();
+        self.address_vars.clear();
         self.return_ty = func.ret.clone();
         self.param_vars = func.params.iter().map(|(v, _)| *v).collect();
 
@@ -485,6 +485,17 @@ impl X86_64Backend {
             self.stack_size += size;
             self.var_offsets.insert(*var, -self.stack_size);
             self.var_types.insert(*var, ty.clone());
+        }
+
+        for block in &func.blocks {
+            for instr in &block.instructions {
+                match instr {
+                    Instruction::AddrOf { dst, .. } | Instruction::Gep { dst, .. } => {
+                        self.address_vars.insert(*dst);
+                    }
+                    _ => {}
+                }
+            }
         }
 
         // Align stack to 16 bytes
@@ -869,15 +880,19 @@ impl X86_64Backend {
                 self.emit(&format!("    jmp {}", self.block_label(label)));
             }
             // `let` binding / `set!`: store a value into a local's stack slot.
-            // Only direct local-variable addresses (`Value::Var`) are supported;
-            // the local's slot *is* the storage, so this is a slot write rather
-            // than a pointer dereference.
+            // Ordinary local variables are stack slots. Vars produced by
+            // `AddrOf`/`Gep` hold an address, so a Store through them writes to
+            // the pointed-to memory instead of the pointer slot.
             Instruction::Store { dst, src, ty } => {
                 let dst_var = match dst {
                     Value::Var(v) => *v,
                     // Validation rejects non-Var store addresses.
                     _ => return,
                 };
+                if self.is_pointer_deref_var(dst_var, ty) {
+                    self.store_value_through_pointer(dst_var, src, ty);
+                    return;
+                }
                 let dst_offset = self.var_offsets[&dst_var];
                 if *ty == Type::F64 {
                     self.load_value(src, "%xmm0", ty);
@@ -924,9 +939,16 @@ impl X86_64Backend {
                     _ => {}
                 }
             }
-            // Read a local's stack slot into the destination's slot.
+            // Read a local's stack slot into the destination's slot, or
+            // dereference a pointer-valued local produced by AddrOf/Gep.
             Instruction::Load { dst, src, ty } => {
                 let dst_offset = self.var_offsets[dst];
+                if let Value::Var(src_var) = src
+                    && self.is_pointer_deref_var(*src_var, ty)
+                {
+                    self.load_value_through_pointer(*src_var, dst_offset, ty);
+                    return;
+                }
                 if *ty == Type::F64 {
                     self.load_value(src, "%xmm0", ty);
                     self.store_xmm_value("%xmm0", dst_offset);
@@ -1032,6 +1054,68 @@ impl X86_64Backend {
                 self.store_gpr_value("%rax", dst_offset, ty);
             }
         }
+    }
+
+    fn is_pointer_deref_var(&self, var: VarId, access_ty: &Type) -> bool {
+        if self.address_vars.contains(&var) {
+            return true;
+        }
+        match self.var_types.get(&var) {
+            Some(var_ty) => is_pointer_sized_type(var_ty) && var_ty != access_ty,
+            None => false,
+        }
+    }
+
+    fn load_value_through_pointer(&mut self, ptr_var: VarId, dst_offset: i32, ty: &Type) {
+        self.load_pointer_value(ptr_var, "%r10");
+        if *ty == Type::F64 {
+            self.emit("    movsd (%r10), %xmm0");
+            self.store_xmm_value("%xmm0", dst_offset);
+            return;
+        }
+
+        match ty.size() {
+            8 => {
+                self.emit("    movq (%r10), %rax");
+                self.emit(&format!("    movq %rax, {}(%rbp)", dst_offset));
+            }
+            4 => {
+                self.emit("    movl (%r10), %eax");
+                self.emit(&format!("    movl %eax, {}(%rbp)", dst_offset));
+            }
+            2 => {
+                self.emit("    movw (%r10), %ax");
+                self.emit(&format!("    movw %ax, {}(%rbp)", dst_offset));
+            }
+            1 => {
+                self.emit("    movb (%r10), %al");
+                self.emit(&format!("    movb %al, {}(%rbp)", dst_offset));
+            }
+            _ => {}
+        }
+    }
+
+    fn store_value_through_pointer(&mut self, ptr_var: VarId, src: &Value, ty: &Type) {
+        self.load_pointer_value(ptr_var, "%r10");
+        if *ty == Type::F64 {
+            self.load_value(src, "%xmm0", ty);
+            self.emit("    movsd %xmm0, (%r10)");
+            return;
+        }
+
+        self.load_value(src, "%rax", ty);
+        match ty.size() {
+            8 => self.emit("    movq %rax, (%r10)"),
+            4 => self.emit("    movl %eax, (%r10)"),
+            2 => self.emit("    movw %ax, (%r10)"),
+            1 => self.emit("    movb %al, (%r10)"),
+            _ => {}
+        }
+    }
+
+    fn load_pointer_value(&mut self, ptr_var: VarId, reg: &str) {
+        let ptr_ty = self.var_types.get(&ptr_var).cloned().unwrap_or(Type::U64);
+        self.load_value(&Value::Var(ptr_var), reg, &ptr_ty);
     }
 
     fn load_value(&mut self, val: &Value, reg: &str, ty: &Type) {
@@ -1500,6 +1584,46 @@ mod tests {
         assert!(asm.contains("    movq $3, %rcx"), "asm:\n{}", asm);
         assert!(asm.contains("    imulq $8, %rcx"), "asm:\n{}", asm);
         assert!(asm.contains("    addq %rcx, %rax"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_load_store_through_computed_address() {
+        let program = Program {
+            functions: vec![Function {
+                name: "ptr_rw".into(),
+                params: vec![],
+                ret: Type::I64,
+                locals: vec![(0, Type::I64), (1, Type::U64), (2, Type::I64)],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![
+                        Instruction::AddrOf { dst: 1, src: 0 },
+                        Instruction::Store {
+                            dst: Value::Var(1),
+                            src: Value::ConstI64(99),
+                            ty: Type::I64,
+                        },
+                        Instruction::Load {
+                            dst: 2,
+                            src: Value::Var(1),
+                            ty: Type::I64,
+                        },
+                        Instruction::Return(Some(Value::Var(2))),
+                    ],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![],
+        };
+        let asm = generate_assembly(&program).expect("computed-address load/store should compile");
+        assert!(asm.contains("    leaq -8(%rbp), %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq -16(%rbp), %r10"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $99, %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %rax, (%r10)"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq (%r10), %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %rax, -24(%rbp)"), "asm:\n{}", asm);
         assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
     }
 

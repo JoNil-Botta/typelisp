@@ -531,43 +531,21 @@ impl FnLowerer {
             return self.lower_construct(&enum_name, tag, &arg_vals);
         }
 
-        // `(array-length a)` / `(length a)` over a dynamic array are builtins,
-        // not runtime calls: load the `len` field (offset 8) of the fat storage.
-        // Checked before the string `length` handler so a dynamic-array argument
-        // takes the array path.
+        // Fat-value length builtins are not runtime calls: lower the argument
+        // first and dispatch on the recorded result type. This covers compound
+        // array expressions such as `(let ... a)` and `(if ... a b)`, which the
+        // lightweight AST type guesser cannot classify before lowering.
         if let ast::Expr::Var(name) = func.unspan()
-            && (name == "array-length" || name == "length")
-            && args.len() == 1
-            && matches!(self.expr_type(&args[0]), Type::DynArray(_))
-        {
-            let arr = self.lower_expr(&args[0]);
-            let len_ptr = self.gep_byte(&arr, DYN_ARRAY_LEN_OFFSET);
-            let dst = self.builder.fresh_var();
-            self.builder.emit(Instruction::Load {
-                dst,
-                src: Value::Var(len_ptr),
-                ty: Type::I64,
-            });
-            self.record_local(dst, Type::I64);
-            return Value::Var(dst);
-        }
-
-        // `(string-length s)` / `(length s)` are builtins, not runtime calls:
-        // load the `len` field (offset 8) of the string's fat storage.
-        if let ast::Expr::Var(name) = func.unspan()
-            && (name == "string-length" || name == "length")
+            && (name == "array-length" || name == "string-length" || name == "length")
             && args.len() == 1
         {
-            let s = self.lower_expr(&args[0]);
-            let len_ptr = self.gep_byte(&s, STRING_LEN_OFFSET);
-            let dst = self.builder.fresh_var();
-            self.builder.emit(Instruction::Load {
-                dst,
-                src: Value::Var(len_ptr),
-                ty: Type::I64,
-            });
-            self.record_local(dst, Type::I64);
-            return Value::Var(dst);
+            let fat = self.lower_expr(&args[0]);
+            let len_offset = if matches!(self.value_type(&fat), Type::DynArray(_)) {
+                DYN_ARRAY_LEN_OFFSET
+            } else {
+                STRING_LEN_OFFSET
+            };
+            return self.load_fat_len(&fat, len_offset);
         }
 
         // Evaluate arguments left-to-right
@@ -727,7 +705,8 @@ impl FnLowerer {
     fn lower_make_array(&mut self, elem_ty: &Type, len: &ast::Expr) -> Value {
         let elem_ty = self.enums.resolve_type(elem_ty);
         let elem_size = elem_ty.size() as i64;
-        let len_val = self.lower_expr(len);
+        let len_raw = self.lower_expr(len);
+        let len_val = self.cast_value(len_raw, Type::I64);
 
         // byte_count = len * sizeof(elem). Computed in i64 so it feeds tl_alloc.
         let byte_count = self.builder.fresh_var();
@@ -797,7 +776,8 @@ impl FnLowerer {
     /// only a Call survives DCE), then on the in-bounds path compute the element
     /// address via `Gep` over the buffer pointer and `Load` the element.
     fn lower_array_ref(&mut self, arr: &ast::Expr, index: &ast::Expr) -> Value {
-        let arr_ty = self.expr_type(arr);
+        let arr_val = self.lower_expr(arr);
+        let arr_ty = self.value_type(&arr_val);
         // Only *dynamic* arrays are lowered here. Fixed-size `(Array elem N)`
         // value/stack arrays are still stubbed (their inline layout is a
         // separate, deferred slice), so fall through to a unit value as before.
@@ -806,8 +786,9 @@ impl FnLowerer {
             _ => return Value::ConstUnit,
         };
 
-        let arr_val = self.lower_expr(arr);
         let idx_val = self.lower_expr(index);
+        let idx_u_val = self.cast_value(idx_val.clone(), Type::U64);
+        let idx_offset_val = self.cast_value(idx_val, Type::I64);
 
         // Load len (offset 8) from the fat value.
         let len_ptr = self.gep_byte(&arr_val, DYN_ARRAY_LEN_OFFSET);
@@ -825,28 +806,13 @@ impl FnLowerer {
         // values and so also fail the check. `Cast` (not `Mov`) is used because
         // the optimizer's copy propagation would substitute a `Mov` away,
         // restoring the signed operand and silently weakening the check.
-        let idx_u = self.builder.fresh_var();
-        self.builder.emit(Instruction::Cast {
-            dst: idx_u,
-            src: idx_val.clone(),
-            from_ty: Type::I64,
-            to_ty: Type::U64,
-        });
-        self.record_local(idx_u, Type::U64);
-        let len_u = self.builder.fresh_var();
-        self.builder.emit(Instruction::Cast {
-            dst: len_u,
-            src: Value::Var(len),
-            from_ty: Type::I64,
-            to_ty: Type::U64,
-        });
-        self.record_local(len_u, Type::U64);
+        let len_u_val = self.cast_value(Value::Var(len), Type::U64);
         let in_bounds = self.builder.fresh_var();
         self.builder.emit(Instruction::BinOp {
             dst: in_bounds,
             op: BinOp::Lt,
-            lhs: Value::Var(idx_u),
-            rhs: Value::Var(len_u),
+            lhs: idx_u_val,
+            rhs: len_u_val,
             ty: Type::Bool,
         });
         self.record_local(in_bounds, Type::Bool);
@@ -886,7 +852,7 @@ impl FnLowerer {
         self.builder.emit(Instruction::Gep {
             dst: elem_ptr,
             base: Value::Var(buf),
-            offset: idx_val,
+            offset: idx_offset_val,
             elem_ty: elem_ty.clone(),
         });
         self.record_local(elem_ptr, Type::U64);
@@ -901,42 +867,33 @@ impl FnLowerer {
         Value::Var(result)
     }
 
-    /// Best-effort static type of an AST expression, sufficient to dispatch
-    /// array operations (which need to know if the array is dynamic and its
-    /// element type). The program has already type-checked, so this only needs
-    /// to resolve the cases that flow into `array-ref`/`make-array`/`length`.
-    fn expr_type(&self, expr: &ast::Expr) -> Type {
-        match expr.unspan() {
-            ast::Expr::Var(name) => self
-                .vars
-                .get(name)
-                .and_then(|v| self.var_types.get(v))
-                .cloned()
-                .unwrap_or_else(|| match self.function_types.get(name) {
-                    Some(Type::Func(_, ret)) => (**ret).clone(),
-                    _ => Type::I64,
-                }),
-            ast::Expr::MakeArray { elem_ty, .. } => {
-                Type::DynArray(Box::new(self.enums.resolve_type(elem_ty)))
-            }
-            ast::Expr::Ann { ty, .. } => self.enums.resolve_type(ty),
-            ast::Expr::Cast { ty, .. } => self.enums.resolve_type(ty),
-            ast::Expr::Let { body, .. } => self.expr_type(body),
-            ast::Expr::Begin(exprs) => exprs
-                .last()
-                .map(|e| self.expr_type(e))
-                .unwrap_or(Type::Unit),
-            ast::Expr::Call { func, .. } => {
-                if let ast::Expr::Var(name) = func.unspan() {
-                    match self.function_types.get(name) {
-                        Some(Type::Func(_, ret)) => return (**ret).clone(),
-                        _ => return Type::I64,
-                    }
-                }
-                Type::I64
-            }
-            _ => Type::I64,
+    fn load_fat_len(&mut self, fat: &Value, len_offset: usize) -> Value {
+        let len_ptr = self.gep_byte(fat, len_offset);
+        let dst = self.builder.fresh_var();
+        self.builder.emit(Instruction::Load {
+            dst,
+            src: Value::Var(len_ptr),
+            ty: Type::I64,
+        });
+        self.record_local(dst, Type::I64);
+        Value::Var(dst)
+    }
+
+    fn cast_value(&mut self, val: Value, to_ty: Type) -> Value {
+        let from_ty = self.value_type(&val);
+        if from_ty == to_ty {
+            return val;
         }
+
+        let dst = self.builder.fresh_var();
+        self.builder.emit(Instruction::Cast {
+            dst,
+            src: val,
+            from_ty,
+            to_ty: to_ty.clone(),
+        });
+        self.record_local(dst, to_ty);
+        Value::Var(dst)
     }
 
     /// Emit `dst = gep base, byte_offset : i8` — a pointer `byte_offset` bytes
@@ -2162,6 +2119,22 @@ mod tests {
     }
 
     #[test]
+    fn test_lower_make_array_widens_narrow_length_before_i64_math() {
+        // The typechecker accepts any integer length; lowering must not read a
+        // narrow parameter as an i64 stack slot.
+        let prog = parse("(define (f [n : i32]) : i64 (begin (make-array i64 n) 0))").unwrap();
+        let ir = lower_program(&prog);
+        assert!(all_instrs(&ir).iter().any(|i| matches!(
+            i,
+            Instruction::Cast {
+                from_ty: Type::I32,
+                to_ty: Type::I64,
+                ..
+            }
+        )));
+    }
+
+    #[test]
     fn test_lower_array_ref_bounds_checks_with_call_trap() {
         // `array-ref` on a dynamic array emits an unsigned bounds compare, a
         // Branch, a Call to the abort runtime (so DCE can't drop it), then a
@@ -2207,6 +2180,53 @@ mod tests {
     }
 
     #[test]
+    fn test_lower_array_ref_handles_dynamic_array_from_let() {
+        let prog = parse(
+            "(define (f [n : i64] [i : i64]) : i64 \
+               (array-ref (let ([a : (Array i64) (make-array i64 n)]) a) i))",
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let instrs = all_instrs(&ir);
+
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::Call { func, dst: None, .. } if func == "tl_oob_abort"
+        )));
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::Gep {
+                elem_ty: Type::I64,
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn test_lower_array_ref_widens_narrow_index_for_bounds_and_addressing() {
+        let prog = parse("(define (f [a : (Array i64)] [i : i32]) : i64 (array-ref a i))").unwrap();
+        let ir = lower_program(&prog);
+        let instrs = all_instrs(&ir);
+
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::Cast {
+                from_ty: Type::I32,
+                to_ty: Type::U64,
+                ..
+            }
+        )));
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::Cast {
+                from_ty: Type::I32,
+                to_ty: Type::I64,
+                ..
+            }
+        )));
+    }
+
+    #[test]
     fn test_lower_length_reads_len_field_not_a_call() {
         // `(length a)` / `(array-length a)` load the fat value's len field; they
         // are not runtime calls.
@@ -2216,6 +2236,27 @@ mod tests {
         assert!(!instrs.iter().any(|i| matches!(
             i,
             Instruction::Call { func, .. } if func == "length" || func == "array-length"
+        )));
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Load { ty: Type::I64, .. }))
+        );
+    }
+
+    #[test]
+    fn test_lower_array_length_handles_dynamic_array_from_let() {
+        let prog = parse(
+            "(define (f [n : i64]) : i64 \
+               (array-length (let ([a : (Array i64) (make-array i64 n)]) a)))",
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let instrs = all_instrs(&ir);
+
+        assert!(!instrs.iter().any(|i| matches!(
+            i,
+            Instruction::Call { func, .. } if func == "array-length"
         )));
         assert!(
             instrs

@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 /// Source location span: start and end position in a file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {

@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::span::Span;
 use std::fmt;
 
@@ -14,6 +12,7 @@ pub struct Diagnostic {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum Level {
     Error,
     Warning,
@@ -35,11 +34,13 @@ impl Diagnostic {
         Self::new(Level::Error, message, span)
     }
 
+    #[allow(dead_code)]
     pub fn with_code(mut self, code: impl Into<String>) -> Self {
         self.code = Some(code.into());
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_help(mut self, help: impl Into<String>) -> Self {
         self.help = Some(help.into());
         self

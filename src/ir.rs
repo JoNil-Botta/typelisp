@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::types::Type;
 use std::fmt;
 
@@ -119,8 +117,6 @@ pub enum Instruction {
     Jump(Label),
     /// Return from function
     Return(Option<Value>),
-    /// Label marker
-    Label(Label),
     /// Allocate stack space for a local variable
     Alloc { var: VarId, ty: Type },
     /// Get element pointer: dst = base[offset]
@@ -375,9 +371,6 @@ impl fmt::Display for Instruction {
             }
             Instruction::Return(None) => {
                 write!(f, "  ret")
-            }
-            Instruction::Label(label) => {
-                write!(f, "{}:", label)
             }
             Instruction::Alloc { var, ty } => {
                 write!(f, "  alloc %{} : {}", var, ty)

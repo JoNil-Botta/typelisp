@@ -279,7 +279,7 @@ impl Optimizer {
                 | Instruction::Branch { .. }
                 | Instruction::Jump(_)
                 | Instruction::Return(_)
-                | Instruction::Label(_)
+
         )
     }
 

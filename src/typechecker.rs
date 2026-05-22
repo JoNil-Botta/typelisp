@@ -150,25 +150,47 @@ impl TypeChecker {
                     } else {
                         self.check_expr(value)?
                     };
+                    if type_contains_enum(&inferred) {
+                        return Err(TypeError::at(
+                            "global definitions with enum values are not yet supported \
+                             because enum constructors currently produce stack-owned storage",
+                            value.span(),
+                        ));
+                    }
                     self.bind(name.clone(), inferred);
                 }
                 Decl::DefFn {
                     name,
                     params,
                     ret,
-                    body: _,
+                    body,
                 } => {
+                    let ret = self.enums.resolve_type(ret);
+                    if type_contains_enum(&ret) {
+                        return Err(TypeError::at(
+                            "functions returning enum values are not yet supported \
+                             because enum constructors currently produce stack-owned storage",
+                            body.span(),
+                        ));
+                    }
                     let func_ty = Type::Func(
                         params
                             .iter()
                             .map(|(_, t)| self.enums.resolve_type(t))
                             .collect(),
-                        Box::new(self.enums.resolve_type(ret)),
+                        Box::new(ret),
                     );
                     self.bind(name.clone(), func_ty);
                 }
                 Decl::Extern { name, ty } => {
-                    self.bind(name.clone(), self.enums.resolve_type(ty));
+                    let ty = self.enums.resolve_type(ty);
+                    if type_contains_enum(&ty) {
+                        return Err(TypeError::at(
+                            "extern declarations involving enum values are not yet supported",
+                            Span::default(),
+                        ));
+                    }
+                    self.bind(name.clone(), ty);
                 }
                 Decl::DefEnum { .. } => {}
             }
@@ -409,6 +431,13 @@ impl TypeChecker {
                 self.pop_scope();
 
                 let ret_ty = ret.clone().unwrap_or(body_ty.clone());
+                if type_contains_enum(&ret_ty) {
+                    return Err(TypeError::at(
+                        "lambdas returning enum values are not yet supported \
+                         because enum constructors currently produce stack-owned storage",
+                        body.span(),
+                    ));
+                }
                 if !self.types_equal(&ret_ty, &body_ty) {
                     return Err(TypeError::at(
                         format!(
@@ -717,6 +746,16 @@ fn type_mentions_enum(ty: &Type, name: &str) -> bool {
     }
 }
 
+fn type_contains_enum(ty: &Type) -> bool {
+    match ty {
+        Type::Enum(_) => true,
+        Type::Func(args, ret) => args.iter().any(type_contains_enum) || type_contains_enum(ret),
+        Type::Tuple(elems) => elems.iter().any(type_contains_enum),
+        Type::Array(elem, _) => type_contains_enum(elem),
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -814,21 +853,40 @@ mod tests {
 
     #[test]
     fn test_typecheck_nullary_constructor() {
-        let src = format!("{SHAPE}\n(define (n) : Shape Nothing)");
+        let src = format!("{SHAPE}\n(define (n) : i64 (match Nothing [Nothing 1] [_ 0]))");
         assert!(check(&src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_enum_return_is_rejected() {
+        let src = format!("{SHAPE}\n(define (mk) : Shape (Circle 1))");
+        let err = check(&src).unwrap_err();
+        assert!(
+            err.msg.contains("returning enum values"),
+            "got: {}",
+            err.msg
+        );
     }
 
     #[test]
     fn test_typecheck_constructor_arity_checked() {
         // Circle takes one i64; calling with none is an arity error via the
         // ordinary call path.
-        let src = format!("{SHAPE}\n(define (c) : Shape (Circle))");
+        let src = format!(
+            "{SHAPE}\n\
+             (define (area [s : Shape]) : i64 (match s [_ 0]))\n\
+             (define (c) : i64 (area (Circle)))"
+        );
         assert!(check(&src).is_err());
     }
 
     #[test]
     fn test_typecheck_constructor_arg_type_checked() {
-        let src = format!("{SHAPE}\n(define (c) : Shape (Circle true))");
+        let src = format!(
+            "{SHAPE}\n\
+             (define (area [s : Shape]) : i64 (match s [_ 0]))\n\
+             (define (c) : i64 (area (Circle true)))"
+        );
         assert!(check(&src).is_err());
     }
 

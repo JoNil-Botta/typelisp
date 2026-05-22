@@ -1787,10 +1787,10 @@ mod tests {
     #[test]
     fn test_lower_constructor_emits_alloc_tag_and_payload_store() {
         // (Circle 7) -> Alloc storage, AddrOf base, Gep+Store tag, Gep+Store payload.
-        let src = format!("{SHAPE}\n(define (mk) : Shape (Circle 7))");
+        let src = format!("{SHAPE}\n(define (main) : i64 (begin (Circle 7) 0))");
         let prog = parse(&src).unwrap();
         let ir = lower_program(&prog);
-        let f = ir.functions.iter().position(|f| f.name == "mk").unwrap();
+        let f = ir.functions.iter().position(|f| f.name == "main").unwrap();
 
         // One stack-storage Alloc for the enum value.
         let alloc_count = count(&ir, f, |i| matches!(i, Instruction::Alloc { .. }));
@@ -1902,10 +1902,13 @@ mod tests {
     #[test]
     fn test_lower_match_no_const_unit_stub() {
         // Regression: match/constructor must not lower to the old ConstUnit stub.
-        let src = format!("{SHAPE}\n(define (mk) : Shape (Circle 1))");
+        let src = format!(
+            "{SHAPE}\n(define (main) : i64 \
+               (match (Circle 1) [(Circle r) r] [_ 0]))"
+        );
         let prog = parse(&src).unwrap();
         let ir = lower_program(&prog);
-        let f = ir.functions.iter().position(|f| f.name == "mk").unwrap();
+        let f = ir.functions.iter().position(|f| f.name == "main").unwrap();
         let returns_unit = ir.functions[f].blocks.iter().any(|b| {
             b.instructions
                 .iter()

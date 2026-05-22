@@ -19,6 +19,10 @@ pub struct X86_64Backend {
     /// backend must therefore emit the self-contained allocator runtime
     /// (mmap arena + bump pointer) into the program's `.s`.
     needs_alloc_runtime: bool,
+    /// Whether the backend must emit the raw `tl_alloc` runtime body. This is
+    /// true when IR calls resolve to the allocator runtime, or when another
+    /// backend runtime helper calls raw `tl_alloc` internally.
+    emits_alloc_runtime: bool,
     /// Whether the program references the out-of-bounds abort `tl_oob_abort`
     /// (emitted by array bounds checks) and the backend must emit the
     /// self-contained abort runtime (write to fd 2 + `exit`) into the `.s`.
@@ -604,6 +608,7 @@ impl X86_64Backend {
             address_vars: HashSet::new(),
             runtime_print_names: HashSet::new(),
             needs_alloc_runtime: false,
+            emits_alloc_runtime: false,
             needs_oob_runtime: false,
             needs_string_eq_runtime: false,
             needs_string_to_int_runtime: false,
@@ -620,26 +625,25 @@ impl X86_64Backend {
         for (name, ty, _) in &program.globals {
             self.global_types.insert(name.clone(), ty.clone());
         }
+        self.emits_alloc_runtime = false;
 
         self.generate_globals(&program.globals);
         self.runtime_print_names = Self::runtime_print_names(program);
+        self.needs_alloc_runtime = Self::needs_alloc_runtime(program);
         self.needs_oob_runtime = Self::needs_oob_runtime(program);
         self.needs_string_eq_runtime = Self::needs_string_eq_runtime(program);
         self.needs_string_to_int_runtime = Self::needs_string_to_int_runtime(program);
         self.needs_int_to_string_runtime = Self::needs_int_to_string_runtime(program);
-        // The int->string runtime allocates its digit buffer and fat value via
-        // `tl_alloc`, so its presence forces the bump-allocator runtime to be
-        // emitted even when no IR `Call tl_alloc` is otherwise present. (When a
-        // program defines its own `tl_alloc`, `needs_alloc_runtime` stays false
-        // so we do not emit a conflicting definition.)
-        let defines_own_alloc = program.functions.iter().any(|f| f.name == "tl_alloc");
-        self.needs_alloc_runtime = Self::needs_alloc_runtime(program)
-            || (self.needs_int_to_string_runtime && !defines_own_alloc);
+        // The int->string runtime allocates its digit buffer and fat value via a
+        // raw `tl_alloc` call, so its presence forces the raw allocator runtime
+        // to be emitted even when IR calls to a user-defined TypeLisp function
+        // named `tl_alloc` remain mangled to `_tl_tl_alloc`.
+        self.emits_alloc_runtime = self.needs_alloc_runtime || self.needs_int_to_string_runtime;
         let needs_print_runtime = !self.runtime_print_names.is_empty();
         if needs_print_runtime {
             self.generate_print_runtime_data();
         }
-        if self.needs_alloc_runtime {
+        if self.emits_alloc_runtime {
             self.generate_alloc_runtime_data();
         }
         self.intern_strings(program);
@@ -660,7 +664,7 @@ impl X86_64Backend {
             // helpers and the bump allocator) must not also be declared
             // `.extern` — they are defined in this same translation unit.
             let defined_inline = Self::is_defined_print_runtime_symbol(&symbol)
-                || (self.needs_alloc_runtime && symbol == "tl_alloc")
+                || (self.emits_alloc_runtime && symbol == "tl_alloc")
                 || (self.needs_oob_runtime && symbol == "tl_oob_abort")
                 || (self.needs_string_eq_runtime && symbol == "tl_string_eq")
                 || (self.needs_string_to_int_runtime && symbol == "tl_string_to_int")
@@ -678,7 +682,7 @@ impl X86_64Backend {
         if needs_print_runtime {
             self.generate_print_runtime_functions();
         }
-        if self.needs_alloc_runtime {
+        if self.emits_alloc_runtime {
             self.generate_alloc_runtime_functions();
         }
         if self.needs_oob_runtime {
@@ -706,10 +710,21 @@ impl X86_64Backend {
             self.emit("    ret");
         }
 
+        let main_ret = program
+            .functions
+            .iter()
+            .find(|f| f.name == "main")
+            .map(|f| f.ret.clone())
+            .unwrap_or(Type::I64);
+
         self.emit("");
         self.emit("_start:");
         self.emit("    call main");
-        self.emit("    movq %rax, %rdi");
+        if main_ret == Type::Unit {
+            self.emit("    xor %edi, %edi");
+        } else {
+            self.emit("    movq %rax, %rdi");
+        }
         self.emit("    movq $60, %rax");
         self.emit("    syscall");
 
@@ -2881,6 +2896,21 @@ mod tests {
     }
 
     #[test]
+    fn test_compile_unit_main_exits_zero() {
+        let asm = compile_ok("(define (main) : unit unit)");
+        let start = asm.split("_start:").nth(1).expect("expected _start entry");
+
+        assert!(start.contains("    call main"), "asm:\n{}", asm);
+        assert!(start.contains("    xor %edi, %edi"), "asm:\n{}", asm);
+        assert!(
+            !start.contains("    movq %rax, %rdi"),
+            "unit main must not use an undefined return value as the exit code:\n{}",
+            asm
+        );
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
     fn test_compile_unit_phi_and_store_are_noops() {
         let asm = compile_ok(
             r#"
@@ -4107,6 +4137,30 @@ mod tests {
         // The call targets the user's (mangled) function.
         assert!(asm.contains("_tl_tl_alloc:"), "asm:\n{}", asm);
         assert!(asm.contains("    call _tl_tl_alloc"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_int_to_string_allocator_runtime_coexists_with_user_tl_alloc() {
+        // `int->string` needs the backend's raw `tl_alloc` helper internally.
+        // A user function named `tl_alloc` is a separate TypeLisp symbol and is
+        // still called through its mangled name.
+        let asm = compile_ok(
+            r#"
+            (define (tl_alloc [n : u64]) : u64 n)
+            (define (main) : i64
+              (begin
+                (tl_alloc (cast 8 : u64))
+                (string-length (int->string 42))))
+            "#,
+        );
+
+        assert!(asm.contains("\n_tl_tl_alloc:\n"), "asm:\n{}", asm);
+        assert!(asm.contains("    call _tl_tl_alloc"), "asm:\n{}", asm);
+        assert!(asm.contains("\ntl_alloc:\n"), "asm:\n{}", asm);
+        assert!(asm.contains("    call tl_int_to_string"), "asm:\n{}", asm);
+        assert!(asm.contains("    call tl_alloc"), "asm:\n{}", asm);
+        assert!(!asm.contains("    .extern tl_alloc"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
     }
 
     // ------------------------------------------------------------------

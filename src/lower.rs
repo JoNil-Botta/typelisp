@@ -160,6 +160,30 @@ fn extract_const(expr: &ast::Expr) -> Option<Value> {
         ast::Expr::Literal(ast::Literal::Bool(b)) => Some(Value::ConstBool(*b)),
         ast::Expr::Literal(ast::Literal::Char(c)) => Some(Value::ConstI8(*c as i8)),
         ast::Expr::Literal(ast::Literal::Unit) => Some(Value::ConstUnit),
+        ast::Expr::Ann { expr, .. } => extract_const(expr),
+        ast::Expr::Cast { expr, ty } => extract_const_cast(expr, ty),
+        _ => None,
+    }
+}
+
+fn extract_const_cast(expr: &ast::Expr, to_ty: &Type) -> Option<Value> {
+    let value = extract_const(expr)?;
+    let value = match value {
+        Value::ConstI64(n) => n as i128,
+        Value::ConstI32(n) => n as i128,
+        Value::ConstI8(n) => n as i128,
+        _ => return None,
+    };
+
+    match to_ty {
+        Type::I64 => Some(Value::ConstI64(value as i64)),
+        Type::U64 => Some(Value::ConstI64(value as u64 as i64)),
+        Type::I32 => Some(Value::ConstI32(value as i32)),
+        Type::U32 => Some(Value::ConstI32(value as u32 as i32)),
+        Type::I16 => Some(Value::ConstI64(value as i16 as i64)),
+        Type::U16 => Some(Value::ConstI64(value as u16 as i64)),
+        Type::I8 => Some(Value::ConstI8(value as i8)),
+        Type::U8 | Type::Char => Some(Value::ConstI8(value as u8 as i8)),
         _ => None,
     }
 }
@@ -1541,6 +1565,25 @@ mod tests {
         assert_eq!(ir.globals.len(), 1);
         assert_eq!(ir.globals[0].0, "result");
         assert_eq!(ir.globals[0].2, Some(Value::ConstI64(42)));
+    }
+
+    #[test]
+    fn test_lower_casted_global_initializer_is_constant() {
+        let prog = parse(
+            r#"
+            (define small : i32 (cast 7 : i32))
+            (define byte : u8 (cast 255 : u8))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        assert_eq!(ir.globals.len(), 2);
+        assert_eq!(ir.globals[0].0, "small");
+        assert_eq!(ir.globals[0].1, Type::I32);
+        assert_eq!(ir.globals[0].2, Some(Value::ConstI32(7)));
+        assert_eq!(ir.globals[1].0, "byte");
+        assert_eq!(ir.globals[1].1, Type::U8);
+        assert_eq!(ir.globals[1].2, Some(Value::ConstI8(-1)));
     }
 
     #[test]

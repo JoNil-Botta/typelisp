@@ -424,15 +424,16 @@ fn is_loadable_global_type(ty: &Type) -> bool {
 }
 
 fn global_initializer_matches_type(value: &Value, ty: &Type) -> bool {
+    let integer_initializer = matches!(
+        value,
+        Value::ConstI64(_) | Value::ConstI32(_) | Value::ConstI8(_)
+    );
     matches!(
         (value, ty),
-        (Value::ConstI64(_), Type::I64 | Type::U64)
-            | (Value::ConstI32(_), Type::I32 | Type::U32)
-            | (Value::ConstI8(_), Type::I8 | Type::U8 | Type::Char)
-            | (Value::ConstBool(_), Type::Bool)
+        (Value::ConstBool(_), Type::Bool)
             | (Value::ConstF64(_), Type::F64)
             | (Value::ConstUnit, Type::Unit)
-    )
+    ) || (integer_initializer && (ty.is_integer() || matches!(ty, Type::Char)))
 }
 
 fn unsupported_value(func: &str, what: &str) -> String {
@@ -2549,6 +2550,31 @@ mod tests {
             "asm:\n{}",
             asm
         );
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_casted_narrow_globals_emit_sized_data() {
+        let asm = compile_ok(
+            r#"
+            (define small : i32 (cast 7 : i32))
+            (define mid : u16 (cast 513 : u16))
+            (define byte : u8 (cast 255 : u8))
+            (define (main) : i32 small)
+            "#,
+        );
+        assert!(asm.contains("_tl_small:"), "asm:\n{}", asm);
+        assert!(asm.contains("    .long 7"), "asm:\n{}", asm);
+        assert!(asm.contains("_tl_mid:"), "asm:\n{}", asm);
+        assert!(asm.contains("    .word 513"), "asm:\n{}", asm);
+        assert!(asm.contains("_tl_byte:"), "asm:\n{}", asm);
+        assert!(asm.contains("    .byte -1"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("    movslq _tl_small(%rip), %rax"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(!asm.contains("non-constant initializer"), "asm:\n{}", asm);
         assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
     }
 

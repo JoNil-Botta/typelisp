@@ -68,6 +68,11 @@ fn type_lisp_programs_compile_link_and_run() {
             exit_code: 36,
             stdout: "",
         },
+        Case {
+            name: "string_length",
+            exit_code: 5,
+            stdout: "",
+        },
     ];
 
     for case in cases {

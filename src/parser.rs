@@ -236,6 +236,7 @@ impl<'a> Parser<'a> {
                     "f32" => Type::F32,
                     "bool" => Type::Bool,
                     "char" => Type::Char,
+                    "String" => Type::String,
                     _ => Type::Var(s.clone()),
                 };
                 self.advance()?;

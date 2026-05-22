@@ -1,6 +1,6 @@
 use crate::ast;
 use crate::ir::*;
-use crate::types::Type;
+use crate::types::{STRING_FAT_SIZE, STRING_LEN_OFFSET, STRING_PTR_OFFSET, Type};
 use std::collections::HashMap;
 
 /// Lowers a typed AST program into IR.
@@ -122,7 +122,7 @@ fn infer_literal_type(expr: &ast::Expr) -> Type {
         ast::Expr::Literal(ast::Literal::Float(_)) => Type::F64,
         ast::Expr::Literal(ast::Literal::Bool(_)) => Type::Bool,
         ast::Expr::Literal(ast::Literal::Char(_)) => Type::Char,
-        ast::Expr::Literal(ast::Literal::String(_)) => Type::Var("String".into()),
+        ast::Expr::Literal(ast::Literal::String(_)) => Type::String,
         ast::Expr::Literal(ast::Literal::Unit) => Type::Unit,
         _ => Type::Unit,
     }
@@ -216,6 +216,9 @@ impl FnLowerer {
     /// Lower an expression into a fresh IR variable holding its result.
     fn lower_expr(&mut self, expr: &ast::Expr) -> Value {
         match expr.unspan() {
+            // A string literal constructs an inline fat `{ ptr, len }` value and
+            // yields a pointer to it (the runtime representation of a string).
+            ast::Expr::Literal(ast::Literal::String(s)) => self.lower_string_literal(s),
             ast::Expr::Literal(lit) => self.lower_literal(lit),
             ast::Expr::Var(name) => {
                 // A bare reference to a nullary variant constructs that value.
@@ -521,6 +524,24 @@ impl FnLowerer {
             return self.lower_construct(&enum_name, tag, &arg_vals);
         }
 
+        // `(string-length s)` / `(length s)` are builtins, not runtime calls:
+        // load the `len` field (offset 8) of the string's fat storage.
+        if let ast::Expr::Var(name) = func.unspan()
+            && (name == "string-length" || name == "length")
+            && args.len() == 1
+        {
+            let s = self.lower_expr(&args[0]);
+            let len_ptr = self.gep_byte(&s, STRING_LEN_OFFSET);
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Load {
+                dst,
+                src: Value::Var(len_ptr),
+                ty: Type::I64,
+            });
+            self.record_local(dst, Type::I64);
+            return Value::Var(dst);
+        }
+
         // Evaluate arguments left-to-right
         let arg_vals: Vec<Value> = args.iter().map(|a| self.lower_expr(a)).collect();
 
@@ -618,6 +639,52 @@ impl FnLowerer {
                 ty: fty.clone(),
             });
         }
+
+        base_val
+    }
+
+    /// Construct an immutable string literal value: reserve 16 bytes of inline
+    /// fat-string storage `{ ptr, len }`, store the data pointer (a `ConstStr`
+    /// the backend interns into `.rodata`) at offset 0, store the byte length at
+    /// offset 8, and yield a pointer to the storage (the runtime representation
+    /// of a string value). Uses only Alloc/AddrOf/Gep/Store — no new IR shape,
+    /// mirroring how enum values are built (`lower_construct`).
+    fn lower_string_literal(&mut self, text: &str) -> Value {
+        // Reserve the fat-string storage as an i8 array (align 1, exact size) so
+        // the backend allocates exactly 16 bytes.
+        let slot = self.builder.fresh_var();
+        let storage_ty = Type::Array(Box::new(Type::I8), STRING_FAT_SIZE);
+        self.builder.emit(Instruction::Alloc {
+            var: slot,
+            ty: storage_ty.clone(),
+        });
+        self.record_local(slot, storage_ty);
+
+        // base = &slot : the String-typed pointer to the fat storage.
+        let base = self.builder.fresh_var();
+        self.builder.emit(Instruction::AddrOf {
+            dst: base,
+            src: slot,
+        });
+        self.record_local(base, Type::String);
+        let base_val = Value::Var(base);
+
+        // Store the data pointer at offset 0. `ConstStr` is materialized by the
+        // backend as the address of the literal's interned `.rodata` bytes.
+        let ptr_field = self.gep_byte(&base_val, STRING_PTR_OFFSET);
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(ptr_field),
+            src: Value::ConstStr(text.to_string()),
+            ty: Type::U64,
+        });
+
+        // Store the byte length at offset 8.
+        let len_field = self.gep_byte(&base_val, STRING_LEN_OFFSET);
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(len_field),
+            src: Value::ConstI64(text.len() as i64),
+            ty: Type::I64,
+        });
 
         base_val
     }
@@ -859,6 +926,8 @@ impl FnLowerer {
             Value::ConstF64(_) => Type::F64,
             Value::ConstBool(_) => Type::Bool,
             Value::ConstUnit => Type::Unit,
+            // A `ConstStr` operand is the raw data pointer of a string literal.
+            Value::ConstStr(_) => Type::U64,
             Value::Var(v) => self.var_types.get(v).cloned().unwrap_or(Type::I64),
             Value::Global(_) => Type::I64,
         }
@@ -1203,27 +1272,59 @@ mod tests {
     }
 
     #[test]
-    fn test_lower_string_literal_stub() {
-        // String literals are not yet supported in IR; lowerer returns ConstUnit.
+    fn test_lower_string_literal_builds_fat_value() {
+        // A string literal lowers to inline fat `{ ptr, len }` storage: an
+        // Alloc of 16 bytes, a Store of the `ConstStr` data pointer and a Store
+        // of the i64 length, mirroring how enum values are constructed.
         let prog = parse(
             r#"
-            (define (get_str) : i64 "hello")
+            (define (greet [s : String]) : i64 (string-length "hello"))
         "#,
         )
         .unwrap();
         let ir = lower_program(&prog);
         assert_eq!(ir.functions.len(), 1);
+        let instrs: Vec<&Instruction> = ir.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .collect();
 
-        let has_unit_return = ir.functions[0].blocks.iter().any(|b| {
-            b.instructions.iter().any(|i| {
-                if let Instruction::Return(Some(Value::ConstUnit)) = i {
-                    true
-                } else {
-                    false
-                }
-            })
-        });
-        assert!(has_unit_return);
+        // 16-byte fat-string storage is reserved.
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::Alloc {
+                ty: Type::Array(elem, 16),
+                ..
+            } if **elem == Type::I8
+        )));
+
+        // The data pointer is stored as a `ConstStr` carrying the literal bytes.
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::Store { src: Value::ConstStr(s), .. } if s == "hello"
+        )));
+
+        // The byte length (5) is stored as an i64.
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::Store {
+                src: Value::ConstI64(5),
+                ty: Type::I64,
+                ..
+            }
+        )));
+
+        // `string-length` lowers to a Load of the len field (not a runtime Call).
+        assert!(!instrs.iter().any(|i| matches!(
+            i,
+            Instruction::Call { func, .. } if func == "string-length"
+        )));
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Load { ty: Type::I64, .. }))
+        );
     }
 
     // ---- Expressions ---------------------------------------------------

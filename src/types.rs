@@ -20,6 +20,11 @@ pub enum Type {
     Bool,
     /// Character
     Char,
+    /// Immutable string. As a *value* a string is a pointer to its inline fat
+    /// `{ ptr, len }` representation (16 bytes: data pointer + i64 length), so —
+    /// like an enum — it is pointer-sized everywhere it flows through the IR.
+    /// The underlying bytes live in `.rodata` for string literals.
+    String,
     /// Unit / void
     Unit,
     /// Function type: (-> arg1 arg2 ... ret)
@@ -53,6 +58,7 @@ impl fmt::Display for Type {
             Type::F32 => write!(f, "f32"),
             Type::Bool => write!(f, "bool"),
             Type::Char => write!(f, "char"),
+            Type::String => write!(f, "String"),
             Type::Unit => write!(f, "unit"),
             Type::Func(args, ret) => {
                 write!(f, "(->")?;
@@ -90,6 +96,8 @@ impl Type {
             Type::Array(ty, n) => ty.size() * n,
             // An enum *value* is a pointer to its inline tagged storage.
             Type::Enum(_) => 8,
+            // A string *value* is a pointer to its inline `{ ptr, len }` storage.
+            Type::String => 8,
             Type::Var(_) => panic!("cannot compute size of type variable"),
         }
     }
@@ -106,6 +114,7 @@ impl Type {
             Type::Tuple(elems) => elems.iter().map(|e| e.align()).max().unwrap_or(1),
             Type::Array(ty, _) => ty.align(),
             Type::Enum(_) => 8,
+            Type::String => 8,
             Type::Var(_) => panic!("cannot compute alignment of type variable"),
         }
     }
@@ -150,3 +159,12 @@ impl Type {
         matches!(self, Type::F64 | Type::F32)
     }
 }
+
+/// Layout of the inline fat-string representation a `Type::String` value points
+/// at: a data pointer at offset 0 followed by an i64 byte length at offset 8.
+/// Total 16 bytes, 8-byte aligned.
+pub const STRING_FAT_SIZE: usize = 16;
+/// Byte offset of the data pointer within the fat-string storage.
+pub const STRING_PTR_OFFSET: usize = 0;
+/// Byte offset of the length field within the fat-string storage.
+pub const STRING_LEN_OFFSET: usize = 8;

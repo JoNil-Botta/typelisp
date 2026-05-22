@@ -32,6 +32,11 @@ pub struct X86_64Backend {
     /// target — the IR carries bare block labels (e.g. `then.0`) which must be
     /// qualified with the function symbol to resolve.
     current_fn: String,
+    /// String-literal bytes interned into `.rodata`, mapped to their emitted
+    /// label. A `Value::ConstStr` materializes as the address of its label.
+    /// Built in a pre-pass over the program so the bytes are emitted once and
+    /// referenced by `leaq`.
+    interned_strings: HashMap<String, String>,
 }
 
 /// Validate that an IR program only uses constructs the backend can faithfully
@@ -315,6 +320,7 @@ fn check_operand(val: &Value, global_types: &HashMap<String, Type>) -> Result<()
         | Value::ConstI8(_)
         | Value::ConstF64(_)
         | Value::ConstBool(_)
+        | Value::ConstStr(_)
         | Value::Var(_) => Ok(()),
         Value::ConstUnit => Err("unit value".into()),
         Value::Global(name) => match global_types.get(name) {
@@ -337,6 +343,8 @@ fn validate_value_type(
         Value::ConstF64(_) => Some(Type::F64),
         Value::ConstBool(_) => Some(Type::Bool),
         Value::ConstUnit => Some(Type::Unit),
+        // A `ConstStr` operand is the raw data pointer of a string literal.
+        Value::ConstStr(_) => Some(Type::U64),
         Value::Var(var) => var_types.get(var).cloned(),
         Value::Global(name) => global_types.get(name).cloned(),
     }
@@ -355,9 +363,13 @@ fn validate_unit_value(
 }
 
 fn is_pointer_sized_type(ty: &Type) -> bool {
-    // An enum value is a pointer to its inline tagged storage, so it is
+    // An enum value is a pointer to its inline tagged storage and a string
+    // value is a pointer to its inline `{ptr,len}` storage, so both are
     // pointer-sized like I64/U64/function pointers.
-    matches!(ty, Type::I64 | Type::U64 | Type::Func(_, _) | Type::Enum(_))
+    matches!(
+        ty,
+        Type::I64 | Type::U64 | Type::Func(_, _) | Type::Enum(_) | Type::String
+    )
 }
 
 fn is_sized_backend_type(ty: &Type) -> bool {
@@ -565,6 +577,7 @@ impl X86_64Backend {
             return_ty: Type::Unit,
             param_vars: HashSet::new(),
             current_fn: String::new(),
+            interned_strings: HashMap::new(),
         }
     }
 
@@ -584,6 +597,8 @@ impl X86_64Backend {
         if self.needs_alloc_runtime {
             self.generate_alloc_runtime_data();
         }
+        self.intern_strings(program);
+        self.generate_string_rodata();
 
         self.emit("    .text");
         self.emit("    .globl main");
@@ -826,6 +841,95 @@ impl X86_64Backend {
         self.emit("");
     }
 
+    /// Walk the whole program and assign each distinct string-literal value a
+    /// stable `.rodata` label, so identical literals share one set of bytes and
+    /// every `Value::ConstStr` can be materialized as `leaq label(%rip)`.
+    fn intern_strings(&mut self, program: &Program) {
+        let mut next = 0u32;
+        for func in &program.functions {
+            for block in &func.blocks {
+                for instr in &block.instructions {
+                    Self::collect_const_strs(instr, &mut self.interned_strings, &mut next);
+                }
+            }
+        }
+    }
+
+    fn collect_const_strs(
+        instr: &Instruction,
+        table: &mut HashMap<String, String>,
+        next: &mut u32,
+    ) {
+        let mut intern = |s: &String| {
+            if !table.contains_key(s) {
+                table.insert(s.clone(), format!(".L_tl_str_{}", *next));
+                *next += 1;
+            }
+        };
+        match instr {
+            Instruction::Store { src, .. } | Instruction::Mov { src, .. } => {
+                if let Value::ConstStr(s) = src {
+                    intern(s);
+                }
+            }
+            Instruction::Call { args, .. } | Instruction::CallIndirect { args, .. } => {
+                for a in args {
+                    if let Value::ConstStr(s) = a {
+                        intern(s);
+                    }
+                }
+            }
+            Instruction::Return(Some(Value::ConstStr(s))) => intern(s),
+            _ => {}
+        }
+    }
+
+    /// Emit interned string-literal bytes into `.rodata`. Each literal is a NUL
+    /// -terminated byte sequence; the language-level length is carried in the
+    /// fat value's `len` field, so the terminator is incidental (it lets the
+    /// bytes double as a C string for any future libc interop).
+    fn generate_string_rodata(&mut self) {
+        if self.interned_strings.is_empty() {
+            return;
+        }
+        // Emit in label order so output is deterministic regardless of HashMap
+        // iteration order.
+        let mut entries: Vec<(String, String)> = self
+            .interned_strings
+            .iter()
+            .map(|(s, l)| (l.clone(), s.clone()))
+            .collect();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+        self.emit("    .section .rodata");
+        for (label, text) in entries {
+            self.emit(&format!("{}:", label));
+            self.emit(&format!("    .string {}", Self::escape_string_bytes(&text)));
+        }
+        self.emit("");
+    }
+
+    /// Render `text` as a GAS string-literal token (`"..."`) with the bytes the
+    /// language string holds escaped so the assembler reproduces them exactly.
+    fn escape_string_bytes(text: &str) -> String {
+        let mut out = String::with_capacity(text.len() + 2);
+        out.push('"');
+        for b in text.bytes() {
+            match b {
+                b'"' => out.push_str("\\\""),
+                b'\\' => out.push_str("\\\\"),
+                b'\n' => out.push_str("\\n"),
+                b'\t' => out.push_str("\\t"),
+                b'\r' => out.push_str("\\r"),
+                0x20..=0x7e => out.push(b as char),
+                // Non-printable / non-ASCII bytes as octal escapes.
+                other => out.push_str(&format!("\\{:03o}", other)),
+            }
+        }
+        out.push('"');
+        out
+    }
+
     /// Emit the self-contained bump allocator `tl_alloc(size) -> ptr`.
     ///
     /// ABI (System V): the byte count arrives in `%rdi`, the returned pointer
@@ -1008,7 +1112,7 @@ impl X86_64Backend {
         for (var, ty) in &func.params {
             let offset = self.var_offsets[var];
             match ty {
-                Type::I64 | Type::U64 | Type::Func(_, _) | Type::Enum(_) => {
+                Type::I64 | Type::U64 | Type::Func(_, _) | Type::Enum(_) | Type::String => {
                     if int_param < param_regs.len() {
                         self.emit(&format!(
                             "    movq {}, {}(%rbp)",
@@ -1708,6 +1812,16 @@ impl X86_64Backend {
                 let n = if *b { 1 } else { 0 };
                 self.emit(&format!("    movq ${}, {}", n, reg));
             }
+            Value::ConstStr(s) => {
+                // The data pointer of a string literal: the address of its
+                // interned `.rodata` bytes, loaded RIP-relative.
+                let label = self
+                    .interned_strings
+                    .get(s)
+                    .cloned()
+                    .expect("string literal interned in pre-pass");
+                self.emit(&format!("    leaq {}(%rip), {}", label, reg));
+            }
             Value::Var(v) => {
                 let offset = self.var_offsets[v];
                 let addr = format!("{}(%rbp)", offset);
@@ -1841,6 +1955,8 @@ impl X86_64Backend {
             Value::ConstF64(_) => Some(Type::F64),
             Value::ConstBool(_) => Some(Type::Bool),
             Value::ConstUnit => Some(Type::Unit),
+            // A `ConstStr` operand is the raw data pointer of a string literal.
+            Value::ConstStr(_) => Some(Type::U64),
             Value::Var(v) => self.var_types.get(v).cloned(),
             Value::Global(name) => self.global_types.get(name).cloned(),
         }
@@ -3261,5 +3377,68 @@ mod tests {
         // The call targets the user's (mangled) function.
         assert!(asm.contains("_tl_tl_alloc:"), "asm:\n{}", asm);
         assert!(asm.contains("    call _tl_tl_alloc"), "asm:\n{}", asm);
+    }
+
+    // ------------------------------------------------------------------
+    // String literals — Issue #13
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_compile_string_literal_emits_rodata_and_fat_value() {
+        // `string-length` returns i64, so the function is backend-valid; the
+        // string literal is constructed inline and its length read back.
+        let asm = compile_ok(r#"(define (main) : i64 (string-length "hello"))"#);
+
+        // The literal's bytes are interned into `.rodata` as a `.string`.
+        assert!(asm.contains("    .section .rodata"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_str_0:"), "asm:\n{}", asm);
+        assert!(asm.contains("    .string \"hello\""), "asm:\n{}", asm);
+
+        // The fat value's data pointer is loaded RIP-relative from that label.
+        assert!(asm.contains("leaq .L_tl_str_0(%rip)"), "asm:\n{}", asm);
+
+        // The byte length (5) is stored into the fat value.
+        assert!(asm.contains("$5,"), "asm:\n{}", asm);
+
+        // No instruction selection fell through to a TODO stub.
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_identical_string_literals_share_rodata() {
+        // Two identical literals intern to one set of bytes / one label.
+        let asm =
+            compile_ok(r#"(define (main) : i64 (+ (string-length "hi") (string-length "hi")))"#);
+        let occurrences = asm.matches(".L_tl_str_0:").count();
+        assert_eq!(occurrences, 1, "asm:\n{}", asm);
+        // No second distinct string label was allocated.
+        assert!(!asm.contains(".L_tl_str_1:"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_string_length_reads_len_field() {
+        // `string-length` is not a runtime call; it loads the fat value's len
+        // field. There must be no call to a `string-length` symbol.
+        let asm = compile_ok(r#"(define (main) : i64 (string-length "abc"))"#);
+        assert!(!asm.contains("string_length"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+        // The length byte count for "abc" is 3.
+        assert!(asm.contains("$3,"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_distinct_string_literals_get_distinct_labels() {
+        let asm =
+            compile_ok(r#"(define (main) : i64 (+ (string-length "aa") (string-length "bbb")))"#);
+        assert!(asm.contains(".L_tl_str_0:"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_str_1:"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_escape_string_bytes_escapes_specials() {
+        // Quote, backslash, newline and a non-printable byte are escaped so the
+        // assembler reproduces the exact bytes.
+        let rendered = X86_64Backend::escape_string_bytes("a\"b\\c\n\u{7}");
+        assert_eq!(rendered, "\"a\\\"b\\\\c\\n\\007\"");
     }
 }

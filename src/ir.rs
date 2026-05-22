@@ -16,6 +16,11 @@ pub enum Value {
     ConstF64(f64),
     ConstBool(bool),
     ConstUnit,
+    /// A reference to the raw bytes of a string literal. The backend interns the
+    /// bytes into `.rodata` and materializes this operand as the address of
+    /// those bytes (the `ptr` field of a fat string). The value is pointer-sized
+    /// (a data pointer), used only to populate fat-string storage at lowering.
+    ConstStr(String),
     Var(VarId),
     Global(String),
 }
@@ -229,6 +234,9 @@ impl Value {
             Value::ConstF64(_) => Some(Type::F64),
             Value::ConstBool(_) => Some(Type::Bool),
             Value::ConstUnit => Some(Type::Unit),
+            // A `ConstStr` operand is the raw data pointer of a string literal,
+            // a pointer-sized value.
+            Value::ConstStr(_) => Some(Type::U64),
             Value::Var(_) | Value::Global(_) => None, // Need type context
         }
     }
@@ -243,6 +251,7 @@ impl fmt::Display for Value {
             Value::ConstF64(n) => write!(f, "{}", n),
             Value::ConstBool(b) => write!(f, "{}", b),
             Value::ConstUnit => write!(f, "unit"),
+            Value::ConstStr(s) => write!(f, "{:?}", s),
             Value::Var(v) => write!(f, "%{}", v),
             Value::Global(g) => write!(f, "@{}", g),
         }

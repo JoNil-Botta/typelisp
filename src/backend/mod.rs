@@ -15,6 +15,7 @@ pub struct X86_64Backend {
     stack_size: i32,
     var_offsets: HashMap<VarId, i32>,
     var_types: HashMap<VarId, Type>,
+    global_types: HashMap<String, Type>,
     address_vars: HashSet<VarId>,
     return_ty: Type,
     /// VarIds that are function parameters of the function currently being
@@ -43,13 +44,49 @@ pub fn validate_program(program: &Program) -> Result<(), String> {
     if program.functions.is_empty() {
         return Err("backend: program defines no functions to compile".into());
     }
+    let global_types: HashMap<String, Type> = program
+        .globals
+        .iter()
+        .map(|(name, ty, _)| (name.clone(), ty.clone()))
+        .collect();
+    for (name, ty, init) in &program.globals {
+        validate_global(name, ty, init.as_ref())?;
+    }
     for func in &program.functions {
-        validate_function(func)?;
+        validate_function(func, &global_types)?;
     }
     Ok(())
 }
 
-fn validate_function(func: &Function) -> Result<(), String> {
+fn validate_global(name: &str, ty: &Type, init: Option<&Value>) -> Result<(), String> {
+    if !is_global_data_type(ty) {
+        return Err(format!(
+            "backend: global '{}' has unsupported type {}. \
+             The x86_64 backend currently supports scalar integer, bool, char, f64 \
+             and unit globals.",
+            name, ty
+        ));
+    }
+
+    let Some(init) = init else {
+        return Err(format!(
+            "backend: global '{}' has a non-constant initializer. \
+             Global code generation currently supports literal initializers only.",
+            name
+        ));
+    };
+
+    if global_initializer_matches_type(init, ty) {
+        Ok(())
+    } else {
+        Err(format!(
+            "backend: global '{}' has unsupported initializer {:?} for type {}",
+            name, init, ty
+        ))
+    }
+}
+
+fn validate_function(func: &Function, global_types: &HashMap<String, Type>) -> Result<(), String> {
     let var_types: HashMap<VarId, Type> = func
         .params
         .iter()
@@ -76,10 +113,14 @@ fn validate_function(func: &Function) -> Result<(), String> {
                 Instruction::BinOp {
                     op, lhs, rhs, ty, ..
                 } => {
-                    check_operand(lhs).map_err(|w| unsupported_value(&func.name, &w))?;
-                    check_operand(rhs).map_err(|w| unsupported_value(&func.name, &w))?;
-                    let lhs_ty = validate_value_type(lhs, &var_types).unwrap_or_else(|| ty.clone());
-                    let rhs_ty = validate_value_type(rhs, &var_types).unwrap_or_else(|| ty.clone());
+                    check_operand(lhs, global_types)
+                        .map_err(|w| unsupported_value(&func.name, &w))?;
+                    check_operand(rhs, global_types)
+                        .map_err(|w| unsupported_value(&func.name, &w))?;
+                    let lhs_ty = validate_value_type(lhs, &var_types, global_types)
+                        .unwrap_or_else(|| ty.clone());
+                    let rhs_ty = validate_value_type(rhs, &var_types, global_types)
+                        .unwrap_or_else(|| ty.clone());
                     if (lhs_ty == Type::F64 || rhs_ty == Type::F64 || *ty == Type::F64)
                         && matches!(
                             *op,
@@ -97,14 +138,17 @@ fn validate_function(func: &Function) -> Result<(), String> {
                     }
                 }
                 Instruction::UnOp { op, src, ty, .. } => {
-                    check_operand(src).map_err(|w| unsupported_value(&func.name, &w))?;
-                    let src_ty = validate_value_type(src, &var_types).unwrap_or_else(|| ty.clone());
+                    check_operand(src, global_types)
+                        .map_err(|w| unsupported_value(&func.name, &w))?;
+                    let src_ty = validate_value_type(src, &var_types, global_types)
+                        .unwrap_or_else(|| ty.clone());
                     if src_ty == Type::F64 && matches!(*op, IrUnOp::Not | IrUnOp::BitNot) {
                         return unsupported("unsupported f64 unary operator");
                     }
                 }
                 Instruction::Mov { src, .. } => {
-                    check_operand(src).map_err(|w| unsupported_value(&func.name, &w))?;
+                    check_operand(src, global_types)
+                        .map_err(|w| unsupported_value(&func.name, &w))?;
                 }
                 Instruction::Cast {
                     src,
@@ -112,29 +156,34 @@ fn validate_function(func: &Function) -> Result<(), String> {
                     to_ty,
                     ..
                 } => {
-                    check_operand(src).map_err(|w| unsupported_value(&func.name, &w))?;
+                    check_operand(src, global_types)
+                        .map_err(|w| unsupported_value(&func.name, &w))?;
                     if from_ty.is_float() || to_ty.is_float() {
                         return unsupported("floating-point cast");
                     }
                 }
                 Instruction::Call { args, .. } => {
                     for arg in args {
-                        check_operand(arg).map_err(|w| unsupported_value(&func.name, &w))?;
+                        check_operand(arg, global_types)
+                            .map_err(|w| unsupported_value(&func.name, &w))?;
                     }
                 }
                 Instruction::Return(Some(v)) => {
-                    check_operand(v).map_err(|w| unsupported_value(&func.name, &w))?;
+                    check_operand(v, global_types)
+                        .map_err(|w| unsupported_value(&func.name, &w))?;
                 }
                 Instruction::Return(None) | Instruction::Label(_) | Instruction::Jump(_) => {}
                 // `if`/`while` control flow — now codegen'd.
                 Instruction::Branch { cond, .. } => {
-                    check_operand(cond).map_err(|w| unsupported_value(&func.name, &w))?;
+                    check_operand(cond, global_types)
+                        .map_err(|w| unsupported_value(&func.name, &w))?;
                 }
                 // `if` result selection — eliminated to predecessor copies before
                 // codegen (see `eliminate_phis`).
                 Instruction::Phi { incoming, .. } => {
                     for (val, _) in incoming {
-                        check_operand(val).map_err(|w| unsupported_value(&func.name, &w))?;
+                        check_operand(val, global_types)
+                            .map_err(|w| unsupported_value(&func.name, &w))?;
                     }
                 }
                 // `let`/`set!` scalar locals and pointer values materialized by
@@ -146,14 +195,16 @@ fn validate_function(func: &Function) -> Result<(), String> {
                         Value::Var(_) => {}
                         _ => return unsupported("load through a non-local address"),
                     }
-                    check_operand(src).map_err(|w| unsupported_value(&func.name, &w))?;
+                    check_operand(src, global_types)
+                        .map_err(|w| unsupported_value(&func.name, &w))?;
                 }
                 Instruction::Store { dst, src, .. } => {
                     match dst {
                         Value::Var(_) => {}
                         _ => return unsupported("store through a non-local address"),
                     }
-                    check_operand(src).map_err(|w| unsupported_value(&func.name, &w))?;
+                    check_operand(src, global_types)
+                        .map_err(|w| unsupported_value(&func.name, &w))?;
                 }
                 Instruction::CallIndirect {
                     func: target, args, ..
@@ -167,7 +218,8 @@ fn validate_function(func: &Function) -> Result<(), String> {
                         _ => return unsupported("indirect call through a non-local value"),
                     }
                     for arg in args {
-                        check_operand(arg).map_err(|w| unsupported_value(&func.name, &w))?;
+                        check_operand(arg, global_types)
+                            .map_err(|w| unsupported_value(&func.name, &w))?;
                     }
                 }
                 Instruction::AddrOf { dst, src } => {
@@ -193,13 +245,14 @@ fn validate_function(func: &Function) -> Result<(), String> {
                     if !is_pointer_sized_type(dst_ty) {
                         return unsupported("gep destination is not pointer-sized");
                     }
-                    let Some(base_ty) = validate_value_type(base, &var_types) else {
+                    let Some(base_ty) = validate_value_type(base, &var_types, global_types) else {
                         return unsupported("gep base has unknown type");
                     };
                     if !is_pointer_sized_type(&base_ty) {
                         return unsupported("gep base is not pointer-sized");
                     }
-                    let Some(offset_ty) = validate_value_type(offset, &var_types) else {
+                    let Some(offset_ty) = validate_value_type(offset, &var_types, global_types)
+                    else {
                         return unsupported("gep offset has unknown type");
                     };
                     if !offset_ty.is_integer() {
@@ -208,8 +261,10 @@ fn validate_function(func: &Function) -> Result<(), String> {
                     if !is_sized_backend_type(elem_ty) {
                         return unsupported("gep element type has unsupported size");
                     }
-                    check_operand(base).map_err(|w| unsupported_value(&func.name, &w))?;
-                    check_operand(offset).map_err(|w| unsupported_value(&func.name, &w))?;
+                    check_operand(base, global_types)
+                        .map_err(|w| unsupported_value(&func.name, &w))?;
+                    check_operand(offset, global_types)
+                        .map_err(|w| unsupported_value(&func.name, &w))?;
                 }
             }
         }
@@ -218,7 +273,7 @@ fn validate_function(func: &Function) -> Result<(), String> {
 }
 
 /// Reject operand kinds the code generator cannot materialize.
-fn check_operand(val: &Value) -> Result<(), String> {
+fn check_operand(val: &Value, global_types: &HashMap<String, Type>) -> Result<(), String> {
     match val {
         Value::ConstI64(_)
         | Value::ConstI32(_)
@@ -227,11 +282,19 @@ fn check_operand(val: &Value) -> Result<(), String> {
         | Value::ConstBool(_)
         | Value::Var(_) => Ok(()),
         Value::ConstUnit => Err("unit value".into()),
-        Value::Global(name) => Err(format!("global/unresolved reference '{}'", name)),
+        Value::Global(name) => match global_types.get(name) {
+            Some(ty) if is_loadable_global_type(ty) => Ok(()),
+            Some(ty) => Err(format!("global '{}' has unsupported type {}", name, ty)),
+            None => Err(format!("global/unresolved reference '{}'", name)),
+        },
     }
 }
 
-fn validate_value_type(val: &Value, var_types: &HashMap<VarId, Type>) -> Option<Type> {
+fn validate_value_type(
+    val: &Value,
+    var_types: &HashMap<VarId, Type>,
+    global_types: &HashMap<String, Type>,
+) -> Option<Type> {
     match val {
         Value::ConstI64(_) => Some(Type::I64),
         Value::ConstI32(_) => Some(Type::I32),
@@ -240,7 +303,7 @@ fn validate_value_type(val: &Value, var_types: &HashMap<VarId, Type>) -> Option<
         Value::ConstBool(_) => Some(Type::Bool),
         Value::ConstUnit => Some(Type::Unit),
         Value::Var(var) => var_types.get(var).cloned(),
-        Value::Global(_) => None,
+        Value::Global(name) => global_types.get(name).cloned(),
     }
 }
 
@@ -255,6 +318,40 @@ fn is_sized_backend_type(ty: &Type) -> bool {
         Type::Array(elem, len) => *len > 0 && is_sized_backend_type(elem),
         _ => true,
     }
+}
+
+fn is_global_data_type(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::I64
+            | Type::U64
+            | Type::I32
+            | Type::U32
+            | Type::I16
+            | Type::U16
+            | Type::I8
+            | Type::U8
+            | Type::Bool
+            | Type::Char
+            | Type::F64
+            | Type::Unit
+    )
+}
+
+fn is_loadable_global_type(ty: &Type) -> bool {
+    is_global_data_type(ty) && *ty != Type::Unit
+}
+
+fn global_initializer_matches_type(value: &Value, ty: &Type) -> bool {
+    matches!(
+        (value, ty),
+        (Value::ConstI64(_), Type::I64 | Type::U64)
+            | (Value::ConstI32(_), Type::I32 | Type::U32)
+            | (Value::ConstI8(_), Type::I8 | Type::U8 | Type::Char)
+            | (Value::ConstBool(_), Type::Bool)
+            | (Value::ConstF64(_), Type::F64)
+            | (Value::ConstUnit, Type::Unit)
+    )
 }
 
 fn unsupported_value(func: &str, what: &str) -> String {
@@ -412,6 +509,7 @@ impl X86_64Backend {
             stack_size: 0,
             var_offsets: HashMap::new(),
             var_types: HashMap::new(),
+            global_types: HashMap::new(),
             address_vars: HashSet::new(),
             return_ty: Type::Unit,
             param_vars: HashSet::new(),
@@ -420,6 +518,13 @@ impl X86_64Backend {
     }
 
     pub fn generate(&mut self, program: &Program) -> String {
+        self.global_types.clear();
+        for (name, ty, _) in &program.globals {
+            self.global_types.insert(name.clone(), ty.clone());
+        }
+
+        self.generate_globals(&program.globals);
+
         self.emit("    .text");
         self.emit("    .globl main");
         self.emit("    .globl _start");
@@ -451,6 +556,52 @@ impl X86_64Backend {
         self.emit("    syscall");
 
         self.output.clone()
+    }
+
+    fn generate_globals(&mut self, globals: &[(String, Type, Option<Value>)]) {
+        if globals.is_empty() {
+            return;
+        }
+
+        self.emit("    .data");
+        for (name, ty, init) in globals {
+            let symbol = Self::mangle_name(name);
+            self.emit(&format!("    .globl {}", symbol));
+            self.emit(&format!("    .balign {}", ty.align().max(1)));
+            self.emit(&format!("{}:", symbol));
+            self.emit_global_initializer(ty, init.as_ref());
+        }
+        self.emit("");
+    }
+
+    fn emit_global_initializer(&mut self, ty: &Type, init: Option<&Value>) {
+        match init {
+            Some(Value::ConstI64(n)) => self.emit_integer_global(ty, *n as i128),
+            Some(Value::ConstI32(n)) => self.emit_integer_global(ty, *n as i128),
+            Some(Value::ConstI8(n)) => self.emit_integer_global(ty, *n as i128),
+            Some(Value::ConstBool(b)) => self.emit_integer_global(ty, if *b { 1 } else { 0 }),
+            Some(Value::ConstF64(n)) => self.emit(&format!("    .quad {:#x}", n.to_bits())),
+            Some(Value::ConstUnit) => {}
+            // Validation rejects non-literal global initializers.
+            Some(_) | None => self.emit_zero_global(ty),
+        }
+    }
+
+    fn emit_integer_global(&mut self, ty: &Type, value: i128) {
+        match ty.size() {
+            8 => self.emit(&format!("    .quad {}", value)),
+            4 => self.emit(&format!("    .long {}", value)),
+            2 => self.emit(&format!("    .word {}", value)),
+            1 => self.emit(&format!("    .byte {}", value)),
+            _ => self.emit_zero_global(ty),
+        }
+    }
+
+    fn emit_zero_global(&mut self, ty: &Type) {
+        let size = ty.size();
+        if size > 0 {
+            self.emit(&format!("    .zero {}", size));
+        }
     }
 
     fn generate_function(&mut self, func: &Function) {
@@ -1140,26 +1291,32 @@ impl X86_64Backend {
             }
             Value::Var(v) => {
                 let offset = self.var_offsets[v];
-                // Scalar slots are 8 bytes wide. Load the value into the full
-                // 64-bit register, extending narrower types so the upper bits
-                // are well-defined for the subsequent op/compare. Signed types
-                // sign-extend (`movs..`); unsigned types (and bool/char)
-                // zero-extend (`movz..`) so signed/unsigned comparisons and
-                // arithmetic see correctly-extended operands.
-                let signed = ty.is_signed();
-                match ty.size() {
-                    8 => self.emit(&format!("    movq {}(%rbp), {}", offset, reg)),
-                    4 if signed => self.emit(&format!("    movslq {}(%rbp), {}", offset, reg)),
-                    // `movl` into the 32-bit sub-register zero-extends into the
-                    // full 64-bit register on x86_64.
-                    4 => self.emit(&format!("    movl {}(%rbp), {}", offset, Self::gpr32(reg))),
-                    2 if signed => self.emit(&format!("    movswq {}(%rbp), {}", offset, reg)),
-                    2 => self.emit(&format!("    movzwq {}(%rbp), {}", offset, reg)),
-                    1 if signed => self.emit(&format!("    movsbq {}(%rbp), {}", offset, reg)),
-                    1 => self.emit(&format!("    movzbq {}(%rbp), {}", offset, reg)),
-                    _ => {}
-                }
+                let addr = format!("{}(%rbp)", offset);
+                self.load_memory_value(&addr, reg, ty);
             }
+            Value::Global(name) => {
+                let addr = format!("{}(%rip)", Self::mangle_name(name));
+                self.load_memory_value(&addr, reg, ty);
+            }
+            _ => {}
+        }
+    }
+
+    fn load_memory_value(&mut self, addr: &str, reg: &str, ty: &Type) {
+        // Load the value into the full 64-bit register, extending narrower
+        // types so upper bits are well-defined for the subsequent op/compare.
+        // Signed types sign-extend; unsigned types (and bool/char) zero-extend.
+        let signed = ty.is_signed();
+        match ty.size() {
+            8 => self.emit(&format!("    movq {}, {}", addr, reg)),
+            4 if signed => self.emit(&format!("    movslq {}, {}", addr, reg)),
+            // `movl` into the 32-bit sub-register zero-extends into the full
+            // 64-bit register on x86_64.
+            4 => self.emit(&format!("    movl {}, {}", addr, Self::gpr32(reg))),
+            2 if signed => self.emit(&format!("    movswq {}, {}", addr, reg)),
+            2 => self.emit(&format!("    movzwq {}, {}", addr, reg)),
+            1 if signed => self.emit(&format!("    movsbq {}, {}", addr, reg)),
+            1 => self.emit(&format!("    movzbq {}, {}", addr, reg)),
             _ => {}
         }
     }
@@ -1173,6 +1330,13 @@ impl X86_64Backend {
             Value::Var(v) => {
                 let offset = self.var_offsets[v];
                 self.emit(&format!("    movsd {}(%rbp), {}", offset, reg));
+            }
+            Value::Global(name) => {
+                self.emit(&format!(
+                    "    movsd {}(%rip), {}",
+                    Self::mangle_name(name),
+                    reg
+                ));
             }
             _ => {}
         }
@@ -1259,7 +1423,7 @@ impl X86_64Backend {
             Value::ConstBool(_) => Some(Type::Bool),
             Value::ConstUnit => Some(Type::Unit),
             Value::Var(v) => self.var_types.get(v).cloned(),
-            Value::Global(_) => None,
+            Value::Global(name) => self.global_types.get(name).cloned(),
         }
     }
 
@@ -1406,6 +1570,62 @@ mod tests {
         assert!(asm.contains("_start:"));
         assert!(asm.contains("    call main"));
         assert!(asm.contains("    movq $60, %rax"));
+    }
+
+    #[test]
+    fn test_compile_loads_i64_global() {
+        let asm = compile_ok(
+            r#"
+            (define answer 42)
+            (define (main) : i64 answer)
+            "#,
+        );
+        assert!(asm.contains("    .data"), "asm:\n{}", asm);
+        assert!(asm.contains("_tl_answer:"), "asm:\n{}", asm);
+        assert!(asm.contains("    .quad 42"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("    movq _tl_answer(%rip), %rax"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_loads_f64_global() {
+        let asm = compile_ok(
+            r#"
+            (define pi 3.14)
+            (define (main) : f64 pi)
+            "#,
+        );
+        assert!(asm.contains("_tl_pi:"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("    .quad 0x40091eb851eb851f"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("    movsd _tl_pi(%rip), %xmm0"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
+    fn test_reject_non_constant_global_initializer() {
+        let err = compile_err(
+            r#"
+            (define result (+ 1 2))
+            (define (main) : i64 result)
+            "#,
+        );
+        assert!(
+            err.contains("non-constant initializer"),
+            "unexpected error: {}",
+            err
+        );
     }
 
     #[test]

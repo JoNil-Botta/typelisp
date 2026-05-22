@@ -196,7 +196,11 @@ impl FnLowerer {
     /// Lower a function body and produce a complete IR Function.
     fn lower_body(mut self, body: &ast::Expr, ret_ty: &Type) -> Function {
         let result = self.lower_expr(body);
-        self.builder.emit(Instruction::Return(Some(result)));
+        if *ret_ty == Type::Unit {
+            self.builder.emit(Instruction::Return(None));
+        } else {
+            self.builder.emit(Instruction::Return(Some(result)));
+        }
 
         let blocks = self.builder.build();
         Function {
@@ -542,6 +546,16 @@ impl FnLowerer {
                 return Value::Var(dst);
             }
         };
+
+        if ret_ty == Type::Unit {
+            self.builder.emit(Instruction::Call {
+                dst: None,
+                func: func_name,
+                args: arg_vals,
+                ty: Type::Unit,
+            });
+            return Value::ConstUnit;
+        }
 
         let dst = self.builder.fresh_var();
         self.builder.emit(Instruction::Call {
@@ -1113,6 +1127,25 @@ mod tests {
             })
         });
         assert!(has_const_unit);
+    }
+
+    #[test]
+    fn test_lower_unit_return_has_no_operand() {
+        let prog = parse(
+            r#"
+            (define (noop) : unit unit)
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        assert_eq!(ir.functions.len(), 1);
+
+        let has_empty_return = ir.functions[0].blocks.iter().any(|b| {
+            b.instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::Return(None)))
+        });
+        assert!(has_empty_return);
     }
 
     #[test]

@@ -218,6 +218,10 @@ impl<'a> Parser<'a> {
 
     fn parse_type(&mut self) -> Result<Type, ParseError> {
         match &self.current {
+            Token::Unit => {
+                self.advance()?;
+                Ok(Type::Unit)
+            }
             Token::Ident(s) => {
                 let ty = match s.as_str() {
                     "i64" => Type::I64,
@@ -232,7 +236,6 @@ impl<'a> Parser<'a> {
                     "f32" => Type::F32,
                     "bool" => Type::Bool,
                     "char" => Type::Char,
-                    "unit" => Type::Unit,
                     _ => Type::Var(s.clone()),
                 };
                 self.advance()?;
@@ -627,6 +630,19 @@ mod tests {
                 assert_eq!(name, "add");
                 assert_eq!(params.len(), 2);
                 assert_eq!(ret, &Type::I64);
+            }
+            _ => panic!("expected DefFn"),
+        }
+    }
+
+    #[test]
+    fn test_parse_unit_return_type() {
+        let prog = parse("(define (noop) : unit unit)").unwrap();
+        assert_eq!(prog.decls.len(), 1);
+        match &prog.decls[0] {
+            Decl::DefFn { ret, body, .. } => {
+                assert_eq!(ret, &Type::Unit);
+                assert_eq!(body.unspan(), &Expr::Literal(Literal::Unit));
             }
             _ => panic!("expected DefFn"),
         }

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::span::Span;
 use std::fmt;
 
@@ -111,7 +113,9 @@ pub fn format_diagnostic(diag: &Diagnostic, source: &str, file: &str) -> String 
 
 impl fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {} at {}:{}",
+        write!(
+            f,
+            "{}: {} at {}:{}",
             match self.level {
                 Level::Error => "error",
                 Level::Warning => "warning",
@@ -130,13 +134,10 @@ mod tests {
 
     #[test]
     fn test_format_simple() {
-        // Point at 'y' in "(+ x y)" which is column 5
-        let diag = Diagnostic::error(
-            "type mismatch",
-            Span::new(3, 6, 3, 7),
-        )
-        .with_code("E0001")
-        .with_help("expected i64, found bool");
+        // Point at 'y' in "(+ x y)" which is column 6
+        let diag = Diagnostic::error("type mismatch", Span::new(3, 6, 3, 7))
+            .with_code("E0001")
+            .with_help("expected i64, found bool");
 
         let source = "(define x true)\n(define y 42)\n(+ x y)\n";
         let out = format_diagnostic(&diag, source, "test.tl");

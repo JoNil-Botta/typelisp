@@ -698,6 +698,38 @@ impl X86_64Backend {
         self.emit("    pop %rbp");
         self.emit("    ret");
         self.emit("");
+
+        self.emit("    .globl tl_print_char");
+        self.emit("tl_print_char:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    sub $16, %rsp");
+        self.emit("    movb %dil, -1(%rbp)");
+        self.emit("    leaq -1(%rbp), %rsi");
+        self.emit("    movq $1, %rdx");
+        self.emit("    movq $1, %rax");
+        self.emit("    movq $1, %rdi");
+        self.emit("    syscall");
+        self.emit("    mov %rbp, %rsp");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+
+        self.emit("    .globl tl_print_newline");
+        self.emit("tl_print_newline:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    sub $16, %rsp");
+        self.emit("    movb $10, -1(%rbp)");
+        self.emit("    leaq -1(%rbp), %rsi");
+        self.emit("    movq $1, %rdx");
+        self.emit("    movq $1, %rax");
+        self.emit("    movq $1, %rdi");
+        self.emit("    syscall");
+        self.emit("    mov %rbp, %rsp");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
     }
 
     fn generate_globals(&mut self, globals: &[(String, Type, Option<Value>)]) {
@@ -1729,12 +1761,21 @@ impl X86_64Backend {
             "print" => Some("tl_print_i64".into()),
             "print-bool" => Some("tl_print_bool".into()),
             "print-float" => Some("tl_print_f64".into()),
+            "print-char" => Some("tl_print_char".into()),
+            "print-newline" => Some("tl_print_newline".into()),
             _ => None,
         }
     }
 
     fn is_defined_print_runtime_symbol(symbol: &str) -> bool {
-        matches!(symbol, "tl_print_i64" | "tl_print_bool" | "tl_print_f64")
+        matches!(
+            symbol,
+            "tl_print_i64"
+                | "tl_print_bool"
+                | "tl_print_f64"
+                | "tl_print_char"
+                | "tl_print_newline"
+        )
     }
 
     fn fresh_label(&mut self, prefix: &str) -> String {
@@ -1909,6 +1950,28 @@ mod tests {
         assert!(asm.contains("    .asciz \"%.17g\\n\""), "asm:\n{}", asm);
         assert!(asm.contains("    call printf"), "asm:\n{}", asm);
         assert!(asm.contains("    call fflush"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_builtin_print_char_and_newline_runtime_calls() {
+        let asm = compile_ok(
+            r#"
+            (define (main) : i64
+              (begin
+                (print-char #A')
+                (print-newline)
+                0))
+            "#,
+        );
+        assert!(asm.contains("    call tl_print_char"), "asm:\n{}", asm);
+        assert!(asm.contains("    call tl_print_newline"), "asm:\n{}", asm);
+        assert!(!asm.contains("    call _tl_print_char"), "asm:\n{}", asm);
+        assert!(!asm.contains("    call _tl_print_newline"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_print_char:"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_print_newline:"), "asm:\n{}", asm);
+        assert!(asm.contains("    movb %dil, -1(%rbp)"), "asm:\n{}", asm);
+        assert!(asm.contains("    movb $10, -1(%rbp)"), "asm:\n{}", asm);
         assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
     }
 

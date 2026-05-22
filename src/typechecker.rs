@@ -52,6 +52,14 @@ impl TypeChecker {
             "print-float".into(),
             Type::Func(vec![Type::F64], Box::new(Type::Unit)),
         );
+        globals.insert(
+            "print-char".into(),
+            Type::Func(vec![Type::Char], Box::new(Type::Unit)),
+        );
+        globals.insert(
+            "print-newline".into(),
+            Type::Func(vec![], Box::new(Type::Unit)),
+        );
         TypeChecker {
             env: vec![globals],
             func_ret: None,
@@ -773,6 +781,22 @@ mod tests {
         let prog = parse(
             r#"
             (define (add [a : i64] [b : i64]) : i64 (+ a b))
+        "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        assert!(tc.check_program(&prog).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_builtin_char_and_newline_prints() {
+        let prog = parse(
+            r#"
+            (define (main) : i64
+              (begin
+                (print-char #A')
+                (print-newline)
+                0))
         "#,
         )
         .unwrap();

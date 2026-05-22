@@ -69,6 +69,11 @@ fn type_lisp_programs_compile_link_and_run() {
             stdout: "",
         },
         Case {
+            name: "narrow_div_mod",
+            exit_code: 30,
+            stdout: "",
+        },
+        Case {
             name: "string_length",
             exit_code: 5,
             stdout: "",

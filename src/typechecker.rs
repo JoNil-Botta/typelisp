@@ -69,6 +69,15 @@ impl TypeChecker {
             "length".into(),
             Type::Func(vec![Type::String], Box::new(Type::I64)),
         );
+        // `(string-eq a b)` / `(string=? a b)` -> byte-wise string equality.
+        globals.insert(
+            "string-eq".into(),
+            Type::Func(vec![Type::String, Type::String], Box::new(Type::Bool)),
+        );
+        globals.insert(
+            "string=?".into(),
+            Type::Func(vec![Type::String, Type::String], Box::new(Type::Bool)),
+        );
         TypeChecker {
             env: vec![globals],
             func_ret: None,
@@ -1305,6 +1314,48 @@ mod tests {
     fn test_typecheck_string_length_arg_type_checked() {
         // `string-length` requires a String argument; an i64 is rejected.
         let src = "(define (n) : i64 (string-length 42))";
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_string_eq_is_bool() {
+        // `(string-eq a b)` of two Strings type-checks to bool.
+        let src = r#"(define (n) : bool (string-eq "hi" "hi"))"#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_string_eq_question_alias() {
+        // `string=?` is the Scheme-style alias and behaves identically.
+        let src = r#"(define (n) : bool (string=? "a" "b"))"#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_string_eq_on_params() {
+        // String parameters compare fine (caller owns the storage).
+        let src = "(define (cmp [a : String] [b : String]) : bool (string-eq a b))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_string_eq_arg_type_checked() {
+        // Both operands must be String; an i64 operand is rejected.
+        let src = r#"(define (n) : bool (string-eq "a" 42))"#;
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_string_eq_arity_checked() {
+        // `string-eq` is binary; a single argument is an arity error.
+        let src = r#"(define (n) : bool (string-eq "a"))"#;
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_string_eq_result_not_i64() {
+        // The result is bool, not i64 — using it where i64 is expected fails.
+        let src = r#"(define (n) : i64 (string-eq "a" "a"))"#;
         assert!(check(src).is_err());
     }
 

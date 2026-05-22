@@ -1,0 +1,7 @@
+(define (fib [n : i64]) : i64
+  (if (< n 2)
+      n
+      (+ (fib (- n 1)) (fib (- n 2)))))
+
+(define (main) : i64
+  (fib 7))

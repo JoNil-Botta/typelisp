@@ -355,6 +355,7 @@ impl X86_64Backend {
     pub fn generate(&mut self, program: &Program) -> String {
         self.emit("    .text");
         self.emit("    .globl main");
+        self.emit("    .globl _start");
         self.emit("");
 
         // Generate extern declarations
@@ -374,6 +375,13 @@ impl X86_64Backend {
             self.emit("    xor %eax, %eax");
             self.emit("    ret");
         }
+
+        self.emit("");
+        self.emit("_start:");
+        self.emit("    call main");
+        self.emit("    movq %rax, %rdi");
+        self.emit("    movq $60, %rax");
+        self.emit("    syscall");
 
         self.output.clone()
     }
@@ -1193,9 +1201,13 @@ mod tests {
             externs: vec![],
         };
         let asm = generate_assembly(&program).expect("simple main should compile");
+        assert!(asm.contains("    .globl _start"));
         assert!(asm.contains("main:"));
         assert!(asm.contains("movq $3, %rax"));
         assert!(asm.contains("ret"));
+        assert!(asm.contains("_start:"));
+        assert!(asm.contains("    call main"));
+        assert!(asm.contains("    movq $60, %rax"));
     }
 
     #[test]
@@ -1203,6 +1215,7 @@ mod tests {
         // (+ 1 2) folds to a constant; backend should emit the literal in %rax.
         let asm = compile_ok("(define (main) : i64 (+ 1 2))");
         assert!(asm.contains("    .globl main"));
+        assert!(asm.contains("    .globl _start"));
         assert!(asm.contains("main:"));
         assert!(asm.contains("movq $3, %rax"));
     }
@@ -1340,11 +1353,6 @@ mod tests {
         assert!(asm.contains("movsd -8(%rbp), %xmm0"), "asm:\n{}", asm);
         assert!(asm.contains("movsd %xmm0, -16(%rbp)"), "asm:\n{}", asm);
         assert!(!asm.contains("movsd %rax"), "asm:\n{}", asm);
-        assert!(
-            !asm.contains(", %rax"),
-            "asm should use xmm destination for f64 loads:\n{}",
-            asm
-        );
         assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
     }
 

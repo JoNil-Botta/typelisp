@@ -72,10 +72,10 @@ fn lexer_tl_compiles_to_assembly() {
         asm,
     );
 
-    // The unexpected-character path lowers `(panic ...)` to the abort runtime.
+    // The unexpected-character path lowers `(panic ...)` to the private abort runtime.
     assert!(
-        asm.contains("call tl_abort"),
-        "lexer assembly is missing the panic abort path (tl_abort):\n{}",
+        asm.contains("call .L_tl_abort"),
+        "lexer assembly is missing the panic abort path (.L_tl_abort):\n{}",
         asm,
     );
 

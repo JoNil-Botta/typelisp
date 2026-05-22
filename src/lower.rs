@@ -16,6 +16,7 @@ struct ProgramLowerer {
     functions: Vec<Function>,
     globals: Vec<(String, Type, Option<Value>)>,
     externs: Vec<(String, Type)>,
+    global_types: HashMap<String, Type>,
     function_types: HashMap<String, Type>,
     enums: ast::EnumRegistry,
 }
@@ -26,6 +27,7 @@ impl ProgramLowerer {
             functions: Vec::new(),
             globals: Vec::new(),
             externs: Vec::new(),
+            global_types: HashMap::new(),
             function_types: HashMap::new(),
             enums: ast::EnumRegistry::default(),
         }
@@ -54,7 +56,14 @@ impl ProgramLowerer {
                     self.function_types
                         .insert(name.clone(), self.enums.resolve_type(ty));
                 }
-                ast::Decl::Def { .. } | ast::Decl::DefEnum { .. } => {}
+                ast::Decl::Def { name, ty, value } => {
+                    let val_ty = ty
+                        .as_ref()
+                        .map(|ty| self.enums.resolve_type(ty))
+                        .unwrap_or_else(|| infer_literal_type(value));
+                    self.global_types.insert(name.clone(), val_ty);
+                }
+                ast::Decl::DefEnum { .. } => {}
             }
         }
 
@@ -68,6 +77,7 @@ impl ProgramLowerer {
                         &[],
                         &val_ty,
                         &self.function_types,
+                        &self.global_types,
                         &self.enums,
                     );
                     let (_func, _result_var) = fn_lowerer.lower_expr_to_fn(value, &val_ty);
@@ -113,7 +123,14 @@ impl ProgramLowerer {
         ret: &Type,
         body: &ast::Expr,
     ) -> Function {
-        let fn_lowerer = FnLowerer::new(name, params, ret, &self.function_types, &self.enums);
+        let fn_lowerer = FnLowerer::new(
+            name,
+            params,
+            ret,
+            &self.function_types,
+            &self.global_types,
+            &self.enums,
+        );
         fn_lowerer.lower_body(body, ret)
     }
 }
@@ -151,6 +168,7 @@ struct FnLowerer {
     /// This lets `value_type` recover the true width of a `Value::Var` instead
     /// of defaulting to `i64`, which is essential for width-correct codegen.
     var_types: HashMap<VarId, Type>,
+    global_types: HashMap<String, Type>,
     function_types: HashMap<String, Type>,
     enums: ast::EnumRegistry,
     params: Vec<(VarId, Type)>,
@@ -165,6 +183,7 @@ impl FnLowerer {
         params: &[(String, Type)],
         ret: &Type,
         function_types: &HashMap<String, Type>,
+        global_types: &HashMap<String, Type>,
         enums: &ast::EnumRegistry,
     ) -> Self {
         let mut builder = IrBuilder::new("entry");
@@ -188,6 +207,7 @@ impl FnLowerer {
             builder,
             vars,
             var_types,
+            global_types: global_types.clone(),
             function_types: function_types.clone(),
             enums: enums.clone(),
             params: ir_params,
@@ -1272,6 +1292,12 @@ impl FnLowerer {
                 src: val,
                 ty,
             });
+        } else if let Some(ty) = self.global_types.get(name).cloned() {
+            self.builder.emit(Instruction::Store {
+                dst: Value::Global(name.to_string()),
+                src: val,
+                ty,
+            });
         }
         Value::ConstUnit
     }
@@ -1290,7 +1316,7 @@ impl FnLowerer {
             // A `ConstStr` operand is the raw data pointer of a string literal.
             Value::ConstStr(_) => Type::U64,
             Value::Var(v) => self.var_types.get(v).cloned().unwrap_or(Type::I64),
-            Value::Global(_) => Type::I64,
+            Value::Global(name) => self.global_types.get(name).cloned().unwrap_or(Type::I64),
         }
     }
 
@@ -1844,6 +1870,34 @@ mod tests {
                 .any(|i| matches!(i, Instruction::Store { .. }))
         });
         assert!(has_store);
+    }
+
+    #[test]
+    fn test_lower_set_global_emits_store_to_global() {
+        let prog = parse(
+            r#"
+            (define counter 0)
+            (define (f) : i64
+              (begin
+                (set! counter 5)
+                counter))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let has_global_store = ir.functions[0].blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                matches!(
+                    i,
+                    Instruction::Store {
+                        dst: Value::Global(name),
+                        src: Value::ConstI64(5),
+                        ty: Type::I64,
+                    } if name == "counter"
+                )
+            })
+        });
+        assert!(has_global_store);
     }
 
     #[test]

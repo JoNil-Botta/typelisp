@@ -1,0 +1,366 @@
+//! Module-graph loader for multi-file TypeLisp programs (#44, chunk 1).
+//!
+//! TypeLisp uses *whole-program* compilation: there is no separate-compilation
+//! linker. The loader starts at an entry file, discovers `(import "path")`
+//! directives, resolves each path **relative to the importing file**, and
+//! depth-first loads the reachable modules. A canonical-path visited-set
+//! deduplicates modules reached more than once (diamond imports) and makes
+//! import cycles terminate harmlessly. Every loaded module's real (non-import)
+//! declarations are concatenated, in imported-before-importer order, into a
+//! single [`Program`] which then flows through the *unchanged*
+//! `typecheck -> lower -> codegen` pipeline.
+//!
+//! The file-read and path-canonicalization steps are abstracted behind the
+//! [`ModuleSource`] trait so the graph logic (dedup, cycles, ordering, relative
+//! resolution) is unit-testable with an in-memory file map, requiring no real
+//! filesystem. The driver uses [`FsSource`], backed by `std::fs`/`std::path`.
+
+use crate::ast::{Decl, Program};
+use crate::parser::{ParseError, parse};
+use std::collections::HashSet;
+use std::io;
+use std::path::{Path, PathBuf};
+
+/// Abstraction over the filesystem so the loader can be driven by an in-memory
+/// map in tests. The driver uses [`FsSource`]; tests use a `HashMap`-backed
+/// source (see the test module).
+pub trait ModuleSource {
+    /// Read the full source text of the file at `path`.
+    fn read(&self, path: &Path) -> io::Result<String>;
+
+    /// Resolve `path` to a canonical key used for the dedup visited-set. Two
+    /// import paths that name the same module must canonicalize equal.
+    fn canonicalize(&self, path: &Path) -> io::Result<PathBuf>;
+}
+
+/// Real filesystem module source backed by `std::fs` / `std::path`.
+pub struct FsSource;
+
+impl ModuleSource for FsSource {
+    fn read(&self, path: &Path) -> io::Result<String> {
+        std::fs::read_to_string(path)
+    }
+
+    fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
+        std::fs::canonicalize(path)
+    }
+}
+
+/// An error from loading the module graph.
+#[derive(Debug)]
+pub enum LoadError {
+    /// A module file could not be read (missing import, permission, etc.).
+    /// Carries the path as written/resolved and the underlying I/O error.
+    Io { path: PathBuf, source: io::Error },
+    /// A module failed to parse. Carries the canonical path of the offending
+    /// module (so the driver can render the diagnostic against its source) and
+    /// the parse error itself.
+    Parse {
+        path: PathBuf,
+        source_text: String,
+        error: Box<ParseError>,
+    },
+}
+
+impl std::fmt::Display for LoadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LoadError::Io { path, source } => {
+                write!(f, "cannot read module '{}': {}", path.display(), source)
+            }
+            LoadError::Parse { path, error, .. } => {
+                write!(f, "in module '{}': {}", path.display(), error)
+            }
+        }
+    }
+}
+
+/// Resolve an import path written inside `importer` (the canonical path of the
+/// file containing the `(import ...)`) to a path relative to that file's
+/// directory. Absolute import paths are returned unchanged.
+fn resolve_import(importer: &Path, import_path: &str) -> PathBuf {
+    let p = Path::new(import_path);
+    if p.is_absolute() {
+        return p.to_path_buf();
+    }
+    match importer.parent() {
+        Some(dir) => dir.join(p),
+        None => p.to_path_buf(),
+    }
+}
+
+/// Load the module graph rooted at `entry`, returning a single combined
+/// `Program` whose `decls` are every reachable module's non-import declarations
+/// in imported-before-importer (post-order DFS) order, plus the canonical path
+/// of the entry module (for diagnostics).
+///
+/// `src` supplies file reads and canonicalization, making the loader testable
+/// without a real filesystem.
+pub fn load_program(entry: &Path, src: &dyn ModuleSource) -> Result<(Program, PathBuf), LoadError> {
+    let entry_canon = src.canonicalize(entry).map_err(|e| LoadError::Io {
+        path: entry.to_path_buf(),
+        source: e,
+    })?;
+
+    let mut visited: HashSet<PathBuf> = HashSet::new();
+    let mut decls: Vec<Decl> = Vec::new();
+    load_module(&entry_canon, src, &mut visited, &mut decls)?;
+    Ok((Program { decls }, entry_canon))
+}
+
+/// Depth-first load a single module and its (transitive) imports into `decls`.
+///
+/// The `visited` set is keyed on canonical path. A module already in `visited`
+/// (whether fully loaded or currently on the DFS stack) is skipped, which both
+/// deduplicates diamonds and breaks import cycles without infinite recursion.
+/// Imports are visited *before* the module's own decls are appended, so the
+/// final order is imported-before-importer.
+fn load_module(
+    canon: &Path,
+    src: &dyn ModuleSource,
+    visited: &mut HashSet<PathBuf>,
+    decls: &mut Vec<Decl>,
+) -> Result<(), LoadError> {
+    // Mark visited *before* recursing so a cycle back to this module is a no-op.
+    if !visited.insert(canon.to_path_buf()) {
+        return Ok(());
+    }
+
+    let text = src.read(canon).map_err(|e| LoadError::Io {
+        path: canon.to_path_buf(),
+        source: e,
+    })?;
+    let prog = parse(&text).map_err(|e| LoadError::Parse {
+        path: canon.to_path_buf(),
+        source_text: text.clone(),
+        error: Box::new(e),
+    })?;
+
+    // First resolve & recurse into imports (so imported decls land first), then
+    // append this module's real declarations, stripping the import directives.
+    for decl in &prog.decls {
+        if let Decl::Import(import_path) = decl {
+            let target = resolve_import(canon, import_path);
+            let target_canon = src.canonicalize(&target).map_err(|e| LoadError::Io {
+                path: target.clone(),
+                source: e,
+            })?;
+            load_module(&target_canon, src, visited, decls)?;
+        }
+    }
+
+    for decl in prog.decls {
+        if !matches!(decl, Decl::Import(_)) {
+            decls.push(decl);
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::Decl;
+    use std::collections::HashMap;
+
+    /// In-memory module source for tests. Paths are normalized logically
+    /// (lexically, without touching disk) so relative imports resolve and the
+    /// dedup visited-set works without a real filesystem.
+    struct MapSource {
+        files: HashMap<PathBuf, String>,
+    }
+
+    impl MapSource {
+        fn new(files: &[(&str, &str)]) -> Self {
+            MapSource {
+                files: files
+                    .iter()
+                    .map(|(p, s)| (normalize(Path::new(p)), s.to_string()))
+                    .collect(),
+            }
+        }
+    }
+
+    /// Lexically normalize a path: collapse `.` and `foo/..` segments without
+    /// consulting the filesystem. Good enough to make `a/../b.tl` and `b.tl`
+    /// dedup to one key in tests.
+    fn normalize(path: &Path) -> PathBuf {
+        let mut out: Vec<std::ffi::OsString> = Vec::new();
+        for comp in path.components() {
+            use std::path::Component;
+            match comp {
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    out.pop();
+                }
+                Component::Normal(s) => out.push(s.to_os_string()),
+                Component::RootDir => out.push(std::ffi::OsString::from("/")),
+                Component::Prefix(p) => out.push(p.as_os_str().to_os_string()),
+            }
+        }
+        let mut pb = PathBuf::new();
+        for s in out {
+            pb.push(s);
+        }
+        pb
+    }
+
+    impl ModuleSource for MapSource {
+        fn read(&self, path: &Path) -> io::Result<String> {
+            let key = normalize(path);
+            self.files.get(&key).cloned().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::NotFound, format!("{}", path.display()))
+            })
+        }
+
+        fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
+            let key = normalize(path);
+            if self.files.contains_key(&key) {
+                Ok(key)
+            } else {
+                Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("{}", path.display()),
+                ))
+            }
+        }
+    }
+
+    /// Collect the names of the def/deffn/extern decls in load order.
+    fn decl_names(prog: &Program) -> Vec<String> {
+        prog.decls
+            .iter()
+            .filter_map(|d| match d {
+                Decl::Def { name, .. }
+                | Decl::DefFn { name, .. }
+                | Decl::Extern { name, .. }
+                | Decl::DefEnum { name, .. } => Some(name.clone()),
+                Decl::Import(_) => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn single_import_concatenates_both_modules() {
+        let src = MapSource::new(&[
+            ("a.tl", "(define (a) : i64 1)"),
+            ("b.tl", "(import \"a.tl\")\n(define (b) : i64 (a))"),
+        ]);
+        let (prog, entry) = load_program(Path::new("b.tl"), &src).unwrap();
+        assert_eq!(entry, PathBuf::from("b.tl"));
+        // Imports are stripped; imported-before-importer order.
+        assert_eq!(decl_names(&prog), vec!["a", "b"]);
+        // No Import decls survive into the combined program.
+        assert!(!prog.decls.iter().any(|d| matches!(d, Decl::Import(_))));
+    }
+
+    #[test]
+    fn transitive_imports_a_b_c() {
+        // entry imports b, b imports c. Order: c, b, entry.
+        let src = MapSource::new(&[
+            ("c.tl", "(define (c) : i64 3)"),
+            ("b.tl", "(import \"c.tl\")\n(define (b) : i64 (c))"),
+            ("entry.tl", "(import \"b.tl\")\n(define (e) : i64 (b))"),
+        ]);
+        let (prog, _) = load_program(Path::new("entry.tl"), &src).unwrap();
+        assert_eq!(decl_names(&prog), vec!["c", "b", "e"]);
+    }
+
+    #[test]
+    fn diamond_dedup_loads_shared_module_once() {
+        // a imports b and c; b imports d; c imports d. d must appear once.
+        let src = MapSource::new(&[
+            ("d.tl", "(define (d) : i64 4)"),
+            ("b.tl", "(import \"d.tl\")\n(define (b) : i64 (d))"),
+            ("c.tl", "(import \"d.tl\")\n(define (c) : i64 (d))"),
+            (
+                "a.tl",
+                "(import \"b.tl\")\n(import \"c.tl\")\n(define (a) : i64 (+ (b) (c)))",
+            ),
+        ]);
+        let (prog, _) = load_program(Path::new("a.tl"), &src).unwrap();
+        let names = decl_names(&prog);
+        assert_eq!(names.iter().filter(|n| *n == "d").count(), 1, "{:?}", names);
+        // d before b and c; b and c before a.
+        assert_eq!(names, vec!["d", "b", "c", "a"]);
+    }
+
+    #[test]
+    fn cycle_terminates_and_loads_each_once() {
+        // a imports b, b imports a. Must terminate; each decl once.
+        let src = MapSource::new(&[
+            ("a.tl", "(import \"b.tl\")\n(define (a) : i64 1)"),
+            ("b.tl", "(import \"a.tl\")\n(define (b) : i64 2)"),
+        ]);
+        let (prog, _) = load_program(Path::new("a.tl"), &src).unwrap();
+        let names = decl_names(&prog);
+        assert_eq!(names.iter().filter(|n| *n == "a").count(), 1);
+        assert_eq!(names.iter().filter(|n| *n == "b").count(), 1);
+        assert_eq!(names.len(), 2);
+    }
+
+    #[test]
+    fn relative_path_resolution_uses_importer_directory() {
+        // entry in src/ imports lib/helper.tl relative to src/.
+        let src = MapSource::new(&[
+            (
+                "src/main.tl",
+                "(import \"lib/helper.tl\")\n(define (m) : i64 (h))",
+            ),
+            ("src/lib/helper.tl", "(define (h) : i64 7)"),
+        ]);
+        let (prog, _) = load_program(Path::new("src/main.tl"), &src).unwrap();
+        assert_eq!(decl_names(&prog), vec!["h", "m"]);
+    }
+
+    #[test]
+    fn relative_parent_dir_dedups_with_direct_path() {
+        // Reaching the same file via `a/../shared.tl` and `shared.tl` must
+        // dedup to one module thanks to canonicalization/normalization.
+        let src = MapSource::new(&[
+            ("shared.tl", "(define (s) : i64 0)"),
+            (
+                "a.tl",
+                "(import \"sub/../shared.tl\")\n(define (a) : i64 (s))",
+            ),
+            (
+                "entry.tl",
+                "(import \"shared.tl\")\n(import \"a.tl\")\n(define (e) : i64 (s))",
+            ),
+        ]);
+        let (prog, _) = load_program(Path::new("entry.tl"), &src).unwrap();
+        let names = decl_names(&prog);
+        assert_eq!(names.iter().filter(|n| *n == "s").count(), 1, "{:?}", names);
+    }
+
+    #[test]
+    fn missing_import_is_an_io_error() {
+        let src = MapSource::new(&[("entry.tl", "(import \"nope.tl\")\n(define (e) : i64 1)")]);
+        let err = load_program(Path::new("entry.tl"), &src).unwrap_err();
+        match err {
+            LoadError::Io { .. } => {}
+            other => panic!("expected Io error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn missing_entry_is_an_io_error() {
+        let src = MapSource::new(&[]);
+        let err = load_program(Path::new("ghost.tl"), &src).unwrap_err();
+        assert!(matches!(err, LoadError::Io { .. }));
+    }
+
+    #[test]
+    fn parse_error_in_imported_module_is_reported_with_its_path() {
+        let src = MapSource::new(&[
+            ("bad.tl", "(define ("),
+            ("entry.tl", "(import \"bad.tl\")\n(define (e) : i64 1)"),
+        ]);
+        let err = load_program(Path::new("entry.tl"), &src).unwrap_err();
+        match err {
+            LoadError::Parse { path, .. } => assert_eq!(path, PathBuf::from("bad.tl")),
+            other => panic!("expected Parse error, got {:?}", other),
+        }
+    }
+}

@@ -64,6 +64,8 @@ impl ProgramLowerer {
                     self.global_types.insert(name.clone(), val_ty);
                 }
                 ast::Decl::DefEnum { .. } => {}
+                // Imports are stripped by the loader before lowering; defensive.
+                ast::Decl::Import(_) => {}
             }
         }
 
@@ -106,6 +108,8 @@ impl ProgramLowerer {
                         .push((name.clone(), self.enums.resolve_type(ty)));
                 }
                 ast::Decl::DefEnum { .. } => {}
+                // Imports are stripped by the loader before lowering; defensive.
+                ast::Decl::Import(_) => {}
             }
         }
 
@@ -1369,6 +1373,33 @@ mod tests {
                 .any(|i| matches!(i, Instruction::BinOp { .. }))
         });
         assert!(has_binop);
+    }
+
+    #[test]
+    fn test_lower_cross_module_call_is_direct() {
+        // Simulate the loader's concatenation: module a's function, then module
+        // b's function (import stripped) that calls a's function. The call must
+        // lower to a direct `Instruction::Call` targeting "a".
+        let mut prog_a = parse("(define (a [x : i64]) : i64 (+ x 1))").unwrap();
+        let prog_b = parse("(import \"a.tl\")\n(define (b) : i64 (a 41))").unwrap();
+        for d in prog_b.decls {
+            if !matches!(d, ast::Decl::Import(_)) {
+                prog_a.decls.push(d);
+            }
+        }
+        let ir = lower_program(&prog_a);
+        // Find function b and confirm it emits a direct Call to "a".
+        let b_fn = ir
+            .functions
+            .iter()
+            .find(|f| f.name == "b")
+            .expect("function b lowered");
+        let calls_a = b_fn.blocks.iter().any(|blk| {
+            blk.instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::Call { func, .. } if func == "a"))
+        });
+        assert!(calls_a, "expected b to emit a direct Call to a");
     }
 
     #[test]

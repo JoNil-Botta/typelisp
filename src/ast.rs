@@ -97,6 +97,12 @@ pub enum Decl {
         name: Symbol,
         variants: Vec<VariantDef>,
     },
+    /// (import "path") — a directive consumed by the module-graph loader, not a
+    /// codegen declaration. The string is the import path as written, resolved
+    /// relative to the importing file by the loader. Import decls are stripped
+    /// from the concatenated `Program` before typecheck/lower/codegen, so the
+    /// downstream stages never act on them.
+    Import(String),
 }
 
 /// Expressions

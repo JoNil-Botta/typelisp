@@ -19,6 +19,7 @@ pub enum Token {
     Set,
     Extern,
     Ann,
+    Import,
 
     // Literals
     Int(i64),
@@ -60,6 +61,7 @@ impl fmt::Display for Token {
             Token::Set => write!(f, "set!"),
             Token::Extern => write!(f, "extern"),
             Token::Ann => write!(f, "ann"),
+            Token::Import => write!(f, "import"),
             Token::Int(n) => write!(f, "{}", n),
             Token::Float(n) => write!(f, "{}", n),
             Token::Bool(b) => write!(f, "{}", b),
@@ -328,6 +330,7 @@ impl<'a> Lexer<'a> {
             "set!" => Token::Set,
             "extern" => Token::Extern,
             "ann" => Token::Ann,
+            "import" => Token::Import,
             "true" => Token::Bool(true),
             "false" => Token::Bool(false),
             "unit" => Token::Unit,

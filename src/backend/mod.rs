@@ -686,10 +686,21 @@ impl X86_64Backend {
             self.emit("    ret");
         }
 
+        let main_ret = program
+            .functions
+            .iter()
+            .find(|f| f.name == "main")
+            .map(|f| f.ret.clone())
+            .unwrap_or(Type::I64);
+
         self.emit("");
         self.emit("_start:");
         self.emit("    call main");
-        self.emit("    movq %rax, %rdi");
+        if main_ret == Type::Unit {
+            self.emit("    xor %edi, %edi");
+        } else {
+            self.emit("    movq %rax, %rdi");
+        }
         self.emit("    movq $60, %rax");
         self.emit("    syscall");
 
@@ -2726,6 +2737,21 @@ mod tests {
         );
         assert!(asm.contains("_tl_noop:"), "asm:\n{}", asm);
         assert!(asm.contains("    call _tl_noop"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_unit_main_exits_zero() {
+        let asm = compile_ok("(define (main) : unit unit)");
+        let start = asm.split("_start:").nth(1).expect("expected _start entry");
+
+        assert!(start.contains("    call main"), "asm:\n{}", asm);
+        assert!(start.contains("    xor %edi, %edi"), "asm:\n{}", asm);
+        assert!(
+            !start.contains("    movq %rax, %rdi"),
+            "unit main must not use an undefined return value as the exit code:\n{}",
+            asm
+        );
         assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
     }
 

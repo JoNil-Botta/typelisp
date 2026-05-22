@@ -1472,7 +1472,7 @@ impl X86_64Backend {
                 false_label,
             } => {
                 self.load_value(cond, "%rax", &Type::Bool);
-                self.emit("    testq %rax, %rax");
+                self.emit("    testb %al, %al");
                 self.emit(&format!("    jnz {}", self.block_label(true_label)));
                 self.emit(&format!("    jmp {}", self.block_label(false_label)));
             }
@@ -2812,7 +2812,12 @@ mod tests {
         let asm = compile_ok("(define (max [a : i64] [b : i64]) : i64 (if (> a b) a b))");
 
         // Conditional branch selection against qualified block labels.
-        assert!(asm.contains("testq %rax, %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("testb %al, %al"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("testq %rax, %rax"),
+            "bool branch condition must use byte-width test; asm:\n{}",
+            asm
+        );
         assert!(asm.contains("jnz _tl_max.then."), "asm:\n{}", asm);
         assert!(asm.contains("jmp _tl_max.else."), "asm:\n{}", asm);
 

@@ -532,6 +532,15 @@ impl<'a> Parser<'a> {
                 let end = self.expect_rparen_span()?;
                 (Expr::ArrayRef { expr, index }, end)
             }
+            Token::Ident(s) if s == "array-set!" => {
+                // (array-set! arr index value)
+                self.advance()?;
+                let expr = Box::new(self.parse_expr()?);
+                let index = Box::new(self.parse_expr()?);
+                let value = Box::new(self.parse_expr()?);
+                let end = self.expect_rparen_span()?;
+                (Expr::ArraySet { expr, index, value }, end)
+            }
             Token::Ident(s) if s == "string-ref" || s == "char-at" => {
                 // (string-ref s i) / (char-at s i)
                 self.advance()?;

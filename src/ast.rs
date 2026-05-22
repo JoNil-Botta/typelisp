@@ -154,6 +154,14 @@ pub enum Expr {
     MakeArray { elem_ty: Type, len: Box<Expr> },
     /// Array access: (array-ref expr index)
     ArrayRef { expr: Box<Expr>, index: Box<Expr> },
+    /// In-place array mutation: `(array-set! expr index value)`. Stores `value`
+    /// into element `index` of dynamic array `expr` (bounds-checked at runtime),
+    /// mutating the existing heap buffer in place. Evaluates to Unit.
+    ArraySet {
+        expr: Box<Expr>,
+        index: Box<Expr>,
+        value: Box<Expr>,
+    },
     /// String byte indexing: `(string-ref s i)` / `(char-at s i)`. Returns the
     /// byte at index `i` of String `s` as a `char`, bounds-checked at runtime.
     StringRef { expr: Box<Expr>, index: Box<Expr> },

@@ -79,9 +79,27 @@ fn lexer_tl_compiles_to_assembly() {
         asm,
     );
 
+    // Identifier tokens slice their text out of the source: the `substring`
+    // builtin (#104) lowers to the `tl_substring` runtime helper. This is the
+    // proof that identifiers carry their lexeme rather than being skipped.
+    assert!(
+        asm.contains("tl_substring"),
+        "lexer assembly does not slice identifier text via tl_substring:\n{}",
+        asm,
+    );
+
     // The lexer's own functions were emitted (TypeLisp prefixes user symbols
-    // with `_tl_`): the scan loop and its token helpers.
-    for sym in ["_tl_lex:", "_tl_token_tag:", "_tl_single_token:"] {
+    // with `_tl_`): the scan loop, its token helpers, and the identifier path
+    // that builds a `(TIdent text)` token from a `substring` of the source.
+    for sym in [
+        "_tl_lex:",
+        "_tl_token_tag:",
+        "_tl_single_token:",
+        "_tl_ident_end:",
+        "_tl_ident_token:",
+        "_tl_first_ident:",
+        "_tl_ident_text_length:",
+    ] {
         assert!(
             asm.contains(sym),
             "lexer assembly is missing expected symbol {}:\n{}",

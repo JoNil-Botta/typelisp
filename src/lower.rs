@@ -603,6 +603,21 @@ impl FnLowerer {
         self.locals.push((var, ty));
     }
 
+    fn resolved_struct_fields(&self, struct_name: &str) -> Vec<ast::FieldDef> {
+        self.structs
+            .fields(struct_name)
+            .map(|fields| {
+                fields
+                    .iter()
+                    .map(|field| ast::FieldDef {
+                        name: field.name.clone(),
+                        ty: self.resolve_type(&field.ty),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// Recover the type of a binary op's operands, preferring a concrete
     /// (non-unit) type from either side. Char operands are treated as i8 for
     /// width purposes.
@@ -1019,8 +1034,10 @@ impl FnLowerer {
     /// first field begins at offset 0. Uses only Alloc/AddrOf/Gep/Store (frame)
     /// or Call/Gep/Store (heap-promoted) — no new IR.
     fn lower_construct_struct(&mut self, struct_name: &str, args: &[Value]) -> Value {
-        let size = self.structs.struct_size(struct_name);
         let struct_ty = Type::Struct(struct_name.to_string());
+        let fields = self.resolved_struct_fields(struct_name);
+        let field_tys: Vec<Type> = fields.iter().map(|f| f.ty.clone()).collect();
+        let size = ast::StructRegistry::struct_size_for_types(&field_tys);
 
         // Heap-promote when a struct value can escape via the function's return.
         let promote =
@@ -1028,12 +1045,6 @@ impl FnLowerer {
         let base_val = self.reserve_aggregate_storage(size, struct_ty, promote);
 
         // Store each field at its (resolved) byte offset.
-        let fields: Vec<ast::FieldDef> = self
-            .structs
-            .fields(struct_name)
-            .map(|f| f.to_vec())
-            .unwrap_or_default();
-        let field_tys: Vec<Type> = fields.iter().map(|f| self.resolve_type(&f.ty)).collect();
         let offsets = self.structs.field_offsets(&fields);
         for ((arg, off), fty) in args.iter().zip(offsets.iter()).zip(field_tys.iter()) {
             let field_ptr = self.gep_byte(&base_val, *off);
@@ -1059,16 +1070,12 @@ impl FnLowerer {
             _ => return Value::ConstUnit,
         };
 
-        let fields: Vec<ast::FieldDef> = self
-            .structs
-            .fields(&struct_name)
-            .map(|f| f.to_vec())
-            .unwrap_or_default();
+        let fields = self.resolved_struct_fields(&struct_name);
         let offsets = self.structs.field_offsets(&fields);
         let Some(idx) = fields.iter().position(|f| f.name == field) else {
             return Value::ConstUnit;
         };
-        let fty = self.resolve_type(&fields[idx].ty);
+        let fty = fields[idx].ty.clone();
         let off = offsets[idx];
 
         let field_ptr = self.gep_byte(&s_val, off);
@@ -3921,6 +3928,32 @@ mod tests {
                     }
                 ))),
             "expected a Gep to byte offset 0 for the first field"
+        );
+    }
+
+    #[test]
+    fn test_lower_struct_layout_resolves_nominal_field_types() {
+        // The field type `Inner` parses as a nominal type name; layout must
+        // resolve it to pointer-sized `Type::Struct`, not call size/align on the
+        // raw parser variable.
+        let src = "(defstruct Inner (a i64))\n\
+                   (defstruct Outer (inner Inner) (b i64))\n\
+                   (define (getb [o : Outer]) : i64 (struct-get o b))";
+        let prog = parse(src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().position(|f| f.name == "getb").unwrap();
+        assert!(
+            ir.functions[f]
+                .blocks
+                .iter()
+                .any(|b| b.instructions.iter().any(|i| matches!(
+                    i,
+                    Instruction::Gep {
+                        offset: Value::ConstI64(8),
+                        ..
+                    }
+                ))),
+            "expected field b after the pointer-sized Inner field"
         );
     }
 

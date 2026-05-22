@@ -1,4 +1,6 @@
 use crate::ast::*;
+use crate::diagnostic::Diagnostic;
+use crate::span::Span;
 use crate::types::Type;
 use std::collections::HashMap;
 use std::fmt;
@@ -6,6 +8,20 @@ use std::fmt;
 #[derive(Debug, Clone)]
 pub struct TypeError {
     pub msg: String,
+    pub span: Span,
+}
+
+impl TypeError {
+    fn at(msg: impl Into<String>, span: Span) -> Self {
+        TypeError {
+            msg: msg.into(),
+            span,
+        }
+    }
+
+    pub fn to_diagnostic(&self) -> Diagnostic {
+        Diagnostic::error(self.msg.clone(), self.span).with_code("E0200")
+    }
 }
 
 impl fmt::Display for TypeError {
@@ -70,12 +86,13 @@ impl TypeChecker {
                     let inferred = if let Some(ty) = ty {
                         let val_ty = self.check_expr(value)?;
                         if !self.types_equal(ty, &val_ty) {
-                            return Err(TypeError {
-                                msg: format!(
+                            return Err(TypeError::at(
+                                format!(
                                     "type mismatch in definition of '{}': expected {}, got {}",
                                     name, ty, val_ty
                                 ),
-                            });
+                                value.span(),
+                            ));
                         }
                         ty.clone()
                     } else {
@@ -121,12 +138,13 @@ impl TypeChecker {
                 self.pop_scope();
 
                 if !self.types_equal(ret, &body_ty) {
-                    return Err(TypeError {
-                        msg: format!(
+                    return Err(TypeError::at(
+                        format!(
                             "function '{}' return type mismatch: expected {}, got {}",
                             name, ret, body_ty
                         ),
-                    });
+                        body.span(),
+                    ));
                 }
             }
         }
@@ -135,7 +153,8 @@ impl TypeChecker {
     }
 
     fn check_expr(&mut self, expr: &Expr) -> Result<Type, TypeError> {
-        match expr {
+        let span = expr.span();
+        match expr.unspan() {
             Expr::Literal(lit) => match lit {
                 Literal::Int(_) => Ok(Type::I64), // Default to i64
                 Literal::Float(_) => Ok(Type::F64),
@@ -144,9 +163,9 @@ impl TypeChecker {
                 Literal::String(_) => Ok(Type::Var("String".into())), // Not fully supported yet
                 Literal::Unit => Ok(Type::Unit),
             },
-            Expr::Var(name) => self.lookup(name).ok_or_else(|| TypeError {
-                msg: format!("unbound variable: {}", name),
-            }),
+            Expr::Var(name) => self
+                .lookup(name)
+                .ok_or_else(|| TypeError::at(format!("unbound variable: {}", name), span)),
             Expr::Binary { op, lhs, rhs } => {
                 let lhs_ty = self.check_expr(lhs)?;
                 let rhs_ty = self.check_expr(rhs)?;
@@ -154,50 +173,52 @@ impl TypeChecker {
                 match op {
                     BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
                         if !lhs_ty.is_numeric() || !rhs_ty.is_numeric() {
-                            return Err(TypeError {
-                                msg: format!(
+                            return Err(TypeError::at(
+                                format!(
                                     "arithmetic operator requires numeric types, got {} and {}",
                                     lhs_ty, rhs_ty
                                 ),
-                            });
+                                span,
+                            ));
                         }
                         if !self.types_equal(&lhs_ty, &rhs_ty) {
-                            return Err(TypeError {
-                                msg: format!(
-                                    "type mismatch in arithmetic: {} and {}",
-                                    lhs_ty, rhs_ty
-                                ),
-                            });
+                            return Err(TypeError::at(
+                                format!("type mismatch in arithmetic: {} and {}", lhs_ty, rhs_ty),
+                                span,
+                            ));
                         }
                         Ok(lhs_ty)
                     }
                     BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
                         if !self.types_equal(&lhs_ty, &rhs_ty) {
-                            return Err(TypeError {
-                                msg: format!("comparison type mismatch: {} and {}", lhs_ty, rhs_ty),
-                            });
+                            return Err(TypeError::at(
+                                format!("comparison type mismatch: {} and {}", lhs_ty, rhs_ty),
+                                span,
+                            ));
                         }
                         Ok(Type::Bool)
                     }
                     BinOp::And | BinOp::Or => {
                         if lhs_ty != Type::Bool || rhs_ty != Type::Bool {
-                            return Err(TypeError {
-                                msg: format!(
+                            return Err(TypeError::at(
+                                format!(
                                     "logical operator requires bool, got {} and {}",
                                     lhs_ty, rhs_ty
                                 ),
-                            });
+                                span,
+                            ));
                         }
                         Ok(Type::Bool)
                     }
                     BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
                         if !lhs_ty.is_integer() || !rhs_ty.is_integer() {
-                            return Err(TypeError {
-                                msg: format!(
+                            return Err(TypeError::at(
+                                format!(
                                     "bitwise operator requires integer types, got {} and {}",
                                     lhs_ty, rhs_ty
                                 ),
-                            });
+                                span,
+                            ));
                         }
                         Ok(lhs_ty)
                     }
@@ -208,25 +229,28 @@ impl TypeChecker {
                 match op {
                     UnOp::Neg => {
                         if !ty.is_numeric() {
-                            return Err(TypeError {
-                                msg: format!("negation requires numeric type, got {}", ty),
-                            });
+                            return Err(TypeError::at(
+                                format!("negation requires numeric type, got {}", ty),
+                                span,
+                            ));
                         }
                         Ok(ty)
                     }
                     UnOp::Not => {
                         if ty != Type::Bool {
-                            return Err(TypeError {
-                                msg: format!("not requires bool, got {}", ty),
-                            });
+                            return Err(TypeError::at(
+                                format!("not requires bool, got {}", ty),
+                                span,
+                            ));
                         }
                         Ok(Type::Bool)
                     }
                     UnOp::BitNot => {
                         if !ty.is_integer() {
-                            return Err(TypeError {
-                                msg: format!("bit-not requires integer, got {}", ty),
-                            });
+                            return Err(TypeError::at(
+                                format!("bit-not requires integer, got {}", ty),
+                                span,
+                            ));
                         }
                         Ok(ty)
                     }
@@ -237,30 +261,33 @@ impl TypeChecker {
                 match func_ty {
                     Type::Func(param_tys, ret_ty) => {
                         if param_tys.len() != args.len() {
-                            return Err(TypeError {
-                                msg: format!(
+                            return Err(TypeError::at(
+                                format!(
                                     "function expects {} arguments, got {}",
                                     param_tys.len(),
                                     args.len()
                                 ),
-                            });
+                                span,
+                            ));
                         }
                         for (expected, arg) in param_tys.iter().zip(args.iter()) {
                             let arg_ty = self.check_expr(arg)?;
                             if !self.types_equal(expected, &arg_ty) {
-                                return Err(TypeError {
-                                    msg: format!(
+                                return Err(TypeError::at(
+                                    format!(
                                         "argument type mismatch: expected {}, got {}",
                                         expected, arg_ty
                                     ),
-                                });
+                                    arg.span(),
+                                ));
                             }
                         }
                         Ok(*ret_ty)
                     }
-                    _ => Err(TypeError {
-                        msg: format!("expected function type, got {}", func_ty),
-                    }),
+                    _ => Err(TypeError::at(
+                        format!("expected function type, got {}", func_ty),
+                        func.span(),
+                    )),
                 }
             }
             Expr::If {
@@ -270,19 +297,21 @@ impl TypeChecker {
             } => {
                 let cond_ty = self.check_expr(cond)?;
                 if cond_ty != Type::Bool {
-                    return Err(TypeError {
-                        msg: format!("if condition must be bool, got {}", cond_ty),
-                    });
+                    return Err(TypeError::at(
+                        format!("if condition must be bool, got {}", cond_ty),
+                        cond.span(),
+                    ));
                 }
                 let then_ty = self.check_expr(then_branch)?;
                 let else_ty = self.check_expr(else_branch)?;
                 if !self.types_equal(&then_ty, &else_ty) {
-                    return Err(TypeError {
-                        msg: format!(
+                    return Err(TypeError::at(
+                        format!(
                             "if branches have different types: {} and {}",
                             then_ty, else_ty
                         ),
-                    });
+                        span,
+                    ));
                 }
                 Ok(then_ty)
             }
@@ -292,12 +321,13 @@ impl TypeChecker {
                     let val_ty = self.check_expr(value)?;
                     let binding_ty = if let Some(expected) = ty {
                         if !self.types_equal(expected, &val_ty) {
-                            return Err(TypeError {
-                                msg: format!(
+                            return Err(TypeError::at(
+                                format!(
                                     "let binding '{}' type mismatch: expected {}, got {}",
                                     name, expected, val_ty
                                 ),
-                            });
+                                value.span(),
+                            ));
                         }
                         expected.clone()
                     } else {
@@ -322,12 +352,13 @@ impl TypeChecker {
 
                 let ret_ty = ret.clone().unwrap_or(body_ty.clone());
                 if !self.types_equal(&ret_ty, &body_ty) {
-                    return Err(TypeError {
-                        msg: format!(
+                    return Err(TypeError::at(
+                        format!(
                             "lambda return type mismatch: expected {}, got {}",
                             ret_ty, body_ty
                         ),
-                    });
+                        body.span(),
+                    ));
                 }
 
                 Ok(Type::Func(
@@ -347,34 +378,35 @@ impl TypeChecker {
                 match ty {
                     Type::Tuple(elems) => {
                         if *index >= elems.len() {
-                            return Err(TypeError {
-                                msg: format!(
+                            return Err(TypeError::at(
+                                format!(
                                     "tuple index {} out of bounds (len {})",
                                     index,
                                     elems.len()
                                 ),
-                            });
+                                span,
+                            ));
                         }
                         Ok(elems[*index].clone())
                     }
-                    _ => Err(TypeError {
-                        msg: format!("tuple-ref requires tuple type, got {}", ty),
-                    }),
+                    _ => Err(TypeError::at(
+                        format!("tuple-ref requires tuple type, got {}", ty),
+                        expr.span(),
+                    )),
                 }
             }
             Expr::Array(elems) => {
                 if elems.is_empty() {
-                    return Err(TypeError {
-                        msg: "cannot infer type of empty array".into(),
-                    });
+                    return Err(TypeError::at("cannot infer type of empty array", span));
                 }
                 let first_ty = self.check_expr(&elems[0])?;
                 for e in &elems[1..] {
                     let ty = self.check_expr(e)?;
                     if !self.types_equal(&first_ty, &ty) {
-                        return Err(TypeError {
-                            msg: "array elements must have same type".into(),
-                        });
+                        return Err(TypeError::at(
+                            "array elements must have same type",
+                            e.span(),
+                        ));
                     }
                 }
                 Ok(Type::Array(Box::new(first_ty), elems.len()))
@@ -383,23 +415,26 @@ impl TypeChecker {
                 let arr_ty = self.check_expr(expr)?;
                 let idx_ty = self.check_expr(index)?;
                 if !idx_ty.is_integer() {
-                    return Err(TypeError {
-                        msg: format!("array index must be integer, got {}", idx_ty),
-                    });
+                    return Err(TypeError::at(
+                        format!("array index must be integer, got {}", idx_ty),
+                        index.span(),
+                    ));
                 }
                 match arr_ty {
                     Type::Array(elem_ty, _) => Ok(*elem_ty),
-                    _ => Err(TypeError {
-                        msg: format!("array-ref requires array type, got {}", arr_ty),
-                    }),
+                    _ => Err(TypeError::at(
+                        format!("array-ref requires array type, got {}", arr_ty),
+                        expr.span(),
+                    )),
                 }
             }
             Expr::While { cond, body } => {
                 let cond_ty = self.check_expr(cond)?;
                 if cond_ty != Type::Bool {
-                    return Err(TypeError {
-                        msg: format!("while condition must be bool, got {}", cond_ty),
-                    });
+                    return Err(TypeError::at(
+                        format!("while condition must be bool, got {}", cond_ty),
+                        cond.span(),
+                    ));
                 }
                 self.check_expr(body)?;
                 Ok(Type::Unit)
@@ -413,25 +448,27 @@ impl TypeChecker {
             }
             Expr::Set(name, expr) => {
                 let val_ty = self.check_expr(expr)?;
-                let var_ty = self.lookup(name).ok_or_else(|| TypeError {
-                    msg: format!("unbound variable in set!: {}", name),
+                let var_ty = self.lookup(name).ok_or_else(|| {
+                    TypeError::at(format!("unbound variable in set!: {}", name), span)
                 })?;
                 if !self.types_equal(&var_ty, &val_ty) {
-                    return Err(TypeError {
-                        msg: format!(
+                    return Err(TypeError::at(
+                        format!(
                             "set! type mismatch: variable {} has type {}, got {}",
                             name, var_ty, val_ty
                         ),
-                    });
+                        expr.span(),
+                    ));
                 }
                 Ok(Type::Unit)
             }
             Expr::Ann { expr, ty } => {
                 let expr_ty = self.check_expr(expr)?;
                 if !self.types_equal(ty, &expr_ty) {
-                    return Err(TypeError {
-                        msg: format!("type annotation mismatch: expected {}, got {}", ty, expr_ty),
-                    });
+                    return Err(TypeError::at(
+                        format!("type annotation mismatch: expected {}, got {}", ty, expr_ty),
+                        span,
+                    ));
                 }
                 Ok(ty.clone())
             }
@@ -441,15 +478,17 @@ impl TypeChecker {
                 // (integers and `char`, which is an 8-bit code unit here).
                 let castable = |t: &Type| t.is_integer() || matches!(t, Type::Char);
                 if !castable(&expr_ty) || !castable(ty) {
-                    return Err(TypeError {
-                        msg: format!(
+                    return Err(TypeError::at(
+                        format!(
                             "cast requires integer/char source and target, got {} -> {}",
                             expr_ty, ty
                         ),
-                    });
+                        span,
+                    ));
                 }
                 Ok(ty.clone())
             }
+            Expr::Spanned { expr, .. } => self.check_expr(expr),
         }
     }
 
@@ -507,5 +546,34 @@ mod tests {
         .unwrap();
         let mut tc = TypeChecker::new();
         assert!(tc.check_program(&prog).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_error_carries_span() {
+        let src = "(define (bad [a : i64] [b : bool]) : i64 (+ a b))";
+        let prog = parse(src).unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert_eq!(err.span, Span::new(1, 42, 1, 49), "error: {}", err);
+    }
+
+    #[test]
+    fn test_typecheck_error_diagnostic_renders_caret() {
+        use crate::diagnostic::format_diagnostic;
+
+        let src = "(define (bad [a : i64] [b : bool]) : i64 (+ a b))";
+        let prog = parse(src).unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        let rendered = format_diagnostic(&err.to_diagnostic(), src, "test.tl");
+
+        assert!(rendered.contains("error[E0200]"), "got:\n{}", rendered);
+        assert!(rendered.contains("--> test.tl:1:42"), "got:\n{}", rendered);
+        assert!(
+            rendered.contains(" 1 | (define (bad [a : i64] [b : bool]) : i64 (+ a b))"),
+            "got:\n{}",
+            rendered
+        );
+        assert!(rendered.contains("^^^^^^^"), "got:\n{}", rendered);
     }
 }

@@ -1,3 +1,4 @@
+use crate::span::Span;
 use crate::types::Type;
 
 /// Unique identifier for variables, functions, etc.
@@ -78,6 +79,8 @@ pub enum Decl {
 /// Expressions
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
+    /// Expression paired with its source span.
+    Spanned { expr: Box<Expr>, span: Span },
     /// Literal value
     Literal(Literal),
     /// Variable reference
@@ -139,6 +142,27 @@ pub struct Program {
 }
 
 impl Expr {
+    pub fn spanned(expr: Expr, span: Span) -> Self {
+        Expr::Spanned {
+            expr: Box::new(expr),
+            span,
+        }
+    }
+
+    pub fn span(&self) -> Span {
+        match self {
+            Expr::Spanned { span, .. } => *span,
+            _ => Span::default(),
+        }
+    }
+
+    pub fn unspan(&self) -> &Expr {
+        match self {
+            Expr::Spanned { expr, .. } => expr.unspan(),
+            _ => self,
+        }
+    }
+
     #[allow(dead_code)]
     pub fn unit() -> Self {
         Expr::Literal(Literal::Unit)

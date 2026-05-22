@@ -97,7 +97,7 @@ impl ProgramLowerer {
 
 /// Infers the type of a literal expression for use in global initializers.
 fn infer_literal_type(expr: &ast::Expr) -> Type {
-    match expr {
+    match expr.unspan() {
         ast::Expr::Literal(ast::Literal::Int(_)) => Type::I64,
         ast::Expr::Literal(ast::Literal::Float(_)) => Type::F64,
         ast::Expr::Literal(ast::Literal::Bool(_)) => Type::Bool,
@@ -110,7 +110,7 @@ fn infer_literal_type(expr: &ast::Expr) -> Type {
 
 /// Extracts an IR Value from a constant AST expression, if possible.
 fn extract_const(expr: &ast::Expr) -> Option<Value> {
-    match expr {
+    match expr.unspan() {
         ast::Expr::Literal(ast::Literal::Int(n)) => Some(Value::ConstI64(*n)),
         ast::Expr::Literal(ast::Literal::Float(n)) => Some(Value::ConstF64(*n)),
         ast::Expr::Literal(ast::Literal::Bool(b)) => Some(Value::ConstBool(*b)),
@@ -188,7 +188,7 @@ impl FnLowerer {
 
     /// Lower an expression into a fresh IR variable holding its result.
     fn lower_expr(&mut self, expr: &ast::Expr) -> Value {
-        match expr {
+        match expr.unspan() {
             ast::Expr::Literal(lit) => self.lower_literal(lit),
             ast::Expr::Var(name) => self.lower_var(name),
             ast::Expr::Binary { op, lhs, rhs } => self.lower_binary(*op, lhs, rhs),
@@ -210,6 +210,7 @@ impl FnLowerer {
                 Value::ConstUnit
             }
             ast::Expr::TupleRef { .. } | ast::Expr::ArrayRef { .. } => Value::ConstUnit,
+            ast::Expr::Spanned { expr, .. } => self.lower_expr(expr),
         }
     }
 
@@ -476,7 +477,7 @@ impl FnLowerer {
         // Evaluate arguments left-to-right
         let arg_vals: Vec<Value> = args.iter().map(|a| self.lower_expr(a)).collect();
 
-        let (func_name, ret_ty) = match func {
+        let (func_name, ret_ty) = match func.unspan() {
             ast::Expr::Var(name) => {
                 let ret_ty = match self.function_types.get(name) {
                     Some(Type::Func(_, ret)) => (**ret).clone(),

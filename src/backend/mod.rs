@@ -1315,25 +1315,10 @@ impl X86_64Backend {
                         }
                     }
                     IrBinOp::Div if operand_ty.is_integer() => {
-                        if signed {
-                            self.emit("    cqo");
-                            self.emit("    idivq %rcx");
-                        } else {
-                            // Unsigned division zero-extends the dividend into
-                            // %rdx and uses `div`.
-                            self.emit("    xorq %rdx, %rdx");
-                            self.emit("    divq %rcx");
-                        }
+                        self.emit_integer_divmod(&operand_ty, signed, false);
                     }
                     IrBinOp::Mod if operand_ty.is_integer() => {
-                        if signed {
-                            self.emit("    cqo");
-                            self.emit("    idivq %rcx");
-                        } else {
-                            self.emit("    xorq %rdx, %rdx");
-                            self.emit("    divq %rcx");
-                        }
-                        self.emit("    movq %rdx, %rax");
+                        self.emit_integer_divmod(&operand_ty, signed, true);
                     }
                     // Bitwise/logical operators work on every integer and bool
                     // width. Emit the natural width so upper-byte state cannot
@@ -1889,6 +1874,59 @@ impl X86_64Backend {
 
     fn store_xmm_value(&mut self, reg: &str, offset: i32) {
         self.emit(&format!("    movsd {}, {}(%rbp)", reg, offset));
+    }
+
+    fn emit_integer_divmod(&mut self, ty: &Type, signed: bool, want_remainder: bool) {
+        match ty.size() {
+            1 => {
+                if signed {
+                    self.emit("    cbw");
+                    self.emit("    idivb %cl");
+                } else {
+                    self.emit("    andw $0x00ff, %ax");
+                    self.emit("    divb %cl");
+                }
+                if want_remainder {
+                    self.emit("    movb %ah, %al");
+                }
+            }
+            2 => {
+                if signed {
+                    self.emit("    cwd");
+                    self.emit("    idivw %cx");
+                } else {
+                    self.emit("    xorw %dx, %dx");
+                    self.emit("    divw %cx");
+                }
+                if want_remainder {
+                    self.emit("    movw %dx, %ax");
+                }
+            }
+            4 => {
+                if signed {
+                    self.emit("    cdq");
+                    self.emit("    idivl %ecx");
+                } else {
+                    self.emit("    xorl %edx, %edx");
+                    self.emit("    divl %ecx");
+                }
+                if want_remainder {
+                    self.emit("    movl %edx, %eax");
+                }
+            }
+            _ => {
+                if signed {
+                    self.emit("    cqo");
+                    self.emit("    idivq %rcx");
+                } else {
+                    self.emit("    xorq %rdx, %rdx");
+                    self.emit("    divq %rcx");
+                }
+                if want_remainder {
+                    self.emit("    movq %rdx, %rax");
+                }
+            }
+        }
     }
 
     fn generate_float_binop(
@@ -3067,6 +3105,56 @@ mod tests {
         assert!(
             !asm.contains("shlq %cl, %rax"),
             "u8 shift must not use 64-bit shl; asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_compile_i32_div_uses_32_bit_instruction() {
+        let asm = compile_ok("(define (f [a : i32] [b : i32]) : i32 (/ a b))");
+        assert!(asm.contains("cdq"), "asm:\n{}", asm);
+        assert!(asm.contains("idivl %ecx"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("idivq %rcx"),
+            "i32 division must not use 64-bit idiv; asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_compile_u16_div_uses_16_bit_instruction() {
+        let asm = compile_ok("(define (f [a : u16] [b : u16]) : u16 (/ a b))");
+        assert!(asm.contains("xorw %dx, %dx"), "asm:\n{}", asm);
+        assert!(asm.contains("divw %cx"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("divq %rcx"),
+            "u16 division must not use 64-bit div; asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_compile_i8_mod_uses_8_bit_instruction() {
+        let asm = compile_ok("(define (f [a : i8] [b : i8]) : i8 (% a b))");
+        assert!(asm.contains("cbw"), "asm:\n{}", asm);
+        assert!(asm.contains("idivb %cl"), "asm:\n{}", asm);
+        assert!(asm.contains("movb %ah, %al"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("idivq %rcx"),
+            "i8 modulo must not use 64-bit idiv; asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_compile_u8_mod_uses_8_bit_instruction() {
+        let asm = compile_ok("(define (f [a : u8] [b : u8]) : u8 (% a b))");
+        assert!(asm.contains("andw $0x00ff, %ax"), "asm:\n{}", asm);
+        assert!(asm.contains("divb %cl"), "asm:\n{}", asm);
+        assert!(asm.contains("movb %ah, %al"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("divq %rcx"),
+            "u8 modulo must not use 64-bit div; asm:\n{}",
             asm
         );
     }

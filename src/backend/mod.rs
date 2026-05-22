@@ -85,6 +85,9 @@ pub fn validate_program(program: &Program) -> Result<(), String> {
     for (name, ty, init) in &program.globals {
         validate_global(name, ty, init.as_ref())?;
     }
+    for (name, ty) in &program.externs {
+        validate_extern(name, ty)?;
+    }
     for func in &program.functions {
         validate_function(func, &global_types)?;
     }
@@ -119,6 +122,35 @@ fn validate_global(name: &str, ty: &Type, init: Option<&Value>) -> Result<(), St
     }
 }
 
+fn validate_extern(name: &str, ty: &Type) -> Result<(), String> {
+    let Type::Func(args, ret) = ty else {
+        return Err(format!(
+            "backend: extern '{}' has unsupported type {}. \
+             Extern declarations must use function types.",
+            name, ty
+        ));
+    };
+
+    for arg in args {
+        if !is_backend_abi_value_type(arg) {
+            return Err(format!(
+                "backend: extern '{}' has unsupported argument type {}. \
+                 The x86_64 backend cannot lower that ABI yet.",
+                name, arg
+            ));
+        }
+    }
+    if !is_backend_abi_value_type(ret) {
+        return Err(format!(
+            "backend: extern '{}' has unsupported return type {}. \
+             The x86_64 backend cannot lower that ABI yet.",
+            name, ret
+        ));
+    }
+
+    Ok(())
+}
+
 fn validate_function(func: &Function, global_types: &HashMap<String, Type>) -> Result<(), String> {
     let var_types: HashMap<VarId, Type> = func
         .params
@@ -133,11 +165,25 @@ fn validate_function(func: &Function, global_types: &HashMap<String, Type>) -> R
              The x86_64 backend currently supports scalar arithmetic, comparisons, \
              unary/binary operators, direct function calls, recursion, control flow \
              (if/while), indirect calls through function-pointer values and scalar \
-             let/set! locals. F32 values, tuples, arrays, lambdas and strings are \
-             not yet wired (see #13).",
+             let/set! locals. F32 values and by-value tuples/fixed arrays are \
+             not yet wired.",
             func.name, what
         ))
     };
+
+    if !is_backend_abi_value_type(&func.ret) {
+        return unsupported(&format!("return type {}", func.ret));
+    }
+    for (var, ty) in &func.params {
+        if !is_backend_abi_value_type(ty) {
+            return unsupported(&format!("parameter %{} has type {}", var, ty));
+        }
+    }
+    for (var, ty) in &func.locals {
+        if !is_backend_local_type(ty) {
+            return unsupported(&format!("local %{} has type {}", var, ty));
+        }
+    }
 
     for block in &func.blocks {
         for instr in &block.instructions {
@@ -404,6 +450,32 @@ fn is_pointer_sized_type(ty: &Type) -> bool {
         ty,
         Type::I64 | Type::U64 | Type::Func(_, _) | Type::Enum(_) | Type::String | Type::DynArray(_)
     )
+}
+
+fn is_backend_abi_value_type(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::I64
+            | Type::U64
+            | Type::I32
+            | Type::U32
+            | Type::I16
+            | Type::U16
+            | Type::I8
+            | Type::U8
+            | Type::Bool
+            | Type::Char
+            | Type::F64
+            | Type::String
+            | Type::Unit
+            | Type::Func(_, _)
+            | Type::DynArray(_)
+            | Type::Enum(_)
+    )
+}
+
+fn is_backend_local_type(ty: &Type) -> bool {
+    *ty == Type::Unit || is_sized_backend_type(ty)
 }
 
 fn is_sized_backend_type(ty: &Type) -> bool {
@@ -2618,6 +2690,84 @@ mod tests {
         let mut ir = lower_program(&prog);
         Optimizer::optimize(&mut ir);
         generate_assembly(&ir).expect_err("backend should reject this program")
+    }
+
+    #[test]
+    fn test_reject_f32_parameter_type_before_codegen() {
+        let err = compile_err("(define (bad [x : f32]) : i64 0)");
+        assert!(
+            err.contains("parameter %0 has type f32"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_reject_by_value_tuple_return_type_before_codegen() {
+        let err = compile_err(
+            r#"
+            (define (make_pair [a : i64] [b : bool]) : (Tuple i64 bool)
+              (tuple a b))
+            "#,
+        );
+        assert!(
+            err.contains("return type (Tuple i64 bool)"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_reject_f32_local_type_before_codegen() {
+        let err = generate_assembly(&Program {
+            functions: vec![Function {
+                name: "main".into(),
+                params: vec![],
+                ret: Type::I64,
+                locals: vec![(0, Type::F32)],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![Instruction::Return(Some(Value::ConstI64(0)))],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![],
+        })
+        .expect_err("backend should reject unsupported local slot types");
+        assert!(
+            err.contains("local %0 has type f32"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_reject_unsupported_extern_signature_before_codegen() {
+        let err = generate_assembly(&Program {
+            functions: vec![Function {
+                name: "main".into(),
+                params: vec![],
+                ret: Type::I64,
+                locals: vec![],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![Instruction::Return(Some(Value::ConstI64(0)))],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![(
+                "foreign_f32".into(),
+                Type::Func(vec![Type::F32], Box::new(Type::I64)),
+            )],
+        })
+        .expect_err("backend should reject unsupported extern ABI types");
+        assert!(
+            err.contains("extern 'foreign_f32' has unsupported argument type f32"),
+            "unexpected error: {}",
+            err
+        );
     }
 
     fn compile_unop_param(op: UnOp, ty: Type) -> String {

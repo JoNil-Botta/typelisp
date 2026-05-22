@@ -86,6 +86,13 @@ impl TypeChecker {
             "string->int".into(),
             Type::Func(vec![Type::String], Box::new(Type::I64)),
         );
+        // `(int->string n)` -> the decimal text of an i64 as a String. The
+        // companion of `string->int`; returning a String is now permitted (the
+        // lowerer heap-promotes escaping aggregates, see #85).
+        globals.insert(
+            "int->string".into(),
+            Type::Func(vec![Type::I64], Box::new(Type::String)),
+        );
         TypeChecker {
             env: vec![globals],
             func_ret: None,
@@ -1467,6 +1474,45 @@ mod tests {
         let src = r#"(define greeting "hello")"#;
         let err = check(src).unwrap_err();
         assert!(err.msg.contains("string values"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_int_to_string_yields_string() {
+        // `(int->string n)` : `(-> i64 String)`. A function returning the result
+        // type-checks (String returns are now accepted, refs #13/#45).
+        let src = "(define (f [n : i64]) : String (int->string n))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_int_to_string_on_literal() {
+        // The argument may be any i64 expression, including a literal.
+        let src = "(define (f) : String (int->string 42))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_int_to_string_arg_type_checked() {
+        // The operand must be an i64; a String operand is rejected.
+        let src = r#"(define (f) : String (int->string "x"))"#;
+        let err = check(src).unwrap_err();
+        assert!(err.msg.contains("argument type"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_int_to_string_arity_checked() {
+        // `int->string` is unary; two arguments is an arity error.
+        let src = "(define (f) : String (int->string 1 2))";
+        let err = check(src).unwrap_err();
+        assert!(err.msg.contains("arguments"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_int_to_string_result_is_not_i64() {
+        // The result is a String, not an i64; using it where an i64 is required
+        // (a function's i64 return) is a mismatch.
+        let src = "(define (f) : i64 (int->string 5))";
+        assert!(check(src).is_err());
     }
 
     // ------------------------------------------------------------------

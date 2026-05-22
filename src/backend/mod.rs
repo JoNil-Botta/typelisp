@@ -104,8 +104,16 @@ fn validate_function(func: &Function) -> Result<(), String> {
                 Instruction::Mov { src, .. } => {
                     check_operand(src).map_err(|w| unsupported_value(&func.name, &w))?;
                 }
-                Instruction::Cast { src, .. } => {
+                Instruction::Cast {
+                    src,
+                    from_ty,
+                    to_ty,
+                    ..
+                } => {
                     check_operand(src).map_err(|w| unsupported_value(&func.name, &w))?;
+                    if from_ty.is_float() || to_ty.is_float() {
+                        return unsupported("floating-point cast");
+                    }
                 }
                 Instruction::Call { args, .. } => {
                     for arg in args {
@@ -431,7 +439,7 @@ impl X86_64Backend {
                 Type::I64 | Type::U64 | Type::Func(_, _) => {
                     if int_param < param_regs.len() {
                         self.emit(&format!(
-                            "    mov {}, {}(%rbp)",
+                            "    movq {}, {}(%rbp)",
                             param_regs[int_param], offset
                         ));
                     }
@@ -580,31 +588,35 @@ impl X86_64Backend {
             } => {
                 let dst_offset = self.var_offsets[dst];
                 let operand_ty = self.binop_operand_ty(op, lhs, rhs, ty);
+                let result_ty = self
+                    .var_types
+                    .get(dst)
+                    .cloned()
+                    .unwrap_or_else(|| ty.clone());
                 if operand_ty == Type::F64 {
-                    self.generate_float_binop(dst_offset, op, lhs, rhs, ty);
+                    self.generate_float_binop(dst_offset, op, lhs, rhs, &result_ty);
                     return;
                 }
 
-                self.load_value(lhs, "%rax", &operand_ty);
-                self.load_value(rhs, "%rcx", &operand_ty);
-
                 // Whether the operand type is signed drives division, shift and
                 // comparison instruction selection. `bool`/`char` are treated as
-                // unsigned magnitudes. For comparisons the IR `ty` carries the
-                // operand type (not bool), so `is_signed()` reflects the operands.
+                // unsigned magnitudes.
                 let signed = operand_ty.is_signed();
+
+                self.load_value(lhs, "%rax", &operand_ty);
+                self.load_value(rhs, "%rcx", &operand_ty);
 
                 match op {
                     IrBinOp::Add if operand_ty.is_integer() => {
                         self.emit("    addq %rcx, %rax");
                     }
-                    IrBinOp::Sub if ty.is_integer() => {
+                    IrBinOp::Sub if operand_ty.is_integer() => {
                         self.emit("    subq %rcx, %rax");
                     }
-                    IrBinOp::Mul if ty.is_integer() => {
+                    IrBinOp::Mul if operand_ty.is_integer() => {
                         self.emit("    imulq %rcx, %rax");
                     }
-                    IrBinOp::Div if ty.is_integer() => {
+                    IrBinOp::Div if operand_ty.is_integer() => {
                         if signed {
                             self.emit("    cqo");
                             self.emit("    idivq %rcx");
@@ -615,7 +627,7 @@ impl X86_64Backend {
                             self.emit("    divq %rcx");
                         }
                     }
-                    IrBinOp::Mod if ty.is_integer() => {
+                    IrBinOp::Mod if operand_ty.is_integer() => {
                         if signed {
                             self.emit("    cqo");
                             self.emit("    idivq %rcx");
@@ -705,7 +717,7 @@ impl X86_64Backend {
                     _ => {}
                 }
 
-                self.store_gpr_value("%rax", dst_offset, ty);
+                self.store_gpr_value("%rax", dst_offset, &result_ty);
             }
             Instruction::UnOp { dst, op, src, ty } => {
                 let dst_offset = self.var_offsets[dst];
@@ -964,6 +976,7 @@ impl X86_64Backend {
         match ty.size() {
             8 => self.emit(&format!("    movq {}, {}(%rbp)", reg, offset)),
             4 => self.emit(&format!("    movl {}, {}(%rbp)", Self::gpr32(reg), offset)),
+            2 => self.emit(&format!("    movw {}, {}(%rbp)", Self::gpr16(reg), offset)),
             1 => self.emit(&format!("    movb {}, {}(%rbp)", Self::gpr8(reg), offset)),
             _ => {}
         }
@@ -1063,7 +1076,7 @@ impl X86_64Backend {
         }
     }
 
-    /// Map a 64-bit register name to its 16-bit sub-register (`%rax`->`%ax`).
+    /// Map a 64-bit register name to its 16-bit sub-register (`%rax` -> `%ax`).
     fn gpr16(reg: &str) -> &str {
         match reg {
             "%rax" => "%ax",
@@ -1200,11 +1213,10 @@ mod tests {
         let asm = compile_ok("(define (add [a : i64] [b : i64]) : i64 (+ a b))");
         // Mangled non-main name.
         assert!(asm.contains("_tl_add:"), "asm:\n{}", asm);
-        // Prologue moves the two integer params from rdi/rsi to stack slots.
-        // (For 64-bit operands GAS infers the size, so the `q` suffix is
-        // optional; assert the register move happens regardless of suffix.)
-        assert!(asm.contains("mov %rdi,"), "asm:\n{}", asm);
-        assert!(asm.contains("mov %rsi,"), "asm:\n{}", asm);
+        // Prologue moves the two integer params from rdi/rsi to stack slots
+        // (now emitted with an explicit size suffix).
+        assert!(asm.contains("movq %rdi,"), "asm:\n{}", asm);
+        assert!(asm.contains("movq %rsi,"), "asm:\n{}", asm);
         // The actual addition.
         assert!(asm.contains("addq %rcx, %rax"), "asm:\n{}", asm);
         // Block labels are emitted as valid (colon-terminated) GAS labels.
@@ -1247,6 +1259,7 @@ mod tests {
         let asm = compile_ok("(define (lt [a : i64] [b : i64]) : bool (< a b))");
         assert!(asm.contains("cmpq %rcx, %rax"), "asm:\n{}", asm);
         assert!(asm.contains("setl %al"), "asm:\n{}", asm);
+        assert!(asm.contains("movb %al,"), "asm:\n{}", asm);
     }
 
     #[test]
@@ -1275,6 +1288,7 @@ mod tests {
         let asm = compile_ok("(define (ltf [a : f64] [b : f64]) : bool (< a b))");
         assert!(asm.contains("ucomisd %xmm1, %xmm0"), "asm:\n{}", asm);
         assert!(asm.contains("setb %al"), "asm:\n{}", asm);
+        assert!(asm.contains("movb %al,"), "asm:\n{}", asm);
     }
 
     #[test]
@@ -1315,7 +1329,7 @@ mod tests {
     #[test]
     fn test_compile_mixed_integer_and_float_params_use_independent_abi_registers() {
         let asm = compile_ok("(define (second [n : i64] [x : f64]) : f64 x)");
-        assert!(asm.contains("    mov %rdi, -8(%rbp)"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %rdi, -8(%rbp)"), "asm:\n{}", asm);
         assert!(asm.contains("    movsd %xmm0, -16(%rbp)"), "asm:\n{}", asm);
         assert!(!asm.contains("    movsd %xmm1, -16(%rbp)"), "asm:\n{}", asm);
     }

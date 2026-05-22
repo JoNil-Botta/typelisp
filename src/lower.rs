@@ -284,20 +284,13 @@ impl FnLowerer {
             _ => operand_ty.clone(),
         };
 
-        // For comparisons we still want the backend to know the operand
-        // width/signedness, so the IR `ty` carries the operand type for those.
-        let instr_ty = match ir_op {
-            BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => operand_ty,
-            _ => result_ty.clone(),
-        };
-
         let dst = self.builder.fresh_var();
         self.builder.emit(Instruction::BinOp {
             dst,
             op: ir_op,
             lhs: lhs_val,
             rhs: rhs_val,
-            ty: instr_ty,
+            ty: result_ty.clone(),
         });
         self.record_local(dst, result_ty.clone());
         Value::Var(dst)
@@ -636,30 +629,19 @@ mod tests {
         )
         .unwrap();
         let ir = lower_program(&prog);
-        // A comparison's IR `ty` carries the *operand* type (f64 here) so the
-        // backend can pick the right compare instruction; the *result* local is
-        // recorded as bool.
-        let func = &ir.functions[0];
-        let cmp_dst = func.blocks.iter().find_map(|b| {
-            b.instructions.iter().find_map(|i| match i {
-                Instruction::BinOp {
-                    op: BinOp::Lt,
-                    ty: Type::F64,
-                    dst,
-                    ..
-                } => Some(*dst),
-                _ => None,
+        let has_bool_cmp = ir.functions[0].blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                matches!(
+                    i,
+                    Instruction::BinOp {
+                        op: BinOp::Lt,
+                        ty: Type::Bool,
+                        ..
+                    }
+                )
             })
         });
-        assert!(cmp_dst.is_some(), "expected an f64 `<` BinOp");
-        // The result of the comparison is a bool-typed local.
-        let dst = cmp_dst.unwrap();
-        assert!(
-            func.locals
-                .iter()
-                .any(|(v, t)| *v == dst && *t == Type::Bool),
-            "comparison result local should be bool"
-        );
+        assert!(has_bool_cmp);
     }
 
     #[test]

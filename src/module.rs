@@ -235,7 +235,8 @@ mod tests {
                 Decl::Def { name, .. }
                 | Decl::DefFn { name, .. }
                 | Decl::Extern { name, .. }
-                | Decl::DefEnum { name, .. } => Some(name.clone()),
+                | Decl::DefEnum { name, .. }
+                | Decl::DefStruct { name, .. } => Some(name.clone()),
                 Decl::Import(_) => None,
             })
             .collect()

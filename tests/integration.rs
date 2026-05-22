@@ -72,6 +72,12 @@ fn type_lisp_programs_compile_link_and_run() {
             deps: &[],
         },
         Case {
+            name: "unit_main",
+            exit_code: 0,
+            stdout: "",
+            deps: &[],
+        },
+        Case {
             name: "tl_alloc",
             exit_code: 0,
             stdout: "",

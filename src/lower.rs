@@ -726,6 +726,30 @@ impl FnLowerer {
             return Value::Var(dst);
         }
 
+        // `(int->string n)` converts an i64 to its decimal-text String. The
+        // result is a String value (a pointer to inline fat `{ ptr, len }`
+        // storage), so it dispatches to the emit-on-demand runtime
+        // `tl_int_to_string(n) -> ptr`, which heap-allocates both the digit
+        // buffer and the fat value via `tl_alloc` so the returned pointer
+        // outlives the caller's frame. A `Call` (not an inline divide loop) is
+        // used so the conversion survives DCE, matching `string-eq`.
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "int->string"
+            && args.len() == 1
+        {
+            let n_raw = self.lower_expr(&args[0]);
+            let n_val = self.cast_value(n_raw, Type::I64);
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: "tl_int_to_string".to_string(),
+                args: vec![n_val],
+                ty: Type::String,
+            });
+            self.record_local(dst, Type::String);
+            return Value::Var(dst);
+        }
+
         // Evaluate arguments left-to-right
         let arg_vals: Vec<Value> = args.iter().map(|a| self.lower_expr(a)).collect();
 
@@ -2035,6 +2059,30 @@ mod tests {
                 .any(|i| matches!(i, Instruction::Load { ty: Type::I64, .. })),
             "expected a Load of the I64 length field"
         );
+    }
+
+    #[test]
+    fn test_lower_int_to_string_calls_runtime() {
+        // `(int->string n)` lowers to a single `Call tl_int_to_string` taking the
+        // i64 argument and yielding a String. A `Call` (not an inline divide
+        // loop) is used so the conversion survives DCE.
+        let prog = parse("(define (f [n : i64]) : String (int->string n))").unwrap();
+        let ir = lower_program(&prog);
+        let instrs: Vec<&Instruction> = ir.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .collect();
+
+        let call = instrs.iter().find_map(|i| match i {
+            Instruction::Call { func, args, ty, .. } if func == "tl_int_to_string" => {
+                Some((args, ty))
+            }
+            _ => None,
+        });
+        let (args, ty) = call.expect("expected a Call to tl_int_to_string");
+        assert_eq!(args.len(), 1, "int->string takes the single i64 operand");
+        assert_eq!(*ty, Type::String, "int->string yields a String");
     }
 
     // ---- Expressions ---------------------------------------------------

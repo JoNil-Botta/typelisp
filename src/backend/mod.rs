@@ -19,6 +19,10 @@ pub struct X86_64Backend {
     /// backend must therefore emit the self-contained allocator runtime
     /// (mmap arena + bump pointer) into the program's `.s`.
     needs_alloc_runtime: bool,
+    /// Whether the backend must emit the raw `tl_alloc` runtime body. This is
+    /// true when IR calls resolve to the allocator runtime, or when another
+    /// backend runtime helper calls raw `tl_alloc` internally.
+    emits_alloc_runtime: bool,
     /// Whether the program references the out-of-bounds abort `tl_oob_abort`
     /// (emitted by array bounds checks) and the backend must emit the
     /// self-contained abort runtime (write to fd 2 + `exit`) into the `.s`.
@@ -33,6 +37,13 @@ pub struct X86_64Backend {
     /// (libc-free, syscall-free) parse runtime into the program's `.s`. Set when
     /// `(string->int s)` is lowered.
     needs_string_to_int_runtime: bool,
+    /// Whether the program references the integer-to-string helper
+    /// `tl_int_to_string` and the backend must therefore emit the
+    /// self-contained (libc-free) decimal-formatting runtime into the
+    /// program's `.s`. Set when `(int->string n)` is lowered. The runtime
+    /// itself calls `tl_alloc`, so its presence also forces the bump-allocator
+    /// runtime to be emitted.
+    needs_int_to_string_runtime: bool,
     return_ty: Type,
     /// VarIds that are function parameters of the function currently being
     /// generated. Their `Alloc` instructions are no-ops because the parameter
@@ -597,9 +608,11 @@ impl X86_64Backend {
             address_vars: HashSet::new(),
             runtime_print_names: HashSet::new(),
             needs_alloc_runtime: false,
+            emits_alloc_runtime: false,
             needs_oob_runtime: false,
             needs_string_eq_runtime: false,
             needs_string_to_int_runtime: false,
+            needs_int_to_string_runtime: false,
             return_ty: Type::Unit,
             param_vars: HashSet::new(),
             current_fn: String::new(),
@@ -612,6 +625,7 @@ impl X86_64Backend {
         for (name, ty, _) in &program.globals {
             self.global_types.insert(name.clone(), ty.clone());
         }
+        self.emits_alloc_runtime = false;
 
         self.generate_globals(&program.globals);
         self.runtime_print_names = Self::runtime_print_names(program);
@@ -619,11 +633,17 @@ impl X86_64Backend {
         self.needs_oob_runtime = Self::needs_oob_runtime(program);
         self.needs_string_eq_runtime = Self::needs_string_eq_runtime(program);
         self.needs_string_to_int_runtime = Self::needs_string_to_int_runtime(program);
+        self.needs_int_to_string_runtime = Self::needs_int_to_string_runtime(program);
+        // The int->string runtime allocates its digit buffer and fat value via a
+        // raw `tl_alloc` call, so its presence forces the raw allocator runtime
+        // to be emitted even when IR calls to a user-defined TypeLisp function
+        // named `tl_alloc` remain mangled to `_tl_tl_alloc`.
+        self.emits_alloc_runtime = self.needs_alloc_runtime || self.needs_int_to_string_runtime;
         let needs_print_runtime = !self.runtime_print_names.is_empty();
         if needs_print_runtime {
             self.generate_print_runtime_data();
         }
-        if self.needs_alloc_runtime {
+        if self.emits_alloc_runtime {
             self.generate_alloc_runtime_data();
         }
         self.intern_strings(program);
@@ -644,10 +664,11 @@ impl X86_64Backend {
             // helpers and the bump allocator) must not also be declared
             // `.extern` — they are defined in this same translation unit.
             let defined_inline = Self::is_defined_print_runtime_symbol(&symbol)
-                || (self.needs_alloc_runtime && symbol == "tl_alloc")
+                || (self.emits_alloc_runtime && symbol == "tl_alloc")
                 || (self.needs_oob_runtime && symbol == "tl_oob_abort")
                 || (self.needs_string_eq_runtime && symbol == "tl_string_eq")
-                || (self.needs_string_to_int_runtime && symbol == "tl_string_to_int");
+                || (self.needs_string_to_int_runtime && symbol == "tl_string_to_int")
+                || (self.needs_int_to_string_runtime && symbol == "tl_int_to_string");
             if !defined_inline {
                 self.emit(&format!("    .extern {}", symbol));
             }
@@ -661,7 +682,7 @@ impl X86_64Backend {
         if needs_print_runtime {
             self.generate_print_runtime_functions();
         }
-        if self.needs_alloc_runtime {
+        if self.emits_alloc_runtime {
             self.generate_alloc_runtime_functions();
         }
         if self.needs_oob_runtime {
@@ -672,6 +693,9 @@ impl X86_64Backend {
         }
         if self.needs_string_to_int_runtime {
             self.generate_string_to_int_runtime_functions();
+        }
+        if self.needs_int_to_string_runtime {
+            self.generate_int_to_string_runtime_functions();
         }
 
         // Generate functions
@@ -686,10 +710,21 @@ impl X86_64Backend {
             self.emit("    ret");
         }
 
+        let main_ret = program
+            .functions
+            .iter()
+            .find(|f| f.name == "main")
+            .map(|f| f.ret.clone())
+            .unwrap_or(Type::I64);
+
         self.emit("");
         self.emit("_start:");
         self.emit("    call main");
-        self.emit("    movq %rax, %rdi");
+        if main_ret == Type::Unit {
+            self.emit("    xor %edi, %edi");
+        } else {
+            self.emit("    movq %rax, %rdi");
+        }
         self.emit("    movq $60, %rax");
         self.emit("    syscall");
 
@@ -818,6 +853,33 @@ impl X86_64Backend {
             .externs
             .iter()
             .any(|(name, _)| name == "tl_string_to_int");
+        referenced_in_calls || referenced_in_externs
+    }
+
+    /// Whether the program references the integer-to-string helper
+    /// `tl_int_to_string` (through a direct `Call` or an `extern` declaration)
+    /// and does not define its own. When true the backend emits the
+    /// self-contained decimal-formatting runtime into the program's `.s` so the
+    /// symbol resolves without linking libc.
+    fn needs_int_to_string_runtime(program: &Program) -> bool {
+        let defines_own = program
+            .functions
+            .iter()
+            .any(|f| f.name == "tl_int_to_string");
+        if defines_own {
+            return false;
+        }
+        let referenced_in_calls = program.functions.iter().any(|func| {
+            func.blocks.iter().any(|block| {
+                block.instructions.iter().any(|instr| {
+                    matches!(instr, Instruction::Call { func, .. } if func == "tl_int_to_string")
+                })
+            })
+        });
+        let referenced_in_externs = program
+            .externs
+            .iter()
+            .any(|(name, _)| name == "tl_int_to_string");
         referenced_in_calls || referenced_in_externs
     }
 
@@ -1233,6 +1295,106 @@ impl X86_64Backend {
         self.emit("    jz .L_tl_string_to_int_done");
         self.emit("    negq %rax");
         self.emit(".L_tl_string_to_int_done:");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    /// Emit the self-contained integer-to-string helper
+    /// `tl_int_to_string(n) -> ptr`.
+    ///
+    /// ABI (System V): the i64 `n` arrives in `%rdi`; the returned pointer (to a
+    /// 16-byte heap fat `{ ptr, len }` String value) leaves in `%rax`. The
+    /// routine formats `n` in decimal using the same divide-by-10 digit loop as
+    /// `tl_print_i64` (handling zero and a leading `-` for negatives), but writes
+    /// the digits into a stack scratch buffer. It then heap-allocates — via the
+    /// bump allocator `tl_alloc` — a data buffer of exactly `len` bytes, copies
+    /// the digits in, allocates the 16-byte fat value, stores the data pointer at
+    /// offset 0 and the length at offset 8, and returns the fat pointer. Both
+    /// allocations are on the heap so the returned String outlives the caller's
+    /// frame (matching the heap-promotion rule for returned aggregates, #85).
+    /// `n`'s digits/length and the data pointer are kept in callee-saved
+    /// registers (`%rbx`/`%r12`/`%r13`) across the `tl_alloc` calls.
+    fn generate_int_to_string_runtime_functions(&mut self) {
+        self.emit("    .globl tl_int_to_string");
+        self.emit("tl_int_to_string:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        // Preserve the callee-saved registers we use to carry state across the
+        // two `tl_alloc` calls, then reserve a 72-byte scratch frame (keeps the
+        // stack 16-byte aligned at the `call` sites; 64 bytes hold the digits —
+        // far more than the 20-digit + sign maximum of an i64).
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    sub $72, %rsp");
+        // Digit generation (mirrors tl_print_i64). %rsi = descending write
+        // cursor, starting one past the top of the scratch region; %rcx = digit
+        // count. %rax holds the working magnitude.
+        self.emit("    leaq 72(%rsp), %rsi");
+        self.emit("    movq $0, %rcx");
+        self.emit("    movq %rdi, %rax");
+        self.emit("    cmpq $0, %rax");
+        self.emit("    jne .L_tl_int_to_string_nonzero");
+        // Zero: a single '0' digit.
+        self.emit("    decq %rsi");
+        self.emit("    movb $48, (%rsi)");
+        self.emit("    incq %rcx");
+        self.emit("    jmp .L_tl_int_to_string_digits_done");
+        self.emit(".L_tl_int_to_string_nonzero:");
+        // %r8 = sign flag (1 if negative). Take the absolute value.
+        self.emit("    movq $0, %r8");
+        self.emit("    cmpq $0, %rax");
+        self.emit("    jge .L_tl_int_to_string_abs_ready");
+        self.emit("    negq %rax");
+        self.emit("    movq $1, %r8");
+        self.emit(".L_tl_int_to_string_abs_ready:");
+        self.emit("    movq $10, %r9");
+        self.emit(".L_tl_int_to_string_digit_loop:");
+        self.emit("    xorq %rdx, %rdx");
+        self.emit("    divq %r9");
+        self.emit("    addb $48, %dl");
+        self.emit("    decq %rsi");
+        self.emit("    movb %dl, (%rsi)");
+        self.emit("    incq %rcx");
+        self.emit("    testq %rax, %rax");
+        self.emit("    jne .L_tl_int_to_string_digit_loop");
+        // Prepend the '-' sign for negatives.
+        self.emit("    testq %r8, %r8");
+        self.emit("    jz .L_tl_int_to_string_digits_done");
+        self.emit("    decq %rsi");
+        self.emit("    movb $45, (%rsi)");
+        self.emit("    incq %rcx");
+        self.emit(".L_tl_int_to_string_digits_done:");
+        // %rbx = pointer to the first digit; %r12 = byte length. Both survive the
+        // upcoming `tl_alloc` calls (callee-saved).
+        self.emit("    movq %rsi, %rbx");
+        self.emit("    movq %rcx, %r12");
+        // data = tl_alloc(len). The returned heap pointer is saved in %r13.
+        self.emit("    movq %r12, %rdi");
+        self.emit("    call tl_alloc");
+        self.emit("    movq %rax, %r13");
+        // Copy the `len` digit bytes from the scratch buffer (%rbx) into the heap
+        // data buffer (%r13), front to back.
+        self.emit("    movq $0, %rcx");
+        self.emit(".L_tl_int_to_string_copy_loop:");
+        self.emit("    cmpq %r12, %rcx");
+        self.emit("    jge .L_tl_int_to_string_copy_done");
+        self.emit("    movzbl (%rbx,%rcx), %edx");
+        self.emit("    movb %dl, (%r13,%rcx)");
+        self.emit("    incq %rcx");
+        self.emit("    jmp .L_tl_int_to_string_copy_loop");
+        self.emit(".L_tl_int_to_string_copy_done:");
+        // fat = tl_alloc(16); store { data_ptr (offset 0), len (offset 8) }.
+        self.emit("    movq $16, %rdi");
+        self.emit("    call tl_alloc");
+        self.emit("    movq %r13, 0(%rax)");
+        self.emit("    movq %r12, 8(%rax)");
+        // %rax already holds the fat pointer — the return value.
+        self.emit("    add $72, %rsp");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
         self.emit("    ret");
         self.emit("");
     }
@@ -2371,6 +2533,10 @@ impl X86_64Backend {
             // referenced by its raw runtime symbol so it resolves to itself
             // rather than being mangled to `_tl_tl_string_to_int`.
             "tl_string_to_int".into()
+        } else if name == "tl_int_to_string" && self.needs_int_to_string_runtime {
+            // The backend-provided integer-to-string helper resolves to its raw
+            // runtime symbol rather than being mangled to `_tl_tl_int_to_string`.
+            "tl_int_to_string".into()
         } else {
             Self::mangle_name(name)
         }
@@ -2726,6 +2892,21 @@ mod tests {
         );
         assert!(asm.contains("_tl_noop:"), "asm:\n{}", asm);
         assert!(asm.contains("    call _tl_noop"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_unit_main_exits_zero() {
+        let asm = compile_ok("(define (main) : unit unit)");
+        let start = asm.split("_start:").nth(1).expect("expected _start entry");
+
+        assert!(start.contains("    call main"), "asm:\n{}", asm);
+        assert!(start.contains("    xor %edi, %edi"), "asm:\n{}", asm);
+        assert!(
+            !start.contains("    movq %rax, %rdi"),
+            "unit main must not use an undefined return value as the exit code:\n{}",
+            asm
+        );
         assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
     }
 
@@ -3958,6 +4139,30 @@ mod tests {
         assert!(asm.contains("    call _tl_tl_alloc"), "asm:\n{}", asm);
     }
 
+    #[test]
+    fn test_int_to_string_allocator_runtime_coexists_with_user_tl_alloc() {
+        // `int->string` needs the backend's raw `tl_alloc` helper internally.
+        // A user function named `tl_alloc` is a separate TypeLisp symbol and is
+        // still called through its mangled name.
+        let asm = compile_ok(
+            r#"
+            (define (tl_alloc [n : u64]) : u64 n)
+            (define (main) : i64
+              (begin
+                (tl_alloc (cast 8 : u64))
+                (string-length (int->string 42))))
+            "#,
+        );
+
+        assert!(asm.contains("\n_tl_tl_alloc:\n"), "asm:\n{}", asm);
+        assert!(asm.contains("    call _tl_tl_alloc"), "asm:\n{}", asm);
+        assert!(asm.contains("\ntl_alloc:\n"), "asm:\n{}", asm);
+        assert!(asm.contains("    call tl_int_to_string"), "asm:\n{}", asm);
+        assert!(asm.contains("    call tl_alloc"), "asm:\n{}", asm);
+        assert!(!asm.contains("    .extern tl_alloc"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
     // ------------------------------------------------------------------
     // String literals — Issue #13
     // ------------------------------------------------------------------
@@ -4107,10 +4312,66 @@ mod tests {
     }
 
     #[test]
+    fn test_compile_int_to_string_emits_runtime_and_calls_it() {
+        // `(int->string n)` calls the emit-on-demand `tl_int_to_string` helper,
+        // which the backend defines inline (gated like `tl_alloc`). The result is
+        // discarded but the `Call` survives DCE (it has side effects).
+        let asm = compile_ok("(define (main) : i64 (begin (int->string 42) 0))");
+
+        // The runtime function is emitted and globally visible.
+        assert!(asm.contains("    .globl tl_int_to_string"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_int_to_string:"), "asm:\n{}", asm);
+
+        // The call site dispatches to the raw runtime symbol (not mangled).
+        assert!(asm.contains("    call tl_int_to_string"), "asm:\n{}", asm);
+        assert!(!asm.contains("_tl_tl_int_to_string"), "asm:\n{}", asm);
+        assert!(!asm.contains("_tl_int_to_string:"), "asm:\n{}", asm);
+
+        // The helper formats with a divide-by-10 digit loop (like tl_print_i64),
+        // handles the negative sign (`movb $45`), and the zero/'0' digit
+        // (`movb $48`).
+        assert!(
+            asm.contains(".L_tl_int_to_string_digit_loop:"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(asm.contains("    divq %r9"), "asm:\n{}", asm);
+        assert!(asm.contains("    movb $45,"), "asm:\n{}", asm);
+        assert!(asm.contains("    movb $48,"), "asm:\n{}", asm);
+
+        // It heap-allocates both the digit buffer and the 16-byte fat value via
+        // the bump allocator, whose self-contained body is also emitted here.
+        assert!(asm.contains("    call tl_alloc"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $16, %rdi"), "asm:\n{}", asm);
+        // The fat value's data pointer (offset 0) and length (offset 8) are
+        // stored before returning.
+        assert!(asm.contains("    movq %r13, 0(%rax)"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %r12, 8(%rax)"), "asm:\n{}", asm);
+
+        // The helper is not declared `.extern` (it is defined in this unit).
+        assert!(
+            !asm.contains("    .extern tl_int_to_string"),
+            "asm:\n{}",
+            asm
+        );
+
+        // No instruction selection fell through to a TODO stub.
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
     fn test_compile_no_string_to_int_means_no_runtime() {
         // A program that never parses strings must not emit the helper.
         let asm = compile_ok(r#"(define (main) : i64 (string-length "hi"))"#);
         assert!(!asm.contains("tl_string_to_int"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_no_int_to_string_means_no_runtime() {
+        // A program that never converts ints to strings must not emit the helper.
+        let asm = compile_ok(r#"(define (main) : i64 (string-length "hi"))"#);
+        assert!(!asm.contains("tl_int_to_string"), "asm:\n{}", asm);
     }
 
     #[test]

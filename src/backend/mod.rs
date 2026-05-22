@@ -811,6 +811,7 @@ impl X86_64Backend {
         // narrow parameter does not clobber adjacent slots.
         let mut int_param = 0;
         let mut float_param = 0;
+        let mut stack_param = 0;
         for (var, ty) in &func.params {
             let offset = self.var_offsets[var];
             match ty {
@@ -820,6 +821,9 @@ impl X86_64Backend {
                             "    movq {}, {}(%rbp)",
                             param_regs[int_param], offset
                         ));
+                    } else {
+                        self.store_incoming_stack_param(stack_param, offset, ty);
+                        stack_param += 1;
                     }
                     int_param += 1;
                 }
@@ -830,6 +834,9 @@ impl X86_64Backend {
                             Self::gpr32(param_regs[int_param]),
                             offset
                         ));
+                    } else {
+                        self.store_incoming_stack_param(stack_param, offset, ty);
+                        stack_param += 1;
                     }
                     int_param += 1;
                 }
@@ -840,6 +847,9 @@ impl X86_64Backend {
                             Self::gpr16(param_regs[int_param]),
                             offset
                         ));
+                    } else {
+                        self.store_incoming_stack_param(stack_param, offset, ty);
+                        stack_param += 1;
                     }
                     int_param += 1;
                 }
@@ -850,6 +860,9 @@ impl X86_64Backend {
                             Self::gpr8(param_regs[int_param]),
                             offset
                         ));
+                    } else {
+                        self.store_incoming_stack_param(stack_param, offset, ty);
+                        stack_param += 1;
                     }
                     int_param += 1;
                 }
@@ -859,6 +872,9 @@ impl X86_64Backend {
                             "    movsd {}, {}(%rbp)",
                             xmm_regs[float_param], offset
                         ));
+                    } else {
+                        self.store_incoming_stack_param(stack_param, offset, ty);
+                        stack_param += 1;
                     }
                     float_param += 1;
                 }
@@ -1139,8 +1155,9 @@ impl X86_64Backend {
                 args,
                 ty,
             } => {
-                self.load_call_args(args);
+                let stack_arg_space = self.load_call_args(args);
                 self.emit(&format!("    call {}", self.call_symbol(func)));
+                self.release_call_args(stack_arg_space);
                 self.store_call_result(dst, ty);
             }
             Instruction::CallIndirect {
@@ -1149,12 +1166,13 @@ impl X86_64Backend {
                 args,
                 ty,
             } => {
-                self.load_call_args(args);
+                let stack_arg_space = self.load_call_args(args);
                 let func_ty = self
                     .value_type(func)
                     .unwrap_or_else(|| Type::Func(Vec::new(), Box::new(Type::Unit)));
                 self.load_value(func, "%rax", &func_ty);
                 self.emit("    call *%rax");
+                self.release_call_args(stack_arg_space);
                 self.store_call_result(dst, ty);
             }
             Instruction::Branch {
@@ -1313,26 +1331,87 @@ impl X86_64Backend {
         }
     }
 
-    fn load_call_args(&mut self, args: &[Value]) {
+    fn store_incoming_stack_param(&mut self, stack_param: i32, local_offset: i32, ty: &Type) {
+        let caller_offset = 16 + stack_param * 8;
+        if *ty == Type::F64 {
+            self.emit(&format!("    movsd {}(%rbp), %xmm15", caller_offset));
+            self.emit(&format!("    movsd %xmm15, {}(%rbp)", local_offset));
+            return;
+        }
+
+        match ty.size() {
+            8 => {
+                self.emit(&format!("    movq {}(%rbp), %r11", caller_offset));
+                self.emit(&format!("    movq %r11, {}(%rbp)", local_offset));
+            }
+            4 => {
+                self.emit(&format!("    movl {}(%rbp), %r11d", caller_offset));
+                self.emit(&format!("    movl %r11d, {}(%rbp)", local_offset));
+            }
+            2 => {
+                self.emit(&format!("    movw {}(%rbp), %r11w", caller_offset));
+                self.emit(&format!("    movw %r11w, {}(%rbp)", local_offset));
+            }
+            1 => {
+                self.emit(&format!("    movb {}(%rbp), %r11b", caller_offset));
+                self.emit(&format!("    movb %r11b, {}(%rbp)", local_offset));
+            }
+            _ => {}
+        }
+    }
+
+    fn load_call_args(&mut self, args: &[Value]) -> i32 {
         let param_regs = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
         let xmm_regs = [
             "%xmm0", "%xmm1", "%xmm2", "%xmm3", "%xmm4", "%xmm5", "%xmm6", "%xmm7",
         ];
         let mut int_arg = 0;
         let mut float_arg = 0;
+        let mut stack_args = Vec::new();
         for arg in args {
             let arg_ty = self.value_type(arg).unwrap_or(Type::I64);
             if arg_ty == Type::F64 {
                 if float_arg < xmm_regs.len() {
                     self.load_value(arg, xmm_regs[float_arg], &Type::F64);
+                } else {
+                    stack_args.push((arg.clone(), arg_ty));
                 }
                 float_arg += 1;
             } else {
                 if int_arg < param_regs.len() {
                     self.load_value(arg, param_regs[int_arg], &arg_ty);
+                } else {
+                    stack_args.push((arg.clone(), arg_ty));
                 }
                 int_arg += 1;
             }
+        }
+
+        let stack_arg_space = ((stack_args.len() as i32 * 8) + 15) & !15;
+        if stack_arg_space > 0 {
+            self.emit(&format!("    sub ${}, %rsp", stack_arg_space));
+            for (idx, (arg, ty)) in stack_args.iter().enumerate() {
+                self.store_stack_call_arg(idx as i32, arg, ty);
+            }
+        }
+        stack_arg_space
+    }
+
+    fn store_stack_call_arg(&mut self, stack_arg: i32, arg: &Value, ty: &Type) {
+        let offset = stack_arg * 8;
+        if *ty == Type::F64 {
+            self.load_value(arg, "%xmm15", ty);
+            self.emit(&format!("    movsd %xmm15, {}(%rsp)", offset));
+            return;
+        }
+
+        self.load_value(arg, "%r11", ty);
+        self.emit(&format!("    movq %r11, {}(%rsp)", offset));
+    }
+
+    fn release_call_args(&mut self, stack_arg_space: i32) {
+        if stack_arg_space > 0 {
+            self.emit(&format!("    add ${}, %rsp", stack_arg_space));
         }
     }
 
@@ -1892,6 +1971,51 @@ mod tests {
         assert!(asm.contains("call _tl_inc"), "asm:\n{}", asm);
         // Argument register load for the call.
         assert!(asm.contains("%rdi"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_direct_call_stack_integer_args() {
+        let asm = compile_ok(
+            r#"
+            (define (sum8
+                [a : i64] [b : i64] [c : i64] [d : i64]
+                [e : i64] [f : i64] [g : i64] [h : i64]) : i64
+              (+ (+ (+ (+ (+ (+ (+ a b) c) d) e) f) g) h))
+            (define (main) : i64 (sum8 1 2 3 4 5 6 7 8))
+            "#,
+        );
+        assert!(asm.contains("_tl_sum8:"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq 16(%rbp), %r11"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq 24(%rbp), %r11"), "asm:\n{}", asm);
+        assert!(asm.contains("    sub $16, %rsp"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $7, %r11"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %r11, 0(%rsp)"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $8, %r11"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %r11, 8(%rsp)"), "asm:\n{}", asm);
+        assert!(asm.contains("    call _tl_sum8"), "asm:\n{}", asm);
+        assert!(asm.contains("    add $16, %rsp"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_direct_call_stack_float_arg() {
+        let asm = compile_ok(
+            r#"
+            (define (pick9
+                [a : f64] [b : f64] [c : f64] [d : f64] [e : f64]
+                [f : f64] [g : f64] [h : f64] [i : f64]) : f64
+              i)
+            (define (main) : f64 (pick9 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0))
+            "#,
+        );
+        assert!(asm.contains("_tl_pick9:"), "asm:\n{}", asm);
+        assert!(asm.contains("    movsd 16(%rbp), %xmm15"), "asm:\n{}", asm);
+        assert!(asm.contains("    sub $16, %rsp"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %rax, %xmm15"), "asm:\n{}", asm);
+        assert!(asm.contains("    movsd %xmm15, 0(%rsp)"), "asm:\n{}", asm);
+        assert!(asm.contains("    call _tl_pick9"), "asm:\n{}", asm);
+        assert!(asm.contains("    add $16, %rsp"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
     }
 
     #[test]

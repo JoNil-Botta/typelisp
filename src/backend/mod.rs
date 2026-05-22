@@ -875,9 +875,17 @@ mod tests {
         let merge_def = asm
             .lines()
             .find(|l| l.starts_with("_tl_max.merge.") && l.ends_with(':'));
-        assert!(merge_def.is_some(), "merge label not defined; asm:\n{}", asm);
+        assert!(
+            merge_def.is_some(),
+            "merge label not defined; asm:\n{}",
+            asm
+        );
         let merge_jumps = asm.matches("jmp _tl_max.merge.").count();
-        assert_eq!(merge_jumps, 2, "both arms should jump to merge; asm:\n{}", asm);
+        assert_eq!(
+            merge_jumps, 2,
+            "both arms should jump to merge; asm:\n{}",
+            asm
+        );
 
         // Phi elimination: each arm writes its value into the phi's stack slot.
         // The phi result is the function result, so the merge block returns it.
@@ -890,16 +898,19 @@ mod tests {
         // predecessor blocks (not by a fall-through that reads an undefined
         // register). We expect a load of each arm's value into a register and a
         // store into a single stack slot, performed on both arms.
-        let asm = compile_ok(
-            "(define (pick [a : i64] [b : i64]) : i64 (if (> a b) 100 200))",
-        );
+        let asm = compile_ok("(define (pick [a : i64] [b : i64]) : i64 (if (> a b) 100 200))");
         // The two constant arms move their literals into the phi slot. After
         // copy-propagation the constants reach the phi sources directly.
         assert!(asm.contains("$100"), "asm:\n{}", asm);
         assert!(asm.contains("$200"), "asm:\n{}", asm);
         // Branch + both merge jumps present.
         assert!(asm.contains("jnz _tl_pick.then."), "asm:\n{}", asm);
-        assert_eq!(asm.matches("jmp _tl_pick.merge.").count(), 2, "asm:\n{}", asm);
+        assert_eq!(
+            asm.matches("jmp _tl_pick.merge.").count(),
+            2,
+            "asm:\n{}",
+            asm
+        );
     }
 
     #[test]
@@ -924,7 +935,12 @@ mod tests {
         // Multiplication on the recursive arm.
         assert!(asm.contains("imulq %rcx, %rax"), "asm:\n{}", asm);
         // Both arms converge on the merge block.
-        assert_eq!(asm.matches("jmp _tl_fact.merge.").count(), 2, "asm:\n{}", asm);
+        assert_eq!(
+            asm.matches("jmp _tl_fact.merge.").count(),
+            2,
+            "asm:\n{}",
+            asm
+        );
     }
 
     // ---- Locals: `let` / `set!` (Alloc/Store/Load) (issue #36) ---------
@@ -934,9 +950,7 @@ mod tests {
         // `(let ([y (+ x x)]) (+ y x))` allocates a slot for `y`, stores the
         // computed value into it, and later loads it. The backend now emits a
         // real store into y's slot rather than rejecting the program.
-        let asm = compile_ok(
-            "(define (triple [x : i64]) : i64 (let ([y : i64 (+ x x)]) (+ y x)))",
-        );
+        let asm = compile_ok("(define (triple [x : i64]) : i64 (let ([y : i64 (+ x x)]) (+ y x)))");
         assert!(asm.contains("_tl_triple:"), "asm:\n{}", asm);
         // The `(+ x x)` addition feeding the binding.
         assert!(asm.contains("addq %rcx, %rax"), "asm:\n{}", asm);
@@ -984,9 +998,17 @@ mod tests {
         assert!(asm.contains("_tl_countdown.while_body."), "asm:\n{}", asm);
         assert!(asm.contains("_tl_countdown.while_exit."), "asm:\n{}", asm);
         // Header conditional branch into body / exit.
-        assert!(asm.contains("jnz _tl_countdown.while_body."), "asm:\n{}", asm);
+        assert!(
+            asm.contains("jnz _tl_countdown.while_body."),
+            "asm:\n{}",
+            asm
+        );
         // Back-edge from the body to the header.
-        assert!(asm.contains("jmp _tl_countdown.while_header."), "asm:\n{}", asm);
+        assert!(
+            asm.contains("jmp _tl_countdown.while_header."),
+            "asm:\n{}",
+            asm
+        );
         assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
     }
 

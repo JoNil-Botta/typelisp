@@ -129,13 +129,15 @@ fn type_lisp_programs_compile_link_and_run() {
             deps: &[],
         },
         // Self-hosting (#27, phase 4): a tokenizer written in TypeLisp itself.
-        // Lexes "foo + (12)" into 5 tokens: TIdent("foo") TPlus TLParen
-        // TInt(12) TRParen. The first token is read back from `(Array Token)`
-        // and its substring-sliced text is projected out of `(TIdent "foo")`.
-        // `main` returns token count (5) + identifier text length (3) = 8.
+        // Lexes "foo - 3 * (12 / 4)" into 9 tokens: TIdent("foo") TMinus
+        // TInt(3) TStar TLParen TInt(12) TSlash TInt(4) TRParen — exercising
+        // every operator (`- * /`). The first token is read back from
+        // `(Array Token)` and its substring-sliced text is projected out of
+        // `(TIdent "foo")`. `main` returns token count (9) + identifier text
+        // length (3) = 12.
         Case {
             name: "lexer",
-            exit_code: 8,
+            exit_code: 12,
             stdout: "",
             deps: &[],
         },
@@ -157,15 +159,17 @@ fn type_lisp_programs_compile_link_and_run() {
             stdout: "",
             deps: &[],
         },
-        // Self-hosting (#27, phase 4): a recursive-descent parser written in
-        // TypeLisp. Parses the token stream for "1 + 2 + 3" over the grammar
-        // expr := term ('+' term)* (left-assoc) into a REAL recursive `Expr`
-        // AST tree — (EAdd (EAdd (ENum 1) (ENum 2)) (ENum 3)), whose payloads
+        // Self-hosting (#27, phase 4): a recursive-descent precedence parser
+        // written in TypeLisp. Parses the token stream for "2 + 3 * 4" over the
+        // grammar expr := term (('+'|'-') term)*, term := factor (('*'|'/')
+        // factor)*, factor := int | '(' expr ')' into a REAL recursive `Expr`
+        // AST tree — (EAdd (ENum 2) (EMul (ENum 3) (ENum 4))), whose payloads
         // are heap-pointer indirections (#111) — then folds it with a recursive
-        // tree-walking `eval`. `main` returns the evaluated sum, 6.
+        // tree-walking `eval`. `*` binds tighter than `+`, so the result is
+        // 2 + (3 * 4) = 14, not (2 + 3) * 4 = 20.
         Case {
             name: "parser",
-            exit_code: 6,
+            exit_code: 14,
             stdout: "",
             deps: &[],
         },
@@ -289,11 +293,12 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         },
         // Self-hosting (#27, phase 4): the TypeLisp tokenizer, also exercised
         // through the explicit compile -> as -> ld -> run pipeline. Lexes
-        // "foo + (12)" into 5 tokens and reads the first identifier token back
-        // from `(Array Token)`; `main` returns 5 + 3 = 8.
+        // "foo - 3 * (12 / 4)" into 9 tokens (exercising the `- * /` operators)
+        // and reads the first identifier token back from `(Array Token)`;
+        // `main` returns 9 + 3 = 12.
         Case {
             name: "lexer",
-            exit_code: 8,
+            exit_code: 12,
             stdout: "",
             deps: &[],
         },
@@ -314,13 +319,14 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             stdout: "",
             deps: &[],
         },
-        // Self-hosting (#27, phase 4): the TypeLisp recursive-descent parser,
-        // also exercised through the explicit compile -> as -> ld -> run
-        // pipeline. Parses "1 + 2 + 3" into a real recursive `Expr` AST tree and
-        // folds it with a recursive `eval`; `main` returns the sum, 6.
+        // Self-hosting (#27, phase 4): the TypeLisp recursive-descent precedence
+        // parser, also exercised through the explicit compile -> as -> ld -> run
+        // pipeline. Parses "2 + 3 * 4" into a real recursive `Expr` AST tree
+        // (EAdd (ENum 2) (EMul (ENum 3) (ENum 4))) and folds it with a recursive
+        // `eval`; `*` binds tighter than `+`, so `main` returns 2 + 3*4 = 14.
         Case {
             name: "parser",
-            exit_code: 6,
+            exit_code: 14,
             stdout: "",
             deps: &[],
         },

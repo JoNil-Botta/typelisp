@@ -223,22 +223,37 @@ fn type_lisp_programs_compile_link_and_run() {
         // Self-hosting (#27): the s-expression EVALUATOR for TypeLisp's own syntax
         // - a tiny tree-walking interpreter. `tl_eval.tl` walks the recursive
         // cons-cell `Sexpr` AST and INTERPRETS it: an `(SInt n)` is `n`, and an
-        // `(SCons op rest)` call form projects its two argument sub-exprs out of
-        // the cons spine, recursively evaluates each, and dispatches on the head
-        // operator symbol (`+ - * /`) via `string-eq`. It REUSES the whole front
-        // end by importing `read` + the `Sexpr` enum from the `main`-less
-        // `tl_read.tl` (which transitively imports the `main`-less `tl_lex.tl` ->
-        // `tl_token.tl`), so the whole program has one `main` - the evaluator's.
-        // `main` runs `(eval-sexpr (read (lex "(+ 1 (* 2 3))")))`: the inner
-        // `(* 2 3)` interprets to 6 FIRST (it is the nested argument), then the
-        // outer `(+ 1 6)` to 7 - proving the interpreter honours the tree shape.
-        // All three imported `main`-less modules are copied alongside so the
+        // `(SCons (SSym name) rest)` call form binds the operator symbol `name`
+        // and the argument spine `rest` in ONE nested pattern (#41), projects
+        // its two argument sub-exprs out of the cons spine, recursively
+        // evaluates each, and dispatches on `name` (`+ - * /`) via `string-eq`.
+        // It REUSES the whole front end by importing `read` + the `Sexpr` enum
+        // from the `main`-less `tl_read.tl` (which transitively imports the
+        // `main`-less `tl_lex.tl` -> `tl_token.tl`), so the whole program has
+        // one `main` - the evaluator's. `main` runs
+        // `(eval-sexpr (read (lex "(+ 1 (* 2 3))")))`: the inner `(* 2 3)`
+        // interprets to 6 FIRST (it is the nested argument), then the outer
+        // `(+ 1 6)` to 7 - proving the interpreter honours the tree shape. All
+        // three imported `main`-less modules are copied alongside so the
         // `(import)` chain resolves.
         Case {
             name: "tl_eval",
             exit_code: 7,
             stdout: "",
             deps: &["tl_read.tl", "tl_lex.tl", "tl_token.tl"],
+        },
+        // refs #41: NESTED PATTERN MATCHING, standalone witness. A tree-walking
+        // evaluator whose SCons arm destructures two enum layers in ONE pattern
+        // - `(SCons (SSym name) rest)` - binding the operator symbol `name` and
+        // the argument spine `rest` together. `main` evaluates `(+ 1 (* 2 3))`:
+        // the nested `(* 2 3)` is evaluated first (6), then `(+ 1 6)` => 7. A
+        // non-symbol operator head would fail the nested `SSym` test and fall
+        // through to the `_` arm, exactly like a flat tag mismatch.
+        Case {
+            name: "nested_eval",
+            exit_code: 7,
+            stdout: "",
+            deps: &[],
         },
     ];
 
@@ -443,6 +458,16 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             exit_code: 7,
             stdout: "",
             deps: &["tl_read.tl", "tl_lex.tl", "tl_token.tl"],
+        },
+        // refs #41: nested pattern matching, also through the explicit
+        // compile -> as -> ld -> run pipeline. `(SCons (SSym name) rest)`
+        // destructures two enum layers in one arm; `main` evaluates
+        // `(+ 1 (* 2 3))` => 7.
+        Case {
+            name: "nested_eval",
+            exit_code: 7,
+            stdout: "",
+            deps: &[],
         },
     ];
 

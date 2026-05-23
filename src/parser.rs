@@ -632,9 +632,19 @@ impl<'a> Parser<'a> {
         Ok(Expr::spanned(expr, start.merge(&end)))
     }
 
-    /// Parse a `match` arm pattern: `_`, a scalar literal (`0`, `true`, `#\a`),
-    /// a bare nullary variant `Variant`, or a variant with positional bindings
-    /// `(Variant b1 b2 ...)`.
+    /// Parse a `match` arm pattern. Recursive, so a variant's arguments may
+    /// themselves be patterns:
+    /// - `_`                     → `Wildcard`
+    /// - a scalar (`0`/`true`/`#\a`) → `Literal`
+    /// - a bare identifier       → `Binding(name)` (names/binds this position)
+    /// - `Variant`               → nullary `Variant { args: [] }`
+    /// - `(Variant sub ...)`     → a `Variant` whose `sub`s are nested patterns
+    ///
+    /// A bare identifier is a `Binding`, never a nullary variant, at this
+    /// (top) level too — the typechecker resolves which identifiers are nullary
+    /// variants vs. fresh bindings against the scrutinee's enum, so a leading
+    /// bare-`Variant` arm (`[Red 0]`) and a binding sub-pattern (`(SSym op)`)
+    /// share one syntactic form.
     fn parse_pattern(&mut self) -> Result<Pattern, ParseError> {
         match &self.current {
             Token::Ident(s) if s == "_" => {
@@ -659,20 +669,17 @@ impl<'a> Parser<'a> {
             Token::Ident(s) => {
                 let name = s.clone();
                 self.advance()?;
-                Ok(Pattern::Variant {
-                    name,
-                    bindings: Vec::new(),
-                })
+                Ok(Pattern::Binding(name))
             }
             Token::LParen => {
                 self.advance()?;
                 let name = self.expect_ident()?;
-                let mut bindings = Vec::new();
+                let mut args = Vec::new();
                 while self.current != Token::RParen {
-                    bindings.push(self.expect_ident()?);
+                    args.push(self.parse_pattern()?);
                 }
                 self.advance()?; // consume RParen
-                Ok(Pattern::Variant { name, bindings })
+                Ok(Pattern::Variant { name, args })
             }
             _ => Err(ParseError {
                 msg: format!("expected pattern, got {:?}", self.current),
@@ -921,17 +928,85 @@ mod tests {
                     arms[0].0,
                     Pattern::Variant {
                         name: "Circle".into(),
-                        bindings: vec!["r".into()]
+                        args: vec![Pattern::Binding("r".into())]
                     }
                 );
                 assert_eq!(
                     arms[1].0,
                     Pattern::Variant {
                         name: "Square".into(),
-                        bindings: vec!["w".into()]
+                        args: vec![Pattern::Binding("w".into())]
                     }
                 );
                 assert_eq!(arms[2].0, Pattern::Wildcard);
+            }
+            other => panic!("expected Match, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_nested_variant_pattern() {
+        // `(SCons (SSym op) rest)` — the first variant arg is itself a nested
+        // variant pattern binding `op`; the second is a flat binding `rest`.
+        let prog = parse(
+            "(defenum Sexpr (SInt i64) (SSym String) (SNil) (SCons Sexpr Sexpr)) \
+             (define (f [s : Sexpr]) : i64 \
+               (match s [(SCons (SSym op) rest) 1] [_ 0]))",
+        )
+        .unwrap();
+        let body = match &prog.decls[1] {
+            Decl::DefFn { body, .. } => body.unspan(),
+            other => panic!("expected DefFn, got {:?}", other),
+        };
+        match body {
+            Expr::Match { arms, .. } => {
+                assert_eq!(
+                    arms[0].0,
+                    Pattern::Variant {
+                        name: "SCons".into(),
+                        args: vec![
+                            Pattern::Variant {
+                                name: "SSym".into(),
+                                args: vec![Pattern::Binding("op".into())],
+                            },
+                            Pattern::Binding("rest".into()),
+                        ],
+                    }
+                );
+                assert_eq!(arms[1].0, Pattern::Wildcard);
+            }
+            other => panic!("expected Match, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_nested_wildcard_and_literal_in_variant() {
+        // A variant arg may be `_` or a scalar literal.
+        let prog = parse(
+            "(defenum Sexpr (SInt i64) (SNil) (SCons Sexpr Sexpr)) \
+             (define (f [s : Sexpr]) : i64 \
+               (match s [(SCons (SInt 0) _) 1] [_ 0]))",
+        )
+        .unwrap();
+        let body = match &prog.decls[1] {
+            Decl::DefFn { body, .. } => body.unspan(),
+            other => panic!("expected DefFn, got {:?}", other),
+        };
+        match body {
+            Expr::Match { arms, .. } => {
+                assert_eq!(
+                    arms[0].0,
+                    Pattern::Variant {
+                        name: "SCons".into(),
+                        args: vec![
+                            Pattern::Variant {
+                                name: "SInt".into(),
+                                args: vec![Pattern::Literal(Literal::Int(0))],
+                            },
+                            Pattern::Wildcard,
+                        ],
+                    }
+                );
             }
             other => panic!("expected Match, got {:?}", other),
         }
@@ -946,13 +1021,9 @@ mod tests {
         };
         match body {
             Expr::Match { arms, .. } => {
-                assert_eq!(
-                    arms[0].0,
-                    Pattern::Variant {
-                        name: "Red".into(),
-                        bindings: vec![]
-                    }
-                );
+                // A bare nullary-variant arm parses as a `Binding`; the
+                // typechecker resolves it to the `Red` variant against `Color`.
+                assert_eq!(arms[0].0, Pattern::Binding("Red".into()));
             }
             other => panic!("expected Match, got {:?}", other),
         }

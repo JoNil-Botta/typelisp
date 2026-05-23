@@ -100,15 +100,16 @@ fn tl_eval_tl_compiles_to_assembly() {
 
     // The evaluator's own functions were emitted (TypeLisp prefixes user symbols
     // with `_tl_`): the tree-walking `eval-sexpr`, and the cons-cell projections
-    // `sexpr-head` ("car") / `sexpr-tail` ("cdr") / `sexpr-sym` (operator symbol)
-    // it uses to destructure each call form one level at a time. The arity guard
-    // rejects extra operands after the second fixed-arity argument.
+    // `sexpr-head` ("car") / `sexpr-tail` ("cdr") it uses to walk the (flat)
+    // argument spine. The operator-symbol projection that used to be a third
+    // helper (`sexpr-sym`) is gone: `eval-sexpr` now binds the operator text
+    // directly via the nested pattern `(SCons (SSym name) rest)` (#41). The
+    // arity guard rejects extra operands after the second fixed-arity argument.
     for sym in [
         "_tl_eval_sexpr:",
         "_tl_sexpr_head:",
         "_tl_sexpr_tail:",
         "_tl_sexpr_expect_nil:",
-        "_tl_sexpr_sym:",
     ] {
         assert!(
             asm.contains(sym),
@@ -117,6 +118,26 @@ fn tl_eval_tl_compiles_to_assembly() {
             asm,
         );
     }
+
+    // The `sexpr-sym` projection helper was REMOVED in favour of the nested
+    // pattern; it must no longer be emitted.
+    assert!(
+        !asm.contains("_tl_sexpr_sym:"),
+        "tl_eval should no longer define the sexpr-sym projection (replaced by a \
+         nested pattern):\n{}",
+        asm,
+    );
+
+    // The nested pattern `(SCons (SSym name) rest)` lowers to a SECOND tag
+    // dispatch inside the SCons arm (testing the inner SSym tag), labelled
+    // `match_nested` by the lowerer (#41). Its presence proves the operator
+    // symbol is destructured in the `match` itself rather than by a helper.
+    assert!(
+        asm.contains("match_nested"),
+        "tl_eval assembly has no nested tag-dispatch block (match_nested) for the \
+         `(SCons (SSym name) rest)` pattern:\n{}",
+        asm,
+    );
 
     // The reader and lexer are REUSED across the import boundary, not re-derived:
     // the imported `read` entry and the imported `lex` entry are emitted.

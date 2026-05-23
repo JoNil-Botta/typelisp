@@ -81,6 +81,13 @@ impl ProgramLowerer {
                 .get(name)
                 .or_else(|| self.function_types.get(name))
                 .cloned()
+                .or_else(|| {
+                    self.enums
+                        .lookup_variant(name)
+                        .and_then(|(enum_name, _tag, fields)| {
+                            fields.is_empty().then(|| Type::Enum(enum_name.to_string()))
+                        })
+                })
                 .unwrap_or(Type::Unit),
             ast::Expr::Binary { op, lhs, rhs } => {
                 let lhs_ty = self.infer_expr_type(lhs);
@@ -130,6 +137,11 @@ impl ProgramLowerer {
             }
             ast::Expr::Call { func, .. } => {
                 if let ast::Expr::Var(name) = func.unspan()
+                    && let Some((enum_name, _tag, _fields)) = self.enums.lookup_variant(name)
+                {
+                    return Type::Enum(enum_name.to_string());
+                }
+                if let ast::Expr::Var(name) = func.unspan()
                     && let Some(Type::Func(_, ret)) = self.function_types.get(name)
                 {
                     return (**ret).clone();
@@ -151,6 +163,18 @@ impl ProgramLowerer {
                 }
             }
             ast::Expr::Ann { ty, .. } => ty.clone(),
+            ast::Expr::Tuple(elems) => Type::Tuple(
+                elems
+                    .iter()
+                    .map(|elem| self.infer_expr_type(elem))
+                    .collect(),
+            ),
+            ast::Expr::Array(elems) => elems.first().map_or(Type::Unit, |first| {
+                Type::Array(Box::new(self.infer_expr_type(first)), elems.len())
+            }),
+            ast::Expr::MakeArray { elem_ty, .. } => {
+                Type::DynArray(Box::new(self.resolve_type(elem_ty)))
+            }
             _ => Type::Unit,
         }
     }

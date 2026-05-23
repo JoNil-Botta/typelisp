@@ -67,6 +67,15 @@ fn compiler_symbols_tl_compiles_to_assembly() {
         "_tl_compiler_symbol_make_handle:",
         "_tl_compiler_symbol_handle_kind:",
         "_tl_compiler_symbol_handle_index:",
+        "_tl_compiler_registry_make_handle:",
+        "_tl_compiler_registry_handle_owner_index:",
+        "_tl_compiler_registry_handle_child_index:",
+        "_tl_compiler_registries_lookup_variant:",
+        "_tl_compiler_registries_lookup_struct_field:",
+        "_tl_build_compiler_registries:",
+        "_tl_build_compiler_registries_from_source:",
+        "_tl_compiler_registries_variant_fields:",
+        "_tl_compiler_registries_struct_field_type:",
         "_tl_compiler_symbols_lookup_value:",
         "_tl_compiler_symbols_lookup_type:",
         "_tl_build_compiler_symbols:",
@@ -81,6 +90,8 @@ fn compiler_symbols_tl_compiles_to_assembly() {
     for message in [
         "symbols: duplicate value declaration ",
         "symbols: duplicate type declaration ",
+        "symbols: duplicate enum variant ",
+        "symbols: duplicate field ",
         "symbols: smoke score mismatch",
         "(defstruct Point (x i64) (y i64))",
         "(define (main [argc : i64] [name : String]) : i64",
@@ -107,7 +118,9 @@ fn compiler_symbols_smoke_tl_compiles_to_assembly() {
     for sym in [
         "_tl_compiler_symbols_self_test:",
         "_tl_build_compiler_symbols_from_source:",
+        "_tl_build_compiler_registries_from_source:",
         "_tl_compiler_symbols_duplicate_value_ok_question:",
+        "_tl_compiler_registries_duplicate_variant_ok_question:",
     ] {
         assert_symbol(&asm, sym, "compiler_symbols_smoke");
     }

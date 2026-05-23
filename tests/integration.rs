@@ -840,9 +840,10 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
                 "token.tl",
             ],
         },
-        // refs #405: selfhost top-level symbol table over the real compiler AST.
-        // The smoke parses a representative source, builds deterministic value
-        // and type declaration tables, checks lookup handles, and verifies
+        // refs #405/#423: selfhost top-level symbol table plus variant/field
+        // registries over the real compiler AST. The smoke parses a
+        // representative source, builds deterministic value/type declaration
+        // tables and enum/struct metadata, checks lookup handles, and verifies
         // duplicate detection stays recoverable.
         Case {
             name: "compiler_symbols_smoke",

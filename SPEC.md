@@ -127,9 +127,11 @@ narrower or unsigned integer is required. Floating-point literals are always
 
 **Fixed array:** `(Array type size)`
 - Size must be a compile-time constant.
-- Fixed-array types and literals parse and type-check, but fixed-array value
-  lowering is incomplete. Dynamic arrays are the usable array form in compiled
-  programs today.
+- Fixed-array literals lower to inline element storage. Values are passed around
+  by pointer handle inside compiled code.
+- `array-ref` and `array-set!` on fixed arrays are bounds-checked and use the
+  compile-time length. By-value fixed-array returns are still rejected by backend
+  validation.
 
 **Dynamic array:** `(Array type)` - written without a size
 - Runtime-sized element buffer allocated with `tl_alloc`.
@@ -440,8 +442,8 @@ See §3.6.
 | `length` | `String → i64` | Get string byte length |
 | `array-length` | `(Array t) → i64` | Get dynamic array length |
 | `make-array` | `type i64 → (Array type)` | Allocate dynamic array element buffer; invalid lengths trap |
-| `array-ref` | `(Array t) i64 → t` | Read element (bounds checked) |
-| `array-set!` | `(Array t) i64 t → unit` | Write element (bounds checked) |
+| `array-ref` | `(Array t) i64 → t` | Read dynamic or fixed array element (bounds checked) |
+| `array-set!` | `(Array t) i64 t → unit` | Write dynamic or fixed array element (bounds checked) |
 | `string-ref` | `String i64 → char` | Read byte from string (bounds checked) |
 | `string-length` | `String → i64` | Get string byte length |
 | `string-eq` | `String String → bool` | Byte-wise string comparison |
@@ -561,13 +563,13 @@ They are not implemented by a separate C runtime.
 |---------|--------|
 | `f32` type | Rejected by backend validation |
 | `f32` local/parameter type | Rejected by backend validation |
-| Tuple/fixed-array value lowering | Incomplete |
+| Tuple value lowering | Incomplete |
 | Tuple by-value return | Rejected by backend validation |
+| Fixed-array by-value return | Rejected by backend validation |
 | Struct/Enum/String globals | Rejected by backend validation |
 | Closures (capturing lambdas) | Not implemented |
 | Tail call optimization | Not implemented |
 | `struct-set!` | Not implemented |
-| `array-ref` / `array-set!` on fixed arrays | Not implemented |
 | Garbage collection / `free` | Not implemented (memory leaks) |
 | Windows target | Not implemented |
 | Complete source locations for all semantic errors | Partial |

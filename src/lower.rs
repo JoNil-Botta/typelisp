@@ -313,6 +313,10 @@ struct FnLowerer {
     /// This lets `value_type` recover the true width of a `Value::Var` instead
     /// of defaulting to `i64`, which is essential for width-correct codegen.
     var_types: HashMap<VarId, Type>,
+    /// Fixed arrays are lowered as pointer handles to inline element storage.
+    /// Backend storage for the handle is `u64`; this side table preserves the
+    /// source-level `(Array elem len)` type for type-directed lowering.
+    fixed_array_types: HashMap<VarId, (Type, usize)>,
     global_types: HashMap<String, Type>,
     function_types: HashMap<String, Type>,
     enums: ast::EnumRegistry,
@@ -478,17 +482,22 @@ impl FnLowerer {
         let mut builder = IrBuilder::new("entry");
         let mut vars = HashMap::new();
         let mut var_types = HashMap::new();
+        let mut fixed_array_types = HashMap::new();
         let mut ir_params = Vec::new();
 
         for (param_name, param_ty) in params {
             let var = builder.fresh_var();
+            let storage_ty = Self::backend_value_type(param_ty);
             builder.emit(Instruction::Alloc {
                 var,
-                ty: param_ty.clone(),
+                ty: storage_ty.clone(),
             });
-            ir_params.push((var, param_ty.clone()));
+            ir_params.push((var, storage_ty.clone()));
             vars.insert(param_name.clone(), var);
-            var_types.insert(var, param_ty.clone());
+            var_types.insert(var, storage_ty);
+            if let Type::Array(elem, len) = param_ty {
+                fixed_array_types.insert(var, ((**elem).clone(), *len));
+            }
         }
 
         FnLowerer {
@@ -496,6 +505,7 @@ impl FnLowerer {
             builder,
             vars,
             var_types,
+            fixed_array_types,
             global_types: global_types.clone(),
             function_types: function_types.clone(),
             enums: enums.clone(),
@@ -664,14 +674,13 @@ impl FnLowerer {
             // A dynamic-array constructor allocates an element buffer and builds
             // an inline fat `{ ptr, len }` value, yielding a pointer to it.
             ast::Expr::MakeArray { elem_ty, len } => self.lower_make_array(elem_ty, len),
+            ast::Expr::Array(elems) => self.lower_array_literal(elems),
             ast::Expr::ArrayRef { expr, index } => self.lower_array_ref(expr, index),
             ast::Expr::ArraySet { expr, index, value } => self.lower_array_set(expr, index, value),
             ast::Expr::StringRef { expr, index } => self.lower_string_ref(expr, index),
             ast::Expr::StructGet { expr, field } => self.lower_struct_get(expr, field),
-            // Tuple, Array (literal), Lambda — stubbed to unit for now
-            ast::Expr::Tuple(_) | ast::Expr::Array(_) | ast::Expr::Lambda { .. } => {
-                Value::ConstUnit
-            }
+            // Tuple and Lambda lowering are still stubbed to unit for now.
+            ast::Expr::Tuple(_) | ast::Expr::Lambda { .. } => Value::ConstUnit,
             ast::Expr::TupleRef { .. } => Value::ConstUnit,
             ast::Expr::Spanned { expr, .. } => self.lower_expr(expr),
         }
@@ -1036,6 +1045,21 @@ impl FnLowerer {
         self.locals.push((var, ty));
     }
 
+    fn backend_value_type(ty: &Type) -> Type {
+        match ty {
+            Type::Array(_, _) => Type::U64,
+            _ => ty.clone(),
+        }
+    }
+
+    fn record_value_local(&mut self, var: VarId, source_ty: Type) {
+        let storage_ty = Self::backend_value_type(&source_ty);
+        self.record_local(var, storage_ty);
+        if let Type::Array(elem, len) = source_ty {
+            self.fixed_array_types.insert(var, (*elem, len));
+        }
+    }
+
     fn resolved_struct_fields(&self, struct_name: &str) -> Vec<ast::FieldDef> {
         self.structs
             .fields(struct_name)
@@ -1128,15 +1152,16 @@ impl FnLowerer {
             else_val
         };
         let phi_dst = self.builder.fresh_var();
+        let phi_ty = Self::backend_value_type(&result_ty);
         self.builder.emit(Instruction::Phi {
             dst: phi_dst,
             incoming: vec![
                 (then_val, then_label.clone()),
                 (else_val, else_label.clone()),
             ],
-            ty: result_ty.clone(),
+            ty: phi_ty,
         });
-        self.record_local(phi_dst, result_ty);
+        self.record_value_local(phi_dst, result_ty);
         Value::Var(phi_dst)
     }
 
@@ -1156,18 +1181,19 @@ impl FnLowerer {
                 self.lower_expr(value)
             };
             let binding_ty = declared_ty.unwrap_or_else(|| self.value_type(&val));
+            let storage_ty = Self::backend_value_type(&binding_ty);
 
             let var = self.builder.fresh_var();
             self.builder.emit(Instruction::Alloc {
                 var,
-                ty: binding_ty.clone(),
+                ty: storage_ty.clone(),
             });
             self.builder.emit(Instruction::Store {
                 dst: Value::Var(var),
                 src: val,
-                ty: binding_ty.clone(),
+                ty: storage_ty,
             });
-            self.record_local(var, binding_ty);
+            self.record_value_local(var, binding_ty);
             self.vars.insert(name.clone(), var);
         }
         self.lower_expr(body)
@@ -1854,6 +1880,52 @@ impl FnLowerer {
         base_val
     }
 
+    /// Construct a fixed-size array value. The source type is `(Array elem N)`,
+    /// but the lowered value is a pointer handle to inline element storage, so
+    /// array indexing can reuse the same `Gep`/`Load`/`Store` machinery as other
+    /// aggregate values.
+    fn lower_array_literal(&mut self, elems: &[ast::Expr]) -> Value {
+        if elems.is_empty() {
+            return Value::ConstUnit;
+        }
+
+        let first = self.lower_expr(&elems[0]);
+        let elem_ty = self.value_type(&first);
+        let len = elems.len();
+        let elem_size = elem_ty.size();
+        let storage_size = elem_size * len;
+
+        let base_val = self.reserve_aggregate_storage(storage_size.max(1), Type::U64, false);
+        if let Value::Var(base) = &base_val {
+            self.fixed_array_types.insert(*base, (elem_ty.clone(), len));
+        }
+
+        for (idx, elem) in elems.iter().enumerate() {
+            let elem_val = if idx == 0 {
+                first.clone()
+            } else {
+                self.lower_expr_as(elem, &elem_ty)
+            };
+            if elem_size != 0 {
+                let elem_ptr = self.builder.fresh_var();
+                self.builder.emit(Instruction::Gep {
+                    dst: elem_ptr,
+                    base: base_val.clone(),
+                    offset: Value::ConstI64(idx as i64),
+                    elem_ty: elem_ty.clone(),
+                });
+                self.record_local(elem_ptr, Type::U64);
+                self.builder.emit(Instruction::Store {
+                    dst: Value::Var(elem_ptr),
+                    src: elem_val,
+                    ty: elem_ty.clone(),
+                });
+            }
+        }
+
+        base_val
+    }
+
     /// Construct a dynamic-array value: reject negative lengths and byte-count
     /// overflow, reserve 16 bytes of inline fat `{ ptr, len }` storage, allocate
     /// an element buffer of `len * sizeof(elem)` bytes via `tl_alloc`, store the
@@ -1979,9 +2051,11 @@ impl FnLowerer {
     fn lower_array_ref(&mut self, arr: &ast::Expr, index: &ast::Expr) -> Value {
         let arr_val = self.lower_expr(arr);
         let arr_ty = self.value_type(&arr_val);
-        // Only *dynamic* arrays are lowered here. Fixed-size `(Array elem N)`
-        // value/stack arrays are still stubbed (their inline layout is a
-        // separate, deferred slice), so fall through to a unit value as before.
+        if let Type::Array(elem, len) = &arr_ty {
+            return self.lower_fixed_array_ref(arr_val, (**elem).clone(), *len, index);
+        }
+        // Dynamic arrays use a fat `{ptr, len}` value; fixed arrays returned above
+        // are direct pointer handles to inline element storage.
         let elem_ty = match &arr_ty {
             Type::DynArray(e) => (**e).clone(),
             _ => return Value::ConstUnit,
@@ -2068,6 +2142,68 @@ impl FnLowerer {
         Value::Var(result)
     }
 
+    fn lower_fixed_array_ref(
+        &mut self,
+        arr_val: Value,
+        elem_ty: Type,
+        len: usize,
+        index: &ast::Expr,
+    ) -> Value {
+        let idx_val = self.lower_expr(index);
+        let idx_u_val = self.cast_value(idx_val.clone(), Type::U64);
+        let idx_offset_val = self.cast_value(idx_val, Type::I64);
+
+        let in_bounds = self.builder.fresh_var();
+        self.builder.emit(Instruction::BinOp {
+            dst: in_bounds,
+            op: BinOp::Lt,
+            lhs: idx_u_val,
+            rhs: Value::ConstI64(len as i64),
+            ty: Type::Bool,
+        });
+        self.record_local(in_bounds, Type::Bool);
+
+        let ok_label = self.builder.fresh_label("fixed_bounds_ok");
+        let fail_label = self.builder.fresh_label("fixed_bounds_fail");
+        self.builder.emit(Instruction::Branch {
+            cond: Value::Var(in_bounds),
+            true_label: ok_label.clone(),
+            false_label: fail_label.clone(),
+        });
+
+        self.builder.finish_block(&fail_label);
+        self.builder.emit(Instruction::Call {
+            dst: None,
+            func: "tl_oob_abort".into(),
+            args: vec![],
+            ty: Type::Unit,
+        });
+        self.builder.emit(Instruction::Jump(ok_label.clone()));
+
+        self.builder.finish_block(&ok_label);
+        if elem_ty.size() == 0 {
+            return self.dummy_value_for_type(&elem_ty);
+        }
+
+        let elem_ptr = self.builder.fresh_var();
+        self.builder.emit(Instruction::Gep {
+            dst: elem_ptr,
+            base: arr_val,
+            offset: idx_offset_val,
+            elem_ty: elem_ty.clone(),
+        });
+        self.record_local(elem_ptr, Type::U64);
+
+        let result = self.builder.fresh_var();
+        self.builder.emit(Instruction::Load {
+            dst: result,
+            src: Value::Var(elem_ptr),
+            ty: elem_ty.clone(),
+        });
+        self.record_local(result, elem_ty);
+        Value::Var(result)
+    }
+
     /// Lower `(array-set! a i v)`. The store-side mirror of `lower_array_ref`:
     /// for a *dynamic* array the access is bounds-checked with the identical
     /// UNSIGNED `idx u< len` comparison (so negative indices wrap to huge
@@ -2082,9 +2218,11 @@ impl FnLowerer {
     fn lower_array_set(&mut self, arr: &ast::Expr, index: &ast::Expr, value: &ast::Expr) -> Value {
         let arr_val = self.lower_expr(arr);
         let arr_ty = self.value_type(&arr_val);
-        // Only *dynamic* arrays are lowered here, exactly like `array-ref`:
-        // fixed-size `(Array elem N)` value/stack arrays have a separate inline
-        // layout that is still deferred, so fall through to a Unit value.
+        if let Type::Array(elem, len) = &arr_ty {
+            return self.lower_fixed_array_set(arr_val, (**elem).clone(), *len, index, value);
+        }
+        // Dynamic arrays use a fat `{ptr, len}` value; fixed arrays returned above
+        // are direct pointer handles to inline element storage.
         let elem_ty = match &arr_ty {
             Type::DynArray(e) => (**e).clone(),
             _ => return Value::ConstUnit,
@@ -2171,6 +2309,69 @@ impl FnLowerer {
         self.builder.emit(Instruction::Gep {
             dst: elem_ptr,
             base: Value::Var(buf),
+            offset: idx_offset_val,
+            elem_ty: elem_ty.clone(),
+        });
+        self.record_local(elem_ptr, Type::U64);
+
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(elem_ptr),
+            src: store_val,
+            ty: elem_ty,
+        });
+
+        Value::ConstUnit
+    }
+
+    fn lower_fixed_array_set(
+        &mut self,
+        arr_val: Value,
+        elem_ty: Type,
+        len: usize,
+        index: &ast::Expr,
+        value: &ast::Expr,
+    ) -> Value {
+        let idx_val = self.lower_expr(index);
+        let idx_u_val = self.cast_value(idx_val.clone(), Type::U64);
+        let idx_offset_val = self.cast_value(idx_val, Type::I64);
+        let store_val = self.lower_expr_as(value, &elem_ty);
+
+        let in_bounds = self.builder.fresh_var();
+        self.builder.emit(Instruction::BinOp {
+            dst: in_bounds,
+            op: BinOp::Lt,
+            lhs: idx_u_val,
+            rhs: Value::ConstI64(len as i64),
+            ty: Type::Bool,
+        });
+        self.record_local(in_bounds, Type::Bool);
+
+        let ok_label = self.builder.fresh_label("fixed_set_bounds_ok");
+        let fail_label = self.builder.fresh_label("fixed_set_bounds_fail");
+        self.builder.emit(Instruction::Branch {
+            cond: Value::Var(in_bounds),
+            true_label: ok_label.clone(),
+            false_label: fail_label.clone(),
+        });
+
+        self.builder.finish_block(&fail_label);
+        self.builder.emit(Instruction::Call {
+            dst: None,
+            func: "tl_oob_abort".into(),
+            args: vec![],
+            ty: Type::Unit,
+        });
+        self.builder.emit(Instruction::Jump(ok_label.clone()));
+
+        self.builder.finish_block(&ok_label);
+        if elem_ty.size() == 0 {
+            return Value::ConstUnit;
+        }
+
+        let elem_ptr = self.builder.fresh_var();
+        self.builder.emit(Instruction::Gep {
+            dst: elem_ptr,
+            base: arr_val,
             offset: idx_offset_val,
             elem_ty: elem_ty.clone(),
         });
@@ -2848,7 +3049,8 @@ impl FnLowerer {
             // Store at the variable's declared width, not the (possibly wider)
             // type of the RHS value.
             let ty = self.var_types.get(&var).cloned().unwrap_or(Type::Unit);
-            let val = self.lower_expr_as(expr, &ty);
+            let semantic_ty = self.value_type(&Value::Var(var));
+            let val = self.lower_expr_as(expr, &semantic_ty);
             self.builder.emit(Instruction::Store {
                 dst: Value::Var(var),
                 src: val,
@@ -2878,7 +3080,12 @@ impl FnLowerer {
             Value::ConstUnit => Type::Unit,
             // A `ConstStr` operand is the raw data pointer of a string literal.
             Value::ConstStr(_) => Type::U64,
-            Value::Var(v) => self.var_types.get(v).cloned().unwrap_or(Type::I64),
+            Value::Var(v) => self
+                .fixed_array_types
+                .get(v)
+                .map(|(elem, len)| Type::Array(Box::new(elem.clone()), *len))
+                .or_else(|| self.var_types.get(v).cloned())
+                .unwrap_or(Type::I64),
             Value::Global(name) => self.global_types.get(name).cloned().unwrap_or(Type::I64),
         }
     }
@@ -4667,24 +4874,77 @@ mod tests {
     }
 
     #[test]
-    fn test_lower_array_stub() {
-        // Array lowering is stubbed to ConstUnit.
+    fn test_lower_fixed_array_literal_allocates_and_stores_elements() {
+        let prog = parse("(define (f) : i64 (begin (array 1 2 3) 0))").unwrap();
+        let ir = lower_program(&prog);
+        let instrs = all_instrs(&ir);
+
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::Alloc { ty: Type::Array(elem, 24), .. } if **elem == Type::I8
+        )));
+        assert_eq!(
+            instrs
+                .iter()
+                .filter(|i| matches!(
+                    i,
+                    Instruction::Gep {
+                        elem_ty: Type::I64,
+                        ..
+                    }
+                ))
+                .count(),
+            3
+        );
+        assert_eq!(
+            instrs
+                .iter()
+                .filter(|i| matches!(i, Instruction::Store { ty: Type::I64, .. }))
+                .count(),
+            3
+        );
+    }
+
+    #[test]
+    fn test_lower_fixed_array_unit_literal_keeps_pointer_value() {
         let prog = parse(
             r#"
-            (define (make_arr) : (Array i64 3)
-              (array 1 2 3))
+            (define (f) : unit
+              (let ([a : (Array unit 2) (array unit unit)])
+                (array-ref a 0)))
         "#,
         )
         .unwrap();
         let ir = lower_program(&prog);
-        assert_eq!(ir.functions.len(), 1);
+        let instrs = all_instrs(&ir);
 
-        let has_unit_ret = ir.functions[0].blocks.iter().any(|b| {
-            b.instructions
-                .iter()
-                .any(|i| matches!(i, Instruction::Return(Some(Value::ConstUnit))))
-        });
-        assert!(has_unit_ret);
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::Alloc { ty: Type::Array(elem, 1), .. } if **elem == Type::I8
+        )));
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::BinOp {
+                op: BinOp::Lt,
+                rhs: Value::ConstI64(2),
+                ty: Type::Bool,
+                ..
+            }
+        )));
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::Call { func, dst: None, .. } if func == "tl_oob_abort"
+        )));
+        assert!(
+            !instrs.iter().any(|i| matches!(
+                i,
+                Instruction::Gep {
+                    elem_ty: Type::Unit,
+                    ..
+                }
+            )),
+            "unit element access should not compute a zero-sized address"
+        );
     }
 
     #[test]
@@ -4730,24 +4990,81 @@ mod tests {
     }
 
     #[test]
-    fn test_lower_array_ref_stub() {
-        // Array-ref lowering is stubbed to ConstUnit.
+    fn test_lower_fixed_array_ref_bounds_checks_and_loads() {
         let prog = parse(
             r#"
-            (define (first [a : (Array i64 3)]) : i64
-              (array-ref a 0))
+            (define (first [a : (Array i64 3)] [i : i64]) : i64
+              (array-ref a i))
         "#,
         )
         .unwrap();
         let ir = lower_program(&prog);
-        assert_eq!(ir.functions.len(), 1);
+        let instrs = all_instrs(&ir);
 
-        let has_unit_ret = ir.functions[0].blocks.iter().any(|b| {
-            b.instructions
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::BinOp {
+                op: BinOp::Lt,
+                rhs: Value::ConstI64(3),
+                ty: Type::Bool,
+                ..
+            }
+        )));
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::Call { func, dst: None, .. } if func == "tl_oob_abort"
+        )));
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::Gep {
+                elem_ty: Type::I64,
+                ..
+            }
+        )));
+        assert!(
+            instrs
                 .iter()
-                .any(|i| matches!(i, Instruction::Return(Some(Value::ConstUnit))))
-        });
-        assert!(has_unit_ret);
+                .any(|i| matches!(i, Instruction::Load { ty: Type::I64, .. }))
+        );
+    }
+
+    #[test]
+    fn test_lower_fixed_array_set_bounds_checks_and_stores() {
+        let prog = parse(
+            r#"
+            (define (set_second [a : (Array i64 3)] [v : i64]) : unit
+              (array-set! a 1 v))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let instrs = all_instrs(&ir);
+
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::BinOp {
+                op: BinOp::Lt,
+                rhs: Value::ConstI64(3),
+                ty: Type::Bool,
+                ..
+            }
+        )));
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::Call { func, dst: None, .. } if func == "tl_oob_abort"
+        )));
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::Gep {
+                elem_ty: Type::I64,
+                ..
+            }
+        )));
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Store { ty: Type::I64, .. }))
+        );
     }
 
     // ------------------------------------------------------------------

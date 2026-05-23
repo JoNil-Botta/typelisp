@@ -3971,6 +3971,21 @@ mod tests {
     }
 
     #[test]
+    fn test_reject_by_value_fixed_array_return_type_before_codegen() {
+        let err = compile_err(
+            r#"
+            (define (make_arr) : (Array i64 3)
+              (array 1 2 3))
+            "#,
+        );
+        assert!(
+            err.contains("return type (Array i64 3)"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
     fn test_reject_f32_local_type_before_codegen() {
         let err = generate_assembly(&Program {
             functions: vec![Function {
@@ -6850,6 +6865,25 @@ mod tests {
         // value is written through the computed pointer in %r10 — a store to
         // memory, not a load from it.
         assert!(asm.contains("imulq $8"), "asm:\n{}", asm);
+        assert!(asm.contains("%rax, (%r10)"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_fixed_array_literal_ref_and_set() {
+        let asm = compile_ok(
+            "(define (main) : i64 \
+               (let ([a : (Array i64 3) (array 2 2 3)]) \
+                 (begin \
+                   (array-set! a 1 40) \
+                   (+ (array-ref a 0) (array-ref a 1)))))",
+        );
+
+        assert!(asm.contains("setb %al"), "asm:\n{}", asm);
+        assert!(asm.contains("    call tl_oob_abort"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_oob_abort:"), "asm:\n{}", asm);
+        assert!(asm.contains("imulq $8, %rcx"), "asm:\n{}", asm);
+        assert!(asm.contains("movq $40"), "asm:\n{}", asm);
         assert!(asm.contains("%rax, (%r10)"), "asm:\n{}", asm);
         assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
     }

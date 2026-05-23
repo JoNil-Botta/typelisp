@@ -2241,6 +2241,37 @@ fn tl_compile_smoke_writes_while_program_and_output_exits_42() {
     assert_eq!(stderr, "", "tl_compile_smoke while output stderr");
 }
 
+#[test]
+fn tl_compile_smoke_writes_multi_binding_let_and_output_exits_42() {
+    // Sequential let* semantics: later bindings can reference earlier ones.
+    let (code, stdout, stderr, _asm) = run_compile_smoke_generated_program(
+        "tl_compile_smoke_multi_let",
+        "(let ((x 20) (y (+ x 22))) y)",
+        &[
+            "_start:\n",
+            "    call main\n",
+            "    movq $60, %rax\n",
+            "    syscall\n",
+        ],
+    );
+
+    assert_eq!(
+        code,
+        Some(42),
+        "tl_compile_smoke multi-binding let output program exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(
+        stdout, "",
+        "tl_compile_smoke multi-binding let output stdout"
+    );
+    assert_eq!(
+        stderr, "",
+        "tl_compile_smoke multi-binding let output stderr"
+    );
+}
+
 fn run_compile_smoke_driver(work_name: &str, input_source: &str) -> (Option<i32>, String, String) {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let selfhost_dir = manifest_dir.join("selfhost");

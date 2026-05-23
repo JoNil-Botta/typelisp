@@ -2241,16 +2241,15 @@ fn tl_compile_smoke_writes_while_program_and_output_exits_42() {
     assert_eq!(stderr, "", "tl_compile_smoke while output stderr");
 }
 
-#[test]
-fn tl_compile_smoke_rejects_empty_begin_with_specific_diagnostic() {
+fn run_compile_smoke_driver(work_name: &str, input_source: &str) -> (Option<i32>, String, String) {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let selfhost_dir = manifest_dir.join("selfhost");
     let source_path = selfhost_dir.join("compile_smoke.tl");
     let work_dir = manifest_dir
         .join("target")
         .join("integration-tests")
-        .join("tl_compile_smoke_empty_begin");
-    fs::create_dir_all(&work_dir).expect("create tl_compile_smoke empty begin test work dir");
+        .join(work_name);
+    fs::create_dir_all(&work_dir).expect("create tl_compile_smoke test work dir");
 
     let work_path = work_dir.join("compile_smoke.tl");
     fs::copy(&source_path, &work_path).expect("copy compile_smoke.tl to work dir");
@@ -2270,7 +2269,7 @@ fn tl_compile_smoke_rejects_empty_begin_with_specific_diagnostic() {
 
     let input_path = work_dir.join("input.tl");
     let asm_path = work_dir.join("generated.s");
-    fs::write(&input_path, "(begin)").expect("write empty begin input");
+    fs::write(&input_path, input_source).expect("write tl_compile_smoke input");
 
     let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
         .arg("run")
@@ -2278,12 +2277,39 @@ fn tl_compile_smoke_rejects_empty_begin_with_specific_diagnostic() {
         .arg(&input_path)
         .arg(&asm_path)
         .output()
-        .expect("run tl_compile_smoke empty begin");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+        .expect("run tl_compile_smoke");
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    (output.status.code(), stdout, stderr)
+}
+
+#[test]
+fn tl_compile_smoke_rejects_malformed_while_with_specific_diagnostic() {
+    let (code, stdout, stderr) =
+        run_compile_smoke_driver("tl_compile_smoke_malformed_while", "(while)");
 
     assert_eq!(
-        output.status.code(),
+        code,
+        Some(134),
+        "malformed while should abort through panic\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(stdout, "", "malformed while driver wrote stdout");
+    assert_eq!(
+        stderr, "parse: malformed while",
+        "malformed while diagnostic"
+    );
+}
+
+#[test]
+fn tl_compile_smoke_rejects_empty_begin_with_specific_diagnostic() {
+    let (code, stdout, stderr) =
+        run_compile_smoke_driver("tl_compile_smoke_empty_begin", "(begin)");
+
+    assert_eq!(
+        code,
         Some(134),
         "empty begin should abort through panic\nstdout:\n{}\nstderr:\n{}",
         stdout,

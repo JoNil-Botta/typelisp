@@ -712,14 +712,44 @@ separate design track.
 - Heap allocations are process-lifetime allocations: once allocated, they remain
   live until the compiled program exits.
 
-### 7.3 Globals
+### 7.3 V1 reclamation direction
+
+Issue #320 chose the near-term reclamation policy. The current
+process-lifetime arena remains the default because it is simple, deterministic,
+and correct for one-shot compiled programs. It covers all current heap
+allocation kinds: fresh string storage from `substring`, `string-append`,
+`read-file`, `arg`, and `int->string`; dynamic array element buffers and fat
+values; returned enum and struct storage; and self-hosted data structures built
+from those primitives. Future closures are expected to allocate in the same
+heap until a more precise model exists.
+
+General per-object `free`, destructors, move-only ownership, and borrowed
+references are not part of this v1 policy. Aggregate handles are freely copied
+today, and dynamic arrays are shared mutable buffers, so adding arbitrary
+`free` before ownership/reference semantics would make double-free and
+use-after-free errors expressible. Ownership, borrowing, and reference work is a
+separate design track (#25, #182).
+
+A tracing garbage collector is also not the first reclamation step. It would
+need object metadata, root discovery or stack maps, runtime scanning policy, and
+coverage across every aggregate allocation shape. That may be revisited later,
+but it is larger than the immediate need for long-running tools.
+
+The first planned reclamation mechanism is explicit region reset at tool-owned
+phase boundaries (#418, #419). A region reset mark invalidates every heap handle
+allocated after that mark, so it is only valid when the caller can prove those
+values are dead, such as after a compiler, formatter, package-tooling, or REPL
+iteration has discarded all phase-local results. It is not a safe arbitrary
+source-level `free` replacement.
+
+### 7.4 Globals
 
 - Stored in the `.data` or `.rodata` section.
 - Mutable globals use `.data` with an initializer.
 - String literal bytes are stored in `.rodata`; a `String` value points to
   inline `{ptr,len}` storage whose `ptr` field points into `.rodata`.
 
-### 7.4 Aggregate handles and aliasing
+### 7.5 Aggregate handles and aliasing
 
 - Passing or assigning an aggregate value copies the value handle, not the
   pointed-to storage. This applies to `String`, dynamic-array, enum, and struct
@@ -789,7 +819,7 @@ separate design track.
 | Closures (capturing lambdas) | Not implemented |
 | Tail call optimization | Not implemented |
 | `struct-set!` | Not implemented |
-| Garbage collection / `free` | Not implemented (memory leaks) |
+| Garbage collection / general `free` | Not implemented; v1 direction is process-lifetime allocation plus future explicit region reset (#320, #418, #419) |
 | SPMD / SIMD `foreach` | Scalar reference lowering only; vector IR and AVX backends not implemented |
 | Windows target | Not implemented |
 | Complete source locations for all semantic errors | Partial |

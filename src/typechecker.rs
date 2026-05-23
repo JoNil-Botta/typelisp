@@ -172,6 +172,65 @@ impl TypeChecker {
         self.enums = EnumRegistry::from_program(prog);
         self.structs = StructRegistry::from_program(prog);
 
+        // Check for duplicate top-level names across the whole program.
+        // Value-level names share the backend symbol namespace; nominal types
+        // share the type-resolution namespace. Keep them separate so an enum
+        // type can intentionally have a same-named constructor variant.
+        let mut seen_values: HashMap<String, Span> = HashMap::new();
+        let mut seen_types: HashMap<String, Span> = HashMap::new();
+        for decl in &prog.decls {
+            let type_name: Option<(String, Span)> = match decl {
+                Decl::DefEnum { name, .. } | Decl::DefStruct { name, .. } => {
+                    Some((name.clone(), Span::default()))
+                }
+                _ => None,
+            };
+            if let Some((name, span)) = type_name {
+                if let Some(prev_span) = seen_types.get(&name) {
+                    return Err(TypeError::at(
+                        format!(
+                            "duplicate top-level type name '{}' (already defined at {:?})",
+                            name, prev_span,
+                        ),
+                        span,
+                    ));
+                }
+                seen_types.insert(name, span);
+            }
+
+            let value_names: Vec<(String, Span)> = match decl {
+                Decl::Def { name, value, .. } => {
+                    vec![(name.clone(), value.span())]
+                }
+                Decl::DefFn { name, body, .. } => {
+                    vec![(name.clone(), body.span())]
+                }
+                Decl::Extern { name, .. } => {
+                    vec![(name.clone(), Span::default())]
+                }
+                Decl::DefEnum { name: _, variants } => variants
+                    .iter()
+                    .map(|v| (v.name.clone(), Span::default()))
+                    .collect(),
+                Decl::DefStruct { name, .. } => {
+                    vec![(name.clone(), Span::default())]
+                }
+                Decl::Import(_) => vec![],
+            };
+            for (name, span) in value_names {
+                if let Some(prev_span) = seen_values.get(&name) {
+                    return Err(TypeError::at(
+                        format!(
+                            "duplicate top-level name '{}' (already defined at {:?})",
+                            name, prev_span,
+                        ),
+                        span,
+                    ));
+                }
+                seen_values.insert(name, span);
+            }
+        }
+
         // Recursive enums (refs #13/#27). A *direct* self-referential payload
         // field — a variant field whose type IS the enclosing enum (`(EAdd Expr
         // Expr)` in `defenum Expr`) — is now supported: an enum value is a
@@ -1010,59 +1069,47 @@ impl TypeChecker {
         let mut has_wildcard = false;
 
         for (pat, body) in arms {
+            if has_wildcard {
+                return Err(TypeError::at(
+                    "unreachable match arm after wildcard `_`",
+                    body.span(),
+                ));
+            }
             self.push_scope();
             match pat {
                 Pattern::Wildcard => {
                     has_wildcard = true;
                 }
-                Pattern::Variant { name, bindings } => {
-                    let (owner, tag, fields) =
-                        self.enums.lookup_variant(name).ok_or_else(|| {
-                            TypeError::at(
-                                format!("unknown variant '{}' in match", name),
-                                body.span(),
-                            )
-                        })?;
-                    if owner != enum_name {
-                        let owner = owner.to_string();
-                        self.pop_scope();
-                        return Err(TypeError::at(
-                            format!(
-                                "variant '{}' belongs to enum {}, not {}",
-                                name, owner, enum_name
-                            ),
-                            body.span(),
-                        ));
+                // A bare top-level identifier is a nullary-variant arm
+                // (`[Red 0]`): resolve it as the variant `name` with no args.
+                Pattern::Binding(name) => {
+                    let (tag, irrefutable) =
+                        match self.check_variant_pattern(&enum_name, name, &[], body.span()) {
+                            Ok(t) => t,
+                            Err(e) => {
+                                self.pop_scope();
+                                return Err(e);
+                            }
+                        };
+                    if irrefutable {
+                        covered[tag] = true;
                     }
-                    if bindings.len() != fields.len() {
-                        let nfields = fields.len();
-                        self.pop_scope();
-                        return Err(TypeError::at(
-                            format!(
-                                "variant '{}' binds {} fields but pattern has {}",
-                                name,
-                                nfields,
-                                bindings.len()
-                            ),
-                            body.span(),
-                        ));
-                    }
-                    // Resolve each payload field type before binding so a
-                    // nominal payload (a struct/enum named in the `defenum`,
-                    // parsed as `Type::Var`) becomes its concrete
-                    // `Type::Struct`/`Type::Enum`. Without this the bound
-                    // variable stays an unresolved type variable and downstream
-                    // operations that require a concrete aggregate (e.g.
-                    // `struct-get` on a struct payload) wrongly reject it. The
-                    // lowerer already resolves these types the same way.
-                    let field_tys: Vec<Type> =
-                        fields.iter().map(|t| self.resolve_type(t)).collect();
-                    for (b, fty) in bindings.iter().zip(field_tys.iter()) {
-                        self.bind(b.clone(), fty.clone());
-                    }
-                    covered[tag] = true;
                 }
-                // Var/Tuple patterns are not supported in `match` arms yet.
+                Pattern::Variant { name, args } => {
+                    let (tag, irrefutable) =
+                        match self.check_variant_pattern(&enum_name, name, args, body.span()) {
+                            Ok(t) => t,
+                            Err(e) => {
+                                self.pop_scope();
+                                return Err(e);
+                            }
+                        };
+                    if irrefutable {
+                        covered[tag] = true;
+                    }
+                }
+                // Var/Tuple/bare-literal patterns are not supported as a
+                // top-level enum match arm.
                 other => {
                     self.pop_scope();
                     return Err(TypeError::at(
@@ -1090,7 +1137,11 @@ impl TypeChecker {
             }
         }
 
-        // Exhaustiveness: every variant must be covered, or a wildcard present.
+        // Exhaustiveness: every variant must be fully covered, or a wildcard
+        // present. Nested variant and literal sub-patterns are refutable: they
+        // cover only part of the outer variant's value space, so a fallback arm
+        // is still required unless a later irrefutable pattern covers the same
+        // top-level variant.
         if !has_wildcard {
             let missing: Vec<String> = self
                 .enums
@@ -1116,6 +1167,151 @@ impl TypeChecker {
         }
 
         Ok(result_ty.unwrap_or(Type::Unit))
+    }
+
+    /// Type-check a (possibly top-level) variant pattern `name(args...)` against
+    /// the enum `enum_name`, binding identifiers found anywhere in `args`.
+    /// Returns the matched variant's tag index plus whether this pattern fully
+    /// covers that variant for exhaustiveness. A nested variant or literal
+    /// sub-pattern is refutable unless it recursively covers the whole nested
+    /// enum field, so the outer variant may need a later fallback arm.
+    /// Callers are responsible for `pop_scope` on error (so bindings made before
+    /// the failure are discarded).
+    fn check_variant_pattern(
+        &mut self,
+        enum_name: &str,
+        name: &str,
+        args: &[Pattern],
+        span: Span,
+    ) -> Result<(usize, bool), TypeError> {
+        let (owner, tag, fields) = self
+            .enums
+            .lookup_variant(name)
+            .ok_or_else(|| TypeError::at(format!("unknown variant '{}' in match", name), span))?;
+        if owner != enum_name {
+            let owner = owner.to_string();
+            return Err(TypeError::at(
+                format!(
+                    "variant '{}' belongs to enum {}, not {}",
+                    name, owner, enum_name
+                ),
+                span,
+            ));
+        }
+        if args.len() != fields.len() {
+            let nfields = fields.len();
+            return Err(TypeError::at(
+                format!(
+                    "variant '{}' binds {} fields but pattern has {}",
+                    name,
+                    nfields,
+                    args.len()
+                ),
+                span,
+            ));
+        }
+        // Resolve each payload field type before checking sub-patterns so a
+        // nominal payload (a struct/enum named in the `defenum`, parsed as
+        // `Type::Var`) becomes its concrete `Type::Struct`/`Type::Enum`. The
+        // lowerer resolves these types the same way.
+        let field_tys: Vec<Type> = fields.iter().map(|t| self.resolve_type(t)).collect();
+        let mut irrefutable = true;
+        for (arg, fty) in args.iter().zip(field_tys.iter()) {
+            self.check_sub_pattern(arg, fty, span)?;
+            if !self.sub_pattern_is_irrefutable(arg, fty) {
+                irrefutable = false;
+            }
+        }
+        Ok((tag, irrefutable))
+    }
+
+    /// Whether a checked sub-pattern covers every value of a payload field.
+    /// Binding and `_` always do. A nested variant only does when the field enum
+    /// has exactly one variant and that variant's own fields are all covered.
+    /// Literal sub-patterns are always refutable.
+    fn sub_pattern_is_irrefutable(&self, pat: &Pattern, fty: &Type) -> bool {
+        match pat {
+            Pattern::Binding(_) | Pattern::Wildcard => true,
+            Pattern::Literal(_) => false,
+            Pattern::Variant { name, args } => {
+                let Type::Enum(enum_name) = fty else {
+                    return false;
+                };
+                let Some(variants) = self.enums.variants(enum_name) else {
+                    return false;
+                };
+                if variants.len() != 1 {
+                    return false;
+                }
+                let Some((owner, _tag, fields)) = self.enums.lookup_variant(name) else {
+                    return false;
+                };
+                if owner != enum_name || args.len() != fields.len() {
+                    return false;
+                }
+                let field_tys: Vec<Type> = fields.iter().map(|t| self.resolve_type(t)).collect();
+                args.iter()
+                    .zip(field_tys.iter())
+                    .all(|(arg, fty)| self.sub_pattern_is_irrefutable(arg, fty))
+            }
+            _ => false,
+        }
+    }
+
+    /// Type-check a sub-pattern (a variant payload field) against its field
+    /// type `fty`, binding any identifiers it introduces:
+    /// - `Binding(x)` binds `x : fty` (irrefutable);
+    /// - `Wildcard` ignores the field;
+    /// - a nested `Variant` requires `fty` to be an enum and recurses;
+    /// - a `Literal` requires `fty` to be the matching scalar (refutable).
+    fn check_sub_pattern(
+        &mut self,
+        pat: &Pattern,
+        fty: &Type,
+        span: Span,
+    ) -> Result<(), TypeError> {
+        match pat {
+            Pattern::Binding(name) => {
+                self.bind(name.clone(), fty.clone());
+                Ok(())
+            }
+            Pattern::Wildcard => Ok(()),
+            Pattern::Variant { name, args } => match fty {
+                Type::Enum(sub_enum) => {
+                    self.check_variant_pattern(&sub_enum.clone(), name, args, span)?;
+                    Ok(())
+                }
+                other => Err(TypeError::at(
+                    format!(
+                        "nested variant pattern '{}' requires an enum field, got {}",
+                        name, other
+                    ),
+                    span,
+                )),
+            },
+            Pattern::Literal(lit) => {
+                let lit_ty = Self::literal_pattern_type(lit);
+                let ok = if matches!(lit, Literal::Int(_)) {
+                    fty.is_integer()
+                } else {
+                    self.types_equal(fty, &lit_ty)
+                };
+                if !ok {
+                    return Err(TypeError::at(
+                        format!(
+                            "literal sub-pattern of type {} does not match field type {}",
+                            lit_ty, fty
+                        ),
+                        span,
+                    ));
+                }
+                Ok(())
+            }
+            other => Err(TypeError::at(
+                format!("unsupported nested match pattern: {:?}", other),
+                span,
+            )),
+        }
     }
 
     fn types_equal(&self, a: &Type, b: &Type) -> bool {
@@ -1382,6 +1578,155 @@ mod tests {
         assert!(tc.check_program(&prog).is_err());
     }
 
+    // ------------------------------------------------------------------
+    // Duplicate top-level names — Issue #44
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_typecheck_duplicate_function_names_error() {
+        let prog = concat_modules(
+            "(define (foo [x : i64]) : i64 x)",
+            "(define (foo [x : i64]) : i64 (+ x 1))",
+        );
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(
+            err.msg.contains("duplicate top-level name 'foo'"),
+            "err: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_typecheck_duplicate_define_and_function_error() {
+        let prog = parse(
+            r#"
+            (define foo : i64 42)
+            (define (foo [x : i64]) : i64 x)
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(
+            err.msg.contains("duplicate top-level name 'foo'"),
+            "err: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_typecheck_duplicate_enum_variant_error() {
+        let src = r#"
+            (defenum A (Foo))
+            (defenum B (Foo))
+        "#;
+        let prog = parse(src).unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(
+            err.msg.contains("duplicate top-level name 'Foo'"),
+            "err: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_typecheck_duplicate_enum_type_name_error() {
+        let src = r#"
+            (defenum Shape (Circle))
+            (defenum Shape (Square))
+        "#;
+        let prog = parse(src).unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(
+            err.msg.contains("duplicate top-level type name 'Shape'"),
+            "err: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_typecheck_duplicate_nominal_type_name_error() {
+        let src = r#"
+            (defenum Shape (Circle))
+            (defstruct Shape (x i64))
+        "#;
+        let prog = parse(src).unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(
+            err.msg.contains("duplicate top-level type name 'Shape'"),
+            "err: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_typecheck_duplicate_struct_and_function_error() {
+        let prog = parse(
+            r#"
+            (defstruct Point (x i64))
+            (define (Point [x : i64]) : i64 x)
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(
+            err.msg.contains("duplicate top-level name 'Point'"),
+            "err: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_typecheck_duplicate_extern_error() {
+        let prog = parse(
+            r#"
+            (extern foo : (-> i64 i64))
+            (extern foo : (-> bool bool))
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(
+            err.msg.contains("duplicate top-level name 'foo'"),
+            "err: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_typecheck_no_duplicate_across_different_names_ok() {
+        let prog = parse(
+            r#"
+            (defenum A (Foo))
+            (defenum B (Bar))
+            (define (baz [x : i64]) : i64 x)
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        assert!(tc.check_program(&prog).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_builtin_shadowing_not_duplicate() {
+        // Built-ins are allowed to be shadowed by user-defined names.
+        let prog = parse(
+            r#"
+            (define (print [x : i64]) : i64 (+ x 1))
+            (define (main) : i64 (print 41))
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        assert!(tc.check_program(&prog).is_ok());
+    }
+
     #[test]
     fn test_typecheck_error_carries_span() {
         let src = "(define (bad [a : i64] [b : bool]) : i64 (+ a b))";
@@ -1485,6 +1830,126 @@ mod tests {
                    (define (line-of [t : Tok]) : i64 \
                      (match t [(TPos p) (struct-get p line)] [(TEnd) -1]))";
         assert!(check(src).is_ok());
+    }
+
+    // ------------------------------------------------------------------
+    // Nested pattern matching — Issue #41
+    // ------------------------------------------------------------------
+
+    const SEXPR: &str = "(defenum Sexpr (SInt i64) (SSym String) (SNil) (SCons Sexpr Sexpr))";
+
+    #[test]
+    fn test_typecheck_nested_pattern_binds_nested_field_types() {
+        // `(SCons (SSym op) rest)` binds `op : String` (from the nested SSym)
+        // and `rest : Sexpr`. Using `op` where a String is required and `rest`
+        // where a Sexpr is required type-checks.
+        let src = format!(
+            "{SEXPR}\n(define (op-len [s : Sexpr]) : i64 \
+               (match s [(SCons (SSym op) rest) (string-length op)] [_ 0]))"
+        );
+        assert!(check(&src).is_ok(), "{:?}", check(&src));
+    }
+
+    #[test]
+    fn test_typecheck_nested_pattern_binds_rest_as_enum() {
+        // The flat binding `rest` in a nested pattern is a full `Sexpr`, usable
+        // in a recursive call.
+        let src = format!(
+            "{SEXPR}\n(define (depth [s : Sexpr]) : i64 \
+               (match s [(SCons (SSym op) rest) (+ 1 (depth rest))] [_ 0]))"
+        );
+        assert!(check(&src).is_ok(), "{:?}", check(&src));
+    }
+
+    #[test]
+    fn test_typecheck_nested_pattern_wrong_nested_variant_type_is_err() {
+        // A nested variant pattern must name a variant of the FIELD's enum. The
+        // `SInt` field of `SCons` is a `Sexpr`, so `(SCons (SInt x) r)` is fine;
+        // but using a String-only op on the bound int payload is rejected.
+        let src = format!(
+            "{SEXPR}\n(define (f [s : Sexpr]) : i64 \
+               (match s [(SCons (SInt n) r) (string-length n)] [_ 0]))"
+        );
+        // `n : i64`, `string-length` wants a String → type error.
+        assert!(check(&src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_nested_variant_on_non_enum_field_is_err() {
+        // A nested variant sub-pattern on a non-enum field (here `SInt`'s i64
+        // payload) is rejected.
+        let src = format!(
+            "{SEXPR}\n(define (f [s : Sexpr]) : i64 \
+               (match s [(SInt (SNil)) 1] [_ 0]))"
+        );
+        let err = check(&src).unwrap_err();
+        assert!(
+            err.msg.contains("requires an enum field"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_nested_literal_sub_pattern_ok() {
+        // A scalar literal sub-pattern against a matching field type.
+        let src = format!(
+            "{SEXPR}\n(define (f [s : Sexpr]) : i64 \
+               (match s [(SCons (SInt 0) r) 1] [_ 0]))"
+        );
+        assert!(check(&src).is_ok(), "{:?}", check(&src));
+    }
+
+    #[test]
+    fn test_typecheck_nested_literal_sub_pattern_type_mismatch_is_err() {
+        // A bool literal sub-pattern against an i64 field is a type error.
+        let src = format!(
+            "{SEXPR}\n(define (f [s : Sexpr]) : i64 \
+               (match s [(SCons (SInt true) r) 1] [_ 0]))"
+        );
+        let err = check(&src).unwrap_err();
+        assert!(
+            err.msg.contains("does not match field type"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_nested_pattern_does_not_regress_flat_exhaustiveness() {
+        // A flat match with no wildcard must still be proven exhaustive over all
+        // variants (unchanged behaviour). Dropping `SCons` is an error.
+        let src = format!(
+            "{SEXPR}\n(define (f [s : Sexpr]) : i64 \
+               (match s [(SInt n) n] [(SSym x) 0] [(SNil) 0]))"
+        );
+        let err = check(&src).unwrap_err();
+        assert!(err.msg.contains("non-exhaustive"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_refutable_nested_pattern_does_not_cover_outer_variant() {
+        // `(Outer (Left n))` covers only the `Left` subset of `Outer` values.
+        // Without a fallback for `Outer (Right ...)`, lowering would have a
+        // nested mismatch edge into the match merge with no value.
+        let src = "(defenum Inner (Left i64) (Right i64))\n\
+                   (defenum Outer (Outer Inner))\n\
+                   (define (f [o : Outer]) : i64 \
+                     (match o [(Outer (Left n)) n]))";
+        let err = check(src).unwrap_err();
+        assert!(err.msg.contains("non-exhaustive"), "got: {}", err.msg);
+        assert!(err.msg.contains("Outer"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_nested_pattern_with_same_variant_fallback_is_exhaustive() {
+        // A later irrefutable arm for the same top-level variant covers the
+        // nested mismatch path.
+        let src = "(defenum Inner (Left i64) (Right i64))\n\
+                   (defenum Outer (Outer Inner))\n\
+                   (define (f [o : Outer]) : i64 \
+                     (match o [(Outer (Left n)) n] [(Outer _) 0]))";
+        assert!(check(src).is_ok(), "{:?}", check(src));
     }
 
     #[test]

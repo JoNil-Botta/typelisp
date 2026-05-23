@@ -65,14 +65,11 @@
 ;; --------------------------------------------------------------------------
 ;; Sexpr projections: flat single-level `match` accessors over the AST.
 ;; --------------------------------------------------------------------------
-;; TypeLisp's `match` (on this branch) binds a variant's payload fields to flat
-;; variable names; it does NOT support nested patterns (e.g. `(SCons (SSym op)
-;; rest)` is not a single pattern). So instead of destructuring a call form in one
-;; nested match, the evaluator projects one level at a time with these helpers,
-;; each a single-level `match` that pulls one field out (or `panic`s on the wrong
-;; shape - exactly how an interpreter reports a malformed program). This is the
-;; cons-cell discipline of a real Lisp interpreter: `car`, `cdr`, and a symbol
-;; projector - reused below to destructure the `let` binding list too.
+;; The argument spine is a flat cons list, so these `car`/`cdr` accessors stay
+;; single-level: each pulls one field out (or `panic`s on the wrong shape -
+;; exactly how an interpreter reports a malformed program). Operator symbols and
+;; `let` binding names are handled by NESTED patterns (#41), so no separate
+;; `sexpr-sym` projection is needed.
 
 ;; sexpr-head ("car"): the head child of a cons cell. A non-cons (an atom or nil
 ;; in operator position, or too few arguments) is a malformed call - abort.
@@ -101,54 +98,39 @@
     [(SSym _) (panic "eval: too many arguments")]
     [(SCons _ _) (panic "eval: too many arguments")]))
 
-;; sexpr-sym: the operator symbol text. The head of a call form must be a symbol
-;; (`+`, `-`, `*`, `/`, or the `let` keyword); any other head shape is a
-;; non-symbol operator - abort.
-(define (sexpr-sym [s : Sexpr]) : String
-  (match s
-    [(SInt _) (begin (panic "eval: non-symbol in operator position") "")]
-    [(SSym name) name]
-    [(SNil) (begin (panic "eval: non-symbol in operator position") "")]
-    [(SCons _ _) (begin (panic "eval: non-symbol in operator position") "")]))
-
 ;; --------------------------------------------------------------------------
 ;; The `let` special form: a single lexical binding pushed onto the environment.
 ;; --------------------------------------------------------------------------
 ;; A `(let ((x e1)) body)` form reads into the spine
 ;;   rest     = (SCons bindings (SCons body SNil))
 ;;   bindings = (SCons (SCons (SSym x) (SCons e1 SNil)) SNil)
-;; The two helpers below destructure this shape one cons level at a time (no
-;; nested patterns on this branch), each delegating to the `sexpr-head` /
-;; `sexpr-tail` / `sexpr-sym` projections so a malformed `let` aborts with the
-;; same cons-cell guards as a malformed call. They isolate the binding's NAME and
-;; its initializer EXPRESSION; `eval-let` glues them together.
+;; The helpers destructure this shape one cons level at a time with `car`/`cdr`;
+;; the binding name itself uses a nested pattern to require `(SSym name)`.
 ;;
-;; SCOPE OF THIS SLICE: exactly one binding. The first (and only) binding pair is
-;; taken from the head of `bindings`; multi-binding lists `((x 1) (y 2))`, nested
-;; `let`-bound bodies that themselves bind, and lambda are deferred (see PR notes).
-;; The single-binding case is the load-bearing step from calculator to environment
-;; interpreter; the rest is additive.
+;; SCOPE OF THIS SLICE: exactly one binding. The first and only binding pair is
+;; taken from the head of `bindings`; multi-binding lists `((x 1) (y 2))` abort
+;; cleanly rather than silently dropping bindings. The single-binding case is the
+;; load-bearing step from calculator to environment interpreter.
 
 ;; let-binding: the single binding pair `(x e1)` out of the `let` form's tail.
 ;; `rest` is `(SCons bindings (SCons body SNil))`, so the binding LIST is
-;; `(sexpr-head rest)` and the (single) binding pair is the head of that list.
-;; This slice supports exactly one binding: the binding list's tail must be SNil,
-;; so a multi-binding list `((x 1) (y 2))` aborts cleanly rather than silently
-;; dropping the rest (deferred - see PR notes). Aborts on an empty binding list.
+;; `(sexpr-head rest)` and the pair is the head of that list. The binding list's
+;; tail must be SNil, so multi-binding lists abort cleanly.
 (define (let-binding [rest : Sexpr]) : Sexpr
   (let ([bindings : Sexpr (sexpr-head rest)])
     (begin
       (sexpr-expect-nil (sexpr-tail bindings))
       (sexpr-head bindings))))
 
-;; let-var: the bound variable's name `x` from a binding pair `(x e1)` - the
-;; symbol at the head of the pair.
+;; let-var: the bound variable's name `x` from a binding pair `(x e1)`.
 (define (let-var [pair : Sexpr]) : String
-  (sexpr-sym (sexpr-head pair)))
+  (match pair
+    [(SCons (SSym name) _) name]
+    [_ (begin (panic "eval: malformed let binding name") "")]))
 
-;; let-init: the initializer sub-expression `e1` from a binding pair `(x e1)` -
-;; the head of the pair's tail. The pair's tail-tail must be SNil (each binding is
-;; exactly a name and one initializer).
+;; let-init: the initializer sub-expression `e1` from a binding pair `(x e1)`.
+;; The pair's tail-tail must be SNil: each binding has exactly a name and one
+;; initializer.
 (define (let-init [pair : Sexpr]) : Sexpr
   (let ([rest : Sexpr (sexpr-tail pair)])
     (begin
@@ -173,8 +155,10 @@
 ;;   (SSym name)          -> (lookup env name)  a bare symbol is a VARIABLE reference,
 ;;                           resolved in the current environment.
 ;;   (SNil)               -> the empty list is not an evaluable expression - abort.
-;;   (SCons op rest)      -> a call form OR the `let` special form. The head `op`
-;;                           is the operator/keyword symbol:
+;;   (SCons (SSym name) rest)
+;;                        -> a call form OR the `let` special form. The nested
+;;                           pattern requires a symbol head and binds it as
+;;                           the operator/keyword name:
 ;;                             - "let": the special form - destructure the single
 ;;                               binding `(x e1)` and the body out of `rest`,
 ;;                               evaluate `e1` in the CURRENT env, then evaluate the
@@ -197,37 +181,37 @@
     [(SInt n) n]
     [(SSym name) (lookup env name)]
     [(SNil) (begin (panic "eval: cannot evaluate the empty list") 0)]
-    [(SCons op rest)
-     (let ([name : String (sexpr-sym op)])
-       (if (string-eq name "let")
-           ;; The `let` special form: `(let ((x e1)) body)`.
-           (let ([pair : Sexpr (let-binding rest)])
-             (let ([var : String (let-var pair)]
-                   [v : i64 (eval-sexpr (let-init pair) env)])
-               (eval-sexpr (let-body rest) (EBind var v env))))
-           ;; A binary call form `(op arg1 arg2)`: rest is
-           ;; `(SCons arg1 (SCons arg2 SNil))`.
-           (let ([arg1 : Sexpr (sexpr-head rest)]
-                 [rest2 : Sexpr (sexpr-tail rest)])
-             (let ([arg2 : Sexpr (sexpr-head rest2)]
-                   [rest3 : Sexpr (sexpr-tail rest2)])
-               (begin
-                 (sexpr-expect-nil rest3)
-                 (let ([a : i64 (eval-sexpr arg1 env)]
-                       [b : i64 (eval-sexpr arg2 env)])
-                   ;; Dispatch on the operator text. `string-eq` is the byte-wise
-                   ;; equality builtin; an unmatched operator falls through to a panic.
-                   (if (string-eq name "+")
-                       (+ a b)
-                       (if (string-eq name "-")
-                           (- a b)
-                           (if (string-eq name "*")
-                               (* a b)
-                               (if (string-eq name "/")
-                                   (/ a b)
-                                   (begin
-                                     (panic "eval: unknown operator")
-                                     0)))))))))))]))
+    [(SCons (SSym name) rest)
+     (if (string-eq name "let")
+         ;; The `let` special form: `(let ((x e1)) body)`.
+         (let ([pair : Sexpr (let-binding rest)])
+           (let ([var : String (let-var pair)]
+                 [v : i64 (eval-sexpr (let-init pair) env)])
+             (eval-sexpr (let-body rest) (EBind var v env))))
+         ;; A binary call form `(op arg1 arg2)`: rest is
+         ;; `(SCons arg1 (SCons arg2 SNil))`.
+         (let ([arg1 : Sexpr (sexpr-head rest)]
+               [rest2 : Sexpr (sexpr-tail rest)])
+           (let ([arg2 : Sexpr (sexpr-head rest2)]
+                 [rest3 : Sexpr (sexpr-tail rest2)])
+             (begin
+               (sexpr-expect-nil rest3)
+               (let ([a : i64 (eval-sexpr arg1 env)]
+                     [b : i64 (eval-sexpr arg2 env)])
+                 ;; Dispatch on the operator text. `string-eq` is the byte-wise
+                 ;; equality builtin; an unmatched operator falls through to a panic.
+                 (if (string-eq name "+")
+                     (+ a b)
+                     (if (string-eq name "-")
+                         (- a b)
+                         (if (string-eq name "*")
+                             (* a b)
+                             (if (string-eq name "/")
+                                 (/ a b)
+                                 (begin
+                                   (panic "eval: unknown operator")
+                                   0))))))))))]
+    [_ (begin (panic "eval: not an evaluable expression") 0)]))
 
 ;; --------------------------------------------------------------------------
 ;; main: the whole front end composed - lex, read, then interpret with variables.

@@ -220,28 +220,40 @@ fn type_lisp_programs_compile_link_and_run() {
             stdout: "",
             deps: &["tl_lex.tl", "tl_token.tl"],
         },
-        // Self-hosting (#27): the s-expression EVALUATOR for TypeLisp's own syntax
-        // - a tiny tree-walking interpreter, now with VARIABLES and a `let` special
-        // form threaded through a lexical environment. `tl_eval.tl` walks the
-        // recursive cons-cell `Sexpr` AST and INTERPRETS it with respect to an
-        // environment: an `(SInt n)` is `n`, an `(SSym name)` is a VARIABLE
-        // resolved via `lookup` over the cons-cell assoc-list `Env`
-        // (`ENil | (EBind String i64 Env)`), `(let ((x e1)) body)` evaluates `e1`
-        // and then the body in `(EBind x v env)`, and any other `(SCons op rest)`
-        // is a binary call dispatched on the head operator symbol (`+ - * /`) via
-        // `string-eq`. It REUSES the whole front end by importing `read` + the
-        // `Sexpr` enum from the `main`-less `tl_read.tl` (which transitively
-        // imports the `main`-less `tl_lex.tl` -> `tl_token.tl`), so the whole
-        // program has one `main` - the evaluator's. `main` runs
-        // `(eval-sexpr (read (lex "(let ((x 5)) (+ x (* 2 x)))")) ENil)`: `x` binds
-        // to 5, so the body `(+ x (* 2 x))` = (+ 5 10) = 15 - the variable
-        // references resolving through the threaded environment. All three imported
-        // `main`-less modules are copied alongside so the `(import)` chain resolves.
+        // Self-hosting (#27): the s-expression EVALUATOR for TypeLisp's own
+        // syntax - a tiny tree-walking interpreter, now with VARIABLES and a
+        // `let` special form threaded through a lexical environment. `tl_eval.tl`
+        // walks the recursive cons-cell `Sexpr` AST and INTERPRETS it with
+        // respect to an environment: `(SInt n)` is `n`, `(SSym name)` is a
+        // variable resolved via recursive assoc-list `lookup`, and
+        // `(SCons (SSym name) rest)` binds the operator/keyword symbol by nested
+        // pattern (#41). `(let ((x e1)) body)` evaluates `e1` in the current
+        // environment and the body in `(EBind x v env)`; other operator forms are
+        // fixed-arity binary calls dispatched via `string-eq`. It REUSES the
+        // whole front end by importing `read` + the `Sexpr` enum from the
+        // `main`-less `tl_read.tl` (transitively `tl_lex.tl` -> `tl_token.tl`),
+        // so the whole program has one `main`. `main` runs
+        // `(eval-sexpr (read (lex "(let ((x 5)) (+ x (* 2 x)))")) ENil)`,
+        // which returns 15. All three imported `main`-less modules are copied
+        // alongside so the `(import)` chain resolves.
         Case {
             name: "tl_eval",
             exit_code: 15,
             stdout: "",
             deps: &["tl_read.tl", "tl_lex.tl", "tl_token.tl"],
+        },
+        // refs #41: NESTED PATTERN MATCHING, standalone witness. A tree-walking
+        // evaluator whose SCons arm destructures two enum layers in ONE pattern
+        // - `(SCons (SSym name) rest)` - binding the operator symbol `name` and
+        // the argument spine `rest` together. `main` evaluates `(+ 1 (* 2 3))`:
+        // the nested `(* 2 3)` is evaluated first (6), then `(+ 1 6)` => 7. A
+        // non-symbol operator head would fail the nested `SSym` test and fall
+        // through to the `_` arm, exactly like a flat tag mismatch.
+        Case {
+            name: "nested_eval",
+            exit_code: 7,
+            stdout: "",
+            deps: &[],
         },
     ];
 
@@ -447,6 +459,16 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             exit_code: 15,
             stdout: "",
             deps: &["tl_read.tl", "tl_lex.tl", "tl_token.tl"],
+        },
+        // refs #41: nested pattern matching, also through the explicit
+        // compile -> as -> ld -> run pipeline. `(SCons (SSym name) rest)`
+        // destructures two enum layers in one arm; `main` evaluates
+        // `(+ 1 (* 2 3))` => 7.
+        Case {
+            name: "nested_eval",
+            exit_code: 7,
+            stdout: "",
+            deps: &[],
         },
     ];
 

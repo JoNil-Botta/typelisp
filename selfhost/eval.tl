@@ -1,4 +1,4 @@
-;; tl_eval.tl - A tiny tree-walking EVALUATOR (interpreter) over the recursive
+;; eval.tl - A tiny tree-walking EVALUATOR (interpreter) over the recursive
 ;; `Sexpr` AST: the third component of TypeLisp's self-hosting front end (#27),
 ;; following the lexer and the reader. Where the reader turns a token stream into
 ;; the cons-cell `Sexpr` tree the parens describe, this evaluator INTERPRETS that
@@ -25,27 +25,27 @@
 ;; --------------------------------------------------------------------------
 ;; How the reader and lexer are reused (the KEY module signal, refs #44/#81).
 ;; --------------------------------------------------------------------------
-;; The evaluator does NOT re-derive lexing or reading. It `(import "tl_read.tl")`s
+;; The evaluator does NOT re-derive lexing or reading. It `(import "read.tl")`s
 ;; the reader's public `read : (-> (Array Token) Sexpr)` and the `Sexpr` enum,
 ;; factored into a `main`-less module precisely so they can be shared. Crucially
 ;; it also reuses the reader's PUBLIC CURSOR helpers - `read-form`, `peek-tag`,
 ;; `tag-end` - to walk MULTIPLE top-level forms out of one token stream (the
-;; reader's own `read` returns just the first datum). `tl_read.tl` in turn imports
-;; the `main`-less `tl_lex.tl` (the lexer), which imports the `main`-less
-;; `tl_token.tl` (the token model). So this single import transitively pulls in
+;; reader's own `read` returns just the first datum). `read.tl` in turn imports
+;; the `main`-less `lex.tl` (the lexer), which imports the `main`-less
+;; `token.tl` (the token model). So this single import transitively pulls in
 ;; the WHOLE front end: `read`/`read-form`, the `Sexpr` AST, `lex`, the `Token`
 ;; model + its accessors, and the token-tag constants.
 ;;
 ;; The module loader (#44) is whole-program: it concatenates every reachable
 ;; module's declarations (post-order DFS: imported-before-importer), then runs the
-;; unchanged pipeline. So the load order is `tl_token.tl`, `tl_lex.tl`,
-;; `tl_read.tl`, then this file. Crucially, NONE of the imported modules declares
+;; unchanged pipeline. So the load order is `token.tl`, `lex.tl`,
+;; `read.tl`, then this file. Crucially, NONE of the imported modules declares
 ;; a `main` - only this evaluator does - so the concatenated program has exactly
 ;; one `main` and there is no duplicate-symbol clash. The imported `defenum Sexpr`
 ;; is ONE nominal type, so the tree this evaluator walks is the very tree the
 ;; imported `read-form` constructed - the enum, its constructors, and the
 ;; projections' `match` arms all carry across the boundary.
-(import "tl_read.tl")
+(import "read.tl")
 
 ;; --------------------------------------------------------------------------
 ;; The VALUE domain: a tagged union of the things an expression denotes (#27).

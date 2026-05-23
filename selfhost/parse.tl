@@ -1,13 +1,13 @@
-;; tl_parse.tl - The s-expression PARSER that completes the end-to-end
+;; parse.tl - The s-expression PARSER that completes the end-to-end
 ;; self-hosted compiler pipeline: `lex -> read -> parse -> emit-program` turns
 ;; SOURCE TEXT into a runnable x86_64 `.s`, all in TypeLisp (#154).
 ;;
 ;; --------------------------------------------------------------------------
 ;; Where this sits in the front end.
 ;; --------------------------------------------------------------------------
-;; The reader (`tl_read.tl`) turns the lexer's token stream into the generic
+;; The reader (`read.tl`) turns the lexer's token stream into the generic
 ;; cons-cell `Sexpr` tree the parens describe - it knows nothing about which
-;; symbols are operators. The BACKEND (`tl_emit_core.tl`) lowers a tiny, TYPED
+;; symbols are operators. The BACKEND (`emit_core.tl`) lowers a tiny, TYPED
 ;; arithmetic `Expr` AST (`(EInt n)` / `(EBin op a b)`) to x86_64 text. This
 ;; module is the missing middle: `parse : Sexpr -> Expr` recognises the
 ;; arithmetic SUBSET of s-expressions and projects it onto that `Expr` AST, so
@@ -22,27 +22,27 @@
 ;; --------------------------------------------------------------------------
 ;; The import decision: import main-less reader + emitter modules.
 ;; --------------------------------------------------------------------------
-;; `tl_read.tl` is a `main`-less module (refs #44): `(import "tl_read.tl")` pulls
+;; `read.tl` is a `main`-less module (refs #44): `(import "read.tl")` pulls
 ;; in `lex`, `read`, and the `Sexpr` AST (it transitively imports the `main`-less
-;; `tl_lex.tl` + `tl_token.tl`). The module loader is whole-program-concatenation,
+;; `lex.tl` + `token.tl`). The module loader is whole-program-concatenation,
 ;; so it copies all imported declarations into one program before typecheck ->
 ;; lower -> codegen. That import is clean BECAUSE none of those modules declares a
 ;; `main`.
 ;;
-;; The shared `tl_emit_core.tl` module is also `main`-less and imports
-;; `tl_ast_types.tl`, so `BinOp` / `Expr` and `emit-program` come from the same
-;; definitions used by `tl_emit.tl`.
+;; The shared `emit_core.tl` module is also `main`-less and imports
+;; `ast_types.tl`, so `BinOp` / `Expr` and `emit-program` come from the same
+;; definitions used by `emit.tl`.
 ;;
-;; `tl_emit.tl`, by contrast, is a runnable DEMO and carries its own `main`.
+;; `emit.tl`, by contrast, is a runnable DEMO and carries its own `main`.
 ;; Importing the core emitter here avoids concatenating two `main`s into one
 ;; program. The result COMPILES with exactly one `main` (this file's) and runs
 ;; the real pipeline.
 ;;
 ;; `string-eq` (used by `parse-op`) is a host builtin (see its many uses in
-;; tl_eval.tl), not a module export, so it needs no import.
+;; eval.tl), not a module export, so it needs no import.
 
-(import "tl_emit_core.tl")
-(import "tl_read.tl")
+(import "emit_core.tl")
+(import "read.tl")
 
 ;; ==========================================================================
 ;; The PARSER: `Sexpr -> Expr`, the new contribution of this module (#154).
@@ -50,7 +50,7 @@
 
 ;; parse-op: resolve an operator SYMBOL's text to its `BinOp` tag. The arithmetic
 ;; surface recognises exactly `+`, `-`, `*`, dispatched byte-wise on the lexeme
-;; with the host `string-eq` (the same builtin tl_eval.tl uses for operator
+;; with the host `string-eq` (the same builtin eval.tl uses for operator
 ;; dispatch). Any other head symbol is not part of the recognised arithmetic
 ;; subset, so it is a MALFORMED program: abort via the `panic` builtin (#45) -
 ;; the codebase's channel for malformed input, exactly as the reader uses it.

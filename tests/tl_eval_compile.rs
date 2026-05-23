@@ -1,8 +1,8 @@
 //! Cross-platform proof that the TypeLisp-syntax s-expression *evaluator*
-//! (`tests/integration/tl_eval.tl`) compiles all the way to valid x86_64
+//! (`selfhost/eval.tl`) compiles all the way to valid x86_64
 //! assembly.
 //!
-//! `tl_eval.tl` is the third piece of TypeLisp's *real* self-hosting compiler
+//! `eval.tl` is the third piece of TypeLisp's *real* self-hosting compiler
 //! front end (#27): a tiny tree-walking interpreter, now with VARIABLES, lexical
 //! `let` (now MULTI-BINDING, with sequential `let*` scoping), short-circuit `if`,
 //! comparison operators, a `begin` SEQUENCING special form (evaluate a sequence
@@ -39,15 +39,15 @@
 //! expression - read with the reader's lower-level `read-form` cursor API (the
 //! plain `read` returns only the first datum). It does NOT
 //! re-derive lexing or reading: it `(import)`s the reader's `read-form` and the
-//! `Sexpr` enum from the `main`-less module `tl_read.tl`, which itself imports
-//! the `main`-less lexer `tl_lex.tl`, which imports the `main`-less token model
-//! `tl_token.tl`. So compiling it exercises the module loader (#44) transitively:
-//! `tl_token.tl`, `tl_lex.tl`, and `tl_read.tl` are loaded
+//! `Sexpr` enum from the `main`-less module `read.tl`, which itself imports
+//! the `main`-less lexer `lex.tl`, which imports the `main`-less token model
+//! `token.tl`. So compiling it exercises the module loader (#44) transitively:
+//! `token.tl`, `lex.tl`, and `read.tl` are loaded
 //! (imported-before-importer) and concatenated with this file, and because NONE
 //! of the imported modules declares a `main`, the combined program has exactly
 //! one `main` - the evaluator's - with no duplicate-symbol clash. (Importing the
-//! `main`-bearing `tl_reader.tl` demo would have clashed; the reusable reader
-//! lives in the `main`-less `tl_read.tl` precisely to avoid that.)
+//! `main`-bearing `reader.tl` demo would have clashed; the reusable reader
+//! lives in the `main`-less `read.tl` precisely to avoid that.)
 //!
 //! Like the other `*_compile.rs` tests this only invokes the `compile`
 //! subcommand, so it runs everywhere - including the Windows dev box - and
@@ -61,20 +61,20 @@ use std::process::Command;
 #[test]
 fn tl_eval_tl_compiles_to_assembly() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let integration_dir = manifest_dir.join("tests").join("integration");
-    let source_path = integration_dir.join("tl_eval.tl");
+    let selfhost_dir = manifest_dir.join("selfhost");
+    let source_path = selfhost_dir.join("eval.tl");
 
     let work_dir = manifest_dir.join("target").join("tl-eval-compile-test");
     fs::create_dir_all(&work_dir).expect("create tl_eval compile test work dir");
 
-    // The evaluator imports `tl_read.tl`, which imports `tl_lex.tl`, which
-    // transitively imports `tl_token.tl`. The loader resolves imports relative to
+    // The evaluator imports `read.tl`, which imports `lex.tl`, which
+    // transitively imports `token.tl`. The loader resolves imports relative to
     // the importing file, so every imported module must sit alongside the entry
     // file in the work dir for the `(import ...)` chain to resolve.
-    let entry_path = work_dir.join("tl_eval.tl");
-    fs::copy(&source_path, &entry_path).expect("copy tl_eval.tl to work dir");
-    for dep in ["tl_read.tl", "tl_lex.tl", "tl_token.tl"] {
-        fs::copy(integration_dir.join(dep), work_dir.join(dep))
+    let entry_path = work_dir.join("eval.tl");
+    fs::copy(&source_path, &entry_path).expect("copy eval.tl to work dir");
+    for dep in ["read.tl", "lex.tl", "token.tl"] {
+        fs::copy(selfhost_dir.join(dep), work_dir.join(dep))
             .unwrap_or_else(|e| panic!("copy imported module {dep}: {e}"));
     }
 
@@ -92,7 +92,7 @@ fn tl_eval_tl_compiles_to_assembly() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "tl_eval.tl compile step failed\nstdout:\n{}\nstderr:\n{}",
+        "eval.tl compile step failed\nstdout:\n{}\nstderr:\n{}",
         stdout,
         stderr,
     );
@@ -106,8 +106,8 @@ fn tl_eval_tl_compiles_to_assembly() {
         asm,
     );
 
-    // Multi-file organization (#44): the imported `main`-less `tl_read.tl`,
-    // `tl_lex.tl`, and `tl_token.tl` contribute `read` / `lex` / `Sexpr` / `Token`
+    // Multi-file organization (#44): the imported `main`-less `read.tl`,
+    // `lex.tl`, and `token.tl` contribute `read` / `lex` / `Sexpr` / `Token`
     // + accessors but no `main`, so the concatenated program has EXACTLY one
     // `main:` - the evaluator's. The import chain composes with no
     // duplicate-symbol clash.

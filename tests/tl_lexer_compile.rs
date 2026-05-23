@@ -1,15 +1,15 @@
 //! Cross-platform proof that the TypeLisp-syntax lexer
-//! (`tests/integration/tl_lexer.tl`) compiles all the way to valid x86_64
+//! (`selfhost/lexer.tl`) compiles all the way to valid x86_64
 //! assembly.
 //!
-//! `tl_lexer.tl` is the first piece of TypeLisp's *real* self-hosting compiler
+//! `lexer.tl` is the first piece of TypeLisp's *real* self-hosting compiler
 //! front end (#27): a tokenizer for the s-expression syntax TypeLisp source is
 //! actually written in - balanced parens, integer literals, and *symbols*
 //! (operators / keywords / names are all one `TSym` kind) - NOT the
 //! arithmetic-calculator surface that `lexer.tl` / `calc.tl` tokenize. It
-//! `(import)`s the `main`-less token model `tl_token.tl`, so compiling it also
+//! `(import)`s the `main`-less token model `token.tl`, so compiling it also
 //! exercises the module loader (#44): the import is resolved relative to
-//! `tl_lexer.tl`, the co-located `tl_token.tl` is loaded, and its declarations
+//! `lexer.tl`, the co-located `token.tl` is loaded, and its declarations
 //! are concatenated into one program.
 //!
 //! Like the other `*_compile.rs` tests this only invokes the `compile`
@@ -24,10 +24,7 @@ use std::process::Command;
 #[test]
 fn tl_lexer_tl_compiles_to_assembly() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let source_path = manifest_dir
-        .join("tests")
-        .join("integration")
-        .join("tl_lexer.tl");
+    let source_path = manifest_dir.join("selfhost").join("lexer.tl");
 
     let work_dir = manifest_dir.join("target").join("tl-lexer-compile-test");
     fs::create_dir_all(&work_dir).expect("create tl_lexer compile test work dir");
@@ -45,7 +42,7 @@ fn tl_lexer_tl_compiles_to_assembly() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "tl_lexer.tl compile step failed\nstdout:\n{}\nstderr:\n{}",
+        "lexer.tl compile step failed\nstdout:\n{}\nstderr:\n{}",
         stdout,
         stderr,
     );
@@ -59,7 +56,7 @@ fn tl_lexer_tl_compiles_to_assembly() {
         asm,
     );
 
-    // Multi-file organization (#44): the imported `main`-less `tl_token.tl`
+    // Multi-file organization (#44): the imported `main`-less `token.tl`
     // contributes its `Token`/accessors but no `main`, so the concatenated
     // program has EXACTLY one `main:` - the import composes with no
     // duplicate-symbol clash.
@@ -115,7 +112,7 @@ fn tl_lexer_tl_compiles_to_assembly() {
     // The lexer's functions were emitted (TypeLisp prefixes user symbols with
     // `_tl_`): the public `lex` entry, the scan-into loop, the int/symbol run
     // scanners, the new string-literal and line-comment scanners, the TSym /
-    // TStr / total-token tallies, and the imported token accessors `tl_token.tl`
+    // TStr / total-token tallies, and the imported token accessors `token.tl`
     // contributes across the import boundary (`token-tag` / `token-int` /
     // `token-sym` / `token-str`).
     for sym in [

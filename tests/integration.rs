@@ -251,17 +251,17 @@ fn type_lisp_programs_compile_link_and_run() {
             deps: &["token.tl"],
         },
         // Self-hosting M1 (#155/#156): the first backend-shaped TypeLisp emitter
-        // and driver. `tl_emit.tl` builds `(+ 1 (* 2 3))`, wraps its emitted body
+        // and driver. `emit.tl` builds `(+ 1 (* 2 3))`, wraps its emitted body
         // in the backend-shaped `main` + `_start` skeleton, and prints the full
         // `.s`. This test asserts the exact printed assembly text.
         Case {
             name: "tl_emit",
             exit_code: 0,
             stdout: TL_EMIT_PROGRAM_ASM,
-            deps: &["tl_emit_core.tl", "tl_ast_types.tl"],
+            deps: &["emit_core.tl", "ast_types.tl"],
         },
         // Self-hosting M1 (#154/#173): parse the reader's generic Sexpr tree
-        // into the compiler AST shared with `tl_emit.tl`. The witness parses
+        // into the compiler AST shared with `emit.tl`. The witness parses
         // arithmetic, define, let, if, comparison operators, string literals,
         // and print forms, then returns a stable structural score. The raw score
         // is 685; process exit observes it modulo 256, so the Linux exit code is
@@ -270,10 +270,10 @@ fn type_lisp_programs_compile_link_and_run() {
             name: "tl_ast",
             exit_code: 173,
             stdout: "",
-            deps: &["tl_ast_types.tl", "tl_read.tl", "tl_lex.tl", "tl_token.tl"],
+            deps: &["ast_types.tl", "read.tl", "lex.tl", "token.tl"],
         },
         // Self-hosting (#27): the lexer for TypeLisp's OWN s-expression syntax
-        // (NOT the arithmetic-calculator surface). `tl_lexer.tl` tokenizes real
+        // (NOT the arithmetic-calculator surface). `lexer.tl` tokenizes real
         // TypeLisp source - balanced parens, integer literals, *symbols*
         // (operators / keywords / names are all one `TSym` kind), STRING LITERALS
         // (`"..."` => `TStr`), and `;` line comments (skipped) - into a real
@@ -282,21 +282,21 @@ fn type_lisp_programs_compile_link_and_run() {
         // "(foo \"hi\" 42) ; c\n(bar)" into TLParen TSym(foo) TStr(hi) TInt(42)
         // TRParen TLParen TSym(bar) TRParen (the `; c` comment drops out): 8
         // tokens with 1 TStr, so it returns total (8) + TStr count (1) = 9. The
-        // token model lives in the `main`-less `tl_token.tl`, imported by
-        // `tl_lexer.tl` and copied alongside.
+        // token model lives in the `main`-less `token.tl`, imported by
+        // `lexer.tl` and copied alongside.
         Case {
             name: "tl_lexer",
             exit_code: 9,
             stdout: "",
-            deps: &["tl_token.tl"],
+            deps: &["token.tl"],
         },
         // Self-hosting (#27): the s-expression READER for TypeLisp's own syntax -
-        // the canonical Lisp reader. `tl_reader.tl` consumes the lexer's
+        // the canonical Lisp reader. `reader.tl` consumes the lexer's
         // `(Array Token)` into the recursive cons-cell `Sexpr` AST
         // (SInt | SSym | SStr | SNil | SCons) with a token cursor and mutually
         // recursive `read-form` / `read-list`. It REUSES the lexer by importing
-        // `lex` from the `main`-less `tl_lex.tl` (which transitively imports the
-        // `main`-less `tl_token.tl`), so the whole program has one `main` - the
+        // `lex` from the `main`-less `lex.tl` (which transitively imports the
+        // `main`-less `token.tl`), so the whole program has one `main` - the
         // reader's. The reader now also consumes the lexer's `TStr` token (#128)
         // into a new `(SStr String)` atom, kept distinct from a same-character
         // `SSym` (#27). `main` reads `(greet "hi" 7 (msg "yo" 35))` into the Sexpr
@@ -310,7 +310,7 @@ fn type_lisp_programs_compile_link_and_run() {
             name: "tl_reader",
             exit_code: 44,
             stdout: "",
-            deps: &["tl_lex.tl", "tl_token.tl"],
+            deps: &["lex.tl", "token.tl"],
         },
         // Self-hosting (#27): the s-expression EVALUATOR for TypeLisp's own
         // syntax, now with FIRST-CLASS FUNCTIONS (`lambda` + CLOSURES), CONS PAIRS /
@@ -371,7 +371,7 @@ fn type_lisp_programs_compile_link_and_run() {
             name: "tl_eval",
             exit_code: 30,
             stdout: "hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10 . 20)(1 2 . 3)(1 4 9 16)(1 2)",
-            deps: &["tl_read.tl", "tl_lex.tl", "tl_token.tl"],
+            deps: &["read.tl", "lex.tl", "token.tl"],
         },
         // refs #41: NESTED PATTERN MATCHING, standalone witness. A tree-walking
         // evaluator whose SCons arm destructures two enum layers in ONE pattern
@@ -601,7 +601,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             name: "tl_emit",
             exit_code: 0,
             stdout: TL_EMIT_PROGRAM_ASM,
-            deps: &["tl_emit_core.tl", "tl_ast_types.tl"],
+            deps: &["emit_core.tl", "ast_types.tl"],
         },
         // Self-hosting M1 (#154/#173): Sexpr -> compiler AST parser, also
         // through the explicit compile -> as -> ld -> run pipeline.
@@ -609,20 +609,20 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             name: "tl_ast",
             exit_code: 173,
             stdout: "",
-            deps: &["tl_ast_types.tl", "tl_read.tl", "tl_lex.tl", "tl_token.tl"],
+            deps: &["ast_types.tl", "read.tl", "lex.tl", "token.tl"],
         },
         // Self-hosting (#27): the TypeLisp-syntax (s-expression) lexer - now with
         // string literals (`TStr`) and `;` line comments - also exercised through
         // the explicit compile -> as -> ld -> run pipeline. Lexes the escaped
         // sample "(foo \"hi\" 42) ; c\n(bar)" into 8 tokens (1 of them a TStr;
         // the `; c` comment is skipped) and returns total (8) + TStr count (1) =
-        // 9. The `main`-less `tl_token.tl` is copied alongside so the `(import)`
+        // 9. The `main`-less `token.tl` is copied alongside so the `(import)`
         // resolves.
         Case {
             name: "tl_lexer",
             exit_code: 9,
             stdout: "",
-            deps: &["tl_token.tl"],
+            deps: &["token.tl"],
         },
         // Self-hosting (#27): the s-expression reader, also exercised through the
         // explicit compile -> as -> ld -> run pipeline. Reads
@@ -631,13 +631,13 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         // and `count-strs` tallies every `SStr` atom the reader produced from the
         // lexer's `TStr` tokens (#128) - "hi" and the nested "yo" => 2 - so the
         // result is 42 + 2 => 44. The lexer is reused via the `main`-less
-        // `tl_lex.tl` import (which transitively imports `tl_token.tl`); both are
+        // `lex.tl` import (which transitively imports `token.tl`); both are
         // copied alongside so the imports resolve.
         Case {
             name: "tl_reader",
             exit_code: 44,
             stdout: "",
-            deps: &["tl_lex.tl", "tl_token.tl"],
+            deps: &["lex.tl", "token.tl"],
         },
         // Self-hosting (#27): the s-expression evaluator with FIRST-CLASS
         // FUNCTIONS (`lambda` + CLOSURES), CONS PAIRS / LINKED LISTS, AND the
@@ -667,7 +667,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         // `(VInt 30)`. Stdout is
         // `hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10 . 20)(1 2 . 3)(1 4 9 16)(1 2)`
         // and the exit code is `30`. The reader (and transitively the lexer + token
-        // model) is reused via the `main`-less `tl_read.tl` import - including its
+        // model) is reused via the `main`-less `read.tl` import - including its
         // lower-level `read-form` cursor entry, which the program reader drives to
         // read all top-level forms; all three imported modules are copied alongside
         // so the imports resolve.
@@ -675,7 +675,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             name: "tl_eval",
             exit_code: 30,
             stdout: "hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10 . 20)(1 2 . 3)(1 4 9 16)(1 2)",
-            deps: &["tl_read.tl", "tl_lex.tl", "tl_token.tl"],
+            deps: &["read.tl", "lex.tl", "token.tl"],
         },
         // refs #41: nested pattern matching, also through the explicit
         // compile -> as -> ld -> run pipeline. `(SCons (SSym name) rest)`
@@ -705,34 +705,26 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
 #[test]
 fn tl_emit_printed_program_assembles_links_and_exits_7() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let source_path = manifest_dir
-        .join("tests")
-        .join("integration")
-        .join("tl_emit.tl");
+    let selfhost_dir = manifest_dir.join("selfhost");
+    let source_path = selfhost_dir.join("emit.tl");
     let work_dir = manifest_dir
         .join("target")
         .join("integration-tests")
         .join("tl_emit_printed_program");
     fs::create_dir_all(&work_dir).expect("create tl_emit printed-program test work dir");
 
-    let work_path = work_dir.join("tl_emit.tl");
-    fs::copy(&source_path, &work_path).expect("copy tl_emit.tl to work dir");
+    let work_path = work_dir.join("emit.tl");
+    fs::copy(&source_path, &work_path).expect("copy emit.tl to work dir");
     fs::copy(
-        manifest_dir
-            .join("tests")
-            .join("integration")
-            .join("tl_ast_types.tl"),
-        work_dir.join("tl_ast_types.tl"),
+        selfhost_dir.join("ast_types.tl"),
+        work_dir.join("ast_types.tl"),
     )
-    .expect("copy tl_ast_types.tl to work dir");
+    .expect("copy ast_types.tl to work dir");
     fs::copy(
-        manifest_dir
-            .join("tests")
-            .join("integration")
-            .join("tl_emit_core.tl"),
-        work_dir.join("tl_emit_core.tl"),
+        selfhost_dir.join("emit_core.tl"),
+        work_dir.join("emit_core.tl"),
     )
-    .expect("copy tl_emit_core.tl to work dir");
+    .expect("copy emit_core.tl to work dir");
 
     let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
         .arg("run")
@@ -828,7 +820,7 @@ fn tl_emit_let_printed_programs_assemble_link_and_exit_expected() {
     ];
 
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let integration_dir = manifest_dir.join("tests").join("integration");
+    let selfhost_dir = manifest_dir.join("selfhost");
     let root_dir = manifest_dir
         .join("target")
         .join("integration-tests")
@@ -838,13 +830,13 @@ fn tl_emit_let_printed_programs_assemble_link_and_exit_expected() {
         let work_dir = root_dir.join(name);
         fs::create_dir_all(&work_dir).expect("create tl_emit let test work dir");
 
-        for dep in ["tl_emit_core.tl", "tl_ast_types.tl"] {
-            fs::copy(integration_dir.join(dep), work_dir.join(dep))
+        for dep in ["emit_core.tl", "ast_types.tl"] {
+            fs::copy(selfhost_dir.join(dep), work_dir.join(dep))
                 .expect("copy imported emitter module to work dir");
         }
 
         let source = format!(
-            "(import \"tl_emit_core.tl\")\n\n\
+            "(import \"emit_core.tl\")\n\n\
              (define (sample) : Expr\n  {})\n\n\
              (define (main) : unit\n  (print-string (emit-program (sample))))\n",
             expr
@@ -1081,7 +1073,7 @@ fn tl_emit_if_printed_programs_assemble_link_and_exit_expected() {
     ];
 
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let integration_dir = manifest_dir.join("tests").join("integration");
+    let selfhost_dir = manifest_dir.join("selfhost");
     let root_dir = manifest_dir
         .join("target")
         .join("integration-tests")
@@ -1091,13 +1083,13 @@ fn tl_emit_if_printed_programs_assemble_link_and_exit_expected() {
         let work_dir = root_dir.join(name);
         fs::create_dir_all(&work_dir).expect("create tl_emit if test work dir");
 
-        for dep in ["tl_emit_core.tl", "tl_ast_types.tl"] {
-            fs::copy(integration_dir.join(dep), work_dir.join(dep))
+        for dep in ["emit_core.tl", "ast_types.tl"] {
+            fs::copy(selfhost_dir.join(dep), work_dir.join(dep))
                 .expect("copy imported emitter module to work dir");
         }
 
         let source = format!(
-            "(import \"tl_emit_core.tl\")\n\n\
+            "(import \"emit_core.tl\")\n\n\
              (define (sample) : Expr\n  {})\n\n\
              (define (main) : unit\n  (print-string (emit-program (sample))))\n",
             expr
@@ -1223,7 +1215,7 @@ fn tl_emit_comparison_printed_programs_assemble_link_and_exit_expected() {
     ];
 
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let integration_dir = manifest_dir.join("tests").join("integration");
+    let selfhost_dir = manifest_dir.join("selfhost");
     let root_dir = manifest_dir
         .join("target")
         .join("integration-tests")
@@ -1233,13 +1225,13 @@ fn tl_emit_comparison_printed_programs_assemble_link_and_exit_expected() {
         let work_dir = root_dir.join(name);
         fs::create_dir_all(&work_dir).expect("create tl_emit comparison test work dir");
 
-        for dep in ["tl_emit_core.tl", "tl_ast_types.tl"] {
-            fs::copy(integration_dir.join(dep), work_dir.join(dep))
+        for dep in ["emit_core.tl", "ast_types.tl"] {
+            fs::copy(selfhost_dir.join(dep), work_dir.join(dep))
                 .expect("copy imported emitter module to work dir");
         }
 
         let source = format!(
-            "(import \"tl_emit_core.tl\")\n\n\
+            "(import \"emit_core.tl\")\n\n\
              (define (sample) : Expr\n  {})\n\n\
              (define (main) : unit\n  (print-string (emit-program (sample))))\n",
             expr
@@ -1367,7 +1359,7 @@ fn tl_emit_string_printed_programs_assemble_link_and_stdout_expected() {
     ];
 
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let integration_dir = manifest_dir.join("tests").join("integration");
+    let selfhost_dir = manifest_dir.join("selfhost");
     let root_dir = manifest_dir
         .join("target")
         .join("integration-tests")
@@ -1377,13 +1369,13 @@ fn tl_emit_string_printed_programs_assemble_link_and_stdout_expected() {
         let work_dir = root_dir.join(name);
         fs::create_dir_all(&work_dir).expect("create tl_emit string test work dir");
 
-        for dep in ["tl_emit_core.tl", "tl_ast_types.tl"] {
-            fs::copy(integration_dir.join(dep), work_dir.join(dep))
+        for dep in ["emit_core.tl", "ast_types.tl"] {
+            fs::copy(selfhost_dir.join(dep), work_dir.join(dep))
                 .expect("copy imported emitter module to work dir");
         }
 
         let source = format!(
-            "(import \"tl_emit_core.tl\")\n\n\
+            "(import \"emit_core.tl\")\n\n\
              (define (sample) : Expr\n  {})\n\n\
              (define (main) : unit\n  (print-string (emit-program (sample))))\n",
             expr
@@ -1568,7 +1560,7 @@ fn tl_emit_def_call_printed_programs_assemble_link_and_exit_expected() {
     ];
 
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let integration_dir = manifest_dir.join("tests").join("integration");
+    let selfhost_dir = manifest_dir.join("selfhost");
     let root_dir = manifest_dir
         .join("target")
         .join("integration-tests")
@@ -1578,13 +1570,13 @@ fn tl_emit_def_call_printed_programs_assemble_link_and_exit_expected() {
         let work_dir = root_dir.join(name);
         fs::create_dir_all(&work_dir).expect("create tl_emit def/call test work dir");
 
-        for dep in ["tl_emit_core.tl", "tl_ast_types.tl"] {
-            fs::copy(integration_dir.join(dep), work_dir.join(dep))
+        for dep in ["emit_core.tl", "ast_types.tl"] {
+            fs::copy(selfhost_dir.join(dep), work_dir.join(dep))
                 .expect("copy imported emitter module to work dir");
         }
 
         let source = format!(
-            "(import \"tl_emit_core.tl\")\n\n\
+            "(import \"emit_core.tl\")\n\n\
              (define (defs) : ItemList\n  {})\n\n\
              (define (sample) : Expr\n  {})\n\n\
              (define (main) : unit\n  (print-string (emit-program-with-defs (defs) (sample))))\n",
@@ -1657,7 +1649,7 @@ fn tl_emit_def_call_printed_programs_assemble_link_and_exit_expected() {
     }
 }
 
-/// End-to-end self-hosted pipeline (#154/#163/#167): `examples/tl_parse.tl` runs
+/// End-to-end self-hosted pipeline (#154/#163/#167): `selfhost/parse.tl` runs
 /// `(emit-program (parse (read (lex "(let ((x 5)) (if (< x 10) 1 0))"))))`,
 /// taking SOURCE TEXT all the way to a runnable `.s` in TypeLisp: lex -> read ->
 /// parse -> emit. The demo now binds a let slot AND branches on a comparison, so
@@ -1666,26 +1658,26 @@ fn tl_emit_def_call_printed_programs_assemble_link_and_exit_expected() {
 #[test]
 fn tl_parse_printed_program_assembles_links_and_exits_1() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let integration_dir = manifest_dir.join("tests").join("integration");
-    let source_path = integration_dir.join("tl_parse.tl");
+    let selfhost_dir = manifest_dir.join("selfhost");
+    let source_path = selfhost_dir.join("parse.tl");
     let work_dir = manifest_dir
         .join("target")
         .join("integration-tests")
         .join("tl_parse_printed_program");
     fs::create_dir_all(&work_dir).expect("create tl_parse printed-program test work dir");
 
-    let work_path = work_dir.join("tl_parse.tl");
-    fs::copy(&source_path, &work_path).expect("copy tl_parse.tl to work dir");
+    let work_path = work_dir.join("parse.tl");
+    fs::copy(&source_path, &work_path).expect("copy parse.tl to work dir");
 
     // Copy imported modules alongside so the `(import)` chain resolves at load time.
     for dep in [
-        "tl_emit_core.tl",
-        "tl_ast_types.tl",
-        "tl_read.tl",
-        "tl_lex.tl",
-        "tl_token.tl",
+        "emit_core.tl",
+        "ast_types.tl",
+        "read.tl",
+        "lex.tl",
+        "token.tl",
     ] {
-        fs::copy(integration_dir.join(dep), work_dir.join(dep))
+        fs::copy(selfhost_dir.join(dep), work_dir.join(dep))
             .expect("copy imported front-end module to work dir");
     }
 
@@ -1770,12 +1762,33 @@ fn tl_parse_printed_program_assembles_links_and_exits_1() {
     assert_eq!(stdout, "", "printed tl_parse program wrote stdout");
 }
 
-fn run_case_explicit_build(case: &Case) {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let source_path = manifest_dir
+fn source_path_for_case(manifest_dir: &PathBuf, name: &str) -> PathBuf {
+    let integration_path = manifest_dir
         .join("tests")
         .join("integration")
-        .join(format!("{}.tl", case.name));
+        .join(format!("{name}.tl"));
+    if integration_path.exists() {
+        return integration_path;
+    }
+
+    let selfhost_file = match name {
+        "tl_ast" => "ast.tl",
+        "tl_emit" => "emit.tl",
+        "tl_eval" => "eval.tl",
+        "tl_lex" => "lex.tl",
+        "tl_lexer" => "lexer.tl",
+        "tl_parse" => "parse.tl",
+        "tl_read" => "read.tl",
+        "tl_reader" => "reader.tl",
+        "tl_token" => "token.tl",
+        _ => panic!("no TypeLisp source path configured for integration case {name}"),
+    };
+    manifest_dir.join("selfhost").join(selfhost_file)
+}
+
+fn run_case_explicit_build(case: &Case) {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source_path = source_path_for_case(&manifest_dir, case.name);
     let work_dir = manifest_dir
         .join("target")
         .join("integration-tests-explicit")
@@ -1785,8 +1798,9 @@ fn run_case_explicit_build(case: &Case) {
     fs::copy(&source_path, &work_path).expect("copy TypeLisp program to work dir");
 
     // Copy any imported helper modules alongside the entry file.
+    let source_dir = source_path.parent().expect("case source path has parent");
     for dep in case.deps {
-        let dep_src = manifest_dir.join("tests").join("integration").join(dep);
+        let dep_src = source_dir.join(dep);
         let dep_dst = work_dir.join(dep);
         if let Some(parent) = dep_dst.parent() {
             fs::create_dir_all(parent).expect("create dep work dir");
@@ -1860,10 +1874,7 @@ fn run_case_explicit_build(case: &Case) {
 
 fn run_case(case: &Case) {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let source_path = manifest_dir
-        .join("tests")
-        .join("integration")
-        .join(format!("{}.tl", case.name));
+    let source_path = source_path_for_case(&manifest_dir, case.name);
     let work_dir = manifest_dir
         .join("target")
         .join("integration-tests")
@@ -1874,8 +1885,9 @@ fn run_case(case: &Case) {
 
     // Copy any imported helper modules alongside the entry file, preserving
     // their relative path so `(import "...")` resolves at load time.
+    let source_dir = source_path.parent().expect("case source path has parent");
     for dep in case.deps {
-        let dep_src = manifest_dir.join("tests").join("integration").join(dep);
+        let dep_src = source_dir.join(dep);
         let dep_dst = work_dir.join(dep);
         if let Some(parent) = dep_dst.parent() {
             fs::create_dir_all(parent).expect("create dep work dir");

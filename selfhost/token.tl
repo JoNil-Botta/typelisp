@@ -1,4 +1,4 @@
-;; tl_token.tl - The token model for a lexer of TypeLisp's OWN s-expression
+;; token.tl - The token model for a lexer of TypeLisp's OWN s-expression
 ;; syntax, factored out as a `main`-less, importable module (refs #27/#44).
 ;;
 ;; This is the token vocabulary for the *self-hosting front end proper*: not the

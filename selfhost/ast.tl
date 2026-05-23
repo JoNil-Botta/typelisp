@@ -1,7 +1,7 @@
-;; tl_ast.tl - Sexpr -> compiler AST parser for the M1 self-hosting slice (#154).
+;; ast.tl - Sexpr -> compiler AST parser for the M1 self-hosting slice (#154).
 
-(import "tl_ast_types.tl")
-(import "tl_read.tl")
+(import "ast_types.tl")
+(import "read.tl")
 
 (define (sexpr-head [s : Sexpr]) : Sexpr
   (match s

@@ -1,12 +1,12 @@
-;; tl_read.tl - The s-expression READER for TypeLisp's own syntax, factored out
+;; read.tl - The s-expression READER for TypeLisp's own syntax, factored out
 ;; as a `main`-less, importable module (refs #27/#44).
 ;;
 ;; --------------------------------------------------------------------------
 ;; Why this module exists (the module signal for the evaluator, refs #44/#81).
 ;; --------------------------------------------------------------------------
-;; `tl_reader.tl` is the *demo* program for the s-expression reader: it carries a
+;; `reader.tl` is the *demo* program for the s-expression reader: it carries a
 ;; `main` that reads a sample and folds the resulting tree with `sum-ints`. But
-;; the next front-end component - the s-expression *evaluator* in `tl_eval.tl` -
+;; the next front-end component - the s-expression *evaluator* in `eval.tl` -
 ;; wants to REUSE the reader's `read : (-> (Array Token) Sexpr)` and the `Sexpr`
 ;; AST it builds, rather than re-derive them, and it carries its own `main`
 ;; (interpret the read tree to an i64).
@@ -15,27 +15,27 @@
 ;; module's declarations into a single program, then runs the unchanged
 ;; `typecheck -> lower -> codegen` pipeline. So two modules that both declare a
 ;; `main` and are loaded together produce a duplicate `main` symbol - the known
-;; module limitation. Importing `tl_reader.tl` (which HAS a `main`) into the
+;; module limitation. Importing `reader.tl` (which HAS a `main`) into the
 ;; evaluator (which also needs a `main`) would clash.
 ;;
 ;; The fix is this `main`-less module: it holds the reader's cursor helpers, the
 ;; mutually recursive `read-form` / `read-list`, the public `read` entry, AND the
-;; `Sexpr` AST definition, `(import)`s the shared `main`-less `tl_lex.tl` (which
-;; transitively imports the `main`-less `tl_token.tl`), and declares NO `main`.
-;; The evaluator `(import "tl_read.tl")`s it and gets `read` + `lex` + the
+;; `Sexpr` AST definition, `(import)`s the shared `main`-less `lex.tl` (which
+;; transitively imports the `main`-less `token.tl`), and declares NO `main`.
+;; The evaluator `(import "read.tl")`s it and gets `read` + `lex` + the
 ;; `Sexpr` enum across the import boundary, and the concatenated program has
-;; exactly one `main` (the evaluator's). `tl_reader.tl` stays as the reader's
-;; standalone demo. This mirrors how `tl_lex.tl` was factored from the
-;; `main`-bearing `tl_lexer.tl`: a `main`-less module is the unit of reuse, a
+;; exactly one `main` (the evaluator's). `reader.tl` stays as the reader's
+;; standalone demo. This mirrors how `lex.tl` was factored from the
+;; `main`-bearing `lexer.tl`: a `main`-less module is the unit of reuse, a
 ;; `main`-bearing file is a runnable demo.
 
 ;; The shared lexer: the public `lex : (-> String (Array Token))`, factored into
-;; a `main`-less module. `tl_lex.tl` in turn imports the `main`-less
-;; `tl_token.tl` token model, so this single import transitively pulls in BOTH
+;; a `main`-less module. `lex.tl` in turn imports the `main`-less
+;; `token.tl` token model, so this single import transitively pulls in BOTH
 ;; the `lex` entry and the `Token` enum + `token-tag` / `token-int` / `token-sym`
 ;; accessors + tag constants. Resolved relative to this file, so it finds the
-;; co-located `tl_lex.tl`.
-(import "tl_lex.tl")
+;; co-located `lex.tl`.
+(import "lex.tl")
 
 ;; --------------------------------------------------------------------------
 ;; The Sexpr AST: cons cells, the way Lisp represents read source (refs #13/#27).

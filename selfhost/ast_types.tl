@@ -1,4 +1,4 @@
-;; tl_ast_types.tl - Shared M1 compiler AST enums (#154).
+;; ast_types.tl - Shared M1 compiler AST enums (#154).
 
 (defenum BinOp
   (OpAdd)

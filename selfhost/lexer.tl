@@ -1,4 +1,4 @@
-;; tl_lexer.tl - A lexer for TypeLisp's OWN s-expression syntax, written in
+;; lexer.tl - A lexer for TypeLisp's OWN s-expression syntax, written in
 ;; TypeLisp itself. The first piece of the *real* self-hosting compiler front end
 ;; (#27): it tokenizes actual TypeLisp source - the surface this very file is
 ;; written in - rather than the arithmetic-calculator surface that `lexer.tl` /
@@ -14,7 +14,7 @@
 ;; (`string->int`, `array-set!`), or a user name (`parse-expr`). So the lexer
 ;; does NOT recognise a fixed operator alphabet the way the calculator lexer
 ;; does; it slices each maximal symbol/int run out of the source. The token kinds
-;; collapse to: `(` `)` integer symbol end (see the imported `tl_token.tl`).
+;; collapse to: `(` `)` integer symbol end (see the imported `token.tl`).
 ;;
 ;; The scan loop is the shape of a real lexer: a cursor over the input, a
 ;; whitespace skip, single-char paren tokens, a digit run sliced into a
@@ -38,8 +38,8 @@
 
 ;; The shared token model: the `Token` enum and the `token-tag` / `token-int` /
 ;; `token-sym` accessors. Resolved relative to this file, so it finds the
-;; co-located `tl_token.tl` (the `main`-less module pattern from #44/#116).
-(import "tl_token.tl")
+;; co-located `token.tl` (the `main`-less module pattern from #44/#116).
+(import "token.tl")
 
 ;; ASCII code point of a char, e.g. the digit char `7` -> 55.
 (define (code [c : char]) : i64

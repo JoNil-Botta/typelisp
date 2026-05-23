@@ -1,20 +1,20 @@
 //! Cross-platform proof that the TypeLisp-syntax s-expression *reader*
-//! (`tests/integration/tl_reader.tl`) compiles all the way to valid x86_64
+//! (`selfhost/reader.tl`) compiles all the way to valid x86_64
 //! assembly.
 //!
-//! `tl_reader.tl` is the second piece of TypeLisp's *real* self-hosting compiler
+//! `reader.tl` is the second piece of TypeLisp's *real* self-hosting compiler
 //! front end (#27): the canonical Lisp reader. Where the lexer turns a source
 //! String into a flat `(Array Token)`, the reader consumes that token stream
 //! into the recursive cons-cell tree the parens describe - the `Sexpr` AST
 //! `(SInt | SSym | SNil | SCons)`. It does NOT re-derive tokenization: it
-//! `(import)`s the lexer's `lex` from the `main`-less module `tl_lex.tl`, which
-//! itself imports the `main`-less token model `tl_token.tl`. So compiling it
-//! also exercises the module loader (#44) transitively: `tl_token.tl` and
-//! `tl_lex.tl` are loaded (imported-before-importer) and concatenated with this
+//! `(import)`s the lexer's `lex` from the `main`-less module `lex.tl`, which
+//! itself imports the `main`-less token model `token.tl`. So compiling it
+//! also exercises the module loader (#44) transitively: `token.tl` and
+//! `lex.tl` are loaded (imported-before-importer) and concatenated with this
 //! file, and because NEITHER imported module declares a `main`, the combined
 //! program has exactly one `main` - the reader's - with no duplicate-symbol
-//! clash. (Importing the `main`-bearing `tl_lexer.tl` demo would have clashed;
-//! the reusable lexer lives in the `main`-less `tl_lex.tl` precisely to avoid
+//! clash. (Importing the `main`-bearing `lexer.tl` demo would have clashed;
+//! the reusable lexer lives in the `main`-less `lex.tl` precisely to avoid
 //! that.)
 //!
 //! Like the other `*_compile.rs` tests this only invokes the `compile`
@@ -29,20 +29,20 @@ use std::process::Command;
 #[test]
 fn tl_reader_tl_compiles_to_assembly() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let integration_dir = manifest_dir.join("tests").join("integration");
-    let source_path = integration_dir.join("tl_reader.tl");
+    let selfhost_dir = manifest_dir.join("selfhost");
+    let source_path = selfhost_dir.join("reader.tl");
 
     let work_dir = manifest_dir.join("target").join("tl-reader-compile-test");
     fs::create_dir_all(&work_dir).expect("create tl_reader compile test work dir");
 
-    // The reader imports `tl_lex.tl`, which transitively imports `tl_token.tl`.
+    // The reader imports `lex.tl`, which transitively imports `token.tl`.
     // The loader resolves imports relative to the importing file, so both
     // imported modules must sit alongside the entry file in the work dir for the
     // `(import ...)` chain to resolve.
-    let entry_path = work_dir.join("tl_reader.tl");
-    fs::copy(&source_path, &entry_path).expect("copy tl_reader.tl to work dir");
-    for dep in ["tl_lex.tl", "tl_token.tl"] {
-        fs::copy(integration_dir.join(dep), work_dir.join(dep))
+    let entry_path = work_dir.join("reader.tl");
+    fs::copy(&source_path, &entry_path).expect("copy reader.tl to work dir");
+    for dep in ["lex.tl", "token.tl"] {
+        fs::copy(selfhost_dir.join(dep), work_dir.join(dep))
             .unwrap_or_else(|e| panic!("copy imported module {dep}: {e}"));
     }
 
@@ -60,7 +60,7 @@ fn tl_reader_tl_compiles_to_assembly() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "tl_reader.tl compile step failed\nstdout:\n{}\nstderr:\n{}",
+        "reader.tl compile step failed\nstdout:\n{}\nstderr:\n{}",
         stdout,
         stderr,
     );
@@ -74,8 +74,8 @@ fn tl_reader_tl_compiles_to_assembly() {
         asm,
     );
 
-    // Multi-file organization (#44): the imported `main`-less `tl_lex.tl` and
-    // `tl_token.tl` contribute `lex` / `Token` / accessors but no `main`, so the
+    // Multi-file organization (#44): the imported `main`-less `lex.tl` and
+    // `token.tl` contribute `lex` / `Token` / accessors but no `main`, so the
     // concatenated program has EXACTLY one `main:` - the reader's. The import
     // chain composes with no duplicate-symbol clash.
     assert_eq!(
@@ -116,7 +116,7 @@ fn tl_reader_tl_compiles_to_assembly() {
     }
 
     // The lexer is REUSED across the import boundary, not re-derived: the
-    // imported `lex` entry and the imported `tl_token.tl` accessors are emitted
+    // imported `lex` entry and the imported `token.tl` accessors are emitted
     // and called. `token-tag` classifies each token under the cursor; `token-str`
     // projects the inner text out of a `TStr` token (#128) so the reader can build
     // the new `SStr` atom from it.

@@ -1,41 +1,38 @@
-;; tl_read.tl - The s-expression READER for TypeLisp's own syntax, factored out
-;; as a `main`-less, importable module (refs #27/#44).
+;; reader.tl - The s-expression READER for TypeLisp's own syntax: the
+;; canonical Lisp reader, written in TypeLisp itself. The second component of
+;; TypeLisp's self-hosting compiler front end (#27), following the tokenizer.
+;;
+;; Where the lexer (`lex.tl`) turns a source String into a flat
+;; `(Array Token)` - balanced parens, integer literals, and symbols - the reader
+;; turns that token stream into the recursive cons-cell tree those parens
+;; describe: the `Sexpr` AST. This is exactly the `read` of a real Lisp: the
+;; data structure a TypeLisp compiler's later passes (macroexpansion, the
+;; special-form/`define` analyzer, lowering) walk over.
+;;
+;;   String --lex--> (Array Token) --read--> Sexpr
 ;;
 ;; --------------------------------------------------------------------------
-;; Why this module exists (the module signal for the evaluator, refs #44/#81).
+;; How the lexer is reused (the KEY module signal, refs #44/#81).
 ;; --------------------------------------------------------------------------
-;; `tl_reader.tl` is the *demo* program for the s-expression reader: it carries a
-;; `main` that reads a sample and folds the resulting tree with `sum-ints`. But
-;; the next front-end component - the s-expression *evaluator* in `tl_eval.tl` -
-;; wants to REUSE the reader's `read : (-> (Array Token) Sexpr)` and the `Sexpr`
-;; AST it builds, rather than re-derive them, and it carries its own `main`
-;; (interpret the read tree to an i64).
+;; The reader does NOT re-derive tokenization. It `(import "lex.tl")`s the
+;; lexer's public `lex : (-> String (Array Token))`, factored into a `main`-less
+;; module precisely so it can be shared. `lex.tl` in turn imports the
+;; `main`-less `token.tl` token model, so this single import transitively
+;; pulls in BOTH the `lex` entry and the `Token` enum + `token-tag` /
+;; `token-int` / `token-sym` accessors + tag constants.
 ;;
-;; The module loader (#44) is whole-program: it concatenates every imported
-;; module's declarations into a single program, then runs the unchanged
-;; `typecheck -> lower -> codegen` pipeline. So two modules that both declare a
-;; `main` and are loaded together produce a duplicate `main` symbol - the known
-;; module limitation. Importing `tl_reader.tl` (which HAS a `main`) into the
-;; evaluator (which also needs a `main`) would clash.
-;;
-;; The fix is this `main`-less module: it holds the reader's cursor helpers, the
-;; mutually recursive `read-form` / `read-list`, the public `read` entry, AND the
-;; `Sexpr` AST definition, `(import)`s the shared `main`-less `tl_lex.tl` (which
-;; transitively imports the `main`-less `tl_token.tl`), and declares NO `main`.
-;; The evaluator `(import "tl_read.tl")`s it and gets `read` + `lex` + the
-;; `Sexpr` enum across the import boundary, and the concatenated program has
-;; exactly one `main` (the evaluator's). `tl_reader.tl` stays as the reader's
-;; standalone demo. This mirrors how `tl_lex.tl` was factored from the
-;; `main`-bearing `tl_lexer.tl`: a `main`-less module is the unit of reuse, a
-;; `main`-bearing file is a runnable demo.
-
-;; The shared lexer: the public `lex : (-> String (Array Token))`, factored into
-;; a `main`-less module. `tl_lex.tl` in turn imports the `main`-less
-;; `tl_token.tl` token model, so this single import transitively pulls in BOTH
-;; the `lex` entry and the `Token` enum + `token-tag` / `token-int` / `token-sym`
-;; accessors + tag constants. Resolved relative to this file, so it finds the
-;; co-located `tl_lex.tl`.
-(import "tl_lex.tl")
+;; The module loader (#44) is whole-program: it concatenates every reachable
+;; module's declarations (post-order DFS: imported-before-importer), then runs
+;; the unchanged pipeline. So the load order is `token.tl`, then `lex.tl`,
+;; then this file. Crucially, NONE of the imported modules declares a `main` -
+;; only this reader does - so the concatenated program has exactly one `main`
+;; and there is no duplicate-symbol clash. (Importing the `main`-bearing
+;; `lexer.tl` demo instead would have clashed; that is why the reusable lexer
+;; lives in the `main`-less `lex.tl`.) The imported `defenum Token` is ONE
+;; nominal type, so the `(array-ref toks i)` values this reader classifies are
+;; the very `Token` values the imported `lex` constructed - the enum, its
+;; constructors, and the accessors' `match` arms all carry across the boundary.
+(import "lex.tl")
 
 ;; --------------------------------------------------------------------------
 ;; The Sexpr AST: cons cells, the way Lisp represents read source (refs #13/#27).
@@ -47,12 +44,11 @@
 ;; `SCons` carries two `Sexpr` children; recursive enum payloads (#111) make each
 ;; child an 8-byte heap pointer, so the layout is finite and every constructed
 ;; node that escapes via a return is heap-promoted. The reader builds this tree;
-;; the evaluator that imports this module walks it with a `match`-based recursion.
+;; a `match`-based fold walks it.
 ;; `SStr` carries the inner text of a `"..."` string-literal datum: the reader
 ;; consumes the lexer's `TStr` token (#128) into it, so a quoted string reads as a
 ;; distinct atom rather than being conflated with a `SSym` of the same characters.
-;; `SStr` is appended last so the existing variants keep their stable ordering for
-;; every importer.
+;; `SStr` is appended last so the existing variants keep their stable ordering.
 (defenum Sexpr
   (SInt i64)
   (SSym String)
@@ -68,6 +64,7 @@
 ;; out-param: a single-cell `(Array i64)` (`cur`) holding the index of the token
 ;; under the cursor. Because arrays are heap references, a mutation through `cur`
 ;; is visible to the caller across the recursive `read-form` / `read-list` calls.
+;; This is the same cursor-threading the recursive-descent parser uses.
 
 ;; Current cursor position (index of the token under the cursor).
 (define (cur-pos [cur : (Array i64)]) : i64
@@ -173,3 +170,56 @@
     (begin
       (array-set! cur 0 0)
       (read-form toks cur))))
+
+;; --------------------------------------------------------------------------
+;; An observable fold over the tree: sum every integer atom in the Sexpr.
+;; --------------------------------------------------------------------------
+;; A recursive tree walk with a `match` over `Sexpr`: an `SInt` contributes its
+;; value, the atoms `SSym`/`SNil` contribute 0, and an `SCons` sums both its head
+;; and tail. The bound recursive payloads (`h`/`t`) are pointers to the child
+;; enums, passed straight back into `sum-ints`. The result depends on the WHOLE
+;; tree shape, so it is a faithful observation that the reader built it correctly.
+(define (sum-ints [s : Sexpr]) : i64
+  (match s
+    [(SInt n) n]
+    [(SSym _) 0]
+    [(SStr _) 0]
+    [(SNil) 0]
+    [(SCons h t) (+ (sum-ints h) (sum-ints t))]))
+
+;; --------------------------------------------------------------------------
+;; A second fold that OBSERVES the new `SStr` variant: count string atoms.
+;; --------------------------------------------------------------------------
+;; The same recursive tree walk shape as `sum-ints`, but it tallies the `SStr`
+;; atoms the reader produced from `"..."` literals (#27/#128): an `SStr`
+;; contributes 1, every other atom (`SInt`/`SSym`/`SNil`) contributes 0, and an
+;; `SCons` sums both children. Because the count depends on the whole read tree,
+;; it is a faithful observation that the reader consumed the lexer's `TStr` token
+;; into an `SStr` rather than dropping it or folding it into an `SSym`.
+(define (count-strs [s : Sexpr]) : i64
+  (match s
+    [(SInt _) 0]
+    [(SSym _) 0]
+    [(SStr _) 1]
+    [(SNil) 0]
+    [(SCons h t) (+ (count-strs h) (count-strs t))]))
+
+;; main: lex a real nested s-expression that mixes integer atoms AND string
+;; literals, READ it into the `Sexpr` cons tree, and fold that tree two ways. The
+;; source `(greet "hi" 7 (msg "yo" 35))` lexes (#128: a `"..."` is one TStr) to
+;;   (  greet  "hi"  7  (  msg  "yo"  35  )  )  End
+;; and reads into the tree
+;;   (SCons (SSym "greet")
+;;     (SCons (SStr "hi")
+;;       (SCons (SInt 7)
+;;         (SCons (SCons (SSym "msg") (SCons (SStr "yo") (SCons (SInt 35) (SNil))))
+;;           (SNil)))))
+;; Its integer atoms are 7 and 35 (`sum-ints` => 42), and it has TWO string atoms
+;; - "hi" at the top level and "yo" nested one list deep (`count-strs` => 2). The
+;; result `(+ (sum-ints ...) (count-strs ...))` = 42 + 2 = 44 is the observable
+;; exit code an execution test asserts. It depends on the reader BOTH still
+;; reading integers through nesting AND consuming the lexer's `TStr` token into a
+;; distinct `SStr` atom at every depth - lexer and reader kept in sync (#27/#128).
+(define (main) : i64
+  (let ([tree : Sexpr (read (lex "(greet \"hi\" 7 (msg \"yo\" 35))"))])
+    (+ (sum-ints tree) (count-strs tree))))

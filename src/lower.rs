@@ -43,6 +43,97 @@ impl ProgramLowerer {
         self.structs.resolve_type(&self.enums.resolve_type(ty))
     }
 
+    /// Infer the type of a global initializer expression for use when no
+    /// explicit type annotation is present. Falls back to `Unit` for
+    /// unsupported or complex expressions.
+    fn infer_expr_type(&self, expr: &ast::Expr) -> Type {
+        match expr.unspan() {
+            ast::Expr::Literal(ast::Literal::Int(_)) => Type::I64,
+            ast::Expr::Literal(ast::Literal::Float(_)) => Type::F64,
+            ast::Expr::Literal(ast::Literal::Bool(_)) => Type::Bool,
+            ast::Expr::Literal(ast::Literal::Char(_)) => Type::Char,
+            ast::Expr::Literal(ast::Literal::String(_)) => Type::String,
+            ast::Expr::Literal(ast::Literal::Unit) => Type::Unit,
+            ast::Expr::Var(name) => self
+                .global_types
+                .get(name)
+                .or_else(|| {
+                    self.function_types.get(name).and_then(|t| match t {
+                        Type::Func(_, ret) => Some(ret.as_ref()),
+                        _ => None,
+                    })
+                })
+                .cloned()
+                .unwrap_or(Type::Unit),
+            ast::Expr::Binary { op, lhs, rhs } => {
+                let lhs_ty = self.infer_expr_type(lhs);
+                let rhs_ty = self.infer_expr_type(rhs);
+                match op {
+                    ast::BinOp::Add
+                    | ast::BinOp::Sub
+                    | ast::BinOp::Mul
+                    | ast::BinOp::Div
+                    | ast::BinOp::Mod => {
+                        if lhs_ty == Type::F64 || rhs_ty == Type::F64 {
+                            Type::F64
+                        } else if lhs_ty != Type::Unit {
+                            lhs_ty
+                        } else {
+                            rhs_ty
+                        }
+                    }
+                    ast::BinOp::Eq
+                    | ast::BinOp::Ne
+                    | ast::BinOp::Lt
+                    | ast::BinOp::Le
+                    | ast::BinOp::Gt
+                    | ast::BinOp::Ge
+                    | ast::BinOp::And
+                    | ast::BinOp::Or => Type::Bool,
+                    ast::BinOp::BitAnd
+                    | ast::BinOp::BitOr
+                    | ast::BinOp::BitXor
+                    | ast::BinOp::Shl
+                    | ast::BinOp::Shr => {
+                        if lhs_ty != Type::Unit {
+                            lhs_ty
+                        } else {
+                            rhs_ty
+                        }
+                    }
+                }
+            }
+            ast::Expr::Unary { op, expr } => {
+                let ty = self.infer_expr_type(expr);
+                match op {
+                    ast::UnOp::Neg => ty,
+                    ast::UnOp::Not => Type::Bool,
+                    ast::UnOp::BitNot => ty,
+                }
+            }
+            ast::Expr::Call { func, .. } => {
+                if let ast::Expr::Var(name) = func.unspan() {
+                    if let Some(Type::Func(_, ret)) = self.function_types.get(name) {
+                        return (**ret).clone();
+                    }
+                }
+                Type::Unit
+            }
+            ast::Expr::Cast { ty, .. } => ty.clone(),
+            ast::Expr::If { then_branch, else_branch, .. } => {
+                let then_ty = self.infer_expr_type(then_branch);
+                let else_ty = self.infer_expr_type(else_branch);
+                if then_ty != Type::Unit {
+                    then_ty
+                } else {
+                    else_ty
+                }
+            }
+            ast::Expr::Ann { ty, .. } => ty.clone(),
+            _ => Type::Unit,
+        }
+    }
+
     fn lower(&mut self, prog: &ast::Program) -> Program {
         self.enums = ast::EnumRegistry::from_program(prog);
         self.structs = ast::StructRegistry::from_program(prog);
@@ -68,7 +159,7 @@ impl ProgramLowerer {
                     let val_ty = ty
                         .as_ref()
                         .map(|ty| self.resolve_type(ty))
-                        .unwrap_or_else(|| infer_literal_type(value));
+                        .unwrap_or_else(|| self.infer_expr_type(value));
                     self.global_types.insert(name.clone(), val_ty);
                 }
                 // A struct constructor `Name : (-> field-tys... Name)` is bound
@@ -91,22 +182,26 @@ impl ProgramLowerer {
         for decl in &prog.decls {
             match decl {
                 ast::Decl::Def { name, ty, value } => {
-                    let val_ty = ty.clone().unwrap_or_else(|| infer_literal_type(value));
-                    // Lower the global initializer as an anonymous function
-                    let fn_lowerer = FnLowerer::new(
-                        "__global_init",
-                        &[],
-                        &val_ty,
-                        &self.function_types,
-                        &self.global_types,
-                        &self.enums,
-                        &self.structs,
-                    );
-                    let (_func, _result_var) = fn_lowerer.lower_expr_to_fn(value, &val_ty);
-
-                    // Replace the generated function name with a proper init approach
-                    // For simplicity, just store the constant if possible
+                    let val_ty = ty.clone().unwrap_or_else(|| self.infer_expr_type(value));
                     let init_value = extract_const(value);
+                    if init_value.is_none() {
+                        // Non-constant global initializer: generate an init
+                        // function that evaluates the expression and returns
+                        // the result. The backend calls it from _start and
+                        // stores %rax into the global before calling main.
+                        let init_fn_name = format!("__global_init_{}", name);
+                        let fn_lowerer = FnLowerer::new(
+                            &init_fn_name,
+                            &[],
+                            &val_ty,
+                            &self.function_types,
+                            &self.global_types,
+                            &self.enums,
+                            &self.structs,
+                        );
+                        let (func, _result) = fn_lowerer.lower_expr_to_fn(value, &val_ty);
+                        self.functions.push(func);
+                    }
                     self.globals.push((name.clone(), val_ty, init_value));
                 }
                 ast::Decl::DefFn {
@@ -159,19 +254,6 @@ impl ProgramLowerer {
             &self.structs,
         );
         fn_lowerer.lower_body(body, ret)
-    }
-}
-
-/// Infers the type of a literal expression for use in global initializers.
-fn infer_literal_type(expr: &ast::Expr) -> Type {
-    match expr.unspan() {
-        ast::Expr::Literal(ast::Literal::Int(_)) => Type::I64,
-        ast::Expr::Literal(ast::Literal::Float(_)) => Type::F64,
-        ast::Expr::Literal(ast::Literal::Bool(_)) => Type::Bool,
-        ast::Expr::Literal(ast::Literal::Char(_)) => Type::Char,
-        ast::Expr::Literal(ast::Literal::String(_)) => Type::String,
-        ast::Expr::Literal(ast::Literal::Unit) => Type::Unit,
-        _ => Type::Unit,
     }
 }
 

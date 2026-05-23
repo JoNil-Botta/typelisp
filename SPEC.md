@@ -244,8 +244,14 @@ Example:
 Imports another TypeLisp file. All top-level definitions from the imported file become available.
 
 - Relative paths are resolved from the importing file's directory.
+- Absolute filesystem paths are accepted by the underlying path resolver.
 - Circular imports currently terminate by loading each module once; they are not rejected.
 - Import paths are normalized; importing via different relative paths to the same file deduplicates.
+- The repository's `stdlib/` directory is currently just source files. Importing
+  `stdlib/string.tl` works only when that path is reachable from the importing
+  file, such as by staging or copying the `stdlib/` directory next to the entry
+  source. There is no compiler stdlib search path, package manifest, dependency
+  resolver, or implicit prelude yet.
 
 ### 4.5 `(defenum ...)` and `(defstruct ...)`
 

@@ -97,6 +97,12 @@ Name              ; a defenum / defstruct nominal type
 (import "lib/util.tl")                        ; relative, deduped; cycles load once
 ```
 
+`stdlib/string.tl` is the canonical in-repo string utility module. Today it is
+still imported through the same filesystem path mechanism as any other module:
+make `stdlib/string.tl` reachable relative to the importing file, or use an
+absolute path. TypeLisp does not yet have a compiler stdlib search path, package
+manifest, dependency resolver, or implicit prelude.
+
 ### Expression forms
 
 `if`, `let`, `while`, `begin`, `set!`, `match` (incl. nested/recursive enum

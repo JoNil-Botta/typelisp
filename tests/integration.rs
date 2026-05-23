@@ -2411,6 +2411,110 @@ fn run_case(case: &Case) {
     );
 }
 
+fn run_inline_source(work_name: &str, file_name: &str, source: &str) -> std::process::Output {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let work_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join(work_name);
+    fs::create_dir_all(&work_dir).expect("create inline test work dir");
+
+    let work_path = work_dir.join(file_name);
+    fs::write(&work_path, source).expect("write inline test source");
+
+    Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&work_path)
+        .output()
+        .expect("run inline typelisp test")
+}
+
+#[test]
+fn make_array_negative_length_traps_before_alloc() {
+    let output = run_inline_source(
+        "make_array_negative_length_trap",
+        "make_array_negative_length_trap.tl",
+        r#"
+(define (main) : i64
+  (begin
+    (make-array i64 -1)
+    0))
+"#,
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(134),
+        "negative make-array length should abort 134\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert_eq!(stdout, "", "make-array length trap should not write stdout");
+    assert_eq!(
+        stderr, "tl: array index out of bounds\n",
+        "negative make-array length should trap before tl_alloc"
+    );
+}
+
+#[test]
+fn make_array_byte_count_overflow_traps_before_alloc() {
+    let output = run_inline_source(
+        "make_array_overflow_trap",
+        "make_array_overflow_trap.tl",
+        r#"
+(define (main) : i64
+  (begin
+    (make-array i64 1152921504606846976)
+    0))
+"#,
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(134),
+        "overflowing make-array byte count should abort 134\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert_eq!(
+        stdout, "",
+        "make-array overflow trap should not write stdout"
+    );
+    assert_eq!(
+        stderr, "tl: array index out of bounds\n",
+        "overflowing make-array length should trap before tl_alloc"
+    );
+}
+
+#[test]
+fn make_array_zero_length_reports_zero() {
+    let output = run_inline_source(
+        "make_array_zero_length",
+        "make_array_zero_length.tl",
+        r#"
+(define (main) : i64
+  (let ([a : (Array i64) (make-array i64 0)])
+    (length a)))
+"#,
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "zero-length make-array should return length 0\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert_eq!(stdout, "", "zero-length make-array should not write stdout");
+    assert_eq!(stderr, "", "zero-length make-array should not write stderr");
+}
+
 // refs #205: calling the raw allocator with an impossible-size request
 // (`u64` -1, i.e. 0xFFFFFFFFFFFFFFFF) triggers the allocation-failure trap
 // and terminates with the abort status 134 rather than crashing or returning

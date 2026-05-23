@@ -6542,6 +6542,12 @@ mod tests {
         // whose self-contained body is emitted in this same unit.
         assert!(asm.contains("    call tl_alloc"), "asm:\n{}", asm);
         assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        // Dynamic lengths are checked before allocation: signed <= comparisons
+        // reject negative lengths and byte-count overflow.
+        assert!(asm.matches("setle %al").count() >= 2, "asm:\n{}", asm);
+        assert!(asm.contains("$1152921504606846975"), "asm:\n{}", asm);
+        assert!(asm.contains("    call tl_oob_abort"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_oob_abort:"), "asm:\n{}", asm);
         // The byte count is the element count scaled by sizeof(i64) = 8, then
         // passed to the allocator in %rdi.
         assert!(asm.contains("$8, %rcx"), "asm:\n{}", asm);

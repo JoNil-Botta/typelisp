@@ -22,6 +22,7 @@ cargo build --release
 ./target/release/typelisp check   examples/hello.tl
 ./target/release/typelisp compile examples/hello.tl     # writes examples/hello.s
 ./target/release/typelisp run     examples/hello.tl
+./target/release/typelisp build                         # builds nearest typelisp.pkg
 ```
 
 ## Example
@@ -106,6 +107,23 @@ explicit CLI roots; prefer `--stdlib-root` for CI, bootstrap, and reproducible
 scripts. See [stdlib/README.md](stdlib/README.md) for the current stdlib layout
 and verification conventions.
 
+Local packages can be described with a std-only S-expression manifest named
+`typelisp.pkg`:
+
+```lisp
+(package
+  (name "my-app")
+  (version "0.1.0")
+  (entry "src/main.tl"))
+```
+
+`typelisp build [--manifest-path path/to/typelisp.pkg]` resolves `entry`
+relative to the manifest directory, reuses the existing file import loader, and
+writes assembly to `target/typelisp/<package-name>/<package-name>.s` under the
+package root. This first package slice has no dependency resolver, lockfile,
+workspace model, package-qualified import syntax, namespace isolation, or native
+executable build promise.
+
 ### Enum and struct namespace rules
 
 TypeLisp keeps **type names** and **value names** in separate namespaces:
@@ -174,6 +192,7 @@ typelisp parse    file.tl    # Print AST
 typelisp check    file.tl    # Type check
 typelisp compile  file.tl    # Generate assembly (.s); -o <path>, --emit-ir
 typelisp run      file.tl    # Compile, assemble, link, and run (needs as/ld)
+typelisp build              # Build nearest typelisp.pkg to package assembly
 ```
 
 ## Status

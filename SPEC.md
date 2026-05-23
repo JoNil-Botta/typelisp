@@ -269,10 +269,34 @@ Imports another TypeLisp file. All top-level definitions from the imported file 
   are not resolved through stdlib root fallback.
 - The current stdlib source-tree layout and verification convention is
   documented in `stdlib/README.md`.
-- There is no package manifest, dependency resolver, package-qualified import
-  syntax, or implicit prelude yet.
+- A local package manifest/build command exists, but package dependencies,
+  package-qualified import syntax, namespace isolation, and implicit preludes
+  are not defined yet.
 
-### 4.5 `(defenum ...)` and `(defstruct ...)`
+### 4.5 `typelisp.pkg` — local package manifest
+
+`typelisp.pkg` is an S-expression package manifest for local builds:
+
+```lisp test=ignore name=package-manifest reason="manifest file, not TypeLisp source"
+(package
+  (name "my-app")
+  (version "0.1.0")
+  (entry "src/main.tl"))
+```
+
+- `name`, `version`, and `entry` are required string fields.
+- `entry` is resolved relative to the manifest directory.
+- `typelisp build --manifest-path path/to/typelisp.pkg` builds the entry file
+  through the same module loader and compiler pipeline as `compile`.
+- `typelisp build` without `--manifest-path` searches for `typelisp.pkg` from
+  the current directory upward.
+- Build output is assembly under
+  `target/typelisp/<package-name>/<package-name>.s` in the package root.
+- This first package layer has no dependency resolver, package-qualified import
+  syntax, namespace isolation, lockfile, workspace model, registry, or native
+  executable build promise.
+
+### 4.6 `(defenum ...)` and `(defstruct ...)`
 
 See §3.4.
 
@@ -676,10 +700,13 @@ Commands:
   check       Run type checker
   compile     Generate assembly (.s)
   run         Compile, assemble, link, and run binary
+  build       Build nearest typelisp.pkg to package assembly
 
 Options:
   compile -o <file>       Write assembly to the given path
   compile --emit-ir       Write the lowered and optimized IR instead of assembly
+  build --manifest-path <file>
+                          Use an explicit package manifest path
 ```
 
 ---

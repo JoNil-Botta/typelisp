@@ -827,6 +827,24 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
                 "token.tl",
             ],
         },
+        // refs #405: selfhost top-level symbol table over the real compiler AST.
+        // The smoke parses a representative source, builds deterministic value
+        // and type declaration tables, checks lookup handles, and verifies
+        // duplicate detection stays recoverable.
+        Case {
+            name: "compiler_symbols_smoke",
+            exit_code: 42,
+            stdout: "",
+            deps: &[
+                "compiler_symbols.tl",
+                "compiler_parse_core.tl",
+                "compiler_ast_types.tl",
+                "sym_i64_env.tl",
+                "read.tl",
+                "lex.tl",
+                "token.tl",
+            ],
+        },
         // refs #387: selfhost doc comment extraction over TypeLisp source.
         // The smoke checks module docs, supported item docs, ignored ordinary
         // comments, blank-line clearing, and unattached EOF docs.
@@ -2853,6 +2871,7 @@ fn source_path_for_case(manifest_dir: &PathBuf, name: &str) -> PathBuf {
         "tl_lexer" => "lexer.tl",
         "tl_parse" => "parse.tl",
         "compiler_parse_smoke" => "compiler_parse_smoke.tl",
+        "compiler_symbols_smoke" => "compiler_symbols_smoke.tl",
         "doc_extract_smoke" => "doc_extract_smoke.tl",
         "tl_read" => "read.tl",
         "tl_reader" => "reader.tl",

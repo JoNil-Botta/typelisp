@@ -48,6 +48,11 @@
     [(SCons arg (SNil)) (EPrint (parse-expr arg))]
     [_ (begin (panic "ast: malformed print") (EInt 0))]))
 
+(define (parse-begin [rest : Sexpr]) : Expr
+  (match rest
+    [(SCons _ _) (EBegin (parse-args rest))]
+    [_ (begin (panic "ast: malformed begin") (EInt 0))]))
+
 (define (parse-args [s : Sexpr]) : ExprList
   (match s
     [(SNil) ELNil]
@@ -84,7 +89,9 @@
                                                  (parse-if rest)
                                                  (if (string-eq op "print")
                                                      (parse-print rest)
-                                                     (ECall op (parse-args rest))))))))))))))]
+                                                     (if (string-eq op "begin")
+                                                         (parse-begin rest)
+                                                         (ECall op (parse-args rest)))))))))))))))]
     [_ (begin (panic "ast: malformed expression") (EInt 0))]))
 
 (define (parse-params [s : Sexpr]) : StrList
@@ -143,7 +150,8 @@
     [(EIf c t e) (+ (expr-score c) (+ (expr-score t) (expr-score e)))]
     [(ECall name args) (+ (string-length name) (expr-list-score args))]
     [(EStr s) (string-length s)]
-    [(EPrint e) (+ 100 (expr-score e))]))
+    [(EPrint e) (+ 100 (expr-score e))]
+    [(EBegin body) (+ 200 (expr-list-score body))]))
 
 (define (item-score [i : Item]) : i64
   (match i

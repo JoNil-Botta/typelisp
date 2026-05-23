@@ -295,7 +295,7 @@ Imports another TypeLisp file. All top-level definitions from the imported file 
   are not resolved through stdlib root fallback.
 - The current stdlib source-tree layout and verification convention is
   documented in `stdlib/README.md`.
-- During `typelisp build`, imports of the form `pkg:<alias>/<path>` resolve
+- During package builds, imports of the form `pkg:<alias>/<path>` resolve
   from a dependency package root declared in the current `typelisp.pkg`.
   Package import suffixes must stay below that dependency root. Imported
   declarations share the same flat top-level namespace as ordinary modules, so
@@ -332,7 +332,8 @@ Imports another TypeLisp file. All top-level definitions from the imported file 
   `pkg:<alias>/...`, for example `(import "pkg:math/src/lib.tl")`.
 - This first package layer has no registry, semantic-version solving, transitive
   manifest loading, namespace isolation, qualified symbol access, implicit
-  preludes, lockfile, workspace model, or native executable build promise.
+  preludes, lockfile, workspace model, or native executable build promise for
+  package manifests.
 
 ### 4.6 `(defenum ...)` and `(defstruct ...)`
 
@@ -950,6 +951,7 @@ Commands:
   debug parse       Print AST
   debug check       Run type checker
   compile           Generate assembly (.s)
+  build <file.tl>   Compile, assemble, and link a native executable
   run               Compile, assemble, link, and run binary
   build             Build nearest typelisp.pkg to package assembly
 
@@ -961,9 +963,16 @@ Options:
   build --backend-mode <mode>
                           Select scalar, avx2, or avx512 backend mode;
                           scalar is the only implemented mode
+  build <file.tl> -o <exe>
+                          Write the native executable to the given path
   build --manifest-path <file>
                           Use an explicit package manifest path
 ```
+
+For source-file builds, the default executable path is the source path with the
+`.tl` extension removed. Source-file `build` does not run the executable. The
+package build form continues to write deterministic package assembly rather than
+native executables.
 
 `tokenize`, `parse`, and `check` are also accepted as top-level compatibility
 aliases for the corresponding `debug` commands.

@@ -3117,6 +3117,118 @@ fn run_inline_source(work_name: &str, file_name: &str, source: &str) -> std::pro
         .expect("run inline typelisp test")
 }
 
+#[test]
+fn source_file_build_writes_default_executable_without_running() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let work_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("source_file_build_default");
+    fs::create_dir_all(&work_dir).expect("create source build default test dir");
+    let source = work_dir.join("main.tl");
+    fs::write(
+        &source,
+        r#"
+(define (main) : i64
+  (begin
+    (print-string "built\n")
+    42))
+"#,
+    )
+    .expect("write source build default fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("build")
+        .arg(&source)
+        .output()
+        .expect("run typelisp source build");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "source build failed\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    let bin_path = source.with_extension("");
+    assert!(
+        stdout.contains(&format!("Generated: {}", bin_path.display())),
+        "source build stdout should name executable\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert!(
+        !stdout.contains("built"),
+        "build should not run the compiled program\nstdout:\n{}",
+        stdout
+    );
+    assert!(bin_path.exists(), "source build did not write executable");
+
+    let run = Command::new(&bin_path)
+        .output()
+        .expect("run source-built executable");
+    assert_eq!(
+        run.status.code(),
+        Some(42),
+        "source-built executable exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "built\n");
+}
+
+#[test]
+fn source_file_build_respects_explicit_output_path() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let work_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("source_file_build_output");
+    fs::create_dir_all(&work_dir).expect("create source build output test dir");
+    let source = work_dir.join("main.tl");
+    fs::write(&source, "(define (main) : i64 7)\n").expect("write source build output fixture");
+    let bin_path = work_dir.join("nested").join("custom-app");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("build")
+        .arg(&source)
+        .arg("-o")
+        .arg(&bin_path)
+        .output()
+        .expect("run typelisp source build with -o");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "source build -o failed\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert!(
+        stdout.contains(&format!("Generated: {}", bin_path.display())),
+        "source build -o stdout should name executable\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert!(
+        bin_path.exists(),
+        "source build -o did not write executable"
+    );
+
+    let run = Command::new(&bin_path)
+        .output()
+        .expect("run explicit-output executable");
+    assert_eq!(
+        run.status.code(),
+        Some(7),
+        "explicit-output executable exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+}
+
 const STDLIB_STRING_CONTAINS_PROGRAM: &str = r#"
 (import "stdlib/string.tl")
 

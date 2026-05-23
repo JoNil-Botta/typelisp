@@ -212,6 +212,60 @@ fn debug_usage_errors_are_specific() {
 }
 
 #[test]
+fn build_source_rejects_unimplemented_backend_mode() {
+    let dir = fixture_dir("backend-mode-source-build");
+    let source = write_main_source(&dir);
+    let source_arg = source.to_str().expect("source path is utf-8");
+
+    let output = typelisp(&["build", source_arg, "--backend-mode", "avx2"]);
+
+    assert_backend_mode_rejected(&output, "avx2");
+}
+
+#[test]
+fn build_source_missing_output_value_is_error() {
+    let dir = fixture_dir("build-missing-output-value");
+    let source = dir.join("main.tl");
+    fs::write(&source, "(define (main) : i64 42)\n").expect("write source");
+    let source_arg = source.to_str().expect("source path is utf-8");
+
+    let output = typelisp(&["build", source_arg, "-o"]);
+
+    assert!(!output.status.success());
+    assert!(stderr(&output).contains("Error: -o requires a value"));
+}
+
+#[test]
+fn build_output_without_source_file_is_error() {
+    let dir = fixture_dir("build-output-without-source");
+    let output_arg = dir
+        .join("app")
+        .to_str()
+        .expect("output path is utf-8")
+        .to_string();
+
+    let output = typelisp(&["build", "-o", &output_arg]);
+
+    assert!(!output.status.success());
+    assert!(stderr(&output).contains("Error: build -o requires a source file argument"));
+}
+
+#[test]
+fn build_source_missing_file_reports_module_error() {
+    let dir = fixture_dir("build-missing-source");
+    let missing_arg = dir
+        .join("missing.tl")
+        .to_str()
+        .expect("missing source path is utf-8")
+        .to_string();
+
+    let output = typelisp(&["build", &missing_arg]);
+
+    assert!(!output.status.success());
+    assert!(stderr(&output).contains("Error: cannot read module"));
+}
+
+#[test]
 fn doc_test_checks_module_and_item_examples() {
     let dir = fixture_dir("doc-test-pass");
     let source = dir.join("docs.tl");

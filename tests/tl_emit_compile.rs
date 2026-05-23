@@ -138,12 +138,16 @@ fn tl_emit_tl_compiles_to_assembly() {
         "    addq %rcx, %rax\\n",
         "    subq %rcx, %rax\\n",
         "    imulq %rcx, %rax\\n",
-        // refs #167: comparison and conditional-branch lowering. The `<`/`=`
-        // operators stage a `cmpq` + `setl`/`sete` + `movzbq`; `if` emits a
-        // `cmpq $0` test, a `je` to a fresh `.Lelse_` label, a `jmp` to a fresh
-        // `.Lend_` label, and the two local labels themselves.
+        // refs #167/#173: comparison and conditional-branch lowering. The
+        // operators stage a `cmpq` + `setcc` + `movzbq`; `if` emits a `cmpq $0`
+        // test, a `je` to a fresh `.Lelse_` label, a `jmp` to a fresh `.Lend_`
+        // label, and the two local labels themselves.
         "    cmpq %rcx, %rax\\n    setl %al\\n    movzbq %al, %rax\\n",
         "    cmpq %rcx, %rax\\n    sete %al\\n    movzbq %al, %rax\\n",
+        "    cmpq %rcx, %rax\\n    setle %al\\n    movzbq %al, %rax\\n",
+        "    cmpq %rcx, %rax\\n    setg %al\\n    movzbq %al, %rax\\n",
+        "    cmpq %rcx, %rax\\n    setge %al\\n    movzbq %al, %rax\\n",
+        "    cmpq %rcx, %rax\\n    setne %al\\n    movzbq %al, %rax\\n",
         "    cmpq $0, %rax\\n",
         "    je ",
         "    jmp ",

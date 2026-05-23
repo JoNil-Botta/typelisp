@@ -67,9 +67,17 @@
                   (OpLt)
                   (if (string-eq op "=")
                       (OpEq)
-                      (begin
-                        (panic "parse: unknown operator")
-                        (OpAdd))))))))
+                      (if (string-eq op "<=")
+                          (OpLe)
+                          (if (string-eq op ">")
+                              (OpGt)
+                              (if (string-eq op ">=")
+                                  (OpGe)
+                                  (if (string-eq op "!=")
+                                      (OpNe)
+                                      (begin
+                                        (panic "parse: unknown operator")
+                                        (OpAdd))))))))))))
 
 (define (parse-binary [op : BinOp] [rest : Sexpr]) : Expr
   (match rest
@@ -118,4 +126,4 @@
 ;; main: run the whole self-hosted pipeline on a source string that exercises
 ;; let, if, and comparison lowering.
 (define (main) : unit
-  (print-string (emit-program (parse (read (lex "(let ((x 5)) (if (< x 10) 1 0))"))))))
+  (print-string (emit-program (parse (read (lex "(let ((x 5)) (if (<= x 5) 1 0))"))))))

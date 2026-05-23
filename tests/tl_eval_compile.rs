@@ -827,20 +827,24 @@ fn tl_eval_tl_compiles_to_assembly() {
     );
 
     // The runtime result composes a CLOSURE witness, a LIST-CONSTRUCTOR witness, a
-    // recursive-list predicate witness, AND the RECURSIVE LIST PRINTER:
+    // recursive-list predicate witness, the RECURSIVE LIST PRINTER, AND
+    // HIGHER-ORDER `map` / `filter` over interpreted lists:
     // `main`'s `begin` prints the string/recursion sum (`hello world3233\n`), two
     // closure applications (`25\n`, `15\n`), then the list/pair witness - it builds
     // the 3-element list with `(list 1 2 3)` and the pair `(cons 10 20)`, prints
     // the list's second element via `(car (cdr ...))` (`2\n`), the pair's car
     // (`10\n`), the predicate observations (`1\n`, `0\n`, `1\n`), and the recursive
     // list length (`3\n`), THEN the recursive list printer renders the proper list
-    // `(1 2 3)`, a nested list `(1 (2 3) 4)`, and the improper pair `(10)`, before
-    // denoting the unprinted `(sum-list (list 1 2 3 4 5))` = `1 + 2 + 3 + 4 + 5` =
-    // `15`. All of this is computed by the interpreter at RUNTIME (not a
-    // compile-time constant in this evaluator's own source), so we do NOT assert the
-    // result appears in the assembly; the printed stdout
-    // (`hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10)`) and exit
-    // code (`15`) are asserted by the Linux-gated exec test in `tests/integration.rs`.
+    // `(1 2 3)`, a nested list `(1 (2 3) 4)`, and the improper pair `(10)`. The
+    // higher-order showcase then prints `(1 4 9 16)` from `map` and `(1 2)` from
+    // `filter`, before denoting the unprinted
+    // `(sum-list (map (lambda (x) (* x x)) (list 1 2 3 4)))` =
+    // `1 + 4 + 9 + 16` = `30`. All of this is computed by the interpreter at
+    // RUNTIME (not a compile-time constant in this evaluator's own source), so we
+    // do NOT assert the result appears in the assembly; the printed stdout
+    // (`hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10)(1 4 9 16)(1 2)`)
+    // and exit code (`30`) are asserted by the Linux-gated exec test in
+    // `tests/integration.rs`.
 
     // The comparison operators fold a bool to the 1/0 integer-truth convention,
     // so the lowered evaluator must contain at least one signed integer comparison

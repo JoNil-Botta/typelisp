@@ -1105,8 +1105,9 @@
 ;; main: the whole front end composed - lex, read MANY forms, interpret with
 ;; MULTI-ARGUMENT user functions, recursion, multi-binding `let`, string ops, the
 ;; `begin` sequencing form, FIRST-CLASS FUNCTIONS (`lambda` + CLOSURES), CONS
-;; PAIRS / LINKED LISTS, AND the `pair?` / `null?` LIST PREDICATES that let an
-;; interpreted recursive list algorithm test for the end of a list.
+;; PAIRS / LINKED LISTS, the `pair?` / `null?` LIST PREDICATES that let an
+;; interpreted recursive list algorithm test for the end of a list, and
+;; HIGHER-ORDER `map` / `filter` over interpreted lists.
 ;; --------------------------------------------------------------------------
 ;; `(run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1)))))
 ;;                (define (second xs) (car (cdr xs)))
@@ -1114,16 +1115,22 @@
 ;;                  (if (pair? l) (+ (car l) (sum-list (cdr l))) 0))
 ;;                (define (list-len l)
 ;;                  (if (null? l) 0 (+ 1 (list-len (cdr l)))))
+;;                (define (map f l)
+;;                  (if (pair? l) (cons (f (car l)) (map f (cdr l))) 0))
+;;                (define (filter p l)
+;;                  (if (pair? l) (if (p (car l)) ... (filter p (cdr l))) 0))
 ;;                (begin
 ;;                  (let ((s \"hello world\") ...)
 ;;                    (begin (print t) (print (+ ...)) (+ ...)))
 ;;                  (print ((lambda (x) (* x x)) 5))
 ;;                  (print (let ((n 10)) ((lambda (x) (+ x n)) 5)))
 ;;                  (let ((lst (list 1 2 3)) (p (cons 10 20)))
-;;                    (begin (print (second lst)) (print p) (print (car p))
+;;                    (begin (print (second lst)) (print (car p))
 ;;                           (print (pair? lst)) (print (null? lst))
 ;;                           (print (null? 0)) (print (list-len lst))
-;;                           (sum-list (list 1 2 3 4 5))))))")`:
+;;                           (print lst) (print (list 1 (list 2 3) 4))
+;;                           (print p) (print (map ...)) (print (filter ...))
+;;                           (sum-list (map ...))))))")`:
 ;;   - the program starts with a recursive TWO-parameter `define` of `pow`, the
 ;;     ONE-parameter `define` of `second` (just `(car (cdr xs))` - a list accessor
 ;;     built FROM the pair primitives), and two RECURSIVE LIST functions that the

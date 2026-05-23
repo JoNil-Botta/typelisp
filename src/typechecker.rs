@@ -172,19 +172,38 @@ impl TypeChecker {
         self.enums = EnumRegistry::from_program(prog);
         self.structs = StructRegistry::from_program(prog);
 
-        // Recursive enums (a variant whose payload references the enum itself,
-        // directly or via a compound type) require heap indirection and are out
-        // of scope for this slice (deferred to #13). Reject them with a clear
-        // diagnostic rather than miscompiling.
+        // Recursive enums (refs #13/#27). A *direct* self-referential payload
+        // field — a variant field whose type IS the enclosing enum (`(EAdd Expr
+        // Expr)` in `defenum Expr`) — is now supported: an enum value is a
+        // pointer (`Type::size` reports 8), so such a field occupies an 8-byte
+        // heap-pointer slot. The layout stays finite (the recursive field counts
+        // as 8 bytes, never re-expanded), construction `tl_alloc`s each child
+        // node and stores its pointer, and a `match` arm loads the field back as
+        // a pointer typed as the enum — usable in a nested match or a recursive
+        // call. This is the keystone for tree-shaped ASTs.
+        //
+        // Recursion reached only *indirectly* — through another aggregate that
+        // is laid out inline (a tuple/array directly carrying the enum, or a
+        // mutually-recursive struct field) — is still deferred: those storage
+        // paths need the inline-vs-pointer and escape interactions worked out
+        // beyond this slice. Such a field is rejected with a clear diagnostic
+        // rather than miscompiled. (A field that is itself a *pointer-sized*
+        // aggregate value — `(Array Expr)` dyn array, another enum/struct — is
+        // fine; only inline-carrying compounds are rejected.)
         for decl in &prog.decls {
             if let Decl::DefEnum { name, variants } = decl {
                 for v in variants {
                     for f in &v.fields {
-                        if type_mentions_enum(&self.enums.resolve_type(f), name) {
+                        let resolved = self.enums.resolve_type(f);
+                        // A direct self-reference (`Type::Enum(name)`) is the
+                        // supported case; skip it. Only flag recursion buried
+                        // inside an inline-carrying compound type.
+                        if type_mentions_enum_indirectly(&resolved, name) {
                             return Err(TypeError::at(
                                 format!(
-                                    "recursive enum '{}' (variant '{}') is not yet supported \
-                                     (needs heap indirection, see #13)",
+                                    "recursive enum '{}' (variant '{}') via an inline compound \
+                                     type is not yet supported; reference the enum directly \
+                                     (it is heap-pointer-indirected) — see #13",
                                     name, v.name
                                 ),
                                 Span::default(),
@@ -1120,17 +1139,47 @@ impl TypeChecker {
     }
 }
 
-/// Whether `ty` (after enum resolution) refers to the enum named `name`,
-/// directly or nested inside a compound type. Used to reject recursive enums.
-fn type_mentions_enum(ty: &Type, name: &str) -> bool {
-    match ty {
-        Type::Enum(n) => n == name,
-        Type::Func(args, ret) => {
-            args.iter().any(|a| type_mentions_enum(a, name)) || type_mentions_enum(ret, name)
+/// Whether `ty` (after enum resolution) reaches the enum named `name` only
+/// *indirectly*, through a compound type that would lay the enum out **inline**
+/// rather than behind its natural pointer. Used to reject the still-unsupported
+/// recursive-enum shapes while permitting the supported direct one.
+///
+/// A *direct* self-reference — `ty == Type::Enum(name)` — is the supported case
+/// (an enum value is pointer-sized, so the field is an 8-byte heap pointer); it
+/// returns `false`. So do pointer-sized aggregate boundaries that re-introduce
+/// indirection: a `(Array Expr)` dynamic array (the value is a pointer to a heap
+/// buffer of 8-byte element pointers) and a function type (a code pointer).
+///
+/// Only the *inline-carrying* compounds are descended into and flagged:
+///
+///   * `Type::Tuple` — laid out as its elements end-to-end (inline), so an enum
+///     element would be embedded by value, not behind a pointer.
+///   * `Type::Array(_, n)` — a fixed-size array stores `n` elements inline.
+///
+/// Reaching `name` at any depth beneath one of those returns `true`.
+fn type_mentions_enum_indirectly(ty: &Type, name: &str) -> bool {
+    // Does `ty` refer to `name` anywhere (direct or nested)? Helper for the
+    // inline-compound descent below.
+    fn mentions(ty: &Type, name: &str) -> bool {
+        match ty {
+            Type::Enum(n) => n == name,
+            Type::Func(args, ret) => args.iter().any(|a| mentions(a, name)) || mentions(ret, name),
+            Type::Tuple(elems) => elems.iter().any(|e| mentions(e, name)),
+            Type::Array(elem, _) => mentions(elem, name),
+            Type::DynArray(elem) => mentions(elem, name),
+            _ => false,
         }
-        Type::Tuple(elems) => elems.iter().any(|e| type_mentions_enum(e, name)),
-        Type::Array(elem, _) => type_mentions_enum(elem, name),
-        Type::DynArray(elem) => type_mentions_enum(elem, name),
+    }
+    match ty {
+        // Direct self-reference: supported (heap-pointer slot). Not "indirect".
+        Type::Enum(_) => false,
+        // Pointer-sized aggregate boundaries keep the enum behind a pointer, so
+        // they are fine even when they carry the enum.
+        Type::DynArray(_) | Type::Func(_, _) => false,
+        // Inline-carrying compounds: any mention of the enum beneath them is the
+        // unsupported inline-recursive shape.
+        Type::Tuple(elems) => elems.iter().any(|e| mentions(e, name)),
+        Type::Array(elem, _) => mentions(elem, name),
         _ => false,
     }
 }
@@ -1599,10 +1648,49 @@ mod tests {
     }
 
     #[test]
-    fn test_typecheck_recursive_enum_rejected() {
+    fn test_typecheck_recursive_enum_direct_ok() {
+        // refs #13/#27: a directly self-referential payload (`List` field inside
+        // `List`) is now accepted — the field is an 8-byte heap-pointer slot.
         let src = "(defenum List (Cons i64 List) (Nil))\n(define (f [l : List]) : i64 0)";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_recursive_enum_expr_tree_ok() {
+        // The keystone shape: a binary AST node referencing the enum twice.
+        // Constructing, returning, and matching all type-check.
+        let src = "(defenum Expr (ENum i64) (EAdd Expr Expr))\n\
+                   (define (mk) : Expr (EAdd (ENum 1) (ENum 2)))\n\
+                   (define (eval [e : Expr]) : i64 \
+                     (match e [(ENum n) n] [(EAdd l r) (+ (eval l) (eval r))]))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_recursive_enum_build_eval_returns_ok() {
+        // `(EAdd (ENum 1) (ENum 2))` constructs through the ordinary call path:
+        // each child `(ENum _)` yields an `Expr`, accepted as an `EAdd` field.
+        let src = "(defenum Expr (ENum i64) (EAdd Expr Expr))\n\
+                   (define (one) : Expr (EAdd (ENum 1) (ENum 2)))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_recursive_enum_inline_tuple_rejected() {
+        // Recursion buried in an *inline-carrying* tuple is still deferred:
+        // the enum would be embedded by value, not behind its pointer.
+        let src = "(defenum Bad (V (Tuple Bad i64)) (Nil))\n(define (f [b : Bad]) : i64 0)";
         let err = check(src).unwrap_err();
-        assert!(err.msg.contains("recursive enum"), "got: {}", err.msg);
+        assert!(err.msg.contains("inline compound"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_recursive_enum_indirect_array_rejected() {
+        // A fixed-size array stores elements inline; recursion through it is
+        // likewise deferred.
+        let src = "(defenum Bad (V (Array Bad 2)) (Nil))\n(define (f [b : Bad]) : i64 0)";
+        let err = check(src).unwrap_err();
+        assert!(err.msg.contains("inline compound"), "got: {}", err.msg);
     }
 
     // ------------------------------------------------------------------

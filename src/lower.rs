@@ -4110,6 +4110,116 @@ mod tests {
         );
     }
 
+    // ------------------------------------------------------------------
+    // Recursive enums (heap-pointer indirection) — refs #13/#27
+    // ------------------------------------------------------------------
+
+    const EXPR: &str = "(defenum Expr (ENum i64) (EAdd Expr Expr))";
+
+    #[test]
+    fn test_lower_recursive_enum_tree_heap_allocs_all_nodes() {
+        // `(EAdd (ENum 1) (ENum 2))` returned as an `Expr` heap-promotes ALL
+        // three enum nodes (the outer EAdd + both ENum children), since every
+        // enum constructor in an Expr-returning function escapes via the return.
+        // The two child pointers are stored into the EAdd payload slots as
+        // 8-byte enum (pointer) values — no frame storage dangles.
+        let src = format!("{EXPR}\n(define (mk) : Expr (EAdd (ENum 1) (ENum 2)))");
+        let prog = parse(&src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().position(|f| f.name == "mk").unwrap();
+
+        // No frame Alloc / AddrOf: every node is on the heap.
+        assert_eq!(
+            count(&ir, f, |i| matches!(i, Instruction::Alloc { .. })),
+            0,
+            "recursive-enum tree nodes must NOT be frame Allocs"
+        );
+        assert_eq!(
+            count(&ir, f, |i| matches!(i, Instruction::AddrOf { .. })),
+            0,
+            "recursive-enum tree nodes must NOT take frame addresses"
+        );
+
+        // Three tl_alloc Calls: EAdd node + two ENum children. The enum's storage
+        // size is the MAX over its variants: EAdd holds a tag (8) + two 8-byte
+        // enum-pointer fields = 24 bytes, which dominates ENum's tag (8) + i64
+        // (8) = 16. So every `Expr` node — including the ENum leaves — allocates
+        // the uniform 24-byte storage.
+        let tl_alloc_sizes = ir.functions[f]
+            .blocks
+            .iter()
+            .flat_map(|b| &b.instructions)
+            .filter_map(|i| match i {
+                Instruction::Call { func, args, .. } if func == "tl_alloc" => args.first().cloned(),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            tl_alloc_sizes.len(),
+            3,
+            "expected three tl_alloc Calls (EAdd + two ENum children), got {tl_alloc_sizes:?}"
+        );
+        assert!(
+            tl_alloc_sizes.iter().all(|s| *s == Value::ConstI64(24)),
+            "expected every Expr node to tl_alloc the uniform 24-byte storage, got {tl_alloc_sizes:?}"
+        );
+    }
+
+    #[test]
+    fn test_lower_recursive_enum_payload_field_stored_as_8byte_pointer() {
+        // The EAdd payload fields are recursive (`Expr`), so each is stored as an
+        // 8-byte enum-pointer value (`Store { ty: Type::Enum("Expr") }`), not
+        // inlined. This is what makes the layout finite (24 bytes, not infinite).
+        let src = format!("{EXPR}\n(define (mk) : Expr (EAdd (ENum 1) (ENum 2)))");
+        let prog = parse(&src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().position(|f| f.name == "mk").unwrap();
+
+        let enum_ptr_stores = count(
+            &ir,
+            f,
+            |i| matches!(i, Instruction::Store { ty: Type::Enum(n), .. } if n == "Expr"),
+        );
+        assert_eq!(
+            enum_ptr_stores, 2,
+            "expected two 8-byte enum-pointer Stores for the EAdd children"
+        );
+    }
+
+    #[test]
+    fn test_lower_recursive_enum_match_loads_payload_as_pointer() {
+        // A `match` arm binding the recursive payload loads it back as an 8-byte
+        // enum (pointer) value — usable in a recursive call. Lowering an
+        // `eval` that recurses on both children confirms the payload Loads are
+        // typed `Type::Enum("Expr")` (pointer width) and the recursive calls fire.
+        let src = format!(
+            "{EXPR}\n(define (eval [e : Expr]) : i64 \
+               (match e [(ENum n) n] [(EAdd l r) (+ (eval l) (eval r))]))"
+        );
+        let prog = parse(&src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().position(|f| f.name == "eval").unwrap();
+
+        // The two EAdd payload fields are LOADED back as enum pointers.
+        let enum_ptr_loads = count(
+            &ir,
+            f,
+            |i| matches!(i, Instruction::Load { ty: Type::Enum(n), .. } if n == "Expr"),
+        );
+        assert_eq!(
+            enum_ptr_loads, 2,
+            "expected two 8-byte enum-pointer Loads for the bound EAdd children"
+        );
+
+        // Two recursive calls to `eval` consume those loaded child pointers.
+        let recursive_calls = count(
+            &ir,
+            f,
+            |i| matches!(i, Instruction::Call { func, .. } if func == "eval"),
+        );
+        assert_eq!(recursive_calls, 2, "expected two recursive eval Calls");
+    }
+
     #[test]
     fn test_lower_returned_dyn_array_fat_value_is_heap_allocated() {
         // The element buffer was always heap; returning the array additionally

@@ -148,6 +148,15 @@ fn type_lisp_programs_compile_link_and_run() {
             stdout: "",
             deps: &[],
         },
+        // refs #13/#27: recursive enum payloads. Builds `(EAdd (ENum 1)
+        // (ENum 2))` as a heap-allocated tree (each `Expr` child is an 8-byte
+        // heap pointer) and folds it with a recursive `eval`. `main` returns 3.
+        Case {
+            name: "tree",
+            exit_code: 3,
+            stdout: "",
+            deps: &[],
+        },
         // Self-hosting (#27, phase 4): a recursive-descent parser written in
         // TypeLisp. Parses the token stream for "1 + 2 + 3" over the grammar
         // expr := term ('+' term)* (left-assoc) into a flat postfix op stream
@@ -293,6 +302,15 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         Case {
             name: "enum_string_payload",
             exit_code: 5,
+            stdout: "",
+            deps: &[],
+        },
+        // refs #13/#27: recursive enum payloads, also through the explicit
+        // compile -> as -> ld -> run pipeline. Builds and folds `(EAdd (ENum 1)
+        // (ENum 2))`; `main` returns 3.
+        Case {
+            name: "tree",
+            exit_code: 3,
             stdout: "",
             deps: &[],
         },

@@ -80,6 +80,16 @@
          (panic "parse: malformed print")
          (EInt 0))]))
 
+(define (parse-begin [rest : Sexpr]) : Expr
+  (match rest
+    [(SNil) (begin
+              (panic "parse: empty begin")
+              (EInt 0))]
+    [(SCons _ _) (EBegin (parse-args rest))]
+    [_ (begin
+         (panic "parse: malformed begin")
+         (EInt 0))]))
+
 (define (parse-args [s : Sexpr]) : ExprList
   (match s
     [(SNil) ELNil]
@@ -100,9 +110,11 @@
              (parse-if rest)
              (if (string-eq op "print")
                  (parse-print rest)
-                 (if (is-binary-op op)
-                     (parse-binary (parse-op op) rest)
-                     (ECall op (parse-args rest))))))]
+                 (if (string-eq op "begin")
+                     (parse-begin rest)
+                     (if (is-binary-op op)
+                         (parse-binary (parse-op op) rest)
+                         (ECall op (parse-args rest)))))))]
     [_ (begin
          (panic "parse: malformed expression")
          (EInt 0))]))

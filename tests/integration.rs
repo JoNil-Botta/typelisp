@@ -2033,6 +2033,123 @@ fn tl_compile_smoke_writes_definition_program_and_output_exits_42() {
     );
 }
 
+#[test]
+fn tl_compile_smoke_writes_begin_program_and_output_prints_hi_exits_42() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let selfhost_dir = manifest_dir.join("selfhost");
+    let source_path = selfhost_dir.join("compile_smoke.tl");
+    let work_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("tl_compile_smoke_begin");
+    fs::create_dir_all(&work_dir).expect("create tl_compile_smoke begin test work dir");
+
+    let work_path = work_dir.join("compile_smoke.tl");
+    fs::copy(&source_path, &work_path).expect("copy compile_smoke.tl to work dir");
+
+    for dep in [
+        "parse_core.tl",
+        "emit_core.tl",
+        "sym_i64_env.tl",
+        "ast_types.tl",
+        "read.tl",
+        "lex.tl",
+        "token.tl",
+    ] {
+        fs::copy(selfhost_dir.join(dep), work_dir.join(dep))
+            .expect("copy imported selfhost module to work dir");
+    }
+
+    let input_path = work_dir.join("input_begin.tl");
+    let asm_path = work_dir.join("generated_begin.s");
+    let obj_path = work_dir.join("generated_begin.o");
+    let bin_path = work_dir.join("generated_begin");
+    fs::write(
+        &input_path,
+        "(define (answer) (begin 1 42))\n(begin (print \"hi\") (answer))",
+    )
+    .expect("write tl_compile_smoke begin input");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&work_path)
+        .arg(&input_path)
+        .arg(&asm_path)
+        .output()
+        .expect("run tl_compile_smoke begin");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "tl_compile_smoke begin driver exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(stdout, "", "tl_compile_smoke begin driver wrote stdout");
+    assert_eq!(stderr, "", "tl_compile_smoke begin driver wrote stderr");
+
+    let asm = fs::read_to_string(&asm_path).expect("read tl_compile_smoke begin output");
+    for snippet in [
+        "    .section .rodata\n",
+        ".Lstr_0:\n    .string \"hi\"\n",
+        "answer:\n",
+        "main:\n",
+        "_start:\n",
+        "    call answer\n",
+        "    movq $42, %rax\n",
+        "    movq $1, %rax\n    syscall\n    movq $0, %rax\n",
+    ] {
+        assert!(
+            asm.contains(snippet),
+            "tl_compile_smoke begin output assembly missing {:?}:\n{}",
+            snippet,
+            asm,
+        );
+    }
+
+    let status = Command::new("as")
+        .arg(&asm_path)
+        .arg("-o")
+        .arg(&obj_path)
+        .status()
+        .expect("run assembler on tl_compile_smoke begin output");
+    assert!(
+        status.success(),
+        "assembling tl_compile_smoke begin output failed"
+    );
+
+    let status = Command::new("ld")
+        .arg(&obj_path)
+        .arg("-o")
+        .arg(&bin_path)
+        .status()
+        .expect("run linker on tl_compile_smoke begin output");
+    assert!(
+        status.success(),
+        "linking tl_compile_smoke begin output failed"
+    );
+
+    let output = Command::new(&bin_path)
+        .output()
+        .expect("run binary assembled from tl_compile_smoke begin output");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "tl_compile_smoke begin output program exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(
+        stdout, "hi",
+        "tl_compile_smoke begin output stdout differed"
+    );
+    assert_eq!(stderr, "", "tl_compile_smoke begin output stderr differed");
+}
+
 fn tl_string_literal(text: &str) -> String {
     text.replace('\\', "\\\\").replace('"', "\\\"")
 }

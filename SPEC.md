@@ -395,6 +395,10 @@ See §3.6.
 | `print-newline` | `→ unit` | Print newline to stdout |
 | `print-string` | `String → unit` | Print string bytes to stdout |
 | `print-str` | `String → unit` | Alias for `print-string` |
+| `arg-count` | `→ i64` | Get Linux process `argc` |
+| `arg` | `i64 → String` | Get argv entry as an owned String |
+| `read-file` | `String → String` | Read whole file contents; panics on error |
+| `write-file` | `String String → unit` | Write whole file contents; panics on error |
 | `length` | `(Array t) → i64` | Get dynamic array length |
 | `length` | `String → i64` | Get string byte length |
 | `array-length` | `(Array t) → i64` | Get dynamic array length |
@@ -436,6 +440,10 @@ They are not implemented by a separate C runtime.
 | `tl_substring` | String slicing |
 | `tl_string_to_int` | Parse integer |
 | `tl_int_to_string` | Format integer |
+| `.L_tl_arg_count` | Return captured process argc |
+| `.L_tl_arg` | Return copied argv entry |
+| `.L_tl_read_file` | Read whole file |
+| `.L_tl_write_file` | Write whole file |
 | `.L_tl_abort` | Print and abort (used by `panic`/`error`) |
 | `tl_oob_abort` | Bounds-check trap |
 
@@ -494,11 +502,12 @@ They are not implemented by a separate C runtime.
   `string-eq`/`string=?`, `string-append`/`string-concat`,
   `substring`/`string-slice`, `string->int`, `int->string`,
   `print-string`/`print-str`.
+- Bootstrap I/O helpers: `arg-count`, `arg`, `read-file`, `write-file`.
 - `extern` declarations.
 - Multi-file modules via `import`.
 - Builtin `print`, `print-bool`, `print-float`, `print-char`,
   `print-newline`, `print-string`/`print-str`, `string-append`/`string-concat`,
-  `panic`/`error`.
+  `read-file`, `write-file`, `panic`/`error`.
 
 ### 8.2 What does NOT work (yet)
 

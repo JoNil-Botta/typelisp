@@ -48,6 +48,11 @@
     [(SCons arg (SNil)) (EPrint (parse-expr arg))]
     [_ (begin (panic "ast: malformed print") (EInt 0))]))
 
+(define (parse-set [rest : Sexpr]) : Expr
+  (match rest
+    [(SCons (SSym name) (SCons value (SNil))) (ESet name (parse-expr value))]
+    [_ (begin (panic "ast: malformed set!") (EInt 0))]))
+
 (define (parse-begin [rest : Sexpr]) : Expr
   (match rest
     [(SNil) (begin (panic "ast: empty begin") (EInt 0))]
@@ -92,7 +97,9 @@
                                                      (parse-print rest)
                                                      (if (string-eq op "begin")
                                                          (parse-begin rest)
-                                                         (ECall op (parse-args rest)))))))))))))))]
+                                                         (if (string-eq op "set!")
+                                                             (parse-set rest)
+                                                             (ECall op (parse-args rest))))))))))))))))]
     [_ (begin (panic "ast: malformed expression") (EInt 0))]))
 
 (define (parse-params [s : Sexpr]) : StrList
@@ -152,7 +159,8 @@
     [(ECall name args) (+ (string-length name) (expr-list-score args))]
     [(EStr s) (string-length s)]
     [(EPrint e) (+ 100 (expr-score e))]
-    [(EBegin body) (+ 200 (expr-list-score body))]))
+    [(EBegin body) (+ 200 (expr-list-score body))]
+    [(ESet name value) (+ 300 (+ (string-length name) (expr-score value)))]))
 
 (define (item-score [i : Item]) : i64
   (match i

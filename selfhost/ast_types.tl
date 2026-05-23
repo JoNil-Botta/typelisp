@@ -20,7 +20,8 @@
   (ECall String ExprList)
   (EStr String)
   (EPrint Expr)
-  (EBegin ExprList))
+  (EBegin ExprList)
+  (ESet String Expr))
 
 (defenum ExprList
   (ELNil)

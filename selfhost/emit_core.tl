@@ -67,7 +67,8 @@
     [(ECall _ args) (expr-list-collect-strings args acc)]
     [(EStr s) (str-list-append-one acc s)]
     [(EPrint e) (collect-strings e acc)]
-    [(EBegin body) (expr-list-collect-strings body acc)]))
+    [(EBegin body) (expr-list-collect-strings body acc)]
+    [(ESet _ value) (collect-strings value acc)]))
 
 (define (collect-item-strings [item : Item] [acc : StrList]) : StrList
   (match item
@@ -175,7 +176,8 @@
     [(ECall _ args) (expr-list-max-let-depth args)]
     [(EStr _) 0]
     [(EPrint e) (max-let-depth e)]
-    [(EBegin body) (expr-list-max-let-depth body)]))
+    [(EBegin body) (expr-list-max-let-depth body)]
+    [(ESet _ value) (max-let-depth value)]))
 
 (define (frame-size [e : Expr]) : i64
   (round-up-16 (* 8 (max-let-depth e))))
@@ -327,6 +329,13 @@
        (emit-begin strings env depth lc rest))]
     [(ELNil) (begin (panic "emit: empty begin") "")]))
 
+(define (emit-set [strings : StrList] [env : SymI64Env] [depth : i64] [lc : (Array i64)] [name : String] [value : Expr]) : String
+  (let ([off : i64 (cenv-lookup env name)])
+    (string-append (emit-expr-in strings env depth lc value)
+      (string-append "    movq %rax, "
+        (string-append (emit-slot off)
+          "\n    movq $0, %rax\n")))))
+
 (define (emit-expr-in [strings : StrList] [env : SymI64Env] [depth : i64] [lc : (Array i64)] [e : Expr]) : String
   (match e
     [(EInt n) (emit-int n)]
@@ -337,7 +346,8 @@
     [(ECall name args) (emit-call strings env depth lc name args)]
     [(EStr s) (emit-str strings s)]
     [(EPrint arg) (emit-print strings arg)]
-    [(EBegin body) (emit-begin strings env depth lc body)]))
+    [(EBegin body) (emit-begin strings env depth lc body)]
+    [(ESet name value) (emit-set strings env depth lc name value)]))
 
 (define (function-frame-size [params : StrList] [body : Expr]) : i64
   (round-up-16 (* 8 (+ (str-list-count params) (max-let-depth body)))))

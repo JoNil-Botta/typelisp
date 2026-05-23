@@ -1010,6 +1010,12 @@ impl TypeChecker {
         let mut has_wildcard = false;
 
         for (pat, body) in arms {
+            if has_wildcard {
+                return Err(TypeError::at(
+                    "unreachable match arm after wildcard `_`",
+                    body.span(),
+                ));
+            }
             self.push_scope();
             match pat {
                 Pattern::Wildcard => {
@@ -1018,25 +1024,30 @@ impl TypeChecker {
                 // A bare top-level identifier is a nullary-variant arm
                 // (`[Red 0]`): resolve it as the variant `name` with no args.
                 Pattern::Binding(name) => {
-                    let tag = match self.check_variant_pattern(&enum_name, name, &[], body.span()) {
-                        Ok(t) => t,
-                        Err(e) => {
-                            self.pop_scope();
-                            return Err(e);
-                        }
-                    };
-                    covered[tag] = true;
+                    let (tag, irrefutable) =
+                        match self.check_variant_pattern(&enum_name, name, &[], body.span()) {
+                            Ok(t) => t,
+                            Err(e) => {
+                                self.pop_scope();
+                                return Err(e);
+                            }
+                        };
+                    if irrefutable {
+                        covered[tag] = true;
+                    }
                 }
                 Pattern::Variant { name, args } => {
-                    let tag = match self.check_variant_pattern(&enum_name, name, args, body.span())
-                    {
-                        Ok(t) => t,
-                        Err(e) => {
-                            self.pop_scope();
-                            return Err(e);
-                        }
-                    };
-                    covered[tag] = true;
+                    let (tag, irrefutable) =
+                        match self.check_variant_pattern(&enum_name, name, args, body.span()) {
+                            Ok(t) => t,
+                            Err(e) => {
+                                self.pop_scope();
+                                return Err(e);
+                            }
+                        };
+                    if irrefutable {
+                        covered[tag] = true;
+                    }
                 }
                 // Var/Tuple/bare-literal patterns are not supported as a
                 // top-level enum match arm.
@@ -1067,7 +1078,11 @@ impl TypeChecker {
             }
         }
 
-        // Exhaustiveness: every variant must be covered, or a wildcard present.
+        // Exhaustiveness: every variant must be fully covered, or a wildcard
+        // present. Nested variant and literal sub-patterns are refutable: they
+        // cover only part of the outer variant's value space, so a fallback arm
+        // is still required unless a later irrefutable pattern covers the same
+        // top-level variant.
         if !has_wildcard {
             let missing: Vec<String> = self
                 .enums
@@ -1097,7 +1112,10 @@ impl TypeChecker {
 
     /// Type-check a (possibly top-level) variant pattern `name(args...)` against
     /// the enum `enum_name`, binding identifiers found anywhere in `args`.
-    /// Returns the matched variant's tag index for exhaustiveness tracking.
+    /// Returns the matched variant's tag index plus whether this pattern fully
+    /// covers that variant for exhaustiveness. A nested variant or literal
+    /// sub-pattern is refutable unless it recursively covers the whole nested
+    /// enum field, so the outer variant may need a later fallback arm.
     /// Callers are responsible for `pop_scope` on error (so bindings made before
     /// the failure are discarded).
     fn check_variant_pattern(
@@ -1106,7 +1124,7 @@ impl TypeChecker {
         name: &str,
         args: &[Pattern],
         span: Span,
-    ) -> Result<usize, TypeError> {
+    ) -> Result<(usize, bool), TypeError> {
         let (owner, tag, fields) = self
             .enums
             .lookup_variant(name)
@@ -1138,10 +1156,47 @@ impl TypeChecker {
         // `Type::Var`) becomes its concrete `Type::Struct`/`Type::Enum`. The
         // lowerer resolves these types the same way.
         let field_tys: Vec<Type> = fields.iter().map(|t| self.resolve_type(t)).collect();
+        let mut irrefutable = true;
         for (arg, fty) in args.iter().zip(field_tys.iter()) {
             self.check_sub_pattern(arg, fty, span)?;
+            if !self.sub_pattern_is_irrefutable(arg, fty) {
+                irrefutable = false;
+            }
         }
-        Ok(tag)
+        Ok((tag, irrefutable))
+    }
+
+    /// Whether a checked sub-pattern covers every value of a payload field.
+    /// Binding and `_` always do. A nested variant only does when the field enum
+    /// has exactly one variant and that variant's own fields are all covered.
+    /// Literal sub-patterns are always refutable.
+    fn sub_pattern_is_irrefutable(&self, pat: &Pattern, fty: &Type) -> bool {
+        match pat {
+            Pattern::Binding(_) | Pattern::Wildcard => true,
+            Pattern::Literal(_) => false,
+            Pattern::Variant { name, args } => {
+                let Type::Enum(enum_name) = fty else {
+                    return false;
+                };
+                let Some(variants) = self.enums.variants(enum_name) else {
+                    return false;
+                };
+                if variants.len() != 1 {
+                    return false;
+                }
+                let Some((owner, _tag, fields)) = self.enums.lookup_variant(name) else {
+                    return false;
+                };
+                if owner != enum_name || args.len() != fields.len() {
+                    return false;
+                }
+                let field_tys: Vec<Type> = fields.iter().map(|t| self.resolve_type(t)).collect();
+                args.iter()
+                    .zip(field_tys.iter())
+                    .all(|(arg, fty)| self.sub_pattern_is_irrefutable(arg, fty))
+            }
+            _ => false,
+        }
     }
 
     /// Type-check a sub-pattern (a variant payload field) against its field
@@ -1662,6 +1717,31 @@ mod tests {
         );
         let err = check(&src).unwrap_err();
         assert!(err.msg.contains("non-exhaustive"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_refutable_nested_pattern_does_not_cover_outer_variant() {
+        // `(Outer (Left n))` covers only the `Left` subset of `Outer` values.
+        // Without a fallback for `Outer (Right ...)`, lowering would have a
+        // nested mismatch edge into the match merge with no value.
+        let src = "(defenum Inner (Left i64) (Right i64))\n\
+                   (defenum Outer (Outer Inner))\n\
+                   (define (f [o : Outer]) : i64 \
+                     (match o [(Outer (Left n)) n]))";
+        let err = check(src).unwrap_err();
+        assert!(err.msg.contains("non-exhaustive"), "got: {}", err.msg);
+        assert!(err.msg.contains("Outer"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_nested_pattern_with_same_variant_fallback_is_exhaustive() {
+        // A later irrefutable arm for the same top-level variant covers the
+        // nested mismatch path.
+        let src = "(defenum Inner (Left i64) (Right i64))\n\
+                   (defenum Outer (Outer Inner))\n\
+                   (define (f [o : Outer]) : i64 \
+                     (match o [(Outer (Left n)) n] [(Outer _) 0]))";
+        assert!(check(src).is_ok(), "{:?}", check(src));
     }
 
     #[test]

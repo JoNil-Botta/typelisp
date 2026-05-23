@@ -97,8 +97,6 @@ fn print_usage() {
     eprintln!();
     eprintln!("Options for compile:");
     eprintln!("    -o <file>                      Output assembly file");
-    eprintln!();
-    eprintln!("No third-party dependencies. Built with std only.");
 }
 
 fn main() {

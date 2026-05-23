@@ -296,6 +296,7 @@
     [(SInt _) (begin (panic "eval: expected a cons cell (car of an atom)") SNil)]
     [(SSym _) (begin (panic "eval: expected a cons cell (car of an atom)") SNil)]
     [(SStr _) (begin (panic "eval: expected a cons cell (car of an atom)") SNil)]
+    [(SChar _) (begin (panic "eval: expected a cons cell (car of an atom)") SNil)]
     [(SNil) (begin (panic "eval: expected a cons cell (car of nil / too few args)") SNil)]
     [(SCons h _) h]))
 
@@ -305,6 +306,7 @@
     [(SInt _) (begin (panic "eval: expected a cons cell (cdr of an atom)") SNil)]
     [(SSym _) (begin (panic "eval: expected a cons cell (cdr of an atom)") SNil)]
     [(SStr _) (begin (panic "eval: expected a cons cell (cdr of an atom)") SNil)]
+    [(SChar _) (begin (panic "eval: expected a cons cell (cdr of an atom)") SNil)]
     [(SNil) (begin (panic "eval: expected a cons cell (cdr of nil / too few args)") SNil)]
     [(SCons _ t) t]))
 
@@ -317,6 +319,7 @@
     [(SInt _) (panic "eval: too many arguments")]
     [(SSym _) (panic "eval: too many arguments")]
     [(SStr _) (panic "eval: too many arguments")]
+    [(SChar _) (panic "eval: too many arguments")]
     [(SCons _ _) (panic "eval: too many arguments")]))
 
 ;; --------------------------------------------------------------------------
@@ -363,7 +366,8 @@
        (eval-let-bindings more (EBind var v acc) fenv))]
     [(SInt _) (begin (panic "eval: malformed let binding list") acc)]
     [(SSym _) (begin (panic "eval: malformed let binding list") acc)]
-    [(SStr _) (begin (panic "eval: malformed let binding list") acc)]))
+    [(SStr _) (begin (panic "eval: malformed let binding list") acc)]
+    [(SChar _) (begin (panic "eval: malformed let binding list") acc)]))
 
 ;; let-var: the bound variable's name `x` from a binding pair `(x e1)`.
 (define (let-var [pair : Sexpr]) : String
@@ -426,7 +430,8 @@
          [_ (eval-seq rest env fenv)]))]
     [(SInt _) (begin (panic "eval: malformed begin body") (VInt 0))]
     [(SSym _) (begin (panic "eval: malformed begin body") (VInt 0))]
-    [(SStr _) (begin (panic "eval: malformed begin body") (VInt 0))]))
+    [(SStr _) (begin (panic "eval: malformed begin body") (VInt 0))]
+    [(SChar _) (begin (panic "eval: malformed begin body") (VInt 0))]))
 
 ;; --------------------------------------------------------------------------
 ;; The `list` special form: build a cons LIST from N evaluated elements (#27).
@@ -458,7 +463,8 @@
      (VPair (eval-sexpr head env fenv) (eval-list tail env fenv))]
     [(SInt _) (begin (panic "eval: malformed list elements") (VInt 0))]
     [(SSym _) (begin (panic "eval: malformed list elements") (VInt 0))]
-    [(SStr _) (begin (panic "eval: malformed list elements") (VInt 0))]))
+    [(SStr _) (begin (panic "eval: malformed list elements") (VInt 0))]
+    [(SChar _) (begin (panic "eval: malformed list elements") (VInt 0))]))
 
 ;; --------------------------------------------------------------------------
 ;; The `define` form: register a MULTI-parameter user function (refs #27).
@@ -547,6 +553,7 @@
 ;; funnel through `as-int`:
 ;;   (SInt n)             -> (VInt n)           an integer literal evaluates to itself.
 ;;   (SStr s)             -> (VStr s)           a string literal evaluates to itself.
+;;   (SChar c)            -> unsupported        outside this evaluator slice.
 ;;   (SSym name)          -> (lookup env name)  a bare symbol is a VARIABLE reference,
 ;;                           resolved in the current value environment (a `Value`).
 ;;   (SNil)               -> the empty list is not an evaluable expression - abort.
@@ -608,6 +615,7 @@
     ;; `(VStr s)` - a first-class string VALUE that can be bound, returned, passed,
     ;; printed, and consumed by the string-operation dispatch arms below.
     [(SStr s) (VStr s)]
+    [(SChar _) (begin (panic "eval: unsupported char literal") (VInt 0))]
     [(SNil) (begin (panic "eval: cannot evaluate the empty list") (VInt 0))]
     [(SCons (SSym name) rest)
      (if (string-eq name "list")
@@ -1030,7 +1038,8 @@
        [(SNil) (begin (panic "eval: too few arguments in call") base)]
        [(SInt _) (begin (panic "eval: malformed argument list") base)]
        [(SSym _) (begin (panic "eval: malformed argument list") base)]
-       [(SStr _) (begin (panic "eval: malformed argument list") base)])]
+       [(SStr _) (begin (panic "eval: malformed argument list") base)]
+       [(SChar _) (begin (panic "eval: malformed argument list") base)])]
     [_ (begin (panic "eval: malformed parameter list") base)]))
 
 ;; is-builtin-op: is `name` one of the fixed binary builtins? This is the dispatch

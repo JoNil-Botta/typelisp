@@ -18,8 +18,8 @@
 ;; lexer's public `lex : (-> String (Array Token))`, factored into a `main`-less
 ;; module precisely so it can be shared. `lex.tl` in turn imports the
 ;; `main`-less `token.tl` token model, so this single import transitively
-;; pulls in BOTH the `lex` entry and the `Token` enum + `token-tag` /
-;; `token-int` / `token-sym` accessors + tag constants.
+;; pulls in BOTH the `lex` entry and the `Token` enum + token accessors/tag
+;; constants.
 ;;
 ;; The module loader (#44) is whole-program: it concatenates every reachable
 ;; module's declarations (post-order DFS: imported-before-importer), then runs
@@ -45,16 +45,17 @@
 ;; child an 8-byte heap pointer, so the layout is finite and every constructed
 ;; node that escapes via a return is heap-promoted. The reader builds this tree;
 ;; a `match`-based fold walks it.
-;; `SStr` carries the inner text of a `"..."` string-literal datum: the reader
-;; consumes the lexer's `TStr` token (#128) into it, so a quoted string reads as a
-;; distinct atom rather than being conflated with a `SSym` of the same characters.
-;; `SStr` is appended last so the existing variants keep their stable ordering.
+;; `SStr` carries the inner text of a `"..."` string-literal datum and `SChar`
+;; carries a decoded character literal. Both stay distinct from symbols with
+;; similar printed spellings. New variants are appended so existing variants keep
+;; their stable ordering.
 (defenum Sexpr
   (SInt i64)
   (SSym String)
   (SNil)
   (SCons Sexpr Sexpr)
-  (SStr String))
+  (SStr String)
+  (SChar char))
 
 ;; --------------------------------------------------------------------------
 ;; The reader cursor: a single mutable index into the `(Array Token)`.
@@ -93,6 +94,7 @@
 ;;   TInt n  -> (SInt n)            an integer atom
 ;;   TSym s  -> (SSym s)            a symbol atom
 ;;   TStr s  -> (SStr s)            a string-literal atom (`"..."`, refs #128)
+;;   TChar c -> (SChar c)           a character-literal atom
 ;;   TLParen -> read-list           consume '(' then read a list to its ')'
 ;;   TRParen -> error                a stray ')' with no opening '(' is malformed
 ;;   TEnd    -> error                end of stream where a form was expected
@@ -120,20 +122,27 @@
                   (begin
                     (advance cur)
                     (SStr s)))
-                (if (= t (tag-lparen))
-                    ;; A list: consume '(' and read forms until the matching ')'.
-                    (begin
-                      (advance cur)
-                      (read-list toks cur))
-                    (if (= t (tag-rparen))
+                (if (= t (tag-char))
+                    ;; A character-literal atom: project the decoded char out of
+                    ;; the TChar and keep it distinct from strings/symbols.
+                    (let ([c : char (token-char (peek-tok toks cur))])
+                      (begin
+                        (advance cur)
+                        (SChar c)))
+                    (if (= t (tag-lparen))
+                        ;; A list: consume '(' and read forms until the matching ')'.
                         (begin
-                          (panic "reader: unexpected ')'")
-                          ;; Dead code: `panic` never returns, but the `if` needs a Sexpr.
-                          SNil)
-                        ;; tag-end (or anything else): premature end of stream.
-                        (begin
-                          (panic "reader: unexpected end of input")
-                          SNil))))))))
+                          (advance cur)
+                          (read-list toks cur))
+                        (if (= t (tag-rparen))
+                            (begin
+                              (panic "reader: unexpected ')'")
+                              ;; Dead code: `panic` never returns, but the `if` needs a Sexpr.
+                              SNil)
+                            ;; tag-end (or anything else): premature end of stream.
+                            (begin
+                              (panic "reader: unexpected end of input")
+                              SNil)))))))))
 
 ;; read-list: the cursor is positioned just AFTER an opening '('. Read forms
 ;; until the matching ')', returning the proper list `(SCons f1 (SCons f2 ...
@@ -184,6 +193,7 @@
     [(SInt n) n]
     [(SSym _) 0]
     [(SStr _) 0]
+    [(SChar _) 0]
     [(SNil) 0]
     [(SCons h t) (+ (sum-ints h) (sum-ints t))]))
 
@@ -201,25 +211,53 @@
     [(SInt _) 0]
     [(SSym _) 0]
     [(SStr _) 1]
+    [(SChar _) 0]
     [(SNil) 0]
     [(SCons h t) (+ (count-strs h) (count-strs t))]))
 
-;; main: lex a real nested s-expression that mixes integer atoms AND string
-;; literals, READ it into the `Sexpr` cons tree, and fold that tree two ways. The
-;; source `(greet "hi" 7 (msg "yo" 35))` lexes (#128: a `"..."` is one TStr) to
-;;   (  greet  "hi"  7  (  msg  "yo"  35  )  )  End
+;; Count and observe decoded character atoms produced from TChar tokens.
+(define (count-chars [s : Sexpr]) : i64
+  (match s
+    [(SInt _) 0]
+    [(SSym _) 0]
+    [(SStr _) 0]
+    [(SChar _) 1]
+    [(SNil) 0]
+    [(SCons h t) (+ (count-chars h) (count-chars t))]))
+
+(define (sum-char-codes [s : Sexpr]) : i64
+  (match s
+    [(SInt _) 0]
+    [(SSym _) 0]
+    [(SStr _) 0]
+    [(SChar c) (code c)]
+    [(SNil) 0]
+    [(SCons h t) (+ (sum-char-codes h) (sum-char-codes t))]))
+
+;; main: lex a real nested s-expression that mixes integer, string, and
+;; character atoms, READ it into the `Sexpr` cons tree, and fold that tree. The
+;; source `(greet "hi" #x' 7 (msg "yo" #\space' #\newline' 35 #\n'))` lexes to
+;;   (  greet  "hi"  #x'  7  (  msg  "yo"  #\space'  #\newline'  35  #\n'  )  )  End
 ;; and reads into the tree
 ;;   (SCons (SSym "greet")
 ;;     (SCons (SStr "hi")
-;;       (SCons (SInt 7)
-;;         (SCons (SCons (SSym "msg") (SCons (SStr "yo") (SCons (SInt 35) (SNil))))
+;;       (SCons (SChar #x')
+;;         (SCons (SInt 7)
+;;           (SCons (SCons (SSym "msg")
+;;             (SCons (SStr "yo")
+;;               (SCons (SChar #\space')
+;;                 (SCons (SChar #\newline')
+;;                   (SCons (SInt 35) (SCons (SChar #\n') (SNil)))))))
 ;;           (SNil)))))
-;; Its integer atoms are 7 and 35 (`sum-ints` => 42), and it has TWO string atoms
-;; - "hi" at the top level and "yo" nested one list deep (`count-strs` => 2). The
-;; result `(+ (sum-ints ...) (count-strs ...))` = 42 + 2 = 44 is the observable
-;; exit code an execution test asserts. It depends on the reader BOTH still
-;; reading integers through nesting AND consuming the lexer's `TStr` token into a
-;; distinct `SStr` atom at every depth - lexer and reader kept in sync (#27/#128).
+;; Its integer atoms sum to 42, it has two string atoms, and it has four character
+;; atoms whose decoded code sum is 172. `main` returns 42 + 2 + 4 + 10 = 58 when
+;; that char-value check holds.
 (define (main) : i64
-  (let ([tree : Sexpr (read (lex "(greet \"hi\" 7 (msg \"yo\" 35))"))])
-    (+ (sum-ints tree) (count-strs tree))))
+  (let ([tree : Sexpr
+          (read (lex "(greet \"hi\" #x' 7 (msg \"yo\" #\\space' #\\newline' 35 #\\n'))"))])
+    (+ (sum-ints tree)
+       (+ (count-strs tree)
+          (+ (count-chars tree)
+             (if (= (sum-char-codes tree) 172)
+                 10
+                 0))))))

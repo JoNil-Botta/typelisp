@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 const ABORT_RUNTIME_SYMBOL: &str = ".L_tl_abort";
 const ARG_COUNT_RUNTIME_SYMBOL: &str = ".L_tl_arg_count";
 const ARG_RUNTIME_SYMBOL: &str = ".L_tl_arg";
+const READ_FILE_RUNTIME_SYMBOL: &str = ".L_tl_read_file";
 
 /// x86_64 assembly code generator
 /// Target: Linux, System V AMD64 ABI
@@ -83,6 +84,10 @@ pub struct X86_64Backend {
     /// `(arg i)`. The helper heap-allocates the returned String and aborts on
     /// out-of-bounds indexes.
     needs_arg_runtime: bool,
+    /// Whether the program references the private read-file helper emitted for
+    /// `(read-file path)`. The helper uses Linux syscalls, `tl_alloc`, and the
+    /// panic/abort runtime.
+    needs_read_file_runtime: bool,
     return_ty: Type,
     /// VarIds that are function parameters of the function currently being
     /// generated. Their `Alloc` instructions are no-ops because the parameter
@@ -799,6 +804,7 @@ impl X86_64Backend {
             needs_print_str_runtime: false,
             needs_arg_count_runtime: false,
             needs_arg_runtime: false,
+            needs_read_file_runtime: false,
             return_ty: Type::Unit,
             param_vars: HashSet::new(),
             current_fn: String::new(),
@@ -829,7 +835,10 @@ impl X86_64Backend {
         self.needs_print_str_runtime = Self::needs_print_str_runtime(program);
         self.needs_arg_count_runtime = Self::needs_arg_count_runtime(program);
         self.needs_arg_runtime = Self::needs_arg_runtime(program);
-        self.needs_abort_runtime = Self::needs_abort_runtime(program) || self.needs_arg_runtime;
+        self.needs_read_file_runtime = Self::needs_read_file_runtime(program);
+        self.needs_abort_runtime = Self::needs_abort_runtime(program)
+            || self.needs_arg_runtime
+            || self.needs_read_file_runtime;
         // Several backend runtimes allocate their buffers and fat values via a
         // raw `tl_alloc` call, so their presence forces the raw allocator
         // runtime to be emitted even when IR calls to a user-defined TypeLisp
@@ -838,7 +847,8 @@ impl X86_64Backend {
             || self.needs_int_to_string_runtime
             || self.needs_substring_runtime
             || self.needs_string_concat_runtime
-            || self.needs_arg_runtime;
+            || self.needs_arg_runtime
+            || self.needs_read_file_runtime;
         let needs_print_runtime = !self.runtime_print_names.is_empty();
         let needs_argv_data = self.needs_arg_count_runtime || self.needs_arg_runtime;
         if needs_print_runtime {
@@ -854,6 +864,9 @@ impl X86_64Backend {
         self.generate_string_rodata();
         if self.needs_oob_runtime {
             self.generate_oob_runtime_data();
+        }
+        if self.needs_read_file_runtime {
+            self.generate_read_file_runtime_data();
         }
 
         self.emit("    .text");
@@ -878,7 +891,8 @@ impl X86_64Backend {
                 || (self.needs_abort_runtime && symbol == ABORT_RUNTIME_SYMBOL)
                 || (self.needs_print_str_runtime && symbol == "tl_print_str")
                 || (self.needs_arg_count_runtime && symbol == ARG_COUNT_RUNTIME_SYMBOL)
-                || (self.needs_arg_runtime && symbol == ARG_RUNTIME_SYMBOL);
+                || (self.needs_arg_runtime && symbol == ARG_RUNTIME_SYMBOL)
+                || (self.needs_read_file_runtime && symbol == READ_FILE_RUNTIME_SYMBOL);
             if !defined_inline {
                 self.emit(&format!("    .extern {}", symbol));
             }
@@ -924,6 +938,9 @@ impl X86_64Backend {
         }
         if self.needs_arg_runtime {
             self.generate_arg_runtime_functions();
+        }
+        if self.needs_read_file_runtime {
+            self.generate_read_file_runtime_functions();
         }
 
         // Generate functions
@@ -1220,6 +1237,22 @@ impl X86_64Backend {
             func.blocks.iter().any(|block| {
                 block.instructions.iter().any(|instr| {
                     matches!(instr, Instruction::Call { func, .. } if func == ARG_RUNTIME_SYMBOL)
+                })
+            })
+        })
+    }
+
+    /// Whether the program references the private read-file helper emitted for
+    /// `(read-file path)`. The lowerer targets a private assembler label, so it
+    /// cannot collide with a user-defined TypeLisp function.
+    fn needs_read_file_runtime(program: &Program) -> bool {
+        program.functions.iter().any(|func| {
+            func.blocks.iter().any(|block| {
+                block.instructions.iter().any(|instr| {
+                    matches!(
+                        instr,
+                        Instruction::Call { func, .. } if func == READ_FILE_RUNTIME_SYMBOL
+                    )
                 })
             })
         })
@@ -1542,6 +1575,14 @@ impl X86_64Backend {
         self.emit("");
     }
 
+    fn generate_read_file_runtime_data(&mut self) {
+        self.emit("    .section .rodata");
+        self.emit(".L_tl_read_file_error_msg:");
+        self.emit("    .ascii \"tl: read-file failed\\n\"");
+        self.emit("    .set .L_tl_read_file_error_msg_len, . - .L_tl_read_file_error_msg");
+        self.emit("");
+    }
+
     /// Emit the self-contained out-of-bounds abort `tl_oob_abort()`. It writes a
     /// diagnostic to fd 2 via the `write(2)` syscall, then terminates the process
     /// with the conventional "aborted" status 134 via the `exit(2)` syscall. It
@@ -1680,6 +1721,117 @@ impl X86_64Backend {
         self.emit(".L_tl_arg_oob:");
         self.emit("    leaq .L_tl_arg_oob_msg(%rip), %rdi");
         self.emit("    movq $.L_tl_arg_oob_msg_len, %rsi");
+        self.emit(&format!("    call {}", ABORT_RUNTIME_SYMBOL));
+        self.emit("");
+    }
+
+    /// Emit the self-contained read-file helper
+    /// `tl_read_file(path_ptr, path_len) -> {ptr, len}`.
+    ///
+    /// ABI (System V): `path_ptr` in `%rdi`, `path_len` in `%rsi`; the returned
+    /// heap fat-value pointer leaves in `%rax`. The helper copies the TypeLisp
+    /// path bytes into a fresh NUL-terminated buffer, opens the regular file
+    /// read-only with Linux syscalls, sizes it with `lseek`, reads exactly that
+    /// many bytes into a heap buffer, closes the fd, then returns a heap String
+    /// fat value. V1 is compiler-driver oriented and aborts on any syscall,
+    /// short-read, or path-length error until recoverable file errors exist.
+    fn generate_read_file_runtime_functions(&mut self) {
+        self.emit(&format!("{}:", READ_FILE_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    sub $8, %rsp");
+        // %rbx = path_ptr, %r12 = path_len. Reject negative lengths, then
+        // allocate path_len + 1 bytes for the NUL-terminated syscall path.
+        self.emit("    movq %rdi, %rbx");
+        self.emit("    movq %rsi, %r12");
+        self.emit("    cmpq $0, %r12");
+        self.emit("    jl .L_tl_read_file_error");
+        self.emit("    movq %r12, %rdi");
+        self.emit("    addq $1, %rdi");
+        self.emit("    js .L_tl_read_file_error");
+        self.emit("    call tl_alloc");
+        self.emit("    movq %rax, %r13");
+        // Copy path_len bytes and append a trailing NUL.
+        self.emit("    xorq %rcx, %rcx");
+        self.emit(".L_tl_read_file_path_copy_loop:");
+        self.emit("    cmpq %r12, %rcx");
+        self.emit("    jge .L_tl_read_file_path_copy_done");
+        self.emit("    movzbl (%rbx,%rcx), %edx");
+        self.emit("    movb %dl, (%r13,%rcx)");
+        self.emit("    incq %rcx");
+        self.emit("    jmp .L_tl_read_file_path_copy_loop");
+        self.emit(".L_tl_read_file_path_copy_done:");
+        self.emit("    movb $0, (%r13,%r12)");
+
+        // fd = openat(AT_FDCWD, c_path, O_RDONLY, 0).
+        self.emit("    movq $257, %rax");
+        self.emit("    movq $-100, %rdi");
+        self.emit("    movq %r13, %rsi");
+        self.emit("    xorq %rdx, %rdx");
+        self.emit("    xorq %r10, %r10");
+        self.emit("    syscall");
+        self.emit("    testq %rax, %rax");
+        self.emit("    js .L_tl_read_file_error");
+        self.emit("    movq %rax, %rbx");
+
+        // file_len = lseek(fd, 0, SEEK_END), then rewind to the start.
+        self.emit("    movq $8, %rax");
+        self.emit("    movq %rbx, %rdi");
+        self.emit("    xorq %rsi, %rsi");
+        self.emit("    movq $2, %rdx");
+        self.emit("    syscall");
+        self.emit("    testq %rax, %rax");
+        self.emit("    js .L_tl_read_file_close_error");
+        self.emit("    movq %rax, %r12");
+        self.emit("    movq $8, %rax");
+        self.emit("    movq %rbx, %rdi");
+        self.emit("    xorq %rsi, %rsi");
+        self.emit("    xorq %rdx, %rdx");
+        self.emit("    syscall");
+        self.emit("    testq %rax, %rax");
+        self.emit("    js .L_tl_read_file_close_error");
+
+        // data = tl_alloc(file_len); read exactly file_len bytes into it.
+        self.emit("    movq %r12, %rdi");
+        self.emit("    call tl_alloc");
+        self.emit("    movq %rax, %r13");
+        self.emit("    xorq %rax, %rax");
+        self.emit("    movq %rbx, %rdi");
+        self.emit("    movq %r13, %rsi");
+        self.emit("    movq %r12, %rdx");
+        self.emit("    syscall");
+        self.emit("    testq %rax, %rax");
+        self.emit("    js .L_tl_read_file_close_error");
+        self.emit("    cmpq %r12, %rax");
+        self.emit("    jne .L_tl_read_file_close_error");
+
+        // close(fd), then allocate and return the fat String value.
+        self.emit("    movq $3, %rax");
+        self.emit("    movq %rbx, %rdi");
+        self.emit("    syscall");
+        self.emit("    testq %rax, %rax");
+        self.emit("    js .L_tl_read_file_error");
+        self.emit("    movq $16, %rdi");
+        self.emit("    call tl_alloc");
+        self.emit("    movq %r13, 0(%rax)");
+        self.emit("    movq %r12, 8(%rax)");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+
+        self.emit(".L_tl_read_file_close_error:");
+        self.emit("    movq $3, %rax");
+        self.emit("    movq %rbx, %rdi");
+        self.emit("    syscall");
+        self.emit(".L_tl_read_file_error:");
+        self.emit("    leaq .L_tl_read_file_error_msg(%rip), %rdi");
+        self.emit("    movq $.L_tl_read_file_error_msg_len, %rsi");
         self.emit(&format!("    call {}", ABORT_RUNTIME_SYMBOL));
         self.emit("");
     }
@@ -3203,6 +3355,8 @@ impl X86_64Backend {
             ARG_COUNT_RUNTIME_SYMBOL.into()
         } else if name == ARG_RUNTIME_SYMBOL && self.needs_arg_runtime {
             ARG_RUNTIME_SYMBOL.into()
+        } else if name == READ_FILE_RUNTIME_SYMBOL && self.needs_read_file_runtime {
+            READ_FILE_RUNTIME_SYMBOL.into()
         } else if self.extern_names.contains(name) {
             Self::extern_symbol(name)
         } else {
@@ -5406,6 +5560,50 @@ mod tests {
         assert!(asm.contains("_tl_arg_count:"), "asm:\n{}", asm);
         assert!(asm.contains("    call _tl_arg_count"), "asm:\n{}", asm);
         assert!(!asm.contains(".L_tl_arg_count:"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_read_file_emits_runtime_alloc_syscalls_and_abort_path() {
+        let asm = compile_ok(r#"(define (main) : i64 (begin (read-file "input.txt") 0))"#);
+
+        assert!(asm.contains(".L_tl_read_file:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call .L_tl_read_file"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call tl_alloc"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_abort:"), "asm:\n{}", asm);
+        assert!(asm.contains("tl: read-file failed"), "asm:\n{}", asm);
+        assert!(asm.contains("    movb $0, (%r13,%r12)"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $257, %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $-100, %rdi"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $8, %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("    xorq %rax, %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $3, %rax"), "asm:\n{}", asm);
+        assert!(!asm.contains("_tl_.L_tl_read_file"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("    .extern .L_tl_read_file"),
+            "asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_compile_no_read_file_means_no_read_file_runtime() {
+        let asm = compile_ok(r#"(define (main) : i64 (string-length "hi"))"#);
+        assert!(!asm.contains(".L_tl_read_file"), "asm:\n{}", asm);
+        assert!(!asm.contains("tl: read-file failed"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_user_defined_read_file_shadows_builtin() {
+        let asm = compile_ok(
+            r#"
+            (define (read-file [n : i64]) : i64 (+ n 1))
+            (define (main) : i64 (read-file 41))
+            "#,
+        );
+        assert!(asm.contains("_tl_read_file:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call _tl_read_file"), "asm:\n{}", asm);
+        assert!(!asm.contains(".L_tl_read_file:"), "asm:\n{}", asm);
     }
 
     #[test]

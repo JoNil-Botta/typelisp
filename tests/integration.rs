@@ -1768,6 +1768,10 @@ fn tl_parse_printed_program_assembles_links_and_exits_1() {
     assert_eq!(stdout, "", "printed tl_parse program wrote stdout");
 }
 
+fn tl_string_literal(text: &str) -> String {
+    text.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
 #[test]
 fn argv_builtins_receive_run_args() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -1837,6 +1841,87 @@ fn argv_out_of_bounds_aborts() {
     assert!(
         stderr.contains("tl: argv index out of bounds"),
         "argv oob stderr differed:\n{}",
+        stderr
+    );
+}
+
+#[test]
+fn read_file_builtin_reads_fixture_contents() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let work_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("read-file");
+    fs::create_dir_all(&work_dir).expect("create read-file test work dir");
+    let fixture_path = work_dir.join("input.txt");
+    fs::write(&fixture_path, "alpha\nbeta\n").expect("write read-file fixture");
+
+    let fixture_literal = tl_string_literal(&fixture_path.to_string_lossy());
+    let source = format!(
+        r#"(define (main) : i64
+  (let ([s : String (read-file "{}")])
+    (begin
+      (print-string s)
+      (if (string-eq s "alpha\nbeta\n") 7 1))))"#,
+        fixture_literal
+    );
+    let work_path = work_dir.join("read_file.tl");
+    fs::write(&work_path, source).expect("write read-file TypeLisp fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&work_path)
+        .output()
+        .expect("run typelisp read-file fixture");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(7),
+        "read-file fixture exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(stdout, "alpha\nbeta\n", "read-file stdout differed");
+}
+
+#[test]
+fn read_file_missing_path_aborts() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let work_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("read-file-missing");
+    fs::create_dir_all(&work_dir).expect("create missing read-file test work dir");
+    let missing_path = work_dir.join("missing.txt");
+    let missing_literal = tl_string_literal(&missing_path.to_string_lossy());
+    let source = format!(
+        r#"(define (main) : i64 (string-length (read-file "{}")))"#,
+        missing_literal
+    );
+    let work_path = work_dir.join("read_file_missing.tl");
+    fs::write(&work_path, source).expect("write missing read-file TypeLisp fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&work_path)
+        .output()
+        .expect("run typelisp missing read-file fixture");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(134),
+        "missing read-file fixture exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(stdout, "", "missing read-file fixture wrote stdout");
+    assert!(
+        stderr.contains("tl: read-file failed"),
+        "missing read-file stderr differed:\n{}",
         stderr
     );
 }

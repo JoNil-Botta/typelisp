@@ -209,6 +209,17 @@ because `struct-set!` is not implemented. Heap allocation uses a
 backend-emitted `tl_alloc` bump allocator and allocations live until process
 exit. See [SPEC.md §7](SPEC.md) for the precise current model.
 
+The v1 reclamation direction keeps that process-lifetime arena as the default
+and does not add general per-object `free` or GC yet. `String` buffers, dynamic
+array storage, returned enum/struct storage, and self-hosted data structures all
+remain heap allocations. General `free` is deferred until ownership, borrowing,
+and reference semantics are designed, because current aggregate handles can be
+copied freely. A tracing GC is also larger than the next step. The planned first
+reclamation mechanism is explicit region reset for tool-owned phase boundaries:
+resetting a region invalidates every heap handle allocated after its mark and is
+only valid when a compiler, formatter, package-tooling, or REPL phase has
+discarded those values. See #320, #418, and #419 for the split follow-up work.
+
 See [SPEC.md](SPEC.md) for the full language reference.
 
 ## Self-hosting sources
@@ -258,7 +269,7 @@ structs + field access, dynamic arrays, strings, `extern`, and multi-file
 modules all compile to native code. See the
 [project roadmap](https://github.com/JoNil-Botta/typelisp/issues/8) and
 [SPEC.md §8](SPEC.md) for what is not yet supported (closures, tail calls,
-tuple/fixed-array by-value returns, `f32` codegen, GC/free,
+tuple/fixed-array by-value returns, `f32` codegen, general GC/free,
 ownership/borrowing, SPMD/SIMD).
 
 ## Contributing

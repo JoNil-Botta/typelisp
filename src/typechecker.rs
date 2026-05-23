@@ -2825,6 +2825,15 @@ mod tests {
     }
 
     #[test]
+    fn test_typecheck_panic_with_dummy_value_in_non_unit_context() {
+        // TypeLisp has no bottom/never type yet. A terminal panic can appear in
+        // a non-unit context by sequencing a dummy value of the expected type
+        // after it.
+        let src = r#"(define (f) : i64 (begin (panic "boom") 0))"#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
     fn test_typecheck_print_string_is_unit() {
         // `(print-string s)` : `(-> String unit)` — a string-literal argument
         // yields unit, so it type-checks as the body of a unit-returning fn.

@@ -557,6 +557,21 @@ TypeLisp has one built-in error-handling mechanism today: **panic**.
 - Panic is a terminal operation; it never returns normally.
 - `error` is an alias for `panic`.
 
+The type checker still gives `panic` and `error` the result type `unit`.
+TypeLisp does not have a bottom/never type yet, so a panic expression cannot be
+used directly where another type is required. Put the panic in a `begin` and add
+a dummy value of the surrounding type after it when a non-unit branch must type
+check.
+
+```lisp test=compile name=panic-dummy-value
+(define (parse-or-zero [ok : bool]) : i64
+  (if ok
+    1
+    (begin
+      (panic "parse failed")
+      0)))
+```
+
 Recoverable failures are represented with ordinary monomorphic enums. There
 are no built-in generic `Option<T>` / `Result<T,E>` types, no `?` operator,
 and no early-return sugar yet. Code that can recover should define an explicit

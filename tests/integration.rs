@@ -2559,3 +2559,90 @@ fn tl_alloc_huge_request_traps_abort_134() {
         "tl_alloc trap should write the allocation diagnostic"
     );
 }
+
+#[test]
+fn division_by_zero_traps_with_diagnostic() {
+    let output = run_inline_source(
+        "div_zero_trap",
+        "div_zero_trap.tl",
+        r#"
+(define (main) : i64
+  (begin
+    (/ 1 0)
+    0))
+"#,
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(135),
+        "division by zero should abort 135\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert_eq!(stdout, "", "div-zero trap should not write stdout");
+    assert_eq!(
+        stderr, "tl: integer division or remainder error\n",
+        "div-zero trap stderr differed"
+    );
+}
+
+#[test]
+fn remainder_by_zero_traps_with_diagnostic() {
+    let output = run_inline_source(
+        "rem_zero_trap",
+        "rem_zero_trap.tl",
+        r#"
+(define (main) : i64
+  (begin
+    (% 1 0)
+    0))
+"#,
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(135),
+        "remainder by zero should abort 135\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert_eq!(stdout, "", "rem-zero trap should not write stdout");
+    assert_eq!(
+        stderr, "tl: integer division or remainder error\n",
+        "rem-zero trap stderr differed"
+    );
+}
+
+#[test]
+fn signed_min_divided_by_neg_one_traps() {
+    let output = run_inline_source(
+        "min_div_neg1_trap",
+        "min_div_neg1_trap.tl",
+        r#"
+(define (main) : i64
+  (begin
+    (/ -9223372036854775808 -1)
+    0))
+"#,
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(135),
+        "signed MIN / -1 should abort 135\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert_eq!(stdout, "", "MIN/-1 trap should not write stdout");
+    assert_eq!(
+        stderr, "tl: integer division or remainder error\n",
+        "MIN/-1 trap stderr differed"
+    );
+}

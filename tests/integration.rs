@@ -102,6 +102,12 @@ fn type_lisp_programs_compile_link_and_run() {
             deps: &[],
         },
         Case {
+            name: "function_pointer_values",
+            exit_code: 42,
+            stdout: "",
+            deps: &[],
+        },
+        Case {
             name: "print",
             exit_code: 0,
             stdout: "42\nfalse\n",
@@ -502,6 +508,12 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         Case {
             name: "functions",
             exit_code: 32,
+            stdout: "",
+            deps: &[],
+        },
+        Case {
+            name: "function_pointer_values",
+            exit_code: 42,
             stdout: "",
             deps: &[],
         },

@@ -393,6 +393,7 @@ fn validate_function(func: &Function, global_types: &HashMap<String, Type>) -> R
                                 return unsupported("indirect call through a non-function value");
                             }
                         }
+                        Value::Function(_) => {}
                         _ => return unsupported("indirect call through a non-local value"),
                     }
                     for arg in args {
@@ -459,6 +460,7 @@ fn check_operand(val: &Value, global_types: &HashMap<String, Type>) -> Result<()
         | Value::ConstF64(_)
         | Value::ConstBool(_)
         | Value::ConstStr(_)
+        | Value::Function(_)
         | Value::Var(_) => Ok(()),
         Value::ConstUnit => Err("unit value".into()),
         Value::Global(name) => match global_types.get(name) {
@@ -483,6 +485,7 @@ fn validate_value_type(
         Value::ConstUnit => Some(Type::Unit),
         // A `ConstStr` operand is the raw data pointer of a string literal.
         Value::ConstStr(_) => Some(Type::U64),
+        Value::Function(_) => Some(Type::U64),
         Value::Var(var) => var_types.get(var).cloned(),
         Value::Global(name) => global_types.get(name).cloned(),
     }
@@ -2891,7 +2894,10 @@ impl X86_64Backend {
                         self.emit(&format!("    movabsq ${:#x}, %rax", n.to_bits()));
                         self.emit(&format!("    movq %rax, {}(%rbp)", dst_offset));
                     }
-                    (Value::Var(_) | Value::Global(_) | Value::ConstStr(_), _) => {
+                    (
+                        Value::Var(_) | Value::Global(_) | Value::ConstStr(_) | Value::Function(_),
+                        _,
+                    ) => {
                         self.load_value(src, "%rax", ty);
                         self.store_gpr_value("%rax", dst_offset, ty);
                     }
@@ -3170,7 +3176,7 @@ impl X86_64Backend {
                 }
 
                 match src {
-                    Value::Var(_) | Value::Global(_) | Value::ConstStr(_) => {
+                    Value::Var(_) | Value::Global(_) | Value::ConstStr(_) | Value::Function(_) => {
                         // Round-trip through a register sized to the value.
                         self.load_value(src, "%rax", ty);
                         self.store_gpr_value("%rax", dst_offset, ty);
@@ -3454,6 +3460,10 @@ impl X86_64Backend {
                     .expect("string literal interned in pre-pass");
                 self.emit(&format!("    leaq {}(%rip), {}", label, reg));
             }
+            Value::Function(name) => {
+                let symbol = self.call_symbol(name);
+                self.emit(&format!("    leaq {}(%rip), {}", symbol, reg));
+            }
             Value::Var(v) => {
                 let offset = self.var_offsets[v];
                 let addr = format!("{}(%rbp)", offset);
@@ -3697,6 +3707,7 @@ impl X86_64Backend {
             Value::ConstUnit => Some(Type::Unit),
             // A `ConstStr` operand is the raw data pointer of a string literal.
             Value::ConstStr(_) => Some(Type::U64),
+            Value::Function(_) => Some(Type::U64),
             Value::Var(v) => self.var_types.get(v).cloned(),
             Value::Global(name) => self.global_types.get(name).cloned(),
         }
@@ -4620,6 +4631,55 @@ mod tests {
         assert!(asm.contains("    movq -8(%rbp), %rax"), "asm:\n{}", asm);
         assert!(asm.contains("    call *%rax"), "asm:\n{}", asm);
         assert!(!asm.contains("    call _tl_f"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_named_function_pointer_value_arg_from_source() {
+        let asm = compile_ok(
+            r#"
+            (define (inc [x : i64]) : i64
+              (+ x 1))
+            (define (apply1 [f : (-> i64 i64)] [x : i64]) : i64
+              (f x))
+            (define (main) : i64
+              (apply1 inc 41))
+            "#,
+        );
+        assert!(asm.contains("_tl_inc:"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("    leaq _tl_inc(%rip), %rdi"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(asm.contains("    call _tl_apply1"), "asm:\n{}", asm);
+        assert!(asm.contains("    call *%rax"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_unit_named_function_pointer_value_arg_from_source() {
+        let asm = compile_ok(
+            r#"
+            (define seen : i64 0)
+            (define (mark) : unit
+              (set! seen 42))
+            (define (apply0u [f : (-> unit)]) : unit
+              (f))
+            (define (main) : i64
+              (begin
+                (apply0u mark)
+                seen))
+            "#,
+        );
+        assert!(asm.contains("_tl_mark:"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("    leaq _tl_mark(%rip), %rdi"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(asm.contains("    call _tl_apply0u"), "asm:\n{}", asm);
+        assert!(asm.contains("    call *%rax"), "asm:\n{}", asm);
         assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
     }
 

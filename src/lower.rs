@@ -62,12 +62,7 @@ impl ProgramLowerer {
             ast::Expr::Var(name) => self
                 .global_types
                 .get(name)
-                .or_else(|| {
-                    self.function_types.get(name).and_then(|t| match t {
-                        Type::Func(_, ret) => Some(ret.as_ref()),
-                        _ => None,
-                    })
-                })
+                .or_else(|| self.function_types.get(name))
                 .cloned()
                 .unwrap_or(Type::Unit),
             ast::Expr::Binary { op, lhs, rhs } => {
@@ -711,8 +706,13 @@ impl FnLowerer {
     fn lower_var(&mut self, name: &str) -> Value {
         if let Some(&var) = self.vars.get(name) {
             Value::Var(var)
+        } else if self.global_types.contains_key(name) {
+            Value::Global(name.to_string())
+        } else if self.function_types.contains_key(name) {
+            Value::Function(name.to_string())
         } else {
-            // Global or external reference — treat as global for now
+            // Unknown global or unresolved reference: leave it for backend
+            // validation so diagnostics can point at the unresolved symbol.
             Value::Global(name.to_string())
         }
     }
@@ -3159,6 +3159,7 @@ impl FnLowerer {
             Value::ConstUnit => Type::Unit,
             // A `ConstStr` operand is the raw data pointer of a string literal.
             Value::ConstStr(_) => Type::U64,
+            Value::Function(name) => self.function_types.get(name).cloned().unwrap_or(Type::I64),
             Value::Var(v) => self
                 .fixed_array_types
                 .get(v)
@@ -3284,6 +3285,69 @@ mod tests {
                 .any(|i| matches!(i, Instruction::Call { func, .. } if func == "f"))
         });
         assert!(!has_direct_f_call);
+    }
+
+    #[test]
+    fn test_lower_named_function_as_function_pointer_arg() {
+        let prog = parse(
+            r#"
+            (define (inc [x : i64]) : i64
+              (+ x 1))
+            (define (apply1 [f : (-> i64 i64)] [x : i64]) : i64
+              (f x))
+            (define (main) : i64
+              (apply1 inc 41))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let main = ir
+            .functions
+            .iter()
+            .find(|f| f.name == "main")
+            .expect("main lowered");
+        let apply_call_args = main.blocks.iter().find_map(|blk| {
+            blk.instructions.iter().find_map(|i| match i {
+                Instruction::Call { func, args, .. } if func == "apply1" => Some(args.clone()),
+                _ => None,
+            })
+        });
+        assert_eq!(
+            apply_call_args,
+            Some(vec![Value::Function("inc".into()), Value::ConstI64(41)])
+        );
+    }
+
+    #[test]
+    fn test_lower_local_function_pointer_shadows_top_level_function() {
+        let prog = parse(
+            r#"
+            (define (inc [x : i64]) : i64
+              (+ x 1))
+            (define (shadow-inc [inc : (-> i64 i64)] [x : i64]) : i64
+              (inc x))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let shadow = ir
+            .functions
+            .iter()
+            .find(|f| f.name == "shadow-inc")
+            .expect("shadow-inc lowered");
+        let indirect = shadow.blocks.iter().find_map(|blk| {
+            blk.instructions.iter().find_map(|i| match i {
+                Instruction::CallIndirect { func, args, .. } => Some((func.clone(), args.clone())),
+                _ => None,
+            })
+        });
+        assert_eq!(indirect, Some((Value::Var(0), vec![Value::Var(1)])));
+        let calls_top_level_inc = shadow.blocks.iter().any(|blk| {
+            blk.instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::Call { func, .. } if func == "inc"))
+        });
+        assert!(!calls_top_level_inc);
     }
 
     #[test]

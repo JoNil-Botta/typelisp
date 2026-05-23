@@ -145,8 +145,10 @@ patterns and `_`), `ann`, `cast`, plus arithmetic (`+ - * / %`), comparison
 (`= != < <= > >=`), boolean (`and` `or`), and bitwise/shift (`bit-and` `bit-or`
 `bit-xor` `shl` `shr`) operators. `struct-get` reads a struct field.
 
-`lambda` parses and type-checks as a function value in limited cases, but
-backend lowering for lambda literals and captured closures is incomplete today.
+Named top-level functions can be passed as non-capturing function pointer
+values. `lambda` parses and type-checks as a function value in limited cases,
+but backend lowering for lambda literals and captured closures is incomplete
+today.
 
 ### Builtins
 

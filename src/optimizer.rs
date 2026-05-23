@@ -434,7 +434,8 @@ impl Optimizer {
                     | Value::ConstI64(_)
                     | Value::ConstI32(_)
                     | Value::ConstBool(_)
-                    | Value::ConstF64(_) = src
+                    | Value::ConstF64(_)
+                    | Value::Function(_) = src
                 {
                     copies.insert(*dst, src.clone());
                 }
@@ -541,6 +542,7 @@ enum CseValue {
     ConstBool(bool),
     ConstUnit,
     ConstStr(String),
+    Function(String),
     Var(VarId),
 }
 
@@ -554,6 +556,7 @@ impl CseValue {
             Value::ConstBool(value) => Some(CseValue::ConstBool(*value)),
             Value::ConstUnit => Some(CseValue::ConstUnit),
             Value::ConstStr(value) => Some(CseValue::ConstStr(value.clone())),
+            Value::Function(value) => Some(CseValue::Function(value.clone())),
             Value::Var(value) => Some(CseValue::Var(*value)),
             Value::Global(_) => None,
         }

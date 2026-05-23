@@ -803,6 +803,14 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             stdout: "hello|\nhello|\nhello|\nfound\n|empty-left\n|empty-right\n|all-space\ncontains\nmissing\nhippo\nabx\n",
             deps: &["stdlib/string.tl"],
         },
+        // stdlib/test.tl: shared TypeLisp-native assertion helpers. Passing
+        // assertions are silent and preserve the caller's chosen result.
+        Case {
+            name: "stdlib_test",
+            exit_code: 42,
+            stdout: "",
+            deps: &["stdlib/test.tl"],
+        },
     ];
 
     for case in cases {
@@ -2846,6 +2854,9 @@ fn dep_source_path(manifest_dir: &Path, source_dir: &Path, dep: &str) -> PathBuf
     if dep == "stdlib/string.tl" {
         return manifest_dir.join("stdlib").join("string.tl");
     }
+    if dep == "stdlib/test.tl" {
+        return manifest_dir.join("stdlib").join("test.tl");
+    }
     source_dir.join(dep)
 }
 
@@ -3174,6 +3185,51 @@ fn stdlib_root_env_resolves_compile_without_staging() {
         "stdlib env compile did not write IR output"
     );
     assert_eq!(stderr, "", "stdlib env compile wrote stderr");
+}
+
+#[test]
+fn stdlib_test_failing_assertion_reports_message() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let work_dir =
+        std::env::temp_dir().join(format!("typelisp-stdlib-test-fail-{}", std::process::id()));
+    fs::create_dir_all(&work_dir).expect("create stdlib test failure work dir");
+    let work_path = work_dir.join("main.tl");
+    fs::write(
+        &work_path,
+        r#"
+(import "stdlib/test.tl")
+
+(define (main) : i64
+  (begin
+    (assert-i64-eq 1 2 "stdlib test failure message")
+    0))
+"#,
+    )
+    .expect("write stdlib test failure fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&work_path)
+        .arg("--stdlib-root")
+        .arg(manifest_dir.join("stdlib"))
+        .output()
+        .expect("run stdlib test failure fixture");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(134),
+        "failing stdlib assertion should abort with status 134\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(stdout, "", "failing stdlib assertion wrote stdout");
+    assert!(
+        stderr.contains("stdlib test failure message"),
+        "failing stdlib assertion did not report caller message\nstderr:\n{}",
+        stderr,
+    );
 }
 
 #[test]

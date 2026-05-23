@@ -3,22 +3,24 @@
 //! assembly.
 //!
 //! `tl_eval.tl` is the third piece of TypeLisp's *real* self-hosting compiler
-//! front end (#27): a tiny tree-walking interpreter - UNIFIED: VARIABLES and a
-//! `let` special form threaded through a lexical environment, TOGETHER WITH the
-//! short-circuiting `if` special form and the comparison operators `= < > <= >=`.
-//! Where the lexer turns a source String into a flat `(Array Token)` and the
-//! reader consumes that token stream into the recursive cons-cell `Sexpr` AST
-//! `(SInt | SSym | SNil | SCons)`, the evaluator INTERPRETS that tree WITH RESPECT
-//! TO an environment - it walks the s-expression, dispatches on the head symbol,
-//! resolves a bare symbol as a variable reference via `lookup` over the cons-cell
-//! assoc-list `Env` (`ENil | (EBind String i64 Env)`), handles `(let ((x e1))
-//! body)` by pushing an `EBind` frame and `(if cond then else)` by short-circuit
-//! (eval the cond, then ONLY the taken branch, both in `env`), and otherwise
-//! recursively evaluates the argument sub-exprs and applies the arithmetic
-//! `+ - * /` or comparison `= < > <= >=` operator (the comparisons fold their bool
-//! to the 1/0 integer-truth convention), computing the integer the expression
-//! denotes. It does NOT
-//! re-derive lexing or reading: it `(import)`s the reader's `read` and the
+//! front end (#27): a tiny tree-walking interpreter, now with VARIABLES, lexical
+//! `let`, short-circuit `if`, comparison operators, AND - the real-language
+//! milestone - USER-DEFINED FUNCTIONS plus RECURSION via top-level
+//! `(define (f x) body)` forms. Where the lexer turns a source String into a flat
+//! `(Array Token)` and the reader consumes that token stream into the recursive
+//! cons-cell `Sexpr` AST `(SInt | SSym | SNil | SCons)`, the evaluator INTERPRETS
+//! that tree WITH RESPECT TO two environments - a value `Env` and a function
+//! `FnEnv`: it resolves bare symbols via recursive `lookup`, pushes an `EBind`
+//! frame for `(let ((x e1)) body)`, dispatches `if` without evaluating the
+//! untaken branch, folds `= < > <= >=` to 1/0 integer truth values, evaluates
+//! builtin binary arithmetic, and OTHERWISE treats the head symbol as a CALL into
+//! a `FnEnv` assoc-list of `(define ...)`s - looking up the parameter and body and
+//! evaluating the body in a fresh single-binding env with the SAME `FnEnv`, so a
+//! body can call itself (RECURSION) or any sibling. A whole PROGRAM is now a
+//! sequence of top-level forms - zero or more `(define ...)`s then a trailing
+//! expression - read with the reader's lower-level `read-form` cursor API (the
+//! plain `read` returns only the first datum). It does NOT
+//! re-derive lexing or reading: it `(import)`s the reader's `read-form` and the
 //! `Sexpr` enum from the `main`-less module `tl_read.tl`, which itself imports
 //! the `main`-less lexer `tl_lex.tl`, which imports the `main`-less token model
 //! `tl_token.tl`. So compiling it exercises the module loader (#44) transitively:
@@ -110,12 +112,16 @@ fn tl_eval_tl_compiles_to_assembly() {
     // The evaluator's own functions were emitted (TypeLisp prefixes user symbols
     // with `_tl_`): the tree-walking `eval-sexpr`, recursive variable `lookup`,
     // the cons-cell projections `sexpr-head` ("car") / `sexpr-tail` ("cdr"),
-    // the arity guard, and the `let`-binding helpers. The old `sexpr-sym`
-    // projection is gone: `eval-sexpr` and `let-var` bind symbol text directly
-    // via nested patterns (#41).
+    // the arity guard, the `let`-binding helpers, the `define`-form projections,
+    // the function-environment lookups (`lookup-fn-param` / `lookup-fn-body`),
+    // and the multi-form program reader (`run-forms` / `run-program`). The old
+    // `sexpr-sym` projection is gone: `eval-sexpr`, `let-var`, and the define
+    // projections bind symbol text directly via nested patterns (#41).
     for sym in [
         "_tl_eval_sexpr:",
         "_tl_lookup:",
+        "_tl_lookup_fn_param:",
+        "_tl_lookup_fn_body:",
         "_tl_sexpr_head:",
         "_tl_sexpr_tail:",
         "_tl_sexpr_expect_nil:",
@@ -123,6 +129,12 @@ fn tl_eval_tl_compiles_to_assembly() {
         "_tl_let_var:",
         "_tl_let_init:",
         "_tl_let_body:",
+        "_tl_define_name:",
+        "_tl_define_param:",
+        "_tl_define_body:",
+        "_tl_is_define:",
+        "_tl_run_forms:",
+        "_tl_run_program:",
     ] {
         assert!(
             asm.contains(sym),
@@ -153,8 +165,10 @@ fn tl_eval_tl_compiles_to_assembly() {
     );
 
     // The reader and lexer are REUSED across the import boundary, not re-derived:
-    // the imported `read` entry and the imported `lex` entry are emitted.
-    for sym in ["_tl_read:", "_tl_lex:"] {
+    // the imported per-form `read-form` cursor entry and the imported `lex` entry
+    // are emitted. The program reader walks MULTIPLE top-level forms by driving
+    // `read-form` directly (the single-datum `read` is no longer the entry).
+    for sym in ["_tl_read_form:", "_tl_lex:"] {
         assert!(
             asm.contains(sym),
             "tl_eval assembly is missing expected imported reader/lexer symbol {}:\n{}",
@@ -187,6 +201,38 @@ fn tl_eval_tl_compiles_to_assembly() {
         asm,
     );
 
+    // USER FUNCTIONS + RECURSION (#27): a call form whose head is neither a
+    // special form nor a builtin is dispatched as a CALL into the function
+    // environment. `eval-sexpr` therefore looks the function's parameter and body
+    // up in the `FnEnv` via `lookup-fn-param` / `lookup-fn-body`, each of which is
+    // itself recursive (it walks the `FnEnv` assoc-list head-first, comparing the
+    // bound function name and recursing on the tail). So a call to each lookup AND
+    // a recursive self-call within each must be present.
+    for fname in ["_tl_lookup_fn_param", "_tl_lookup_fn_body"] {
+        assert!(
+            asm.contains(&format!("call {fname}")),
+            "tl_eval assembly shows no function-environment lookup call ({fname}) - \
+             no user-function call dispatch:\n{}",
+            asm,
+        );
+        assert!(
+            asm.matches(&format!("call {fname}")).count() >= 2,
+            "tl_eval assembly shows no recursive {fname} self-call (FnEnv assoc-list walk):\n{}",
+            asm,
+        );
+    }
+
+    // The program is a SEQUENCE of top-level forms read with the reader's
+    // lower-level per-form cursor API, so `run-forms` reuses `read-form` and is
+    // itself recursive - it reads one form, folds a `(define ...)` into the
+    // `FnEnv`, and recurses for the rest until the trailing expression. A
+    // `run-forms` self-call must therefore be present.
+    assert!(
+        asm.matches("call _tl_run_forms").count() >= 1,
+        "tl_eval assembly shows no recursive run-forms self-call (multi-form program reader):\n{}",
+        asm,
+    );
+
     // Operator dispatch is by byte-wise string equality: the head symbol text is
     // compared against "+"/"-"/"*"/"/" via the emit-on-demand `tl_string_eq`
     // runtime helper. Its definition and at least one call must be present.
@@ -201,22 +247,28 @@ fn tl_eval_tl_compiles_to_assembly() {
         asm,
     );
 
-    // SPECIAL FORMS + CONDITIONALS (#27): the `let` and `if` special forms and the
-    // comparison operators are dispatched on their head/operator text, so each
-    // keyword's string literal must be emitted in the read-only data. `"let"`
-    // selects the binding special form; `"if"` selects the short-circuit special
+    // CONDITIONALS (#27): the `if` special form and the comparison operators are
+    // dispatched on their operator text, so each operator's string literal must
+    // be emitted in the read-only data. `"if"` selects the short-circuit special
     // form; `"<"`/`">"`/`"<="`/`">="` (and the existing `"="`) are the comparison
     // operators that fold their bool result to the 1/0 integer-truth convention.
-    for op in [
-        "\"let\"", "\"if\"", "\"=\"", "\"<\"", "\">\"", "\"<=\"", "\">=\"",
-    ] {
+    for op in ["\"if\"", "\"=\"", "\"<\"", "\">\"", "\"<=\"", "\">=\""] {
         assert!(
             asm.contains(&format!(".string {op}")),
-            "tl_eval assembly is missing the dispatch string literal for keyword/operator {op} \
-             (let/conditionals/comparisons):\n{}",
+            "tl_eval assembly is missing the dispatch string literal for operator {op} \
+             (conditionals/comparisons):\n{}",
             asm,
         );
     }
+
+    // USER FUNCTIONS (#27): the program reader splits top-level forms on the
+    // `define` keyword, so `is-define` compares the head symbol against the
+    // `"define"` string literal, which must be emitted in the read-only data.
+    assert!(
+        asm.contains(".string \"define\""),
+        "tl_eval assembly is missing the \"define\" keyword literal (top-level definitions):\n{}",
+        asm,
+    );
 
     // The comparison operators fold a bool to the 1/0 integer-truth convention,
     // so the lowered evaluator must contain at least one signed integer comparison
@@ -229,17 +281,18 @@ fn tl_eval_tl_compiles_to_assembly() {
         asm,
     );
 
-    // `main` drives the whole composed pipeline: lex the sample, read it into the
-    // Sexpr tree, then interpret it - so the lexing entry, the reader entry, and
-    // the evaluator are all called.
+    // `main` drives the whole composed pipeline through `run-program`: lex the
+    // whole source, read EVERY top-level form with the reader's per-form cursor
+    // API, then interpret the trailing expression - so the lexing entry, the
+    // per-form reader entry, and the evaluator are all called.
     assert!(
         asm.contains("call _tl_lex"),
-        "tl_eval assembly shows no main -> lex call (lexing step reused):\n{}",
+        "tl_eval assembly shows no lex call (lexing step reused):\n{}",
         asm,
     );
     assert!(
-        asm.contains("call _tl_read"),
-        "tl_eval assembly shows no main -> read call (reading step reused):\n{}",
+        asm.contains("call _tl_read_form"),
+        "tl_eval assembly shows no read-form call (per-form reading step reused):\n{}",
         asm,
     );
 

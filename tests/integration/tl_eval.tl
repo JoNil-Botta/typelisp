@@ -10,8 +10,9 @@
 ;;   String --lex--> (Array Token) --read-form*--> (Sexpr ...) --run-program--> i64
 ;;
 ;; A WHOLE PROGRAM is now a sequence of top-level forms: zero or more
-;; `(define (f x) body)` definitions followed by ONE trailing expression. This
-;; composes the whole front end: `(run-program "(define (fact n) ...) (fact 5)")`.
+;; `(define (f x y z) body)` definitions - each with an arbitrary-arity parameter
+;; LIST - followed by ONE trailing expression. This composes the whole front end:
+;; `(run-program "(define (pow b e) ...) (pow 2 10)")`.
 ;;
 ;; --------------------------------------------------------------------------
 ;; How the reader and lexer are reused (the KEY module signal, refs #44/#81).
@@ -56,19 +57,24 @@
 ;; --------------------------------------------------------------------------
 ;; The FUNCTION environment: an assoc-list of user-defined functions (#27/#111).
 ;; --------------------------------------------------------------------------
-;; The step from calculator to real language. A `(define (f x) body)` registers a
-;; function: its name, its single parameter name, and its UN-EVALUATED body AST.
-;; Like the value `Env` this is the classic Lisp assoc-list encoded as a recursive
-;; enum (recursive payloads, #111), but its binding carries an `Sexpr` payload -
-;; the function body tree - alongside the two name Strings: `FNil` is the empty
-;; function table, and `(FBind fn-name param body rest)` extends `rest` with one
+;; The step from calculator to real language. A `(define (f x y z) body)`
+;; registers a function: its name, its PARAMETER-NAME LIST, and its UN-EVALUATED
+;; body AST. Like the value `Env` this is the classic Lisp assoc-list encoded as a
+;; recursive enum (recursive payloads, #111). Its binding now carries TWO `Sexpr`
+;; payloads: the original parenthesised PARAMETER LIST `(x y z)` - kept verbatim
+;; as the cons-cell list of `SSym`s the reader built, NOT a single param string -
+;; alongside the function body tree, plus the name String. `FNil` is the empty
+;; function table, and `(FBind fn-name params body rest)` extends `rest` with one
 ;; function. Because every define in the program is folded into ONE `FnEnv` that
 ;; is threaded into every body evaluation, a function body can call ANY defined
 ;; function - including ITSELF: that single shared `FnEnv` is exactly what makes
-;; RECURSION (e.g. factorial) resolve.
+;; RECURSION (e.g. `pow`) resolve. Storing the param list as an `Sexpr` (rather
+;; than a fixed number of String fields) is what generalises the single-parameter
+;; table to MULTI-ARGUMENT functions: the call site zips this list against the
+;; argument list.
 (defenum FnEnv
   (FNil)
-  (FBind String String Sexpr FnEnv))
+  (FBind String Sexpr Sexpr FnEnv))
 
 ;; lookup: resolve a variable name to its value in the environment, walking the
 ;; assoc-list head-first so the most recently pushed (innermost) binding wins. An
@@ -83,20 +89,22 @@
          val
          (lookup rest name))]))
 
-;; lookup-fn-param / lookup-fn-body: resolve a function name to its parameter name
-;; and to its body AST in the function environment. The two projections walk the
-;; SAME assoc-list head-first (most recent define wins) and `panic` on an unknown
-;; function - exactly how an interpreter reports a call to a name that was never
-;; defined. They are split into two single-result functions because a TypeLisp
-;; function returns one value; both are driven by the head symbol's text via
-;; `string-eq`, the same byte-wise dispatch the operators use.
-(define (lookup-fn-param [fenv : FnEnv] [name : String]) : String
+;; lookup-fn-params / lookup-fn-body: resolve a function name to its PARAMETER
+;; LIST (an `Sexpr` of `SSym`s) and to its body AST in the function environment.
+;; The two projections walk the SAME assoc-list head-first (most recent define
+;; wins) and `panic` on an unknown function - exactly how an interpreter reports a
+;; call to a name that was never defined. They are split into two single-result
+;; functions because a TypeLisp function returns one value; both are driven by the
+;; head symbol's text via `string-eq`, the same byte-wise dispatch the operators
+;; use. `lookup-fn-params` returns the param list verbatim so the call site can
+;; ZIP it against the argument list (multi-argument functions).
+(define (lookup-fn-params [fenv : FnEnv] [name : String]) : Sexpr
   (match fenv
-    [(FNil) (begin (panic "eval: unknown function") "")]
-    [(FBind fname param _ rest)
+    [(FNil) (begin (panic "eval: unknown function") SNil)]
+    [(FBind fname params _ rest)
      (if (string-eq fname name)
-         param
-         (lookup-fn-param rest name))]))
+         params
+         (lookup-fn-params rest name))]))
 
 (define (lookup-fn-body [fenv : FnEnv] [name : String]) : Sexpr
   (match fenv
@@ -191,40 +199,39 @@
       (sexpr-head after))))
 
 ;; --------------------------------------------------------------------------
-;; The `define` form: register a single-parameter user function (refs #27).
+;; The `define` form: register a MULTI-parameter user function (refs #27).
 ;; --------------------------------------------------------------------------
-;; A top-level `(define (f x) body)` reads into the spine
+;; A top-level `(define (f x y z) body)` reads into the spine
 ;;   form   = (SCons (SSym "define") (SCons header (SCons body SNil)))
-;;   header = (SCons (SSym f) (SCons (SSym x) SNil))
+;;   header = (SCons (SSym f) (SCons (SSym x) (SCons (SSym y) (SCons (SSym z) SNil))))
 ;; The helpers below destructure that shape: `define-header` pulls the
-;; `(f x)` parenthesised header, `define-name`/`define-param` pull the function
-;; and parameter names out of it via nested `(SSym ...)` patterns, and
-;; `define-body` pulls the single body expression. SCOPE OF THIS SLICE: exactly
-;; ONE parameter (the header's tail-tail must be SNil), so `(define (f x y) ...)`
-;; aborts cleanly rather than silently dropping a parameter.
+;; `(f x y z)` parenthesised header, `define-name` pulls the function name out of
+;; it via a nested `(SSym ...)` pattern, `define-params` returns the PARAMETER
+;; LIST `(x y z)` verbatim - the header's tail, an `Sexpr` cons-list of `SSym`s -
+;; and `define-body` pulls the single body expression. The parameter list is kept
+;; as an `Sexpr` (not flattened to a fixed number of Strings) so an arbitrary
+;; ARITY is supported: the call site zips it against the argument list. A zero-arg
+;; define `(define (f) body)` has an empty `(SNil)` parameter list, which is fine.
 
-;; define-header: the `(f x)` header list out of a define form `s`.
+;; define-header: the `(f x y z)` header list out of a define form `s`.
 ;; `s` is `(SCons (SSym "define") (SCons header (SCons body SNil)))`, so the
 ;; header is the head of `s`'s tail.
 (define (define-header [s : Sexpr]) : Sexpr
   (sexpr-head (sexpr-tail s)))
 
-;; define-name: the function name `f` from the header `(f x)` - the head SSym.
+;; define-name: the function name `f` from the header `(f x y z)` - the head SSym.
 (define (define-name [s : Sexpr]) : String
   (match (sexpr-head (define-header s))
     [(SSym name) name]
     [_ (begin (panic "eval: malformed define function name") "")]))
 
-;; define-param: the single parameter name `x` from the header `(f x)` - the
-;; head SSym of the header's tail. The header's tail-tail must be SNil: this slice
-;; supports exactly one parameter.
-(define (define-param [s : Sexpr]) : String
-  (let ([after : Sexpr (sexpr-tail (define-header s))])
-    (begin
-      (sexpr-expect-nil (sexpr-tail after))
-      (match (sexpr-head after)
-        [(SSym pname) pname]
-        [_ (begin (panic "eval: malformed define parameter name") "")]))))
+;; define-params: the PARAMETER LIST `(x y z)` from the header `(f x y z)` - the
+;; header's tail, returned verbatim as an `Sexpr` cons-list of `SSym`s. No arity
+;; restriction: zero or more parameters. `bind-args` later validates that each
+;; element is an `(SSym ...)` and that the count matches the call's argument
+;; count, so a malformed parameter (a non-symbol) is caught at the call.
+(define (define-params [s : Sexpr]) : Sexpr
+  (sexpr-tail (define-header s)))
 
 ;; define-body: the body expression of a define. `s`'s tail is
 ;; `(SCons header (SCons body SNil))`, so the body is the head of that tail's
@@ -268,22 +275,27 @@
 ;;                               the two argument sub-exprs, eval each in `env`
 ;;                               (threading `fenv` so calls nest), then dispatch on
 ;;                               the operator text; comparisons fold bool to 1/0.
-;;                             - OTHERWISE a USER-FUNCTION CALL `(f arg)`: look the
-;;                               function up in `fenv` to get its parameter name and
-;;                               body, eval the single argument in the CURRENT env,
-;;                               then eval the body in a FRESH env binding only the
-;;                               parameter - `(EBind param argval ENil)` - with the
-;;                               SAME `fenv`. The fresh env is lexical (params only,
-;;                               no caller locals leak in); the shared `fenv` is
-;;                               what lets the body call other functions AND ITSELF,
-;;                               so recursion (e.g. factorial) terminates via the
-;;                               base case rather than diverging.
+;;                             - OTHERWISE a USER-FUNCTION CALL `(f a b c)`: look
+;;                               the function up in `fenv` to get its PARAMETER
+;;                               LIST and body, then build a FRESH callee env by
+;;                               ZIPPING the parameter list against the argument
+;;                               expressions via `bind-args` - each argument is
+;;                               evaluated in the CALLER's current env (so caller
+;;                               variables resolve in the actual arguments) and
+;;                               bound to its parameter, `(EBind p1 v1 (EBind p2 v2
+;;                               ... ENil))`. The body is then evaluated in that
+;;                               callee env with the SAME `fenv`. The callee env is
+;;                               lexical (params only, no caller locals leak in);
+;;                               the shared `fenv` is what lets the body call other
+;;                               functions AND ITSELF, so recursion (e.g. `pow`)
+;;                               terminates via the base case rather than
+;;                               diverging. `bind-args` panics on an arity mismatch
+;;                               (param/arg counts differ).
 ;;
 ;; The recursive `eval-sexpr` calls thread BOTH envs so the result depends on the
 ;; whole nested shape, the bindings in scope, AND the program's functions.
-;; (Deferred: multi-binding `let`, multi-argument functions, lambda, closures,
-;; mutual recursion is supported - the whole `fenv` is shared - but only via
-;; single-arg calls.)
+;; (Deferred: multi-binding `let`, lambda, closures, variadic arity; mutual
+;; recursion IS supported - the whole `fenv` is shared.)
 (define (eval-sexpr [s : Sexpr] [env : Env] [fenv : FnEnv]) : i64
   (match s
     [(SInt n) n]
@@ -325,21 +337,52 @@
                        (let ([a : i64 (eval-sexpr arg1 env fenv)]
                              [b : i64 (eval-sexpr arg2 env fenv)])
                          (eval-builtin name a b)))))
-                 ;; OTHERWISE: a USER-FUNCTION CALL `(f arg)`. rest is
-                 ;; `(SCons arg SNil)`. Look up `f`'s parameter and body in the
-                 ;; shared `fenv`, evaluate the single argument in the CURRENT
-                 ;; env, then evaluate the body in a FRESH env binding only the
-                 ;; parameter, with the SAME `fenv` - so the body resolves
-                 ;; recursive and sibling calls. Single argument only.
-                 (let ([arg : Sexpr (sexpr-head rest)]
-                       [rest1 : Sexpr (sexpr-tail rest)])
-                   (begin
-                     (sexpr-expect-nil rest1)
-                     (let ([param : String (lookup-fn-param fenv name)]
-                           [body : Sexpr (lookup-fn-body fenv name)]
-                           [argval : i64 (eval-sexpr arg env fenv)])
-                       (eval-sexpr body (EBind param argval ENil) fenv)))))))]
+                 ;; OTHERWISE: a USER-FUNCTION CALL `(f a b c)`. `rest` is the
+                 ;; ARGUMENT-EXPRESSION list `(SCons a (SCons b (SCons c SNil)))`.
+                 ;; Look up `f`'s PARAMETER LIST and body in the shared `fenv`,
+                 ;; then build the callee env by zipping the parameter list against
+                 ;; the argument list with `bind-args` (each argument evaluated in
+                 ;; the CURRENT env, so caller variables resolve), and evaluate the
+                 ;; body in that callee env with the SAME `fenv` - so the body
+                 ;; resolves recursive and sibling calls. Arbitrary arity.
+                 (let ([params : Sexpr (lookup-fn-params fenv name)]
+                       [body : Sexpr (lookup-fn-body fenv name)])
+                   (eval-sexpr body (bind-args params rest env fenv) fenv)))))]
     [_ (begin (panic "eval: not an evaluable expression") 0)]))
+
+;; --------------------------------------------------------------------------
+;; bind-args: zip a parameter list against an argument-expression list (#27).
+;; --------------------------------------------------------------------------
+;; The heart of MULTI-ARGUMENT calls. Given a function's parameter list `params`
+;; (an `Sexpr` cons-list of `SSym`s, e.g. `(b e)`), the call's argument-expression
+;; list `args` (an `Sexpr` cons-list of sub-exprs, e.g. `(2 10)`), the CALLER's
+;; value env, and the program `fenv`, it walks BOTH lists in lock-step and builds
+;; the FRESH callee env `(EBind p1 v1 (EBind p2 v2 ... ENil))`: each argument
+;; sub-expr is evaluated in the CALLER's env (NOT the partially built callee env,
+;; so the arguments see caller-scope variables, not sibling parameters), and the
+;; resulting value is bound to the matching parameter name. Recursion bottoms out
+;; when BOTH lists reach `SNil` together (`ENil`); if exactly one runs out first
+;; the call's arity does not match the definition's, which is a malformed program
+;; - abort. A parameter that is not an `(SSym ...)` is a malformed define header.
+;; `bind-args` and `eval-sexpr` are MUTUALLY RECURSIVE: an argument may itself be
+;; a call (e.g. `(pow b (- e 1))`), so evaluating it re-enters `eval-sexpr`.
+(define (bind-args [params : Sexpr] [args : Sexpr] [caller : Env] [fenv : FnEnv]) : Env
+  (match params
+    ;; No more parameters: the argument list must also be exhausted.
+    [(SNil)
+     (match args
+       [(SNil) ENil]
+       [_ (begin (panic "eval: too many arguments in call") ENil)])]
+    ;; One more parameter `(SSym pname)`: there must be a matching argument.
+    [(SCons (SSym pname) ptail)
+     (match args
+       [(SCons arg atail)
+        (EBind pname (eval-sexpr arg caller fenv)
+               (bind-args ptail atail caller fenv))]
+       [(SNil) (begin (panic "eval: too few arguments in call") ENil)]
+       [(SInt _) (begin (panic "eval: malformed argument list") ENil)]
+       [(SSym _) (begin (panic "eval: malformed argument list") ENil)])]
+    [_ (begin (panic "eval: malformed parameter list") ENil)]))
 
 ;; is-builtin-op: is `name` one of the fixed binary builtins? This is the dispatch
 ;; key that separates a builtin call from a USER-FUNCTION call in `eval-sexpr`:
@@ -396,8 +439,9 @@
 ;;   - if after reading a form the cursor is at `TEnd`, that was the LAST form -
 ;;     it is the trailing EXPRESSION, evaluated in the empty value env with the
 ;;     accumulated `fenv` and returned.
-;;   - otherwise the form must be a `(define (f x) body)`: register it as a fresh
-;;     `(FBind name param body fenv)` frame and recurse to read the rest, threading
+;;   - otherwise the form must be a `(define (f x y z) body)`: register it as a
+;;     fresh `(FBind name params body fenv)` frame (the param LIST kept verbatim)
+;;     and recurse to read the rest, threading
 ;;     the EXTENDED `fenv` so every subsequent form (and the final expression) sees
 ;;     this and all earlier definitions - which is what makes recursion resolve.
 ;; A non-define form that is NOT the last form is a malformed program (only the
@@ -410,7 +454,7 @@
         ;; A leading form must be a definition; fold it into the function env.
         (if (is-define form)
             (run-forms toks cur
-              (FBind (define-name form) (define-param form)
+              (FBind (define-name form) (define-params form)
                      (define-body form) fenv))
             (begin
               (panic "eval: a non-final top-level form must be a (define ...)")
@@ -429,19 +473,28 @@
 
 ;; --------------------------------------------------------------------------
 ;; main: the whole front end composed - lex, read MANY forms, interpret with
-;; user functions and recursion.
+;; MULTI-ARGUMENT user functions and recursion.
 ;; --------------------------------------------------------------------------
-;; `(run-program "(define (fact n) (if (< n 1) 1 (* n (fact (- n 1))))) (fact 5)")`:
-;;   - the program is TWO top-level forms: one recursive `define` of `fact`, then
-;;     the trailing call `(fact 5)`.
-;;   - the program reader folds the `define` into `(FBind "fact" "n" body FNil)`,
-;;     then evaluates `(fact 5)` against that function env.
-;;   - the body recurses: `fact(5) = 5*fact(4) = 5*4*fact(3) = ... = 5*4*3*2*1`,
-;;     bottoming out at the `(< n 1)` base case which returns 1.
-;;   - 5! = 120, used as the process exit code.
-;; This single program proves the evaluator is now a real language: top-level
-;; function definitions, single-argument calls, and RECURSION resolving through a
-;; shared function environment, all composed atop the reused lexer and reader.
-;; (Deferred: multi-argument functions, lambda, closures.)
+;; `(run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (pow 2 7)")`:
+;;   - the program is TWO top-level forms: one recursive TWO-parameter `define` of
+;;     `pow`, then the trailing call `(pow 2 7)`.
+;;   - the program reader folds the `define` into
+;;     `(FBind "pow" (b e) body FNil)` - the param LIST `(b e)` kept verbatim -
+;;     then evaluates `(pow 2 7)` against that function env.
+;;   - the call zips the params `(b e)` against the args `(2 7)` via `bind-args`,
+;;     building the callee env `(EBind "b" 2 (EBind "e" 7 ENil))`. The body then
+;;     recurses on the SECOND argument: `pow(2,7) = 2*pow(2,6) = ... = 2^7`,
+;;     bottoming out at the `(< e 1)` base case which returns 1.
+;;   - 2^7 = 128, used as the process exit code. (The exponent is chosen so the
+;;     result fits a byte: a process exit code is taken mod 256, so e.g. 2^10 =
+;;     1024 would wrap to an unobservable 0. 128 is a distinct, observable
+;;     witness that still exercises seven levels of two-argument recursion.)
+;; This single program proves the evaluator now supports MULTI-ARGUMENT user
+;; functions: the parameter list `(b e)` is zipped against the argument list, both
+;; parameters are in scope in the body, and RECURSION resolves through the shared
+;; function environment, all composed atop the reused lexer and reader. (An
+;; alternative three-arg witness, `(define (add3 a b c) (+ a (+ b c))) (add3 10 20
+;; 30)` => 60, exercises the zipping without recursion - both were verified on
+;; Linux.) (Deferred: lambda, closures, variadic arity.)
 (define (main) : i64
-  (run-program "(define (fact n) (if (< n 1) 1 (* n (fact (- n 1))))) (fact 5)"))
+  (run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (pow 2 7)"))

@@ -10,8 +10,8 @@ struct Case {
     stdout: &'static str,
     /// Additional source files that the entry program imports; copied into the
     /// work dir preserving their relative path so `(import ...)` resolves.
-    /// Most deps are relative to the entry source directory; `sym_i64_env_core.tl`
-    /// is sourced from the canonical selfhost module.
+    /// Most deps are relative to the entry source directory; selected fixtures
+    /// are sourced from their canonical `selfhost/` or `stdlib/` modules.
     deps: &'static [&'static str],
 }
 
@@ -737,28 +737,13 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             name: "stdlib_string",
             exit_code: 42,
             stdout: "hello|\nhello|\nhello|\nfound\n|empty-left\n|empty-right\n|all-space\ncontains\nmissing\nhippo\nabx\n",
-            deps: &["string.tl"],
+            deps: &["stdlib/string.tl"],
         },
     ];
 
     for case in cases {
         run_case_explicit_build(&case);
     }
-}
-
-#[test]
-fn stdlib_string_integration_copy_matches_source() {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let stdlib_source = fs::read_to_string(manifest_dir.join("stdlib").join("string.tl"))
-        .expect("read stdlib/string.tl");
-    let integration_copy = fs::read_to_string(
-        manifest_dir
-            .join("tests")
-            .join("integration")
-            .join("string.tl"),
-    )
-    .expect("read integration string.tl");
-    assert_eq!(integration_copy, stdlib_source);
 }
 
 #[test]
@@ -2393,6 +2378,9 @@ fn source_path_for_case(manifest_dir: &PathBuf, name: &str) -> PathBuf {
 fn dep_source_path(manifest_dir: &Path, source_dir: &Path, dep: &str) -> PathBuf {
     if dep == "sym_i64_env_core.tl" {
         return manifest_dir.join("selfhost").join("sym_i64_env.tl");
+    }
+    if dep == "stdlib/string.tl" {
+        return manifest_dir.join("stdlib").join("string.tl");
     }
     source_dir.join(dep)
 }

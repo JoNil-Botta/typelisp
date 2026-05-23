@@ -10,6 +10,7 @@ const ABORT_RUNTIME_SYMBOL: &str = ".L_tl_abort";
 const ARG_COUNT_RUNTIME_SYMBOL: &str = ".L_tl_arg_count";
 const ARG_RUNTIME_SYMBOL: &str = ".L_tl_arg";
 const READ_FILE_RUNTIME_SYMBOL: &str = ".L_tl_read_file";
+const WRITE_FILE_RUNTIME_SYMBOL: &str = ".L_tl_write_file";
 
 /// Lowers a typed AST program into IR.
 pub fn lower_program(prog: &ast::Program) -> Program {
@@ -1045,6 +1046,33 @@ impl FnLowerer {
             });
             self.record_local(dst, Type::String);
             return Value::Var(dst);
+        }
+
+        // `(write-file path contents)` writes a whole String to a file. The
+        // runtime receives both Strings as `{ptr,len}` field pairs and handles
+        // path NUL-termination plus panic-on-error Linux file syscalls.
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "write-file"
+            && args.len() == 2
+            && !self.vars.contains_key(name)
+            && !self.function_types.contains_key(name)
+        {
+            let path = self.lower_expr(&args[0]);
+            let contents = self.lower_expr(&args[1]);
+            let (path_ptr, path_len) = self.load_string_fields(&path);
+            let (contents_ptr, contents_len) = self.load_string_fields(&contents);
+            self.builder.emit(Instruction::Call {
+                dst: None,
+                func: WRITE_FILE_RUNTIME_SYMBOL.to_string(),
+                args: vec![
+                    Value::Var(path_ptr),
+                    Value::Var(path_len),
+                    Value::Var(contents_ptr),
+                    Value::Var(contents_len),
+                ],
+                ty: Type::Unit,
+            });
+            return Value::ConstUnit;
         }
 
         // `(substring s start len)` / `(string-slice s start len)` extracts the
@@ -3289,6 +3317,80 @@ mod tests {
                 |i| matches!(i, Instruction::Call { func, .. } if func == READ_FILE_RUNTIME_SYMBOL)
             ),
             "user-defined read-file must not lower to the builtin runtime"
+        );
+    }
+
+    #[test]
+    fn test_lower_write_file_extracts_fields_and_calls_runtime() {
+        let prog = parse(r#"(define (f) : unit (write-file "out.txt" "hello"))"#).unwrap();
+        let ir = lower_program(&prog);
+        let instrs: Vec<&Instruction> = ir.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .collect();
+
+        let call = instrs.iter().find_map(|i| match i {
+            Instruction::Call {
+                func,
+                args,
+                ty,
+                dst,
+                ..
+            } if func == WRITE_FILE_RUNTIME_SYMBOL => Some((args, ty, dst)),
+            _ => None,
+        });
+        let (args, ty, dst) = call.expect("expected a Call to write-file runtime");
+        assert_eq!(
+            args.len(),
+            4,
+            "write-file runtime takes path ptr/len and contents ptr/len"
+        );
+        assert_eq!(*ty, Type::Unit, "write-file yields unit");
+        assert!(dst.is_none(), "write-file has no destination");
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Load { ty: Type::U64, .. })),
+            "expected Loads of string data pointers"
+        );
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Load { ty: Type::I64, .. })),
+            "expected Loads of string byte lengths"
+        );
+    }
+
+    #[test]
+    fn test_lower_user_defined_write_file_shadows_builtin() {
+        let prog = parse(
+            r#"
+            (define (write-file [n : i64]) : i64 n)
+            (define (main) : i64 (write-file 7))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let main = ir
+            .functions
+            .iter()
+            .position(|func| func.name == "main")
+            .unwrap();
+
+        assert!(
+            ir.functions[main]
+                .blocks
+                .iter()
+                .flat_map(|b| b.instructions.iter())
+                .any(|i| matches!(i, Instruction::Call { func, .. } if func == "write-file")),
+            "expected ordinary call to user-defined write-file"
+        );
+        assert!(
+            !ir.functions[main].blocks.iter().flat_map(|b| b.instructions.iter()).any(
+                |i| matches!(i, Instruction::Call { func, .. } if func == WRITE_FILE_RUNTIME_SYMBOL)
+            ),
+            "user-defined write-file must not lower to the builtin runtime"
         );
     }
 

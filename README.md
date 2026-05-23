@@ -110,7 +110,8 @@ backend lowering for lambda literals and captured closures is incomplete today.
 ### Builtins
 
 `print`, `print-bool`, `print-float`, `print-char`, `print-newline`,
-`print-string`/`print-str`; `make-array`, `array-ref`, `array-set!`,
+`print-string`/`print-str`; `arg-count`, `arg`, `read-file`, `write-file`;
+`make-array`, `array-ref`, `array-set!`,
 `array-length`/`length`; strings: `string-length`/`length`,
 `string-ref`/`char-at`, `string-eq`/`string=?`, `string-append`/`string-concat`,
 `substring`/`string-slice`, `string->int`, `int->string`; and `panic`/`error`.

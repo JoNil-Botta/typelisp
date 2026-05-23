@@ -120,6 +120,13 @@ impl TypeChecker {
             "read-file".into(),
             Type::Func(vec![Type::String], Box::new(Type::String)),
         );
+        // `(write-file path contents)` -> write all contents bytes to path.
+        // V1 mirrors `read-file`: Linux/compiler-driver oriented and
+        // panic-on-error until recoverable file errors are designed.
+        globals.insert(
+            "write-file".into(),
+            Type::Func(vec![Type::String, Type::String], Box::new(Type::Unit)),
+        );
         // `(substring s start len)` / `(string-slice s start len)` ->
         // `(-> String i64 i64 String)` — a fresh String holding the `len` bytes
         // of `s` beginning at byte offset `start` (a half-open `[start,
@@ -2519,6 +2526,45 @@ mod tests {
         let src = r#"
             (define (read-file [n : i64]) : i64 n)
             (define (main) : i64 (read-file 7))
+        "#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_write_file_yields_unit() {
+        let src = r#"(define (f) : unit (write-file "out.s" "hello"))"#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_write_file_requires_string_path() {
+        let src = r#"(define (f) : unit (write-file 42 "hello"))"#;
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_write_file_requires_string_contents() {
+        let src = r#"(define (f) : unit (write-file "out.s" 42))"#;
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_write_file_arity_checked() {
+        let src = r#"(define (f) : unit (write-file "out.s"))"#;
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_write_file_result_is_not_i64() {
+        let src = r#"(define (f) : i64 (write-file "out.s" "hello"))"#;
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_write_file_builtin_can_be_shadowed() {
+        let src = r#"
+            (define (write-file [n : i64]) : i64 n)
+            (define (main) : i64 (write-file 7))
         "#;
         assert!(check(src).is_ok());
     }

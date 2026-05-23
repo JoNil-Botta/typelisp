@@ -1961,6 +1961,86 @@ fn read_file_missing_path_aborts() {
     );
 }
 
+#[test]
+fn write_file_builtin_writes_fixture_contents() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let work_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("write-file");
+    fs::create_dir_all(&work_dir).expect("create write-file test work dir");
+    let output_path = work_dir.join("output.txt");
+    let output_literal = tl_string_literal(&output_path.to_string_lossy());
+    let source = format!(
+        r#"(define (main) : unit
+  (write-file "{}" "alpha\nbeta\n"))"#,
+        output_literal
+    );
+    let work_path = work_dir.join("write_file.tl");
+    fs::write(&work_path, source).expect("write write-file TypeLisp fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&work_path)
+        .output()
+        .expect("run typelisp write-file fixture");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "write-file fixture exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(stdout, "", "write-file fixture wrote stdout");
+    assert_eq!(stderr, "", "write-file fixture wrote stderr");
+    let contents = fs::read_to_string(&output_path).expect("read write-file output");
+    assert_eq!(contents, "alpha\nbeta\n", "write-file contents differed");
+}
+
+#[test]
+fn write_file_invalid_path_aborts() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let work_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("write-file-invalid");
+    fs::create_dir_all(&work_dir).expect("create invalid write-file test work dir");
+    let output_path = work_dir.join("missing-parent").join("output.txt");
+    let output_literal = tl_string_literal(&output_path.to_string_lossy());
+    let source = format!(
+        r#"(define (main) : unit
+  (write-file "{}" "alpha"))"#,
+        output_literal
+    );
+    let work_path = work_dir.join("write_file_invalid.tl");
+    fs::write(&work_path, source).expect("write invalid write-file TypeLisp fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&work_path)
+        .output()
+        .expect("run typelisp invalid write-file fixture");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(134),
+        "invalid write-file fixture exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(stdout, "", "invalid write-file fixture wrote stdout");
+    assert!(
+        stderr.contains("tl: write-file failed"),
+        "invalid write-file stderr differed:\n{}",
+        stderr
+    );
+}
+
 fn source_path_for_case(manifest_dir: &PathBuf, name: &str) -> PathBuf {
     let integration_path = manifest_dir
         .join("tests")

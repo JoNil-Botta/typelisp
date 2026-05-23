@@ -6999,11 +6999,11 @@ mod tests {
     #[test]
     fn test_compile_fixed_array_literal_ref_and_set() {
         let asm = compile_ok(
-            "(define (main) : i64 \
+            "(define (f [i : i64]) : i64 \
                (let ([a : (Array i64 3) (array 2 2 3)]) \
                  (begin \
-                   (array-set! a 1 40) \
-                   (+ (array-ref a 0) (array-ref a 1)))))",
+                   (array-set! a i 40) \
+                   (+ (array-ref a 0) (array-ref a i)))))",
         );
 
         assert!(asm.contains("setb %al"), "asm:\n{}", asm);

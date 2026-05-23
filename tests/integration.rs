@@ -2403,3 +2403,48 @@ fn run_case(case: &Case) {
         case.name, stderr
     );
 }
+
+// refs #205: calling the raw allocator with an impossible-size request
+// (`u64` -1, i.e. 0xFFFFFFFFFFFFFFFF) triggers the allocation-failure trap
+// and terminates with the abort status 134 rather than crashing or returning
+// an invalid pointer.
+#[test]
+fn tl_alloc_huge_request_traps_abort_134() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let work_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("tl_alloc_trap");
+    fs::create_dir_all(&work_dir).expect("create tl_alloc trap test work dir");
+
+    let source = r#"
+(extern tl_alloc : (-> u64 u64))
+
+;; Cast -1 to u64 to get the max value (0xFFFFFFFFFFFFFFFF)
+(define (main) : u64
+  (tl_alloc (cast -1 : u64)))
+"#;
+    let work_path = work_dir.join("tl_alloc_trap.tl");
+    fs::write(&work_path, source).expect("write tl_alloc trap source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&work_path)
+        .output()
+        .expect("run tl_alloc trap test");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(134),
+        "tl_alloc with huge size should abort 134, not succeed\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(stdout, "", "tl_alloc trap should not write stdout");
+    assert_eq!(
+        stderr, "tl: allocation failed\n",
+        "tl_alloc trap should write the allocation diagnostic"
+    );
+}

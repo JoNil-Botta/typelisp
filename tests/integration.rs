@@ -321,6 +321,17 @@ fn type_lisp_programs_compile_link_and_run() {
             stdout: "",
             deps: &[],
         },
+        // refs #42: Immutable scoped String -> i64 symbol table. A focused
+        // functional API with head-first lookup, shadowing, and key equality
+        // via `string-eq`. Exercises `defenum`, recursive `match`, `substring`,
+        // and `string-append` as key builders. Stdout is the PASS lines from
+        // each assertion; exit code is 0.
+        Case {
+            name: "sym_i64_env",
+            exit_code: 0,
+            stdout: "PASS: empty-miss\nPASS: single-hit-contains\nPASS: single-hit-value\nPASS: single-miss\nPASS: shadow-newest\nPASS: outer-preserved-a\nPASS: outer-no-b\nPASS: inner-sees-a\nPASS: inner-sees-b\nPASS: substring-key-hit\nPASS: append-key-hit\nPASS: chain-x\nPASS: chain-y\nPASS: chain-z\nAll sym-i64-env tests passed.\n",
+            deps: &["sym_i64_env_core.tl"],
+        },
     ];
 
     for case in cases {
@@ -581,6 +592,14 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             exit_code: 7,
             stdout: "",
             deps: &[],
+        },
+        // refs #42: Immutable scoped String -> i64 symbol table through the
+        // explicit compile -> as -> ld -> run pipeline.
+        Case {
+            name: "sym_i64_env",
+            exit_code: 0,
+            stdout: "PASS: empty-miss\nPASS: single-hit-contains\nPASS: single-hit-value\nPASS: single-miss\nPASS: shadow-newest\nPASS: outer-preserved-a\nPASS: outer-no-b\nPASS: inner-sees-a\nPASS: inner-sees-b\nPASS: substring-key-hit\nPASS: append-key-hit\nPASS: chain-x\nPASS: chain-y\nPASS: chain-z\nAll sym-i64-env tests passed.\n",
+            deps: &["sym_i64_env_core.tl"],
         },
     ];
 

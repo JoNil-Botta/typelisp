@@ -2218,6 +2218,85 @@ fn tl_compile_smoke_writes_function_set_body_and_output_exits_42() {
 }
 
 #[test]
+fn tl_compile_smoke_writes_while_loop_and_output_exits_42() {
+    let (code, stdout, stderr, _asm) = run_compile_smoke_generated_program(
+        "tl_compile_smoke_while",
+        "(let ((x 0)) (begin (while (< x 42) (set! x (+ x 1))) x))",
+        &[
+            ".Lhead_",
+            "    cmpq $0, %rax\n",
+            "    je .Lend_",
+            "    jmp .Lhead_",
+            ".Lend_",
+        ],
+    );
+
+    assert_eq!(
+        code,
+        Some(42),
+        "tl_compile_smoke while output program exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(stdout, "", "tl_compile_smoke while output stdout");
+    assert_eq!(stderr, "", "tl_compile_smoke while output stderr");
+}
+
+#[test]
+fn tl_compile_smoke_rejects_malformed_while_with_specific_diagnostic() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let selfhost_dir = manifest_dir.join("selfhost");
+    let source_path = selfhost_dir.join("compile_smoke.tl");
+    let work_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("tl_compile_smoke_malformed_while");
+    fs::create_dir_all(&work_dir).expect("create tl_compile_smoke malformed while test work dir");
+
+    let work_path = work_dir.join("compile_smoke.tl");
+    fs::copy(&source_path, &work_path).expect("copy compile_smoke.tl to work dir");
+
+    for dep in [
+        "parse_core.tl",
+        "emit_core.tl",
+        "sym_i64_env.tl",
+        "ast_types.tl",
+        "read.tl",
+        "lex.tl",
+        "token.tl",
+    ] {
+        fs::copy(selfhost_dir.join(dep), work_dir.join(dep))
+            .unwrap_or_else(|err| panic!("copy imported selfhost module {dep} to work dir: {err}"));
+    }
+
+    let input_path = work_dir.join("input.tl");
+    let asm_path = work_dir.join("generated.s");
+    fs::write(&input_path, "(while)").expect("write malformed while input");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&work_path)
+        .arg(&input_path)
+        .arg(&asm_path)
+        .output()
+        .expect("run tl_compile_smoke malformed while");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(134),
+        "malformed while should abort through panic\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(stdout, "", "malformed while driver wrote stdout");
+    assert_eq!(
+        stderr, "parse: malformed while",
+        "malformed while diagnostic"
+    );
+}
+
+#[test]
 fn tl_compile_smoke_rejects_empty_begin_with_specific_diagnostic() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let selfhost_dir = manifest_dir.join("selfhost");

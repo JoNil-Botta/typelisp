@@ -68,7 +68,8 @@
     [(EStr s) (str-list-append-one acc s)]
     [(EPrint e) (collect-strings e acc)]
     [(ESet _ value) (collect-strings value acc)]
-    [(EBegin body) (expr-list-collect-strings body acc)]))
+    [(EBegin body) (expr-list-collect-strings body acc)]
+    [(EWhile c b) (collect-strings b (collect-strings c acc))]))
 
 (define (collect-item-strings [item : Item] [acc : StrList]) : StrList
   (match item
@@ -177,7 +178,8 @@
     [(EStr _) 0]
     [(EPrint e) (max-let-depth e)]
     [(ESet _ value) (max-let-depth value)]
-    [(EBegin body) (expr-list-max-let-depth body)]))
+    [(EBegin body) (expr-list-max-let-depth body)]
+    [(EWhile c b) (max-i64 (max-let-depth c) (max-let-depth b))]))
 
 (define (frame-size [e : Expr]) : i64
   (round-up-16 (* 8 (max-let-depth e))))
@@ -279,6 +281,24 @@
                           (string-append (emit-expr-in strings env depth lc e)
                             (string-append lend ":\n")))))))))))))))
 
+(define (emit-while [strings : StrList] [env : SymI64Env] [depth : i64] [lc : (Array i64)] [c : Expr] [b : Expr]) : String
+  (let ([lhead : String (fresh-label lc ".Lhead_")]
+        [lend : String (fresh-label lc ".Lend_")])
+    (string-append lhead
+      (string-append ":\n"
+        (string-append (emit-expr-in strings env depth lc c)
+          (string-append "    cmpq $0, %rax\n"
+            (string-append "    je "
+              (string-append lend
+                (string-append "\n"
+                  (string-append (emit-expr-in strings env depth lc b)
+                    (string-append "    jmp "
+                      (string-append lhead
+                        (string-append "\n"
+                          (string-append lend
+                            (string-append ":\n"
+                              "    movq $0, %rax\n")))))))))))))))
+
 (define (emit-call-arg-pushes [strings : StrList] [env : SymI64Env] [depth : i64] [lc : (Array i64)] [args : ExprList]) : String
   (match args
     [(ELNil) ""]
@@ -347,7 +367,8 @@
     [(EStr s) (emit-str strings s)]
     [(EPrint arg) (emit-print strings arg)]
     [(ESet name value) (emit-set strings env depth lc name value)]
-    [(EBegin body) (emit-begin strings env depth lc body)]))
+    [(EBegin body) (emit-begin strings env depth lc body)]
+    [(EWhile c b) (emit-while strings env depth lc c b)]))
 
 (define (function-frame-size [params : StrList] [body : Expr]) : i64
   (round-up-16 (* 8 (+ (str-list-count params) (max-let-depth body)))))

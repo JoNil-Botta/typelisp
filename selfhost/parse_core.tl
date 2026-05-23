@@ -97,6 +97,13 @@
          (panic "parse: malformed begin")
          (EInt 0))]))
 
+(define (parse-while [rest : Sexpr]) : Expr
+  (match rest
+    [(SCons c (SCons b (SNil))) (EWhile (parse c) (parse b))]
+    [_ (begin
+         (panic "parse: malformed while")
+         (EInt 0))]))
+
 (define (parse-args [s : Sexpr]) : ExprList
   (match s
     [(SNil) ELNil]
@@ -121,9 +128,11 @@
                      (parse-set rest)
                      (if (string-eq op "begin")
                          (parse-begin rest)
-                         (if (is-binary-op op)
-                             (parse-binary (parse-op op) rest)
-                             (ECall op (parse-args rest))))))))]
+                         (if (string-eq op "while")
+                             (parse-while rest)
+                             (if (is-binary-op op)
+                                 (parse-binary (parse-op op) rest)
+                                 (ECall op (parse-args rest)))))))))]
     [_ (begin
          (panic "parse: malformed expression")
          (EInt 0))]))

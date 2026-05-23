@@ -65,6 +65,11 @@
     [(SCons a d) (ELCons (parse-expr a) (parse-args d))]
     [_ (begin (panic "ast: malformed argument list") ELNil)]))
 
+(define (parse-while [rest : Sexpr]) : Expr
+  (match rest
+    [(SCons c (SCons b (SNil))) (EWhile (parse-expr c) (parse-expr b))]
+    [_ (begin (panic "ast: malformed while") (EInt 0))]))
+
 (define (parse-expr [s : Sexpr]) : Expr
   (match s
     [(SInt n) (EInt n)]
@@ -99,7 +104,9 @@
                                                          (parse-set rest)
                                                          (if (string-eq op "begin")
                                                              (parse-begin rest)
-                                                             (ECall op (parse-args rest))))))))))))))))]
+                                                             (if (string-eq op "while")
+                                                                 (parse-while rest)
+                                                                 (ECall op (parse-args rest)))))))))))))))))]
     [_ (begin (panic "ast: malformed expression") (EInt 0))]))
 
 (define (parse-params [s : Sexpr]) : StrList
@@ -160,7 +167,8 @@
     [(EStr s) (string-length s)]
     [(EPrint e) (+ 100 (expr-score e))]
     [(ESet name value) (+ 300 (+ (string-length name) (expr-score value)))]
-    [(EBegin body) (+ 200 (expr-list-score body))]))
+    [(EBegin body) (+ 200 (expr-list-score body))]
+    [(EWhile c b) (+ 400 (+ (expr-score c) (expr-score b)))]))
 
 (define (item-score [i : Item]) : i64
   (match i

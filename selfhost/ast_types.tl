@@ -21,7 +21,8 @@
   (EStr String)
   (EPrint Expr)
   (ESet String Expr)
-  (EBegin ExprList))
+  (EBegin ExprList)
+  (EWhile Expr Expr))
 
 (defenum ExprList
   (ELNil)

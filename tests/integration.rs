@@ -252,10 +252,10 @@ fn type_lisp_programs_compile_link_and_run() {
         // Self-hosting (#27): the s-expression EVALUATOR for TypeLisp's own
         // syntax, now a REAL LANGUAGE - a tiny tree-walking interpreter with
         // VARIABLES, MULTI-BINDING lexical `let` (sequential `let*` scoping),
-        // short-circuit `if`, comparison operators,
-        // USER-DEFINED FUNCTIONS plus RECURSION and MULTI-ARGUMENT calls via
+        // short-circuit `if`, comparison operators, a `begin` SEQUENCING special
+        // form, USER-DEFINED FUNCTIONS plus RECURSION and MULTI-ARGUMENT calls via
         // top-level `(define (f x y z) body)` forms, a tagged VALUE domain
-        // `(defenum Value (VInt i64) (VStr String))`, AND now STRING OPERATIONS
+        // `(defenum Value (VInt i64) (VStr String))`, AND STRING OPERATIONS
         // (`substring` / `string-length` / `string-eq` / `int->string` /
         // `string->int` / `string-append`). `tl_eval.tl` walks the
         // recursive cons-cell `Sexpr` AST
@@ -263,7 +263,9 @@ fn type_lisp_programs_compile_link_and_run() {
         // function `FnEnv`: `(SSym name)` resolves via recursive assoc-list
         // `lookup`, `let` folds its binding LIST into the env (each init evaluated
         // in the env built so far - `let*` - then the body evaluated in the
-        // extended env), integer-requiring contexts funnel through `as-int` and
+        // extended env), `begin` walks its sub-expression spine with `eval-seq`
+        // (each form evaluated in order for its side effects, the LAST one's value
+        // returned), integer-requiring contexts funnel through `as-int` and
         // string-requiring contexts through `as-str`, a string-op or builtin op
         // dispatches on its head-symbol text (unwrapping its operands and
         // re-wrapping the host builtin's result as a `Value`), and any other head
@@ -273,33 +275,25 @@ fn type_lisp_programs_compile_link_and_run() {
         // SAME `FnEnv`, so a body can call itself with any arity). The `print`
         // special form prints BOTH value shapes: a `VInt` via the host `print`
         // (integer + newline), a `VStr` via the host `print-string` (raw bytes, NO
-        // newline). `main` runs `run-program` over the THREE-form program
-        // `(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (define (seq a b) b)
+        // newline). `main` runs `run-program` over the TWO-form program
+        // `(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1)))))
         //  (let ((s "hello world") (h (substring s 0 5)) (w (substring s 6 5))
         //        (n (string-length h)) (g (string-append h (string-append " " w)))
         //        (t (string-append g (int->string (pow 2 n)))))
-        //    (seq (print t) (print (+ (string->int (substring t 11 2)) (string-eq g s)))))`:
-        // the recursive TWO-parameter `pow` and a two-parameter `seq` (whose body
-        // is its SECOND argument - a left-to-right sequencer, the interpreted
-        // language having no `begin`) are folded into the `FnEnv`, then the trailing
-        // MULTI-BINDING `let` binds `s` to the string VALUE `"hello world"`, then
-        // `h` to `(substring s 0 5)` = `"hello"` (its init SEES the earlier `s` -
-        // sequential `let*` scoping), `w` to `(substring s 6 5)` = `"world"`, then
-        // `n` to `(string-length h)` = `5`, then `g` to `(string-append h
-        // (string-append " " w))` - the NEW string-append op REBUILDS `"hello world"`
-        // from the sliced parts into one fresh heap String - then `t` to
-        // `(string-append g (int->string (pow 2 n)))` appends `(int->string 32)` =
-        // `"32"` onto `g`, giving `"hello world32"`. The body `(seq (print t)
-        // (print (+ (string->int (substring t 11 2)) (string-eq g s))))` evaluates
-        // left-to-right: FIRST `(print t)` prints the string bytes `hello world32`
-        // via the `VStr` arm (host `print-string`, no newline), SECOND
-        // `(print (+ (string->int (substring t 11 2)) (string-eq g s)))` slices the
-        // trailing `"32"` back out, parses it with `string->int` to `32`, adds
-        // `(string-eq g s)` = 1 (exactly 1 because `string-append` rebuilt `s`
-        // byte-for-byte), giving `(+ 32 1)` = `33\n` via the `VInt` arm; `seq`
-        // returns its second arg `(VInt 33)`. So stdout is `hello world3233\n`;
-        // printing to stdout escapes the old mod-256 exit-code ceiling, so the exit
-        // code is the wrapped `33 & 0xff = 33`. All three imported `main`-less
+        //    (begin
+        //      (print t)
+        //      (print (+ (string->int (substring t 11 2)) (string-eq g s)))
+        //      (+ (string->int (substring t 11 2)) (string-eq g s))))`:
+        // the recursive TWO-parameter `pow` is folded into the `FnEnv`, then the
+        // trailing MULTI-BINDING `let` rebuilds `"hello world"` from substring
+        // slices via `string-append`, appends `(int->string (pow 2 n))` to form
+        // `"hello world32"`, and uses `begin` in the body. The first `begin` form
+        // prints that string with no newline; the second slices `"32"` back out,
+        // parses it, adds `(string-eq g s)` = 1, and prints `33\n`; the third
+        // evaluates the same sum but does NOT print it, so the `begin` denotes
+        // `(VInt 33)`. Stdout is `hello world3233\n`, proving `begin` sequences
+        // side effects while returning only the last value, and the exit code is
+        // `33`. All three imported `main`-less
         // modules are copied alongside so the `(import)` chain resolves.
         Case {
             name: "tl_eval",
@@ -536,33 +530,23 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         },
         // Self-hosting (#27): the s-expression evaluator with variables,
         // MULTI-BINDING `let` (sequential `let*`),
-        // `if`, comparisons, user-defined functions + recursion + MULTI-ARGUMENT
-        // calls, a tagged VALUE domain `(VInt/VStr)` whose BOTH shapes print
+        // `if`, comparisons, a `begin` SEQUENCING special form, user-defined
+        // functions + recursion + MULTI-ARGUMENT calls, a tagged VALUE domain
+        // `(VInt/VStr)` whose BOTH shapes print
         // (`VInt` via host `print`, `VStr` via host `print-string`), AND STRING
         // OPERATIONS (`substring` / `string-length` / `string-eq` / `int->string` /
         // `string->int` / `string-append`), also
         // exercised through the explicit compile -> as -> ld -> run pipeline.
-        // Runs `run-program` over the three-form program
-        // `(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (define (seq a b) b)
-        //  (let ((s "hello world") (h (substring s 0 5)) (w (substring s 6 5))
-        //        (n (string-length h)) (g (string-append h (string-append " " w)))
-        //        (t (string-append g (int->string (pow 2 n)))))
-        //    (seq (print t) (print (+ (string->int (substring t 11 2)) (string-eq g s)))))`:
-        // `pow` and the sequencer `seq` are folded into the `FnEnv`, then the
-        // multi-binding `let` binds `s`->"hello world", `h`->(substring s 0 5) =
-        // "hello" (the init sees the earlier `s` - sequential `let*` scoping),
-        // `w`->(substring s 6 5) = "world", `n`->(string-length h) = 5, then
-        // `g`->(string-append h (string-append " " w)) - the NEW string-append op
-        // REBUILDS "hello world" from the sliced parts - then `t`->(string-append g
-        // (int->string (pow 2 n))) appends `(int->string 32)` = "32" onto `g`,
-        // giving "hello world32"; the body `(seq (print t) (print ...))` prints
-        // `hello world32` (the `VStr` arm, host `print-string`, no newline) then
-        // `(+ (string->int (substring t 11 2)) (string-eq g s))` slices the trailing
-        // "32" back out, parses it (`string->int` = 32), adds `(string-eq g s)` = 1
-        // (the rebuild is byte-correct), = `(+ 32 1)` = `33\n` (the `VInt` arm) and
-        // `seq` returns `(VInt 33)` - so stdout is `hello world3233\n` and the
-        // exit code is the wrapped `33 & 0xff = 33`. The reader (and transitively
-        // the lexer + token
+        // Runs `run-program` over the two-form program
+        // `(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1)))))
+        //  (let ((s "hello world") ... (t (string-append g (int->string (pow 2 n)))))
+        //    (begin (print t) (print (+ ...)) (+ ...)))`:
+        // `pow` is folded into the `FnEnv`, then the trailing `let` exercises the
+        // interpreted string toolkit (`substring`, `string-length`, `string-append`,
+        // `int->string`, `string->int`, `string-eq`) and uses `begin` to sequence
+        // side-effecting prints before returning the final unprinted sum. Stdout is
+        // `hello world3233\n` and the `begin` denotes `(VInt 33)`, so the exit code
+        // is `33`. The reader (and transitively the lexer + token
         // model) is reused via the `main`-less `tl_read.tl` import - including its
         // lower-level `read-form` cursor entry, which the program reader drives to
         // read all top-level forms; all three imported modules are copied

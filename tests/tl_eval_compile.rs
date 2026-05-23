@@ -5,7 +5,9 @@
 //! `tl_eval.tl` is the third piece of TypeLisp's *real* self-hosting compiler
 //! front end (#27): a tiny tree-walking interpreter, now with VARIABLES, lexical
 //! `let` (now MULTI-BINDING, with sequential `let*` scoping), short-circuit `if`,
-//! comparison operators, USER-DEFINED FUNCTIONS plus
+//! comparison operators, a `begin` SEQUENCING special form (evaluate a sequence
+//! of forms in order, return the last value - the natural sequencing primitive,
+//! retiring the old `seq` two-arg-function workaround), USER-DEFINED FUNCTIONS plus
 //! RECURSION via top-level `(define (f x y z) body)` forms with MULTI-ARGUMENT
 //! calls, AND a tagged VALUE domain - `(defenum Value (VInt i64) (VStr String))`
 //! - so an expression now denotes a `VInt` or a `VStr` rather than a raw `i64`
@@ -141,6 +143,7 @@ fn tl_eval_tl_compiles_to_assembly() {
         "_tl_let_var:",
         "_tl_let_init:",
         "_tl_let_body:",
+        "_tl_eval_seq:",
         "_tl_define_name:",
         "_tl_define_params:",
         "_tl_define_body:",
@@ -521,6 +524,44 @@ fn tl_eval_tl_compiles_to_assembly() {
     assert!(
         asm.contains(".string \"print\""),
         "tl_eval assembly is missing the \"print\" dispatch string literal (print special form):\n{}",
+        asm,
+    );
+
+    // SEQUENCING (#27): the `begin` SPECIAL FORM `(begin e1 e2 ... en)` is
+    // dispatched on its head-symbol text `"begin"` (checked BEFORE the builtin-op
+    // and user-call paths, so it controls evaluation ORDER rather than being a
+    // call), so that string literal must be emitted in the read-only data alongside
+    // the other special forms.
+    assert!(
+        asm.contains(".string \"begin\""),
+        "tl_eval assembly is missing the \"begin\" dispatch string literal (begin special form):\n{}",
+        asm,
+    );
+
+    // The `begin` arm walks its sub-expression spine with `eval-seq`, which
+    // evaluates each form head-first (for its side effects) and recurses on the
+    // tail, returning the LAST form's value. So `eval-seq` is emitted as its own
+    // function (asserted in the symbol list above), the dispatch arm calls it, AND
+    // it calls ITSELF (the recursive spine walk) - so at least two
+    // `call _tl_eval_seq` sites must be present.
+    assert!(
+        asm.contains("call _tl_eval_seq"),
+        "tl_eval assembly shows no eval-seq call (begin sequencing not lowered):\n{}",
+        asm,
+    );
+    assert!(
+        asm.matches("call _tl_eval_seq").count() >= 2,
+        "tl_eval assembly shows no recursive eval-seq self-call (begin spine walk):\n{}",
+        asm,
+    );
+
+    // The `seq` two-argument-function workaround `(define (seq a b) b)` is RETIRED
+    // in favour of the `begin` special form, so the old `seq` helper must no longer
+    // be emitted (TypeLisp prefixes user symbols with `_tl_`).
+    assert!(
+        !asm.contains("_tl_seq:"),
+        "tl_eval should no longer define the seq sequencer helper (retired by the \
+         begin special form):\n{}",
         asm,
     );
 

@@ -60,6 +60,13 @@ pub struct X86_64Backend {
     /// Set when `(panic msg)` / `(error msg)` is lowered. Unlike the fixed-text
     /// `tl_oob_abort`, `tl_abort` takes a `(ptr, len)` message argument.
     needs_abort_runtime: bool,
+    /// Whether the program references the print-string helper `tl_print_str` and
+    /// the backend must therefore emit the self-contained (libc-free) runtime
+    /// that writes a String's bytes to fd 1 (stdout) via a single `write(2)`
+    /// syscall. Set when `(print-string s)` / `(print-str s)` is lowered. Like
+    /// `tl_abort` it takes a `(ptr, len)` argument, but unlike `tl_abort` it
+    /// returns rather than terminating the process.
+    needs_print_str_runtime: bool,
     return_ty: Type,
     /// VarIds that are function parameters of the function currently being
     /// generated. Their `Alloc` instructions are no-ops because the parameter
@@ -772,6 +779,7 @@ impl X86_64Backend {
             needs_int_to_string_runtime: false,
             needs_substring_runtime: false,
             needs_abort_runtime: false,
+            needs_print_str_runtime: false,
             return_ty: Type::Unit,
             param_vars: HashSet::new(),
             current_fn: String::new(),
@@ -799,6 +807,7 @@ impl X86_64Backend {
         self.needs_int_to_string_runtime = Self::needs_int_to_string_runtime(program);
         self.needs_substring_runtime = Self::needs_substring_runtime(program);
         self.needs_abort_runtime = Self::needs_abort_runtime(program);
+        self.needs_print_str_runtime = Self::needs_print_str_runtime(program);
         // The int->string and substring runtimes allocate their buffers and fat
         // values via a raw `tl_alloc` call, so their presence forces the raw
         // allocator runtime to be emitted even when IR calls to a user-defined
@@ -837,7 +846,8 @@ impl X86_64Backend {
                 || (self.needs_string_to_int_runtime && symbol == "tl_string_to_int")
                 || (self.needs_int_to_string_runtime && symbol == "tl_int_to_string")
                 || (self.needs_substring_runtime && symbol == "tl_substring")
-                || (self.needs_abort_runtime && symbol == ABORT_RUNTIME_SYMBOL);
+                || (self.needs_abort_runtime && symbol == ABORT_RUNTIME_SYMBOL)
+                || (self.needs_print_str_runtime && symbol == "tl_print_str");
             if !defined_inline {
                 self.emit(&format!("    .extern {}", symbol));
             }
@@ -871,6 +881,9 @@ impl X86_64Backend {
         }
         if self.needs_abort_runtime {
             self.generate_abort_runtime_functions();
+        }
+        if self.needs_print_str_runtime {
+            self.generate_print_str_runtime_functions();
         }
 
         // Generate functions
@@ -1093,6 +1106,30 @@ impl X86_64Backend {
                 })
             })
         })
+    }
+
+    /// Whether the program references the print-string helper `tl_print_str`
+    /// (through a direct `Call` or an `extern` declaration) and does not define
+    /// its own. When true the backend emits the self-contained write-syscall
+    /// runtime into the program's `.s` so the symbol resolves without linking
+    /// libc.
+    fn needs_print_str_runtime(program: &Program) -> bool {
+        let defines_own = program.functions.iter().any(|f| f.name == "tl_print_str");
+        if defines_own {
+            return false;
+        }
+        let referenced_in_calls = program.functions.iter().any(|func| {
+            func.blocks.iter().any(|block| {
+                block.instructions.iter().any(|instr| {
+                    matches!(instr, Instruction::Call { func, .. } if func == "tl_print_str")
+                })
+            })
+        });
+        let referenced_in_externs = program
+            .externs
+            .iter()
+            .any(|(name, _)| name == "tl_print_str");
+        referenced_in_calls || referenced_in_externs
     }
 
     fn generate_print_runtime_data(&mut self) {
@@ -1445,6 +1482,32 @@ impl X86_64Backend {
         self.emit("    movq $60, %rax");
         self.emit("    movq $134, %rdi");
         self.emit("    syscall");
+        self.emit("");
+    }
+
+    /// Emit the self-contained print-string helper `tl_print_str(ptr, len)`.
+    ///
+    /// It writes the `len` bytes at `ptr` to fd 1 (stdout) via a single
+    /// `write(2)` syscall, then returns. Unlike `tl_abort` it does not terminate
+    /// the process. It is zero-dependency (no libc) and emits no rodata — the
+    /// bytes come from the caller-supplied operand. `(print-string s)` /
+    /// `(print-str s)` `Call` this symbol; because it is a `Call` the optimizer's
+    /// dead-code elimination cannot drop it.
+    ///
+    /// ABI (System V): `ptr` in `%rdi`, `len` in `%rsi`. The `write(2)` syscall
+    /// wants fd in `%rdi`, buf in `%rsi`, count in `%rdx`, so the operands are
+    /// shuffled (`%rdx <- len`, `%rsi <- ptr`, `%rdi <- 1`) before the syscall.
+    fn generate_print_str_runtime_functions(&mut self) {
+        self.emit("    .globl tl_print_str");
+        self.emit("tl_print_str:");
+        // write(1 /*fd=stdout*/, ptr, len). syscall number 1; args rdi/rsi/rdx.
+        // Move len (rsi) -> rdx before clobbering rsi with ptr (rdi).
+        self.emit("    movq %rsi, %rdx");
+        self.emit("    movq %rdi, %rsi");
+        self.emit("    movq $1, %rdi");
+        self.emit("    movq $1, %rax");
+        self.emit("    syscall");
+        self.emit("    ret");
         self.emit("");
     }
 
@@ -2867,6 +2930,10 @@ impl X86_64Backend {
             // The backend-provided byte-slice helper resolves to its raw runtime
             // symbol rather than being mangled to `_tl_tl_substring`.
             "tl_substring".into()
+        } else if name == "tl_print_str" && self.needs_print_str_runtime {
+            // The backend-provided print-string helper resolves to its raw
+            // runtime symbol rather than being mangled to `_tl_tl_print_str`.
+            "tl_print_str".into()
         } else if self.extern_names.contains(name) {
             Self::extern_symbol(name)
         } else {
@@ -4943,6 +5010,103 @@ mod tests {
         // A program that never panics must not emit the `tl_abort` helper.
         let asm = compile_ok(r#"(define (main) : i64 (string-length "hi"))"#);
         assert!(!asm.contains(".L_tl_abort"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_print_string_emits_runtime_and_calls_it() {
+        // `(print-string s)` calls the emit-on-demand `tl_print_str` helper and
+        // the backend defines that helper inline (gated like `tl_string_eq`).
+        let asm = compile_ok(r#"(define (main) : unit (print-string "hi"))"#);
+
+        // The runtime function is emitted and globally visible.
+        assert!(asm.contains("    .globl tl_print_str"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_print_str:"), "asm:\n{}", asm);
+
+        // The call site dispatches to the raw runtime symbol (not mangled).
+        assert!(asm.contains("    call tl_print_str"), "asm:\n{}", asm);
+        assert!(!asm.contains("_tl_tl_print_str"), "asm:\n{}", asm);
+        assert!(!asm.contains("_tl_print_str:"), "asm:\n{}", asm);
+
+        // The helper issues a single `write(2)` syscall to fd 1 (stdout): the
+        // write syscall number 1 in %rax, fd 1 in %rdi, then a `syscall`, and it
+        // RETURNS (unlike `tl_abort` it does not exit). Isolate the body.
+        let ps_section = asm
+            .split("tl_print_str:")
+            .nth(1)
+            .expect("tl_print_str body");
+        let ps_body = ps_section
+            .split("\n    .globl ")
+            .next()
+            .unwrap_or(ps_section)
+            .split("\nmain:")
+            .next()
+            .unwrap_or(ps_section)
+            .split("\n_start:")
+            .next()
+            .unwrap_or(ps_section);
+        assert!(
+            ps_body.contains("movq $1, %rdi"),
+            "tl_print_str writes to fd 1 (stdout):\n{}",
+            ps_body
+        );
+        assert!(
+            ps_body.contains("movq $1, %rax"),
+            "tl_print_str uses the write syscall (number 1):\n{}",
+            ps_body
+        );
+        assert!(
+            ps_body.contains("syscall"),
+            "tl_print_str issues a syscall:\n{}",
+            ps_body
+        );
+        assert!(
+            ps_body.contains("ret"),
+            "tl_print_str returns rather than exiting:\n{}",
+            ps_body
+        );
+        // It does not terminate the process (no exit syscall like tl_abort).
+        assert!(
+            !ps_body.contains("movq $60, %rax"),
+            "tl_print_str must not exit the process:\n{}",
+            ps_body
+        );
+
+        // The helper is not declared `.extern` (it is defined in this unit).
+        assert!(!asm.contains("    .extern tl_print_str"), "asm:\n{}", asm);
+
+        // No instruction selection fell through to a TODO stub.
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_print_str_aliases_print_string_runtime() {
+        // `(print-str s)` emits and calls the same `tl_print_str` runtime.
+        let asm = compile_ok(r#"(define (main) : unit (print-str "hi"))"#);
+        assert!(asm.contains("tl_print_str:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call tl_print_str"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_no_print_string_means_no_runtime() {
+        // A program that never prints a string must not emit the helper.
+        let asm = compile_ok(r#"(define (main) : i64 (string-length "hi"))"#);
+        assert!(!asm.contains("tl_print_str"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_user_defined_print_string_shadows_builtin() {
+        // A user-defined `print-string` function must be a mangled TypeLisp call,
+        // not forced through the `tl_print_str` runtime.
+        let asm = compile_ok(
+            r#"
+            (define (print-string [n : i64]) : i64 (+ n 1))
+            (define (main) : i64 (print-string 41))
+            "#,
+        );
+        assert!(asm.contains("_tl_print_string:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call _tl_print_string"), "asm:\n{}", asm);
+        assert!(!asm.contains("    call tl_print_str"), "asm:\n{}", asm);
+        assert!(!asm.contains("\ntl_print_str:\n"), "asm:\n{}", asm);
     }
 
     #[test]

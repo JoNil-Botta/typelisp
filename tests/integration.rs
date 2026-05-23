@@ -65,6 +65,16 @@ fn type_lisp_programs_compile_link_and_run() {
             stdout: "A\n",
             deps: &[],
         },
+        // refs #13/#27: `(print-string s)` / `(print-str s)` writes a whole
+        // String's bytes to stdout via a single write(1) syscall. The "\n"
+        // escapes lex to real newline bytes, so the program emits exactly
+        // "hello\nworld\n" and exits 0 — unblocking printing String values.
+        Case {
+            name: "print_string",
+            exit_code: 0,
+            stdout: "hello\nworld\n",
+            deps: &[],
+        },
         Case {
             name: "unit_functions",
             exit_code: 7,
@@ -328,6 +338,15 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             name: "print_char",
             exit_code: 0,
             stdout: "A\n",
+            deps: &[],
+        },
+        // refs #13/#27: `print-string`/`print-str` write(1)-syscall builtin, also
+        // exercised through the explicit compile -> as -> ld -> run pipeline.
+        // Emits "hello\nworld\n" and exits 0.
+        Case {
+            name: "print_string",
+            exit_code: 0,
+            stdout: "hello\nworld\n",
             deps: &[],
         },
         Case {

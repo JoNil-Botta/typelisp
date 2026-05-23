@@ -37,9 +37,9 @@ impl Optimizer {
     /// Constant folding: evaluate constant expressions at compile time
     fn constant_folding(func: &mut Function) -> bool {
         let mut changed = false;
-        let mut constants: HashMap<VarId, KnownConst> = HashMap::new();
 
         for block in &mut func.blocks {
+            let mut constants: HashMap<VarId, KnownConst> = HashMap::new();
             for instr in &mut block.instructions {
                 match instr {
                     Instruction::BinOp {
@@ -88,6 +88,7 @@ impl Optimizer {
                             *rhs = c.value.clone();
                             changed = true;
                         }
+                        constants.remove(dst);
                     }
                     Instruction::UnOp { dst, op, src, ty } => {
                         let src_val = Self::resolve_value(src, &constants);
@@ -120,6 +121,7 @@ impl Optimizer {
                             *src = c.value.clone();
                             changed = true;
                         }
+                        constants.remove(dst);
                     }
                     Instruction::Cast {
                         dst,
@@ -157,6 +159,7 @@ impl Optimizer {
                             *src = c.value.clone();
                             changed = true;
                         }
+                        constants.remove(dst);
                     }
                     Instruction::Mov { dst, src, ty } => {
                         let known_src = match src {
@@ -187,7 +190,11 @@ impl Optimizer {
                             constants.remove(dst);
                         }
                     }
-                    _ => {}
+                    _ => {
+                        if let Some(dst) = Self::instruction_defined_var(instr) {
+                            constants.remove(&dst);
+                        }
+                    }
                 }
             }
         }
@@ -823,9 +830,9 @@ impl Optimizer {
     /// Copy propagation: replace uses of a copy with the original value
     fn copy_propagation(func: &mut Function) -> bool {
         let mut changed = false;
-        let mut copies: HashMap<VarId, Value> = HashMap::new();
 
         for block in &mut func.blocks {
+            let mut copies: HashMap<VarId, Value> = HashMap::new();
             for instr in &mut block.instructions {
                 // First, try to substitute any Var uses with known copies
                 let subs = Self::substitute_copies(instr, &copies);
@@ -838,6 +845,8 @@ impl Optimizer {
                     && Self::can_copy_propagate(src, ty)
                 {
                     copies.insert(*dst, src.clone());
+                } else if let Some(dst) = Self::instruction_defined_var(instr) {
+                    copies.remove(&dst);
                 }
             }
         }
@@ -900,14 +909,29 @@ impl Optimizer {
                 substitute(base);
                 substitute(offset);
             }
-            Instruction::Phi { incoming, .. } => {
-                for (val, _) in incoming {
-                    substitute(val);
-                }
-            }
+            Instruction::Phi { .. } => {}
             _ => {}
         }
         changed
+    }
+
+    fn instruction_defined_var(instr: &Instruction) -> Option<VarId> {
+        match instr {
+            Instruction::BinOp { dst, .. }
+            | Instruction::UnOp { dst, .. }
+            | Instruction::Mov { dst, .. }
+            | Instruction::Cast { dst, .. }
+            | Instruction::Load { dst, .. }
+            | Instruction::AddrOf { dst, .. }
+            | Instruction::Gep { dst, .. }
+            | Instruction::Phi { dst, .. } => Some(*dst),
+            Instruction::Alloc { var, .. } => Some(*var),
+            Instruction::Call { dst, .. } | Instruction::CallIndirect { dst, .. } => *dst,
+            Instruction::Store { .. }
+            | Instruction::Branch { .. }
+            | Instruction::Jump(_)
+            | Instruction::Return(_) => None,
+        }
     }
 }
 
@@ -1291,6 +1315,260 @@ mod tests {
                 lhs: Value::Var(0),
                 ..
             }
+        ));
+    }
+
+    #[test]
+    fn test_constant_folding_does_not_propagate_across_branch_join() {
+        let mut func = Function {
+            name: "f".into(),
+            params: vec![],
+            ret: Type::I64,
+            locals: vec![(0, Type::I64), (1, Type::I64)],
+            blocks: vec![
+                BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![
+                        Instruction::Mov {
+                            dst: 0,
+                            src: Value::ConstI64(1),
+                            ty: Type::I64,
+                        },
+                        Instruction::Branch {
+                            cond: Value::ConstBool(true),
+                            true_label: "then".into(),
+                            false_label: "else".into(),
+                        },
+                    ],
+                },
+                BasicBlock {
+                    label: "then".into(),
+                    instructions: vec![
+                        Instruction::Mov {
+                            dst: 0,
+                            src: Value::ConstI64(2),
+                            ty: Type::I64,
+                        },
+                        Instruction::Jump("join".into()),
+                    ],
+                },
+                BasicBlock {
+                    label: "else".into(),
+                    instructions: vec![Instruction::Jump("join".into())],
+                },
+                BasicBlock {
+                    label: "join".into(),
+                    instructions: vec![
+                        Instruction::BinOp {
+                            dst: 1,
+                            op: BinOp::Add,
+                            lhs: Value::Var(0),
+                            rhs: Value::ConstI64(1),
+                            ty: Type::I64,
+                        },
+                        Instruction::Return(Some(Value::Var(1))),
+                    ],
+                },
+            ],
+            entry: "entry".into(),
+        };
+
+        assert!(
+            !Optimizer::constant_folding(&mut func),
+            "branch-local constants must not flow into join blocks"
+        );
+        assert!(matches!(
+            func.blocks[3].instructions[0],
+            Instruction::BinOp {
+                lhs: Value::Var(0),
+                rhs: Value::ConstI64(1),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_constant_folding_does_not_use_block_order_through_loop_backedge() {
+        let mut func = Function {
+            name: "f".into(),
+            params: vec![],
+            ret: Type::I64,
+            locals: vec![(0, Type::I64), (1, Type::I64), (2, Type::I64)],
+            blocks: vec![
+                BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![
+                        Instruction::Mov {
+                            dst: 0,
+                            src: Value::ConstI64(0),
+                            ty: Type::I64,
+                        },
+                        Instruction::Jump("loop".into()),
+                    ],
+                },
+                BasicBlock {
+                    label: "loop".into(),
+                    instructions: vec![
+                        Instruction::BinOp {
+                            dst: 1,
+                            op: BinOp::Add,
+                            lhs: Value::Var(0),
+                            rhs: Value::ConstI64(1),
+                            ty: Type::I64,
+                        },
+                        Instruction::Mov {
+                            dst: 0,
+                            src: Value::Var(1),
+                            ty: Type::I64,
+                        },
+                        Instruction::Branch {
+                            cond: Value::ConstBool(false),
+                            true_label: "loop".into(),
+                            false_label: "exit".into(),
+                        },
+                    ],
+                },
+                BasicBlock {
+                    label: "exit".into(),
+                    instructions: vec![
+                        Instruction::BinOp {
+                            dst: 2,
+                            op: BinOp::Add,
+                            lhs: Value::Var(0),
+                            rhs: Value::ConstI64(1),
+                            ty: Type::I64,
+                        },
+                        Instruction::Return(Some(Value::Var(2))),
+                    ],
+                },
+            ],
+            entry: "entry".into(),
+        };
+
+        assert!(
+            !Optimizer::constant_folding(&mut func),
+            "constants from entry/loop blocks must not be reused through a backedge"
+        );
+        assert!(matches!(
+            func.blocks[1].instructions[0],
+            Instruction::BinOp {
+                lhs: Value::Var(0),
+                ..
+            }
+        ));
+        assert!(matches!(
+            func.blocks[2].instructions[0],
+            Instruction::BinOp {
+                lhs: Value::Var(0),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_copy_propagation_does_not_propagate_across_branch_join() {
+        let mut func = Function {
+            name: "f".into(),
+            params: vec![],
+            ret: Type::I64,
+            locals: vec![(0, Type::I64), (1, Type::I64)],
+            blocks: vec![
+                BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![
+                        Instruction::Mov {
+                            dst: 0,
+                            src: Value::ConstI64(1),
+                            ty: Type::I64,
+                        },
+                        Instruction::Branch {
+                            cond: Value::ConstBool(true),
+                            true_label: "then".into(),
+                            false_label: "else".into(),
+                        },
+                    ],
+                },
+                BasicBlock {
+                    label: "then".into(),
+                    instructions: vec![
+                        Instruction::Mov {
+                            dst: 0,
+                            src: Value::ConstI64(2),
+                            ty: Type::I64,
+                        },
+                        Instruction::Jump("join".into()),
+                    ],
+                },
+                BasicBlock {
+                    label: "else".into(),
+                    instructions: vec![Instruction::Jump("join".into())],
+                },
+                BasicBlock {
+                    label: "join".into(),
+                    instructions: vec![
+                        Instruction::Mov {
+                            dst: 1,
+                            src: Value::Var(0),
+                            ty: Type::I64,
+                        },
+                        Instruction::Return(Some(Value::Var(1))),
+                    ],
+                },
+            ],
+            entry: "entry".into(),
+        };
+
+        assert!(
+            Optimizer::copy_propagation(&mut func),
+            "the join block's own copy can still propagate locally"
+        );
+        assert!(matches!(
+            func.blocks[3].instructions[0],
+            Instruction::Mov {
+                src: Value::Var(0),
+                ..
+            }
+        ));
+        assert!(matches!(
+            func.blocks[3].instructions[1],
+            Instruction::Return(Some(Value::Var(0)))
+        ));
+    }
+
+    #[test]
+    fn test_copy_propagation_does_not_rewrite_phi_incoming_values() {
+        let mut func = Function {
+            name: "f".into(),
+            params: vec![],
+            ret: Type::I64,
+            locals: vec![(0, Type::I64), (1, Type::I64)],
+            blocks: vec![BasicBlock {
+                label: "join".into(),
+                instructions: vec![
+                    Instruction::Mov {
+                        dst: 0,
+                        src: Value::ConstI64(1),
+                        ty: Type::I64,
+                    },
+                    Instruction::Phi {
+                        dst: 1,
+                        incoming: vec![(Value::Var(0), "pred".into())],
+                        ty: Type::I64,
+                    },
+                    Instruction::Return(Some(Value::Var(1))),
+                ],
+            }],
+            entry: "join".into(),
+        };
+
+        assert!(
+            !Optimizer::copy_propagation(&mut func),
+            "current-block copies do not describe phi predecessor values"
+        );
+        assert!(matches!(
+            &func.blocks[0].instructions[1],
+            Instruction::Phi { incoming, .. }
+                if incoming == &vec![(Value::Var(0), "pred".into())]
         ));
     }
 

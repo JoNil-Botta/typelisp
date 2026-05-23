@@ -186,7 +186,10 @@ impl ProgramLowerer {
         for decl in &prog.decls {
             match decl {
                 ast::Decl::Def { name, ty, value } => {
-                    let val_ty = ty.clone().unwrap_or_else(|| self.infer_expr_type(value));
+                    let val_ty = ty
+                        .as_ref()
+                        .map(|ty| self.resolve_type(ty))
+                        .unwrap_or_else(|| self.infer_expr_type(value));
                     let init_value = extract_const(value);
                     if init_value.is_none() {
                         // Non-constant global initializer: generate an init

@@ -907,6 +907,20 @@ impl FnLowerer {
             return self.lower_substring(&args[0], &args[1], &args[2]);
         }
 
+        // `(string-append a b)` / `(string-concat a b)` concatenates the bytes of
+        // Strings `a` and `b` into a fresh heap-allocated String. Extract each
+        // operand's `{ptr,len}` fields and dispatch to the emit-on-demand runtime
+        // `tl_string_concat(a_ptr, a_len, b_ptr, b_len) -> {ptr, len}`; see
+        // `lower_string_concat`.
+        if let ast::Expr::Var(name) = func.unspan()
+            && (name == "string-append" || name == "string-concat")
+            && args.len() == 2
+            && !self.vars.contains_key(name)
+            && !self.function_types.contains_key(name)
+        {
+            return self.lower_string_concat(&args[0], &args[1]);
+        }
+
         // `(panic msg)` / `(error msg)` writes `msg` to fd 2 then terminates the
         // process — the lexer's unrecoverable-error primitive (refs #45). The
         // operand is a pointer to inline fat `{ ptr, len }` storage; extract the
@@ -1725,6 +1739,47 @@ impl FnLowerer {
             dst: Some(dst),
             func: "tl_substring".to_string(),
             args: vec![Value::Var(s_ptr), start_i64, len_i64],
+            ty: Type::String,
+        });
+        self.record_local(dst, Type::String);
+        Value::Var(dst)
+    }
+
+    /// Lower `(string-append a b)` / `(string-concat a b)`: a fresh heap String
+    /// holding the bytes of `a` immediately followed by the bytes of `b`. Each
+    /// operand is a pointer to inline fat `{ ptr, len }` storage; extract the data
+    /// pointer (offset 0) and byte length (offset 8) of both operands (two
+    /// `load_string_fields`) and dispatch to the emit-on-demand runtime
+    /// `tl_string_concat(a_ptr, a_len, b_ptr, b_len) -> {ptr, len}`, which
+    /// `tl_alloc`s a `a_len + b_len` byte buffer, copies `a`'s then `b`'s bytes
+    /// into it, then `tl_alloc`s the 16-byte fat value (mirroring `tl_substring`)
+    /// so the result outlives the caller's frame. A `Call` (not an inline copy
+    /// loop) keeps the concatenation alive through DCE — the optimizer treats
+    /// `Load`/`Gep` as pure. Two empty operands still yield a valid empty String.
+    fn lower_string_concat(&mut self, a: &ast::Expr, b: &ast::Expr) -> Value {
+        let a_val = self.lower_expr(a);
+        let b_val = self.lower_expr(b);
+        // Defensive: non-String operands can't be concatenated. The typechecker
+        // rejects this, so just yield unit rather than miscompile.
+        if !matches!(self.value_type(&a_val), Type::String)
+            || !matches!(self.value_type(&b_val), Type::String)
+        {
+            return Value::ConstUnit;
+        }
+
+        let (a_ptr, a_len) = self.load_string_fields(&a_val);
+        let (b_ptr, b_len) = self.load_string_fields(&b_val);
+
+        let dst = self.builder.fresh_var();
+        self.builder.emit(Instruction::Call {
+            dst: Some(dst),
+            func: "tl_string_concat".to_string(),
+            args: vec![
+                Value::Var(a_ptr),
+                Value::Var(a_len),
+                Value::Var(b_ptr),
+                Value::Var(b_len),
+            ],
             ty: Type::String,
         });
         self.record_local(dst, Type::String);
@@ -3032,6 +3087,95 @@ mod tests {
                 .iter()
                 .any(|i| matches!(i, Instruction::Call { func, .. } if func == "tl_substring")),
             "user-defined substring must not lower to builtin runtime"
+        );
+    }
+
+    #[test]
+    fn test_lower_string_append_extracts_both_fields_and_calls_runtime() {
+        // `(string-append a b)` lowers to: extract a's `{ptr,len}` and b's
+        // `{ptr,len}` (four field Loads total — two per operand), then
+        // `Call tl_string_concat(a_ptr, a_len, b_ptr, b_len)` yielding a String.
+        let prog =
+            parse("(define (f [a : String] [b : String]) : String (string-append a b))").unwrap();
+        let ir = lower_program(&prog);
+        let instrs: Vec<&Instruction> = ir.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .collect();
+
+        // The concat runtime is called by name with four args, yielding a String.
+        let call = instrs.iter().find_map(|i| match i {
+            Instruction::Call { func, args, ty, .. } if func == "tl_string_concat" => {
+                Some((args, ty))
+            }
+            _ => None,
+        });
+        let (args, ty) = call.expect("expected a Call to tl_string_concat");
+        assert_eq!(
+            args.len(),
+            4,
+            "tl_string_concat takes both operands' (ptr, len)"
+        );
+        assert_eq!(*ty, Type::String, "string-append yields a String");
+
+        // Both operands are field-extracted: the data pointer (offset 0, U64) of
+        // each is loaded, so at least two U64 Loads precede the call.
+        let u64_loads = instrs
+            .iter()
+            .filter(|i| matches!(i, Instruction::Load { ty: Type::U64, .. }))
+            .count();
+        assert!(
+            u64_loads >= 2,
+            "expected two data-pointer loads (one per operand), got {}",
+            u64_loads
+        );
+    }
+
+    #[test]
+    fn test_lower_string_concat_alias_calls_same_runtime() {
+        // `string-concat` is the alias of `string-append`; it lowers to the same
+        // `tl_string_concat` runtime call.
+        let prog =
+            parse("(define (f [a : String] [b : String]) : String (string-concat a b))").unwrap();
+        let ir = lower_program(&prog);
+        let calls_concat = ir.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .any(|i| matches!(i, Instruction::Call { func, .. } if func == "tl_string_concat"));
+        assert!(calls_concat, "string-concat should call tl_string_concat");
+    }
+
+    #[test]
+    fn test_lower_user_defined_string_append_shadows_builtin() {
+        // User functions may shadow builtin names. A surface `string-append`
+        // function with two arguments must lower as an ordinary direct call, not
+        // as the builtin concat runtime helper.
+        let prog = parse(
+            "(define (string-append [a : i64] [b : i64]) : i64 (+ a b))
+             (define (f) : i64 (string-append 1 2))",
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().find(|f| f.name == "f").unwrap();
+        let instrs: Vec<&Instruction> = f
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .collect();
+
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Call { func, .. } if func == "string-append")),
+            "expected ordinary call to user-defined string-append"
+        );
+        assert!(
+            !instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Call { func, .. } if func == "tl_string_concat")),
+            "user-defined string-append must not lower to builtin runtime"
         );
     }
 

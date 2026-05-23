@@ -747,21 +747,6 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
 }
 
 #[test]
-fn stdlib_string_integration_copy_matches_source() {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let stdlib_source = fs::read_to_string(manifest_dir.join("stdlib").join("string.tl"))
-        .expect("read stdlib/string.tl");
-    let integration_copy = fs::read_to_string(
-        manifest_dir
-            .join("tests")
-            .join("integration")
-            .join("string.tl"),
-    )
-    .expect("read integration string.tl");
-    assert_eq!(integration_copy, stdlib_source);
-}
-
-#[test]
 fn tl_emit_printed_program_assembles_links_and_exits_7() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let selfhost_dir = manifest_dir.join("selfhost");
@@ -2393,6 +2378,9 @@ fn source_path_for_case(manifest_dir: &PathBuf, name: &str) -> PathBuf {
 fn dep_source_path(manifest_dir: &Path, source_dir: &Path, dep: &str) -> PathBuf {
     if dep == "sym_i64_env_core.tl" {
         return manifest_dir.join("selfhost").join("sym_i64_env.tl");
+    }
+    if dep == "string.tl" {
+        return manifest_dir.join("stdlib").join("string.tl");
     }
     source_dir.join(dep)
 }

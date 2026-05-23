@@ -1,4 +1,5 @@
 ;; tests/integration/stdlib_string.tl - Integration test for stdlib/string.tl
+;; Test harnesses stage stdlib/string.tl under this import name.
 ;;
 ;; Expected stdout:
 ;;   hello|

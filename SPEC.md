@@ -121,9 +121,10 @@ narrower or unsigned integer is required. Floating-point literals are always
 
 **Tuple:** `(Tuple t1 t2 ... tn)`
 - Fixed-size, heterogeneous. Layout is sequential with natural alignment per element.
-- Tuple literals and `tuple-ref` parse and type-check, but tuple value
-  lowering is incomplete. Tuples are not first-class values in the backend ABI
-  today.
+- Tuple literals lower to pointer values over inline element storage, and
+  `tuple-ref` reads tuple values in local/expression positions.
+- Tuple function parameters and by-value returns are not first-class values in
+  the backend ABI today.
 
 **Fixed array:** `(Array type size)`
 - Size must be a compile-time constant.
@@ -563,10 +564,9 @@ They are not implemented by a separate C runtime.
 |---------|--------|
 | `f32` type | Rejected by backend validation |
 | `f32` local/parameter type | Rejected by backend validation |
-| Tuple value lowering | Incomplete |
-| Tuple by-value return | Rejected by backend validation |
+| Tuple by-value ABI | Function parameters/returns rejected by backend validation |
 | Fixed-array by-value return | Rejected by backend validation |
-| Struct/Enum/String globals | Rejected by backend validation |
+| Tuple/Struct/Enum/String globals | Rejected by backend validation |
 | Closures (capturing lambdas) | Not implemented |
 | Tail call optimization | Not implemented |
 | `struct-set!` | Not implemented |

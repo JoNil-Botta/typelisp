@@ -223,7 +223,7 @@ fn validate_function(func: &Function, global_types: &HashMap<String, Type>) -> R
              The x86_64 backend currently supports scalar arithmetic, comparisons, \
              unary/binary operators, direct function calls, recursion, control flow \
              (if/while), indirect calls through function-pointer values and scalar \
-             let/set! locals. F32 values and by-value tuples/fixed arrays are \
+             let/set! locals. F32 values and by-value tuple/fixed-array ABI are \
              not yet wired.",
             func.name, what
         ))
@@ -501,8 +501,8 @@ fn validate_unit_value(
 }
 
 fn is_pointer_sized_type(ty: &Type) -> bool {
-    // An enum value is a pointer to its inline tagged storage; a struct is a
-    // pointer to its inline field storage; a string and a dynamic array are
+    // An enum value is a pointer to its inline tagged storage; a struct or tuple
+    // is a pointer to inline field storage; a string and a dynamic array are
     // pointers to their inline `{ptr,len}` storage. All are pointer-sized like
     // I64/U64/function pointers.
     matches!(
@@ -512,6 +512,7 @@ fn is_pointer_sized_type(ty: &Type) -> bool {
             | Type::Func(_, _)
             | Type::Enum(_)
             | Type::Struct(_)
+            | Type::Tuple(_)
             | Type::String
             | Type::DynArray(_)
     )
@@ -3983,6 +3984,19 @@ mod tests {
             "unexpected error: {}",
             err
         );
+    }
+
+    #[test]
+    fn test_compile_tuple_roundtrip_construct_then_read_no_todo() {
+        let asm = compile_ok(
+            r#"
+            (define (main) : i64
+              (let ([t : (Tuple bool i64) (tuple true 42)])
+                (if (tuple-ref t 0) (tuple-ref t 1) 0)))
+            "#,
+        );
+        assert!(asm.contains("movq $42,"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
     }
 
     #[test]

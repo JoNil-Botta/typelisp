@@ -197,6 +197,13 @@ fn type_lisp_programs_compile_link_and_run() {
             stdout: "",
             deps: &[],
         },
+        // Tuple locals lower to inline storage and tuple-ref reads scalar fields.
+        Case {
+            name: "tuple_values",
+            exit_code: 42,
+            stdout: "",
+            deps: &[],
+        },
         // refs #41, GAP (D): the zero-arg call form `(Ctor)` constructs a NULLARY
         // enum variant. `main` builds `(Red)` and `(Green)` via the call form (the
         // same construction bare `Red`/`Green` would produce), the payload variant

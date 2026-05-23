@@ -50,6 +50,7 @@
 
 (define (parse-begin [rest : Sexpr]) : Expr
   (match rest
+    [(SNil) (begin (panic "ast: empty begin") (EInt 0))]
     [(SCons _ _) (EBegin (parse-args rest))]
     [_ (begin (panic "ast: malformed begin") (EInt 0))]))
 

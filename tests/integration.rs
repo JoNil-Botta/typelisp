@@ -2172,6 +2172,58 @@ fn tl_compile_smoke_writes_begin_function_body_and_output_exits_42() {
     assert_eq!(stderr, "", "tl_compile_smoke begin defs output stderr");
 }
 
+#[test]
+fn tl_compile_smoke_rejects_empty_begin_with_specific_diagnostic() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let selfhost_dir = manifest_dir.join("selfhost");
+    let source_path = selfhost_dir.join("compile_smoke.tl");
+    let work_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("tl_compile_smoke_empty_begin");
+    fs::create_dir_all(&work_dir).expect("create tl_compile_smoke empty begin test work dir");
+
+    let work_path = work_dir.join("compile_smoke.tl");
+    fs::copy(&source_path, &work_path).expect("copy compile_smoke.tl to work dir");
+
+    for dep in [
+        "parse_core.tl",
+        "emit_core.tl",
+        "sym_i64_env.tl",
+        "ast_types.tl",
+        "read.tl",
+        "lex.tl",
+        "token.tl",
+    ] {
+        fs::copy(selfhost_dir.join(dep), work_dir.join(dep))
+            .unwrap_or_else(|err| panic!("copy imported selfhost module {dep} to work dir: {err}"));
+    }
+
+    let input_path = work_dir.join("input.tl");
+    let asm_path = work_dir.join("generated.s");
+    fs::write(&input_path, "(begin)").expect("write empty begin input");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&work_path)
+        .arg(&input_path)
+        .arg(&asm_path)
+        .output()
+        .expect("run tl_compile_smoke empty begin");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert_eq!(
+        output.status.code(),
+        Some(134),
+        "empty begin should abort through panic\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(stdout, "", "empty begin driver wrote stdout");
+    assert_eq!(stderr, "parse: empty begin", "empty begin diagnostic");
+}
+
 fn tl_string_literal(text: &str) -> String {
     text.replace('\\', "\\\\").replace('"', "\\\"")
 }

@@ -172,6 +172,19 @@ fn tl_parse_tl_compiles_to_assembly() {
             asm,
         );
     }
+
+    for msg in [
+        "parse: malformed begin",
+        "parse: empty begin",
+        "emit: empty begin",
+    ] {
+        assert!(
+            asm.contains(msg),
+            "tl_parse assembly is missing panic message {:?}:\n{}",
+            msg,
+            asm,
+        );
+    }
 }
 
 fn compile_selfhost_source(source_file: &str, work_name: &str, asm_file: &str) -> String {
@@ -244,6 +257,19 @@ fn tl_parse_core_tl_compiles_to_assembly() {
             asm,
         );
     }
+
+    for msg in [
+        "parse: malformed begin",
+        "parse: empty begin",
+        "emit: empty begin",
+    ] {
+        assert!(
+            asm.contains(msg),
+            "tl_parse_core assembly is missing panic message {:?}:\n{}",
+            msg,
+            asm,
+        );
+    }
 }
 
 #[test]
@@ -298,6 +324,8 @@ fn tl_compile_smoke_tl_compiles_to_assembly() {
         "tl: read-file failed",
         "tl: write-file failed",
         "compile-smoke: expected input and output paths",
+        "parse: empty begin",
+        "emit: empty begin",
     ] {
         assert!(
             asm.contains(runtime),

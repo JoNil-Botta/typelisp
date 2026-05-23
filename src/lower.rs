@@ -4335,6 +4335,50 @@ mod tests {
         assert!(stores_payload, "expected a payload Store of ConstI64(7)");
     }
 
+    #[test]
+    fn test_lower_nullary_variant_call_form_matches_bare() {
+        // GAP (D): the zero-arg call form `(Nothing)` lowers to exactly the same
+        // IR as bare `Nothing` — both construct the nullary variant (Alloc,
+        // AddrOf, one Gep, a tag Store of ConstI64(2), and NO payload store).
+        let bare = format!("{SHAPE}\n(define (main) : i64 (begin Nothing 0))");
+        let call = format!("{SHAPE}\n(define (main) : i64 (begin (Nothing) 0))");
+        let ir_bare = lower_program(&parse(&bare).unwrap());
+        let ir_call = lower_program(&parse(&call).unwrap());
+        let fb = ir_bare.functions.iter().find(|f| f.name == "main").unwrap();
+        let fc = ir_call.functions.iter().find(|f| f.name == "main").unwrap();
+        assert_eq!(
+            fb.blocks, fc.blocks,
+            "(Nothing) must lower to the same IR as bare Nothing"
+        );
+
+        // And concretely: exactly one tag Store of ConstI64(2) (the Nothing tag),
+        // no payload Store, for the call form.
+        let f = ir_call
+            .functions
+            .iter()
+            .position(|f| f.name == "main")
+            .unwrap();
+        let tag_stores = count(&ir_call, f, |i| {
+            matches!(
+                i,
+                Instruction::Store {
+                    src: Value::ConstI64(2),
+                    ty: Type::I64,
+                    ..
+                }
+            )
+        });
+        assert_eq!(
+            tag_stores, 1,
+            "expected one Nothing tag Store of ConstI64(2)"
+        );
+        assert_eq!(
+            count(&ir_call, f, |i| matches!(i, Instruction::Gep { .. })),
+            1,
+            "nullary variant has only the tag slot — one Gep"
+        );
+    }
+
     // ------------------------------------------------------------------
     // Nested pattern matching — Issue #41
     // ------------------------------------------------------------------

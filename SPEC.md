@@ -882,12 +882,12 @@ propagation, and richer diagnostic payloads.
 typelisp <command> [file.tl] [options]
 
 Commands:
-  tokenize    Print token stream
-  parse       Print AST
-  check       Run type checker
-  compile     Generate assembly (.s)
-  run         Compile, assemble, link, and run binary
-  build       Build nearest typelisp.pkg to package assembly
+  debug tokenize    Print token stream
+  debug parse       Print AST
+  debug check       Run type checker
+  compile           Generate assembly (.s)
+  run               Compile, assemble, link, and run binary
+  build             Build nearest typelisp.pkg to package assembly
 
 Options:
   compile -o <file>       Write assembly to the given path
@@ -895,6 +895,9 @@ Options:
   build --manifest-path <file>
                           Use an explicit package manifest path
 ```
+
+`tokenize`, `parse`, and `check` are also accepted as top-level compatibility
+aliases for the corresponding `debug` commands.
 
 ---
 

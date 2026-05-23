@@ -142,12 +142,17 @@ fn print_usage() {
     eprintln!("typelisp — A typed Lisp/Scheme dialect with x86_64 backend");
     eprintln!();
     eprintln!("Usage:");
-    eprintln!("    typelisp tokenize <file.tl>    Show tokens");
-    eprintln!("    typelisp parse <file.tl>       Show AST");
-    eprintln!("    typelisp check <file.tl> [--stdlib-root <dir>...]");
+    eprintln!("    typelisp debug tokenize <file.tl>    Show tokens");
+    eprintln!("    typelisp debug parse <file.tl>       Show AST");
+    eprintln!("    typelisp debug check <file.tl> [--stdlib-root <dir>...]");
     eprintln!("    typelisp compile <file.tl> [-o <file>] [--emit-ir] [--stdlib-root <dir>...]");
     eprintln!("    typelisp run <file.tl> [--stdlib-root <dir>...] [-- args...]");
     eprintln!("    typelisp build [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]");
+    eprintln!();
+    eprintln!("Compatibility aliases:");
+    eprintln!("    typelisp tokenize <file.tl>");
+    eprintln!("    typelisp parse <file.tl>");
+    eprintln!("    typelisp check <file.tl> [--stdlib-root <dir>...]");
     eprintln!();
     eprintln!("    --emit-ir                      Emit intermediate representation");
     eprintln!("    --manifest-path <file>         Package manifest for build");
@@ -160,9 +165,74 @@ fn print_usage() {
     eprintln!("    --manifest-path <file>         Defaults to nearest typelisp.pkg upward");
 }
 
+fn print_debug_usage() {
+    eprintln!("Usage:");
+    eprintln!("    typelisp debug tokenize <file.tl>    Show tokens");
+    eprintln!("    typelisp debug parse <file.tl>       Show AST");
+    eprintln!("    typelisp debug check <file.tl> [--stdlib-root <dir>...]");
+}
+
 fn missing_option_value(option: &str) -> ! {
     eprintln!("Error: {} requires a value", option);
     std::process::exit(1);
+}
+
+fn missing_file_argument(usage: fn()) -> ! {
+    eprintln!("Error: missing file argument");
+    usage();
+    std::process::exit(1);
+}
+
+fn command_file_arg(args: &[String], file_index: usize, usage: fn()) -> PathBuf {
+    if args.len() <= file_index {
+        missing_file_argument(usage);
+    }
+    PathBuf::from(&args[file_index])
+}
+
+fn run_tokenize_command(args: &[String], file_index: usize, usage: fn()) {
+    let file = command_file_arg(args, file_index, usage);
+    let source = fs::read_to_string(&file).expect("Failed to read file");
+    let mut lexer = lexer::Lexer::new(&source);
+    let tokens = lexer.tokenize().expect("Lexing failed");
+    for tok in tokens {
+        println!("{}", tok);
+    }
+}
+
+fn run_parse_command(args: &[String], file_index: usize, usage: fn()) {
+    let file = command_file_arg(args, file_index, usage);
+    let source = fs::read_to_string(&file).expect("Failed to read file");
+    let prog = parse_or_exit(&source, &file.display().to_string());
+    println!("{:#?}", prog);
+}
+
+fn run_check_command(args: &[String], file_index: usize, usage: fn()) {
+    let file = command_file_arg(args, file_index, usage);
+    let options = parse_stdlib_roots(args, file_index + 1);
+    let loaded = load_or_exit(&file, &options);
+    typecheck_or_exit(&loaded.program, &loaded.sources);
+    println!("Type checking passed!");
+}
+
+fn run_debug_command(args: &[String]) {
+    if args.len() < 3 {
+        eprintln!("Error: missing debug subcommand");
+        print_debug_usage();
+        std::process::exit(1);
+    }
+
+    match args[2].as_str() {
+        "tokenize" => run_tokenize_command(args, 3, print_debug_usage),
+        "parse" => run_parse_command(args, 3, print_debug_usage),
+        "check" => run_check_command(args, 3, print_debug_usage),
+        "help" | "--help" | "-h" => print_debug_usage(),
+        subcommand => {
+            eprintln!("Unknown debug command: {}", subcommand);
+            print_debug_usage();
+            std::process::exit(1);
+        }
+    }
 }
 
 fn load_options_with_env_stdlib_root(mut stdlib_roots: Vec<PathBuf>) -> LoadOptions {
@@ -294,41 +364,16 @@ fn run_cli() {
 
     match command.as_str() {
         "tokenize" => {
-            if args.len() < 3 {
-                eprintln!("Error: missing file argument");
-                print_usage();
-                std::process::exit(1);
-            }
-            let file = PathBuf::from(&args[2]);
-            let source = fs::read_to_string(&file).expect("Failed to read file");
-            let mut lexer = lexer::Lexer::new(&source);
-            let tokens = lexer.tokenize().expect("Lexing failed");
-            for tok in tokens {
-                println!("{}", tok);
-            }
+            run_tokenize_command(&args, 2, print_usage);
         }
         "parse" => {
-            if args.len() < 3 {
-                eprintln!("Error: missing file argument");
-                print_usage();
-                std::process::exit(1);
-            }
-            let file = PathBuf::from(&args[2]);
-            let source = fs::read_to_string(&file).expect("Failed to read file");
-            let prog = parse_or_exit(&source, &file.display().to_string());
-            println!("{:#?}", prog);
+            run_parse_command(&args, 2, print_usage);
         }
         "check" => {
-            if args.len() < 3 {
-                eprintln!("Error: missing file argument");
-                print_usage();
-                std::process::exit(1);
-            }
-            let file = PathBuf::from(&args[2]);
-            let options = parse_stdlib_roots(&args, 3);
-            let loaded = load_or_exit(&file, &options);
-            typecheck_or_exit(&loaded.program, &loaded.sources);
-            println!("Type checking passed!");
+            run_check_command(&args, 2, print_usage);
+        }
+        "debug" => {
+            run_debug_command(&args);
         }
         "compile" => {
             if args.len() < 3 {

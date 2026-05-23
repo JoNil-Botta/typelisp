@@ -1000,6 +1000,83 @@ fn tl_emit_if_printed_programs_assemble_link_and_exit_expected() {
                 "    add $16, %rsp\n",
             ][..],
         ),
+        // refs #173: M2(a) comparison operators. The emitter follows the same
+        // cmpq %rcx, %rax convention (left in %rax, right in %rcx, so the flags
+        // reflect left - right) as OpLt/OpEq, with setle/setg/setge/setne. These
+        // exercise both the true (10) and false (20) branch of each new operator,
+        // proving `>` / `<=` are NOT inverted.
+        (
+            "if_le_true_10",
+            r#"(EIf
+  (EBin (OpLe) (EInt 2) (EInt 2))
+  (EInt 10)
+  (EInt 20))"#,
+            10,
+            &["    cmpq %rcx, %rax\n", "    setle %al\n"][..],
+        ),
+        (
+            "if_le_false_20",
+            r#"(EIf
+  (EBin (OpLe) (EInt 3) (EInt 2))
+  (EInt 10)
+  (EInt 20))"#,
+            20,
+            &["    setle %al\n"][..],
+        ),
+        (
+            "if_gt_true_10",
+            r#"(EIf
+  (EBin (OpGt) (EInt 3) (EInt 2))
+  (EInt 10)
+  (EInt 20))"#,
+            10,
+            &["    cmpq %rcx, %rax\n", "    setg %al\n"][..],
+        ),
+        (
+            "if_gt_false_20",
+            r#"(EIf
+  (EBin (OpGt) (EInt 2) (EInt 3))
+  (EInt 10)
+  (EInt 20))"#,
+            20,
+            &["    setg %al\n"][..],
+        ),
+        (
+            "if_ge_true_10",
+            r#"(EIf
+  (EBin (OpGe) (EInt 3) (EInt 3))
+  (EInt 10)
+  (EInt 20))"#,
+            10,
+            &["    cmpq %rcx, %rax\n", "    setge %al\n"][..],
+        ),
+        (
+            "if_ge_false_20",
+            r#"(EIf
+  (EBin (OpGe) (EInt 2) (EInt 3))
+  (EInt 10)
+  (EInt 20))"#,
+            20,
+            &["    setge %al\n"][..],
+        ),
+        (
+            "if_ne_true_10",
+            r#"(EIf
+  (EBin (OpNe) (EInt 1) (EInt 2))
+  (EInt 10)
+  (EInt 20))"#,
+            10,
+            &["    cmpq %rcx, %rax\n", "    setne %al\n"][..],
+        ),
+        (
+            "if_ne_false_20",
+            r#"(EIf
+  (EBin (OpNe) (EInt 2) (EInt 2))
+  (EInt 10)
+  (EInt 20))"#,
+            20,
+            &["    setne %al\n"][..],
+        ),
     ];
 
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

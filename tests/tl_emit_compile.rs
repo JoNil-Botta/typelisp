@@ -144,6 +144,14 @@ fn tl_emit_tl_compiles_to_assembly() {
         // `.Lend_` label, and the two local labels themselves.
         "    cmpq %rcx, %rax\\n    setl %al\\n    movzbq %al, %rax\\n",
         "    cmpq %rcx, %rax\\n    sete %al\\n    movzbq %al, %rax\\n",
+        // refs #173: M2(a) comparison operators. The emit-op table gains four more
+        // setcc arms (setle/setg/setge/setne) using the same cmpq %rcx, %rax
+        // (left - right) convention, so `<=`/`>`/`>=`/`!=` lower without inverting
+        // operand order.
+        "    cmpq %rcx, %rax\\n    setle %al\\n    movzbq %al, %rax\\n",
+        "    cmpq %rcx, %rax\\n    setg %al\\n    movzbq %al, %rax\\n",
+        "    cmpq %rcx, %rax\\n    setge %al\\n    movzbq %al, %rax\\n",
+        "    cmpq %rcx, %rax\\n    setne %al\\n    movzbq %al, %rax\\n",
         "    cmpq $0, %rax\\n",
         "    je ",
         "    jmp ",

@@ -5,7 +5,11 @@
   (OpSub)
   (OpMul)
   (OpLt)
-  (OpEq))
+  (OpEq)
+  (OpLe)
+  (OpGt)
+  (OpGe)
+  (OpNe))
 
 (defenum Expr
   (EInt i64)

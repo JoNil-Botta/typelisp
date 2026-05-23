@@ -64,11 +64,19 @@
                      (parse-binary (OpLt) rest)
                      (if (string-eq op "=")
                          (parse-binary (OpEq) rest)
-                         (if (string-eq op "let")
-                             (parse-let rest)
-                             (if (string-eq op "if")
-                                 (parse-if rest)
-                                 (ECall op (parse-args rest)))))))))]
+                         (if (string-eq op "<=")
+                             (parse-binary (OpLe) rest)
+                             (if (string-eq op ">")
+                                 (parse-binary (OpGt) rest)
+                                 (if (string-eq op ">=")
+                                     (parse-binary (OpGe) rest)
+                                     (if (string-eq op "!=")
+                                         (parse-binary (OpNe) rest)
+                                         (if (string-eq op "let")
+                                             (parse-let rest)
+                                             (if (string-eq op "if")
+                                                 (parse-if rest)
+                                                 (ECall op (parse-args rest)))))))))))))]
     [_ (begin (panic "ast: malformed expression") (EInt 0))]))
 
 (define (parse-params [s : Sexpr]) : StrList
@@ -101,7 +109,11 @@
     [(OpSub) 20]
     [(OpMul) 30]
     [(OpLt) 40]
-    [(OpEq) 50]))
+    [(OpEq) 50]
+    [(OpLe) 60]
+    [(OpGt) 70]
+    [(OpGe) 80]
+    [(OpNe) 90]))
 
 (define (expr-list-score [xs : ExprList]) : i64
   (match xs

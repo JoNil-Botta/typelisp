@@ -67,9 +67,17 @@
                   (OpLt)
                   (if (string-eq op "=")
                       (OpEq)
-                      (begin
-                        (panic "parse: unknown operator")
-                        (OpAdd))))))))
+                      (if (string-eq op "<=")
+                          (OpLe)
+                          (if (string-eq op ">")
+                              (OpGt)
+                              (if (string-eq op ">=")
+                                  (OpGe)
+                                  (if (string-eq op "!=")
+                                      (OpNe)
+                                      (begin
+                                        (panic "parse: unknown operator")
+                                        (OpAdd))))))))))))
 
 (define (parse-binary [op : BinOp] [rest : Sexpr]) : Expr
   (match rest

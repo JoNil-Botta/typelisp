@@ -27,8 +27,8 @@ if [ ! -x "$COMPILER" ]; then
     exit 1
 fi
 
-# Every canonical stdlib module must be listed here. This keeps new modules
-# from landing without an explicit verification decision.
+# Every canonical stdlib module must be listed here. See stdlib/README.md for
+# the source-tree convention and verification expectations.
 stdlib_manifest() {
     cat <<'EOF'
 string.tl

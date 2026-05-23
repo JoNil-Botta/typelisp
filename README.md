@@ -104,7 +104,8 @@ absolute path. `check`, `compile`, and `run` also accept
 `--stdlib-root <dir>`; for imports under `stdlib/`, TypeLisp first tries the
 importer-relative path, then searches configured roots by stripping the leading
 `stdlib/`. TypeLisp does not yet have a package manifest, dependency resolver,
-or implicit prelude.
+or implicit prelude. See `stdlib/README.md` for the current stdlib source-tree
+conventions and verification expectations.
 
 ### Enum and struct namespace rules
 

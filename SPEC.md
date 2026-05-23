@@ -399,6 +399,8 @@ See §3.6.
 | `string-length` | `String → i64` | Get string byte length |
 | `string-eq` | `String String → bool` | Byte-wise string comparison |
 | `string=?` | `String String → bool` | Alias for `string-eq` |
+| `string-append` | `String String → String` | Concatenate two strings |
+| `string-concat` | `String String → String` | Alias for `string-append` |
 | `string->int` | `String → i64` | Parse decimal integer from string |
 | `int->string` | `i64 → String` | Format integer as decimal string |
 | `panic` | `String → unit` | Print message to stderr and abort |
@@ -422,6 +424,7 @@ They are not implemented by a separate C runtime.
 | `tl_print_str` | Print string bytes |
 | `tl_alloc` | Allocate bump-allocator memory |
 | `tl_string_eq` | String comparison |
+| `tl_string_concat` | String concatenation |
 | `tl_string_to_int` | Parse integer |
 | `tl_int_to_string` | Format integer |
 | `.L_tl_abort` | Print and abort (used by `panic`/`error`) |
@@ -432,6 +435,7 @@ They are not implemented by a separate C runtime.
 | Alias | Expands to |
 |-------|------------|
 | `string=?` | `string-eq` |
+| `string-concat` | `string-append` |
 | `char-at` | `string-ref` |
 | `print-str` | `print-string` |
 
@@ -477,11 +481,13 @@ They are not implemented by a separate C runtime.
 - Structs with construction and field access.
 - Dynamic arrays: `make-array`, `array-ref`, `array-set!`, `length`.
 - Strings: literals, `string-ref`/`char-at`, `string-length`/`length`,
-  `string-eq`/`string=?`, `string->int`, `int->string`, `print-string`/`print-str`.
+  `string-eq`/`string=?`, `string-append`/`string-concat`, `string->int`,
+  `int->string`, `print-string`/`print-str`.
 - `extern` declarations.
 - Multi-file modules via `import`.
 - Builtin `print`, `print-bool`, `print-float`, `print-char`,
-  `print-newline`, `print-string`/`print-str`, `panic`/`error`.
+  `print-newline`, `print-string`/`print-str`, `string-append`/`string-concat`,
+  `panic`/`error`.
 
 ### 8.2 What does NOT work (yet)
 

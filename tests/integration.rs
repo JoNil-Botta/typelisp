@@ -335,6 +335,18 @@ fn type_lisp_programs_compile_link_and_run() {
             stdout: "",
             deps: &[],
         },
+        // Self-hosting (#27, Milestone 1): the x86_64 .s text emitter.
+        // `tl_emit.tl` defines `emit-expr : Expr -> String` that produces
+        // Intel-syntax x86_64 asm text for int + `+`/`-`/`*` expressions, using
+        // a stack-machine approach matching the Rust backend. `main` emits and
+        // prints (via `print-string`) the body asm for `(+ 1 (* 2 3))`.
+        // The expected exact text is the sequence from #27 comment.
+        Case {
+            name: "tl_emit",
+            exit_code: 0,
+            stdout: "    movq $1, %rax\n    pushq %rax\n    movq $2, %rax\n    pushq %rax\n    movq $3, %rax\n    movq %rax, %rcx\n    popq %rax\n    imulq %rcx, %rax\n    movq %rax, %rcx\n    popq %rax\n    addq %rcx, %rax\n",
+            deps: &[],
+        },
         // refs #42: Immutable scoped String -> i64 symbol table. A focused
         // functional API with head-first lookup, shadowing, and key equality
         // via `string-eq`. Exercises `defenum`, recursive `match`, `substring`,
@@ -617,6 +629,14 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             name: "nested_eval",
             exit_code: 7,
             stdout: "",
+            deps: &[],
+        },
+        // Self-hosting (#27, Milestone 1): x86_64 .s text emitter through
+        // the explicit compile -> as -> ld -> run pipeline.
+        Case {
+            name: "tl_emit",
+            exit_code: 0,
+            stdout: "    movq $1, %rax\n    pushq %rax\n    movq $2, %rax\n    pushq %rax\n    movq $3, %rax\n    movq %rax, %rcx\n    popq %rax\n    imulq %rcx, %rax\n    movq %rax, %rcx\n    popq %rax\n    addq %rcx, %rax\n",
             deps: &[],
         },
         // refs #42: Immutable scoped String -> i64 symbol table through the

@@ -1,12 +1,13 @@
 //! Cross-platform proof that the TypeLisp self-hosting PARSER slice compiles.
 //!
-//! `selfhost/parse.tl` is the middle of the first end-to-end self-hosted
-//! pipeline (#154/#163): it imports the `main`-less reader (`lex` + `read` + the
-//! `Sexpr` AST) and the `main`-less emitter core, adds `parse : Sexpr -> Expr`
-//! and `parse-op : String -> BinOp`, and `main` runs the whole pipeline over a
-//! source that uses let, if, and comparison - printing the full runnable `.s`.
-//! This test only COMPILES the program so it runs on Windows too; the Linux
-//! integration test executes it, assembles the printed text, and asserts exit 1.
+//! `selfhost/parse_core.tl` is the reusable middle of the first end-to-end
+//! self-hosted pipeline (#154/#163): it imports the `main`-less reader (`lex` +
+//! `read` + the `Sexpr` AST) and emitter core, then defines
+//! `parse : Sexpr -> Expr` and `parse-op : String -> BinOp`. `selfhost/parse.tl`
+//! remains the runnable demo that drives the whole pipeline over an embedded
+//! source and prints the full runnable `.s`. These tests only COMPILE the
+//! programs so they run on Windows too; the Linux integration tests execute the
+//! drivers, assemble generated text, and assert the output behavior.
 
 use std::fs;
 use std::path::PathBuf;
@@ -164,6 +165,125 @@ fn tl_parse_tl_compiles_to_assembly() {
             asm.contains(literal),
             "tl_parse assembly is missing emitted string literal {:?}:\n{}",
             literal,
+            asm,
+        );
+    }
+}
+
+fn compile_selfhost_source(source_file: &str, work_name: &str, asm_file: &str) -> String {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source_path = manifest_dir.join("selfhost").join(source_file);
+
+    let work_dir = manifest_dir.join("target").join(work_name);
+    fs::create_dir_all(&work_dir).expect("create selfhost compile test work dir");
+    let asm_path = work_dir.join(asm_file);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("compile")
+        .arg(&source_path)
+        .arg("-o")
+        .arg(&asm_path)
+        .output()
+        .expect("run typelisp compile");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "{} compile step failed\nstdout:\n{}\nstderr:\n{}",
+        source_file,
+        stdout,
+        stderr,
+    );
+
+    fs::read_to_string(&asm_path).expect("read generated selfhost assembly")
+}
+
+#[test]
+fn tl_parse_core_tl_compiles_to_assembly() {
+    let asm = compile_selfhost_source(
+        "parse_core.tl",
+        "tl-parse-core-compile-test",
+        "tl_parse_core.s",
+    );
+
+    assert!(
+        !asm.contains("# TODO"),
+        "tl_parse_core assembly still contains a # TODO marker:\n{}",
+        asm,
+    );
+
+    for sym in [
+        "_tl_parse:",
+        "_tl_parse_op:",
+        "_tl_parse_binary:",
+        "_tl_parse_let:",
+        "_tl_parse_if:",
+        "_tl_parse_print:",
+        "_tl_lex:",
+        "_tl_read:",
+        "_tl_emit_program:",
+    ] {
+        assert!(
+            asm.contains(sym),
+            "tl_parse_core assembly is missing expected symbol {}:\n{}",
+            sym,
+            asm,
+        );
+    }
+}
+
+#[test]
+fn tl_compile_smoke_tl_compiles_to_assembly() {
+    let asm = compile_selfhost_source(
+        "compile_smoke.tl",
+        "tl-compile-smoke-compile-test",
+        "tl_compile_smoke.s",
+    );
+
+    assert!(
+        !asm.contains("# TODO"),
+        "tl_compile_smoke assembly still contains a # TODO marker:\n{}",
+        asm,
+    );
+    assert_eq!(
+        asm.matches("\nmain:").count() + usize::from(asm.starts_with("main:")),
+        1,
+        "tl_compile_smoke assembly must have exactly one main:\n{}",
+        asm,
+    );
+
+    for call in [
+        "call _tl_parse",
+        "call _tl_read",
+        "call _tl_lex",
+        "call _tl_emit_program",
+        "call .L_tl_arg_count",
+        "call .L_tl_arg",
+        "call .L_tl_read_file",
+        "call .L_tl_write_file",
+    ] {
+        assert!(
+            asm.contains(call),
+            "tl_compile_smoke assembly is missing expected call {}:\n{}",
+            call,
+            asm,
+        );
+    }
+
+    for runtime in [
+        ".L_tl_arg_count:",
+        ".L_tl_arg:",
+        ".L_tl_read_file:",
+        ".L_tl_write_file:",
+        "tl: read-file failed",
+        "tl: write-file failed",
+        "compile-smoke: expected input and output paths",
+    ] {
+        assert!(
+            asm.contains(runtime),
+            "tl_compile_smoke assembly is missing runtime marker {:?}:\n{}",
+            runtime,
             asm,
         );
     }

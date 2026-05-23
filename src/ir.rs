@@ -103,6 +103,13 @@ pub enum UnOp {
     BitNot,
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MaskBinOp {
+    And,
+    Or,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Instruction {
     /// Binary operation: dst = lhs op rhs
@@ -170,6 +177,99 @@ pub enum Instruction {
         offset: Value,
         elem_ty: Type,
     },
+    /// Vector lane id: dst = <0, 1, ..., lanes - 1> as a vector of `ty`.
+    #[allow(dead_code)]
+    LaneId { dst: VarId, lanes: usize, ty: Type },
+    /// Splat scalar value across all lanes: dst = <value, ...>.
+    #[allow(dead_code)]
+    Splat {
+        dst: VarId,
+        value: Value,
+        lanes: usize,
+        ty: Type,
+    },
+    /// Vector binary operation over lane values.
+    #[allow(dead_code)]
+    VectorBinOp {
+        dst: VarId,
+        op: BinOp,
+        lhs: Value,
+        rhs: Value,
+        lanes: usize,
+        elem_ty: Type,
+    },
+    /// Vector comparison, producing a mask.
+    #[allow(dead_code)]
+    VectorCompare {
+        dst: VarId,
+        op: BinOp,
+        lhs: Value,
+        rhs: Value,
+        lanes: usize,
+        elem_ty: Type,
+    },
+    /// Binary lane-mask operation.
+    #[allow(dead_code)]
+    MaskBinOp {
+        dst: VarId,
+        op: MaskBinOp,
+        lhs: Value,
+        rhs: Value,
+        lanes: usize,
+    },
+    /// Logical lane-mask complement.
+    #[allow(dead_code)]
+    MaskNot {
+        dst: VarId,
+        src: Value,
+        lanes: usize,
+    },
+    /// Per-lane select: dst = mask ? on_true : on_false.
+    #[allow(dead_code)]
+    Select {
+        dst: VarId,
+        mask: Value,
+        on_true: Value,
+        on_false: Value,
+        lanes: usize,
+        ty: Type,
+    },
+    /// Contiguous vector load from base[index + lane].
+    #[allow(dead_code)]
+    VectorLoad {
+        dst: VarId,
+        base: Value,
+        index: Value,
+        lanes: usize,
+        elem_ty: Type,
+    },
+    /// Contiguous vector store to base[index + lane].
+    #[allow(dead_code)]
+    VectorStore {
+        base: Value,
+        index: Value,
+        value: Value,
+        lanes: usize,
+        elem_ty: Type,
+    },
+    /// Contiguous vector store guarded by a lane mask.
+    #[allow(dead_code)]
+    PredicatedStore {
+        base: Value,
+        index: Value,
+        value: Value,
+        mask: Value,
+        lanes: usize,
+        elem_ty: Type,
+    },
+    /// Tail mask: lane is active when `index + lane < len`.
+    #[allow(dead_code)]
+    TailMask {
+        dst: VarId,
+        index: Value,
+        len: Value,
+        lanes: usize,
+    },
     /// Phi node for SSA: dst = phi [(val1, label1), (val2, label2), ...]
     Phi {
         dst: VarId,
@@ -214,9 +314,20 @@ impl Instruction {
             | Instruction::Cast { .. }
             | Instruction::AddrOf { .. }
             | Instruction::Gep { .. }
+            | Instruction::LaneId { .. }
+            | Instruction::Splat { .. }
+            | Instruction::VectorBinOp { .. }
+            | Instruction::VectorCompare { .. }
+            | Instruction::MaskBinOp { .. }
+            | Instruction::MaskNot { .. }
+            | Instruction::Select { .. }
+            | Instruction::TailMask { .. }
             | Instruction::Phi { .. } => IrEffect::Pure,
-            Instruction::Load { .. } => IrEffect::MemoryRead,
-            Instruction::Store { .. } | Instruction::Alloc { .. } => IrEffect::MemoryWrite,
+            Instruction::Load { .. } | Instruction::VectorLoad { .. } => IrEffect::MemoryRead,
+            Instruction::Store { .. }
+            | Instruction::VectorStore { .. }
+            | Instruction::PredicatedStore { .. }
+            | Instruction::Alloc { .. } => IrEffect::MemoryWrite,
             Instruction::Call { func, .. } => classify_direct_call_effect(func),
             Instruction::CallIndirect { .. } => IrEffect::Unknown,
             Instruction::Branch { .. } | Instruction::Jump(_) | Instruction::Return(_) => {
@@ -395,6 +506,16 @@ impl fmt::Display for UnOp {
     }
 }
 
+impl fmt::Display for MaskBinOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            MaskBinOp::And => "mask_and",
+            MaskBinOp::Or => "mask_or",
+        };
+        write!(f, "{}", s)
+    }
+}
+
 impl fmt::Display for Instruction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -486,6 +607,119 @@ impl fmt::Display for Instruction {
                 elem_ty,
             } => {
                 write!(f, "  %{} = gep {}, {} : {}", dst, base, offset, elem_ty)
+            }
+            Instruction::LaneId { dst, lanes, ty } => {
+                write!(f, "  %{} = lane_id {} x {}", dst, lanes, ty)
+            }
+            Instruction::Splat {
+                dst,
+                value,
+                lanes,
+                ty,
+            } => {
+                write!(f, "  %{} = splat {} : {} x {}", dst, value, lanes, ty)
+            }
+            Instruction::VectorBinOp {
+                dst,
+                op,
+                lhs,
+                rhs,
+                lanes,
+                elem_ty,
+            } => {
+                write!(
+                    f,
+                    "  %{} = vector_{} {}, {} : {} x {}",
+                    dst, op, lhs, rhs, lanes, elem_ty
+                )
+            }
+            Instruction::VectorCompare {
+                dst,
+                op,
+                lhs,
+                rhs,
+                lanes,
+                elem_ty,
+            } => {
+                write!(
+                    f,
+                    "  %{} = vector_cmp_{} {}, {} : {} x {}",
+                    dst, op, lhs, rhs, lanes, elem_ty
+                )
+            }
+            Instruction::MaskBinOp {
+                dst,
+                op,
+                lhs,
+                rhs,
+                lanes,
+            } => {
+                write!(f, "  %{} = {} {}, {} : {}", dst, op, lhs, rhs, lanes)
+            }
+            Instruction::MaskNot { dst, src, lanes } => {
+                write!(f, "  %{} = mask_not {} : {}", dst, src, lanes)
+            }
+            Instruction::Select {
+                dst,
+                mask,
+                on_true,
+                on_false,
+                lanes,
+                ty,
+            } => {
+                write!(
+                    f,
+                    "  %{} = select {}, {}, {} : {} x {}",
+                    dst, mask, on_true, on_false, lanes, ty
+                )
+            }
+            Instruction::VectorLoad {
+                dst,
+                base,
+                index,
+                lanes,
+                elem_ty,
+            } => {
+                write!(
+                    f,
+                    "  %{} = vector_load {}, {} : {} x {}",
+                    dst, base, index, lanes, elem_ty
+                )
+            }
+            Instruction::VectorStore {
+                base,
+                index,
+                value,
+                lanes,
+                elem_ty,
+            } => {
+                write!(
+                    f,
+                    "  vector_store {}, {}, {} : {} x {}",
+                    base, index, value, lanes, elem_ty
+                )
+            }
+            Instruction::PredicatedStore {
+                base,
+                index,
+                value,
+                mask,
+                lanes,
+                elem_ty,
+            } => {
+                write!(
+                    f,
+                    "  predicated_store {}, {}, {}, {} : {} x {}",
+                    base, index, value, mask, lanes, elem_ty
+                )
+            }
+            Instruction::TailMask {
+                dst,
+                index,
+                len,
+                lanes,
+            } => {
+                write!(f, "  %{} = tail_mask {}, {} : {}", dst, index, len, lanes)
             }
             Instruction::Phi { dst, incoming, ty } => {
                 write!(f, "  %{} = phi : {}", dst, ty)?;
@@ -620,6 +854,91 @@ mod tests {
             pure
         );
         assert_eq!(
+            Instruction::LaneId {
+                dst: 0,
+                lanes: 4,
+                ty: Type::I64,
+            }
+            .effect(),
+            pure
+        );
+        assert_eq!(
+            Instruction::Splat {
+                dst: 0,
+                value: Value::ConstI64(1),
+                lanes: 4,
+                ty: Type::I64,
+            }
+            .effect(),
+            pure
+        );
+        assert_eq!(
+            Instruction::VectorBinOp {
+                dst: 0,
+                op: BinOp::Add,
+                lhs: Value::Var(1),
+                rhs: Value::Var(2),
+                lanes: 4,
+                elem_ty: Type::I64,
+            }
+            .effect(),
+            pure
+        );
+        assert_eq!(
+            Instruction::VectorCompare {
+                dst: 0,
+                op: BinOp::Lt,
+                lhs: Value::Var(1),
+                rhs: Value::Var(2),
+                lanes: 4,
+                elem_ty: Type::I64,
+            }
+            .effect(),
+            pure
+        );
+        assert_eq!(
+            Instruction::MaskBinOp {
+                dst: 0,
+                op: MaskBinOp::And,
+                lhs: Value::Var(1),
+                rhs: Value::Var(2),
+                lanes: 4,
+            }
+            .effect(),
+            pure
+        );
+        assert_eq!(
+            Instruction::MaskNot {
+                dst: 0,
+                src: Value::Var(1),
+                lanes: 4,
+            }
+            .effect(),
+            pure
+        );
+        assert_eq!(
+            Instruction::Select {
+                dst: 0,
+                mask: Value::Var(1),
+                on_true: Value::Var(2),
+                on_false: Value::Var(3),
+                lanes: 4,
+                ty: Type::I64,
+            }
+            .effect(),
+            pure
+        );
+        assert_eq!(
+            Instruction::TailMask {
+                dst: 0,
+                index: Value::Var(1),
+                len: Value::Var(2),
+                lanes: 4,
+            }
+            .effect(),
+            pure
+        );
+        assert_eq!(
             Instruction::Phi {
                 dst: 0,
                 incoming: vec![(Value::ConstI64(1), "entry".into())],
@@ -639,6 +958,17 @@ mod tests {
             IrEffect::MemoryRead
         );
         assert_eq!(
+            Instruction::VectorLoad {
+                dst: 0,
+                base: Value::Var(1),
+                index: Value::ConstI64(0),
+                lanes: 4,
+                elem_ty: Type::I64,
+            }
+            .effect(),
+            IrEffect::MemoryRead
+        );
+        assert_eq!(
             Instruction::Store {
                 dst: Value::Var(0),
                 src: Value::ConstI64(1),
@@ -651,6 +981,29 @@ mod tests {
             Instruction::Alloc {
                 var: 0,
                 ty: i64_ty()
+            }
+            .effect(),
+            IrEffect::MemoryWrite
+        );
+        assert_eq!(
+            Instruction::VectorStore {
+                base: Value::Var(0),
+                index: Value::ConstI64(0),
+                value: Value::Var(1),
+                lanes: 4,
+                elem_ty: Type::I64,
+            }
+            .effect(),
+            IrEffect::MemoryWrite
+        );
+        assert_eq!(
+            Instruction::PredicatedStore {
+                base: Value::Var(0),
+                index: Value::ConstI64(0),
+                value: Value::Var(1),
+                mask: Value::Var(2),
+                lanes: 4,
+                elem_ty: Type::I64,
             }
             .effect(),
             IrEffect::MemoryWrite
@@ -745,5 +1098,125 @@ mod tests {
         assert!(IrEffect::MemoryWrite.invalidates_cse());
         assert!(IrEffect::ControlFlow.invalidates_cse());
         assert!(IrEffect::Unknown.invalidates_cse());
+    }
+
+    #[test]
+    fn vector_and_mask_types_display_as_internal_ir_types() {
+        assert_eq!(
+            Type::Vector(Box::new(Type::I32), 8).to_string(),
+            "(Vector i32 8)"
+        );
+        assert_eq!(Type::Mask(8).to_string(), "(Mask 8)");
+    }
+
+    #[test]
+    fn vector_and_mask_ir_pretty_prints_each_primitive() {
+        let instrs = vec![
+            Instruction::LaneId {
+                dst: 0,
+                lanes: 4,
+                ty: Type::I64,
+            },
+            Instruction::Splat {
+                dst: 1,
+                value: Value::ConstI64(7),
+                lanes: 4,
+                ty: Type::I64,
+            },
+            Instruction::VectorBinOp {
+                dst: 2,
+                op: BinOp::Add,
+                lhs: Value::Var(0),
+                rhs: Value::Var(1),
+                lanes: 4,
+                elem_ty: Type::I64,
+            },
+            Instruction::VectorCompare {
+                dst: 3,
+                op: BinOp::Lt,
+                lhs: Value::Var(0),
+                rhs: Value::Var(1),
+                lanes: 4,
+                elem_ty: Type::I64,
+            },
+            Instruction::MaskBinOp {
+                dst: 4,
+                op: MaskBinOp::Or,
+                lhs: Value::Var(3),
+                rhs: Value::Var(3),
+                lanes: 4,
+            },
+            Instruction::MaskNot {
+                dst: 5,
+                src: Value::Var(4),
+                lanes: 4,
+            },
+            Instruction::Select {
+                dst: 6,
+                mask: Value::Var(5),
+                on_true: Value::Var(2),
+                on_false: Value::Var(1),
+                lanes: 4,
+                ty: Type::I64,
+            },
+            Instruction::VectorLoad {
+                dst: 7,
+                base: Value::Var(10),
+                index: Value::Var(11),
+                lanes: 4,
+                elem_ty: Type::I64,
+            },
+            Instruction::VectorStore {
+                base: Value::Var(12),
+                index: Value::Var(11),
+                value: Value::Var(6),
+                lanes: 4,
+                elem_ty: Type::I64,
+            },
+            Instruction::PredicatedStore {
+                base: Value::Var(12),
+                index: Value::Var(11),
+                value: Value::Var(6),
+                mask: Value::Var(5),
+                lanes: 4,
+                elem_ty: Type::I64,
+            },
+        ];
+        let rendered = instrs
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        for expected in [
+            "%0 = lane_id 4 x i64",
+            "%1 = splat 7 : 4 x i64",
+            "%2 = vector_add %0, %1 : 4 x i64",
+            "%3 = vector_cmp_lt %0, %1 : 4 x i64",
+            "%4 = mask_or %3, %3 : 4",
+            "%5 = mask_not %4 : 4",
+            "%6 = select %5, %2, %1 : 4 x i64",
+            "%7 = vector_load %10, %11 : 4 x i64",
+            "vector_store %12, %11, %6 : 4 x i64",
+            "predicated_store %12, %11, %6, %5 : 4 x i64",
+        ] {
+            assert!(
+                rendered.contains(expected),
+                "missing {expected:?} in:\n{rendered}"
+            );
+        }
+    }
+
+    #[test]
+    fn tail_mask_ir_records_index_length_and_lane_width() {
+        let instr = Instruction::TailMask {
+            dst: 9,
+            index: Value::Var(1),
+            len: Value::Var(2),
+            lanes: 8,
+        };
+
+        assert_eq!(instr.to_string(), "  %9 = tail_mask %1, %2 : 8");
+        assert_eq!(instr.effect(), IrEffect::Pure);
     }
 }

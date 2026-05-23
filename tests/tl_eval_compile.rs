@@ -101,11 +101,13 @@ fn tl_eval_tl_compiles_to_assembly() {
     // The evaluator's own functions were emitted (TypeLisp prefixes user symbols
     // with `_tl_`): the tree-walking `eval-sexpr`, and the cons-cell projections
     // `sexpr-head` ("car") / `sexpr-tail` ("cdr") / `sexpr-sym` (operator symbol)
-    // it uses to destructure each call form one level at a time.
+    // it uses to destructure each call form one level at a time. The arity guard
+    // rejects extra operands after the second fixed-arity argument.
     for sym in [
         "_tl_eval_sexpr:",
         "_tl_sexpr_head:",
         "_tl_sexpr_tail:",
+        "_tl_sexpr_expect_nil:",
         "_tl_sexpr_sym:",
     ] {
         assert!(
@@ -163,8 +165,8 @@ fn tl_eval_tl_compiles_to_assembly() {
         asm,
     );
 
-    // A malformed program (a non-symbol operator, too few arguments, or an unknown
-    // operator) aborts via `(panic ...)`, lowered to the private abort runtime -
+    // A malformed program (a non-symbol operator, too few/many arguments, or an
+    // unknown operator) aborts via `(panic ...)`, lowered to the private abort runtime -
     // exactly how a real interpreter reports a malformed program.
     assert!(
         asm.contains("call .L_tl_abort"),

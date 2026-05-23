@@ -61,6 +61,16 @@
     [(SNil) (begin (panic "eval: expected a cons cell (cdr of nil / too few args)") SNil)]
     [(SCons _ t) t]))
 
+;; sexpr-expect-nil: fixed-arity binary operators must have exactly two
+;; arguments. After projecting arg1 and arg2, the remaining tail must be SNil; a
+;; third cons cell is a malformed call rather than an ignored extra operand.
+(define (sexpr-expect-nil [s : Sexpr]) : unit
+  (match s
+    [(SNil) unit]
+    [(SInt _) (panic "eval: too many arguments")]
+    [(SSym _) (panic "eval: too many arguments")]
+    [(SCons _ _) (panic "eval: too many arguments")]))
+
 ;; sexpr-sym: the operator symbol text. The head of a call form must be a symbol
 ;; (`+`, `-`, `*`, `/`); any other head shape is a non-symbol operator - abort.
 (define (sexpr-sym [s : Sexpr]) : String
@@ -104,22 +114,25 @@
      (let ([name : String (sexpr-sym op)]
            [arg1 : Sexpr (sexpr-head rest)]
            [rest2 : Sexpr (sexpr-tail rest)])
-       (let ([arg2 : Sexpr (sexpr-head rest2)])
-         (let ([a : i64 (eval-sexpr arg1)]
-               [b : i64 (eval-sexpr arg2)])
-           ;; Dispatch on the operator text. `string-eq` is the byte-wise
-           ;; equality builtin; an unmatched operator falls through to a panic.
-           (if (string-eq name "+")
-               (+ a b)
-               (if (string-eq name "-")
-                   (- a b)
-                   (if (string-eq name "*")
-                       (* a b)
-                       (if (string-eq name "/")
-                           (/ a b)
-                           (begin
-                             (panic "eval: unknown operator")
-                             0))))))))]))
+       (let ([arg2 : Sexpr (sexpr-head rest2)]
+             [rest3 : Sexpr (sexpr-tail rest2)])
+         (begin
+           (sexpr-expect-nil rest3)
+           (let ([a : i64 (eval-sexpr arg1)]
+                 [b : i64 (eval-sexpr arg2)])
+             ;; Dispatch on the operator text. `string-eq` is the byte-wise
+             ;; equality builtin; an unmatched operator falls through to a panic.
+             (if (string-eq name "+")
+                 (+ a b)
+                 (if (string-eq name "-")
+                     (- a b)
+                     (if (string-eq name "*")
+                         (* a b)
+                         (if (string-eq name "/")
+                             (/ a b)
+                             (begin
+                               (panic "eval: unknown operator")
+                               0)))))))))]))
 
 ;; --------------------------------------------------------------------------
 ;; main: the whole front end composed - lex, read, then interpret.

@@ -438,10 +438,7 @@ impl Optimizer {
                 BinOp::Mod => a % b,
                 _ => unreachable!(),
             };
-            return Some(Self::value_from_bits(
-                Self::bits_from_signed(result, width),
-                ty,
-            )?);
+            return Self::value_from_bits(Self::bits_from_signed(result, width), ty);
         }
 
         let a = Self::integer_bits(&lhs.value, ty)?;

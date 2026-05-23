@@ -39,7 +39,9 @@
   (TSym String)
   (TEnd)
   (TStr String)
-  (TChar char))
+  (TChar char)
+  (TLBracket)
+  (TRBracket))
 
 ;; Numeric tag for a token kind: a parser's cursor classifies the token under it
 ;; by tag. Exercises `match` over every Token variant, including the
@@ -52,7 +54,9 @@
     [(TSym _) 4]
     [(TEnd) 5]
     [(TStr _) 6]
-    [(TChar _) 7]))
+    [(TChar _) 7]
+    [(TLBracket) 8]
+    [(TRBracket) 9]))
 
 ;; Integer payload of a TInt token (0 for any other kind): projects the literal
 ;; value back out of the enum, the way a parser reads a numeric literal.
@@ -64,7 +68,9 @@
     [(TSym _) 0]
     [(TEnd) 0]
     [(TStr _) 0]
-    [(TChar _) 0]))
+    [(TChar _) 0]
+    [(TLBracket) 0]
+    [(TRBracket) 0]))
 
 ;; Symbol text of a TSym token (the empty string for any other kind): projects
 ;; the sliced lexeme back out of the enum, the way a parser reads a symbol/name.
@@ -76,7 +82,9 @@
     [(TSym s) s]
     [(TEnd) ""]
     [(TStr _) ""]
-    [(TChar _) ""]))
+    [(TChar _) ""]
+    [(TLBracket) ""]
+    [(TRBracket) ""]))
 
 ;; String text of a TStr token (the empty string for any other kind): projects
 ;; the sliced inner text of a `"..."` literal back out of the enum, the way a
@@ -90,7 +98,9 @@
     [(TSym _) ""]
     [(TEnd) ""]
     [(TStr s) s]
-    [(TChar _) ""]))
+    [(TChar _) ""]
+    [(TLBracket) ""]
+    [(TRBracket) ""]))
 
 ;; Character payload of a TChar token (NUL for any other kind): projects the
 ;; read character back out of the enum while keeping char atoms distinct from
@@ -103,7 +113,9 @@
     [(TSym _) #\nul']
     [(TEnd) #\nul']
     [(TStr _) #\nul']
-    [(TChar c) c]))
+    [(TChar c) c]
+    [(TLBracket) #\nul']
+    [(TRBracket) #\nul']))
 
 ;; ---- Token-kind tag constants (kept in sync with `token-tag`). ----
 ;; A parser compares a token's tag against these to drive its descent.
@@ -114,3 +126,5 @@
 (define (tag-end) : i64 5)
 (define (tag-str) : i64 6)
 (define (tag-char) : i64 7)
+(define (tag-lbracket) : i64 8)
+(define (tag-rbracket) : i64 9)

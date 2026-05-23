@@ -51,7 +51,7 @@
 ;; `c` is one of TypeLisp's symbol punctuation chars - the non-alphanumeric
 ;; characters that may appear in a symbol/operator name:
 ;;   `-` 45  `+` 43  `*` 42  `/` 47  `?` 63  `!` 33  `>` 62  `<` 60  `=` 61
-;;   `_` 95
+;;   `_` 95  `:` 58  `%` 37  `&` 38  `$` 36
 ;; This is what makes `+`, `<=`, `string->int`, and `array-set!` all lex as one
 ;; `TSym` rather than as separate operator tokens.
 (define (is-symbol-punct [c : char]) : bool
@@ -65,7 +65,11 @@
                             (or (= k 62)
                                 (or (= k 60)
                                     (or (= k 61)
-                                        (= k 95))))))))))))
+                                        (or (= k 95)
+                                            (or (= k 58)
+                                                (or (= k 37)
+                                                    (or (= k 38)
+                                                        (= k 36))))))))))))))))
 
 ;; `c` may appear in a symbol: a letter, a digit, or a symbol-punctuation char.
 ;; A symbol run is the maximal span of these starting at a non-digit symbol char.
@@ -287,47 +291,57 @@
                         (array-set! toks count TRParen)
                         (set! count (+ count 1))
                         (set! i (+ i 1)))
-                      (if (= (code c) 34)  ; '"' - a string literal
-                          ;; Inner text runs from just after the opening quote to
-                          ;; the closing quote; slice it into a TStr and skip the
-                          ;; closing quote. NO escape handling (deferred).
-                          (let ([start : i64 (+ i 1)])
-                            (let ([end : i64 (scan-str-end src start n)])
+                      (if (= (code c) 91)  ; '['
+                          (begin
+                            (array-set! toks count TLBracket)
+                            (set! count (+ count 1))
+                            (set! i (+ i 1)))
+                          (if (= (code c) 93)  ; ']'
                               (begin
-                                (array-set! toks count
-                                  (TStr (substring src start (- end start))))
+                                (array-set! toks count TRBracket)
                                 (set! count (+ count 1))
-                                (set! i (+ end 1)))))
-                          (if (= (code c) 59)  ; ';' - a line comment
-                              ;; Skip to end-of-line; emit no token. The newline
-                              ;; (if any) is left for the whitespace skip.
-                              (set! i (scan-comment-end src (+ i 1) n))
-                              (if (= (code c) 35)  ; '#' - a char literal
-                                  (let ([value : char (char-literal-value src i n)])
-                                    (let ([end : i64 (char-literal-end src i n)])
+                                (set! i (+ i 1)))
+                              (if (= (code c) 34)  ; '"' - a string literal
+                                  ;; Inner text runs from just after the opening quote to
+                                  ;; the closing quote; slice it into a TStr and skip the
+                                  ;; closing quote. NO escape handling (deferred).
+                                  (let ([start : i64 (+ i 1)])
+                                    (let ([end : i64 (scan-str-end src start n)])
                                       (begin
-                                        (array-set! toks count (TChar value))
+                                        (array-set! toks count
+                                          (TStr (substring src start (- end start))))
                                         (set! count (+ count 1))
-                                        (set! i end))))
-                                  (if (is-digit c)
-                                      ;; A digit run -> one TInt, parsed from its substring.
-                                      (let ([end : i64 (scan-int-end src i n)])
-                                        (begin
-                                          (array-set! toks count
-                                            (TInt (string->int (substring src i (- end i)))))
-                                          (set! count (+ count 1))
-                                          (set! i end)))
-                                      (if (is-symbol-char c)
-                                          ;; A symbol run -> one TSym carrying its lexeme.
-                                          (let ([end : i64 (scan-symbol-end src i n)])
-                                            (begin
-                                              (array-set! toks count
-                                                (TSym (substring src i (- end i))))
-                                              (set! count (+ count 1))
-                                              (set! i end)))
-                                          (begin
-                                            (panic "lexer: unexpected character")
-                                            (set! i (+ i 1)))))))))))))
+                                        (set! i (+ end 1)))))
+                                  (if (= (code c) 59)  ; ';' - a line comment
+                                      ;; Skip to end-of-line; emit no token. The newline
+                                      ;; (if any) is left for the whitespace skip.
+                                      (set! i (scan-comment-end src (+ i 1) n))
+                                      (if (= (code c) 35)  ; '#' - a char literal
+                                          (let ([value : char (char-literal-value src i n)])
+                                            (let ([end : i64 (char-literal-end src i n)])
+                                              (begin
+                                                (array-set! toks count (TChar value))
+                                                (set! count (+ count 1))
+                                                (set! i end))))
+                                          (if (is-digit c)
+                                              ;; A digit run -> one TInt, parsed from its substring.
+                                              (let ([end : i64 (scan-int-end src i n)])
+                                                (begin
+                                                  (array-set! toks count
+                                                    (TInt (string->int (substring src i (- end i)))))
+                                                  (set! count (+ count 1))
+                                                  (set! i end)))
+                                              (if (is-symbol-char c)
+                                                  ;; A symbol run -> one TSym carrying its lexeme.
+                                                  (let ([end : i64 (scan-symbol-end src i n)])
+                                                    (begin
+                                                      (array-set! toks count
+                                                        (TSym (substring src i (- end i))))
+                                                      (set! count (+ count 1))
+                                                      (set! i end)))
+                                                  (begin
+                                                    (panic "lexer: unexpected character")
+                                                    (set! i (+ i 1)))))))))))))))
       ;; A real lexer terminates the stream; record the sentinel too.
       (array-set! toks count TEnd)
       count)))

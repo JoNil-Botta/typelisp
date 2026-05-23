@@ -10,6 +10,35 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
+fn compile_selfhost_source(source_file: &str, work_name: &str, asm_file: &str) -> String {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source_path = manifest_dir.join("selfhost").join(source_file);
+
+    let work_dir = manifest_dir.join("target").join(work_name);
+    fs::create_dir_all(&work_dir).expect("create selfhost compile test work dir");
+    let asm_path = work_dir.join(asm_file);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("compile")
+        .arg(&source_path)
+        .arg("-o")
+        .arg(&asm_path)
+        .output()
+        .expect("run typelisp compile");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "{} compile step failed\nstdout:\n{}\nstderr:\n{}",
+        source_file,
+        stdout,
+        stderr,
+    );
+
+    fs::read_to_string(&asm_path).expect("read generated selfhost assembly")
+}
+
 #[test]
 fn tl_ast_tl_compiles_to_assembly() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -214,4 +243,124 @@ fn tl_compiler_ast_types_tl_compiles_to_assembly() {
             asm,
         );
     }
+}
+
+#[test]
+fn tl_compiler_parse_core_tl_compiles_to_assembly() {
+    let asm = compile_selfhost_source(
+        "compiler_parse_core.tl",
+        "tl-compiler-parse-core-compile-test",
+        "compiler_parse_core.s",
+    );
+
+    assert!(
+        !asm.contains("# TODO"),
+        "compiler_parse_core assembly still contains a # TODO marker:\n{}",
+        asm,
+    );
+    assert_eq!(
+        asm.matches("\nmain:").count() + usize::from(asm.starts_with("main:")),
+        1,
+        "compiler_parse_core assembly must have exactly one synthesized main:\n{}",
+        asm,
+    );
+
+    for sym in [
+        "_tl_compiler_parse_type:",
+        "_tl_compiler_parse_expr:",
+        "_tl_compiler_parse_pattern:",
+        "_tl_compiler_parse_decl:",
+        "_tl_compiler_parse_program:",
+        "_tl_compiler_parse_smoke:",
+        "_tl_cp_parse_array_type:",
+        "_tl_cp_parse_match_arm:",
+        "_tl_cp_parse_function_define:",
+        "_tl_read_form:",
+        "_tl_read_list_until:",
+        "_tl_lex:",
+        "_tl_token_tag:",
+        "_tl_ast_decl_tag:",
+    ] {
+        assert!(
+            asm.contains(sym),
+            "compiler_parse_core assembly is missing expected symbol {}:\n{}",
+            sym,
+            asm,
+        );
+    }
+
+    for call in [
+        "call _tl_compiler_parse_program",
+        "call _tl_compiler_parse_decl",
+        "call _tl_compiler_parse_expr",
+        "call _tl_compiler_parse_type",
+        "call _tl_compiler_parse_pattern",
+        "call _tl_read_form",
+        "call _tl_read_list_until",
+        "call _tl_lex",
+        "call _tl_token_tag",
+        "call tl_string_eq",
+    ] {
+        assert!(
+            asm.contains(call),
+            "compiler_parse_core assembly is missing expected call {}:\n{}",
+            call,
+            asm,
+        );
+    }
+
+    for msg in [
+        "compiler parse: malformed expression",
+        "compiler parse: malformed function define",
+        "compiler parse: malformed match arm",
+        "compiler parse: malformed array type",
+        "compiler parse: array size must be integer",
+        "compiler parse: function type needs return type",
+    ] {
+        assert!(
+            asm.contains(msg),
+            "compiler_parse_core assembly is missing parse message {:?}:\n{}",
+            msg,
+            asm,
+        );
+    }
+
+    for literal in [
+        "(import \\\"std.tl\\\")",
+        "(define (main [x : i64] [s : String]) : i64",
+        "[(Some v) (cast (ann (+ v 1) : i64) : i64)]",
+    ] {
+        assert!(
+            asm.contains(literal),
+            "compiler_parse_core assembly is missing smoke literal {:?}:\n{}",
+            literal,
+            asm,
+        );
+    }
+}
+
+#[test]
+fn tl_compiler_parse_tl_compiles_to_assembly() {
+    let asm = compile_selfhost_source(
+        "compiler_parse.tl",
+        "tl-compiler-parse-compile-test",
+        "compiler_parse.s",
+    );
+
+    assert!(
+        !asm.contains("# TODO"),
+        "compiler_parse assembly still contains a # TODO marker:\n{}",
+        asm,
+    );
+    assert_eq!(
+        asm.matches("\nmain:").count() + usize::from(asm.starts_with("main:")),
+        1,
+        "compiler_parse assembly must have exactly one main:\n{}",
+        asm,
+    );
+    assert!(
+        asm.contains("call _tl_compiler_parse_smoke"),
+        "compiler_parse main should call the structural smoke parser:\n{}",
+        asm,
+    );
 }

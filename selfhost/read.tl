@@ -138,15 +138,23 @@
                         (begin
                           (advance cur)
                           (read-list toks cur))
-                        (if (= t (tag-rparen))
+                        (if (= t (tag-lbracket))
                             (begin
-                              (panic "reader: unexpected ')'")
-                              ;; Dead code: `panic` never returns, but the `if` needs a Sexpr.
-                              SNil)
-                            ;; tag-end (or anything else): premature end of stream.
-                            (begin
-                              (panic "reader: unexpected end of input")
-                              SNil)))))))))
+                              (advance cur)
+                              (read-list-until toks cur (tag-rbracket)))
+                            (if (= t (tag-rparen))
+                                (begin
+                                  (panic "reader: unexpected ')'")
+                                  ;; Dead code: `panic` never returns, but the `if` needs a Sexpr.
+                                  SNil)
+                                (if (= t (tag-rbracket))
+                                    (begin
+                                      (panic "reader: unexpected ']'")
+                                      SNil)
+                                    ;; tag-end (or anything else): premature end of stream.
+                                    (begin
+                                      (panic "reader: unexpected end of input")
+                                      SNil)))))))))))
 
 ;; read-list: the cursor is positioned just AFTER an opening '('. Read forms
 ;; until the matching ')', returning the proper list `(SCons f1 (SCons f2 ...
@@ -158,21 +166,28 @@
 ;; itself a '(' re-enters `read-form` -> `read-list`, which reads the inner list
 ;; to ITS ')' and advances the shared cursor past it before this level reads its
 ;; next sibling.
-(define (read-list [toks : (Array Token)] [cur : (Array i64)]) : Sexpr
+(define (read-list-until [toks : (Array Token)] [cur : (Array i64)] [stop-tag : i64]) : Sexpr
   (let ([t : i64 (peek-tag toks cur)])
-    (if (= t (tag-rparen))
+    (if (= t stop-tag)
         ;; End of this list: consume the ')' and terminate the spine with SNil.
         (begin
           (advance cur)
           SNil)
-        (if (= t (tag-end))
+        (if (or (= t (tag-rparen)) (= t (tag-rbracket)))
             (begin
-              (panic "reader: unterminated list (missing ')')")
+              (panic "reader: unexpected closing delimiter")
               SNil)
-            ;; A list element: read the head form (which advances the cursor past
-            ;; it, however deeply nested), then recurse for the tail and cons.
-            (let ([head : Sexpr (read-form toks cur)])
-              (SCons head (read-list toks cur)))))))
+            (if (= t (tag-end))
+                (begin
+                  (panic "reader: unterminated list")
+                  SNil)
+                ;; A list element: read the head form (which advances the cursor past
+                ;; it, however deeply nested), then recurse for the tail and cons.
+                (let ([head : Sexpr (read-form toks cur)])
+                  (SCons head (read-list-until toks cur stop-tag))))))))
+
+(define (read-list [toks : (Array Token)] [cur : (Array i64)]) : Sexpr
+  (read-list-until toks cur (tag-rparen)))
 
 ;; read: the public entry point. Read a single top-level form from the front of
 ;; `toks` (a cursor starting at index 0) and return its `Sexpr` tree. (Trailing

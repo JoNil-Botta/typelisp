@@ -331,6 +331,21 @@ fn type_lisp_programs_compile_link_and_run() {
             stdout: "",
             deps: &["ast_types.tl", "read.tl", "lex.tl", "token.tl"],
         },
+        // Self-hosting real-AST parser (#335): parse bracketed TypeLisp forms
+        // from the shared reader into compiler_ast_types.tl and return a
+        // declaration-count/tag structural score.
+        Case {
+            name: "tl_compiler_parse",
+            exit_code: 27,
+            stdout: "",
+            deps: &[
+                "compiler_parse_core.tl",
+                "compiler_ast_types.tl",
+                "read.tl",
+                "lex.tl",
+                "token.tl",
+            ],
+        },
         // Self-hosting (#27): the lexer for TypeLisp's OWN s-expression syntax
         // (NOT the arithmetic-calculator surface). `lexer.tl` tokenizes real
         // TypeLisp source - balanced parens, integer literals, *symbols*
@@ -707,6 +722,20 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             exit_code: 173,
             stdout: "",
             deps: &["ast_types.tl", "read.tl", "lex.tl", "token.tl"],
+        },
+        // Self-hosting real-AST parser (#335): parse bracketed TypeLisp forms
+        // into compiler_ast_types.tl and return a structural score.
+        Case {
+            name: "tl_compiler_parse",
+            exit_code: 27,
+            stdout: "",
+            deps: &[
+                "compiler_parse_core.tl",
+                "compiler_ast_types.tl",
+                "read.tl",
+                "lex.tl",
+                "token.tl",
+            ],
         },
         // Self-hosting (#27): the TypeLisp-syntax (s-expression) lexer - now with
         // string literals (`TStr`), char literals (`TChar`), and `;` line comments
@@ -2822,6 +2851,7 @@ fn source_path_for_case(manifest_dir: &PathBuf, name: &str) -> PathBuf {
 
     let selfhost_file = match name {
         "tl_ast" => "ast.tl",
+        "tl_compiler_parse" => "compiler_parse.tl",
         "tl_emit" => "emit.tl",
         "tl_eval" => "eval.tl",
         "tl_lex" => "lex.tl",

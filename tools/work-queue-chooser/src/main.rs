@@ -4,8 +4,8 @@ use std::fmt;
 use std::io::{self, Read};
 use std::process;
 
-const REVIEW_WEIGHT: u32 = 15;
-const IMPLEMENT_WEIGHT: u32 = 15;
+const REVIEW_WEIGHT: u32 = 10;
+const IMPLEMENT_WEIGHT: u32 = 10;
 const RESEARCH_WEIGHT: u32 = 1;
 const PRIORITY_BONUS: u32 = 3;
 
@@ -208,7 +208,6 @@ fn action_name(kind: Kind) -> &'static str {
 
 fn print_summary(candidates: &[Candidate], selection: &Selection) {
     let selected = &candidates[selection.selected_item_index];
-    println!("{candidates:#?}");
 
     println!(
         "{} {} #{}: {}",

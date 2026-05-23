@@ -129,6 +129,19 @@ impl TypeChecker {
                 Box::new(Type::String),
             ),
         );
+        // `(string-append a b)` / `(string-concat a b)` ->
+        // `(-> String String String)` — a fresh String holding the bytes of `a`
+        // immediately followed by the bytes of `b`. The fat `{ ptr, len }` result
+        // is heap-allocated (via the emit-on-demand `tl_string_concat` runtime) so
+        // it outlives the caller. `string-concat` is an alias with identical type.
+        globals.insert(
+            "string-append".into(),
+            Type::Func(vec![Type::String, Type::String], Box::new(Type::String)),
+        );
+        globals.insert(
+            "string-concat".into(),
+            Type::Func(vec![Type::String, Type::String], Box::new(Type::String)),
+        );
         // `(panic msg)` / `(error msg)` -> write `msg` to fd 2 (stderr) then
         // terminate the process. It never returns; its type is `(-> String unit)`
         // so a `(panic ...)` expression yields unit and can appear wherever a
@@ -2395,6 +2408,62 @@ mod tests {
         // The result is a String, not an i64; using it where an i64 is required
         // (the function's declared return) is a type error.
         let src = r#"(define (f) : i64 (substring "hi" 0 1))"#;
+        assert!(check(src).is_err());
+    }
+
+    // ------------------------------------------------------------------
+    // string-append / string-concat — `(-> String String String)` (refs #13/#27)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_typecheck_string_append_yields_string() {
+        // `(string-append a b)` : `(-> String String String)`. Concatenating two
+        // String parameters and returning the result type-checks as a String.
+        let src = "(define (f [a : String] [b : String]) : String (string-append a b))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_string_concat_alias_yields_string() {
+        // `string-concat` is the alias of `string-append` with identical type.
+        let src = "(define (f [a : String] [b : String]) : String (string-concat a b))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_string_append_on_literals() {
+        // Two String literals concatenate fine.
+        let src = r#"(define (f) : String (string-append "foo" "bar"))"#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_string_append_requires_string_first_arg() {
+        // The first argument must be a String, not an i64.
+        let src = r#"(define (f) : String (string-append 42 "bar"))"#;
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_string_append_requires_string_second_arg() {
+        // The second argument must be a String, not an i64.
+        let src = r#"(define (f) : String (string-append "foo" 42))"#;
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_string_append_arity_checked() {
+        // `string-append` is binary; one argument is an arity error.
+        let src = r#"(define (f) : String (string-append "foo"))"#;
+        let err = check(src).unwrap_err();
+        assert!(err.msg.contains("arguments"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_string_append_result_is_not_i64() {
+        // The result is a String, not an i64; using it where an i64 is required
+        // (the function's declared return) is a type error.
+        let src = r#"(define (f) : i64 (string-append "foo" "bar"))"#;
         assert!(check(src).is_err());
     }
 

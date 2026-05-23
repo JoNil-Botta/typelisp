@@ -54,6 +54,13 @@ pub struct X86_64Backend {
     /// `tl_alloc`s both the slice buffer and the 16-byte fat value, so its
     /// presence also forces the bump-allocator runtime to be emitted.
     needs_substring_runtime: bool,
+    /// Whether the program references the concatenation helper `tl_string_concat`
+    /// and the backend must therefore emit the self-contained (libc-free)
+    /// byte-append runtime into the program's `.s`. Set when `(string-append a b)`
+    /// / `(string-concat a b)` is lowered. Like `tl_substring` the runtime
+    /// `tl_alloc`s both the joined data buffer and the 16-byte fat value, so its
+    /// presence also forces the bump-allocator runtime to be emitted.
+    needs_string_concat_runtime: bool,
     /// Whether the program references the message-abort helper `tl_abort` and
     /// the backend must therefore emit the self-contained abort runtime (write
     /// the caller-supplied message to fd 2 + `exit`) into the program's `.s`.
@@ -778,6 +785,7 @@ impl X86_64Backend {
             needs_string_to_int_runtime: false,
             needs_int_to_string_runtime: false,
             needs_substring_runtime: false,
+            needs_string_concat_runtime: false,
             needs_abort_runtime: false,
             needs_print_str_runtime: false,
             return_ty: Type::Unit,
@@ -806,6 +814,7 @@ impl X86_64Backend {
         self.needs_string_to_int_runtime = Self::needs_string_to_int_runtime(program);
         self.needs_int_to_string_runtime = Self::needs_int_to_string_runtime(program);
         self.needs_substring_runtime = Self::needs_substring_runtime(program);
+        self.needs_string_concat_runtime = Self::needs_string_concat_runtime(program);
         self.needs_abort_runtime = Self::needs_abort_runtime(program);
         self.needs_print_str_runtime = Self::needs_print_str_runtime(program);
         // The int->string and substring runtimes allocate their buffers and fat
@@ -814,7 +823,8 @@ impl X86_64Backend {
         // TypeLisp function named `tl_alloc` remain mangled to `_tl_tl_alloc`.
         self.emits_alloc_runtime = self.needs_alloc_runtime
             || self.needs_int_to_string_runtime
-            || self.needs_substring_runtime;
+            || self.needs_substring_runtime
+            || self.needs_string_concat_runtime;
         let needs_print_runtime = !self.runtime_print_names.is_empty();
         if needs_print_runtime {
             self.generate_print_runtime_data();
@@ -846,6 +856,7 @@ impl X86_64Backend {
                 || (self.needs_string_to_int_runtime && symbol == "tl_string_to_int")
                 || (self.needs_int_to_string_runtime && symbol == "tl_int_to_string")
                 || (self.needs_substring_runtime && symbol == "tl_substring")
+                || (self.needs_string_concat_runtime && symbol == "tl_string_concat")
                 || (self.needs_abort_runtime && symbol == ABORT_RUNTIME_SYMBOL)
                 || (self.needs_print_str_runtime && symbol == "tl_print_str");
             if !defined_inline {
@@ -878,6 +889,9 @@ impl X86_64Backend {
         }
         if self.needs_substring_runtime {
             self.generate_substring_runtime_functions();
+        }
+        if self.needs_string_concat_runtime {
+            self.generate_string_concat_runtime_functions();
         }
         if self.needs_abort_runtime {
             self.generate_abort_runtime_functions();
@@ -1091,6 +1105,33 @@ impl X86_64Backend {
             .externs
             .iter()
             .any(|(name, _)| name == "tl_substring");
+        referenced_in_calls || referenced_in_externs
+    }
+
+    /// Whether the program references the concatenation helper
+    /// `tl_string_concat` (through a direct `Call` or an `extern` declaration) and
+    /// does not define its own. When true the backend emits the self-contained
+    /// byte-append runtime into the program's `.s` so the symbol resolves without
+    /// linking libc.
+    fn needs_string_concat_runtime(program: &Program) -> bool {
+        let defines_own = program
+            .functions
+            .iter()
+            .any(|f| f.name == "tl_string_concat");
+        if defines_own {
+            return false;
+        }
+        let referenced_in_calls = program.functions.iter().any(|func| {
+            func.blocks.iter().any(|block| {
+                block.instructions.iter().any(|instr| {
+                    matches!(instr, Instruction::Call { func, .. } if func == "tl_string_concat")
+                })
+            })
+        });
+        let referenced_in_externs = program
+            .externs
+            .iter()
+            .any(|(name, _)| name == "tl_string_concat");
         referenced_in_calls || referenced_in_externs
     }
 
@@ -1758,6 +1799,94 @@ impl X86_64Backend {
         self.emit("    movq %r12, 8(%rax)");
         // %rax already holds the fat pointer — the return value.
         self.emit("    add $8, %rsp");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    /// Emit the self-contained byte-append helper
+    /// `tl_string_concat(a_ptr, a_len, b_ptr, b_len) -> {ptr, len}`.
+    ///
+    /// ABI (System V): `a_ptr` in `%rdi`, `a_len` in `%rsi`, `b_ptr` in `%rdx`,
+    /// `b_len` in `%rcx`; the returned heap fat-value pointer leaves in `%rax`. It
+    /// mirrors `tl_substring`'s two-`tl_alloc` shape: allocate a `a_len + b_len`
+    /// byte heap buffer, copy `a`'s bytes then `b`'s bytes into it front-to-back,
+    /// then allocate the 16-byte fat value and store `{ data_ptr (offset 0), len
+    /// (offset 8) }`. Two empty operands still allocate (the bump allocator
+    /// returns a valid pointer) and copy nothing, yielding a valid empty String.
+    /// The four arguments and the data pointer survive the two `tl_alloc` calls in
+    /// callee-saved registers (`%rbx`/`%r12`/`%r13`/`%r14`/`%r15`); the total
+    /// length is recomputed as `%r12 + %r14` when storing the fat value. It
+    /// heap-allocates so the result outlives the caller's frame; it is safe to
+    /// emit when referenced.
+    fn generate_string_concat_runtime_functions(&mut self) {
+        self.emit("    .globl tl_string_concat");
+        self.emit("tl_string_concat:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        // Preserve the callee-saved registers carrying the operands and the data
+        // pointer across the two `tl_alloc` calls. Five pushes + the `sub $8`
+        // padding keep %rsp 16-byte aligned at the `call` sites (after the saved
+        // %rbp: 5 pushes -> %rsp at 16n-40; the `sub $8` brings it to 16n-48).
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    push %r15");
+        self.emit("    sub $8, %rsp");
+        // Stash the operands in callee-saved registers: %rbx = a_ptr, %r12 =
+        // a_len, %r13 = b_ptr, %r14 = b_len. All survive the upcoming `tl_alloc`
+        // calls.
+        self.emit("    movq %rdi, %rbx");
+        self.emit("    movq %rsi, %r12");
+        self.emit("    movq %rdx, %r13");
+        self.emit("    movq %rcx, %r14");
+        // data = tl_alloc(a_len + b_len). The returned heap pointer is saved in
+        // %r15.
+        self.emit("    movq %r12, %rdi");
+        self.emit("    addq %r14, %rdi");
+        self.emit("    call tl_alloc");
+        self.emit("    movq %rax, %r15");
+        // Copy a_len bytes from a_ptr (%rbx) into the heap data buffer (%r15) at
+        // offset 0, front to back.
+        self.emit("    movq $0, %rcx");
+        self.emit(".L_tl_string_concat_copy_a:");
+        self.emit("    cmpq %r12, %rcx");
+        self.emit("    jge .L_tl_string_concat_copy_a_done");
+        self.emit("    movzbl (%rbx,%rcx), %edx");
+        self.emit("    movb %dl, (%r15,%rcx)");
+        self.emit("    incq %rcx");
+        self.emit("    jmp .L_tl_string_concat_copy_a");
+        self.emit(".L_tl_string_concat_copy_a_done:");
+        // Copy b_len bytes from b_ptr (%r13) into the data buffer starting at
+        // offset a_len. %rcx indexes b; the destination offset is a_len + %rcx.
+        self.emit("    movq $0, %rcx");
+        self.emit(".L_tl_string_concat_copy_b:");
+        self.emit("    cmpq %r14, %rcx");
+        self.emit("    jge .L_tl_string_concat_copy_b_done");
+        self.emit("    movzbl (%r13,%rcx), %edx");
+        // dest = %r15 + a_len + %rcx; compute the destination index in %rax.
+        self.emit("    movq %r12, %rax");
+        self.emit("    addq %rcx, %rax");
+        self.emit("    movb %dl, (%r15,%rax)");
+        self.emit("    incq %rcx");
+        self.emit("    jmp .L_tl_string_concat_copy_b");
+        self.emit(".L_tl_string_concat_copy_b_done:");
+        // fat = tl_alloc(16); store { data_ptr (offset 0), total_len (offset 8) }.
+        // total_len = a_len + b_len, recomputed from the preserved %r12/%r14.
+        self.emit("    movq $16, %rdi");
+        self.emit("    call tl_alloc");
+        self.emit("    movq %r15, 0(%rax)");
+        self.emit("    movq %r12, %rdx");
+        self.emit("    addq %r14, %rdx");
+        self.emit("    movq %rdx, 8(%rax)");
+        // %rax already holds the fat pointer — the return value.
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r15");
+        self.emit("    pop %r14");
         self.emit("    pop %r13");
         self.emit("    pop %r12");
         self.emit("    pop %rbx");
@@ -2930,6 +3059,10 @@ impl X86_64Backend {
             // The backend-provided byte-slice helper resolves to its raw runtime
             // symbol rather than being mangled to `_tl_tl_substring`.
             "tl_substring".into()
+        } else if name == "tl_string_concat" && self.needs_string_concat_runtime {
+            // The backend-provided byte-append helper resolves to its raw runtime
+            // symbol rather than being mangled to `_tl_tl_string_concat`.
+            "tl_string_concat".into()
         } else if name == "tl_print_str" && self.needs_print_str_runtime {
             // The backend-provided print-string helper resolves to its raw
             // runtime symbol rather than being mangled to `_tl_tl_print_str`.
@@ -5329,6 +5462,84 @@ mod tests {
         assert!(asm.contains("_tl_substring:"), "asm:\n{}", asm);
         assert!(asm.contains("    call _tl_substring"), "asm:\n{}", asm);
         assert!(!asm.contains("\ntl_substring:\n"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_string_append_emits_runtime_and_calls_it() {
+        // `(string-append a b)` calls the emit-on-demand `tl_string_concat`
+        // helper, which the backend defines inline (gated like `tl_alloc`). The
+        // result is discarded but the `Call` survives DCE (it has side effects).
+        let asm = compile_ok(
+            "(define (f [a : String] [b : String]) : i64 (begin (string-append a b) 0))",
+        );
+
+        // The runtime function is emitted and globally visible.
+        assert!(asm.contains("    .globl tl_string_concat"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_string_concat:"), "asm:\n{}", asm);
+
+        // The call site dispatches to the raw runtime symbol (not mangled).
+        assert!(asm.contains("    call tl_string_concat"), "asm:\n{}", asm);
+        assert!(!asm.contains("_tl_tl_string_concat"), "asm:\n{}", asm);
+
+        // It heap-allocates both the joined data buffer and the 16-byte fat value
+        // via the bump allocator, whose self-contained body is also emitted here.
+        assert!(asm.contains("    call tl_alloc"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $16, %rdi"), "asm:\n{}", asm);
+
+        // The runtime copies each operand's bytes in its own loop (two byte-copy
+        // loops, one per source) and stores the fat value's data pointer
+        // (offset 0) and total length (offset 8).
+        assert!(asm.contains(".L_tl_string_concat_copy_a:"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_string_concat_copy_b:"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %r15, 0(%rax)"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %rdx, 8(%rax)"), "asm:\n{}", asm);
+
+        // The helper is not declared `.extern` (it is defined in this unit).
+        assert!(
+            !asm.contains("    .extern tl_string_concat"),
+            "asm:\n{}",
+            asm
+        );
+
+        // No instruction selection fell through to a TODO stub.
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_string_concat_alias_emits_runtime() {
+        // `string-concat` is the alias of `string-append`; it emits and calls the
+        // same `tl_string_concat` runtime.
+        let asm = compile_ok(
+            "(define (f [a : String] [b : String]) : i64 (begin (string-concat a b) 0))",
+        );
+        assert!(asm.contains("tl_string_concat:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call tl_string_concat"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_no_string_append_means_no_runtime() {
+        // A program that never concatenates strings must not emit the helper.
+        let asm = compile_ok(r#"(define (main) : i64 (string-length "hi"))"#);
+        assert!(!asm.contains("tl_string_concat"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_user_defined_string_append_shadows_builtin() {
+        // User-defined functions may shadow builtin names. A surface function
+        // named `string-append` must call the mangled TypeLisp symbol and must
+        // not emit the backend concat runtime.
+        let asm = compile_ok(
+            r#"
+            (define (string-append [a : i64] [b : i64]) : i64
+              (+ a b))
+            (define (main) : i64 (string-append 1 2))
+            "#,
+        );
+        assert!(asm.contains("_tl_string_append:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call _tl_string_append"), "asm:\n{}", asm);
+        assert!(!asm.contains("\ntl_string_concat:\n"), "asm:\n{}", asm);
     }
 
     #[test]

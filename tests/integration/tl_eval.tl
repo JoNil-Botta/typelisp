@@ -378,8 +378,8 @@
 ;;
 ;; The recursive `eval-sexpr` calls thread BOTH envs so the result depends on the
 ;; whole nested shape, the bindings in scope, AND the program's functions.
-;; (Deferred: `string-append` / concat, lambda, closures, variadic arity; mutual
-;; recursion IS supported - the whole `fenv` is shared.)
+;; (Deferred: interpreted `string-append` / concat dispatch, lambda, closures,
+;; variadic arity; mutual recursion IS supported - the whole `fenv` is shared.)
 (define (eval-sexpr [s : Sexpr] [env : Env] [fenv : FnEnv]) : Value
   (match s
     [(SInt n) (VInt n)]
@@ -678,7 +678,8 @@
 ;; `let` with sequential (`let*`) scoping; and (d) exposes the STRING OPERATIONS
 ;; `substring` / `string-length` / `string-eq`, each dispatched on the head symbol
 ;; and operating on the tagged `Value` - all composed atop the reused lexer and
-;; reader. (Deferred: `string-append` - needs a host concat builtin; lambda;
-;; closures; variadic arity; string-literal escapes.)
+;; reader. (Deferred: interpreted `string-append` dispatch now that the host
+;; compiler has `string-append`; lambda; closures; variadic arity;
+;; string-literal escapes.)
 (define (main) : i64
   (run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (define (seq a b) b) (let ((s \"hello world\") (h (substring s 0 5)) (n (string-length h))) (seq (print h) (print (+ (pow 2 n) (string-eq h \"hello\")))))"))

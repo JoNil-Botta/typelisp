@@ -123,6 +123,17 @@ fn type_lisp_programs_compile_link_and_run() {
             stdout: "",
             deps: &[],
         },
+        // refs #13/#27: `(string-append a b)` / `(string-concat a b)` joins two
+        // Strings into a fresh heap String via the emit-on-demand, libc-free
+        // `tl_string_concat` runtime. The program prints "foo"+"bar" then a
+        // "\n"+"" concatenation, so stdout is exactly "foobar\n" and it exits 0 —
+        // unblocking exposing concatenation in the interpreter.
+        Case {
+            name: "string_append",
+            exit_code: 0,
+            stdout: "foobar\n",
+            deps: &[],
+        },
         // Multi-file program (#44): entry imports a helper module and calls a
         // function defined there; exercises the module-graph loader end to end.
         Case {
@@ -412,6 +423,14 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             name: "substring",
             exit_code: 33,
             stdout: "",
+            deps: &[],
+        },
+        // refs #13/#27: string concatenation via `tl_string_concat`, also through
+        // the explicit compile -> as -> ld -> run pipeline. Prints "foobar\n".
+        Case {
+            name: "string_append",
+            exit_code: 0,
+            stdout: "foobar\n",
             deps: &[],
         },
         Case {

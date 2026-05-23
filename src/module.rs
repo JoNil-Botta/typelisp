@@ -46,6 +46,13 @@ impl ModuleSource for FsSource {
     }
 }
 
+/// Optional module-loader behavior. The default keeps imports as plain
+/// importer-relative or absolute filesystem paths.
+#[derive(Debug, Clone, Default)]
+pub struct LoadOptions {
+    pub stdlib_roots: Vec<PathBuf>,
+}
+
 /// One source file loaded into a whole-program compilation.
 #[derive(Debug, Clone)]
 pub struct SourceFile {
@@ -76,6 +83,7 @@ pub enum LoadError {
         importer: PathBuf,
         import_path: String,
         resolved_path: PathBuf,
+        searched_stdlib_roots: Vec<PathBuf>,
         source: io::Error,
     },
     /// A module failed to parse. Carries the canonical path of the offending
@@ -98,16 +106,26 @@ impl std::fmt::Display for LoadError {
                 importer,
                 import_path,
                 resolved_path,
+                searched_stdlib_roots,
                 source,
             } => {
-                write!(
-                    f,
+                let base = format!(
                     "cannot read import \"{}\" from '{}' (resolved '{}'): {}",
                     import_path,
                     importer.display(),
                     resolved_path.display(),
                     source
-                )
+                );
+                if searched_stdlib_roots.is_empty() {
+                    write!(f, "{}", base)
+                } else {
+                    let roots = searched_stdlib_roots
+                        .iter()
+                        .map(|root| root.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    write!(f, "{}; searched stdlib roots: {}", base, roots)
+                }
             }
             LoadError::Parse { path, error, .. } => {
                 write!(f, "in module '{}': {}", path.display(), error)
@@ -135,6 +153,7 @@ struct ImportRequest {
     importer: PathBuf,
     import_path: String,
     resolved_path: PathBuf,
+    searched_stdlib_roots: Vec<PathBuf>,
 }
 
 fn io_load_error(path: &Path, source: io::Error, request: Option<&ImportRequest>) -> LoadError {
@@ -143,6 +162,7 @@ fn io_load_error(path: &Path, source: io::Error, request: Option<&ImportRequest>
             importer: request.importer.clone(),
             import_path: request.import_path.clone(),
             resolved_path: request.resolved_path.clone(),
+            searched_stdlib_roots: request.searched_stdlib_roots.clone(),
             source,
         },
         None => LoadError::Io {
@@ -150,6 +170,105 @@ fn io_load_error(path: &Path, source: io::Error, request: Option<&ImportRequest>
             source,
         },
     }
+}
+
+fn stdlib_import_suffix(import_path: &str) -> Option<PathBuf> {
+    let path = Path::new(import_path);
+    if path.is_absolute() {
+        return None;
+    }
+    match path.strip_prefix("stdlib") {
+        Ok(suffix) if !suffix.as_os_str().is_empty() => Some(suffix.to_path_buf()),
+        _ => None,
+    }
+}
+
+fn resolve_import_canonical(
+    importer: &Path,
+    import_path: &str,
+    src: &dyn ModuleSource,
+    options: &LoadOptions,
+) -> Result<(PathBuf, ImportRequest), LoadError> {
+    let primary_target = resolve_import(importer, import_path);
+    let stdlib_suffix = stdlib_import_suffix(import_path);
+    let searched_stdlib_roots = if stdlib_suffix.is_some() {
+        options.stdlib_roots.clone()
+    } else {
+        Vec::new()
+    };
+    let primary_request = ImportRequest {
+        importer: importer.to_path_buf(),
+        import_path: import_path.to_string(),
+        resolved_path: primary_target.clone(),
+        searched_stdlib_roots: searched_stdlib_roots.clone(),
+    };
+
+    match src.canonicalize(&primary_target) {
+        Ok(primary_canon) => {
+            if let Some(suffix) = &stdlib_suffix
+                && !options.stdlib_roots.is_empty()
+            {
+                match src.read(&primary_canon) {
+                    Ok(_) => return Ok((primary_canon, primary_request)),
+                    Err(primary_read_error) => {
+                        if let Some(resolved) = try_stdlib_roots(
+                            importer,
+                            import_path,
+                            suffix,
+                            src,
+                            &searched_stdlib_roots,
+                        ) {
+                            return Ok(resolved);
+                        }
+                        return Err(io_load_error(
+                            &primary_target,
+                            primary_read_error,
+                            Some(&primary_request),
+                        ));
+                    }
+                }
+            }
+            Ok((primary_canon, primary_request))
+        }
+        Err(primary_error) => {
+            if let Some(suffix) = stdlib_suffix
+                && let Some(resolved) =
+                    try_stdlib_roots(importer, import_path, &suffix, src, &searched_stdlib_roots)
+            {
+                return Ok(resolved);
+            }
+            Err(io_load_error(
+                &primary_target,
+                primary_error,
+                Some(&primary_request),
+            ))
+        }
+    }
+}
+
+fn try_stdlib_roots(
+    importer: &Path,
+    import_path: &str,
+    suffix: &Path,
+    src: &dyn ModuleSource,
+    searched_stdlib_roots: &[PathBuf],
+) -> Option<(PathBuf, ImportRequest)> {
+    for root in searched_stdlib_roots {
+        let target = root.join(suffix);
+        let request = ImportRequest {
+            importer: importer.to_path_buf(),
+            import_path: import_path.to_string(),
+            resolved_path: target.clone(),
+            searched_stdlib_roots: searched_stdlib_roots.to_vec(),
+        };
+        let Ok(canon) = src.canonicalize(&target) else {
+            continue;
+        };
+        if src.read(&canon).is_ok() {
+            return Some((canon, request));
+        }
+    }
+    None
 }
 
 /// Load the module graph rooted at `entry`, returning a single combined
@@ -160,6 +279,15 @@ fn io_load_error(path: &Path, source: io::Error, request: Option<&ImportRequest>
 /// `src` supplies file reads and canonicalization, making the loader testable
 /// without a real filesystem.
 pub fn load_program(entry: &Path, src: &dyn ModuleSource) -> Result<LoadedProgram, LoadError> {
+    load_program_with_options(entry, src, &LoadOptions::default())
+}
+
+/// Load the module graph with explicit loader options.
+pub fn load_program_with_options(
+    entry: &Path,
+    src: &dyn ModuleSource,
+    options: &LoadOptions,
+) -> Result<LoadedProgram, LoadError> {
     let entry_canon = src.canonicalize(entry).map_err(|e| LoadError::Io {
         path: entry.to_path_buf(),
         source: e,
@@ -175,6 +303,7 @@ pub fn load_program(entry: &Path, src: &dyn ModuleSource) -> Result<LoadedProgra
         &mut decls,
         &mut sources,
         None,
+        options,
     )?;
     Ok(LoadedProgram {
         program: Program { decls },
@@ -197,6 +326,7 @@ fn load_module(
     decls: &mut Vec<Decl>,
     sources: &mut Vec<SourceFile>,
     request: Option<&ImportRequest>,
+    options: &LoadOptions,
 ) -> Result<(), LoadError> {
     // Mark visited *before* recursing so a cycle back to this module is a no-op.
     if !visited.insert(canon.to_path_buf()) {
@@ -222,16 +352,17 @@ fn load_module(
     // append this module's real declarations, stripping the import directives.
     for decl in &prog.decls {
         if let Decl::Import(import_path) = decl {
-            let target = resolve_import(canon, import_path);
-            let request = ImportRequest {
-                importer: canon.to_path_buf(),
-                import_path: import_path.clone(),
-                resolved_path: target.clone(),
-            };
-            let target_canon = src
-                .canonicalize(&target)
-                .map_err(|e| io_load_error(&target, e, Some(&request)))?;
-            load_module(&target_canon, src, visited, decls, sources, Some(&request))?;
+            let (target_canon, request) =
+                resolve_import_canonical(canon, import_path, src, options)?;
+            load_module(
+                &target_canon,
+                src,
+                visited,
+                decls,
+                sources,
+                Some(&request),
+                options,
+            )?;
         }
     }
 
@@ -430,6 +561,94 @@ mod tests {
     }
 
     #[test]
+    fn absolute_import_resolution_is_unchanged() {
+        let absolute = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join("module-test-absolute.tl");
+        let import_literal = absolute.to_string_lossy().replace('\\', "\\\\");
+        let entry = format!("(import \"{}\")\n(define (e) : i64 (abs))", import_literal);
+        let absolute_key = absolute.to_string_lossy().to_string();
+        let src = MapSource::new(&[
+            (absolute_key.as_str(), "(define (abs) : i64 9)"),
+            ("entry.tl", entry.as_str()),
+        ]);
+
+        let loaded = load_program(Path::new("entry.tl"), &src).unwrap();
+        assert_eq!(decl_names(&loaded.program), vec!["abs", "e"]);
+    }
+
+    #[test]
+    fn stdlib_import_uses_configured_root_after_local_miss() {
+        let src = MapSource::new(&[
+            (
+                "work/main.tl",
+                "(import \"stdlib/string.tl\")\n(define (main) : i64 (std))",
+            ),
+            ("repo-stdlib/string.tl", "(define (std) : i64 42)"),
+        ]);
+        let options = LoadOptions {
+            stdlib_roots: vec![PathBuf::from("repo-stdlib")],
+        };
+
+        let loaded = load_program_with_options(Path::new("work/main.tl"), &src, &options).unwrap();
+        assert_eq!(decl_names(&loaded.program), vec!["std", "main"]);
+        assert!(
+            loaded
+                .sources
+                .iter()
+                .any(|source| source.path == PathBuf::from("repo-stdlib/string.tl"))
+        );
+    }
+
+    #[test]
+    fn local_stdlib_import_shadows_configured_root() {
+        let src = MapSource::new(&[
+            (
+                "work/main.tl",
+                "(import \"stdlib/string.tl\")\n(define (main) : i64 (local))",
+            ),
+            ("work/stdlib/string.tl", "(define (local) : i64 1)"),
+            ("repo-stdlib/string.tl", "(define (root) : i64 2)"),
+        ]);
+        let options = LoadOptions {
+            stdlib_roots: vec![PathBuf::from("repo-stdlib")],
+        };
+
+        let loaded = load_program_with_options(Path::new("work/main.tl"), &src, &options).unwrap();
+        assert_eq!(decl_names(&loaded.program), vec!["local", "main"]);
+        assert!(
+            !loaded
+                .sources
+                .iter()
+                .any(|source| source.path == PathBuf::from("repo-stdlib/string.tl"))
+        );
+    }
+
+    #[test]
+    fn stdlib_root_import_dedups_with_relative_path_to_same_file() {
+        let src = MapSource::new(&[
+            (
+                "work/main.tl",
+                "(import \"stdlib/string.tl\")\n(import \"dep.tl\")\n(define (main) : i64 (std))",
+            ),
+            (
+                "work/dep.tl",
+                "(import \"../repo-stdlib/string.tl\")\n(define (dep) : i64 (std))",
+            ),
+            ("repo-stdlib/string.tl", "(define (std) : i64 42)"),
+        ]);
+        let options = LoadOptions {
+            stdlib_roots: vec![PathBuf::from("repo-stdlib")],
+        };
+
+        let loaded = load_program_with_options(Path::new("work/main.tl"), &src, &options).unwrap();
+        let names = decl_names(&loaded.program);
+        assert_eq!(names.iter().filter(|name| *name == "std").count(), 1);
+        assert_eq!(names, vec!["std", "dep", "main"]);
+    }
+
+    #[test]
     fn missing_import_reports_import_context() {
         let src = MapSource::new(&[("entry.tl", "(import \"nope.tl\")\n(define (e) : i64 1)")]);
         let err = load_program(Path::new("entry.tl"), &src).unwrap_err();
@@ -438,11 +657,13 @@ mod tests {
                 importer,
                 import_path,
                 resolved_path,
+                searched_stdlib_roots,
                 source,
             } => {
                 assert_eq!(importer, PathBuf::from("entry.tl"));
                 assert_eq!(import_path, "nope.tl");
                 assert_eq!(resolved_path, PathBuf::from("nope.tl"));
+                assert!(searched_stdlib_roots.is_empty());
                 assert_eq!(source.kind(), io::ErrorKind::NotFound);
             }
             other => panic!("expected ImportIo error, got {:?}", other),
@@ -461,11 +682,13 @@ mod tests {
                 importer,
                 import_path,
                 resolved_path,
+                searched_stdlib_roots,
                 source,
             } => {
                 assert_eq!(importer, &PathBuf::from("work/main.tl"));
                 assert_eq!(import_path, "stdlib/string.tl");
                 assert_eq!(resolved_path, &PathBuf::from("work/stdlib/string.tl"));
+                assert!(searched_stdlib_roots.is_empty());
                 assert_eq!(source.kind(), io::ErrorKind::NotFound);
                 (
                     importer.display().to_string(),
@@ -499,6 +722,53 @@ mod tests {
     }
 
     #[test]
+    fn missing_stdlib_import_reports_searched_roots() {
+        let src = MapSource::new(&[(
+            "work/main.tl",
+            "(import \"stdlib/string.tl\")\n(define (main) : i64 0)",
+        )]);
+        let options = LoadOptions {
+            stdlib_roots: vec![PathBuf::from("repo-stdlib")],
+        };
+        let err = load_program_with_options(Path::new("work/main.tl"), &src, &options).unwrap_err();
+
+        match &err {
+            LoadError::ImportIo {
+                importer,
+                import_path,
+                resolved_path,
+                searched_stdlib_roots,
+                source,
+            } => {
+                assert_eq!(importer, &PathBuf::from("work/main.tl"));
+                assert_eq!(import_path, "stdlib/string.tl");
+                assert_eq!(resolved_path, &PathBuf::from("work/stdlib/string.tl"));
+                assert_eq!(searched_stdlib_roots, &vec![PathBuf::from("repo-stdlib")]);
+                assert_eq!(source.kind(), io::ErrorKind::NotFound);
+            }
+            other => panic!("expected ImportIo error, got {:?}", other),
+        };
+
+        let rendered = err.to_string();
+        let rendered_normalized = rendered.replace('\\', "/");
+        assert!(
+            rendered_normalized.contains("work/stdlib/string.tl"),
+            "diagnostic should include importer-relative resolved path:\n{}",
+            rendered
+        );
+        assert!(
+            rendered.contains("searched stdlib roots"),
+            "diagnostic should identify stdlib roots:\n{}",
+            rendered
+        );
+        assert!(
+            rendered.contains("repo-stdlib"),
+            "diagnostic should include searched root:\n{}",
+            rendered
+        );
+    }
+
+    #[test]
     fn import_read_failure_reports_import_context() {
         struct ReadFailingImportSource;
 
@@ -527,11 +797,13 @@ mod tests {
                 importer,
                 import_path,
                 resolved_path,
+                searched_stdlib_roots,
                 source,
             } => {
                 assert_eq!(importer, PathBuf::from("entry.tl"));
                 assert_eq!(import_path, "blocked.tl");
                 assert_eq!(resolved_path, PathBuf::from("blocked.tl"));
+                assert!(searched_stdlib_roots.is_empty());
                 assert_eq!(source.kind(), io::ErrorKind::PermissionDenied);
                 assert_eq!(source.to_string(), "blocked read");
             }

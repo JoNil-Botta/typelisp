@@ -2777,6 +2777,48 @@ fn run_inline_source(work_name: &str, file_name: &str, source: &str) -> std::pro
 }
 
 #[test]
+fn stdlib_root_option_resolves_stdlib_import_without_staging() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let work_dir = std::env::temp_dir().join(format!(
+        "typelisp-stdlib-root-lookup-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&work_dir).expect("create stdlib-root lookup temp dir");
+
+    let work_path = work_dir.join("main.tl");
+    fs::write(
+        &work_path,
+        r#"
+(import "stdlib/string.tl")
+
+(define (main) : i64
+  (if (string-contains "hello" "ell") 42 1))
+"#,
+    )
+    .expect("write stdlib-root lookup fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&work_path)
+        .arg("--stdlib-root")
+        .arg(manifest_dir.join("stdlib"))
+        .output()
+        .expect("run stdlib-root lookup fixture");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "stdlib-root fixture exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(stdout, "", "stdlib-root fixture wrote stdout");
+    assert_eq!(stderr, "", "stdlib-root fixture wrote stderr");
+}
+
+#[test]
 fn make_array_negative_length_traps_before_alloc() {
     let output = run_inline_source(
         "make_array_negative_length_trap",

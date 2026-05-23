@@ -69,6 +69,15 @@ pub enum LoadError {
     /// A module file could not be read (missing import, permission, etc.).
     /// Carries the path as written/resolved and the underlying I/O error.
     Io { path: PathBuf, source: io::Error },
+    /// A module file could not be read during import resolution.
+    /// Carries the importing module path, the requested import string, the
+    /// resolved filesystem path the loader tried, and the underlying I/O error.
+    ImportIo {
+        importer: PathBuf,
+        import_path: String,
+        resolved_path: PathBuf,
+        source: io::Error,
+    },
     /// A module failed to parse. Carries the canonical path of the offending
     /// module (so the driver can render the diagnostic against its source) and
     /// the parse error itself.
@@ -84,6 +93,21 @@ impl std::fmt::Display for LoadError {
         match self {
             LoadError::Io { path, source } => {
                 write!(f, "cannot read module '{}': {}", path.display(), source)
+            }
+            LoadError::ImportIo {
+                importer,
+                import_path,
+                resolved_path,
+                source,
+            } => {
+                write!(
+                    f,
+                    "cannot read import '{}' from '{}' (resolved '{}'): {}",
+                    import_path,
+                    importer.display(),
+                    resolved_path.display(),
+                    source
+                )
             }
             LoadError::Parse { path, error, .. } => {
                 write!(f, "in module '{}': {}", path.display(), error)
@@ -170,11 +194,21 @@ fn load_module(
     for decl in &prog.decls {
         if let Decl::Import(import_path) = decl {
             let target = resolve_import(canon, import_path);
-            let target_canon = src.canonicalize(&target).map_err(|e| LoadError::Io {
-                path: target.clone(),
+            let target_canon = src.canonicalize(&target).map_err(|e| LoadError::ImportIo {
+                importer: canon.to_path_buf(),
+                import_path: import_path.clone(),
+                resolved_path: target.clone(),
                 source: e,
             })?;
-            load_module(&target_canon, src, visited, decls, sources)?;
+            load_module(&target_canon, src, visited, decls, sources).map_err(|e| match e {
+                LoadError::Io { path, source } => LoadError::ImportIo {
+                    importer: canon.to_path_buf(),
+                    import_path: import_path.clone(),
+                    resolved_path: path,
+                    source,
+                },
+                other => other,
+            })?;
         }
     }
 
@@ -373,12 +407,45 @@ mod tests {
     }
 
     #[test]
-    fn missing_import_is_an_io_error() {
+    fn missing_import_is_import_io_error() {
         let src = MapSource::new(&[("entry.tl", "(import \"nope.tl\")\n(define (e) : i64 1)")]);
         let err = load_program(Path::new("entry.tl"), &src).unwrap_err();
         match err {
-            LoadError::Io { .. } => {}
-            other => panic!("expected Io error, got {:?}", other),
+            LoadError::ImportIo {
+                importer,
+                import_path,
+                resolved_path,
+                source,
+            } => {
+                assert_eq!(importer, PathBuf::from("entry.tl"));
+                assert_eq!(import_path, "nope.tl");
+                assert_eq!(resolved_path, PathBuf::from("nope.tl"));
+                assert_eq!(source.kind(), io::ErrorKind::NotFound);
+            }
+            other => panic!("expected ImportIo error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn missing_stdlib_import_from_non_repo_workdir() {
+        let src = MapSource::new(&[(
+            "work/main.tl",
+            "(import \"stdlib/string.tl\")\n(define (e) : i64 1)",
+        )]);
+        let err = load_program(Path::new("work/main.tl"), &src).unwrap_err();
+        match err {
+            LoadError::ImportIo {
+                importer,
+                import_path,
+                resolved_path,
+                source,
+            } => {
+                assert_eq!(importer, PathBuf::from("work/main.tl"));
+                assert_eq!(import_path, "stdlib/string.tl");
+                assert_eq!(resolved_path, PathBuf::from("work/stdlib/string.tl"));
+                assert_eq!(source.kind(), io::ErrorKind::NotFound);
+            }
+            other => panic!("expected ImportIo error, got {:?}", other),
         }
     }
 

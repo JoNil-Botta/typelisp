@@ -75,6 +75,21 @@ fn load_or_exit(entry: &Path) -> LoadedProgram {
             eprintln!("Error: cannot read module '{}': {}", path.display(), source);
             std::process::exit(1);
         }
+        Err(LoadError::ImportIo {
+            importer,
+            import_path,
+            resolved_path,
+            source,
+        }) => {
+            eprintln!(
+                "Error: cannot read import '{}' from '{}' (resolved '{}'): {}",
+                import_path,
+                importer.display(),
+                resolved_path.display(),
+                source
+            );
+            std::process::exit(1);
+        }
         Err(LoadError::Parse {
             path,
             source_text,

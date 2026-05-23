@@ -7,6 +7,7 @@
 
 (import "compiler_ast_types.tl")
 (import "read.tl")
+(import "sym_i64_env.tl")
 
 (defenum ResultAstType
   (OkAstType AstType)
@@ -93,320 +94,494 @@
     [(SSym text) (string-eq text ":")]
     [_ false]))
 
-(define (ast-binop? [name : String]) : bool
-  (if (string-eq name "+")
-      true
-      (if (string-eq name "-")
-          true
-          (if (string-eq name "*")
-              true
-              (if (string-eq name "/")
-                  true
-                  (if (string-eq name "%")
-                      true
-                      (if (string-eq name "=")
-                          true
-                          (if (string-eq name "!=")
-                              true
-                              (if (string-eq name "<")
-                                  true
-                                  (if (string-eq name "<=")
-                                      true
-                                      (if (string-eq name ">")
-                                          true
-                                          (if (string-eq name ">=")
-                                              true
-                                              (if (string-eq name "and")
-                                                  true
-                                                  (if (string-eq name "or")
-                                                      true
-                                                      (if (string-eq name "bit-and")
-                                                          true
-                                                          (if (string-eq name "bit-or")
-                                                              true
-                                                              (if (string-eq name "bit-xor")
-                                                                  true
-                                                                  (if (string-eq name "shl")
-                                                                      true
-                                                                      (string-eq name "shr")))))))))))))))))))
+(define (compiler-parse-tag-unknown) : i64 0)
+(define (compiler-parse-tag-bin-add) : i64 10)
+(define (compiler-parse-tag-bin-sub) : i64 11)
+(define (compiler-parse-tag-bin-mul) : i64 12)
+(define (compiler-parse-tag-bin-div) : i64 13)
+(define (compiler-parse-tag-bin-mod) : i64 14)
+(define (compiler-parse-tag-bin-eq) : i64 15)
+(define (compiler-parse-tag-bin-ne) : i64 16)
+(define (compiler-parse-tag-bin-lt) : i64 17)
+(define (compiler-parse-tag-bin-le) : i64 18)
+(define (compiler-parse-tag-bin-gt) : i64 19)
+(define (compiler-parse-tag-bin-ge) : i64 20)
+(define (compiler-parse-tag-bin-and) : i64 21)
+(define (compiler-parse-tag-bin-or) : i64 22)
+(define (compiler-parse-tag-bin-bit-and) : i64 23)
+(define (compiler-parse-tag-bin-bit-or) : i64 24)
+(define (compiler-parse-tag-bin-bit-xor) : i64 25)
+(define (compiler-parse-tag-bin-shl) : i64 26)
+(define (compiler-parse-tag-bin-shr) : i64 27)
+(define (compiler-parse-tag-un-not) : i64 40)
+(define (compiler-parse-tag-un-neg) : i64 41)
+(define (compiler-parse-tag-un-bit-not) : i64 42)
+(define (compiler-parse-tag-ty-i64) : i64 100)
+(define (compiler-parse-tag-ty-i32) : i64 101)
+(define (compiler-parse-tag-ty-i16) : i64 102)
+(define (compiler-parse-tag-ty-i8) : i64 103)
+(define (compiler-parse-tag-ty-u64) : i64 104)
+(define (compiler-parse-tag-ty-u32) : i64 105)
+(define (compiler-parse-tag-ty-u16) : i64 106)
+(define (compiler-parse-tag-ty-u8) : i64 107)
+(define (compiler-parse-tag-ty-f64) : i64 108)
+(define (compiler-parse-tag-ty-f32) : i64 109)
+(define (compiler-parse-tag-ty-bool) : i64 110)
+(define (compiler-parse-tag-ty-char) : i64 111)
+(define (compiler-parse-tag-ty-string) : i64 112)
+(define (compiler-parse-tag-unit) : i64 113)
+(define (compiler-parse-tag-ty-never) : i64 114)
+(define (compiler-parse-tag-ty-func) : i64 130)
+(define (compiler-parse-tag-ty-tuple) : i64 131)
+(define (compiler-parse-tag-ty-array) : i64 132)
+(define (compiler-parse-tag-expr-if) : i64 200)
+(define (compiler-parse-tag-expr-let) : i64 201)
+(define (compiler-parse-tag-expr-lambda) : i64 202)
+(define (compiler-parse-tag-expr-while) : i64 203)
+(define (compiler-parse-tag-expr-begin) : i64 204)
+(define (compiler-parse-tag-expr-set) : i64 205)
+(define (compiler-parse-tag-expr-ann) : i64 206)
+(define (compiler-parse-tag-expr-cast) : i64 207)
+(define (compiler-parse-tag-expr-tuple) : i64 220)
+(define (compiler-parse-tag-expr-tuple-ref) : i64 221)
+(define (compiler-parse-tag-expr-array) : i64 222)
+(define (compiler-parse-tag-expr-make-array) : i64 223)
+(define (compiler-parse-tag-expr-array-ref) : i64 240)
+(define (compiler-parse-tag-expr-array-set) : i64 241)
+(define (compiler-parse-tag-expr-string-ref) : i64 242)
+(define (compiler-parse-tag-expr-char-at) : i64 243)
+(define (compiler-parse-tag-expr-match) : i64 244)
+(define (compiler-parse-tag-expr-foreach) : i64 245)
+(define (compiler-parse-tag-expr-struct-get) : i64 246)
+(define (compiler-parse-tag-lit-true) : i64 300)
+(define (compiler-parse-tag-lit-false) : i64 301)
+(define (compiler-parse-tag-pattern-wildcard) : i64 302)
+(define (compiler-parse-tag-decl-define) : i64 400)
+(define (compiler-parse-tag-decl-extern) : i64 401)
+(define (compiler-parse-tag-decl-defenum) : i64 402)
+(define (compiler-parse-tag-decl-defstruct) : i64 403)
+(define (compiler-parse-tag-decl-import) : i64 404)
 
-(define (ast-binop-from-name [name : String]) : AstBinOp
-  (if (string-eq name "+")
+(define (compiler-parse-dispatch-binops [e : SymI64Env]) : SymI64Env
+  (let ([e1 : SymI64Env (sym-i64-bind e "+" (compiler-parse-tag-bin-add))])
+    (let ([e2 : SymI64Env (sym-i64-bind e1 "-" (compiler-parse-tag-bin-sub))])
+      (let ([e3 : SymI64Env (sym-i64-bind e2 "*" (compiler-parse-tag-bin-mul))])
+        (let ([e4 : SymI64Env (sym-i64-bind e3 "/" (compiler-parse-tag-bin-div))])
+          (let ([e5 : SymI64Env (sym-i64-bind e4 "%" (compiler-parse-tag-bin-mod))])
+            (let ([e6 : SymI64Env (sym-i64-bind e5 "=" (compiler-parse-tag-bin-eq))])
+              (let ([e7 : SymI64Env (sym-i64-bind e6 "!=" (compiler-parse-tag-bin-ne))])
+                (let ([e8 : SymI64Env (sym-i64-bind e7 "<" (compiler-parse-tag-bin-lt))])
+                  (let ([e9 : SymI64Env (sym-i64-bind e8 "<=" (compiler-parse-tag-bin-le))])
+                    (let ([e10 : SymI64Env (sym-i64-bind e9 ">" (compiler-parse-tag-bin-gt))])
+                      (let ([e11 : SymI64Env (sym-i64-bind e10 ">=" (compiler-parse-tag-bin-ge))])
+                        (let ([e12 : SymI64Env (sym-i64-bind e11 "and" (compiler-parse-tag-bin-and))])
+                          (let ([e13 : SymI64Env (sym-i64-bind e12 "or" (compiler-parse-tag-bin-or))])
+                            (let ([e14 : SymI64Env (sym-i64-bind e13 "bit-and" (compiler-parse-tag-bin-bit-and))])
+                              (let ([e15 : SymI64Env (sym-i64-bind e14 "bit-or" (compiler-parse-tag-bin-bit-or))])
+                                (let ([e16 : SymI64Env (sym-i64-bind e15 "bit-xor" (compiler-parse-tag-bin-bit-xor))])
+                                  (let ([e17 : SymI64Env (sym-i64-bind e16 "shl" (compiler-parse-tag-bin-shl))])
+                                    (sym-i64-bind e17 "shr" (compiler-parse-tag-bin-shr))))))))))))))))))))
+
+(define (compiler-parse-dispatch-unops [e : SymI64Env]) : SymI64Env
+  (let ([e1 : SymI64Env (sym-i64-bind e "not" (compiler-parse-tag-un-not))])
+    (let ([e2 : SymI64Env (sym-i64-bind e1 "neg" (compiler-parse-tag-un-neg))])
+      (sym-i64-bind e2 "bit-not" (compiler-parse-tag-un-bit-not)))))
+
+(define (compiler-parse-dispatch-types [e : SymI64Env]) : SymI64Env
+  (let ([e1 : SymI64Env (sym-i64-bind e "i64" (compiler-parse-tag-ty-i64))])
+    (let ([e2 : SymI64Env (sym-i64-bind e1 "i32" (compiler-parse-tag-ty-i32))])
+      (let ([e3 : SymI64Env (sym-i64-bind e2 "i16" (compiler-parse-tag-ty-i16))])
+        (let ([e4 : SymI64Env (sym-i64-bind e3 "i8" (compiler-parse-tag-ty-i8))])
+          (let ([e5 : SymI64Env (sym-i64-bind e4 "u64" (compiler-parse-tag-ty-u64))])
+            (let ([e6 : SymI64Env (sym-i64-bind e5 "u32" (compiler-parse-tag-ty-u32))])
+              (let ([e7 : SymI64Env (sym-i64-bind e6 "u16" (compiler-parse-tag-ty-u16))])
+                (let ([e8 : SymI64Env (sym-i64-bind e7 "u8" (compiler-parse-tag-ty-u8))])
+                  (let ([e9 : SymI64Env (sym-i64-bind e8 "f64" (compiler-parse-tag-ty-f64))])
+                    (let ([e10 : SymI64Env (sym-i64-bind e9 "f32" (compiler-parse-tag-ty-f32))])
+                      (let ([e11 : SymI64Env (sym-i64-bind e10 "bool" (compiler-parse-tag-ty-bool))])
+                        (let ([e12 : SymI64Env (sym-i64-bind e11 "char" (compiler-parse-tag-ty-char))])
+                          (let ([e13 : SymI64Env (sym-i64-bind e12 "String" (compiler-parse-tag-ty-string))])
+                            (let ([e14 : SymI64Env (sym-i64-bind e13 "unit" (compiler-parse-tag-unit))])
+                              (let ([e15 : SymI64Env (sym-i64-bind e14 "never" (compiler-parse-tag-ty-never))])
+                                (let ([e16 : SymI64Env (sym-i64-bind e15 "->" (compiler-parse-tag-ty-func))])
+                                  (let ([e17 : SymI64Env (sym-i64-bind e16 "Tuple" (compiler-parse-tag-ty-tuple))])
+                                    (sym-i64-bind e17 "Array" (compiler-parse-tag-ty-array))))))))))))))))))))
+
+(define (compiler-parse-dispatch-exprs [e : SymI64Env]) : SymI64Env
+  (let ([e1 : SymI64Env (sym-i64-bind e "if" (compiler-parse-tag-expr-if))])
+    (let ([e2 : SymI64Env (sym-i64-bind e1 "let" (compiler-parse-tag-expr-let))])
+      (let ([e3 : SymI64Env (sym-i64-bind e2 "lambda" (compiler-parse-tag-expr-lambda))])
+        (let ([e4 : SymI64Env (sym-i64-bind e3 "while" (compiler-parse-tag-expr-while))])
+          (let ([e5 : SymI64Env (sym-i64-bind e4 "begin" (compiler-parse-tag-expr-begin))])
+            (let ([e6 : SymI64Env (sym-i64-bind e5 "set!" (compiler-parse-tag-expr-set))])
+              (let ([e7 : SymI64Env (sym-i64-bind e6 "ann" (compiler-parse-tag-expr-ann))])
+                (let ([e8 : SymI64Env (sym-i64-bind e7 "cast" (compiler-parse-tag-expr-cast))])
+                  (let ([e9 : SymI64Env (sym-i64-bind e8 "tuple" (compiler-parse-tag-expr-tuple))])
+                    (let ([e10 : SymI64Env (sym-i64-bind e9 "tuple-ref" (compiler-parse-tag-expr-tuple-ref))])
+                      (let ([e11 : SymI64Env (sym-i64-bind e10 "array" (compiler-parse-tag-expr-array))])
+                        (let ([e12 : SymI64Env (sym-i64-bind e11 "make-array" (compiler-parse-tag-expr-make-array))])
+                          (let ([e13 : SymI64Env (sym-i64-bind e12 "array-ref" (compiler-parse-tag-expr-array-ref))])
+                            (let ([e14 : SymI64Env (sym-i64-bind e13 "array-set!" (compiler-parse-tag-expr-array-set))])
+                              (let ([e15 : SymI64Env (sym-i64-bind e14 "string-ref" (compiler-parse-tag-expr-string-ref))])
+                                (let ([e16 : SymI64Env (sym-i64-bind e15 "char-at" (compiler-parse-tag-expr-char-at))])
+                                  (let ([e17 : SymI64Env (sym-i64-bind e16 "match" (compiler-parse-tag-expr-match))])
+                                    (let ([e18 : SymI64Env (sym-i64-bind e17 "foreach" (compiler-parse-tag-expr-foreach))])
+                                      (sym-i64-bind e18 "struct-get" (compiler-parse-tag-expr-struct-get)))))))))))))))))))))
+
+(define (compiler-parse-dispatch-patterns [e : SymI64Env]) : SymI64Env
+  (let ([e1 : SymI64Env (sym-i64-bind e "true" (compiler-parse-tag-lit-true))])
+    (let ([e2 : SymI64Env (sym-i64-bind e1 "false" (compiler-parse-tag-lit-false))])
+      (sym-i64-bind e2 "_" (compiler-parse-tag-pattern-wildcard)))))
+
+(define (compiler-parse-dispatch-decls [e : SymI64Env]) : SymI64Env
+  (let ([e1 : SymI64Env (sym-i64-bind e "define" (compiler-parse-tag-decl-define))])
+    (let ([e2 : SymI64Env (sym-i64-bind e1 "extern" (compiler-parse-tag-decl-extern))])
+      (let ([e3 : SymI64Env (sym-i64-bind e2 "defenum" (compiler-parse-tag-decl-defenum))])
+        (let ([e4 : SymI64Env (sym-i64-bind e3 "defstruct" (compiler-parse-tag-decl-defstruct))])
+          (sym-i64-bind e4 "import" (compiler-parse-tag-decl-import)))))))
+
+(define (compiler-parse-dispatch-env) : SymI64Env
+  (compiler-parse-dispatch-decls
+    (compiler-parse-dispatch-patterns
+      (compiler-parse-dispatch-exprs
+        (compiler-parse-dispatch-types
+          (compiler-parse-dispatch-unops
+            (compiler-parse-dispatch-binops (sym-i64-empty))))))))
+
+(define (compiler-parse-dispatch-tag [dispatch : SymI64Env] [name : String]) : i64
+  (match (sym-i64-lookup dispatch name)
+    [(SomeI64 tag) tag]
+    [(NoneI64) (compiler-parse-tag-unknown)]))
+
+(define (ast-binop-tag? [tag : i64]) : bool
+  (if (= tag (compiler-parse-tag-bin-add))
+      true
+      (if (= tag (compiler-parse-tag-bin-sub))
+          true
+          (if (= tag (compiler-parse-tag-bin-mul))
+              true
+              (if (= tag (compiler-parse-tag-bin-div))
+                  true
+                  (if (= tag (compiler-parse-tag-bin-mod))
+                      true
+                      (if (= tag (compiler-parse-tag-bin-eq))
+                          true
+                          (if (= tag (compiler-parse-tag-bin-ne))
+                              true
+                              (if (= tag (compiler-parse-tag-bin-lt))
+                                  true
+                                  (if (= tag (compiler-parse-tag-bin-le))
+                                      true
+                                      (if (= tag (compiler-parse-tag-bin-gt))
+                                          true
+                                          (if (= tag (compiler-parse-tag-bin-ge))
+                                              true
+                                              (if (= tag (compiler-parse-tag-bin-and))
+                                                  true
+                                                  (if (= tag (compiler-parse-tag-bin-or))
+                                                      true
+                                                      (if (= tag (compiler-parse-tag-bin-bit-and))
+                                                          true
+                                                          (if (= tag (compiler-parse-tag-bin-bit-or))
+                                                              true
+                                                              (if (= tag (compiler-parse-tag-bin-bit-xor))
+                                                                  true
+                                                                  (if (= tag (compiler-parse-tag-bin-shl))
+                                                                      true
+                                                                      (= tag (compiler-parse-tag-bin-shr))))))))))))))))))))
+
+(define (ast-binop? [dispatch : SymI64Env] [name : String]) : bool
+  (ast-binop-tag? (compiler-parse-dispatch-tag dispatch name)))
+
+(define (ast-binop-from-tag [tag : i64]) : AstBinOp
+  (if (= tag (compiler-parse-tag-bin-add))
       (AstBinAdd)
-      (if (string-eq name "-")
+      (if (= tag (compiler-parse-tag-bin-sub))
           (AstBinSub)
-          (if (string-eq name "*")
+          (if (= tag (compiler-parse-tag-bin-mul))
               (AstBinMul)
-              (if (string-eq name "/")
+              (if (= tag (compiler-parse-tag-bin-div))
                   (AstBinDiv)
-                  (if (string-eq name "%")
+                  (if (= tag (compiler-parse-tag-bin-mod))
                       (AstBinMod)
-                      (if (string-eq name "=")
+                      (if (= tag (compiler-parse-tag-bin-eq))
                           (AstBinEq)
-                          (if (string-eq name "!=")
+                          (if (= tag (compiler-parse-tag-bin-ne))
                               (AstBinNe)
-                              (if (string-eq name "<")
+                              (if (= tag (compiler-parse-tag-bin-lt))
                                   (AstBinLt)
-                                  (if (string-eq name "<=")
+                                  (if (= tag (compiler-parse-tag-bin-le))
                                       (AstBinLe)
-                                      (if (string-eq name ">")
+                                      (if (= tag (compiler-parse-tag-bin-gt))
                                           (AstBinGt)
-                                          (if (string-eq name ">=")
+                                          (if (= tag (compiler-parse-tag-bin-ge))
                                               (AstBinGe)
-                                              (if (string-eq name "and")
+                                              (if (= tag (compiler-parse-tag-bin-and))
                                                   (AstBinAnd)
-                                                  (if (string-eq name "or")
+                                                  (if (= tag (compiler-parse-tag-bin-or))
                                                       (AstBinOr)
-                                                      (if (string-eq name "bit-and")
+                                                      (if (= tag (compiler-parse-tag-bin-bit-and))
                                                           (AstBinBitAnd)
-                                                          (if (string-eq name "bit-or")
+                                                          (if (= tag (compiler-parse-tag-bin-bit-or))
                                                               (AstBinBitOr)
-                                                              (if (string-eq name "bit-xor")
+                                                              (if (= tag (compiler-parse-tag-bin-bit-xor))
                                                                   (AstBinBitXor)
-                                                                  (if (string-eq name "shl")
+                                                                  (if (= tag (compiler-parse-tag-bin-shl))
                                                                       (AstBinShl)
                                                                       (AstBinShr)))))))))))))))))))
 
-(define (ast-unop? [name : String]) : bool
-  (if (string-eq name "not")
-      true
-      (if (string-eq name "neg")
-          true
-          (string-eq name "bit-not"))))
+(define (ast-binop-from-name [dispatch : SymI64Env] [name : String]) : AstBinOp
+  (ast-binop-from-tag (compiler-parse-dispatch-tag dispatch name)))
 
-(define (ast-unop-from-name [name : String]) : AstUnOp
-  (if (string-eq name "not")
+(define (ast-unop-tag? [tag : i64]) : bool
+  (if (= tag (compiler-parse-tag-un-not))
+      true
+      (if (= tag (compiler-parse-tag-un-neg))
+          true
+          (= tag (compiler-parse-tag-un-bit-not)))))
+
+(define (ast-unop? [dispatch : SymI64Env] [name : String]) : bool
+  (ast-unop-tag? (compiler-parse-dispatch-tag dispatch name)))
+
+(define (ast-unop-from-tag [tag : i64]) : AstUnOp
+  (if (= tag (compiler-parse-tag-un-not))
       (AstUnNot)
-      (if (string-eq name "neg")
+      (if (= tag (compiler-parse-tag-un-neg))
           (AstUnNeg)
           (AstUnBitNot))))
 
-(define (parse-ast-type-list [s : Sexpr]) : ResultAstTypeList
+(define (ast-unop-from-name [dispatch : SymI64Env] [name : String]) : AstUnOp
+  (ast-unop-from-tag (compiler-parse-dispatch-tag dispatch name)))
+
+(define (parse-ast-type-list [dispatch : SymI64Env] [s : Sexpr]) : ResultAstTypeList
   (match s
     [(SNil) (OkAstTypeList AstTypeNil)]
     [(SCons head tail)
-     (match (parse-ast-type head)
+     (match (parse-ast-type dispatch head)
        [(OkAstType parsed-head)
-        (match (parse-ast-type-list tail)
+        (match (parse-ast-type-list dispatch tail)
           [(OkAstTypeList parsed-tail)
            (OkAstTypeList (AstTypeCons parsed-head parsed-tail))]
           [(ErrAstTypeList message) (ErrAstTypeList message)])]
        [(ErrAstType message) (ErrAstTypeList message)])]
     [_ (ErrAstTypeList "parse: malformed type list")]))
 
-(define (parse-ast-func-type-parts [s : Sexpr]) : ResultAstFuncTypeParts
+(define (parse-ast-func-type-parts [dispatch : SymI64Env] [s : Sexpr]) : ResultAstFuncTypeParts
   (match s
     [(SCons ret (SNil))
-     (match (parse-ast-type ret)
+     (match (parse-ast-type dispatch ret)
        [(OkAstType parsed-ret)
         (OkAstFuncTypeParts AstTypeNil parsed-ret)]
        [(ErrAstType message) (ErrAstFuncTypeParts message)])]
     [(SCons arg rest)
-     (match (parse-ast-type arg)
+     (match (parse-ast-type dispatch arg)
        [(OkAstType parsed-arg)
-        (match (parse-ast-func-type-parts rest)
+        (match (parse-ast-func-type-parts dispatch rest)
           [(OkAstFuncTypeParts parsed-args parsed-ret)
            (OkAstFuncTypeParts (AstTypeCons parsed-arg parsed-args) parsed-ret)]
           [(ErrAstFuncTypeParts message) (ErrAstFuncTypeParts message)])]
        [(ErrAstType message) (ErrAstFuncTypeParts message)])]
     [_ (ErrAstFuncTypeParts "parse: function type needs at least return type")]))
 
-(define (parse-ast-type [s : Sexpr]) : ResultAstType
+(define (parse-ast-type [dispatch : SymI64Env] [s : Sexpr]) : ResultAstType
   (match s
     [(SSym name)
-     (if (string-eq name "i64")
+     (let ([tag : i64 (compiler-parse-dispatch-tag dispatch name)])
+       (if (= tag (compiler-parse-tag-ty-i64))
          (OkAstType (AstTyI64))
-         (if (string-eq name "i32")
+         (if (= tag (compiler-parse-tag-ty-i32))
              (OkAstType (AstTyI32))
-             (if (string-eq name "i16")
+             (if (= tag (compiler-parse-tag-ty-i16))
                  (OkAstType (AstTyI16))
-                 (if (string-eq name "i8")
+                 (if (= tag (compiler-parse-tag-ty-i8))
                      (OkAstType (AstTyI8))
-                     (if (string-eq name "u64")
+                     (if (= tag (compiler-parse-tag-ty-u64))
                          (OkAstType (AstTyU64))
-                         (if (string-eq name "u32")
+                         (if (= tag (compiler-parse-tag-ty-u32))
                              (OkAstType (AstTyU32))
-                             (if (string-eq name "u16")
+                             (if (= tag (compiler-parse-tag-ty-u16))
                                  (OkAstType (AstTyU16))
-                                 (if (string-eq name "u8")
+                                 (if (= tag (compiler-parse-tag-ty-u8))
                                      (OkAstType (AstTyU8))
-                                     (if (string-eq name "f64")
+                                     (if (= tag (compiler-parse-tag-ty-f64))
                                          (OkAstType (AstTyF64))
-                                         (if (string-eq name "f32")
+                                         (if (= tag (compiler-parse-tag-ty-f32))
                                              (OkAstType (AstTyF32))
-                                             (if (string-eq name "bool")
+                                             (if (= tag (compiler-parse-tag-ty-bool))
                                                  (OkAstType (AstTyBool))
-                                                 (if (string-eq name "char")
+                                                 (if (= tag (compiler-parse-tag-ty-char))
                                                      (OkAstType (AstTyChar))
-                                                     (if (string-eq name "String")
+                                                     (if (= tag (compiler-parse-tag-ty-string))
                                                          (OkAstType (AstTyString))
-                                                         (if (string-eq name "unit")
+                                                         (if (= tag (compiler-parse-tag-unit))
                                                              (OkAstType (AstTyUnit))
-                                                             (if (string-eq name "never")
+                                                             (if (= tag (compiler-parse-tag-ty-never))
                                                                  (OkAstType (AstTyNever))
-                                                                 (OkAstType (AstTyVar name)))))))))))))))))]
+                                                                 (OkAstType (AstTyVar name))))))))))))))))))]
     [(SCons (SSym head) rest)
-     (if (string-eq head "->")
-         (match (parse-ast-func-type-parts rest)
+     (let ([tag : i64 (compiler-parse-dispatch-tag dispatch head)])
+       (if (= tag (compiler-parse-tag-ty-func))
+         (match (parse-ast-func-type-parts dispatch rest)
            [(OkAstFuncTypeParts args ret) (OkAstType (AstTyFunc args ret))]
            [(ErrAstFuncTypeParts message) (ErrAstType message)])
-         (if (string-eq head "Tuple")
-             (match (parse-ast-type-list rest)
+         (if (= tag (compiler-parse-tag-ty-tuple))
+             (match (parse-ast-type-list dispatch rest)
                [(OkAstTypeList elems) (OkAstType (AstTyTuple elems))]
                [(ErrAstTypeList message) (ErrAstType message)])
-             (if (string-eq head "Array")
+             (if (= tag (compiler-parse-tag-ty-array))
                  (match rest
                    [(SCons elem (SNil))
-                    (match (parse-ast-type elem)
+                    (match (parse-ast-type dispatch elem)
                       [(OkAstType elem-ty) (OkAstType (AstTyDynArray elem-ty))]
                       [(ErrAstType message) (ErrAstType message)])]
                    [(SCons elem (SCons (SInt size) (SNil)))
-                    (match (parse-ast-type elem)
+                    (match (parse-ast-type dispatch elem)
                       [(OkAstType elem-ty) (OkAstType (AstTyArray elem-ty size))]
                       [(ErrAstType message) (ErrAstType message)])]
                    [(SCons _ (SCons _ (SNil))) (ErrAstType "parse: array size must be integer")]
                    [_ (ErrAstType "parse: malformed array type")])
-                 (ErrAstType "parse: unknown type constructor"))))]
+                 (ErrAstType "parse: unknown type constructor")))))]
     [_ (ErrAstType "parse: expected type")]))
 
-(define (parse-ast-param [s : Sexpr]) : ResultAstParam
+(define (parse-ast-param [dispatch : SymI64Env] [s : Sexpr]) : ResultAstParam
   (match s
     [(SCons (SSym name) (SCons colon (SCons ty (SNil))))
      (if (sexpr-colon? colon)
-         (match (parse-ast-type ty)
+         (match (parse-ast-type dispatch ty)
            [(OkAstType parsed-ty) (OkAstParam (AstParam name parsed-ty))]
            [(ErrAstType message) (ErrAstParam message)])
          (ErrAstParam "parse: expected ':' in parameter"))]
     [_ (ErrAstParam "parse: malformed parameter")]))
 
-(define (parse-ast-param-list [s : Sexpr]) : ResultAstParamList
+(define (parse-ast-param-list [dispatch : SymI64Env] [s : Sexpr]) : ResultAstParamList
   (match s
     [(SNil) (OkAstParamList AstParamNil)]
     [(SCons head tail)
-     (match (parse-ast-param head)
+     (match (parse-ast-param dispatch head)
        [(OkAstParam parsed-head)
-        (match (parse-ast-param-list tail)
+        (match (parse-ast-param-list dispatch tail)
           [(OkAstParamList parsed-tail)
            (OkAstParamList (AstParamCons parsed-head parsed-tail))]
           [(ErrAstParamList message) (ErrAstParamList message)])]
        [(ErrAstParam message) (ErrAstParamList message)])]
     [_ (ErrAstParamList "parse: malformed parameter list")]))
 
-(define (parse-ast-field-def [s : Sexpr]) : ResultAstFieldDef
+(define (parse-ast-field-def [dispatch : SymI64Env] [s : Sexpr]) : ResultAstFieldDef
   (match s
     [(SCons (SSym name) (SCons ty (SNil)))
-     (match (parse-ast-type ty)
+     (match (parse-ast-type dispatch ty)
        [(OkAstType parsed-ty) (OkAstFieldDef (AstFieldDef name parsed-ty))]
        [(ErrAstType message) (ErrAstFieldDef message)])]
     [_ (ErrAstFieldDef "parse: malformed field definition")]))
 
-(define (parse-ast-field-def-list [s : Sexpr]) : ResultAstFieldDefList
+(define (parse-ast-field-def-list [dispatch : SymI64Env] [s : Sexpr]) : ResultAstFieldDefList
   (match s
     [(SNil) (OkAstFieldDefList AstFieldDefNil)]
     [(SCons head tail)
-     (match (parse-ast-field-def head)
+     (match (parse-ast-field-def dispatch head)
        [(OkAstFieldDef parsed-head)
-        (match (parse-ast-field-def-list tail)
+        (match (parse-ast-field-def-list dispatch tail)
           [(OkAstFieldDefList parsed-tail)
            (OkAstFieldDefList (AstFieldDefCons parsed-head parsed-tail))]
           [(ErrAstFieldDefList message) (ErrAstFieldDefList message)])]
        [(ErrAstFieldDef message) (ErrAstFieldDefList message)])]
     [_ (ErrAstFieldDefList "parse: malformed field list")]))
 
-(define (parse-ast-variant-def [s : Sexpr]) : ResultAstVariantDef
+(define (parse-ast-variant-def [dispatch : SymI64Env] [s : Sexpr]) : ResultAstVariantDef
   (match s
     [(SCons (SSym name) fields)
-     (match (parse-ast-type-list fields)
+     (match (parse-ast-type-list dispatch fields)
        [(OkAstTypeList parsed-fields) (OkAstVariantDef (AstVariantDef name parsed-fields))]
        [(ErrAstTypeList message) (ErrAstVariantDef message)])]
     [_ (ErrAstVariantDef "parse: malformed variant definition")]))
 
-(define (parse-ast-variant-def-list [s : Sexpr]) : ResultAstVariantDefList
+(define (parse-ast-variant-def-list [dispatch : SymI64Env] [s : Sexpr]) : ResultAstVariantDefList
   (match s
     [(SNil) (OkAstVariantDefList AstVariantDefNil)]
     [(SCons head tail)
-     (match (parse-ast-variant-def head)
+     (match (parse-ast-variant-def dispatch head)
        [(OkAstVariantDef parsed-head)
-        (match (parse-ast-variant-def-list tail)
+        (match (parse-ast-variant-def-list dispatch tail)
           [(OkAstVariantDefList parsed-tail)
            (OkAstVariantDefList (AstVariantDefCons parsed-head parsed-tail))]
           [(ErrAstVariantDefList message) (ErrAstVariantDefList message)])]
        [(ErrAstVariantDef message) (ErrAstVariantDefList message)])]
     [_ (ErrAstVariantDefList "parse: malformed variant list")]))
 
-(define (parse-ast-pattern-list [s : Sexpr]) : ResultAstPatternList
+(define (parse-ast-pattern-list [dispatch : SymI64Env] [s : Sexpr]) : ResultAstPatternList
   (match s
     [(SNil) (OkAstPatternList AstPatternNil)]
     [(SCons head tail)
-     (match (parse-ast-pattern head)
+     (match (parse-ast-pattern dispatch head)
        [(OkAstPattern parsed-head)
-        (match (parse-ast-pattern-list tail)
+        (match (parse-ast-pattern-list dispatch tail)
           [(OkAstPatternList parsed-tail)
            (OkAstPatternList (AstPatternCons parsed-head parsed-tail))]
           [(ErrAstPatternList message) (ErrAstPatternList message)])]
        [(ErrAstPattern message) (ErrAstPatternList message)])]
     [_ (ErrAstPatternList "parse: malformed pattern list")]))
 
-(define (parse-ast-pattern [s : Sexpr]) : ResultAstPattern
+(define (parse-ast-pattern [dispatch : SymI64Env] [s : Sexpr]) : ResultAstPattern
   (match s
     [(SInt n) (OkAstPattern (AstPatLiteral (AstLitInt n)))]
     [(SStr text) (OkAstPattern (AstPatLiteral (AstLitString text)))]
     [(SChar c) (OkAstPattern (AstPatLiteral (AstLitChar c)))]
     [(SSym name)
-     (if (string-eq name "_")
+     (let ([tag : i64 (compiler-parse-dispatch-tag dispatch name)])
+       (if (= tag (compiler-parse-tag-pattern-wildcard))
          (OkAstPattern AstPatWildcard)
-         (if (string-eq name "true")
+         (if (= tag (compiler-parse-tag-lit-true))
              (OkAstPattern (AstPatLiteral (AstLitBool true)))
-             (if (string-eq name "false")
+             (if (= tag (compiler-parse-tag-lit-false))
                  (OkAstPattern (AstPatLiteral (AstLitBool false)))
-                 (OkAstPattern (AstPatBinding name)))))]
+                 (OkAstPattern (AstPatBinding name))))))]
     [(SCons (SSym name) args)
-     (match (parse-ast-pattern-list args)
+     (match (parse-ast-pattern-list dispatch args)
        [(OkAstPatternList parsed-args) (OkAstPattern (AstPatVariant name parsed-args))]
        [(ErrAstPatternList message) (ErrAstPattern message)])]
     [_ (ErrAstPattern "parse: expected pattern")]))
 
-(define (parse-ast-expr-list [s : Sexpr]) : ResultAstExprList
+(define (parse-ast-expr-list [dispatch : SymI64Env] [s : Sexpr]) : ResultAstExprList
   (match s
     [(SNil) (OkAstExprList AstExprNil)]
     [(SCons head tail)
-     (match (parse-ast-expr head)
+     (match (parse-ast-expr dispatch head)
        [(OkAstExpr parsed-head)
-        (match (parse-ast-expr-list tail)
+        (match (parse-ast-expr-list dispatch tail)
           [(OkAstExprList parsed-tail)
            (OkAstExprList (AstExprCons parsed-head parsed-tail))]
           [(ErrAstExprList message) (ErrAstExprList message)])]
        [(ErrAstExpr message) (ErrAstExprList message)])]
     [_ (ErrAstExprList "parse: malformed expression list")]))
 
-(define (parse-ast-binary [op : AstBinOp] [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-binary [dispatch : SymI64Env] [op : AstBinOp] [rest : Sexpr]) : ResultAstExpr
   (match rest
     [(SCons left (SCons right (SNil)))
-     (match (parse-ast-expr left)
+     (match (parse-ast-expr dispatch left)
        [(OkAstExpr parsed-left)
-        (match (parse-ast-expr right)
+        (match (parse-ast-expr dispatch right)
           [(OkAstExpr parsed-right)
            (OkAstExpr (AstExprBinary op parsed-left parsed-right))]
           [(ErrAstExpr message) (ErrAstExpr message)])]
        [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed binary expression")]))
 
-(define (parse-ast-unary [op : AstUnOp] [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-unary [dispatch : SymI64Env] [op : AstUnOp] [rest : Sexpr]) : ResultAstExpr
   (match rest
     [(SCons expr (SNil))
-     (match (parse-ast-expr expr)
+     (match (parse-ast-expr dispatch expr)
        [(OkAstExpr parsed-expr) (OkAstExpr (AstExprUnary op parsed-expr))]
        [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed unary expression")]))
 
-(define (parse-ast-if [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-if [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstExpr
   (match rest
     [(SCons cond (SCons then-branch (SCons else-branch (SNil))))
-     (match (parse-ast-expr cond)
+     (match (parse-ast-expr dispatch cond)
        [(OkAstExpr parsed-cond)
-        (match (parse-ast-expr then-branch)
+        (match (parse-ast-expr dispatch then-branch)
           [(OkAstExpr parsed-then)
-           (match (parse-ast-expr else-branch)
+           (match (parse-ast-expr dispatch else-branch)
              [(OkAstExpr parsed-else)
               (OkAstExpr (AstExprIf parsed-cond parsed-then parsed-else))]
              [(ErrAstExpr message) (ErrAstExpr message)])]
@@ -414,32 +589,32 @@
        [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed if")]))
 
-(define (parse-ast-while [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-while [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstExpr
   (match rest
     [(SCons cond (SCons body (SNil)))
-     (match (parse-ast-expr cond)
+     (match (parse-ast-expr dispatch cond)
        [(OkAstExpr parsed-cond)
-        (match (parse-ast-expr body)
+        (match (parse-ast-expr dispatch body)
           [(OkAstExpr parsed-body) (OkAstExpr (AstExprWhile parsed-cond parsed-body))]
           [(ErrAstExpr message) (ErrAstExpr message)])]
        [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed while")]))
 
-(define (parse-ast-set [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-set [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstExpr
   (match rest
     [(SCons (SSym name) (SCons value (SNil)))
-     (match (parse-ast-expr value)
+     (match (parse-ast-expr dispatch value)
        [(OkAstExpr parsed-value) (OkAstExpr (AstExprSet name parsed-value))]
        [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed set!")]))
 
-(define (parse-ast-ann-like [is-cast : bool] [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-ann-like [dispatch : SymI64Env] [is-cast : bool] [rest : Sexpr]) : ResultAstExpr
   (match rest
     [(SCons expr (SCons colon (SCons ty (SNil))))
      (if (sexpr-colon? colon)
-         (match (parse-ast-expr expr)
+         (match (parse-ast-expr dispatch expr)
            [(OkAstExpr parsed-expr)
-            (match (parse-ast-type ty)
+            (match (parse-ast-type dispatch ty)
               [(OkAstType parsed-ty)
                (if is-cast
                    (OkAstExpr (AstExprCast parsed-expr parsed-ty))
@@ -449,58 +624,58 @@
          (ErrAstExpr "parse: expected ':' in annotation"))]
     [_ (ErrAstExpr "parse: malformed annotation")]))
 
-(define (parse-ast-let-binding [s : Sexpr]) : ResultAstLetBinding
+(define (parse-ast-let-binding [dispatch : SymI64Env] [s : Sexpr]) : ResultAstLetBinding
   (match s
     [(SCons (SSym name) (SCons colon (SCons ty (SCons value (SNil)))))
      (if (sexpr-colon? colon)
-         (match (parse-ast-type ty)
+         (match (parse-ast-type dispatch ty)
            [(OkAstType parsed-ty)
-            (match (parse-ast-expr value)
+            (match (parse-ast-expr dispatch value)
               [(OkAstExpr parsed-value)
                (OkAstLetBinding (AstLetBinding name (AstSomeType parsed-ty) parsed-value))]
               [(ErrAstExpr message) (ErrAstLetBinding message)])]
            [(ErrAstType message) (ErrAstLetBinding message)])
          (ErrAstLetBinding "parse: expected ':' in let binding"))]
     [(SCons (SSym name) (SCons value (SNil)))
-     (match (parse-ast-expr value)
+     (match (parse-ast-expr dispatch value)
        [(OkAstExpr parsed-value)
         (OkAstLetBinding (AstLetBinding name AstNoType parsed-value))]
        [(ErrAstExpr message) (ErrAstLetBinding message)])]
     [_ (ErrAstLetBinding "parse: malformed let binding")]))
 
-(define (parse-ast-let-binding-list [s : Sexpr]) : ResultAstLetBindingList
+(define (parse-ast-let-binding-list [dispatch : SymI64Env] [s : Sexpr]) : ResultAstLetBindingList
   (match s
     [(SNil) (OkAstLetBindingList AstLetBindingNil)]
     [(SCons head tail)
-     (match (parse-ast-let-binding head)
+     (match (parse-ast-let-binding dispatch head)
        [(OkAstLetBinding parsed-head)
-        (match (parse-ast-let-binding-list tail)
+        (match (parse-ast-let-binding-list dispatch tail)
           [(OkAstLetBindingList parsed-tail)
            (OkAstLetBindingList (AstLetBindingCons parsed-head parsed-tail))]
           [(ErrAstLetBindingList message) (ErrAstLetBindingList message)])]
        [(ErrAstLetBinding message) (ErrAstLetBindingList message)])]
     [_ (ErrAstLetBindingList "parse: malformed let binding list")]))
 
-(define (parse-ast-let [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-let [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstExpr
   (match rest
     [(SCons bindings (SCons body (SNil)))
-     (match (parse-ast-let-binding-list bindings)
+     (match (parse-ast-let-binding-list dispatch bindings)
        [(OkAstLetBindingList parsed-bindings)
-        (match (parse-ast-expr body)
+        (match (parse-ast-expr dispatch body)
           [(OkAstExpr parsed-body) (OkAstExpr (AstExprLet parsed-bindings parsed-body))]
           [(ErrAstExpr message) (ErrAstExpr message)])]
        [(ErrAstLetBindingList message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed let")]))
 
-(define (parse-ast-lambda [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-lambda [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstExpr
   (match rest
     [(SCons params (SCons colon (SCons ret (SCons body (SNil)))))
      (if (sexpr-colon? colon)
-         (match (parse-ast-param-list params)
+         (match (parse-ast-param-list dispatch params)
            [(OkAstParamList parsed-params)
-            (match (parse-ast-type ret)
+            (match (parse-ast-type dispatch ret)
               [(OkAstType parsed-ret)
-               (match (parse-ast-expr body)
+               (match (parse-ast-expr dispatch body)
                  [(OkAstExpr parsed-body)
                   (OkAstExpr (AstExprLambda parsed-params (AstSomeType parsed-ret) parsed-body))]
                  [(ErrAstExpr message) (ErrAstExpr message)])]
@@ -508,41 +683,41 @@
            [(ErrAstParamList message) (ErrAstExpr message)])
          (ErrAstExpr "parse: expected ':' in lambda"))]
     [(SCons params (SCons body (SNil)))
-     (match (parse-ast-param-list params)
+     (match (parse-ast-param-list dispatch params)
        [(OkAstParamList parsed-params)
-        (match (parse-ast-expr body)
+        (match (parse-ast-expr dispatch body)
           [(OkAstExpr parsed-body)
            (OkAstExpr (AstExprLambda parsed-params AstNoType parsed-body))]
           [(ErrAstExpr message) (ErrAstExpr message)])]
        [(ErrAstParamList message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed lambda")]))
 
-(define (parse-ast-tuple-ref [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-tuple-ref [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstExpr
   (match rest
     [(SCons expr (SCons (SInt index) (SNil)))
-     (match (parse-ast-expr expr)
+     (match (parse-ast-expr dispatch expr)
        [(OkAstExpr parsed-expr) (OkAstExpr (AstExprTupleRef parsed-expr index))]
        [(ErrAstExpr message) (ErrAstExpr message)])]
     [(SCons _ (SCons _ (SNil))) (ErrAstExpr "parse: tuple-ref index must be integer")]
     [_ (ErrAstExpr "parse: malformed tuple-ref")]))
 
-(define (parse-ast-make-array [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-make-array [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstExpr
   (match rest
     [(SCons elem-ty (SCons len (SNil)))
-     (match (parse-ast-type elem-ty)
+     (match (parse-ast-type dispatch elem-ty)
        [(OkAstType parsed-ty)
-        (match (parse-ast-expr len)
+        (match (parse-ast-expr dispatch len)
           [(OkAstExpr parsed-len) (OkAstExpr (AstExprMakeArray parsed-ty parsed-len))]
           [(ErrAstExpr message) (ErrAstExpr message)])]
        [(ErrAstType message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed make-array")]))
 
-(define (parse-ast-array-ref-like [is-string : bool] [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-array-ref-like [dispatch : SymI64Env] [is-string : bool] [rest : Sexpr]) : ResultAstExpr
   (match rest
     [(SCons expr (SCons index (SNil)))
-     (match (parse-ast-expr expr)
+     (match (parse-ast-expr dispatch expr)
        [(OkAstExpr parsed-expr)
-        (match (parse-ast-expr index)
+        (match (parse-ast-expr dispatch index)
           [(OkAstExpr parsed-index)
            (if is-string
                (OkAstExpr (AstExprStringRef parsed-expr parsed-index))
@@ -551,14 +726,14 @@
        [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed ref expression")]))
 
-(define (parse-ast-array-set [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-array-set [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstExpr
   (match rest
     [(SCons expr (SCons index (SCons value (SNil))))
-     (match (parse-ast-expr expr)
+     (match (parse-ast-expr dispatch expr)
        [(OkAstExpr parsed-expr)
-        (match (parse-ast-expr index)
+        (match (parse-ast-expr dispatch index)
           [(OkAstExpr parsed-index)
-           (match (parse-ast-expr value)
+           (match (parse-ast-expr dispatch value)
              [(OkAstExpr parsed-value)
               (OkAstExpr (AstExprArraySet parsed-expr parsed-index parsed-value))]
              [(ErrAstExpr message) (ErrAstExpr message)])]
@@ -566,61 +741,61 @@
        [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed array-set!")]))
 
-(define (parse-ast-struct-get [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-struct-get [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstExpr
   (match rest
     [(SCons expr (SCons (SSym field) (SNil)))
-     (match (parse-ast-expr expr)
+     (match (parse-ast-expr dispatch expr)
        [(OkAstExpr parsed-expr) (OkAstExpr (AstExprStructGet parsed-expr field))]
        [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed struct-get")]))
 
-(define (parse-ast-match-arm [s : Sexpr]) : ResultAstMatchArm
+(define (parse-ast-match-arm [dispatch : SymI64Env] [s : Sexpr]) : ResultAstMatchArm
   (match s
     [(SCons pattern (SCons body (SNil)))
-     (match (parse-ast-pattern pattern)
+     (match (parse-ast-pattern dispatch pattern)
        [(OkAstPattern parsed-pattern)
-        (match (parse-ast-expr body)
+        (match (parse-ast-expr dispatch body)
           [(OkAstExpr parsed-body) (OkAstMatchArm (AstMatchArm parsed-pattern parsed-body))]
           [(ErrAstExpr message) (ErrAstMatchArm message)])]
        [(ErrAstPattern message) (ErrAstMatchArm message)])]
     [_ (ErrAstMatchArm "parse: malformed match arm")]))
 
-(define (parse-ast-match-arm-list [s : Sexpr]) : ResultAstMatchArmList
+(define (parse-ast-match-arm-list [dispatch : SymI64Env] [s : Sexpr]) : ResultAstMatchArmList
   (match s
     [(SNil) (OkAstMatchArmList AstMatchArmNil)]
     [(SCons head tail)
-     (match (parse-ast-match-arm head)
+     (match (parse-ast-match-arm dispatch head)
        [(OkAstMatchArm parsed-head)
-        (match (parse-ast-match-arm-list tail)
+        (match (parse-ast-match-arm-list dispatch tail)
           [(OkAstMatchArmList parsed-tail)
            (OkAstMatchArmList (AstMatchArmCons parsed-head parsed-tail))]
           [(ErrAstMatchArmList message) (ErrAstMatchArmList message)])]
        [(ErrAstMatchArm message) (ErrAstMatchArmList message)])]
     [_ (ErrAstMatchArmList "parse: malformed match arm list")]))
 
-(define (parse-ast-match [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-match [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstExpr
   (match rest
     [(SCons scrutinee arms)
-     (match (parse-ast-expr scrutinee)
+     (match (parse-ast-expr dispatch scrutinee)
        [(OkAstExpr parsed-scrutinee)
-        (match (parse-ast-match-arm-list arms)
+        (match (parse-ast-match-arm-list dispatch arms)
           [(OkAstMatchArmList parsed-arms)
            (OkAstExpr (AstExprMatch parsed-scrutinee parsed-arms))]
           [(ErrAstMatchArmList message) (ErrAstExpr message)])]
        [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed match")]))
 
-(define (parse-ast-foreach [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-foreach [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstExpr
   (match rest
     [(SCons (SCons (SCons (SSym index) (SCons colon (SCons index-ty (SCons start (SCons end (SNil)))))) (SNil)) (SCons body (SNil)))
      (if (sexpr-colon? colon)
-         (match (parse-ast-type index-ty)
+         (match (parse-ast-type dispatch index-ty)
            [(OkAstType parsed-index-ty)
-            (match (parse-ast-expr start)
+            (match (parse-ast-expr dispatch start)
               [(OkAstExpr parsed-start)
-               (match (parse-ast-expr end)
+               (match (parse-ast-expr dispatch end)
                  [(OkAstExpr parsed-end)
-                  (match (parse-ast-expr body)
+                  (match (parse-ast-expr dispatch body)
                     [(OkAstExpr parsed-body)
                      (OkAstExpr (AstExprForeach index parsed-index-ty parsed-start parsed-end parsed-body))]
                     [(ErrAstExpr message) (ErrAstExpr message)])]
@@ -630,130 +805,126 @@
          (ErrAstExpr "parse: expected ':' in foreach"))]
     [_ (ErrAstExpr "parse: malformed foreach")]))
 
-(define (parse-ast-call [head : Sexpr] [rest : Sexpr]) : ResultAstExpr
-  (match (parse-ast-expr head)
+(define (parse-ast-call [dispatch : SymI64Env] [head : Sexpr] [rest : Sexpr]) : ResultAstExpr
+  (match (parse-ast-expr dispatch head)
     [(OkAstExpr parsed-head)
-     (match (parse-ast-expr-list rest)
+     (match (parse-ast-expr-list dispatch rest)
        [(OkAstExprList parsed-args) (OkAstExpr (AstExprCall parsed-head parsed-args))]
        [(ErrAstExprList message) (ErrAstExpr message)])]
     [(ErrAstExpr message) (ErrAstExpr message)]))
 
-(define (parse-ast-begin [rest : Sexpr]) : ResultAstExpr
-  (match (parse-ast-expr-list rest)
+(define (parse-ast-begin [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstExpr
+  (match (parse-ast-expr-list dispatch rest)
     [(OkAstExprList exprs) (OkAstExpr (AstExprBegin exprs))]
     [(ErrAstExprList message) (ErrAstExpr message)]))
 
-(define (parse-ast-tuple [rest : Sexpr]) : ResultAstExpr
-  (match (parse-ast-expr-list rest)
+(define (parse-ast-tuple [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstExpr
+  (match (parse-ast-expr-list dispatch rest)
     [(OkAstExprList exprs) (OkAstExpr (AstExprTuple exprs))]
     [(ErrAstExprList message) (ErrAstExpr message)]))
 
-(define (parse-ast-array [rest : Sexpr]) : ResultAstExpr
-  (match (parse-ast-expr-list rest)
+(define (parse-ast-array [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstExpr
+  (match (parse-ast-expr-list dispatch rest)
     [(OkAstExprList exprs) (OkAstExpr (AstExprArray exprs))]
     [(ErrAstExprList message) (ErrAstExpr message)]))
 
-(define (parse-ast-list-expr-more [op : String] [head : Sexpr] [rest : Sexpr]) : ResultAstExpr
-  (if (string-eq op "array-ref")
-      (parse-ast-array-ref-like false rest)
-      (if (string-eq op "array-set!")
-          (parse-ast-array-set rest)
-          (if (string-eq op "string-ref")
-              (parse-ast-array-ref-like true rest)
-              (if (string-eq op "char-at")
-                  (parse-ast-array-ref-like true rest)
-                  (if (string-eq op "match")
-                      (parse-ast-match rest)
-                      (if (string-eq op "foreach")
-                          (parse-ast-foreach rest)
-                          (if (string-eq op "struct-get")
-                              (parse-ast-struct-get rest)
-                              (parse-ast-call head rest)))))))))
+(define (parse-ast-list-expr-tag [dispatch : SymI64Env] [tag : i64] [head : Sexpr] [rest : Sexpr]) : ResultAstExpr
+  (if (= tag (compiler-parse-tag-expr-if))
+      (parse-ast-if dispatch rest)
+      (if (= tag (compiler-parse-tag-expr-let))
+          (parse-ast-let dispatch rest)
+          (if (= tag (compiler-parse-tag-expr-lambda))
+              (parse-ast-lambda dispatch rest)
+              (if (= tag (compiler-parse-tag-expr-while))
+                  (parse-ast-while dispatch rest)
+                  (if (= tag (compiler-parse-tag-expr-begin))
+                      (parse-ast-begin dispatch rest)
+                      (if (= tag (compiler-parse-tag-expr-set))
+                          (parse-ast-set dispatch rest)
+                          (if (= tag (compiler-parse-tag-expr-ann))
+                              (parse-ast-ann-like dispatch false rest)
+                              (if (= tag (compiler-parse-tag-expr-cast))
+                                  (parse-ast-ann-like dispatch true rest)
+                                  (if (= tag (compiler-parse-tag-expr-tuple))
+                                      (parse-ast-tuple dispatch rest)
+                                      (if (= tag (compiler-parse-tag-expr-tuple-ref))
+                                          (parse-ast-tuple-ref dispatch rest)
+                                          (if (= tag (compiler-parse-tag-expr-array))
+                                              (parse-ast-array dispatch rest)
+                                              (if (= tag (compiler-parse-tag-expr-make-array))
+                                                  (parse-ast-make-array dispatch rest)
+                                                  (if (= tag (compiler-parse-tag-expr-array-ref))
+                                                      (parse-ast-array-ref-like dispatch false rest)
+                                                      (if (= tag (compiler-parse-tag-expr-array-set))
+                                                          (parse-ast-array-set dispatch rest)
+                                                          (if (= tag (compiler-parse-tag-expr-string-ref))
+                                                              (parse-ast-array-ref-like dispatch true rest)
+                                                              (if (= tag (compiler-parse-tag-expr-char-at))
+                                                                  (parse-ast-array-ref-like dispatch true rest)
+                                                                  (if (= tag (compiler-parse-tag-expr-match))
+                                                                      (parse-ast-match dispatch rest)
+                                                                      (if (= tag (compiler-parse-tag-expr-foreach))
+                                                                          (parse-ast-foreach dispatch rest)
+                                                                          (if (= tag (compiler-parse-tag-expr-struct-get))
+                                                                              (parse-ast-struct-get dispatch rest)
+                                                                              (parse-ast-call dispatch head rest)))))))))))))))))))))
 
-(define (parse-ast-list-expr-aggregate [op : String] [head : Sexpr] [rest : Sexpr]) : ResultAstExpr
-  (if (string-eq op "tuple")
-      (parse-ast-tuple rest)
-      (if (string-eq op "tuple-ref")
-          (parse-ast-tuple-ref rest)
-          (if (string-eq op "array")
-              (parse-ast-array rest)
-              (if (string-eq op "make-array")
-                  (parse-ast-make-array rest)
-                  (parse-ast-list-expr-more op head rest))))))
-
-(define (parse-ast-list-expr-special [op : String] [head : Sexpr] [rest : Sexpr]) : ResultAstExpr
-  (if (string-eq op "if")
-      (parse-ast-if rest)
-      (if (string-eq op "let")
-          (parse-ast-let rest)
-          (if (string-eq op "lambda")
-              (parse-ast-lambda rest)
-              (if (string-eq op "while")
-                  (parse-ast-while rest)
-                  (if (string-eq op "begin")
-                      (parse-ast-begin rest)
-                      (if (string-eq op "set!")
-                          (parse-ast-set rest)
-                          (if (string-eq op "ann")
-                              (parse-ast-ann-like false rest)
-                              (if (string-eq op "cast")
-                                  (parse-ast-ann-like true rest)
-                                  (parse-ast-list-expr-aggregate op head rest))))))))))
-
-(define (parse-ast-list-expr [head : Sexpr] [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-list-expr [dispatch : SymI64Env] [head : Sexpr] [rest : Sexpr]) : ResultAstExpr
   (match head
     [(SSym op)
-     (if (ast-unop? op)
-         (parse-ast-unary (ast-unop-from-name op) rest)
-         (if (ast-binop? op)
-             (parse-ast-binary (ast-binop-from-name op) rest)
-              (parse-ast-list-expr-special op head rest)))]
-    [_ (parse-ast-call head rest)]))
+     (let ([tag : i64 (compiler-parse-dispatch-tag dispatch op)])
+       (if (ast-unop-tag? tag)
+           (parse-ast-unary dispatch (ast-unop-from-tag tag) rest)
+           (if (ast-binop-tag? tag)
+               (parse-ast-binary dispatch (ast-binop-from-tag tag) rest)
+               (parse-ast-list-expr-tag dispatch tag head rest))))]
+    [_ (parse-ast-call dispatch head rest)]))
 
-(define (parse-ast-expr [s : Sexpr]) : ResultAstExpr
+(define (parse-ast-expr [dispatch : SymI64Env] [s : Sexpr]) : ResultAstExpr
   (match s
     [(SInt n) (OkAstExpr (AstExprLiteral (AstLitInt n)))]
     [(SStr text) (OkAstExpr (AstExprLiteral (AstLitString text)))]
     [(SChar c) (OkAstExpr (AstExprLiteral (AstLitChar c)))]
     [(SSym name)
-     (if (string-eq name "true")
+     (let ([tag : i64 (compiler-parse-dispatch-tag dispatch name)])
+       (if (= tag (compiler-parse-tag-lit-true))
          (OkAstExpr (AstExprLiteral (AstLitBool true)))
-         (if (string-eq name "false")
+         (if (= tag (compiler-parse-tag-lit-false))
              (OkAstExpr (AstExprLiteral (AstLitBool false)))
-             (if (string-eq name "unit")
+             (if (= tag (compiler-parse-tag-unit))
                  (OkAstExpr (AstExprLiteral AstLitUnit))
-                 (OkAstExpr (AstExprVar name)))))]
-    [(SCons head rest) (parse-ast-list-expr head rest)]
+                 (OkAstExpr (AstExprVar name))))))]
+    [(SCons head rest) (parse-ast-list-expr dispatch head rest)]
     [_ (ErrAstExpr "parse: malformed expression")]))
 
-(define (parse-ast-define-value [name : String] [rest : Sexpr]) : ResultAstDecl
+(define (parse-ast-define-value [dispatch : SymI64Env] [name : String] [rest : Sexpr]) : ResultAstDecl
   (match rest
     [(SCons colon (SCons ty (SCons value (SNil))))
      (if (sexpr-colon? colon)
-         (match (parse-ast-type ty)
+         (match (parse-ast-type dispatch ty)
            [(OkAstType parsed-ty)
-            (match (parse-ast-expr value)
+            (match (parse-ast-expr dispatch value)
               [(OkAstExpr parsed-value)
                (OkAstDecl (AstDeclDef name (AstSomeType parsed-ty) parsed-value))]
               [(ErrAstExpr message) (ErrAstDecl message)])]
            [(ErrAstType message) (ErrAstDecl message)])
          (ErrAstDecl "parse: expected ':' in definition"))]
     [(SCons value (SNil))
-     (match (parse-ast-expr value)
+     (match (parse-ast-expr dispatch value)
        [(OkAstExpr parsed-value)
         (OkAstDecl (AstDeclDef name AstNoType parsed-value))]
        [(ErrAstExpr message) (ErrAstDecl message)])]
     [_ (ErrAstDecl "parse: malformed value definition")]))
 
-(define (parse-ast-define-fn [name : String] [params : Sexpr] [rest : Sexpr]) : ResultAstDecl
+(define (parse-ast-define-fn [dispatch : SymI64Env] [name : String] [params : Sexpr] [rest : Sexpr]) : ResultAstDecl
   (match rest
     [(SCons colon (SCons ret (SCons body (SNil))))
      (if (sexpr-colon? colon)
-         (match (parse-ast-param-list params)
+         (match (parse-ast-param-list dispatch params)
            [(OkAstParamList parsed-params)
-            (match (parse-ast-type ret)
+            (match (parse-ast-type dispatch ret)
               [(OkAstType parsed-ret)
-               (match (parse-ast-expr body)
+               (match (parse-ast-expr dispatch body)
                  [(OkAstExpr parsed-body)
                   (OkAstDecl (AstDeclDefFn name parsed-params parsed-ret parsed-body))]
                  [(ErrAstExpr message) (ErrAstDecl message)])]
@@ -761,49 +932,49 @@
            [(ErrAstParamList message) (ErrAstDecl message)])
          (ErrAstDecl "parse: expected ':' in function definition"))]
     [(SCons body (SNil))
-     (match (parse-ast-param-list params)
+     (match (parse-ast-param-list dispatch params)
        [(OkAstParamList parsed-params)
-        (match (parse-ast-expr body)
+        (match (parse-ast-expr dispatch body)
           [(OkAstExpr parsed-body)
            (OkAstDecl (AstDeclDefFn name parsed-params (AstTyUnit) parsed-body))]
           [(ErrAstExpr message) (ErrAstDecl message)])]
        [(ErrAstParamList message) (ErrAstDecl message)])]
     [_ (ErrAstDecl "parse: malformed function definition")]))
 
-(define (parse-ast-define [rest : Sexpr]) : ResultAstDecl
+(define (parse-ast-define [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstDecl
   (match rest
-    [(SCons (SSym name) after-name) (parse-ast-define-value name after-name)]
+    [(SCons (SSym name) after-name) (parse-ast-define-value dispatch name after-name)]
     [(SCons (SCons (SSym name) params) after-header)
-     (parse-ast-define-fn name params after-header)]
+     (parse-ast-define-fn dispatch name params after-header)]
     [_ (ErrAstDecl "parse: malformed define")]))
 
-(define (parse-ast-extern [rest : Sexpr]) : ResultAstDecl
+(define (parse-ast-extern [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstDecl
   (match rest
     [(SCons (SSym name) (SCons colon (SCons ty (SNil))))
      (if (sexpr-colon? colon)
-         (match (parse-ast-type ty)
+         (match (parse-ast-type dispatch ty)
            [(OkAstType parsed-ty) (OkAstDecl (AstDeclExtern name parsed-ty))]
            [(ErrAstType message) (ErrAstDecl message)])
          (ErrAstDecl "parse: expected ':' in extern"))]
     [_ (ErrAstDecl "parse: malformed extern")]))
 
-(define (parse-ast-defenum [rest : Sexpr]) : ResultAstDecl
+(define (parse-ast-defenum [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstDecl
   (match rest
     [(SCons (SSym name) variants)
      (match variants
        [(SNil) (ErrAstDecl "parse: defenum needs at least one variant")]
-       [_ (match (parse-ast-variant-def-list variants)
+       [_ (match (parse-ast-variant-def-list dispatch variants)
             [(OkAstVariantDefList parsed-variants)
              (OkAstDecl (AstDeclDefEnum name parsed-variants))]
             [(ErrAstVariantDefList message) (ErrAstDecl message)])])]
     [_ (ErrAstDecl "parse: malformed defenum")]))
 
-(define (parse-ast-defstruct [rest : Sexpr]) : ResultAstDecl
+(define (parse-ast-defstruct [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstDecl
   (match rest
     [(SCons (SSym name) fields)
      (match fields
        [(SNil) (ErrAstDecl "parse: defstruct needs at least one field")]
-       [_ (match (parse-ast-field-def-list fields)
+       [_ (match (parse-ast-field-def-list dispatch fields)
             [(OkAstFieldDefList parsed-fields)
              (OkAstDecl (AstDeclDefStruct name parsed-fields))]
             [(ErrAstFieldDefList message) (ErrAstDecl message)])])]
@@ -814,40 +985,42 @@
     [(SCons (SStr path) (SNil)) (OkAstDecl (AstDeclImport path))]
     [_ (ErrAstDecl "parse: malformed import")]))
 
-(define (parse-ast-decl [s : Sexpr]) : ResultAstDecl
+(define (parse-ast-decl [dispatch : SymI64Env] [s : Sexpr]) : ResultAstDecl
   (match s
     [(SCons (SSym head) rest)
-     (if (string-eq head "define")
-         (parse-ast-define rest)
-         (if (string-eq head "extern")
-             (parse-ast-extern rest)
-             (if (string-eq head "defenum")
-                 (parse-ast-defenum rest)
-                 (if (string-eq head "defstruct")
-                     (parse-ast-defstruct rest)
-                     (if (string-eq head "import")
-                         (parse-ast-import rest)
-                         (ErrAstDecl "parse: expected declaration"))))))]
+     (let ([tag : i64 (compiler-parse-dispatch-tag dispatch head)])
+       (if (= tag (compiler-parse-tag-decl-define))
+           (parse-ast-define dispatch rest)
+           (if (= tag (compiler-parse-tag-decl-extern))
+               (parse-ast-extern dispatch rest)
+               (if (= tag (compiler-parse-tag-decl-defenum))
+                   (parse-ast-defenum dispatch rest)
+                   (if (= tag (compiler-parse-tag-decl-defstruct))
+                       (parse-ast-defstruct dispatch rest)
+                       (if (= tag (compiler-parse-tag-decl-import))
+                           (parse-ast-import rest)
+                           (ErrAstDecl "parse: expected declaration")))))))]
     [_ (ErrAstDecl "parse: malformed declaration")]))
 
-(define (parse-ast-program-forms [toks : (Array Token)] [cur : (Array i64)]) : ResultAstDeclList
+(define (parse-ast-program-forms [dispatch : SymI64Env] [toks : (Array Token)] [cur : (Array i64)]) : ResultAstDeclList
   (if (= (peek-tag toks cur) (tag-end))
       (OkAstDeclList AstDeclNil)
       (let ([form : Sexpr (read-form toks cur)])
-        (match (parse-ast-decl form)
+        (match (parse-ast-decl dispatch form)
           [(OkAstDecl decl)
-           (match (parse-ast-program-forms toks cur)
+           (match (parse-ast-program-forms dispatch toks cur)
              [(OkAstDeclList rest) (OkAstDeclList (AstDeclCons decl rest))]
              [(ErrAstDeclList message) (ErrAstDeclList message)])]
           [(ErrAstDecl message) (ErrAstDeclList message)]))))
 
 (define (parse-ast-program [toks : (Array Token)]) : ResultAstProgram
   (let ([cur : (Array i64) (make-array i64 1)])
-    (begin
-      (array-set! cur 0 0)
-      (match (parse-ast-program-forms toks cur)
-        [(OkAstDeclList decls) (OkAstProgram (AstProgram decls))]
-        [(ErrAstDeclList message) (ErrAstProgram message)]))))
+    (let ([dispatch : SymI64Env (compiler-parse-dispatch-env)])
+      (begin
+        (array-set! cur 0 0)
+        (match (parse-ast-program-forms dispatch toks cur)
+          [(OkAstDeclList decls) (OkAstProgram (AstProgram decls))]
+          [(ErrAstDeclList message) (ErrAstProgram message)])))))
 
 (define (parse-ast-source [src : String]) : ResultAstProgram
   (parse-ast-program (lex src)))

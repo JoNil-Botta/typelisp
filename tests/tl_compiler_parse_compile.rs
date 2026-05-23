@@ -54,6 +54,15 @@ fn assert_message(asm: &str, message: &str, name: &str) {
     );
 }
 
+fn assert_dispatch_env_call_shape(asm: &str, name: &str) {
+    assert_eq!(
+        asm.matches("call _tl_compiler_parse_dispatch_env").count(),
+        1,
+        "{name} should build the compiler parser dispatch env only in \
+         parse-ast-program, not recursive parse helpers:\n{asm}",
+    );
+}
+
 #[test]
 fn compiler_parse_core_tl_compiles_to_assembly() {
     let asm = compile_selfhost_source(
@@ -65,6 +74,8 @@ fn compiler_parse_core_tl_compiles_to_assembly() {
     assert_no_todo(&asm, "compiler_parse_core");
 
     for sym in [
+        "_tl_compiler_parse_dispatch_env:",
+        "_tl_compiler_parse_dispatch_tag:",
         "_tl_parse_ast_type:",
         "_tl_parse_ast_expr:",
         "_tl_parse_ast_decl:",
@@ -75,6 +86,7 @@ fn compiler_parse_core_tl_compiles_to_assembly() {
         "_tl_compiler_parse_smoke:",
         "_tl_read_form:",
         "_tl_lex:",
+        "_tl_sym_i64_lookup:",
         "_tl_ast_decl_tag:",
         "_tl_ast_expr_tag:",
     ] {
@@ -101,6 +113,8 @@ fn compiler_parse_core_tl_compiles_to_assembly() {
             "compiler_parse_core assembly is missing smoke datum {datum:?}:\n{asm}",
         );
     }
+
+    assert_dispatch_env_call_shape(&asm, "compiler_parse_core");
 }
 
 #[test]

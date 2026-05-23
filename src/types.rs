@@ -176,6 +176,18 @@ impl Type {
     }
 
     #[allow(dead_code)]
+    /// Bit width for integer types. Panics on non-integer.
+    pub fn bit_width(&self) -> u8 {
+        match self {
+            Type::I64 | Type::U64 => 64,
+            Type::I32 | Type::U32 => 32,
+            Type::I16 | Type::U16 => 16,
+            Type::I8 | Type::U8 => 8,
+            _ => panic!("bit_width only defined for integer types"),
+        }
+    }
+
+    #[allow(dead_code)]
     pub fn is_float(&self) -> bool {
         matches!(self, Type::F64 | Type::F32)
     }

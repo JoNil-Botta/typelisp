@@ -149,6 +149,9 @@ Named top-level functions can be passed as non-capturing function pointer
 values. `lambda` parses and type-checks as a function value in limited cases,
 but backend lowering for lambda literals and captured closures is incomplete
 today.
+SPMD/SIMD `foreach` is documented as a future design in [SPEC.md §5.15](SPEC.md),
+but parser, typechecker, lowering, vector IR, and AVX backend support are not
+implemented yet.
 
 ### Builtins
 
@@ -206,7 +209,7 @@ structs + field access, dynamic arrays, strings, `extern`, and multi-file
 modules all compile to native code. See the
 [project roadmap](https://github.com/JoNil-Botta/typelisp/issues/8) and
 [SPEC.md §8](SPEC.md) for what is not yet supported (closures, tail calls,
-tuple/fixed-array by-value returns, `f32` codegen, GC).
+tuple/fixed-array by-value returns, `f32` codegen, GC, SPMD/SIMD).
 
 ## Contributing
 

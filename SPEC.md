@@ -447,6 +447,126 @@ See §3.6.
 - Backend lowering for lambda literals is incomplete today.
 - No closure captures.
 
+### 5.15 Future SPMD `foreach` design (not implemented yet)
+
+This section chooses the initial SPMD source surface for future implementation.
+The current compiler does not parse or type-check `foreach` specially yet; #343
+owns parser/typechecker support, #344 owns scalar reference lowering, and later
+issues own vector IR and AVX backends.
+
+Initial syntax:
+
+```lisp test=ignore name=spmd-foreach-map reason="future SPMD design, not implemented yet"
+(define (add-arrays [a : (Array i64)]
+                    [b : (Array i64)]
+                    [out : (Array i64)]
+                    [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+```
+
+Semantics:
+
+- `(foreach ([i : i64 start end]) body)` executes one logical program instance
+  for each integer `i` in the half-open range `[start, end)`.
+- `start` and `end` are uniform `i64` expressions evaluated once before the
+  loop. If `end <= start`, the loop has zero logical iterations.
+- `body` must have type `unit`; the `foreach` expression has type `unit`.
+- The semantic result must match an ordinary scalar loop over the same range.
+  SIMD lowering may group iterations into lanes, but programs must not depend
+  on lane width or on an ordering between distinct logical iterations.
+- Existing dynamic-array bounds checks still apply. If a `foreach` indexes past
+  an array's length, the program traps the same way `array-ref`/`array-set!`
+  traps today.
+
+Initial dynamic-array use cases:
+
+- Contiguous map and zip-style kernels over dynamic arrays.
+- Reads through `array-ref` and writes through `array-set!`.
+- Array indexes must be the loop index or a simple uniform offset from it, such
+  as `i` or `(+ base i)`. Gather/scatter through an index array is deferred.
+- Supported lane element types for the first slice are `i32`, `i64`, and `f64`.
+  `f32` waits for scalar backend support; narrow integers, unsigned integers,
+  `bool`, `String`, structs, enums, tuples, and arrays as lane elements are
+  deferred.
+
+Uniform and varying rules:
+
+- Values are uniform by default.
+- The `foreach` index binding is varying: each logical program instance has its
+  own `i`.
+- Arithmetic and comparisons involving a varying value produce varying values.
+- `array-ref` with a varying index produces a varying element value.
+- `array-set!` with a varying index or value performs one write per active
+  logical program instance.
+- There is no public `(varying T)` or mask type in the first source surface.
+  Varying information is inferred inside `foreach` and masks are internal to
+  lowering.
+- `let` bindings inside the `foreach` body may be uniform or varying by
+  inference. `set!` to a binding declared outside the `foreach` is rejected;
+  reductions and cross-lane updates are separate future work.
+- Calls with varying arguments are rejected until an SPMD function ABI is
+  designed. The first slice only permits built-in arithmetic/comparison
+  operators and array operations over supported lane types.
+- `if` and `while` conditions must be uniform in the first slice. Divergent
+  varying control flow is deferred until mask semantics are implemented.
+
+Lane builtins:
+
+- Public lane builtins equivalent to ISPC `programIndex` and `programCount` are
+  explicitly deferred from the first slice.
+- Reserve the names `program-index` and `program-count` for a later design.
+  They should only become valid after target selection and vector/mask IR exist,
+  because their semantics depend on gang width and tail-mask behavior.
+
+Tail behavior:
+
+- The language-level range has exactly `max(end - start, 0)` logical
+  iterations.
+- Scalar fallback lowering executes those iterations one at a time.
+- SIMD lowering must use an internal active-lane mask for tails so lengths `0`,
+  less than the lane width, exactly one lane width, and not divisible by the
+  lane width all produce the same observable result.
+- Inactive tail lanes must not perform bounds checks, loads, stores, calls, or
+  other side effects.
+
+Unsupported in the initial SPMD surface:
+
+- Public vector types, public mask types, `program-index`, and `program-count`.
+- Gather/scatter, indirect indexing through arrays, and non-contiguous memory.
+- Reductions, scans, cross-lane operations, atomics, and overlapping writes.
+- Varying `if`/`while`, early exits, `break`, and `continue`.
+- User-defined function calls with varying arguments or varying returns.
+- Struct, enum, tuple, string, function, and nested array lane values.
+- Task parallelism, multicore scheduling, CPU dispatch, and AVX-specific codegen.
+
+Negative examples for later parser/typechecker tests:
+
+```lisp test=ignore name=spmd-reject-varying-if reason="future SPMD negative example"
+(define (clamp-positive [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (if (< (array-ref xs i) 0)
+        (array-set! out i 0)
+        (array-set! out i (array-ref xs i)))))
+```
+
+```lisp test=ignore name=spmd-reject-reduction reason="future SPMD negative example"
+(define (sum-array [xs : (Array i64)] [n : i64]) : i64
+  (let ([sum : i64 0])
+    (begin
+      (foreach ([i : i64 0 n])
+        (set! sum (+ sum (array-ref xs i))))
+      sum)))
+```
+
+```lisp test=ignore name=spmd-reject-varying-call reason="future SPMD negative example"
+(define (inc [x : i64]) : i64 (+ x 1))
+
+(define (map-inc [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (array-set! out i (inc (array-ref xs i)))))
+```
+
 ---
 
 ## 6. Built-in functions and runtime
@@ -600,6 +720,7 @@ They are not implemented by a separate C runtime.
 | Tail call optimization | Not implemented |
 | `struct-set!` | Not implemented |
 | Garbage collection / `free` | Not implemented (memory leaks) |
+| SPMD / SIMD `foreach` | Design chosen in §5.15; parser/typechecker/lowering not implemented |
 | Windows target | Not implemented |
 | Complete source locations for all semantic errors | Partial |
 | REPL | Not implemented |

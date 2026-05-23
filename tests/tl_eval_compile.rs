@@ -7,8 +7,10 @@
 //! source String into a flat `(Array Token)` and the reader consumes that token
 //! stream into the recursive cons-cell `Sexpr` AST `(SInt | SSym | SNil |
 //! SCons)`, the evaluator INTERPRETS that tree - it walks the s-expression,
-//! dispatches on the head operator symbol, recursively evaluates the argument
-//! sub-exprs, and computes the integer the expression denotes. It does NOT
+//! dispatches on the head operator symbol (the `if` short-circuiting special
+//! form, the arithmetic operators `+ - * /`, and the comparison operators
+//! `= < > <= >=`), recursively evaluates the argument sub-exprs, and computes
+//! the integer the expression denotes. It does NOT
 //! re-derive lexing or reading: it `(import)`s the reader's `read` and the
 //! `Sexpr` enum from the `main`-less module `tl_read.tl`, which itself imports
 //! the `main`-less lexer `tl_lex.tl`, which imports the `main`-less token model
@@ -169,6 +171,31 @@ fn tl_eval_tl_compiles_to_assembly() {
     assert!(
         asm.contains("call tl_string_eq"),
         "tl_eval assembly shows no string-eq operator-dispatch call:\n{}",
+        asm,
+    );
+
+    // CONDITIONALS (#27): the `if` special form and the comparison operators are
+    // dispatched on their operator text, so each operator's string literal must
+    // be emitted in the read-only data. `"if"` selects the short-circuit special
+    // form; `"<"`/`">"`/`"<="`/`">="` (and the existing `"="`) are the comparison
+    // operators that fold their bool result to the 1/0 integer-truth convention.
+    for op in ["\"if\"", "\"=\"", "\"<\"", "\">\"", "\"<=\"", "\">=\""] {
+        assert!(
+            asm.contains(&format!(".string {op}")),
+            "tl_eval assembly is missing the dispatch string literal for operator {op} \
+             (conditionals/comparisons):\n{}",
+            asm,
+        );
+    }
+
+    // The comparison operators fold a bool to the 1/0 integer-truth convention,
+    // so the lowered evaluator must contain at least one signed integer comparison
+    // (cmp + a set/conditional-move or conditional jump). `cmp` proves the
+    // comparison operators actually emit a magnitude test rather than only the
+    // byte-wise `string-eq` used for operator dispatch.
+    assert!(
+        asm.contains("cmp"),
+        "tl_eval assembly has no integer comparison (cmp) for the comparison operators:\n{}",
         asm,
     );
 

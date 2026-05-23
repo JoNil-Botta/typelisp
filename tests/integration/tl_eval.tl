@@ -81,24 +81,44 @@
 ;;                           `name`. This NESTED pattern (#41) matches two enum
 ;;                           layers at once: it requires the head to itself be an
 ;;                           `(SSym name)` and binds the operator text `name`
-;;                           directly - the projection `sexpr-sym` used to do.
-;;                           `rest` is the proper-list `(SCons arg1 (SCons arg2
-;;                           SNil))` of the (fixed two) argument sub-exprs.
-;;                           Project the two args out of the spine, recursively
-;;                           `eval-sexpr` each, then DISPATCH on `name` via
-;;                           `string-eq`: "+" -> a+b, "-" -> a-b, "*" -> a*b,
-;;                           "/" -> a/b (integer division). An unknown operator
-;;                           is a malformed program - abort via `panic`.
-;;   _                    -> any other shape (a bare symbol or empty list - not
-;;                           evaluable in this slice; or an `SCons` whose head is
-;;                           NOT a symbol, which fails the nested `(SSym name)`
-;;                           test above and falls through here exactly like a
-;;                           flat tag mismatch) is a non-evaluable expression -
-;;                           abort. (Deferred: SSym variable lookup, `define`,
-;;                           variadic arity.)
+;;                           directly. The head dispatch first checks for the
+;;                           `if` SPECIAL FORM (whose evaluation is short-circuit,
+;;                           NOT a fixed-arity strict call); everything else is a
+;;                           strict fixed-arity BINARY operator.
+;;   _                    -> any other shape (a bare symbol, an empty list, or an
+;;                           `SCons` whose head is NOT a symbol) is non-evaluable
+;;                           - abort.
 ;;
-;; The recursive `eval-sexpr` calls on each argument make this a genuine tree
-;; walk - the result depends on the WHOLE nested shape.
+;; -------------------------------------------------------------------------
+;; The `if` special form: `(if cond then else)`.
+;; -------------------------------------------------------------------------
+;; CONDITIONALS are a control-flow construct, so `if` CANNOT be evaluated like the
+;; strict binary operators: those eval BOTH operands up front, but `if` must
+;; SHORT-CIRCUIT - evaluate `cond`, then evaluate ONLY the taken branch (so e.g.
+;; the untaken branch may safely contain a division by zero or a non-terminating
+;; recursion). `if` therefore gets its own dispatch arm, ahead of the binary path.
+;;
+;; The form-tail `rest` for `(if cond then else)` is the three-element spine
+;; `(SCons cond (SCons then (SCons else SNil)))`. We project the three sub-exprs
+;; one cons level at a time with the shared `sexpr-head`/`sexpr-tail` helpers, and
+;; assert the spine is exactly three long via `sexpr-expect-nil` on the final
+;; tail (a fourth element is a malformed `if`). Then we eval `cond` in isolation
+;; and branch on whether it is non-zero - the integer truth convention this
+;; interpreter uses (the comparison operators below produce 1 for true, 0 for
+;; false). Crucially, exactly ONE of `(eval-sexpr then)` / `(eval-sexpr else)`
+;; runs, inside the two arms of the host-language `if` - that is the
+;; short-circuit.
+;;
+;; -------------------------------------------------------------------------
+;; Comparison operators: `= < > <= >=`, the integer-truth convention.
+;; -------------------------------------------------------------------------
+;; TypeLisp's own `= < > <= >=` operators return `bool`, but this interpreter is
+;; an `(-> Sexpr i64)` - every expression denotes an integer. So a comparison
+;; folds its bool back to the integer truth convention with a host `if`: true ->
+;; 1, false -> 0. `(eval-sexpr (read (lex "(< 2 3)")))` is therefore 1, and a
+;; `cond`-position `(< x 3)` reads back as the 1/0 the `if` special form tests.
+;; These join the existing arithmetic operators in the strict binary dispatch:
+;; both operands are eval'd (in order) before the operator is applied.
 (define (eval-sexpr [s : Sexpr]) : i64
   (match s
     [(SInt n) n]
@@ -106,45 +126,77 @@
     ;; operator text `name : String` (one enum layer down) and the spine `rest`
     ;; together; a non-symbol head fails this and falls through to the `_` arm.
     [(SCons (SSym name) rest)
-     ;; A call form `(name arg1 arg2)`: rest is `(SCons arg1 (SCons arg2 SNil))`.
-     (let ([arg1 : Sexpr (sexpr-head rest)]
-           [rest2 : Sexpr (sexpr-tail rest)])
-       (let ([arg2 : Sexpr (sexpr-head rest2)]
-             [rest3 : Sexpr (sexpr-tail rest2)])
-         (begin
-           (sexpr-expect-nil rest3)
-           (let ([a : i64 (eval-sexpr arg1)]
-                 [b : i64 (eval-sexpr arg2)])
-             ;; Dispatch on the operator text. `string-eq` is the byte-wise
-             ;; equality builtin; an unmatched operator falls through to a panic.
-             (if (string-eq name "+")
-                 (+ a b)
-                 (if (string-eq name "-")
-                     (- a b)
-                     (if (string-eq name "*")
-                         (* a b)
-                         (if (string-eq name "/")
-                             (/ a b)
-                             (begin
-                               (panic "eval: unknown operator")
-                               0)))))))))]
+     (if (string-eq name "if")
+         ;; `if` SPECIAL FORM `(if cond then else)`: rest is
+         ;; `(SCons cond (SCons then (SCons else SNil)))`. Project the three
+         ;; sub-exprs, assert exactly three, then SHORT-CIRCUIT: eval cond, and
+         ;; eval ONLY the taken branch. `0` is false, anything else true.
+         (let ([cond-e : Sexpr (sexpr-head rest)]
+               [restc : Sexpr (sexpr-tail rest)])
+           (let ([then-e : Sexpr (sexpr-head restc)]
+                 [restt : Sexpr (sexpr-tail restc)])
+             (let ([else-e : Sexpr (sexpr-head restt)]
+                   [reste : Sexpr (sexpr-tail restt)])
+               (begin
+                 (sexpr-expect-nil reste)
+                 (let ([c : i64 (eval-sexpr cond-e)])
+                   ;; Only one branch is evaluated - the untaken sub-expr is
+                   ;; NOT walked. (Condition true when c is non-zero.)
+                   (if (= c 0)
+                       (eval-sexpr else-e)
+                       (eval-sexpr then-e)))))))
+         ;; A strict fixed-arity BINARY call form `(name arg1 arg2)`: rest is
+         ;; `(SCons arg1 (SCons arg2 SNil))`.
+         (let ([arg1 : Sexpr (sexpr-head rest)]
+               [rest2 : Sexpr (sexpr-tail rest)])
+           (let ([arg2 : Sexpr (sexpr-head rest2)]
+                 [rest3 : Sexpr (sexpr-tail rest2)])
+             (begin
+               (sexpr-expect-nil rest3)
+               (let ([a : i64 (eval-sexpr arg1)]
+                     [b : i64 (eval-sexpr arg2)])
+                 ;; Dispatch on the operator text. `string-eq` is the byte-wise
+                 ;; equality builtin; an unmatched operator falls through to a
+                 ;; panic. The arithmetic operators `+ - * /` yield their integer
+                 ;; result directly; the comparison operators `= < > <= >=` fold
+                 ;; their bool to the 1 (true) / 0 (false) integer convention.
+                 (if (string-eq name "+")
+                     (+ a b)
+                     (if (string-eq name "-")
+                         (- a b)
+                         (if (string-eq name "*")
+                             (* a b)
+                             (if (string-eq name "/")
+                                 (/ a b)
+                                 (if (string-eq name "=")
+                                     (if (= a b) 1 0)
+                                     (if (string-eq name "<")
+                                         (if (< a b) 1 0)
+                                         (if (string-eq name ">")
+                                             (if (> a b) 1 0)
+                                             (if (string-eq name "<=")
+                                                 (if (<= a b) 1 0)
+                                                 (if (string-eq name ">=")
+                                                     (if (>= a b) 1 0)
+                                                     (begin
+                                                       (panic "eval: unknown operator")
+                                                       0)))))))))))))))]
     [_ (begin (panic "eval: not an evaluable expression") 0)]))
 
 ;; --------------------------------------------------------------------------
 ;; main: the whole front end composed - lex, read, then interpret.
 ;; --------------------------------------------------------------------------
-;; `(eval-sexpr (read (lex "(+ 1 (* 2 3))")))`:
-;;   - lex   produces the token stream  (  +  1  (  *  2  3  )  )  End
+;; `(eval-sexpr (read (lex "(if (< 2 3) (* 5 5) 0)")))` exercises CONDITIONALS:
+;;   - lex   produces the token stream for the `if` form
 ;;   - read  builds the Sexpr tree
-;;       (SCons (SSym "+")
-;;         (SCons (SInt 1)
-;;           (SCons (SCons (SSym "*") (SCons (SInt 2) (SCons (SInt 3) (SNil))))
-;;             (SNil))))
-;;   - eval-sexpr interprets it: the inner `(* 2 3)` evaluates to 6, then the
-;;     outer `(+ 1 6)` evaluates to 7. Multiplication runs FIRST because it is the
-;;     nested argument - proving the interpreter honours the tree's structure.
-;; `main` returns 7, an observable result an execution test asserts as the exit
-;; code. (Sanity, also tree-shape dependent: "(- (* 4 5) (/ 10 2))" interprets to
-;; (* 4 5) = 20 and (/ 10 2) = 5, then 20 - 5 = 15.)
+;;       (SCons (SSym "if")
+;;         (SCons (SCons (SSym "<") (SCons (SInt 2) (SCons (SInt 3) (SNil))))
+;;           (SCons (SCons (SSym "*") (SCons (SInt 5) (SCons (SInt 5) (SNil))))
+;;             (SCons (SInt 0) (SNil)))))
+;;   - eval-sexpr interprets it: the comparison `(< 2 3)` evaluates to 1 (true),
+;;     so the `if` SHORT-CIRCUITS to the THEN branch `(* 5 5)` = 25, and the ELSE
+;;     branch `0` is never evaluated. `main` returns 25, the observable result an
+;;     execution test asserts as the exit code. (Sanity, also conditional: a
+;;     false guard `(if (> 2 3) 99 7)` short-circuits to the ELSE branch => 7.)
 (define (main) : i64
-  (eval-sexpr (read (lex "(+ 1 (* 2 3))"))))
+  (eval-sexpr (read (lex "(if (< 2 3) (* 5 5) 0)"))))

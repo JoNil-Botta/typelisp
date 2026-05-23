@@ -61,6 +61,7 @@ fn tl_parse_tl_compiles_to_assembly() {
         "_tl_parse_dispatch_tag:",
         "_tl_parse_op_tag:",
         "_tl_parse:",
+        "_tl_parse_with_dispatch:",
         "_tl_parse_op:",
         "_tl_is_binary_tag:",
         "_tl_parse_binary:",
@@ -101,6 +102,7 @@ fn tl_parse_tl_compiles_to_assembly() {
         "call _tl_lex",
         "call _tl_read",
         "call _tl_parse",
+        "call _tl_parse_with_dispatch",
         "call _tl_parse_if",
         "call _tl_parse_print",
         "call _tl_parse_set",
@@ -121,6 +123,8 @@ fn tl_parse_tl_compiles_to_assembly() {
             asm,
         );
     }
+
+    assert_dispatch_env_call_shape(&asm, "tl_parse");
 
     // The literal source string the pipeline is run on appears as a data datum.
     // refs #167/#173: the demo now exercises let + if + comparison together.
@@ -227,6 +231,17 @@ fn compile_selfhost_source(source_file: &str, work_name: &str, asm_file: &str) -
     fs::read_to_string(&asm_path).expect("read generated selfhost assembly")
 }
 
+fn assert_dispatch_env_call_shape(asm: &str, label: &str) {
+    assert_eq!(
+        asm.matches("call _tl_parse_dispatch_env").count(),
+        4,
+        "{label} should build the parser dispatch env only in public wrappers \
+         (`parse`, `parse-op`, `is-binary-op`, `parse-program`), not recursive \
+         parse helpers:\n{}",
+        asm,
+    );
+}
+
 #[test]
 fn tl_parse_core_tl_compiles_to_assembly() {
     let asm = compile_selfhost_source(
@@ -246,6 +261,7 @@ fn tl_parse_core_tl_compiles_to_assembly() {
         "_tl_parse_dispatch_tag:",
         "_tl_parse_op_tag:",
         "_tl_parse:",
+        "_tl_parse_with_dispatch:",
         "_tl_parse_op:",
         "_tl_is_binary_tag:",
         "_tl_parse_binary:",
@@ -291,6 +307,8 @@ fn tl_parse_core_tl_compiles_to_assembly() {
             asm,
         );
     }
+
+    assert_dispatch_env_call_shape(&asm, "tl_parse_core");
 }
 
 #[test]
@@ -315,6 +333,7 @@ fn tl_compile_smoke_tl_compiles_to_assembly() {
 
     for call in [
         "call _tl_parse_program",
+        "call _tl_parse_with_dispatch",
         "call _tl_parse_dispatch_tag",
         "call _tl_sym_i64_lookup",
         "call _tl_parse_begin",
@@ -365,4 +384,6 @@ fn tl_compile_smoke_tl_compiles_to_assembly() {
             asm,
         );
     }
+
+    assert_dispatch_env_call_shape(&asm, "tl_compile_smoke");
 }

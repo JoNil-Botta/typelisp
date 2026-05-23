@@ -43,8 +43,8 @@
                               (let ([e14 : SymI64Env (sym-i64-bind e13 ">=" (parse-tag-ge))])
                                 (sym-i64-bind e14 "!=" (parse-tag-ne))))))))))))))))))
 
-(define (parse-dispatch-tag [op : String]) : i64
-  (match (sym-i64-lookup (parse-dispatch-env) op)
+(define (parse-dispatch-tag [dispatch : SymI64Env] [op : String]) : i64
+  (match (sym-i64-lookup dispatch op)
     [(SomeI64 tag) tag]
     [(NoneI64) (parse-tag-call)]))
 
@@ -72,7 +72,7 @@
                                         (OpAdd))))))))))))
 
 (define (parse-op [op : String]) : BinOp
-  (parse-op-tag (parse-dispatch-tag op)))
+  (parse-op-tag (parse-dispatch-tag (parse-dispatch-env) op)))
 
 (define (is-binary-tag [tag : i64]) : bool
   (if (= tag (parse-tag-add))
@@ -94,14 +94,14 @@
                                   (= tag (parse-tag-ne)))))))))))
 
 (define (is-binary-op [op : String]) : bool
-  (is-binary-tag (parse-dispatch-tag op)))
+  (is-binary-tag (parse-dispatch-tag (parse-dispatch-env) op)))
 
-(define (parse-binary [op : BinOp] [rest : Sexpr]) : ResultExpr
+(define (parse-binary [dispatch : SymI64Env] [op : BinOp] [rest : Sexpr]) : ResultExpr
   (match rest
     [(SCons a (SCons b (SNil)))
-     (match (parse a)
+     (match (parse-with-dispatch dispatch a)
        [(OkExpr left)
-        (match (parse b)
+        (match (parse-with-dispatch dispatch b)
           [(OkExpr right) (OkExpr (EBin op left right))]
           [(ErrExpr message) (ErrExpr message)])]
        [(ErrExpr message) (ErrExpr message)])]
@@ -109,113 +109,116 @@
 
 ;; parse-let: single- or multi-binding let, desugared into nested ELet nodes
 ;; so later bindings can see earlier ones (sequential let* semantics).
-(define (parse-let-bindings [bindings : Sexpr] [body : Expr]) : ResultExpr
+(define (parse-let-bindings [dispatch : SymI64Env] [bindings : Sexpr] [body : Expr]) : ResultExpr
   (match bindings
     [(SNil) (OkExpr body)]
     [(SCons (SCons (SSym name) (SCons value (SNil))) rest)
-     (match (parse value)
+     (match (parse-with-dispatch dispatch value)
        [(OkExpr parsed-value)
-        (match (parse-let-bindings rest body)
+        (match (parse-let-bindings dispatch rest body)
           [(OkExpr parsed-rest) (OkExpr (ELet name parsed-value parsed-rest))]
           [(ErrExpr message) (ErrExpr message)])]
        [(ErrExpr message) (ErrExpr message)])]
     [_ (ErrExpr "parse: malformed let binding")]))
 
-(define (parse-let [rest : Sexpr]) : ResultExpr
+(define (parse-let [dispatch : SymI64Env] [rest : Sexpr]) : ResultExpr
   (match rest
     [(SCons bindings (SCons body (SNil)))
-     (match (parse body)
-       [(OkExpr parsed-body) (parse-let-bindings bindings parsed-body)]
+     (match (parse-with-dispatch dispatch body)
+       [(OkExpr parsed-body) (parse-let-bindings dispatch bindings parsed-body)]
        [(ErrExpr message) (ErrExpr message)])]
     [_ (ErrExpr "parse: malformed let")]))
 
-(define (parse-set [rest : Sexpr]) : ResultExpr
+(define (parse-set [dispatch : SymI64Env] [rest : Sexpr]) : ResultExpr
   (match rest
     [(SCons (SSym name) (SCons value (SNil)))
-     (match (parse value)
+     (match (parse-with-dispatch dispatch value)
        [(OkExpr parsed-value) (OkExpr (ESet name parsed-value))]
        [(ErrExpr message) (ErrExpr message)])]
     [_ (ErrExpr "parse: malformed set!")]))
 
-(define (parse-if [rest : Sexpr]) : ResultExpr
+(define (parse-if [dispatch : SymI64Env] [rest : Sexpr]) : ResultExpr
   (match rest
     [(SCons c (SCons t (SCons e (SNil))))
-     (match (parse c)
+     (match (parse-with-dispatch dispatch c)
        [(OkExpr parsed-c)
-        (match (parse t)
+        (match (parse-with-dispatch dispatch t)
           [(OkExpr parsed-t)
-           (match (parse e)
+           (match (parse-with-dispatch dispatch e)
              [(OkExpr parsed-e) (OkExpr (EIf parsed-c parsed-t parsed-e))]
              [(ErrExpr message) (ErrExpr message)])]
           [(ErrExpr message) (ErrExpr message)])]
        [(ErrExpr message) (ErrExpr message)])]
     [_ (ErrExpr "parse: malformed if")]))
 
-(define (parse-while [rest : Sexpr]) : ResultExpr
+(define (parse-while [dispatch : SymI64Env] [rest : Sexpr]) : ResultExpr
   (match rest
     [(SCons c (SCons body (SNil)))
-     (match (parse c)
+     (match (parse-with-dispatch dispatch c)
        [(OkExpr parsed-c)
-        (match (parse body)
+        (match (parse-with-dispatch dispatch body)
           [(OkExpr parsed-body) (OkExpr (EWhile parsed-c parsed-body))]
           [(ErrExpr message) (ErrExpr message)])]
        [(ErrExpr message) (ErrExpr message)])]
     [_ (ErrExpr "parse: malformed while")]))
 
-(define (parse-print [rest : Sexpr]) : ResultExpr
+(define (parse-print [dispatch : SymI64Env] [rest : Sexpr]) : ResultExpr
   (match rest
     [(SCons arg (SNil))
-     (match (parse arg)
+     (match (parse-with-dispatch dispatch arg)
        [(OkExpr parsed-arg) (OkExpr (EPrint parsed-arg))]
        [(ErrExpr message) (ErrExpr message)])]
     [_ (ErrExpr "parse: malformed print")]))
 
-(define (parse-begin [rest : Sexpr]) : ResultExpr
+(define (parse-begin [dispatch : SymI64Env] [rest : Sexpr]) : ResultExpr
   (match rest
     [(SNil) (ErrExpr "parse: empty begin")]
     [(SCons _ _)
-     (match (parse-args rest)
+     (match (parse-args dispatch rest)
        [(OkExprList args) (OkExpr (EBegin args))]
        [(ErrExprList message) (ErrExpr message)])]
     [_ (ErrExpr "parse: malformed begin")]))
 
-(define (parse-args [s : Sexpr]) : ResultExprList
+(define (parse-args [dispatch : SymI64Env] [s : Sexpr]) : ResultExprList
   (match s
     [(SNil) (OkExprList ELNil)]
     [(SCons a d)
-     (match (parse a)
+     (match (parse-with-dispatch dispatch a)
        [(OkExpr parsed-a)
-        (match (parse-args d)
+        (match (parse-args dispatch d)
           [(OkExprList parsed-d) (OkExprList (ELCons parsed-a parsed-d))]
           [(ErrExprList message) (ErrExprList message)])]
        [(ErrExpr message) (ErrExprList message)])]
     [_ (ErrExprList "parse: malformed argument list")]))
 
-(define (parse [s : Sexpr]) : ResultExpr
+(define (parse-with-dispatch [dispatch : SymI64Env] [s : Sexpr]) : ResultExpr
   (match s
     [(SInt n) (OkExpr (EInt n))]
     [(SSym name) (OkExpr (EVar name))]
     [(SStr s) (OkExpr (EStr s))]
     [(SCons (SSym op) rest)
-     (let ([tag : i64 (parse-dispatch-tag op)])
+     (let ([tag : i64 (parse-dispatch-tag dispatch op)])
        (if (= tag (parse-tag-let))
-           (parse-let rest)
+           (parse-let dispatch rest)
            (if (= tag (parse-tag-if))
-               (parse-if rest)
+               (parse-if dispatch rest)
                (if (= tag (parse-tag-while))
-                   (parse-while rest)
+                   (parse-while dispatch rest)
                    (if (= tag (parse-tag-print))
-                       (parse-print rest)
+                       (parse-print dispatch rest)
                        (if (= tag (parse-tag-set))
-                           (parse-set rest)
-                           (if (= tag (parse-tag-begin))
-                               (parse-begin rest)
-                               (if (is-binary-tag tag)
-                                   (parse-binary (parse-op-tag tag) rest)
-                                   (match (parse-args rest)
-                                     [(OkExprList args) (OkExpr (ECall op args))]
-                                     [(ErrExprList message) (ErrExpr message)])))))))))]
+                           (parse-set dispatch rest)
+                            (if (= tag (parse-tag-begin))
+                                (parse-begin dispatch rest)
+                                (if (is-binary-tag tag)
+                                    (parse-binary dispatch (parse-op-tag tag) rest)
+                                    (match (parse-args dispatch rest)
+                                      [(OkExprList args) (OkExpr (ECall op args))]
+                                      [(ErrExprList message) (ErrExpr message)])))))))))]
     [_ (ErrExpr "parse: malformed expression")]))
+
+(define (parse [s : Sexpr]) : ResultExpr
+  (parse-with-dispatch (parse-dispatch-env) s))
 
 (define (parse-params [s : Sexpr]) : ResultStrList
   (match s
@@ -231,35 +234,35 @@
     [(SCons (SSym head) _) (string-eq head "define")]
     [_ false]))
 
-(define (parse-define-header [header : Sexpr] [body : Sexpr]) : ResultItem
+(define (parse-define-header [dispatch : SymI64Env] [header : Sexpr] [body : Sexpr]) : ResultItem
   (match header
     [(SCons (SSym name) params)
      (match (parse-params params)
        [(OkStrList parsed-params)
-        (match (parse body)
+        (match (parse-with-dispatch dispatch body)
           [(OkExpr parsed-body) (OkItem (IDefFn name parsed-params parsed-body))]
           [(ErrExpr message) (ErrItem message)])]
        [(ErrStrList message) (ErrItem message)])]
     [_ (ErrItem "parse: malformed define header")]))
 
-(define (parse-define-rest-body [header : Sexpr] [after-header : Sexpr]) : ResultItem
+(define (parse-define-rest-body [dispatch : SymI64Env] [header : Sexpr] [after-header : Sexpr]) : ResultItem
   (match after-header
-    [(SCons body (SNil)) (parse-define-header header body)]
+    [(SCons body (SNil)) (parse-define-header dispatch header body)]
     [(SCons _ _) (ErrItem "parse: expected end of list")]
     [(SNil) (ErrItem "parse: expected non-empty list")]
     [_ (ErrItem "parse: expected list tail")]))
 
-(define (parse-define-rest [rest : Sexpr]) : ResultItem
+(define (parse-define-rest [dispatch : SymI64Env] [rest : Sexpr]) : ResultItem
   (match rest
-    [(SCons header after-header) (parse-define-rest-body header after-header)]
+    [(SCons header after-header) (parse-define-rest-body dispatch header after-header)]
     [(SNil) (ErrItem "parse: expected non-empty list")]
     [_ (ErrItem "parse: expected list tail")]))
 
-(define (parse-item [s : Sexpr]) : ResultItem
+(define (parse-item [dispatch : SymI64Env] [s : Sexpr]) : ResultItem
   (match s
     [(SCons (SSym head) rest)
      (if (string-eq head "define")
-         (parse-define-rest rest)
+         (parse-define-rest dispatch rest)
          (ErrItem "parse: expected define"))]
     [_ (ErrItem "parse: malformed item")]))
 
@@ -268,22 +271,23 @@
     [(ILNil) (ILCons item ILNil)]
     [(ILCons head rest) (ILCons head (item-list-append-one rest item))]))
 
-(define (parse-program-forms [toks : (Array Token)] [cur : (Array i64)] [defs : ItemList]) : ResultParsedProgram
+(define (parse-program-forms [dispatch : SymI64Env] [toks : (Array Token)] [cur : (Array i64)] [defs : ItemList]) : ResultParsedProgram
   (let ([form : Sexpr (read-form toks cur)])
     (if (= (peek-tag toks cur) (tag-end))
         (if (is-define-form form)
             (ErrParsedProgram "parse: missing final expression")
-            (match (parse form)
+            (match (parse-with-dispatch dispatch form)
               [(OkExpr expr) (OkParsedProgram (PProgram defs expr))]
               [(ErrExpr message) (ErrParsedProgram message)]))
         (if (is-define-form form)
-            (match (parse-item form)
-              [(OkItem item) (parse-program-forms toks cur (item-list-append-one defs item))]
+            (match (parse-item dispatch form)
+              [(OkItem item) (parse-program-forms dispatch toks cur (item-list-append-one defs item))]
               [(ErrItem message) (ErrParsedProgram message)])
             (ErrParsedProgram "parse: non-final form must be define")))))
 
 (define (parse-program [toks : (Array Token)]) : ResultParsedProgram
   (let ([cur : (Array i64) (make-array i64 1)])
-    (begin
-      (array-set! cur 0 0)
-      (parse-program-forms toks cur ILNil))))
+    (let ([dispatch : SymI64Env (parse-dispatch-env)])
+      (begin
+        (array-set! cur 0 0)
+        (parse-program-forms dispatch toks cur ILNil)))))

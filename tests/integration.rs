@@ -66,7 +66,7 @@ fn type_lisp_programs_compile_link_and_run() {
             deps: &[],
         },
         Case {
-            name: "format_doc",
+            name: "format_doc_integration",
             exit_code: 42,
             stdout: "",
             deps: &["format_doc.tl"],
@@ -461,7 +461,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             deps: &[],
         },
         Case {
-            name: "format_doc",
+            name: "format_doc_integration",
             exit_code: 42,
             stdout: "",
             deps: &["format_doc.tl"],

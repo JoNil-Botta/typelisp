@@ -112,10 +112,10 @@ impl ProgramLowerer {
                 }
             }
             ast::Expr::Call { func, .. } => {
-                if let ast::Expr::Var(name) = func.unspan() {
-                    if let Some(Type::Func(_, ret)) = self.function_types.get(name) {
-                        return (**ret).clone();
-                    }
+                if let ast::Expr::Var(name) = func.unspan()
+                    && let Some(Type::Func(_, ret)) = self.function_types.get(name)
+                {
+                    return (**ret).clone();
                 }
                 Type::Unit
             }

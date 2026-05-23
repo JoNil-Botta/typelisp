@@ -241,16 +241,16 @@ fn type_lisp_programs_compile_link_and_run() {
         // body, zip the params against the args with `bind-args` to build a fresh
         // callee env, eval body with the SAME `FnEnv`, so a body can call itself
         // with any arity). `main` runs `run-program` over the TWO-form program
-        // `(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (pow 2 7)`: the
+        // `(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (pow 2 10)`: the
         // program reader folds the recursive TWO-parameter `pow` define into the
-        // `FnEnv`, then evaluates `(pow 2 7)` - which zips `(b e)` against `(2 7)`
-        // and recurses to 2^10 = 1024. `main` now PRINTS the result via the host
-        // `print` builtin, so the FULL value `1024` is emitted to stdout (with a
-        // trailing newline) - escaping the mod-256 exit-code ceiling that capped
-        // the old `(pow 2 7) => 128` exit-code witness (1024 wraps to 0 as a raw
-        // exit code). The interpreted language also gained a `(print e)` special
-        // form. All three imported `main`-less modules are copied alongside so the
-        // `(import)` chain resolves.
+        // `FnEnv`, then evaluates `(pow 2 10)` - which zips `(b e)` against
+        // `(2 10)` and recurses to 2^10 = 1024. `main` now PRINTS the result via
+        // the host `print` builtin, so the FULL value `1024` is emitted to stdout
+        // (with a trailing newline) - escaping the mod-256 exit-code ceiling that
+        // capped the old `(pow 2 7) => 128` exit-code witness (1024 wraps to 0 as
+        // a raw exit code). The interpreted language also gained a `(print e)`
+        // special form. All three imported `main`-less modules are copied
+        // alongside so the `(import)` chain resolves.
         Case {
             name: "tl_eval",
             exit_code: 0,
@@ -472,7 +472,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         // ARGUMENT calls, also
         // exercised through the explicit compile -> as -> ld -> run pipeline.
         // Runs `run-program` over the two-form program
-        // `(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (pow 2 7)`: the
+        // `(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (pow 2 10)`: the
         // recursive TWO-parameter `pow` define is folded into the `FnEnv`, then
         // `(pow 2 10)` zips `(b e)` against `(2 10)` via `bind-args` and recurses
         // to 2^10 = 1024, which `main` PRINTS to stdout via the host `print`

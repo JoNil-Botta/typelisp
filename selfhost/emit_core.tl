@@ -64,6 +64,7 @@
     [(EBin _ a b) (collect-strings b (collect-strings a acc))]
     [(ELet _ value body) (collect-strings body (collect-strings value acc))]
     [(EIf c t e) (collect-strings e (collect-strings t (collect-strings c acc)))]
+    [(EWhile c body) (collect-strings body (collect-strings c acc))]
     [(ECall _ args) (expr-list-collect-strings args acc)]
     [(EStr s) (str-list-append-one acc s)]
     [(EPrint e) (collect-strings e acc)]
@@ -173,6 +174,7 @@
      (max-i64 (max-let-depth value) (+ 1 (max-let-depth body)))]
     [(EIf c t e)
      (max-i64 (max-let-depth c) (max-i64 (max-let-depth t) (max-let-depth e)))]
+    [(EWhile c body) (max-i64 (max-let-depth c) (max-let-depth body))]
     [(ECall _ args) (expr-list-max-let-depth args)]
     [(EStr _) 0]
     [(EPrint e) (max-let-depth e)]
@@ -271,13 +273,29 @@
           (string-append lelse
             (string-append "\n"
               (string-append (emit-expr-in strings env depth lc t)
-                (string-append "    jmp "
-                  (string-append lend
-                    (string-append "\n"
-                      (string-append lelse
-                        (string-append ":\n"
-                          (string-append (emit-expr-in strings env depth lc e)
-                            (string-append lend ":\n")))))))))))))))
+                  (string-append "    jmp "
+                    (string-append lend
+                      (string-append "\n"
+                        (string-append lelse
+                          (string-append ":\n"
+                            (string-append (emit-expr-in strings env depth lc e)
+                              (string-append lend ":\n")))))))))))))))
+
+(define (emit-while [strings : StrList] [env : SymI64Env] [depth : i64] [lc : (Array i64)] [c : Expr] [body : Expr]) : String
+  (let ([lhead : String (fresh-label lc ".Lwhile_")]
+        [lend : String (fresh-label lc ".Lwend_")])
+    (string-append lhead
+      (string-append ":\n"
+        (string-append (emit-expr-in strings env depth lc c)
+          (string-append "    cmpq $0, %rax\n"
+            (string-append "    je "
+              (string-append lend
+                (string-append "\n"
+                  (string-append (emit-expr-in strings env depth lc body)
+                    (string-append "    jmp "
+                      (string-append lhead
+                        (string-append "\n"
+                          (string-append lend ":\n    movq $0, %rax\n"))))))))))))))
 
 (define (emit-call-arg-pushes [strings : StrList] [env : SymI64Env] [depth : i64] [lc : (Array i64)] [args : ExprList]) : String
   (match args
@@ -343,6 +361,7 @@
     [(EBin op a b) (emit-bin strings env depth lc op a b)]
     [(ELet name value body) (emit-let strings env depth lc name value body)]
     [(EIf c t e) (emit-if strings env depth lc c t e)]
+    [(EWhile c body) (emit-while strings env depth lc c body)]
     [(ECall name args) (emit-call strings env depth lc name args)]
     [(EStr s) (emit-str strings s)]
     [(EPrint arg) (emit-print strings arg)]

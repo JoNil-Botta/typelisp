@@ -181,6 +181,7 @@ fn tl_parse_tl_compiles_to_assembly() {
         "parse: malformed begin",
         "parse: empty begin",
         "parse: malformed set!",
+        "parse: malformed while",
         "emit: empty begin",
     ] {
         assert!(
@@ -304,6 +305,7 @@ fn tl_compile_smoke_tl_compiles_to_assembly() {
         "call _tl_parse_program",
         "call _tl_parse_begin",
         "call _tl_parse_set",
+        "call _tl_parse_while",
         "call _tl_read_form",
         "call _tl_peek_tag",
         "call _tl_lex",
@@ -313,6 +315,7 @@ fn tl_compile_smoke_tl_compiles_to_assembly() {
         "call _tl_emit_call",
         "call _tl_emit_begin",
         "call _tl_emit_set",
+        "call _tl_emit_while",
         "call .L_tl_arg_count",
         "call .L_tl_arg",
         "call .L_tl_read_file",
@@ -335,6 +338,7 @@ fn tl_compile_smoke_tl_compiles_to_assembly() {
         "tl: write-file failed",
         "compile-smoke: expected input and output paths",
         "parse: malformed set!",
+        "parse: malformed while",
         "parse: empty begin",
         "emit: empty begin",
     ] {

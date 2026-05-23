@@ -48,6 +48,12 @@
      (EIf (parse-expr c) (parse-expr t) (parse-expr e))]
     [_ (begin (panic "ast: malformed if") (EInt 0))]))
 
+(define (parse-while [rest : Sexpr]) : Expr
+  (match rest
+    [(SCons c (SCons body (SNil)))
+     (EWhile (parse-expr c) (parse-expr body))]
+    [_ (begin (panic "ast: malformed while") (EInt 0))]))
+
 (define (parse-print [rest : Sexpr]) : Expr
   (match rest
     [(SCons arg (SNil)) (EPrint (parse-expr arg))]
@@ -90,16 +96,18 @@
                                      (if (string-eq op "!=")
                                          (parse-binary (OpNe) rest)
                                          (if (string-eq op "let")
-                                             (parse-let rest)
-                                             (if (string-eq op "if")
-                                                 (parse-if rest)
-                                                 (if (string-eq op "print")
-                                                     (parse-print rest)
-                                                     (if (string-eq op "set!")
-                                                         (parse-set rest)
-                                                         (if (string-eq op "begin")
-                                                             (parse-begin rest)
-                                                             (ECall op (parse-args rest))))))))))))))))]
+                                              (parse-let rest)
+                                              (if (string-eq op "if")
+                                                  (parse-if rest)
+                                                  (if (string-eq op "while")
+                                                      (parse-while rest)
+                                                      (if (string-eq op "print")
+                                                          (parse-print rest)
+                                                          (if (string-eq op "set!")
+                                                              (parse-set rest)
+                                                              (if (string-eq op "begin")
+                                                                  (parse-begin rest)
+                                                                  (ECall op (parse-args rest)))))))))))))))))]
     [_ (begin (panic "ast: malformed expression") (EInt 0))]))
 
 (define (parse-params [s : Sexpr]) : StrList
@@ -156,6 +164,7 @@
     [(ELet name value body)
      (+ (string-length name) (+ (expr-score value) (expr-score body)))]
     [(EIf c t e) (+ (expr-score c) (+ (expr-score t) (expr-score e)))]
+    [(EWhile c body) (+ 400 (+ (expr-score c) (expr-score body)))]
     [(ECall name args) (+ (string-length name) (expr-list-score args))]
     [(EStr s) (string-length s)]
     [(EPrint e) (+ 100 (expr-score e))]

@@ -55,6 +55,7 @@ fn tl_ast_tl_compiles_to_assembly() {
         "_tl_parse_binary:",
         "_tl_parse_let:",
         "_tl_parse_if:",
+        "_tl_parse_while:",
         "_tl_parse_print:",
         "_tl_parse_begin:",
         "_tl_parse_args:",
@@ -78,6 +79,7 @@ fn tl_ast_tl_compiles_to_assembly() {
     for call in [
         "call _tl_parse_expr",
         "call _tl_parse_if",
+        "call _tl_parse_while",
         "call _tl_parse_print",
         "call _tl_parse_begin",
         "call _tl_parse_item",
@@ -98,6 +100,7 @@ fn tl_ast_tl_compiles_to_assembly() {
         "ast: malformed expression",
         "ast: malformed let",
         "ast: malformed if",
+        "ast: malformed while",
         "ast: malformed print",
         "ast: malformed begin",
         "ast: empty begin",

@@ -8,6 +8,45 @@ use std::fmt;
 pub type VarId = u32;
 pub type Label = String;
 
+pub const ABORT_RUNTIME_SYMBOL: &str = ".L_tl_abort";
+pub const ARG_COUNT_RUNTIME_SYMBOL: &str = ".L_tl_arg_count";
+pub const ARG_RUNTIME_SYMBOL: &str = ".L_tl_arg";
+pub const READ_FILE_RUNTIME_SYMBOL: &str = ".L_tl_read_file";
+pub const WRITE_FILE_RUNTIME_SYMBOL: &str = ".L_tl_write_file";
+pub const FILE_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists";
+
+/// Conservative effect class for an IR instruction. The optimizer uses this
+/// to decide what may be dropped or reused without doing alias analysis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IrEffect {
+    /// Computes a value/address only; does not inspect or mutate memory.
+    Pure,
+    /// Reads memory but does not intentionally mutate it.
+    MemoryRead,
+    /// Writes memory or allocates storage.
+    MemoryWrite,
+    /// Changes control flow or may not return.
+    ControlFlow,
+    /// Calls or host interactions whose effects are not modeled precisely.
+    Unknown,
+}
+
+impl IrEffect {
+    pub fn has_side_effect(self) -> bool {
+        matches!(
+            self,
+            IrEffect::MemoryWrite | IrEffect::ControlFlow | IrEffect::Unknown
+        )
+    }
+
+    pub fn invalidates_cse(self) -> bool {
+        // Without alias analysis, any memory observation/mutation, control
+        // boundary, or unknown call is a barrier for available expressions:
+        // no load CSE across stores/calls, and no reordering effectful calls.
+        !matches!(self, IrEffect::Pure)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     ConstI64(i64),
@@ -137,6 +176,54 @@ pub enum Instruction {
         incoming: Vec<(Value, Label)>,
         ty: Type,
     },
+}
+
+/// Classify compiler-known direct runtime helper calls. Unknown names remain
+/// effectful so ordinary user, extern, and future helper calls default safe.
+pub fn classify_direct_call_effect(func: &str) -> IrEffect {
+    match func {
+        "tl_string_eq" | "tl_string_to_int" => IrEffect::MemoryRead,
+        "tl_alloc" | "tl_int_to_string" | "tl_substring" | "tl_string_concat" => {
+            IrEffect::MemoryWrite
+        }
+        ABORT_RUNTIME_SYMBOL | "tl_oob_abort" | "tl_div_abort" | "tl_shift_abort" => {
+            IrEffect::ControlFlow
+        }
+        "tl_print_i64"
+        | "tl_print_bool"
+        | "tl_print_f64"
+        | "tl_print_char"
+        | "tl_print_newline"
+        | "tl_print_str"
+        | "tl_print_err"
+        | ARG_COUNT_RUNTIME_SYMBOL
+        | ARG_RUNTIME_SYMBOL
+        | READ_FILE_RUNTIME_SYMBOL
+        | WRITE_FILE_RUNTIME_SYMBOL
+        | FILE_EXISTS_RUNTIME_SYMBOL => IrEffect::Unknown,
+        _ => IrEffect::Unknown,
+    }
+}
+
+impl Instruction {
+    pub fn effect(&self) -> IrEffect {
+        match self {
+            Instruction::BinOp { .. }
+            | Instruction::UnOp { .. }
+            | Instruction::Mov { .. }
+            | Instruction::Cast { .. }
+            | Instruction::AddrOf { .. }
+            | Instruction::Gep { .. }
+            | Instruction::Phi { .. } => IrEffect::Pure,
+            Instruction::Load { .. } => IrEffect::MemoryRead,
+            Instruction::Store { .. } | Instruction::Alloc { .. } => IrEffect::MemoryWrite,
+            Instruction::Call { func, .. } => classify_direct_call_effect(func),
+            Instruction::CallIndirect { .. } => IrEffect::Unknown,
+            Instruction::Branch { .. } | Instruction::Jump(_) | Instruction::Return(_) => {
+                IrEffect::ControlFlow
+            }
+        }
+    }
 }
 
 /// A basic block is a sequence of instructions with a single entry point
@@ -458,5 +545,205 @@ impl fmt::Display for Program {
             write!(f, "{}", func)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn i64_ty() -> Type {
+        Type::I64
+    }
+
+    fn call(func: &str) -> Instruction {
+        Instruction::Call {
+            dst: Some(0),
+            func: func.into(),
+            args: vec![Value::ConstI64(1)],
+            ty: i64_ty(),
+        }
+    }
+
+    #[test]
+    fn instruction_effect_classifies_every_variant() {
+        let pure = IrEffect::Pure;
+        assert_eq!(
+            Instruction::BinOp {
+                dst: 0,
+                op: BinOp::Add,
+                lhs: Value::ConstI64(1),
+                rhs: Value::ConstI64(2),
+                ty: i64_ty(),
+            }
+            .effect(),
+            pure
+        );
+        assert_eq!(
+            Instruction::UnOp {
+                dst: 0,
+                op: UnOp::Neg,
+                src: Value::ConstI64(1),
+                ty: i64_ty(),
+            }
+            .effect(),
+            pure
+        );
+        assert_eq!(
+            Instruction::Mov {
+                dst: 0,
+                src: Value::ConstI64(1),
+                ty: i64_ty(),
+            }
+            .effect(),
+            pure
+        );
+        assert_eq!(
+            Instruction::Cast {
+                dst: 0,
+                src: Value::ConstI64(1),
+                from_ty: Type::I64,
+                to_ty: Type::I32,
+            }
+            .effect(),
+            pure
+        );
+        assert_eq!(Instruction::AddrOf { dst: 0, src: 1 }.effect(), pure);
+        assert_eq!(
+            Instruction::Gep {
+                dst: 0,
+                base: Value::Var(1),
+                offset: Value::ConstI64(0),
+                elem_ty: i64_ty(),
+            }
+            .effect(),
+            pure
+        );
+        assert_eq!(
+            Instruction::Phi {
+                dst: 0,
+                incoming: vec![(Value::ConstI64(1), "entry".into())],
+                ty: i64_ty(),
+            }
+            .effect(),
+            pure
+        );
+
+        assert_eq!(
+            Instruction::Load {
+                dst: 0,
+                src: Value::Var(1),
+                ty: i64_ty(),
+            }
+            .effect(),
+            IrEffect::MemoryRead
+        );
+        assert_eq!(
+            Instruction::Store {
+                dst: Value::Var(0),
+                src: Value::ConstI64(1),
+                ty: i64_ty(),
+            }
+            .effect(),
+            IrEffect::MemoryWrite
+        );
+        assert_eq!(
+            Instruction::Alloc {
+                var: 0,
+                ty: i64_ty()
+            }
+            .effect(),
+            IrEffect::MemoryWrite
+        );
+
+        assert_eq!(
+            Instruction::CallIndirect {
+                dst: Some(0),
+                func: Value::Function("f".into()),
+                args: vec![],
+                ty: i64_ty(),
+            }
+            .effect(),
+            IrEffect::Unknown
+        );
+        assert_eq!(
+            Instruction::Branch {
+                cond: Value::ConstBool(true),
+                true_label: "t".into(),
+                false_label: "f".into(),
+            }
+            .effect(),
+            IrEffect::ControlFlow
+        );
+        assert_eq!(
+            Instruction::Jump("next".into()).effect(),
+            IrEffect::ControlFlow
+        );
+        assert_eq!(
+            Instruction::Return(Some(Value::ConstI64(0))).effect(),
+            IrEffect::ControlFlow
+        );
+    }
+
+    #[test]
+    fn direct_runtime_helper_effects_are_conservative() {
+        for func in ["tl_string_eq", "tl_string_to_int"] {
+            assert_eq!(classify_direct_call_effect(func), IrEffect::MemoryRead);
+            assert_eq!(call(func).effect(), IrEffect::MemoryRead);
+        }
+
+        for func in [
+            "tl_alloc",
+            "tl_int_to_string",
+            "tl_substring",
+            "tl_string_concat",
+        ] {
+            assert_eq!(classify_direct_call_effect(func), IrEffect::MemoryWrite);
+            assert_eq!(call(func).effect(), IrEffect::MemoryWrite);
+        }
+
+        for func in [
+            ABORT_RUNTIME_SYMBOL,
+            "tl_oob_abort",
+            "tl_div_abort",
+            "tl_shift_abort",
+        ] {
+            assert_eq!(classify_direct_call_effect(func), IrEffect::ControlFlow);
+            assert_eq!(call(func).effect(), IrEffect::ControlFlow);
+        }
+
+        for func in [
+            "tl_print_i64",
+            "tl_print_bool",
+            "tl_print_f64",
+            "tl_print_char",
+            "tl_print_newline",
+            "tl_print_str",
+            "tl_print_err",
+            ARG_COUNT_RUNTIME_SYMBOL,
+            ARG_RUNTIME_SYMBOL,
+            READ_FILE_RUNTIME_SYMBOL,
+            WRITE_FILE_RUNTIME_SYMBOL,
+            FILE_EXISTS_RUNTIME_SYMBOL,
+            "user_or_extern_call",
+        ] {
+            assert_eq!(classify_direct_call_effect(func), IrEffect::Unknown);
+            assert_eq!(call(func).effect(), IrEffect::Unknown);
+        }
+    }
+
+    #[test]
+    fn effect_predicates_match_optimizer_conservatism() {
+        assert!(!IrEffect::Pure.has_side_effect());
+        assert!(!IrEffect::MemoryRead.has_side_effect());
+        assert!(IrEffect::MemoryWrite.has_side_effect());
+        assert!(IrEffect::ControlFlow.has_side_effect());
+        assert!(IrEffect::Unknown.has_side_effect());
+
+        assert!(!IrEffect::Pure.invalidates_cse());
+        assert!(IrEffect::MemoryRead.invalidates_cse());
+        assert!(IrEffect::MemoryWrite.invalidates_cse());
+        assert!(IrEffect::ControlFlow.invalidates_cse());
+        assert!(IrEffect::Unknown.invalidates_cse());
     }
 }

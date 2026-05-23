@@ -255,24 +255,29 @@ fn type_lisp_programs_compile_link_and_run() {
         // its i64 result as a `VInt`, and any other head symbol is a CALL into the
         // `FnEnv` (look up the PARAMETER LIST + body, zip the params against the
         // args with `bind-args` to build a fresh callee env, eval body with the
-        // SAME `FnEnv`, so a body can call itself with any arity). `main` runs
-        // `run-program` over the TWO-form program
-        // `(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1)))))
-        //  (let ((b 2) (e 10) (r (pow b e))) (print r))`:
-        // the program reader folds the recursive TWO-parameter `pow` define into
-        // the `FnEnv`, then evaluates the MULTI-BINDING `let` - binding `b`->2,
-        // `e`->10, then `r`->`(pow b e)` whose init SEES the earlier `b`/`e`
-        // (sequential scoping); `(pow 2 10)` zips `(b e)` against `(2 10)` and
-        // recurses to `(VInt 1024)`, then `(print r)` writes it to
-        // STDOUT. So stdout is `1024\n` (the host `print` appends a newline);
-        // printing to stdout escapes the old mod-256 exit-code ceiling, so the exit
-        // code is the wrapped `1024 & 0xff = 0`. All three imported
-        // `main`-less modules are copied alongside so the `(import)` chain
-        // resolves.
+        // SAME `FnEnv`, so a body can call itself with any arity). The `print`
+        // special form now prints BOTH value shapes: a `VInt` via the host `print`
+        // (integer + newline), a `VStr` via the host `print-string` (raw bytes, NO
+        // newline) - so STRING values are printable too. `main` runs `run-program`
+        // over the THREE-form program
+        // `(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (define (seq a b) b) (let ((b 2) (e 10) (r (pow b e))) (seq (print "hi") (print r)))`:
+        // the recursive TWO-parameter `pow` and a two-parameter `seq` (whose body
+        // is its SECOND argument - a left-to-right sequencer, the interpreted
+        // language having no `begin`) are folded into the `FnEnv`, then the trailing
+        // MULTI-BINDING `let` binds `b`->2, `e`->10, then `r`->`(pow b e)` whose
+        // init SEES the earlier `b`/`e` (sequential `let*` scoping); `(pow 2 10)`
+        // recurses to `(VInt 1024)`. The body `(seq (print "hi") (print r))`
+        // evaluates left-to-right: FIRST `(print "hi")` prints the string bytes `hi`
+        // via the `VStr` arm (host `print-string`, no newline), SECOND `(print r)`
+        // prints `1024\n` via the `VInt` arm; `seq` returns its second arg
+        // `(VInt 1024)`. So stdout is `hi1024\n`; printing to stdout escapes the old
+        // mod-256 exit-code ceiling, so the exit code is the wrapped
+        // `1024 & 0xff = 0`. All three imported `main`-less modules are copied
+        // alongside so the `(import)` chain resolves.
         Case {
             name: "tl_eval",
             exit_code: 0,
-            stdout: "1024\n",
+            stdout: "hi1024\n",
             deps: &["tl_read.tl", "tl_lex.tl", "tl_token.tl"],
         },
         // refs #41: NESTED PATTERN MATCHING, standalone witness. A tree-walking
@@ -497,16 +502,17 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         // Self-hosting (#27): the s-expression evaluator with variables,
         // MULTI-BINDING `let` (sequential `let*`),
         // `if`, comparisons, user-defined functions + recursion + MULTI-ARGUMENT
-        // calls, AND a tagged VALUE domain `(VInt/VStr)`, also
+        // calls, AND a tagged VALUE domain `(VInt/VStr)` whose BOTH shapes now
+        // print (`VInt` via host `print`, `VStr` via host `print-string`), also
         // exercised through the explicit compile -> as -> ld -> run pipeline.
-        // Runs `run-program` over the two-form program
-        // `(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1)))))
-        //  (let ((b 2) (e 10) (r (pow b e))) (print r))`:
-        // the recursive TWO-parameter `pow` define is folded into the `FnEnv`, then
-        // the multi-binding `let` binds `b`->2, `e`->10, `r`->`(pow b e)` (the last
-        // init sees the earlier `b`/`e`), zips `(b e)` against `(2 10)` via
-        // `bind-args`, recurses to `(VInt 1024)`, and `(print r)` writes it - so
-        // stdout is `1024\n` and the
+        // Runs `run-program` over the three-form program
+        // `(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (define (seq a b) b) (let ((b 2) (e 10) (r (pow b e))) (seq (print "hi") (print r)))`:
+        // `pow` and the sequencer `seq` are folded into the `FnEnv`, then the
+        // multi-binding `let` binds `b`->2, `e`->10, `r`->`(pow b e)` (the last init
+        // sees the earlier `b`/`e` - sequential `let*` scoping), recursing to
+        // `(VInt 1024)`; the body `(seq (print "hi") (print r))` prints `hi` (the
+        // `VStr` arm, host `print-string`, no newline) then `1024\n` (the `VInt`
+        // arm) and `seq` returns `(VInt 1024)` - so stdout is `hi1024\n` and the
         // exit code is the wrapped `1024 & 0xff = 0`. The reader (and transitively
         // the lexer + token
         // model) is reused via the `main`-less `tl_read.tl` import - including its
@@ -516,7 +522,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         Case {
             name: "tl_eval",
             exit_code: 0,
-            stdout: "1024\n",
+            stdout: "hi1024\n",
             deps: &["tl_read.tl", "tl_lex.tl", "tl_token.tl"],
         },
         // refs #41: nested pattern matching, also through the explicit

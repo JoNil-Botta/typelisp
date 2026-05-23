@@ -257,17 +257,35 @@ fn tl_eval_tl_compiles_to_assembly() {
     // EXHAUSTIVE over the SStr variant (#27/#128) AND the value domain (#27): the
     // reader's `(SStr String)` atom now evaluates to a first-class `(VStr s)`
     // VALUE rather than aborting, so the old "eval: strings not supported" panic is
-    // GONE. `VStr` PRINTING, however, is deferred (no host string-print builtin
-    // exists), so the `print` special form's `(VStr _)` arm aborts with a
-    // deferral message that must reach the read-only data.
+    // GONE. `VStr` PRINTING is now WIRED (#27): the `print` special form's
+    // `(VStr s)` arm dispatches to the host `print-string` builtin, which lowers to
+    // the emit-on-demand write(2)-syscall runtime helper `tl_print_str` - so the
+    // old deferral abort message is GONE and the runtime + a call to it are
+    // present.
     assert!(
         !asm.contains("eval: strings not supported"),
         "tl_eval should no longer abort on string literals (SStr now evaluates to VStr):\n{}",
         asm,
     );
     assert!(
-        asm.contains(".string \"print: strings not yet printable\""),
-        "tl_eval assembly is missing the VStr-print deferral message:\n{}",
+        !asm.contains("print: strings not yet printable"),
+        "tl_eval should no longer abort on VStr printing (the VStr arm now dispatches \
+         to the host print-string builtin):\n{}",
+        asm,
+    );
+    // The `(VStr s)` arm lowers `(print-string s)` to the emit-on-demand
+    // `tl_print_str` runtime (writes the string's raw bytes to fd 1 via a write(2)
+    // syscall, NO trailing newline), so the runtime's definition AND a call to it
+    // must both be present - this is the load-bearing wiring of string output.
+    assert!(
+        asm.contains("tl_print_str:"),
+        "tl_eval assembly is missing the tl_print_str runtime helper (VStr-print wiring):\n{}",
+        asm,
+    );
+    assert!(
+        asm.contains("call tl_print_str"),
+        "tl_eval assembly shows no host print-string call (the VStr arm must print \
+         the string's bytes):\n{}",
         asm,
     );
     // (The host `print` runtime helper `tl_print_i64` and its call site - emitted

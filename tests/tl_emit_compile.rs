@@ -1,9 +1,10 @@
 //! Cross-platform proof that the TypeLisp self-hosting emitter slice compiles.
 //!
-//! `examples/tl_emit.tl` is the first backend-shaped TypeLisp program for #155:
-//! it walks a tiny arithmetic `Expr` tree and returns x86_64 instruction text.
+//! `examples/tl_emit.tl` is the first backend-shaped TypeLisp program for
+//! #155/#156: it walks a tiny arithmetic `Expr` tree, wraps the emitted body in
+//! a runnable `main` + `_start` assembly skeleton, and prints that full `.s`.
 //! This test only compiles the program so it runs on Windows too; the Linux
-//! integration test executes it and asserts the exact printed body assembly.
+//! integration test executes it, assembles the printed text, and asserts exit 7.
 
 use std::fs;
 use std::path::PathBuf;
@@ -54,6 +55,7 @@ fn tl_emit_tl_compiles_to_assembly() {
         "_tl_emit_op:",
         "_tl_emit_bin:",
         "_tl_emit_expr:",
+        "_tl_emit_program:",
         "_tl_sample:",
         "tl_int_to_string:",
         "tl_string_concat:",
@@ -92,6 +94,19 @@ fn tl_emit_tl_compiles_to_assembly() {
         "    addq %rcx, %rax\\n",
         "    subq %rcx, %rax\\n",
         "    imulq %rcx, %rax\\n",
+        "    .text\\n",
+        "    .globl main\\n",
+        "    .globl _start\\n\\n",
+        "main:\\n",
+        "    push %rbp\\n",
+        "    mov %rsp, %rbp\\n",
+        "    pop %rbp\\n",
+        "    ret\\n\\n",
+        "_start:\\n",
+        "    call main\\n",
+        "    movq %rax, %rdi\\n",
+        "    movq $60, %rax\\n",
+        "    syscall\\n",
     ] {
         assert!(
             asm.contains(literal),

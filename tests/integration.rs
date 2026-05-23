@@ -14,7 +14,14 @@ struct Case {
     deps: &'static [&'static str],
 }
 
-const TL_EMIT_BODY_ASM: &str = concat!(
+const TL_EMIT_PROGRAM_ASM: &str = concat!(
+    "    .text\n",
+    "    .globl main\n",
+    "    .globl _start\n",
+    "\n",
+    "main:\n",
+    "    push %rbp\n",
+    "    mov %rsp, %rbp\n",
     "    movq $1, %rax\n",
     "    pushq %rax\n",
     "    movq $2, %rax\n",
@@ -26,6 +33,14 @@ const TL_EMIT_BODY_ASM: &str = concat!(
     "    movq %rax, %rcx\n",
     "    popq %rax\n",
     "    addq %rcx, %rax\n",
+    "    pop %rbp\n",
+    "    ret\n",
+    "\n",
+    "_start:\n",
+    "    call main\n",
+    "    movq %rax, %rdi\n",
+    "    movq $60, %rax\n",
+    "    syscall\n",
 );
 
 #[test]
@@ -235,15 +250,14 @@ fn type_lisp_programs_compile_link_and_run() {
             stdout: "",
             deps: &["token.tl"],
         },
-        // Self-hosting M1 (#155): the first backend-shaped TypeLisp emitter.
-        // `tl_emit.tl` builds the arithmetic Expr tree `(+ 1 (* 2 3))`, walks it
-        // with `emit-expr`, and prints the body assembly text. This test asserts
-        // the exact printed stack-machine instruction sequence; wrapping it in a
-        // full `_start`/`main` skeleton is the follow-up driver issue (#156).
+        // Self-hosting M1 (#155/#156): the first backend-shaped TypeLisp emitter
+        // and driver. `tl_emit.tl` builds `(+ 1 (* 2 3))`, wraps its emitted body
+        // in the backend-shaped `main` + `_start` skeleton, and prints the full
+        // `.s`. This test asserts the exact printed assembly text.
         Case {
             name: "tl_emit",
             exit_code: 0,
-            stdout: TL_EMIT_BODY_ASM,
+            stdout: TL_EMIT_PROGRAM_ASM,
             deps: &[],
         },
         // Self-hosting (#27): the lexer for TypeLisp's OWN s-expression syntax
@@ -568,13 +582,13 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             stdout: "",
             deps: &["token.tl"],
         },
-        // Self-hosting M1 (#155): the TypeLisp emitter for the arithmetic Expr
-        // subset, also through the explicit compile -> as -> ld -> run pipeline.
-        // It prints exactly the stack-machine body assembly for `(+ 1 (* 2 3))`.
+        // Self-hosting M1 (#155/#156): the TypeLisp arithmetic emitter and
+        // full-.s driver, also through the explicit compile -> as -> ld -> run
+        // pipeline. It prints the complete program for `(+ 1 (* 2 3))`.
         Case {
             name: "tl_emit",
             exit_code: 0,
-            stdout: TL_EMIT_BODY_ASM,
+            stdout: TL_EMIT_PROGRAM_ASM,
             deps: &[],
         },
         // Self-hosting (#27): the TypeLisp-syntax (s-expression) lexer - now with
@@ -666,6 +680,79 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
     for case in cases {
         run_case_explicit_build(&case);
     }
+}
+
+#[test]
+fn tl_emit_printed_program_assembles_links_and_exits_7() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source_path = manifest_dir
+        .join("tests")
+        .join("integration")
+        .join("tl_emit.tl");
+    let work_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("tl_emit_printed_program");
+    fs::create_dir_all(&work_dir).expect("create tl_emit printed-program test work dir");
+
+    let work_path = work_dir.join("tl_emit.tl");
+    fs::copy(&source_path, &work_path).expect("copy tl_emit.tl to work dir");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&work_path)
+        .output()
+        .expect("run tl_emit");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "tl_emit driver exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(
+        stdout, TL_EMIT_PROGRAM_ASM,
+        "tl_emit printed program differed\nstderr:\n{}",
+        stderr,
+    );
+
+    let asm_path = work_dir.join("printed.s");
+    let obj_path = work_dir.join("printed.o");
+    let bin_path = work_dir.join("printed");
+    fs::write(&asm_path, &output.stdout).expect("write printed assembly");
+
+    let status = Command::new("as")
+        .arg(&asm_path)
+        .arg("-o")
+        .arg(&obj_path)
+        .status()
+        .expect("run assembler on printed tl_emit output");
+    assert!(status.success(), "assembling printed tl_emit output failed");
+
+    let status = Command::new("ld")
+        .arg(&obj_path)
+        .arg("-o")
+        .arg(&bin_path)
+        .status()
+        .expect("run linker on printed tl_emit output");
+    assert!(status.success(), "linking printed tl_emit output failed");
+
+    let output = Command::new(&bin_path)
+        .output()
+        .expect("run binary assembled from printed tl_emit output");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(7),
+        "printed tl_emit program exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(stdout, "", "printed tl_emit program wrote stdout");
 }
 
 fn run_case_explicit_build(case: &Case) {

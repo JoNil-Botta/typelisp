@@ -154,3 +154,6 @@ jobs:
 
       - name: Compile and verify all examples
         run: TYPELISP_BIN=./target/release/typelisp ./scripts/verify-examples.sh
+
+      - name: Verify stdlib modules
+        run: TYPELISP_BIN=./target/release/typelisp ./scripts/verify-stdlib.sh

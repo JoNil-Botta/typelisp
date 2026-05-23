@@ -1667,9 +1667,11 @@ impl X86_64Backend {
         // %rax = arena base, or a negative errno on failure. Trap on failure.
         self.emit("    testq %rax, %rax");
         self.emit("    js .L_tl_alloc_abort");
-        // Set end = base + len, ptr = base + size, return base.
+        // Set end = base + len, ptr = base + size, return base. The end
+        // carry check also proves base + size cannot wrap because size <= len.
         self.emit("    movq %rax, %rcx");
         self.emit("    addq %rdx, %rcx");
+        self.emit("    jc .L_tl_alloc_abort"); // arena end overflow
         self.emit("    movq %rcx, tl_arena_end(%rip)");
         self.emit("    movq %rax, %rcx");
         self.emit("    addq %rsi, %rcx");
@@ -5704,11 +5706,12 @@ mod tests {
         let asm = generate_assembly(&program_calling_tl_alloc())
             .expect("program calling tl_alloc should compile");
 
-        // There should be exactly two carry-check jumps to the abort label.
+        // There should be exactly three carry-check jumps to the abort label:
+        // request rounding, active-arena bump pointer, and fresh-arena end.
         let jc_count = asm.matches("    jc .L_tl_alloc_abort").count();
         assert_eq!(
-            jc_count, 2,
-            "expected two carry guards (rounding + bump overflow), got {}\nasm:\n{}",
+            jc_count, 3,
+            "expected three carry guards (rounding + bump/end overflow), got {}\nasm:\n{}",
             jc_count, asm
         );
 

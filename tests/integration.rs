@@ -2425,4 +2425,9 @@ fn tl_alloc_huge_request_traps_abort_134() {
         stdout,
         stderr,
     );
+    assert_eq!(stdout, "", "tl_alloc trap should not write stdout");
+    assert_eq!(
+        stderr, "tl: allocation failed\n",
+        "tl_alloc trap should write the allocation diagnostic"
+    );
 }

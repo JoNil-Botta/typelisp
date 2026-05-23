@@ -3,12 +3,16 @@
 //! assembly.
 //!
 //! `tl_eval.tl` is the third piece of TypeLisp's *real* self-hosting compiler
-//! front end (#27): a tiny tree-walking interpreter. Where the lexer turns a
-//! source String into a flat `(Array Token)` and the reader consumes that token
-//! stream into the recursive cons-cell `Sexpr` AST `(SInt | SSym | SNil |
-//! SCons)`, the evaluator INTERPRETS that tree - it walks the s-expression,
-//! dispatches on the head operator symbol, recursively evaluates the argument
-//! sub-exprs, and computes the integer the expression denotes. It does NOT
+//! front end (#27): a tiny tree-walking interpreter, now with VARIABLES and a
+//! `let` special form threaded through a lexical environment. Where the lexer
+//! turns a source String into a flat `(Array Token)` and the reader consumes that
+//! token stream into the recursive cons-cell `Sexpr` AST `(SInt | SSym | SNil |
+//! SCons)`, the evaluator INTERPRETS that tree WITH RESPECT TO an environment - it
+//! walks the s-expression, dispatches on the head symbol, resolves a bare symbol
+//! as a variable reference via `lookup` over the cons-cell assoc-list `Env`
+//! (`ENil | (EBind String i64 Env)`), handles `(let ((x e1)) body)` by pushing an
+//! `EBind` frame, and otherwise recursively evaluates the argument sub-exprs and
+//! computes the integer the expression denotes. It does NOT
 //! re-derive lexing or reading: it `(import)`s the reader's `read` and the
 //! `Sexpr` enum from the `main`-less module `tl_read.tl`, which itself imports
 //! the `main`-less lexer `tl_lex.tl`, which imports the `main`-less token model
@@ -99,16 +103,24 @@ fn tl_eval_tl_compiles_to_assembly() {
     );
 
     // The evaluator's own functions were emitted (TypeLisp prefixes user symbols
-    // with `_tl_`): the tree-walking `eval-sexpr`, and the cons-cell projections
-    // `sexpr-head` ("car") / `sexpr-tail` ("cdr") / `sexpr-sym` (operator symbol)
-    // it uses to destructure each call form one level at a time. The arity guard
-    // rejects extra operands after the second fixed-arity argument.
+    // with `_tl_`): the tree-walking `eval-sexpr`, the variable-lookup `lookup`
+    // over the `Env` assoc-list, the cons-cell projections `sexpr-head` ("car") /
+    // `sexpr-tail` ("cdr") / `sexpr-sym` (operator symbol) it uses to destructure
+    // each call form one level at a time, and the `let`-binding destructuring
+    // helpers (`let-binding` / `let-var` / `let-init` / `let-body`) that pull the
+    // single binding pair `(x e1)` and the body out of the `let` form's spine. The
+    // arity guard rejects extra operands after the second fixed-arity argument.
     for sym in [
         "_tl_eval_sexpr:",
+        "_tl_lookup:",
         "_tl_sexpr_head:",
         "_tl_sexpr_tail:",
         "_tl_sexpr_expect_nil:",
         "_tl_sexpr_sym:",
+        "_tl_let_binding:",
+        "_tl_let_var:",
+        "_tl_let_init:",
+        "_tl_let_body:",
     ] {
         assert!(
             asm.contains(sym),
@@ -134,6 +146,22 @@ fn tl_eval_tl_compiles_to_assembly() {
     assert!(
         asm.contains("call _tl_eval_sexpr"),
         "tl_eval assembly shows no recursive eval-sexpr self-call (tree walk):\n{}",
+        asm,
+    );
+
+    // Variables: a bare symbol is resolved as a variable reference, and `let`
+    // binds a name into the environment. `eval-sexpr` therefore calls `lookup`,
+    // and `lookup` is itself recursive - it walks the `Env` assoc-list chain
+    // head-first, comparing each bound name to the query and recursing on the
+    // tail. So a `lookup` call AND a `lookup` self-call must both be present.
+    assert!(
+        asm.contains("call _tl_lookup"),
+        "tl_eval assembly shows no variable-lookup call (no environment threading):\n{}",
+        asm,
+    );
+    assert!(
+        asm.matches("call _tl_lookup").count() >= 2,
+        "tl_eval assembly shows no recursive lookup self-call (assoc-list walk):\n{}",
         asm,
     );
 

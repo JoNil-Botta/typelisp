@@ -221,22 +221,25 @@ fn type_lisp_programs_compile_link_and_run() {
             deps: &["tl_lex.tl", "tl_token.tl"],
         },
         // Self-hosting (#27): the s-expression EVALUATOR for TypeLisp's own syntax
-        // - a tiny tree-walking interpreter. `tl_eval.tl` walks the recursive
-        // cons-cell `Sexpr` AST and INTERPRETS it: an `(SInt n)` is `n`, and an
-        // `(SCons op rest)` call form projects its two argument sub-exprs out of
-        // the cons spine, recursively evaluates each, and dispatches on the head
-        // operator symbol (`+ - * /`) via `string-eq`. It REUSES the whole front
-        // end by importing `read` + the `Sexpr` enum from the `main`-less
-        // `tl_read.tl` (which transitively imports the `main`-less `tl_lex.tl` ->
-        // `tl_token.tl`), so the whole program has one `main` - the evaluator's.
-        // `main` runs `(eval-sexpr (read (lex "(+ 1 (* 2 3))")))`: the inner
-        // `(* 2 3)` interprets to 6 FIRST (it is the nested argument), then the
-        // outer `(+ 1 6)` to 7 - proving the interpreter honours the tree shape.
-        // All three imported `main`-less modules are copied alongside so the
-        // `(import)` chain resolves.
+        // - a tiny tree-walking interpreter, now with VARIABLES and a `let` special
+        // form threaded through a lexical environment. `tl_eval.tl` walks the
+        // recursive cons-cell `Sexpr` AST and INTERPRETS it with respect to an
+        // environment: an `(SInt n)` is `n`, an `(SSym name)` is a VARIABLE
+        // resolved via `lookup` over the cons-cell assoc-list `Env`
+        // (`ENil | (EBind String i64 Env)`), `(let ((x e1)) body)` evaluates `e1`
+        // and then the body in `(EBind x v env)`, and any other `(SCons op rest)`
+        // is a binary call dispatched on the head operator symbol (`+ - * /`) via
+        // `string-eq`. It REUSES the whole front end by importing `read` + the
+        // `Sexpr` enum from the `main`-less `tl_read.tl` (which transitively
+        // imports the `main`-less `tl_lex.tl` -> `tl_token.tl`), so the whole
+        // program has one `main` - the evaluator's. `main` runs
+        // `(eval-sexpr (read (lex "(let ((x 5)) (+ x (* 2 x)))")) ENil)`: `x` binds
+        // to 5, so the body `(+ x (* 2 x))` = (+ 5 10) = 15 - the variable
+        // references resolving through the threaded environment. All three imported
+        // `main`-less modules are copied alongside so the `(import)` chain resolves.
         Case {
             name: "tl_eval",
-            exit_code: 7,
+            exit_code: 15,
             stdout: "",
             deps: &["tl_read.tl", "tl_lex.tl", "tl_token.tl"],
         },
@@ -432,15 +435,16 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             stdout: "",
             deps: &["tl_lex.tl", "tl_token.tl"],
         },
-        // Self-hosting (#27): the s-expression evaluator, also exercised through
-        // the explicit compile -> as -> ld -> run pipeline. Runs
-        // `(eval-sexpr (read (lex "(+ 1 (* 2 3))")))`: the inner `(* 2 3)` -> 6,
-        // then `(+ 1 6)` -> 7. The reader (and transitively the lexer + token
-        // model) is reused via the `main`-less `tl_read.tl` import; all three
-        // imported modules are copied alongside so the imports resolve.
+        // Self-hosting (#27): the s-expression evaluator with variables + `let`,
+        // also exercised through the explicit compile -> as -> ld -> run pipeline.
+        // Runs `(eval-sexpr (read (lex "(let ((x 5)) (+ x (* 2 x)))")) ENil)`: `x`
+        // binds to 5 in the lexical environment, so the body `(+ x (* 2 x))` =
+        // (+ 5 10) -> 15. The reader (and transitively the lexer + token model) is
+        // reused via the `main`-less `tl_read.tl` import; all three imported
+        // modules are copied alongside so the imports resolve.
         Case {
             name: "tl_eval",
-            exit_code: 7,
+            exit_code: 15,
             stdout: "",
             deps: &["tl_read.tl", "tl_lex.tl", "tl_token.tl"],
         },

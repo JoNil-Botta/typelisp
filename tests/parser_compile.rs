@@ -5,9 +5,11 @@
 //! (#27, phase 4), following the tokenizer in `lexer.tl`: it consumes a token
 //! stream and runs recursive descent over the grammar
 //!   expr := term ('+' term)*    term := int | '(' expr ')'
-//! emitting a flat postfix op stream (a non-recursive AST encoding, since
-//! recursive enums are not yet supported by the typechecker — see the file
-//! header and the PR body), then folds that op stream to a value.
+//! building a REAL recursive `Expr` AST tree — `(defenum Expr (ENum i64)
+//! (EAdd Expr Expr))`, whose payloads are heap-pointer indirections (#111) —
+//! then folds it with a recursive tree-walking `eval`. This replaces the
+//! previous flat postfix / RPN op-stream encoding and validates recursive
+//! enums end-to-end (see the file header and the PR body).
 //!
 //! Like `lexer_compile.rs`, this test only invokes the `compile` subcommand, so
 //! it runs everywhere — including the Windows dev box — and asserts on the
@@ -63,16 +65,17 @@ fn parser_tl_compiles_to_assembly() {
         asm
     );
 
-    // The token / op-stream / value-stack arrays are heap-allocated through the
-    // runtime allocator.
+    // The token arrays, the cursor cell, and every `Expr` AST node are
+    // heap-allocated through the runtime allocator (recursive enum payloads are
+    // heap-pointer indirections, so each `ENum`/`EAdd` constructor allocates).
     assert!(
         asm.contains("call tl_alloc"),
-        "parser assembly does not allocate its arrays via tl_alloc:\n{}",
+        "parser assembly does not allocate its arrays / AST nodes via tl_alloc:\n{}",
         asm,
     );
 
-    // Array indexing is bounds-checked: cursor reads and op-stream writes go
-    // through the out-of-bounds abort helper.
+    // Array indexing is bounds-checked: cursor reads/writes go through the
+    // out-of-bounds abort helper.
     assert!(
         asm.contains("call tl_oob_abort"),
         "parser assembly is missing the bounds-check trap (tl_oob_abort):\n{}",
@@ -89,15 +92,13 @@ fn parser_tl_compiles_to_assembly() {
 
     // The parser's own functions were emitted (TypeLisp prefixes user symbols
     // with `_tl_`): the recursive-descent core (`parse_expr`/`parse_term`), the
-    // token-cursor `expect`, the op-stream `emit`, and the postfix `eval_ops`.
-    // `parse_expr` calling `parse_term` and vice versa proves mutual recursion
-    // across the two parse routines lowers correctly.
+    // token-cursor `expect`/`advance`, and the recursive tree-walking `eval`.
     for sym in [
         "_tl_parse_expr:",
         "_tl_parse_term:",
         "_tl_expect:",
-        "_tl_emit:",
-        "_tl_eval_ops:",
+        "_tl_advance:",
+        "_tl_eval:",
         "_tl_token_tag:",
         "_tl_token_int:",
     ] {
@@ -109,10 +110,24 @@ fn parser_tl_compiles_to_assembly() {
         );
     }
 
-    // Recursive descent: `parse_expr` actually calls `parse_term`.
+    // Mutual recursion in the recursive-descent core: `parse_expr` calls
+    // `parse_term`, and a parenthesized term re-enters `parse_expr`.
     assert!(
         asm.contains("call _tl_parse_term"),
         "parser assembly shows no parse_expr -> parse_term call:\n{}",
+        asm,
+    );
+    assert!(
+        asm.contains("call _tl_parse_expr"),
+        "parser assembly shows no parse_term -> parse_expr call (parenthesized term):\n{}",
+        asm,
+    );
+
+    // The evaluator is a real recursive tree walk: `eval` calls itself on the
+    // `EAdd` children, proving the recursive `Expr` AST folds correctly.
+    assert!(
+        asm.contains("call _tl_eval"),
+        "parser assembly shows no recursive eval -> eval call:\n{}",
         asm,
     );
 }

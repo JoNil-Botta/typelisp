@@ -159,10 +159,10 @@ fn type_lisp_programs_compile_link_and_run() {
         },
         // Self-hosting (#27, phase 4): a recursive-descent parser written in
         // TypeLisp. Parses the token stream for "1 + 2 + 3" over the grammar
-        // expr := term ('+' term)* (left-assoc) into a flat postfix op stream
-        // (PUSH 1, PUSH 2, ADD, PUSH 3, ADD) — a non-recursive AST encoding,
-        // since recursive enums are not yet supported — then folds it with a
-        // value stack. `main` returns the evaluated sum, 6.
+        // expr := term ('+' term)* (left-assoc) into a REAL recursive `Expr`
+        // AST tree — (EAdd (EAdd (ENum 1) (ENum 2)) (ENum 3)), whose payloads
+        // are heap-pointer indirections (#111) — then folds it with a recursive
+        // tree-walking `eval`. `main` returns the evaluated sum, 6.
         Case {
             name: "parser",
             exit_code: 6,
@@ -316,8 +316,8 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         },
         // Self-hosting (#27, phase 4): the TypeLisp recursive-descent parser,
         // also exercised through the explicit compile -> as -> ld -> run
-        // pipeline. Parses "1 + 2 + 3" into a postfix op stream and folds it;
-        // `main` returns the sum, 6.
+        // pipeline. Parses "1 + 2 + 3" into a real recursive `Expr` AST tree and
+        // folds it with a recursive `eval`; `main` returns the sum, 6.
         Case {
             name: "parser",
             exit_code: 6,

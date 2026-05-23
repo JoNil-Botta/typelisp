@@ -172,6 +172,44 @@ impl TypeChecker {
         self.enums = EnumRegistry::from_program(prog);
         self.structs = StructRegistry::from_program(prog);
 
+        // Check for duplicate top-level names across the whole program.
+        // Every name bound into the global scope must be unique so that
+        // neither the typechecker silently shadows a prior binding nor the
+        // backend emits duplicate `.globl _tl_<name>` symbols.
+        let mut seen: HashMap<String, Span> = HashMap::new();
+        for decl in &prog.decls {
+            let names: Vec<(String, Span)> = match decl {
+                Decl::Def { name, value, .. } => {
+                    vec![(name.clone(), value.span())]
+                }
+                Decl::DefFn { name, body, .. } => {
+                    vec![(name.clone(), body.span())]
+                }
+                Decl::Extern { name, .. } => {
+                    vec![(name.clone(), Span::default())]
+                }
+                Decl::DefEnum { name: _, variants } => {
+                    variants.iter().map(|v| (v.name.clone(), Span::default())).collect()
+                }
+                Decl::DefStruct { name, .. } => {
+                    vec![(name.clone(), Span::default())]
+                }
+                Decl::Import(_) => vec![],
+            };
+            for (name, span) in names {
+                if let Some(prev_span) = seen.get(&name) {
+                    return Err(TypeError::at(
+                        format!(
+                            "duplicate top-level name '{}' (already defined at {:?})",
+                            name, prev_span,
+                        ),
+                        span,
+                    ));
+                }
+                seen.insert(name, span);
+            }
+        }
+
         // Recursive enums (refs #13/#27). A *direct* self-referential payload
         // field — a variant field whose type IS the enclosing enum (`(EAdd Expr
         // Expr)` in `defenum Expr`) — is now supported: an enum value is a
@@ -1380,6 +1418,103 @@ mod tests {
         );
         let mut tc = TypeChecker::new();
         assert!(tc.check_program(&prog).is_err());
+    }
+
+    // ------------------------------------------------------------------
+    // Duplicate top-level names — Issue #44
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_typecheck_duplicate_function_names_error() {
+        let prog = concat_modules(
+            "(define (foo [x : i64]) : i64 x)",
+            "(define (foo [x : i64]) : i64 (+ x 1))",
+        );
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(err.msg.contains("duplicate top-level name 'foo'"), "err: {}", err);
+    }
+
+    #[test]
+    fn test_typecheck_duplicate_define_and_function_error() {
+        let prog = parse(
+            r#"
+            (define foo : i64 42)
+            (define (foo [x : i64]) : i64 x)
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(err.msg.contains("duplicate top-level name 'foo'"), "err: {}", err);
+    }
+
+    #[test]
+    fn test_typecheck_duplicate_enum_variant_error() {
+        let src = r#"
+            (defenum A (Foo))
+            (defenum B (Foo))
+        "#;
+        let prog = parse(src).unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(err.msg.contains("duplicate top-level name 'Foo'"), "err: {}", err);
+    }
+
+    #[test]
+    fn test_typecheck_duplicate_struct_and_function_error() {
+        let prog = parse(
+            r#"
+            (defstruct Point (x i64))
+            (define (Point [x : i64]) : i64 x)
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(err.msg.contains("duplicate top-level name 'Point'"), "err: {}", err);
+    }
+
+    #[test]
+    fn test_typecheck_duplicate_extern_error() {
+        let prog = parse(
+            r#"
+            (extern foo : (-> i64 i64))
+            (extern foo : (-> bool bool))
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(err.msg.contains("duplicate top-level name 'foo'"), "err: {}", err);
+    }
+
+    #[test]
+    fn test_typecheck_no_duplicate_across_different_names_ok() {
+        let prog = parse(
+            r#"
+            (defenum A (Foo))
+            (defenum B (Bar))
+            (define (baz [x : i64]) : i64 x)
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        assert!(tc.check_program(&prog).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_builtin_shadowing_not_duplicate() {
+        // Built-ins are allowed to be shadowed by user-defined names.
+        let prog = parse(
+            r#"
+            (define (print [x : i64]) : i64 (+ x 1))
+            (define (main) : i64 (print 41))
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        assert!(tc.check_program(&prog).is_ok());
     }
 
     #[test]

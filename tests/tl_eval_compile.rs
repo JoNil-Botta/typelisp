@@ -633,8 +633,9 @@ fn tl_eval_tl_compiles_to_assembly() {
 
     // RECURSIVE LIST PRINTING (#27): a `VPair` no longer prints as the opaque
     // placeholder `#<pair>` - the `print` special form's pair arm now delegates to
-    // the recursive `print-value` walk, which renders a proper list as
-    // `(e1 e2 ... en)` (nesting parenthesised; an improper tail closed early). So the
+    // the recursive `print-value` walk, which renders a list as
+    // `(e1 e2 ... en)` (nesting parenthesised; an improper final cdr rendered in
+    // DOTTED-PAIR notation `(a . b)`). So the
     // old `#<pair>` placeholder literal must be GONE, and the two new mutually
     // recursive printer helpers - `print-value` (dispatches on value shape) and
     // `print-list-tail` (walks the cdr chain emitting space-separated elements) -
@@ -667,6 +668,20 @@ fn tl_eval_tl_compiles_to_assembly() {
             asm,
         );
     }
+
+    // DOTTED-PAIR PRINTING (#27): an IMPROPER list (a cdr that is neither a `VPair`
+    // nor the `(VInt 0)` nil sentinel) renders in the standard Lisp dotted-pair
+    // notation `(a . b)`. `print-list-tail`'s improper-tail arms emit the ` . `
+    // separator (space-dot-space) before `print-value`-ing the final non-nil cdr and
+    // closing the paren, so `(cons 10 20)` prints `(10 . 20)`. That ` . ` separator
+    // literal must reach the read-only data (it replaces the old stop-and-close
+    // behaviour that dropped the cdr and printed `(10)`).
+    assert!(
+        asm.contains(".string \" . \""),
+        "tl_eval assembly is missing the dotted-pair separator literal \" . \" \
+         (improper-list printing in print-list-tail):\n{}",
+        asm,
+    );
 
     // The list printer is genuinely RECURSIVE: `print-value` and `print-list-tail`
     // call each other to walk the cons chain (and a nested pair element re-enters
@@ -835,14 +850,15 @@ fn tl_eval_tl_compiles_to_assembly() {
     // the list's second element via `(car (cdr ...))` (`2\n`), the pair's car
     // (`10\n`), the predicate observations (`1\n`, `0\n`, `1\n`), and the recursive
     // list length (`3\n`), THEN the recursive list printer renders the proper list
-    // `(1 2 3)`, a nested list `(1 (2 3) 4)`, and the improper pair `(10)`. The
+    // `(1 2 3)`, a nested list `(1 (2 3) 4)`, the improper pair `(10 . 20)` (dotted-
+    // pair notation), and the longer improper list `(1 2 . 3)`. The
     // higher-order showcase then prints `(1 4 9 16)` from `map` and `(1 2)` from
     // `filter`, before denoting the unprinted
     // `(sum-list (map (lambda (x) (* x x)) (list 1 2 3 4)))` =
     // `1 + 4 + 9 + 16` = `30`. All of this is computed by the interpreter at
     // RUNTIME (not a compile-time constant in this evaluator's own source), so we
     // do NOT assert the result appears in the assembly; the printed stdout
-    // (`hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10)(1 4 9 16)(1 2)`)
+    // (`hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10 . 20)(1 2 . 3)(1 4 9 16)(1 2)`)
     // and exit code (`30`) are asserted by the Linux-gated exec test in
     // `tests/integration.rs`.
 

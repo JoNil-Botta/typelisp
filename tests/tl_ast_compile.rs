@@ -149,3 +149,69 @@ fn tl_ast_tl_compiles_to_assembly() {
         );
     }
 }
+
+#[test]
+fn tl_compiler_ast_types_tl_compiles_to_assembly() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source_path = manifest_dir.join("selfhost").join("compiler_ast_types.tl");
+
+    let work_dir = manifest_dir
+        .join("target")
+        .join("tl-compiler-ast-types-compile-test");
+    fs::create_dir_all(&work_dir).expect("create compiler_ast_types compile test work dir");
+    let asm_path = work_dir.join("compiler_ast_types.s");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("compile")
+        .arg(&source_path)
+        .arg("-o")
+        .arg(&asm_path)
+        .output()
+        .expect("run typelisp compile");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "compiler_ast_types.tl compile step failed\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+
+    let asm = fs::read_to_string(&asm_path).expect("read generated compiler_ast_types assembly");
+
+    assert!(
+        !asm.contains("# TODO"),
+        "compiler_ast_types assembly still contains a # TODO marker:\n{}",
+        asm,
+    );
+    assert_eq!(
+        asm.matches("\nmain:").count() + usize::from(asm.starts_with("main:")),
+        1,
+        "compiler_ast_types assembly must have exactly one synthesized main:\n{}",
+        asm,
+    );
+
+    for sym in [
+        "_tl_ast_type_tag:",
+        "_tl_ast_expr_tag:",
+        "_tl_ast_decl_tag:",
+        "_tl_compiler_ast_smoke:",
+    ] {
+        assert!(
+            asm.contains(sym),
+            "compiler_ast_types assembly is missing expected symbol {}:\n{}",
+            sym,
+            asm,
+        );
+    }
+
+    for literal in [".string \"x\"", ".string \"main\""] {
+        assert!(
+            asm.contains(literal),
+            "compiler_ast_types assembly is missing smoke literal {:?}:\n{}",
+            literal,
+            asm,
+        );
+    }
+}

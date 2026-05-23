@@ -13,22 +13,19 @@
 ;; `(eval (parse (lex "2 + 3 * 4")))` and returns 14.
 ;;
 ;; --------------------------------------------------------------------------
-;; Why one file rather than `(import "lexer.tl")` + `(import "parser.tl")`.
+;; Multi-file organization: the `Token` model lives in an imported module.
 ;; --------------------------------------------------------------------------
-;; The module loader (#44) is whole-program: it concatenates every imported
-;; module's declarations into a single program, so an imported `defenum Token`
-;; and its constructors/`match` arms ARE usable from the importer (verified - the
-;; nominal enum identity carries across the concatenation; no cross-module
-;; identity gap surfaced here). What blocks reusing `lexer.tl`/`parser.tl`
-;; verbatim is more mundane: each of those files defines its own `(define (main)
-;; ...)` (and its own `token-tag`), so importing them would emit duplicate
-;; `main`/`token-tag` symbols. They also disagree on the `Token` enum - the
-;; lexer's surface had no `*` `-` `/`, the operators this calculator needs.
-;; Unifying them in one file (a single `Token` with the full operator set, a
-;; single `token-tag`, a single `main`) is the clean way to ship the composed
-;; pipeline now; factoring the shared `Token` enum into an importable module that
-;; defines NO `main` is the natural follow-up once we want the lexer and parser
-;; to literally `(import)` a common token module.
+;; The token kinds, the `token-tag` / `token-int` accessors that `match` over
+;; `Token`, and the token-kind tag constants are factored into `token.tl`, a
+;; `main`-less module imported below. The module loader (#44) is whole-program:
+;; it concatenates every imported module's declarations into a single program,
+;; imported-before-importer, then runs the unchanged `typecheck -> lower ->
+;; codegen` pipeline. So the imported `defenum Token` defines ONE nominal type
+;; that this file's lexer constructs (`(TInt acc)`, `TPlus`, ...) and that the
+;; imported accessors `match` over - the enum's type, constructors, and `match`
+;; arms all carry across the import boundary with no cross-module identity gap
+;; (refs #44/#81). Because `token.tl` declares no `main`, the concatenation
+;; yields exactly one `main` (this file's) and no duplicate-symbol clash.
 ;;
 ;; --------------------------------------------------------------------------
 ;; The unification that makes lex -> parse direct: a single `(Array Token)`.
@@ -42,19 +39,12 @@
 ;; no hand-built token stream anywhere in this file: the parser's input is
 ;; exactly the lexer's output.
 
-;; ============================ Token model =================================
+;; The shared token model: the `Token` enum, the `token-tag` / `token-int`
+;; accessors, and the tag constants. Resolved relative to this file, so it finds
+;; the co-located `token.tl`.
+(import "token.tl")
 
-;; The token kinds the calculator surface needs: integer literals, the four
-;; binary operators, parentheses, and an end-of-stream sentinel.
-(defenum Token
-  (TInt i64)
-  (TPlus)
-  (TMinus)
-  (TStar)
-  (TSlash)
-  (TLParen)
-  (TRParen)
-  (TEnd))
+;; ============================ AST model ===================================
 
 ;; The real recursive AST: an integer literal, or a binary node over two
 ;; sub-expressions for each of the four arithmetic operators. Recursive enum
@@ -65,42 +55,6 @@
   (ESub Expr Expr)
   (EMul Expr Expr)
   (EDiv Expr Expr))
-
-;; Numeric tag for a token kind: the parser's cursor classifies the token under
-;; it by tag. Exercises `match` over every Token variant.
-(define (token-tag [t : Token]) : i64
-  (match t
-    [(TInt _) 1]
-    [(TPlus) 2]
-    [(TMinus) 3]
-    [(TStar) 4]
-    [(TSlash) 5]
-    [(TLParen) 6]
-    [(TRParen) 7]
-    [(TEnd) 8]))
-
-;; Integer payload of a TInt token (0 for any other kind): projects the operand
-;; back out of the enum, the way the parser reads a literal.
-(define (token-int [t : Token]) : i64
-  (match t
-    [(TInt v) v]
-    [(TPlus) 0]
-    [(TMinus) 0]
-    [(TStar) 0]
-    [(TSlash) 0]
-    [(TLParen) 0]
-    [(TRParen) 0]
-    [(TEnd) 0]))
-
-;; ---- Token-kind tag constants (kept in sync with `token-tag`). ----
-(define (tag-int) : i64 1)
-(define (tag-plus) : i64 2)
-(define (tag-minus) : i64 3)
-(define (tag-star) : i64 4)
-(define (tag-slash) : i64 5)
-(define (tag-lparen) : i64 6)
-(define (tag-rparen) : i64 7)
-(define (tag-end) : i64 8)
 
 ;; ============================ Lexer =======================================
 ;; Scan a source String character by character into a real `(Array Token)`.

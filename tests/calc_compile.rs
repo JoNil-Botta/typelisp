@@ -12,6 +12,16 @@
 //! tree-walking `eval` folds the `Expr` AST. `main` runs
 //! `(eval (parse (lex "2 + 3 * 4")))` and returns 14.
 //!
+//! Multi-file organization (#44): the shared `Token` model — the `Token` enum
+//! plus the `token-tag` / `token-int` accessors — lives in the `main`-less
+//! module `tests/integration/token.tl`, which `calc.tl` `(import)`s. Compiling
+//! `calc.tl` therefore also exercises the module loader: the import is resolved
+//! relative to `calc.tl`, the co-located `token.tl` is loaded, and its
+//! declarations are concatenated into one program. That the `_tl_token_tag` /
+//! `_tl_token_int` symbols (defined in `token.tl`) appear in the asm — alongside
+//! exactly one `main:` — proves the imported `defenum`'s type/constructors/`match`
+//! cross the import boundary and compose with no duplicate-symbol clash.
+//!
 //! Like `lexer_compile.rs` / `parser_compile.rs`, this test only invokes the
 //! `compile` subcommand, so it runs everywhere — including the Windows dev box —
 //! and asserts on the emitted assembly text. The assemble+link+run check is
@@ -59,8 +69,16 @@ fn calc_tl_compiles_to_assembly() {
         asm,
     );
 
-    // A real program entry point exists.
-    assert!(asm.contains("main:"), "calc assembly has no main:\n{}", asm);
+    // A real program entry point exists. Multi-file organization (#44): the
+    // imported `main`-less `token.tl` contributes its `Token`/accessors but no
+    // `main`, so the concatenated program has EXACTLY one `main:` — proving the
+    // import composes with no duplicate-symbol clash.
+    assert_eq!(
+        asm.matches("\nmain:").count() + usize::from(asm.starts_with("main:")),
+        1,
+        "calc assembly must have exactly one main: (import must not duplicate symbols):\n{}",
+        asm,
+    );
 
     // The token array, the cursor cell, and every `Expr` AST node are
     // heap-allocated through the runtime allocator (recursive enum payloads are

@@ -180,11 +180,13 @@ fn type_lisp_programs_compile_link_and_run() {
         // tree-walking `eval` folds it: `(eval (parse (lex "2 + 3 * 4")))`. `*`
         // binds tighter than `+`, so the result is 2 + (3 * 4) = 14, NOT
         // (2 + 3) * 4 = 20 — proving the composed pipeline honours precedence.
+        // The shared `Token` model lives in the `main`-less `token.tl`, which
+        // `calc.tl` imports; it is copied alongside so the import resolves.
         Case {
             name: "calc",
             exit_code: 14,
             stdout: "",
-            deps: &[],
+            deps: &["token.tl"],
         },
     ];
 
@@ -347,12 +349,13 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         // to end, also through the explicit compile -> as -> ld -> run pipeline.
         // Lexes "2 + 3 * 4" into a real `(Array Token)`, parses it into the
         // recursive `Expr` AST, and folds it with `eval`; `main` returns
-        // 2 + (3 * 4) = 14.
+        // 2 + (3 * 4) = 14. The shared `Token` model lives in the `main`-less
+        // `token.tl`, imported by `calc.tl` and copied alongside.
         Case {
             name: "calc",
             exit_code: 14,
             stdout: "",
-            deps: &[],
+            deps: &["token.tl"],
         },
     ];
 

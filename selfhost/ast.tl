@@ -34,6 +34,11 @@
      (ELet name (parse-expr value) (parse-expr body))]
     [_ (begin (panic "ast: malformed let") (EInt 0))]))
 
+(define (parse-set [rest : Sexpr]) : Expr
+  (match rest
+    [(SCons (SSym name) (SCons value (SNil))) (ESet name (parse-expr value))]
+    [_ (begin (panic "ast: malformed set!") (EInt 0))]))
+
 ;; parse-if (#167): project `(if c t e)` onto `(EIf c t e)`. The argument spine
 ;; must be exactly three forms (cond, then, else); any other shape is malformed
 ;; input and aborts via `panic`, matching `parse-let`'s discipline.
@@ -90,9 +95,11 @@
                                                  (parse-if rest)
                                                  (if (string-eq op "print")
                                                      (parse-print rest)
-                                                     (if (string-eq op "begin")
-                                                         (parse-begin rest)
-                                                         (ECall op (parse-args rest)))))))))))))))]
+                                                     (if (string-eq op "set!")
+                                                         (parse-set rest)
+                                                         (if (string-eq op "begin")
+                                                             (parse-begin rest)
+                                                             (ECall op (parse-args rest))))))))))))))))]
     [_ (begin (panic "ast: malformed expression") (EInt 0))]))
 
 (define (parse-params [s : Sexpr]) : StrList
@@ -152,6 +159,7 @@
     [(ECall name args) (+ (string-length name) (expr-list-score args))]
     [(EStr s) (string-length s)]
     [(EPrint e) (+ 100 (expr-score e))]
+    [(ESet name value) (+ 300 (+ (string-length name) (expr-score value)))]
     [(EBegin body) (+ 200 (expr-list-score body))]))
 
 (define (item-score [i : Item]) : i64

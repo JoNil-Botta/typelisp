@@ -67,6 +67,7 @@
     [(ECall _ args) (expr-list-collect-strings args acc)]
     [(EStr s) (str-list-append-one acc s)]
     [(EPrint e) (collect-strings e acc)]
+    [(ESet _ value) (collect-strings value acc)]
     [(EBegin body) (expr-list-collect-strings body acc)]))
 
 (define (collect-item-strings [item : Item] [acc : StrList]) : StrList
@@ -175,6 +176,7 @@
     [(ECall _ args) (expr-list-max-let-depth args)]
     [(EStr _) 0]
     [(EPrint e) (max-let-depth e)]
+    [(ESet _ value) (max-let-depth value)]
     [(EBegin body) (expr-list-max-let-depth body)]))
 
 (define (frame-size [e : Expr]) : i64
@@ -319,6 +321,13 @@
                           "    movq $0, %rax\n"))))))))))]
     [_ (begin (panic "emit: print expects string literal") "")]))
 
+(define (emit-set [strings : StrList] [env : SymI64Env] [depth : i64] [lc : (Array i64)] [name : String] [value : Expr]) : String
+  (let ([off : i64 (cenv-lookup env name)])
+    (string-append (emit-expr-in strings env depth lc value)
+      (string-append "    movq %rax, "
+        (string-append (emit-slot off)
+          "\n    movq $0, %rax\n")))))
+
 (define (emit-begin [strings : StrList] [env : SymI64Env] [depth : i64] [lc : (Array i64)] [body : ExprList]) : String
   (match body
     [(ELCons e (ELNil)) (emit-expr-in strings env depth lc e)]
@@ -337,6 +346,7 @@
     [(ECall name args) (emit-call strings env depth lc name args)]
     [(EStr s) (emit-str strings s)]
     [(EPrint arg) (emit-print strings arg)]
+    [(ESet name value) (emit-set strings env depth lc name value)]
     [(EBegin body) (emit-begin strings env depth lc body)]))
 
 (define (function-frame-size [params : StrList] [body : Expr]) : i64

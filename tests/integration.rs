@@ -2173,6 +2173,51 @@ fn tl_compile_smoke_writes_begin_function_body_and_output_exits_42() {
 }
 
 #[test]
+fn tl_compile_smoke_writes_local_set_program_and_output_exits_42() {
+    let (code, stdout, stderr, _asm) = run_compile_smoke_generated_program(
+        "tl_compile_smoke_set_local",
+        "(let ((x 1)) (begin (set! x 41) (+ x 1)))",
+        &[
+            "    movq $41, %rax\n    movq %rax, -8(%rbp)\n    movq $0, %rax\n",
+            "    movq -8(%rbp), %rax\n",
+        ],
+    );
+
+    assert_eq!(
+        code,
+        Some(42),
+        "tl_compile_smoke set local output program exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(stdout, "", "tl_compile_smoke set local output stdout");
+    assert_eq!(stderr, "", "tl_compile_smoke set local output stderr");
+}
+
+#[test]
+fn tl_compile_smoke_writes_function_set_body_and_output_exits_42() {
+    let (code, stdout, stderr, _asm) = run_compile_smoke_generated_program(
+        "tl_compile_smoke_set_defs",
+        "(define (bump x) (begin (set! x (+ x 1)) x))\n(bump 41)",
+        &[
+            "bump:\n",
+            "    addq %rcx, %rax\n    movq %rax, -8(%rbp)\n    movq $0, %rax\n",
+            "    call bump\n",
+        ],
+    );
+
+    assert_eq!(
+        code,
+        Some(42),
+        "tl_compile_smoke set defs output program exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(stdout, "", "tl_compile_smoke set defs output stdout");
+    assert_eq!(stderr, "", "tl_compile_smoke set defs output stderr");
+}
+
+#[test]
 fn tl_compile_smoke_rejects_empty_begin_with_specific_diagnostic() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let selfhost_dir = manifest_dir.join("selfhost");

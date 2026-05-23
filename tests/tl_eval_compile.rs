@@ -10,9 +10,11 @@
 //! retiring the old `seq` two-arg-function workaround), USER-DEFINED FUNCTIONS plus
 //! RECURSION via top-level `(define (f x y z) body)` forms with MULTI-ARGUMENT
 //! calls, FIRST-CLASS FUNCTIONS - `lambda` and CLOSURES, the `(VClosure params
-//! body captured-env)` value - AND a tagged VALUE domain - `(defenum Value (VInt
-//! i64) (VStr String) (VClosure Sexpr Sexpr Env))` - so an expression now denotes
-//! a `VInt`, a `VStr`, or a closure rather than a raw `i64` (integer-requiring
+//! body captured-env)` value, CONS PAIRS / LINKED LISTS - `(VPair Value Value)`
+//! cells built by `cons` and projected by `car` / `cdr` - AND a tagged VALUE
+//! domain - `(defenum Value (VInt i64) (VStr String) (VClosure Sexpr Sexpr Env)
+//! (VPair Value Value))` - so an expression now denotes a `VInt`, a `VStr`, a
+//! closure, or a pair rather than a raw `i64` (integer-requiring
 //! contexts funnel through the `as-int` projection; `Value` and `Env` are mutually
 //! recursive enums, the `VClosure` carrying the env it captured). Where the
 //! lexer turns a source String into a flat `(Array Token)` and the reader consumes
@@ -599,6 +601,47 @@ fn tl_eval_tl_compiles_to_assembly() {
         asm,
     );
 
+    // CONS PAIRS / LINKED LISTS (#27): the value domain gains a `(VPair Value
+    // Value)` cons cell built by the `cons` builtin and projected by `car` / `cdr`,
+    // each dispatched in `eval-sexpr` on its head-symbol text. So the three dispatch
+    // string literals must be emitted in the read-only data alongside the other
+    // builtins.
+    for op in ["\"cons\"", "\"car\"", "\"cdr\""] {
+        assert!(
+            asm.contains(&format!(".string {op}")),
+            "tl_eval assembly is missing the dispatch string literal for the pair op {op} \
+             (cons/car/cdr):\n{}",
+            asm,
+        );
+    }
+
+    // `car` / `cdr` of a non-pair value is a type error in the interpreted program,
+    // reported by aborting via `panic` (the same channel `as-int`/`as-str` use), so
+    // each op's "not a pair" abort message must reach the read-only data.
+    for msg in ["\"car: not a pair\"", "\"cdr: not a pair\""] {
+        assert!(
+            asm.contains(&format!(".string {msg}")),
+            "tl_eval assembly is missing the {msg} type-error message (car/cdr of a non-pair):\n{}",
+            asm,
+        );
+    }
+
+    // A `VPair` is PRINTABLE: the `print` special form stays total over the value
+    // domain by emitting the placeholder `#<pair>` for a pair (a pair has no flat
+    // textual rendering), so that literal must reach the read-only data and at least
+    // one `tl_print_str` call (the host `print-string` builtin) backs it.
+    assert!(
+        asm.contains(".string \"#<pair>\""),
+        "tl_eval assembly is missing the \"#<pair>\" placeholder literal (VPair print arm):\n{}",
+        asm,
+    );
+
+    // Building a `(VPair a b)` cons cell heap-allocates a two-field node (its fields
+    // are `Value` pointers, #111), so the pair-building path goes through the
+    // runtime allocator just like the `Sexpr` tree does. (`call tl_alloc` is already
+    // asserted above for the Sexpr/token nodes; the VPair constructor adds more
+    // allocation sites — the assertion above already covers presence.)
+
     // The `begin` arm walks its sub-expression spine with `eval-seq`, which
     // evaluates each form head-first (for its side effects) and recurses on the
     // tail, returning the LAST form's value. So `eval-seq` is emitted as its own
@@ -642,12 +685,17 @@ fn tl_eval_tl_compiles_to_assembly() {
         asm,
     );
 
-    // 1024 is the printed integer witness: `main` evaluates a multi-binding `let`
-    // whose last binding computes `(pow b e) => 1024`, then prints `r` after first
-    // printing a string. The literal `1024` is built by the interpreter's
-    // arithmetic at RUNTIME (not a compile-time constant in this evaluator's own
-    // source), so we do NOT assert it appears in the assembly; the printed stdout
-    // is asserted by the Linux-gated exec test in `tests/integration.rs`.
+    // The runtime result composes a CLOSURE witness and a CONS-LIST witness:
+    // `main`'s `begin` prints the string/recursion sum (`hello world3233\n`), two
+    // closure applications (`25\n`, `15\n`), then the cons-pair witness - it builds
+    // the 3-element list `(cons 1 (cons 2 (cons 3 0)))` and the pair `(cons 10 20)`,
+    // prints the list's second element via `(car (cdr ...))` (`2\n`), the pair (as
+    // `#<pair>`), and the pair's car (`10\n`), then denotes
+    // `(+ (car (cdr (cdr lst))) (cdr p))` = `3 + 20` = `23`. All of this is computed
+    // by the interpreter at RUNTIME (not a compile-time constant in this evaluator's
+    // own source), so we do NOT assert the result appears in the assembly; the
+    // printed stdout (`hello world3233\n25\n15\n2\n#<pair>10\n`) and exit code (`23`)
+    // are asserted by the Linux-gated exec test in `tests/integration.rs`.
 
     // The comparison operators fold a bool to the 1/0 integer-truth convention,
     // so the lowered evaluator must contain at least one signed integer comparison

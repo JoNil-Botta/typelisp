@@ -3,11 +3,14 @@
 ;; following the lexer and the reader. Where the reader turns a token stream into
 ;; the cons-cell `Sexpr` tree the parens describe, this evaluator INTERPRETS that
 ;; tree - it walks the s-expression and computes the tagged VALUE it denotes
-;; (a `(VInt n)`, a `(VStr s)`, or a `(VClosure ...)`, the value domain generalised
-;; from a raw i64 so it can carry strings AND first-class functions), now with
+;; (a `(VInt n)`, a `(VStr s)`, a `(VClosure ...)`, or a `(VPair ...)`, the value
+;; domain generalised from a raw i64 so it can carry strings, first-class functions,
+;; AND cons pairs), now with
 ;; VARIABLES, a MULTI-BINDING `let` special form, an `if`, comparisons, a `begin`
-;; SEQUENCING special form, FIRST-CLASS FUNCTIONS (`lambda` + CLOSURES), AND - the
-;; milestone of a real language -
+;; SEQUENCING special form, FIRST-CLASS FUNCTIONS (`lambda` + CLOSURES), CONS PAIRS
+;; / LINKED LISTS - a `(VPair Value Value)` value built by `cons` and taken apart by
+;; `car` / `cdr`, so interpreted programs can construct heterogeneous pairs and
+;; singly-linked lists - AND - the milestone of a real language -
 ;; USER-DEFINED FUNCTIONS plus RECURSION via top-level `(define (f x y z) body)`
 ;; forms threaded through a function environment.
 ;;
@@ -61,6 +64,14 @@
 ;; are now MUTUALLY RECURSIVE enums; each is pointer-sized, so the layout stays
 ;; finite (recursive/cross-recursive enum payloads, #111/#41).
 ;;
+;; The domain ALSO carries CONS PAIRS: `(VPair Value Value)` is a two-field cell
+;; holding any two `Value`s (its fields are `Value` pointers, #111). `cons` builds
+;; one, `car` / `cdr` project its first / second field. A singly-linked LIST is the
+;; classic right-nested chain `(cons 1 (cons 2 (cons 3 0)))` whose final `cdr` is
+;; the integer `0` used as the empty-list sentinel (NIL) - this slice deliberately
+;; reuses `(VInt 0)` as nil rather than adding a dedicated variant, so no
+;; `null?`/`nil` builtin is introduced yet (see the dispatch arms).
+;;
 ;; `eval-sexpr` returns a `Value`, the environment binds `Value`s, and the
 ;; arithmetic / comparison / `if`-condition contexts that require an integer go
 ;; through `as-int`, which projects a `VInt` and aborts on a non-integer ("type
@@ -69,7 +80,8 @@
 (defenum Value
   (VInt i64)
   (VStr String)
-  (VClosure Sexpr Sexpr Env))
+  (VClosure Sexpr Sexpr Env)
+  (VPair Value Value))
 
 ;; as-int: project the i64 out of a `Value`, used wherever an INTEGER is required
 ;; - the operands of arithmetic / comparison operators and the condition of `if`.
@@ -80,7 +92,8 @@
   (match v
     [(VInt n) n]
     [(VStr _) (begin (panic "type error: expected int") 0)]
-    [(VClosure _ _ _) (begin (panic "type error: expected int") 0)]))
+    [(VClosure _ _ _) (begin (panic "type error: expected int") 0)]
+    [(VPair _ _) (begin (panic "type error: expected int") 0)]))
 
 ;; as-str: the STRING counterpart of `as-int` - project the String out of a
 ;; `Value`, used wherever a string operand is required (the `string-length` /
@@ -92,7 +105,8 @@
   (match v
     [(VStr s) s]
     [(VInt _) (begin (panic "type error: expected string") "")]
-    [(VClosure _ _ _) (begin (panic "type error: expected string") "")]))
+    [(VClosure _ _ _) (begin (panic "type error: expected string") "")]
+    [(VPair _ _) (begin (panic "type error: expected string") "")]))
 
 ;; --------------------------------------------------------------------------
 ;; The lexical environment: a cons-cell association list (refs #27/#111).
@@ -529,6 +543,14 @@
                      (sexpr-expect-nil restp)
                      (let ([v : Value (eval-sexpr arg env fenv)])
                        (begin
+                         ;; A `VPair` has no flat textual rendering here (printing
+                         ;; a whole list would need a recursive walk and a
+                         ;; delimiter convention - deferred), so it emits the
+                         ;; placeholder `#<pair>` rather than aborting: `print`
+                         ;; stays TOTAL over every `Value` shape, and a pair in an
+                         ;; integer/string CONTEXT is still a type error via
+                         ;; `as-int` / `as-str`. Inspect a pair's contents with
+                         ;; `car` / `cdr` instead.
                          (match v
                            [(VInt n) (print n)]
                            [(VStr s) (print-string s)]
@@ -537,7 +559,8 @@
                            ;; trailing newline - like the `VStr` arm) rather than
                            ;; aborting; the closure value is still RETURNED so
                            ;; `(print f)` composes.
-                           [(VClosure _ _ _) (print-string "#<closure>")])
+                           [(VClosure _ _ _) (print-string "#<closure>")]
+                           [(VPair _ _) (print-string "#<pair>")])
                          v))))
                  (if (string-eq name "string-length")
                      ;; STRING OP `(string-length s)`: rest is `(SCons s SNil)`.
@@ -634,6 +657,57 @@
                                        (VStr (string-append
                                               (as-str (eval-sexpr ae env fenv))
                                               (as-str (eval-sexpr be env fenv)))))))
+                             (if (string-eq name "cons")
+                                 ;; CONS PAIR `(cons a b)`: rest is
+                                 ;; `(SCons a (SCons b SNil))`. Evaluate BOTH
+                                 ;; argument sub-exprs (in the current env, so
+                                 ;; nested calls resolve) into `Value`s and pack
+                                 ;; them into a fresh `(VPair a-val b-val)` cell -
+                                 ;; the heap-allocated two-field cons cell of the
+                                 ;; interpreted language. No `as-int`/`as-str`
+                                 ;; projection: a pair holds ANY two values
+                                 ;; (ints, strings, or further pairs), which is
+                                 ;; exactly what makes a singly-linked LIST a
+                                 ;; right-nested chain of pairs.
+                                 (let ([ae : Sexpr (sexpr-head rest)]
+                                       [restC : Sexpr (sexpr-tail rest)])
+                                   (let ([be : Sexpr (sexpr-head restC)]
+                                         [restC2 : Sexpr (sexpr-tail restC)])
+                                     (begin
+                                       (sexpr-expect-nil restC2)
+                                       (VPair (eval-sexpr ae env fenv)
+                                              (eval-sexpr be env fenv)))))
+                             (if (string-eq name "car")
+                                 ;; CAR `(car p)`: rest is `(SCons p SNil)`.
+                                 ;; Evaluate the single argument and project the
+                                 ;; FIRST field of the pair. A non-pair value in
+                                 ;; car position is a type error in the interpreted
+                                 ;; program - abort via `panic` (the same channel
+                                 ;; `as-int` / `as-str` use). `(VInt 0)` is the
+                                 ;; neutral fall-through after the panic.
+                                 (let ([pe : Sexpr (sexpr-head rest)]
+                                       [restR : Sexpr (sexpr-tail rest)])
+                                   (begin
+                                     (sexpr-expect-nil restR)
+                                     (match (eval-sexpr pe env fenv)
+                                       [(VPair a _) a]
+                                       [(VInt _) (begin (panic "car: not a pair") (VInt 0))]
+                                       [(VStr _) (begin (panic "car: not a pair") (VInt 0))]
+                                       [(VClosure _ _ _) (begin (panic "car: not a pair") (VInt 0))])))
+                             (if (string-eq name "cdr")
+                                 ;; CDR `(cdr p)`: rest is `(SCons p SNil)`.
+                                 ;; Evaluate the single argument and project the
+                                 ;; SECOND field of the pair - the REST of a list.
+                                 ;; A non-pair value is a type error - abort.
+                                 (let ([pe : Sexpr (sexpr-head rest)]
+                                       [restD : Sexpr (sexpr-tail rest)])
+                                   (begin
+                                     (sexpr-expect-nil restD)
+                                     (match (eval-sexpr pe env fenv)
+                                       [(VPair _ d) d]
+                                       [(VInt _) (begin (panic "cdr: not a pair") (VInt 0))]
+                                       [(VStr _) (begin (panic "cdr: not a pair") (VInt 0))]
+                                       [(VClosure _ _ _) (begin (panic "cdr: not a pair") (VInt 0))])))
                              (if (is-builtin-op name)
                                  ;; A builtin binary call form `(op arg1 arg2)`: rest is
                                  ;; `(SCons arg1 (SCons arg2 SNil))`. Both operands must be
@@ -668,7 +742,7 @@
                                      (apply-value (lookup env name) rest env fenv)
                                      (let ([params : Sexpr (lookup-fn-params fenv name)]
                                            [body : Sexpr (lookup-fn-body fenv name)])
-                                       (eval-sexpr body (bind-args params rest env fenv) fenv)))))))))))))))]
+                                       (eval-sexpr body (bind-args params rest env fenv) fenv))))))))))))))))))]
     ;; APPLICATION OF A COMPUTED OPERATOR `((<expr>) a b ...)`: the head is itself
     ;; a non-symbol form (a `lambda` literal, or any expression that evaluates to a
     ;; closure), so it falls through the symbol-head arm. Evaluate the head form in
@@ -710,7 +784,8 @@
     [(VClosure params body captured)
      (eval-sexpr body (bind-args-onto params args caller fenv captured) fenv)]
     [(VInt _) (begin (panic "eval: cannot apply a non-function value") (VInt 0))]
-    [(VStr _) (begin (panic "eval: cannot apply a non-function value") (VInt 0))]))
+    [(VStr _) (begin (panic "eval: cannot apply a non-function value") (VInt 0))]
+    [(VPair _ _) (begin (panic "eval: cannot apply a non-function value") (VInt 0))]))
 
 ;; --------------------------------------------------------------------------
 ;; bind-args: zip a parameter list against an argument-expression list (#27).
@@ -857,57 +932,57 @@
 ;; --------------------------------------------------------------------------
 ;; main: the whole front end composed - lex, read MANY forms, interpret with
 ;; MULTI-ARGUMENT user functions, recursion, multi-binding `let`, string ops, the
-;; `begin` sequencing form, AND (the new milestone) FIRST-CLASS FUNCTIONS -
-;; `lambda` and CLOSURES.
+;; `begin` sequencing form, FIRST-CLASS FUNCTIONS (`lambda` + CLOSURES), AND CONS
+;; PAIRS / LINKED LISTS.
 ;; --------------------------------------------------------------------------
 ;; `(run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1)))))
+;;                (define (second xs) (car (cdr xs)))
 ;;                (begin
 ;;                  (let ((s \"hello world\") ...)
 ;;                    (begin (print t) (print (+ ...)) (+ ...)))
 ;;                  (print ((lambda (x) (* x x)) 5))
 ;;                  (print (let ((n 10)) ((lambda (x) (+ x n)) 5)))
-;;                  (let ((f (lambda (x) (+ x 1)))) (f 41)))")`:
-;;   - the program starts with a recursive TWO-parameter `define` of `pow`, then a
-;;     trailing `(begin ...)` SPECIAL FORM. The first `begin` arm is the previous
-;;     string/recursion witness: a MULTI-BINDING `let` rebuilds `"hello world"`
-;;     from `substring` slices via nested `string-append`, appends
+;;                  (let ((lst (cons 1 (cons 2 (cons 3 0)))) (p (cons 10 20)))
+;;                    (begin (print (second lst)) (print p) (print (car p))
+;;                           (+ (car (cdr (cdr lst))) (cdr p))))))")`:
+;;   - the program starts with a recursive TWO-parameter `define` of `pow` and the
+;;     ONE-parameter `define` of `second` (just `(car (cdr xs))` - a list accessor
+;;     built FROM the new pair primitives), then a trailing `(begin ...)` SPECIAL
+;;     FORM with FOUR sub-expressions walked head-first by `eval-seq`.
+;;   - FIRST arm (string/recursion witness): a MULTI-BINDING `let` rebuilds
+;;     `"hello world"` from `substring` slices via nested `string-append`, appends
 ;;     `(int->string (pow 2 n))` to produce `"hello world32"`, prints that string,
-;;     prints the parsed/string-equality sum `33`, and returns that same `33`.
-;;     This keeps runtime coverage for top-level function calls, recursion,
-;;     multi-argument binding, the string toolkit, and `begin` sequencing.
-;;   - SECOND `((lambda (x) (* x x)) 5)`: the operator is itself a `(lambda ...)`
-;;     form, so it falls through the symbol-head dispatch to the COMPUTED-OPERATOR
-;;     arm `(SCons head rest)`. Evaluating the head yields `(VClosure (x) (* x x)
-;;     <env>)`; `apply-value` zips its one parameter `x` against the argument `5`
-;;     (bound onto the captured env via `bind-args-onto`) and evaluates `(* x x)`
-;;     in that env -> `(VInt 25)`. `(print 25)` writes `25\n` (the `VInt` arm, host
-;;     `print`).
+;;     prints the parsed/string-equality sum `33`, and returns `33` - keeping
+;;     runtime coverage for top-level calls, recursion, the string toolkit, and
+;;     `begin`. STDOUT so far: `hello world3233\n`.
+;;   - SECOND `((lambda (x) (* x x)) 5)`: a COMPUTED OPERATOR. The head is a
+;;     `(lambda ...)` form, so it falls through to the `(SCons head rest)` arm;
+;;     evaluating it yields a `(VClosure (x) (* x x) <env>)` that `apply-value`
+;;     applies to `5` -> `(VInt 25)`. `(print 25)` writes `25\n`.
 ;;   - THIRD `(let ((n 10)) ((lambda (x) (+ x n)) 5))`: a CLOSURE OVER A FREE
-;;     VARIABLE. The lambda is evaluated with `n -> (VInt 10)` in scope, so the
-;;     `(VClosure ...)` CAPTURES that env. Applying it to `5` binds `x -> 5` onto
-;;     the captured env, so the body `(+ x n)` resolves the free `n` to the captured
-;;     `10` -> `(VInt 15)`. This is the load-bearing proof of CLOSURE CAPTURE: the
-;;     free `n` is NOT in the argument list, it comes from the environment captured
-;;     at lambda-creation time. `(print 15)` writes `15\n`.
-;;   - FOURTH `(let ((f (lambda (x) (+ x 1)))) (f 41))`: a closure BOUND TO A LET
-;;     VARIABLE and called BY NAME. The head `f` is a symbol, but it names a
-;;     closure-valued VARIABLE in `env` (not a top-level `define`), so the symbol-
-;;     head call path's `env-has` probe routes it to `apply-value` on the looked-up
-;;     `VClosure` rather than a `fenv` lookup. `(+ x 1)` with `x -> 41` -> `(VInt 42)`.
-;;   - `begin` walks the four sub-expressions head-first via `eval-seq`, returning
-;;     the LAST, `(VInt 42)`, so the whole program denotes `42`. STDOUT is
-;;     `hello world3233\n25\n15\n`; printing to stdout escapes the mod-256
-;;     exit-code ceiling, and the exit code is the wrapped `42 & 0xff = 42`.
-;; This program proves the evaluator now has FIRST-CLASS FUNCTIONS: a `lambda`
-;; special form that builds a `(VClosure params body captured-env)` VALUE capturing
-;; the current lexical env; APPLICATION of a closure whether it appears as a
-;; computed operator `((lambda ...) a)` (the `(SCons head rest)` arm) or as a
-;; closure-valued variable in head position `(f a)` (the `env-has` route); and true
-;; CLOSURE SEMANTICS - a body's free variables resolve through the CAPTURED env via
-;; the generalised `bind-args-onto`, which layers the parameters over that captured
-;; env. `Value` and `Env` are now mutually recursive enums (a `VClosure` carries an
-;; `Env`, an `EBind` carries a `Value`), each pointer-sized so the layout stays
-;; finite. (Deferred: variadic arity; string-literal escapes; recursive lambdas
-;; bound by name - top-level `define` recursion already covers self-reference.)
+;;     VARIABLE. The lambda CAPTURES `n -> 10`; applying it to `5` binds `x -> 5`
+;;     onto the captured env so `(+ x n)` -> `(VInt 15)`. `(print 15)` writes
+;;     `15\n` - the load-bearing closure-capture proof.
+;;   - FOURTH (the CONS-PAIR / LINKED-LIST witness): `lst` is the 3-element
+;;     singly-linked list `(cons 1 (cons 2 (cons 3 0)))` - a right-nested chain of
+;;     `(VPair ...)` cells terminated by the `0` NIL sentinel - and `p` is the
+;;     heterogeneous pair `(cons 10 20)`. The inner `begin` prints the list's
+;;     second element via `(second lst)` = `(car (cdr lst))` (`2\n`), the pair as
+;;     the placeholder `#<pair>` (no newline - a pair has no flat textual form),
+;;     and the pair's car `10\n`, then denotes the UNPRINTED
+;;     `(+ (car (cdr (cdr lst))) (cdr p))` = `3 + 20` = `(VInt 23)`.
+;;   - the outer `begin` returns the LAST arm, `(VInt 23)`, so the whole program
+;;     denotes `23`. STDOUT is `hello world3233\n25\n15\n2\n#<pair>10\n`; printing
+;;     to stdout escapes the mod-256 exit-code ceiling, and the exit code is `23`.
+;; This program proves the evaluator now has BOTH FIRST-CLASS FUNCTIONS - a
+;; `lambda` special form building a `(VClosure params body captured-env)`, applied
+;; as a computed operator or a closure-valued variable, with true CLOSURE capture
+;; via `bind-args-onto` - AND CONS PAIRS / LINKED LISTS: `cons` builds a
+;; `(VPair ...)`, `car` / `cdr` project it (the pair PRINTS as `#<pair>`), and a
+;; right-nested chain of pairs terminated by `0` (NIL) is a singly-linked list
+;; walked with composed `car`/`cdr`. `Value` and `Env` are mutually recursive
+;; enums (a `VClosure` carries an `Env`, an `EBind` carries a `Value`), each
+;; pointer-sized so the layout stays finite. (Deferred: variadic arity;
+;; string-literal escapes; a dedicated nil/`null?`; recursive list printing.)
 (define (main) : i64
-  (run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (begin (let ((s \"hello world\") (h (substring s 0 5)) (w (substring s 6 5)) (n (string-length h)) (g (string-append h (string-append \" \" w))) (t (string-append g (int->string (pow 2 n))))) (begin (print t) (print (+ (string->int (substring t 11 2)) (string-eq g s))) (+ (string->int (substring t 11 2)) (string-eq g s)))) (print ((lambda (x) (* x x)) 5)) (print (let ((n 10)) ((lambda (x) (+ x n)) 5))) (let ((f (lambda (x) (+ x 1)))) (f 41)))"))
+  (run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (define (second xs) (car (cdr xs))) (begin (let ((s \"hello world\") (h (substring s 0 5)) (w (substring s 6 5)) (n (string-length h)) (g (string-append h (string-append \" \" w))) (t (string-append g (int->string (pow 2 n))))) (begin (print t) (print (+ (string->int (substring t 11 2)) (string-eq g s))) (+ (string->int (substring t 11 2)) (string-eq g s)))) (print ((lambda (x) (* x x)) 5)) (print (let ((n 10)) ((lambda (x) (+ x n)) 5))) (let ((lst (cons 1 (cons 2 (cons 3 0)))) (p (cons 10 20))) (begin (print (second lst)) (print p) (print (car p)) (+ (car (cdr (cdr lst))) (cdr p)))))"))

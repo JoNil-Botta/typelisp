@@ -27,10 +27,11 @@
 ;; `main`-bearing file is a runnable demo.
 
 ;; The shared token model: the `Token` enum and the `token-tag` / `token-int` /
-;; `token-sym` accessors and tag constants. Resolved relative to this file, so
-;; it finds the co-located `token.tl`. This is a transitive import: the reader
-;; imports this module, which imports `token.tl`; the loader's post-order DFS
-;; loads `token.tl` first, then this module, then the reader.
+;; `token-sym` / `token-str` / `token-char` accessors and tag constants.
+;; Resolved relative to this file, so it finds the co-located `token.tl`. This
+;; is a transitive import: the reader imports this module, which imports
+;; `token.tl`; the loader's post-order DFS loads `token.tl` first, then this
+;; module, then the reader.
 (import "token.tl")
 
 ;; ASCII code point of a char, e.g. the digit char `7` -> 55.
@@ -145,17 +146,128 @@
             (set! keep false)))
       j)))
 
+;; A named character literal starts after `#\` only when the first TWO chars are
+;; alphabetic. This matches the Rust lexer and keeps `#\n'` as the newline escape
+;; instead of trying to read the one-letter name `n`.
+(define (starts-named-char [src : String] [start : i64] [n : i64]) : bool
+  (if (< (+ start 1) n)
+      (if (is-alpha (string-ref src start))
+          (is-alpha (string-ref src (+ start 1)))
+          false)
+      false))
+
+;; Return the end index (exclusive) of a named char's alphabetic name.
+(define (scan-char-name-end [src : String] [start : i64] [n : i64]) : i64
+  (let ([j : i64 start]
+        [keep : bool true])
+    (begin
+      (while keep
+        (if (< j n)
+            (if (is-alpha (string-ref src j))
+                (set! j (+ j 1))
+                (set! keep false))
+            (set! keep false)))
+      j)))
+
+;; Require a closing `'` at `idx`; malformed char literals abort like other
+;; lexer errors.
+(define (require-char-close [src : String] [idx : i64] [n : i64]) : unit
+  (if (< idx n)
+      (if (= (code (string-ref src idx)) 39)
+          unit
+          (panic "lexer: expected ' after character"))
+      (panic "lexer: unterminated character literal")))
+
+;; Map a multi-letter `#\name'` character literal to its character payload.
+(define (named-char [name : String]) : char
+  (if (string-eq name "space")
+      #\space'
+      (if (string-eq name "newline")
+          #\newline'
+          (if (string-eq name "tab")
+              #\tab'
+              (if (string-eq name "return")
+                  #\return'
+                  (if (string-eq name "nul")
+                      #\nul'
+                      (begin
+                        (panic "lexer: unknown named character literal")
+                        #\nul')))))))
+
+;; Map single-character escapes after `#\`; unknown escapes read as the literal
+;; character, matching stage0 (`#\a'` is `a`).
+(define (escaped-char [c : char]) : char
+  (let ([k : i64 (code c)])
+    (if (= k 110)
+        #\newline'
+        (if (= k 116)
+            #\tab'
+            (if (= k 114)
+                #\return'
+                (if (= k 48)
+                    #\nul'
+                    c))))))
+
+;; Character payload for a literal beginning at `i`, where `src[i]` is `#`.
+(define (char-literal-value [src : String] [i : i64] [n : i64]) : char
+  (if (< (+ i 1) n)
+      (if (= (code (string-ref src (+ i 1))) 92)
+          (let ([start : i64 (+ i 2)])
+            (if (< start n)
+                (if (starts-named-char src start n)
+                    (let ([end : i64 (scan-char-name-end src start n)])
+                      (begin
+                        (require-char-close src end n)
+                        (named-char (substring src start (- end start)))))
+                    (begin
+                      (require-char-close src (+ start 1) n)
+                      (escaped-char (string-ref src start))))
+                (begin
+                  (panic "lexer: unterminated character literal")
+                  #\nul')))
+          (begin
+            (require-char-close src (+ i 2) n)
+            (string-ref src (+ i 1))))
+      (begin
+        (panic "lexer: unterminated character literal")
+        #\nul')))
+
+;; Index just after the closing `'` for a char literal beginning at `i`.
+(define (char-literal-end [src : String] [i : i64] [n : i64]) : i64
+  (if (< (+ i 1) n)
+      (if (= (code (string-ref src (+ i 1))) 92)
+          (let ([start : i64 (+ i 2)])
+            (if (< start n)
+                (if (starts-named-char src start n)
+                    (let ([end : i64 (scan-char-name-end src start n)])
+                      (begin
+                        (require-char-close src end n)
+                        (+ end 1)))
+                    (begin
+                      (require-char-close src (+ start 1) n)
+                      (+ start 2)))
+                (begin
+                  (panic "lexer: unterminated character literal")
+                  n)))
+          (begin
+            (require-char-close src (+ i 2) n)
+            (+ i 3)))
+      (begin
+        (panic "lexer: unterminated character literal")
+        n)))
+
 ;; Lex `src`, recording each emitted `Token` value into `toks` (which must be
 ;; large enough to hold every token plus the TEnd sentinel) and returning the
 ;; token count. A `(` / `)` is a single-char paren token; a digit run is sliced
 ;; with `substring` and parsed with `string->int` into a `(TInt ...)`; a `"`
 ;; opens a string literal whose inner text is sliced with `substring` into a
-;; `(TStr ...)` (closing quote skipped); a `;` opens a line comment that is
+;; `(TStr ...)` (closing quote skipped); a `#` opens a char literal whose
+;; payload is recorded as `(TChar ...)`; a `;` opens a line comment that is
 ;; skipped to end-of-line and emits NO token; a symbol run is sliced with
 ;; `substring` into a `(TSym ...)`; an unexpected char aborts via `panic`. The
-;; `"` and `;` cases are tested BEFORE the symbol path so they are not lexed as
-;; symbol chars. The terminating `TEnd` is recorded so a parser's cursor always
-;; has a sentinel to stop on.
+;; `"`, `#`, and `;` cases are tested BEFORE the symbol path so they are not
+;; lexed as symbol chars. The terminating `TEnd` is recorded so a parser's cursor
+;; always has a sentinel to stop on.
 (define (lex-into [src : String] [toks : (Array Token)]) : i64
   (let ([i : i64 0]
         [n : i64 (string-length src)]
@@ -190,25 +302,32 @@
                               ;; Skip to end-of-line; emit no token. The newline
                               ;; (if any) is left for the whitespace skip.
                               (set! i (scan-comment-end src (+ i 1) n))
-                              (if (is-digit c)
-                                  ;; A digit run -> one TInt, parsed from its substring.
-                                  (let ([end : i64 (scan-int-end src i n)])
-                                    (begin
-                                      (array-set! toks count
-                                        (TInt (string->int (substring src i (- end i)))))
-                                      (set! count (+ count 1))
-                                      (set! i end)))
-                                  (if (is-symbol-char c)
-                                      ;; A symbol run -> one TSym carrying its lexeme.
-                                      (let ([end : i64 (scan-symbol-end src i n)])
+                              (if (= (code c) 35)  ; '#' - a char literal
+                                  (let ([value : char (char-literal-value src i n)])
+                                    (let ([end : i64 (char-literal-end src i n)])
+                                      (begin
+                                        (array-set! toks count (TChar value))
+                                        (set! count (+ count 1))
+                                        (set! i end))))
+                                  (if (is-digit c)
+                                      ;; A digit run -> one TInt, parsed from its substring.
+                                      (let ([end : i64 (scan-int-end src i n)])
                                         (begin
                                           (array-set! toks count
-                                            (TSym (substring src i (- end i))))
+                                            (TInt (string->int (substring src i (- end i)))))
                                           (set! count (+ count 1))
                                           (set! i end)))
-                                      (begin
-                                        (panic "lexer: unexpected character")
-                                        (set! i (+ i 1))))))))))))
+                                      (if (is-symbol-char c)
+                                          ;; A symbol run -> one TSym carrying its lexeme.
+                                          (let ([end : i64 (scan-symbol-end src i n)])
+                                            (begin
+                                              (array-set! toks count
+                                                (TSym (substring src i (- end i))))
+                                              (set! count (+ count 1))
+                                              (set! i end)))
+                                          (begin
+                                            (panic "lexer: unexpected character")
+                                            (set! i (+ i 1)))))))))))))
       ;; A real lexer terminates the stream; record the sentinel too.
       (array-set! toks count TEnd)
       count)))

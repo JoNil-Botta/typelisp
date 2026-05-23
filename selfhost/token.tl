@@ -4,7 +4,7 @@
 ;; This is the token vocabulary for the *self-hosting front end proper*: not the
 ;; arithmetic-calculator surface (`+ - * /` as distinct operator tokens, in
 ;; `token.tl`/`calc.tl`), but the surface TypeLisp source is actually written in
-;; - balanced parentheses, integer literals, and *symbols*. In an s-expression
+;; - balanced parentheses, integer/char/string literals, and *symbols*. In an s-expression
 ;; language an operator like `+`, a comparison like `<=`, a keyword like
 ;; `define`, and a name like `string->int` are ALL one token kind: a symbol. So
 ;; the kinds collapse to parens / int / symbol / end-of-stream, and the lexer's
@@ -29,15 +29,17 @@
 ;; The token kinds TypeLisp's s-expression surface needs: an opening paren, a
 ;; closing paren, an integer literal, a symbol (any operator / keyword / name -
 ;; carries the sliced lexeme text), a string literal (`"..."`, carries the
-;; sliced inner text), and an end-of-stream sentinel. `TStr` is appended last so
-;; the existing variants/tags keep their stable ordering for every importer.
+;; sliced inner text), a character literal (`#x'` / `#\x'`, carries the char),
+;; and an end-of-stream sentinel. `TStr` and `TChar` are appended last so the
+;; existing variants/tags keep their stable ordering for every importer.
 (defenum Token
   (TLParen)
   (TRParen)
   (TInt i64)
   (TSym String)
   (TEnd)
-  (TStr String))
+  (TStr String)
+  (TChar char))
 
 ;; Numeric tag for a token kind: a parser's cursor classifies the token under it
 ;; by tag. Exercises `match` over every Token variant, including the
@@ -49,7 +51,8 @@
     [(TInt _) 3]
     [(TSym _) 4]
     [(TEnd) 5]
-    [(TStr _) 6]))
+    [(TStr _) 6]
+    [(TChar _) 7]))
 
 ;; Integer payload of a TInt token (0 for any other kind): projects the literal
 ;; value back out of the enum, the way a parser reads a numeric literal.
@@ -60,7 +63,8 @@
     [(TInt v) v]
     [(TSym _) 0]
     [(TEnd) 0]
-    [(TStr _) 0]))
+    [(TStr _) 0]
+    [(TChar _) 0]))
 
 ;; Symbol text of a TSym token (the empty string for any other kind): projects
 ;; the sliced lexeme back out of the enum, the way a parser reads a symbol/name.
@@ -71,7 +75,8 @@
     [(TInt _) ""]
     [(TSym s) s]
     [(TEnd) ""]
-    [(TStr _) ""]))
+    [(TStr _) ""]
+    [(TChar _) ""]))
 
 ;; String text of a TStr token (the empty string for any other kind): projects
 ;; the sliced inner text of a `"..."` literal back out of the enum, the way a
@@ -84,7 +89,21 @@
     [(TInt _) ""]
     [(TSym _) ""]
     [(TEnd) ""]
-    [(TStr s) s]))
+    [(TStr s) s]
+    [(TChar _) ""]))
+
+;; Character payload of a TChar token (NUL for any other kind): projects the
+;; read character back out of the enum while keeping char atoms distinct from
+;; symbols, ints, and strings.
+(define (token-char [t : Token]) : char
+  (match t
+    [(TLParen) #\nul']
+    [(TRParen) #\nul']
+    [(TInt _) #\nul']
+    [(TSym _) #\nul']
+    [(TEnd) #\nul']
+    [(TStr _) #\nul']
+    [(TChar c) c]))
 
 ;; ---- Token-kind tag constants (kept in sync with `token-tag`). ----
 ;; A parser compares a token's tag against these to drive its descent.
@@ -94,3 +113,4 @@
 (define (tag-sym) : i64 4)
 (define (tag-end) : i64 5)
 (define (tag-str) : i64 6)
+(define (tag-char) : i64 7)

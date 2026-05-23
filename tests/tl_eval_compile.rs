@@ -252,6 +252,61 @@ fn tl_eval_tl_compiles_to_assembly() {
         asm,
     );
 
+    // STRING OPERATIONS (#27): the interpreter exposes the host string builtins
+    // `string-length` / `substring` / `string-eq` as dispatch arms in
+    // `eval-sexpr`, keyed on the head symbol text. Each evaluates its argument
+    // sub-exprs, projects them to the host shape (a String via the new `as-str`
+    // companion of `as-int`, an i64 via `as-int`), calls the host builtin, and
+    // re-wraps the result as a tagged `Value`. So `as-str` must be emitted as its
+    // own function, and its type-error abort message (a `VInt` where a string is
+    // required) must reach the read-only data.
+    assert!(
+        asm.contains("_tl_as_str:"),
+        "tl_eval assembly is missing the as-str projection (string-op operand unwrap):\n{}",
+        asm,
+    );
+    assert!(
+        asm.contains(".string \"type error: expected string\""),
+        "tl_eval assembly is missing the as-str type-error message (VInt in string context):\n{}",
+        asm,
+    );
+
+    // The string ops are dispatched on their head-symbol text, so each op's
+    // string literal must be emitted in the read-only data: `"string-length"`
+    // (1 arg -> VInt byte count), `"substring"` (3 args -> VStr slice), and
+    // `"string-eq"` (2 args -> VInt 1/0). Note `"string-eq"` is ALSO the operator-
+    // dispatch builtin's name, but here it is the interpreted-language head symbol
+    // the evaluator recognises.
+    for op in ["\"string-length\"", "\"substring\"", "\"string-eq\""] {
+        assert!(
+            asm.contains(&format!(".string {op}")),
+            "tl_eval assembly is missing the dispatch string literal for the string op {op}:\n{}",
+            asm,
+        );
+    }
+
+    // The `substring` dispatch arm lowers the host `substring` builtin to a call
+    // into the emit-on-demand runtime `tl_substring` (a heap-allocated, runtime
+    // bounds-checked slice). Its definition and at least one call site must be
+    // present. (The imported lexer also slices lexemes with `substring`, so this
+    // helper is shared; the evaluator's own string-op arm adds a further call.)
+    assert!(
+        asm.contains("tl_substring:"),
+        "tl_eval assembly is missing the tl_substring runtime helper (substring string op):\n{}",
+        asm,
+    );
+    assert!(
+        asm.contains("call tl_substring"),
+        "tl_eval assembly shows no substring call (substring string op not lowered):\n{}",
+        asm,
+    );
+
+    // The `string-length` dispatch arm lowers the host `string-length` builtin.
+    // Its byte-count is computed inline (the String's length field) rather than via
+    // a dedicated runtime helper, so we assert the dispatch literal (above) plus the
+    // `as-str` unwrap (above) cover its wiring; no `tl_string_length:` symbol is
+    // required.
+
     // EXHAUSTIVE over the SStr variant (#27/#128) AND the value domain (#27): the
     // reader's `(SStr String)` atom now evaluates to a first-class `(VStr s)`
     // VALUE rather than aborting, so the old "eval: strings not supported" panic is

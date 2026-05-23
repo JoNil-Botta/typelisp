@@ -103,6 +103,20 @@ make `stdlib/string.tl` reachable relative to the importing file, or use an
 absolute path. TypeLisp does not yet have a compiler stdlib search path, package
 manifest, dependency resolver, or implicit prelude.
 
+### Enum and struct namespace rules
+
+TypeLisp keeps **type names** and **value names** in separate namespaces:
+
+- **Type namespace**: enum and struct type names share one namespace, so
+  `defenum Shape` and `defstruct Shape` collide.
+- **Value namespace**: functions, variables (`define`), `extern`s, struct
+  constructors, and enum *variant* constructors all share one namespace, so a
+  variant `Foo` cannot coexist with a function, variable, or `extern` named
+  `Foo`, even if they belong to different enums.
+- An enum *type* name may intentionally share a name with one of its own
+  variants (e.g. `defenum Result (Result i64) (Err String)`), because the type
+  and the constructor live in different namespaces.
+
 ### Expression forms
 
 `if`, `let`, `while`, `begin`, `set!`, `match` (incl. nested/recursive enum

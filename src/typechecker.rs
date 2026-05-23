@@ -1857,6 +1857,95 @@ mod tests {
     }
 
     #[test]
+    fn test_typecheck_enum_type_may_share_name_with_own_variant_ok() {
+        // Type names and value names live in separate namespaces, so an enum
+        // type may have a variant with the same name.
+        let prog = parse(
+            r#"
+            (defenum Shape (Shape i64) (Circle))
+            (define (make [x : i64]) : Shape (Shape x))
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        assert!(tc.check_program(&prog).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_variant_collides_with_function_error() {
+        let prog = parse(
+            r#"
+            (defenum A (Foo))
+            (define (Foo [x : i64]) : i64 x)
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(
+            err.msg.contains("duplicate top-level name 'Foo'"),
+            "err: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_typecheck_variant_collides_with_define_error() {
+        let prog = parse(
+            r#"
+            (defenum A (Foo))
+            (define Foo : i64 42)
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(
+            err.msg.contains("duplicate top-level name 'Foo'"),
+            "err: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_typecheck_variant_collides_with_extern_error() {
+        let prog = parse(
+            r#"
+            (defenum A (Foo))
+            (extern Foo : (-> i64 i64))
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(
+            err.msg.contains("duplicate top-level name 'Foo'"),
+            "err: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_typecheck_variant_collides_with_struct_constructor_error() {
+        // Struct names are constructors in the value namespace, so they collide
+        // with enum variants of the same name.
+        let prog = parse(
+            r#"
+            (defenum A (Foo))
+            (defstruct Foo (x i64))
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(
+            err.msg.contains("duplicate top-level name 'Foo'"),
+            "err: {}",
+            err
+        );
+    }
+
+    #[test]
     fn test_typecheck_builtin_shadowing_not_duplicate() {
         // Built-ins are allowed to be shadowed by user-defined names.
         let prog = parse(

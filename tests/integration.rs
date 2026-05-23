@@ -71,6 +71,12 @@ fn type_lisp_programs_compile_link_and_run() {
             deps: &[],
         },
         Case {
+            name: "global_initializer",
+            exit_code: 120,
+            stdout: "",
+            deps: &[],
+        },
+        Case {
             name: "control_flow",
             exit_code: 15,
             stdout: "",
@@ -434,6 +440,12 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         Case {
             name: "fibonacci",
             exit_code: 13,
+            stdout: "",
+            deps: &[],
+        },
+        Case {
+            name: "global_initializer",
+            exit_code: 120,
             stdout: "",
             deps: &[],
         },

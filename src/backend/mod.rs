@@ -147,21 +147,20 @@ fn validate_global(name: &str, ty: &Type, init: Option<&Value>) -> Result<(), St
         ));
     }
 
-    let Some(init) = init else {
-        return Err(format!(
-            "backend: global '{}' has a non-constant initializer. \
-             Global code generation currently supports literal initializers only.",
-            name
-        ));
-    };
-
-    if global_initializer_matches_type(init, ty) {
-        Ok(())
+    if let Some(init) = init {
+        if global_initializer_matches_type(init, ty) {
+            Ok(())
+        } else {
+            Err(format!(
+                "backend: global '{}' has unsupported initializer {:?} for type {}",
+                name, init, ty
+            ))
+        }
     } else {
-        Err(format!(
-            "backend: global '{}' has unsupported initializer {:?} for type {}",
-            name, init, ty
-        ))
+        // Non-constant initializer: the global is zero-initialized in .bss
+        // and a __global_init_<name> function computes and stores the value
+        // at startup before main.
+        Ok(())
     }
 }
 
@@ -969,6 +968,37 @@ impl X86_64Backend {
             self.emit("    movq %rax, .L_tl_argc(%rip)");
             self.emit("    leaq 8(%rsp), %rax");
             self.emit("    movq %rax, .L_tl_argv(%rip)");
+        }
+        // Initialize non-constant globals: call their __global_init_* function
+        // and store the returned value (in %rax for integers, %xmm0 for f64).
+        for (name, ty, init) in &program.globals {
+            if init.is_some() {
+                continue;
+            }
+            let init_fn = format!("__global_init_{}", name);
+            if program.functions.iter().any(|f| f.name == init_fn) {
+                self.emit(&format!("    call {}", Self::mangle_name(&init_fn)));
+                let symbol = Self::mangle_name(name);
+                match ty {
+                    Type::F64 => {
+                        self.emit(&format!("    movsd %xmm0, {}(%rip)", symbol));
+                    }
+                    Type::I64 | Type::U64 => {
+                        self.emit(&format!("    movq %rax, {}(%rip)", symbol));
+                    }
+                    Type::I32 | Type::U32 => {
+                        self.emit(&format!("    movl %eax, {}(%rip)", symbol));
+                    }
+                    Type::I16 | Type::U16 => {
+                        self.emit(&format!("    movw %ax, {}(%rip)", symbol));
+                    }
+                    Type::I8 | Type::U8 | Type::Bool | Type::Char => {
+                        self.emit(&format!("    movb %al, {}(%rip)", symbol));
+                    }
+                    Type::Unit => {}
+                    _ => {}
+                }
+            }
         }
         self.emit("    call main");
         if main_ret == Type::Unit {
@@ -2184,13 +2214,27 @@ impl X86_64Backend {
             return;
         }
 
-        self.emit("    .data");
+        let mut data_emitted = false;
         for (name, ty, init) in globals {
             let symbol = Self::mangle_name(name);
             self.emit(&format!("    .globl {}", symbol));
-            self.emit(&format!("    .balign {}", ty.align().max(1)));
-            self.emit(&format!("{}:", symbol));
-            self.emit_global_initializer(ty, init.as_ref());
+            if init.is_some() {
+                if !data_emitted {
+                    self.emit("    .data");
+                    data_emitted = true;
+                }
+                self.emit(&format!("    .balign {}", ty.align().max(1)));
+                self.emit(&format!("{}:", symbol));
+                self.emit_global_initializer(ty, init.as_ref());
+            } else {
+                // Non-constant initializer: emit as common symbol (.bss)
+                self.emit(&format!(
+                    "    .comm {}, {}, {}",
+                    symbol,
+                    ty.size(),
+                    ty.align().max(1)
+                ));
+            }
         }
         self.emit("");
     }
@@ -3705,17 +3749,59 @@ mod tests {
     }
 
     #[test]
-    fn test_reject_non_constant_global_initializer() {
-        let err = compile_err(
+    fn test_non_constant_global_initializer() {
+        let asm = compile_ok(
             r#"
-            (define result (+ 1 2))
+            (define (add [a : i64] [b : i64]) : i64 (+ a b))
+            (define result : i64 (add 1 2))
             (define (main) : i64 result)
             "#,
         );
+        // The global should be emitted as .comm (bss) and _start should call
+        // __global_init_result before main.
         assert!(
-            err.contains("non-constant initializer"),
-            "unexpected error: {}",
-            err
+            asm.contains("    .comm _tl_result,"),
+            "expected .comm for result, got:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("    call _tl___global_init_result"),
+            "expected init call, got:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("    movq %rax, _tl_result(%rip)"),
+            "expected store after init, got:\n{}",
+            asm
+        );
+        assert!(asm.contains("add:"), "expected add function, got:\n{}", asm);
+    }
+
+    #[test]
+    fn test_non_constant_global_initializer_can_use_arg_count() {
+        let asm = compile_ok(
+            r#"
+            (define count : i64 (arg-count))
+            (define (main) : i64 count)
+            "#,
+        );
+        let start = asm.split("_start:").nth(1).expect("expected _start");
+        let argv_save = start
+            .find("    movq %rax, .L_tl_argv(%rip)")
+            .expect("expected argv capture");
+        let init_call = start
+            .find("    call _tl___global_init_count")
+            .expect("expected global init call");
+        let main_call = start.find("    call main").expect("expected main call");
+        assert!(
+            argv_save < init_call,
+            "argv must be captured before global initializers:\n{}",
+            start
+        );
+        assert!(
+            init_call < main_call,
+            "global initializers must run before main:\n{}",
+            start
         );
     }
 

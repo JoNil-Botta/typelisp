@@ -5,6 +5,12 @@ use std::collections::{HashMap, HashSet};
 /// Optimization passes for the IR
 pub struct Optimizer;
 
+#[derive(Debug, Clone, PartialEq)]
+struct KnownConst {
+    value: Value,
+    ty: Type,
+}
+
 impl Optimizer {
     pub fn optimize(program: &mut Program) {
         for func in &mut program.functions {
@@ -31,7 +37,7 @@ impl Optimizer {
     /// Constant folding: evaluate constant expressions at compile time
     fn constant_folding(func: &mut Function) -> bool {
         let mut changed = false;
-        let mut constants: HashMap<VarId, Value> = HashMap::new();
+        let mut constants: HashMap<VarId, KnownConst> = HashMap::new();
 
         for block in &mut func.blocks {
             for instr in &mut block.instructions {
@@ -47,67 +53,139 @@ impl Optimizer {
                         let rhs_val = Self::resolve_value(rhs, &constants);
 
                         if let (Some(l), Some(r)) = (lhs_val, rhs_val)
-                            && let Some(result) = Self::eval_binop(*op, l, r)
+                            && let Some(result) = Self::eval_binop(*op, &l, &r, ty)
                         {
                             let dst_id = *dst;
-                            let result_ty = result.ty().unwrap_or_else(|| ty.clone());
+                            let result_ty = ty.clone();
                             let result_clone = result.clone();
                             *instr = Instruction::Mov {
                                 dst: dst_id,
                                 src: result,
-                                ty: result_ty,
+                                ty: result_ty.clone(),
                             };
-                            constants.insert(dst_id, result_clone);
+                            constants.insert(
+                                dst_id,
+                                KnownConst {
+                                    value: result_clone,
+                                    ty: result_ty,
+                                },
+                            );
                             changed = true;
                             continue;
                         }
 
                         if let Value::Var(v) = lhs
                             && let Some(c) = constants.get(v)
+                            && Self::can_inline_known_const(c)
                         {
-                            *lhs = c.clone();
+                            *lhs = c.value.clone();
                             changed = true;
                         }
                         if let Value::Var(v) = rhs
                             && let Some(c) = constants.get(v)
+                            && Self::can_inline_known_const(c)
                         {
-                            *rhs = c.clone();
+                            *rhs = c.value.clone();
                             changed = true;
                         }
                     }
                     Instruction::UnOp { dst, op, src, ty } => {
                         let src_val = Self::resolve_value(src, &constants);
                         if let Some(s) = src_val
-                            && let Some(result) = Self::eval_unop(*op, s)
+                            && let Some(result) = Self::eval_unop(*op, &s, ty)
                         {
                             let dst_id = *dst;
-                            let result_ty = result.ty().unwrap_or_else(|| ty.clone());
+                            let result_ty = ty.clone();
                             let result_clone = result.clone();
                             *instr = Instruction::Mov {
                                 dst: dst_id,
                                 src: result,
-                                ty: result_ty,
+                                ty: result_ty.clone(),
                             };
-                            constants.insert(dst_id, result_clone);
+                            constants.insert(
+                                dst_id,
+                                KnownConst {
+                                    value: result_clone,
+                                    ty: result_ty,
+                                },
+                            );
                             changed = true;
                             continue;
                         }
 
                         if let Value::Var(v) = src
                             && let Some(c) = constants.get(v)
+                            && Self::can_inline_known_const(c)
                         {
-                            *src = c.clone();
+                            *src = c.value.clone();
                             changed = true;
                         }
                     }
-                    Instruction::Mov { dst, src, .. } => {
+                    Instruction::Cast {
+                        dst,
+                        src,
+                        from_ty,
+                        to_ty,
+                    } => {
+                        let src_val = Self::resolve_value(src, &constants);
+                        if let Some(s) = src_val
+                            && let Some(result) = Self::eval_cast(&s, from_ty, to_ty)
+                        {
+                            let dst_id = *dst;
+                            let result_ty = to_ty.clone();
+                            let result_clone = result.clone();
+                            *instr = Instruction::Mov {
+                                dst: dst_id,
+                                src: result,
+                                ty: result_ty.clone(),
+                            };
+                            constants.insert(
+                                dst_id,
+                                KnownConst {
+                                    value: result_clone,
+                                    ty: result_ty,
+                                },
+                            );
+                            changed = true;
+                            continue;
+                        }
+
                         if let Value::Var(v) = src
                             && let Some(c) = constants.get(v)
+                            && Self::can_inline_known_const(c)
                         {
-                            *src = c.clone();
+                            *src = c.value.clone();
                             changed = true;
                         }
-                        constants.insert(*dst, src.clone());
+                    }
+                    Instruction::Mov { dst, src, ty } => {
+                        let known_src = match src {
+                            Value::Var(v) => constants.get(v).cloned(),
+                            _ => None,
+                        };
+                        if let Some(c) = known_src {
+                            if Self::can_inline_known_const(&c) {
+                                *src = c.value.clone();
+                                changed = true;
+                            }
+                            constants.insert(
+                                *dst,
+                                KnownConst {
+                                    value: c.value,
+                                    ty: ty.clone(),
+                                },
+                            );
+                        } else if Self::is_foldable_immediate(src) {
+                            constants.insert(
+                                *dst,
+                                KnownConst {
+                                    value: src.clone(),
+                                    ty: ty.clone(),
+                                },
+                            );
+                        } else {
+                            constants.remove(dst);
+                        }
                     }
                     _ => {}
                 }
@@ -117,82 +195,409 @@ impl Optimizer {
         changed
     }
 
-    fn resolve_value(val: &Value, constants: &HashMap<VarId, Value>) -> Option<Value> {
+    fn resolve_value(val: &Value, constants: &HashMap<VarId, KnownConst>) -> Option<KnownConst> {
         match val {
             Value::Var(v) => constants.get(v).cloned(),
-            _ => Some(val.clone()),
+            _ => val.ty().map(|ty| KnownConst {
+                value: val.clone(),
+                ty,
+            }),
         }
     }
 
-    fn eval_binop(op: BinOp, lhs: Value, rhs: Value) -> Option<Value> {
-        match (op, lhs, rhs) {
-            (BinOp::Add, Value::ConstI64(a), Value::ConstI64(b)) => {
-                a.checked_add(b).map(Value::ConstI64)
+    fn can_inline_known_const(value: &KnownConst) -> bool {
+        match &value.value {
+            Value::Function(_) => true,
+            _ => value.value.ty().is_some_and(|ty| ty == value.ty),
+        }
+    }
+
+    fn is_foldable_immediate(value: &Value) -> bool {
+        matches!(
+            value,
+            Value::ConstI64(_)
+                | Value::ConstI32(_)
+                | Value::ConstI8(_)
+                | Value::ConstF64(_)
+                | Value::ConstBool(_)
+                | Value::ConstUnit
+                | Value::ConstStr(_)
+                | Value::Function(_)
+        )
+    }
+
+    fn eval_binop(
+        op: BinOp,
+        lhs: &KnownConst,
+        rhs: &KnownConst,
+        result_ty: &Type,
+    ) -> Option<Value> {
+        match op {
+            BinOp::And => Self::eval_bool_binop(lhs, rhs, |a, b| a && b),
+            BinOp::Or => Self::eval_bool_binop(lhs, rhs, |a, b| a || b),
+            _ if Self::is_float_binop(op, lhs, rhs) => {
+                Self::eval_f64_binop(op, &lhs.value, &rhs.value)
             }
-            (BinOp::Sub, Value::ConstI64(a), Value::ConstI64(b)) => {
-                a.checked_sub(b).map(Value::ConstI64)
+            _ => {
+                let operand_ty = Self::binop_operand_ty(op, lhs, rhs, result_ty);
+                Self::eval_integer_binop(op, lhs, rhs, &operand_ty)
             }
-            (BinOp::Mul, Value::ConstI64(a), Value::ConstI64(b)) => {
-                a.checked_mul(b).map(Value::ConstI64)
+        }
+    }
+
+    fn eval_unop(op: UnOp, src: &KnownConst, result_ty: &Type) -> Option<Value> {
+        match op {
+            UnOp::Neg if *result_ty == Type::F64 => {
+                let Value::ConstF64(value) = src.value else {
+                    return None;
+                };
+                Some(Value::ConstF64(-value))
             }
-            (BinOp::Div, Value::ConstI64(a), Value::ConstI64(b)) => {
-                a.checked_div(b).map(Value::ConstI64)
+            UnOp::Not if *result_ty == Type::Bool => {
+                let Value::ConstBool(value) = src.value else {
+                    return None;
+                };
+                Some(Value::ConstBool(!value))
             }
-            (BinOp::Mod, Value::ConstI64(a), Value::ConstI64(b)) => {
-                a.checked_rem(b).map(Value::ConstI64)
+            UnOp::BitNot => {
+                let bits = Self::integer_bits(&src.value, result_ty)?;
+                let width = Self::integer_width(result_ty)?;
+                Some(Self::value_from_bits(!bits & Self::mask(width), result_ty)?)
             }
-            (BinOp::Eq, Value::ConstI64(a), Value::ConstI64(b)) => Some(Value::ConstBool(a == b)),
-            (BinOp::Ne, Value::ConstI64(a), Value::ConstI64(b)) => Some(Value::ConstBool(a != b)),
-            (BinOp::Lt, Value::ConstI64(a), Value::ConstI64(b)) => Some(Value::ConstBool(a < b)),
-            (BinOp::Le, Value::ConstI64(a), Value::ConstI64(b)) => Some(Value::ConstBool(a <= b)),
-            (BinOp::Gt, Value::ConstI64(a), Value::ConstI64(b)) => Some(Value::ConstBool(a > b)),
-            (BinOp::Ge, Value::ConstI64(a), Value::ConstI64(b)) => Some(Value::ConstBool(a >= b)),
-            (BinOp::And, Value::ConstBool(a), Value::ConstBool(b)) => {
-                Some(Value::ConstBool(a && b))
+            UnOp::Neg if result_ty.is_signed() => {
+                let width = result_ty.bit_width();
+                let value = Self::signed_integer_value(&src.value, result_ty)?;
+                let result = value.checked_neg()?;
+                Self::fits_signed(result, width).then(|| {
+                    Self::value_from_bits(Self::bits_from_signed(result, width), result_ty)
+                })?
             }
-            (BinOp::Or, Value::ConstBool(a), Value::ConstBool(b)) => Some(Value::ConstBool(a || b)),
-            // Bitwise/shift folding on i64 constants. Shifts mask the amount to
-            // 0..63 to match the x86_64 hardware behaviour the backend emits.
-            (BinOp::BitAnd, Value::ConstI64(a), Value::ConstI64(b)) => Some(Value::ConstI64(a & b)),
-            (BinOp::BitOr, Value::ConstI64(a), Value::ConstI64(b)) => Some(Value::ConstI64(a | b)),
-            (BinOp::BitXor, Value::ConstI64(a), Value::ConstI64(b)) => Some(Value::ConstI64(a ^ b)),
-            (BinOp::Shl, Value::ConstI64(a), Value::ConstI64(b)) => {
-                Some(Value::ConstI64(a.wrapping_shl(b as u32 & 63)))
-            }
-            (BinOp::Shr, Value::ConstI64(a), Value::ConstI64(b)) => {
-                Some(Value::ConstI64(a.wrapping_shr(b as u32 & 63)))
-            }
-            (BinOp::Add, Value::ConstI32(a), Value::ConstI32(b)) => {
-                a.checked_add(b).map(Value::ConstI32)
-            }
-            (BinOp::Sub, Value::ConstI32(a), Value::ConstI32(b)) => {
-                a.checked_sub(b).map(Value::ConstI32)
-            }
-            (BinOp::Mul, Value::ConstI32(a), Value::ConstI32(b)) => {
-                a.checked_mul(b).map(Value::ConstI32)
-            }
-            (BinOp::Add, Value::ConstF64(a), Value::ConstF64(b)) => Some(Value::ConstF64(a + b)),
-            (BinOp::Sub, Value::ConstF64(a), Value::ConstF64(b)) => Some(Value::ConstF64(a - b)),
-            (BinOp::Mul, Value::ConstF64(a), Value::ConstF64(b)) => Some(Value::ConstF64(a * b)),
-            (BinOp::Div, Value::ConstF64(a), Value::ConstF64(b)) => Some(Value::ConstF64(a / b)),
-            (BinOp::Eq, Value::ConstF64(a), Value::ConstF64(b)) => Some(Value::ConstBool(a == b)),
-            (BinOp::Ne, Value::ConstF64(a), Value::ConstF64(b)) => Some(Value::ConstBool(a != b)),
-            (BinOp::Lt, Value::ConstF64(a), Value::ConstF64(b)) => Some(Value::ConstBool(a < b)),
-            (BinOp::Le, Value::ConstF64(a), Value::ConstF64(b)) => Some(Value::ConstBool(a <= b)),
-            (BinOp::Gt, Value::ConstF64(a), Value::ConstF64(b)) => Some(Value::ConstBool(a > b)),
-            (BinOp::Ge, Value::ConstF64(a), Value::ConstF64(b)) => Some(Value::ConstBool(a >= b)),
             _ => None,
         }
     }
 
-    fn eval_unop(op: UnOp, src: Value) -> Option<Value> {
-        match (op, src) {
-            (UnOp::Neg, Value::ConstI64(a)) => a.checked_neg().map(Value::ConstI64),
-            (UnOp::Neg, Value::ConstI32(a)) => a.checked_neg().map(Value::ConstI32),
-            (UnOp::Neg, Value::ConstF64(a)) => Some(Value::ConstF64(-a)),
-            (UnOp::Not, Value::ConstBool(a)) => Some(Value::ConstBool(!a)),
-            (UnOp::BitNot, Value::ConstI64(a)) => Some(Value::ConstI64(!a)),
-            (UnOp::BitNot, Value::ConstI32(a)) => Some(Value::ConstI32(!a)),
+    fn eval_cast(src: &KnownConst, from_ty: &Type, to_ty: &Type) -> Option<Value> {
+        if !Self::castable_integer_ty(from_ty) || !Self::castable_integer_ty(to_ty) {
+            return None;
+        }
+
+        let from_bits = Self::integer_bits(&src.value, from_ty)?;
+        let extended = if from_ty.is_signed() {
+            Self::signed_from_bits(from_bits, Self::integer_width(from_ty)?) as u128
+        } else {
+            from_bits
+        };
+        let to_bits = extended & Self::mask(Self::integer_width(to_ty)?);
+        Self::value_from_bits(to_bits, to_ty)
+    }
+
+    fn eval_bool_binop(
+        lhs: &KnownConst,
+        rhs: &KnownConst,
+        op: impl FnOnce(bool, bool) -> bool,
+    ) -> Option<Value> {
+        let (Value::ConstBool(a), Value::ConstBool(b)) = (&lhs.value, &rhs.value) else {
+            return None;
+        };
+        Some(Value::ConstBool(op(*a, *b)))
+    }
+
+    fn is_float_binop(op: BinOp, lhs: &KnownConst, rhs: &KnownConst) -> bool {
+        matches!(
+            op,
+            BinOp::Add
+                | BinOp::Sub
+                | BinOp::Mul
+                | BinOp::Div
+                | BinOp::Eq
+                | BinOp::Ne
+                | BinOp::Lt
+                | BinOp::Le
+                | BinOp::Gt
+                | BinOp::Ge
+        ) && lhs.ty == Type::F64
+            && rhs.ty == Type::F64
+    }
+
+    fn eval_f64_binop(op: BinOp, lhs: &Value, rhs: &Value) -> Option<Value> {
+        let (Value::ConstF64(a), Value::ConstF64(b)) = (lhs, rhs) else {
+            return None;
+        };
+        match op {
+            BinOp::Add => Some(Value::ConstF64(a + b)),
+            BinOp::Sub => Some(Value::ConstF64(a - b)),
+            BinOp::Mul => Some(Value::ConstF64(a * b)),
+            BinOp::Div => Some(Value::ConstF64(a / b)),
+            BinOp::Eq => Some(Value::ConstBool(a == b)),
+            BinOp::Ne => Some(Value::ConstBool(a != b)),
+            BinOp::Lt => Some(Value::ConstBool(a < b)),
+            BinOp::Le => Some(Value::ConstBool(a <= b)),
+            BinOp::Gt => Some(Value::ConstBool(a > b)),
+            BinOp::Ge => Some(Value::ConstBool(a >= b)),
+            _ => None,
+        }
+    }
+
+    fn binop_operand_ty(op: BinOp, lhs: &KnownConst, rhs: &KnownConst, result_ty: &Type) -> Type {
+        match op {
+            BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
+                if lhs.ty != Type::I64 {
+                    lhs.ty.clone()
+                } else {
+                    rhs.ty.clone()
+                }
+            }
+            BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
+                lhs.ty.clone()
+            }
+            _ => result_ty.clone(),
+        }
+    }
+
+    fn eval_integer_binop(
+        op: BinOp,
+        lhs: &KnownConst,
+        rhs: &KnownConst,
+        ty: &Type,
+    ) -> Option<Value> {
+        match op {
+            BinOp::Add | BinOp::Sub | BinOp::Mul => Self::eval_checked_arithmetic(op, lhs, rhs, ty),
+            BinOp::Div | BinOp::Mod => Self::eval_checked_divmod(op, lhs, rhs, ty),
+            BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
+                Self::eval_integer_compare(op, lhs, rhs, ty)
+            }
+            BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor => {
+                let a = Self::integer_bits(&lhs.value, ty)?;
+                let b = Self::integer_bits(&rhs.value, ty)?;
+                let result = match op {
+                    BinOp::BitAnd => a & b,
+                    BinOp::BitOr => a | b,
+                    BinOp::BitXor => a ^ b,
+                    _ => unreachable!(),
+                };
+                let width = Self::integer_width(ty)?;
+                Self::value_from_bits(result & Self::mask(width), ty)
+            }
+            BinOp::Shl | BinOp::Shr => Self::eval_shift(op, lhs, rhs, ty),
+            BinOp::And | BinOp::Or => None,
+        }
+    }
+
+    fn eval_checked_arithmetic(
+        op: BinOp,
+        lhs: &KnownConst,
+        rhs: &KnownConst,
+        ty: &Type,
+    ) -> Option<Value> {
+        if !ty.is_integer() {
+            return None;
+        }
+        let width = ty.bit_width();
+        if ty.is_signed() {
+            let a = Self::signed_integer_value(&lhs.value, ty)?;
+            let b = Self::signed_integer_value(&rhs.value, ty)?;
+            let result = match op {
+                BinOp::Add => a.checked_add(b)?,
+                BinOp::Sub => a.checked_sub(b)?,
+                BinOp::Mul => a.checked_mul(b)?,
+                _ => unreachable!(),
+            };
+            return Self::fits_signed(result, width)
+                .then(|| Self::value_from_bits(Self::bits_from_signed(result, width), ty))?;
+        }
+
+        let a = Self::integer_bits(&lhs.value, ty)?;
+        let b = Self::integer_bits(&rhs.value, ty)?;
+        let result = match op {
+            BinOp::Add => a.checked_add(b)?,
+            BinOp::Sub => a.checked_sub(b)?,
+            BinOp::Mul => a.checked_mul(b)?,
+            _ => unreachable!(),
+        };
+        (result <= Self::mask(width)).then(|| Self::value_from_bits(result, ty))?
+    }
+
+    fn eval_checked_divmod(
+        op: BinOp,
+        lhs: &KnownConst,
+        rhs: &KnownConst,
+        ty: &Type,
+    ) -> Option<Value> {
+        if !ty.is_integer() {
+            return None;
+        }
+        let width = ty.bit_width();
+        if ty.is_signed() {
+            let a = Self::signed_integer_value(&lhs.value, ty)?;
+            let b = Self::signed_integer_value(&rhs.value, ty)?;
+            if b == 0 || (a == Self::signed_min(width) && b == -1) {
+                return None;
+            }
+            let result = match op {
+                BinOp::Div => a / b,
+                BinOp::Mod => a % b,
+                _ => unreachable!(),
+            };
+            return Self::value_from_bits(Self::bits_from_signed(result, width), ty);
+        }
+
+        let a = Self::integer_bits(&lhs.value, ty)?;
+        let b = Self::integer_bits(&rhs.value, ty)?;
+        if b == 0 {
+            return None;
+        }
+        let result = match op {
+            BinOp::Div => a / b,
+            BinOp::Mod => a % b,
+            _ => unreachable!(),
+        };
+        Self::value_from_bits(result, ty)
+    }
+
+    fn eval_integer_compare(
+        op: BinOp,
+        lhs: &KnownConst,
+        rhs: &KnownConst,
+        ty: &Type,
+    ) -> Option<Value> {
+        if !ty.is_integer() && !matches!(ty, Type::Char) {
+            return None;
+        }
+
+        let result = if ty.is_signed() {
+            let a = Self::signed_integer_value(&lhs.value, ty)?;
+            let b = Self::signed_integer_value(&rhs.value, ty)?;
+            match op {
+                BinOp::Eq => a == b,
+                BinOp::Ne => a != b,
+                BinOp::Lt => a < b,
+                BinOp::Le => a <= b,
+                BinOp::Gt => a > b,
+                BinOp::Ge => a >= b,
+                _ => unreachable!(),
+            }
+        } else {
+            let a = Self::integer_bits(&lhs.value, ty)?;
+            let b = Self::integer_bits(&rhs.value, ty)?;
+            match op {
+                BinOp::Eq => a == b,
+                BinOp::Ne => a != b,
+                BinOp::Lt => a < b,
+                BinOp::Le => a <= b,
+                BinOp::Gt => a > b,
+                BinOp::Ge => a >= b,
+                _ => unreachable!(),
+            }
+        };
+
+        Some(Value::ConstBool(result))
+    }
+
+    fn eval_shift(op: BinOp, lhs: &KnownConst, rhs: &KnownConst, ty: &Type) -> Option<Value> {
+        if !ty.is_integer() {
+            return None;
+        }
+        let width = ty.bit_width();
+        let count = Self::shift_count(rhs)?;
+        if count >= width {
+            return None;
+        }
+
+        let bits = Self::integer_bits(&lhs.value, ty)?;
+        let result = match op {
+            BinOp::Shl => (bits << count) & Self::mask(width),
+            BinOp::Shr if ty.is_signed() => {
+                let shifted = Self::signed_from_bits(bits, width) >> count;
+                Self::bits_from_signed(shifted, width)
+            }
+            BinOp::Shr => bits >> count,
+            _ => unreachable!(),
+        };
+        Self::value_from_bits(result, ty)
+    }
+
+    fn shift_count(value: &KnownConst) -> Option<u8> {
+        if !value.ty.is_integer() {
+            return None;
+        }
+        if value.ty.is_signed() {
+            let count = Self::signed_integer_value(&value.value, &value.ty)?;
+            return u8::try_from(count).ok();
+        }
+        u8::try_from(Self::integer_bits(&value.value, &value.ty)?).ok()
+    }
+
+    fn castable_integer_ty(ty: &Type) -> bool {
+        ty.is_integer() || matches!(ty, Type::Char)
+    }
+
+    fn integer_bits(value: &Value, ty: &Type) -> Option<u128> {
+        let width = Self::integer_width(ty)?;
+        let bits = match value {
+            Value::ConstI64(value) => *value as u128,
+            Value::ConstI32(value) => *value as u128,
+            Value::ConstI8(value) => *value as u128,
+            _ => return None,
+        };
+        Some(bits & Self::mask(width))
+    }
+
+    fn integer_width(ty: &Type) -> Option<u8> {
+        if ty.is_integer() {
+            Some(ty.bit_width())
+        } else if matches!(ty, Type::Char) {
+            Some(8)
+        } else {
+            None
+        }
+    }
+
+    fn signed_integer_value(value: &Value, ty: &Type) -> Option<i128> {
+        Some(Self::signed_from_bits(
+            Self::integer_bits(value, ty)?,
+            ty.bit_width(),
+        ))
+    }
+
+    fn signed_from_bits(bits: u128, width: u8) -> i128 {
+        let sign_bit = 1u128 << (width - 1);
+        let bits = bits & Self::mask(width);
+        if bits & sign_bit == 0 {
+            bits as i128
+        } else {
+            bits as i128 - (1i128 << width)
+        }
+    }
+
+    fn bits_from_signed(value: i128, width: u8) -> u128 {
+        (value as u128) & Self::mask(width)
+    }
+
+    fn signed_min(width: u8) -> i128 {
+        -(1i128 << (width - 1))
+    }
+
+    fn signed_max(width: u8) -> i128 {
+        (1i128 << (width - 1)) - 1
+    }
+
+    fn fits_signed(value: i128, width: u8) -> bool {
+        (Self::signed_min(width)..=Self::signed_max(width)).contains(&value)
+    }
+
+    fn mask(width: u8) -> u128 {
+        debug_assert!(width <= 64);
+        (1u128 << width) - 1
+    }
+
+    fn value_from_bits(bits: u128, ty: &Type) -> Option<Value> {
+        let bits = bits & Self::mask(Self::integer_width(ty)?);
+        match ty {
+            Type::I64 | Type::U64 | Type::I16 | Type::U16 => {
+                Some(Value::ConstI64(bits as u64 as i64))
+            }
+            Type::I32 | Type::U32 => Some(Value::ConstI32(bits as u32 as i32)),
+            Type::I8 | Type::U8 | Type::Char => Some(Value::ConstI8(bits as u8 as i8)),
             _ => None,
         }
     }
@@ -429,13 +834,8 @@ impl Optimizer {
                 }
 
                 // Then, record new copies
-                if let Instruction::Mov { dst, src, .. } = instr
-                    && let Value::Var(_)
-                    | Value::ConstI64(_)
-                    | Value::ConstI32(_)
-                    | Value::ConstBool(_)
-                    | Value::ConstF64(_)
-                    | Value::Function(_) = src
+                if let Instruction::Mov { dst, src, ty } = instr
+                    && Self::can_copy_propagate(src, ty)
                 {
                     copies.insert(*dst, src.clone());
                 }
@@ -443,6 +843,20 @@ impl Optimizer {
         }
 
         changed
+    }
+
+    fn can_copy_propagate(src: &Value, ty: &Type) -> bool {
+        match src {
+            Value::Var(_) | Value::Function(_) => true,
+            Value::ConstI64(_)
+            | Value::ConstI32(_)
+            | Value::ConstI8(_)
+            | Value::ConstF64(_)
+            | Value::ConstBool(_)
+            | Value::ConstUnit
+            | Value::ConstStr(_) => src.ty().is_some_and(|src_ty| src_ty == *ty),
+            Value::Global(_) => false,
+        }
     }
 
     fn substitute_copies(instr: &mut Instruction, copies: &HashMap<VarId, Value>) -> bool {
@@ -567,9 +981,14 @@ impl CseValue {
 mod tests {
     use crate::ir::{BasicBlock, BinOp, Function, Instruction, Program, UnOp, Value};
     use crate::lower::lower_program;
-    use crate::optimizer::Optimizer;
     use crate::parser::parse;
     use crate::types::Type;
+
+    use super::{KnownConst, Optimizer};
+
+    fn known(value: Value, ty: Type) -> KnownConst {
+        KnownConst { value, ty }
+    }
 
     fn optimize(source: &str) -> crate::ir::Program {
         let prog = parse(source).unwrap();
@@ -615,29 +1034,264 @@ mod tests {
     #[test]
     fn test_constant_folding_skips_overflowing_integer_ops() {
         assert_eq!(
-            Optimizer::eval_binop(BinOp::Mul, Value::ConstI64(i64::MAX), Value::ConstI64(2)),
+            Optimizer::eval_binop(
+                BinOp::Mul,
+                &known(Value::ConstI64(i64::MAX), Type::I64),
+                &known(Value::ConstI64(2), Type::I64),
+                &Type::I64
+            ),
             None
         );
         assert_eq!(
-            Optimizer::eval_binop(BinOp::Add, Value::ConstI64(i64::MAX), Value::ConstI64(1)),
+            Optimizer::eval_binop(
+                BinOp::Add,
+                &known(Value::ConstI64(i64::MAX), Type::I64),
+                &known(Value::ConstI64(1), Type::I64),
+                &Type::I64
+            ),
             None
         );
         assert_eq!(
-            Optimizer::eval_binop(BinOp::Sub, Value::ConstI64(i64::MIN), Value::ConstI64(1)),
+            Optimizer::eval_binop(
+                BinOp::Sub,
+                &known(Value::ConstI64(i64::MIN), Type::I64),
+                &known(Value::ConstI64(1), Type::I64),
+                &Type::I64
+            ),
             None
         );
         assert_eq!(
-            Optimizer::eval_binop(BinOp::Div, Value::ConstI64(i64::MIN), Value::ConstI64(-1)),
+            Optimizer::eval_binop(
+                BinOp::Div,
+                &known(Value::ConstI64(i64::MIN), Type::I64),
+                &known(Value::ConstI64(-1), Type::I64),
+                &Type::I64
+            ),
             None
         );
         assert_eq!(
-            Optimizer::eval_binop(BinOp::Mod, Value::ConstI64(i64::MIN), Value::ConstI64(-1)),
+            Optimizer::eval_binop(
+                BinOp::Mod,
+                &known(Value::ConstI64(i64::MIN), Type::I64),
+                &known(Value::ConstI64(-1), Type::I64),
+                &Type::I64
+            ),
             None
         );
         assert_eq!(
-            Optimizer::eval_unop(UnOp::Neg, Value::ConstI64(i64::MIN)),
+            Optimizer::eval_unop(
+                UnOp::Neg,
+                &known(Value::ConstI64(i64::MIN), Type::I64),
+                &Type::I64
+            ),
             None
         );
+        assert_eq!(
+            Optimizer::eval_unop(UnOp::Neg, &known(Value::ConstI8(-1), Type::U8), &Type::U8),
+            None
+        );
+        assert_eq!(
+            Optimizer::eval_binop(
+                BinOp::Add,
+                &known(Value::ConstI8(127), Type::I8),
+                &known(Value::ConstI8(1), Type::I8),
+                &Type::I8
+            ),
+            None
+        );
+        assert_eq!(
+            Optimizer::eval_binop(
+                BinOp::Add,
+                &known(Value::ConstI8(-1), Type::U8),
+                &known(Value::ConstI8(1), Type::U8),
+                &Type::U8
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn test_typed_integer_constant_folding_uses_width_and_signedness() {
+        assert_eq!(
+            Optimizer::eval_binop(
+                BinOp::Add,
+                &known(Value::ConstI64(40), Type::I16),
+                &known(Value::ConstI64(2), Type::I16),
+                &Type::I16
+            ),
+            Some(Value::ConstI64(42))
+        );
+        assert_eq!(
+            Optimizer::eval_binop(
+                BinOp::Gt,
+                &known(Value::ConstI8(-1), Type::U8),
+                &known(Value::ConstI8(1), Type::U8),
+                &Type::Bool
+            ),
+            Some(Value::ConstBool(true))
+        );
+        assert_eq!(
+            Optimizer::eval_binop(
+                BinOp::Lt,
+                &known(Value::ConstI8(-1), Type::I8),
+                &known(Value::ConstI8(1), Type::I8),
+                &Type::Bool
+            ),
+            Some(Value::ConstBool(true))
+        );
+        assert_eq!(
+            Optimizer::eval_binop(
+                BinOp::BitAnd,
+                &known(Value::ConstI8(-1), Type::U8),
+                &known(Value::ConstI8(0x0f), Type::U8),
+                &Type::U8
+            ),
+            Some(Value::ConstI8(0x0f))
+        );
+    }
+
+    #[test]
+    fn test_typed_shift_folding_preserves_runtime_traps() {
+        assert_eq!(
+            Optimizer::eval_binop(
+                BinOp::Shr,
+                &known(Value::ConstI8(-128), Type::U8),
+                &known(Value::ConstI8(7), Type::U8),
+                &Type::U8
+            ),
+            Some(Value::ConstI8(1))
+        );
+        assert_eq!(
+            Optimizer::eval_binop(
+                BinOp::Shr,
+                &known(Value::ConstI8(-128), Type::I8),
+                &known(Value::ConstI8(7), Type::I8),
+                &Type::I8
+            ),
+            Some(Value::ConstI8(-1))
+        );
+        assert_eq!(
+            Optimizer::eval_binop(
+                BinOp::Shl,
+                &known(Value::ConstI8(1), Type::I8),
+                &known(Value::ConstI8(-1), Type::I8),
+                &Type::I8
+            ),
+            None
+        );
+        assert_eq!(
+            Optimizer::eval_binop(
+                BinOp::Shl,
+                &known(Value::ConstI8(1), Type::U8),
+                &known(Value::ConstI8(8), Type::U8),
+                &Type::U8
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn test_constant_cast_folding_preserves_source_sign_and_target_width() {
+        assert_eq!(
+            Optimizer::eval_cast(&known(Value::ConstI8(-1), Type::I8), &Type::I8, &Type::I64),
+            Some(Value::ConstI64(-1))
+        );
+        assert_eq!(
+            Optimizer::eval_cast(&known(Value::ConstI8(-1), Type::U8), &Type::U8, &Type::I64),
+            Some(Value::ConstI64(255))
+        );
+        assert_eq!(
+            Optimizer::eval_cast(
+                &known(Value::ConstI64(257), Type::U16),
+                &Type::U16,
+                &Type::U8
+            ),
+            Some(Value::ConstI8(1))
+        );
+        assert_eq!(
+            Optimizer::eval_cast(
+                &known(Value::ConstI64(300), Type::U16),
+                &Type::U16,
+                &Type::Char
+            ),
+            Some(Value::ConstI8(44))
+        );
+    }
+
+    #[test]
+    fn test_constant_folding_rewrites_cast_instruction() {
+        let mut func = Function {
+            name: "f".into(),
+            params: vec![],
+            ret: Type::I64,
+            locals: vec![(0, Type::U8), (1, Type::I64)],
+            blocks: vec![BasicBlock {
+                label: "entry".into(),
+                instructions: vec![
+                    Instruction::Mov {
+                        dst: 0,
+                        src: Value::ConstI8(-1),
+                        ty: Type::U8,
+                    },
+                    Instruction::Cast {
+                        dst: 1,
+                        src: Value::Var(0),
+                        from_ty: Type::U8,
+                        to_ty: Type::I64,
+                    },
+                    Instruction::Return(Some(Value::Var(1))),
+                ],
+            }],
+            entry: "entry".into(),
+        };
+
+        assert!(Optimizer::constant_folding(&mut func));
+        assert!(matches!(
+            func.blocks[0].instructions[1],
+            Instruction::Mov {
+                dst: 1,
+                src: Value::ConstI64(255),
+                ty: Type::I64
+            }
+        ));
+    }
+
+    #[test]
+    fn test_copy_propagation_preserves_contextual_integer_constants() {
+        let mut func = Function {
+            name: "f".into(),
+            params: vec![(2, Type::U64)],
+            ret: Type::Bool,
+            locals: vec![(0, Type::U64), (1, Type::Bool)],
+            blocks: vec![BasicBlock {
+                label: "entry".into(),
+                instructions: vec![
+                    Instruction::Mov {
+                        dst: 0,
+                        src: Value::ConstI64(1),
+                        ty: Type::U64,
+                    },
+                    Instruction::BinOp {
+                        dst: 1,
+                        op: BinOp::Lt,
+                        lhs: Value::Var(0),
+                        rhs: Value::Var(2),
+                        ty: Type::Bool,
+                    },
+                    Instruction::Return(Some(Value::Var(1))),
+                ],
+            }],
+            entry: "entry".into(),
+        };
+
+        assert!(!Optimizer::copy_propagation(&mut func));
+        assert!(matches!(
+            func.blocks[0].instructions[1],
+            Instruction::BinOp {
+                lhs: Value::Var(0),
+                ..
+            }
+        ));
     }
 
     #[test]

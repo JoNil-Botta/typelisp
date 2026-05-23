@@ -5,9 +5,10 @@
 ;; tree - it walks the s-expression and computes the tagged VALUE it denotes
 ;; (a `(VInt n)` or a `(VStr s)`, the value domain generalised from a raw i64 so
 ;; it can carry strings), now with
-;; VARIABLES, a `let` special form, an `if`, comparisons, AND - the milestone of
-;; a real language - USER-DEFINED FUNCTIONS plus RECURSION via top-level
-;; `(define (f x) body)` forms threaded through a function environment.
+;; VARIABLES, a MULTI-BINDING `let` special form, an `if`, comparisons, AND - the
+;; milestone of a real language - USER-DEFINED FUNCTIONS plus RECURSION via
+;; top-level `(define (f x y z) body)` forms threaded through a function
+;; environment.
 ;;
 ;;   String --lex--> (Array Token) --read-form*--> (Sexpr ...)
 ;;          --eval--> Value --as-int--> i64
@@ -15,7 +16,7 @@
 ;; A WHOLE PROGRAM is now a sequence of top-level forms: zero or more
 ;; `(define (f x y z) body)` definitions - each with an arbitrary-arity parameter
 ;; LIST - followed by ONE trailing expression. This composes the whole front end:
-;; `(run-program "(define (pow b e) ...) (pow 2 10)")`.
+;; `(run-program "(define (pow b e) ...) (let ((b 2) (e 10) (r (pow b e))) ...))"`.
 ;;
 ;; --------------------------------------------------------------------------
 ;; How the reader and lexer are reused (the KEY module signal, refs #44/#81).
@@ -76,9 +77,10 @@
 ;; recursive enum (recursive enum payloads, #111, make this finite): `ENil` is the
 ;; empty environment, and `(EBind name value rest)` extends an environment `rest`
 ;; with one binding `name -> value`, where the value is now a tagged `Value`
-;; (`VInt`/`VStr`) rather than a raw `i64`. A `let` pushes a fresh `EBind` frame in
-;; front of the current environment; because lookup walks the chain head-first, an
-;; inner binding SHADOWS an outer one of the same name - lexical scoping for free.
+;; (`VInt`/`VStr`) rather than a raw `i64`. A multi-binding `let` pushes one fresh
+;; `EBind` frame per pair, sequentially, in front of the current environment;
+;; because lookup walks the chain head-first, an inner binding SHADOWS an outer one
+;; of the same name - lexical scoping for free.
 (defenum Env
   (ENil)
   (EBind String Value Env))
@@ -403,10 +405,12 @@
              (if (string-eq name "print")
                  ;; The `print` special form `(print e)`: rest is
                  ;; `(SCons e SNil)`. Evaluate the single argument, emit it via the
-                 ;; host `print` builtin, and RETURN the value so `(print x)`
+                 ;; matching host builtin, and RETURN the value so `(print x)`
                  ;; composes inside a larger expression. A `VInt` prints its integer
-                 ;; (+ newline); a `VStr` is NOT yet printable - there is no host
-                 ;; string-print builtin - so it aborts (deferred).
+                 ;; (+ a newline) via the host `print`; a `VStr` writes its raw
+                 ;; bytes (NO trailing newline) via the host `print-string` builtin
+                 ;; (the write(2)-syscall string emitter, #13/#27) - so STRING values
+                 ;; are now printable too, not a deferred abort.
                  (let ([arg : Sexpr (sexpr-head rest)]
                        [restp : Sexpr (sexpr-tail rest)])
                    (begin
@@ -415,7 +419,7 @@
                        (begin
                          (match v
                            [(VInt n) (print n)]
-                           [(VStr _) (panic "print: strings not yet printable")])
+                           [(VStr s) (print-string s)])
                          v))))
                  (if (is-builtin-op name)
                      ;; A builtin binary call form `(op arg1 arg2)`: rest is
@@ -573,13 +577,16 @@
 ;; main: the whole front end composed - lex, read MANY forms, interpret with
 ;; MULTI-ARGUMENT user functions, recursion, AND multi-binding `let`.
 ;; --------------------------------------------------------------------------
-;; `(run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1)))))
-;;                (let ((b 2) (e 10) (r (pow b e))) (print r))")`:
-;;   - the program is TWO top-level forms: one recursive TWO-parameter `define` of
-;;     `pow`, then the trailing expression - a MULTI-BINDING `let` over `pow`.
-;;   - the program reader folds the `define` into
-;;     `(FBind "pow" (b e) body FNil)` - the param LIST `(b e)` kept verbatim -
-;;     then evaluates the `let` against that function env.
+;; `(run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (define (seq a b) b)
+;;                (let ((b 2) (e 10) (r (pow b e))) (seq (print \"hi\") (print r)))")`:
+;;   - the program is THREE top-level forms: a recursive TWO-parameter `define` of
+;;     `pow`, a two-parameter `seq` whose body is just its SECOND argument (a
+;;     left-to-right sequencer - the interpreted language has no `begin`, so a
+;;     two-arg function whose arguments are evaluated in order, returning the last,
+;;     stands in for one), then the trailing expression - a MULTI-BINDING `let`
+;;     over `pow` whose body prints BOTH a string and the result via `seq`.
+;;   - the program reader folds both defines into the `FnEnv`, then evaluates the
+;;     `let` against that function env.
 ;;   - the `let` has THREE bindings, folded SEQUENTIALLY (`let*`): `b -> (VInt 2)`,
 ;;     then `e -> (VInt 10)`, then `r -> (pow b e)` whose initializer `(pow b e)`
 ;;     SEES the earlier `b` and `e` bindings - the load-bearing proof that a later
@@ -589,19 +596,25 @@
 ;;     The body then recurses on the SECOND argument: `pow(2,10) = 2*pow(2,9) =
 ;;     ... = 2^10`, bottoming out at the `(< e 1)` base case which returns `(VInt
 ;;     1)`, so `r` binds `(VInt 1024)`.
-;;   - the body `(print r)` emits `1024` to STDOUT (the host `print` builtin
-;;     appends a newline) and returns `(VInt 1024)`, so the `let` - and the whole
-;;     program - denotes `1024`. Because output is to STDOUT we escape the mod-256
-;;     process-exit-code ceiling: stdout shows the full `1024` even though the exit
-;;     code (`1024 & 0xff`) wraps to 0.
+;;   - the body `(seq (print "hi") (print r))` evaluates its two arguments
+;;     left-to-right in the caller env: FIRST `(print "hi")` evaluates the string
+;;     literal to `(VStr "hi")` and prints it via the new `VStr` arm - the host
+;;     `print-string` builtin writes the raw bytes `hi` to STDOUT (NO trailing
+;;     newline) and the form returns the `(VStr "hi")`; SECOND `(print r)` prints
+;;     `r`'s `(VInt 1024)` via the `VInt` arm - the host `print` appends a newline,
+;;     so `1024\n`. `seq` returns its second arg `(VInt 1024)`, so the `let` - and
+;;     the whole program - denotes `1024`. STDOUT is therefore `hi1024\n`. Because
+;;     output is to STDOUT we escape the mod-256 process-exit-code ceiling: stdout
+;;     shows the full `1024` even though the exit code (`1024 & 0xff`) wraps to 0.
 ;; This single program proves the evaluator now (a) carries a tagged `Value`
-;; domain - the env binds `VInt`s, arithmetic/`if` go through `as-int`, and the
-;; result is a `(VInt 1024)`; (b) supports MULTI-ARGUMENT user functions with
-;; RECURSION through the shared function environment; and (c) supports
-;; MULTI-BINDING `let` with sequential (`let*`) scoping - all composed atop the
-;; reused lexer and reader. A string VALUE is also first-class: `(let ((s "hi")) 1)`
-;; BINDS a `(VStr "hi")` without error. (Deferred: `VStr` printing - no host
-;; string-print builtin exists; string OPERATIONS; lambda; closures; variadic
-;; arity.)
+;; domain - the env binds `VInt`s/`VStr`s, arithmetic/`if` go through `as-int`,
+;; and BOTH a `(VStr "hi")` and a `(VInt 1024)` are PRINTABLE (the `VStr` arm
+;; dispatches to the host `print-string`, the `VInt` arm to the host `print`);
+;; (b) supports MULTI-ARGUMENT user functions with RECURSION through the shared
+;; function environment; and (c) supports MULTI-BINDING `let` with sequential
+;; (`let*`) scoping - all composed atop the reused lexer and reader. A string
+;; VALUE is now not only first-class (bound, returned, passed) but also
+;; OUTPUTTABLE. (Deferred: string OPERATIONS; lambda; closures; variadic arity;
+;; string-literal escapes.)
 (define (main) : i64
-  (run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (let ((b 2) (e 10) (r (pow b e))) (print r))"))
+  (run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (define (seq a b) b) (let ((b 2) (e 10) (r (pow b e))) (seq (print \"hi\") (print r)))"))

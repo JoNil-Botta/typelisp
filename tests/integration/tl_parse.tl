@@ -63,9 +63,13 @@
           (OpSub)
           (if (string-eq op "*")
               (OpMul)
-              (begin
-                (panic "parse: unknown operator")
-                (OpAdd))))))
+              (if (string-eq op "<")
+                  (OpLt)
+                  (if (string-eq op "=")
+                      (OpEq)
+                      (begin
+                        (panic "parse: unknown operator")
+                        (OpAdd))))))))
 
 (define (parse-binary [op : BinOp] [rest : Sexpr]) : Expr
   (match rest
@@ -83,6 +87,16 @@
          (panic "parse: malformed let")
          (EInt 0))]))
 
+;; parse-if (#167): project `(if c t e)` onto `(EIf c t e)`. The argument spine
+;; must be exactly three forms; anything else is malformed input.
+(define (parse-if [rest : Sexpr]) : Expr
+  (match rest
+    [(SCons c (SCons t (SCons e (SNil))))
+     (EIf (parse c) (parse t) (parse e))]
+    [_ (begin
+         (panic "parse: malformed if")
+         (EInt 0))]))
+
 ;; parse: project the small source subset onto the typed `Expr` AST the emitter
 ;; consumes: ints, variables, binary arithmetic, and one-binding `let`.
 ;; Malformed input aborts via `panic`; the trailing `(EInt 0)` arms are
@@ -94,18 +108,14 @@
     [(SCons (SSym op) rest)
      (if (string-eq op "let")
          (parse-let rest)
-         (parse-binary (parse-op op) rest))]
+         (if (string-eq op "if")
+             (parse-if rest)
+             (parse-binary (parse-op op) rest)))]
     [_ (begin
          (panic "parse: malformed expression")
          (EInt 0))]))
 
-;; main: run the WHOLE self-hosted pipeline end to end on a literal source string
-;; and PRINT the complete runnable `.s`. `lex` tokenises the text, `read` builds
-;; the `Sexpr` cons tree, `parse` projects it onto the `Expr` AST, and
-;; `emit-program` lowers that to a full backend-shaped `.s`. The emitted program,
-;; when assembled + linked + run, exits 7 - so this single
-;; line takes SOURCE TEXT to machine code that runs and returns 7. The
-;; Linux-gated integration test assembles the printed text and asserts exit
-;; status 7, including the let slot store/load path from #163.
+;; main: run the whole self-hosted pipeline on a source string that exercises
+;; let, if, and comparison lowering.
 (define (main) : unit
-  (print-string (emit-program (parse (read (lex "(let ((x (* 2 3))) (+ x 1))"))))))
+  (print-string (emit-program (parse (read (lex "(let ((x 5)) (if (< x 10) 1 0))"))))))

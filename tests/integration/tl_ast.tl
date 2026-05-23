@@ -34,6 +34,15 @@
      (ELet name (parse-expr value) (parse-expr body))]
     [_ (begin (panic "ast: malformed let") (EInt 0))]))
 
+;; parse-if (#167): project `(if c t e)` onto `(EIf c t e)`. The argument spine
+;; must be exactly three forms (cond, then, else); any other shape is malformed
+;; input and aborts via `panic`, matching `parse-let`'s discipline.
+(define (parse-if [rest : Sexpr]) : Expr
+  (match rest
+    [(SCons c (SCons t (SCons e (SNil))))
+     (EIf (parse-expr c) (parse-expr t) (parse-expr e))]
+    [_ (begin (panic "ast: malformed if") (EInt 0))]))
+
 (define (parse-args [s : Sexpr]) : ExprList
   (match s
     [(SNil) ELNil]
@@ -51,9 +60,15 @@
              (parse-binary (OpSub) rest)
              (if (string-eq op "*")
                  (parse-binary (OpMul) rest)
-                 (if (string-eq op "let")
-                     (parse-let rest)
-                     (ECall op (parse-args rest))))))]
+                 (if (string-eq op "<")
+                     (parse-binary (OpLt) rest)
+                     (if (string-eq op "=")
+                         (parse-binary (OpEq) rest)
+                         (if (string-eq op "let")
+                             (parse-let rest)
+                             (if (string-eq op "if")
+                                 (parse-if rest)
+                                 (ECall op (parse-args rest)))))))))]
     [_ (begin (panic "ast: malformed expression") (EInt 0))]))
 
 (define (parse-params [s : Sexpr]) : StrList
@@ -84,7 +99,9 @@
   (match op
     [(OpAdd) 10]
     [(OpSub) 20]
-    [(OpMul) 30]))
+    [(OpMul) 30]
+    [(OpLt) 40]
+    [(OpEq) 50]))
 
 (define (expr-list-score [xs : ExprList]) : i64
   (match xs
@@ -103,6 +120,7 @@
     [(EBin op a b) (+ (op-score op) (+ (expr-score a) (expr-score b)))]
     [(ELet name value body)
      (+ (string-length name) (+ (expr-score value) (expr-score body)))]
+    [(EIf c t e) (+ (expr-score c) (+ (expr-score t) (expr-score e)))]
     [(ECall name args) (+ (string-length name) (expr-list-score args))]))
 
 (define (item-score [i : Item]) : i64
@@ -113,4 +131,5 @@
 (define (main) : i64
   (+ (+ (expr-score (parse-expr (read (lex "(+ 1 (* 2 3))"))))
         (item-score (parse-item (read (lex "(define (main) (+ 1 (* 2 3)))")))))
-     (expr-score (parse-expr (read (lex "(let ((x (* 2 3))) (+ x 1))"))))))
+     (+ (expr-score (parse-expr (read (lex "(let ((x (* 2 3))) (+ x 1))"))))
+        (expr-score (parse-expr (read (lex "(if (< 1 2) (= 3 3) 0)")))))))

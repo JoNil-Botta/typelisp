@@ -50,10 +50,18 @@
     [(EBin _ a b) (max-i64 (max-let-depth a) (max-let-depth b))]
     [(ELet _ value body)
      (max-i64 (max-let-depth value) (+ 1 (max-let-depth body)))]
+    [(EIf c t e)
+     (max-i64 (max-let-depth c) (max-i64 (max-let-depth t) (max-let-depth e)))]
     [(ECall _ args) (expr-list-max-let-depth args)]))
 
 (define (frame-size [e : Expr]) : i64
   (round-up-16 (* 8 (max-let-depth e))))
+
+(define (fresh-label [lc : (Array i64)] [prefix : String]) : String
+  (let ([id : i64 (array-ref lc 0)])
+    (begin
+      (array-set! lc 0 (+ id 1))
+      (string-append prefix (int->string id)))))
 
 (define (emit-int [n : i64]) : String
   (string-append "    movq $" (string-append (int->string n) ", %rax\n")))
@@ -62,57 +70,83 @@
   (match op
     [(OpAdd) "    addq %rcx, %rax\n"]
     [(OpSub) "    subq %rcx, %rax\n"]
-    [(OpMul) "    imulq %rcx, %rax\n"]))
+    [(OpMul) "    imulq %rcx, %rax\n"]
+    [(OpLt) "    cmpq %rcx, %rax\n    setl %al\n    movzbq %al, %rax\n"]
+    [(OpEq) "    cmpq %rcx, %rax\n    sete %al\n    movzbq %al, %rax\n"]))
 
 (define (emit-var [env : CEnv] [name : String]) : String
   (string-append "    movq "
     (string-append (emit-slot (cenv-lookup env name)) ", %rax\n")))
 
-(define (emit-bin [env : CEnv] [depth : i64] [op : BinOp] [a : Expr] [b : Expr]) : String
-  (string-append (emit-expr-in env depth a)
+(define (emit-bin [env : CEnv] [depth : i64] [lc : (Array i64)] [op : BinOp] [a : Expr] [b : Expr]) : String
+  (string-append (emit-expr-in env depth lc a)
     (string-append "    pushq %rax\n"
-      (string-append (emit-expr-in env depth b)
+      (string-append (emit-expr-in env depth lc b)
         (string-append "    movq %rax, %rcx\n"
           (string-append "    popq %rax\n"
             (emit-op op)))))))
 
-(define (emit-let [env : CEnv] [depth : i64] [name : String] [value : Expr] [body : Expr]) : String
+(define (emit-let [env : CEnv] [depth : i64] [lc : (Array i64)] [name : String] [value : Expr] [body : Expr]) : String
   (let ([next-depth : i64 (+ depth 1)])
     (let ([off : i64 (slot-offset next-depth)])
-      (string-append (emit-expr-in env depth value)
+      (string-append (emit-expr-in env depth lc value)
         (string-append "    movq %rax, "
           (string-append (emit-slot off)
             (string-append "\n"
-              (emit-expr-in (CBind name off env) next-depth body))))))))
+              (emit-expr-in (CBind name off env) next-depth lc body))))))))
 
-(define (emit-expr-in [env : CEnv] [depth : i64] [e : Expr]) : String
+(define (emit-if [env : CEnv] [depth : i64] [lc : (Array i64)] [c : Expr] [t : Expr] [e : Expr]) : String
+  (let ([lelse : String (fresh-label lc ".Lelse_")]
+        [lend : String (fresh-label lc ".Lend_")])
+    (string-append (emit-expr-in env depth lc c)
+      (string-append "    cmpq $0, %rax\n"
+        (string-append "    je "
+          (string-append lelse
+            (string-append "\n"
+              (string-append (emit-expr-in env depth lc t)
+                (string-append "    jmp "
+                  (string-append lend
+                    (string-append "\n"
+                      (string-append lelse
+                        (string-append ":\n"
+                          (string-append (emit-expr-in env depth lc e)
+                            (string-append lend ":\n")))))))))))))))
+
+(define (emit-expr-in [env : CEnv] [depth : i64] [lc : (Array i64)] [e : Expr]) : String
   (match e
     [(EInt n) (emit-int n)]
     [(EVar name) (emit-var env name)]
-    [(EBin op a b) (emit-bin env depth op a b)]
-    [(ELet name value body) (emit-let env depth name value body)]
+    [(EBin op a b) (emit-bin env depth lc op a b)]
+    [(ELet name value body) (emit-let env depth lc name value body)]
+    [(EIf c t e) (emit-if env depth lc c t e)]
     [(ECall _ _) (begin (panic "emit: calls are not in M1 arithmetic") "")]))
 
 (define (emit-expr [e : Expr]) : String
-  (emit-expr-in CNil 0 e))
+  (let ([lc : (Array i64) (make-array i64 1)])
+    (begin
+      (array-set! lc 0 0)
+      (emit-expr-in CNil 0 lc e))))
 
 ;; emit-program: wrap the body asm in the complete backend-shaped `.s` skeleton.
 ;; It reserves one aligned frame region for all lexical let slots.
 (define (emit-program [e : Expr]) : String
-  (let ([frame : i64 (frame-size e)])
-    (string-append "    .text\n"
-      (string-append "    .globl main\n"
-        (string-append "    .globl _start\n\n"
-          (string-append "main:\n"
-            (string-append "    push %rbp\n"
-              (string-append "    mov %rsp, %rbp\n"
-                (string-append (emit-stack-sub frame)
-                  (string-append (emit-expr-in CNil 0 e)
-                    (string-append (emit-stack-add frame)
-                      (string-append "    pop %rbp\n"
-                        (string-append "    ret\n\n"
-                          (string-append "_start:\n"
-                            (string-append "    call main\n"
-                              (string-append "    movq %rax, %rdi\n"
-                                (string-append "    movq $60, %rax\n"
-                                  "    syscall\n")))))))))))))))))
+  (let ([frame : i64 (frame-size e)]
+        [lc : (Array i64) (make-array i64 1)])
+    (begin
+      (array-set! lc 0 0)
+      (string-append "    .text\n"
+        (string-append "    .globl main\n"
+          (string-append "    .globl _start\n\n"
+            (string-append "main:\n"
+              (string-append "    push %rbp\n"
+                (string-append "    mov %rsp, %rbp\n"
+                  (string-append (emit-stack-sub frame)
+                    (string-append (emit-expr-in CNil 0 lc e)
+                      (string-append (emit-stack-add frame)
+                        (string-append "    pop %rbp\n"
+                          (string-append "    ret\n\n"
+                            (string-append "_start:\n"
+                              (string-append "    call main\n"
+                                (string-append "    movq %rax, %rdi\n"
+                                  (string-append "    movq $60, %rax\n"
+                                    "    syscall\n"))))))))))))))))))

@@ -378,8 +378,8 @@
 ;;
 ;; The recursive `eval-sexpr` calls thread BOTH envs so the result depends on the
 ;; whole nested shape, the bindings in scope, AND the program's functions.
-;; (Deferred: interpreted `string-append` / concat dispatch, lambda, closures,
-;; variadic arity; mutual recursion IS supported - the whole `fenv` is shared.)
+;; (Deferred: lambda, closures, variadic arity; mutual recursion IS supported -
+;; the whole `fenv` is shared.)
 (define (eval-sexpr [s : Sexpr] [env : Env] [fenv : FnEnv]) : Value
   (match s
     [(SInt n) (VInt n)]
@@ -509,6 +509,27 @@
                                    (begin
                                      (sexpr-expect-nil restp2)
                                      (VInt (string->int (as-str (eval-sexpr arg env fenv))))))
+                             (if (string-eq name "string-append")
+                                 ;; STRING OP `(string-append a b)`: rest is
+                                 ;; `(SCons a (SCons b SNil))`. Evaluate both
+                                 ;; operands, `as-str`-project each (a `VInt` here
+                                 ;; is a type error), call the host `string-append`
+                                 ;; builtin - the emit-on-demand `tl_string_concat`
+                                 ;; runtime that copies both operands' bytes into
+                                 ;; ONE fresh heap String - and re-wrap that joined
+                                 ;; String as `(VStr r)`. This completes the
+                                 ;; interpreter's string toolkit: it can now BUILD
+                                 ;; strings, not only measure / slice / compare /
+                                 ;; print them.
+                                 (let ([ae : Sexpr (sexpr-head rest)]
+                                       [restA : Sexpr (sexpr-tail rest)])
+                                   (let ([be : Sexpr (sexpr-head restA)]
+                                         [restA2 : Sexpr (sexpr-tail restA)])
+                                     (begin
+                                       (sexpr-expect-nil restA2)
+                                       (VStr (string-append
+                                              (as-str (eval-sexpr ae env fenv))
+                                              (as-str (eval-sexpr be env fenv)))))))
                              (if (is-builtin-op name)
                                  ;; A builtin binary call form `(op arg1 arg2)`: rest is
                                  ;; `(SCons arg1 (SCons arg2 SNil))`. Both operands must be
@@ -534,7 +555,7 @@
                                  ;; Arbitrary arity.
                                  (let ([params : Sexpr (lookup-fn-params fenv name)]
                                        [body : Sexpr (lookup-fn-body fenv name)])
-                                   (eval-sexpr body (bind-args params rest env fenv) fenv)))))))))))]
+                                   (eval-sexpr body (bind-args params rest env fenv) fenv))))))))))))]
     [_ (begin (panic "eval: not an evaluable expression") (VInt 0))]))
 
 ;; --------------------------------------------------------------------------
@@ -663,47 +684,52 @@
 
 ;; --------------------------------------------------------------------------
 ;; main: the whole front end composed - lex, read MANY forms, interpret with
-;; MULTI-ARGUMENT user functions, recursion, multi-binding `let`, AND STRING OPS.
+;; MULTI-ARGUMENT user functions, recursion, multi-binding `let`, AND STRING OPS
+;; including string-BUILDING via `string-append`.
 ;; --------------------------------------------------------------------------
 ;; `(run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (define (seq a b) b)
-;;                (let ((s "hello world") (h (substring s 0 5)) (n (string-length h))
-;;                      (t (int->string (pow 2 n))) (m (string->int t)))
-;;                  (seq (seq (print h) (print t)) (print (+ m (string-eq h "hello")))))")`:
+;;                (let ((s "hello world") (h (substring s 0 5)) (w (substring s 6 5))
+;;                      (n (string-length h)) (g (string-append h (string-append " " w)))
+;;                      (t (string-append g (int->string (pow 2 n)))))
+;;                  (seq (print t) (print (+ (string->int (substring t 11 2)) (string-eq g s)))))")`:
 ;;   - the program is THREE top-level forms: a recursive TWO-parameter `define` of
 ;;     `pow`, a two-parameter `seq` whose body is just its SECOND argument (a
 ;;     left-to-right sequencer - the interpreted language has no `begin`, so a
 ;;     two-arg function whose arguments are evaluated in order, returning the last,
 ;;     stands in for one), then the trailing expression - a MULTI-BINDING `let`
-;;     exercising the new STRING OPERATIONS whose body prints BOTH a STRING and an
-;;     integer via `seq`.
+;;     exercising the WHOLE STRING TOOLKIT - measure, slice, COMPARE, the new
+;;     int<->string conversions, AND string CONSTRUCTION via `string-append` -
+;;     whose body prints BOTH a built STRING and an integer via `seq`.
 ;;   - the program reader folds both defines into the `FnEnv`, then evaluates the
 ;;     `let` against that function env.
-;;   - the `let` has FIVE bindings, folded SEQUENTIALLY (`let*`):
+;;   - the `let` has SIX bindings, folded SEQUENTIALLY (`let*`):
 ;;     `s -> (VStr "hello world")` (a first-class string VALUE), then
 ;;     `h -> (substring s 0 5)` whose initializer SEES the earlier `s` - the
 ;;     load-bearing proof that a later init resolves earlier bindings - so the
 ;;     `substring` STRING OP slices `[0, 5)` to `(VStr "hello")`, then
+;;     `w -> (substring s 6 5)` slices `[6, 11)` to `(VStr "world")`, then
 ;;     `n -> (string-length h)` whose `string-length` STRING OP yields the byte
-;;     count `(VInt 5)`, then `t -> (int->string (pow 2 n))` - `(pow 2 5)` is the
-;;     recursive `(VInt 32)`, and the `int->string` STRING OP turns that integer
-;;     VALUE into the string VALUE `(VStr "32")`, then `m -> (string->int t)`
-;;     parses that string back with the `string->int` STRING OP to the `(VInt 32)`
-;;     it denotes - a round-trip through the new int<->string conversions. Each
-;;     op unwraps its operand via `as-str` / `as-int` and re-wraps the host
-;;     builtin's result.
-;;   - the body `(seq (seq (print h) (print t)) (print (+ m (string-eq h "hello"))))`
-;;     evaluates left-to-right in the caller env: FIRST `(print h)` prints `h`'s
-;;     `(VStr "hello")` via the `VStr` arm - the host `print-string` builtin writes
-;;     the raw bytes `hello` to STDOUT (NO trailing newline); SECOND `(print t)`
-;;     prints `t`'s `(VStr "32")` the same way, writing `32` (NO newline) - this is
-;;     the visible witness of `int->string`; THIRD `(print (+ m (string-eq h
-;;     "hello")))` - `m` is the `(VInt 32)` parsed by `string->int`, `(string-eq h
-;;     "hello")` folds byte-wise equality to the `1` integer-truth value, their sum
-;;     is `(VInt 33)` - prints `33` via the `VInt` arm (the host `print` appends a
-;;     newline), so `33\n`. The outer `seq` returns its second arg `(VInt 33)`, so
-;;     the `let` - and the whole program - denotes `33`. STDOUT is therefore
-;;     `hello3233\n`. Because output is to STDOUT we escape the mod-256
-;;     process-exit-code ceiling.
+;;     count `(VInt 5)`, then `g -> (string-append h (string-append " " w))` - the
+;;     NEW string-append OP - joins the sliced parts back into ONE fresh heap
+;;     String `(VStr "hello world")` (the inner append builds `(VStr " world")`,
+;;     the outer prepends `h`), then `t -> (string-append g (int->string (pow 2 n)))`
+;;     appends the decimal text of `(pow 2 5)` = `(VInt 32)` -> `(VStr "32")` (via
+;;     the int->string conversion) onto `g`, giving `(VStr "hello world32")`. Each
+;;     op unwraps its operands via `as-str` / `as-int` and re-wraps the host
+;;     builtin's result as a tagged `Value`.
+;;   - the body `(seq (print t) (print (+ (string->int (substring t 11 2)) (string-eq g s))))`
+;;     evaluates its two arguments left-to-right in the caller env: FIRST `(print t)`
+;;     prints `t`'s `(VStr "hello world32")` via the `VStr` arm - the host
+;;     `print-string` builtin writes the raw bytes `hello world32` to STDOUT (NO
+;;     trailing newline); SECOND `(print (+ (string->int (substring t 11 2))
+;;     (string-eq g s)))` - `(substring t 11 2)` slices the trailing `"32"` back
+;;     out, `string->int` parses it to `(VInt 32)`, and `(string-eq g s)` is `1`
+;;     because `string-append` REBUILT `s` from its sliced parts byte-for-byte, so
+;;     their sum is `(VInt 33)`, printed as `33` via the `VInt` arm (the host
+;;     `print` appends a newline), so `33\n`. `seq` returns its second arg
+;;     `(VInt 33)`, so the `let` - and the whole program - denotes `33`. STDOUT is
+;;     therefore `hello world3233\n`. Because output is to STDOUT we escape the
+;;     mod-256 process-exit-code ceiling.
 ;; This single program proves the evaluator now (a) carries a tagged `Value`
 ;; domain - the env binds `VInt`s/`VStr`s, numeric contexts go through `as-int`,
 ;; string contexts through `as-str`, and BOTH a `(VStr ...)` and a `(VInt ...)`
@@ -711,12 +737,11 @@
 ;; arm to the host `print`); (b) supports MULTI-ARGUMENT user functions with
 ;; RECURSION through the shared function environment; (c) supports MULTI-BINDING
 ;; `let` with sequential (`let*`) scoping; and (d) exposes the STRING OPERATIONS
-;; `substring` / `string-length` / `string-eq` / `int->string` / `string->int`,
-;; each dispatched on the head symbol and operating on the tagged `Value` - the
-;; int<->string pair lets an interpreted program convert between integer and
-;; string VALUES (and build numeric strings) - all composed atop the reused lexer
-;; and reader. (Deferred: an interpreted `string-append` dispatch arm now that the
-;; host compiler has the `string-append` builtin (#136); lambda; closures;
-;; variadic arity; string-literal escapes.)
+;; `substring` / `string-length` / `string-eq` / `int->string` / `string->int` /
+;; `string-append`, each dispatched on the head symbol and operating on the tagged
+;; `Value` - so the interpreter can now MEASURE, SLICE, COMPARE, CONVERT (int<->
+;; string), PRINT, and (the new piece) BUILD strings: its string toolkit is
+;; complete - all composed atop the reused lexer and reader. (Deferred: lambda;
+;; closures; variadic arity; string-literal escapes.)
 (define (main) : i64
-  (run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (define (seq a b) b) (let ((s \"hello world\") (h (substring s 0 5)) (n (string-length h)) (t (int->string (pow 2 n))) (m (string->int t))) (seq (seq (print h) (print t)) (print (+ m (string-eq h \"hello\")))))"))
+  (run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (define (seq a b) b) (let ((s \"hello world\") (h (substring s 0 5)) (w (substring s 6 5)) (n (string-length h)) (g (string-append h (string-append \" \" w))) (t (string-append g (int->string (pow 2 n))))) (seq (print t) (print (+ (string->int (substring t 11 2)) (string-eq g s)))))"))

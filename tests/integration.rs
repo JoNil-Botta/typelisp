@@ -257,7 +257,7 @@ fn type_lisp_programs_compile_link_and_run() {
         // top-level `(define (f x y z) body)` forms, a tagged VALUE domain
         // `(defenum Value (VInt i64) (VStr String))`, AND now STRING OPERATIONS
         // (`substring` / `string-length` / `string-eq` / `int->string` /
-        // `string->int`). `tl_eval.tl` walks the
+        // `string->int` / `string-append`). `tl_eval.tl` walks the
         // recursive cons-cell `Sexpr` AST
         // against two environments - a value `Env` (binding `Value`s) and a
         // function `FnEnv`: `(SSym name)` resolves via recursive assoc-list
@@ -275,32 +275,36 @@ fn type_lisp_programs_compile_link_and_run() {
         // (integer + newline), a `VStr` via the host `print-string` (raw bytes, NO
         // newline). `main` runs `run-program` over the THREE-form program
         // `(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (define (seq a b) b)
-        //  (let ((s "hello world") (h (substring s 0 5)) (n (string-length h))
-        //        (t (int->string (pow 2 n))) (m (string->int t)))
-        //    (seq (seq (print h) (print t)) (print (+ m (string-eq h "hello")))))`:
+        //  (let ((s "hello world") (h (substring s 0 5)) (w (substring s 6 5))
+        //        (n (string-length h)) (g (string-append h (string-append " " w)))
+        //        (t (string-append g (int->string (pow 2 n)))))
+        //    (seq (print t) (print (+ (string->int (substring t 11 2)) (string-eq g s)))))`:
         // the recursive TWO-parameter `pow` and a two-parameter `seq` (whose body
         // is its SECOND argument - a left-to-right sequencer, the interpreted
         // language having no `begin`) are folded into the `FnEnv`, then the trailing
         // MULTI-BINDING `let` binds `s` to the string VALUE `"hello world"`, then
         // `h` to `(substring s 0 5)` = `"hello"` (its init SEES the earlier `s` -
-        // sequential `let*` scoping), then `n` to `(string-length h)` = `5`, then
-        // `t` to `(int->string (pow 2 n))` = `(int->string 32)` = the string
-        // `"32"` (the `int->string` op), then `m` to `(string->int t)` = `32` (the
-        // inverse `string->int` op - an int<->string round-trip). The body
-        // `(seq (seq (print h) (print t)) (print (+ m (string-eq h "hello"))))`
-        // evaluates left-to-right: FIRST `(print h)` prints `hello` via the `VStr`
-        // arm (host `print-string`, no newline), SECOND `(print t)` prints `32`
-        // (the `VStr` arm again, no newline - the visible witness of `int->string`),
-        // THIRD `(print (+ m (string-eq h "hello")))` = `(+ 32 1)` = `33\n` via the
-        // `VInt` arm; the outer `seq` returns its second arg `(VInt 33)`. So stdout
-        // is `hello3233\n`; printing to stdout escapes the old mod-256 exit-code
-        // ceiling, so the exit code is the wrapped `33 & 0xff = 33`. All three
-        // imported `main`-less modules are copied alongside so the `(import)` chain
-        // resolves.
+        // sequential `let*` scoping), `w` to `(substring s 6 5)` = `"world"`, then
+        // `n` to `(string-length h)` = `5`, then `g` to `(string-append h
+        // (string-append " " w))` - the NEW string-append op REBUILDS `"hello world"`
+        // from the sliced parts into one fresh heap String - then `t` to
+        // `(string-append g (int->string (pow 2 n)))` appends `(int->string 32)` =
+        // `"32"` onto `g`, giving `"hello world32"`. The body `(seq (print t)
+        // (print (+ (string->int (substring t 11 2)) (string-eq g s))))` evaluates
+        // left-to-right: FIRST `(print t)` prints the string bytes `hello world32`
+        // via the `VStr` arm (host `print-string`, no newline), SECOND
+        // `(print (+ (string->int (substring t 11 2)) (string-eq g s)))` slices the
+        // trailing `"32"` back out, parses it with `string->int` to `32`, adds
+        // `(string-eq g s)` = 1 (exactly 1 because `string-append` rebuilt `s`
+        // byte-for-byte), giving `(+ 32 1)` = `33\n` via the `VInt` arm; `seq`
+        // returns its second arg `(VInt 33)`. So stdout is `hello world3233\n`;
+        // printing to stdout escapes the old mod-256 exit-code ceiling, so the exit
+        // code is the wrapped `33 & 0xff = 33`. All three imported `main`-less
+        // modules are copied alongside so the `(import)` chain resolves.
         Case {
             name: "tl_eval",
             exit_code: 33,
-            stdout: "hello3233\n",
+            stdout: "hello world3233\n",
             deps: &["tl_read.tl", "tl_lex.tl", "tl_token.tl"],
         },
         // refs #41: NESTED PATTERN MATCHING, standalone witness. A tree-walking
@@ -536,23 +540,27 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         // calls, a tagged VALUE domain `(VInt/VStr)` whose BOTH shapes print
         // (`VInt` via host `print`, `VStr` via host `print-string`), AND STRING
         // OPERATIONS (`substring` / `string-length` / `string-eq` / `int->string` /
-        // `string->int`), also
+        // `string->int` / `string-append`), also
         // exercised through the explicit compile -> as -> ld -> run pipeline.
         // Runs `run-program` over the three-form program
         // `(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (define (seq a b) b)
-        //  (let ((s "hello world") (h (substring s 0 5)) (n (string-length h))
-        //        (t (int->string (pow 2 n))) (m (string->int t)))
-        //    (seq (seq (print h) (print t)) (print (+ m (string-eq h "hello")))))`:
+        //  (let ((s "hello world") (h (substring s 0 5)) (w (substring s 6 5))
+        //        (n (string-length h)) (g (string-append h (string-append " " w)))
+        //        (t (string-append g (int->string (pow 2 n)))))
+        //    (seq (print t) (print (+ (string->int (substring t 11 2)) (string-eq g s)))))`:
         // `pow` and the sequencer `seq` are folded into the `FnEnv`, then the
         // multi-binding `let` binds `s`->"hello world", `h`->(substring s 0 5) =
         // "hello" (the init sees the earlier `s` - sequential `let*` scoping),
-        // `n`->(string-length h) = 5, `t`->(int->string (pow 2 n)) = "32" (the
-        // `int->string` op), `m`->(string->int t) = 32 (the inverse `string->int`
-        // op - an int<->string round-trip); the body
-        // `(seq (seq (print h) (print t)) (print ...))` prints `hello` then `32`
-        // (both the `VStr` arm, host `print-string`, no newline) then
-        // `(+ m (string-eq h "hello"))` = `(+ 32 1)` = `33\n` (the `VInt` arm) and
-        // the outer `seq` returns `(VInt 33)` - so stdout is `hello3233\n` and the
+        // `w`->(substring s 6 5) = "world", `n`->(string-length h) = 5, then
+        // `g`->(string-append h (string-append " " w)) - the NEW string-append op
+        // REBUILDS "hello world" from the sliced parts - then `t`->(string-append g
+        // (int->string (pow 2 n))) appends `(int->string 32)` = "32" onto `g`,
+        // giving "hello world32"; the body `(seq (print t) (print ...))` prints
+        // `hello world32` (the `VStr` arm, host `print-string`, no newline) then
+        // `(+ (string->int (substring t 11 2)) (string-eq g s))` slices the trailing
+        // "32" back out, parses it (`string->int` = 32), adds `(string-eq g s)` = 1
+        // (the rebuild is byte-correct), = `(+ 32 1)` = `33\n` (the `VInt` arm) and
+        // `seq` returns `(VInt 33)` - so stdout is `hello world3233\n` and the
         // exit code is the wrapped `33 & 0xff = 33`. The reader (and transitively
         // the lexer + token
         // model) is reused via the `main`-less `tl_read.tl` import - including its
@@ -562,7 +570,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         Case {
             name: "tl_eval",
             exit_code: 33,
-            stdout: "hello3233\n",
+            stdout: "hello world3233\n",
             deps: &["tl_read.tl", "tl_lex.tl", "tl_token.tl"],
         },
         // refs #41: nested pattern matching, also through the explicit

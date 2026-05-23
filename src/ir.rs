@@ -19,6 +19,9 @@ pub enum Value {
     /// those bytes (the `ptr` field of a fat string). The value is pointer-sized
     /// (a data pointer), used only to populate fat-string storage at lowering.
     ConstStr(String),
+    /// Address of a named function or extern. This is pointer-sized and is
+    /// materialized by the backend as a code address.
+    Function(String),
     Var(VarId),
     Global(String),
 }
@@ -233,6 +236,9 @@ impl Value {
             // A `ConstStr` operand is the raw data pointer of a string literal,
             // a pointer-sized value.
             Value::ConstStr(_) => Some(Type::U64),
+            // The exact function type depends on the symbol table, so callers
+            // that need it must use contextual type maps.
+            Value::Function(_) => None,
             Value::Var(_) | Value::Global(_) => None, // Need type context
         }
     }
@@ -248,6 +254,7 @@ impl fmt::Display for Value {
             Value::ConstBool(b) => write!(f, "{}", b),
             Value::ConstUnit => write!(f, "unit"),
             Value::ConstStr(s) => write!(f, "{:?}", s),
+            Value::Function(name) => write!(f, "&{}", name),
             Value::Var(v) => write!(f, "%{}", v),
             Value::Global(g) => write!(f, "@{}", g),
         }

@@ -148,6 +148,8 @@ narrower or unsigned integer is required. Floating-point literals are always
 `(-> arg1 arg2 ... ret)`
 - Function pointers exist in the type system and ABI.
 - Direct calls are resolved at compile time; indirect calls through function pointer values use `call *%rax`.
+- A named top-level function can be used as a non-capturing function pointer
+  value, e.g. `(apply1 inc 41)` where `apply1` takes a `(-> i64 i64)`.
 - Lambda expressions parse and type-check for scalar returns, but backend
   lowering for lambda literals is incomplete. Closures (captured environment)
   are not supported.
@@ -306,7 +308,8 @@ See §3.4.
 ```
 
 - Direct calls: the callee is a known function name.
-- Indirect calls: the callee is a variable/parameter of function type.
+- Indirect calls: the callee is a variable/parameter of function type, or a
+  named top-level function has been passed as a function pointer value.
 - Arguments are evaluated left-to-right.
 - System V AMD64 ABI: integer args in `%rdi`, `%rsi`, `%rdx`, `%rcx`, `%r8`, `%r9`; float args in `%xmm0-%xmm7`; independent counters.
 - Stack arguments (beyond register capacity) are passed on the stack.

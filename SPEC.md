@@ -273,9 +273,11 @@ Imports another TypeLisp file. All top-level definitions from the imported file 
   are not resolved through stdlib root fallback.
 - The current stdlib source-tree layout and verification convention is
   documented in `stdlib/README.md`.
-- A local package manifest/build command exists, but package dependencies,
-  package-qualified import syntax, namespace isolation, and implicit preludes
-  are not defined yet.
+- During `typelisp build`, imports of the form `pkg:<alias>/<path>` resolve
+  from a dependency package root declared in the current `typelisp.pkg`.
+  Package import suffixes must stay below that dependency root. Imported
+  declarations share the same flat top-level namespace as ordinary modules, so
+  duplicate value or type names are errors.
 
 ### 4.5 `typelisp.pkg` — local package manifest
 
@@ -285,20 +287,30 @@ Imports another TypeLisp file. All top-level definitions from the imported file 
 (package
   (name "my-app")
   (version "0.1.0")
-  (entry "src/main.tl"))
+  (entry "src/main.tl")
+  (dependencies
+    (math "../math")))
 ```
 
 - `name`, `version`, and `entry` are required string fields.
+- `dependencies` is optional. Each entry has an alias symbol and a string root
+  path: `(alias "relative/or/absolute/path")`.
+- Dependency aliases use the same character rules as package names: ASCII
+  letters, digits, `-`, and `_`; duplicate aliases are rejected.
 - `entry` is resolved relative to the manifest directory.
+- Relative dependency paths are resolved relative to the manifest directory;
+  absolute dependency paths are used as written.
 - `typelisp build --manifest-path path/to/typelisp.pkg` builds the entry file
   through the same module loader and compiler pipeline as `compile`.
 - `typelisp build` without `--manifest-path` searches for `typelisp.pkg` from
   the current directory upward.
 - Build output is assembly under
   `target/typelisp/<package-name>/<package-name>.s` in the package root.
-- This first package layer has no dependency resolver, package-qualified import
-  syntax, namespace isolation, lockfile, workspace model, registry, or native
-  executable build promise.
+- Package-root-qualified imports use the reserved string prefix
+  `pkg:<alias>/...`, for example `(import "pkg:math/src/lib.tl")`.
+- This first package layer has no registry, semantic-version solving, transitive
+  manifest loading, namespace isolation, qualified symbol access, implicit
+  preludes, lockfile, workspace model, or native executable build promise.
 
 ### 4.6 `(defenum ...)` and `(defstruct ...)`
 

@@ -1164,14 +1164,23 @@
 ;;     4))` renders a NESTED list as `(1 (2 3) 4)` (the inner pair element recurses
 ;;     parenthesised), and `(print p)` renders the IMPROPER pair `(cons 10 20)` as
 ;;     `(10)` (the non-nil cdr `20` is dropped - the documented improper-tail limit).
-;;     The arm then denotes the UNPRINTED recursive `(sum-list (list 1 2 3 4 5))` -
-;;     summing the FIVE elements of a list built by the variadic constructor =
-;;     `1 + 2 + 3 + 4 + 5` = `(VInt 15)`.
-;;   - the outer `begin` returns the LAST arm, `(VInt 15)`, so the whole program
-;;     denotes `15`. STDOUT is
-;;     `hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10)`;
+;;     THEN the HIGHER-ORDER showcase, the payoff of closure-valued PARAMETERS: a
+;;     define'd function takes a closure as a parameter and CALLS it (`(f (car l))`
+;;     where `f` is bound to a `VClosure`, routed through `apply-value` because the
+;;     call head resolves to a value-env binding rather than an `fenv` name).
+;;     `(map (lambda (x) (* x x)) (list 1 2 3 4))` builds the squared list, printed
+;;     by the recursive list printer as `(1 4 9 16)`, and
+;;     `(filter (lambda (x) (< x 3)) (list 1 2 3 4))` keeps the elements below 3,
+;;     printed as `(1 2)` - idiomatic functional programs composing closures, lists,
+;;     recursion, and list-printing end to end. The arm then denotes the UNPRINTED
+;;     `(sum-list (map (lambda (x) (* x x)) (list 1 2 3 4)))` - a NUMERIC witness
+;;     that map's result is a real list `sum-list` can walk = `1 + 4 + 9 + 16` =
+;;     `(VInt 30)`.
+;;   - the outer `begin` returns the LAST arm, `(VInt 30)`, so the whole program
+;;     denotes `30`. STDOUT is
+;;     `hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10)(1 4 9 16)(1 2)`;
 ;;     printing to stdout escapes the mod-256 exit-code ceiling, and the exit code
-;;     is `15`.
+;;     is `30`.
 ;; This program proves the evaluator now has FIRST-CLASS FUNCTIONS - a `lambda`
 ;; special form building a `(VClosure params body captured-env)`, applied as a
 ;; computed operator or a closure-valued variable, with true CLOSURE capture via
@@ -1180,14 +1189,22 @@
 ;; (NIL) is a singly-linked list, now also buildable in one form by the VARIADIC
 ;; `(list e1 ... en)` SPECIAL FORM and PRINTABLE as a proper list `(e1 e2 ... en)`
 ;; via the recursive `print-value` walk (nesting parenthesised; an improper tail
-;; closed early) - AND the `pair?` / `null?` LIST PREDICATES that let an interpreted
+;; closed early) - the `pair?` / `null?` LIST PREDICATES that let an interpreted
 ;; program write RECURSIVE LIST ALGORITHMS: `sum-list` and `list-len` recur on
 ;; `(cdr l)` and terminate by testing the structure of the value (a pair = more
-;; list, the `0` NIL sentinel = done), composing closures, pairs, the `list`
-;; constructor, and recursion. `Value` and `Env` are mutually recursive enums (a
+;; list, the `0` NIL sentinel = done) - AND, the capstone, HIGHER-ORDER FUNCTIONS:
+;; `map` and `filter` are define'd functions whose FIRST PARAMETER is a closure they
+;; CALL on each element (`(f (car l))` / `(p (car l))`). This works because a
+;; symbol-head call probes the value env first (`env-has`) and, finding the
+;; parameter bound to a `VClosure`, applies it via `apply-value` rather than
+;; treating the head as an `fenv` function name - the dispatch rule that makes
+;; closures first-class ARGUMENTS, not just first-class values. So the interpreter
+;; runs idiomatic functional programs: `(map (lambda (x) (* x x)) (list 1 2 3 4))`
+;; -> `(1 4 9 16)`, composing closures, pairs, the `list` constructor, recursion,
+;; and list-printing. `Value` and `Env` are mutually recursive enums (a
 ;; `VClosure` carries an `Env`, an `EBind` carries a `Value`), each pointer-sized so
 ;; the layout stays finite. (Deferred: variadic user-function arity; string-literal
 ;; escapes; a dedicated nil variant; dotted-pair `(a . b)` rendering for improper
 ;; lists.)
 (define (main) : i64
-  (run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (define (second xs) (car (cdr xs))) (define (sum-list l) (if (pair? l) (+ (car l) (sum-list (cdr l))) 0)) (define (list-len l) (if (null? l) 0 (+ 1 (list-len (cdr l))))) (begin (let ((s \"hello world\") (h (substring s 0 5)) (w (substring s 6 5)) (n (string-length h)) (g (string-append h (string-append \" \" w))) (t (string-append g (int->string (pow 2 n))))) (begin (print t) (print (+ (string->int (substring t 11 2)) (string-eq g s))) (+ (string->int (substring t 11 2)) (string-eq g s)))) (print ((lambda (x) (* x x)) 5)) (print (let ((n 10)) ((lambda (x) (+ x n)) 5))) (let ((lst (list 1 2 3)) (p (cons 10 20))) (begin (print (second lst)) (print (car p)) (print (pair? lst)) (print (null? lst)) (print (null? 0)) (print (list-len lst)) (print lst) (print (list 1 (list 2 3) 4)) (print p) (sum-list (list 1 2 3 4 5)))))"))
+  (run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (define (second xs) (car (cdr xs))) (define (sum-list l) (if (pair? l) (+ (car l) (sum-list (cdr l))) 0)) (define (list-len l) (if (null? l) 0 (+ 1 (list-len (cdr l))))) (define (map f l) (if (pair? l) (cons (f (car l)) (map f (cdr l))) 0)) (define (filter p l) (if (pair? l) (if (p (car l)) (cons (car l) (filter p (cdr l))) (filter p (cdr l))) 0)) (begin (let ((s \"hello world\") (h (substring s 0 5)) (w (substring s 6 5)) (n (string-length h)) (g (string-append h (string-append \" \" w))) (t (string-append g (int->string (pow 2 n))))) (begin (print t) (print (+ (string->int (substring t 11 2)) (string-eq g s))) (+ (string->int (substring t 11 2)) (string-eq g s)))) (print ((lambda (x) (* x x)) 5)) (print (let ((n 10)) ((lambda (x) (+ x n)) 5))) (let ((lst (list 1 2 3)) (p (cons 10 20))) (begin (print (second lst)) (print (car p)) (print (pair? lst)) (print (null? lst)) (print (null? 0)) (print (list-len lst)) (print lst) (print (list 1 (list 2 3) 4)) (print p) (print (map (lambda (x) (* x x)) (list 1 2 3 4))) (print (filter (lambda (x) (< x 3)) (list 1 2 3 4))) (sum-list (map (lambda (x) (* x x)) (list 1 2 3 4))))))"))

@@ -752,6 +752,31 @@ fn tl_eval_tl_compiles_to_assembly() {
         asm,
     );
 
+    // HIGHER-ORDER FUNCTIONS - `map` / `filter` SHOWCASE (#27): `main`'s program
+    // additionally defines `map` (`(define (map f l) (if (pair? l) (cons (f (car l))
+    // (map f (cdr l))) 0))`) and `filter`, whose FIRST PARAMETER is a closure they
+    // CALL on each element via `(f (car l))` / `(p (car l))`. Like `sum-list` these
+    // are INTERPRETED functions (their text lives in the program String), so NO host
+    // `_tl_map:` / `_tl_filter:` labels are emitted. What makes calling a
+    // closure-VALUED PARAMETER work is the existing symbol-head dispatch: a call head
+    // `f` that resolves to a `VClosure` in the value `env` is detected by `env-has`
+    // and applied via `apply-value` (extending the captured env through
+    // `bind-args-onto`) rather than looked up as a top-level `define` in the `fenv`.
+    // That routing - `_tl_env_has:` / `_tl_apply_value:` / `_tl_bind_args_onto:` and
+    // their call sites - is asserted above; this slice needs NO new host symbol (no
+    // call-dispatch fix was required), only the interpreted `map`/`filter` defines.
+    for gone in ["_tl_map:", "_tl_filter:"] {
+        assert!(
+            !asm.contains(gone),
+            "map/filter are INTERPRETED functions (they live in main's program \
+             String), so no host `{}` label should be emitted - the higher-order \
+             call works through the existing env-has/apply-value closure-arg \
+             routing:\n{}",
+            gone,
+            asm,
+        );
+    }
+
     // Building a `(VPair a b)` cons cell heap-allocates a two-field node (its fields
     // are `Value` pointers, #111), so the pair-building path goes through the
     // runtime allocator just like the `Sexpr` tree does. (`call tl_alloc` is already

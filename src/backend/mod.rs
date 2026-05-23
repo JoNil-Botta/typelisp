@@ -1,9 +1,12 @@
+use crate::diagnostic::Diagnostic;
 use crate::ir::{
-    BasicBlock, BinOp as IrBinOp, Function, Instruction, Label, Program, UnOp as IrUnOp, Value,
-    VarId,
+    BasicBlock, BinOp as IrBinOp, Function, Instruction, Label, Program, SourceSpans,
+    UnOp as IrUnOp, Value, VarId,
 };
+use crate::span::Span;
 use crate::types::Type;
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 
 const ABORT_RUNTIME_SYMBOL: &str = ".L_tl_abort";
 const ARG_COUNT_RUNTIME_SYMBOL: &str = ".L_tl_arg_count";
@@ -11,6 +14,44 @@ const ARG_RUNTIME_SYMBOL: &str = ".L_tl_arg";
 const READ_FILE_RUNTIME_SYMBOL: &str = ".L_tl_read_file";
 const WRITE_FILE_RUNTIME_SYMBOL: &str = ".L_tl_write_file";
 const FILE_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists";
+
+/// Backend validation error with optional source provenance. The existing
+/// `generate_assembly` API still exposes plain strings for tests and library
+/// callers; CLI paths use this richer form to render diagnostics with snippets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackendError {
+    pub message: String,
+    pub span: Option<Span>,
+}
+
+impl BackendError {
+    fn unspanned(message: impl Into<String>) -> Self {
+        BackendError {
+            message: message.into(),
+            span: None,
+        }
+    }
+
+    fn at(message: impl Into<String>, span: Option<Span>) -> Self {
+        BackendError {
+            message: message.into(),
+            span,
+        }
+    }
+
+    pub fn to_diagnostic(&self) -> Option<Diagnostic> {
+        self.span
+            .map(|span| Diagnostic::error(self.message.clone(), span).with_code("E0300"))
+    }
+}
+
+impl fmt::Display for BackendError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for BackendError {}
 
 /// x86_64 assembly code generator
 /// Target: Linux, System V AMD64 ABI
@@ -153,6 +194,56 @@ pub fn validate_program(program: &Program) -> Result<(), String> {
     Ok(())
 }
 
+fn unsupported_function_message(func_name: &str, what: &str) -> String {
+    format!(
+        "backend: function '{}' uses an unsupported construct ({}). \
+         The x86_64 backend currently supports scalar arithmetic, comparisons, \
+         unary/binary operators, direct function calls, recursion, control flow \
+         (if/while), indirect calls through function-pointer values and scalar \
+         let/set! locals. F32 values and by-value tuple/fixed-array ABI are \
+         not yet wired.",
+        func_name, what
+    )
+}
+
+fn validate_program_source_spans(
+    program: &Program,
+    source_spans: &SourceSpans,
+) -> Result<(), BackendError> {
+    for func in &program.functions {
+        let span = source_spans.functions.get(&func.name).copied();
+        if !is_backend_abi_value_type(&func.ret) {
+            return Err(BackendError::at(
+                unsupported_function_message(&func.name, &format!("return type {}", func.ret)),
+                span,
+            ));
+        }
+        for (var, ty) in &func.params {
+            if !is_backend_abi_value_type(ty) {
+                return Err(BackendError::at(
+                    unsupported_function_message(
+                        &func.name,
+                        &format!("parameter %{} has type {}", var, ty),
+                    ),
+                    span,
+                ));
+            }
+        }
+        for (var, ty) in &func.locals {
+            if !is_backend_local_type(ty) {
+                return Err(BackendError::at(
+                    unsupported_function_message(
+                        &func.name,
+                        &format!("local %{} has type {}", var, ty),
+                    ),
+                    span,
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_global(name: &str, ty: &Type, init: Option<&Value>) -> Result<(), String> {
     if !is_global_data_type(ty) {
         return Err(format!(
@@ -217,17 +308,7 @@ fn validate_function(func: &Function, global_types: &HashMap<String, Type>) -> R
         .map(|(var, ty)| (*var, ty.clone()))
         .collect();
 
-    let unsupported = |what: &str| {
-        Err(format!(
-            "backend: function '{}' uses an unsupported construct ({}). \
-             The x86_64 backend currently supports scalar arithmetic, comparisons, \
-             unary/binary operators, direct function calls, recursion, control flow \
-             (if/while), indirect calls through function-pointer values and scalar \
-             let/set! locals. F32 values and by-value tuple/fixed-array ABI are \
-             not yet wired.",
-            func.name, what
-        ))
-    };
+    let unsupported = |what: &str| Err(unsupported_function_message(&func.name, what));
 
     if !is_backend_abi_value_type(&func.ret) {
         return unsupported(&format!("return type {}", func.ret));
@@ -3925,8 +4006,21 @@ impl X86_64Backend {
 /// Returns `Err` with a clear, user-facing message if the program uses
 /// constructs the backend cannot yet faithfully compile, rather than emitting
 /// silently incorrect assembly.
+#[allow(dead_code)]
 pub fn generate_assembly(program: &Program) -> Result<String, String> {
     validate_program(program)?;
+    let mut backend = X86_64Backend::new();
+    Ok(backend.generate(program))
+}
+
+/// Generate x86_64 assembly, rendering backend validation failures as
+/// source-located diagnostics when the lowerer supplied provenance.
+pub fn generate_assembly_with_spans(
+    program: &Program,
+    source_spans: &SourceSpans,
+) -> Result<String, BackendError> {
+    validate_program_source_spans(program, source_spans)?;
+    validate_program(program).map_err(BackendError::unspanned)?;
     let mut backend = X86_64Backend::new();
     Ok(backend.generate(program))
 }

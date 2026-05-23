@@ -14,7 +14,22 @@ const WRITE_FILE_RUNTIME_SYMBOL: &str = ".L_tl_write_file";
 const FILE_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists";
 
 /// Lowers a typed AST program into IR.
+#[allow(dead_code)]
 pub fn lower_program(prog: &ast::Program) -> Program {
+    lower_program_with_spans(prog).program
+}
+
+/// Lowered IR plus the source side table needed for later diagnostics.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoweredProgram {
+    pub program: Program,
+    pub source_spans: SourceSpans,
+}
+
+/// Lowers a typed AST program into IR and records source provenance for
+/// backend diagnostics. The plain `lower_program` entry keeps tests and callers
+/// that only need IR unchanged.
+pub fn lower_program_with_spans(prog: &ast::Program) -> LoweredProgram {
     let mut lowerer = ProgramLowerer::new();
     lowerer.lower(prog)
 }
@@ -27,6 +42,7 @@ struct ProgramLowerer {
     function_types: HashMap<String, Type>,
     enums: ast::EnumRegistry,
     structs: ast::StructRegistry,
+    source_spans: SourceSpans,
 }
 
 impl ProgramLowerer {
@@ -39,6 +55,7 @@ impl ProgramLowerer {
             function_types: HashMap::new(),
             enums: ast::EnumRegistry::default(),
             structs: ast::StructRegistry::default(),
+            source_spans: SourceSpans::default(),
         }
     }
 
@@ -138,7 +155,7 @@ impl ProgramLowerer {
         }
     }
 
-    fn lower(&mut self, prog: &ast::Program) -> Program {
+    fn lower(&mut self, prog: &ast::Program) -> LoweredProgram {
         self.enums = ast::EnumRegistry::from_program(prog);
         self.structs = ast::StructRegistry::from_program(prog);
 
@@ -207,6 +224,9 @@ impl ProgramLowerer {
                             &self.structs,
                         );
                         let (func, _result) = fn_lowerer.lower_expr_to_fn(value, &val_ty);
+                        self.source_spans
+                            .functions
+                            .insert(init_fn_name, value.span());
                         self.functions.push(func);
                     }
                     self.globals.push((name.clone(), val_ty, init_value));
@@ -223,6 +243,9 @@ impl ProgramLowerer {
                         .collect();
                     let ret = self.resolve_type(ret);
                     let func = self.lower_function(name, &params, &ret, body);
+                    self.source_spans
+                        .functions
+                        .insert(name.clone(), body.span());
                     self.functions.push(func);
                 }
                 ast::Decl::Extern { name, ty } => {
@@ -237,10 +260,13 @@ impl ProgramLowerer {
             }
         }
 
-        Program {
-            functions: self.functions.clone(),
-            globals: self.globals.clone(),
-            externs: self.externs.clone(),
+        LoweredProgram {
+            program: Program {
+                functions: self.functions.clone(),
+                globals: self.globals.clone(),
+                externs: self.externs.clone(),
+            },
+            source_spans: self.source_spans.clone(),
         }
     }
 

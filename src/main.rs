@@ -19,9 +19,9 @@ mod typechecker;
 mod types;
 
 use ast::Program;
-use backend::generate_assembly;
+use backend::generate_assembly_with_spans;
 use diagnostic::format_diagnostic;
-use lower::lower_program;
+use lower::{LoweredProgram, lower_program_with_spans};
 use module::{
     FsSource, LoadError, LoadOptions, LoadedProgram, SourceFile, load_program,
     load_program_with_options,
@@ -72,18 +72,22 @@ fn typecheck_or_exit(prog: &Program, sources: &[SourceFile]) {
     }
 }
 
-fn optimized_ir_or_exit(loaded: &LoadedProgram) -> ir::Program {
+fn optimized_ir_or_exit(loaded: &LoadedProgram) -> LoweredProgram {
     typecheck_or_exit(&loaded.program, &loaded.sources);
-    let mut ir_prog = lower_program(&loaded.program);
-    Optimizer::optimize(&mut ir_prog);
-    ir_prog
+    let mut lowered = lower_program_with_spans(&loaded.program);
+    Optimizer::optimize(&mut lowered.program);
+    lowered
 }
 
-fn assembly_or_exit(ir_prog: &ir::Program) -> String {
-    match generate_assembly(ir_prog) {
+fn assembly_or_exit(lowered: &LoweredProgram, sources: &[SourceFile]) -> String {
+    match generate_assembly_with_spans(&lowered.program, &lowered.source_spans) {
         Ok(asm) => asm,
         Err(e) => {
-            eprintln!("Error: {}", e);
+            if let Some(diag) = e.to_diagnostic() {
+                eprint!("{}", format_diagnostic_from_sources(&diag, sources));
+            } else {
+                eprintln!("Error: {}", e);
+            }
             std::process::exit(1);
         }
     }
@@ -332,15 +336,15 @@ fn main() {
 
             let options = load_options_with_env_stdlib_root(stdlib_roots);
             let loaded = load_or_exit(&file, &options);
-            let ir_prog = optimized_ir_or_exit(&loaded);
+            let lowered = optimized_ir_or_exit(&loaded);
 
             if emit_ir {
-                let ir_text = format!("{:#?}", ir_prog);
+                let ir_text = format!("{:#?}", lowered.program);
                 let output_path = output.unwrap_or_else(|| file.with_extension("ir"));
                 fs::write(&output_path, ir_text).expect("Failed to write output");
                 println!("Generated: {}", output_path.display());
             } else {
-                let asm = assembly_or_exit(&ir_prog);
+                let asm = assembly_or_exit(&lowered, &loaded.sources);
                 let output_path = output.unwrap_or_else(|| file.with_extension("s"));
                 fs::write(&output_path, asm).expect("Failed to write output");
                 println!("Generated: {}", output_path.display());
@@ -360,8 +364,8 @@ fn main() {
             };
             let manifest = package_or_exit(load_manifest(&manifest_path));
             let loaded = load_or_exit(&manifest.entry_path(), &options);
-            let ir_prog = optimized_ir_or_exit(&loaded);
-            let asm = assembly_or_exit(&ir_prog);
+            let lowered = optimized_ir_or_exit(&loaded);
+            let asm = assembly_or_exit(&lowered, &loaded.sources);
             let output_path = manifest.output_asm_path();
             if let Some(parent) = output_path.parent() {
                 fs::create_dir_all(parent).expect("Failed to create package output directory");
@@ -378,8 +382,8 @@ fn main() {
             let file = PathBuf::from(&args[2]);
             let (options, runtime_args) = parse_run_options(&args, 3);
             let loaded = load_or_exit(&file, &options);
-            let ir_prog = optimized_ir_or_exit(&loaded);
-            let asm = assembly_or_exit(&ir_prog);
+            let lowered = optimized_ir_or_exit(&loaded);
+            let asm = assembly_or_exit(&lowered, &loaded.sources);
             let asm_path = file.with_extension("s");
             fs::write(&asm_path, asm).expect("Failed to write assembly");
 

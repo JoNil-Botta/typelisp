@@ -873,6 +873,7 @@ impl X86_64Backend {
         }
         if self.emits_alloc_runtime {
             self.generate_alloc_runtime_data();
+            self.generate_alloc_failure_data();
         }
         if needs_argv_data {
             self.generate_argv_runtime_data();
@@ -1506,6 +1507,18 @@ impl X86_64Backend {
         self.emit("");
     }
 
+    /// Emit the fixed-text message consumed by `tl_alloc`'s self-contained
+    /// failure trap. Kept separate so the `.rodata` label can be referenced
+    /// from the allocator without depending on the generic `.L_tl_abort` path
+    /// (which is only emitted when `needs_abort_runtime` is true).
+    fn generate_alloc_failure_data(&mut self) {
+        self.emit("    .section .rodata");
+        self.emit(".L_tl_alloc_msg:");
+        self.emit("    .ascii \"tl: allocation failed\\n\"");
+        self.emit("    .set .L_tl_alloc_msg_len, . - .L_tl_alloc_msg");
+        self.emit("");
+    }
+
     /// Walk the whole program and assign each distinct string-literal value a
     /// stable `.rodata` label, so identical literals share one set of bytes and
     /// every `Value::ConstStr` can be materialized as `leaq label(%rip)`.
@@ -1612,6 +1625,7 @@ impl X86_64Backend {
         self.emit("tl_alloc:");
         // Round the requested size up to an 8-byte boundary: size = (size+7)&~7.
         self.emit("    addq $7, %rdi");
+        self.emit("    jc .L_tl_alloc_abort"); // alignment-rounding overflow
         self.emit("    andq $-8, %rdi");
         // %rsi holds the (aligned) request size for the duration of the routine.
         self.emit("    movq %rdi, %rsi");
@@ -1622,6 +1636,7 @@ impl X86_64Backend {
         // Enough room left? new_ptr = ptr + size; if new_ptr <= end, bump.
         self.emit("    movq %rax, %rcx");
         self.emit("    addq %rsi, %rcx");
+        self.emit("    jc .L_tl_alloc_abort"); // pointer overflow
         self.emit("    cmpq tl_arena_end(%rip), %rcx");
         self.emit("    ja .L_tl_alloc_new_arena");
         // Fast path: commit the bump and return the old pointer (already in %rax).
@@ -1649,7 +1664,10 @@ impl X86_64Backend {
         self.emit("    syscall");
         self.emit("    pop %rsi");
         self.emit("    pop %rdx");
-        // %rax = arena base. Set end = base + len, ptr = base + size, return base.
+        // %rax = arena base, or a negative errno on failure. Trap on failure.
+        self.emit("    testq %rax, %rax");
+        self.emit("    js .L_tl_alloc_abort");
+        // Set end = base + len, ptr = base + size, return base.
         self.emit("    movq %rax, %rcx");
         self.emit("    addq %rdx, %rcx");
         self.emit("    movq %rcx, tl_arena_end(%rip)");
@@ -1657,6 +1675,16 @@ impl X86_64Backend {
         self.emit("    addq %rsi, %rcx");
         self.emit("    movq %rcx, tl_arena_ptr(%rip)");
         self.emit("    ret");
+        self.emit(".L_tl_alloc_abort:");
+        // Self-contained trap: write diagnostic to stderr, then exit(134).
+        self.emit("    movq $1, %rax");
+        self.emit("    movq $2, %rdi");
+        self.emit("    leaq .L_tl_alloc_msg(%rip), %rsi");
+        self.emit("    movq $.L_tl_alloc_msg_len, %rdx");
+        self.emit("    syscall");
+        self.emit("    movq $60, %rax");
+        self.emit("    movq $134, %rdi");
+        self.emit("    syscall");
         self.emit("");
     }
 
@@ -5546,6 +5574,18 @@ mod tests {
         assert!(asm.contains("    movq $-1, %r8"), "asm:\n{}", asm);
         assert!(asm.contains("    syscall"), "asm:\n{}", asm);
 
+        // Overflow guard: `addq $7, %rdi` followed by a carry check before `andq`
+        assert!(asm.contains("    jc .L_tl_alloc_abort"), "asm:\n{}", asm);
+        // mmap-failure guard: test mmap result, trap if negative (errno in low bits)
+        assert!(asm.contains("    js .L_tl_alloc_abort"), "asm:\n{}", asm);
+        // Self-contained abort path writes to fd 2 and exits 134.
+        assert!(asm.contains(".L_tl_alloc_abort:"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("leaq .L_tl_alloc_msg(%rip), %rsi"),
+            "asm:\n{}",
+            asm
+        );
+
         // No unhandled instruction slipped through.
         assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
     }
@@ -5657,6 +5697,28 @@ mod tests {
         assert!(asm.contains("    call tl_alloc"), "asm:\n{}", asm);
         assert!(!asm.contains("    .extern tl_alloc"), "asm:\n{}", asm);
         assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_alloc_runtime_overflow_guard_exists() {
+        let asm = generate_assembly(&program_calling_tl_alloc())
+            .expect("program calling tl_alloc should compile");
+
+        // There should be exactly two carry-check jumps to the abort label.
+        let jc_count = asm.matches("    jc .L_tl_alloc_abort").count();
+        assert_eq!(
+            jc_count, 2,
+            "expected two carry guards (rounding + bump overflow), got {}\nasm:\n{}",
+            jc_count, asm
+        );
+
+        // mmap result test: exactly one js after syscall before the arena is used.
+        let js_count = asm.matches("    js .L_tl_alloc_abort").count();
+        assert_eq!(
+            js_count, 1,
+            "expected one mmap-failure guard, got {}\nasm:\n{}",
+            js_count, asm
+        );
     }
 
     // ------------------------------------------------------------------

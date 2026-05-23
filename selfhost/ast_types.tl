@@ -41,3 +41,11 @@
 
 (defenum ParsedProgram
   (PProgram ItemList Expr))
+
+(defenum ResultExpr
+  (OkExpr Expr)
+  (ErrExpr String))
+
+(defenum ResultParsedProgram
+  (OkParsedProgram ParsedProgram)
+  (ErrParsedProgram String))

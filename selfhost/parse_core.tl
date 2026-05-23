@@ -8,6 +8,26 @@
 (import "emit_core.tl")
 (import "read.tl")
 
+(defenum ResultExprList
+  (OkExprList ExprList)
+  (ErrExprList String))
+
+(defenum ResultStrList
+  (OkStrList StrList)
+  (ErrStrList String))
+
+(defenum ResultItem
+  (OkItem Item)
+  (ErrItem String))
+
+(defenum ResultSexpr
+  (OkSexpr Sexpr)
+  (ErrSexpr String))
+
+(defenum ResultUnit
+  (OkUnit)
+  (ErrUnit String))
+
 (define (parse-tag-call) : i64 0)
 (define (parse-tag-let) : i64 1)
 (define (parse-tag-if) : i64 2)
@@ -96,85 +116,106 @@
 (define (is-binary-op [op : String]) : bool
   (is-binary-tag (parse-dispatch-tag op)))
 
-(define (parse-binary [op : BinOp] [rest : Sexpr]) : Expr
+(define (parse-binary [op : BinOp] [rest : Sexpr]) : ResultExpr
   (match rest
-    [(SCons a (SCons b (SNil))) (EBin op (parse a) (parse b))]
-    [_ (begin
-         (panic "parse: malformed binary expression")
-         (EInt 0))]))
+    [(SCons a (SCons b (SNil)))
+     (match (parse a)
+       [(OkExpr lhs)
+        (match (parse b)
+          [(OkExpr rhs) (OkExpr (EBin op lhs rhs))]
+          [(ErrExpr message) (ErrExpr message)])]
+       [(ErrExpr message) (ErrExpr message)])]
+    [_ (ErrExpr "parse: malformed binary expression")]))
 
 ;; parse-let: single- or multi-binding let, desugared into nested ELet nodes
 ;; so later bindings can see earlier ones (sequential let* semantics).
-(define (parse-let-bindings [bindings : Sexpr] [body : Expr]) : Expr
+(define (parse-let-bindings [bindings : Sexpr] [body : Expr]) : ResultExpr
   (match bindings
-    [(SNil) body]
+    [(SNil) (OkExpr body)]
     [(SCons (SCons (SSym name) (SCons value (SNil))) rest)
-     (ELet name (parse value) (parse-let-bindings rest body))]
-    [_ (begin
-         (panic "parse: malformed let binding")
-         (EInt 0))]))
+     (match (parse value)
+       [(OkExpr parsed-value)
+        (match (parse-let-bindings rest body)
+          [(OkExpr parsed-rest) (OkExpr (ELet name parsed-value parsed-rest))]
+          [(ErrExpr message) (ErrExpr message)])]
+       [(ErrExpr message) (ErrExpr message)])]
+    [_ (ErrExpr "parse: malformed let binding")]))
 
-(define (parse-let [rest : Sexpr]) : Expr
+(define (parse-let [rest : Sexpr]) : ResultExpr
   (match rest
     [(SCons bindings (SCons body (SNil)))
-     (parse-let-bindings bindings (parse body))]
-    [_ (begin
-         (panic "parse: malformed let")
-         (EInt 0))]))
+     (match (parse body)
+       [(OkExpr parsed-body) (parse-let-bindings bindings parsed-body)]
+       [(ErrExpr message) (ErrExpr message)])]
+    [_ (ErrExpr "parse: malformed let")]))
 
-(define (parse-set [rest : Sexpr]) : Expr
+(define (parse-set [rest : Sexpr]) : ResultExpr
   (match rest
-    [(SCons (SSym name) (SCons value (SNil))) (ESet name (parse value))]
-    [_ (begin
-         (panic "parse: malformed set!")
-         (EInt 0))]))
+    [(SCons (SSym name) (SCons value (SNil)))
+     (match (parse value)
+       [(OkExpr parsed-value) (OkExpr (ESet name parsed-value))]
+       [(ErrExpr message) (ErrExpr message)])]
+    [_ (ErrExpr "parse: malformed set!")]))
 
-(define (parse-if [rest : Sexpr]) : Expr
+(define (parse-if [rest : Sexpr]) : ResultExpr
   (match rest
     [(SCons c (SCons t (SCons e (SNil))))
-     (EIf (parse c) (parse t) (parse e))]
-    [_ (begin
-         (panic "parse: malformed if")
-         (EInt 0))]))
+     (match (parse c)
+       [(OkExpr parsed-c)
+        (match (parse t)
+          [(OkExpr parsed-t)
+           (match (parse e)
+             [(OkExpr parsed-e) (OkExpr (EIf parsed-c parsed-t parsed-e))]
+             [(ErrExpr message) (ErrExpr message)])]
+          [(ErrExpr message) (ErrExpr message)])]
+       [(ErrExpr message) (ErrExpr message)])]
+    [_ (ErrExpr "parse: malformed if")]))
 
-(define (parse-while [rest : Sexpr]) : Expr
+(define (parse-while [rest : Sexpr]) : ResultExpr
   (match rest
     [(SCons c (SCons body (SNil)))
-     (EWhile (parse c) (parse body))]
-    [_ (begin
-         (panic "parse: malformed while")
-         (EInt 0))]))
+     (match (parse c)
+       [(OkExpr parsed-c)
+        (match (parse body)
+          [(OkExpr parsed-body) (OkExpr (EWhile parsed-c parsed-body))]
+          [(ErrExpr message) (ErrExpr message)])]
+       [(ErrExpr message) (ErrExpr message)])]
+    [_ (ErrExpr "parse: malformed while")]))
 
-(define (parse-print [rest : Sexpr]) : Expr
+(define (parse-print [rest : Sexpr]) : ResultExpr
   (match rest
-    [(SCons arg (SNil)) (EPrint (parse arg))]
-    [_ (begin
-         (panic "parse: malformed print")
-         (EInt 0))]))
+    [(SCons arg (SNil))
+     (match (parse arg)
+       [(OkExpr parsed-arg) (OkExpr (EPrint parsed-arg))]
+       [(ErrExpr message) (ErrExpr message)])]
+    [_ (ErrExpr "parse: malformed print")]))
 
-(define (parse-begin [rest : Sexpr]) : Expr
+(define (parse-begin [rest : Sexpr]) : ResultExpr
   (match rest
-    [(SNil) (begin
-              (panic "parse: empty begin")
-              (EInt 0))]
-    [(SCons _ _) (EBegin (parse-args rest))]
-    [_ (begin
-         (panic "parse: malformed begin")
-         (EInt 0))]))
+    [(SNil) (ErrExpr "parse: empty begin")]
+    [(SCons _ _)
+     (match (parse-args rest)
+       [(OkExprList args) (OkExpr (EBegin args))]
+       [(ErrExprList message) (ErrExpr message)])]
+    [_ (ErrExpr "parse: malformed begin")]))
 
-(define (parse-args [s : Sexpr]) : ExprList
+(define (parse-args [s : Sexpr]) : ResultExprList
   (match s
-    [(SNil) ELNil]
-    [(SCons a d) (ELCons (parse a) (parse-args d))]
-    [_ (begin
-         (panic "parse: malformed argument list")
-         ELNil)]))
+    [(SNil) (OkExprList ELNil)]
+    [(SCons a d)
+     (match (parse a)
+       [(OkExpr parsed-a)
+        (match (parse-args d)
+          [(OkExprList parsed-d) (OkExprList (ELCons parsed-a parsed-d))]
+          [(ErrExprList message) (ErrExprList message)])]
+       [(ErrExpr message) (ErrExprList message)])]
+    [_ (ErrExprList "parse: malformed argument list")]))
 
-(define (parse [s : Sexpr]) : Expr
+(define (parse [s : Sexpr]) : ResultExpr
   (match s
-    [(SInt n) (EInt n)]
-    [(SSym name) (EVar name)]
-    [(SStr s) (EStr s)]
+    [(SInt n) (OkExpr (EInt n))]
+    [(SSym name) (OkExpr (EVar name))]
+    [(SStr s) (OkExpr (EStr s))]
     [(SCons (SSym op) rest)
      (let ([tag : i64 (parse-dispatch-tag op)])
        (if (= tag (parse-tag-let))
@@ -190,87 +231,93 @@
                            (if (= tag (parse-tag-begin))
                                (parse-begin rest)
                                (if (is-binary-tag tag)
-                                   (parse-binary (parse-op-tag tag) rest)
-                                   (ECall op (parse-args rest))))))))))]
-    [_ (begin
-         (panic "parse: malformed expression")
-         (EInt 0))]))
+                                    (parse-binary (parse-op-tag tag) rest)
+                                    (match (parse-args rest)
+                                      [(OkExprList args) (OkExpr (ECall op args))]
+                                      [(ErrExprList message) (ErrExpr message)])))))))))]
+    [_ (ErrExpr "parse: malformed expression")]))
 
-(define (sexpr-head [s : Sexpr]) : Sexpr
+(define (sexpr-head [s : Sexpr]) : ResultSexpr
   (match s
-    [(SCons a _) a]
-    [_ (begin
-         (panic "parse: expected non-empty list")
-         SNil)]))
+    [(SCons a _) (OkSexpr a)]
+    [_ (ErrSexpr "parse: expected non-empty list")]))
 
-(define (sexpr-tail [s : Sexpr]) : Sexpr
+(define (sexpr-tail [s : Sexpr]) : ResultSexpr
   (match s
-    [(SCons _ d) d]
-    [_ (begin
-         (panic "parse: expected list tail")
-         SNil)]))
+    [(SCons _ d) (OkSexpr d)]
+    [_ (ErrSexpr "parse: expected list tail")]))
 
-(define (sexpr-expect-nil [s : Sexpr]) : unit
+(define (sexpr-expect-nil [s : Sexpr]) : ResultUnit
   (match s
-    [(SNil) (print-string "")]
-    [_ (panic "parse: expected end of list")]))
+    [(SNil) OkUnit]
+    [_ (ErrUnit "parse: expected end of list")]))
 
-(define (parse-params [s : Sexpr]) : StrList
+(define (parse-params [s : Sexpr]) : ResultStrList
   (match s
-    [(SNil) SLNil]
-    [(SCons (SSym name) rest) (SLCons name (parse-params rest))]
-    [_ (begin
-         (panic "parse: malformed parameter list")
-         SLNil)]))
+    [(SNil) (OkStrList SLNil)]
+    [(SCons (SSym name) rest)
+     (match (parse-params rest)
+       [(OkStrList parsed-rest) (OkStrList (SLCons name parsed-rest))]
+       [(ErrStrList message) (ErrStrList message)])]
+    [_ (ErrStrList "parse: malformed parameter list")]))
 
 (define (is-define-form [s : Sexpr]) : bool
   (match s
     [(SCons (SSym head) _) (string-eq head "define")]
     [_ false]))
 
-(define (parse-item [s : Sexpr]) : Item
+(define (parse-item [s : Sexpr]) : ResultItem
   (match s
     [(SCons (SSym head) rest)
      (if (string-eq head "define")
-         (let ([header : Sexpr (sexpr-head rest)]
-               [after-header : Sexpr (sexpr-tail rest)])
-           (let ([body : Sexpr (sexpr-head after-header)]
-                 [after-body : Sexpr (sexpr-tail after-header)])
-             (begin
-               (sexpr-expect-nil after-body)
-               (match header
-                 [(SCons (SSym name) params)
-                  (IDefFn name (parse-params params) (parse body))]
-                 [_ (begin
-                      (panic "parse: malformed define header")
-                      (IDefFn "" SLNil (EInt 0)))]))))
-         (begin
-           (panic "parse: expected define")
-           (IDefFn "" SLNil (EInt 0))))]
-    [_ (begin
-         (panic "parse: malformed item")
-         (IDefFn "" SLNil (EInt 0)))]))
+         (match (sexpr-head rest)
+           [(OkSexpr header)
+            (match (sexpr-tail rest)
+              [(OkSexpr after-header)
+               (match (sexpr-head after-header)
+                 [(OkSexpr body)
+                  (match (sexpr-tail after-header)
+                    [(OkSexpr after-body)
+                     (match (sexpr-expect-nil after-body)
+                       [OkUnit
+                        (match header
+                          [(SCons (SSym name) params)
+                           (match (parse-params params)
+                             [(OkStrList parsed-params)
+                              (match (parse body)
+                                [(OkExpr parsed-body)
+                                 (OkItem (IDefFn name parsed-params parsed-body))]
+                                [(ErrExpr message) (ErrItem message)])]
+                             [(ErrStrList message) (ErrItem message)])]
+                          [_ (ErrItem "parse: malformed define header")])]
+                       [(ErrUnit message) (ErrItem message)])]
+                    [(ErrSexpr message) (ErrItem message)])]
+                 [(ErrSexpr message) (ErrItem message)])]
+              [(ErrSexpr message) (ErrItem message)])]
+           [(ErrSexpr message) (ErrItem message)])
+         (ErrItem "parse: expected define"))]
+    [_ (ErrItem "parse: malformed item")]))
 
 (define (item-list-append-one [items : ItemList] [item : Item]) : ItemList
   (match items
     [(ILNil) (ILCons item ILNil)]
     [(ILCons head rest) (ILCons head (item-list-append-one rest item))]))
 
-(define (parse-program-forms [toks : (Array Token)] [cur : (Array i64)] [defs : ItemList]) : ParsedProgram
+(define (parse-program-forms [toks : (Array Token)] [cur : (Array i64)] [defs : ItemList]) : ResultParsedProgram
   (let ([form : Sexpr (read-form toks cur)])
     (if (= (peek-tag toks cur) (tag-end))
         (if (is-define-form form)
-            (begin
-              (panic "parse: missing final expression")
-              (PProgram defs (EInt 0)))
-            (PProgram defs (parse form)))
+            (ErrParsedProgram "parse: missing final expression")
+            (match (parse form)
+              [(OkExpr expr) (OkParsedProgram (PProgram defs expr))]
+              [(ErrExpr message) (ErrParsedProgram message)]))
         (if (is-define-form form)
-            (parse-program-forms toks cur (item-list-append-one defs (parse-item form)))
-            (begin
-              (panic "parse: non-final form must be define")
-              (PProgram defs (EInt 0)))))))
+            (match (parse-item form)
+              [(OkItem item) (parse-program-forms toks cur (item-list-append-one defs item))]
+              [(ErrItem message) (ErrParsedProgram message)])
+            (ErrParsedProgram "parse: non-final form must be define")))))
 
-(define (parse-program [toks : (Array Token)]) : ParsedProgram
+(define (parse-program [toks : (Array Token)]) : ResultParsedProgram
   (let ([cur : (Array i64) (make-array i64 1)])
     (begin
       (array-set! cur 0 0)

@@ -185,12 +185,13 @@ fn tl_parse_tl_compiles_to_assembly() {
         "parse: malformed begin",
         "parse: empty begin",
         "parse: malformed set!",
+        "parse: malformed if",
         "parse: malformed while",
         "emit: empty begin",
     ] {
         assert!(
             asm.contains(msg),
-            "tl_parse assembly is missing panic message {:?}:\n{}",
+            "tl_parse assembly is missing diagnostic string {:?}:\n{}",
             msg,
             asm,
         );
@@ -226,8 +227,32 @@ fn compile_selfhost_source(source_file: &str, work_name: &str, asm_file: &str) -
     fs::read_to_string(&asm_path).expect("read generated selfhost assembly")
 }
 
+fn assert_parser_result_enums_declared() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let ast_types = fs::read_to_string(manifest_dir.join("selfhost").join("ast_types.tl"))
+        .expect("read selfhost ast types");
+
+    for snippet in [
+        "(defenum ResultExpr",
+        "(OkExpr Expr)",
+        "(ErrExpr String)",
+        "(defenum ResultParsedProgram",
+        "(OkParsedProgram ParsedProgram)",
+        "(ErrParsedProgram String)",
+    ] {
+        assert!(
+            ast_types.contains(snippet),
+            "ast_types.tl is missing parser result type snippet {:?}:\n{}",
+            snippet,
+            ast_types,
+        );
+    }
+}
+
 #[test]
 fn tl_parse_core_tl_compiles_to_assembly() {
+    assert_parser_result_enums_declared();
+
     let asm = compile_selfhost_source(
         "parse_core.tl",
         "tl-parse-core-compile-test",
@@ -279,11 +304,12 @@ fn tl_parse_core_tl_compiles_to_assembly() {
         "parse: malformed begin",
         "parse: empty begin",
         "parse: malformed set!",
+        "parse: malformed if",
         "emit: empty begin",
     ] {
         assert!(
             asm.contains(msg),
-            "tl_parse_core assembly is missing panic message {:?}:\n{}",
+            "tl_parse_core assembly is missing diagnostic string {:?}:\n{}",
             msg,
             asm,
         );
@@ -348,6 +374,8 @@ fn tl_compile_smoke_tl_compiles_to_assembly() {
         "tl: read-file failed",
         "tl: write-file failed",
         "compile-smoke: expected input and output paths",
+        "/dev/stderr",
+        "parse: malformed if",
         "parse: malformed set!",
         "parse: malformed while",
         "parse: empty begin",

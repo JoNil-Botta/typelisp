@@ -11,7 +11,10 @@
 //! RECURSION via top-level `(define (f x y z) body)` forms with MULTI-ARGUMENT
 //! calls, FIRST-CLASS FUNCTIONS - `lambda` and CLOSURES, the `(VClosure params
 //! body captured-env)` value, CONS PAIRS / LINKED LISTS - `(VPair Value Value)`
-//! cells built by `cons` and projected by `car` / `cdr` - AND a tagged VALUE
+//! cells built by `cons` and projected by `car` / `cdr` - the `pair?` / `null?`
+//! LIST PREDICATES that let an interpreted program write RECURSIVE LIST ALGORITHMS
+//! (`(pair? x)` true iff `x` is a `(VPair ...)`, `(null? x)` true iff `x` is the
+//! nil sentinel `(VInt 0)`, refs #141) - AND a tagged VALUE
 //! domain - `(defenum Value (VInt i64) (VStr String) (VClosure Sexpr Sexpr Env)
 //! (VPair Value Value))` - so an expression now denotes a `VInt`, a `VStr`, a
 //! closure, or a pair rather than a raw `i64` (integer-requiring
@@ -633,6 +636,40 @@ fn tl_eval_tl_compiles_to_assembly() {
     assert!(
         asm.contains(".string \"#<pair>\""),
         "tl_eval assembly is missing the \"#<pair>\" placeholder literal (VPair print arm):\n{}",
+        asm,
+    );
+
+    // LIST PREDICATES (#27/#141): `(pair? x)` is true iff `x` evaluates to a
+    // `(VPair ...)` and `(null? x)` is true iff `x` is the nil sentinel `(VInt 0)`
+    // (this file reuses `(VInt 0)` as the empty-list NIL, #141), each dispatched in
+    // `eval-sexpr` on its head-symbol text and folded to the 1/0 integer-truth
+    // convention. Both are TOTAL over the value domain (a non-pair / non-nil is
+    // simply false, never a type error). So the two dispatch string literals must be
+    // emitted in the read-only data alongside the other builtins.
+    for op in ["\"pair?\"", "\"null?\""] {
+        assert!(
+            asm.contains(&format!(".string {op}")),
+            "tl_eval assembly is missing the dispatch string literal for the list \
+             predicate {op} (pair?/null?):\n{}",
+            asm,
+        );
+    }
+
+    // RECURSIVE LIST ALGORITHMS (#27): the predicates exist so an interpreted
+    // program can write recursive list functions that TERMINATE on the structure of
+    // the list. `main`'s program defines `sum-list` (recurs on `(cdr l)` while
+    // `(pair? l)`) and `list-len` (recurs until `(null? l)`), so the function names
+    // are folded into the `FnEnv` via `is-define` and a recursive self-call resolves
+    // through the shared `fenv`. The named functions are *interpreted* (their symbol
+    // text lives in the program String, not as TypeLisp `_tl_` labels), so we assert
+    // the predicate dispatch literals above plus the user-call wiring already
+    // asserted (`lookup-fn-body`, `bind-args`) cover the recursive-list demo; no new
+    // `_tl_sum_list:` label is emitted (the function lives in the interpreted
+    // program, not the host).
+    assert!(
+        !asm.contains("_tl_sum_list:"),
+        "sum-list is an INTERPRETED function (it lives in main's program String), so \
+         no host `_tl_sum_list:` label should be emitted:\n{}",
         asm,
     );
 

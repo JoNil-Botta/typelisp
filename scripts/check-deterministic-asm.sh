@@ -87,6 +87,7 @@ tl_alloc tests/integration/tl_alloc.tl
 tl_ast selfhost/ast.tl
 tl_emit selfhost/emit.tl
 tl_eval selfhost/eval.tl
+tl_format_doc selfhost/format_doc.tl
 tl_lex selfhost/lex.tl
 tl_lexer selfhost/lexer.tl
 tl_parse_core selfhost/parse_core.tl

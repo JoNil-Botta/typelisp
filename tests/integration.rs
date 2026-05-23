@@ -66,6 +66,12 @@ fn type_lisp_programs_compile_link_and_run() {
             deps: &[],
         },
         Case {
+            name: "format_doc",
+            exit_code: 42,
+            stdout: "",
+            deps: &["format_doc.tl"],
+        },
+        Case {
             name: "factorial",
             exit_code: 120,
             stdout: "",
@@ -453,6 +459,12 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             exit_code: 47,
             stdout: "",
             deps: &[],
+        },
+        Case {
+            name: "format_doc",
+            exit_code: 42,
+            stdout: "",
+            deps: &["format_doc.tl"],
         },
         Case {
             name: "factorial",
@@ -2724,6 +2736,9 @@ fn source_path_for_case(manifest_dir: &PathBuf, name: &str) -> PathBuf {
 fn dep_source_path(manifest_dir: &Path, source_dir: &Path, dep: &str) -> PathBuf {
     if dep == "sym_i64_env_core.tl" {
         return manifest_dir.join("selfhost").join("sym_i64_env.tl");
+    }
+    if dep == "format_doc.tl" {
+        return manifest_dir.join("selfhost").join("format_doc.tl");
     }
     if dep == "stdlib/string.tl" {
         return manifest_dir.join("stdlib").join("string.tl");

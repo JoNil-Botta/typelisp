@@ -17,7 +17,7 @@
 
 use crate::ast::{Decl, Program};
 use crate::parser::{ParseError, parse_with_file_id};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
@@ -51,6 +51,7 @@ impl ModuleSource for FsSource {
 #[derive(Debug, Clone, Default)]
 pub struct LoadOptions {
     pub stdlib_roots: Vec<PathBuf>,
+    pub package_roots: BTreeMap<String, PathBuf>,
 }
 
 /// One source file loaded into a whole-program compilation.
@@ -86,6 +87,21 @@ pub enum LoadError {
         searched_stdlib_roots: Vec<PathBuf>,
         source: io::Error,
     },
+    /// A `pkg:<alias>/...` import referenced an alias absent from the current
+    /// package manifest dependency roots.
+    PackageImportAliasNotFound {
+        importer: PathBuf,
+        import_path: String,
+        alias: String,
+        known_aliases: Vec<String>,
+    },
+    /// A `pkg:` import used the reserved prefix but not the required
+    /// `pkg:<alias>/<path>` shape.
+    PackageImportInvalid {
+        importer: PathBuf,
+        import_path: String,
+        message: String,
+    },
     /// A module failed to parse. Carries the canonical path of the offending
     /// module (so the driver can render the diagnostic against its source) and
     /// the parse error itself.
@@ -109,13 +125,24 @@ impl std::fmt::Display for LoadError {
                 searched_stdlib_roots,
                 source,
             } => {
-                let base = format!(
-                    "cannot read import \"{}\" from '{}' (resolved '{}'): {}",
-                    import_path,
-                    importer.display(),
-                    resolved_path.display(),
-                    source
-                );
+                let base = if let Some(alias) = package_import_alias(import_path) {
+                    format!(
+                        "cannot read package import \"{}\" from '{}' (alias `{}`, resolved '{}'): {}",
+                        import_path,
+                        importer.display(),
+                        alias,
+                        resolved_path.display(),
+                        source
+                    )
+                } else {
+                    format!(
+                        "cannot read import \"{}\" from '{}' (resolved '{}'): {}",
+                        import_path,
+                        importer.display(),
+                        resolved_path.display(),
+                        source
+                    )
+                };
                 if searched_stdlib_roots.is_empty() {
                     write!(f, "{}", base)
                 } else {
@@ -126,6 +153,39 @@ impl std::fmt::Display for LoadError {
                         .join(", ");
                     write!(f, "{}; searched stdlib roots: {}", base, roots)
                 }
+            }
+            LoadError::PackageImportAliasNotFound {
+                importer,
+                import_path,
+                alias,
+                known_aliases,
+            } => {
+                let known = if known_aliases.is_empty() {
+                    "none".to_string()
+                } else {
+                    known_aliases.join(", ")
+                };
+                write!(
+                    f,
+                    "cannot resolve package import \"{}\" from '{}' (alias `{}`): no dependency with that alias; known package aliases: {}",
+                    import_path,
+                    importer.display(),
+                    alias,
+                    known
+                )
+            }
+            LoadError::PackageImportInvalid {
+                importer,
+                import_path,
+                message,
+            } => {
+                write!(
+                    f,
+                    "cannot resolve package import \"{}\" from '{}': {}",
+                    import_path,
+                    importer.display(),
+                    message
+                )
             }
             LoadError::Parse { path, error, .. } => {
                 write!(f, "in module '{}': {}", path.display(), error)
@@ -183,10 +243,48 @@ fn stdlib_import_suffix(import_path: &str) -> Option<PathBuf> {
     }
 }
 
+fn package_import_parts(import_path: &str) -> Option<Result<(&str, &str), String>> {
+    let rest = import_path.strip_prefix("pkg:")?;
+    let Some((alias, suffix)) = rest.split_once('/') else {
+        return Some(Err(
+            "package imports must use `pkg:<alias>/<path>`".to_string()
+        ));
+    };
+    if alias.is_empty() {
+        return Some(Err("package import alias must not be empty".to_string()));
+    }
+    if suffix.is_empty() {
+        return Some(Err("package import path must not be empty".to_string()));
+    }
+    if !alias
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+    {
+        return Some(Err(
+            "package import alias may only contain ASCII letters, digits, '-' and '_'".to_string(),
+        ));
+    }
+    Some(Ok((alias, suffix)))
+}
+
+fn package_import_alias(import_path: &str) -> Option<&str> {
+    let Ok((alias, _)) = package_import_parts(import_path)? else {
+        return None;
+    };
+    Some(alias)
+}
+
 fn is_safe_stdlib_root_suffix(suffix: &Path) -> bool {
     suffix
         .components()
         .all(|component| matches!(component, Component::Normal(_)))
+}
+
+fn is_safe_package_import_suffix(suffix: &Path) -> bool {
+    !suffix.as_os_str().is_empty()
+        && suffix
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
 }
 
 fn resolve_import_canonical(
@@ -195,6 +293,23 @@ fn resolve_import_canonical(
     src: &dyn ModuleSource,
     options: &LoadOptions,
 ) -> Result<(PathBuf, ImportRequest), LoadError> {
+    if let Some(package_import) = package_import_parts(import_path) {
+        let (alias, suffix) =
+            package_import.map_err(|message| LoadError::PackageImportInvalid {
+                importer: importer.to_path_buf(),
+                import_path: import_path.to_string(),
+                message,
+            })?;
+        return resolve_package_import_canonical(
+            importer,
+            import_path,
+            alias,
+            suffix,
+            src,
+            options,
+        );
+    }
+
     let primary_target = resolve_import(importer, import_path);
     let stdlib_suffix = stdlib_import_suffix(import_path);
     let searched_stdlib_roots = if stdlib_suffix.is_some() {
@@ -250,6 +365,49 @@ fn resolve_import_canonical(
             ))
         }
     }
+}
+
+fn resolve_package_import_canonical(
+    importer: &Path,
+    import_path: &str,
+    alias: &str,
+    suffix: &str,
+    src: &dyn ModuleSource,
+    options: &LoadOptions,
+) -> Result<(PathBuf, ImportRequest), LoadError> {
+    let Some(root) = options.package_roots.get(alias) else {
+        return Err(LoadError::PackageImportAliasNotFound {
+            importer: importer.to_path_buf(),
+            import_path: import_path.to_string(),
+            alias: alias.to_string(),
+            known_aliases: options.package_roots.keys().cloned().collect(),
+        });
+    };
+
+    let suffix = Path::new(suffix);
+    let target = root.join(suffix);
+    let request = ImportRequest {
+        importer: importer.to_path_buf(),
+        import_path: import_path.to_string(),
+        resolved_path: target.clone(),
+        searched_stdlib_roots: Vec::new(),
+    };
+
+    if !is_safe_package_import_suffix(suffix) {
+        return Err(io_load_error(
+            &target,
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "package import path must stay below the dependency root",
+            ),
+            Some(&request),
+        ));
+    }
+
+    let canon = src
+        .canonicalize(&target)
+        .map_err(|err| io_load_error(&target, err, Some(&request)))?;
+    Ok((canon, request))
 }
 
 fn try_stdlib_roots(
@@ -391,7 +549,7 @@ mod tests {
     use crate::ast::Decl;
     use crate::diagnostic::format_diagnostic;
     use crate::typechecker::TypeChecker;
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
 
     /// In-memory module source for tests. Paths are normalized logically
     /// (lexically, without touching disk) so relative imports resolve and the
@@ -409,6 +567,13 @@ mod tests {
                     .collect(),
             }
         }
+    }
+
+    fn package_roots(entries: &[(&str, &str)]) -> BTreeMap<String, PathBuf> {
+        entries
+            .iter()
+            .map(|(alias, path)| ((*alias).to_string(), PathBuf::from(path)))
+            .collect()
     }
 
     /// Lexically normalize a path: collapse `.` and `foo/..` segments without
@@ -611,6 +776,7 @@ mod tests {
         ]);
         let options = LoadOptions {
             stdlib_roots: vec![PathBuf::from("repo-stdlib")],
+            ..LoadOptions::default()
         };
 
         let loaded = load_program_with_options(Path::new("work/main.tl"), &src, &options).unwrap();
@@ -635,6 +801,7 @@ mod tests {
         ]);
         let options = LoadOptions {
             stdlib_roots: vec![PathBuf::from("repo-stdlib")],
+            ..LoadOptions::default()
         };
 
         let loaded = load_program_with_options(Path::new("work/main.tl"), &src, &options).unwrap();
@@ -659,6 +826,7 @@ mod tests {
         ]);
         let options = LoadOptions {
             stdlib_roots: vec![PathBuf::from("repo-stdlib")],
+            ..LoadOptions::default()
         };
 
         let loaded = load_program_with_options(Path::new("work/main.tl"), &src, &options).unwrap();
@@ -688,6 +856,7 @@ mod tests {
         ]);
         let options = LoadOptions {
             stdlib_roots: vec![PathBuf::from("repo-stdlib")],
+            ..LoadOptions::default()
         };
 
         let err = load_program_with_options(Path::new("work/main.tl"), &src, &options).unwrap_err();
@@ -742,12 +911,220 @@ mod tests {
         ]);
         let options = LoadOptions {
             stdlib_roots: vec![PathBuf::from("repo-stdlib")],
+            ..LoadOptions::default()
         };
 
         let loaded = load_program_with_options(Path::new("work/main.tl"), &src, &options).unwrap();
         let names = decl_names(&loaded.program);
         assert_eq!(names.iter().filter(|name| *name == "std").count(), 1);
         assert_eq!(names, vec!["std", "dep", "main"]);
+    }
+
+    #[test]
+    fn pkg_import_resolves_from_dependency_root() {
+        let src = MapSource::new(&[
+            (
+                "app/src/main.tl",
+                "(import \"pkg:math/src/lib.tl\")\n(define (main) : i64 (add-one 41))",
+            ),
+            (
+                "deps/math/src/lib.tl",
+                "(define (add-one [x : i64]) : i64 (+ x 1))",
+            ),
+        ]);
+        let options = LoadOptions {
+            package_roots: package_roots(&[("math", "deps/math")]),
+            ..LoadOptions::default()
+        };
+
+        let loaded = load_program_with_options(Path::new("app/src/main.tl"), &src, &options)
+            .expect("load package import");
+        assert_eq!(decl_names(&loaded.program), vec!["add-one", "main"]);
+        assert!(
+            loaded
+                .sources
+                .iter()
+                .any(|source| source.path == PathBuf::from("deps/math/src/lib.tl"))
+        );
+    }
+
+    #[test]
+    fn pkg_import_dedups_with_relative_path_to_same_file() {
+        let src = MapSource::new(&[
+            (
+                "main.tl",
+                "(import \"pkg:math/src/lib.tl\")\n(import \"deps/math/src/lib.tl\")\n(define (main) : i64 (answer))",
+            ),
+            ("deps/math/src/lib.tl", "(define (answer) : i64 42)"),
+        ]);
+        let options = LoadOptions {
+            package_roots: package_roots(&[("math", "deps/math")]),
+            ..LoadOptions::default()
+        };
+
+        let loaded = load_program_with_options(Path::new("main.tl"), &src, &options)
+            .expect("load deduped package import");
+        let names = decl_names(&loaded.program);
+        assert_eq!(names.iter().filter(|name| *name == "answer").count(), 1);
+        assert_eq!(names, vec!["answer", "main"]);
+    }
+
+    #[test]
+    fn pkg_import_reports_missing_alias() {
+        let src = MapSource::new(&[(
+            "app/src/main.tl",
+            "(import \"pkg:math/src/lib.tl\")\n(define (main) : i64 0)",
+        )]);
+        let options = LoadOptions {
+            package_roots: package_roots(&[("util", "deps/util")]),
+            ..LoadOptions::default()
+        };
+
+        let err = load_program_with_options(Path::new("app/src/main.tl"), &src, &options)
+            .expect_err("missing package alias should fail");
+        match &err {
+            LoadError::PackageImportAliasNotFound {
+                importer,
+                import_path,
+                alias,
+                known_aliases,
+            } => {
+                assert_eq!(importer, &PathBuf::from("app/src/main.tl"));
+                assert_eq!(import_path, "pkg:math/src/lib.tl");
+                assert_eq!(alias, "math");
+                assert_eq!(known_aliases, &vec!["util".to_string()]);
+            }
+            other => panic!("expected PackageImportAliasNotFound, got {:?}", other),
+        }
+
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("pkg:math/src/lib.tl"),
+            "diagnostic should include requested package import:\n{}",
+            rendered
+        );
+        assert!(
+            rendered.contains("alias `math`"),
+            "diagnostic should include missing alias:\n{}",
+            rendered
+        );
+        assert!(
+            rendered.contains("known package aliases: util"),
+            "diagnostic should include searched aliases:\n{}",
+            rendered
+        );
+    }
+
+    #[test]
+    fn pkg_import_reports_missing_dependency_file() {
+        let src = MapSource::new(&[(
+            "app/src/main.tl",
+            "(import \"pkg:math/src/missing.tl\")\n(define (main) : i64 0)",
+        )]);
+        let options = LoadOptions {
+            package_roots: package_roots(&[("math", "deps/math")]),
+            ..LoadOptions::default()
+        };
+
+        let err = load_program_with_options(Path::new("app/src/main.tl"), &src, &options)
+            .expect_err("missing dependency file should fail");
+        match &err {
+            LoadError::ImportIo {
+                importer,
+                import_path,
+                resolved_path,
+                searched_stdlib_roots,
+                source,
+            } => {
+                assert_eq!(importer, &PathBuf::from("app/src/main.tl"));
+                assert_eq!(import_path, "pkg:math/src/missing.tl");
+                assert_eq!(resolved_path, &PathBuf::from("deps/math/src/missing.tl"));
+                assert!(searched_stdlib_roots.is_empty());
+                assert_eq!(source.kind(), io::ErrorKind::NotFound);
+            }
+            other => panic!("expected ImportIo, got {:?}", other),
+        }
+
+        let rendered = err.to_string();
+        let rendered_normalized = rendered.replace('\\', "/");
+        assert!(
+            rendered_normalized.contains("deps/math/src/missing.tl"),
+            "diagnostic should include resolved dependency path:\n{}",
+            rendered
+        );
+        assert!(
+            rendered.contains("alias `math`"),
+            "diagnostic should include package alias:\n{}",
+            rendered
+        );
+    }
+
+    #[test]
+    fn pkg_import_rejects_parent_dir_escape_from_dependency_root() {
+        let src = MapSource::new(&[(
+            "app/src/main.tl",
+            "(import \"pkg:math/../outside.tl\")\n(define (main) : i64 0)",
+        )]);
+        let options = LoadOptions {
+            package_roots: package_roots(&[("math", "deps/math")]),
+            ..LoadOptions::default()
+        };
+
+        let err = load_program_with_options(Path::new("app/src/main.tl"), &src, &options)
+            .expect_err("package import escape should fail");
+        match &err {
+            LoadError::ImportIo { source, .. } => {
+                assert_eq!(source.kind(), io::ErrorKind::InvalidInput);
+            }
+            other => panic!("expected ImportIo, got {:?}", other),
+        }
+        assert!(
+            err.to_string()
+                .contains("must stay below the dependency root"),
+            "diagnostic should explain package-root escape:\n{}",
+            err
+        );
+    }
+
+    #[test]
+    fn pkg_imported_names_share_flat_namespace() {
+        let src = MapSource::new(&[
+            (
+                "app/src/main.tl",
+                "(import \"pkg:math/src/lib.tl\")\n(define (dup) : i64 2)\n(define (main) : i64 (dup))",
+            ),
+            ("deps/math/src/lib.tl", "(define (dup) : i64 1)"),
+        ]);
+        let options = LoadOptions {
+            package_roots: package_roots(&[("math", "deps/math")]),
+            ..LoadOptions::default()
+        };
+
+        let loaded = load_program_with_options(Path::new("app/src/main.tl"), &src, &options)
+            .expect("load package import");
+        let mut tc = TypeChecker::new();
+        let err = tc
+            .check_program(&loaded.program)
+            .expect_err("duplicate name across package import should fail");
+        let source = loaded
+            .sources
+            .iter()
+            .find(|source| source.id == err.span.file_id)
+            .expect("diagnostic span file id must resolve");
+        let rendered = format_diagnostic(
+            &err.to_diagnostic(),
+            &source.source_text,
+            &source.path.display().to_string(),
+        );
+
+        assert!(err.msg.contains("duplicate top-level name 'dup'"));
+        assert_eq!(source.path, PathBuf::from("app/src/main.tl"));
+        let rendered_normalized = rendered.replace('\\', "/");
+        assert!(
+            rendered_normalized.contains("--> app/src/main.tl:2:"),
+            "diagnostic should point at colliding local definition:\n{}",
+            rendered
+        );
     }
 
     #[test]
@@ -831,6 +1208,7 @@ mod tests {
         )]);
         let options = LoadOptions {
             stdlib_roots: vec![PathBuf::from("repo-stdlib")],
+            ..LoadOptions::default()
         };
         let err = load_program_with_options(Path::new("work/main.tl"), &src, &options).unwrap_err();
 

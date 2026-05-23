@@ -97,7 +97,7 @@ fn assembly_or_exit(lowered: &LoweredProgram, sources: &[SourceFile]) -> String 
 /// into one `Program`, or print a diagnostic and exit. The returned source map
 /// lets later semantic diagnostics render against the originating module.
 fn load_or_exit(entry: &Path, options: &LoadOptions) -> LoadedProgram {
-    let loaded = if options.stdlib_roots.is_empty() {
+    let loaded = if options.stdlib_roots.is_empty() && options.package_roots.is_empty() {
         load_program(entry, &FsSource)
     } else {
         load_program_with_options(entry, &FsSource, options)
@@ -109,6 +109,14 @@ fn load_or_exit(entry: &Path, options: &LoadOptions) -> LoadedProgram {
             std::process::exit(1);
         }
         Err(err @ LoadError::ImportIo { .. }) => {
+            eprintln!("Error: {}", err);
+            std::process::exit(1);
+        }
+        Err(err @ LoadError::PackageImportAliasNotFound { .. }) => {
+            eprintln!("Error: {}", err);
+            std::process::exit(1);
+        }
+        Err(err @ LoadError::PackageImportInvalid { .. }) => {
             eprintln!("Error: {}", err);
             std::process::exit(1);
         }
@@ -165,7 +173,10 @@ fn load_options_with_env_stdlib_root(mut stdlib_roots: Vec<PathBuf>) -> LoadOpti
         _ => {}
     }
 
-    LoadOptions { stdlib_roots }
+    LoadOptions {
+        stdlib_roots,
+        ..LoadOptions::default()
+    }
 }
 
 fn parse_stdlib_roots(args: &[String], mut i: usize) -> LoadOptions {
@@ -370,7 +381,7 @@ fn run_cli() {
             }
         }
         "build" => {
-            let (manifest_path, options) = parse_build_options(&args, 2);
+            let (manifest_path, mut options) = parse_build_options(&args, 2);
             let manifest_path = match manifest_path {
                 Some(path) => path,
                 None => {
@@ -382,6 +393,7 @@ fn run_cli() {
                 }
             };
             let manifest = package_or_exit(load_manifest(&manifest_path));
+            options.package_roots = manifest.dependencies.clone();
             let loaded = load_or_exit(&manifest.entry_path(), &options);
             let lowered = optimized_ir_or_exit(&loaded);
             let asm = assembly_or_exit(&lowered, &loaded.sources);

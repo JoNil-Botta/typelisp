@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
@@ -9,6 +10,7 @@ pub struct PackageManifest {
     pub name: String,
     pub version: String,
     pub entry: PathBuf,
+    pub dependencies: BTreeMap<String, PathBuf>,
     pub manifest_path: PathBuf,
     pub root: PathBuf,
 }
@@ -104,10 +106,24 @@ pub fn load_manifest(path: &Path) -> Result<PackageManifest, PackageError> {
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
 
+    let dependencies = parsed
+        .dependencies
+        .into_iter()
+        .map(|(alias, path)| {
+            let root_path = if path.is_absolute() {
+                path
+            } else {
+                root.join(path)
+            };
+            (alias, root_path)
+        })
+        .collect();
+
     Ok(PackageManifest {
         name: parsed.name,
         version: parsed.version,
         entry: parsed.entry,
+        dependencies,
         manifest_path,
         root,
     })
@@ -118,6 +134,7 @@ struct ParsedManifest {
     name: String,
     version: String,
     entry: PathBuf,
+    dependencies: BTreeMap<String, PathBuf>,
 }
 
 fn parse_manifest(source: &str) -> Result<ParsedManifest, String> {
@@ -148,6 +165,7 @@ fn parse_package_form(sexp: &Sexp) -> Result<ParsedManifest, String> {
     let mut name = None;
     let mut version = None;
     let mut entry = None;
+    let mut dependencies = None;
 
     for field in &items[1..] {
         let Sexp::List(parts) = field else {
@@ -156,20 +174,25 @@ fn parse_package_form(sexp: &Sexp) -> Result<ParsedManifest, String> {
         let Some(Sexp::Symbol(field_name)) = parts.first() else {
             return Err("package fields must start with a field name".into());
         };
-        if parts.len() != 2 {
-            return Err(format!(
-                "manifest field `{}` must have exactly one value",
-                field_name
-            ));
-        }
-        let Sexp::String(value) = &parts[1] else {
-            return Err(format!("manifest field `{}` must be a string", field_name));
-        };
 
         match field_name.as_str() {
-            "name" => assign_field(&mut name, field_name, value.clone())?,
-            "version" => assign_field(&mut version, field_name, value.clone())?,
-            "entry" => assign_field(&mut entry, field_name, value.clone())?,
+            "name" => {
+                let value = parse_string_field(parts, field_name)?;
+                assign_field(&mut name, field_name, value)?;
+            }
+            "version" => {
+                let value = parse_string_field(parts, field_name)?;
+                assign_field(&mut version, field_name, value)?;
+            }
+            "entry" => {
+                let value = parse_string_field(parts, field_name)?;
+                assign_field(&mut entry, field_name, value)?;
+            }
+            "dependencies" => assign_dependencies_field(
+                &mut dependencies,
+                field_name,
+                parse_dependencies_field(parts)?,
+            )?,
             other => return Err(format!("unknown manifest field `{}`", other)),
         }
     }
@@ -177,6 +200,7 @@ fn parse_package_form(sexp: &Sexp) -> Result<ParsedManifest, String> {
     let name = name.ok_or_else(|| "manifest missing required field `name`".to_string())?;
     let version = version.ok_or_else(|| "manifest missing required field `version`".to_string())?;
     let entry = entry.ok_or_else(|| "manifest missing required field `entry`".to_string())?;
+    let dependencies = dependencies.unwrap_or_default();
 
     validate_package_name(&name)?;
     if version.is_empty() {
@@ -197,7 +221,56 @@ fn parse_package_form(sexp: &Sexp) -> Result<ParsedManifest, String> {
         name,
         version,
         entry,
+        dependencies,
     })
+}
+
+fn parse_string_field(parts: &[Sexp], field_name: &str) -> Result<String, String> {
+    if parts.len() != 2 {
+        return Err(format!(
+            "manifest field `{}` must have exactly one value",
+            field_name
+        ));
+    }
+    let Sexp::String(value) = &parts[1] else {
+        return Err(format!("manifest field `{}` must be a string", field_name));
+    };
+    Ok(value.clone())
+}
+
+fn parse_dependencies_field(parts: &[Sexp]) -> Result<BTreeMap<String, PathBuf>, String> {
+    let mut dependencies = BTreeMap::new();
+    for dep in &parts[1..] {
+        let Sexp::List(dep_parts) = dep else {
+            return Err("manifest dependency entries must be lists like `(alias \"path\")`".into());
+        };
+        if dep_parts.len() != 2 {
+            return Err("manifest dependency entries must have exactly an alias and a path".into());
+        }
+        let Some(Sexp::Symbol(alias)) = dep_parts.first() else {
+            return Err("manifest dependency entries must start with an alias".into());
+        };
+        let Sexp::String(path) = &dep_parts[1] else {
+            return Err(format!(
+                "manifest dependency `{}` path must be a string",
+                alias
+            ));
+        };
+        validate_dependency_alias(alias)?;
+        if path.is_empty() {
+            return Err(format!(
+                "manifest dependency `{}` path must not be empty",
+                alias
+            ));
+        }
+        if dependencies
+            .insert(alias.clone(), PathBuf::from(path))
+            .is_some()
+        {
+            return Err(format!("duplicate dependency alias `{}`", alias));
+        }
+    }
+    Ok(dependencies)
 }
 
 fn is_normal_relative_path(path: &Path) -> bool {
@@ -208,6 +281,18 @@ fn is_normal_relative_path(path: &Path) -> bool {
 }
 
 fn assign_field(slot: &mut Option<String>, field_name: &str, value: String) -> Result<(), String> {
+    if slot.is_some() {
+        return Err(format!("duplicate manifest field `{}`", field_name));
+    }
+    *slot = Some(value);
+    Ok(())
+}
+
+fn assign_dependencies_field(
+    slot: &mut Option<BTreeMap<String, PathBuf>>,
+    field_name: &str,
+    value: BTreeMap<String, PathBuf>,
+) -> Result<(), String> {
     if slot.is_some() {
         return Err(format!("duplicate manifest field `{}`", field_name));
     }
@@ -226,6 +311,19 @@ fn validate_package_name(name: &str) -> Result<(), String> {
         return Err(
             "manifest field `name` may only contain ASCII letters, digits, '-' and '_'".into(),
         );
+    }
+    Ok(())
+}
+
+fn validate_dependency_alias(alias: &str) -> Result<(), String> {
+    if alias.is_empty() {
+        return Err("dependency alias must not be empty".into());
+    }
+    if !alias
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+    {
+        return Err("dependency alias may only contain ASCII letters, digits, '-' and '_'".into());
     }
     Ok(())
 }
@@ -413,7 +511,7 @@ where
 mod tests {
     use super::{PackageError, discover_manifest, load_manifest, parse_manifest};
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn parse_manifest_accepts_required_fields() {
@@ -434,6 +532,32 @@ mod tests {
     }
 
     #[test]
+    fn parse_manifest_accepts_dependencies() {
+        let manifest = parse_manifest(
+            r#"
+(package
+  (name "demo-app")
+  (version "0.1.0")
+  (entry "src/main.tl")
+  (dependencies
+    (math "../math")
+    (util "/opt/type-lisp/util")))
+"#,
+        )
+        .expect("parse manifest");
+
+        assert_eq!(manifest.dependencies.len(), 2);
+        assert_eq!(
+            manifest.dependencies.get("math"),
+            Some(&PathBuf::from("../math"))
+        );
+        assert_eq!(
+            manifest.dependencies.get("util"),
+            Some(&PathBuf::from("/opt/type-lisp/util"))
+        );
+    }
+
+    #[test]
     fn parse_manifest_rejects_missing_field() {
         let err = parse_manifest(r#"(package (name "demo") (entry "src/main.tl"))"#)
             .expect_err("missing version should fail");
@@ -447,6 +571,49 @@ mod tests {
         )
         .expect_err("duplicate name should fail");
         assert!(err.contains("duplicate manifest field `name`"));
+    }
+
+    #[test]
+    fn parse_manifest_rejects_duplicate_dependencies_field() {
+        let err = parse_manifest(
+            r#"(package
+  (name "demo")
+  (version "0.1.0")
+  (entry "src/main.tl")
+  (dependencies (math "../math"))
+  (dependencies (util "../util")))"#,
+        )
+        .expect_err("duplicate dependencies should fail");
+        assert!(err.contains("duplicate manifest field `dependencies`"));
+    }
+
+    #[test]
+    fn parse_manifest_rejects_duplicate_dependency_alias() {
+        let err = parse_manifest(
+            r#"(package
+  (name "demo")
+  (version "0.1.0")
+  (entry "src/main.tl")
+  (dependencies
+    (math "../math-a")
+    (math "../math-b")))"#,
+        )
+        .expect_err("duplicate dependency alias should fail");
+        assert!(err.contains("duplicate dependency alias `math`"));
+    }
+
+    #[test]
+    fn parse_manifest_rejects_invalid_dependency_alias() {
+        let err = parse_manifest(
+            r#"(package
+  (name "demo")
+  (version "0.1.0")
+  (entry "src/main.tl")
+  (dependencies
+    (bad.alias "../bad")))"#,
+        )
+        .expect_err("invalid dependency alias should fail");
+        assert!(err.contains("dependency alias may only contain ASCII letters"));
     }
 
     #[test]
@@ -507,9 +674,41 @@ mod tests {
         let manifest = load_manifest(&manifest_path).expect("load manifest");
         assert_eq!(manifest.name, "demo");
         assert_eq!(manifest.entry_path(), manifest.root.join("src/main.tl"));
+        assert!(manifest.dependencies.is_empty());
         assert_eq!(
             manifest.output_asm_path(),
             manifest.root.join("target/typelisp/demo/demo.s")
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn load_manifest_resolves_dependency_paths_from_root() {
+        let root =
+            std::env::temp_dir().join(format!("typelisp-package-load-deps-{}", std::process::id()));
+        fs::create_dir_all(&root).expect("create package test dir");
+        let manifest_path = root.join("typelisp.pkg");
+        fs::write(
+            &manifest_path,
+            r#"(package
+  (name "demo")
+  (version "0.1.0")
+  (entry "src/main.tl")
+  (dependencies
+    (math "../math")
+    (util "vendor/util")))"#,
+        )
+        .expect("write manifest");
+
+        let manifest = load_manifest(&manifest_path).expect("load manifest");
+        assert_eq!(
+            manifest.dependencies.get("math"),
+            Some(&manifest.root.join("../math"))
+        );
+        assert_eq!(
+            manifest.dependencies.get("util"),
+            Some(&manifest.root.join("vendor/util"))
         );
 
         let _ = fs::remove_dir_all(root);

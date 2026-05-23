@@ -114,15 +114,25 @@ Local packages can be described with a std-only S-expression manifest named
 (package
   (name "my-app")
   (version "0.1.0")
-  (entry "src/main.tl"))
+  (entry "src/main.tl")
+  (dependencies
+    (math "../math")))
 ```
 
 `typelisp build [--manifest-path path/to/typelisp.pkg]` resolves `entry`
-relative to the manifest directory, reuses the existing file import loader, and
-writes assembly to `target/typelisp/<package-name>/<package-name>.s` under the
-package root. This first package slice has no dependency resolver, lockfile,
-workspace model, package-qualified import syntax, namespace isolation, or native
-executable build promise.
+relative to the manifest directory and writes assembly under
+`target/typelisp/<package-name>/<package-name>.s`. Dependency paths may be
+relative to that same package root or absolute. Inside a package build, imports
+of the form `(import "pkg:math/src/lib.tl")` resolve from the dependency root
+declared for alias `math`; ordinary string imports remain relative to the
+importing file, and `stdlib/...` imports keep their local-first then
+configured-root behavior.
+
+Imported package definitions share the same flat top-level namespace as local
+modules, so duplicate value or type names fail through the existing duplicate
+definition diagnostics. This package slice has no registry, version solving,
+lockfile, workspace model, namespace isolation, qualified symbol lookup, or
+native executable build promise.
 
 ### Enum and struct namespace rules
 

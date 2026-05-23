@@ -331,6 +331,24 @@ fn type_lisp_programs_compile_link_and_run() {
             stdout: "",
             deps: &["ast_types.tl", "read.tl", "lex.tl", "token.tl"],
         },
+        // Self-hosting (#27/#335): parse real TypeLisp forms into the compiler
+        // AST model from `compiler_ast_types.tl`. The driver parses a source
+        // string with import, extern, enum, struct, value define, function
+        // define, typed params, let bindings, arrays, tuples, casts, field refs,
+        // and match arms. It exits 42 only if the top-level AST structure has
+        // the expected declaration sequence.
+        Case {
+            name: "tl_compiler_parse",
+            exit_code: 42,
+            stdout: "",
+            deps: &[
+                "compiler_parse_core.tl",
+                "compiler_ast_types.tl",
+                "read.tl",
+                "lex.tl",
+                "token.tl",
+            ],
+        },
         // Self-hosting (#27): the lexer for TypeLisp's OWN s-expression syntax
         // (NOT the arithmetic-calculator surface). `lexer.tl` tokenizes real
         // TypeLisp source - balanced parens, integer literals, *symbols*
@@ -2822,6 +2840,7 @@ fn source_path_for_case(manifest_dir: &PathBuf, name: &str) -> PathBuf {
 
     let selfhost_file = match name {
         "tl_ast" => "ast.tl",
+        "tl_compiler_parse" => "compiler_parse.tl",
         "tl_emit" => "emit.tl",
         "tl_eval" => "eval.tl",
         "tl_lex" => "lex.tl",

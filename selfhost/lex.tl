@@ -277,12 +277,12 @@
         (let ([c : char (string-ref src i)])
           (if (is-space c)
               (set! i (+ i 1))
-              (if (= (code c) 40)        ; '('
+              (if (or (= (code c) 40) (= (code c) 91))  ; '(' or '['
                   (begin
                     (array-set! toks count TLParen)
                     (set! count (+ count 1))
                     (set! i (+ i 1)))
-                  (if (= (code c) 41)    ; ')'
+                  (if (or (= (code c) 41) (= (code c) 93))  ; ')' or ']'
                       (begin
                         (array-set! toks count TRParen)
                         (set! count (+ count 1))

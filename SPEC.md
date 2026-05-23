@@ -471,16 +471,15 @@ See §3.6.
 - Backend lowering for lambda literals is incomplete today.
 - No closure captures.
 
-### 5.15 Future SPMD `foreach` design (not implemented yet)
+### 5.15 SPMD `foreach`
 
-This section chooses the initial SPMD source surface for future implementation.
-The current compiler does not parse or type-check `foreach` specially yet; #343
-owns parser/typechecker support, #344 owns scalar reference lowering, and later
+This section defines the initial SPMD source surface. The current compiler
+parses and type-checks this form and lowers it to scalar reference loops; later
 issues own vector IR and AVX backends.
 
 Initial syntax:
 
-```lisp test=ignore name=spmd-foreach-map reason="future SPMD design, not implemented yet"
+```lisp test=ignore name=spmd-foreach-map reason="illustrative function; integration tests cover executable foreach programs"
 (define (add-arrays [a : (Array i64)]
                     [b : (Array i64)]
                     [out : (Array i64)]
@@ -781,7 +780,7 @@ separate design track.
 | Tail call optimization | Not implemented |
 | `struct-set!` | Not implemented |
 | Garbage collection / `free` | Not implemented (memory leaks) |
-| SPMD / SIMD `foreach` | Design chosen in §5.15; parser/typechecker/lowering not implemented |
+| SPMD / SIMD `foreach` | Scalar reference lowering only; vector IR and AVX backends not implemented |
 | Windows target | Not implemented |
 | Complete source locations for all semantic errors | Partial |
 | REPL | Not implemented |

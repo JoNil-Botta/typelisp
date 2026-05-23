@@ -159,9 +159,9 @@ Named top-level functions can be passed as non-capturing function pointer
 values. `lambda` parses and type-checks as a function value in limited cases,
 but backend lowering for lambda literals and captured closures is incomplete
 today.
-SPMD/SIMD `foreach` is documented as a future design in [SPEC.md §5.15](SPEC.md),
-but parser, typechecker, lowering, vector IR, and AVX backend support are not
-implemented yet.
+SPMD/SIMD `foreach` is documented in [SPEC.md section 5.15](SPEC.md). The
+compiler parses and type-checks the first source form and lowers it to scalar
+reference loops; vector IR and AVX backend support are not implemented yet.
 
 ### Builtins
 

@@ -1,4 +1,4 @@
-;; tl_ast.tl - Sexpr -> compiler AST parser for the M1 self-hosting slice (#154).
+;; tl_ast.tl - Sexpr -> compiler AST parser for the M1 self-hosting slice (#154/#167).
 
 (import "tl_ast_types.tl")
 (import "tl_read.tl")
@@ -34,6 +34,20 @@
      (ELet name (parse-expr value) (parse-expr body))]
     [_ (begin (panic "ast: malformed let") (EInt 0))]))
 
+;; parse-if: project `(if c t e)` onto `(EIf c' t' e')`.
+;; `rest` is the tail after the `if` head. Exactly three sub-expressions;
+;; any other shape is malformed.
+(define (parse-if [rest : Sexpr]) : Expr
+  (let ([c : Sexpr (sexpr-head rest)]
+        [after-c : Sexpr (sexpr-tail rest)])
+    (let ([t : Sexpr (sexpr-head after-c)]
+          [after-t : Sexpr (sexpr-tail after-c)])
+      (let ([e : Sexpr (sexpr-head after-t)]
+            [after-e : Sexpr (sexpr-tail after-t)])
+        (begin
+          (sexpr-expect-nil after-e)
+          (EIf (parse-expr c) (parse-expr t) (parse-expr e)))))))
+
 (define (parse-args [s : Sexpr]) : ExprList
   (match s
     [(SNil) ELNil]
@@ -51,9 +65,15 @@
              (parse-binary (OpSub) rest)
              (if (string-eq op "*")
                  (parse-binary (OpMul) rest)
-                 (if (string-eq op "let")
-                     (parse-let rest)
-                     (ECall op (parse-args rest))))))]
+                 (if (string-eq op "<")
+                     (parse-binary (OpLt) rest)
+                     (if (string-eq op "=")
+                         (parse-binary (OpEq) rest)
+                         (if (string-eq op "let")
+                             (parse-let rest)
+                             (if (string-eq op "if")
+                                 (parse-if rest)
+                                 (ECall op (parse-args rest)))))))))]
     [_ (begin (panic "ast: malformed expression") (EInt 0))]))
 
 (define (parse-params [s : Sexpr]) : StrList
@@ -84,7 +104,9 @@
   (match op
     [(OpAdd) 10]
     [(OpSub) 20]
-    [(OpMul) 30]))
+    [(OpMul) 30]
+    [(OpLt) 40]
+    [(OpEq) 50]))
 
 (define (expr-list-score [xs : ExprList]) : i64
   (match xs
@@ -103,6 +125,8 @@
     [(EBin op a b) (+ (op-score op) (+ (expr-score a) (expr-score b)))]
     [(ELet name value body)
      (+ (string-length name) (+ (expr-score value) (expr-score body)))]
+    [(EIf c t e)
+     (+ (expr-score c) (+ (expr-score t) (expr-score e)))]
     [(ECall name args) (+ (string-length name) (expr-list-score args))]))
 
 (define (item-score [i : Item]) : i64

@@ -1,6 +1,6 @@
 ;; tl_parse.tl - The s-expression PARSER that completes the end-to-end
 ;; self-hosted compiler pipeline: `lex -> read -> parse -> emit-program` turns
-;; SOURCE TEXT into a runnable x86_64 `.s`, all in TypeLisp (#154).
+;; SOURCE TEXT into a runnable x86_64 `.s`, all in TypeLisp (#154/#167).
 ;;
 ;; --------------------------------------------------------------------------
 ;; Where this sits in the front end.
@@ -14,10 +14,9 @@
 ;;
 ;;   String --lex--> (Array Token) --read--> Sexpr --parse--> Expr --emit--> .s
 ;;
-;; becomes a single composition. `main` runs the WHOLE pipeline on a single-let
-;; source string and prints the complete runnable `.s`; assembled (`as`) + linked
-;; (`ld`) + run, that `.s` EXITS 7 - the same value the emitter proved, now
-;; reached THROUGH lex -> read -> parse.
+;; becomes a single composition. `main` runs the WHOLE pipeline on a source
+;; string and prints the complete runnable `.s`; assembled (`as`) + linked
+;; (`ld`) + run, that `.s` exits with the computed value.
 ;;
 ;; --------------------------------------------------------------------------
 ;; The import decision: import main-less reader + emitter modules.
@@ -45,12 +44,32 @@
 (import "tl_read.tl")
 
 ;; ==========================================================================
-;; The PARSER: `Sexpr -> Expr`, the new contribution of this module (#154).
+;; S-expression list helpers (duplicated from tl_ast.tl since it is not
+;; imported; whole-program concatenation keeps these in scope).
+;; ==========================================================================
+
+(define (sexpr-head [s : Sexpr]) : Sexpr
+  (match s
+    [(SCons a _) a]
+    [_ (begin (panic "parse: expected non-empty list") SNil)]))
+
+(define (sexpr-tail [s : Sexpr]) : Sexpr
+  (match s
+    [(SCons _ d) d]
+    [_ (begin (panic "parse: expected list tail") SNil)]))
+
+(define (sexpr-expect-nil [s : Sexpr]) : unit
+  (match s
+    [(SNil) (print-string "")]
+    [_ (panic "parse: expected end of list")]))
+
+;; ==========================================================================
+;; The PARSER: `Sexpr -> Expr`, the new contribution of this module (#154/#167).
 ;; ==========================================================================
 
 ;; parse-op: resolve an operator SYMBOL's text to its `BinOp` tag. The arithmetic
-;; surface recognises exactly `+`, `-`, `*`, dispatched byte-wise on the lexeme
-;; with the host `string-eq` (the same builtin tl_eval.tl uses for operator
+;; surface recognises exactly `+`, `-`, `*`, `<`, `=`, dispatched byte-wise on the
+;; lexeme with the host `string-eq` (the same builtin tl_eval.tl uses for operator
 ;; dispatch). Any other head symbol is not part of the recognised arithmetic
 ;; subset, so it is a MALFORMED program: abort via the `panic` builtin (#45) -
 ;; the codebase's channel for malformed input, exactly as the reader uses it.
@@ -63,9 +82,13 @@
           (OpSub)
           (if (string-eq op "*")
               (OpMul)
-              (begin
-                (panic "parse: unknown operator")
-                (OpAdd))))))
+              (if (string-eq op "<")
+                  (OpLt)
+                  (if (string-eq op "=")
+                      (OpEq)
+                      (begin
+                        (panic "parse: unknown operator")
+                        (OpAdd))))))))
 
 (define (parse-binary [op : BinOp] [rest : Sexpr]) : Expr
   (match rest
@@ -83,10 +106,22 @@
          (panic "parse: malformed let")
          (EInt 0))]))
 
+;; parse-if: project `(if c t e)` onto `(EIf c' t' e')`.
+(define (parse-if [rest : Sexpr]) : Expr
+  (let ([c : Sexpr (sexpr-head rest)]
+        [after-c : Sexpr (sexpr-tail rest)])
+    (let ([t : Sexpr (sexpr-head after-c)]
+          [after-t : Sexpr (sexpr-tail after-c)])
+      (let ([e : Sexpr (sexpr-head after-t)]
+            [after-e : Sexpr (sexpr-tail after-t)])
+        (begin
+          (sexpr-expect-nil after-e)
+          (EIf (parse c) (parse t) (parse e)))))))
+
 ;; parse: project the small source subset onto the typed `Expr` AST the emitter
-;; consumes: ints, variables, binary arithmetic, and one-binding `let`.
-;; Malformed input aborts via `panic`; the trailing `(EInt 0)` arms are
-;; unreachable dead code that give fall-through branches an `Expr`.
+;; consumes: ints, variables, binary arithmetic, comparisons, one-binding `let`,
+;; and `if`. Malformed input aborts via `panic`; the trailing `(EInt 0)` arms
+;; are unreachable dead code that give fall-through branches an `Expr`.
 (define (parse [s : Sexpr]) : Expr
   (match s
     [(SInt n) (EInt n)]
@@ -94,18 +129,14 @@
     [(SCons (SSym op) rest)
      (if (string-eq op "let")
          (parse-let rest)
-         (parse-binary (parse-op op) rest))]
+         (if (string-eq op "if")
+             (parse-if rest)
+             (parse-binary (parse-op op) rest)))]
     [_ (begin
          (panic "parse: malformed expression")
          (EInt 0))]))
 
-;; main: run the WHOLE self-hosted pipeline end to end on a literal source string
-;; and PRINT the complete runnable `.s`. `lex` tokenises the text, `read` builds
-;; the `Sexpr` cons tree, `parse` projects it onto the `Expr` AST, and
-;; `emit-program` lowers that to a full backend-shaped `.s`. The emitted program,
-;; when assembled + linked + run, exits 7 - so this single
-;; line takes SOURCE TEXT to machine code that runs and returns 7. The
-;; Linux-gated integration test assembles the printed text and asserts exit
-;; status 7, including the let slot store/load path from #163.
+;; main: run the WHOLE self-hosted pipeline end to end on a literal source
+;; string and PRINT the complete runnable `.s`.
 (define (main) : unit
   (print-string (emit-program (parse (read (lex "(let ((x (* 2 3))) (+ x 1))"))))))

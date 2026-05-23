@@ -1,12 +1,13 @@
 //! Cross-platform proof that the TypeLisp self-hosting PARSER slice compiles.
 //!
 //! `examples/tl_parse.tl` is the middle of the first end-to-end self-hosted
-//! pipeline (#154/#163): it imports the `main`-less reader (`lex` + `read` + the
-//! `Sexpr` AST) and the `main`-less emitter core, adds `parse : Sexpr -> Expr`
-//! and `parse-op : String -> BinOp`, and `main` runs the whole pipeline over a
-//! single-binding let source - printing the full runnable `.s`. This test only
-//! COMPILES the program so it runs on Windows too; the Linux integration test
-//! executes it, assembles the printed text, and asserts exit 7.
+//! compiler pipeline (#154/#163/#167): it imports the `main`-less reader
+//! (`lex` + `read` + the `Sexpr` AST) and the `main`-less emitter core, adds
+//! `parse : Sexpr -> Expr` and `parse-op : String -> BinOp`, and `main` runs
+//! the whole pipeline over a single-binding let source - printing the full
+//! runnable `.s`. This test only COMPILES the program so it runs on Windows too;
+//! the Linux integration test executes it, assembles the printed text, and
+//! asserts exit 7.
 
 use std::fs;
 use std::path::PathBuf;
@@ -33,7 +34,7 @@ fn tl_parse_tl_compiles_to_assembly() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "tl_parse.tl compile step failed\nstdout:\n{}\nstderr:\n{}",
+        "tl_parse.tl compile step failed\nstdout:{}\nstderr:{}",
         stdout,
         stderr,
     );
@@ -69,6 +70,10 @@ fn tl_parse_tl_compiles_to_assembly() {
         "tl_string_concat:",
         "tl_print_str:",
         "tl_alloc:",
+        // refs #167: if/cmp parse + emit symbols
+        "_tl_parse_if:",
+        "_tl_fresh_label:",
+        "_tl_emit_if:",
     ] {
         assert!(
             asm.contains(sym),
@@ -85,6 +90,8 @@ fn tl_parse_tl_compiles_to_assembly() {
         "call _tl_parse",
         "call _tl_emit_program",
         "call _tl_emit_let",
+        // refs #167: label generation threaded through emit
+        "call _tl_fresh_label",
     ] {
         assert!(
             asm.contains(call),
@@ -103,8 +110,7 @@ fn tl_parse_tl_compiles_to_assembly() {
 
     // The emitter's output text - the `.s` the pipeline PRODUCES - appears as
     // `.string` data: the operator instructions and the `main` / `_start`
-    // skeleton, including the `imulq`, `_start`, `syscall`, and `$60` markers the
-    // brief calls out.
+    // skeleton, including the `imulq`, `_start`, `syscall`, and `$60` markers.
     for literal in [
         ".string \"    movq $",
         ".string \"    addq %rcx, %rax\\n\"",
@@ -119,6 +125,12 @@ fn tl_parse_tl_compiles_to_assembly() {
         ".string \"    call main\\n\"",
         ".string \"    movq $60, %rax\\n\"",
         ".string \"    syscall\\n\"",
+        // refs #167: comparison + branch data fragments
+        "setl %al\\n",
+        "sete %al\\n",
+        "movzbq %al, %rax\\n",
+        "    je   ",
+        "    jmp  ",
     ] {
         assert!(
             asm.contains(literal),

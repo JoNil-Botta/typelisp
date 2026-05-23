@@ -3,13 +3,16 @@
 (defenum BinOp
   (OpAdd)
   (OpSub)
-  (OpMul))
+  (OpMul)
+  (OpLt)
+  (OpEq))
 
 (defenum Expr
   (EInt i64)
   (EVar String)
   (EBin BinOp Expr Expr)
   (ELet String Expr Expr)
+  (EIf Expr Expr Expr)
   (ECall String ExprList))
 
 (defenum ExprList

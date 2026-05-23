@@ -1,11 +1,11 @@
 //! Cross-platform proof that the TypeLisp self-hosting emitter slice compiles.
 //!
 //! `examples/tl_emit.tl` is the first backend-shaped TypeLisp program for
-//! #155/#156/#163: it imports the main-less emitter core, walks a tiny arithmetic
-//! `Expr` tree, wraps the emitted body in a runnable `main` + `_start` assembly
-//! skeleton, and prints that full `.s`. This test only compiles the program so it
-//! runs on Windows too; the Linux integration test executes it, assembles the
-//! printed text, and asserts exit 7.
+//! #155/#156/#163/#167: it imports the main-less emitter core, walks a tiny
+//! arithmetic `Expr` tree, wraps the emitted body in a runnable `main` + `_start`
+//! assembly skeleton, and prints that full `.s`. This test only compiles the
+//! program so it runs on Windows too; the Linux integration test executes it,
+//! assembles the printed text, and asserts exit 7.
 
 use std::fs;
 use std::path::PathBuf;
@@ -32,7 +32,7 @@ fn tl_emit_tl_compiles_to_assembly() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "tl_emit.tl compile step failed\nstdout:\n{}\nstderr:\n{}",
+        "tl_emit.tl compile step failed\nstdout:{}\nstderr:{}",
         stdout,
         stderr,
     );
@@ -68,6 +68,9 @@ fn tl_emit_tl_compiles_to_assembly() {
         "tl_string_concat:",
         "tl_print_str:",
         "tl_alloc:",
+        // refs #167: if/cmp code-generation symbols
+        "_tl_fresh_label:",
+        "_tl_emit_if:",
     ] {
         assert!(
             asm.contains(sym),
@@ -85,6 +88,8 @@ fn tl_emit_tl_compiles_to_assembly() {
         "call tl_int_to_string",
         "call tl_string_concat",
         "call tl_print_str",
+        // refs #167: label generation called during emit-if
+        "call _tl_fresh_label",
     ] {
         assert!(
             asm.contains(call),
@@ -120,6 +125,15 @@ fn tl_emit_tl_compiles_to_assembly() {
         "    movq %rax, %rdi\\n",
         "    movq $60, %rax\\n",
         "    syscall\\n",
+        // refs #167: comparison + branch data fragments
+        "setl %al\\n",
+        "sete %al\\n",
+        "movzbq %al, %rax\\n",
+        "    cmpq $0, %rax\\n",
+        "    je   ",
+        "    jmp  ",
+        ".Lelse",
+        ".Lend",
     ] {
         assert!(
             asm.contains(literal),

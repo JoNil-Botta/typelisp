@@ -223,6 +223,134 @@ impl TypeChecker {
         self.env.pop();
     }
 
+    fn outer_local_names(&self) -> HashSet<String> {
+        self.env
+            .iter()
+            .skip(1)
+            .flat_map(|scope| scope.keys().cloned())
+            .collect()
+    }
+
+    fn find_captured_name(
+        expr: &Expr,
+        outer_locals: &HashSet<String>,
+        local_bindings: &HashSet<String>,
+    ) -> Option<String> {
+        match expr.unspan() {
+            Expr::Literal(_) => None,
+            Expr::Var(name) => (outer_locals.contains(name) && !local_bindings.contains(name))
+                .then(|| name.clone()),
+            Expr::Binary { lhs, rhs, .. } => {
+                Self::find_captured_name(lhs, outer_locals, local_bindings)
+                    .or_else(|| Self::find_captured_name(rhs, outer_locals, local_bindings))
+            }
+            Expr::Unary { expr, .. }
+            | Expr::Ann { expr, .. }
+            | Expr::Cast { expr, .. }
+            | Expr::TupleRef { expr, .. }
+            | Expr::StructGet { expr, .. } => {
+                Self::find_captured_name(expr, outer_locals, local_bindings)
+            }
+            Expr::Call { func, args } => {
+                Self::find_captured_name(func, outer_locals, local_bindings).or_else(|| {
+                    args.iter()
+                        .find_map(|arg| Self::find_captured_name(arg, outer_locals, local_bindings))
+                })
+            }
+            Expr::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => Self::find_captured_name(cond, outer_locals, local_bindings)
+                .or_else(|| Self::find_captured_name(then_branch, outer_locals, local_bindings))
+                .or_else(|| Self::find_captured_name(else_branch, outer_locals, local_bindings)),
+            Expr::Let { bindings, body } => {
+                let mut scoped = local_bindings.clone();
+                for (name, _, value) in bindings {
+                    if let Some(captured) = Self::find_captured_name(value, outer_locals, &scoped) {
+                        return Some(captured);
+                    }
+                    scoped.insert(name.clone());
+                }
+                Self::find_captured_name(body, outer_locals, &scoped)
+            }
+            Expr::Lambda { .. } => None,
+            Expr::Tuple(elems) | Expr::Array(elems) | Expr::Begin(elems) => elems
+                .iter()
+                .find_map(|elem| Self::find_captured_name(elem, outer_locals, local_bindings)),
+            Expr::MakeArray { len, .. } => {
+                Self::find_captured_name(len, outer_locals, local_bindings)
+            }
+            Expr::ArrayRef { expr, index } | Expr::StringRef { expr, index } => {
+                Self::find_captured_name(expr, outer_locals, local_bindings)
+                    .or_else(|| Self::find_captured_name(index, outer_locals, local_bindings))
+            }
+            Expr::ArraySet { expr, index, value } => {
+                Self::find_captured_name(expr, outer_locals, local_bindings)
+                    .or_else(|| Self::find_captured_name(index, outer_locals, local_bindings))
+                    .or_else(|| Self::find_captured_name(value, outer_locals, local_bindings))
+            }
+            Expr::While { cond, body } => {
+                Self::find_captured_name(cond, outer_locals, local_bindings)
+                    .or_else(|| Self::find_captured_name(body, outer_locals, local_bindings))
+            }
+            Expr::Set(name, expr) => {
+                if outer_locals.contains(name) && !local_bindings.contains(name) {
+                    Some(name.clone())
+                } else {
+                    Self::find_captured_name(expr, outer_locals, local_bindings)
+                }
+            }
+            Expr::Match { scrutinee, arms } => {
+                Self::find_captured_name(scrutinee, outer_locals, local_bindings).or_else(|| {
+                    arms.iter().find_map(|(pat, body)| {
+                        let mut scoped = local_bindings.clone();
+                        Self::collect_pattern_bindings(pat, true, &mut scoped);
+                        Self::find_captured_name(body, outer_locals, &scoped)
+                    })
+                })
+            }
+            Expr::Foreach {
+                index,
+                start,
+                end,
+                body,
+                ..
+            } => Self::find_captured_name(start, outer_locals, local_bindings)
+                .or_else(|| Self::find_captured_name(end, outer_locals, local_bindings))
+                .or_else(|| {
+                    let mut scoped = local_bindings.clone();
+                    scoped.insert(index.clone());
+                    Self::find_captured_name(body, outer_locals, &scoped)
+                }),
+            Expr::Spanned { expr, .. } => {
+                Self::find_captured_name(expr, outer_locals, local_bindings)
+            }
+        }
+    }
+
+    fn collect_pattern_bindings(pat: &Pattern, top_level: bool, bindings: &mut HashSet<String>) {
+        match pat {
+            Pattern::Var(name, _) => {
+                bindings.insert(name.clone());
+            }
+            Pattern::Tuple(items) => {
+                for item in items {
+                    Self::collect_pattern_bindings(item, false, bindings);
+                }
+            }
+            Pattern::Binding(name) if !top_level => {
+                bindings.insert(name.clone());
+            }
+            Pattern::Variant { args, .. } => {
+                for arg in args {
+                    Self::collect_pattern_bindings(arg, false, bindings);
+                }
+            }
+            Pattern::Wildcard | Pattern::Literal(_) | Pattern::Binding(_) => {}
+        }
+    }
+
     pub fn check_program(&mut self, prog: &Program) -> Result<(), TypeError> {
         // Build the enum and struct registries up front so declared types and
         // constructors can be resolved/registered in the first pass.
@@ -736,6 +864,21 @@ impl TypeChecker {
                 Ok(body_ty)
             }
             Expr::Lambda { params, ret, body } => {
+                let outer_locals = self.outer_local_names();
+                let lambda_bindings: HashSet<String> =
+                    params.iter().map(|(param, _)| param.clone()).collect();
+                if let Some(captured) =
+                    Self::find_captured_name(body, &outer_locals, &lambda_bindings)
+                {
+                    return Err(TypeError::at(
+                        format!(
+                            "capturing lambdas are not yet supported: lambda captures '{}'",
+                            captured
+                        ),
+                        body.span(),
+                    ));
+                }
+
                 self.push_scope();
                 for (param, ty) in params {
                     self.bind(param.clone(), ty.clone());
@@ -2153,6 +2296,39 @@ mod tests {
         .unwrap();
         let mut tc = TypeChecker::new();
         assert!(tc.check_program(&prog).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_noncapturing_lambda_ok() {
+        let prog = parse(
+            r#"
+            (define (main) : i64
+              ((lambda ([x : i64]) : i64 (+ x 1)) 41))
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        assert!(tc.check_program(&prog).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_capturing_lambda_rejected() {
+        let prog = parse(
+            r#"
+            (define (main) : i64
+              (let ([n : i64 10])
+                ((lambda ([x : i64]) : i64 (+ x n)) 5)))
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(
+            err.msg.contains("capturing lambdas are not yet supported"),
+            "err: {}",
+            err
+        );
+        assert!(err.msg.contains("n"), "err: {}", err);
     }
 
     #[test]

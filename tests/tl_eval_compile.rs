@@ -3,15 +3,21 @@
 //! assembly.
 //!
 //! `tl_eval.tl` is the third piece of TypeLisp's *real* self-hosting compiler
-//! front end (#27): a tiny tree-walking interpreter, now with VARIABLES, lexical
-//! `let`, short-circuit `if`, and comparison operators. Where the lexer turns a
-//! source String into a flat `(Array Token)` and the reader consumes that token
-//! stream into the recursive cons-cell `Sexpr` AST `(SInt | SSym | SNil |
-//! SCons)`, the evaluator INTERPRETS that tree WITH RESPECT TO an environment: it
-//! resolves bare symbols via recursive `lookup`, pushes an `EBind` frame for
-//! `(let ((x e1)) body)`, dispatches `if` without evaluating the untaken branch,
-//! folds `= < > <= >=` to 1/0 integer truth values, and otherwise recursively
-//! evaluates binary arithmetic arguments. It does NOT
+//! front end (#27): a tiny tree-walking interpreter - UNIFIED: VARIABLES and a
+//! `let` special form threaded through a lexical environment, TOGETHER WITH the
+//! short-circuiting `if` special form and the comparison operators `= < > <= >=`.
+//! Where the lexer turns a source String into a flat `(Array Token)` and the
+//! reader consumes that token stream into the recursive cons-cell `Sexpr` AST
+//! `(SInt | SSym | SNil | SCons)`, the evaluator INTERPRETS that tree WITH RESPECT
+//! TO an environment - it walks the s-expression, dispatches on the head symbol,
+//! resolves a bare symbol as a variable reference via `lookup` over the cons-cell
+//! assoc-list `Env` (`ENil | (EBind String i64 Env)`), handles `(let ((x e1))
+//! body)` by pushing an `EBind` frame and `(if cond then else)` by short-circuit
+//! (eval the cond, then ONLY the taken branch, both in `env`), and otherwise
+//! recursively evaluates the argument sub-exprs and applies the arithmetic
+//! `+ - * /` or comparison `= < > <= >=` operator (the comparisons fold their bool
+//! to the 1/0 integer-truth convention), computing the integer the expression
+//! denotes. It does NOT
 //! re-derive lexing or reading: it `(import)`s the reader's `read` and the
 //! `Sexpr` enum from the `main`-less module `tl_read.tl`, which itself imports
 //! the `main`-less lexer `tl_lex.tl`, which imports the `main`-less token model
@@ -195,16 +201,19 @@ fn tl_eval_tl_compiles_to_assembly() {
         asm,
     );
 
-    // CONDITIONALS (#27): the `if` special form and the comparison operators are
-    // dispatched on their operator text, so each operator's string literal must
-    // be emitted in the read-only data. `"if"` selects the short-circuit special
+    // SPECIAL FORMS + CONDITIONALS (#27): the `let` and `if` special forms and the
+    // comparison operators are dispatched on their head/operator text, so each
+    // keyword's string literal must be emitted in the read-only data. `"let"`
+    // selects the binding special form; `"if"` selects the short-circuit special
     // form; `"<"`/`">"`/`"<="`/`">="` (and the existing `"="`) are the comparison
     // operators that fold their bool result to the 1/0 integer-truth convention.
-    for op in ["\"if\"", "\"=\"", "\"<\"", "\">\"", "\"<=\"", "\">=\""] {
+    for op in [
+        "\"let\"", "\"if\"", "\"=\"", "\"<\"", "\">\"", "\"<=\"", "\">=\"",
+    ] {
         assert!(
             asm.contains(&format!(".string {op}")),
-            "tl_eval assembly is missing the dispatch string literal for operator {op} \
-             (conditionals/comparisons):\n{}",
+            "tl_eval assembly is missing the dispatch string literal for keyword/operator {op} \
+             (let/conditionals/comparisons):\n{}",
             asm,
         );
     }

@@ -97,7 +97,7 @@ fn assembly_or_exit(lowered: &LoweredProgram, sources: &[SourceFile]) -> String 
 /// into one `Program`, or print a diagnostic and exit. The returned source map
 /// lets later semantic diagnostics render against the originating module.
 fn load_or_exit(entry: &Path, options: &LoadOptions) -> LoadedProgram {
-    let loaded = if options.stdlib_roots.is_empty() {
+    let loaded = if options.stdlib_roots.is_empty() && options.package_dependencies.is_empty() {
         load_program(entry, &FsSource)
     } else {
         load_program_with_options(entry, &FsSource, options)
@@ -110,6 +110,19 @@ fn load_or_exit(entry: &Path, options: &LoadOptions) -> LoadedProgram {
         }
         Err(err @ LoadError::ImportIo { .. }) => {
             eprintln!("Error: {}", err);
+            std::process::exit(1);
+        }
+        Err(LoadError::PkgAliasUnknown {
+            importer,
+            import_path,
+            alias,
+        }) => {
+            eprintln!(
+                "Error: unknown dependency alias '{}' in import \"{}\" from '{}'",
+                alias,
+                import_path,
+                importer.display()
+            );
             std::process::exit(1);
         }
         Err(LoadError::Parse {
@@ -165,7 +178,10 @@ fn load_options_with_env_stdlib_root(mut stdlib_roots: Vec<PathBuf>) -> LoadOpti
         _ => {}
     }
 
-    LoadOptions { stdlib_roots }
+    LoadOptions {
+        stdlib_roots,
+        package_dependencies: Vec::new(),
+    }
 }
 
 fn parse_stdlib_roots(args: &[String], mut i: usize) -> LoadOptions {
@@ -382,7 +398,13 @@ fn run_cli() {
                 }
             };
             let manifest = package_or_exit(load_manifest(&manifest_path));
-            let loaded = load_or_exit(&manifest.entry_path(), &options);
+            let mut build_options = options;
+            build_options.package_dependencies = manifest
+                .dependencies
+                .iter()
+                .map(|d| (d.alias.clone(), d.root.clone()))
+                .collect();
+            let loaded = load_or_exit(&manifest.entry_path(), &build_options);
             let lowered = optimized_ir_or_exit(&loaded);
             let asm = assembly_or_exit(&lowered, &loaded.sources);
             let output_path = manifest.output_asm_path();

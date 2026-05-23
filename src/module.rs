@@ -19,7 +19,7 @@ use crate::ast::{Decl, Program};
 use crate::parser::{ParseError, parse_with_file_id};
 use std::collections::HashSet;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// Abstraction over the filesystem so the loader can be driven by an in-memory
 /// map in tests. The driver uses [`FsSource`]; tests use a `HashMap`-backed
@@ -183,6 +183,12 @@ fn stdlib_import_suffix(import_path: &str) -> Option<PathBuf> {
     }
 }
 
+fn is_safe_stdlib_root_suffix(suffix: &Path) -> bool {
+    suffix
+        .components()
+        .all(|component| matches!(component, Component::Normal(_)))
+}
+
 fn resolve_import_canonical(
     importer: &Path,
     import_path: &str,
@@ -253,6 +259,10 @@ fn try_stdlib_roots(
     src: &dyn ModuleSource,
     searched_stdlib_roots: &[PathBuf],
 ) -> Option<(PathBuf, ImportRequest)> {
+    if !is_safe_stdlib_root_suffix(suffix) {
+        return None;
+    }
+
     for root in searched_stdlib_roots {
         let target = root.join(suffix);
         let request = ImportRequest {
@@ -579,6 +589,18 @@ mod tests {
     }
 
     #[test]
+    fn stdlib_root_suffix_accepts_only_normal_components() {
+        assert!(is_safe_stdlib_root_suffix(Path::new("string.tl")));
+        assert!(is_safe_stdlib_root_suffix(Path::new("text/string.tl")));
+        assert!(!is_safe_stdlib_root_suffix(Path::new("../outside.tl")));
+        assert!(!is_safe_stdlib_root_suffix(Path::new("./string.tl")));
+        assert!(!is_safe_stdlib_root_suffix(Path::new("/string.tl")));
+
+        #[cfg(windows)]
+        assert!(!is_safe_stdlib_root_suffix(Path::new(r"C:\string.tl")));
+    }
+
+    #[test]
     fn stdlib_import_uses_configured_root_after_local_miss() {
         let src = MapSource::new(&[
             (
@@ -622,6 +644,86 @@ mod tests {
                 .sources
                 .iter()
                 .any(|source| source.path == PathBuf::from("repo-stdlib/string.tl"))
+        );
+    }
+
+    #[test]
+    fn local_stdlib_parent_dir_import_still_resolves_relative_to_importer() {
+        let src = MapSource::new(&[
+            (
+                "work/main.tl",
+                "(import \"stdlib/../outside.tl\")\n(define (main) : i64 (outside))",
+            ),
+            ("work/outside.tl", "(define (outside) : i64 42)"),
+            ("repo-stdlib/outside.tl", "(define (root) : i64 1)"),
+        ]);
+        let options = LoadOptions {
+            stdlib_roots: vec![PathBuf::from("repo-stdlib")],
+        };
+
+        let loaded = load_program_with_options(Path::new("work/main.tl"), &src, &options).unwrap();
+        assert_eq!(decl_names(&loaded.program), vec!["outside", "main"]);
+        assert!(
+            loaded
+                .sources
+                .iter()
+                .any(|source| source.path == PathBuf::from("work/outside.tl"))
+        );
+        assert!(
+            !loaded
+                .sources
+                .iter()
+                .any(|source| source.path == PathBuf::from("repo-stdlib/outside.tl"))
+        );
+    }
+
+    #[test]
+    fn stdlib_root_rejects_parent_dir_suffix_escape() {
+        let src = MapSource::new(&[
+            (
+                "work/main.tl",
+                "(import \"stdlib/../outside.tl\")\n(define (main) : i64 (outside))",
+            ),
+            ("outside.tl", "(define (outside) : i64 42)"),
+        ]);
+        let options = LoadOptions {
+            stdlib_roots: vec![PathBuf::from("repo-stdlib")],
+        };
+
+        let err = load_program_with_options(Path::new("work/main.tl"), &src, &options).unwrap_err();
+        match &err {
+            LoadError::ImportIo {
+                importer,
+                import_path,
+                resolved_path,
+                searched_stdlib_roots,
+                source,
+            } => {
+                assert_eq!(importer, &PathBuf::from("work/main.tl"));
+                assert_eq!(import_path, "stdlib/../outside.tl");
+                assert_eq!(
+                    resolved_path,
+                    &PathBuf::from("work")
+                        .join("stdlib")
+                        .join("..")
+                        .join("outside.tl")
+                );
+                assert_eq!(searched_stdlib_roots, &vec![PathBuf::from("repo-stdlib")]);
+                assert_eq!(source.kind(), io::ErrorKind::NotFound);
+            }
+            other => panic!("expected ImportIo error, got {:?}", other),
+        }
+
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("stdlib/../outside.tl"),
+            "diagnostic should include requested import:\n{}",
+            rendered
+        );
+        assert!(
+            rendered.contains("searched stdlib roots"),
+            "diagnostic should still identify searched roots:\n{}",
+            rendered
         );
     }
 

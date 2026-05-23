@@ -27,6 +27,8 @@ configured stdlib root is searched by stripping the leading `stdlib/` and
 joining the remaining suffix to the root.
 
 That means local project files take precedence over configured stdlib roots.
+Configured stdlib roots only serve normal relative suffixes below the root;
+paths such as `stdlib/../outside.tl` are not resolved through root fallback.
 When compiling or checking sources outside the repository tree, prefer passing
 the repository stdlib directory explicitly:
 

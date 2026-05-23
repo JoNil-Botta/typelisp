@@ -3077,6 +3077,63 @@ fn stdlib_root_env_appears_in_missing_import_diagnostic() {
 }
 
 #[test]
+fn stdlib_root_env_rejects_parent_dir_escape() {
+    let base_dir =
+        std::env::temp_dir().join(format!("typelisp-stdlib-env-escape-{}", std::process::id()));
+    let work_dir = base_dir.join("work");
+    let env_parent = base_dir.join("env");
+    let env_root = env_parent.join("stdlib");
+    fs::create_dir_all(&env_root).expect("create env stdlib root");
+    fs::write(
+        env_parent.join("outside.tl"),
+        "(define (escaped) : i64 42)\n",
+    )
+    .expect("write escaped sibling fixture");
+
+    let work_path = write_stdlib_string_import_fixture(
+        &work_dir,
+        r#"
+(import "stdlib/../outside.tl")
+
+(define (main) : i64
+  (escaped))
+"#,
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("check")
+        .arg(&work_path)
+        .env("TYPELISP_STDLIB_ROOT", &env_root)
+        .output()
+        .expect("check stdlib env escape fixture");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "stdlib env escape check unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert!(
+        stderr.contains("stdlib/../outside.tl"),
+        "stdlib env escape diagnostic did not include import path\nstderr:\n{}",
+        stderr,
+    );
+    assert!(
+        stderr.contains("searched stdlib roots"),
+        "stdlib env escape diagnostic did not mention searched roots\nstderr:\n{}",
+        stderr,
+    );
+    assert!(
+        stderr.contains(&env_root.display().to_string()),
+        "stdlib env escape diagnostic did not include env root {}\nstderr:\n{}",
+        env_root.display(),
+        stderr,
+    );
+}
+
+#[test]
 fn make_array_negative_length_traps_before_alloc() {
     let output = run_inline_source(
         "make_array_negative_length_trap",

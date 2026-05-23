@@ -261,7 +261,9 @@ Imports another TypeLisp file. All top-level definitions from the imported file 
   root is searched by stripping the leading `stdlib/` and joining the remainder
   to the root. Explicit `--stdlib-root` entries are searched before the optional
   `TYPELISP_STDLIB_ROOT` fallback. Local project files therefore take precedence
-  over configured stdlib roots.
+  over configured stdlib roots. Configured stdlib roots only serve normal
+  relative suffixes under the root; suffixes containing components such as `..`
+  are not resolved through stdlib root fallback.
 - The current stdlib source-tree layout and verification convention is
   documented in `stdlib/README.md`.
 - There is no package manifest, dependency resolver, package-qualified import

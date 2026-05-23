@@ -7,6 +7,7 @@ use crate::types::{
 use std::collections::{HashMap, HashSet};
 
 const ABORT_RUNTIME_SYMBOL: &str = ".L_tl_abort";
+const READ_FILE_RUNTIME_SYMBOL: &str = ".L_tl_read_file";
 
 /// Lowers a typed AST program into IR.
 pub fn lower_program(prog: &ast::Program) -> Program {
@@ -888,6 +889,28 @@ impl FnLowerer {
                 dst: Some(dst),
                 func: "tl_int_to_string".to_string(),
                 args: vec![n_val],
+                ty: Type::String,
+            });
+            self.record_local(dst, Type::String);
+            return Value::Var(dst);
+        }
+
+        // `(read-file path)` returns the full file contents as a heap-owned
+        // String. The runtime receives the path's `{ptr,len}` fields and handles
+        // path NUL-termination plus panic-on-error Linux file syscalls.
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "read-file"
+            && args.len() == 1
+            && !self.vars.contains_key(name)
+            && !self.function_types.contains_key(name)
+        {
+            let path = self.lower_expr(&args[0]);
+            let (ptr, len) = self.load_string_fields(&path);
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: READ_FILE_RUNTIME_SYMBOL.to_string(),
+                args: vec![Value::Var(ptr), Value::Var(len)],
                 ty: Type::String,
             });
             self.record_local(dst, Type::String);
@@ -2968,6 +2991,71 @@ mod tests {
         let (args, ty) = call.expect("expected a Call to tl_int_to_string");
         assert_eq!(args.len(), 1, "int->string takes the single i64 operand");
         assert_eq!(*ty, Type::String, "int->string yields a String");
+    }
+
+    #[test]
+    fn test_lower_read_file_extracts_path_fields_and_calls_runtime() {
+        let prog = parse(r#"(define (f) : String (read-file "input.txt"))"#).unwrap();
+        let ir = lower_program(&prog);
+        let instrs: Vec<&Instruction> = ir.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .collect();
+
+        let call = instrs.iter().find_map(|i| match i {
+            Instruction::Call { func, args, ty, .. } if func == READ_FILE_RUNTIME_SYMBOL => {
+                Some((args, ty))
+            }
+            _ => None,
+        });
+        let (args, ty) = call.expect("expected a Call to read-file runtime");
+        assert_eq!(args.len(), 2, "read-file runtime takes path ptr/len");
+        assert_eq!(*ty, Type::String, "read-file yields a String");
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Load { ty: Type::U64, .. })),
+            "expected a Load of the path data pointer"
+        );
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Load { ty: Type::I64, .. })),
+            "expected a Load of the path byte length"
+        );
+    }
+
+    #[test]
+    fn test_lower_user_defined_read_file_shadows_builtin() {
+        let prog = parse(
+            r#"
+            (define (read-file [n : i64]) : i64 n)
+            (define (main) : i64 (read-file 7))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let main = ir
+            .functions
+            .iter()
+            .position(|func| func.name == "main")
+            .unwrap();
+
+        assert!(
+            ir.functions[main]
+                .blocks
+                .iter()
+                .flat_map(|b| b.instructions.iter())
+                .any(|i| matches!(i, Instruction::Call { func, .. } if func == "read-file")),
+            "expected ordinary call to user-defined read-file"
+        );
+        assert!(
+            !ir.functions[main].blocks.iter().flat_map(|b| b.instructions.iter()).any(
+                |i| matches!(i, Instruction::Call { func, .. } if func == READ_FILE_RUNTIME_SYMBOL)
+            ),
+            "user-defined read-file must not lower to the builtin runtime"
+        );
     }
 
     #[test]

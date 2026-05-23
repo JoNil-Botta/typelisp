@@ -106,6 +106,13 @@ impl TypeChecker {
             "int->string".into(),
             Type::Func(vec![Type::I64], Box::new(Type::String)),
         );
+        // `(read-file path)` -> the full file contents as a heap-owned String.
+        // V1 is Linux/compiler-driver oriented and panic-on-error; recoverable
+        // file errors are deferred until the Result/Option model is settled.
+        globals.insert(
+            "read-file".into(),
+            Type::Func(vec![Type::String], Box::new(Type::String)),
+        );
         // `(substring s start len)` / `(string-slice s start len)` ->
         // `(-> String i64 i64 String)` — a fresh String holding the `len` bytes
         // of `s` beginning at byte offset `start` (a half-open `[start,
@@ -2426,6 +2433,39 @@ mod tests {
         // (a function's i64 return) is a mismatch.
         let src = "(define (f) : i64 (int->string 5))";
         assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_read_file_yields_string() {
+        let src = r#"(define (f) : String (read-file "input.tl"))"#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_read_file_requires_string_path() {
+        let src = "(define (f) : String (read-file 42))";
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_read_file_arity_checked() {
+        let src = r#"(define (f) : String (read-file "a" "b"))"#;
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_read_file_result_is_not_i64() {
+        let src = r#"(define (f) : i64 (read-file "input.tl"))"#;
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_read_file_builtin_can_be_shadowed() {
+        let src = r#"
+            (define (read-file [n : i64]) : i64 n)
+            (define (main) : i64 (read-file 7))
+        "#;
+        assert!(check(src).is_ok());
     }
 
     // ------------------------------------------------------------------

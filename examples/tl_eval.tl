@@ -36,13 +36,13 @@
 ;; --------------------------------------------------------------------------
 ;; Sexpr projections: flat single-level `match` accessors over the AST.
 ;; --------------------------------------------------------------------------
-;; TypeLisp's `match` binds a variant's payload fields to flat variable names; it
-;; does NOT support nested patterns (e.g. `(SCons (SSym op) rest)` is not a single
-;; pattern). So instead of destructuring a call form in one nested match, the
-;; evaluator projects one level at a time with these helpers, each a single-level
-;; `match` that pulls one field out (or `panic`s on the wrong shape - exactly how
-;; an interpreter reports a malformed program). This is the cons-cell discipline
-;; of a real Lisp interpreter: `car`, `cdr`, and a symbol projector.
+;; The argument spine is a flat cons list, so these `car`/`cdr` accessors stay
+;; single-level: each pulls one field out (or `panic`s on the wrong shape -
+;; exactly how an interpreter reports a malformed program). The OPERATOR-symbol
+;; projection that used to be a third helper (`sexpr-sym`) is now folded into
+;; `eval-sexpr`'s dispatch via a NESTED pattern (#41): the `SCons` arm matches
+;; `(SCons (SSym name) rest)`, binding the operator text `name` one enum layer
+;; down in the same `match` - no separate projection function needed.
 
 ;; sexpr-head ("car"): the head child of a cons cell. A non-cons (an atom or nil
 ;; in operator position, or too few arguments) is a malformed call - abort.
@@ -71,48 +71,43 @@
     [(SSym _) (panic "eval: too many arguments")]
     [(SCons _ _) (panic "eval: too many arguments")]))
 
-;; sexpr-sym: the operator symbol text. The head of a call form must be a symbol
-;; (`+`, `-`, `*`, `/`); any other head shape is a non-symbol operator - abort.
-(define (sexpr-sym [s : Sexpr]) : String
-  (match s
-    [(SInt _) (begin (panic "eval: non-symbol in operator position") "")]
-    [(SSym name) name]
-    [(SNil) (begin (panic "eval: non-symbol in operator position") "")]
-    [(SCons _ _) (begin (panic "eval: non-symbol in operator position") "")]))
-
 ;; --------------------------------------------------------------------------
 ;; eval-sexpr: the tree-walking interpreter. `(-> Sexpr i64)`.
 ;; --------------------------------------------------------------------------
 ;; A recursive walk over the `Sexpr` tree, dispatching on the head symbol of each
 ;; call form - the heart of a Lisp interpreter's `eval`:
-;;   (SInt n)             -> n            an integer literal evaluates to itself.
-;;   (SCons op rest)      -> a call form. The head `op` is the operator symbol;
+;;   (SInt n)                  -> n       an integer literal evaluates to itself.
+;;   (SCons (SSym name) rest)  -> a call form whose operator head is the symbol
+;;                           `name`. This NESTED pattern (#41) matches two enum
+;;                           layers at once: it requires the head to itself be an
+;;                           `(SSym name)` and binds the operator text `name`
+;;                           directly - the projection `sexpr-sym` used to do.
 ;;                           `rest` is the proper-list `(SCons arg1 (SCons arg2
-;;                           SNil))` of the (fixed two) argument sub-exprs. Project
-;;                           the two args out of the spine, recursively `eval-sexpr`
-;;                           each, then DISPATCH on the operator text via
+;;                           SNil))` of the (fixed two) argument sub-exprs.
+;;                           Project the two args out of the spine, recursively
+;;                           `eval-sexpr` each, then DISPATCH on `name` via
 ;;                           `string-eq`: "+" -> a+b, "-" -> a-b, "*" -> a*b,
-;;                           "/" -> a/b (integer division). An unknown operator is
-;;                           a malformed program - abort via `panic`.
-;;   (SSym _) / (SNil)    -> a bare symbol or the empty list is not an evaluable
-;;                           expression in this slice (no variable lookup yet) -
+;;                           "/" -> a/b (integer division). An unknown operator
+;;                           is a malformed program - abort via `panic`.
+;;   _                    -> any other shape (a bare symbol or empty list - not
+;;                           evaluable in this slice; or an `SCons` whose head is
+;;                           NOT a symbol, which fails the nested `(SSym name)`
+;;                           test above and falls through here exactly like a
+;;                           flat tag mismatch) is a non-evaluable expression -
 ;;                           abort. (Deferred: SSym variable lookup, `define`,
 ;;                           variadic arity.)
 ;;
-;; The `match` is exhaustive over all four `Sexpr` variants. In the `SCons` arm,
-;; `op` is the operator sub-expr and `rest` the argument-list sub-expr; the binary
-;; fixed-arity argument extraction walks the cons spine with the projections
-;; above, and the recursive `eval-sexpr` calls on each argument make this a
-;; genuine tree walk - the result depends on the WHOLE nested shape.
+;; The recursive `eval-sexpr` calls on each argument make this a genuine tree
+;; walk - the result depends on the WHOLE nested shape.
 (define (eval-sexpr [s : Sexpr]) : i64
   (match s
     [(SInt n) n]
-    [(SSym _) (begin (panic "eval: cannot evaluate a bare symbol (no variables yet)") 0)]
-    [(SNil) (begin (panic "eval: cannot evaluate the empty list") 0)]
-    [(SCons op rest)
-     ;; A call form `(op arg1 arg2)`: rest is `(SCons arg1 (SCons arg2 SNil))`.
-     (let ([name : String (sexpr-sym op)]
-           [arg1 : Sexpr (sexpr-head rest)]
+    ;; Nested pattern: the call's head must itself be `(SSym name)`. Binds the
+    ;; operator text `name : String` (one enum layer down) and the spine `rest`
+    ;; together; a non-symbol head fails this and falls through to the `_` arm.
+    [(SCons (SSym name) rest)
+     ;; A call form `(name arg1 arg2)`: rest is `(SCons arg1 (SCons arg2 SNil))`.
+     (let ([arg1 : Sexpr (sexpr-head rest)]
            [rest2 : Sexpr (sexpr-tail rest)])
        (let ([arg2 : Sexpr (sexpr-head rest2)]
              [rest3 : Sexpr (sexpr-tail rest2)])
@@ -132,7 +127,8 @@
                              (/ a b)
                              (begin
                                (panic "eval: unknown operator")
-                               0)))))))))]))
+                               0)))))))))]
+    [_ (begin (panic "eval: not an evaluable expression") 0)]))
 
 ;; --------------------------------------------------------------------------
 ;; main: the whole front end composed - lex, read, then interpret.

@@ -1814,6 +1814,19 @@ impl FnLowerer {
         let n = arms.len();
         for (i, (pat, body)) in arms.iter().enumerate() {
             let is_last = i + 1 == n;
+            // A bare top-level identifier arm is a nullary-variant pattern
+            // (`[Red 0]`); treat it exactly like `Variant { name, args: [] }`.
+            let nullary;
+            let pat = match pat {
+                ast::Pattern::Binding(name) if self.enums.lookup_variant(name).is_some() => {
+                    nullary = ast::Pattern::Variant {
+                        name: name.clone(),
+                        args: Vec::new(),
+                    };
+                    &nullary
+                }
+                other => other,
+            };
             match pat {
                 ast::Pattern::Wildcard => {
                     // Irrefutable: lower the body in the current block and jump
@@ -1827,22 +1840,17 @@ impl FnLowerer {
                     self.builder.emit(Instruction::Jump(merge_label.clone()));
                     break;
                 }
-                ast::Pattern::Variant { name, bindings } => {
-                    let (_owner, tag, raw_fields) = {
-                        let (o, t, f) = self
-                            .enums
-                            .lookup_variant(name)
-                            .expect("typechecked variant exists");
-                        (o.to_string(), t, f.to_vec())
-                    };
-                    let field_tys: Vec<Type> =
-                        raw_fields.iter().map(|t| self.resolve_type(t)).collect();
-                    let offsets = self.enums.field_offsets(&field_tys);
+                ast::Pattern::Variant { name, args } => {
+                    let tag = self
+                        .enums
+                        .lookup_variant(name)
+                        .expect("typechecked variant exists")
+                        .1;
 
                     let arm_label = self.builder.fresh_label("match_arm");
                     let next_label = self.builder.fresh_label("match_next");
 
-                    // tag == this_tag ?
+                    // Outer tag == this_tag ?
                     let cmp = self.builder.fresh_var();
                     self.builder.emit(Instruction::BinOp {
                         dst: cmp,
@@ -1858,34 +1866,14 @@ impl FnLowerer {
                         false_label: next_label.clone(),
                     });
 
-                    // Arm block: bind payload fields, lower the body.
+                    // Arm block: project each payload field, run any nested
+                    // refutable sub-tests (branching to `next_label` on a
+                    // mismatch so control falls through to the next arm — the
+                    // same fall-through as an outer tag mismatch), bind
+                    // identifiers, then lower the body.
                     self.builder.finish_block(&arm_label);
-                    for ((binding, off), fty) in
-                        bindings.iter().zip(offsets.iter()).zip(field_tys.iter())
-                    {
-                        let field_ptr = self.gep_byte(&scrut, *off);
-                        let loaded = self.builder.fresh_var();
-                        self.builder.emit(Instruction::Load {
-                            dst: loaded,
-                            src: Value::Var(field_ptr),
-                            ty: fty.clone(),
-                        });
-                        self.record_local(loaded, fty.clone());
-                        // Give the binding a real stack slot so nested control
-                        // flow can read it.
-                        let slot = self.builder.fresh_var();
-                        self.builder.emit(Instruction::Alloc {
-                            var: slot,
-                            ty: fty.clone(),
-                        });
-                        self.builder.emit(Instruction::Store {
-                            dst: Value::Var(slot),
-                            src: Value::Var(loaded),
-                            ty: fty.clone(),
-                        });
-                        self.record_local(slot, fty.clone());
-                        self.vars.insert(binding.clone(), slot);
-                    }
+                    self.lower_variant_args(&scrut, name, args, &next_label);
+
                     let val = self.lower_expr(body);
                     let arm_end = self.current_block_label();
                     if self.value_type(&val) != Type::Unit {
@@ -1897,8 +1885,12 @@ impl FnLowerer {
                     // Continue testing in the next block.
                     self.builder.finish_block(&next_label);
                     if is_last {
-                        // Exhaustive match guarantees this is unreachable, but
-                        // we still need a terminator into the merge.
+                        // For a fully-exhaustive flat match this is unreachable;
+                        // with nested patterns a final non-wildcard arm can fail
+                        // its sub-tests and land here. The terminator into the
+                        // merge keeps the CFG well-formed; the typechecker
+                        // requires a wildcard/exhaustive top level so the Phi is
+                        // never read from this edge with a live value.
                         self.builder.emit(Instruction::Jump(merge_label.clone()));
                     }
                 }
@@ -1960,6 +1952,138 @@ impl FnLowerer {
         });
         self.record_local(phi_dst, result_ty);
         Value::Var(phi_dst)
+    }
+
+    /// Project + match the payload fields of a variant value `base` (a pointer
+    /// to the `{ tag, payload... }` storage of variant `variant_name`) against
+    /// the sub-patterns `args`. The caller has already confirmed `base`'s tag.
+    ///
+    /// For each field, depending on its sub-pattern:
+    /// - `Binding(x)`  → load the field into a fresh stack slot and bind `x`;
+    /// - `Wildcard`    → ignore;
+    /// - nested `Variant` → load the field (a pointer to the sub-enum), compare
+    ///   *its* tag, and `Branch` to `fail_label` on a mismatch (so control
+    ///   falls through to the next arm exactly like an outer tag mismatch);
+    ///   then recurse into the sub-variant's own args;
+    /// - `Literal`     → load the (scalar) field and `Branch` to `fail_label`
+    ///   unless it equals the constant.
+    ///
+    /// Each refutable sub-test starts a fresh "matched-so-far" block on success,
+    /// so all bindings made before a later sub-test failure are still discarded
+    /// by falling through to `fail_label`.
+    fn lower_variant_args(
+        &mut self,
+        base: &Value,
+        variant_name: &str,
+        args: &[ast::Pattern],
+        fail_label: &Label,
+    ) {
+        let (_owner, _tag, raw_fields) = self
+            .enums
+            .lookup_variant(variant_name)
+            .expect("typechecked variant exists");
+        let field_tys: Vec<Type> = raw_fields.iter().map(|t| self.resolve_type(t)).collect();
+        let offsets = self.enums.field_offsets(&field_tys);
+
+        for ((arg, off), fty) in args.iter().zip(offsets.iter()).zip(field_tys.iter()) {
+            match arg {
+                ast::Pattern::Wildcard => {}
+                ast::Pattern::Binding(binding) => {
+                    let loaded = self.load_field(base, *off, fty);
+                    // Give the binding a real stack slot so nested control flow
+                    // can read it.
+                    let slot = self.builder.fresh_var();
+                    self.builder.emit(Instruction::Alloc {
+                        var: slot,
+                        ty: fty.clone(),
+                    });
+                    self.builder.emit(Instruction::Store {
+                        dst: Value::Var(slot),
+                        src: Value::Var(loaded),
+                        ty: fty.clone(),
+                    });
+                    self.record_local(slot, fty.clone());
+                    self.vars.insert(binding.clone(), slot);
+                }
+                ast::Pattern::Variant {
+                    name,
+                    args: sub_args,
+                } => {
+                    // Load the field: a pointer to the nested enum value.
+                    let sub_val = self.load_field(base, *off, fty);
+                    let sub_ptr = Value::Var(sub_val);
+                    // Compare the nested enum's tag (offset 0).
+                    let sub_tag_ptr = self.gep_byte(&sub_ptr, 0);
+                    let sub_tag = self.builder.fresh_var();
+                    self.builder.emit(Instruction::Load {
+                        dst: sub_tag,
+                        src: Value::Var(sub_tag_ptr),
+                        ty: Type::I64,
+                    });
+                    self.record_local(sub_tag, Type::I64);
+                    let want_tag = self
+                        .enums
+                        .lookup_variant(name)
+                        .expect("typechecked nested variant exists")
+                        .1;
+                    let cmp = self.builder.fresh_var();
+                    self.builder.emit(Instruction::BinOp {
+                        dst: cmp,
+                        op: BinOp::Eq,
+                        lhs: Value::Var(sub_tag),
+                        rhs: Value::ConstI64(want_tag as i64),
+                        ty: Type::Bool,
+                    });
+                    self.record_local(cmp, Type::Bool);
+                    let cont_label = self.builder.fresh_label("match_nested");
+                    self.builder.emit(Instruction::Branch {
+                        cond: Value::Var(cmp),
+                        true_label: cont_label.clone(),
+                        false_label: fail_label.clone(),
+                    });
+                    // On match, continue projecting/binding the nested fields.
+                    self.builder.finish_block(&cont_label);
+                    self.lower_variant_args(&sub_ptr, name, sub_args, fail_label);
+                }
+                ast::Pattern::Literal(lit) => {
+                    let loaded = self.load_field(base, *off, fty);
+                    let lit_val = self.lower_literal(lit);
+                    let cmp = self.builder.fresh_var();
+                    self.builder.emit(Instruction::BinOp {
+                        dst: cmp,
+                        op: BinOp::Eq,
+                        lhs: Value::Var(loaded),
+                        rhs: lit_val,
+                        ty: Type::Bool,
+                    });
+                    self.record_local(cmp, Type::Bool);
+                    let cont_label = self.builder.fresh_label("match_lit");
+                    self.builder.emit(Instruction::Branch {
+                        cond: Value::Var(cmp),
+                        true_label: cont_label.clone(),
+                        false_label: fail_label.clone(),
+                    });
+                    self.builder.finish_block(&cont_label);
+                }
+                // Var/Tuple sub-patterns are rejected by the typechecker.
+                _ => {}
+            }
+        }
+    }
+
+    /// Load the payload field at byte offset `off` of the variant value `base`,
+    /// at its (already-resolved) field type. Returns the fresh var holding the
+    /// loaded value.
+    fn load_field(&mut self, base: &Value, off: usize, fty: &Type) -> VarId {
+        let field_ptr = self.gep_byte(base, off);
+        let loaded = self.builder.fresh_var();
+        self.builder.emit(Instruction::Load {
+            dst: loaded,
+            src: Value::Var(field_ptr),
+            ty: fty.clone(),
+        });
+        self.record_local(loaded, fty.clone());
+        loaded
     }
 
     /// The label of the block currently being built.
@@ -3993,6 +4117,153 @@ mod tests {
             })
         });
         assert!(stores_payload, "expected a payload Store of ConstI64(7)");
+    }
+
+    // ------------------------------------------------------------------
+    // Nested pattern matching — Issue #41
+    // ------------------------------------------------------------------
+
+    const SEXPR: &str = "(defenum Sexpr (SInt i64) (SSym String) (SNil) (SCons Sexpr Sexpr))";
+
+    #[test]
+    fn test_lower_nested_pattern_emits_nested_tag_compare_and_branch() {
+        // `(SCons (SSym op) rest)`: the outer SCons tag compare, PLUS a nested
+        // tag compare on the loaded first field (the sub-Sexpr) against SSym's
+        // tag (1). So there are >=2 tag-equality BinOps before the body, and a
+        // matching number of Branches that fall through to the next arm on a
+        // mismatch.
+        let src = format!(
+            "{SEXPR}\n(define (op-len [s : Sexpr]) : i64 \
+               (match s [(SCons (SSym op) rest) (string-length op)] [_ 0]))"
+        );
+        let prog = parse(&src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir
+            .functions
+            .iter()
+            .position(|f| f.name == "op-len")
+            .unwrap();
+
+        // Two Eq compares against constant tags: outer SCons=3 and nested SSym=1.
+        let outer = count(&ir, f, |i| {
+            matches!(
+                i,
+                Instruction::BinOp {
+                    op: BinOp::Eq,
+                    rhs: Value::ConstI64(3),
+                    ..
+                }
+            )
+        });
+        let nested = count(&ir, f, |i| {
+            matches!(
+                i,
+                Instruction::BinOp {
+                    op: BinOp::Eq,
+                    rhs: Value::ConstI64(1),
+                    ..
+                }
+            )
+        });
+        assert_eq!(outer, 1, "expected one outer SCons (tag 3) compare");
+        assert_eq!(nested, 1, "expected one nested SSym (tag 1) compare");
+
+        // At least two Branches (outer tag dispatch + nested tag test).
+        let branches = count(&ir, f, |i| matches!(i, Instruction::Branch { .. }));
+        assert!(
+            branches >= 2,
+            "expected >=2 Branches (outer + nested tag tests), got {}",
+            branches
+        );
+    }
+
+    #[test]
+    fn test_lower_nested_pattern_binds_string_and_enum_fields() {
+        // The nested `op` binds the String payload of the inner SSym; `rest`
+        // binds the second SCons field as an enum pointer. So we Load a String
+        // (the op) and a `Type::Enum("Sexpr")` (the rest), each into a slot.
+        let src = format!(
+            "{SEXPR}\n(define (f [s : Sexpr]) : i64 \
+               (match s [(SCons (SSym op) rest) (begin (string-length op) (depth rest))] [_ 0])) \
+             (define (depth [s : Sexpr]) : i64 (match s [_ 0]))"
+        );
+        let prog = parse(&src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().position(|f| f.name == "f").unwrap();
+
+        let loads_string = count(&ir, f, |i| {
+            matches!(
+                i,
+                Instruction::Load {
+                    ty: Type::String,
+                    ..
+                }
+            )
+        });
+        assert!(
+            loads_string >= 1,
+            "expected the nested String op to be loaded"
+        );
+
+        let loads_enum = count(
+            &ir,
+            f,
+            |i| matches!(i, Instruction::Load { ty: Type::Enum(n), .. } if n == "Sexpr"),
+        );
+        // The `rest` binding (a Sexpr pointer) is loaded; the nested SSym field
+        // is also loaded as a Sexpr before its tag is read.
+        assert!(
+            loads_enum >= 2,
+            "expected the nested sub-enum field and `rest` to be loaded as Sexpr pointers, got {}",
+            loads_enum
+        );
+    }
+
+    #[test]
+    fn test_lower_nested_mismatch_falls_through_to_next_arm() {
+        // SOUNDNESS: when a nested tag test fails it must Branch to the SAME
+        // fall-through block as the outer dispatch — i.e. the nested test's
+        // false target is the arm's `match_next` block (not the merge). We
+        // assert the false-edge label of the nested Branch is a `match_next`
+        // block, proving control reaches the following arm rather than skipping
+        // straight to the Phi.
+        let src = format!(
+            "{SEXPR}\n(define (f [s : Sexpr]) : i64 \
+               (match s [(SCons (SSym op) rest) 1] [(SInt n) n] [_ 0]))"
+        );
+        let prog = parse(&src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().position(|f| f.name == "f").unwrap();
+
+        // Find the nested SSym (tag 1) compare's Branch and check its false edge
+        // targets a `match_next` block.
+        let mut found = false;
+        for b in &ir.functions[f].blocks {
+            let mut prev_was_nested_cmp = false;
+            for ins in &b.instructions {
+                match ins {
+                    Instruction::BinOp {
+                        op: BinOp::Eq,
+                        rhs: Value::ConstI64(1),
+                        ..
+                    } => {
+                        prev_was_nested_cmp = true;
+                    }
+                    Instruction::Branch { false_label, .. } if prev_was_nested_cmp => {
+                        assert!(
+                            false_label.contains("match_next"),
+                            "nested tag mismatch must fall through to the next arm \
+                             (match_next), got false_label={}",
+                            false_label
+                        );
+                        found = true;
+                        prev_was_nested_cmp = false;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        assert!(found, "expected a nested SSym (tag 1) compare + Branch");
     }
 
     // ------------------------------------------------------------------

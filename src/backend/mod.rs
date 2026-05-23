@@ -4052,6 +4052,22 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_reject_extern_tuple_containing_enum_signature_before_codegen() {
+        let err = compile_err(
+            r#"
+            (defenum Shape (Circle i64) (Nothing))
+            (extern foreign_tuple : (-> (Tuple Shape i64) i64))
+            (define (main) : i64 0)
+            "#,
+        );
+        assert!(
+            err.contains("extern 'foreign_tuple' has unsupported argument type (Tuple Shape i64)"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
     fn compile_unop_param(op: UnOp, ty: Type) -> String {
         let program = Program {
             functions: vec![Function {
@@ -4457,6 +4473,43 @@ mod tests {
         assert!(!asm.contains("_tl_foreign_add"), "asm:\n{}", asm);
         assert!(!asm.contains("    .extern foreign-add"), "asm:\n{}", asm);
         assert!(!asm.contains("    call foreign-add"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_extern_enum_argument_and_return() {
+        let asm = compile_ok(
+            r#"
+            (defenum Shape (Circle i64) (Square i64) (Nothing))
+            (extern foreign_shape : (-> Shape Shape))
+            (define (main) : i64
+              (match (foreign_shape (Circle 7))
+                [(Circle r) r]
+                [(Square w) w]
+                [Nothing 0]))
+            "#,
+        );
+
+        assert!(asm.contains("    .extern foreign_shape"), "asm:\n{}", asm);
+        assert!(asm.contains("    call foreign_shape"), "asm:\n{}", asm);
+        assert!(!asm.contains("_tl_foreign_shape"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_extern_dyn_array_of_enum_argument_and_enum_return() {
+        let asm = compile_ok(
+            r#"
+            (defenum Shape (Circle i64) (Nothing))
+            (extern foreign_pick : (-> (Array Shape) Shape))
+            (define (pick [xs : (Array Shape)]) : Shape (foreign_pick xs))
+            (define (main) : i64 0)
+            "#,
+        );
+
+        assert!(asm.contains("    .extern foreign_pick"), "asm:\n{}", asm);
+        assert!(asm.contains("    call foreign_pick"), "asm:\n{}", asm);
+        assert!(!asm.contains("_tl_foreign_pick"), "asm:\n{}", asm);
         assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
     }
 

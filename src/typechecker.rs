@@ -448,8 +448,8 @@ impl TypeChecker {
                     // returned pointer outlives the frame instead of dangling
                     // (see `type_kind_escapes_via_return` in src/lower.rs). The
                     // former hard rejections here have been lifted. Escapes via
-                    // *global* initializers / *extern* values are still rejected
-                    // (those storage paths are not yet heap-promoted).
+                    // *global* initializers are still rejected because that storage
+                    // path is not yet heap-promoted.
                     let func_ty = Type::Func(
                         params.iter().map(|(_, t)| self.resolve_type(t)).collect(),
                         Box::new(ret),
@@ -458,12 +458,6 @@ impl TypeChecker {
                 }
                 Decl::Extern { name, ty } => {
                     let ty = self.resolve_type(ty);
-                    if type_contains_enum(&ty) {
-                        return Err(TypeError::at(
-                            "extern declarations involving enum values are not yet supported",
-                            Span::default(),
-                        ));
-                    }
                     self.bind(name.clone(), ty);
                 }
                 Decl::DefEnum { .. } => {}
@@ -2318,6 +2312,18 @@ mod tests {
         // aggregates, refs #13/#45).
         let src = format!("{SHAPE}\n(define (mk) : Shape (Circle 1))");
         assert!(check(&src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_extern_enum_signatures_are_accepted() {
+        let src = format!(
+            "{SHAPE}\n\
+             (extern foreign_shape : (-> Shape Shape))\n\
+             (extern foreign_pick : (-> (Array Shape) Shape))\n\
+             (define (roundtrip [s : Shape]) : Shape (foreign_shape s))\n\
+             (define (pick [xs : (Array Shape)]) : Shape (foreign_pick xs))"
+        );
+        assert!(check(&src).is_ok(), "{:?}", check(&src));
     }
 
     #[test]

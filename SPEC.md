@@ -239,7 +239,9 @@ Defines a named function.
 Declares an external function to link against. The name is an identifier, not a
 string. External symbols are emitted without the `_tl_` TypeLisp function
 prefix. Identifier punctuation is converted to assembler-safe symbol text; for
-example, hyphens become underscores and `?` becomes `_question`.
+example, hyphens become underscores and `?` becomes `_question`. Extern
+signatures may use the backend ABI value types, including pointer-valued
+`String`, dynamic array, enum, and struct values.
 
 Example:
 ```lisp test=check name=extern-declaration

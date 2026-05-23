@@ -120,7 +120,11 @@ impl ProgramLowerer {
                 Type::Unit
             }
             ast::Expr::Cast { ty, .. } => ty.clone(),
-            ast::Expr::If { then_branch, else_branch, .. } => {
+            ast::Expr::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
                 let then_ty = self.infer_expr_type(then_branch);
                 let else_ty = self.infer_expr_type(else_branch);
                 if then_ty != Type::Unit {

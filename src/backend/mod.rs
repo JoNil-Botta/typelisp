@@ -1944,7 +1944,12 @@ impl X86_64Backend {
                 self.emit_global_initializer(ty, init.as_ref());
             } else {
                 // Non-constant initializer: emit as common symbol (.bss)
-                self.emit(&format!("    .comm {}, {}, {}", symbol, ty.size(), ty.align().max(1)));
+                self.emit(&format!(
+                    "    .comm {}, {}, {}",
+                    symbol,
+                    ty.size(),
+                    ty.align().max(1)
+                ));
             }
         }
         self.emit("");
@@ -3479,11 +3484,7 @@ mod tests {
             "expected store after init, got:\n{}",
             asm
         );
-        assert!(
-            asm.contains("add:"),
-            "expected add function, got:\n{}",
-            asm
-        );
+        assert!(asm.contains("add:"), "expected add function, got:\n{}", asm);
     }
 
     #[test]

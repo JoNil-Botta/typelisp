@@ -203,6 +203,23 @@ fn type_lisp_programs_compile_link_and_run() {
             stdout: "",
             deps: &["tl_token.tl"],
         },
+        // Self-hosting (#27): the s-expression READER for TypeLisp's own syntax -
+        // the canonical Lisp reader. `tl_reader.tl` consumes the lexer's
+        // `(Array Token)` into the recursive cons-cell `Sexpr` AST
+        // (SInt | SSym | SNil | SCons) with a token cursor and mutually
+        // recursive `read-form` / `read-list`. It REUSES the lexer by importing
+        // `lex` from the `main`-less `tl_lex.tl` (which transitively imports the
+        // `main`-less `tl_token.tl`), so the whole program has one `main` - the
+        // reader's. `main` reads "(+ 1 (* 2 3))" into the Sexpr tree and folds it
+        // with `sum-ints`, summing every integer atom: 1 + 2 + 3 => 6 (the nested
+        // inner list contributes 2 and 3). Both imported `main`-less modules are
+        // copied alongside so the `(import)` chain resolves.
+        Case {
+            name: "tl_reader",
+            exit_code: 6,
+            stdout: "",
+            deps: &["tl_lex.tl", "tl_token.tl"],
+        },
     ];
 
     for case in cases {
@@ -382,6 +399,18 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             exit_code: 5,
             stdout: "",
             deps: &["tl_token.tl"],
+        },
+        // Self-hosting (#27): the s-expression reader, also exercised through the
+        // explicit compile -> as -> ld -> run pipeline. Reads "(+ 1 (* 2 3))"
+        // into the recursive cons-cell `Sexpr` AST and folds it with `sum-ints`
+        // (sum of every integer atom): 1 + 2 + 3 => 6. The lexer is reused via
+        // the `main`-less `tl_lex.tl` import (which transitively imports
+        // `tl_token.tl`); both are copied alongside so the imports resolve.
+        Case {
+            name: "tl_reader",
+            exit_code: 6,
+            stdout: "",
+            deps: &["tl_lex.tl", "tl_token.tl"],
         },
     ];
 

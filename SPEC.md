@@ -399,6 +399,7 @@ See §3.6.
 | `arg` | `i64 → String` | Get argv entry as an owned String |
 | `read-file` | `String → String` | Read whole file contents; panics on error |
 | `write-file` | `String String → unit` | Write whole file contents; panics on error |
+| `file-exists?` | `String → bool` | Return true when a filesystem path exists; panics on unexpected syscall/path errors |
 | `length` | `(Array t) → i64` | Get dynamic array length |
 | `length` | `String → i64` | Get string byte length |
 | `array-length` | `(Array t) → i64` | Get dynamic array length |
@@ -502,12 +503,13 @@ They are not implemented by a separate C runtime.
   `string-eq`/`string=?`, `string-append`/`string-concat`,
   `substring`/`string-slice`, `string->int`, `int->string`,
   `print-string`/`print-str`.
-- Bootstrap I/O helpers: `arg-count`, `arg`, `read-file`, `write-file`.
+- Bootstrap I/O helpers: `arg-count`, `arg`, `read-file`, `write-file`,
+  `file-exists?`.
 - `extern` declarations.
 - Multi-file modules via `import`.
 - Builtin `print`, `print-bool`, `print-float`, `print-char`,
   `print-newline`, `print-string`/`print-str`, `string-append`/`string-concat`,
-  `read-file`, `write-file`, `panic`/`error`.
+  `read-file`, `write-file`, `file-exists?`, `panic`/`error`.
 
 ### 8.2 What does NOT work (yet)
 

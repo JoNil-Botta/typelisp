@@ -114,18 +114,24 @@ fn tl_lexer_tl_compiles_to_assembly() {
 
     // The lexer's functions were emitted (TypeLisp prefixes user symbols with
     // `_tl_`): the public `lex` entry, the scan-into loop, the int/symbol run
-    // scanners, the TSym tally, and the imported token accessors `tl_token.tl`
+    // scanners, the new string-literal and line-comment scanners, the TSym /
+    // TStr / total-token tallies, and the imported token accessors `tl_token.tl`
     // contributes across the import boundary (`token-tag` / `token-int` /
-    // `token-sym`).
+    // `token-sym` / `token-str`).
     for sym in [
         "_tl_lex:",
         "_tl_lex_into:",
         "_tl_scan_int_end:",
         "_tl_scan_symbol_end:",
+        "_tl_scan_str_end:",
+        "_tl_scan_comment_end:",
         "_tl_count_syms:",
+        "_tl_count_strs:",
+        "_tl_count_tokens:",
         "_tl_token_tag:",
         "_tl_token_int:",
         "_tl_token_sym:",
+        "_tl_token_str:",
     ] {
         assert!(
             asm.contains(sym),
@@ -135,16 +141,22 @@ fn tl_lexer_tl_compiles_to_assembly() {
         );
     }
 
-    // `main` drives the lexer: it lexes the sample then tallies the symbol
-    // tokens, so both the lexing entry and the classification helper are called.
+    // `main` drives the lexer: it lexes the sample then tallies the total token
+    // count and the TStr count, so the lexing entry and both new tally helpers
+    // are called.
     assert!(
         asm.contains("call _tl_lex"),
         "tl_lexer assembly shows no main -> lex call (lexing step):\n{}",
         asm,
     );
     assert!(
-        asm.contains("call _tl_count_syms"),
-        "tl_lexer assembly shows no main -> count-syms call (symbol tally):\n{}",
+        asm.contains("call _tl_count_tokens"),
+        "tl_lexer assembly shows no main -> count-tokens call (total tally):\n{}",
+        asm,
+    );
+    assert!(
+        asm.contains("call _tl_count_strs"),
+        "tl_lexer assembly shows no main -> count-strs call (string-literal tally):\n{}",
         asm,
     );
 

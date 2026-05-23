@@ -2,9 +2,9 @@
 //!
 //! `examples/tl_ast.tl` imports the TypeLisp reader, parses generic `Sexpr`
 //! trees into the shared `BinOp` / `Expr` / `Item` AST enums, and scores both an
-//! expression, a `define` form, and a single-binding let. The Linux integration
-//! test executes the same witness; this test keeps Windows coverage at compile
-//! time.
+//! expression, a `define` form, a single-binding let, if, and the comparison
+//! operators. The Linux integration test executes the same witness; this test
+//! keeps Windows coverage at compile time.
 
 use std::fs;
 use std::path::PathBuf;
@@ -117,4 +117,17 @@ fn tl_ast_tl_compiles_to_assembly() {
         "tl_ast assembly is missing the if source-string datum:\n{}",
         asm,
     );
+    for datum in [
+        ".string \"(<= 3 3)\"",
+        ".string \"(> 5 2)\"",
+        ".string \"(>= 5 5)\"",
+        ".string \"(!= 7 8)\"",
+    ] {
+        assert!(
+            asm.contains(datum),
+            "tl_ast assembly is missing comparison source-string datum {:?}:\n{}",
+            datum,
+            asm,
+        );
+    }
 }

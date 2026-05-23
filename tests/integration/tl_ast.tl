@@ -27,6 +27,23 @@
         (sexpr-expect-nil after-b)
         (EBin op (parse-expr a) (parse-expr b))))))
 
+;; parse-let: project a single-binding `(let ((x e)) body)` onto `(ELet x e' b')`.
+;; `rest` is the tail after the `let` head: the binding-list cons'd onto the
+;; body. Slice 1 (#163) accepts EXACTLY one binding `(x e)` and one body form;
+;; any other shape aborts via `panic`, the way the rest of this parser reports
+;; malformed input.
+(define (parse-let [rest : Sexpr]) : Expr
+  (let ([bindings : Sexpr (sexpr-head rest)]
+        [after-bindings : Sexpr (sexpr-tail rest)])
+    (let ([body : Sexpr (sexpr-head after-bindings)]
+          [after-body : Sexpr (sexpr-tail after-bindings)])
+      (begin
+        (sexpr-expect-nil after-body)
+        (match bindings
+          [(SCons (SCons (SSym x) (SCons e (SNil))) (SNil))
+           (ELet x (parse-expr e) (parse-expr body))]
+          [_ (begin (panic "ast: malformed let") (EInt 0))])))))
+
 (define (parse-args [s : Sexpr]) : ExprList
   (match s
     [(SNil) ELNil]
@@ -38,13 +55,15 @@
     [(SInt n) (EInt n)]
     [(SSym name) (EVar name)]
     [(SCons (SSym op) rest)
-     (if (string-eq op "+")
-         (parse-binary (OpAdd) rest)
-         (if (string-eq op "-")
-             (parse-binary (OpSub) rest)
-             (if (string-eq op "*")
-                 (parse-binary (OpMul) rest)
-                 (ECall op (parse-args rest)))))]
+     (if (string-eq op "let")
+         (parse-let rest)
+         (if (string-eq op "+")
+             (parse-binary (OpAdd) rest)
+             (if (string-eq op "-")
+                 (parse-binary (OpSub) rest)
+                 (if (string-eq op "*")
+                     (parse-binary (OpMul) rest)
+                     (ECall op (parse-args rest))))))]
     [_ (begin (panic "ast: malformed expression") (EInt 0))]))
 
 (define (parse-params [s : Sexpr]) : StrList
@@ -92,6 +111,8 @@
     [(EInt n) n]
     [(EVar name) (string-length name)]
     [(EBin op a b) (+ (op-score op) (+ (expr-score a) (expr-score b)))]
+    [(ELet name val body)
+     (+ (string-length name) (+ (expr-score val) (expr-score body)))]
     [(ECall name args) (+ (string-length name) (expr-list-score args))]))
 
 (define (item-score [i : Item]) : i64

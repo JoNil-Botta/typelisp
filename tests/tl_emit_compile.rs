@@ -56,6 +56,14 @@ fn tl_emit_tl_compiles_to_assembly() {
         "_tl_emit_bin:",
         "_tl_emit_expr:",
         "_tl_emit_program:",
+        // refs #163: the variable/let codegen path - the name->slot lookup, the
+        // var load + let store emitters, the frame-sizing helpers.
+        "_tl_cenv_lookup:",
+        "_tl_emit_var:",
+        "_tl_emit_let:",
+        "_tl_let_depth:",
+        "_tl_emit_frame_reserve:",
+        "_tl_emit_frame_restore:",
         "_tl_sample:",
         "tl_int_to_string:",
         "tl_string_concat:",
@@ -107,6 +115,15 @@ fn tl_emit_tl_compiles_to_assembly() {
         "    movq %rax, %rdi\\n",
         "    movq $60, %rax\\n",
         "    syscall\\n",
+        // refs #163: the let/var data fragments the emitter splices at run time -
+        // the slot store (`movq %rax, -OFF(%rbp)`), the slot load
+        // (`movq -OFF(%rbp), %rax`), and the frame reservation `sub $K, %rsp` /
+        // teardown `add $K, %rsp`. Each appears as a `.string` datum.
+        "    movq %rax, -",
+        "(%rbp)\\n",
+        "(%rbp), %rax\\n",
+        "    sub $",
+        "    add $",
     ] {
         assert!(
             asm.contains(literal),

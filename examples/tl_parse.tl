@@ -53,6 +53,18 @@
 ;; The x86_64 emitter helpers. The AST comes from `tl_ast_types.tl`.
 ;; ==========================================================================
 
+;; Compile-time name->slot environment (#163), duplicated from tl_emit.tl
+;; alongside the emitter helpers (same shared-module trade-off documented above).
+(defenum CEnv
+  (CNil)
+  (CBind String i64 CEnv))
+
+(define (cenv-lookup [env : CEnv] [name : String]) : i64
+  (match env
+    [(CNil) (begin (panic "emit: unbound variable") 0)]
+    [(CBind bound off rest)
+     (if (string-eq bound name) off (cenv-lookup rest name))]))
+
 (define (emit-int [n : i64]) : String
   (string-append "    movq $" (string-append (int->string n) ", %rax\n")))
 
@@ -62,36 +74,77 @@
     [(OpSub) "    subq %rcx, %rax\n"]
     [(OpMul) "    imulq %rcx, %rax\n"]))
 
-(define (emit-bin [op : BinOp] [a : Expr] [b : Expr]) : String
-  (string-append (emit-expr a)
+(define (emit-bin [op : BinOp] [a : Expr] [b : Expr] [env : CEnv] [depth : i64]) : String
+  (string-append (emit-expr a env depth)
     (string-append "    pushq %rax\n"
-      (string-append (emit-expr b)
+      (string-append (emit-expr b env depth)
         (string-append "    movq %rax, %rcx\n"
           (string-append "    popq %rax\n"
             (emit-op op)))))))
 
-(define (emit-expr [e : Expr]) : String
+(define (emit-var [name : String] [env : CEnv]) : String
+  (string-append "    movq -"
+    (string-append (int->string (cenv-lookup env name))
+      "(%rbp), %rax\n")))
+
+(define (emit-let [name : String] [val : Expr] [body : Expr] [env : CEnv] [depth : i64]) : String
+  (let ([off : i64 (* 8 (+ depth 1))])
+    (string-append (emit-expr val env depth)
+      (string-append "    movq %rax, -"
+        (string-append (int->string off)
+          (string-append "(%rbp)\n"
+            (emit-expr body (CBind name off env) (+ depth 1))))))))
+
+(define (emit-expr [e : Expr] [env : CEnv] [depth : i64]) : String
   (match e
     [(EInt n) (emit-int n)]
-    [(EVar _) (begin (panic "emit: variables are not in M1 arithmetic") "")]
-    [(EBin op a b) (emit-bin op a b)]
+    [(EVar name) (emit-var name env)]
+    [(EBin op a b) (emit-bin op a b env depth)]
+    [(ELet name val body) (emit-let name val body env depth)]
     [(ECall _ _) (begin (panic "emit: calls are not in M1 arithmetic") "")]))
 
+(define (max2 [a : i64] [b : i64]) : i64
+  (if (> a b) a b))
+
+(define (let-depth [e : Expr]) : i64
+  (match e
+    [(EInt _) 0]
+    [(EVar _) 0]
+    [(EBin _ a b) (max2 (let-depth a) (let-depth b))]
+    [(ELet _ val body) (max2 (let-depth val) (+ 1 (let-depth body)))]
+    [(ECall _ _) 0]))
+
+(define (round-up-16 [n : i64]) : i64
+  (* (/ (+ n 15) 16) 16))
+
+(define (emit-frame-reserve [k : i64]) : String
+  (if (= k 0)
+      ""
+      (string-append "    sub $" (string-append (int->string k) ", %rsp\n"))))
+
+(define (emit-frame-restore [k : i64]) : String
+  (if (= k 0)
+      ""
+      (string-append "    add $" (string-append (int->string k) ", %rsp\n"))))
+
 (define (emit-program [e : Expr]) : String
-  (string-append "    .text\n"
-    (string-append "    .globl main\n"
-      (string-append "    .globl _start\n\n"
-        (string-append "main:\n"
-          (string-append "    push %rbp\n"
-            (string-append "    mov %rsp, %rbp\n"
-              (string-append (emit-expr e)
-                (string-append "    pop %rbp\n"
-                  (string-append "    ret\n\n"
-                    (string-append "_start:\n"
-                      (string-append "    call main\n"
-                        (string-append "    movq %rax, %rdi\n"
-                          (string-append "    movq $60, %rax\n"
-                            "    syscall\n"))))))))))))))
+  (let ([k : i64 (round-up-16 (* 8 (let-depth e)))])
+    (string-append "    .text\n"
+      (string-append "    .globl main\n"
+        (string-append "    .globl _start\n\n"
+          (string-append "main:\n"
+            (string-append "    push %rbp\n"
+              (string-append "    mov %rsp, %rbp\n"
+                (string-append (emit-frame-reserve k)
+                  (string-append (emit-expr e (CNil) 0)
+                    (string-append (emit-frame-restore k)
+                      (string-append "    pop %rbp\n"
+                        (string-append "    ret\n\n"
+                          (string-append "_start:\n"
+                            (string-append "    call main\n"
+                              (string-append "    movq %rax, %rdi\n"
+                                (string-append "    movq $60, %rax\n"
+                                  "    syscall\n")))))))))))))))))
 
 ;; ==========================================================================
 ;; The PARSER: `Sexpr -> Expr`, the new contribution of this module (#154).
@@ -131,11 +184,46 @@
 ;; directly composable as `(emit-program (parse (read (lex src))))`. The trailing
 ;; `(EInt 0)` is unreachable dead code that gives the fall-through `match` arm an
 ;; `Expr` so the function typechecks.
+;; parse-let: project the single-binding `let` shape onto `(ELet name val body)`.
+;; The reader builds `(let ((x e)) body)` as
+;;   (SCons (SSym "let")
+;;     (SCons (SCons (SCons (SSym x) (SCons e (SNil))) (SNil))   ; one-binding list
+;;       (SCons body (SNil))))                                    ; the body
+;; `rest` here is the tail AFTER the `let` head, i.e. the binding-list cons'd
+;; onto the body. Slice 1 accepts EXACTLY one binding and exactly one body form;
+;; any other shape (zero/multiple bindings, missing body, non-symbol binder) is
+;; a MALFORMED program - abort via `panic`, keeping `parse-let` total. The
+;; trailing `(EInt 0)` gives the never-returning `panic` arm an `Expr` so the
+;; function typechecks.
+(define (parse-let [rest : Sexpr]) : Expr
+  (match rest
+    [(SCons (SCons (SCons (SSym x) (SCons e (SNil))) (SNil)) (SCons body (SNil)))
+     (ELet x (parse e) (parse body))]
+    [_ (begin
+         (panic "parse: malformed let")
+         (EInt 0))]))
+
+;; parse: project the recognised SUBSET of the generic `Sexpr` tree onto the
+;; typed `Expr` AST the emitter consumes. A bare `(SSym name)` is a variable
+;; reference `(EVar name)`. A list whose head symbol is `let` is dispatched to
+;; `parse-let` BEFORE the operator-application shape, so `let` is a special form
+;; rather than a call to a function named "let". Otherwise a proper 3-element
+;; list headed by an operator symbol is a binary application. Anything else is
+;; MALFORMED - abort via `panic`. The trailing `(EInt 0)` is unreachable dead
+;; code for the fall-through arm so the function typechecks.
 (define (parse [s : Sexpr]) : Expr
   (match s
     [(SInt n) (EInt n)]
-    [(SCons (SSym op) (SCons a (SCons b (SNil))))
-     (EBin (parse-op op) (parse a) (parse b))]
+    [(SSym name) (EVar name)]
+    [(SCons (SSym op) rest)
+     (if (string-eq op "let")
+         (parse-let rest)
+         (match rest
+           [(SCons a (SCons b (SNil)))
+            (EBin (parse-op op) (parse a) (parse b))]
+           [_ (begin
+                (panic "parse: malformed expression")
+                (EInt 0))]))]
     [_ (begin
          (panic "parse: malformed expression")
          (EInt 0))]))

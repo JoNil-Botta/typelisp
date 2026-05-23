@@ -59,6 +59,15 @@ fn tl_parse_tl_compiles_to_assembly() {
     for sym in [
         "_tl_parse:",
         "_tl_parse_op:",
+        // refs #163: the single-binding `let` parse arm and the var/let codegen
+        // path threaded through the duplicated emitter.
+        "_tl_parse_let:",
+        "_tl_cenv_lookup:",
+        "_tl_emit_var:",
+        "_tl_emit_let:",
+        "_tl_let_depth:",
+        "_tl_emit_frame_reserve:",
+        "_tl_emit_frame_restore:",
         "_tl_lex:",
         "_tl_read:",
         "_tl_emit_expr:",
@@ -113,6 +122,14 @@ fn tl_parse_tl_compiles_to_assembly() {
         ".string \"    call main\\n\"",
         ".string \"    movq $60, %rax\\n\"",
         ".string \"    syscall\\n\"",
+        // refs #163: the let/var codegen fragments and the malformed-let panic
+        // message appear as `.string` data in the compiled parser+emitter.
+        ".string \"    movq %rax, -\"",
+        ".string \"(%rbp)\\n\"",
+        ".string \"(%rbp), %rax\\n\"",
+        ".string \"    sub $\"",
+        ".string \"    add $\"",
+        ".string \"parse: malformed let\"",
     ] {
         assert!(
             asm.contains(literal),

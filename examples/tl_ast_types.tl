@@ -9,6 +9,7 @@
   (EInt i64)
   (EVar String)
   (EBin BinOp Expr Expr)
+  (ELet String Expr Expr)
   (ECall String ExprList))
 
 (defenum ExprList

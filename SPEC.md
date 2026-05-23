@@ -314,8 +314,8 @@ Imports another TypeLisp file. All top-level definitions from the imported file 
   absolute dependency paths are used as written.
 - `typelisp build --manifest-path path/to/typelisp.pkg` builds the entry file
   through the same module loader and compiler pipeline as `compile`.
-- `typelisp build` without `--manifest-path` searches for `typelisp.pkg` from
-  the current directory upward.
+- `typelisp build` without a source file or `--manifest-path` searches for
+  `typelisp.pkg` from the current directory upward.
 - Build output is assembly under
   `target/typelisp/<package-name>/<package-name>.s` in the package root.
 - Package-root-qualified imports use the reserved string prefix
@@ -885,15 +885,23 @@ Commands:
   debug parse       Print AST
   debug check       Run type checker
   compile           Generate assembly (.s)
+  build <file.tl>   Compile, assemble, and link a native executable
   run               Compile, assemble, link, and run binary
-  build             Build nearest typelisp.pkg to package assembly
+  build             With no source file, build nearest typelisp.pkg to package assembly
 
 Options:
   compile -o <file>       Write assembly to the given path
   compile --emit-ir       Write the lowered and optimized IR instead of assembly
+  build <file.tl> -o <exe>
+                          Write the native executable to the given path
   build --manifest-path <file>
                           Use an explicit package manifest path
 ```
+
+For source files, `typelisp build file.tl` writes the executable to the source
+path without the `.tl` extension by default on Linux. It uses the same
+compile/assemble/link path as `typelisp run file.tl`, but does not execute the
+binary. Package builds keep their package-oriented assembly output contract.
 
 `tokenize`, `parse`, and `check` are also accepted as top-level compatibility
 aliases for the corresponding `debug` commands.

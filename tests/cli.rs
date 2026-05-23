@@ -81,6 +81,129 @@ fn debug_usage_errors_are_specific() {
     assert!(unknown_stderr.contains("typelisp debug check <file.tl>"));
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn build_source_writes_default_executable_without_running() {
+    let dir = fixture_dir("build-source-default");
+    let source = dir.join("main.tl");
+    fs::write(
+        &source,
+        r#"(define (main) : i64
+  (begin
+    (print-string "should not run during build")
+    7))
+"#,
+    )
+    .expect("write source");
+    let exe = source.with_extension("");
+    let source_arg = source.to_str().expect("source path is utf-8");
+
+    let output = typelisp(&["build", source_arg]);
+    let stdout = stdout(&output);
+    let stderr = stderr(&output);
+
+    assert!(
+        output.status.success(),
+        "source build failed\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert!(exe.exists(), "default executable was not written");
+    assert!(
+        stdout.contains(&format!("Generated: {}", exe.display())),
+        "stdout missing executable path:\n{}",
+        stdout
+    );
+    assert!(
+        !stdout.contains("should not run during build"),
+        "build unexpectedly ran the program:\n{}",
+        stdout
+    );
+
+    let run = Command::new(&exe).output().expect("run built executable");
+    assert_eq!(run.status.code(), Some(7), "built executable exit code");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn build_source_respects_o_output_path() {
+    let dir = fixture_dir("build-source-output");
+    let source = dir.join("main.tl");
+    let exe = dir.join("custom-program");
+    fs::write(&source, "(define (main) : i64 0)\n").expect("write source");
+    let source_arg = source.to_str().expect("source path is utf-8");
+    let exe_arg = exe.to_str().expect("exe path is utf-8");
+
+    let output = typelisp(&["build", source_arg, "-o", exe_arg]);
+    let stdout = stdout(&output);
+    let stderr = stderr(&output);
+
+    assert!(
+        output.status.success(),
+        "custom source build failed\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert!(exe.exists(), "custom executable was not written");
+    assert!(
+        stdout.contains(&format!("Generated: {}", exe.display())),
+        "stdout missing custom executable path:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn build_source_reports_missing_source_file() {
+    let dir = fixture_dir("build-source-missing");
+    let missing = dir.join("missing.tl");
+    let missing_arg = missing.to_str().expect("missing path is utf-8");
+
+    let output = typelisp(&["build", missing_arg]);
+    let stderr = stderr(&output);
+
+    assert!(!output.status.success(), "stdout:\n{}", stdout(&output));
+    assert!(
+        stderr.contains("cannot read module"),
+        "stderr missing read diagnostic:\n{}",
+        stderr
+    );
+}
+
+#[test]
+fn build_source_reports_missing_o_value() {
+    let dir = fixture_dir("build-source-missing-o");
+    let source = dir.join("main.tl");
+    fs::write(&source, "(define (main) : i64 0)\n").expect("write source");
+    let source_arg = source.to_str().expect("source path is utf-8");
+
+    let output = typelisp(&["build", source_arg, "-o"]);
+    let stderr = stderr(&output);
+
+    assert!(!output.status.success(), "stdout:\n{}", stdout(&output));
+    assert!(
+        stderr.contains("Error: -o requires a value"),
+        "stderr missing -o diagnostic:\n{}",
+        stderr
+    );
+}
+
+#[test]
+fn build_o_without_source_does_not_shadow_package_build() {
+    let dir = fixture_dir("build-output-without-source");
+    let exe = dir.join("out");
+    let exe_arg = exe.to_str().expect("exe path is utf-8");
+
+    let output = typelisp(&["build", "-o", exe_arg]);
+    let stderr = stderr(&output);
+
+    assert!(!output.status.success(), "stdout:\n{}", stdout(&output));
+    assert!(
+        stderr.contains("Error: -o requires a source file"),
+        "stderr missing source-file diagnostic:\n{}",
+        stderr
+    );
+}
+
 fn stdout(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }

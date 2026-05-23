@@ -93,6 +93,69 @@ fn assembly_or_exit(lowered: &LoweredProgram, sources: &[SourceFile]) -> String 
     }
 }
 
+fn default_executable_path(file: &Path) -> PathBuf {
+    file.with_extension("")
+}
+
+fn build_source_executable_or_exit(
+    file: &Path,
+    options: &LoadOptions,
+    output: Option<PathBuf>,
+) -> PathBuf {
+    let loaded = load_or_exit(file, options);
+    let lowered = optimized_ir_or_exit(&loaded);
+    let asm = assembly_or_exit(&lowered, &loaded.sources);
+    let asm_path = file.with_extension("s");
+    let obj_path = file.with_extension("o");
+    let bin_path = output.unwrap_or_else(|| default_executable_path(file));
+
+    fs::write(&asm_path, asm).expect("Failed to write assembly");
+    assemble_and_link_or_exit(&asm_path, &obj_path, &bin_path);
+    bin_path
+}
+
+fn assemble_and_link_or_exit(asm_path: &Path, obj_path: &Path, bin_path: &Path) {
+    let target = BackendTarget::default();
+    let toolchain = target.toolchain();
+
+    let status = Command::new(toolchain.assembler)
+        .arg(asm_path)
+        .arg("-o")
+        .arg(obj_path)
+        .status()
+        .unwrap_or_else(|err| {
+            eprintln!(
+                "Error: failed to run assembler '{}': {}",
+                toolchain.assembler, err
+            );
+            std::process::exit(1);
+        });
+    if !status.success() {
+        eprintln!("Assembly failed");
+        std::process::exit(1);
+    }
+
+    let mut linker = Command::new(toolchain.linker);
+    linker.arg(obj_path).arg("-o").arg(bin_path);
+    if let Some(dynamic_linker) = toolchain.dynamic_linker {
+        linker.arg("-dynamic-linker").arg(dynamic_linker);
+    }
+    for lib in toolchain.libraries {
+        linker.arg(lib);
+    }
+    let status = linker.status().unwrap_or_else(|err| {
+        eprintln!(
+            "Error: failed to run linker '{}': {}",
+            toolchain.linker, err
+        );
+        std::process::exit(1);
+    });
+    if !status.success() {
+        eprintln!("Linking failed");
+        std::process::exit(1);
+    }
+}
+
 /// Load the module graph rooted at `entry`, concatenating all imported modules
 /// into one `Program`, or print a diagnostic and exit. The returned source map
 /// lets later semantic diagnostics render against the originating module.
@@ -146,6 +209,7 @@ fn print_usage() {
     eprintln!("    typelisp debug parse <file.tl>       Show AST");
     eprintln!("    typelisp debug check <file.tl> [--stdlib-root <dir>...]");
     eprintln!("    typelisp compile <file.tl> [-o <file>] [--emit-ir] [--stdlib-root <dir>...]");
+    eprintln!("    typelisp build <file.tl> [-o <exe>] [--stdlib-root <dir>...]");
     eprintln!("    typelisp run <file.tl> [--stdlib-root <dir>...] [-- args...]");
     eprintln!("    typelisp build [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]");
     eprintln!();
@@ -162,6 +226,7 @@ fn print_usage() {
     eprintln!("Options for compile:");
     eprintln!("    -o <file>                      Output assembly file");
     eprintln!("Options for build:");
+    eprintln!("    -o <exe>                       Output executable file for source builds");
     eprintln!("    --manifest-path <file>         Defaults to nearest typelisp.pkg upward");
 }
 
@@ -290,7 +355,21 @@ fn parse_run_options(args: &[String], mut i: usize) -> (LoadOptions, Vec<String>
     )
 }
 
-fn parse_build_options(args: &[String], mut i: usize) -> (Option<PathBuf>, LoadOptions) {
+enum BuildCommand {
+    Source {
+        file: PathBuf,
+        output: Option<PathBuf>,
+        options: LoadOptions,
+    },
+    Package {
+        manifest_path: Option<PathBuf>,
+        options: LoadOptions,
+    },
+}
+
+fn parse_build_command(args: &[String], mut i: usize) -> BuildCommand {
+    let mut source_file = None;
+    let mut output = None;
     let mut manifest_path = None;
     let mut stdlib_roots = Vec::new();
 
@@ -305,22 +384,57 @@ fn parse_build_options(args: &[String], mut i: usize) -> (Option<PathBuf>, LoadO
             }
             manifest_path = Some(PathBuf::from(&args[i + 1]));
             i += 2;
+        } else if args[i] == "-o" {
+            if i + 1 >= args.len() {
+                missing_option_value("-o");
+            }
+            if output.is_some() {
+                eprintln!("Error: -o was provided more than once");
+                std::process::exit(1);
+            }
+            output = Some(PathBuf::from(&args[i + 1]));
+            i += 2;
         } else if args[i] == "--stdlib-root" {
             if i + 1 >= args.len() {
                 missing_option_value("--stdlib-root");
             }
             stdlib_roots.push(PathBuf::from(&args[i + 1]));
             i += 2;
-        } else {
+        } else if args[i].starts_with('-') {
             eprintln!("Error: unknown build flag: {}", args[i]);
             std::process::exit(1);
+        } else {
+            if source_file.is_some() {
+                eprintln!("Error: build accepts only one source file");
+                std::process::exit(1);
+            }
+            source_file = Some(PathBuf::from(&args[i]));
+            i += 1;
         }
     }
 
-    (
-        manifest_path,
-        load_options_with_env_stdlib_root(stdlib_roots),
-    )
+    if source_file.is_some() && manifest_path.is_some() {
+        eprintln!("Error: build accepts either a source file or --manifest-path, not both");
+        std::process::exit(1);
+    }
+    if source_file.is_none() && output.is_some() {
+        eprintln!("Error: -o requires a source file");
+        std::process::exit(1);
+    }
+
+    let options = load_options_with_env_stdlib_root(stdlib_roots);
+    if let Some(file) = source_file {
+        BuildCommand::Source {
+            file,
+            output,
+            options,
+        }
+    } else {
+        BuildCommand::Package {
+            manifest_path,
+            options,
+        }
+    }
 }
 
 fn package_or_exit<T>(result: Result<T, PackageError>) -> T {
@@ -425,30 +539,42 @@ fn run_cli() {
                 println!("Generated: {}", output_path.display());
             }
         }
-        "build" => {
-            let (manifest_path, mut options) = parse_build_options(&args, 2);
-            let manifest_path = match manifest_path {
-                Some(path) => path,
-                None => {
-                    let cwd = env::current_dir().unwrap_or_else(|err| {
-                        eprintln!("Error: cannot read current directory: {}", err);
-                        std::process::exit(1);
-                    });
-                    package_or_exit(discover_manifest(&cwd))
-                }
-            };
-            let manifest = package_or_exit(load_manifest(&manifest_path));
-            options.package_roots = manifest.dependencies.clone();
-            let loaded = load_or_exit(&manifest.entry_path(), &options);
-            let lowered = optimized_ir_or_exit(&loaded);
-            let asm = assembly_or_exit(&lowered, &loaded.sources);
-            let output_path = manifest.output_asm_path();
-            if let Some(parent) = output_path.parent() {
-                fs::create_dir_all(parent).expect("Failed to create package output directory");
+        "build" => match parse_build_command(&args, 2) {
+            BuildCommand::Source {
+                file,
+                output,
+                options,
+            } => {
+                let bin_path = build_source_executable_or_exit(&file, &options, output);
+                println!("Generated: {}", bin_path.display());
             }
-            fs::write(&output_path, asm).expect("Failed to write package assembly");
-            println!("Generated: {}", output_path.display());
-        }
+            BuildCommand::Package {
+                manifest_path,
+                mut options,
+            } => {
+                let manifest_path = match manifest_path {
+                    Some(path) => path,
+                    None => {
+                        let cwd = env::current_dir().unwrap_or_else(|err| {
+                            eprintln!("Error: cannot read current directory: {}", err);
+                            std::process::exit(1);
+                        });
+                        package_or_exit(discover_manifest(&cwd))
+                    }
+                };
+                let manifest = package_or_exit(load_manifest(&manifest_path));
+                options.package_roots = manifest.dependencies.clone();
+                let loaded = load_or_exit(&manifest.entry_path(), &options);
+                let lowered = optimized_ir_or_exit(&loaded);
+                let asm = assembly_or_exit(&lowered, &loaded.sources);
+                let output_path = manifest.output_asm_path();
+                if let Some(parent) = output_path.parent() {
+                    fs::create_dir_all(parent).expect("Failed to create package output directory");
+                }
+                fs::write(&output_path, asm).expect("Failed to write package assembly");
+                println!("Generated: {}", output_path.display());
+            }
+        },
         "run" => {
             if args.len() < 3 {
                 eprintln!("Error: missing file argument");
@@ -457,43 +583,7 @@ fn run_cli() {
             }
             let file = PathBuf::from(&args[2]);
             let (options, runtime_args) = parse_run_options(&args, 3);
-            let loaded = load_or_exit(&file, &options);
-            let lowered = optimized_ir_or_exit(&loaded);
-            let asm = assembly_or_exit(&lowered, &loaded.sources);
-            let target = BackendTarget::default();
-            let toolchain = target.toolchain();
-            let asm_path = file.with_extension("s");
-            fs::write(&asm_path, asm).expect("Failed to write assembly");
-
-            let obj_path = file.with_extension("o");
-            let bin_path = file.with_extension("");
-
-            // Assemble
-            let status = Command::new(toolchain.assembler)
-                .arg(&asm_path)
-                .arg("-o")
-                .arg(&obj_path)
-                .status()
-                .expect("Failed to run assembler");
-            if !status.success() {
-                eprintln!("Assembly failed");
-                std::process::exit(1);
-            }
-
-            // Link
-            let mut linker = Command::new(toolchain.linker);
-            linker.arg(&obj_path).arg("-o").arg(&bin_path);
-            if let Some(dynamic_linker) = toolchain.dynamic_linker {
-                linker.arg("-dynamic-linker").arg(dynamic_linker);
-            }
-            for lib in toolchain.libraries {
-                linker.arg(lib);
-            }
-            let status = linker.status().expect("Failed to run linker");
-            if !status.success() {
-                eprintln!("Linking failed");
-                std::process::exit(1);
-            }
+            let bin_path = build_source_executable_or_exit(&file, &options, None);
 
             // Run
             let status = Command::new(&bin_path)

@@ -18,11 +18,12 @@ git clone https://github.com/JoNil-Botta/typelisp
 cd typelisp
 cargo build --release
 
-# Type-check, compile, or run a program (run requires `as`/`ld` on Linux):
+# Type-check, compile, build, or run a program (build/run require `as`/`ld` on Linux):
 ./target/release/typelisp debug check examples/hello.tl
 ./target/release/typelisp compile examples/hello.tl     # writes examples/hello.s
+./target/release/typelisp build   examples/hello.tl     # writes examples/hello
 ./target/release/typelisp run     examples/hello.tl
-./target/release/typelisp build                         # builds nearest typelisp.pkg
+./target/release/typelisp build                         # builds nearest typelisp.pkg to assembly
 ```
 
 ## Example
@@ -221,9 +222,16 @@ typelisp debug tokenize file.tl    # Print token stream
 typelisp debug parse    file.tl    # Print AST
 typelisp debug check    file.tl    # Type check
 typelisp compile        file.tl    # Generate assembly (.s); -o <path>, --emit-ir
+typelisp build          file.tl    # Generate native executable; -o <path>
 typelisp run            file.tl    # Compile, assemble, link, and run (needs as/ld)
 typelisp build                    # Build nearest typelisp.pkg to package assembly
 ```
+
+For source files, `typelisp build file.tl` writes a native executable next to the
+source using the source path without `.tl` by default; `-o <path>` overrides the
+executable path. Package builds remain available as `typelisp build` from inside
+a package or `typelisp build --manifest-path path/to/typelisp.pkg`; those write
+deterministic package assembly, not a native executable.
 
 The older top-level `tokenize`, `parse`, and `check` commands remain as
 compatibility aliases.

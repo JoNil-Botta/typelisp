@@ -223,22 +223,26 @@ fn type_lisp_programs_compile_link_and_run() {
         // Self-hosting (#27): the s-expression EVALUATOR for TypeLisp's own
         // syntax, now a REAL LANGUAGE - a tiny tree-walking interpreter with
         // VARIABLES, lexical `let`, short-circuit `if`, comparison operators, AND
-        // USER-DEFINED FUNCTIONS plus RECURSION via top-level `(define (f x)
-        // body)` forms. `tl_eval.tl` walks the recursive cons-cell `Sexpr` AST
+        // USER-DEFINED FUNCTIONS plus RECURSION and MULTI-ARGUMENT calls via
+        // top-level `(define (f x y z) body)` forms. `tl_eval.tl` walks the
+        // recursive cons-cell `Sexpr` AST
         // against two environments - a value `Env` and a function `FnEnv`:
         // `(SSym name)` resolves via recursive assoc-list `lookup`, `let` pushes
         // `(EBind x v env)`, a builtin op dispatches on its text, and any other
-        // head symbol is a CALL into the `FnEnv` (look up param + body, eval body
-        // in a fresh single-binding env with the SAME `FnEnv`, so a body can call
-        // itself). `main` runs `run-program` over the TWO-form program
-        // `(define (fact n) (if (< n 1) 1 (* n (fact (- n 1))))) (fact 5)`: the
-        // program reader folds the recursive `fact` define into the `FnEnv`, then
-        // evaluates `(fact 5)` - which recurses to 5! = 120. All three imported
+        // head symbol is a CALL into the `FnEnv` (look up the PARAMETER LIST +
+        // body, zip the params against the args with `bind-args` to build a fresh
+        // callee env, eval body with the SAME `FnEnv`, so a body can call itself
+        // with any arity). `main` runs `run-program` over the TWO-form program
+        // `(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (pow 2 7)`: the
+        // program reader folds the recursive TWO-parameter `pow` define into the
+        // `FnEnv`, then evaluates `(pow 2 7)` - which zips `(b e)` against `(2 7)`
+        // and recurses to 2^7 = 128. (128 fits a byte; 2^10 = 1024 would wrap mod
+        // 256 to an unobservable 0.) All three imported
         // `main`-less modules are copied alongside so the `(import)` chain
         // resolves.
         Case {
             name: "tl_eval",
-            exit_code: 120,
+            exit_code: 128,
             stdout: "",
             deps: &["tl_read.tl", "tl_lex.tl", "tl_token.tl"],
         },
@@ -448,19 +452,21 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             deps: &["tl_lex.tl", "tl_token.tl"],
         },
         // Self-hosting (#27): the s-expression evaluator with variables, `let`,
-        // `if`, comparisons, AND user-defined functions + recursion, also
+        // `if`, comparisons, AND user-defined functions + recursion + MULTI-
+        // ARGUMENT calls, also
         // exercised through the explicit compile -> as -> ld -> run pipeline.
         // Runs `run-program` over the two-form program
-        // `(define (fact n) (if (< n 1) 1 (* n (fact (- n 1))))) (fact 5)`: the
-        // recursive `fact` define is folded into the `FnEnv`, then `(fact 5)`
-        // recurses to 5! = 120. The reader (and transitively the lexer + token
+        // `(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (pow 2 7)`: the
+        // recursive TWO-parameter `pow` define is folded into the `FnEnv`, then
+        // `(pow 2 7)` zips `(b e)` against `(2 7)` via `bind-args` and recurses to
+        // 2^7 = 128. The reader (and transitively the lexer + token
         // model) is reused via the `main`-less `tl_read.tl` import - including its
         // lower-level `read-form` cursor entry, which the program reader drives to
         // read all top-level forms; all three imported modules are copied
         // alongside so the imports resolve.
         Case {
             name: "tl_eval",
-            exit_code: 120,
+            exit_code: 128,
             stdout: "",
             deps: &["tl_read.tl", "tl_lex.tl", "tl_token.tl"],
         },

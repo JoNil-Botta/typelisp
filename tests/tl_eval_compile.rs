@@ -6,7 +6,8 @@
 //! front end (#27): a tiny tree-walking interpreter, now with VARIABLES, lexical
 //! `let`, short-circuit `if`, comparison operators, AND - the real-language
 //! milestone - USER-DEFINED FUNCTIONS plus RECURSION via top-level
-//! `(define (f x) body)` forms. Where the lexer turns a source String into a flat
+//! `(define (f x y z) body)` forms with MULTI-ARGUMENT calls. Where the lexer
+//! turns a source String into a flat
 //! `(Array Token)` and the reader consumes that token stream into the recursive
 //! cons-cell `Sexpr` AST `(SInt | SSym | SNil | SCons)`, the evaluator INTERPRETS
 //! that tree WITH RESPECT TO two environments - a value `Env` and a function
@@ -14,9 +15,12 @@
 //! frame for `(let ((x e1)) body)`, dispatches `if` without evaluating the
 //! untaken branch, folds `= < > <= >=` to 1/0 integer truth values, evaluates
 //! builtin binary arithmetic, and OTHERWISE treats the head symbol as a CALL into
-//! a `FnEnv` assoc-list of `(define ...)`s - looking up the parameter and body and
-//! evaluating the body in a fresh single-binding env with the SAME `FnEnv`, so a
-//! body can call itself (RECURSION) or any sibling. A whole PROGRAM is now a
+//! a `FnEnv` assoc-list of `(define ...)`s - looking up the function's PARAMETER
+//! LIST and body, ZIPPING the parameter list against the argument expressions
+//! with `bind-args` (each argument evaluated in the caller env) to build a fresh
+//! callee env, and evaluating the body in that env with the SAME `FnEnv`, so a
+//! body can call itself (RECURSION) or any sibling with any arity. A whole
+//! PROGRAM is now a
 //! sequence of top-level forms - zero or more `(define ...)`s then a trailing
 //! expression - read with the reader's lower-level `read-form` cursor API (the
 //! plain `read` returns only the first datum). It does NOT
@@ -112,16 +116,19 @@ fn tl_eval_tl_compiles_to_assembly() {
     // The evaluator's own functions were emitted (TypeLisp prefixes user symbols
     // with `_tl_`): the tree-walking `eval-sexpr`, recursive variable `lookup`,
     // the cons-cell projections `sexpr-head` ("car") / `sexpr-tail` ("cdr"),
-    // the arity guard, the `let`-binding helpers, the `define`-form projections,
-    // the function-environment lookups (`lookup-fn-param` / `lookup-fn-body`),
+    // the arity guard, the `let`-binding helpers, the `define`-form projections
+    // (now `define-params`, returning the whole parameter LIST), the
+    // function-environment lookups (`lookup-fn-params` / `lookup-fn-body`), the
+    // multi-argument call binder (`bind-args`, which zips params against args),
     // and the multi-form program reader (`run-forms` / `run-program`). The old
     // `sexpr-sym` projection is gone: `eval-sexpr`, `let-var`, and the define
     // projections bind symbol text directly via nested patterns (#41).
     for sym in [
         "_tl_eval_sexpr:",
         "_tl_lookup:",
-        "_tl_lookup_fn_param:",
+        "_tl_lookup_fn_params:",
         "_tl_lookup_fn_body:",
+        "_tl_bind_args:",
         "_tl_sexpr_head:",
         "_tl_sexpr_tail:",
         "_tl_sexpr_expect_nil:",
@@ -130,7 +137,7 @@ fn tl_eval_tl_compiles_to_assembly() {
         "_tl_let_init:",
         "_tl_let_body:",
         "_tl_define_name:",
-        "_tl_define_param:",
+        "_tl_define_params:",
         "_tl_define_body:",
         "_tl_is_define:",
         "_tl_run_forms:",
@@ -152,6 +159,22 @@ fn tl_eval_tl_compiles_to_assembly() {
          nested pattern):\n{}",
         asm,
     );
+
+    // MULTI-ARGUMENT (#27): the single-parameter `define-param` projection and the
+    // single-parameter `lookup-fn-param` lookup were GENERALISED to the whole
+    // parameter LIST (`define-params` / `lookup-fn-params`), so the old
+    // single-result symbols must no longer be emitted. (The `:` suffix
+    // distinguishes the removed `_tl_define_param:` / `_tl_lookup_fn_param:` labels
+    // from the new `_tl_define_params:` / `_tl_lookup_fn_params:` ones.)
+    for gone in ["_tl_define_param:", "_tl_lookup_fn_param:"] {
+        assert!(
+            !asm.contains(gone),
+            "tl_eval should no longer define the single-parameter helper {} \
+             (generalised to the whole parameter list for multi-argument functions):\n{}",
+            gone,
+            asm,
+        );
+    }
 
     // The nested pattern `(SCons (SSym name) rest)` lowers to a SECOND tag
     // dispatch inside the SCons arm (testing the inner SSym tag), labelled
@@ -203,12 +226,12 @@ fn tl_eval_tl_compiles_to_assembly() {
 
     // USER FUNCTIONS + RECURSION (#27): a call form whose head is neither a
     // special form nor a builtin is dispatched as a CALL into the function
-    // environment. `eval-sexpr` therefore looks the function's parameter and body
-    // up in the `FnEnv` via `lookup-fn-param` / `lookup-fn-body`, each of which is
-    // itself recursive (it walks the `FnEnv` assoc-list head-first, comparing the
-    // bound function name and recursing on the tail). So a call to each lookup AND
-    // a recursive self-call within each must be present.
-    for fname in ["_tl_lookup_fn_param", "_tl_lookup_fn_body"] {
+    // environment. `eval-sexpr` therefore looks the function's PARAMETER LIST and
+    // body up in the `FnEnv` via `lookup-fn-params` / `lookup-fn-body`, each of
+    // which is itself recursive (it walks the `FnEnv` assoc-list head-first,
+    // comparing the bound function name and recursing on the tail). So a call to
+    // each lookup AND a recursive self-call within each must be present.
+    for fname in ["_tl_lookup_fn_params", "_tl_lookup_fn_body"] {
         assert!(
             asm.contains(&format!("call {fname}")),
             "tl_eval assembly shows no function-environment lookup call ({fname}) - \
@@ -221,6 +244,25 @@ fn tl_eval_tl_compiles_to_assembly() {
             asm,
         );
     }
+
+    // MULTI-ARGUMENT CALLS (#27): a user-function call binds its arguments by
+    // ZIPPING the function's parameter list against the call's argument-expression
+    // list with `bind-args`. `bind-args` walks both lists in lock-step, evaluating
+    // each argument in the caller env and `EBind`-ing it to the matching parameter,
+    // so it is itself recursive (it recurses on the parameter/argument tails) and
+    // it calls back into `eval-sexpr` to evaluate each argument. So `eval-sexpr`
+    // calls `bind-args`, AND `bind-args` calls itself (a self-call: the recursive
+    // zip).
+    assert!(
+        asm.contains("call _tl_bind_args"),
+        "tl_eval assembly shows no bind-args call (no multi-argument call binding):\n{}",
+        asm,
+    );
+    assert!(
+        asm.matches("call _tl_bind_args").count() >= 2,
+        "tl_eval assembly shows no recursive bind-args self-call (param/arg zip):\n{}",
+        asm,
+    );
 
     // The program is a SEQUENCE of top-level forms read with the reader's
     // lower-level per-form cursor API, so `run-forms` reuses `read-form` and is

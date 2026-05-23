@@ -3,10 +3,11 @@
 ;; following the lexer and the reader. Where the reader turns a token stream into
 ;; the cons-cell `Sexpr` tree the parens describe, this evaluator INTERPRETS that
 ;; tree - it walks the s-expression and computes the tagged VALUE it denotes
-;; (a `(VInt n)` or a `(VStr s)`, the value domain generalised from a raw i64 so
-;; it can carry strings), now with
+;; (a `(VInt n)`, a `(VStr s)`, or a `(VClosure ...)`, the value domain generalised
+;; from a raw i64 so it can carry strings AND first-class functions), now with
 ;; VARIABLES, a MULTI-BINDING `let` special form, an `if`, comparisons, a `begin`
-;; SEQUENCING special form, AND - the milestone of a real language -
+;; SEQUENCING special form, FIRST-CLASS FUNCTIONS (`lambda` + CLOSURES), AND - the
+;; milestone of a real language -
 ;; USER-DEFINED FUNCTIONS plus RECURSION via top-level `(define (f x y z) body)`
 ;; forms threaded through a function environment.
 ;;
@@ -47,16 +48,28 @@
 ;; The VALUE domain: a tagged union of the things an expression denotes (#27).
 ;; --------------------------------------------------------------------------
 ;; The interpreter was previously i64-VALUED: every expression denoted a raw
-;; `i64`. To carry STRING values (the foundation for string ops and, later,
-;; lambda) the value domain is GENERALISED to a tagged `Value`: `(VInt n)` for an
-;; integer, `(VStr s)` for a string. `eval-sexpr` now returns a `Value`, the
-;; environment binds `Value`s, and the arithmetic / comparison / `if`-condition
-;; contexts that require an integer go through `as-int`, which projects a `VInt`
-;; and aborts on a `VStr` ("type error: expected int") - exactly how a dynamically
-;; typed interpreter reports a type error at a use site that demands a number.
+;; `i64`. To carry STRING values (the foundation for string ops) the value domain
+;; was GENERALISED to a tagged `Value`: `(VInt n)` for an integer, `(VStr s)` for
+;; a string. It now ALSO carries FIRST-CLASS FUNCTIONS: `(VClosure params body
+;; captured-env)` is the value a `(lambda (p...) body)` denotes - a CLOSURE pairing
+;; the un-evaluated parameter LIST and body AST (both `Sexpr`s, kept verbatim as
+;; the reader built them) with the lexical value environment captured AT THE POINT
+;; THE LAMBDA WAS EVALUATED. That captured `Env` is what makes free variables in
+;; the body resolve to their definition-site bindings when the closure is later
+;; applied somewhere else - the defining property of a closure. Because `VClosure`
+;; carries an `Env` and `Env` (via `EBind`) carries a `Value`, `Value` and `Env`
+;; are now MUTUALLY RECURSIVE enums; each is pointer-sized, so the layout stays
+;; finite (recursive/cross-recursive enum payloads, #111/#41).
+;;
+;; `eval-sexpr` returns a `Value`, the environment binds `Value`s, and the
+;; arithmetic / comparison / `if`-condition contexts that require an integer go
+;; through `as-int`, which projects a `VInt` and aborts on a non-integer ("type
+;; error: expected int") - exactly how a dynamically typed interpreter reports a
+;; type error at a use site that demands a number.
 (defenum Value
   (VInt i64)
-  (VStr String))
+  (VStr String)
+  (VClosure Sexpr Sexpr Env))
 
 ;; as-int: project the i64 out of a `Value`, used wherever an INTEGER is required
 ;; - the operands of arithmetic / comparison operators and the condition of `if`.
@@ -66,7 +79,8 @@
 (define (as-int [v : Value]) : i64
   (match v
     [(VInt n) n]
-    [(VStr _) (begin (panic "type error: expected int") 0)]))
+    [(VStr _) (begin (panic "type error: expected int") 0)]
+    [(VClosure _ _ _) (begin (panic "type error: expected int") 0)]))
 
 ;; as-str: the STRING counterpart of `as-int` - project the String out of a
 ;; `Value`, used wherever a string operand is required (the `string-length` /
@@ -77,7 +91,8 @@
 (define (as-str [v : Value]) : String
   (match v
     [(VStr s) s]
-    [(VInt _) (begin (panic "type error: expected string") "")]))
+    [(VInt _) (begin (panic "type error: expected string") "")]
+    [(VClosure _ _ _) (begin (panic "type error: expected string") "")]))
 
 ;; --------------------------------------------------------------------------
 ;; The lexical environment: a cons-cell association list (refs #27/#111).
@@ -358,6 +373,29 @@
     [_ false]))
 
 ;; --------------------------------------------------------------------------
+;; The `lambda` form: project the PARAMETER LIST and body (refs #27).
+;; --------------------------------------------------------------------------
+;; A `(lambda (p...) body)` form's tail `rest` reads into the spine
+;;   rest = (SCons params (SCons body SNil))
+;; so the parameter LIST is `rest`'s head and the body is the head of `rest`'s
+;; tail (whose own tail must be `SNil` - a lambda has exactly one body expression,
+;; like `let`). The parameter list is kept verbatim as the reader's cons-list of
+;; `SSym`s so an arbitrary ARITY is supported; `bind-args-onto` validates each
+;; element is an `(SSym ...)` and that the count matches at the call.
+
+;; lambda-params: the parameter LIST `(p...)` from a lambda form's tail `rest`.
+(define (lambda-params [rest : Sexpr]) : Sexpr
+  (sexpr-head rest))
+
+;; lambda-body: the single body expression from a lambda form's tail `rest`. The
+;; tail's tail must be `SNil` (exactly one body expression).
+(define (lambda-body [rest : Sexpr]) : Sexpr
+  (let ([after : Sexpr (sexpr-tail rest)])
+    (begin
+      (sexpr-expect-nil (sexpr-tail after))
+      (sexpr-head after))))
+
+;; --------------------------------------------------------------------------
 ;; eval-sexpr: the tree-walking interpreter. `(-> Sexpr Env FnEnv Value)`.
 ;; --------------------------------------------------------------------------
 ;; A recursive walk over the `Sexpr` tree, threading BOTH a lexical value
@@ -439,6 +477,18 @@
          ;; user-call paths - so `begin` is dispatched as a special form (its
          ;; operands control evaluation ORDER; they are not a call's arguments).
          (eval-seq rest env fenv)
+         (if (string-eq name "lambda")
+         ;; The `lambda` SPECIAL FORM `(lambda (p...) body)`: rest is
+         ;; `(SCons params (SCons body SNil))`. It does NOT evaluate the body; it
+         ;; CAPTURES the current value environment `env` and packages the verbatim
+         ;; parameter LIST and body AST into a `(VClosure params body env)` VALUE -
+         ;; a first-class function. The captured `env` is what makes the body's
+         ;; FREE variables resolve to their definition-site bindings when the
+         ;; closure is later applied (closure = code + captured environment). The
+         ;; `fenv` is NOT captured: top-level `define`s live in the single shared
+         ;; function environment threaded through every application, so a closure
+         ;; body can still call any defined function.
+         (VClosure (lambda-params rest) (lambda-body rest) env)
          (if (string-eq name "let")
          ;; The `let` special form: `(let ((x e1) (y e2) ...) body)`. Fold the
          ;; whole binding LIST into the environment (sequentially, `let*`-style),
@@ -481,7 +531,13 @@
                        (begin
                          (match v
                            [(VInt n) (print n)]
-                           [(VStr s) (print-string s)])
+                           [(VStr s) (print-string s)]
+                           ;; A closure has no readable surface syntax, so it
+                           ;; prints a fixed `#<closure>` marker (raw bytes, NO
+                           ;; trailing newline - like the `VStr` arm) rather than
+                           ;; aborting; the closure value is still RETURNED so
+                           ;; `(print f)` composes.
+                           [(VClosure _ _ _) (print-string "#<closure>")])
                          v))))
                  (if (string-eq name "string-length")
                      ;; STRING OP `(string-length s)`: rest is `(SCons s SNil)`.
@@ -600,11 +656,61 @@
                                  ;; evaluated in the CURRENT env, so caller variables resolve),
                                  ;; and evaluate the body in that callee env with the SAME
                                  ;; `fenv` - so the body resolves recursive and sibling calls.
-                                 ;; Arbitrary arity.
-                                 (let ([params : Sexpr (lookup-fn-params fenv name)]
-                                       [body : Sexpr (lookup-fn-body fenv name)])
-                                   (eval-sexpr body (bind-args params rest env fenv) fenv)))))))))))))]
+                                 ;; Arbitrary arity. BUT FIRST: a symbol head may
+                                 ;; name a CLOSURE-VALUED VARIABLE in the lexical
+                                 ;; env (e.g. `(let ((f (lambda (x) x))) (f 5))`),
+                                 ;; not a top-level `define`. So if `name` is bound
+                                 ;; in `env`, look it up and APPLY the resulting
+                                 ;; value as a closure (the variable shadows any
+                                 ;; same-named define); otherwise it is a call into
+                                 ;; the shared `fenv`.
+                                 (if (env-has env name)
+                                     (apply-value (lookup env name) rest env fenv)
+                                     (let ([params : Sexpr (lookup-fn-params fenv name)]
+                                           [body : Sexpr (lookup-fn-body fenv name)])
+                                       (eval-sexpr body (bind-args params rest env fenv) fenv)))))))))))))))]
+    ;; APPLICATION OF A COMPUTED OPERATOR `((<expr>) a b ...)`: the head is itself
+    ;; a non-symbol form (a `lambda` literal, or any expression that evaluates to a
+    ;; closure), so it falls through the symbol-head arm. Evaluate the head form in
+    ;; the current env to a `Value`, then apply it as a closure to the argument
+    ;; list `rest` - e.g. `((lambda (x) (* x x)) 5)`.
+    [(SCons head rest)
+     (apply-value (eval-sexpr head env fenv) rest env fenv)]
     [_ (begin (panic "eval: not an evaluable expression") (VInt 0))]))
+
+;; --------------------------------------------------------------------------
+;; Closure application + the env predicate that routes a symbol-head call (#27).
+;; --------------------------------------------------------------------------
+
+;; env-has: does `name` have a binding in the lexical environment? Walks the
+;; assoc-list head-first exactly like `lookup`, but returns a bool instead of
+;; aborting on the empty environment - it is the non-fatal probe that decides, at
+;; a symbol-head call site `(f a b)`, whether `f` is a closure-valued VARIABLE
+;; (apply it) or a top-level `define` (call into `fenv`). A variable shadows a
+;; same-named define, matching the usual lexical-scoping rule.
+(define (env-has [env : Env] [name : String]) : bool
+  (match env
+    [(ENil) false]
+    [(EBind bound _ rest)
+     (if (string-eq bound name)
+         true
+         (env-has rest name))]))
+
+;; apply-value: APPLY a value to an argument-expression list. The value must be a
+;; `(VClosure params body captured-env)`; a non-closure in operator position
+;; (e.g. `(5 1 2)`) is a type error in the interpreted program - abort. The
+;; closure is applied by ZIPPING its parameter list against the argument exprs
+;; (each evaluated in the CALLER's env, so the actual arguments see caller-scope
+;; variables) and EXTENDING THE CAPTURED ENV with those bindings via
+;; `bind-args-onto` - so the body sees both its parameters AND the free variables
+;; captured when the lambda was created. The body is then evaluated in that
+;; extended env with the shared `fenv` (top-level functions stay reachable).
+(define (apply-value [f : Value] [args : Sexpr] [caller : Env] [fenv : FnEnv]) : Value
+  (match f
+    [(VClosure params body captured)
+     (eval-sexpr body (bind-args-onto params args caller fenv captured) fenv)]
+    [(VInt _) (begin (panic "eval: cannot apply a non-function value") (VInt 0))]
+    [(VStr _) (begin (panic "eval: cannot apply a non-function value") (VInt 0))]))
 
 ;; --------------------------------------------------------------------------
 ;; bind-args: zip a parameter list against an argument-expression list (#27).
@@ -622,24 +728,42 @@
 ;; - abort. A parameter that is not an `(SSym ...)` is a malformed define header.
 ;; `bind-args` and `eval-sexpr` are MUTUALLY RECURSIVE: an argument may itself be
 ;; a call (e.g. `(pow b (- e 1))`), so evaluating it re-enters `eval-sexpr`.
+;;
+;; `bind-args` builds the callee env on top of the EMPTY environment `ENil` (a
+;; top-level `define` body is lexically closed - it sees only its parameters and
+;; the shared `fenv`, never caller locals). It is the `base = ENil` case of the
+;; generalised `bind-args-onto`, to which it delegates: a CLOSURE application
+;; instead extends the lambda's CAPTURED env, so the two share this one zip.
 (define (bind-args [params : Sexpr] [args : Sexpr] [caller : Env] [fenv : FnEnv]) : Env
+  (bind-args-onto params args caller fenv ENil))
+
+;; bind-args-onto: the generalised parameter/argument zip. Identical to
+;; `bind-args` except the freshly built frames are pushed onto a caller-supplied
+;; BASE environment rather than `ENil`. A top-level call passes `ENil` (closed
+;; scope, via `bind-args`); a CLOSURE application passes the lambda's CAPTURED env
+;; (so the body sees its parameters layered over the variables free in the lambda
+;; - the essence of a closure). Each argument is still evaluated in the CALLER's
+;; env (so actual arguments resolve caller-scope variables, not sibling params /
+;; captured names), and the parameter/argument lists must have equal length.
+(define (bind-args-onto [params : Sexpr] [args : Sexpr] [caller : Env] [fenv : FnEnv] [base : Env]) : Env
   (match params
-    ;; No more parameters: the argument list must also be exhausted.
+    ;; No more parameters: the argument list must also be exhausted. The result is
+    ;; the BASE env (`ENil` for a top-level call, the captured env for a closure).
     [(SNil)
      (match args
-       [(SNil) ENil]
-       [_ (begin (panic "eval: too many arguments in call") ENil)])]
+       [(SNil) base]
+       [_ (begin (panic "eval: too many arguments in call") base)])]
     ;; One more parameter `(SSym pname)`: there must be a matching argument.
     [(SCons (SSym pname) ptail)
      (match args
        [(SCons arg atail)
         (EBind pname (eval-sexpr arg caller fenv)
-               (bind-args ptail atail caller fenv))]
-       [(SNil) (begin (panic "eval: too few arguments in call") ENil)]
-       [(SInt _) (begin (panic "eval: malformed argument list") ENil)]
-       [(SSym _) (begin (panic "eval: malformed argument list") ENil)]
-       [(SStr _) (begin (panic "eval: malformed argument list") ENil)])]
-    [_ (begin (panic "eval: malformed parameter list") ENil)]))
+               (bind-args-onto ptail atail caller fenv base))]
+       [(SNil) (begin (panic "eval: too few arguments in call") base)]
+       [(SInt _) (begin (panic "eval: malformed argument list") base)]
+       [(SSym _) (begin (panic "eval: malformed argument list") base)]
+       [(SStr _) (begin (panic "eval: malformed argument list") base)])]
+    [_ (begin (panic "eval: malformed parameter list") base)]))
 
 ;; is-builtin-op: is `name` one of the fixed binary builtins? This is the dispatch
 ;; key that separates a builtin call from a USER-FUNCTION call in `eval-sexpr`:
@@ -732,39 +856,52 @@
 
 ;; --------------------------------------------------------------------------
 ;; main: the whole front end composed - lex, read MANY forms, interpret with
-;; MULTI-ARGUMENT user functions, recursion, multi-binding `let`, STRING OPS, and
-;; the `begin` sequencing form.
+;; MULTI-ARGUMENT user functions, recursion, multi-binding `let`, string ops, the
+;; `begin` sequencing form, AND (the new milestone) FIRST-CLASS FUNCTIONS -
+;; `lambda` and CLOSURES.
 ;; --------------------------------------------------------------------------
-;; `(run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1)))))
-;;                (let ((s \"hello world\") (h (substring s 0 5)) (w (substring s 6 5))
-;;                      (n (string-length h)) (g (string-append h (string-append \" \" w)))
-;;                      (t (string-append g (int->string (pow 2 n)))))
-;;                  (begin
-;;                    (print t)
-;;                    (print (+ (string->int (substring t 11 2)) (string-eq g s)))
-;;                    (+ (string->int (substring t 11 2)) (string-eq g s)))))")`:
-;;   - the program is TWO top-level forms: a recursive TWO-parameter `define` of
-;;     `pow`, then the trailing expression - a MULTI-BINDING `let` whose body is a
-;;     `(begin ...)` SPECIAL FORM. `begin` retires the old `seq` two-arg-function
-;;     workaround and is dispatched BEFORE the user-call / builtin paths, so it
-;;     controls evaluation order directly.
-;;   - the `let` is folded SEQUENTIALLY (`let*`): `s` is the source string, `h` and
-;;     `w` are `substring` slices, `n` is `(string-length h)`, `g` rebuilds the
-;;     source via nested `string-append`, and `t` appends `(int->string (pow 2 n))`
-;;     to produce `(VStr "hello world32")`.
-;;   - the `begin` has THREE sub-expressions, walked head-first by `eval-seq`:
-;;     FIRST `(print t)` prints the string bytes `hello world32`; SECOND the
-;;     printed sum slices `"32"` back out, parses it, and adds `(string-eq g s)` =
-;;     1, printing `33\n`; THIRD the same sum is evaluated but NOT printed, so the
-;;     `begin` result is `(VInt 33)`. STDOUT is therefore `hello world3233\n`, and
-;;     the program denotes `33`.
-;; This single program proves the evaluator now (a) carries a tagged `Value`
-;; domain - BOTH a `(VStr ...)` and a `(VInt ...)` are PRINTABLE; (b) supports
-;; MULTI-ARGUMENT user functions with RECURSION through the shared function
-;; environment; (c) supports MULTI-BINDING `let` with sequential scoping; (d)
-;; exposes the STRING TOOLKIT (`substring` / `string-length` / `string-eq` /
-;; `int->string` / `string->int` / `string-append`); and (e) exposes `begin`,
-;; which evaluates a sequence in order and returns only the last value. (Deferred:
-;; lambda; closures; variadic arity; string-literal escapes.)
+;; `(run-program "(begin
+;;                  (print ((lambda (x) (* x x)) 5))
+;;                  (print (let ((n 10)) ((lambda (x) (+ x n)) 5)))
+;;                  (let ((f (lambda (x) (+ x 1)))) (f 41)))")`:
+;;   - the program is ONE trailing expression: a `(begin ...)` SPECIAL FORM (the
+;;     natural sequencer - evaluate each form in order, return the LAST) threading
+;;     three LAMBDA exercises. No `define` is needed; `begin` replaces the old
+;;     `seq` two-arg-function workaround.
+;;   - FIRST `((lambda (x) (* x x)) 5)`: the operator is itself a `(lambda ...)`
+;;     form, so it falls through the symbol-head dispatch to the COMPUTED-OPERATOR
+;;     arm `(SCons head rest)`. Evaluating the head yields `(VClosure (x) (* x x)
+;;     <env>)`; `apply-value` zips its one parameter `x` against the argument `5`
+;;     (bound onto the captured env via `bind-args-onto`) and evaluates `(* x x)`
+;;     in that env -> `(VInt 25)`. `(print 25)` writes `25\n` (the `VInt` arm, host
+;;     `print`).
+;;   - SECOND `(let ((n 10)) ((lambda (x) (+ x n)) 5))`: a CLOSURE OVER A FREE
+;;     VARIABLE. The lambda is evaluated with `n -> (VInt 10)` in scope, so the
+;;     `(VClosure ...)` CAPTURES that env. Applying it to `5` binds `x -> 5` onto
+;;     the captured env, so the body `(+ x n)` resolves the free `n` to the captured
+;;     `10` -> `(VInt 15)`. This is the load-bearing proof of CLOSURE CAPTURE: the
+;;     free `n` is NOT in the argument list, it comes from the environment captured
+;;     at lambda-creation time. `(print 15)` writes `15\n`.
+;;   - THIRD `(let ((f (lambda (x) (+ x 1)))) (f 41))`: a closure BOUND TO A LET
+;;     VARIABLE and called BY NAME. The head `f` is a symbol, but it names a
+;;     closure-valued VARIABLE in `env` (not a top-level `define`), so the symbol-
+;;     head call path's `env-has` probe routes it to `apply-value` on the looked-up
+;;     `VClosure` rather than a `fenv` lookup. `(+ x 1)` with `x -> 41` -> `(VInt 42)`.
+;;   - `begin` walks the three sub-expressions head-first via `eval-seq`, returning
+;;     the LAST, `(VInt 42)`, so the whole program denotes `42`. STDOUT is
+;;     `25\n15\n` (printed by the first two `begin` forms); printing to stdout
+;;     escapes the mod-256 exit-code ceiling, and the exit code is the wrapped
+;;     `42 & 0xff = 42`.
+;; This program proves the evaluator now has FIRST-CLASS FUNCTIONS: a `lambda`
+;; special form that builds a `(VClosure params body captured-env)` VALUE capturing
+;; the current lexical env; APPLICATION of a closure whether it appears as a
+;; computed operator `((lambda ...) a)` (the `(SCons head rest)` arm) or as a
+;; closure-valued variable in head position `(f a)` (the `env-has` route); and true
+;; CLOSURE SEMANTICS - a body's free variables resolve through the CAPTURED env via
+;; the generalised `bind-args-onto`, which layers the parameters over that captured
+;; env. `Value` and `Env` are now mutually recursive enums (a `VClosure` carries an
+;; `Env`, an `EBind` carries a `Value`), each pointer-sized so the layout stays
+;; finite. (Deferred: variadic arity; string-literal escapes; recursive lambdas
+;; bound by name - top-level `define` recursion already covers self-reference.)
 (define (main) : i64
-  (run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (let ((s \"hello world\") (h (substring s 0 5)) (w (substring s 6 5)) (n (string-length h)) (g (string-append h (string-append \" \" w))) (t (string-append g (int->string (pow 2 n))))) (begin (print t) (print (+ (string->int (substring t 11 2)) (string-eq g s))) (+ (string->int (substring t 11 2)) (string-eq g s))))"))
+  (run-program "(begin (print ((lambda (x) (* x x)) 5)) (print (let ((n 10)) ((lambda (x) (+ x n)) 5))) (let ((f (lambda (x) (+ x 1)))) (f 41)))"))

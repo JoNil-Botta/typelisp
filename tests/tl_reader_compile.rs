@@ -97,12 +97,15 @@ fn tl_reader_tl_compiles_to_assembly() {
 
     // The reader's own functions were emitted (TypeLisp prefixes user symbols
     // with `_tl_`): the public `read` entry, the mutually recursive `read-form`
-    // / `read-list`, and the `sum-ints` fold over the built tree.
+    // / `read-list`, the `sum-ints` fold over the built tree, and `count-strs` -
+    // the second fold that OBSERVES the new `SStr` atom (#27/#128) by tallying
+    // every string literal the reader produced from the lexer's `TStr` tokens.
     for sym in [
         "_tl_read:",
         "_tl_read_form:",
         "_tl_read_list:",
         "_tl_sum_ints:",
+        "_tl_count_strs:",
     ] {
         assert!(
             asm.contains(sym),
@@ -114,12 +117,15 @@ fn tl_reader_tl_compiles_to_assembly() {
 
     // The lexer is REUSED across the import boundary, not re-derived: the
     // imported `lex` entry and the imported `tl_token.tl` accessors are emitted
-    // and called. `token-tag` classifies each token under the cursor.
+    // and called. `token-tag` classifies each token under the cursor; `token-str`
+    // projects the inner text out of a `TStr` token (#128) so the reader can build
+    // the new `SStr` atom from it.
     for sym in [
         "_tl_lex:",
         "_tl_token_tag:",
         "_tl_token_int:",
         "_tl_token_sym:",
+        "_tl_token_str:",
     ] {
         assert!(
             asm.contains(sym),
@@ -145,6 +151,27 @@ fn tl_reader_tl_compiles_to_assembly() {
     assert!(
         asm.contains("call _tl_sum_ints"),
         "tl_reader assembly shows no main -> sum-ints call (tree fold):\n{}",
+        asm,
+    );
+    // The new `count-strs` fold is also called from `main` to OBSERVE the `SStr`
+    // atoms (#27/#128): the demo result is `(+ (sum-ints ...) (count-strs ...))`.
+    assert!(
+        asm.contains("call _tl_count_strs"),
+        "tl_reader assembly shows no main -> count-strs call (SStr fold):\n{}",
+        asm,
+    );
+
+    // The reader consumes the lexer's `TStr` token into the new `(SStr String)`
+    // atom: `read-form` projects the inner text via the imported `token-str`
+    // accessor (#128) - the cross-import call that drives the SStr read, exactly
+    // as `token-int` / `token-sym` drive the SInt / SSym reads. (The string
+    // payloads themselves are sliced out of the source at RUNTIME with
+    // `substring`, so there is no per-literal `.string "hi"` to assert on - the
+    // only compile-time literal is the whole `(greet "hi" 7 (msg "yo" 35))`
+    // source; the runtime exec test asserts the resulting count.)
+    assert!(
+        asm.contains("call _tl_token_str"),
+        "tl_reader assembly shows no token-str projection call (TStr -> SStr read):\n{}",
         asm,
     );
 

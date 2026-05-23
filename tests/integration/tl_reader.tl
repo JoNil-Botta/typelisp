@@ -45,11 +45,16 @@
 ;; child an 8-byte heap pointer, so the layout is finite and every constructed
 ;; node that escapes via a return is heap-promoted. The reader builds this tree;
 ;; a `match`-based fold walks it.
+;; `SStr` carries the inner text of a `"..."` string-literal datum: the reader
+;; consumes the lexer's `TStr` token (#128) into it, so a quoted string reads as a
+;; distinct atom rather than being conflated with a `SSym` of the same characters.
+;; `SStr` is appended last so the existing variants keep their stable ordering.
 (defenum Sexpr
   (SInt i64)
   (SSym String)
   (SNil)
-  (SCons Sexpr Sexpr))
+  (SCons Sexpr Sexpr)
+  (SStr String))
 
 ;; --------------------------------------------------------------------------
 ;; The reader cursor: a single mutable index into the `(Array Token)`.
@@ -87,6 +92,7 @@
 ;; it, advancing the cursor past the tokens it consumed.
 ;;   TInt n  -> (SInt n)            an integer atom
 ;;   TSym s  -> (SSym s)            a symbol atom
+;;   TStr s  -> (SStr s)            a string-literal atom (`"..."`, refs #128)
 ;;   TLParen -> read-list           consume '(' then read a list to its ')'
 ;;   TRParen -> error                a stray ')' with no opening '(' is malformed
 ;;   TEnd    -> error                end of stream where a form was expected
@@ -106,20 +112,28 @@
               (begin
                 (advance cur)
                 (SSym s)))
-            (if (= t (tag-lparen))
-                ;; A list: consume '(' and read forms until the matching ')'.
-                (begin
-                  (advance cur)
-                  (read-list toks cur))
-                (if (= t (tag-rparen))
+            (if (= t (tag-str))
+                ;; A string-literal atom: project the inner text out of the TStr
+                ;; (via the imported `token-str` accessor, #128) and consume it.
+                ;; `SStr` keeps it distinct from a same-character `SSym`.
+                (let ([s : String (token-str (peek-tok toks cur))])
+                  (begin
+                    (advance cur)
+                    (SStr s)))
+                (if (= t (tag-lparen))
+                    ;; A list: consume '(' and read forms until the matching ')'.
                     (begin
-                      (panic "reader: unexpected ')'")
-                      ;; Dead code: `panic` never returns, but the `if` needs a Sexpr.
-                      SNil)
-                    ;; tag-end (or anything else): premature end of stream.
-                    (begin
-                      (panic "reader: unexpected end of input")
-                      SNil)))))))
+                      (advance cur)
+                      (read-list toks cur))
+                    (if (= t (tag-rparen))
+                        (begin
+                          (panic "reader: unexpected ')'")
+                          ;; Dead code: `panic` never returns, but the `if` needs a Sexpr.
+                          SNil)
+                        ;; tag-end (or anything else): premature end of stream.
+                        (begin
+                          (panic "reader: unexpected end of input")
+                          SNil))))))))
 
 ;; read-list: the cursor is positioned just AFTER an opening '('. Read forms
 ;; until the matching ')', returning the proper list `(SCons f1 (SCons f2 ...
@@ -169,19 +183,43 @@
   (match s
     [(SInt n) n]
     [(SSym _) 0]
+    [(SStr _) 0]
     [(SNil) 0]
     [(SCons h t) (+ (sum-ints h) (sum-ints t))]))
 
-;; main: lex a real nested s-expression, READ it into the `Sexpr` cons tree, and
-;; fold that tree. The source "(+ 1 (* 2 3))" lexes to
-;;   (  +  1  (  *  2  3  )  )  End
+;; --------------------------------------------------------------------------
+;; A second fold that OBSERVES the new `SStr` variant: count string atoms.
+;; --------------------------------------------------------------------------
+;; The same recursive tree walk shape as `sum-ints`, but it tallies the `SStr`
+;; atoms the reader produced from `"..."` literals (#27/#128): an `SStr`
+;; contributes 1, every other atom (`SInt`/`SSym`/`SNil`) contributes 0, and an
+;; `SCons` sums both children. Because the count depends on the whole read tree,
+;; it is a faithful observation that the reader consumed the lexer's `TStr` token
+;; into an `SStr` rather than dropping it or folding it into an `SSym`.
+(define (count-strs [s : Sexpr]) : i64
+  (match s
+    [(SInt _) 0]
+    [(SSym _) 0]
+    [(SStr _) 1]
+    [(SNil) 0]
+    [(SCons h t) (+ (count-strs h) (count-strs t))]))
+
+;; main: lex a real nested s-expression that mixes integer atoms AND string
+;; literals, READ it into the `Sexpr` cons tree, and fold that tree two ways. The
+;; source `(greet "hi" 7 (msg "yo" 35))` lexes (#128: a `"..."` is one TStr) to
+;;   (  greet  "hi"  7  (  msg  "yo"  35  )  )  End
 ;; and reads into the tree
-;;   (SCons (SSym "+")
-;;     (SCons (SInt 1)
-;;       (SCons (SCons (SSym "*") (SCons (SInt 2) (SCons (SInt 3) (SNil))))
-;;         (SNil))))
-;; whose integer atoms are 1, 2, 3. `sum-ints` therefore returns 1 + 2 + 3 = 6,
-;; an observable result an execution test asserts as the exit code - and it
-;; depends on the reader correctly handling the nested inner list.
+;;   (SCons (SSym "greet")
+;;     (SCons (SStr "hi")
+;;       (SCons (SInt 7)
+;;         (SCons (SCons (SSym "msg") (SCons (SStr "yo") (SCons (SInt 35) (SNil))))
+;;           (SNil)))))
+;; Its integer atoms are 7 and 35 (`sum-ints` => 42), and it has TWO string atoms
+;; - "hi" at the top level and "yo" nested one list deep (`count-strs` => 2). The
+;; result `(+ (sum-ints ...) (count-strs ...))` = 42 + 2 = 44 is the observable
+;; exit code an execution test asserts. It depends on the reader BOTH still
+;; reading integers through nesting AND consuming the lexer's `TStr` token into a
+;; distinct `SStr` atom at every depth - lexer and reader kept in sync (#27/#128).
 (define (main) : i64
-  (sum-ints (read (lex "(+ 1 (* 2 3))"))))
+  (let ([tree : Sexpr (read (lex "(greet \"hi\" 7 (msg \"yo\" 35))"))])
+    (+ (sum-ints tree) (count-strs tree))))

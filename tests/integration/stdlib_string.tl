@@ -15,7 +15,7 @@
 ;;   abx
 ;; Exit code: 42
 
-(import "string.tl")
+(import "stdlib/string.tl")
 
 (define (main) : i64
   (begin

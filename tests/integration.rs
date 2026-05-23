@@ -10,8 +10,8 @@ struct Case {
     stdout: &'static str,
     /// Additional source files that the entry program imports; copied into the
     /// work dir preserving their relative path so `(import ...)` resolves.
-    /// Most deps are relative to the entry source directory; `sym_i64_env_core.tl`
-    /// is sourced from the canonical selfhost module.
+    /// Most deps are relative to the entry source directory; selected fixtures
+    /// are sourced from their canonical `selfhost/` or `stdlib/` modules.
     deps: &'static [&'static str],
 }
 
@@ -737,7 +737,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             name: "stdlib_string",
             exit_code: 42,
             stdout: "hello|\nhello|\nhello|\nfound\n|empty-left\n|empty-right\n|all-space\ncontains\nmissing\nhippo\nabx\n",
-            deps: &["string.tl"],
+            deps: &["stdlib/string.tl"],
         },
     ];
 
@@ -2379,7 +2379,7 @@ fn dep_source_path(manifest_dir: &Path, source_dir: &Path, dep: &str) -> PathBuf
     if dep == "sym_i64_env_core.tl" {
         return manifest_dir.join("selfhost").join("sym_i64_env.tl");
     }
-    if dep == "string.tl" {
+    if dep == "stdlib/string.tl" {
         return manifest_dir.join("stdlib").join("string.tl");
     }
     source_dir.join(dep)

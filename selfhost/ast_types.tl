@@ -35,3 +35,6 @@
 (defenum ItemList
   (ILNil)
   (ILCons Item ItemList))
+
+(defenum ParsedProgram
+  (PProgram ItemList Expr))

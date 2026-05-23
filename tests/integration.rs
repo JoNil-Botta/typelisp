@@ -438,6 +438,15 @@ fn type_lisp_programs_compile_link_and_run() {
             stdout: "PASS: empty-miss\nPASS: single-hit-contains\nPASS: single-hit-value\nPASS: single-miss\nPASS: shadow-newest\nPASS: outer-preserved-a\nPASS: outer-no-b\nPASS: inner-sees-a\nPASS: inner-sees-b\nPASS: substring-key-hit\nPASS: append-key-hit\nPASS: chain-x\nPASS: chain-y\nPASS: chain-z\nAll sym-i64-env tests passed.\n",
             deps: &["sym_i64_env_core.tl"],
         },
+        // refs #336: main-less selfhost text buffer utility. The driver checks
+        // empty rendering, multi-chunk append order, repeated appends, and
+        // buffer append before printing the joined text.
+        Case {
+            name: "text_buf",
+            exit_code: 0,
+            stdout: "left-right\n",
+            deps: &["text_buf_core.tl"],
+        },
     ];
 
     for case in cases {
@@ -755,6 +764,14 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             exit_code: 0,
             stdout: "PASS: empty-miss\nPASS: single-hit-contains\nPASS: single-hit-value\nPASS: single-miss\nPASS: shadow-newest\nPASS: outer-preserved-a\nPASS: outer-no-b\nPASS: inner-sees-a\nPASS: inner-sees-b\nPASS: substring-key-hit\nPASS: append-key-hit\nPASS: chain-x\nPASS: chain-y\nPASS: chain-z\nAll sym-i64-env tests passed.\n",
             deps: &["sym_i64_env_core.tl"],
+        },
+        // refs #336: selfhost text buffer utility through the explicit
+        // compile -> as -> ld -> run pipeline.
+        Case {
+            name: "text_buf",
+            exit_code: 0,
+            stdout: "left-right\n",
+            deps: &["text_buf_core.tl"],
         },
         // stdlib/string.tl: trim edge cases, contains, and replace through the
         // explicit compile -> as -> ld -> run pipeline.
@@ -2739,6 +2756,9 @@ fn dep_source_path(manifest_dir: &Path, source_dir: &Path, dep: &str) -> PathBuf
     }
     if dep == "format_doc.tl" {
         return manifest_dir.join("selfhost").join("format_doc.tl");
+    }
+    if dep == "text_buf_core.tl" {
+        return manifest_dir.join("selfhost").join("text_buf.tl");
     }
     if dep == "stdlib/string.tl" {
         return manifest_dir.join("stdlib").join("string.tl");

@@ -1091,6 +1091,193 @@ fn tl_emit_if_printed_programs_assemble_link_and_exit_expected() {
     }
 }
 
+/// define + calls (#169): the self-hosted backend's `emit-items` lowers a
+/// `(List Item)` of `define`s to per-function `<name>:` blocks under the SysV
+/// calling convention - prologue, param-register spill, `ECall` arg
+/// push/pop-into-registers, `call`, epilogue. Each case builds an Item-AST
+/// program whose `main` is the entry, runs the driver to PRINT the `.s`, asserts
+/// the param-spill / call / recursion markers, then assembles + links + runs the
+/// printed program and asserts its exit code - witnessing functions, calls,
+/// RECURSION (fact 5 -> 120) and MUTUAL RECURSION (even 8 -> 1) end to end.
+#[test]
+fn tl_emit_define_printed_programs_assemble_link_and_exit_expected() {
+    let cases = [
+        // (double 21) -> 42: a single one-arg function, %rdi spilled to -8(%rbp).
+        (
+            "double_42",
+            concat!(
+                "(ILCons (IDefFn \"double\" (SLCons \"x\" SLNil)\n",
+                "          (EBin (OpMul) (EVar \"x\") (EInt 2)))\n",
+                "  (ILCons (IDefFn \"main\" SLNil\n",
+                "            (ECall \"double\" (ELCons (EInt 21) ELNil)))\n",
+                "    ILNil))",
+            ),
+            42,
+            &[
+                "double:\n",
+                "    movq %rdi, -8(%rbp)\n",
+                "    call double\n",
+                "    pushq %rax\n",
+                "    popq %rdi\n",
+            ][..],
+        ),
+        // (add 40 2) -> 42: two args, %rdi/%rsi spilled; reverse pop order.
+        (
+            "add_42",
+            concat!(
+                "(ILCons (IDefFn \"add\" (SLCons \"x\" (SLCons \"y\" SLNil))\n",
+                "          (EBin (OpAdd) (EVar \"x\") (EVar \"y\")))\n",
+                "  (ILCons (IDefFn \"main\" SLNil\n",
+                "            (ECall \"add\" (ELCons (EInt 40) (ELCons (EInt 2) ELNil))))\n",
+                "    ILNil))",
+            ),
+            42,
+            &[
+                "add:\n",
+                "    movq %rdi, -8(%rbp)\n",
+                "    movq %rsi, -16(%rbp)\n",
+                "    popq %rsi\n",
+                "    popq %rdi\n",
+                "    call add\n",
+            ][..],
+        ),
+        // (fact 5) -> 120: RECURSION. The self-call `call fact` resolves to the
+        // emitted label; nested arg push/pop keeps %rsp 16-aligned at the call.
+        (
+            "fact_120",
+            concat!(
+                "(ILCons (IDefFn \"fact\" (SLCons \"n\" SLNil)\n",
+                "          (EIf (EBin (OpEq) (EVar \"n\") (EInt 0)) (EInt 1)\n",
+                "               (EBin (OpMul) (EVar \"n\")\n",
+                "                     (ECall \"fact\" (ELCons (EBin (OpSub) (EVar \"n\") (EInt 1)) ELNil)))))\n",
+                "  (ILCons (IDefFn \"main\" SLNil\n",
+                "            (ECall \"fact\" (ELCons (EInt 5) ELNil)))\n",
+                "    ILNil))",
+            ),
+            120,
+            &[
+                "fact:\n",
+                "    movq %rdi, -8(%rbp)\n",
+                "    call fact\n",
+                "    sete %al\n",
+            ][..],
+        ),
+        // (even 8) -> 1: MUTUAL RECURSION between two define'd functions.
+        (
+            "mutual_even_1",
+            concat!(
+                "(ILCons (IDefFn \"even\" (SLCons \"n\" SLNil)\n",
+                "          (EIf (EBin (OpEq) (EVar \"n\") (EInt 0)) (EInt 1)\n",
+                "               (ECall \"odd\" (ELCons (EBin (OpSub) (EVar \"n\") (EInt 1)) ELNil))))\n",
+                "  (ILCons (IDefFn \"odd\" (SLCons \"n\" SLNil)\n",
+                "            (EIf (EBin (OpEq) (EVar \"n\") (EInt 0)) (EInt 0)\n",
+                "                 (ECall \"even\" (ELCons (EBin (OpSub) (EVar \"n\") (EInt 1)) ELNil))))\n",
+                "    (ILCons (IDefFn \"main\" SLNil\n",
+                "              (ECall \"even\" (ELCons (EInt 8) ELNil)))\n",
+                "      ILNil)))",
+            ),
+            1,
+            &["even:\n", "odd:\n", "    call odd\n", "    call even\n"][..],
+        ),
+    ];
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let integration_dir = manifest_dir.join("tests").join("integration");
+    let root_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("tl_emit_define_printed_programs");
+
+    for (name, program, exit_code, snippets) in cases {
+        let work_dir = root_dir.join(name);
+        fs::create_dir_all(&work_dir).expect("create tl_emit define test work dir");
+
+        for dep in ["tl_emit_core.tl", "tl_ast_types.tl"] {
+            fs::copy(integration_dir.join(dep), work_dir.join(dep))
+                .expect("copy imported emitter module to work dir");
+        }
+
+        let source = format!(
+            "(import \"tl_emit_core.tl\")\n\n\
+             (define (program) : ItemList\n  {})\n\n\
+             (define (main) : unit\n  (print-string (emit-items (program))))\n",
+            program
+        );
+        let work_path = work_dir.join("driver.tl");
+        fs::write(&work_path, source).expect("write tl_emit define driver");
+
+        let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+            .arg("run")
+            .arg(&work_path)
+            .output()
+            .expect("run tl_emit define driver");
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{} driver exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+            name,
+            stdout,
+            stderr,
+        );
+        // The entry trampoline is always present; the per-function blocks each
+        // open with the SysV prologue.
+        assert!(
+            stdout.contains("main:\n") && stdout.contains("_start:\n"),
+            "{} missing entry blocks:\n{}",
+            name,
+            stdout,
+        );
+        for snippet in snippets {
+            assert!(
+                stdout.contains(snippet),
+                "{} emitted assembly missing {:?}:\n{}",
+                name,
+                snippet,
+                stdout,
+            );
+        }
+
+        let asm_path = work_dir.join("printed.s");
+        let obj_path = work_dir.join("printed.o");
+        let bin_path = work_dir.join("printed");
+        fs::write(&asm_path, &output.stdout).expect("write printed assembly");
+
+        let status = Command::new("as")
+            .arg(&asm_path)
+            .arg("-o")
+            .arg(&obj_path)
+            .status()
+            .expect("run assembler on printed tl_emit define output");
+        assert!(status.success(), "{} assembly failed", name);
+
+        let status = Command::new("ld")
+            .arg(&obj_path)
+            .arg("-o")
+            .arg(&bin_path)
+            .status()
+            .expect("run linker on printed tl_emit define output");
+        assert!(status.success(), "{} linking failed", name);
+
+        let output = Command::new(&bin_path)
+            .output()
+            .expect("run binary assembled from printed tl_emit define output");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            output.status.code(),
+            Some(exit_code),
+            "{} printed program exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+            name,
+            stdout,
+            stderr,
+        );
+        assert_eq!(stdout, "", "{} printed program wrote stdout", name);
+    }
+}
+
 /// End-to-end self-hosted pipeline (#154/#163/#167): `examples/tl_parse.tl` runs
 /// `(emit-program (parse (read (lex "(let ((x 5)) (if (< x 10) 1 0))"))))`,
 /// taking SOURCE TEXT all the way to a runnable `.s` in TypeLisp: lex -> read ->
@@ -1197,6 +1384,104 @@ fn tl_parse_printed_program_assembles_links_and_exits_1() {
         stderr,
     );
     assert_eq!(stdout, "", "printed tl_parse program wrote stdout");
+}
+
+/// define + calls (#169): the shipped `examples/tl_define.tl` builds the Item AST
+/// for `(define (fact n) (if (= n 0) 1 (* n (fact (- n 1))))) (define (main)
+/// (fact 5))` and `emit-items` prints the runnable `.s`. This test runs the demo,
+/// assembles + links + runs the printed program, and asserts exit 120 - i.e.
+/// `fact 5` = 120, witnessing define, per-function block emission, the SysV call
+/// sequence AND RECURSION all the way through to a real process exit code.
+#[test]
+fn tl_define_printed_program_assembles_links_and_exits_120() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let integration_dir = manifest_dir.join("tests").join("integration");
+    let source_path = integration_dir.join("tl_define.tl");
+    let work_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("tl_define_printed_program");
+    fs::create_dir_all(&work_dir).expect("create tl_define printed-program test work dir");
+
+    let work_path = work_dir.join("tl_define.tl");
+    fs::copy(&source_path, &work_path).expect("copy tl_define.tl to work dir");
+
+    for dep in ["tl_emit_core.tl", "tl_ast_types.tl"] {
+        fs::copy(integration_dir.join(dep), work_dir.join(dep))
+            .expect("copy imported emitter module to work dir");
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&work_path)
+        .output()
+        .expect("run tl_define");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "tl_define driver exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    for snippet in [
+        "fact:\n",
+        "main:\n",
+        "    movq %rdi, -8(%rbp)\n",
+        "    pushq %rax\n",
+        "    popq %rdi\n",
+        "    call fact\n",
+        "    sete %al\n",
+        "_start:\n",
+    ] {
+        assert!(
+            stdout.contains(snippet),
+            "tl_define printed program missing {:?}\nstderr:\n{}\nstdout:\n{}",
+            snippet,
+            stderr,
+            stdout,
+        );
+    }
+
+    let asm_path = work_dir.join("printed.s");
+    let obj_path = work_dir.join("printed.o");
+    let bin_path = work_dir.join("printed");
+    fs::write(&asm_path, &output.stdout).expect("write printed assembly");
+
+    let status = Command::new("as")
+        .arg(&asm_path)
+        .arg("-o")
+        .arg(&obj_path)
+        .status()
+        .expect("run assembler on printed tl_define output");
+    assert!(
+        status.success(),
+        "assembling printed tl_define output failed"
+    );
+
+    let status = Command::new("ld")
+        .arg(&obj_path)
+        .arg("-o")
+        .arg(&bin_path)
+        .status()
+        .expect("run linker on printed tl_define output");
+    assert!(status.success(), "linking printed tl_define output failed");
+
+    let output = Command::new(&bin_path)
+        .output()
+        .expect("run binary assembled from printed tl_define output");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(120),
+        "printed tl_define program exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(stdout, "", "printed tl_define program wrote stdout");
 }
 
 fn run_case_explicit_build(case: &Case) {

@@ -25,3 +25,7 @@
 
 (defenum Item
   (IDefFn String StrList Expr))
+
+(defenum ItemList
+  (ILNil)
+  (ILCons Item ItemList))

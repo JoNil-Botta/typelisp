@@ -94,16 +94,18 @@ Name              ; a defenum / defstruct nominal type
 (defenum Tree (Leaf i64) (Node Tree Tree))   ; recursive enums supported
 (defstruct Pair (fst i64) (snd i64))
 (extern foreign-add : (-> i64 i64 i64))
-(import "lib/util.tl")                        ; relative, deduped, cycle-checked
+(import "lib/util.tl")                        ; relative, deduped; cycles load once
 ```
 
 ### Expression forms
 
 `if`, `let`, `while`, `begin`, `set!`, `match` (incl. nested/recursive enum
-patterns and `_`), `ann`, `cast`, `lambda`, plus arithmetic (`+ - * / %`),
-comparison (`= != < <= > >=`), boolean (`and` `or`), and bitwise/shift
-(`bit-and` `bit-or` `bit-xor` `shl` `shr`) operators. `struct-get` reads a
-struct field.
+patterns and `_`), `ann`, `cast`, plus arithmetic (`+ - * / %`), comparison
+(`= != < <= > >=`), boolean (`and` `or`), and bitwise/shift (`bit-and` `bit-or`
+`bit-xor` `shl` `shr`) operators. `struct-get` reads a struct field.
+
+`lambda` parses and type-checks as a function value in limited cases, but
+backend lowering for lambda literals and captured closures is incomplete today.
 
 ### Builtins
 
@@ -123,7 +125,7 @@ TypeLisp*:
 
 - `tl_lexer.tl` — a tokenizer for TypeLisp's own s-expression syntax.
 - `tl_read.tl` — an s-expression reader producing a recursive `Sexpr` cons-cell tree (an importable module).
-- `tl_eval.tl` — a tree-walking evaluator over that tree, with integers, strings, cons pairs, and first-class closures.
+- `tl_eval.tl` — a tree-walking evaluator over that tree, with integers, strings, cons pairs, and interpreted first-class closures.
 - `calc.tl` — the lexer + a recursive-descent parser + an evaluator wired end to end into one arithmetic pipeline.
 
 ## Architecture

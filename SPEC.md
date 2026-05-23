@@ -238,7 +238,7 @@ Example:
 Imports another TypeLisp file. All top-level definitions from the imported file become available.
 
 - Relative paths are resolved from the importing file's directory.
-- Circular imports are detected and rejected.
+- Circular imports currently terminate by loading each module once; they are not rejected.
 - Import paths are normalized; importing via different relative paths to the same file deduplicates.
 
 ### 4.5 `(defenum ...)` and `(defstruct ...)`
@@ -427,6 +427,7 @@ They are not implemented by a separate C runtime.
 | `tl_alloc` | Allocate bump-allocator memory |
 | `tl_string_eq` | String comparison |
 | `tl_string_concat` | String concatenation |
+| `tl_substring` | String slicing |
 | `tl_string_to_int` | Parse integer |
 | `tl_int_to_string` | Format integer |
 | `.L_tl_abort` | Print and abort (used by `panic`/`error`) |

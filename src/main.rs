@@ -252,7 +252,26 @@ fn package_or_exit<T>(result: Result<T, PackageError>) -> T {
     }
 }
 
+#[cfg(target_os = "windows")]
+const WINDOWS_CLI_STACK_SIZE: usize = 16 * 1024 * 1024;
+
+#[cfg(target_os = "windows")]
 fn main() {
+    std::thread::Builder::new()
+        .name("typelisp-cli".to_string())
+        .stack_size(WINDOWS_CLI_STACK_SIZE)
+        .spawn(run_cli)
+        .expect("failed to spawn typelisp CLI thread")
+        .join()
+        .expect("typelisp CLI thread panicked");
+}
+
+#[cfg(not(target_os = "windows"))]
+fn main() {
+    run_cli();
+}
+
+fn run_cli() {
     let args: Vec<String> = env::args().collect();
 
     if args.len() < 2 {

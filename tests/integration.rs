@@ -334,20 +334,14 @@ fn type_lisp_programs_compile_link_and_run() {
         // Self-hosting (#27): the lexer for TypeLisp's OWN s-expression syntax
         // (NOT the arithmetic-calculator surface). `lexer.tl` tokenizes real
         // TypeLisp source - balanced parens, integer literals, *symbols*
-        // (operators / keywords / names are all one `TSym` kind), STRING LITERALS
-        // (`"..."` => `TStr`), CHAR LITERALS (`#x'` / `#\x'` => `TChar`), and
-        // `;` line comments (skipped) - into a real
-        // `(Array Token)`, slicing each lexeme out of the source with `substring`
-        // (and parsing ints with `string->int`). `main` lexes the escaped sample
-        // "(foo \"hi\" #\\space' #\\newline' #A' 42) ; c\n(bar)" into TLParen
-        // TSym(foo) TStr(hi) TChar(space) TChar(newline) TChar(A) TInt(42)
-        // TRParen TLParen TSym(bar) TRParen (the `; c` comment drops out): 11
-        // tokens with 1 TStr and 3 TChar, so it returns 11 + 1 + 3 = 15. The
-        // token model lives in the `main`-less `token.tl`, imported by
-        // `lexer.tl` and copied alongside.
+        // (operators / keywords / names are all one `TSym` kind), string literals,
+        // character literals, and `;` line comments (skipped) - into a real
+        // `(Array Token)`. `main` lexes a sample with `#x'`, `#\n'`, `#\space'`,
+        // and `#\newline'`, verifies their decoded code sum, and returns
+        // 12 tokens + 1 string + 4 chars = 17.
         Case {
             name: "tl_lexer",
-            exit_code: 15,
+            exit_code: 17,
             stdout: "",
             deps: &["token.tl"],
         },
@@ -358,18 +352,13 @@ fn type_lisp_programs_compile_link_and_run() {
         // recursive `read-form` / `read-list`. It REUSES the lexer by importing
         // `lex` from the `main`-less `lex.tl` (which transitively imports the
         // `main`-less `token.tl`), so the whole program has one `main` - the
-        // reader's. The reader now also consumes the lexer's `TStr` token (#128)
-        // and `TChar` token (#333) into new `(SStr String)` and `(SChar char)`
-        // atoms, kept distinct from symbols. `main` reads
-        // `(greet "hi" #\space' 7 (msg #\newline' "yo" 35))` into the Sexpr
-        // tree and folds it three ways: `sum-ints` sums integer atoms
-        // (7 + 35 => 42), `count-strs` tallies `SStr` atoms (2), and
-        // `count-chars` tallies `SChar` atoms (2), so the result is 46,
-        // witnessing that ints, strings, and chars read through nesting. Both imported
-        // `main`-less modules are copied alongside so the `(import)` chain resolves.
+        // reader's. The reader consumes lexer `TStr` and `TChar` tokens into
+        // distinct `SStr` and `SChar` atoms. `main` reads a nested sample, sums
+        // ints to 42, counts two strings, counts four chars, verifies decoded char
+        // codes sum to 172, and returns 42 + 2 + 4 + 10 = 58.
         Case {
             name: "tl_reader",
-            exit_code: 46,
+            exit_code: 58,
             stdout: "",
             deps: &["lex.tl", "token.tl"],
         },
@@ -722,29 +711,23 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         // Self-hosting (#27): the TypeLisp-syntax (s-expression) lexer - now with
         // string literals (`TStr`), char literals (`TChar`), and `;` line comments
         // - also exercised through the explicit compile -> as -> ld -> run
-        // pipeline. Lexes the escaped sample
-        // "(foo \"hi\" #\\space' #\\newline' #A' 42) ; c\n(bar)" into 11 tokens
-        // (1 TStr and 3 TChar; the `; c` comment is skipped) and returns
-        // 11 + 1 + 3 = 15. The `main`-less `token.tl` is copied alongside so the `(import)`
-        // resolves.
+        // pipeline. The sample includes `#x'`, `#\n'`, `#\space'`, and
+        // `#\newline'`; `main` verifies their decoded code sum and returns
+        // 12 tokens + 1 string + 4 chars = 17.
         Case {
             name: "tl_lexer",
-            exit_code: 15,
+            exit_code: 17,
             stdout: "",
             deps: &["token.tl"],
         },
         // Self-hosting (#27): the s-expression reader, also exercised through the
         // explicit compile -> as -> ld -> run pipeline. Reads
-        // `(greet "hi" #\space' 7 (msg #\newline' "yo" 35))` into the recursive
-        // cons-cell `Sexpr` AST and folds it three ways: `sum-ints` sums integer
-        // atoms (7 + 35 => 42), `count-strs` tallies `SStr` atoms (2), and
-        // `count-chars` tallies `SChar` atoms (2), so the result is 46. The lexer
-        // is reused via the `main`-less
-        // `lex.tl` import (which transitively imports `token.tl`); both are
-        // copied alongside so the imports resolve.
+        // a nested sample into the recursive cons-cell `Sexpr` AST and folds it:
+        // integer atoms sum to 42, string atoms count to 2, char atoms count to 4,
+        // and decoded char codes sum to 172, so the result is 58.
         Case {
             name: "tl_reader",
-            exit_code: 46,
+            exit_code: 58,
             stdout: "",
             deps: &["lex.tl", "token.tl"],
         },

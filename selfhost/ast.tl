@@ -87,6 +87,7 @@
     [(SInt n) (EInt n)]
     [(SSym name) (EVar name)]
     [(SStr s) (EStr s)]
+    [(SChar _) (begin (panic "ast: unsupported char literal") (EInt 0))]
     [(SCons (SSym op) rest)
      (if (string-eq op "+")
          (parse-binary (OpAdd) rest)

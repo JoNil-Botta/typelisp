@@ -107,6 +107,7 @@ fn tl_reader_tl_compiles_to_assembly() {
         "_tl_sum_ints:",
         "_tl_count_strs:",
         "_tl_count_chars:",
+        "_tl_sum_char_codes:",
     ] {
         assert!(
             asm.contains(sym),
@@ -165,6 +166,11 @@ fn tl_reader_tl_compiles_to_assembly() {
     assert!(
         asm.contains("call _tl_count_chars"),
         "tl_reader assembly shows no main -> count-chars call (SChar fold):\n{}",
+        asm,
+    );
+    assert!(
+        asm.contains("call _tl_sum_char_codes"),
+        "tl_reader assembly shows no main -> sum-char-codes call (char value check):\n{}",
         asm,
     );
 

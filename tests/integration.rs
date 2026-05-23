@@ -279,7 +279,7 @@ fn type_lisp_programs_compile_link_and_run() {
             name: "tl_emit",
             exit_code: 0,
             stdout: TL_EMIT_PROGRAM_ASM,
-            deps: &["emit_core.tl", "ast_types.tl"],
+            deps: &["emit_core.tl", "ast_types.tl", "sym_i64_env.tl"],
         },
         // Self-hosting M1 (#154/#173): parse the reader's generic Sexpr tree
         // into the compiler AST shared with `emit.tl`. The witness parses
@@ -636,7 +636,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             name: "tl_emit",
             exit_code: 0,
             stdout: TL_EMIT_PROGRAM_ASM,
-            deps: &["emit_core.tl", "ast_types.tl"],
+            deps: &["emit_core.tl", "ast_types.tl", "sym_i64_env.tl"],
         },
         // Self-hosting M1 (#154/#173): Sexpr -> compiler AST parser, also
         // through the explicit compile -> as -> ld -> run pipeline.
@@ -783,6 +783,11 @@ fn tl_emit_printed_program_assembles_links_and_exits_7() {
         work_dir.join("emit_core.tl"),
     )
     .expect("copy emit_core.tl to work dir");
+    fs::copy(
+        selfhost_dir.join("sym_i64_env.tl"),
+        work_dir.join("sym_i64_env.tl"),
+    )
+    .expect("copy sym_i64_env.tl to work dir");
 
     let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
         .arg("run")
@@ -888,7 +893,7 @@ fn tl_emit_let_printed_programs_assemble_link_and_exit_expected() {
         let work_dir = root_dir.join(name);
         fs::create_dir_all(&work_dir).expect("create tl_emit let test work dir");
 
-        for dep in ["emit_core.tl", "ast_types.tl"] {
+        for dep in ["emit_core.tl", "ast_types.tl", "sym_i64_env.tl"] {
             fs::copy(selfhost_dir.join(dep), work_dir.join(dep))
                 .expect("copy imported emitter module to work dir");
         }
@@ -1141,7 +1146,7 @@ fn tl_emit_if_printed_programs_assemble_link_and_exit_expected() {
         let work_dir = root_dir.join(name);
         fs::create_dir_all(&work_dir).expect("create tl_emit if test work dir");
 
-        for dep in ["emit_core.tl", "ast_types.tl"] {
+        for dep in ["emit_core.tl", "ast_types.tl", "sym_i64_env.tl"] {
             fs::copy(selfhost_dir.join(dep), work_dir.join(dep))
                 .expect("copy imported emitter module to work dir");
         }
@@ -1283,7 +1288,7 @@ fn tl_emit_comparison_printed_programs_assemble_link_and_exit_expected() {
         let work_dir = root_dir.join(name);
         fs::create_dir_all(&work_dir).expect("create tl_emit comparison test work dir");
 
-        for dep in ["emit_core.tl", "ast_types.tl"] {
+        for dep in ["emit_core.tl", "ast_types.tl", "sym_i64_env.tl"] {
             fs::copy(selfhost_dir.join(dep), work_dir.join(dep))
                 .expect("copy imported emitter module to work dir");
         }
@@ -1427,7 +1432,7 @@ fn tl_emit_string_printed_programs_assemble_link_and_stdout_expected() {
         let work_dir = root_dir.join(name);
         fs::create_dir_all(&work_dir).expect("create tl_emit string test work dir");
 
-        for dep in ["emit_core.tl", "ast_types.tl"] {
+        for dep in ["emit_core.tl", "ast_types.tl", "sym_i64_env.tl"] {
             fs::copy(selfhost_dir.join(dep), work_dir.join(dep))
                 .expect("copy imported emitter module to work dir");
         }
@@ -1628,7 +1633,7 @@ fn tl_emit_def_call_printed_programs_assemble_link_and_exit_expected() {
         let work_dir = root_dir.join(name);
         fs::create_dir_all(&work_dir).expect("create tl_emit def/call test work dir");
 
-        for dep in ["emit_core.tl", "ast_types.tl"] {
+        for dep in ["emit_core.tl", "ast_types.tl", "sym_i64_env.tl"] {
             fs::copy(selfhost_dir.join(dep), work_dir.join(dep))
                 .expect("copy imported emitter module to work dir");
         }
@@ -1731,6 +1736,7 @@ fn tl_parse_printed_program_assembles_links_and_exits_1() {
     for dep in [
         "parse_core.tl",
         "emit_core.tl",
+        "sym_i64_env.tl",
         "ast_types.tl",
         "read.tl",
         "lex.tl",
@@ -1842,6 +1848,7 @@ fn tl_compile_smoke_writes_assembly_file_and_output_exits_1() {
     for dep in [
         "parse_core.tl",
         "emit_core.tl",
+        "sym_i64_env.tl",
         "ast_types.tl",
         "read.tl",
         "lex.tl",

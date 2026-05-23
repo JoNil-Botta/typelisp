@@ -11,8 +11,9 @@
 ;;
 ;; Token grammar handled this slice (a tiny arithmetic + identifier surface):
 ;;   identifiers (an ASCII letter or `_`, then letters/digits/`_`),
-;;   integers (one or more decimal digits), `+`, `(`, `)`, and whitespace
-;;   (space / tab / newline, which separate tokens but emit nothing).
+;;   integers (one or more decimal digits), the operators `+` `-` `*` `/`,
+;;   `(`, `)`, and whitespace (space / tab / newline, which separate tokens but
+;;   emit nothing).
 ;; An unexpected character aborts the program via the `panic` builtin (#45),
 ;; exactly as a real lexer reports malformed input.
 ;;
@@ -31,6 +32,9 @@
   (TIdent String)
   (TInt i64)
   (TPlus)
+  (TMinus)
+  (TStar)
+  (TSlash)
   (TLParen)
   (TRParen)
   (TEnd))
@@ -42,9 +46,12 @@
     [(TIdent _) 0]
     [(TInt _) 1]
     [(TPlus) 2]
-    [(TLParen) 3]
-    [(TRParen) 4]
-    [(TEnd) 5]))
+    [(TMinus) 3]
+    [(TStar) 4]
+    [(TSlash) 5]
+    [(TLParen) 6]
+    [(TRParen) 7]
+    [(TEnd) 8]))
 
 ;; ASCII code point of a char, e.g. the digit char `7` -> 55.
 (define (code [c : char]) : i64
@@ -82,15 +89,21 @@
 ;; dead code that only satisfies the `Token` result type, since `panic` yields
 ;; unit and never returns.
 (define (single-token [c : char]) : Token
-  (if (= (code c) 43)            ; '+'
+  (if (= (code c) 43)                ; '+'
       TPlus
-      (if (= (code c) 40)        ; '('
-          TLParen
-          (if (= (code c) 41)    ; ')'
-              TRParen
-              (begin
-                (panic "lexer: unexpected character")
-                TEnd)))))
+      (if (= (code c) 45)            ; '-'
+          TMinus
+          (if (= (code c) 42)        ; '*'
+              TStar
+              (if (= (code c) 47)    ; '/'
+                  TSlash
+                  (if (= (code c) 40)        ; '('
+                      TLParen
+                      (if (= (code c) 41)    ; ')'
+                          TRParen
+                          (begin
+                            (panic "lexer: unexpected character")
+                            TEnd))))))))
 
 ;; Return the end index (exclusive) of the identifier that starts at `start`
 ;; in `src`: scan forward over identifier characters. `n` is the source length.
@@ -114,6 +127,9 @@
     [(TIdent s) (string-length s)]
     [(TInt _) 0]
     [(TPlus) 0]
+    [(TMinus) 0]
+    [(TStar) 0]
+    [(TSlash) 0]
     [(TLParen) 0]
     [(TRParen) 0]
     [(TEnd) 0]))
@@ -158,14 +174,15 @@
       (array-set! toks count TEnd)
       count)))
 
-;; Lex the sample `"foo + (12)"`:
-;;   - Full token stream (excluding the TEnd sentinel): TIdent("foo") TPlus
-;;     TLParen TInt(12) TRParen => 5 tokens.
+;; Lex the sample `"foo - 3 * (12 / 4)"` (exercises every operator `- * /` and
+;; the parens):
+;;   - Full token stream (excluding the TEnd sentinel): TIdent("foo") TMinus
+;;     TInt(3) TStar TLParen TInt(12) TSlash TInt(4) TRParen => 9 tokens.
 ;;   - Token 0 is read back out of `(Array Token)` as `(TIdent "foo")`, whose
 ;;     text length is 3.
-;; main returns 5 + 3 = 8, an observable result an execution test can check
+;; main returns 9 + 3 = 12, an observable result an execution test can check
 ;; that depends on both the token count and the substring-sliced identifier.
 (define (main) : i64
   (let ([toks : (Array Token) (make-array Token 16)])
-    (let ([count : i64 (lex "foo + (12)" toks)])
+    (let ([count : i64 (lex "foo - 3 * (12 / 4)" toks)])
       (+ count (ident-text-length (array-ref toks 0))))))

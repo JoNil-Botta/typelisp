@@ -260,8 +260,8 @@ fn type_lisp_programs_compile_link_and_run() {
         // lexical env (applied as a computed operator `((lambda ...) a)` or a
         // closure-valued variable `(f a)`, with free variables resolved through the
         // captured env via `bind-args-onto`), and `(cons a b)` builds a `(VPair a b)`
-        // cell that `car` / `cdr` project (a pair PRINTS as the placeholder
-        // `#<pair>`); `(pair? x)` is true iff `x` is a `(VPair ...)` and `(null? x)`
+        // cell that `car` / `cdr` project and the recursive list printer can render
+        // as `(...)`; `(pair? x)` is true iff `x` is a `(VPair ...)` and `(null? x)`
         // is true iff `x` is the nil sentinel `(VInt 0)` (refs #141), both folded to
         // 1/0. `Value` and `Env` are mutually recursive enums (a `VClosure` carries
         // an `Env`, an `EBind` carries a `Value`), each pointer-sized so the layout

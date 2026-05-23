@@ -633,6 +633,38 @@ impl TypeChecker {
                         }
                         Ok(*ret_ty)
                     }
+                    // `(Red)` — a zero-arg call form whose head is a nullary enum
+                    // variant constructs that variant, equivalent to bare `Red`
+                    // and consistent with payload construction `(RGB 5)`. The
+                    // head resolved to `Type::Enum` (not `Type::Func`) precisely
+                    // because nullary variants are bound as their enum type, so a
+                    // genuine zero-arg `define`d function `(f)` — bound as
+                    // `Type::Func` — is unaffected and still calls (the `Func`
+                    // arm above takes precedence). A nullary variant given a
+                    // non-empty arg list is an arity error.
+                    Type::Enum(_)
+                        if matches!(func.unspan(), Expr::Var(name)
+                            if self
+                                .enums
+                                .lookup_variant(name)
+                                .is_some_and(|(_, _, fields)| fields.is_empty())) =>
+                    {
+                        if !args.is_empty() {
+                            let name = match func.unspan() {
+                                Expr::Var(n) => n,
+                                _ => unreachable!(),
+                            };
+                            return Err(TypeError::at(
+                                format!(
+                                    "nullary enum variant '{}' takes no arguments, got {}",
+                                    name,
+                                    args.len()
+                                ),
+                                span,
+                            ));
+                        }
+                        Ok(func_ty)
+                    }
                     _ => Err(TypeError::at(
                         format!("expected function type, got {}", func_ty),
                         func.span(),
@@ -1815,6 +1847,40 @@ mod tests {
     fn test_typecheck_nullary_constructor() {
         let src = format!("{SHAPE}\n(define (n) : i64 (match Nothing [Nothing 1] [_ 0]))");
         assert!(check(&src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_nullary_variant_call_form_constructs() {
+        // GAP (D): the zero-arg call form `(Nothing)` constructs the nullary
+        // variant, equivalent to bare `Nothing` and consistent with payload
+        // construction `(Circle 1)`. It type-checks to the enum type, so it can
+        // be the scrutinee of a `match` over `Shape`.
+        let src = format!(
+            "{SHAPE}\n(define (n) : i64 \
+               (match (Nothing) [(Circle r) r] [(Square w) w] [(Nothing) 0]))"
+        );
+        assert!(check(&src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_nullary_variant_call_form_with_args_is_arity_error() {
+        // `(Nothing 1)` gives a nullary variant a payload it does not have: an
+        // arity error, not a silently-ignored argument.
+        let src = format!(
+            "{SHAPE}\n(define (n) : i64 \
+               (match (Nothing 1) [(Circle r) r] [(Square w) w] [(Nothing) 0]))"
+        );
+        assert!(check(&src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_zero_arg_function_call_still_dispatches() {
+        // Disambiguation: a genuine zero-arg `define`d function `(f)` is bound as
+        // a `Type::Func` and still CALLS the function (the function arm takes
+        // precedence). The nullary-variant construction path only triggers when
+        // the head resolved to an enum type, which a function name never does.
+        let src = "(define (answer) : i64 42)\n(define (main) : i64 (answer))";
+        assert!(check(src).is_ok());
     }
 
     #[test]

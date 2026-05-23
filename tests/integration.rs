@@ -149,6 +149,18 @@ fn type_lisp_programs_compile_link_and_run() {
             stdout: "",
             deps: &[],
         },
+        // refs #41, GAP (D): the zero-arg call form `(Ctor)` constructs a NULLARY
+        // enum variant. `main` builds `(Red)` and `(Green)` via the call form (the
+        // same construction bare `Red`/`Green` would produce), the payload variant
+        // `(RGB 9)`, and calls the zero-arg FUNCTION `(bias)` (30) — proving the
+        // disambiguation rule (a function name still calls). code(Red)=1 +
+        // code(Green)=2 + code(RGB 9)=9 + bias=30 = 42.
+        Case {
+            name: "nullary_variant_call",
+            exit_code: 42,
+            stdout: "",
+            deps: &[],
+        },
         // Self-hosting (#27, phase 4): a tokenizer written in TypeLisp itself.
         // Lexes "foo - 3 * (12 / 4)" into 9 tokens: TIdent("foo") TMinus
         // TInt(3) TStar TLParen TInt(12) TSlash TInt(4) TRParen — exercising
@@ -463,6 +475,17 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         },
         Case {
             name: "enum_match",
+            exit_code: 42,
+            stdout: "",
+            deps: &[],
+        },
+        // refs #41, GAP (D): the zero-arg call form `(Ctor)` constructs a NULLARY
+        // enum variant, also through the explicit compile -> as -> ld -> run
+        // pipeline. `main` = code(Red)=1 + code(Green)=2 + code(RGB 9)=9 +
+        // bias=30 = 42, proving `(Red)`/`(Green)` construct nullary variants while
+        // the zero-arg function `(bias)` still calls.
+        Case {
+            name: "nullary_variant_call",
             exit_code: 42,
             stdout: "",
             deps: &[],

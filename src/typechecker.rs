@@ -642,12 +642,12 @@ impl TypeChecker {
                     // `Type::Func` — is unaffected and still calls (the `Func`
                     // arm above takes precedence). A nullary variant given a
                     // non-empty arg list is an arity error.
-                    Type::Enum(_)
+                    Type::Enum(enum_name)
                         if matches!(func.unspan(), Expr::Var(name)
                             if self
                                 .enums
                                 .lookup_variant(name)
-                                .is_some_and(|(_, _, fields)| fields.is_empty())) =>
+                                .is_some_and(|(owner, _, fields)| owner == enum_name && fields.is_empty())) =>
                     {
                         if !args.is_empty() {
                             let name = match func.unspan() {
@@ -663,7 +663,7 @@ impl TypeChecker {
                                 span,
                             ));
                         }
-                        Ok(func_ty)
+                        Ok(Type::Enum(enum_name))
                     }
                     _ => Err(TypeError::at(
                         format!("expected function type, got {}", func_ty),
@@ -1881,6 +1881,19 @@ mod tests {
         // the head resolved to an enum type, which a function name never does.
         let src = "(define (answer) : i64 42)\n(define (main) : i64 (answer))";
         assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_nullary_variant_call_form_respects_shadowing_type() {
+        // A local enum-typed value whose name happens to match a nullary variant
+        // from a different enum must not be accepted as construction of that
+        // variant. The variant owner must match the enum type of the resolved
+        // head expression.
+        let src = "\
+            (defenum Shape (Nothing))\n\
+            (defenum Other (OtherV))\n\
+            (define (main [Nothing : Other]) : Other (Nothing))";
+        assert!(check(src).is_err());
     }
 
     #[test]

@@ -43,6 +43,16 @@
     [(ELNil) 0]
     [(ELCons e rest) (max-i64 (max-let-depth e) (expr-list-max-let-depth rest))]))
 
+(define (expr-list-count [xs : ExprList]) : i64
+  (match xs
+    [(ELNil) 0]
+    [(ELCons _ rest) (+ 1 (expr-list-count rest))]))
+
+(define (str-list-count [xs : StrList]) : i64
+  (match xs
+    [(SLNil) 0]
+    [(SLCons _ rest) (+ 1 (str-list-count rest))]))
+
 (define (max-let-depth [e : Expr]) : i64
   (match e
     [(EInt _) 0]
@@ -62,6 +72,44 @@
     (begin
       (array-set! lc 0 (+ id 1))
       (string-append prefix (int->string id)))))
+
+(define (checked-max-six [n : i64] [message : String]) : i64
+  (if (< 6 n)
+      (begin (panic message) 0)
+      n))
+
+(define (arg-reg [idx : i64]) : String
+  (if (= idx 0)
+      "%rdi"
+      (if (= idx 1)
+          "%rsi"
+          (if (= idx 2)
+              "%rdx"
+              (if (= idx 3)
+                  "%rcx"
+                  (if (= idx 4)
+                      "%r8"
+                      (if (= idx 5)
+                          "%r9"
+                          (begin
+                            (panic "emit: arg register index out of range")
+                            "%rdi"))))))))
+
+(define (bind-params [params : StrList] [slot : i64] [env : CEnv]) : CEnv
+  (match params
+    [(SLNil) env]
+    [(SLCons name rest)
+     (bind-params rest (+ slot 1) (CBind name (slot-offset slot) env))]))
+
+(define (emit-param-spills [params : StrList] [idx : i64]) : String
+  (match params
+    [(SLNil) ""]
+    [(SLCons _ rest)
+     (string-append "    movq "
+       (string-append (arg-reg idx)
+         (string-append ", "
+           (string-append (emit-slot (slot-offset (+ idx 1)))
+             (string-append "\n" (emit-param-spills rest (+ idx 1)))))))]))
 
 (define (emit-int [n : i64]) : String
   (string-append "    movq $" (string-append (int->string n) ", %rax\n")))
@@ -112,6 +160,28 @@
                           (string-append (emit-expr-in env depth lc e)
                             (string-append lend ":\n")))))))))))))))
 
+(define (emit-call-arg-pushes [env : CEnv] [depth : i64] [lc : (Array i64)] [args : ExprList]) : String
+  (match args
+    [(ELNil) ""]
+    [(ELCons arg rest)
+     (string-append (emit-expr-in env depth lc arg)
+       (string-append "    pushq %rax\n"
+         (emit-call-arg-pushes env depth lc rest)))]))
+
+(define (emit-call-arg-pops [argc : i64]) : String
+  (if (= argc 0)
+      ""
+      (let ([idx : i64 (- argc 1)])
+        (string-append "    popq "
+          (string-append (arg-reg idx)
+            (string-append "\n" (emit-call-arg-pops idx)))))))
+
+(define (emit-call [env : CEnv] [depth : i64] [lc : (Array i64)] [name : String] [args : ExprList]) : String
+  (let ([argc : i64 (checked-max-six (expr-list-count args) "emit: too many call args")])
+    (string-append (emit-call-arg-pushes env depth lc args)
+      (string-append (emit-call-arg-pops argc)
+        (string-append "    call " (string-append name "\n"))))))
+
 (define (emit-expr-in [env : CEnv] [depth : i64] [lc : (Array i64)] [e : Expr]) : String
   (match e
     [(EInt n) (emit-int n)]
@@ -119,7 +189,31 @@
     [(EBin op a b) (emit-bin env depth lc op a b)]
     [(ELet name value body) (emit-let env depth lc name value body)]
     [(EIf c t e) (emit-if env depth lc c t e)]
-    [(ECall _ _) (begin (panic "emit: calls are not in M1 arithmetic") "")]))
+    [(ECall name args) (emit-call env depth lc name args)]))
+
+(define (function-frame-size [params : StrList] [body : Expr]) : i64
+  (round-up-16 (* 8 (+ (str-list-count params) (max-let-depth body)))))
+
+(define (emit-def [lc : (Array i64)] [item : Item]) : String
+  (match item
+    [(IDefFn name params body)
+     (let ([nparams : i64 (checked-max-six (str-list-count params) "emit: too many params")])
+       (let ([frame : i64 (function-frame-size params body)])
+         (string-append name
+           (string-append ":\n"
+             (string-append "    push %rbp\n"
+               (string-append "    mov %rsp, %rbp\n"
+                 (string-append (emit-stack-sub frame)
+                   (string-append (emit-param-spills params 0)
+                     (string-append (emit-expr-in (bind-params params 1 CNil) nparams lc body)
+                       (string-append "    mov %rbp, %rsp\n"
+                         (string-append "    pop %rbp\n"
+                           "    ret\n\n")))))))))))]))
+
+(define (emit-defs [lc : (Array i64)] [items : ItemList]) : String
+  (match items
+    [(ILNil) ""]
+    [(ILCons item rest) (string-append (emit-def lc item) (emit-defs lc rest))]))
 
 (define (emit-expr [e : Expr]) : String
   (let ([lc : (Array i64) (make-array i64 1)])
@@ -127,9 +221,24 @@
       (array-set! lc 0 0)
       (emit-expr-in CNil 0 lc e))))
 
-;; emit-program: wrap the body asm in the complete backend-shaped `.s` skeleton.
-;; It reserves one aligned frame region for all lexical let slots.
-(define (emit-program [e : Expr]) : String
+(define (emit-entry [frame : i64] [body : String]) : String
+  (string-append "main:\n"
+    (string-append "    push %rbp\n"
+      (string-append "    mov %rsp, %rbp\n"
+        (string-append (emit-stack-sub frame)
+          (string-append body
+            (string-append (emit-stack-add frame)
+              (string-append "    pop %rbp\n"
+                (string-append "    ret\n\n"
+                  (string-append "_start:\n"
+                    (string-append "    call main\n"
+                      (string-append "    movq %rax, %rdi\n"
+                        (string-append "    movq $60, %rax\n"
+                          "    syscall\n")))))))))))))
+
+;; emit-program-with-defs: emit user `define` blocks before the entry wrapper.
+;; `emit-program` stays as the no-define compatibility wrapper.
+(define (emit-program-with-defs [defs : ItemList] [e : Expr]) : String
   (let ([frame : i64 (frame-size e)]
         [lc : (Array i64) (make-array i64 1)])
     (begin
@@ -137,16 +246,8 @@
       (string-append "    .text\n"
         (string-append "    .globl main\n"
           (string-append "    .globl _start\n\n"
-            (string-append "main:\n"
-              (string-append "    push %rbp\n"
-                (string-append "    mov %rsp, %rbp\n"
-                  (string-append (emit-stack-sub frame)
-                    (string-append (emit-expr-in CNil 0 lc e)
-                      (string-append (emit-stack-add frame)
-                        (string-append "    pop %rbp\n"
-                          (string-append "    ret\n\n"
-                            (string-append "_start:\n"
-                              (string-append "    call main\n"
-                                (string-append "    movq %rax, %rdi\n"
-                                  (string-append "    movq $60, %rax\n"
-                                    "    syscall\n"))))))))))))))))))
+            (string-append (emit-defs lc defs)
+              (emit-entry frame (emit-expr-in CNil 0 lc e)))))))))
+
+(define (emit-program [e : Expr]) : String
+  (emit-program-with-defs ILNil e))

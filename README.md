@@ -1,14 +1,15 @@
 # TypeLisp
 
-A typed Lisp/Scheme dialect with a custom x86_64 backend and optimizer.
+A statically typed Lisp/Scheme dialect that compiles directly to native
+x86_64 Linux assembly. Written in Rust with **zero third-party dependencies**
+(`std` only).
 
 ## Goals
 
 - **Typed**: Every expression has a known type at compile time. No runtime type tagging.
-- **Simple**: Minimal syntax, minimal runtime, minimal magic.
-- **Fast**: Compiles directly to x86_64 assembly. No bytecode VM, no interpreter.
+- **Native**: Compiles straight to x86_64 assembly, then `as` + `ld` to an ELF binary. No bytecode VM, no interpreter, no garbage collector.
 - **Zero dependencies**: Built with Rust `std` only. No third-party crates.
-- **Educational**: Small enough to understand the whole compiler in a weekend.
+- **Self-hostable front end**: A lexer, s-expression reader, and tree-walking evaluator for TypeLisp are themselves written in TypeLisp (see [`examples/`](examples)).
 
 ## Quick Start
 
@@ -16,91 +17,150 @@ A typed Lisp/Scheme dialect with a custom x86_64 backend and optimizer.
 git clone https://github.com/JoNil-Botta/typelisp
 cd typelisp
 cargo build --release
-./target/release/typelisp check examples/hello.tl
+
+# Type-check, compile, or run a program (run requires `as`/`ld` on Linux):
+./target/release/typelisp check   examples/hello.tl
+./target/release/typelisp compile examples/hello.tl     # writes examples/hello.s
+./target/release/typelisp run     examples/hello.tl
 ```
 
 ## Example
 
 ```lisp
-(define (factorial [n : i64]) : i64
-  (if (= n 0)
-      1
-      (* n (factorial (- n 1)))))
+(defstruct Point (x i64) (y i64))
 
-(factorial 5)  ; => 120
+(defenum Shape
+  (Circle i64)        ; radius
+  (Rect   i64 i64))   ; width height
+
+(define (area [s : Shape]) : i64
+  (match s
+    [(Circle r)   (* 3 (* r r))]
+    [(Rect w h)   (* w h)]))
+
+(define (main) : i64
+  (let ([p : Point (Point 3 4)])
+    (+ (struct-get p x)            ; 3
+       (area (Rect 5 6)))))        ; 30  -> main returns 33
 ```
 
-## Language
+The entry point is a function named `main` returning `i64` or `unit`. If `main`
+is omitted, the compiler synthesizes one that returns 0.
 
-TypeLisp uses S-expressions with optional type annotations.
+## Language at a glance
+
+TypeLisp uses S-expressions with explicit type annotations on parameters,
+struct/enum fields, and (optionally) `let` bindings.
 
 ```lisp
-;; Variables
-(define x : i64 42)
+;; Global variable (scalar literal initializer only)
+(define answer : i64 42)
 
-;; Functions
-(define (add [a : i64] [b : i64]) : i64
-  (+ a b))
+;; Function (parameters must be typed; return type defaults to unit)
+(define (add [a : i64] [b : i64]) : i64 (+ a b))
+
+;; Local bindings (sequential, let* scoping)
+(let ([x : i64 10]
+      [y     (* x 2)])   ; type inferred
+  (+ x y))
 
 ;; Control flow
-(if (< x 10)
-    "small"
-    "large")
+(if (< answer 100) "small" "large")
+(while (> answer 0) (set! answer (- answer 1)))
+(begin (print 1) (print 2) 0)
 
-;; Local bindings
-(let ([y : i64 (+ x 1)])
-  (* y 2))
-
-;; Types
-;; i64 i32 i16 i8 u64 u32 u16 u8 f64 f32 bool char unit
-;; (-> arg1 arg2 ... ret)
-;; (Tuple t1 t2 ...)
-;; (Array type size)
+;; Casts
+(cast 300 : u8)
 ```
+
+### Types
+
+```
+i64 i32 i16 i8   u64 u32 u16 u8   f64   bool   char   unit   String
+(Array t)         ; dynamic, runtime-sized array
+(Array t n)       ; fixed-size array (parses/type-checks; value lowering WIP)
+(Tuple t1 t2 ...) ; (parses/type-checks; value lowering WIP)
+(-> arg... ret)   ; function type
+Name              ; a defenum / defstruct nominal type
+```
+
+`f32` is in the type system but rejected by backend validation today.
+
+### Top-level forms
+
+`define` (variable / function), `defenum`, `defstruct`, `extern`, `import`.
+
+```lisp
+(defenum Tree (Leaf i64) (Node Tree Tree))   ; recursive enums supported
+(defstruct Pair (fst i64) (snd i64))
+(extern foreign-add : (-> i64 i64 i64))
+(import "lib/util.tl")                        ; relative, deduped; cycles load once
+```
+
+### Expression forms
+
+`if`, `let`, `while`, `begin`, `set!`, `match` (incl. nested/recursive enum
+patterns and `_`), `ann`, `cast`, plus arithmetic (`+ - * / %`), comparison
+(`= != < <= > >=`), boolean (`and` `or`), and bitwise/shift (`bit-and` `bit-or`
+`bit-xor` `shl` `shr`) operators. `struct-get` reads a struct field.
+
+`lambda` parses and type-checks as a function value in limited cases, but
+backend lowering for lambda literals and captured closures is incomplete today.
+
+### Builtins
+
+`print`, `print-bool`, `print-float`, `print-char`, `print-newline`,
+`print-string`/`print-str`; `make-array`, `array-ref`, `array-set!`,
+`array-length`/`length`; strings: `string-length`/`length`,
+`string-ref`/`char-at`, `string-eq`/`string=?`, `string-append`/`string-concat`,
+`substring`/`string-slice`, `string->int`, `int->string`; and `panic`/`error`.
+Array and string indexing is bounds-checked at runtime.
+
+See [SPEC.md](SPEC.md) for the full language reference.
+
+## Self-hosting examples
+
+The [`examples/`](examples) directory builds up a TypeLisp front end *written in
+TypeLisp*:
+
+- `tl_lexer.tl` — a tokenizer for TypeLisp's own s-expression syntax.
+- `tl_read.tl` — an s-expression reader producing a recursive `Sexpr` cons-cell tree (an importable module).
+- `tl_eval.tl` — a tree-walking evaluator over that tree, with integers, strings, cons pairs, and interpreted first-class closures.
+- `calc.tl` — the lexer + a recursive-descent parser + an evaluator wired end to end into one arithmetic pipeline.
 
 ## Architecture
 
 ```
-Source Code
-    ↓
-Lexer → Tokens
-    ↓
-Parser → AST
-    ↓
-Type Checker → Typed AST
-    ↓
-Lowerer → IR (3-address code, basic blocks)
-    ↓
-Optimizer → Optimized IR
-    ↓
-Backend → x86_64 Assembly
-    ↓
-as + ld → Binary
+Source (.tl)
+    ↓  Lexer        → Tokens
+    ↓  Parser       → AST
+    ↓  Type Checker → Typed AST
+    ↓  Lowerer      → IR (3-address code, basic blocks)
+    ↓  Optimizer    → constant folding, DCE, strength reduction, copy propagation
+    ↓  Backend      → x86_64 assembly (.s)
+    ↓  as + ld      → ELF binary
 ```
-
-## Current Status
-
-See [Project Roadmap](https://github.com/JoNil-Botta/typelisp/issues/8).
-
-- [x] Lexer, parser, AST
-- [x] Type checker
-- [x] IR data structures + optimizer skeleton
-- [x] x86_64 backend skeleton
-- [ ] IR lowering (#10)
-- [ ] Optimizer pipeline (#11)
-- [ ] Complete backend (#12)
-- [ ] Source spans / error reporting (#9)
-- [ ] Strings, arrays, stdlib (#13)
 
 ## CLI
 
 ```bash
-typelisp tokenize file.tl    # Show tokens
-typelisp parse file.tl       # Show AST
-typelisp check file.tl       # Type check
-typelisp compile file.tl     # Generate assembly
-typelisp run file.tl         # Compile and execute
+typelisp tokenize file.tl    # Print token stream
+typelisp parse    file.tl    # Print AST
+typelisp check    file.tl    # Type check
+typelisp compile  file.tl    # Generate assembly (.s); -o <path>, --emit-ir
+typelisp run      file.tl    # Compile, assemble, link, and run (needs as/ld)
 ```
+
+## Status
+
+Implemented: lexer, parser, type checker, IR lowering, optimizer, and a working
+x86_64 backend. Integers, floats (`f64`), bool/char/unit, `if`/`while`/`begin`,
+local & global variables, direct and indirect calls, `cast`, enums + `match`,
+structs + field access, dynamic arrays, strings, `extern`, and multi-file
+modules all compile to native code. See the
+[project roadmap](https://github.com/JoNil-Botta/typelisp/issues/8) and
+[SPEC.md §8](SPEC.md) for what is not yet supported (closures, tail calls,
+tuple/fixed-array value lowering, `f32` codegen, GC).
 
 ## Contributing
 

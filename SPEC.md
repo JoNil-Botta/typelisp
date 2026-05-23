@@ -238,7 +238,7 @@ Example:
 Imports another TypeLisp file. All top-level definitions from the imported file become available.
 
 - Relative paths are resolved from the importing file's directory.
-- Circular imports are detected and rejected.
+- Circular imports currently terminate by loading each module once; they are not rejected.
 - Import paths are normalized; importing via different relative paths to the same file deduplicates.
 
 ### 4.5 `(defenum ...)` and `(defstruct ...)`
@@ -401,12 +401,14 @@ See §3.6.
 | `string=?` | `String String → bool` | Alias for `string-eq` |
 | `string-append` | `String String → String` | Concatenate two strings |
 | `string-concat` | `String String → String` | Alias for `string-append` |
+| `substring` | `String i64 i64 → String` | Fresh string of `len` bytes starting at byte offset `start` (a `[start, start+len)` slice). Bounds checked. |
+| `string-slice` | `String i64 i64 → String` | Alias for `substring` |
 | `string->int` | `String → i64` | Parse decimal integer from string |
 | `int->string` | `i64 → String` | Format integer as decimal string |
 | `panic` | `String → unit` | Print message to stderr and abort |
 | `error` | `String → unit` | Alias for `panic` |
 
-- `array-ref`, `array-set!`, and `string-ref` perform runtime bounds checks. Out-of-bounds calls the `tl_oob_abort` runtime trap (writes to stderr and exits with code 1).
+- `array-ref`, `array-set!`, `string-ref`, and `substring`/`string-slice` perform runtime bounds checks. Out-of-bounds calls the `tl_oob_abort` runtime trap (writes to stderr and exits with code 1). The slice range is checked with unsigned arithmetic, so a negative `start`/`len` wraps to a huge value and traps.
 - The `char-at` operator is an alias for `string-ref`.
 
 ### 6.2 Runtime functions (emitted by the backend)
@@ -425,6 +427,7 @@ They are not implemented by a separate C runtime.
 | `tl_alloc` | Allocate bump-allocator memory |
 | `tl_string_eq` | String comparison |
 | `tl_string_concat` | String concatenation |
+| `tl_substring` | String slicing |
 | `tl_string_to_int` | Parse integer |
 | `tl_int_to_string` | Format integer |
 | `.L_tl_abort` | Print and abort (used by `panic`/`error`) |
@@ -436,6 +439,7 @@ They are not implemented by a separate C runtime.
 |-------|------------|
 | `string=?` | `string-eq` |
 | `string-concat` | `string-append` |
+| `string-slice` | `substring` |
 | `char-at` | `string-ref` |
 | `print-str` | `print-string` |
 
@@ -481,8 +485,9 @@ They are not implemented by a separate C runtime.
 - Structs with construction and field access.
 - Dynamic arrays: `make-array`, `array-ref`, `array-set!`, `length`.
 - Strings: literals, `string-ref`/`char-at`, `string-length`/`length`,
-  `string-eq`/`string=?`, `string-append`/`string-concat`, `string->int`,
-  `int->string`, `print-string`/`print-str`.
+  `string-eq`/`string=?`, `string-append`/`string-concat`,
+  `substring`/`string-slice`, `string->int`, `int->string`,
+  `print-string`/`print-str`.
 - `extern` declarations.
 - Multi-file modules via `import`.
 - Builtin `print`, `print-bool`, `print-float`, `print-char`,

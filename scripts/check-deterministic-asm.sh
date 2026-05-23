@@ -115,8 +115,19 @@ compile_pass() {
             exit 1
         fi
         out="$out_dir/$name.s"
+        source_to_compile=$source
+        case "$source" in
+            tests/integration/sym_i64_env.tl)
+                staged_dir="$out_dir/$name-work"
+                rm -rf "$staged_dir"
+                mkdir -p "$staged_dir"
+                cp "$source" "$staged_dir/sym_i64_env.tl"
+                cp selfhost/sym_i64_env.tl "$staged_dir/sym_i64_env_core.tl"
+                source_to_compile="$staged_dir/sym_i64_env.tl"
+                ;;
+        esac
         echo "[$pass_name] $source -> $out"
-        "$COMPILER" compile "$source" -o "$out"
+        "$COMPILER" compile "$source_to_compile" -o "$out"
     done
 }
 

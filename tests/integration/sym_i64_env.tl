@@ -1,4 +1,5 @@
-; sym_i64_env.tl - Integration driver for the main-less sym_i64_env_core module.
+; sym_i64_env.tl - Integration driver for the canonical selfhost sym_i64_env module.
+; Test harnesses stage selfhost/sym_i64_env.tl under this import name.
 
 (import "sym_i64_env_core.tl")
 

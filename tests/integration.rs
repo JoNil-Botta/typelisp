@@ -2403,7 +2403,7 @@ fn run_case_explicit_build(case: &Case) {
     // Copy any imported helper modules alongside the entry file.
     let source_dir = source_path.parent().expect("case source path has parent");
     for dep in case.deps {
-        let dep_src = source_dir.join(dep);
+        let dep_src = integration_dep_source_path(&manifest_dir, source_dir, dep);
         let dep_dst = work_dir.join(dep);
         if let Some(parent) = dep_dst.parent() {
             fs::create_dir_all(parent).expect("create dep work dir");
@@ -2490,7 +2490,7 @@ fn run_case(case: &Case) {
     // their relative path so `(import "...")` resolves at load time.
     let source_dir = source_path.parent().expect("case source path has parent");
     for dep in case.deps {
-        let dep_src = source_dir.join(dep);
+        let dep_src = integration_dep_source_path(&manifest_dir, source_dir, dep);
         let dep_dst = work_dir.join(dep);
         if let Some(parent) = dep_dst.parent() {
             fs::create_dir_all(parent).expect("create dep work dir");
@@ -2519,6 +2519,18 @@ fn run_case(case: &Case) {
         "{} stdout differed\nstderr:\n{}",
         case.name, stderr
     );
+}
+
+fn integration_dep_source_path(
+    manifest_dir: &std::path::Path,
+    source_dir: &std::path::Path,
+    dep: &str,
+) -> PathBuf {
+    if dep == "sym_i64_env_core.tl" {
+        return manifest_dir.join("selfhost").join("sym_i64_env.tl");
+    }
+
+    source_dir.join(dep)
 }
 
 fn run_inline_source(work_name: &str, file_name: &str, source: &str) -> std::process::Output {

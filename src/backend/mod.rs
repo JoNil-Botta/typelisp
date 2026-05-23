@@ -6,6 +6,8 @@ use crate::types::Type;
 use std::collections::{HashMap, HashSet};
 
 const ABORT_RUNTIME_SYMBOL: &str = ".L_tl_abort";
+const ARG_COUNT_RUNTIME_SYMBOL: &str = ".L_tl_arg_count";
+const ARG_RUNTIME_SYMBOL: &str = ".L_tl_arg";
 const READ_FILE_RUNTIME_SYMBOL: &str = ".L_tl_read_file";
 
 /// x86_64 assembly code generator
@@ -75,6 +77,13 @@ pub struct X86_64Backend {
     /// `tl_abort` it takes a `(ptr, len)` argument, but unlike `tl_abort` it
     /// returns rather than terminating the process.
     needs_print_str_runtime: bool,
+    /// Whether the program references the private argc helper emitted for
+    /// `(arg-count)`.
+    needs_arg_count_runtime: bool,
+    /// Whether the program references the private argv helper emitted for
+    /// `(arg i)`. The helper heap-allocates the returned String and aborts on
+    /// out-of-bounds indexes.
+    needs_arg_runtime: bool,
     /// Whether the program references the private read-file helper emitted for
     /// `(read-file path)`. The helper uses Linux syscalls, `tl_alloc`, and the
     /// panic/abort runtime.
@@ -793,6 +802,8 @@ impl X86_64Backend {
             needs_string_concat_runtime: false,
             needs_abort_runtime: false,
             needs_print_str_runtime: false,
+            needs_arg_count_runtime: false,
+            needs_arg_runtime: false,
             needs_read_file_runtime: false,
             return_ty: Type::Unit,
             param_vars: HashSet::new(),
@@ -822,9 +833,12 @@ impl X86_64Backend {
         self.needs_substring_runtime = Self::needs_substring_runtime(program);
         self.needs_string_concat_runtime = Self::needs_string_concat_runtime(program);
         self.needs_print_str_runtime = Self::needs_print_str_runtime(program);
+        self.needs_arg_count_runtime = Self::needs_arg_count_runtime(program);
+        self.needs_arg_runtime = Self::needs_arg_runtime(program);
         self.needs_read_file_runtime = Self::needs_read_file_runtime(program);
-        self.needs_abort_runtime =
-            Self::needs_abort_runtime(program) || self.needs_read_file_runtime;
+        self.needs_abort_runtime = Self::needs_abort_runtime(program)
+            || self.needs_arg_runtime
+            || self.needs_read_file_runtime;
         // Several backend runtimes allocate their buffers and fat values via a
         // raw `tl_alloc` call, so their presence forces the raw allocator
         // runtime to be emitted even when IR calls to a user-defined TypeLisp
@@ -833,13 +847,18 @@ impl X86_64Backend {
             || self.needs_int_to_string_runtime
             || self.needs_substring_runtime
             || self.needs_string_concat_runtime
+            || self.needs_arg_runtime
             || self.needs_read_file_runtime;
         let needs_print_runtime = !self.runtime_print_names.is_empty();
+        let needs_argv_data = self.needs_arg_count_runtime || self.needs_arg_runtime;
         if needs_print_runtime {
             self.generate_print_runtime_data();
         }
         if self.emits_alloc_runtime {
             self.generate_alloc_runtime_data();
+        }
+        if needs_argv_data {
+            self.generate_argv_runtime_data();
         }
         self.intern_strings(program);
         self.generate_string_rodata();
@@ -871,6 +890,8 @@ impl X86_64Backend {
                 || (self.needs_string_concat_runtime && symbol == "tl_string_concat")
                 || (self.needs_abort_runtime && symbol == ABORT_RUNTIME_SYMBOL)
                 || (self.needs_print_str_runtime && symbol == "tl_print_str")
+                || (self.needs_arg_count_runtime && symbol == ARG_COUNT_RUNTIME_SYMBOL)
+                || (self.needs_arg_runtime && symbol == ARG_RUNTIME_SYMBOL)
                 || (self.needs_read_file_runtime && symbol == READ_FILE_RUNTIME_SYMBOL);
             if !defined_inline {
                 self.emit(&format!("    .extern {}", symbol));
@@ -912,6 +933,12 @@ impl X86_64Backend {
         if self.needs_print_str_runtime {
             self.generate_print_str_runtime_functions();
         }
+        if self.needs_arg_count_runtime {
+            self.generate_arg_count_runtime_functions();
+        }
+        if self.needs_arg_runtime {
+            self.generate_arg_runtime_functions();
+        }
         if self.needs_read_file_runtime {
             self.generate_read_file_runtime_functions();
         }
@@ -937,6 +964,12 @@ impl X86_64Backend {
 
         self.emit("");
         self.emit("_start:");
+        if needs_argv_data {
+            self.emit("    movq (%rsp), %rax");
+            self.emit("    movq %rax, .L_tl_argc(%rip)");
+            self.emit("    leaq 8(%rsp), %rax");
+            self.emit("    movq %rax, .L_tl_argv(%rip)");
+        }
         self.emit("    call main");
         if main_ret == Type::Unit {
             self.emit("    xor %edi, %edi");
@@ -1189,6 +1222,26 @@ impl X86_64Backend {
         referenced_in_calls || referenced_in_externs
     }
 
+    fn needs_arg_count_runtime(program: &Program) -> bool {
+        program.functions.iter().any(|func| {
+            func.blocks.iter().any(|block| {
+                block.instructions.iter().any(|instr| {
+                    matches!(instr, Instruction::Call { func, .. } if func == ARG_COUNT_RUNTIME_SYMBOL)
+                })
+            })
+        })
+    }
+
+    fn needs_arg_runtime(program: &Program) -> bool {
+        program.functions.iter().any(|func| {
+            func.blocks.iter().any(|block| {
+                block.instructions.iter().any(|instr| {
+                    matches!(instr, Instruction::Call { func, .. } if func == ARG_RUNTIME_SYMBOL)
+                })
+            })
+        })
+    }
+
     /// Whether the program references the private read-file helper emitted for
     /// `(read-file path)`. The lowerer targets a private assembler label, so it
     /// cannot collide with a user-defined TypeLisp function.
@@ -1340,6 +1393,22 @@ impl X86_64Backend {
         self.emit("    .zero 8");
         self.emit("tl_arena_end:");
         self.emit("    .zero 8");
+        self.emit("");
+    }
+
+    fn generate_argv_runtime_data(&mut self) {
+        self.emit("    .data");
+        self.emit("    .balign 8");
+        self.emit(".L_tl_argc:");
+        self.emit("    .quad 0");
+        self.emit(".L_tl_argv:");
+        self.emit("    .quad 0");
+        if self.needs_arg_runtime {
+            self.emit("    .section .rodata");
+            self.emit(".L_tl_arg_oob_msg:");
+            self.emit("    .ascii \"tl: argv index out of bounds\\n\"");
+            self.emit("    .set .L_tl_arg_oob_msg_len, . - .L_tl_arg_oob_msg");
+        }
         self.emit("");
     }
 
@@ -1589,6 +1658,70 @@ impl X86_64Backend {
         self.emit("    movq $1, %rax");
         self.emit("    syscall");
         self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_arg_count_runtime_functions(&mut self) {
+        self.emit(&format!("{}:", ARG_COUNT_RUNTIME_SYMBOL));
+        self.emit("    movq .L_tl_argc(%rip), %rax");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    /// Emit `(arg i) -> String`. The helper reads argv metadata captured in
+    /// `_start`, bounds-checks the signed index, copies the selected
+    /// NUL-terminated argv byte string into a fresh heap buffer, then returns a
+    /// heap fat-string `{ ptr, len }` pointer. Invalid indexes abort through the
+    /// existing message-abort runtime.
+    fn generate_arg_runtime_functions(&mut self) {
+        self.emit(&format!("{}:", ARG_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq %rdi, %rbx");
+        self.emit("    cmpq $0, %rbx");
+        self.emit("    jl .L_tl_arg_oob");
+        self.emit("    movq .L_tl_argc(%rip), %rax");
+        self.emit("    cmpq %rax, %rbx");
+        self.emit("    jge .L_tl_arg_oob");
+        self.emit("    movq .L_tl_argv(%rip), %rax");
+        self.emit("    movq (%rax,%rbx,8), %rbx");
+        self.emit("    xorq %r12, %r12");
+        self.emit(".L_tl_arg_len_loop:");
+        self.emit("    cmpb $0, (%rbx,%r12)");
+        self.emit("    je .L_tl_arg_len_done");
+        self.emit("    incq %r12");
+        self.emit("    jmp .L_tl_arg_len_loop");
+        self.emit(".L_tl_arg_len_done:");
+        self.emit("    movq %r12, %rdi");
+        self.emit("    call tl_alloc");
+        self.emit("    movq %rax, %r13");
+        self.emit("    xorq %rcx, %rcx");
+        self.emit(".L_tl_arg_copy_loop:");
+        self.emit("    cmpq %r12, %rcx");
+        self.emit("    jge .L_tl_arg_copy_done");
+        self.emit("    movzbl (%rbx,%rcx), %edx");
+        self.emit("    movb %dl, (%r13,%rcx)");
+        self.emit("    incq %rcx");
+        self.emit("    jmp .L_tl_arg_copy_loop");
+        self.emit(".L_tl_arg_copy_done:");
+        self.emit("    movq $16, %rdi");
+        self.emit("    call tl_alloc");
+        self.emit("    movq %r13, 0(%rax)");
+        self.emit("    movq %r12, 8(%rax)");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit(".L_tl_arg_oob:");
+        self.emit("    leaq .L_tl_arg_oob_msg(%rip), %rdi");
+        self.emit("    movq $.L_tl_arg_oob_msg_len, %rsi");
+        self.emit(&format!("    call {}", ABORT_RUNTIME_SYMBOL));
         self.emit("");
     }
 
@@ -3218,6 +3351,10 @@ impl X86_64Backend {
             // The backend-provided print-string helper resolves to its raw
             // runtime symbol rather than being mangled to `_tl_tl_print_str`.
             "tl_print_str".into()
+        } else if name == ARG_COUNT_RUNTIME_SYMBOL && self.needs_arg_count_runtime {
+            ARG_COUNT_RUNTIME_SYMBOL.into()
+        } else if name == ARG_RUNTIME_SYMBOL && self.needs_arg_runtime {
+            ARG_RUNTIME_SYMBOL.into()
         } else if name == READ_FILE_RUNTIME_SYMBOL && self.needs_read_file_runtime {
             READ_FILE_RUNTIME_SYMBOL.into()
         } else if self.extern_names.contains(name) {
@@ -5337,6 +5474,92 @@ mod tests {
         // A program that never panics must not emit the `tl_abort` helper.
         let asm = compile_ok(r#"(define (main) : i64 (string-length "hi"))"#);
         assert!(!asm.contains(".L_tl_abort"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_arg_count_preserves_start_argv_and_calls_runtime() {
+        let asm = compile_ok("(define (main) : i64 (arg-count))");
+
+        assert!(asm.contains(".L_tl_argc:"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_argv:"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_arg_count:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call .L_tl_arg_count"), "asm:\n{}", asm);
+
+        let start = asm.split("_start:").nth(1).expect("expected _start");
+        assert!(
+            start.contains("    movq (%rsp), %rax"),
+            "_start must read argc from initial stack:\n{}",
+            start
+        );
+        assert!(
+            start.contains("    movq %rax, .L_tl_argc(%rip)"),
+            "_start must save argc:\n{}",
+            start
+        );
+        assert!(
+            start.contains("    leaq 8(%rsp), %rax"),
+            "_start must compute argv pointer:\n{}",
+            start
+        );
+        assert!(
+            start.contains("    movq %rax, .L_tl_argv(%rip)"),
+            "_start must save argv pointer:\n{}",
+            start
+        );
+    }
+
+    #[test]
+    fn test_compile_arg_emits_runtime_alloc_and_abort_paths() {
+        let asm = compile_ok("(define (main) : i64 (string-length (arg 0)))");
+
+        assert!(asm.contains(".L_tl_arg:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call .L_tl_arg"), "asm:\n{}", asm);
+        assert!(asm.contains("    call tl_alloc"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_abort:"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("tl: argv index out of bounds"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(asm.contains("    jl .L_tl_arg_oob"), "asm:\n{}", asm);
+        assert!(asm.contains("    jge .L_tl_arg_oob"), "asm:\n{}", asm);
+        assert!(asm.contains("    call .L_tl_abort"), "asm:\n{}", asm);
+        assert!(!asm.contains("_tl_.L_tl_arg"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_no_argv_builtin_means_no_argv_runtime() {
+        let asm = compile_ok(r#"(define (main) : i64 (string-length "hi"))"#);
+        assert!(!asm.contains(".L_tl_argc"), "asm:\n{}", asm);
+        assert!(!asm.contains(".L_tl_argv"), "asm:\n{}", asm);
+        assert!(!asm.contains(".L_tl_arg:"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_user_defined_arg_shadows_builtin() {
+        let asm = compile_ok(
+            r#"
+            (define (arg [n : i64]) : i64 (+ n 1))
+            (define (main) : i64 (arg 41))
+            "#,
+        );
+        assert!(asm.contains("_tl_arg:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call _tl_arg"), "asm:\n{}", asm);
+        assert!(!asm.contains(".L_tl_arg:"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_user_defined_arg_count_shadows_builtin() {
+        let asm = compile_ok(
+            r#"
+            (define (arg-count) : i64 9)
+            (define (main) : i64 (arg-count))
+            "#,
+        );
+        assert!(asm.contains("_tl_arg_count:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call _tl_arg_count"), "asm:\n{}", asm);
+        assert!(!asm.contains(".L_tl_arg_count:"), "asm:\n{}", asm);
     }
 
     #[test]

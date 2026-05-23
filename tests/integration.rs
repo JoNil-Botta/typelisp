@@ -1773,6 +1773,79 @@ fn tl_string_literal(text: &str) -> String {
 }
 
 #[test]
+fn argv_builtins_receive_run_args() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source_path = manifest_dir
+        .join("tests")
+        .join("integration")
+        .join("argv.tl");
+    let work_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("argv");
+    fs::create_dir_all(&work_dir).expect("create argv test work dir");
+    let work_path = work_dir.join("argv.tl");
+    fs::copy(&source_path, &work_path).expect("copy argv.tl to work dir");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&work_path)
+        .arg("alpha")
+        .arg("beta")
+        .output()
+        .expect("run typelisp argv fixture");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(7),
+        "argv fixture exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(stdout, "alpha\n", "argv fixture stdout differed");
+}
+
+#[test]
+fn argv_out_of_bounds_aborts() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let work_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("argv_out_of_bounds");
+    fs::create_dir_all(&work_dir).expect("create argv oob test work dir");
+    let work_path = work_dir.join("argv_out_of_bounds.tl");
+    fs::write(
+        &work_path,
+        r#"(define (main) : i64 (string-length (arg 99)))"#,
+    )
+    .expect("write argv oob fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&work_path)
+        .output()
+        .expect("run typelisp argv oob fixture");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(134),
+        "argv oob fixture exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(stdout, "", "argv oob fixture wrote stdout");
+    assert!(
+        stderr.contains("tl: argv index out of bounds"),
+        "argv oob stderr differed:\n{}",
+        stderr
+    );
+}
+
+#[test]
 fn read_file_builtin_reads_fixture_contents() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let work_dir = manifest_dir

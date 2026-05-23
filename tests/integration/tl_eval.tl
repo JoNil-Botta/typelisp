@@ -2,8 +2,10 @@
 ;; `Sexpr` AST: the third component of TypeLisp's self-hosting front end (#27),
 ;; following the lexer and the reader. Where the reader turns a token stream into
 ;; the cons-cell `Sexpr` tree the parens describe, this evaluator INTERPRETS that
-;; tree - it walks the s-expression and computes the integer it denotes, now with
-;; VARIABLES and a `let` special form threaded through a lexical environment.
+;; tree - it walks the s-expression and computes the integer it denotes. It is now
+;; a UNIFIED interpreter: arithmetic `+ - * /`, comparisons `= < > <= >=`, the
+;; short-circuiting `if` special form, AND variables + a `let` special form, all
+;; threaded through a lexical environment.
 ;;
 ;;   String --lex--> (Array Token) --read--> Sexpr --eval-sexpr--> i64
 ;;
@@ -108,11 +110,13 @@
 ;; the binding name itself uses a nested pattern to require `(SSym name)`.
 ;;
 ;; SCOPE OF THIS SLICE: exactly one binding. The first and only binding pair is
-;; taken from the head of `bindings`; multi-binding lists `((x 1) (y 2))` abort
-;; cleanly rather than silently dropping bindings. The single-binding case is the
-;; load-bearing step from calculator to environment interpreter.
+;; taken from the head of `bindings` - it is the PAIR `(SCons (SSym x) (SCons e1
+;; SNil))`, NOT the binding LIST. (The earlier bug descended to the list instead
+;; of the pair.) Multi-binding lists `((x 1) (y 2))` abort cleanly rather than
+;; silently dropping bindings. The single-binding case is the load-bearing step
+;; from calculator to environment interpreter.
 
-;; let-binding: the single binding pair `(x e1)` out of the `let` form's tail.
+;; let-binding: the single binding PAIR `(x e1)` out of the `let` form's tail.
 ;; `rest` is `(SCons bindings (SCons body SNil))`, so the binding LIST is
 ;; `(sexpr-head rest)` and the pair is the head of that list. The binding list's
 ;; tail must be SNil, so multi-binding lists abort cleanly.
@@ -149,85 +153,139 @@
 ;; --------------------------------------------------------------------------
 ;; eval-sexpr: the tree-walking interpreter. `(-> Sexpr Env i64)`.
 ;; --------------------------------------------------------------------------
-;; A recursive walk over the `Sexpr` tree, threading a lexical environment and
-;; dispatching on the head symbol of each call form - the heart of a Lisp `eval`:
+;; A recursive walk over the `Sexpr` tree, THREADING a lexical environment and
+;; dispatching on the head symbol of each call form - the heart of a Lisp `eval`.
+;; This is the UNIFIED evaluator: variables, `let`, `if`, comparisons, and
+;; arithmetic all evaluated against the same environment `env`.
 ;;   (SInt n)             -> n                  an integer literal evaluates to itself.
 ;;   (SSym name)          -> (lookup env name)  a bare symbol is a VARIABLE reference,
 ;;                           resolved in the current environment.
 ;;   (SNil)               -> the empty list is not an evaluable expression - abort.
 ;;   (SCons (SSym name) rest)
-;;                        -> a call form OR the `let` special form. The nested
-;;                           pattern requires a symbol head and binds it as
-;;                           the operator/keyword name:
-;;                             - "let": the special form - destructure the single
-;;                               binding `(x e1)` and the body out of `rest`,
-;;                               evaluate `e1` in the CURRENT env, then evaluate the
-;;                               body in `(EBind x v env)` - pushing the binding so
-;;                               `x` is in scope (and shadows) inside the body only.
-;;                             - otherwise a binary call `(op a b)`: project the two
-;;                               argument sub-exprs out of the spine, recursively
-;;                               `eval-sexpr` each IN `env` (so nested variable
-;;                               references resolve), then dispatch on the operator
-;;                               text via `string-eq`: "+"->a+b, "-"->a-b, "*"->a*b,
-;;                               "/"->a/b. An unknown operator aborts via `panic`.
+;;                        -> a call form OR a special form. This NESTED pattern
+;;                           (#41) matches two enum layers at once: the head must
+;;                           itself be `(SSym name)`, binding the operator/keyword
+;;                           text `name` directly. The head dispatch checks:
+;;                             - "let": the SPECIAL FORM `(let ((x e1)) body)` -
+;;                               destructure the single binding pair `(x e1)` and
+;;                               the body out of `rest`, evaluate `e1` in the
+;;                               CURRENT env, then evaluate the body in
+;;                               `(EBind x v env)` - pushing the binding so `x` is
+;;                               in scope (and shadows) inside the body only.
+;;                             - "if": the SHORT-CIRCUIT special form
+;;                               `(if cond then else)` - eval `cond` in `env`, then
+;;                               eval ONLY the taken branch in `env`. The untaken
+;;                               branch is NOT walked (so a divide-by-zero or a
+;;                               non-terminating recursion there is safe).
+;;                             - otherwise a strict fixed-arity BINARY call
+;;                               `(op arg1 arg2)`: eval BOTH operand sub-exprs IN
+;;                               `env` (so nested variable references resolve),
+;;                               then dispatch on the operator text via
+;;                               `string-eq`: arithmetic `+ - * /` yield their
+;;                               integer result directly; comparisons `= < > <= >=`
+;;                               fold their bool to the 1 (true) / 0 (false)
+;;                               integer-truth convention. An unknown operator is a
+;;                               malformed program - abort via `panic`.
+;;   _                    -> any other shape (an `SCons` whose head is NOT a
+;;                           symbol, which fails the nested `(SSym name)` test) is
+;;                           non-evaluable - abort.
 ;;
-;; The `match` is exhaustive over all four `Sexpr` variants. The recursive
-;; `eval-sexpr` calls thread `env` so the result depends on the WHOLE nested shape
-;; AND on the bindings in scope - the defining property of an environment-based
-;; interpreter. (Deferred: multi-binding `let`, nested binding lists, `define`,
-;; lambda, variadic arity.)
+;; The `match` covers all four `Sexpr` variants. The recursive `eval-sexpr` calls
+;; thread `env` so the result depends on the WHOLE nested shape AND on the bindings
+;; in scope - the defining property of an environment-based interpreter. (Deferred:
+;; multi-binding `let`, nested binding lists, `define`, lambda, variadic arity.)
 (define (eval-sexpr [s : Sexpr] [env : Env]) : i64
   (match s
     [(SInt n) n]
     [(SSym name) (lookup env name)]
     [(SNil) (begin (panic "eval: cannot evaluate the empty list") 0)]
+    ;; Nested pattern: the call's head must itself be `(SSym name)`. Binds the
+    ;; operator/keyword text `name : String` (one enum layer down) and the spine
+    ;; `rest` together; a non-symbol head fails this and falls through to `_`.
     [(SCons (SSym name) rest)
      (if (string-eq name "let")
-         ;; The `let` special form: `(let ((x e1)) body)`.
+         ;; The `let` SPECIAL FORM `(let ((x e1)) body)`: eval the initializer in
+         ;; the CURRENT env, then eval the body in the EXTENDED env `(EBind x v env)`.
          (let ([pair : Sexpr (let-binding rest)])
            (let ([var : String (let-var pair)]
                  [v : i64 (eval-sexpr (let-init pair) env)])
              (eval-sexpr (let-body rest) (EBind var v env))))
-         ;; A binary call form `(op arg1 arg2)`: rest is
-         ;; `(SCons arg1 (SCons arg2 SNil))`.
-         (let ([arg1 : Sexpr (sexpr-head rest)]
-               [rest2 : Sexpr (sexpr-tail rest)])
-           (let ([arg2 : Sexpr (sexpr-head rest2)]
-                 [rest3 : Sexpr (sexpr-tail rest2)])
-             (begin
-               (sexpr-expect-nil rest3)
-               (let ([a : i64 (eval-sexpr arg1 env)]
-                     [b : i64 (eval-sexpr arg2 env)])
-                 ;; Dispatch on the operator text. `string-eq` is the byte-wise
-                 ;; equality builtin; an unmatched operator falls through to a panic.
-                 (if (string-eq name "+")
-                     (+ a b)
-                     (if (string-eq name "-")
-                         (- a b)
-                         (if (string-eq name "*")
-                             (* a b)
-                             (if (string-eq name "/")
-                                 (/ a b)
-                                 (begin
-                                   (panic "eval: unknown operator")
-                                   0))))))))))]
+         (if (string-eq name "if")
+             ;; `if` SPECIAL FORM `(if cond then else)`: rest is
+             ;; `(SCons cond (SCons then (SCons else SNil)))`. Project the three
+             ;; sub-exprs, assert exactly three, then SHORT-CIRCUIT: eval cond in
+             ;; `env`, and eval ONLY the taken branch in `env`. `0` is false,
+             ;; anything else true.
+             (let ([cond-e : Sexpr (sexpr-head rest)]
+                   [restc : Sexpr (sexpr-tail rest)])
+               (let ([then-e : Sexpr (sexpr-head restc)]
+                     [restt : Sexpr (sexpr-tail restc)])
+                 (let ([else-e : Sexpr (sexpr-head restt)]
+                       [reste : Sexpr (sexpr-tail restt)])
+                   (begin
+                     (sexpr-expect-nil reste)
+                     (let ([c : i64 (eval-sexpr cond-e env)])
+                       ;; Only one branch is evaluated - the untaken sub-expr is
+                       ;; NOT walked. (Condition true when c is non-zero.)
+                       (if (= c 0)
+                           (eval-sexpr else-e env)
+                           (eval-sexpr then-e env)))))))
+             ;; A strict fixed-arity BINARY call form `(name arg1 arg2)`: rest is
+             ;; `(SCons arg1 (SCons arg2 SNil))`.
+             (let ([arg1 : Sexpr (sexpr-head rest)]
+                   [rest2 : Sexpr (sexpr-tail rest)])
+               (let ([arg2 : Sexpr (sexpr-head rest2)]
+                     [rest3 : Sexpr (sexpr-tail rest2)])
+                 (begin
+                   (sexpr-expect-nil rest3)
+                   (let ([a : i64 (eval-sexpr arg1 env)]
+                         [b : i64 (eval-sexpr arg2 env)])
+                     ;; Dispatch on the operator text. `string-eq` is the byte-wise
+                     ;; equality builtin; an unmatched operator falls through to a
+                     ;; panic. The arithmetic operators `+ - * /` yield their integer
+                     ;; result directly; the comparison operators `= < > <= >=` fold
+                     ;; their bool to the 1 (true) / 0 (false) integer convention.
+                     (if (string-eq name "+")
+                         (+ a b)
+                         (if (string-eq name "-")
+                             (- a b)
+                             (if (string-eq name "*")
+                                 (* a b)
+                                 (if (string-eq name "/")
+                                     (/ a b)
+                                     (if (string-eq name "=")
+                                         (if (= a b) 1 0)
+                                         (if (string-eq name "<")
+                                             (if (< a b) 1 0)
+                                             (if (string-eq name ">")
+                                                 (if (> a b) 1 0)
+                                                 (if (string-eq name "<=")
+                                                     (if (<= a b) 1 0)
+                                                     (if (string-eq name ">=")
+                                                         (if (>= a b) 1 0)
+                                                         (begin
+                                                           (panic "eval: unknown operator")
+                                                           0))))))))))))))))]
     [_ (begin (panic "eval: not an evaluable expression") 0)]))
 
 ;; --------------------------------------------------------------------------
 ;; main: the whole front end composed - lex, read, then interpret with variables.
 ;; --------------------------------------------------------------------------
-;; `(eval-sexpr (read (lex "(let ((x 5)) (+ x (* 2 x)))")) ENil)`:
-;;   - lex   produces the token stream  ( let ( ( x 5 ) ) ( + x ( * 2 x ) ) ) End
-;;   - read  builds the Sexpr tree, a `let` whose binding list binds `x` to 5 and
-;;     whose body is `(+ x (* 2 x))`.
-;;   - eval-sexpr interprets it in the EMPTY environment `ENil`: it sees the `let`
-;;     keyword, evaluates the initializer `5` to 5, then evaluates the body in
-;;     `(EBind "x" 5 ENil)`. In that body each `x` resolves via `lookup` to 5, so
-;;     `(* 2 x)` = 10 and `(+ x 10)` = 15. The variable reference proves the
-;;     environment is really threaded - the body cannot be computed without it.
-;; `main` returns 15, an observable result an execution test asserts as the exit
-;; code. (Sanity, still tree-shape dependent with NO variables:
-;; "(- (* 4 5) (/ 10 2))" interprets to (* 4 5) = 20 and (/ 10 2) = 5, then
-;; 20 - 5 = 15 - the same exit code via a different path.)
+;; `(eval-sexpr (read (lex "(let ((x 5)) (if (< x 3) 100 (* x x)))")) ENil)`
+;; exercises EVERYTHING at once - `let`, a variable, `if`, a comparison, and
+;; arithmetic - in a single unified interpreter:
+;;   - lex   produces the token stream  ( let ( ( x 5 ) ) ( if ( < x 3 ) 100 ( * x x ) ) ) End
+;;   - read  builds the Sexpr tree, a `let` binding `x` to 5 whose body is the
+;;     conditional `(if (< x 3) 100 (* x x))`.
+;;   - eval-sexpr interprets it in the EMPTY environment `ENil`: it sees `let`,
+;;     evaluates the initializer `5` to 5, then evaluates the body in
+;;     `(EBind "x" 5 ENil)`. In that body the guard `(< x 3)` resolves `x` via
+;;     `lookup` to 5, so `(< 5 3)` folds to 0 (false). The `if` therefore
+;;     SHORT-CIRCUITS to the ELSE branch `(* x x)` - the THEN branch `100` is never
+;;     walked - and `(* 5 5)` = 25. Variables, `let`, `if`, comparison, and
+;;     arithmetic are all threaded through the one environment: the body cannot be
+;;     computed without resolving `x`.
+;; `main` returns 25, an observable result an execution test asserts as the exit
+;; code.
 (define (main) : i64
-  (eval-sexpr (read (lex "(let ((x 5)) (+ x (* 2 x)))")) ENil))
+  (eval-sexpr (read (lex "(let ((x 5)) (if (< x 3) 100 (* x x)))")) ENil))

@@ -1026,6 +1026,59 @@ impl TypeChecker {
                 }
                 Ok(ty)
             }
+            Expr::Foreach {
+                index,
+                index_ty,
+                start,
+                end,
+                body,
+            } => {
+                let index_ty = self.resolve_type(index_ty);
+                if !index_ty.is_integer() {
+                    return Err(TypeError::at(
+                        format!(
+                            "foreach index type must be an integer type, got {}",
+                            index_ty
+                        ),
+                        span,
+                    ));
+                }
+                let start_ty = self.check_expr(start)?;
+                let end_ty = self.check_expr(end)?;
+                if !start_ty.is_integer() {
+                    return Err(TypeError::at(
+                        format!(
+                            "foreach start expression must be an integer type, got {}",
+                            start_ty
+                        ),
+                        start.span(),
+                    ));
+                }
+                if !end_ty.is_integer() {
+                    return Err(TypeError::at(
+                        format!(
+                            "foreach end expression must be an integer type, got {}",
+                            end_ty
+                        ),
+                        end.span(),
+                    ));
+                }
+                // NOTE: In a full SPMD implementation, `start` and `end` are
+                // uniform expressions evaluated once.  For the first slice we
+                // only require they type-check as integers; uniform/varying
+                // inference and the richer restrictions are tracked in #344.
+                self.push_scope();
+                self.bind(index.clone(), index_ty);
+                let body_ty = self.check_expr(body)?;
+                self.pop_scope();
+                if !self.type_compatible(&Type::Unit, &body_ty) {
+                    return Err(TypeError::at(
+                        format!("foreach body must have type unit, got {}", body_ty),
+                        body.span(),
+                    ));
+                }
+                Ok(Type::Unit)
+            }
             Expr::Spanned { expr, .. } => self.check_expr(expr),
         }
     }
@@ -3519,5 +3572,103 @@ mod tests {
             "got: {}",
             err.msg
         );
+    }
+
+    // ------------------------------------------------------------------
+    // SPMD foreach — Issue #343
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_typecheck_foreach_well_typed() {
+        let src = "(define (f [a : (Array i64)] [b : (Array i64)] \
+                      [out : (Array i64)] [n : i64]) : unit \
+               (foreach ([i : i64 0 n]) \
+                 (array-set! out i (+ (array-ref a i) (array-ref b i)))))";
+        assert!(check(src).is_ok(), "{:?}", check(src));
+    }
+
+    #[test]
+    fn test_typecheck_foreach_index_type_must_be_integer() {
+        let src = "(define (f [n : i64]) : unit (foreach ([i : bool 0 n]) unit))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg.contains("foreach index type must be an integer"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_foreach_start_must_be_integer() {
+        let src = "(define (f [n : i64]) : unit (foreach ([i : i64 true n]) unit))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg.contains("start expression must be an integer"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_foreach_end_must_be_integer() {
+        let src = "(define (f [n : i64]) : unit (foreach ([i : i64 0 true]) unit))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg.contains("end expression must be an integer"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_foreach_body_must_be_unit() {
+        let src = "(define (f [n : i64]) : unit (foreach ([i : i64 0 n]) i))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg.contains("foreach body must have type unit"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_foreach_result_is_unit() {
+        // The overall foreach expression has type unit, so using it where i64
+        // is expected is rejected.
+        let src = "(define (f [n : i64]) : i64 (foreach ([i : i64 0 n]) (print i)))";
+        let err = check(src).unwrap_err();
+        assert!(err.msg.contains("return type mismatch"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_foreach_index_in_scope_in_body() {
+        // The index binding is visible in the body.
+        let src = "(define (f [n : i64]) : unit (foreach ([i : i64 0 n]) (print i)))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_foreach_body_can_use_let_bindings() {
+        let src = "(define (f [n : i64]) : unit \
+                     (foreach ([i : i64 0 n]) \
+                       (let ([x : i64 (+ i 1)]) unit)))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_foreach_nested_expressions_as_bounds() {
+        // Start/end can be arbitrary integer expressions.
+        let src = "(define (f [a : i64] [b : i64]) : unit \
+                     (foreach ([i : i64 (+ a 1) (- b 1)]) unit))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_foreach_body_array_set_over_dynamic_array_ok() {
+        // Using dynamic-array operations in the foreach body is the primary use case.
+        let src = "(define (f [xs : (Array i64)] [n : i64]) : unit \
+                     (foreach ([i : i64 0 n]) \
+                       (array-set! xs i (+ (array-ref xs i) 1))))";
+        assert!(check(src).is_ok());
     }
 }

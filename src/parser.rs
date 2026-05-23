@@ -606,6 +606,31 @@ impl<'a> Parser<'a> {
                 let end = self.expect_rparen_span()?;
                 (Expr::Match { scrutinee, arms }, end)
             }
+            Token::Ident(s) if s == "foreach" => {
+                // (foreach ([i : i64 start end]) body)
+                self.advance()?;
+                self.expect(Token::LParen)?;
+                self.expect(Token::LBracket)?;
+                let index = self.expect_ident()?;
+                self.expect(Token::Colon)?;
+                let index_ty = self.parse_type()?;
+                let start = Box::new(self.parse_expr()?);
+                let end_expr = Box::new(self.parse_expr()?);
+                self.expect(Token::RBracket)?;
+                self.expect(Token::RParen)?;
+                let body = Box::new(self.parse_expr()?);
+                let end_span = self.expect_rparen_span()?;
+                (
+                    Expr::Foreach {
+                        index,
+                        index_ty,
+                        start,
+                        end: end_expr,
+                        body,
+                    },
+                    end_span,
+                )
+            }
             _ => {
                 // Unary operator, binary operator, or function call. Unary is
                 // tried first: `not`/`neg`/`bit-not` are distinct identifiers
@@ -1221,5 +1246,103 @@ mod tests {
                 ref other => panic!("expected DefFn, got {:?}", other),
             }
         }
+    }
+
+    // ------------------------------------------------------------------
+    // SPMD foreach — Issue #343
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_foreach_basic() {
+        let prog = parse(
+            "(define (f [n : i64]) : unit \
+               (foreach ([i : i64 0 n]) (print i)))",
+        )
+        .unwrap();
+        let body = match &prog.decls[0] {
+            Decl::DefFn { body, .. } => body.unspan(),
+            other => panic!("expected DefFn, got {:?}", other),
+        };
+        match body {
+            Expr::Foreach {
+                index,
+                index_ty,
+                start,
+                end,
+                body: foreach_body,
+            } => {
+                assert_eq!(index, "i");
+                assert_eq!(*index_ty, Type::I64);
+                assert_eq!(start.unspan(), &Expr::Literal(Literal::Int(0)));
+                assert_eq!(end.unspan(), &Expr::Var("n".into()));
+                // The body is a call to print with arg i.
+                match foreach_body.unspan() {
+                    Expr::Call { func, args } => {
+                        assert_eq!(func.unspan(), &Expr::Var("print".into()));
+                        assert_eq!(args.len(), 1);
+                        assert_eq!(args[0].unspan(), &Expr::Var("i".into()));
+                    }
+                    other => panic!("expected Call, got {:?}", other),
+                }
+            }
+            other => panic!("expected Foreach, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_foreach_empty_range() {
+        let prog = parse("(define (f) : unit (foreach ([i : i64 0 0]) unit))").unwrap();
+        let body = match &prog.decls[0] {
+            Decl::DefFn { body, .. } => body.unspan(),
+            other => panic!("expected DefFn, got {:?}", other),
+        };
+        assert!(matches!(body, Expr::Foreach { .. }), "got {:?}", body);
+    }
+
+    #[test]
+    fn test_parse_foreach_non_i64_index_type() {
+        // `u32` is valid syntax; type-checker will decide whether it's accepted.
+        let prog = parse("(define (f [n : u32]) : unit (foreach ([i : u32 0 n]) unit))").unwrap();
+        let body = match &prog.decls[0] {
+            Decl::DefFn { body, .. } => body.unspan(),
+            other => panic!("expected DefFn, got {:?}", other),
+        };
+        match body {
+            Expr::Foreach { index_ty, .. } => {
+                assert_eq!(*index_ty, Type::U32);
+            }
+            other => panic!("expected Foreach, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_foreach_expressions_as_start_end() {
+        // Start and end can be arbitrary expressions (type-checked later).
+        let src = "(define (f [a : i64] [b : i64]) : unit \
+                     (foreach ([i : i64 (+ a 1) (- b 1)]) (print i)))";
+        let prog = parse(src).unwrap();
+        let body = match &prog.decls[0] {
+            Decl::DefFn { body, .. } => body.unspan(),
+            other => panic!("expected DefFn, got {:?}", other),
+        };
+        match body {
+            Expr::Foreach { start, end, .. } => {
+                assert!(matches!(start.unspan(), Expr::Binary { .. }));
+                assert!(matches!(end.unspan(), Expr::Binary { .. }));
+            }
+            other => panic!("expected Foreach, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_foreach_malformed_missing_brackets_is_error() {
+        // Missing the inner `([` — `(foreach i 0 n) body)` is wrong shape.
+        assert!(parse("(define (f) : unit (foreach i 0 n unit))").is_err());
+    }
+
+    #[test]
+    fn test_parse_foreach_malformed_missing_body_is_error() {
+        // Missing body after range spec.
+        assert!(parse("(define (f) : unit (foreach ([i : i64 0 1])))").is_err());
     }
 }

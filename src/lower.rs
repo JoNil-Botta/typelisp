@@ -584,6 +584,9 @@ impl FnLowerer {
                 elems.iter().any(|expr| self.expr_diverges(expr))
             }
             ast::Expr::TupleRef { expr, .. } => self.expr_diverges(expr),
+            ast::Expr::Foreach {
+                start, end, body, ..
+            } => self.expr_diverges(start) || self.expr_diverges(end) || self.expr_diverges(body),
             ast::Expr::Literal(_) | ast::Expr::Var(_) | ast::Expr::Lambda { .. } => false,
         }
     }
@@ -688,6 +691,15 @@ impl FnLowerer {
             ast::Expr::TupleRef { expr, index } => self.lower_tuple_ref(expr, *index),
             // Lambda lowering is still stubbed to unit for now.
             ast::Expr::Lambda { .. } => Value::ConstUnit,
+            // SPMD foreach is not yet lowered (#344); reject with a clear
+            // diagnostic instead of silently producing unit.
+            ast::Expr::Foreach { .. } => {
+                panic!(
+                    "SPMD foreach lowering is not yet implemented (issue #344); \
+                     the foreach was accepted by the parser and typechecker, \
+                     but cannot yet be compiled to assembly"
+                );
+            }
             ast::Expr::Spanned { expr, .. } => self.lower_expr(expr),
         }
     }

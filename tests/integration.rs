@@ -221,24 +221,19 @@ fn type_lisp_programs_compile_link_and_run() {
             deps: &["tl_lex.tl", "tl_token.tl"],
         },
         // Self-hosting (#27): the s-expression EVALUATOR for TypeLisp's own
-        // syntax - a tiny tree-walking interpreter, now with VARIABLES and a
-        // `let` special form threaded through a lexical environment. `tl_eval.tl`
-        // walks the recursive cons-cell `Sexpr` AST and INTERPRETS it with
-        // respect to an environment: `(SInt n)` is `n`, `(SSym name)` is a
-        // variable resolved via recursive assoc-list `lookup`, and
-        // `(SCons (SSym name) rest)` binds the operator/keyword symbol by nested
-        // pattern (#41). `(let ((x e1)) body)` evaluates `e1` in the current
-        // environment and the body in `(EBind x v env)`; other operator forms are
-        // fixed-arity binary calls dispatched via `string-eq`. It REUSES the
-        // whole front end by importing `read` + the `Sexpr` enum from the
-        // `main`-less `tl_read.tl` (transitively `tl_lex.tl` -> `tl_token.tl`),
-        // so the whole program has one `main`. `main` runs
-        // `(eval-sexpr (read (lex "(let ((x 5)) (+ x (* 2 x)))")) ENil)`,
-        // which returns 15. All three imported `main`-less modules are copied
+        // syntax - a tiny tree-walking interpreter with VARIABLES, lexical `let`,
+        // short-circuit `if`, and comparison operators. `tl_eval.tl` walks the
+        // recursive cons-cell `Sexpr` AST with respect to an environment:
+        // `(SSym name)` resolves via recursive assoc-list `lookup`, `let` pushes
+        // `(EBind x v env)`, and `(SCons (SSym name) rest)` binds the
+        // operator/keyword by nested pattern (#41). `main` runs
+        // `(eval-sexpr (read (lex "(let ((x 5)) (if (< x 6) (* x x) 0))")) ENil)`;
+        // the comparison resolves `x`, the `if` takes only the THEN branch, and
+        // `(* x x)` returns 25. All three imported `main`-less modules are copied
         // alongside so the `(import)` chain resolves.
         Case {
             name: "tl_eval",
-            exit_code: 15,
+            exit_code: 25,
             stdout: "",
             deps: &["tl_read.tl", "tl_lex.tl", "tl_token.tl"],
         },
@@ -447,16 +442,17 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             stdout: "",
             deps: &["tl_lex.tl", "tl_token.tl"],
         },
-        // Self-hosting (#27): the s-expression evaluator with variables + `let`,
-        // also exercised through the explicit compile -> as -> ld -> run pipeline.
-        // Runs `(eval-sexpr (read (lex "(let ((x 5)) (+ x (* 2 x)))")) ENil)`: `x`
-        // binds to 5 in the lexical environment, so the body `(+ x (* 2 x))` =
-        // (+ 5 10) -> 15. The reader (and transitively the lexer + token model) is
-        // reused via the `main`-less `tl_read.tl` import; all three imported
-        // modules are copied alongside so the imports resolve.
+        // Self-hosting (#27): the s-expression evaluator with variables, `let`,
+        // `if`, and comparisons, also exercised through the explicit
+        // compile -> as -> ld -> run pipeline. Runs
+        // `(eval-sexpr (read (lex "(let ((x 5)) (if (< x 6) (* x x) 0))")) ENil)`:
+        // `x` binds to 5, the comparison is true, the `if` evaluates only the
+        // THEN branch, and `(* x x)` returns 25. The reader (and transitively the
+        // lexer + token model) is reused via the `main`-less `tl_read.tl` import;
+        // all three imported modules are copied alongside so the imports resolve.
         Case {
             name: "tl_eval",
-            exit_code: 15,
+            exit_code: 25,
             stdout: "",
             deps: &["tl_read.tl", "tl_lex.tl", "tl_token.tl"],
         },

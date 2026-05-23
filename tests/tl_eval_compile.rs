@@ -3,16 +3,15 @@
 //! assembly.
 //!
 //! `tl_eval.tl` is the third piece of TypeLisp's *real* self-hosting compiler
-//! front end (#27): a tiny tree-walking interpreter, now with VARIABLES and a
-//! `let` special form threaded through a lexical environment. Where the lexer
-//! turns a source String into a flat `(Array Token)` and the reader consumes that
-//! token stream into the recursive cons-cell `Sexpr` AST `(SInt | SSym | SNil |
-//! SCons)`, the evaluator INTERPRETS that tree WITH RESPECT TO an environment - it
-//! walks the s-expression, dispatches on the head symbol, resolves a bare symbol
-//! as a variable reference via `lookup` over the cons-cell assoc-list `Env`
-//! (`ENil | (EBind String i64 Env)`), handles `(let ((x e1)) body)` by pushing an
-//! `EBind` frame, and otherwise recursively evaluates the argument sub-exprs and
-//! computes the integer the expression denotes. It does NOT
+//! front end (#27): a tiny tree-walking interpreter, now with VARIABLES, lexical
+//! `let`, short-circuit `if`, and comparison operators. Where the lexer turns a
+//! source String into a flat `(Array Token)` and the reader consumes that token
+//! stream into the recursive cons-cell `Sexpr` AST `(SInt | SSym | SNil |
+//! SCons)`, the evaluator INTERPRETS that tree WITH RESPECT TO an environment: it
+//! resolves bare symbols via recursive `lookup`, pushes an `EBind` frame for
+//! `(let ((x e1)) body)`, dispatches `if` without evaluating the untaken branch,
+//! folds `= < > <= >=` to 1/0 integer truth values, and otherwise recursively
+//! evaluates binary arithmetic arguments. It does NOT
 //! re-derive lexing or reading: it `(import)`s the reader's `read` and the
 //! `Sexpr` enum from the `main`-less module `tl_read.tl`, which itself imports
 //! the `main`-less lexer `tl_lex.tl`, which imports the `main`-less token model
@@ -193,6 +192,31 @@ fn tl_eval_tl_compiles_to_assembly() {
     assert!(
         asm.contains("call tl_string_eq"),
         "tl_eval assembly shows no string-eq operator-dispatch call:\n{}",
+        asm,
+    );
+
+    // CONDITIONALS (#27): the `if` special form and the comparison operators are
+    // dispatched on their operator text, so each operator's string literal must
+    // be emitted in the read-only data. `"if"` selects the short-circuit special
+    // form; `"<"`/`">"`/`"<="`/`">="` (and the existing `"="`) are the comparison
+    // operators that fold their bool result to the 1/0 integer-truth convention.
+    for op in ["\"if\"", "\"=\"", "\"<\"", "\">\"", "\"<=\"", "\">=\""] {
+        assert!(
+            asm.contains(&format!(".string {op}")),
+            "tl_eval assembly is missing the dispatch string literal for operator {op} \
+             (conditionals/comparisons):\n{}",
+            asm,
+        );
+    }
+
+    // The comparison operators fold a bool to the 1/0 integer-truth convention,
+    // so the lowered evaluator must contain at least one signed integer comparison
+    // (cmp + a set/conditional-move or conditional jump). `cmp` proves the
+    // comparison operators actually emit a magnitude test rather than only the
+    // byte-wise `string-eq` used for operator dispatch.
+    assert!(
+        asm.contains("cmp"),
+        "tl_eval assembly has no integer comparison (cmp) for the comparison operators:\n{}",
         asm,
     );
 

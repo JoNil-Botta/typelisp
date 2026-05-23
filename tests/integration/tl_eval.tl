@@ -164,18 +164,22 @@
 ;;                               evaluate `e1` in the CURRENT env, then evaluate the
 ;;                               body in `(EBind x v env)` - pushing the binding so
 ;;                               `x` is in scope (and shadows) inside the body only.
+;;                             - "if": the short-circuit special form - evaluate
+;;                               the condition in the current env, then evaluate
+;;                               only the taken branch in that same env.
 ;;                             - otherwise a binary call `(op a b)`: project the two
 ;;                               argument sub-exprs out of the spine, recursively
 ;;                               `eval-sexpr` each IN `env` (so nested variable
 ;;                               references resolve), then dispatch on the operator
-;;                               text via `string-eq`: "+"->a+b, "-"->a-b, "*"->a*b,
-;;                               "/"->a/b. An unknown operator aborts via `panic`.
+;;                               text via `string-eq`: arithmetic yields an integer
+;;                               directly, and `= < > <= >=` fold their bool to
+;;                               1 (true) or 0 (false). An unknown operator aborts.
 ;;
 ;; The `match` is exhaustive over all four `Sexpr` variants. The recursive
 ;; `eval-sexpr` calls thread `env` so the result depends on the WHOLE nested shape
 ;; AND on the bindings in scope - the defining property of an environment-based
-;; interpreter. (Deferred: multi-binding `let`, nested binding lists, `define`,
-;; lambda, variadic arity.)
+;; interpreter. (Deferred: multi-binding `let`, `cond`, short-circuiting `and`/`or`,
+;; `define`, lambda, variadic arity.)
 (define (eval-sexpr [s : Sexpr] [env : Env]) : i64
   (match s
     [(SInt n) n]
@@ -188,46 +192,71 @@
            (let ([var : String (let-var pair)]
                  [v : i64 (eval-sexpr (let-init pair) env)])
              (eval-sexpr (let-body rest) (EBind var v env))))
-         ;; A binary call form `(op arg1 arg2)`: rest is
-         ;; `(SCons arg1 (SCons arg2 SNil))`.
-         (let ([arg1 : Sexpr (sexpr-head rest)]
-               [rest2 : Sexpr (sexpr-tail rest)])
-           (let ([arg2 : Sexpr (sexpr-head rest2)]
-                 [rest3 : Sexpr (sexpr-tail rest2)])
-             (begin
-               (sexpr-expect-nil rest3)
-               (let ([a : i64 (eval-sexpr arg1 env)]
-                     [b : i64 (eval-sexpr arg2 env)])
-                 ;; Dispatch on the operator text. `string-eq` is the byte-wise
-                 ;; equality builtin; an unmatched operator falls through to a panic.
-                 (if (string-eq name "+")
-                     (+ a b)
-                     (if (string-eq name "-")
-                         (- a b)
-                         (if (string-eq name "*")
-                             (* a b)
-                             (if (string-eq name "/")
-                                 (/ a b)
-                                 (begin
-                                   (panic "eval: unknown operator")
-                                   0))))))))))]
+         (if (string-eq name "if")
+             ;; `if` SPECIAL FORM `(if cond then else)`: rest is
+             ;; `(SCons cond (SCons then (SCons else SNil)))`. Project the three
+             ;; sub-exprs, assert exactly three, then SHORT-CIRCUIT: eval cond,
+             ;; and eval ONLY the taken branch. `0` is false, anything else true.
+             (let ([cond-e : Sexpr (sexpr-head rest)]
+                   [restc : Sexpr (sexpr-tail rest)])
+               (let ([then-e : Sexpr (sexpr-head restc)]
+                     [restt : Sexpr (sexpr-tail restc)])
+                 (let ([else-e : Sexpr (sexpr-head restt)]
+                       [reste : Sexpr (sexpr-tail restt)])
+                   (begin
+                     (sexpr-expect-nil reste)
+                     (let ([c : i64 (eval-sexpr cond-e env)])
+                       (if (= c 0)
+                           (eval-sexpr else-e env)
+                           (eval-sexpr then-e env)))))))
+             ;; A binary call form `(op arg1 arg2)`: rest is
+             ;; `(SCons arg1 (SCons arg2 SNil))`.
+             (let ([arg1 : Sexpr (sexpr-head rest)]
+                   [rest2 : Sexpr (sexpr-tail rest)])
+               (let ([arg2 : Sexpr (sexpr-head rest2)]
+                     [rest3 : Sexpr (sexpr-tail rest2)])
+                 (begin
+                   (sexpr-expect-nil rest3)
+                   (let ([a : i64 (eval-sexpr arg1 env)]
+                         [b : i64 (eval-sexpr arg2 env)])
+                     ;; Dispatch on the operator text. `string-eq` is the byte-wise
+                     ;; equality builtin; an unmatched operator falls through to a
+                     ;; panic. Arithmetic operators yield integers directly;
+                     ;; comparisons fold bool to 1 (true) or 0 (false).
+                     (if (string-eq name "+")
+                         (+ a b)
+                         (if (string-eq name "-")
+                             (- a b)
+                             (if (string-eq name "*")
+                                 (* a b)
+                                 (if (string-eq name "/")
+                                     (/ a b)
+                                     (if (string-eq name "=")
+                                         (if (= a b) 1 0)
+                                         (if (string-eq name "<")
+                                             (if (< a b) 1 0)
+                                             (if (string-eq name ">")
+                                                 (if (> a b) 1 0)
+                                                 (if (string-eq name "<=")
+                                                     (if (<= a b) 1 0)
+                                                     (if (string-eq name ">=")
+                                                         (if (>= a b) 1 0)
+                                                         (begin
+                                                           (panic "eval: unknown operator")
+                                                           0))))))))))))))))]
     [_ (begin (panic "eval: not an evaluable expression") 0)]))
 
 ;; --------------------------------------------------------------------------
 ;; main: the whole front end composed - lex, read, then interpret with variables.
 ;; --------------------------------------------------------------------------
-;; `(eval-sexpr (read (lex "(let ((x 5)) (+ x (* 2 x)))")) ENil)`:
-;;   - lex   produces the token stream  ( let ( ( x 5 ) ) ( + x ( * 2 x ) ) ) End
-;;   - read  builds the Sexpr tree, a `let` whose binding list binds `x` to 5 and
-;;     whose body is `(+ x (* 2 x))`.
-;;   - eval-sexpr interprets it in the EMPTY environment `ENil`: it sees the `let`
-;;     keyword, evaluates the initializer `5` to 5, then evaluates the body in
-;;     `(EBind "x" 5 ENil)`. In that body each `x` resolves via `lookup` to 5, so
-;;     `(* 2 x)` = 10 and `(+ x 10)` = 15. The variable reference proves the
-;;     environment is really threaded - the body cannot be computed without it.
-;; `main` returns 15, an observable result an execution test asserts as the exit
-;; code. (Sanity, still tree-shape dependent with NO variables:
-;; "(- (* 4 5) (/ 10 2))" interprets to (* 4 5) = 20 and (/ 10 2) = 5, then
-;; 20 - 5 = 15 - the same exit code via a different path.)
+;; `(eval-sexpr (read (lex "(let ((x 5)) (if (< x 6) (* x x) 0))")) ENil)`:
+;;   - lex/read build a `let` whose body is an `if`.
+;;   - the initializer binds `x` to 5 in `(EBind "x" 5 ENil)`.
+;;   - the `if` condition `(< x 6)` resolves `x` through the environment and
+;;     evaluates to 1, so only the THEN branch is walked.
+;;   - `(* x x)` resolves both variable references to 5 and returns 25.
+;; This single sample proves the evaluator now composes variables, lexical `let`,
+;; comparisons, and short-circuit conditionals. A false-guard sanity case like
+;; `(if (> 2 3) (/ 1 0) 7)` would return 7 without evaluating the division.
 (define (main) : i64
-  (eval-sexpr (read (lex "(let ((x 5)) (+ x (* 2 x)))")) ENil))
+  (eval-sexpr (read (lex "(let ((x 5)) (if (< x 6) (* x x) 0))")) ENil))

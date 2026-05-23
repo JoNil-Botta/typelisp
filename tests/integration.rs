@@ -322,6 +322,26 @@ fn type_lisp_programs_compile_link_and_run() {
             stdout: "hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10 . 20)(1 2 . 3)(1 4 9 16)(1 2)",
             deps: &["tl_read.tl", "tl_lex.tl", "tl_token.tl"],
         },
+        // refs #27/#155: the first slice of the self-hosted CODE GENERATOR.
+        // `emit-expr : Expr -> String` is a STACK MACHINE producing x86_64 asm
+        // TEXT for the int + `+`/`-`/`*` `Expr` subset: each sub-expression
+        // leaves its result in %rax; a binary node pushes the left operand,
+        // computes the right into %rcx, pops the left back, then emits the op
+        // mnemonic (`addq`/`subq`/`imulq %rcx, %rax`, mirroring the Rust
+        // backend). `main` emits and PRINTS (via print-string) the body asm for
+        // `(+ 1 (* 2 3))` = `(EAdd (ENum 1) (EMul (ENum 2) (ENum 3)))`. Because
+        // `*` is the right child of `+`, the multiplication is emitted (with its
+        // own push/pop) before the addition combines, so the printed sequence,
+        // when wrapped in a program skeleton and run, computes 1 + (2*3) = 7. We
+        // assert the PRINTED asm text EXACTLY (every line ends in `\n`, including
+        // the final `addq`); `main` returns 0 (clean exit). This catches any
+        // runtime emit bug the Windows compile-to-asm gate cannot.
+        Case {
+            name: "tl_emit",
+            exit_code: 0,
+            stdout: "    movq $1, %rax\n    pushq %rax\n    movq $2, %rax\n    pushq %rax\n    movq $3, %rax\n    movq %rax, %rcx\n    popq %rax\n    imulq %rcx, %rax\n    movq %rax, %rcx\n    popq %rax\n    addq %rcx, %rax\n",
+            deps: &[],
+        },
         // refs #41: NESTED PATTERN MATCHING, standalone witness. A tree-walking
         // evaluator whose SCons arm destructures two enum layers in ONE pattern
         // - `(SCons (SSym name) rest)` - binding the operator symbol `name` and
@@ -608,6 +628,16 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             exit_code: 30,
             stdout: "hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10 . 20)(1 2 . 3)(1 4 9 16)(1 2)",
             deps: &["tl_read.tl", "tl_lex.tl", "tl_token.tl"],
+        },
+        // refs #27/#155: the asm-text emitter, also through the explicit
+        // compile -> as -> ld -> run pipeline. `main` prints the stack-machine
+        // asm for `(+ 1 (* 2 3))` and exits 0; the printed text is asserted
+        // exactly.
+        Case {
+            name: "tl_emit",
+            exit_code: 0,
+            stdout: "    movq $1, %rax\n    pushq %rax\n    movq $2, %rax\n    pushq %rax\n    movq $3, %rax\n    movq %rax, %rcx\n    popq %rax\n    imulq %rcx, %rax\n    movq %rax, %rcx\n    popq %rax\n    addq %rcx, %rax\n",
+            deps: &[],
         },
         // refs #41: nested pattern matching, also through the explicit
         // compile -> as -> ld -> run pipeline. `(SCons (SSym name) rest)`

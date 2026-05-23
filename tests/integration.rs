@@ -240,24 +240,30 @@ fn type_lisp_programs_compile_link_and_run() {
         },
         // Self-hosting (#27): the s-expression EVALUATOR for TypeLisp's own
         // syntax, now a REAL LANGUAGE - a tiny tree-walking interpreter with
-        // VARIABLES, lexical `let`, short-circuit `if`, comparison operators,
+        // VARIABLES, MULTI-BINDING lexical `let` (sequential `let*` scoping),
+        // short-circuit `if`, comparison operators,
         // USER-DEFINED FUNCTIONS plus RECURSION and MULTI-ARGUMENT calls via
         // top-level `(define (f x y z) body)` forms, AND a tagged VALUE domain
         // `(defenum Value (VInt i64) (VStr String))`. `tl_eval.tl` walks the
         // recursive cons-cell `Sexpr` AST
         // against two environments - a value `Env` (binding `Value`s) and a
         // function `FnEnv`: `(SSym name)` resolves via recursive assoc-list
-        // `lookup`, `let` pushes `(EBind x v env)`, integer-requiring contexts
+        // `lookup`, `let` folds its binding LIST into the env (each init evaluated
+        // in the env built so far - `let*` - then the body evaluated in the
+        // extended env), integer-requiring contexts
         // funnel through `as-int`, a builtin op dispatches on its text and re-wraps
         // its i64 result as a `VInt`, and any other head symbol is a CALL into the
         // `FnEnv` (look up the PARAMETER LIST + body, zip the params against the
         // args with `bind-args` to build a fresh callee env, eval body with the
         // SAME `FnEnv`, so a body can call itself with any arity). `main` runs
         // `run-program` over the TWO-form program
-        // `(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (print (pow 2 10))`:
+        // `(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1)))))
+        //  (let ((b 2) (e 10) (r (pow b e))) (print r))`:
         // the program reader folds the recursive TWO-parameter `pow` define into
-        // the `FnEnv`, then evaluates `(print (pow 2 10))` - which zips `(b e)`
-        // against `(2 10)` and recurses to `(VInt 1024)`, then `print`s it to
+        // the `FnEnv`, then evaluates the MULTI-BINDING `let` - binding `b`->2,
+        // `e`->10, then `r`->`(pow b e)` whose init SEES the earlier `b`/`e`
+        // (sequential scoping); `(pow 2 10)` zips `(b e)` against `(2 10)` and
+        // recurses to `(VInt 1024)`, then `(print r)` writes it to
         // STDOUT. So stdout is `1024\n` (the host `print` appends a newline);
         // printing to stdout escapes the old mod-256 exit-code ceiling, so the exit
         // code is the wrapped `1024 & 0xff = 0`. All three imported
@@ -488,15 +494,19 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             stdout: "",
             deps: &["tl_lex.tl", "tl_token.tl"],
         },
-        // Self-hosting (#27): the s-expression evaluator with variables, `let`,
+        // Self-hosting (#27): the s-expression evaluator with variables,
+        // MULTI-BINDING `let` (sequential `let*`),
         // `if`, comparisons, user-defined functions + recursion + MULTI-ARGUMENT
         // calls, AND a tagged VALUE domain `(VInt/VStr)`, also
         // exercised through the explicit compile -> as -> ld -> run pipeline.
         // Runs `run-program` over the two-form program
-        // `(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (print (pow 2 10))`:
+        // `(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1)))))
+        //  (let ((b 2) (e 10) (r (pow b e))) (print r))`:
         // the recursive TWO-parameter `pow` define is folded into the `FnEnv`, then
-        // `(print (pow 2 10))` zips `(b e)` against `(2 10)` via `bind-args`,
-        // recurses to `(VInt 1024)`, and `print`s it - so stdout is `1024\n` and the
+        // the multi-binding `let` binds `b`->2, `e`->10, `r`->`(pow b e)` (the last
+        // init sees the earlier `b`/`e`), zips `(b e)` against `(2 10)` via
+        // `bind-args`, recurses to `(VInt 1024)`, and `(print r)` writes it - so
+        // stdout is `1024\n` and the
         // exit code is the wrapped `1024 & 0xff = 0`. The reader (and transitively
         // the lexer + token
         // model) is reused via the `main`-less `tl_read.tl` import - including its

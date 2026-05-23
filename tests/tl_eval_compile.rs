@@ -4,7 +4,8 @@
 //!
 //! `tl_eval.tl` is the third piece of TypeLisp's *real* self-hosting compiler
 //! front end (#27): a tiny tree-walking interpreter, now with VARIABLES, lexical
-//! `let`, short-circuit `if`, comparison operators, USER-DEFINED FUNCTIONS plus
+//! `let` (now MULTI-BINDING, with sequential `let*` scoping), short-circuit `if`,
+//! comparison operators, USER-DEFINED FUNCTIONS plus
 //! RECURSION via top-level `(define (f x y z) body)` forms with MULTI-ARGUMENT
 //! calls, AND a tagged VALUE domain - `(defenum Value (VInt i64) (VStr String))`
 //! - so an expression now denotes a `VInt` or a `VStr` rather than a raw `i64`
@@ -119,7 +120,9 @@ fn tl_eval_tl_compiles_to_assembly() {
     // The evaluator's own functions were emitted (TypeLisp prefixes user symbols
     // with `_tl_`): the tree-walking `eval-sexpr`, recursive variable `lookup`,
     // the cons-cell projections `sexpr-head` ("car") / `sexpr-tail` ("cdr"),
-    // the arity guard, the `let`-binding helpers, the `define`-form projections
+    // the arity guard, the multi-binding `let` helpers (`let-bindings` projects
+    // the binding LIST, `eval-let-bindings` folds it into the env), the
+    // `define`-form projections
     // (now `define-params`, returning the whole parameter LIST), the
     // function-environment lookups (`lookup-fn-params` / `lookup-fn-body`), the
     // multi-argument call binder (`bind-args`, which zips params against args),
@@ -135,7 +138,8 @@ fn tl_eval_tl_compiles_to_assembly() {
         "_tl_sexpr_head:",
         "_tl_sexpr_tail:",
         "_tl_sexpr_expect_nil:",
-        "_tl_let_binding:",
+        "_tl_let_bindings:",
+        "_tl_eval_let_bindings:",
         "_tl_let_var:",
         "_tl_let_init:",
         "_tl_let_body:",
@@ -178,6 +182,34 @@ fn tl_eval_tl_compiles_to_assembly() {
             asm,
         );
     }
+
+    // MULTI-BINDING `let` (#27): the single-binding `let-binding` projection (which
+    // forced exactly one binding pair) was GENERALISED to `let-bindings` (the whole
+    // binding LIST) plus `eval-let-bindings` (a recursive fold of that list into the
+    // env). The old single-binding helper `_tl_let_binding:` (note: no trailing `s`
+    // before the `:`) must no longer be emitted.
+    assert!(
+        !asm.contains("_tl_let_binding:"),
+        "tl_eval should no longer define the single-binding let-binding helper \
+         (generalised to the binding-list fold for multi-binding let):\n{}",
+        asm,
+    );
+
+    // The binding LIST is folded into the env by `eval-let-bindings`, which walks
+    // the list head-first - evaluating each initializer in the env built so far and
+    // recursing on the binding tail. So a call to `eval-let-bindings` AND a
+    // recursive self-call within it must both be present (the multi-binding fold).
+    assert!(
+        asm.contains("call _tl_eval_let_bindings"),
+        "tl_eval assembly shows no eval-let-bindings call (no multi-binding let fold):\n{}",
+        asm,
+    );
+    assert!(
+        asm.matches("call _tl_eval_let_bindings").count() >= 2,
+        "tl_eval assembly shows no recursive eval-let-bindings self-call \
+         (binding-list fold):\n{}",
+        asm,
+    );
 
     // The nested pattern `(SCons (SSym name) rest)` lowers to a SECOND tag
     // dispatch inside the SCons arm (testing the inner SSym tag), labelled

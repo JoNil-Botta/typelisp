@@ -183,28 +183,50 @@
     [(SCons _ _) (panic "eval: too many arguments")]))
 
 ;; --------------------------------------------------------------------------
-;; The `let` special form: a single lexical binding pushed onto the environment.
+;; The `let` special form: MULTIPLE lexical bindings pushed onto the environment.
 ;; --------------------------------------------------------------------------
-;; A `(let ((x e1)) body)` form reads into the spine
+;; A `(let ((x e1) (y e2) ...) body)` form reads into the spine
 ;;   rest     = (SCons bindings (SCons body SNil))
-;;   bindings = (SCons (SCons (SSym x) (SCons e1 SNil)) SNil)
+;;   bindings = (SCons (SCons (SSym x) (SCons e1 SNil))
+;;                     (SCons (SCons (SSym y) (SCons e2 SNil)) ... SNil))
 ;; The helpers destructure this shape one cons level at a time with `car`/`cdr`;
-;; the binding name itself uses a nested pattern to require `(SSym name)`.
+;; each binding name uses a nested pattern to require `(SSym name)`.
 ;;
-;; SCOPE OF THIS SLICE: exactly one binding. The first and only binding pair is
-;; taken from the head of `bindings`; multi-binding lists `((x 1) (y 2))` abort
-;; cleanly rather than silently dropping bindings. The single-binding case is the
-;; load-bearing step from calculator to environment interpreter.
+;; SCOPE: zero or more bindings. The binding LIST is folded head-first into the
+;; environment by `eval-let-bindings`, which evaluates each initializer in the
+;; environment built so far and pushes one `EBind` frame per pair. So the binding
+;; semantics is SEQUENTIAL (`let*`-style): a later initializer sees the variables
+;; bound by earlier pairs in the same `let` - e.g. `(let ((x 1) (y (+ x 1))) y)`
+;; evaluates `(+ x 1)` with `x` in scope. (For a single binding this is identical
+;; to the previous single-binding `let`.) An empty binding list `()` is allowed
+;; and simply evaluates the body in the unextended environment.
 
-;; let-binding: the single binding pair `(x e1)` out of the `let` form's tail.
-;; `rest` is `(SCons bindings (SCons body SNil))`, so the binding LIST is
-;; `(sexpr-head rest)` and the pair is the head of that list. The binding list's
-;; tail must be SNil, so multi-binding lists abort cleanly.
-(define (let-binding [rest : Sexpr]) : Sexpr
-  (let ([bindings : Sexpr (sexpr-head rest)])
-    (begin
-      (sexpr-expect-nil (sexpr-tail bindings))
-      (sexpr-head bindings))))
+;; let-bindings: the binding LIST `((x e1) (y e2) ...)` out of the `let` form's
+;; tail. `rest` is `(SCons bindings (SCons body SNil))`, so the binding list is
+;; `(sexpr-head rest)`. The list itself is destructured pair-by-pair by
+;; `eval-let-bindings`, so this is just the projection of its head.
+(define (let-bindings [rest : Sexpr]) : Sexpr
+  (sexpr-head rest))
+
+;; eval-let-bindings: fold the binding LIST `((x e1) (y e2) ...)` into the
+;; environment, head-first and SEQUENTIALLY. For each pair `(v init)` it evaluates
+;; `init` in the environment accumulated so far (`acc`) and pushes the resulting
+;; value as a fresh `(EBind v val acc)` frame, then recurses on the rest of the
+;; list - so a later initializer sees the bindings introduced by earlier pairs
+;; (`let*` semantics). An empty list `(SNil)` returns the environment unchanged.
+;; A malformed binding list (a non-cons element where a pair is expected) is a
+;; malformed program - abort. `eval-let-bindings` and `eval-sexpr` are mutually
+;; recursive: each initializer is evaluated by re-entering `eval-sexpr`.
+(define (eval-let-bindings [bindings : Sexpr] [acc : Env] [fenv : FnEnv]) : Env
+  (match bindings
+    [(SNil) acc]
+    [(SCons pair more)
+     (let ([var : String (let-var pair)]
+           [v : Value (eval-sexpr (let-init pair) acc fenv)])
+       (eval-let-bindings more (EBind var v acc) fenv))]
+    [(SInt _) (begin (panic "eval: malformed let binding list") acc)]
+    [(SSym _) (begin (panic "eval: malformed let binding list") acc)]
+    [(SStr _) (begin (panic "eval: malformed let binding list") acc)]))
 
 ;; let-var: the bound variable's name `x` from a binding pair `(x e1)`.
 (define (let-var [pair : Sexpr]) : String
@@ -301,10 +323,13 @@
 ;;                        -> a special form, a builtin call, OR a USER-FUNCTION
 ;;                           CALL. The nested pattern requires a symbol head and
 ;;                           binds it as the operator/keyword/function name:
-;;                             - "let": destructure the single binding `(x e1)`
-;;                               and the body out of `rest`, evaluate `e1` in the
-;;                               CURRENT env, then evaluate the body in
-;;                               `(EBind x v env)` - lexical scoping.
+;;                             - "let": destructure the binding LIST
+;;                               `((x e1) (y e2) ...)` and the body out of `rest`,
+;;                               fold every binding into the env SEQUENTIALLY (each
+;;                               initializer evaluated in the env built so far, so
+;;                               a later init sees earlier bindings - `let*`), then
+;;                               evaluate the body in that extended env - lexical
+;;                               scoping.
 ;;                             - "if": short-circuit - evaluate the condition,
 ;;                               `as-int` it (0 = false), then evaluate only the
 ;;                               taken branch.
@@ -351,11 +376,12 @@
     [(SNil) (begin (panic "eval: cannot evaluate the empty list") (VInt 0))]
     [(SCons (SSym name) rest)
      (if (string-eq name "let")
-         ;; The `let` special form: `(let ((x e1)) body)`.
-         (let ([pair : Sexpr (let-binding rest)])
-           (let ([var : String (let-var pair)]
-                 [v : Value (eval-sexpr (let-init pair) env fenv)])
-             (eval-sexpr (let-body rest) (EBind var v env) fenv)))
+         ;; The `let` special form: `(let ((x e1) (y e2) ...) body)`. Fold the
+         ;; whole binding LIST into the environment (sequentially, `let*`-style),
+         ;; then evaluate the body in that extended environment.
+         (eval-sexpr (let-body rest)
+                     (eval-let-bindings (let-bindings rest) env fenv)
+                     fenv)
          (if (string-eq name "if")
              ;; `if` SPECIAL FORM `(if cond then else)`: rest is
              ;; `(SCons cond (SCons then (SCons else SNil)))`. Project the three
@@ -545,33 +571,37 @@
 
 ;; --------------------------------------------------------------------------
 ;; main: the whole front end composed - lex, read MANY forms, interpret with
-;; MULTI-ARGUMENT user functions and recursion.
+;; MULTI-ARGUMENT user functions, recursion, AND multi-binding `let`.
 ;; --------------------------------------------------------------------------
-;; `(run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (print (pow 2 10))")`:
+;; `(run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1)))))
+;;                (let ((b 2) (e 10) (r (pow b e))) (print r))")`:
 ;;   - the program is TWO top-level forms: one recursive TWO-parameter `define` of
-;;     `pow`, then the trailing expression `(print (pow 2 10))`.
+;;     `pow`, then the trailing expression - a MULTI-BINDING `let` over `pow`.
 ;;   - the program reader folds the `define` into
 ;;     `(FBind "pow" (b e) body FNil)` - the param LIST `(b e)` kept verbatim -
-;;     then evaluates `(print (pow 2 10))` against that function env.
-;;   - the call zips the params `(b e)` against the args `(2 10)` via `bind-args`,
+;;     then evaluates the `let` against that function env.
+;;   - the `let` has THREE bindings, folded SEQUENTIALLY (`let*`): `b -> (VInt 2)`,
+;;     then `e -> (VInt 10)`, then `r -> (pow b e)` whose initializer `(pow b e)`
+;;     SEES the earlier `b` and `e` bindings - the load-bearing proof that a later
+;;     initializer resolves variables bound by earlier pairs in the SAME `let`.
+;;     The call zips the params `(b e)` against the args `(2 10)` via `bind-args`,
 ;;     building the callee env `(EBind "b" (VInt 2) (EBind "e" (VInt 10) ENil))`.
 ;;     The body then recurses on the SECOND argument: `pow(2,10) = 2*pow(2,9) =
 ;;     ... = 2^10`, bottoming out at the `(< e 1)` base case which returns `(VInt
-;;     1)`. The result `(VInt 1024)` is then `print`ed to STDOUT.
-;;   - the trailing `(print (pow 2 10))` emits `1024` to STDOUT (the host `print`
-;;     builtin appends a newline) and returns `(VInt 1024)`, so the program result
-;;     is `1024`. Because output is to STDOUT we escape the mod-256 process-exit-
-;;     code ceiling that capped the old `(pow 2 7) => 128` witness: stdout shows
-;;     the full `1024` even though the exit code (`1024 & 0xff`) wraps to 0.
+;;     1)`, so `r` binds `(VInt 1024)`.
+;;   - the body `(print r)` emits `1024` to STDOUT (the host `print` builtin
+;;     appends a newline) and returns `(VInt 1024)`, so the `let` - and the whole
+;;     program - denotes `1024`. Because output is to STDOUT we escape the mod-256
+;;     process-exit-code ceiling: stdout shows the full `1024` even though the exit
+;;     code (`1024 & 0xff`) wraps to 0.
 ;; This single program proves the evaluator now (a) carries a tagged `Value`
 ;; domain - the env binds `VInt`s, arithmetic/`if` go through `as-int`, and the
-;; result is a `(VInt 1024)` - while still (b) supporting MULTI-ARGUMENT user
-;; functions: the parameter list `(b e)` is zipped against the argument list, both
-;; parameters are in scope, and RECURSION resolves through the shared function
-;; environment, all composed atop the reused lexer and reader. A string VALUE is
-;; also now first-class: `(let ((s "hi")) 1)` BINDS a `(VStr "hi")` without error
-;; (its evaluation is exercised below). (Deferred: `VStr` printing - no host
+;; result is a `(VInt 1024)`; (b) supports MULTI-ARGUMENT user functions with
+;; RECURSION through the shared function environment; and (c) supports
+;; MULTI-BINDING `let` with sequential (`let*`) scoping - all composed atop the
+;; reused lexer and reader. A string VALUE is also first-class: `(let ((s "hi")) 1)`
+;; BINDS a `(VStr "hi")` without error. (Deferred: `VStr` printing - no host
 ;; string-print builtin exists; string OPERATIONS; lambda; closures; variadic
 ;; arity.)
 (define (main) : i64
-  (run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (print (pow 2 10))"))
+  (run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (let ((b 2) (e 10) (r (pow b e))) (print r))"))

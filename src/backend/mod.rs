@@ -35,6 +35,10 @@ pub struct X86_64Backend {
     /// (emitted by array bounds checks) and the backend must emit the
     /// self-contained abort runtime (write to fd 2 + `exit`) into the `.s`.
     needs_oob_runtime: bool,
+    /// Whether the program references the division abort `tl_div_abort`
+    /// (emitted by guarded integer division/remainder) and the backend must
+    /// emit the self-contained abort runtime into the `.s`.
+    needs_div_runtime: bool,
     /// Whether the program references the string-equality helper
     /// `tl_string_eq` and the backend must therefore emit the self-contained
     /// (libc-free, syscall-free) byte-comparison runtime into the program's
@@ -804,6 +808,7 @@ impl X86_64Backend {
             needs_alloc_runtime: false,
             emits_alloc_runtime: false,
             needs_oob_runtime: false,
+            needs_div_runtime: false,
             needs_string_eq_runtime: false,
             needs_string_to_int_runtime: false,
             needs_int_to_string_runtime: false,
@@ -838,6 +843,7 @@ impl X86_64Backend {
         self.runtime_print_names = Self::runtime_print_names(program);
         self.needs_alloc_runtime = Self::needs_alloc_runtime(program);
         self.needs_oob_runtime = Self::needs_oob_runtime(program);
+        self.needs_div_runtime = Self::needs_div_runtime(program);
         self.needs_string_eq_runtime = Self::needs_string_eq_runtime(program);
         self.needs_string_to_int_runtime = Self::needs_string_to_int_runtime(program);
         self.needs_int_to_string_runtime = Self::needs_int_to_string_runtime(program);
@@ -883,6 +889,9 @@ impl X86_64Backend {
         if self.needs_oob_runtime {
             self.generate_oob_runtime_data();
         }
+        if self.needs_div_runtime {
+            self.generate_div_runtime_data();
+        }
         if self.needs_read_file_runtime {
             self.generate_read_file_runtime_data();
         }
@@ -907,6 +916,7 @@ impl X86_64Backend {
             let defined_inline = Self::is_defined_print_runtime_symbol(&symbol)
                 || (self.emits_alloc_runtime && symbol == "tl_alloc")
                 || (self.needs_oob_runtime && symbol == "tl_oob_abort")
+                || (self.needs_div_runtime && symbol == "tl_div_abort")
                 || (self.needs_string_eq_runtime && symbol == "tl_string_eq")
                 || (self.needs_string_to_int_runtime && symbol == "tl_string_to_int")
                 || (self.needs_int_to_string_runtime && symbol == "tl_int_to_string")
@@ -937,6 +947,9 @@ impl X86_64Backend {
         }
         if self.needs_oob_runtime {
             self.generate_oob_runtime_functions();
+        }
+        if self.needs_div_runtime {
+            self.generate_div_runtime_functions();
         }
         if self.needs_string_eq_runtime {
             self.generate_string_eq_runtime_functions();
@@ -1116,6 +1129,29 @@ impl X86_64Backend {
             .externs
             .iter()
             .any(|(name, _)| name == "tl_oob_abort");
+        referenced_in_calls || referenced_in_externs
+    }
+
+    /// Whether the program references the integer-division abort `tl_div_abort`
+    /// (emitted by guarded integer division/remainder) and does not define its
+    /// own. When true the backend emits the self-contained abort runtime so the
+    /// symbol resolves without linking libc.
+    fn needs_div_runtime(program: &Program) -> bool {
+        let defines_own = program.functions.iter().any(|f| f.name == "tl_div_abort");
+        if defines_own {
+            return false;
+        }
+        let referenced_in_calls = program.functions.iter().any(|func| {
+            func.blocks.iter().any(|block| {
+                block.instructions.iter().any(|instr| {
+                    matches!(instr, Instruction::Call { func, .. } if func == "tl_div_abort")
+                })
+            })
+        });
+        let referenced_in_externs = program
+            .externs
+            .iter()
+            .any(|(name, _)| name == "tl_div_abort");
         referenced_in_calls || referenced_in_externs
     }
 
@@ -1720,6 +1756,34 @@ impl X86_64Backend {
         self.emit(".L_tl_file_exists_error_msg:");
         self.emit("    .ascii \"tl: file-exists? failed\\n\"");
         self.emit("    .set .L_tl_file_exists_error_msg_len, . - .L_tl_file_exists_error_msg");
+        self.emit("");
+    }
+
+    /// The abort message written to fd 2 (stderr) on illegal integer division
+    /// or remainder (divide-by-zero or signed overflow).
+    fn generate_div_runtime_data(&mut self) {
+        self.emit("    .section .rodata");
+        self.emit(".L_tl_div_msg:");
+        self.emit("    .ascii \"tl: integer division or remainder error\\n\"");
+        self.emit("    .set .L_tl_div_msg_len, . - .L_tl_div_msg");
+        self.emit("");
+    }
+
+    /// Emit the self-contained division abort `tl_div_abort()`. It writes a
+    /// diagnostic to fd 2 via the `write(2)` syscall, then terminates the
+    /// process with status 135 via the `exit(2)` syscall. Because it is a `Call`
+    /// the optimizer cannot drop the guard.
+    fn generate_div_runtime_functions(&mut self) {
+        self.emit("    .globl tl_div_abort");
+        self.emit("tl_div_abort:");
+        self.emit("    movq $1, %rax");
+        self.emit("    movq $2, %rdi");
+        self.emit("    leaq .L_tl_div_msg(%rip), %rsi");
+        self.emit("    movq $.L_tl_div_msg_len, %rdx");
+        self.emit("    syscall");
+        self.emit("    movq $60, %rax");
+        self.emit("    movq $135, %rdi");
+        self.emit("    syscall");
         self.emit("");
     }
 
@@ -3662,6 +3726,8 @@ impl X86_64Backend {
         } else if name == "tl_oob_abort" && self.needs_oob_runtime {
             // The backend-provided abort runtime resolves to its raw symbol.
             "tl_oob_abort".into()
+        } else if name == "tl_div_abort" && self.needs_div_runtime {
+            "tl_div_abort".into()
         } else if name == ABORT_RUNTIME_SYMBOL && self.needs_abort_runtime {
             // The backend-provided message-abort runtime (emitted on demand by
             // `panic`/`error`) resolves to its private assembler label rather
@@ -5159,6 +5225,26 @@ mod tests {
         assert!(
             !asm.contains("divq %rcx"),
             "u8 modulo must not use 64-bit div; asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_compile_i64_div_has_guard_and_tl_div_abort() {
+        let asm = compile_ok("(define (f [a : i64] [b : i64]) : i64 (/ a b))");
+        assert!(
+            asm.contains("tl_div_abort:"),
+            "asm must contain tl_div_abort runtime:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("call tl_div_abort"),
+            "asm must call tl_div_abort:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("idivq %rcx"),
+            "asm must contain idivq:\n{}",
             asm
         );
     }

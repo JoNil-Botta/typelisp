@@ -658,6 +658,11 @@ impl FnLowerer {
             _ => operand_ty.clone(),
         };
 
+        // Guard integer division and remainder against exceptional cases.
+        if matches!(ir_op, BinOp::Div | BinOp::Mod) && operand_ty.is_integer() {
+            return self.lower_guarded_divmod(ir_op, lhs_val, rhs_val, &operand_ty, &result_ty);
+        }
+
         let dst = self.builder.fresh_var();
         self.builder.emit(Instruction::BinOp {
             dst,
@@ -668,6 +673,138 @@ impl FnLowerer {
         });
         self.record_local(dst, result_ty.clone());
         Value::Var(dst)
+    }
+
+    fn lower_guarded_divmod(
+        &mut self,
+        ir_op: BinOp,
+        lhs_val: Value,
+        rhs_val: Value,
+        operand_ty: &Type,
+        result_ty: &Type,
+    ) -> Value {
+        let signed = operand_ty.is_signed();
+
+        // Helper: emit a comparison and branch to trap_label on true.
+        let trap_label = self.builder.fresh_label("div_trap");
+        let ok_label = self.builder.fresh_label("div_ok");
+
+        // Guard 1: divisor == 0.
+        let zero_const = Self::int_compare_const(0, operand_ty);
+        let rhs_zero = self.builder.fresh_var();
+        self.builder.emit(Instruction::BinOp {
+            dst: rhs_zero,
+            op: BinOp::Eq,
+            lhs: rhs_val.clone(),
+            rhs: zero_const,
+            ty: Type::Bool,
+        });
+        self.record_local(rhs_zero, Type::Bool);
+
+        if signed {
+            let guard2_label = self.builder.fresh_label("div_guard2");
+            self.builder.emit(Instruction::Branch {
+                cond: Value::Var(rhs_zero),
+                true_label: trap_label.clone(),
+                false_label: guard2_label.clone(),
+            });
+
+            // Guard 2: signed MIN / -1 overflow.
+            self.builder.finish_block(&guard2_label);
+
+            // (a) rhs == -1.
+            let neg1_const = Self::int_compare_const(-1, operand_ty);
+            let rhs_neg1 = self.builder.fresh_var();
+            self.builder.emit(Instruction::BinOp {
+                dst: rhs_neg1,
+                op: BinOp::Eq,
+                lhs: rhs_val.clone(),
+                rhs: neg1_const,
+                ty: Type::Bool,
+            });
+            self.record_local(rhs_neg1, Type::Bool);
+
+            let overflow_check = self.builder.fresh_label("div_overflow_check");
+            self.builder.emit(Instruction::Branch {
+                cond: Value::Var(rhs_neg1),
+                true_label: overflow_check.clone(),
+                false_label: ok_label.clone(),
+            });
+
+            // (b) lhs == MIN.
+            self.builder.finish_block(&overflow_check);
+            let min_const = Self::signed_min_compare_const(operand_ty);
+            let lhs_min = self.builder.fresh_var();
+            self.builder.emit(Instruction::BinOp {
+                dst: lhs_min,
+                op: BinOp::Eq,
+                lhs: lhs_val.clone(),
+                rhs: min_const,
+                ty: Type::Bool,
+            });
+            self.record_local(lhs_min, Type::Bool);
+
+            self.builder.emit(Instruction::Branch {
+                cond: Value::Var(lhs_min),
+                true_label: trap_label.clone(),
+                false_label: ok_label.clone(),
+            });
+        } else {
+            // Unsigned: only zero check.
+            self.builder.emit(Instruction::Branch {
+                cond: Value::Var(rhs_zero),
+                true_label: trap_label.clone(),
+                false_label: ok_label.clone(),
+            });
+        }
+
+        // Trap block.
+        self.builder.finish_block(&trap_label);
+        self.builder.emit(Instruction::Call {
+            dst: None,
+            func: "tl_div_abort".into(),
+            args: vec![],
+            ty: Type::Unit,
+        });
+        self.builder.emit(Instruction::Jump(ok_label.clone()));
+
+        // Safe block: emit the actual BinOp.
+        self.builder.finish_block(&ok_label);
+        let dst = self.builder.fresh_var();
+        self.builder.emit(Instruction::BinOp {
+            dst,
+            op: ir_op,
+            lhs: lhs_val,
+            rhs: rhs_val,
+            ty: result_ty.clone(),
+        });
+        self.record_local(dst, result_ty.clone());
+        Value::Var(dst)
+    }
+
+    fn int_compare_const(value: i64, ty: &Type) -> Value {
+        match ty {
+            Type::I8 | Type::U8 => Value::ConstI8(value as i8),
+            // IR has no 16-bit immediate variant. The backend compares the
+            // low `%cx`/`%ax` registers for i16/u16 operations.
+            Type::I16 => Value::ConstI64(value as i16 as i64),
+            Type::U16 => Value::ConstI64(value as u16 as i64),
+            Type::I32 | Type::U32 => Value::ConstI32(value as i32),
+            Type::I64 => Value::ConstI64(value),
+            Type::U64 => Value::ConstI64(value as u64 as i64),
+            _ => unreachable!("division guard constants are only used for integer operands"),
+        }
+    }
+
+    fn signed_min_compare_const(ty: &Type) -> Value {
+        match ty {
+            Type::I8 => Value::ConstI8(i8::MIN),
+            // IR has no 16-bit immediate variant. See `int_compare_const`.
+            Type::I16 => Value::ConstI64(i16::MIN as i64),
+            Type::I32 => Value::ConstI32(i32::MIN),
+            Type::I64 => Value::ConstI64(i64::MIN),
+            _ => unreachable!("signed division overflow guard requires a signed integer type"),
+        }
     }
 
     fn lower_unary(&mut self, op: ast::UnOp, expr: &ast::Expr) -> Value {

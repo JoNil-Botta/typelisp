@@ -314,7 +314,10 @@ All operators are prefix functions (or special forms):
   operand type.
 - `+`, `-`, `*`, `/` also operate on `f64`; `%` on floating-point values is
   rejected by backend validation.
-- Division by zero is **undefined behavior** at runtime.
+- Integer `/` and `%` trap at runtime when the divisor is zero, or when a
+  signed dividend is the minimum value for its width and the divisor is `-1`
+  (since the mathematical result is not representable). Both cases abort
+  the process with a diagnostic written to stderr and exit status 135.
 
 ### 5.5 Comparison operators
 

@@ -11,7 +11,9 @@
 //! RECURSION via top-level `(define (f x y z) body)` forms with MULTI-ARGUMENT
 //! calls, FIRST-CLASS FUNCTIONS - `lambda` and CLOSURES, the `(VClosure params
 //! body captured-env)` value, CONS PAIRS / LINKED LISTS - `(VPair Value Value)`
-//! cells built by `cons` and projected by `car` / `cdr` - the `pair?` / `null?`
+//! cells built by `cons` and projected by `car` / `cdr`, also built in one form by
+//! the VARIADIC `(list e1 ... en)` SPECIAL FORM (a right-nested cons chain
+//! terminated by the `(VInt 0)` NIL sentinel) - the `pair?` / `null?`
 //! LIST PREDICATES that let an interpreted program write RECURSIVE LIST ALGORITHMS
 //! (`(pair? x)` true iff `x` is a `(VPair ...)`, `(null? x)` true iff `x` is the
 //! nil sentinel `(VInt 0)`, refs #141) - AND a tagged VALUE
@@ -654,6 +656,35 @@ fn tl_eval_tl_compiles_to_assembly() {
             asm,
         );
     }
+
+    // VARIADIC LIST CONSTRUCTOR (#27): `(list e1 e2 ... en)` is a SPECIAL FORM
+    // (variadic, so dispatched before the fixed-arity builtin-op / user-call paths)
+    // that builds the right-nested cons chain `(VPair v1 (VPair v2 ... (VInt 0)))`
+    // terminated by the `(VInt 0)` NIL sentinel - the same chain a nested `cons`
+    // literal builds, so `pair?` / `null?` / `car` / `cdr` / `sum-list` walk it
+    // identically. So its `"list"` head-symbol dispatch literal must reach the
+    // read-only data alongside the other special forms.
+    assert!(
+        asm.contains(".string \"list\""),
+        "tl_eval assembly is missing the \"list\" dispatch string literal (variadic list constructor):\n{}",
+        asm,
+    );
+
+    // The `list` arm walks its element spine with `eval-list`, which evaluates each
+    // element head-first and CONSES it onto the recursively built tail (terminating
+    // at `(VInt 0)`). So `eval-list` is emitted as its own function, the dispatch arm
+    // calls it, AND it calls ITSELF (the recursive spine cons-build) - so at least
+    // two `call _tl_eval_list` sites must be present.
+    assert!(
+        asm.contains("_tl_eval_list:"),
+        "tl_eval assembly is missing the eval-list helper (variadic list constructor):\n{}",
+        asm,
+    );
+    assert!(
+        asm.matches("call _tl_eval_list").count() >= 2,
+        "tl_eval assembly shows no recursive eval-list self-call (list spine cons-build):\n{}",
+        asm,
+    );
 
     // RECURSIVE LIST ALGORITHMS (#27): the predicates exist so an interpreted
     // program can write recursive list functions that TERMINATE on the structure of

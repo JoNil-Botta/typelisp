@@ -340,6 +340,38 @@
     [(SStr _) (begin (panic "eval: malformed begin body") (VInt 0))]))
 
 ;; --------------------------------------------------------------------------
+;; The `list` special form: build a cons LIST from N evaluated elements (#27).
+;; --------------------------------------------------------------------------
+;; `(list e1 e2 ... en)` is the variadic LIST CONSTRUCTOR - the ergonomic way to
+;; build the right-nested chain of pairs `(cons e1 (cons e2 ... (cons en 0)))`
+;; that this file uses as its singly-linked list, terminated by the `(VInt 0)`
+;; NIL sentinel (so `null?` recognises its end). It is a SPECIAL FORM rather than
+;; a builtin op because it takes an arbitrary NUMBER of operands (no fixed arity
+;; to zip), so it is dispatched in `eval-sexpr` BEFORE the fixed-arity builtin-op
+;; / user-call paths. `(list)` with no elements denotes the empty list `(VInt 0)`.
+;;
+;; `(list e1 e2 ... en)` reads into the spine
+;;   rest = (SCons e1 (SCons e2 ... (SCons en SNil)))
+;; so `eval-list` walks that flat cons list head-first - structurally identical to
+;; how `eval-seq` walks a `begin` body, except instead of discarding all but the
+;; last value it CONSES every evaluated element onto the recursively built tail:
+;; at `SNil` the tail is `(VInt 0)` (NIL); at `(SCons head tail)` it evaluates
+;; `head` in the current env/fenv and builds `(VPair <head-val> (eval-list tail))`.
+;; So the result is exactly the cons chain a nested `cons` literal would build -
+;; and `pair?` / `null?` / `car` / `cdr` / `sum-list` walk it identically.
+;; `eval-list` and `eval-sexpr` are mutually recursive (each element is evaluated
+;; by re-entering `eval-sexpr`). A malformed (improper) spine - a non-`SCons`,
+;; non-`SNil` element position - is a malformed program and aborts.
+(define (eval-list [elems : Sexpr] [env : Env] [fenv : FnEnv]) : Value
+  (match elems
+    [(SNil) (VInt 0)]
+    [(SCons head tail)
+     (VPair (eval-sexpr head env fenv) (eval-list tail env fenv))]
+    [(SInt _) (begin (panic "eval: malformed list elements") (VInt 0))]
+    [(SSym _) (begin (panic "eval: malformed list elements") (VInt 0))]
+    [(SStr _) (begin (panic "eval: malformed list elements") (VInt 0))]))
+
+;; --------------------------------------------------------------------------
 ;; The `define` form: register a MULTI-parameter user function (refs #27).
 ;; --------------------------------------------------------------------------
 ;; A top-level `(define (f x y z) body)` reads into the spine
@@ -488,7 +520,17 @@
     [(SStr s) (VStr s)]
     [(SNil) (begin (panic "eval: cannot evaluate the empty list") (VInt 0))]
     [(SCons (SSym name) rest)
-     (if (string-eq name "begin")
+     (if (string-eq name "list")
+         ;; The `list` SPECIAL FORM `(list e1 e2 ... en)`: `rest` is the cons
+         ;; spine `(SCons e1 (SCons e2 ... SNil))` of element expressions. Build
+         ;; the cons LIST `(VPair v1 (VPair v2 ... (VInt 0)))` with `eval-list`,
+         ;; which evaluates each element and conses it onto the recursively built
+         ;; tail, terminating at `(VInt 0)` (NIL). `(list)` denotes `(VInt 0)`.
+         ;; Like `begin` this is dispatched as a SPECIAL FORM (checked before the
+         ;; fixed-arity builtin-op and user-call paths) because it is variadic -
+         ;; there is no fixed parameter list to zip its operands against.
+         (eval-list rest env fenv)
+         (if (string-eq name "begin")
          ;; The `begin` SPECIAL FORM `(begin e1 e2 ... en)`: `rest` is the cons
          ;; spine `(SCons e1 (SCons e2 ... SNil))` of sub-expressions. Walk it
          ;; with `eval-seq`, evaluating each form in order for its side effects
@@ -792,7 +834,7 @@
                                      (apply-value (lookup env name) rest env fenv)
                                      (let ([params : Sexpr (lookup-fn-params fenv name)]
                                            [body : Sexpr (lookup-fn-body fenv name)])
-                                       (eval-sexpr body (bind-args params rest env fenv) fenv))))))))))))))))))))]
+                                       (eval-sexpr body (bind-args params rest env fenv) fenv)))))))))))))))))))))]
     ;; APPLICATION OF A COMPUTED OPERATOR `((<expr>) a b ...)`: the head is itself
     ;; a non-symbol form (a `lambda` literal, or any expression that evaluates to a
     ;; closure), so it falls through the symbol-head arm. Evaluate the head form in
@@ -997,11 +1039,11 @@
 ;;                    (begin (print t) (print (+ ...)) (+ ...)))
 ;;                  (print ((lambda (x) (* x x)) 5))
 ;;                  (print (let ((n 10)) ((lambda (x) (+ x n)) 5)))
-;;                  (let ((lst (cons 1 (cons 2 (cons 3 0)))) (p (cons 10 20)))
+;;                  (let ((lst (list 1 2 3)) (p (cons 10 20)))
 ;;                    (begin (print (second lst)) (print p) (print (car p))
 ;;                           (print (pair? lst)) (print (null? lst))
 ;;                           (print (null? 0)) (print (list-len lst))
-;;                           (sum-list lst)))))")`:
+;;                           (sum-list (list 1 2 3 4 5))))))")`:
 ;;   - the program starts with a recursive TWO-parameter `define` of `pow`, the
 ;;     ONE-parameter `define` of `second` (just `(car (cdr xs))` - a list accessor
 ;;     built FROM the pair primitives), and two RECURSIVE LIST functions that the
@@ -1025,34 +1067,40 @@
 ;;     VARIABLE. The lambda CAPTURES `n -> 10`; applying it to `5` binds `x -> 5`
 ;;     onto the captured env so `(+ x n)` -> `(VInt 15)`. `(print 15)` writes
 ;;     `15\n` - the load-bearing closure-capture proof.
-;;   - FOURTH (the CONS-PAIR / LINKED-LIST / RECURSIVE-LIST witness): `lst` is the
-;;     3-element singly-linked list `(cons 1 (cons 2 (cons 3 0)))` - a right-nested
-;;     chain of `(VPair ...)` cells terminated by the `0` NIL sentinel - and `p` is
-;;     the heterogeneous pair `(cons 10 20)`. The inner `begin` prints the list's
-;;     second element via `(second lst)` = `(car (cdr lst))` (`2\n`), the pair as
-;;     the placeholder `#<pair>` (no newline - a pair has no flat textual form),
-;;     the pair's car `10\n`, then EXERCISES THE NEW PREDICATES: `(pair? lst)` is
-;;     `1\n` (a non-empty list IS a pair), `(null? lst)` is `0\n` (it is not the NIL
-;;     terminator), `(null? 0)` is `1\n` (the `0` sentinel IS nil), and the
-;;     recursive `(list-len lst)` walks the chain to `3\n`. The arm then denotes the
-;;     UNPRINTED recursive `(sum-list lst)` = `1 + 2 + 3 + 0` = `(VInt 6)`.
-;;   - the outer `begin` returns the LAST arm, `(VInt 6)`, so the whole program
-;;     denotes `6`. STDOUT is `hello world3233\n25\n15\n2\n#<pair>10\n1\n0\n1\n3\n`;
+;;   - FOURTH (the LIST-CONSTRUCTOR / RECURSIVE-LIST witness): `lst` is the
+;;     3-element singly-linked list built by the VARIADIC `(list 1 2 3)` SPECIAL
+;;     FORM - which denotes exactly the right-nested chain
+;;     `(cons 1 (cons 2 (cons 3 0)))` of `(VPair ...)` cells terminated by the `0`
+;;     NIL sentinel - and `p` is the heterogeneous pair `(cons 10 20)`. The inner
+;;     `begin` prints the list's second element via `(second lst)` =
+;;     `(car (cdr lst))` (`2\n`), the pair as the placeholder `#<pair>` (no newline
+;;     - a pair has no flat textual form), the pair's car `10\n`, then EXERCISES THE
+;;     PREDICATES on the `list`-built chain: `(pair? lst)` is `1\n` (a non-empty
+;;     list IS a pair), `(null? lst)` is `0\n` (it is not the NIL terminator),
+;;     `(null? 0)` is `1\n` (the `0` sentinel IS nil), and the recursive
+;;     `(list-len lst)` walks the chain to `3\n` - so the `(list ...)` constructor
+;;     builds a chain indistinguishable from a nested `cons` literal to every list
+;;     operation. The arm then denotes the UNPRINTED recursive
+;;     `(sum-list (list 1 2 3 4 5))` - summing the FIVE elements of a list built by
+;;     the variadic constructor = `1 + 2 + 3 + 4 + 5` = `(VInt 15)`.
+;;   - the outer `begin` returns the LAST arm, `(VInt 15)`, so the whole program
+;;     denotes `15`. STDOUT is `hello world3233\n25\n15\n2\n#<pair>10\n1\n0\n1\n3\n`;
 ;;     printing to stdout escapes the mod-256 exit-code ceiling, and the exit code
-;;     is `6`.
+;;     is `15`.
 ;; This program proves the evaluator now has FIRST-CLASS FUNCTIONS - a `lambda`
 ;; special form building a `(VClosure params body captured-env)`, applied as a
 ;; computed operator or a closure-valued variable, with true CLOSURE capture via
 ;; `bind-args-onto` - CONS PAIRS / LINKED LISTS - `cons` builds a `(VPair ...)`,
 ;; `car` / `cdr` project it (the pair PRINTS as `#<pair>`), and a right-nested chain
-;; of pairs terminated by `0` (NIL) is a singly-linked list - AND, the milestone of
-;; this slice, the `pair?` / `null?` LIST PREDICATES that let an interpreted program
-;; write RECURSIVE LIST ALGORITHMS: `sum-list` and `list-len` recur on `(cdr l)`
-;; and terminate by testing the structure of the value (a pair = more list, the `0`
-;; NIL sentinel = done), composing closures, pairs, and recursion. `Value` and
+;; of pairs terminated by `0` (NIL) is a singly-linked list, now also buildable in
+;; one form by the VARIADIC `(list e1 ... en)` SPECIAL FORM - AND the `pair?` /
+;; `null?` LIST PREDICATES that let an interpreted program write RECURSIVE LIST
+;; ALGORITHMS: `sum-list` and `list-len` recur on `(cdr l)` and terminate by testing
+;; the structure of the value (a pair = more list, the `0` NIL sentinel = done),
+;; composing closures, pairs, the `list` constructor, and recursion. `Value` and
 ;; `Env` are mutually recursive enums (a `VClosure` carries an `Env`, an `EBind`
 ;; carries a `Value`), each pointer-sized so the layout stays finite. (Deferred:
-;; variadic arity; string-literal escapes; a dedicated nil variant; recursive list
-;; printing.)
+;; variadic user-function arity; string-literal escapes; a dedicated nil variant;
+;; recursive list printing.)
 (define (main) : i64
-  (run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (define (second xs) (car (cdr xs))) (define (sum-list l) (if (pair? l) (+ (car l) (sum-list (cdr l))) 0)) (define (list-len l) (if (null? l) 0 (+ 1 (list-len (cdr l))))) (begin (let ((s \"hello world\") (h (substring s 0 5)) (w (substring s 6 5)) (n (string-length h)) (g (string-append h (string-append \" \" w))) (t (string-append g (int->string (pow 2 n))))) (begin (print t) (print (+ (string->int (substring t 11 2)) (string-eq g s))) (+ (string->int (substring t 11 2)) (string-eq g s)))) (print ((lambda (x) (* x x)) 5)) (print (let ((n 10)) ((lambda (x) (+ x n)) 5))) (let ((lst (cons 1 (cons 2 (cons 3 0)))) (p (cons 10 20))) (begin (print (second lst)) (print p) (print (car p)) (print (pair? lst)) (print (null? lst)) (print (null? 0)) (print (list-len lst)) (sum-list lst))))"))
+  (run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (define (second xs) (car (cdr xs))) (define (sum-list l) (if (pair? l) (+ (car l) (sum-list (cdr l))) 0)) (define (list-len l) (if (null? l) 0 (+ 1 (list-len (cdr l))))) (begin (let ((s \"hello world\") (h (substring s 0 5)) (w (substring s 6 5)) (n (string-length h)) (g (string-append h (string-append \" \" w))) (t (string-append g (int->string (pow 2 n))))) (begin (print t) (print (+ (string->int (substring t 11 2)) (string-eq g s))) (+ (string->int (substring t 11 2)) (string-eq g s)))) (print ((lambda (x) (* x x)) 5)) (print (let ((n 10)) ((lambda (x) (+ x n)) 5))) (let ((lst (list 1 2 3)) (p (cons 10 20))) (begin (print (second lst)) (print p) (print (car p)) (print (pair? lst)) (print (null? lst)) (print (null? 0)) (print (list-len lst)) (sum-list (list 1 2 3 4 5)))))"))

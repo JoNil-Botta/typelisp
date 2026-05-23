@@ -1,4 +1,4 @@
-;; stdlib/string.tl — String utility library for TypeLisp
+;; stdlib/string.tl - String utility library for TypeLisp
 ;; Provides higher-level string operations built on compiler primitives.
 ;;
 ;; Primitives required from the compiler/runtime:
@@ -20,19 +20,25 @@
 ;; Trim leading whitespace from a string.
 (define (string-trim-left [s : String]) : String
   (let ([n : i64 (string-length s)])
-    (let ([i : i64 0])
+    (let ([i : i64 0]
+          [done : bool false])
       (begin
-        (while (and (< i n) (is-char-whitespace (string-ref s i)))
-          (set! i (+ i 1)))
+        (while (and (not done) (< i n))
+          (if (is-char-whitespace (string-ref s i))
+              (set! i (+ i 1))
+              (set! done true)))
         (substring s i (- n i))))))
 
 ;; Trim trailing whitespace from a string.
 (define (string-trim-right [s : String]) : String
   (let ([n : i64 (string-length s)])
-    (let ([i : i64 (- n 1)])
+    (let ([i : i64 (- n 1)]
+          [done : bool false])
       (begin
-        (while (and (>= i 0) (is-char-whitespace (string-ref s i)))
-          (set! i (- i 1)))
+        (while (and (not done) (>= i 0))
+          (if (is-char-whitespace (string-ref s i))
+              (set! i (- i 1))
+              (set! done true)))
         (substring s 0 (+ i 1))))))
 
 ;; Trim whitespace from both ends.
@@ -51,15 +57,9 @@
                   [i : i64 0])
               (begin
                 (while (and (not found) (<= i (- hlen nlen)))
-                  (let ([j : i64 0])
-                    (begin
-                      (while (and (< j nlen)
-                                  (char-eq (string-ref haystack (+ i j))
-                                           (string-ref needle j)))
-                        (set! j (+ j 1)))
-                      (if (= j nlen)
-                          (set! found true)
-                          (set! i (+ i 1))))))
+                  (if (is-string-prefix-at haystack needle i)
+                      (set! found true)
+                      (set! i (+ i 1))))
                 found))))))
 
 ;; Return true if haystack contains the character c.
@@ -75,17 +75,19 @@
       found)))
 
 ;; Replace first occurrence of old with new in s.
-;; Returns a fresh string.
+;; Returns s unchanged if old is not present.
 ;; Note: full multi-replace needs a string builder.
 (define (string-replace [s : String] [old : String] [new : String]) : String
   (if (string-contains s old)
       (let ([hlen : i64 (string-length s)]
             [olen : i64 (string-length old)]
-            [i : i64 0])
+            [i : i64 0]
+            [found : bool false])
         (begin
-          (while (and (< i (- hlen olen))
-                      (not (is-string-prefix-at s old i)))
-            (set! i (+ i 1)))
+          (while (and (not found) (<= i (- hlen olen)))
+            (if (is-string-prefix-at s old i)
+                (set! found true)
+                (set! i (+ i 1))))
           (string-append
             (string-append (substring s 0 i) new)
             (substring s (+ i olen) (- (- hlen i) olen)))))
@@ -95,14 +97,16 @@
 (define (is-string-prefix-at [haystack : String] [needle : String] [start : i64]) : bool
   (let ([hlen : i64 (string-length haystack)]
         [nlen : i64 (string-length needle)])
-    (if (> (+ start nlen) hlen)
+    (if (< start 0)
         false
-        (let ([ok : bool true]
-              [j : i64 0])
-          (begin
-            (while (and ok (< j nlen))
-              (if (char-eq (string-ref haystack (+ start j))
-                           (string-ref needle j))
-                  (set! j (+ j 1))
-                  (set! ok false)))
-            ok)))))
+        (if (> (+ start nlen) hlen)
+            false
+            (let ([ok : bool true]
+                  [j : i64 0])
+              (begin
+                (while (and ok (< j nlen))
+                  (if (char-eq (string-ref haystack (+ start j))
+                               (string-ref needle j))
+                      (set! j (+ j 1))
+                      (set! ok false)))
+                ok))))))

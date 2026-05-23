@@ -811,6 +811,22 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             stdout: "",
             deps: &["stdlib/test.tl"],
         },
+        // refs #335: selfhost parser from Sexpr into the real compiler AST.
+        // The smoke parses a representative multi-declaration source string
+        // with imports, structs, enums, externs, typed definitions, let,
+        // arrays, match arms, and bracketed parameter syntax.
+        Case {
+            name: "compiler_parse_smoke",
+            exit_code: 42,
+            stdout: "",
+            deps: &[
+                "compiler_parse_core.tl",
+                "compiler_ast_types.tl",
+                "read.tl",
+                "lex.tl",
+                "token.tl",
+            ],
+        },
     ];
 
     for case in cases {
@@ -2827,6 +2843,7 @@ fn source_path_for_case(manifest_dir: &PathBuf, name: &str) -> PathBuf {
         "tl_lex" => "lex.tl",
         "tl_lexer" => "lexer.tl",
         "tl_parse" => "parse.tl",
+        "compiler_parse_smoke" => "compiler_parse_smoke.tl",
         "tl_read" => "read.tl",
         "tl_reader" => "reader.tl",
         "tl_token" => "token.tl",

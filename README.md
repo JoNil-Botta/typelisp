@@ -161,7 +161,7 @@ Source (.tl)
     ↓  Parser       → AST
     ↓  Type Checker → Typed AST
     ↓  Lowerer      → IR (3-address code, basic blocks)
-    ↓  Optimizer    → constant folding, DCE, strength reduction, copy propagation
+    ↓  Optimizer    → constant folding, basic-block CSE, DCE, strength reduction, copy propagation
     ↓  Backend      → x86_64 assembly (.s)
     ↓  as + ld      → ELF binary
 ```

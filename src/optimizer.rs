@@ -1,4 +1,5 @@
 use crate::ir::*;
+use crate::types::Type;
 use std::collections::{HashMap, HashSet};
 
 /// Optimization passes for the IR
@@ -19,6 +20,7 @@ impl Optimizer {
         while changed && iterations < MAX_ITERATIONS {
             changed = false;
             changed |= Self::constant_folding(func);
+            changed |= Self::common_subexpression_elimination(func);
             changed |= Self::dead_code_elimination(func);
             changed |= Self::strength_reduction(func);
             changed |= Self::copy_propagation(func);
@@ -286,6 +288,55 @@ impl Optimizer {
         )
     }
 
+    /// Basic-block local common subexpression elimination for pure operations.
+    fn common_subexpression_elimination(func: &mut Function) -> bool {
+        let mut changed = false;
+
+        for block in &mut func.blocks {
+            let mut available: HashMap<CseExpr, VarId> = HashMap::new();
+
+            for instr in &mut block.instructions {
+                let Some(expr) = CseExpr::from_instruction(instr) else {
+                    if Self::cse_invalidates_available_expressions(instr) {
+                        available.clear();
+                    }
+                    continue;
+                };
+
+                let (dst, ty) = match instr {
+                    Instruction::BinOp { dst, ty, .. } | Instruction::UnOp { dst, ty, .. } => {
+                        (*dst, ty.clone())
+                    }
+                    _ => unreachable!("CSE expressions are built only from pure value ops"),
+                };
+
+                if let Some(existing) = available.get(&expr).copied() {
+                    *instr = Instruction::Mov {
+                        dst,
+                        src: Value::Var(existing),
+                        ty,
+                    };
+                    changed = true;
+                } else {
+                    available.insert(expr, dst);
+                }
+            }
+        }
+
+        changed
+    }
+
+    fn cse_invalidates_available_expressions(instr: &Instruction) -> bool {
+        matches!(
+            instr,
+            Instruction::Load { .. }
+                | Instruction::Store { .. }
+                | Instruction::Call { .. }
+                | Instruction::CallIndirect { .. }
+                | Instruction::Alloc { .. }
+        )
+    }
+
     /// Strength reduction: replace expensive ops with cheaper ones
     fn strength_reduction(func: &mut Function) -> bool {
         let mut changed = false;
@@ -445,12 +496,77 @@ impl Optimizer {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum CseExpr {
+    BinOp {
+        op: BinOp,
+        lhs: CseValue,
+        rhs: CseValue,
+        ty: Type,
+    },
+    UnOp {
+        op: UnOp,
+        src: CseValue,
+        ty: Type,
+    },
+}
+
+impl CseExpr {
+    fn from_instruction(instr: &Instruction) -> Option<Self> {
+        match instr {
+            Instruction::BinOp {
+                op, lhs, rhs, ty, ..
+            } => Some(CseExpr::BinOp {
+                op: *op,
+                lhs: CseValue::from_value(lhs)?,
+                rhs: CseValue::from_value(rhs)?,
+                ty: ty.clone(),
+            }),
+            Instruction::UnOp { op, src, ty, .. } => Some(CseExpr::UnOp {
+                op: *op,
+                src: CseValue::from_value(src)?,
+                ty: ty.clone(),
+            }),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum CseValue {
+    ConstI64(i64),
+    ConstI32(i32),
+    ConstI8(i8),
+    ConstF64(u64),
+    ConstBool(bool),
+    ConstUnit,
+    ConstStr(String),
+    Var(VarId),
+}
+
+impl CseValue {
+    fn from_value(value: &Value) -> Option<Self> {
+        match value {
+            Value::ConstI64(value) => Some(CseValue::ConstI64(*value)),
+            Value::ConstI32(value) => Some(CseValue::ConstI32(*value)),
+            Value::ConstI8(value) => Some(CseValue::ConstI8(*value)),
+            Value::ConstF64(value) => Some(CseValue::ConstF64(value.to_bits())),
+            Value::ConstBool(value) => Some(CseValue::ConstBool(*value)),
+            Value::ConstUnit => Some(CseValue::ConstUnit),
+            Value::ConstStr(value) => Some(CseValue::ConstStr(value.clone())),
+            Value::Var(value) => Some(CseValue::Var(*value)),
+            Value::Global(_) => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::ir::{BinOp, Instruction, UnOp, Value};
+    use crate::ir::{BasicBlock, BinOp, Function, Instruction, Program, UnOp, Value};
     use crate::lower::lower_program;
     use crate::optimizer::Optimizer;
     use crate::parser::parse;
+    use crate::types::Type;
 
     fn optimize(source: &str) -> crate::ir::Program {
         let prog = parse(source).unwrap();
@@ -519,5 +635,238 @@ mod tests {
             Optimizer::eval_unop(UnOp::Neg, Value::ConstI64(i64::MIN)),
             None
         );
+    }
+
+    #[test]
+    fn test_basic_block_cse_reuses_repeated_pure_binop() {
+        let mut program = Program {
+            functions: vec![Function {
+                name: "f".into(),
+                params: vec![(0, Type::I64), (1, Type::I64)],
+                ret: Type::I64,
+                locals: vec![(2, Type::I64), (3, Type::I64), (4, Type::I64)],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![
+                        Instruction::BinOp {
+                            dst: 2,
+                            op: BinOp::Add,
+                            lhs: Value::Var(0),
+                            rhs: Value::Var(1),
+                            ty: Type::I64,
+                        },
+                        Instruction::BinOp {
+                            dst: 3,
+                            op: BinOp::Add,
+                            lhs: Value::Var(0),
+                            rhs: Value::Var(1),
+                            ty: Type::I64,
+                        },
+                        Instruction::BinOp {
+                            dst: 4,
+                            op: BinOp::Mul,
+                            lhs: Value::Var(3),
+                            rhs: Value::ConstI64(2),
+                            ty: Type::I64,
+                        },
+                        Instruction::Return(Some(Value::Var(4))),
+                    ],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![],
+        };
+
+        Optimizer::optimize(&mut program);
+
+        let instrs = &program.functions[0].blocks[0].instructions;
+        let add_count = instrs
+            .iter()
+            .filter(|instr| matches!(instr, Instruction::BinOp { op: BinOp::Add, .. }))
+            .count();
+        assert_eq!(add_count, 1, "expected one add after CSE: {instrs:?}");
+        assert!(matches!(
+            instrs.last(),
+            Some(Instruction::Return(Some(Value::Var(4))))
+        ));
+        assert!(
+            instrs.iter().any(|instr| matches!(
+                instr,
+                Instruction::BinOp {
+                    dst: 4,
+                    op: BinOp::Mul,
+                    lhs: Value::Var(2),
+                    rhs: Value::ConstI64(2),
+                    ..
+                }
+            )),
+            "expected later use to refer to the first add result: {instrs:?}"
+        );
+    }
+
+    #[test]
+    fn test_basic_block_cse_does_not_eliminate_loads_or_calls() {
+        let mut program = Program {
+            functions: vec![Function {
+                name: "f".into(),
+                params: vec![(0, Type::I64)],
+                ret: Type::I64,
+                locals: vec![
+                    (1, Type::I64),
+                    (2, Type::I64),
+                    (3, Type::I64),
+                    (4, Type::I64),
+                ],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![
+                        Instruction::Load {
+                            dst: 1,
+                            src: Value::Var(0),
+                            ty: Type::I64,
+                        },
+                        Instruction::Load {
+                            dst: 2,
+                            src: Value::Var(0),
+                            ty: Type::I64,
+                        },
+                        Instruction::Call {
+                            dst: Some(3),
+                            func: "effect".into(),
+                            args: vec![Value::Var(1)],
+                            ty: Type::I64,
+                        },
+                        Instruction::Call {
+                            dst: Some(4),
+                            func: "effect".into(),
+                            args: vec![Value::Var(2)],
+                            ty: Type::I64,
+                        },
+                        Instruction::Return(Some(Value::Var(4))),
+                    ],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![],
+        };
+
+        Optimizer::optimize(&mut program);
+
+        let instrs = &program.functions[0].blocks[0].instructions;
+        let load_count = instrs
+            .iter()
+            .filter(|instr| matches!(instr, Instruction::Load { .. }))
+            .count();
+        let call_count = instrs
+            .iter()
+            .filter(|instr| matches!(instr, Instruction::Call { .. }))
+            .count();
+        assert_eq!(
+            load_count, 2,
+            "loads must not be CSE candidates: {instrs:?}"
+        );
+        assert_eq!(
+            call_count, 2,
+            "calls must not be CSE candidates: {instrs:?}"
+        );
+    }
+
+    #[test]
+    fn test_basic_block_cse_does_not_reuse_across_store() {
+        let mut program = Program {
+            functions: vec![Function {
+                name: "f".into(),
+                params: vec![(0, Type::I64), (1, Type::I64)],
+                ret: Type::I64,
+                locals: vec![(2, Type::I64), (3, Type::I64)],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![
+                        Instruction::BinOp {
+                            dst: 2,
+                            op: BinOp::Add,
+                            lhs: Value::Var(0),
+                            rhs: Value::ConstI64(1),
+                            ty: Type::I64,
+                        },
+                        Instruction::Store {
+                            dst: Value::Var(1),
+                            src: Value::Var(2),
+                            ty: Type::I64,
+                        },
+                        Instruction::BinOp {
+                            dst: 3,
+                            op: BinOp::Add,
+                            lhs: Value::Var(0),
+                            rhs: Value::ConstI64(1),
+                            ty: Type::I64,
+                        },
+                        Instruction::Return(Some(Value::Var(3))),
+                    ],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![],
+        };
+
+        Optimizer::optimize(&mut program);
+
+        let instrs = &program.functions[0].blocks[0].instructions;
+        let add_count = instrs
+            .iter()
+            .filter(|instr| matches!(instr, Instruction::BinOp { op: BinOp::Add, .. }))
+            .count();
+        assert_eq!(add_count, 2, "stores must invalidate CSE state: {instrs:?}");
+    }
+
+    #[test]
+    fn test_basic_block_cse_does_not_cross_block_boundaries() {
+        let mut func = Function {
+            name: "f".into(),
+            params: vec![(0, Type::I64), (1, Type::I64)],
+            ret: Type::I64,
+            locals: vec![(2, Type::I64), (3, Type::I64)],
+            blocks: vec![
+                BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![
+                        Instruction::BinOp {
+                            dst: 2,
+                            op: BinOp::Add,
+                            lhs: Value::Var(0),
+                            rhs: Value::Var(1),
+                            ty: Type::I64,
+                        },
+                        Instruction::Jump("next".into()),
+                    ],
+                },
+                BasicBlock {
+                    label: "next".into(),
+                    instructions: vec![
+                        Instruction::BinOp {
+                            dst: 3,
+                            op: BinOp::Add,
+                            lhs: Value::Var(0),
+                            rhs: Value::Var(1),
+                            ty: Type::I64,
+                        },
+                        Instruction::Return(Some(Value::Var(3))),
+                    ],
+                },
+            ],
+            entry: "entry".into(),
+        };
+
+        assert!(
+            !Optimizer::common_subexpression_elimination(&mut func),
+            "same expression in different blocks must not be rewritten"
+        );
+        assert!(matches!(
+            func.blocks[1].instructions[0],
+            Instruction::BinOp { dst: 3, .. }
+        ));
     }
 }

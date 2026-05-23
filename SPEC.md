@@ -25,7 +25,7 @@ Type Checker → Typed AST
     ↓
 Lowerer → IR (3-address code, basic blocks, SSA)
     ↓
-Optimizer → Constant folding, DCE, strength reduction, copy propagation
+Optimizer → Constant folding, basic-block CSE, DCE, strength reduction, copy propagation
     ↓
 Backend → x86_64 Assembly (.s)
     ↓

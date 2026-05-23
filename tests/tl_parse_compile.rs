@@ -56,8 +56,12 @@ fn tl_parse_tl_compiles_to_assembly() {
     // The parser's own symbols, the imported reader/lexer entry points, and the
     // duplicated emitter helpers all link into the one concatenated program.
     for sym in [
+        "_tl_parse_dispatch_env:",
+        "_tl_parse_dispatch_tag:",
+        "_tl_parse_op_tag:",
         "_tl_parse:",
         "_tl_parse_op:",
+        "_tl_is_binary_tag:",
         "_tl_parse_binary:",
         "_tl_parse_let:",
         "_tl_parse_set:",
@@ -237,8 +241,12 @@ fn tl_parse_core_tl_compiles_to_assembly() {
     );
 
     for sym in [
+        "_tl_parse_dispatch_env:",
+        "_tl_parse_dispatch_tag:",
+        "_tl_parse_op_tag:",
         "_tl_parse:",
         "_tl_parse_op:",
+        "_tl_is_binary_tag:",
         "_tl_parse_binary:",
         "_tl_parse_let:",
         "_tl_parse_set:",
@@ -257,6 +265,7 @@ fn tl_parse_core_tl_compiles_to_assembly() {
         "_tl_emit_program_with_defs:",
         "_tl_emit_set:",
         "_tl_emit_begin:",
+        "_tl_sym_i64_lookup:",
     ] {
         assert!(
             asm.contains(sym),
@@ -303,6 +312,8 @@ fn tl_compile_smoke_tl_compiles_to_assembly() {
 
     for call in [
         "call _tl_parse_program",
+        "call _tl_parse_dispatch_tag",
+        "call _tl_sym_i64_lookup",
         "call _tl_parse_begin",
         "call _tl_parse_set",
         "call _tl_parse_while",

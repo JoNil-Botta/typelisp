@@ -4,50 +4,97 @@
 ;; Keeping them here lets other drivers reuse the parser without importing a
 ;; second `main`.
 
+(import "sym_i64_env.tl")
 (import "emit_core.tl")
 (import "read.tl")
 
-(define (parse-op [op : String]) : BinOp
-  (if (string-eq op "+")
+(define (parse-tag-call) : i64 0)
+(define (parse-tag-let) : i64 1)
+(define (parse-tag-if) : i64 2)
+(define (parse-tag-while) : i64 3)
+(define (parse-tag-print) : i64 4)
+(define (parse-tag-set) : i64 5)
+(define (parse-tag-begin) : i64 6)
+(define (parse-tag-add) : i64 10)
+(define (parse-tag-sub) : i64 11)
+(define (parse-tag-mul) : i64 12)
+(define (parse-tag-lt) : i64 13)
+(define (parse-tag-eq) : i64 14)
+(define (parse-tag-le) : i64 15)
+(define (parse-tag-gt) : i64 16)
+(define (parse-tag-ge) : i64 17)
+(define (parse-tag-ne) : i64 18)
+
+(define (parse-dispatch-env) : SymI64Env
+  (let ([e0 : SymI64Env (sym-i64-empty)])
+    (let ([e1 : SymI64Env (sym-i64-bind e0 "let" (parse-tag-let))])
+      (let ([e2 : SymI64Env (sym-i64-bind e1 "if" (parse-tag-if))])
+        (let ([e3 : SymI64Env (sym-i64-bind e2 "while" (parse-tag-while))])
+          (let ([e4 : SymI64Env (sym-i64-bind e3 "print" (parse-tag-print))])
+            (let ([e5 : SymI64Env (sym-i64-bind e4 "set!" (parse-tag-set))])
+              (let ([e6 : SymI64Env (sym-i64-bind e5 "begin" (parse-tag-begin))])
+                (let ([e7 : SymI64Env (sym-i64-bind e6 "+" (parse-tag-add))])
+                  (let ([e8 : SymI64Env (sym-i64-bind e7 "-" (parse-tag-sub))])
+                    (let ([e9 : SymI64Env (sym-i64-bind e8 "*" (parse-tag-mul))])
+                      (let ([e10 : SymI64Env (sym-i64-bind e9 "<" (parse-tag-lt))])
+                        (let ([e11 : SymI64Env (sym-i64-bind e10 "=" (parse-tag-eq))])
+                          (let ([e12 : SymI64Env (sym-i64-bind e11 "<=" (parse-tag-le))])
+                            (let ([e13 : SymI64Env (sym-i64-bind e12 ">" (parse-tag-gt))])
+                              (let ([e14 : SymI64Env (sym-i64-bind e13 ">=" (parse-tag-ge))])
+                                (sym-i64-bind e14 "!=" (parse-tag-ne))))))))))))))))))
+
+(define (parse-dispatch-tag [op : String]) : i64
+  (match (sym-i64-lookup (parse-dispatch-env) op)
+    [(SomeI64 tag) tag]
+    [(NoneI64) (parse-tag-call)]))
+
+(define (parse-op-tag [tag : i64]) : BinOp
+  (if (= tag (parse-tag-add))
       (OpAdd)
-      (if (string-eq op "-")
+      (if (= tag (parse-tag-sub))
           (OpSub)
-          (if (string-eq op "*")
+          (if (= tag (parse-tag-mul))
               (OpMul)
-              (if (string-eq op "<")
+              (if (= tag (parse-tag-lt))
                   (OpLt)
-                  (if (string-eq op "=")
+                  (if (= tag (parse-tag-eq))
                       (OpEq)
-                      (if (string-eq op "<=")
+                      (if (= tag (parse-tag-le))
                           (OpLe)
-                          (if (string-eq op ">")
+                          (if (= tag (parse-tag-gt))
                               (OpGt)
-                              (if (string-eq op ">=")
+                              (if (= tag (parse-tag-ge))
                                   (OpGe)
-                                  (if (string-eq op "!=")
+                                  (if (= tag (parse-tag-ne))
                                       (OpNe)
                                       (begin
                                         (panic "parse: unknown operator")
                                         (OpAdd))))))))))))
 
-(define (is-binary-op [op : String]) : bool
-  (if (string-eq op "+")
+(define (parse-op [op : String]) : BinOp
+  (parse-op-tag (parse-dispatch-tag op)))
+
+(define (is-binary-tag [tag : i64]) : bool
+  (if (= tag (parse-tag-add))
       true
-      (if (string-eq op "-")
+      (if (= tag (parse-tag-sub))
           true
-          (if (string-eq op "*")
+          (if (= tag (parse-tag-mul))
               true
-              (if (string-eq op "<")
+              (if (= tag (parse-tag-lt))
                   true
-                  (if (string-eq op "=")
+                  (if (= tag (parse-tag-eq))
                       true
-                      (if (string-eq op "<=")
+                      (if (= tag (parse-tag-le))
                           true
-                          (if (string-eq op ">")
+                          (if (= tag (parse-tag-gt))
                               true
-                              (if (string-eq op ">=")
+                              (if (= tag (parse-tag-ge))
                                   true
-                                  (string-eq op "!="))))))))))
+                                  (= tag (parse-tag-ne)))))))))))
+
+(define (is-binary-op [op : String]) : bool
+  (is-binary-tag (parse-dispatch-tag op)))
 
 (define (parse-binary [op : BinOp] [rest : Sexpr]) : Expr
   (match rest
@@ -119,21 +166,22 @@
     [(SSym name) (EVar name)]
     [(SStr s) (EStr s)]
     [(SCons (SSym op) rest)
-     (if (string-eq op "let")
-         (parse-let rest)
-         (if (string-eq op "if")
-             (parse-if rest)
-             (if (string-eq op "while")
-                 (parse-while rest)
-                 (if (string-eq op "print")
-                     (parse-print rest)
-                     (if (string-eq op "set!")
-                         (parse-set rest)
-                         (if (string-eq op "begin")
-                             (parse-begin rest)
-                             (if (is-binary-op op)
-                                 (parse-binary (parse-op op) rest)
-                                 (ECall op (parse-args rest)))))))))]
+     (let ([tag : i64 (parse-dispatch-tag op)])
+       (if (= tag (parse-tag-let))
+           (parse-let rest)
+           (if (= tag (parse-tag-if))
+               (parse-if rest)
+               (if (= tag (parse-tag-while))
+                   (parse-while rest)
+                   (if (= tag (parse-tag-print))
+                       (parse-print rest)
+                       (if (= tag (parse-tag-set))
+                           (parse-set rest)
+                           (if (= tag (parse-tag-begin))
+                               (parse-begin rest)
+                               (if (is-binary-tag tag)
+                                   (parse-binary (parse-op-tag tag) rest)
+                                   (ECall op (parse-args rest))))))))))]
     [_ (begin
          (panic "parse: malformed expression")
          (EInt 0))]))

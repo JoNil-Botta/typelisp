@@ -89,7 +89,9 @@ tl_emit selfhost/emit.tl
 tl_eval selfhost/eval.tl
 tl_lex selfhost/lex.tl
 tl_lexer selfhost/lexer.tl
+tl_parse_core selfhost/parse_core.tl
 tl_parse selfhost/parse.tl
+tl_compile_smoke selfhost/compile_smoke.tl
 tl_read selfhost/read.tl
 tl_reader selfhost/reader.tl
 tl_token selfhost/token.tl

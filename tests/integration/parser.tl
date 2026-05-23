@@ -156,7 +156,8 @@
                   inner)))
             (begin
               (panic "parser: expected an integer or '('")
-              ;; Dead code: `panic` never returns, but the `if` needs an `Expr`.
+              ;; Compatibility-style dead code; builtin `panic` can now satisfy
+              ;; the `Expr` result directly.
               (ENum 0))))))
 
 ;; term := factor (('*' | '/') factor)*  (left-associative '*' / '/').

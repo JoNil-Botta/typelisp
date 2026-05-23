@@ -513,9 +513,102 @@ impl FnLowerer {
         self.structs.resolve_type(&self.enums.resolve_type(ty))
     }
 
+    fn is_builtin_diverging_call(&self, func: &ast::Expr, args: &[ast::Expr]) -> bool {
+        matches!(func.unspan(), ast::Expr::Var(name)
+            if (name == "panic" || name == "error")
+                && args.len() == 1
+                && !self.vars.contains_key(name)
+                && !self.function_types.contains_key(name))
+    }
+
+    fn expr_diverges(&self, expr: &ast::Expr) -> bool {
+        match expr.unspan() {
+            ast::Expr::Spanned { expr, .. }
+            | ast::Expr::Ann { expr, .. }
+            | ast::Expr::Cast { expr, .. } => self.expr_diverges(expr),
+            ast::Expr::Binary { lhs, rhs, .. } => {
+                self.expr_diverges(lhs) || self.expr_diverges(rhs)
+            }
+            ast::Expr::Unary { expr, .. } => self.expr_diverges(expr),
+            ast::Expr::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                self.expr_diverges(cond)
+                    || (self.expr_diverges(then_branch) && self.expr_diverges(else_branch))
+            }
+            ast::Expr::Let { bindings, body } => {
+                bindings
+                    .iter()
+                    .any(|(_, _, value)| self.expr_diverges(value))
+                    || self.expr_diverges(body)
+            }
+            ast::Expr::While { cond, .. } => self.expr_diverges(cond),
+            ast::Expr::Begin(exprs) => exprs.iter().any(|expr| self.expr_diverges(expr)),
+            ast::Expr::Call { func, args } => {
+                self.is_builtin_diverging_call(func, args)
+                    || self.expr_diverges(func)
+                    || args.iter().any(|arg| self.expr_diverges(arg))
+            }
+            ast::Expr::Match { scrutinee, arms } => {
+                self.expr_diverges(scrutinee)
+                    || (!arms.is_empty() && arms.iter().all(|(_, body)| self.expr_diverges(body)))
+            }
+            ast::Expr::Set(_, expr) => self.expr_diverges(expr),
+            ast::Expr::MakeArray { len, .. } => self.expr_diverges(len),
+            ast::Expr::ArrayRef { expr, index } | ast::Expr::StringRef { expr, index } => {
+                self.expr_diverges(expr) || self.expr_diverges(index)
+            }
+            ast::Expr::ArraySet { expr, index, value } => {
+                self.expr_diverges(expr) || self.expr_diverges(index) || self.expr_diverges(value)
+            }
+            ast::Expr::StructGet { expr, .. } => self.expr_diverges(expr),
+            ast::Expr::Tuple(elems) | ast::Expr::Array(elems) => {
+                elems.iter().any(|expr| self.expr_diverges(expr))
+            }
+            ast::Expr::TupleRef { expr, .. } => self.expr_diverges(expr),
+            ast::Expr::Literal(_) | ast::Expr::Var(_) | ast::Expr::Lambda { .. } => false,
+        }
+    }
+
+    fn dummy_value_for_type(&self, ty: &Type) -> Value {
+        match self.resolve_type(ty) {
+            Type::I64
+            | Type::U64
+            | Type::I16
+            | Type::U16
+            | Type::Func(_, _)
+            | Type::Enum(_)
+            | Type::Struct(_)
+            | Type::String
+            | Type::DynArray(_) => Value::ConstI64(0),
+            Type::I32 | Type::U32 => Value::ConstI32(0),
+            Type::I8 | Type::U8 | Type::Char => Value::ConstI8(0),
+            Type::Bool => Value::ConstBool(false),
+            Type::F64 | Type::F32 => Value::ConstF64(0.0),
+            Type::Unit | Type::Never | Type::Tuple(_) | Type::Array(_, _) | Type::Var(_) => {
+                Value::ConstUnit
+            }
+        }
+    }
+
+    fn lower_expr_as(&mut self, expr: &ast::Expr, expected: &Type) -> Value {
+        let value = self.lower_expr(expr);
+        if self.expr_diverges(expr) {
+            self.dummy_value_for_type(expected)
+        } else {
+            value
+        }
+    }
+
     /// Lower a function body and produce a complete IR Function.
     fn lower_body(mut self, body: &ast::Expr, ret_ty: &Type) -> Function {
-        let result = self.lower_expr(body);
+        let result = if *ret_ty == Type::Unit {
+            self.lower_expr(body)
+        } else {
+            self.lower_expr_as(body, ret_ty)
+        };
         if *ret_ty == Type::Unit {
             self.builder.emit(Instruction::Return(None));
         } else {
@@ -563,7 +656,10 @@ impl FnLowerer {
             ast::Expr::Call { func, args } => self.lower_call(func, args),
             ast::Expr::Match { scrutinee, arms } => self.lower_match(scrutinee, arms),
             ast::Expr::Set(name, expr) => self.lower_set(name, expr),
-            ast::Expr::Ann { expr, .. } => self.lower_expr(expr),
+            ast::Expr::Ann { expr, ty } => {
+                let ty = self.resolve_type(ty);
+                self.lower_expr_as(expr, &ty)
+            }
             ast::Expr::Cast { expr, ty } => self.lower_cast(expr, ty),
             // A dynamic-array constructor allocates an element buffer and builds
             // an inline fat `{ ptr, len }` value, yielding a pointer to it.
@@ -983,7 +1079,9 @@ impl FnLowerer {
         then_branch: &ast::Expr,
         else_branch: &ast::Expr,
     ) -> Value {
-        let cond_val = self.lower_expr(cond);
+        let cond_val = self.lower_expr_as(cond, &Type::Bool);
+        let then_diverges = self.expr_diverges(then_branch);
+        let else_diverges = self.expr_diverges(else_branch);
 
         let then_label = self.builder.fresh_label("then");
         let else_label = self.builder.fresh_label("else");
@@ -1010,10 +1108,24 @@ impl FnLowerer {
         // Assume branches match (type-checked); prefer a concrete type from
         // either arm so the phi's width is right.
         let then_ty = self.value_type(&then_val);
-        let result_ty = if then_ty == Type::Unit {
+        let result_ty = if then_diverges && !else_diverges {
+            self.value_type(&else_val)
+        } else if else_diverges && !then_diverges {
+            then_ty.clone()
+        } else if then_ty == Type::Unit {
             self.value_type(&else_val)
         } else {
-            then_ty
+            then_ty.clone()
+        };
+        let then_val = if then_diverges {
+            self.dummy_value_for_type(&result_ty)
+        } else {
+            then_val
+        };
+        let else_val = if else_diverges {
+            self.dummy_value_for_type(&result_ty)
+        } else {
+            else_val
         };
         let phi_dst = self.builder.fresh_var();
         self.builder.emit(Instruction::Phi {
@@ -1034,14 +1146,16 @@ impl FnLowerer {
         body: &ast::Expr,
     ) -> Value {
         for (name, ty, value) in bindings {
-            let val = self.lower_expr(value);
             // Resolve a declared binding type so a `Type::Var` naming an enum or
             // struct becomes the nominal type; otherwise fall back to the
             // lowered value's recorded type.
-            let binding_ty = ty
-                .as_ref()
-                .map(|t| self.resolve_type(t))
-                .unwrap_or_else(|| self.value_type(&val));
+            let declared_ty = ty.as_ref().map(|t| self.resolve_type(t));
+            let val = if let Some(expected) = &declared_ty {
+                self.lower_expr_as(value, expected)
+            } else {
+                self.lower_expr(value)
+            };
+            let binding_ty = declared_ty.unwrap_or_else(|| self.value_type(&val));
 
             let var = self.builder.fresh_var();
             self.builder.emit(Instruction::Alloc {
@@ -1069,7 +1183,7 @@ impl FnLowerer {
 
         // Header block
         self.builder.finish_block(&header_label);
-        let cond_val = self.lower_expr(cond);
+        let cond_val = self.lower_expr_as(cond, &Type::Bool);
         self.builder.emit(Instruction::Branch {
             cond: cond_val,
             true_label: body_label.clone(),
@@ -1101,7 +1215,17 @@ impl FnLowerer {
             && let Some((enum_name, tag, _fields)) = self.enums.lookup_variant(name)
         {
             let enum_name = enum_name.to_string();
-            let arg_vals: Vec<Value> = args.iter().map(|a| self.lower_expr(a)).collect();
+            let field_tys: Vec<Type> = self
+                .enums
+                .lookup_variant_fields(&enum_name, tag)
+                .iter()
+                .map(|ty| self.resolve_type(ty))
+                .collect();
+            let arg_vals: Vec<Value> = args
+                .iter()
+                .zip(field_tys.iter())
+                .map(|(arg, ty)| self.lower_expr_as(arg, ty))
+                .collect();
             return self.lower_construct(&enum_name, tag, &arg_vals);
         }
 
@@ -1111,7 +1235,12 @@ impl FnLowerer {
             && self.structs.is_struct(name)
         {
             let struct_name = name.clone();
-            let arg_vals: Vec<Value> = args.iter().map(|a| self.lower_expr(a)).collect();
+            let fields = self.resolved_struct_fields(&struct_name);
+            let arg_vals: Vec<Value> = args
+                .iter()
+                .zip(fields.iter())
+                .map(|(arg, field)| self.lower_expr_as(arg, &field.ty))
+                .collect();
             return self.lower_construct_struct(&struct_name, &arg_vals);
         }
 
@@ -1123,7 +1252,11 @@ impl FnLowerer {
             && (name == "array-length" || name == "string-length" || name == "length")
             && args.len() == 1
         {
-            let fat = self.lower_expr(&args[0]);
+            let fat = if self.expr_diverges(&args[0]) {
+                self.lower_expr_as(&args[0], &Type::String)
+            } else {
+                self.lower_expr(&args[0])
+            };
             let len_offset = if matches!(self.value_type(&fat), Type::DynArray(_)) {
                 DYN_ARRAY_LEN_OFFSET
             } else {
@@ -1143,8 +1276,8 @@ impl FnLowerer {
             && (name == "string-eq" || name == "string=?")
             && args.len() == 2
         {
-            let a = self.lower_expr(&args[0]);
-            let b = self.lower_expr(&args[1]);
+            let a = self.lower_expr_as(&args[0], &Type::String);
+            let b = self.lower_expr_as(&args[1], &Type::String);
             let (a_ptr, a_len) = self.load_string_fields(&a);
             let (b_ptr, b_len) = self.load_string_fields(&b);
             let dst = self.builder.fresh_var();
@@ -1173,7 +1306,7 @@ impl FnLowerer {
             && name == "string->int"
             && args.len() == 1
         {
-            let s = self.lower_expr(&args[0]);
+            let s = self.lower_expr_as(&args[0], &Type::String);
             let (ptr, len) = self.load_string_fields(&s);
             let dst = self.builder.fresh_var();
             self.builder.emit(Instruction::Call {
@@ -1197,7 +1330,7 @@ impl FnLowerer {
             && name == "int->string"
             && args.len() == 1
         {
-            let n_raw = self.lower_expr(&args[0]);
+            let n_raw = self.lower_expr_as(&args[0], &Type::I64);
             let n_val = self.cast_value(n_raw, Type::I64);
             let dst = self.builder.fresh_var();
             self.builder.emit(Instruction::Call {
@@ -1236,7 +1369,7 @@ impl FnLowerer {
             && !self.vars.contains_key(name)
             && !self.function_types.contains_key(name)
         {
-            let idx_raw = self.lower_expr(&args[0]);
+            let idx_raw = self.lower_expr_as(&args[0], &Type::I64);
             let idx = self.cast_value(idx_raw, Type::I64);
             let dst = self.builder.fresh_var();
             self.builder.emit(Instruction::Call {
@@ -1258,7 +1391,7 @@ impl FnLowerer {
             && !self.vars.contains_key(name)
             && !self.function_types.contains_key(name)
         {
-            let path = self.lower_expr(&args[0]);
+            let path = self.lower_expr_as(&args[0], &Type::String);
             let (ptr, len) = self.load_string_fields(&path);
             let dst = self.builder.fresh_var();
             self.builder.emit(Instruction::Call {
@@ -1280,8 +1413,8 @@ impl FnLowerer {
             && !self.vars.contains_key(name)
             && !self.function_types.contains_key(name)
         {
-            let path = self.lower_expr(&args[0]);
-            let contents = self.lower_expr(&args[1]);
+            let path = self.lower_expr_as(&args[0], &Type::String);
+            let contents = self.lower_expr_as(&args[1], &Type::String);
             let (path_ptr, path_len) = self.load_string_fields(&path);
             let (contents_ptr, contents_len) = self.load_string_fields(&contents);
             self.builder.emit(Instruction::Call {
@@ -1306,7 +1439,7 @@ impl FnLowerer {
             && !self.vars.contains_key(name)
             && !self.function_types.contains_key(name)
         {
-            let path = self.lower_expr(&args[0]);
+            let path = self.lower_expr_as(&args[0], &Type::String);
             let (ptr, len) = self.load_string_fields(&path);
             let dst = self.builder.fresh_var();
             self.builder.emit(Instruction::Call {
@@ -1353,14 +1486,15 @@ impl FnLowerer {
         // emit-on-demand runtime `tl_abort(ptr, len)`, which never returns. A
         // `Call` (with `dst: None`, like the `tl_oob_abort` trap) is used so the
         // abort survives DCE — the optimizer treats `Load`/`Gep` as pure. The
-        // expression yields unit.
+        // IR call itself stays unit-typed; expected-value sites synthesize an
+        // unreachable placeholder after the abort call.
         if let ast::Expr::Var(name) = func.unspan()
             && (name == "panic" || name == "error")
             && args.len() == 1
             && !self.vars.contains_key(name)
             && !self.function_types.contains_key(name)
         {
-            let s = self.lower_expr(&args[0]);
+            let s = self.lower_expr_as(&args[0], &Type::String);
             let (ptr, len) = self.load_string_fields(&s);
             self.builder.emit(Instruction::Call {
                 dst: None,
@@ -1384,7 +1518,7 @@ impl FnLowerer {
             && !self.vars.contains_key(name)
             && !self.function_types.contains_key(name)
         {
-            let s = self.lower_expr(&args[0]);
+            let s = self.lower_expr_as(&args[0], &Type::String);
             let (ptr, len) = self.load_string_fields(&s);
             self.builder.emit(Instruction::Call {
                 dst: None,
@@ -1393,6 +1527,37 @@ impl FnLowerer {
                 ty: Type::Unit,
             });
             return Value::ConstUnit;
+        }
+
+        if let ast::Expr::Var(name) = func.unspan()
+            && !self.vars.contains_key(name)
+            && let Some(Type::Func(param_tys, ret_ty)) = self.function_types.get(name).cloned()
+        {
+            let arg_vals: Vec<Value> = args
+                .iter()
+                .zip(param_tys.iter())
+                .map(|(arg, ty)| self.lower_expr_as(arg, ty))
+                .collect();
+            let ret_ty = *ret_ty;
+            if ret_ty == Type::Unit {
+                self.builder.emit(Instruction::Call {
+                    dst: None,
+                    func: name.clone(),
+                    args: arg_vals,
+                    ty: Type::Unit,
+                });
+                return Value::ConstUnit;
+            }
+
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: name.clone(),
+                args: arg_vals,
+                ty: ret_ty.clone(),
+            });
+            self.record_local(dst, ret_ty);
+            return Value::Var(dst);
         }
 
         // Evaluate arguments left-to-right
@@ -1922,11 +2087,11 @@ impl FnLowerer {
         let store_val = if dyn_array_elem_is_aggregate_pointer(&elem_ty) {
             let previous = self.force_heap_aggregate_storage;
             self.force_heap_aggregate_storage = true;
-            let value = self.lower_expr(value);
+            let value = self.lower_expr_as(value, &elem_ty);
             self.force_heap_aggregate_storage = previous;
             value
         } else {
-            self.lower_expr(value)
+            self.lower_expr_as(value, &elem_ty)
         };
 
         // Load len (offset 8) from the fat value.
@@ -2013,7 +2178,7 @@ impl FnLowerer {
     /// path `Gep` over the data pointer and `Load` a single byte. The byte load
     /// is typed `Char` (1 byte), which the backend zero-extends (`movzbq`).
     fn lower_string_ref(&mut self, s: &ast::Expr, index: &ast::Expr) -> Value {
-        let str_val = self.lower_expr(s);
+        let str_val = self.lower_expr_as(s, &Type::String);
         // Defensive: anything that isn't a String value can't be indexed. The
         // typechecker rejects this, so just yield unit rather than miscompile.
         if !matches!(self.value_type(&str_val), Type::String) {
@@ -2140,9 +2305,9 @@ impl FnLowerer {
 
         let (s_ptr, s_len) = self.load_string_fields(&str_val);
 
-        let start_raw = self.lower_expr(start);
+        let start_raw = self.lower_expr_as(start, &Type::I64);
         let start_i64 = self.cast_value(start_raw, Type::I64);
-        let len_raw = self.lower_expr(slice_len);
+        let len_raw = self.lower_expr_as(slice_len, &Type::I64);
         let len_i64 = self.cast_value(len_raw, Type::I64);
 
         // Check 1: start u<= s_len (unsigned, so a negative start wraps high and
@@ -2235,8 +2400,8 @@ impl FnLowerer {
     /// loop) keeps the concatenation alive through DCE — the optimizer treats
     /// `Load`/`Gep` as pure. Two empty operands still yield a valid empty String.
     fn lower_string_concat(&mut self, a: &ast::Expr, b: &ast::Expr) -> Value {
-        let a_val = self.lower_expr(a);
-        let b_val = self.lower_expr(b);
+        let a_val = self.lower_expr_as(a, &Type::String);
+        let b_val = self.lower_expr_as(b, &Type::String);
         // Defensive: non-String operands can't be concatenated. The typechecker
         // rejects this, so just yield unit rather than miscompile.
         if !matches!(self.value_type(&a_val), Type::String)
@@ -2365,7 +2530,7 @@ impl FnLowerer {
         };
 
         let merge_label = self.builder.fresh_label("match_end");
-        let mut incoming: Vec<(Value, Label)> = Vec::new();
+        let mut incoming: Vec<(Value, Label, bool)> = Vec::new();
         let mut result_ty = Type::Unit;
 
         let n = arms.len();
@@ -2388,12 +2553,13 @@ impl FnLowerer {
                 ast::Pattern::Wildcard => {
                     // Irrefutable: lower the body in the current block and jump
                     // to the merge.
+                    let body_diverges = self.expr_diverges(body);
                     let val = self.lower_expr(body);
                     let arm_block = self.current_block_label();
-                    if self.value_type(&val) != Type::Unit {
+                    if !body_diverges && self.value_type(&val) != Type::Unit {
                         result_ty = self.value_type(&val);
                     }
-                    incoming.push((val, arm_block));
+                    incoming.push((val, arm_block, body_diverges));
                     self.builder.emit(Instruction::Jump(merge_label.clone()));
                     break;
                 }
@@ -2431,12 +2597,13 @@ impl FnLowerer {
                     self.builder.finish_block(&arm_label);
                     self.lower_variant_args(&scrut, name, args, &next_label);
 
+                    let body_diverges = self.expr_diverges(body);
                     let val = self.lower_expr(body);
                     let arm_end = self.current_block_label();
-                    if self.value_type(&val) != Type::Unit {
+                    if !body_diverges && self.value_type(&val) != Type::Unit {
                         result_ty = self.value_type(&val);
                     }
-                    incoming.push((val, arm_end));
+                    incoming.push((val, arm_end, body_diverges));
                     self.builder.emit(Instruction::Jump(merge_label.clone()));
 
                     // Continue testing in the next block.
@@ -2479,12 +2646,13 @@ impl FnLowerer {
 
                     // Arm block: lower the body (no bindings to install).
                     self.builder.finish_block(&arm_label);
+                    let body_diverges = self.expr_diverges(body);
                     let val = self.lower_expr(body);
                     let arm_end = self.current_block_label();
-                    if self.value_type(&val) != Type::Unit {
+                    if !body_diverges && self.value_type(&val) != Type::Unit {
                         result_ty = self.value_type(&val);
                     }
-                    incoming.push((val, arm_end));
+                    incoming.push((val, arm_end, body_diverges));
                     self.builder.emit(Instruction::Jump(merge_label.clone()));
 
                     // Continue testing in the next block.
@@ -2501,6 +2669,16 @@ impl FnLowerer {
 
         // Merge block with a phi selecting the taken arm's result.
         self.builder.finish_block(&merge_label);
+        let incoming: Vec<(Value, Label)> = incoming
+            .into_iter()
+            .map(|(value, label, diverges)| {
+                if diverges {
+                    (self.dummy_value_for_type(&result_ty), label)
+                } else {
+                    (value, label)
+                }
+            })
+            .collect();
         let phi_dst = self.builder.fresh_var();
         self.builder.emit(Instruction::Phi {
             dst: phi_dst,
@@ -2649,21 +2827,18 @@ impl FnLowerer {
     }
 
     fn lower_set(&mut self, name: &str, expr: &ast::Expr) -> Value {
-        let val = self.lower_expr(expr);
         if let Some(&var) = self.vars.get(name) {
             // Store at the variable's declared width, not the (possibly wider)
             // type of the RHS value.
-            let ty = self
-                .var_types
-                .get(&var)
-                .cloned()
-                .unwrap_or_else(|| self.value_type(&val));
+            let ty = self.var_types.get(&var).cloned().unwrap_or(Type::Unit);
+            let val = self.lower_expr_as(expr, &ty);
             self.builder.emit(Instruction::Store {
                 dst: Value::Var(var),
                 src: val,
                 ty,
             });
         } else if let Some(ty) = self.global_types.get(name).cloned() {
+            let val = self.lower_expr_as(expr, &ty);
             self.builder.emit(Instruction::Store {
                 dst: Value::Global(name.to_string()),
                 src: val,
@@ -2694,7 +2869,11 @@ impl FnLowerer {
     /// Lower an expression to a standalone function with a Return.
     /// Used for global initializers.
     fn lower_expr_to_fn(mut self, expr: &ast::Expr, ret_ty: &Type) -> (Function, Value) {
-        let result = self.lower_expr(expr);
+        let result = if *ret_ty == Type::Unit {
+            self.lower_expr(expr)
+        } else {
+            self.lower_expr_as(expr, ret_ty)
+        };
         self.builder.emit(Instruction::Return(Some(result.clone())));
         let blocks = self.builder.build();
         let func = Function {
@@ -3233,7 +3412,7 @@ mod tests {
         });
         let (args, ty, dst) = call.expect("expected a Call to tl_abort");
         assert_eq!(args.len(), 2, "tl_abort takes the message ptr and len");
-        assert_eq!(*ty, Type::Unit, "panic yields unit");
+        assert_eq!(*ty, Type::Unit, "abort call stays unit-typed");
         assert!(dst.is_none(), "the abort call has no destination");
 
         // Both the data-pointer (U64) and length (I64) fields are loaded.
@@ -3262,6 +3441,82 @@ mod tests {
             .flat_map(|b| b.instructions.iter())
             .any(|i| matches!(i, Instruction::Call { func, .. } if func == ABORT_RUNTIME_SYMBOL));
         assert!(has_abort, "error should lower to a Call tl_abort");
+    }
+
+    #[test]
+    fn test_lower_panic_branch_uses_typed_phi_placeholder() {
+        let prog = parse(r#"(define (f [ok : bool]) : i64 (if ok 1 (panic "bad")))"#).unwrap();
+        let ir = lower_program(&prog);
+        let phi = ir.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .find_map(|i| match i {
+                Instruction::Phi { incoming, ty, .. } => Some((incoming, ty)),
+                _ => None,
+            })
+            .expect("expected phi for if result");
+
+        assert_eq!(*phi.1, Type::I64);
+        assert!(
+            phi.0
+                .iter()
+                .all(|(value, _)| !matches!(value, Value::ConstUnit)),
+            "panic arm must not feed unit into an i64 phi"
+        );
+    }
+
+    #[test]
+    fn test_lower_panic_body_returns_typed_placeholder() {
+        let prog = parse(r#"(define (f) : i64 (panic "bad"))"#).unwrap();
+        let ir = lower_program(&prog);
+        let instrs: Vec<&Instruction> = ir.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .collect();
+
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Call { func, dst: None, .. } if func == ABORT_RUNTIME_SYMBOL)),
+            "panic body must still call abort without a destination"
+        );
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Return(Some(Value::ConstI64(0))))),
+            "non-unit panic body must return an unreachable typed placeholder"
+        );
+    }
+
+    #[test]
+    fn test_lower_panic_match_arm_uses_typed_phi_placeholder() {
+        let prog = parse(
+            r#"
+            (define (f [n : i64]) : i64
+              (match n [0 (panic "zero")] [_ 1]))
+            "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let phi = ir.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .find_map(|i| match i {
+                Instruction::Phi { incoming, ty, .. } => Some((incoming, ty)),
+                _ => None,
+            })
+            .expect("expected phi for match result");
+
+        assert_eq!(*phi.1, Type::I64);
+        assert!(
+            phi.0
+                .iter()
+                .all(|(value, _)| !matches!(value, Value::ConstUnit)),
+            "panic arm must not feed unit into an i64 match phi"
+        );
     }
 
     #[test]

@@ -171,17 +171,17 @@ impl TypeChecker {
             Type::Func(vec![Type::String, Type::String], Box::new(Type::String)),
         );
         // `(panic msg)` / `(error msg)` -> write `msg` to fd 2 (stderr) then
-        // terminate the process. It never returns; its type is `(-> String unit)`
-        // so a `(panic ...)` expression yields unit and can appear wherever a
-        // unit-valued expression is expected (e.g. an `if` branch reporting bad
-        // lexer input). `error` is an alias with identical behavior.
+        // terminate the process. The builtin result is the compiler-internal
+        // bottom type so a diverging expression can satisfy any expected type.
+        // A user definition named `panic` or `error` shadows these builtins and
+        // keeps its declared return type.
         globals.insert(
             "panic".into(),
-            Type::Func(vec![Type::String], Box::new(Type::Unit)),
+            Type::Func(vec![Type::String], Box::new(Type::Never)),
         );
         globals.insert(
             "error".into(),
-            Type::Func(vec![Type::String], Box::new(Type::Unit)),
+            Type::Func(vec![Type::String], Box::new(Type::Never)),
         );
         TypeChecker {
             env: vec![globals],
@@ -386,7 +386,7 @@ impl TypeChecker {
                     let inferred = if let Some(ty) = ty {
                         let ty = self.resolve_type(ty);
                         let val_ty = self.check_expr(value)?;
-                        if !self.types_equal(&ty, &val_ty) {
+                        if !self.type_compatible(&ty, &val_ty) {
                             return Err(TypeError::at(
                                 format!(
                                     "type mismatch in definition of '{}': expected {}, got {}",
@@ -492,7 +492,7 @@ impl TypeChecker {
                 self.func_ret = old_ret;
                 self.pop_scope();
 
-                if !self.types_equal(&ret, &body_ty) {
+                if !self.type_compatible(&ret, &body_ty) {
                     return Err(TypeError::at(
                         format!(
                             "function '{}' return type mismatch: expected {}, got {}",
@@ -649,7 +649,7 @@ impl TypeChecker {
                         }
                         for (expected, arg) in param_tys.iter().zip(args.iter()) {
                             let arg_ty = self.check_expr(arg)?;
-                            if !self.types_equal(expected, &arg_ty) {
+                            if !self.type_compatible(expected, &arg_ty) {
                                 return Err(TypeError::at(
                                     format!(
                                         "argument type mismatch: expected {}, got {}",
@@ -705,7 +705,12 @@ impl TypeChecker {
                 else_branch,
             } => {
                 let cond_ty = self.check_expr(cond)?;
-                if cond_ty != Type::Bool {
+                if cond_ty == Type::Never {
+                    self.check_expr(then_branch)?;
+                    self.check_expr(else_branch)?;
+                    return Ok(Type::Never);
+                }
+                if !self.type_compatible(&Type::Bool, &cond_ty) {
                     return Err(TypeError::at(
                         format!("if condition must be bool, got {}", cond_ty),
                         cond.span(),
@@ -713,7 +718,7 @@ impl TypeChecker {
                 }
                 let then_ty = self.check_expr(then_branch)?;
                 let else_ty = self.check_expr(else_branch)?;
-                if !self.types_equal(&then_ty, &else_ty) {
+                let Some(result_ty) = self.merge_branch_types(&then_ty, &else_ty) else {
                     return Err(TypeError::at(
                         format!(
                             "if branches have different types: {} and {}",
@@ -721,8 +726,8 @@ impl TypeChecker {
                         ),
                         span,
                     ));
-                }
-                Ok(then_ty)
+                };
+                Ok(result_ty)
             }
             Expr::Let { bindings, body } => {
                 self.push_scope();
@@ -730,7 +735,7 @@ impl TypeChecker {
                     let val_ty = self.check_expr(value)?;
                     let ty = ty.as_ref().map(|t| self.resolve_type(t));
                     let binding_ty = if let Some(expected) = &ty {
-                        if !self.types_equal(expected, &val_ty) {
+                        if !self.type_compatible(expected, &val_ty) {
                             return Err(TypeError::at(
                                 format!(
                                     "let binding '{}' type mismatch: expected {}, got {}",
@@ -789,7 +794,7 @@ impl TypeChecker {
                         body.span(),
                     ));
                 }
-                if !self.types_equal(&ret_ty, &body_ty) {
+                if !self.type_compatible(&ret_ty, &body_ty) {
                     return Err(TypeError::at(
                         format!(
                             "lambda return type mismatch: expected {}, got {}",
@@ -909,7 +914,7 @@ impl TypeChecker {
                     }
                 };
                 let val_ty = self.check_expr(value)?;
-                if !self.types_equal(&elem_ty, &val_ty) {
+                if !self.type_compatible(&elem_ty, &val_ty) {
                     return Err(TypeError::at(
                         format!(
                             "array-set! value type mismatch: array holds {}, got {}",
@@ -940,7 +945,11 @@ impl TypeChecker {
             }
             Expr::While { cond, body } => {
                 let cond_ty = self.check_expr(cond)?;
-                if cond_ty != Type::Bool {
+                if cond_ty == Type::Never {
+                    self.check_expr(body)?;
+                    return Ok(Type::Never);
+                }
+                if !self.type_compatible(&Type::Bool, &cond_ty) {
                     return Err(TypeError::at(
                         format!("while condition must be bool, got {}", cond_ty),
                         cond.span(),
@@ -961,7 +970,7 @@ impl TypeChecker {
                 let var_ty = self.lookup(name).ok_or_else(|| {
                     TypeError::at(format!("unbound variable in set!: {}", name), span)
                 })?;
-                if !self.types_equal(&var_ty, &val_ty) {
+                if !self.type_compatible(&var_ty, &val_ty) {
                     return Err(TypeError::at(
                         format!(
                             "set! type mismatch: variable {} has type {}, got {}",
@@ -975,7 +984,7 @@ impl TypeChecker {
             Expr::Ann { expr, ty } => {
                 let ty = self.resolve_type(ty);
                 let expr_ty = self.check_expr(expr)?;
-                if !self.types_equal(&ty, &expr_ty) {
+                if !self.type_compatible(&ty, &expr_ty) {
                     return Err(TypeError::at(
                         format!("type annotation mismatch: expected {}, got {}", ty, expr_ty),
                         span,
@@ -1108,7 +1117,7 @@ impl TypeChecker {
             match &result_ty {
                 None => result_ty = Some(body_ty),
                 Some(expected) => {
-                    if !self.types_equal(expected, &body_ty) {
+                    let Some(merged) = self.merge_branch_types(expected, &body_ty) else {
                         return Err(TypeError::at(
                             format!(
                                 "match arms have different types: {} and {}",
@@ -1116,7 +1125,8 @@ impl TypeChecker {
                             ),
                             body.span(),
                         ));
-                    }
+                    };
+                    result_ty = Some(merged);
                 }
             }
         }
@@ -1219,7 +1229,7 @@ impl TypeChecker {
             match &result_ty {
                 None => result_ty = Some(body_ty),
                 Some(expected) => {
-                    if !self.types_equal(expected, &body_ty) {
+                    let Some(merged) = self.merge_branch_types(expected, &body_ty) else {
                         return Err(TypeError::at(
                             format!(
                                 "match arms have different types: {} and {}",
@@ -1227,7 +1237,8 @@ impl TypeChecker {
                             ),
                             body.span(),
                         ));
-                    }
+                    };
+                    result_ty = Some(merged);
                 }
             }
         }
@@ -1406,6 +1417,20 @@ impl TypeChecker {
                 format!("unsupported nested match pattern: {:?}", other),
                 span,
             )),
+        }
+    }
+
+    fn type_compatible(&self, expected: &Type, actual: &Type) -> bool {
+        matches!(actual, Type::Never) || self.types_equal(expected, actual)
+    }
+
+    fn merge_branch_types(&self, a: &Type, b: &Type) -> Option<Type> {
+        if matches!(a, Type::Never) {
+            Some(b.clone())
+        } else if matches!(b, Type::Never) || self.types_equal(a, b) {
+            Some(a.clone())
+        } else {
+            None
         }
     }
 
@@ -2909,16 +2934,16 @@ mod tests {
     // ------------------------------------------------------------------
 
     #[test]
-    fn test_typecheck_panic_is_unit() {
-        // `(panic msg)` : `(-> String unit)` — a string-literal message yields
-        // unit, so it type-checks as the body of a unit-returning function.
+    fn test_typecheck_panic_satisfies_unit_return() {
+        // Builtin `panic` has internal never type and satisfies an expected
+        // unit return.
         let src = r#"(define (f) : unit (panic "bad input"))"#;
         assert!(check(src).is_ok());
     }
 
     #[test]
-    fn test_typecheck_error_alias_is_unit() {
-        // `error` is the alias of `panic` with identical `(-> String unit)` type.
+    fn test_typecheck_error_alias_satisfies_unit_return() {
+        // `error` is the alias of builtin `panic` with identical never result.
         let src = r#"(define (f) : unit (error "bad input"))"#;
         assert!(check(src).is_ok());
     }
@@ -2945,17 +2970,68 @@ mod tests {
     }
 
     #[test]
-    fn test_typecheck_panic_result_not_i64() {
-        // The result is unit, not i64 — using it where i64 is expected fails.
+    fn test_typecheck_panic_satisfies_i64_return() {
         let src = r#"(define (f) : i64 (panic "boom"))"#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_panic_branch_satisfies_i64() {
+        let src = r#"(define (f [ok : bool]) : i64 (if ok 1 (panic "bad")))"#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_begin_panic_satisfies_i64() {
+        let src = r#"(define (f) : i64 (begin (panic "boom")))"#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_panic_argument_satisfies_expected_type() {
+        let src = r#"
+            (define (takes [n : i64]) : i64 n)
+            (define (f) : i64 (takes (panic "boom")))
+        "#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_scalar_match_panic_arm_satisfies_i64() {
+        let src = r#"
+            (define (f [n : i64]) : i64
+              (match n
+                [0 (panic "zero")]
+                [_ 1]))
+        "#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_enum_match_panic_arm_satisfies_i64() {
+        let src = r#"
+            (defenum MaybeInt (Some i64) (None))
+            (define (f [m : MaybeInt]) : i64
+              (match m
+                [(Some n) n]
+                [None (error "missing")]))
+        "#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_user_defined_panic_keeps_declared_return_type() {
+        let src = r#"
+            (define (panic [msg : String]) : unit unit)
+            (define (f) : i64 (panic "boom"))
+        "#;
         assert!(check(src).is_err());
     }
 
     #[test]
     fn test_typecheck_panic_with_dummy_value_in_non_unit_context() {
-        // TypeLisp has no bottom/never type yet. A terminal panic can appear in
-        // a non-unit context by sequencing a dummy value of the expected type
-        // after it.
+        // The old dummy-value style remains accepted, though builtin panic no
+        // longer requires it in non-unit contexts.
         let src = r#"(define (f) : i64 (begin (panic "boom") 0))"#;
         assert!(check(src).is_ok());
     }

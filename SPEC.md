@@ -228,7 +228,8 @@ Defines a named function.
 
 Declares an external function to link against. The name is an identifier, not a
 string. External symbols are emitted without the `_tl_` TypeLisp function
-prefix; hyphens are converted to underscores for assembler-safe symbol names.
+prefix. Identifier punctuation is converted to assembler-safe symbol text; for
+example, hyphens become underscores and `?` becomes `_question`.
 
 Example:
 ```lisp test=check name=extern-declaration

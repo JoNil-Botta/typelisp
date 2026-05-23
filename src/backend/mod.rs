@@ -3594,8 +3594,29 @@ impl X86_64Backend {
         if name == "main" {
             "main".into()
         } else {
-            format!("_tl_{}", name.replace('-', "_"))
+            format!("_tl_{}", Self::asm_safe_symbol_name(name))
         }
+    }
+
+    fn asm_safe_symbol_name(name: &str) -> String {
+        let mut out = String::new();
+        for ch in name.chars() {
+            match ch {
+                'A'..='Z' | 'a'..='z' | '0'..='9' | '_' => out.push(ch),
+                '-' => out.push('_'),
+                '?' => out.push_str("_question"),
+                '!' => out.push_str("_bang"),
+                '+' => out.push_str("_plus"),
+                '*' => out.push_str("_star"),
+                '/' => out.push_str("_slash"),
+                '=' => out.push_str("_eq"),
+                '<' => out.push_str("_lt"),
+                '>' => out.push_str("_gt"),
+                ':' => out.push_str("_colon"),
+                _ => out.push_str(&format!("_u{:x}", ch as u32)),
+            }
+        }
+        out
     }
 
     fn call_symbol(&self, name: &str) -> String {
@@ -3660,7 +3681,7 @@ impl X86_64Backend {
     }
 
     fn extern_symbol(name: &str) -> String {
-        name.replace('-', "_")
+        Self::asm_safe_symbol_name(name)
     }
 
     fn runtime_symbol(name: &str) -> Option<String> {
@@ -6027,8 +6048,13 @@ mod tests {
             (define (main) : i64 (file-exists? 41))
             "#,
         );
-        assert!(asm.contains("_tl_file_exists?:"), "asm:\n{}", asm);
-        assert!(asm.contains("    call _tl_file_exists?"), "asm:\n{}", asm);
+        assert!(asm.contains("_tl_file_exists_question:"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("    call _tl_file_exists_question"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(!asm.contains("_tl_file_exists?"), "asm:\n{}", asm);
         assert!(!asm.contains(".L_tl_file_exists:"), "asm:\n{}", asm);
     }
 

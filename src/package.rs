@@ -325,7 +325,7 @@ fn tokenize_manifest(source: &str) -> Result<Vec<Token>, String> {
             }
             ';' => {
                 column += 1;
-                while let Some(next) = chars.next() {
+                for next in chars.by_ref() {
                     if next == '\n' {
                         line += 1;
                         column = 1;

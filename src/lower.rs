@@ -741,15 +741,13 @@ impl FnLowerer {
             ast::Expr::TupleRef { expr, index } => self.lower_tuple_ref(expr, *index),
             // Lambda lowering is still stubbed to unit for now.
             ast::Expr::Lambda { .. } => Value::ConstUnit,
-            // SPMD foreach is not yet lowered (#344); reject with a clear
-            // diagnostic instead of silently producing unit.
-            ast::Expr::Foreach { .. } => {
-                panic!(
-                    "SPMD foreach lowering is not yet implemented (issue #344); \
-                     the foreach was accepted by the parser and typechecker, \
-                     but cannot yet be compiled to assembly"
-                );
-            }
+            ast::Expr::Foreach {
+                index,
+                index_ty,
+                start,
+                end,
+                body,
+            } => self.lower_foreach(index, index_ty, start, end, body),
             ast::Expr::Spanned { expr, .. } => self.lower_expr(expr),
         }
     }
@@ -1295,6 +1293,89 @@ impl FnLowerer {
         self.builder.emit(Instruction::Jump(header_label));
 
         // Exit block
+        self.builder.finish_block(&exit_label);
+        Value::ConstUnit
+    }
+
+    fn lower_foreach(
+        &mut self,
+        index: &str,
+        index_ty: &Type,
+        start: &ast::Expr,
+        end: &ast::Expr,
+        body: &ast::Expr,
+    ) -> Value {
+        let index_ty = self.resolve_type(index_ty);
+        let storage_ty = Self::backend_value_type(&index_ty);
+
+        let outer_vars = self.vars.clone();
+        let start_val = {
+            let value = self.lower_expr(start);
+            self.cast_value(value, index_ty.clone())
+        };
+        let end_val = {
+            let value = self.lower_expr(end);
+            let value = self.cast_value(value, index_ty.clone());
+            self.materialize_value(value, index_ty.clone())
+        };
+
+        self.vars = outer_vars.clone();
+
+        let index_var = self.builder.fresh_var();
+        self.builder.emit(Instruction::Alloc {
+            var: index_var,
+            ty: storage_ty.clone(),
+        });
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(index_var),
+            src: start_val,
+            ty: storage_ty.clone(),
+        });
+        self.record_value_local(index_var, index_ty.clone());
+        self.vars.insert(index.to_string(), index_var);
+
+        let header_label = self.builder.fresh_label("foreach_header");
+        let body_label = self.builder.fresh_label("foreach_body");
+        let exit_label = self.builder.fresh_label("foreach_exit");
+
+        self.builder.emit(Instruction::Jump(header_label.clone()));
+
+        self.builder.finish_block(&header_label);
+        let in_range = self.builder.fresh_var();
+        self.builder.emit(Instruction::BinOp {
+            dst: in_range,
+            op: BinOp::Lt,
+            lhs: Value::Var(index_var),
+            rhs: end_val,
+            ty: Type::Bool,
+        });
+        self.record_local(in_range, Type::Bool);
+        self.builder.emit(Instruction::Branch {
+            cond: Value::Var(in_range),
+            true_label: body_label.clone(),
+            false_label: exit_label.clone(),
+        });
+
+        self.builder.finish_block(&body_label);
+        self.lower_expr(body);
+        self.vars = outer_vars;
+
+        let next_index = self.builder.fresh_var();
+        self.builder.emit(Instruction::BinOp {
+            dst: next_index,
+            op: BinOp::Add,
+            lhs: Value::Var(index_var),
+            rhs: Self::int_compare_const(1, &index_ty),
+            ty: index_ty.clone(),
+        });
+        self.record_local(next_index, index_ty);
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(index_var),
+            src: Value::Var(next_index),
+            ty: storage_ty,
+        });
+        self.builder.emit(Instruction::Jump(header_label));
+
         self.builder.finish_block(&exit_label);
         Value::ConstUnit
     }
@@ -2817,6 +2898,17 @@ impl FnLowerer {
         Value::Var(dst)
     }
 
+    fn materialize_value(&mut self, val: Value, ty: Type) -> Value {
+        let dst = self.builder.fresh_var();
+        self.builder.emit(Instruction::Mov {
+            dst,
+            src: val,
+            ty: ty.clone(),
+        });
+        self.record_local(dst, ty);
+        Value::Var(dst)
+    }
+
     /// Extract the `(data_ptr, len)` fields of a string fat value. `s` is a
     /// pointer to inline `{ ptr, len }` storage; load the data pointer (offset
     /// 0, U64) and the byte length (offset 8, I64) and return the two result
@@ -3516,6 +3608,86 @@ mod tests {
                 .any(|i| matches!(i, Instruction::Branch { .. }))
         });
         assert!(has_branch);
+    }
+
+    #[test]
+    fn test_lower_foreach_to_scalar_loop() {
+        let prog = parse(
+            r#"
+            (define (fill [out : (Array i64)] [n : i64]) : unit
+              (foreach ([i : i64 0 n])
+                (array-set! out i (+ i 1))))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let instrs = all_instrs(&ir);
+
+        assert!(
+            ir.functions[0]
+                .blocks
+                .iter()
+                .any(|b| b.label.starts_with("foreach_header."))
+        );
+        assert!(
+            ir.functions[0]
+                .blocks
+                .iter()
+                .any(|b| b.label.starts_with("foreach_body."))
+        );
+        assert!(
+            ir.functions[0]
+                .blocks
+                .iter()
+                .any(|b| b.label.starts_with("foreach_exit."))
+        );
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Branch { .. }))
+        );
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::BinOp {
+                op: BinOp::Lt,
+                ty: Type::Bool,
+                ..
+            }
+        )));
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::BinOp {
+                op: BinOp::Add,
+                rhs: Value::ConstI64(1),
+                ty: Type::I64,
+                ..
+            }
+        )));
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Store { ty: Type::I64, .. }))
+        );
+    }
+
+    #[test]
+    fn test_lower_foreach_materializes_end_bound_once() {
+        let prog = parse(
+            r#"
+            (define (fill [out : (Array i64)] [bounds : (Array i64)]) : unit
+              (foreach ([i : i64 0 (array-ref bounds 0)])
+                (array-set! out i (+ i 1))))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let instrs = all_instrs(&ir);
+
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Mov { ty: Type::I64, .. }))
+        );
     }
 
     #[test]

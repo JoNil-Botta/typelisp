@@ -854,6 +854,16 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             stdout: "",
             deps: &["doc_extract.tl", "format_tokens.tl"],
         },
+        // refs #388: selfhost Markdown rendering over extracted docs. The
+        // smoke checks module docs, globals, functions, externs, enums,
+        // variants, structs, fields, Markdown escaping, anchors, and the
+        // predictable empty-model rendering.
+        Case {
+            name: "doc_render_smoke",
+            exit_code: 42,
+            stdout: "",
+            deps: &["doc_render.tl", "doc_extract.tl", "format_tokens.tl"],
+        },
     ];
 
     for case in cases {
@@ -2873,6 +2883,7 @@ fn source_path_for_case(manifest_dir: &PathBuf, name: &str) -> PathBuf {
         "compiler_parse_smoke" => "compiler_parse_smoke.tl",
         "compiler_symbols_smoke" => "compiler_symbols_smoke.tl",
         "doc_extract_smoke" => "doc_extract_smoke.tl",
+        "doc_render_smoke" => "doc_render_smoke.tl",
         "tl_read" => "read.tl",
         "tl_reader" => "reader.tl",
         "tl_token" => "token.tl",

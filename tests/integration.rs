@@ -262,12 +262,13 @@ fn type_lisp_programs_compile_link_and_run() {
         },
         // Self-hosting M1 (#154/#173): parse the reader's generic Sexpr tree
         // into the compiler AST shared with `tl_emit.tl`. The witness parses
-        // arithmetic, define, let, if, and all comparison operators, then returns
-        // a stable structural score. The raw score is 581; process exit observes
-        // it modulo 256, so the Linux exit code is 69.
+        // arithmetic, define, let, if, comparison operators, string literals,
+        // and print forms, then returns a stable structural score. The raw score
+        // is 685; process exit observes it modulo 256, so the Linux exit code is
+        // 173.
         Case {
             name: "tl_ast",
-            exit_code: 69,
+            exit_code: 173,
             stdout: "",
             deps: &["tl_ast_types.tl", "tl_read.tl", "tl_lex.tl", "tl_token.tl"],
         },
@@ -606,7 +607,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         // through the explicit compile -> as -> ld -> run pipeline.
         Case {
             name: "tl_ast",
-            exit_code: 69,
+            exit_code: 173,
             stdout: "",
             deps: &["tl_ast_types.tl", "tl_read.tl", "tl_lex.tl", "tl_token.tl"],
         },
@@ -1311,6 +1312,154 @@ fn tl_emit_comparison_printed_programs_assemble_link_and_exit_expected() {
 }
 
 #[test]
+fn tl_emit_string_printed_programs_assemble_link_and_stdout_expected() {
+    let cases = [
+        (
+            "print_hello_newline",
+            r#"(EPrint (EStr "hello\n"))"#,
+            0,
+            "hello\n",
+            &[
+                "    .section .rodata\n",
+                ".Lstr_0:\n",
+                ".string \"hello\\n\"",
+                "    leaq .Lstr_0(%rip), %rsi\n",
+                "    movq $6, %rdx\n",
+                "    syscall\n",
+                "    movq $0, %rax\n",
+            ][..],
+        ),
+        (
+            "print_then_exit_7",
+            r#"(ELet "_" (EPrint (EStr "side\n")) (EInt 7))"#,
+            7,
+            "side\n",
+            &[
+                ".Lstr_0:\n",
+                ".string \"side\\n\"",
+                "    movq $5, %rdx\n",
+                "    movq $7, %rax\n",
+            ][..],
+        ),
+        (
+            "print_quote_backslash",
+            r#"(EPrint (EStr "q\"b\\c"))"#,
+            0,
+            "q\"b\\c",
+            &[
+                ".Lstr_0:\n",
+                ".string \"q\\\"b\\\\c\"",
+                "    movq $5, %rdx\n",
+            ][..],
+        ),
+        (
+            "print_two_distinct_literals",
+            r#"(ELet "_" (EPrint (EStr "a")) (ELet "__" (EPrint (EStr "b")) (EInt 0)))"#,
+            0,
+            "ab",
+            &[
+                ".Lstr_0:\n    .string \"a\"\n",
+                ".Lstr_1:\n    .string \"b\"\n",
+                "    leaq .Lstr_0(%rip), %rsi\n",
+                "    leaq .Lstr_1(%rip), %rsi\n",
+            ][..],
+        ),
+    ];
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let integration_dir = manifest_dir.join("tests").join("integration");
+    let root_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("tl_emit_string_printed_programs");
+
+    for (name, expr, exit_code, expected_stdout, snippets) in cases {
+        let work_dir = root_dir.join(name);
+        fs::create_dir_all(&work_dir).expect("create tl_emit string test work dir");
+
+        for dep in ["tl_emit_core.tl", "tl_ast_types.tl"] {
+            fs::copy(integration_dir.join(dep), work_dir.join(dep))
+                .expect("copy imported emitter module to work dir");
+        }
+
+        let source = format!(
+            "(import \"tl_emit_core.tl\")\n\n\
+             (define (sample) : Expr\n  {})\n\n\
+             (define (main) : unit\n  (print-string (emit-program (sample))))\n",
+            expr
+        );
+        let work_path = work_dir.join("driver.tl");
+        fs::write(&work_path, source).expect("write tl_emit string driver");
+
+        let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+            .arg("run")
+            .arg(&work_path)
+            .output()
+            .expect("run tl_emit string driver");
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{} driver exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+            name,
+            stdout,
+            stderr,
+        );
+        for snippet in snippets {
+            assert!(
+                stdout.contains(snippet),
+                "{} emitted assembly missing {:?}:\n{}",
+                name,
+                snippet,
+                stdout,
+            );
+        }
+
+        let asm_path = work_dir.join("printed.s");
+        let obj_path = work_dir.join("printed.o");
+        let bin_path = work_dir.join("printed");
+        fs::write(&asm_path, &output.stdout).expect("write printed assembly");
+
+        let status = Command::new("as")
+            .arg(&asm_path)
+            .arg("-o")
+            .arg(&obj_path)
+            .status()
+            .expect("run assembler on printed tl_emit string output");
+        assert!(status.success(), "{} assembly failed", name);
+
+        let status = Command::new("ld")
+            .arg(&obj_path)
+            .arg("-o")
+            .arg(&bin_path)
+            .status()
+            .expect("run linker on printed tl_emit string output");
+        assert!(status.success(), "{} linking failed", name);
+
+        let output = Command::new(&bin_path)
+            .output()
+            .expect("run binary assembled from printed tl_emit string output");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            output.status.code(),
+            Some(exit_code),
+            "{} printed program exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+            name,
+            stdout,
+            stderr,
+        );
+        assert_eq!(
+            stdout, expected_stdout,
+            "{} printed program stdout differed\nstderr:\n{}",
+            name, stderr,
+        );
+    }
+}
+
+#[test]
 fn tl_emit_def_call_printed_programs_assemble_link_and_exit_expected() {
     let cases = [
         (
@@ -1576,6 +1725,11 @@ fn tl_parse_printed_program_assembles_links_and_exits_1() {
             stdout,
         );
     }
+    assert!(
+        !stdout.contains("    .section .rodata\n"),
+        "no-string tl_parse demo should not emit rodata:\n{}",
+        stdout,
+    );
 
     let asm_path = work_dir.join("printed.s");
     let obj_path = work_dir.join("printed.o");

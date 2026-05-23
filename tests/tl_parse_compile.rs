@@ -60,11 +60,16 @@ fn tl_parse_tl_compiles_to_assembly() {
         "_tl_parse_binary:",
         "_tl_parse_let:",
         "_tl_parse_if:",
+        "_tl_parse_print:",
         "_tl_lex:",
         "_tl_read:",
         "_tl_cenv_lookup:",
         "_tl_emit_let:",
         "_tl_emit_if:",
+        "_tl_emit_str:",
+        "_tl_emit_print:",
+        "_tl_emit_rodata:",
+        "_tl_collect_strings:",
         "_tl_fresh_label:",
         "_tl_emit_expr:",
         "_tl_emit_program:",
@@ -87,9 +92,12 @@ fn tl_parse_tl_compiles_to_assembly() {
         "call _tl_read",
         "call _tl_parse",
         "call _tl_parse_if",
+        "call _tl_parse_print",
         "call _tl_emit_program",
         "call _tl_emit_let",
         "call _tl_emit_if",
+        "call _tl_emit_rodata",
+        "call _tl_collect_strings",
         "call _tl_fresh_label",
     ] {
         assert!(
@@ -117,6 +125,18 @@ fn tl_parse_tl_compiles_to_assembly() {
         ".string \"    addq %rcx, %rax\\n\"",
         ".string \"    subq %rcx, %rax\\n\"",
         ".string \"    imulq %rcx, %rax\\n\"",
+        // refs #176: the imported emitter can now emit rodata and inline
+        // write(2) calls for literal-only `(print "...")` forms.
+        ".string \"    .section .rodata\\n\"",
+        ".string \".Lstr_\"",
+        ".string \":\\n    .string \"",
+        ".string \"    leaq \"",
+        ".string \"(%rip), %rax\\n\"",
+        ".string \"(%rip), %rsi\\n\"",
+        ".string \"    movq $1, %rdi\\n\"",
+        ".string \"    movq $1, %rax\\n\"",
+        ".string \"    syscall\\n\"",
+        ".string \"    movq $0, %rax\\n\"",
         // refs #167/#173: the emitter's comparison + conditional-branch string
         // constants are compiled into the program regardless of the input.
         ".string \"    cmpq %rcx, %rax\\n    setl %al\\n    movzbq %al, %rax\\n\"",

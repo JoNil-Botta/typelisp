@@ -2,9 +2,9 @@
 //!
 //! `examples/tl_ast.tl` imports the TypeLisp reader, parses generic `Sexpr`
 //! trees into the shared `BinOp` / `Expr` / `Item` AST enums, and scores both an
-//! expression, a `define` form, a single-binding let, if, and the comparison
-//! operators. The Linux integration test executes the same witness; this test
-//! keeps Windows coverage at compile time.
+//! expression, a `define` form, a single-binding let, if, the comparison
+//! operators, string literals, and print forms. The Linux integration test
+//! executes the same witness; this test keeps Windows coverage at compile time.
 
 use std::fs;
 use std::path::PathBuf;
@@ -55,6 +55,7 @@ fn tl_ast_tl_compiles_to_assembly() {
         "_tl_parse_binary:",
         "_tl_parse_let:",
         "_tl_parse_if:",
+        "_tl_parse_print:",
         "_tl_parse_args:",
         "_tl_parse_params:",
         "_tl_parse_item:",
@@ -76,6 +77,7 @@ fn tl_ast_tl_compiles_to_assembly() {
     for call in [
         "call _tl_parse_expr",
         "call _tl_parse_if",
+        "call _tl_parse_print",
         "call _tl_parse_item",
         "call _tl_read",
         "call _tl_lex",
@@ -94,6 +96,7 @@ fn tl_ast_tl_compiles_to_assembly() {
         "ast: malformed expression",
         "ast: malformed let",
         "ast: malformed if",
+        "ast: malformed print",
         "ast: malformed argument list",
         "ast: malformed parameter list",
         "ast: malformed define header",
@@ -126,6 +129,14 @@ fn tl_ast_tl_compiles_to_assembly() {
         assert!(
             asm.contains(datum),
             "tl_ast assembly is missing comparison source-string datum {:?}:\n{}",
+            datum,
+            asm,
+        );
+    }
+    for datum in [".string \"\\\"hi\\\"\"", ".string \"(print \\\"ok\\\")\""] {
+        assert!(
+            asm.contains(datum),
+            "tl_ast assembly is missing string/print source-string datum {:?}:\n{}",
             datum,
             asm,
         );

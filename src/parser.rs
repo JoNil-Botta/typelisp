@@ -1062,6 +1062,25 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_parse_named_char_literal() {
+        // A named char literal `#\newline'` parses to a Char literal carrying
+        // its code point (10), proving the lexer's named-literal support flows
+        // through the parser into the AST.
+        let prog = parse(r"(define (f) : char #\newline')").unwrap();
+        let body = match &prog.decls[0] {
+            Decl::DefFn { body, .. } => body.unspan(),
+            other => panic!("expected DefFn, got {:?}", other),
+        };
+        match body {
+            Expr::Literal(Literal::Char(c)) => {
+                assert_eq!(*c, '\n');
+                assert_eq!(*c as u32, 10);
+            }
+            other => panic!("expected Char literal, got {:?}", other),
+        }
+    }
+
     // ------------------------------------------------------------------
     // Structs / records — Issue #18
     // ------------------------------------------------------------------

@@ -146,6 +146,14 @@ impl<'a> Lexer<'a> {
         self.current
     }
 
+    /// Look one character past `peek()` without consuming anything. `current`
+    /// holds the next char and `self.chars` is the cursor positioned just after
+    /// it, so cloning the cursor and pulling one item is a cheap two-char
+    /// lookahead.
+    fn peek2(&self) -> Option<char> {
+        self.chars.clone().next()
+    }
+
     fn skip_whitespace(&mut self) {
         while let Some(c) = self.peek() {
             if c.is_whitespace() {
@@ -201,10 +209,63 @@ impl<'a> Lexer<'a> {
         })
     }
 
+    /// Map a multi-letter named character literal (the run after `#\`) to its
+    /// code point. Returns `None` for unknown names so the caller can report a
+    /// precise error. Single-letter escapes (`#\n'`, `#\t'`, …) are handled
+    /// separately and are *not* listed here.
+    fn named_char(name: &str) -> Option<char> {
+        match name {
+            "space" => Some(' '),    // 32
+            "newline" => Some('\n'), // 10
+            "tab" => Some('\t'),     // 9
+            "return" => Some('\r'),  // 13
+            "nul" => Some('\0'),     // 0
+            _ => None,
+        }
+    }
+
     fn read_char(&mut self) -> Result<Token, LexerError> {
         self.advance(); // consume #
         if self.peek() == Some('\\') {
             self.advance();
+            // A run of two or more ASCII letters after `#\` is a *named*
+            // literal (e.g. `#\space'`, `#\newline'`). A single letter is an
+            // escape (`#\n'`) or a literal letter. We only commit to the named
+            // branch when the second character is also alphabetic, which keeps
+            // `#\n'` lexing as newline rather than trying to read a name.
+            let second_is_alpha = self.peek().is_some_and(|c| c.is_ascii_alphabetic())
+                && self.peek2().is_some_and(|c| c.is_ascii_alphabetic());
+            if second_is_alpha {
+                let mut name = String::new();
+                while let Some(c) = self.peek() {
+                    if c.is_ascii_alphabetic() {
+                        name.push(c);
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+                let c = match Self::named_char(&name) {
+                    Some(c) => c,
+                    None => {
+                        return Err(LexerError {
+                            msg: format!("unknown named character literal: #\\{}", name),
+                            line: self.line,
+                            col: self.col,
+                        });
+                    }
+                };
+                return if self.peek() == Some('\'') {
+                    self.advance();
+                    Ok(Token::Char(c))
+                } else {
+                    Err(LexerError {
+                        msg: "expected ' after character".into(),
+                        line: self.line,
+                        col: self.col,
+                    })
+                };
+            }
             let c = match self.peek() {
                 Some('n') => '\n',
                 Some('t') => '\t',
@@ -543,5 +604,92 @@ mod tests {
         // closing ')' on line 3, column 5.
         assert_eq!(toks[3].token, Token::RParen);
         assert_eq!(toks[3].span, Span::new(3, 5, 3, 6));
+    }
+
+    // ------------------------------------------------------------------
+    // Character literals — single, escaped, and named (refs #27)
+    // ------------------------------------------------------------------
+
+    /// Lex `src` (expected to be exactly one char literal) and return the char.
+    fn lex_one_char(src: &str) -> char {
+        let mut lexer = Lexer::new(src);
+        let toks = lexer.tokenize().unwrap();
+        assert_eq!(toks.len(), 1, "expected exactly one token from {src:?}");
+        match &toks[0] {
+            Token::Char(c) => *c,
+            other => panic!("expected Char token from {src:?}, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_single_char_literals() {
+        assert_eq!(lex_one_char("#a'"), 'a');
+        assert_eq!(lex_one_char("#Z'"), 'Z');
+        // A digit literal is the digit character, NOT a numeric/NUL value:
+        // `#0'` is '0' == code point 48.
+        assert_eq!(lex_one_char("#0'"), '0');
+        assert_eq!(lex_one_char("#0'") as u32, 48);
+        // Punctuation, including the open paren, is a perfectly good char.
+        assert_eq!(lex_one_char("#('"), '(');
+        assert_eq!(lex_one_char("#+'"), '+');
+        assert_eq!(lex_one_char("# '"), ' ');
+    }
+
+    #[test]
+    fn test_escaped_char_literals() {
+        // Single-letter escapes still work and are unaffected by named-literal
+        // handling: `#\n'` is newline (10), not a name starting with `n`.
+        assert_eq!(lex_one_char(r"#\n'"), '\n');
+        assert_eq!(lex_one_char(r"#\t'"), '\t');
+        assert_eq!(lex_one_char(r"#\r'"), '\r');
+        // `#\0'` is NUL (code point 0) via the escape branch.
+        assert_eq!(lex_one_char(r"#\0'"), '\0');
+        assert_eq!(lex_one_char(r"#\0'") as u32, 0);
+        // A backslash before an ordinary letter yields that letter.
+        assert_eq!(lex_one_char(r"#\a'"), 'a');
+    }
+
+    #[test]
+    fn test_named_char_literals() {
+        assert_eq!(lex_one_char(r"#\space'"), ' ');
+        assert_eq!(lex_one_char(r"#\space'") as u32, 32);
+        assert_eq!(lex_one_char(r"#\newline'"), '\n');
+        assert_eq!(lex_one_char(r"#\newline'") as u32, 10);
+        assert_eq!(lex_one_char(r"#\tab'"), '\t');
+        assert_eq!(lex_one_char(r"#\tab'") as u32, 9);
+        assert_eq!(lex_one_char(r"#\return'"), '\r');
+        assert_eq!(lex_one_char(r"#\return'") as u32, 13);
+        assert_eq!(lex_one_char(r"#\nul'"), '\0');
+        assert_eq!(lex_one_char(r"#\nul'") as u32, 0);
+    }
+
+    #[test]
+    fn test_named_char_literal_in_context() {
+        // A named literal lexes cleanly amid surrounding tokens.
+        let mut lexer = Lexer::new(r"(= c #\space')");
+        let toks = lexer.tokenize().unwrap();
+        assert_eq!(
+            toks,
+            vec![
+                Token::LParen,
+                Token::Ident("=".into()),
+                Token::Ident("c".into()),
+                Token::Char(' '),
+                Token::RParen,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_unknown_named_char_literal_is_error() {
+        // A multi-letter run that is not a known name is a precise error, not a
+        // silent mis-lex.
+        let mut lexer = Lexer::new(r"#\spcae'");
+        let err = lexer.tokenize().unwrap_err();
+        assert!(
+            err.msg.contains("unknown named character literal"),
+            "expected an unknown-named-literal error, got: {}",
+            err.msg
+        );
     }
 }

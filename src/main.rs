@@ -19,7 +19,7 @@ mod typechecker;
 mod types;
 
 use ast::Program;
-use backend::generate_assembly_with_spans;
+use backend::{BackendTarget, generate_assembly_with_spans};
 use diagnostic::format_diagnostic;
 use lower::{LoweredProgram, lower_program_with_spans};
 use module::{
@@ -460,6 +460,8 @@ fn run_cli() {
             let loaded = load_or_exit(&file, &options);
             let lowered = optimized_ir_or_exit(&loaded);
             let asm = assembly_or_exit(&lowered, &loaded.sources);
+            let target = BackendTarget::default();
+            let toolchain = target.toolchain();
             let asm_path = file.with_extension("s");
             fs::write(&asm_path, asm).expect("Failed to write assembly");
 
@@ -467,7 +469,7 @@ fn run_cli() {
             let bin_path = file.with_extension("");
 
             // Assemble
-            let status = Command::new("as")
+            let status = Command::new(toolchain.assembler)
                 .arg(&asm_path)
                 .arg("-o")
                 .arg(&obj_path)
@@ -479,15 +481,15 @@ fn run_cli() {
             }
 
             // Link
-            let status = Command::new("ld")
-                .arg(&obj_path)
-                .arg("-o")
-                .arg(&bin_path)
-                .arg("-dynamic-linker")
-                .arg("/lib64/ld-linux-x86-64.so.2")
-                .arg("-lc")
-                .status()
-                .expect("Failed to run linker");
+            let mut linker = Command::new(toolchain.linker);
+            linker.arg(&obj_path).arg("-o").arg(&bin_path);
+            if let Some(dynamic_linker) = toolchain.dynamic_linker {
+                linker.arg("-dynamic-linker").arg(dynamic_linker);
+            }
+            for lib in toolchain.libraries {
+                linker.arg(lib);
+            }
+            let status = linker.status().expect("Failed to run linker");
             if !status.success() {
                 eprintln!("Linking failed");
                 std::process::exit(1);

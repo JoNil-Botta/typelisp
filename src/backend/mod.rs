@@ -15,6 +15,143 @@ const READ_FILE_RUNTIME_SYMBOL: &str = ".L_tl_read_file";
 const WRITE_FILE_RUNTIME_SYMBOL: &str = ".L_tl_write_file";
 const FILE_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists";
 
+const SYSV_INTEGER_ARG_REGS: [&str; 6] = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
+const SYSV_FLOAT_ARG_REGS: [&str; 8] = [
+    "%xmm0", "%xmm1", "%xmm2", "%xmm3", "%xmm4", "%xmm5", "%xmm6", "%xmm7",
+];
+const LINUX_LINK_LIBS: [&str; 1] = ["-lc"];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackendArch {
+    X86_64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackendOs {
+    Linux,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackendAbi {
+    SystemV,
+}
+
+/// Concrete backend target. Today only Linux x86_64 System V is emitted, but
+/// codegen policy is kept explicit so later targets do not have to rediscover
+/// Linux assumptions embedded in instruction selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BackendTarget {
+    pub arch: BackendArch,
+    pub os: BackendOs,
+    pub abi: BackendAbi,
+}
+
+impl BackendTarget {
+    pub const LINUX_X86_64_SYSTEM_V: Self = Self {
+        arch: BackendArch::X86_64,
+        os: BackendOs::Linux,
+        abi: BackendAbi::SystemV,
+    };
+
+    pub const fn linux_x86_64_system_v() -> Self {
+        Self::LINUX_X86_64_SYSTEM_V
+    }
+
+    fn calling_convention(self) -> CallingConvention {
+        match (self.arch, self.os, self.abi) {
+            (BackendArch::X86_64, BackendOs::Linux, BackendAbi::SystemV) => CallingConvention {
+                integer_arg_regs: &SYSV_INTEGER_ARG_REGS,
+                float_arg_regs: &SYSV_FLOAT_ARG_REGS,
+                incoming_stack_base_offset: 16,
+                stack_arg_size: 8,
+                return_gpr: "%rax",
+                return_float_reg: "%xmm0",
+            },
+        }
+    }
+
+    fn entry_policy(self) -> EntryPolicy {
+        match (self.arch, self.os, self.abi) {
+            (BackendArch::X86_64, BackendOs::Linux, BackendAbi::SystemV) => EntryPolicy {
+                symbol: "_start",
+                exit_syscall_number: 60,
+                exit_status_reg: "%rdi",
+            },
+        }
+    }
+
+    fn runtime_policy(self) -> RuntimePolicy {
+        match (self.arch, self.os, self.abi) {
+            (BackendArch::X86_64, BackendOs::Linux, BackendAbi::SystemV) => RuntimePolicy {
+                emits_linux_syscall_helpers: true,
+                uses_libc_print_runtime: true,
+            },
+        }
+    }
+
+    pub fn toolchain(self) -> BackendToolchain {
+        match (self.arch, self.os, self.abi) {
+            (BackendArch::X86_64, BackendOs::Linux, BackendAbi::SystemV) => BackendToolchain {
+                assembler: "as",
+                linker: "ld",
+                dynamic_linker: Some("/lib64/ld-linux-x86-64.so.2"),
+                libraries: &LINUX_LINK_LIBS,
+            },
+        }
+    }
+}
+
+impl Default for BackendTarget {
+    fn default() -> Self {
+        Self::linux_x86_64_system_v()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BackendToolchain {
+    pub assembler: &'static str,
+    pub linker: &'static str,
+    pub dynamic_linker: Option<&'static str>,
+    pub libraries: &'static [&'static str],
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CallingConvention {
+    integer_arg_regs: &'static [&'static str],
+    float_arg_regs: &'static [&'static str],
+    incoming_stack_base_offset: i32,
+    stack_arg_size: i32,
+    return_gpr: &'static str,
+    return_float_reg: &'static str,
+}
+
+impl CallingConvention {
+    fn incoming_stack_arg_offset(self, stack_arg: i32) -> i32 {
+        self.incoming_stack_base_offset + stack_arg * self.stack_arg_size
+    }
+
+    fn outgoing_stack_arg_offset(self, stack_arg: i32) -> i32 {
+        stack_arg * self.stack_arg_size
+    }
+
+    fn outgoing_stack_arg_space(self, stack_arg_count: usize) -> i32 {
+        ((stack_arg_count as i32 * self.stack_arg_size) + 15) & !15
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct EntryPolicy {
+    symbol: &'static str,
+    exit_syscall_number: i64,
+    exit_status_reg: &'static str,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RuntimePolicy {
+    emits_linux_syscall_helpers: bool,
+    uses_libc_print_runtime: bool,
+}
+
 /// Backend validation error with optional source provenance. The existing
 /// `generate_assembly` API still exposes plain strings for tests and library
 /// callers; CLI paths use this richer form to render diagnostics with snippets.
@@ -53,9 +190,9 @@ impl fmt::Display for BackendError {
 
 impl std::error::Error for BackendError {}
 
-/// x86_64 assembly code generator
-/// Target: Linux, System V AMD64 ABI
+/// x86_64 assembly code generator.
 pub struct X86_64Backend {
+    target: BackendTarget,
     output: String,
     stack_size: i32,
     var_offsets: HashMap<VarId, i32>,
@@ -887,6 +1024,7 @@ fn find_predecessor(
 impl X86_64Backend {
     pub fn new() -> Self {
         X86_64Backend {
+            target: BackendTarget::default(),
             output: String::new(),
 
             stack_size: 0,
@@ -919,6 +1057,12 @@ impl X86_64Backend {
             current_fn: String::new(),
             interned_strings: HashMap::new(),
         }
+    }
+
+    pub fn with_target(target: BackendTarget) -> Self {
+        let mut backend = Self::new();
+        backend.target = target;
+        backend
     }
 
     pub fn generate(&mut self, program: &Program) -> String {
@@ -969,6 +1113,23 @@ impl X86_64Backend {
             || self.needs_file_exists_runtime;
         let needs_print_runtime = !self.runtime_print_names.is_empty();
         let needs_argv_data = self.needs_arg_count_runtime || self.needs_arg_runtime;
+        let runtime_policy = self.target.runtime_policy();
+        let needs_linux_syscall_runtime = needs_print_runtime
+            || self.emits_alloc_runtime
+            || self.needs_oob_runtime
+            || self.needs_div_runtime
+            || self.needs_shift_runtime
+            || self.needs_abort_runtime
+            || self.needs_print_str_runtime
+            || self.needs_print_err_runtime
+            || self.needs_read_file_runtime
+            || self.needs_write_file_runtime
+            || self.needs_file_exists_runtime
+            || needs_argv_data;
+        debug_assert!(
+            runtime_policy.emits_linux_syscall_helpers || !needs_linux_syscall_runtime,
+            "target runtime policy cannot emit the requested Linux syscall helpers"
+        );
         if needs_print_runtime {
             self.generate_print_runtime_data();
         }
@@ -1002,7 +1163,8 @@ impl X86_64Backend {
 
         self.emit("    .text");
         self.emit("    .globl main");
-        self.emit("    .globl _start");
+        let entry_policy = self.target.entry_policy();
+        self.emit(&format!("    .globl {}", entry_policy.symbol));
         self.emit("");
 
         // Generate extern declarations
@@ -1033,7 +1195,7 @@ impl X86_64Backend {
                 self.emit(&format!("    .extern {}", symbol));
             }
         }
-        if needs_print_runtime {
+        if needs_print_runtime && runtime_policy.uses_libc_print_runtime {
             self.emit("    .extern printf");
             self.emit("    .extern fflush");
         }
@@ -1114,7 +1276,7 @@ impl X86_64Backend {
             .unwrap_or(Type::I64);
 
         self.emit("");
-        self.emit("_start:");
+        self.emit(&format!("{}:", entry_policy.symbol));
         if needs_argv_data {
             self.emit("    movq (%rsp), %rax");
             self.emit("    movq %rax, .L_tl_argc(%rip)");
@@ -1132,9 +1294,13 @@ impl X86_64Backend {
             if program.functions.iter().any(|f| f.name == init_fn) {
                 self.emit(&format!("    call {}", Self::mangle_name(&init_fn)));
                 let symbol = Self::mangle_name(name);
+                let calling_convention = self.target.calling_convention();
                 match ty {
                     Type::F64 => {
-                        self.emit(&format!("    movsd %xmm0, {}(%rip)", symbol));
+                        self.emit(&format!(
+                            "    movsd {}, {}(%rip)",
+                            calling_convention.return_float_reg, symbol
+                        ));
                     }
                     Type::I64
                     | Type::U64
@@ -1142,16 +1308,31 @@ impl X86_64Backend {
                     | Type::DynArray(_)
                     | Type::Enum(_)
                     | Type::Struct(_) => {
-                        self.emit(&format!("    movq %rax, {}(%rip)", symbol));
+                        self.emit(&format!(
+                            "    movq {}, {}(%rip)",
+                            calling_convention.return_gpr, symbol
+                        ));
                     }
                     Type::I32 | Type::U32 => {
-                        self.emit(&format!("    movl %eax, {}(%rip)", symbol));
+                        self.emit(&format!(
+                            "    movl {}, {}(%rip)",
+                            Self::gpr32(calling_convention.return_gpr),
+                            symbol
+                        ));
                     }
                     Type::I16 | Type::U16 => {
-                        self.emit(&format!("    movw %ax, {}(%rip)", symbol));
+                        self.emit(&format!(
+                            "    movw {}, {}(%rip)",
+                            Self::gpr16(calling_convention.return_gpr),
+                            symbol
+                        ));
                     }
                     Type::I8 | Type::U8 | Type::Bool | Type::Char => {
-                        self.emit(&format!("    movb %al, {}(%rip)", symbol));
+                        self.emit(&format!(
+                            "    movb {}, {}(%rip)",
+                            Self::gpr8(calling_convention.return_gpr),
+                            symbol
+                        ));
                     }
                     Type::Unit => {}
                     _ => {}
@@ -1160,11 +1341,15 @@ impl X86_64Backend {
         }
         self.emit("    call main");
         if main_ret == Type::Unit {
-            self.emit("    xor %edi, %edi");
+            let status_reg = Self::gpr32(entry_policy.exit_status_reg);
+            self.emit(&format!("    xor {}, {}", status_reg, status_reg));
         } else {
-            self.emit("    movq %rax, %rdi");
+            self.emit(&format!("    movq %rax, {}", entry_policy.exit_status_reg));
         }
-        self.emit("    movq $60, %rax");
+        self.emit(&format!(
+            "    movq ${}, %rax",
+            entry_policy.exit_syscall_number
+        ));
         self.emit("    syscall");
 
         self.output.clone()
@@ -2857,10 +3042,9 @@ impl X86_64Backend {
         // adjacent slots. The sub-register names differ per register
         // (`%rdi`->`%edi`/`%di`/`%dil`), so we look them up rather than string
         // -slicing the 64-bit name.
-        let param_regs = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
-        let xmm_regs = [
-            "%xmm0", "%xmm1", "%xmm2", "%xmm3", "%xmm4", "%xmm5", "%xmm6", "%xmm7",
-        ];
+        let calling_convention = self.target.calling_convention();
+        let param_regs = calling_convention.integer_arg_regs;
+        let xmm_regs = calling_convention.float_arg_regs;
         // System V AMD64: integer and floating-point arguments consume
         // *independent* register sequences, so we track two counters. Each
         // argument register is written at the width of its declared type so a
@@ -3357,10 +3541,11 @@ impl X86_64Backend {
             Instruction::Return(val) => {
                 if let Some(v) = val {
                     let ret_ty = self.return_ty.clone();
+                    let calling_convention = self.target.calling_convention();
                     if ret_ty == Type::F64 {
-                        self.load_value(v, "%xmm0", &ret_ty);
+                        self.load_value(v, calling_convention.return_float_reg, &ret_ty);
                     } else {
-                        self.load_value(v, "%rax", &ret_ty);
+                        self.load_value(v, calling_convention.return_gpr, &ret_ty);
                     }
                 }
                 // Epilogue
@@ -3372,7 +3557,10 @@ impl X86_64Backend {
     }
 
     fn store_incoming_stack_param(&mut self, stack_param: i32, local_offset: i32, ty: &Type) {
-        let caller_offset = 16 + stack_param * 8;
+        let caller_offset = self
+            .target
+            .calling_convention()
+            .incoming_stack_arg_offset(stack_param);
         if *ty == Type::F64 {
             self.emit(&format!("    movsd {}(%rbp), %xmm15", caller_offset));
             self.emit(&format!("    movsd %xmm15, {}(%rbp)", local_offset));
@@ -3401,10 +3589,9 @@ impl X86_64Backend {
     }
 
     fn load_call_args(&mut self, args: &[Value]) -> i32 {
-        let param_regs = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
-        let xmm_regs = [
-            "%xmm0", "%xmm1", "%xmm2", "%xmm3", "%xmm4", "%xmm5", "%xmm6", "%xmm7",
-        ];
+        let calling_convention = self.target.calling_convention();
+        let param_regs = calling_convention.integer_arg_regs;
+        let xmm_regs = calling_convention.float_arg_regs;
         let mut int_arg = 0;
         let mut float_arg = 0;
         let mut stack_args = Vec::new();
@@ -3427,7 +3614,7 @@ impl X86_64Backend {
             }
         }
 
-        let stack_arg_space = ((stack_args.len() as i32 * 8) + 15) & !15;
+        let stack_arg_space = calling_convention.outgoing_stack_arg_space(stack_args.len());
         if stack_arg_space > 0 {
             self.emit(&format!("    sub ${}, %rsp", stack_arg_space));
             for (idx, (arg, ty)) in stack_args.iter().enumerate() {
@@ -3438,7 +3625,10 @@ impl X86_64Backend {
     }
 
     fn store_stack_call_arg(&mut self, stack_arg: i32, arg: &Value, ty: &Type) {
-        let offset = stack_arg * 8;
+        let offset = self
+            .target
+            .calling_convention()
+            .outgoing_stack_arg_offset(stack_arg);
         if *ty == Type::F64 {
             self.load_value(arg, "%xmm15", ty);
             self.emit(&format!("    movsd %xmm15, {}(%rsp)", offset));
@@ -3458,10 +3648,11 @@ impl X86_64Backend {
     fn store_call_result(&mut self, dst: &Option<VarId>, ty: &Type) {
         if let Some(dst_var) = dst {
             let dst_offset = self.var_offsets[dst_var];
+            let calling_convention = self.target.calling_convention();
             if *ty == Type::F64 {
-                self.store_xmm_value("%xmm0", dst_offset);
+                self.store_xmm_value(calling_convention.return_float_reg, dst_offset);
             } else {
-                self.store_gpr_value("%rax", dst_offset, ty);
+                self.store_gpr_value(calling_convention.return_gpr, dst_offset, ty);
             }
         }
     }
@@ -4018,8 +4209,15 @@ impl X86_64Backend {
 /// silently incorrect assembly.
 #[allow(dead_code)]
 pub fn generate_assembly(program: &Program) -> Result<String, String> {
+    generate_assembly_for_target(program, BackendTarget::default())
+}
+
+pub fn generate_assembly_for_target(
+    program: &Program,
+    target: BackendTarget,
+) -> Result<String, String> {
     validate_program(program)?;
-    let mut backend = X86_64Backend::new();
+    let mut backend = X86_64Backend::with_target(target);
     Ok(backend.generate(program))
 }
 
@@ -4029,9 +4227,17 @@ pub fn generate_assembly_with_spans(
     program: &Program,
     source_spans: &SourceSpans,
 ) -> Result<String, BackendError> {
+    generate_assembly_with_spans_for_target(program, source_spans, BackendTarget::default())
+}
+
+pub fn generate_assembly_with_spans_for_target(
+    program: &Program,
+    source_spans: &SourceSpans,
+    target: BackendTarget,
+) -> Result<String, BackendError> {
     validate_program_source_spans(program, source_spans)?;
     validate_program(program).map_err(BackendError::unspanned)?;
-    let mut backend = X86_64Backend::new();
+    let mut backend = X86_64Backend::with_target(target);
     Ok(backend.generate(program))
 }
 
@@ -4053,12 +4259,145 @@ mod tests {
         generate_assembly(&ir).expect("backend should accept this program")
     }
 
+    fn compile_ok_for_target(source: &str, target: BackendTarget) -> String {
+        let prog = parse(source).expect("parse failed");
+        let mut ir = lower_program(&prog);
+        Optimizer::optimize(&mut ir);
+        generate_assembly_for_target(&ir, target).expect("backend should accept this program")
+    }
+
     /// Compile source expecting the backend to reject it.
     fn compile_err(source: &str) -> String {
         let prog = parse(source).expect("parse failed");
         let mut ir = lower_program(&prog);
         Optimizer::optimize(&mut ir);
         generate_assembly(&ir).expect_err("backend should reject this program")
+    }
+
+    #[test]
+    fn test_backend_default_target_is_linux_x86_64_system_v() {
+        let target = BackendTarget::default();
+        assert_eq!(target, BackendTarget::linux_x86_64_system_v());
+        assert_eq!(target.arch, BackendArch::X86_64);
+        assert_eq!(target.os, BackendOs::Linux);
+        assert_eq!(target.abi, BackendAbi::SystemV);
+
+        let calling_convention = target.calling_convention();
+        let expected_integer_regs: &[&str] = &["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
+        let expected_float_regs: &[&str] = &[
+            "%xmm0", "%xmm1", "%xmm2", "%xmm3", "%xmm4", "%xmm5", "%xmm6", "%xmm7",
+        ];
+        assert_eq!(calling_convention.integer_arg_regs, expected_integer_regs);
+        assert_eq!(calling_convention.float_arg_regs, expected_float_regs);
+        assert_eq!(calling_convention.incoming_stack_arg_offset(0), 16);
+        assert_eq!(calling_convention.outgoing_stack_arg_offset(1), 8);
+        assert_eq!(calling_convention.outgoing_stack_arg_space(2), 16);
+        assert_eq!(calling_convention.return_gpr, "%rax");
+        assert_eq!(calling_convention.return_float_reg, "%xmm0");
+
+        let entry = target.entry_policy();
+        assert_eq!(entry.symbol, "_start");
+        assert_eq!(entry.exit_syscall_number, 60);
+        assert_eq!(entry.exit_status_reg, "%rdi");
+
+        let runtime = target.runtime_policy();
+        assert!(runtime.emits_linux_syscall_helpers);
+        assert!(runtime.uses_libc_print_runtime);
+
+        let toolchain = target.toolchain();
+        assert_eq!(toolchain.assembler, "as");
+        assert_eq!(toolchain.linker, "ld");
+        assert_eq!(
+            toolchain.dynamic_linker,
+            Some("/lib64/ld-linux-x86-64.so.2")
+        );
+        assert_eq!(toolchain.libraries, &["-lc"]);
+    }
+
+    #[test]
+    fn test_explicit_linux_target_matches_default_for_register_and_stack_calls() {
+        let source = r#"
+            (define (sum8
+                [a : i64] [b : i64] [c : i64] [d : i64]
+                [e : i64] [f : i64] [g : i64] [h : i64]) : i64
+              (+ (+ (+ (+ (+ (+ (+ a b) c) d) e) f) g) h))
+            (define (pick9
+                [a : f64] [b : f64] [c : f64] [d : f64] [e : f64]
+                [f : f64] [g : f64] [h : f64] [i : f64]) : f64
+              i)
+            (define (main) : i64
+              (begin
+                (pick9 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0)
+                (sum8 1 2 3 4 5 6 7 8)))
+            "#;
+
+        let default_asm = compile_ok(source);
+        let explicit_asm = compile_ok_for_target(source, BackendTarget::linux_x86_64_system_v());
+        assert_eq!(default_asm, explicit_asm);
+        assert!(
+            default_asm.contains("    movq 16(%rbp), %r11"),
+            "asm:\n{}",
+            default_asm
+        );
+        assert!(
+            default_asm.contains("    movsd 16(%rbp), %xmm15"),
+            "asm:\n{}",
+            default_asm
+        );
+        assert!(
+            default_asm.contains("    call _tl_sum8"),
+            "asm:\n{}",
+            default_asm
+        );
+        assert!(
+            default_asm.contains("    call _tl_pick9"),
+            "asm:\n{}",
+            default_asm
+        );
+    }
+
+    #[test]
+    fn test_linux_target_entry_policy_emits_start_and_exit_syscall() {
+        let asm = compile_ok_for_target(
+            "(define (main) : i64 3)",
+            BackendTarget::linux_x86_64_system_v(),
+        );
+
+        assert!(asm.contains("    .globl _start"), "asm:\n{}", asm);
+        let start = asm.split("_start:").nth(1).expect("expected _start");
+        assert!(start.contains("    call main"), "start:\n{}", start);
+        assert!(start.contains("    movq %rax, %rdi"), "start:\n{}", start);
+        assert!(start.contains("    movq $60, %rax"), "start:\n{}", start);
+        assert!(start.contains("    syscall"), "start:\n{}", start);
+    }
+
+    #[test]
+    fn test_linux_target_runtime_policy_matches_default_for_runtime_helpers() {
+        let source = r#"(define (main) : i64 (begin (read-file "input.txt") 0))"#;
+
+        let default_asm = compile_ok(source);
+        let explicit_asm = compile_ok_for_target(source, BackendTarget::linux_x86_64_system_v());
+        assert_eq!(default_asm, explicit_asm);
+        assert!(
+            explicit_asm.contains(".L_tl_read_file:"),
+            "asm:\n{}",
+            explicit_asm
+        );
+        assert!(
+            explicit_asm.contains(".L_tl_abort:"),
+            "asm:\n{}",
+            explicit_asm
+        );
+        assert!(
+            explicit_asm.contains("    movq $257, %rax"),
+            "asm:\n{}",
+            explicit_asm
+        );
+        assert!(
+            explicit_asm.contains("    syscall"),
+            "asm:\n{}",
+            explicit_asm
+        );
     }
 
     #[test]

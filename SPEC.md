@@ -76,6 +76,18 @@ Semicolon starts a line comment. The lexer skips everything from `;` through
 the next newline. Double semicolons are just two semicolon characters; the first
 one starts the comment.
 
+The self-hosted documentation extractor recognizes public documentation
+comments before the main Rust lexer discards comments:
+
+- `;;;;` starts a module/file documentation line.
+- `;;;` starts an outer item documentation line attached to the next supported
+  top-level item: value `define`, function `define`, `extern`, `defenum`, or
+  `defstruct`.
+- `;` and `;;` remain ordinary comments and are not public documentation.
+- Outer item doc lines must be contiguous. A blank line, ordinary comment,
+  module doc, unsupported top-level form, or unrelated source text clears the
+  pending item doc block. A pending block at EOF is ignored.
+
 ### 2.3 String escapes
 
 | Escape | Meaning |

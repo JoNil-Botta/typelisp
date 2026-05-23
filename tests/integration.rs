@@ -827,6 +827,15 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
                 "token.tl",
             ],
         },
+        // refs #387: selfhost doc comment extraction over TypeLisp source.
+        // The smoke checks module docs, supported item docs, ignored ordinary
+        // comments, blank-line clearing, and unattached EOF docs.
+        Case {
+            name: "doc_extract_smoke",
+            exit_code: 42,
+            stdout: "",
+            deps: &["doc_extract.tl", "format_tokens.tl"],
+        },
     ];
 
     for case in cases {
@@ -2844,6 +2853,7 @@ fn source_path_for_case(manifest_dir: &PathBuf, name: &str) -> PathBuf {
         "tl_lexer" => "lexer.tl",
         "tl_parse" => "parse.tl",
         "compiler_parse_smoke" => "compiler_parse_smoke.tl",
+        "doc_extract_smoke" => "doc_extract_smoke.tl",
         "tl_read" => "read.tl",
         "tl_reader" => "reader.tl",
         "tl_token" => "token.tl",

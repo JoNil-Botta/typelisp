@@ -69,6 +69,15 @@ pub enum LoadError {
     /// A module file could not be read (missing import, permission, etc.).
     /// Carries the path as written/resolved and the underlying I/O error.
     Io { path: PathBuf, source: io::Error },
+    /// An imported module could not be canonicalized or read. Carries the
+    /// import directive context so diagnostics can explain what was requested
+    /// and which filesystem path the loader tried.
+    ImportIo {
+        importer: PathBuf,
+        import_path: String,
+        resolved_path: PathBuf,
+        source: io::Error,
+    },
     /// A module failed to parse. Carries the canonical path of the offending
     /// module (so the driver can render the diagnostic against its source) and
     /// the parse error itself.
@@ -84,6 +93,21 @@ impl std::fmt::Display for LoadError {
         match self {
             LoadError::Io { path, source } => {
                 write!(f, "cannot read module '{}': {}", path.display(), source)
+            }
+            LoadError::ImportIo {
+                importer,
+                import_path,
+                resolved_path,
+                source,
+            } => {
+                write!(
+                    f,
+                    "cannot read import \"{}\" from '{}' (resolved '{}'): {}",
+                    import_path,
+                    importer.display(),
+                    resolved_path.display(),
+                    source
+                )
             }
             LoadError::Parse { path, error, .. } => {
                 write!(f, "in module '{}': {}", path.display(), error)
@@ -106,6 +130,28 @@ fn resolve_import(importer: &Path, import_path: &str) -> PathBuf {
     }
 }
 
+#[derive(Debug, Clone)]
+struct ImportRequest {
+    importer: PathBuf,
+    import_path: String,
+    resolved_path: PathBuf,
+}
+
+fn io_load_error(path: &Path, source: io::Error, request: Option<&ImportRequest>) -> LoadError {
+    match request {
+        Some(request) => LoadError::ImportIo {
+            importer: request.importer.clone(),
+            import_path: request.import_path.clone(),
+            resolved_path: request.resolved_path.clone(),
+            source,
+        },
+        None => LoadError::Io {
+            path: path.to_path_buf(),
+            source,
+        },
+    }
+}
+
 /// Load the module graph rooted at `entry`, returning a single combined
 /// `Program` whose `decls` are every reachable module's non-import declarations
 /// in imported-before-importer (post-order DFS) order, plus the canonical path
@@ -122,7 +168,14 @@ pub fn load_program(entry: &Path, src: &dyn ModuleSource) -> Result<LoadedProgra
     let mut visited: HashSet<PathBuf> = HashSet::new();
     let mut decls: Vec<Decl> = Vec::new();
     let mut sources: Vec<SourceFile> = Vec::new();
-    load_module(&entry_canon, src, &mut visited, &mut decls, &mut sources)?;
+    load_module(
+        &entry_canon,
+        src,
+        &mut visited,
+        &mut decls,
+        &mut sources,
+        None,
+    )?;
     Ok(LoadedProgram {
         program: Program { decls },
         entry: entry_canon,
@@ -143,16 +196,16 @@ fn load_module(
     visited: &mut HashSet<PathBuf>,
     decls: &mut Vec<Decl>,
     sources: &mut Vec<SourceFile>,
+    request: Option<&ImportRequest>,
 ) -> Result<(), LoadError> {
     // Mark visited *before* recursing so a cycle back to this module is a no-op.
     if !visited.insert(canon.to_path_buf()) {
         return Ok(());
     }
 
-    let text = src.read(canon).map_err(|e| LoadError::Io {
-        path: canon.to_path_buf(),
-        source: e,
-    })?;
+    let text = src
+        .read(canon)
+        .map_err(|e| io_load_error(canon, e, request))?;
     let file_id = sources.len() as u32;
     sources.push(SourceFile {
         id: file_id,
@@ -170,11 +223,15 @@ fn load_module(
     for decl in &prog.decls {
         if let Decl::Import(import_path) = decl {
             let target = resolve_import(canon, import_path);
-            let target_canon = src.canonicalize(&target).map_err(|e| LoadError::Io {
-                path: target.clone(),
-                source: e,
-            })?;
-            load_module(&target_canon, src, visited, decls, sources)?;
+            let request = ImportRequest {
+                importer: canon.to_path_buf(),
+                import_path: import_path.clone(),
+                resolved_path: target.clone(),
+            };
+            let target_canon = src
+                .canonicalize(&target)
+                .map_err(|e| io_load_error(&target, e, Some(&request)))?;
+            load_module(&target_canon, src, visited, decls, sources, Some(&request))?;
         }
     }
 
@@ -373,12 +430,112 @@ mod tests {
     }
 
     #[test]
-    fn missing_import_is_an_io_error() {
+    fn missing_import_reports_import_context() {
         let src = MapSource::new(&[("entry.tl", "(import \"nope.tl\")\n(define (e) : i64 1)")]);
         let err = load_program(Path::new("entry.tl"), &src).unwrap_err();
         match err {
-            LoadError::Io { .. } => {}
-            other => panic!("expected Io error, got {:?}", other),
+            LoadError::ImportIo {
+                importer,
+                import_path,
+                resolved_path,
+                source,
+            } => {
+                assert_eq!(importer, PathBuf::from("entry.tl"));
+                assert_eq!(import_path, "nope.tl");
+                assert_eq!(resolved_path, PathBuf::from("nope.tl"));
+                assert_eq!(source.kind(), io::ErrorKind::NotFound);
+            }
+            other => panic!("expected ImportIo error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn missing_stdlib_import_reports_import_context() {
+        let src = MapSource::new(&[(
+            "work/main.tl",
+            "(import \"stdlib/string.tl\")\n(define (main) : i64 0)",
+        )]);
+        let err = load_program(Path::new("work/main.tl"), &src).unwrap_err();
+        let (importer_display, resolved_display) = match &err {
+            LoadError::ImportIo {
+                importer,
+                import_path,
+                resolved_path,
+                source,
+            } => {
+                assert_eq!(importer, &PathBuf::from("work/main.tl"));
+                assert_eq!(import_path, "stdlib/string.tl");
+                assert_eq!(resolved_path, &PathBuf::from("work/stdlib/string.tl"));
+                assert_eq!(source.kind(), io::ErrorKind::NotFound);
+                (
+                    importer.display().to_string(),
+                    resolved_path.display().to_string(),
+                )
+            }
+            other => panic!("expected ImportIo error, got {:?}", other),
+        };
+
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("stdlib/string.tl"),
+            "diagnostic should include requested import:\n{}",
+            rendered
+        );
+        assert!(
+            rendered.contains(&importer_display),
+            "diagnostic should include importer path:\n{}",
+            rendered
+        );
+        assert!(
+            rendered.contains(&resolved_display),
+            "diagnostic should include resolved path:\n{}",
+            rendered
+        );
+        assert!(
+            rendered.contains("cannot read import"),
+            "diagnostic should identify the import failure:\n{}",
+            rendered
+        );
+    }
+
+    #[test]
+    fn import_read_failure_reports_import_context() {
+        struct ReadFailingImportSource;
+
+        impl ModuleSource for ReadFailingImportSource {
+            fn read(&self, path: &Path) -> io::Result<String> {
+                match normalize(path).to_str() {
+                    Some("entry.tl") => {
+                        Ok("(import \"blocked.tl\")\n(define (main) : i64 0)".to_string())
+                    }
+                    _ => Err(io::Error::new(
+                        io::ErrorKind::PermissionDenied,
+                        "blocked read",
+                    )),
+                }
+            }
+
+            fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
+                Ok(normalize(path))
+            }
+        }
+
+        let src = ReadFailingImportSource;
+        let err = load_program(Path::new("entry.tl"), &src).unwrap_err();
+        match err {
+            LoadError::ImportIo {
+                importer,
+                import_path,
+                resolved_path,
+                source,
+            } => {
+                assert_eq!(importer, PathBuf::from("entry.tl"));
+                assert_eq!(import_path, "blocked.tl");
+                assert_eq!(resolved_path, PathBuf::from("blocked.tl"));
+                assert_eq!(source.kind(), io::ErrorKind::PermissionDenied);
+                assert_eq!(source.to_string(), "blocked read");
+            }
+            other => panic!("expected ImportIo error, got {:?}", other),
         }
     }
 

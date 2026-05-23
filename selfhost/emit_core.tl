@@ -62,6 +62,7 @@
     [(EInt _) acc]
     [(EVar _) acc]
     [(EBin _ a b) (collect-strings b (collect-strings a acc))]
+    [(ENot e) (collect-strings e acc)]
     [(ELet _ value body) (collect-strings body (collect-strings value acc))]
     [(EIf c t e) (collect-strings e (collect-strings t (collect-strings c acc)))]
     [(EWhile c body) (collect-strings body (collect-strings c acc))]
@@ -170,6 +171,7 @@
     [(EInt _) 0]
     [(EVar _) 0]
     [(EBin _ a b) (max-i64 (max-let-depth a) (max-let-depth b))]
+    [(ENot e) (max-let-depth e)]
     [(ELet _ value body)
      (max-i64 (max-let-depth value) (+ 1 (max-let-depth body)))]
     [(EIf c t e)
@@ -241,7 +243,9 @@
     [(OpLe) "    cmpq %rcx, %rax\n    setle %al\n    movzbq %al, %rax\n"]
     [(OpGt) "    cmpq %rcx, %rax\n    setg %al\n    movzbq %al, %rax\n"]
     [(OpGe) "    cmpq %rcx, %rax\n    setge %al\n    movzbq %al, %rax\n"]
-    [(OpNe) "    cmpq %rcx, %rax\n    setne %al\n    movzbq %al, %rax\n"]))
+    [(OpNe) "    cmpq %rcx, %rax\n    setne %al\n    movzbq %al, %rax\n"]
+    [(OpAnd) "    cmpq $0, %rax\n    setne %al\n    movzbq %al, %rax\n    cmpq $0, %rcx\n    setne %cl\n    movzbq %cl, %rcx\n    andq %rcx, %rax\n"]
+    [(OpOr) "    cmpq $0, %rax\n    setne %al\n    movzbq %al, %rax\n    cmpq $0, %rcx\n    setne %cl\n    movzbq %cl, %rcx\n    orq %rcx, %rax\n"]))
 
 (define (emit-var [env : SymI64Env] [name : String]) : String
   (string-append "    movq "
@@ -254,6 +258,10 @@
         (string-append "    movq %rax, %rcx\n"
           (string-append "    popq %rax\n"
             (emit-op op)))))))
+
+(define (emit-not [strings : StrList] [env : SymI64Env] [depth : i64] [lc : (Array i64)] [arg : Expr]) : String
+  (string-append (emit-expr-in strings env depth lc arg)
+    "    cmpq $0, %rax\n    sete %al\n    movzbq %al, %rax\n"))
 
 (define (emit-let [strings : StrList] [env : SymI64Env] [depth : i64] [lc : (Array i64)] [name : String] [value : Expr] [body : Expr]) : String
   (let ([next-depth : i64 (+ depth 1)])
@@ -359,6 +367,7 @@
     [(EInt n) (emit-int n)]
     [(EVar name) (emit-var env name)]
     [(EBin op a b) (emit-bin strings env depth lc op a b)]
+    [(ENot arg) (emit-not strings env depth lc arg)]
     [(ELet name value body) (emit-let strings env depth lc name value body)]
     [(EIf c t e) (emit-if strings env depth lc c t e)]
     [(EWhile c body) (emit-while strings env depth lc c body)]

@@ -2314,6 +2314,30 @@ fn tl_compile_smoke_writes_multi_binding_let_and_output_exits_42() {
     );
 }
 
+#[test]
+fn tl_compile_smoke_writes_boolean_program_and_output_exits_42() {
+    let (code, stdout, stderr, _asm) = run_compile_smoke_generated_program(
+        "tl_compile_smoke_boolean_ops",
+        "(let ((x 0)) (begin (while (and (< x 6) (not (= x 6))) (set! x (+ x 1))) (if (and (or (= x 6) 0) (not (and 2 0))) 42 1)))",
+        &[
+            "    andq %rcx, %rax\n",
+            "    orq %rcx, %rax\n",
+            "    cmpq $0, %rax\n    sete %al\n    movzbq %al, %rax\n",
+            "    cmpq $0, %rcx\n    setne %cl\n    movzbq %cl, %rcx\n",
+        ],
+    );
+
+    assert_eq!(
+        code,
+        Some(42),
+        "tl_compile_smoke boolean output program exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(stdout, "", "tl_compile_smoke boolean output stdout");
+    assert_eq!(stderr, "", "tl_compile_smoke boolean output stderr");
+}
+
 fn run_compile_smoke_driver(work_name: &str, input_source: &str) -> (Option<i32>, String, String) {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let selfhost_dir = manifest_dir.join("selfhost");
@@ -2406,6 +2430,37 @@ fn tl_compile_smoke_rejects_malformed_if_without_panic_abort() {
     );
     assert_eq!(stdout, "", "malformed if driver wrote stdout");
     assert_eq!(stderr, "parse: malformed if", "malformed if diagnostic");
+}
+
+#[test]
+fn tl_compile_smoke_rejects_malformed_boolean_ops_with_specific_diagnostics() {
+    for (work_name, input, expected) in [
+        (
+            "tl_compile_smoke_malformed_and",
+            "(and 1)",
+            "parse: malformed and",
+        ),
+        (
+            "tl_compile_smoke_malformed_or",
+            "(or 1 2 3)",
+            "parse: malformed or",
+        ),
+        (
+            "tl_compile_smoke_malformed_not",
+            "(not 1 2)",
+            "parse: malformed not",
+        ),
+    ] {
+        let (code, stdout, stderr) = run_compile_smoke_driver(work_name, input);
+
+        assert_eq!(
+            code,
+            Some(1),
+            "{work_name} should return a recoverable parse error\nstdout:\n{stdout}\nstderr:\n{stderr}",
+        );
+        assert_eq!(stdout, "", "{work_name} driver wrote stdout");
+        assert_eq!(stderr, expected, "{work_name} diagnostic");
+    }
 }
 
 fn tl_string_literal(text: &str) -> String {

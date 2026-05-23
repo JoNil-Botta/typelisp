@@ -27,6 +27,11 @@
         (sexpr-expect-nil after-b)
         (EBin op (parse-expr a) (parse-expr b))))))
 
+(define (parse-not [rest : Sexpr]) : Expr
+  (match rest
+    [(SCons arg (SNil)) (ENot (parse-expr arg))]
+    [_ (begin (panic "ast: malformed not") (EInt 0))]))
+
 (define (parse-let-bindings [bindings : Sexpr] [body : Expr]) : Expr
   (match bindings
     [(SNil) body]
@@ -97,23 +102,29 @@
                              (parse-binary (OpLe) rest)
                              (if (string-eq op ">")
                                  (parse-binary (OpGt) rest)
-                                 (if (string-eq op ">=")
-                                     (parse-binary (OpGe) rest)
-                                     (if (string-eq op "!=")
-                                         (parse-binary (OpNe) rest)
-                                         (if (string-eq op "let")
-                                              (parse-let rest)
-                                              (if (string-eq op "if")
-                                                  (parse-if rest)
-                                                  (if (string-eq op "while")
-                                                      (parse-while rest)
-                                                      (if (string-eq op "print")
-                                                          (parse-print rest)
-                                                          (if (string-eq op "set!")
-                                                              (parse-set rest)
-                                                              (if (string-eq op "begin")
-                                                                  (parse-begin rest)
-                                                                  (ECall op (parse-args rest)))))))))))))))))]
+                                     (if (string-eq op ">=")
+                                         (parse-binary (OpGe) rest)
+                                         (if (string-eq op "!=")
+                                             (parse-binary (OpNe) rest)
+                                             (if (string-eq op "and")
+                                                 (parse-binary (OpAnd) rest)
+                                                 (if (string-eq op "or")
+                                                     (parse-binary (OpOr) rest)
+                                                     (if (string-eq op "not")
+                                                         (parse-not rest)
+                                                         (if (string-eq op "let")
+                                                             (parse-let rest)
+                                                             (if (string-eq op "if")
+                                                                 (parse-if rest)
+                                                                 (if (string-eq op "while")
+                                                                     (parse-while rest)
+                                                                     (if (string-eq op "print")
+                                                                         (parse-print rest)
+                                                                         (if (string-eq op "set!")
+                                                                             (parse-set rest)
+                                                                             (if (string-eq op "begin")
+                                                                                 (parse-begin rest)
+                                                                                 (ECall op (parse-args rest))))))))))))))))))))]
     [_ (begin (panic "ast: malformed expression") (EInt 0))]))
 
 (define (parse-params [s : Sexpr]) : StrList
@@ -150,7 +161,9 @@
     [(OpLe) 60]
     [(OpGt) 70]
     [(OpGe) 80]
-    [(OpNe) 90]))
+    [(OpNe) 90]
+    [(OpAnd) 100]
+    [(OpOr) 110]))
 
 (define (expr-list-score [xs : ExprList]) : i64
   (match xs
@@ -167,6 +180,7 @@
     [(EInt n) n]
     [(EVar name) (string-length name)]
     [(EBin op a b) (+ (op-score op) (+ (expr-score a) (expr-score b)))]
+    [(ENot e) (+ 120 (expr-score e))]
     [(ELet name value body)
      (+ (string-length name) (+ (expr-score value) (expr-score body)))]
     [(EIf c t e) (+ (expr-score c) (+ (expr-score t) (expr-score e)))]

@@ -2531,6 +2531,9 @@ mod tests {
 
         let has_const_f64 = ir.functions[0].blocks.iter().any(|b| {
             b.instructions.iter().any(|i| {
+                // 3.14 is the literal under test from the source above, not an
+                // approximation of PI — it must match the lowered constant exactly.
+                #[allow(clippy::approx_constant)]
                 if let Instruction::Return(Some(Value::ConstF64(v))) = i {
                     (*v - 3.14).abs() < f64::EPSILON
                 } else {
@@ -2602,13 +2605,9 @@ mod tests {
         assert_eq!(ir.functions.len(), 1);
 
         let has_const_unit = ir.functions[0].blocks.iter().any(|b| {
-            b.instructions.iter().any(|i| {
-                if let Instruction::Return(Some(Value::ConstUnit)) = i {
-                    true
-                } else {
-                    false
-                }
-            })
+            b.instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::Return(Some(Value::ConstUnit))))
         });
         assert!(has_const_unit);
     }
@@ -3199,13 +3198,9 @@ mod tests {
         assert_eq!(ir.functions.len(), 1);
 
         let has_unop = ir.functions[0].blocks.iter().any(|b| {
-            b.instructions.iter().any(|i| {
-                if let Instruction::UnOp { op: UnOp::Neg, .. } = i {
-                    true
-                } else {
-                    false
-                }
-            })
+            b.instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::UnOp { op: UnOp::Neg, .. }))
         });
         assert!(has_unop);
     }
@@ -3227,13 +3222,9 @@ mod tests {
         assert_eq!(ir.functions.len(), 1);
 
         let has_unop = ir.functions[0].blocks.iter().any(|b| {
-            b.instructions.iter().any(|i| {
-                if let Instruction::UnOp { op: UnOp::Not, .. } = i {
-                    true
-                } else {
-                    false
-                }
-            })
+            b.instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::UnOp { op: UnOp::Not, .. }))
         });
         assert!(has_unop);
     }
@@ -3336,13 +3327,9 @@ mod tests {
         assert_eq!(ir.functions.len(), 1);
 
         let has_const_42 = ir.functions[0].blocks.iter().any(|b| {
-            b.instructions.iter().any(|i| {
-                if let Instruction::Return(Some(Value::ConstI64(42))) = i {
-                    true
-                } else {
-                    false
-                }
-            })
+            b.instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::Return(Some(Value::ConstI64(42)))))
         });
         assert!(has_const_42);
     }
@@ -3378,13 +3365,9 @@ mod tests {
         assert_eq!(ir.functions[0].ret, Type::I64);
 
         let has_unit_ret = ir.functions[0].blocks.iter().any(|b| {
-            b.instructions.iter().any(|i| {
-                if let Instruction::Return(Some(Value::ConstUnit)) = i {
-                    true
-                } else {
-                    false
-                }
-            })
+            b.instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::Return(Some(Value::ConstUnit))))
         });
         assert!(has_unit_ret);
     }
@@ -3566,9 +3549,12 @@ mod tests {
         let ir = lower_program(&prog);
         assert_eq!(ir.globals.len(), 1);
         assert_eq!(ir.globals[0].0, "pi");
-        assert!(
-            matches!(ir.globals[0].2, Some(Value::ConstF64(v)) if (v - 3.14).abs() < f64::EPSILON)
-        );
+        // 3.14 is the literal under test from the source above, not an
+        // approximation of PI — it must match the lowered constant exactly.
+        #[allow(clippy::approx_constant)]
+        let pi_matches =
+            matches!(ir.globals[0].2, Some(Value::ConstF64(v)) if (v - 3.14).abs() < f64::EPSILON);
+        assert!(pi_matches);
     }
 
     #[test]
@@ -3615,13 +3601,9 @@ mod tests {
         assert_eq!(ir.functions.len(), 1);
 
         let has_unit_ret = ir.functions[0].blocks.iter().any(|b| {
-            b.instructions.iter().any(|i| {
-                if let Instruction::Return(Some(Value::ConstUnit)) = i {
-                    true
-                } else {
-                    false
-                }
-            })
+            b.instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::Return(Some(Value::ConstUnit))))
         });
         assert!(has_unit_ret);
     }
@@ -3640,13 +3622,9 @@ mod tests {
         assert_eq!(ir.functions.len(), 1);
 
         let has_unit_ret = ir.functions[0].blocks.iter().any(|b| {
-            b.instructions.iter().any(|i| {
-                if let Instruction::Return(Some(Value::ConstUnit)) = i {
-                    true
-                } else {
-                    false
-                }
-            })
+            b.instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::Return(Some(Value::ConstUnit))))
         });
         assert!(has_unit_ret);
     }
@@ -3665,13 +3643,9 @@ mod tests {
         assert_eq!(ir.functions.len(), 1);
 
         let has_unit_ret = ir.functions[0].blocks.iter().any(|b| {
-            b.instructions.iter().any(|i| {
-                if let Instruction::Return(Some(Value::ConstUnit)) = i {
-                    true
-                } else {
-                    false
-                }
-            })
+            b.instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::Return(Some(Value::ConstUnit))))
         });
         assert!(has_unit_ret);
     }
@@ -3690,13 +3664,9 @@ mod tests {
         assert_eq!(ir.functions.len(), 1);
 
         let has_unit_ret = ir.functions[0].blocks.iter().any(|b| {
-            b.instructions.iter().any(|i| {
-                if let Instruction::Return(Some(Value::ConstUnit)) = i {
-                    true
-                } else {
-                    false
-                }
-            })
+            b.instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::Return(Some(Value::ConstUnit))))
         });
         assert!(has_unit_ret);
     }
@@ -3715,13 +3685,9 @@ mod tests {
         assert_eq!(ir.functions.len(), 1);
 
         let has_unit_ret = ir.functions[0].blocks.iter().any(|b| {
-            b.instructions.iter().any(|i| {
-                if let Instruction::Return(Some(Value::ConstUnit)) = i {
-                    true
-                } else {
-                    false
-                }
-            })
+            b.instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::Return(Some(Value::ConstUnit))))
         });
         assert!(has_unit_ret);
     }

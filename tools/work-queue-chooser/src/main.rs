@@ -142,29 +142,26 @@ fn candidates_from_prs(items: Vec<Value>) -> Result<Vec<Candidate>, String> {
 }
 
 fn candidates_from_issues(items: Vec<Value>) -> Result<Vec<Candidate>, String> {
-    let mut candidates = Vec::new();
+    items
+        .iter()
+        .map(|item| {
+            let labels = labels(item)?;
+            let kind = if has_label(&labels, "ready-for-implementation") {
+                Some(Kind::Ready)
+            } else if has_label(&labels, "needs-research") || labels.is_empty() {
+                Some(Kind::Triage)
+            } else {
+                Some(Kind::Triage) // catch-all: treat any labeled issue as triage
+            };
 
-    for item in &items {
-        let labels = labels(item)?;
-        let kind = if has_label(&labels, "ready-for-implementation") {
-            Some(Kind::Ready)
-        } else if has_label(&labels, "needs-research") || labels.is_empty() {
-            Some(Kind::Triage)
-        } else {
-            None
-        };
-
-        if let Some(kind) = kind {
-            candidates.push(Candidate {
-                kind,
+            Ok(Candidate {
+                kind: kind.unwrap(), // safe: all branches return Some
                 number: field_u64(item, "number")?,
                 labels,
                 title: field_string(item, "title")?,
-            });
-        }
-    }
-
-    Ok(candidates)
+            })
+        })
+        .collect()
 }
 
 fn candidate_weight(candidate: &Candidate) -> u32 {

@@ -4,15 +4,18 @@
 //!
 //! `tl_eval.tl` is the third piece of TypeLisp's *real* self-hosting compiler
 //! front end (#27): a tiny tree-walking interpreter, now with VARIABLES, lexical
-//! `let`, short-circuit `if`, comparison operators, AND - the real-language
-//! milestone - USER-DEFINED FUNCTIONS plus RECURSION via top-level
-//! `(define (f x y z) body)` forms with MULTI-ARGUMENT calls. Where the lexer
+//! `let`, short-circuit `if`, comparison operators, USER-DEFINED FUNCTIONS plus
+//! RECURSION via top-level `(define (f x y z) body)` forms with MULTI-ARGUMENT
+//! calls, AND a tagged VALUE domain - `(defenum Value (VInt i64) (VStr String))`
+//! - so an expression now denotes a `VInt` or a `VStr` rather than a raw `i64`
+//! (integer-requiring contexts funnel through the `as-int` projection). Where the
+//! lexer
 //! turns a source String into a flat
 //! `(Array Token)` and the reader consumes that token stream into the recursive
-//! cons-cell `Sexpr` AST `(SInt | SSym | SNil | SCons)`, the evaluator INTERPRETS
-//! that tree WITH RESPECT TO two environments - a value `Env` and a function
-//! `FnEnv`: it resolves bare symbols via recursive `lookup`, pushes an `EBind`
-//! frame for `(let ((x e1)) body)`, dispatches `if` without evaluating the
+//! cons-cell `Sexpr` AST `(SInt | SSym | SStr | SNil | SCons)`, the evaluator
+//! INTERPRETS that tree WITH RESPECT TO two environments - a value `Env` and a
+//! function `FnEnv`: it resolves bare symbols via recursive `lookup`, pushes an
+//! `EBind` frame for `(let ((x e1)) body)`, dispatches `if` without evaluating the
 //! untaken branch, folds `= < > <= >=` to 1/0 integer truth values, evaluates
 //! builtin binary arithmetic, and OTHERWISE treats the head symbol as a CALL into
 //! a `FnEnv` assoc-list of `(define ...)`s - looking up the function's PARAMETER
@@ -202,17 +205,42 @@ fn tl_eval_tl_compiles_to_assembly() {
         );
     }
 
-    // EXHAUSTIVE over the new variant (#27/#128): adding `(SStr String)` to the
-    // imported `Sexpr` enum forces every `match` over `Sexpr` in the evaluator to
-    // gain an arm for it. `eval-sexpr` has an explicit `(SStr _)` arm - this
-    // interpreter is i64-valued, so there are no string VALUES in this slice and
-    // evaluating a string-literal atom aborts. Its panic message string must be
-    // emitted in the read-only data, witnessing the new arm survived to codegen.
+    // TAGGED VALUE DOMAIN (#27): the value domain is generalised from a raw `i64`
+    // to a tagged `(defenum Value (VInt i64) (VStr String))`, so `eval-sexpr`
+    // yields a `Value`, the env binds `Value`s, and integer-requiring contexts
+    // (operator operands, the `if` condition) funnel through the `as-int`
+    // projection. `as-int` must be emitted as its own function, and its
+    // type-error abort message must reach the read-only data.
     assert!(
-        asm.contains(".string \"eval: strings not supported\""),
-        "tl_eval assembly is missing the SStr-arm panic message (strings unsupported):\n{}",
+        asm.contains("_tl_as_int:"),
+        "tl_eval assembly is missing the as-int projection (tagged Value domain):\n{}",
         asm,
     );
+    assert!(
+        asm.contains(".string \"type error: expected int\""),
+        "tl_eval assembly is missing the as-int type-error message (VStr in int context):\n{}",
+        asm,
+    );
+
+    // EXHAUSTIVE over the SStr variant (#27/#128) AND the value domain (#27): the
+    // reader's `(SStr String)` atom now evaluates to a first-class `(VStr s)`
+    // VALUE rather than aborting, so the old "eval: strings not supported" panic is
+    // GONE. `VStr` PRINTING, however, is deferred (no host string-print builtin
+    // exists), so the `print` special form's `(VStr _)` arm aborts with a
+    // deferral message that must reach the read-only data.
+    assert!(
+        !asm.contains("eval: strings not supported"),
+        "tl_eval should no longer abort on string literals (SStr now evaluates to VStr):\n{}",
+        asm,
+    );
+    assert!(
+        asm.contains(".string \"print: strings not yet printable\""),
+        "tl_eval assembly is missing the VStr-print deferral message:\n{}",
+        asm,
+    );
+    // (The host `print` runtime helper `tl_print_i64` and its call site - emitted
+    // by the `(print e)` special form's `VInt` arm - are asserted further down,
+    // alongside the `"print"` dispatch-string literal.)
 
     // `eval-sexpr` is genuinely recursive: it evaluates each argument sub-expr by
     // calling itself, so the result depends on the whole nested tree shape.

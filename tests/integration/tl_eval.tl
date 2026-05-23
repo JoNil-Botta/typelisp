@@ -2,20 +2,20 @@
 ;; `Sexpr` AST: the third component of TypeLisp's self-hosting front end (#27),
 ;; following the lexer and the reader. Where the reader turns a token stream into
 ;; the cons-cell `Sexpr` tree the parens describe, this evaluator INTERPRETS that
-;; tree - it walks the s-expression and computes the integer it denotes, now with
+;; tree - it walks the s-expression and computes the tagged VALUE it denotes
+;; (a `(VInt n)` or a `(VStr s)`, the value domain generalised from a raw i64 so
+;; it can carry strings), now with
 ;; VARIABLES, a `let` special form, an `if`, comparisons, AND - the milestone of
 ;; a real language - USER-DEFINED FUNCTIONS plus RECURSION via top-level
 ;; `(define (f x) body)` forms threaded through a function environment.
 ;;
-;;   String --lex--> (Array Token) --read-form*--> (Sexpr ...) --run-program--> i64
+;;   String --lex--> (Array Token) --read-form*--> (Sexpr ...)
+;;          --eval--> Value --as-int--> i64
 ;;
 ;; A WHOLE PROGRAM is now a sequence of top-level forms: zero or more
 ;; `(define (f x y z) body)` definitions - each with an arbitrary-arity parameter
 ;; LIST - followed by ONE trailing expression. This composes the whole front end:
-;; `(run-program "(define (pow b e) ...) (pow 2 10)")`. `main` then PRINTS the
-;; final i64 result to stdout via the host `print` builtin, so the FULL value is
-;; emitted - escaping the mod-256 process exit-code ceiling - and the interpreted
-;; language gains OUTPUT (also via a `(print e)` special form inside `eval-sexpr`).
+;; `(run-program "(define (pow b e) ...) (pow 2 10)")`.
 ;;
 ;; --------------------------------------------------------------------------
 ;; How the reader and lexer are reused (the KEY module signal, refs #44/#81).
@@ -43,19 +43,45 @@
 (import "tl_read.tl")
 
 ;; --------------------------------------------------------------------------
+;; The VALUE domain: a tagged union of the things an expression denotes (#27).
+;; --------------------------------------------------------------------------
+;; The interpreter was previously i64-VALUED: every expression denoted a raw
+;; `i64`. To carry STRING values (the foundation for string ops and, later,
+;; lambda) the value domain is GENERALISED to a tagged `Value`: `(VInt n)` for an
+;; integer, `(VStr s)` for a string. `eval-sexpr` now returns a `Value`, the
+;; environment binds `Value`s, and the arithmetic / comparison / `if`-condition
+;; contexts that require an integer go through `as-int`, which projects a `VInt`
+;; and aborts on a `VStr` ("type error: expected int") - exactly how a dynamically
+;; typed interpreter reports a type error at a use site that demands a number.
+(defenum Value
+  (VInt i64)
+  (VStr String))
+
+;; as-int: project the i64 out of a `Value`, used wherever an INTEGER is required
+;; - the operands of arithmetic / comparison operators and the condition of `if`.
+;; A `VStr` in such a position is a type error in the interpreted program (e.g.
+;; `(+ "a" 1)`), reported by aborting via `panic`, the interpreter's malformed-
+;; program channel.
+(define (as-int [v : Value]) : i64
+  (match v
+    [(VInt n) n]
+    [(VStr _) (begin (panic "type error: expected int") 0)]))
+
+;; --------------------------------------------------------------------------
 ;; The lexical environment: a cons-cell association list (refs #27/#111).
 ;; --------------------------------------------------------------------------
 ;; Variables turn the calculator into a real interpreter: an expression is now
 ;; evaluated WITH RESPECT TO an environment mapping variable names to their
-;; integer values. The environment is the classic Lisp assoc-list, encoded as a
+;; VALUES. The environment is the classic Lisp assoc-list, encoded as a
 ;; recursive enum (recursive enum payloads, #111, make this finite): `ENil` is the
 ;; empty environment, and `(EBind name value rest)` extends an environment `rest`
-;; with one binding `name -> value`. A `let` pushes a fresh `EBind` frame in front
-;; of the current environment; because lookup walks the chain head-first, an inner
-;; binding SHADOWS an outer one of the same name - lexical scoping for free.
+;; with one binding `name -> value`, where the value is now a tagged `Value`
+;; (`VInt`/`VStr`) rather than a raw `i64`. A `let` pushes a fresh `EBind` frame in
+;; front of the current environment; because lookup walks the chain head-first, an
+;; inner binding SHADOWS an outer one of the same name - lexical scoping for free.
 (defenum Env
   (ENil)
-  (EBind String i64 Env))
+  (EBind String Value Env))
 
 ;; --------------------------------------------------------------------------
 ;; The FUNCTION environment: an assoc-list of user-defined functions (#27/#111).
@@ -84,9 +110,9 @@
 ;; unbound variable is a malformed program - abort via `panic`, exactly how an
 ;; interpreter reports a reference to a name that is not in scope. `string-eq` is
 ;; the byte-wise equality builtin used to compare the bound name against the query.
-(define (lookup [env : Env] [name : String]) : i64
+(define (lookup [env : Env] [name : String]) : Value
   (match env
-    [(ENil) (begin (panic "eval: unbound variable") 0)]
+    [(ENil) (begin (panic "eval: unbound variable") (VInt 0))]
     [(EBind bound val rest)
      (if (string-eq bound name)
          val
@@ -258,14 +284,18 @@
     [_ false]))
 
 ;; --------------------------------------------------------------------------
-;; eval-sexpr: the tree-walking interpreter. `(-> Sexpr Env FnEnv i64)`.
+;; eval-sexpr: the tree-walking interpreter. `(-> Sexpr Env FnEnv Value)`.
 ;; --------------------------------------------------------------------------
 ;; A recursive walk over the `Sexpr` tree, threading BOTH a lexical value
 ;; environment `env` and the program's function environment `fenv`, dispatching on
-;; the head symbol of each call form - the heart of a Lisp `eval`:
-;;   (SInt n)             -> n                  an integer literal evaluates to itself.
+;; the head symbol of each call form - the heart of a Lisp `eval`. It now yields a
+;; tagged `Value` (`VInt`/`VStr`) rather than a raw `i64`, so it can carry string
+;; values; contexts that demand a number (operator operands, the `if` condition)
+;; funnel through `as-int`:
+;;   (SInt n)             -> (VInt n)           an integer literal evaluates to itself.
+;;   (SStr s)             -> (VStr s)           a string literal evaluates to itself.
 ;;   (SSym name)          -> (lookup env name)  a bare symbol is a VARIABLE reference,
-;;                           resolved in the current value environment.
+;;                           resolved in the current value environment (a `Value`).
 ;;   (SNil)               -> the empty list is not an evaluable expression - abort.
 ;;   (SCons (SSym name) rest)
 ;;                        -> a special form, a builtin call, OR a USER-FUNCTION
@@ -275,18 +305,19 @@
 ;;                               and the body out of `rest`, evaluate `e1` in the
 ;;                               CURRENT env, then evaluate the body in
 ;;                               `(EBind x v env)` - lexical scoping.
-;;                             - "if": short-circuit - evaluate the condition, then
-;;                               evaluate only the taken branch.
-;;                             - "print": the OUTPUT special form `(print e)` -
-;;                               eval the single argument in the current env/fenv,
-;;                               emit it to stdout via the HOST `print` builtin
-;;                               (full integer + newline, escaping the mod-256
-;;                               exit-code ceiling), and RETURN that value so
-;;                               `(print x)` composes inside larger expressions.
+;;                             - "if": short-circuit - evaluate the condition,
+;;                               `as-int` it (0 = false), then evaluate only the
+;;                               taken branch.
+;;                             - "print": evaluate the single argument, emit it via
+;;                               the host `print` builtin (a `VInt` prints its
+;;                               integer + newline; a `VStr` is NOT yet printable -
+;;                               see deferral), and RETURN that value so `(print x)`
+;;                               composes inside a larger expression.
 ;;                             - a builtin binary op `+ - * / = < > <= >=`: project
 ;;                               the two argument sub-exprs, eval each in `env`
-;;                               (threading `fenv` so calls nest), then dispatch on
-;;                               the operator text; comparisons fold bool to 1/0.
+;;                               (threading `fenv` so calls nest), `as-int` both,
+;;                               compute, then re-wrap the i64 result as `(VInt r)`;
+;;                               comparisons fold bool to 1/0.
 ;;                             - OTHERWISE a USER-FUNCTION CALL `(f a b c)`: look
 ;;                               the function up in `fenv` to get its PARAMETER
 ;;                               LIST and body, then build a FRESH callee env by
@@ -308,28 +339,29 @@
 ;; whole nested shape, the bindings in scope, AND the program's functions.
 ;; (Deferred: multi-binding `let`, lambda, closures, variadic arity; mutual
 ;; recursion IS supported - the whole `fenv` is shared.)
-(define (eval-sexpr [s : Sexpr] [env : Env] [fenv : FnEnv]) : i64
+(define (eval-sexpr [s : Sexpr] [env : Env] [fenv : FnEnv]) : Value
   (match s
-    [(SInt n) n]
+    [(SInt n) (VInt n)]
     [(SSym name) (lookup env name)]
-    ;; A string-literal atom (#27/#128): the reader now produces `SStr` for a
-    ;; `"..."` datum, but this interpreter is i64-valued - there are no string
-    ;; VALUES in this slice - so evaluating one is unsupported and aborts, exactly
-    ;; how the empty list does. (Deferred: real string values / string ops.)
-    [(SStr _) (begin (panic "eval: strings not supported") 0)]
-    [(SNil) (begin (panic "eval: cannot evaluate the empty list") 0)]
+    ;; A string-literal atom (#27/#128): the reader produces `SStr` for a `"..."`
+    ;; datum. The value domain now carries strings, so it evaluates to itself as a
+    ;; `(VStr s)` - a first-class string VALUE that can be bound, returned, and
+    ;; passed (string OPERATIONS and `VStr` PRINTING remain deferred).
+    [(SStr s) (VStr s)]
+    [(SNil) (begin (panic "eval: cannot evaluate the empty list") (VInt 0))]
     [(SCons (SSym name) rest)
      (if (string-eq name "let")
          ;; The `let` special form: `(let ((x e1)) body)`.
          (let ([pair : Sexpr (let-binding rest)])
            (let ([var : String (let-var pair)]
-                 [v : i64 (eval-sexpr (let-init pair) env fenv)])
+                 [v : Value (eval-sexpr (let-init pair) env fenv)])
              (eval-sexpr (let-body rest) (EBind var v env) fenv)))
          (if (string-eq name "if")
              ;; `if` SPECIAL FORM `(if cond then else)`: rest is
              ;; `(SCons cond (SCons then (SCons else SNil)))`. Project the three
              ;; sub-exprs, assert exactly three, then SHORT-CIRCUIT: eval cond,
-             ;; and eval ONLY the taken branch. `0` is false, anything else true.
+             ;; `as-int` it, and eval ONLY the taken branch. `0` is false, anything
+             ;; else true (a `VStr` condition is a type error, caught by `as-int`).
              (let ([cond-e : Sexpr (sexpr-head rest)]
                    [restc : Sexpr (sexpr-tail rest)])
                (let ([then-e : Sexpr (sexpr-head restc)]
@@ -338,51 +370,54 @@
                        [reste : Sexpr (sexpr-tail restt)])
                    (begin
                      (sexpr-expect-nil reste)
-                     (let ([c : i64 (eval-sexpr cond-e env fenv)])
+                     (let ([c : i64 (as-int (eval-sexpr cond-e env fenv))])
                        (if (= c 0)
                            (eval-sexpr else-e env fenv)
                            (eval-sexpr then-e env fenv)))))))
              (if (string-eq name "print")
-                 ;; The `print` SPECIAL FORM `(print e)`: rest is
-                 ;; `(SCons e SNil)`. Evaluate the single argument in the CURRENT
-                 ;; env/fenv to an i64, emit it to stdout via the HOST `print`
-                 ;; builtin (which writes the full integer + a newline - escaping
-                 ;; the mod-256 exit-code ceiling), and RETURN that value so
-                 ;; `(print x)` COMPOSES inside larger expressions, e.g.
-                 ;; `(+ (print 1) (print 2))`. Exactly one argument: the tail past
-                 ;; `e` must be SNil.
+                 ;; The `print` special form `(print e)`: rest is
+                 ;; `(SCons e SNil)`. Evaluate the single argument, emit it via the
+                 ;; host `print` builtin, and RETURN the value so `(print x)`
+                 ;; composes inside a larger expression. A `VInt` prints its integer
+                 ;; (+ newline); a `VStr` is NOT yet printable - there is no host
+                 ;; string-print builtin - so it aborts (deferred).
                  (let ([arg : Sexpr (sexpr-head rest)]
                        [restp : Sexpr (sexpr-tail rest)])
                    (begin
                      (sexpr-expect-nil restp)
-                     (let ([v : i64 (eval-sexpr arg env fenv)])
+                     (let ([v : Value (eval-sexpr arg env fenv)])
                        (begin
-                         (print v)
+                         (match v
+                           [(VInt n) (print n)]
+                           [(VStr _) (panic "print: strings not yet printable")])
                          v))))
-             (if (is-builtin-op name)
-                 ;; A builtin binary call form `(op arg1 arg2)`: rest is
-                 ;; `(SCons arg1 (SCons arg2 SNil))`.
-                 (let ([arg1 : Sexpr (sexpr-head rest)]
-                       [rest2 : Sexpr (sexpr-tail rest)])
-                   (let ([arg2 : Sexpr (sexpr-head rest2)]
-                         [rest3 : Sexpr (sexpr-tail rest2)])
-                     (begin
-                       (sexpr-expect-nil rest3)
-                       (let ([a : i64 (eval-sexpr arg1 env fenv)]
-                             [b : i64 (eval-sexpr arg2 env fenv)])
-                         (eval-builtin name a b)))))
-                 ;; OTHERWISE: a USER-FUNCTION CALL `(f a b c)`. `rest` is the
-                 ;; ARGUMENT-EXPRESSION list `(SCons a (SCons b (SCons c SNil)))`.
-                 ;; Look up `f`'s PARAMETER LIST and body in the shared `fenv`,
-                 ;; then build the callee env by zipping the parameter list against
-                 ;; the argument list with `bind-args` (each argument evaluated in
-                 ;; the CURRENT env, so caller variables resolve), and evaluate the
-                 ;; body in that callee env with the SAME `fenv` - so the body
-                 ;; resolves recursive and sibling calls. Arbitrary arity.
-                 (let ([params : Sexpr (lookup-fn-params fenv name)]
-                       [body : Sexpr (lookup-fn-body fenv name)])
-                   (eval-sexpr body (bind-args params rest env fenv) fenv))))))]
-    [_ (begin (panic "eval: not an evaluable expression") 0)]))
+                 (if (is-builtin-op name)
+                     ;; A builtin binary call form `(op arg1 arg2)`: rest is
+                     ;; `(SCons arg1 (SCons arg2 SNil))`. Both operands must be
+                     ;; integers, so each is `as-int`-projected; the i64 result is
+                     ;; re-wrapped as `(VInt r)`.
+                     (let ([arg1 : Sexpr (sexpr-head rest)]
+                           [rest2 : Sexpr (sexpr-tail rest)])
+                       (let ([arg2 : Sexpr (sexpr-head rest2)]
+                             [rest3 : Sexpr (sexpr-tail rest2)])
+                         (begin
+                           (sexpr-expect-nil rest3)
+                           (let ([a : i64 (as-int (eval-sexpr arg1 env fenv))]
+                                 [b : i64 (as-int (eval-sexpr arg2 env fenv))])
+                             (VInt (eval-builtin name a b))))))
+                     ;; OTHERWISE: a USER-FUNCTION CALL `(f a b c)`. `rest` is the
+                     ;; ARGUMENT-EXPRESSION list `(SCons a (SCons b (SCons c SNil)))`.
+                     ;; Look up `f`'s PARAMETER LIST and body in the shared `fenv`,
+                     ;; then build the callee env by zipping the parameter list
+                     ;; against the argument list with `bind-args` (each argument
+                     ;; evaluated in the CURRENT env, so caller variables resolve),
+                     ;; and evaluate the body in that callee env with the SAME
+                     ;; `fenv` - so the body resolves recursive and sibling calls.
+                     ;; Arbitrary arity.
+                     (let ([params : Sexpr (lookup-fn-params fenv name)]
+                           [body : Sexpr (lookup-fn-body fenv name)])
+                       (eval-sexpr body (bind-args params rest env fenv) fenv))))))]
+    [_ (begin (panic "eval: not an evaluable expression") (VInt 0))]))
 
 ;; --------------------------------------------------------------------------
 ;; bind-args: zip a parameter list against an argument-expression list (#27).
@@ -484,8 +519,10 @@
 (define (run-forms [toks : (Array Token)] [cur : (Array i64)] [fenv : FnEnv]) : i64
   (let ([form : Sexpr (read-form toks cur)])
     (if (= (peek-tag toks cur) (tag-end))
-        ;; Last form: the trailing expression to evaluate.
-        (eval-sexpr form ENil fenv)
+        ;; Last form: the trailing expression to evaluate. Its `Value` result is
+        ;; projected to an i64 via `as-int` for the program's integer result (so a
+        ;; program whose trailing expression denotes a string is a type error).
+        (as-int (eval-sexpr form ENil fenv))
         ;; A leading form must be a definition; fold it into the function env.
         (if (is-define form)
             (run-forms toks cur
@@ -508,41 +545,33 @@
 
 ;; --------------------------------------------------------------------------
 ;; main: the whole front end composed - lex, read MANY forms, interpret with
-;; MULTI-ARGUMENT user functions and recursion, and PRINT the result.
+;; MULTI-ARGUMENT user functions and recursion.
 ;; --------------------------------------------------------------------------
-;; `(run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (pow 2 10)")`:
+;; `(run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (print (pow 2 10))")`:
 ;;   - the program is TWO top-level forms: one recursive TWO-parameter `define` of
-;;     `pow`, then the trailing call `(pow 2 10)`.
+;;     `pow`, then the trailing expression `(print (pow 2 10))`.
 ;;   - the program reader folds the `define` into
 ;;     `(FBind "pow" (b e) body FNil)` - the param LIST `(b e)` kept verbatim -
-;;     then evaluates `(pow 2 10)` against that function env.
+;;     then evaluates `(print (pow 2 10))` against that function env.
 ;;   - the call zips the params `(b e)` against the args `(2 10)` via `bind-args`,
-;;     building the callee env `(EBind "b" 2 (EBind "e" 10 ENil))`. The body then
-;;     recurses on the SECOND argument: `pow(2,10) = 2*pow(2,9) = ... = 2^10`,
-;;     bottoming out at the `(< e 1)` base case which returns 1.
-;;   - 2^10 = 1024. `main` PRINTS this via the host `print` builtin, so the FULL
-;;     value `1024` is emitted to stdout (with a trailing newline) - escaping the
-;;     mod-256 process exit-code ceiling that capped the old `(pow 2 7) => 128`
-;;     witness (1024 would wrap to an unobservable 0 as a raw exit code). The
-;;     value is also returned, so the interpreter still yields its result and
-;;     `print` COMPOSES (it returns its argument); the exit code is now incidental.
-;; This single program proves the evaluator now supports MULTI-ARGUMENT user
+;;     building the callee env `(EBind "b" (VInt 2) (EBind "e" (VInt 10) ENil))`.
+;;     The body then recurses on the SECOND argument: `pow(2,10) = 2*pow(2,9) =
+;;     ... = 2^10`, bottoming out at the `(< e 1)` base case which returns `(VInt
+;;     1)`. The result `(VInt 1024)` is then `print`ed to STDOUT.
+;;   - the trailing `(print (pow 2 10))` emits `1024` to STDOUT (the host `print`
+;;     builtin appends a newline) and returns `(VInt 1024)`, so the program result
+;;     is `1024`. Because output is to STDOUT we escape the mod-256 process-exit-
+;;     code ceiling that capped the old `(pow 2 7) => 128` witness: stdout shows
+;;     the full `1024` even though the exit code (`1024 & 0xff`) wraps to 0.
+;; This single program proves the evaluator now (a) carries a tagged `Value`
+;; domain - the env binds `VInt`s, arithmetic/`if` go through `as-int`, and the
+;; result is a `(VInt 1024)` - while still (b) supporting MULTI-ARGUMENT user
 ;; functions: the parameter list `(b e)` is zipped against the argument list, both
-;; parameters are in scope in the body, and RECURSION resolves through the shared
-;; function environment, all composed atop the reused lexer and reader - and the
-;; interpreted language now has OUTPUT, via both this final-result print AND the
-;; `(print e)` SPECIAL FORM dispatched in `eval-sexpr`. (An alternative three-arg
-;; witness, `(define (add3 a b c) (+ a (+ b c))) (add3 10 20 30)` => 60, exercises
-;; the zipping without recursion.) (Deferred: lambda, closures, variadic arity.)
+;; parameters are in scope, and RECURSION resolves through the shared function
+;; environment, all composed atop the reused lexer and reader. A string VALUE is
+;; also now first-class: `(let ((s "hi")) 1)` BINDS a `(VStr "hi")` without error
+;; (its evaluation is exercised below). (Deferred: `VStr` printing - no host
+;; string-print builtin exists; string OPERATIONS; lambda; closures; variadic
+;; arity.)
 (define (main) : i64
-  (let ([result : i64
-         (run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (pow 2 10)")])
-    (begin
-      ;; Emit the FULL result to stdout via the host `print` builtin (an integer
-      ;; + newline). This is what escapes the mod-256 process exit-code ceiling:
-      ;; `(pow 2 10)` is 1024, which would wrap to an unobservable 0 if only used
-      ;; as an exit code, but prints as the full `1024` on stdout. The value is
-      ;; also returned, so the interpreter still yields its result (the exit code
-      ;; is now merely incidental: 1024 & 0xff = 0).
-      (print result)
-      result)))
+  (run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (print (pow 2 10))"))

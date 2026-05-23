@@ -97,14 +97,12 @@ Name              ; a defenum / defstruct nominal type
 (import "lib/util.tl")                        ; relative, deduped; cycles load once
 ```
 
-`stdlib/string.tl` is the canonical in-repo string utility module. Today it is
-still imported through the same filesystem path mechanism as any other module:
-make `stdlib/string.tl` reachable relative to the importing file, or use an
-absolute path. `check`, `compile`, and `run` also accept
-`--stdlib-root <dir>`; for imports under `stdlib/`, TypeLisp first tries the
-importer-relative path, then searches configured roots by stripping the leading
-`stdlib/`. TypeLisp does not yet have a package manifest, dependency resolver,
-or implicit prelude.
+`stdlib/string.tl` is the canonical in-repo string utility module. Stdlib files
+are ordinary modules imported with explicit paths such as
+`(import "stdlib/string.tl")`. `check`, `compile`, and `run` also accept
+`--stdlib-root <dir>` for resolving `stdlib/...` imports from a configured
+source tree. See [stdlib/README.md](stdlib/README.md) for the current stdlib
+layout and verification conventions.
 
 ### Enum and struct namespace rules
 

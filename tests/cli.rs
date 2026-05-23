@@ -22,6 +22,18 @@ fn typelisp(args: &[&str]) -> Output {
         .expect("run typelisp CLI")
 }
 
+fn assert_doctest_temp_cleaned(source: &std::path::Path) {
+    let temp_parent = source
+        .parent()
+        .expect("source has parent")
+        .join(".typelisp-doctest");
+    assert!(
+        !temp_parent.exists(),
+        "doctest temp directory was not cleaned: {}",
+        temp_parent.display()
+    );
+}
+
 #[test]
 fn debug_tokenize_matches_top_level_alias() {
     let dir = fixture_dir("debug-tokenize");
@@ -79,6 +91,138 @@ fn debug_usage_errors_are_specific() {
     let unknown_stderr = stderr(&unknown);
     assert!(unknown_stderr.contains("Unknown debug command: wat"));
     assert!(unknown_stderr.contains("typelisp debug check <file.tl>"));
+}
+
+#[test]
+fn doc_test_checks_module_and_item_examples() {
+    let dir = fixture_dir("doc-test-pass");
+    let source = dir.join("docs.tl");
+    fs::write(
+        &source,
+        r#";;;; Module docs.
+;;;; ```typelisp
+;;;; (define (main) : i64 42)
+;;;; ```
+
+;;; Item docs.
+;;; ```tl
+;;; (define answer : i64 42)
+;;; ```
+(define documented : i64 1)
+
+; Ordinary comments are not docs, so this failing block is ignored.
+; ```typelisp
+; (define (bad) : i64 true)
+; ```
+"#,
+    )
+    .expect("write doctest source");
+
+    let source_arg = source.to_str().expect("source path is utf-8");
+    let output = typelisp(&["doc", "--test", source_arg]);
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stdout(&output), "Doc tests passed: 2 example(s)\n");
+    assert_doctest_temp_cleaned(&source);
+}
+
+#[test]
+fn doc_test_accepts_expected_type_errors() {
+    let dir = fixture_dir("doc-test-expected-error");
+    let source = dir.join("docs.tl");
+    fs::write(
+        &source,
+        r#";;;; Expected error.
+;;;; ```typelisp expect-error
+;;;; (define (bad) : i64 true)
+;;;; ```
+"#,
+    )
+    .expect("write doctest source");
+
+    let source_arg = source.to_str().expect("source path is utf-8");
+    let output = typelisp(&["doc", "--test", source_arg]);
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stdout(&output), "Doc tests passed: 1 example(s)\n");
+    assert_doctest_temp_cleaned(&source);
+}
+
+#[test]
+fn doc_test_reports_unexpected_type_errors() {
+    let dir = fixture_dir("doc-test-type-error");
+    let source = dir.join("docs.tl");
+    fs::write(
+        &source,
+        r#";;;; Unexpected error.
+;;;; ```typelisp
+;;;; (define (bad) : i64 true)
+;;;; ```
+"#,
+    )
+    .expect("write doctest source");
+
+    let source_arg = source.to_str().expect("source path is utf-8");
+    let output = typelisp(&["doc", "--test", source_arg]);
+    let stderr = stderr(&output);
+
+    assert!(!output.status.success(), "stdout:\n{}", stdout(&output));
+    assert!(stderr.contains("doc tests failed"), "stderr:\n{}", stderr);
+    assert!(
+        stderr.contains("was expected to pass"),
+        "stderr:\n{}",
+        stderr
+    );
+    assert!(stderr.contains("error[E0200]"), "stderr:\n{}", stderr);
+    assert_doctest_temp_cleaned(&source);
+}
+
+#[test]
+fn doc_test_reports_malformed_examples() {
+    let dir = fixture_dir("doc-test-malformed");
+    let source = dir.join("docs.tl");
+    fs::write(
+        &source,
+        r#";;;; Bad fence.
+;;;; ```typelisp maybe
+;;;; (define (main) : i64 0)
+;;;; ```
+"#,
+    )
+    .expect("write doctest source");
+
+    let source_arg = source.to_str().expect("source path is utf-8");
+    let output = typelisp(&["doc", "--test", source_arg]);
+    let stderr = stderr(&output);
+
+    assert!(!output.status.success(), "stdout:\n{}", stdout(&output));
+    assert!(
+        stderr.contains("unsupported TypeLisp doctest option `maybe`"),
+        "stderr:\n{}",
+        stderr
+    );
+    assert_doctest_temp_cleaned(&source);
+}
+
+#[test]
+fn doc_test_passes_when_docs_have_no_examples() {
+    let dir = fixture_dir("doc-test-empty");
+    let source = dir.join("docs.tl");
+    fs::write(
+        &source,
+        r#";;;; Docs without fenced examples.
+;;; Item docs without fenced examples.
+(define documented : i64 1)
+"#,
+    )
+    .expect("write doctest source");
+
+    let source_arg = source.to_str().expect("source path is utf-8");
+    let output = typelisp(&["doc", "--test", source_arg]);
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stdout(&output), "Doc tests passed: 0 example(s)\n");
+    assert_doctest_temp_cleaned(&source);
 }
 
 fn stdout(output: &Output) -> String {

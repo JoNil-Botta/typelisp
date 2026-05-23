@@ -6,6 +6,7 @@ use std::process::Command;
 mod ast;
 mod backend;
 mod diagnostic;
+mod doctest;
 mod ir;
 mod lexer;
 mod lower;
@@ -148,6 +149,7 @@ fn print_usage() {
     eprintln!("    typelisp compile <file.tl> [-o <file>] [--emit-ir] [--stdlib-root <dir>...]");
     eprintln!("    typelisp run <file.tl> [--stdlib-root <dir>...] [-- args...]");
     eprintln!("    typelisp build [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]");
+    eprintln!("    typelisp doc --test <file.tl> [--stdlib-root <dir>...]");
     eprintln!();
     eprintln!("Compatibility aliases:");
     eprintln!("    typelisp tokenize <file.tl>");
@@ -163,6 +165,8 @@ fn print_usage() {
     eprintln!("    -o <file>                      Output assembly file");
     eprintln!("Options for build:");
     eprintln!("    --manifest-path <file>         Defaults to nearest typelisp.pkg upward");
+    eprintln!("Options for doc:");
+    eprintln!("    --test <file.tl>               Check TypeLisp fenced examples in docs");
 }
 
 fn print_debug_usage() {
@@ -170,6 +174,11 @@ fn print_debug_usage() {
     eprintln!("    typelisp debug tokenize <file.tl>    Show tokens");
     eprintln!("    typelisp debug parse <file.tl>       Show AST");
     eprintln!("    typelisp debug check <file.tl> [--stdlib-root <dir>...]");
+}
+
+fn print_doc_usage() {
+    eprintln!("Usage:");
+    eprintln!("    typelisp doc --test <file.tl> [--stdlib-root <dir>...]");
 }
 
 fn missing_option_value(option: &str) -> ! {
@@ -230,6 +239,36 @@ fn run_debug_command(args: &[String]) {
         subcommand => {
             eprintln!("Unknown debug command: {}", subcommand);
             print_debug_usage();
+            std::process::exit(1);
+        }
+    }
+}
+
+fn run_doc_command(args: &[String]) {
+    if args.len() < 3 {
+        eprintln!("Error: missing doc subcommand");
+        print_doc_usage();
+        std::process::exit(1);
+    }
+
+    match args[2].as_str() {
+        "--test" | "test" => {
+            let file = command_file_arg(args, 3, print_doc_usage);
+            let options = parse_stdlib_roots(args, 4);
+            match doctest::run_doc_tests(&file, &options) {
+                Ok(report) => {
+                    println!("Doc tests passed: {} example(s)", report.total);
+                }
+                Err(report) => {
+                    eprint!("{}", report);
+                    std::process::exit(1);
+                }
+            }
+        }
+        "help" | "--help" | "-h" => print_doc_usage(),
+        subcommand => {
+            eprintln!("Unknown doc command: {}", subcommand);
+            print_doc_usage();
             std::process::exit(1);
         }
     }
@@ -374,6 +413,9 @@ fn run_cli() {
         }
         "debug" => {
             run_debug_command(&args);
+        }
+        "doc" => {
+            run_doc_command(&args);
         }
         "compile" => {
             if args.len() < 3 {

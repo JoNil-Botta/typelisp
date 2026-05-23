@@ -781,6 +781,96 @@ fn tl_emit_printed_program_assembles_links_and_exits_7() {
     assert_eq!(stdout, "", "printed tl_emit program wrote stdout");
 }
 
+/// End-to-end self-hosted pipeline (#154): `examples/tl_parse.tl` runs
+/// `(emit-program (parse (read (lex "(+ 1 (* 2 3))"))))`, taking SOURCE TEXT all
+/// the way to a runnable `.s` in TypeLisp - lex -> read -> parse -> emit. It
+/// imports the `main`-less reader (which transitively pulls in `lex` + the
+/// `Sexpr` AST) and duplicates the emitter helpers, so the printed `.s` is
+/// byte-identical to tl_emit's (both compute `(+ 1 (* 2 3))`). This test runs the
+/// driver, asserts the printed text, then assembles + links + runs it and asserts
+/// exit 7 - the same value the emitter proved, now reached THROUGH the parser.
+#[test]
+fn tl_parse_printed_program_assembles_links_and_exits_7() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let integration_dir = manifest_dir.join("tests").join("integration");
+    let source_path = integration_dir.join("tl_parse.tl");
+    let work_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("tl_parse_printed_program");
+    fs::create_dir_all(&work_dir).expect("create tl_parse printed-program test work dir");
+
+    let work_path = work_dir.join("tl_parse.tl");
+    fs::copy(&source_path, &work_path).expect("copy tl_parse.tl to work dir");
+
+    // Copy the imported front-end modules alongside so the `(import)` chain
+    // (tl_parse -> tl_read -> tl_lex -> tl_token) resolves at load time.
+    for dep in ["tl_read.tl", "tl_lex.tl", "tl_token.tl"] {
+        fs::copy(integration_dir.join(dep), work_dir.join(dep))
+            .expect("copy imported front-end module to work dir");
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&work_path)
+        .output()
+        .expect("run tl_parse");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "tl_parse driver exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    // The pipeline emits exactly the emitter's program for `(+ 1 (* 2 3))`.
+    assert_eq!(
+        stdout, TL_EMIT_PROGRAM_ASM,
+        "tl_parse printed program differed\nstderr:\n{}",
+        stderr,
+    );
+
+    let asm_path = work_dir.join("printed.s");
+    let obj_path = work_dir.join("printed.o");
+    let bin_path = work_dir.join("printed");
+    fs::write(&asm_path, &output.stdout).expect("write printed assembly");
+
+    let status = Command::new("as")
+        .arg(&asm_path)
+        .arg("-o")
+        .arg(&obj_path)
+        .status()
+        .expect("run assembler on printed tl_parse output");
+    assert!(
+        status.success(),
+        "assembling printed tl_parse output failed"
+    );
+
+    let status = Command::new("ld")
+        .arg(&obj_path)
+        .arg("-o")
+        .arg(&bin_path)
+        .status()
+        .expect("run linker on printed tl_parse output");
+    assert!(status.success(), "linking printed tl_parse output failed");
+
+    let output = Command::new(&bin_path)
+        .output()
+        .expect("run binary assembled from printed tl_parse output");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(7),
+        "printed tl_parse program exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(stdout, "", "printed tl_parse program wrote stdout");
+}
+
 fn run_case_explicit_build(case: &Case) {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let source_path = manifest_dir

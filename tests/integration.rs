@@ -188,6 +188,21 @@ fn type_lisp_programs_compile_link_and_run() {
             stdout: "",
             deps: &["token.tl"],
         },
+        // Self-hosting (#27): the lexer for TypeLisp's OWN s-expression syntax
+        // (NOT the arithmetic-calculator surface). `tl_lexer.tl` tokenizes real
+        // TypeLisp source - balanced parens, integer literals, and *symbols*
+        // (operators / keywords / names are all one `TSym` kind) - into a real
+        // `(Array Token)`, slicing each symbol/int lexeme out of the source with
+        // `substring` (and parsing ints with `string->int`). `main` lexes
+        // "(define (f x) (+ x 1))" and returns the TSym count: the symbols are
+        // `define f x + x` => 5. The token model lives in the `main`-less
+        // `tl_token.tl`, imported by `tl_lexer.tl` and copied alongside.
+        Case {
+            name: "tl_lexer",
+            exit_code: 5,
+            stdout: "",
+            deps: &["tl_token.tl"],
+        },
     ];
 
     for case in cases {
@@ -356,6 +371,17 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             exit_code: 14,
             stdout: "",
             deps: &["token.tl"],
+        },
+        // Self-hosting (#27): the TypeLisp-syntax (s-expression) lexer, also
+        // exercised through the explicit compile -> as -> ld -> run pipeline.
+        // Lexes "(define (f x) (+ x 1))" into a real `(Array Token)` and returns
+        // the TSym count (`define f x + x` => 5). The `main`-less `tl_token.tl`
+        // is copied alongside so the `(import)` resolves.
+        Case {
+            name: "tl_lexer",
+            exit_code: 5,
+            stdout: "",
+            deps: &["tl_token.tl"],
         },
     ];
 

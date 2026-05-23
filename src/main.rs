@@ -29,6 +29,8 @@ use optimizer::Optimizer;
 use parser::parse;
 use typechecker::TypeChecker;
 
+const TYPELISP_STDLIB_ROOT_ENV: &str = "TYPELISP_STDLIB_ROOT";
+
 /// Parse `source`, or print a located diagnostic (file:line:col with a source
 /// snippet and caret) and exit. `file` is used for the diagnostic header.
 fn parse_or_exit(source: &str, file: &str) -> Program {
@@ -117,6 +119,7 @@ fn print_usage() {
     eprintln!();
     eprintln!("    --emit-ir                      Emit intermediate representation");
     eprintln!("    --stdlib-root <dir>            Search root for stdlib/... imports");
+    eprintln!("    TYPELISP_STDLIB_ROOT           Optional fallback root for stdlib/... imports");
     eprintln!();
     eprintln!("Options for compile:");
     eprintln!("    -o <file>                      Output assembly file");
@@ -125,6 +128,17 @@ fn print_usage() {
 fn missing_option_value(option: &str) -> ! {
     eprintln!("Error: {} requires a value", option);
     std::process::exit(1);
+}
+
+fn load_options_with_env_stdlib_root(mut stdlib_roots: Vec<PathBuf>) -> LoadOptions {
+    match env::var_os(TYPELISP_STDLIB_ROOT_ENV) {
+        Some(env_root) if !env_root.as_os_str().is_empty() => {
+            stdlib_roots.push(PathBuf::from(env_root));
+        }
+        _ => {}
+    }
+
+    LoadOptions { stdlib_roots }
 }
 
 fn parse_stdlib_roots(args: &[String], mut i: usize) -> LoadOptions {
@@ -141,7 +155,7 @@ fn parse_stdlib_roots(args: &[String], mut i: usize) -> LoadOptions {
             i += 1;
         }
     }
-    LoadOptions { stdlib_roots }
+    load_options_with_env_stdlib_root(stdlib_roots)
 }
 
 fn parse_run_options(args: &[String], mut i: usize) -> (LoadOptions, Vec<String>) {
@@ -162,7 +176,10 @@ fn parse_run_options(args: &[String], mut i: usize) -> (LoadOptions, Vec<String>
             break;
         }
     }
-    (LoadOptions { stdlib_roots }, runtime_args)
+    (
+        load_options_with_env_stdlib_root(stdlib_roots),
+        runtime_args,
+    )
 }
 
 fn main() {
@@ -247,7 +264,7 @@ fn main() {
                 }
             }
 
-            let options = LoadOptions { stdlib_roots };
+            let options = load_options_with_env_stdlib_root(stdlib_roots);
             let loaded = load_or_exit(&file, &options);
             typecheck_or_exit(&loaded.program, &loaded.sources);
 

@@ -2826,6 +2826,35 @@ fn run_inline_source(work_name: &str, file_name: &str, source: &str) -> std::pro
         .expect("run inline typelisp test")
 }
 
+const STDLIB_STRING_CONTAINS_PROGRAM: &str = r#"
+(import "stdlib/string.tl")
+
+(define (main) : i64
+  (if (string-contains "hello" "ell") 42 1))
+"#;
+
+fn write_stdlib_string_import_fixture(work_dir: &Path, source: &str) -> PathBuf {
+    fs::create_dir_all(work_dir).expect("create stdlib import fixture dir");
+    let work_path = work_dir.join("main.tl");
+    fs::write(&work_path, source).expect("write stdlib import fixture");
+    work_path
+}
+
+fn assert_exit_code_without_output(output: &std::process::Output, expected: i32, context: &str) {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(expected),
+        "{}\nstdout:\n{}\nstderr:\n{}",
+        context,
+        stdout,
+        stderr,
+    );
+    assert_eq!(stdout, "", "{} wrote stdout", context);
+    assert_eq!(stderr, "", "{} wrote stderr", context);
+}
+
 #[test]
 fn stdlib_root_option_resolves_stdlib_import_without_staging() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -2833,19 +2862,8 @@ fn stdlib_root_option_resolves_stdlib_import_without_staging() {
         "typelisp-stdlib-root-lookup-{}",
         std::process::id()
     ));
-    fs::create_dir_all(&work_dir).expect("create stdlib-root lookup temp dir");
 
-    let work_path = work_dir.join("main.tl");
-    fs::write(
-        &work_path,
-        r#"
-(import "stdlib/string.tl")
-
-(define (main) : i64
-  (if (string-contains "hello" "ell") 42 1))
-"#,
-    )
-    .expect("write stdlib-root lookup fixture");
+    let work_path = write_stdlib_string_import_fixture(&work_dir, STDLIB_STRING_CONTAINS_PROGRAM);
 
     let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
         .arg("run")
@@ -2855,17 +2873,176 @@ fn stdlib_root_option_resolves_stdlib_import_without_staging() {
         .output()
         .expect("run stdlib-root lookup fixture");
 
+    assert_exit_code_without_output(&output, 42, "stdlib-root fixture exited unexpectedly");
+}
+
+#[test]
+fn stdlib_root_env_resolves_stdlib_import_without_staging() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let work_dir =
+        std::env::temp_dir().join(format!("typelisp-stdlib-env-lookup-{}", std::process::id()));
+
+    let work_path = write_stdlib_string_import_fixture(&work_dir, STDLIB_STRING_CONTAINS_PROGRAM);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&work_path)
+        .env("TYPELISP_STDLIB_ROOT", manifest_dir.join("stdlib"))
+        .output()
+        .expect("run stdlib env lookup fixture");
+
+    assert_exit_code_without_output(&output, 42, "stdlib env fixture exited unexpectedly");
+}
+
+#[test]
+fn stdlib_root_option_precedes_env_fallback() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let work_dir = std::env::temp_dir().join(format!(
+        "typelisp-stdlib-root-precedes-env-{}",
+        std::process::id()
+    ));
+    let stale_root = work_dir.join("stale-stdlib");
+    fs::create_dir_all(&stale_root).expect("create stale stdlib root");
+    fs::write(stale_root.join("string.tl"), "(define broken").expect("write stale stdlib file");
+
+    let work_path = write_stdlib_string_import_fixture(&work_dir, STDLIB_STRING_CONTAINS_PROGRAM);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&work_path)
+        .arg("--stdlib-root")
+        .arg(manifest_dir.join("stdlib"))
+        .env("TYPELISP_STDLIB_ROOT", &stale_root)
+        .output()
+        .expect("run explicit stdlib root with stale env fallback");
+
+    assert_exit_code_without_output(
+        &output,
+        42,
+        "explicit stdlib root did not precede env fallback",
+    );
+}
+
+#[test]
+fn local_stdlib_import_precedes_env_fallback() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let work_dir = std::env::temp_dir().join(format!(
+        "typelisp-local-stdlib-precedes-env-{}",
+        std::process::id()
+    ));
+    let local_stdlib_dir = work_dir.join("stdlib");
+    fs::create_dir_all(&local_stdlib_dir).expect("create local stdlib fixture dir");
+    fs::write(
+        local_stdlib_dir.join("string.tl"),
+        "(define (local-stdlib-value) : i64 42)\n",
+    )
+    .expect("write local stdlib fixture");
+
+    let work_path = write_stdlib_string_import_fixture(
+        &work_dir,
+        r#"
+(import "stdlib/string.tl")
+
+(define (main) : i64
+  (local-stdlib-value))
+"#,
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&work_path)
+        .env("TYPELISP_STDLIB_ROOT", manifest_dir.join("stdlib"))
+        .output()
+        .expect("run local stdlib precedence fixture");
+
+    assert_exit_code_without_output(
+        &output,
+        42,
+        "local stdlib import did not precede env fallback",
+    );
+}
+
+#[test]
+fn stdlib_root_env_resolves_compile_without_staging() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let work_dir = std::env::temp_dir().join(format!(
+        "typelisp-stdlib-env-compile-{}",
+        std::process::id()
+    ));
+    let output_path = work_dir.join("main.ir");
+
+    let work_path = write_stdlib_string_import_fixture(&work_dir, STDLIB_STRING_CONTAINS_PROGRAM);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("compile")
+        .arg(&work_path)
+        .arg("--emit-ir")
+        .arg("-o")
+        .arg(&output_path)
+        .env("TYPELISP_STDLIB_ROOT", manifest_dir.join("stdlib"))
+        .output()
+        .expect("compile stdlib env lookup fixture");
+
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(
-        output.status.code(),
-        Some(42),
-        "stdlib-root fixture exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+    assert!(
+        output.status.success(),
+        "stdlib env compile failed\nstdout:\n{}\nstderr:\n{}",
         stdout,
         stderr,
     );
-    assert_eq!(stdout, "", "stdlib-root fixture wrote stdout");
-    assert_eq!(stderr, "", "stdlib-root fixture wrote stderr");
+    assert!(
+        output_path.exists(),
+        "stdlib env compile did not write IR output"
+    );
+    assert_eq!(stderr, "", "stdlib env compile wrote stderr");
+}
+
+#[test]
+fn stdlib_root_env_appears_in_missing_import_diagnostic() {
+    let work_dir = std::env::temp_dir().join(format!(
+        "typelisp-stdlib-env-missing-diag-{}",
+        std::process::id()
+    ));
+    let env_root = work_dir.join("env-stdlib");
+    fs::create_dir_all(&env_root).expect("create env stdlib root");
+
+    let work_path = write_stdlib_string_import_fixture(
+        &work_dir,
+        r#"
+(import "stdlib/not-here.tl")
+
+(define (main) : i64
+  0)
+"#,
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("check")
+        .arg(&work_path)
+        .env("TYPELISP_STDLIB_ROOT", &env_root)
+        .output()
+        .expect("check missing stdlib env lookup fixture");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "missing stdlib check unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert!(
+        stderr.contains("searched stdlib roots"),
+        "missing stdlib diagnostic did not mention searched roots\nstderr:\n{}",
+        stderr,
+    );
+    assert!(
+        stderr.contains(&env_root.display().to_string()),
+        "missing stdlib diagnostic did not include env root {}\nstderr:\n{}",
+        env_root.display(),
+        stderr,
+    );
 }
 
 #[test]

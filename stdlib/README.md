@@ -36,6 +36,11 @@ typelisp compile path/to/main.tl --stdlib-root /path/to/typelisp/stdlib
 typelisp run path/to/main.tl --stdlib-root /path/to/typelisp/stdlib
 ```
 
+For ad-hoc local commands, `TYPELISP_STDLIB_ROOT=/path/to/typelisp/stdlib`
+provides an optional fallback root. Explicit `--stdlib-root` values are searched
+before that environment fallback, so scripts and CI should keep passing
+`--stdlib-root` when they need reproducible resolution.
+
 Copying or staging `stdlib/` next to an entry source still works because imports
 remain filesystem paths, but `--stdlib-root` is the canonical way to verify root
 lookup behavior.

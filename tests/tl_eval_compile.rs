@@ -11,7 +11,9 @@
 //! RECURSION via top-level `(define (f x y z) body)` forms with MULTI-ARGUMENT
 //! calls, FIRST-CLASS FUNCTIONS - `lambda` and CLOSURES, the `(VClosure params
 //! body captured-env)` value, CONS PAIRS / LINKED LISTS - `(VPair Value Value)`
-//! cells built by `cons` and projected by `car` / `cdr` - the `pair?` / `null?`
+//! cells built by `cons` and projected by `car` / `cdr`, also built in one form by
+//! the VARIADIC `(list e1 ... en)` SPECIAL FORM (a right-nested cons chain
+//! terminated by the `(VInt 0)` NIL sentinel) - the `pair?` / `null?`
 //! LIST PREDICATES that let an interpreted program write RECURSIVE LIST ALGORITHMS
 //! (`(pair? x)` true iff `x` is a `(VPair ...)`, `(null? x)` true iff `x` is the
 //! nil sentinel `(VInt 0)`, refs #141) - AND a tagged VALUE
@@ -655,6 +657,35 @@ fn tl_eval_tl_compiles_to_assembly() {
         );
     }
 
+    // VARIADIC LIST CONSTRUCTOR (#27): `(list e1 e2 ... en)` is a SPECIAL FORM
+    // (variadic, so dispatched before the fixed-arity builtin-op / user-call paths)
+    // that builds the right-nested cons chain `(VPair v1 (VPair v2 ... (VInt 0)))`
+    // terminated by the `(VInt 0)` NIL sentinel - the same chain a nested `cons`
+    // literal builds, so `pair?` / `null?` / `car` / `cdr` / `sum-list` walk it
+    // identically. So its `"list"` head-symbol dispatch literal must reach the
+    // read-only data alongside the other special forms.
+    assert!(
+        asm.contains(".string \"list\""),
+        "tl_eval assembly is missing the \"list\" dispatch string literal (variadic list constructor):\n{}",
+        asm,
+    );
+
+    // The `list` arm walks its element spine with `eval-list`, which evaluates each
+    // element head-first and CONSES it onto the recursively built tail (terminating
+    // at `(VInt 0)`). So `eval-list` is emitted as its own function, the dispatch arm
+    // calls it, AND it calls ITSELF (the recursive spine cons-build) - so at least
+    // two `call _tl_eval_list` sites must be present.
+    assert!(
+        asm.contains("_tl_eval_list:"),
+        "tl_eval assembly is missing the eval-list helper (variadic list constructor):\n{}",
+        asm,
+    );
+    assert!(
+        asm.matches("call _tl_eval_list").count() >= 2,
+        "tl_eval assembly shows no recursive eval-list self-call (list spine cons-build):\n{}",
+        asm,
+    );
+
     // RECURSIVE LIST ALGORITHMS (#27): the predicates exist so an interpreted
     // program can write recursive list functions that TERMINATE on the structure of
     // the list. `main`'s program defines `sum-list` (recurs on `(cdr l)` while
@@ -722,20 +753,20 @@ fn tl_eval_tl_compiles_to_assembly() {
         asm,
     );
 
-    // The runtime result composes a CLOSURE witness, a CONS-LIST witness, and a
-    // recursive-list predicate witness:
+    // The runtime result composes a CLOSURE witness, a LIST-CONSTRUCTOR witness,
+    // and a recursive-list predicate witness:
     // `main`'s `begin` prints the string/recursion sum (`hello world3233\n`), two
-    // closure applications (`25\n`, `15\n`), then the cons-pair witness - it builds
-    // the 3-element list `(cons 1 (cons 2 (cons 3 0)))` and the pair `(cons 10 20)`,
-    // prints the list's second element via `(car (cdr ...))` (`2\n`), the pair (as
+    // closure applications (`25\n`, `15\n`), then the list/pair witness - it builds
+    // the 3-element list with `(list 1 2 3)` and the pair `(cons 10 20)`, prints
+    // the list's second element via `(car (cdr ...))` (`2\n`), the pair (as
     // `#<pair>`), the pair's car (`10\n`), the predicate observations (`1\n`,
     // `0\n`, `1\n`), and the recursive list length (`3\n`), then denotes the
-    // unprinted `(sum-list lst)` = `1 + 2 + 3` = `6`. All of this is computed by
-    // the interpreter at RUNTIME (not a compile-time constant in this evaluator's
-    // own source), so we do NOT assert the result appears in the assembly; the
-    // printed stdout (`hello world3233\n25\n15\n2\n#<pair>10\n1\n0\n1\n3\n`) and
-    // exit code (`6`) are asserted by the Linux-gated exec test in
-    // `tests/integration.rs`.
+    // unprinted `(sum-list (list 1 2 3 4 5))` = `1 + 2 + 3 + 4 + 5` = `15`. All of
+    // this is computed by the interpreter at RUNTIME (not a compile-time constant
+    // in this evaluator's own source), so we do NOT assert the result appears in
+    // the assembly; the printed stdout
+    // (`hello world3233\n25\n15\n2\n#<pair>10\n1\n0\n1\n3\n`) and exit code (`15`)
+    // are asserted by the Linux-gated exec test in `tests/integration.rs`.
 
     // The comparison operators fold a bool to the 1/0 integer-truth convention,
     // so the lowered evaluator must contain at least one signed integer comparison

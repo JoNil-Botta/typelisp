@@ -272,22 +272,25 @@ fn type_lisp_programs_compile_link_and_run() {
         // string-heavy `let` prints `hello world32` and `33\n` (recursion, multi-arg
         // calls, the string toolkit); (2) immediate application
         // `((lambda (x) (* x x)) 5)` -> `25\n`; (3) captured free variable `n = 10`
-        // via `((lambda (x) (+ x n)) 5)` -> `15\n`; (4) the CONS-PAIR / PREDICATE /
-        // RECURSIVE-LIST witness - `lst = (cons 1 (cons 2 (cons 3 0)))` (a 3-element
-        // singly-linked list, right-nested pairs terminated by the `0` NIL sentinel)
-        // and `p = (cons 10 20)`: prints the list's second element `2\n`, the pair as
-        // `#<pair>` (no newline), the pair's car `10\n`, `(pair? lst)` `1\n`,
-        // `(null? lst)` `0\n`, `(null? 0)` `1\n`, and the recursive `(list-len lst)`
-        // `3\n`, then denotes the UNPRINTED recursive `(sum-list lst)` =
-        // `1 + 2 + 3 + 0` = `(VInt 6)`. Stdout is
+        // via `((lambda (x) (+ x n)) 5)` -> `15\n`; (4) the LIST-CONSTRUCTOR /
+        // PREDICATE / RECURSIVE-LIST witness - `lst = (list 1 2 3)` (the variadic
+        // `list` SPECIAL FORM, denoting the 3-element right-nested cons chain
+        // terminated by the `0` NIL sentinel) and `p = (cons 10 20)`: prints the
+        // list's second element `2\n`, the pair as `#<pair>` (no newline), the pair's
+        // car `10\n`, `(pair? lst)` `1\n`, `(null? lst)` `0\n`, `(null? 0)` `1\n`,
+        // and the recursive `(list-len lst)` `3\n` (proving the `list`-built chain is
+        // indistinguishable from a nested `cons` literal to every list op), then
+        // denotes the UNPRINTED recursive `(sum-list (list 1 2 3 4 5))` =
+        // `1+2+3+4+5` = `(VInt 15)`. Stdout is
         // `hello world3233\n25\n15\n2\n#<pair>10\n1\n0\n1\n3\n` and the exit code is
-        // `6`, proving the interpreter has first-class functions, can build/walk
-        // pairs and linked lists, AND can express recursive list algorithms that
-        // terminate on the list's structure. All three imported `main`-less modules
-        // are copied alongside so the `(import)` chain resolves.
+        // `15`, proving the interpreter has first-class functions, can build (via the
+        // variadic `list` constructor) and walk pairs and linked lists, AND can
+        // express recursive list algorithms that terminate on the list's structure.
+        // All three imported `main`-less modules are copied alongside so the
+        // `(import)` chain resolves.
         Case {
             name: "tl_eval",
-            exit_code: 6,
+            exit_code: 15,
             stdout: "hello world3233\n25\n15\n2\n#<pair>10\n1\n0\n1\n3\n",
             deps: &["tl_read.tl", "tl_lex.tl", "tl_token.tl"],
         },
@@ -527,23 +530,23 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         // compile -> as -> ld -> run pipeline. It preserves the prior executed
         // recursion/string witness (`pow`, substring/string-append/int conversion,
         // `hello world3233\n`), adds two closure cases (immediate application ->
-        // `25\n`, captured free variable -> `15\n`), and then the CONS-PAIR /
-        // PREDICATE / RECURSIVE-LIST witness: `lst = (cons 1 (cons 2 (cons 3 0)))`
-        // (a 3-element singly-linked list, right-nested `(VPair ...)` cells
+        // `25\n`, captured free variable -> `15\n`), and then the LIST-CONSTRUCTOR /
+        // PREDICATE / RECURSIVE-LIST witness: `lst = (list 1 2 3)` (the variadic
+        // `list` SPECIAL FORM, denoting the 3-element right-nested `(VPair ...)` chain
         // terminated by the `0` NIL sentinel) and `p = (cons 10 20)`, printing the
         // list's second element (`2\n`), the pair (as `#<pair>`), the pair's car
         // (`10\n`), then exercising the predicates - `(pair? lst)` `1\n`,
         // `(null? lst)` `0\n`, `(null? 0)` `1\n` - and the recursive `(list-len lst)`
-        // `3\n`, before returning the unprinted recursive `(sum-list lst)` =
-        // `1 + 2 + 3 + 0` = `(VInt 6)`. Stdout is
+        // `3\n`, before returning the unprinted recursive `(sum-list (list 1 2 3 4 5))`
+        // = `1+2+3+4+5` = `(VInt 15)`. Stdout is
         // `hello world3233\n25\n15\n2\n#<pair>10\n1\n0\n1\n3\n` and the exit code is
-        // `6`. The reader (and transitively the lexer + token model) is reused via
+        // `15`. The reader (and transitively the lexer + token model) is reused via
         // the `main`-less `tl_read.tl` import - including its lower-level `read-form`
         // cursor entry, which the program reader drives to read all top-level forms;
         // all three imported modules are copied alongside so the imports resolve.
         Case {
             name: "tl_eval",
-            exit_code: 6,
+            exit_code: 15,
             stdout: "hello world3233\n25\n15\n2\n#<pair>10\n1\n0\n1\n3\n",
             deps: &["tl_read.tl", "tl_lex.tl", "tl_token.tl"],
         },

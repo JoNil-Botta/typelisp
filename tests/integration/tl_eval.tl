@@ -9,7 +9,8 @@
 ;; a real language - USER-DEFINED FUNCTIONS plus RECURSION via top-level
 ;; `(define (f x) body)` forms threaded through a function environment.
 ;;
-;;   String --lex--> (Array Token) --read-form*--> (Sexpr ...) --run-program--> Value (i64)
+;;   String --lex--> (Array Token) --read-form*--> (Sexpr ...)
+;;          --eval--> Value --as-int--> i64
 ;;
 ;; A WHOLE PROGRAM is now a sequence of top-level forms: zero or more
 ;; `(define (f x y z) body)` definitions - each with an arbitrary-arity parameter

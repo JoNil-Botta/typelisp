@@ -12,10 +12,10 @@
 //! lexer
 //! turns a source String into a flat
 //! `(Array Token)` and the reader consumes that token stream into the recursive
-//! cons-cell `Sexpr` AST `(SInt | SSym | SNil | SCons)`, the evaluator INTERPRETS
-//! that tree WITH RESPECT TO two environments - a value `Env` and a function
-//! `FnEnv`: it resolves bare symbols via recursive `lookup`, pushes an `EBind`
-//! frame for `(let ((x e1)) body)`, dispatches `if` without evaluating the
+//! cons-cell `Sexpr` AST `(SInt | SSym | SStr | SNil | SCons)`, the evaluator
+//! INTERPRETS that tree WITH RESPECT TO two environments - a value `Env` and a
+//! function `FnEnv`: it resolves bare symbols via recursive `lookup`, pushes an
+//! `EBind` frame for `(let ((x e1)) body)`, dispatches `if` without evaluating the
 //! untaken branch, folds `= < > <= >=` to 1/0 integer truth values, evaluates
 //! builtin binary arithmetic, and OTHERWISE treats the head symbol as a CALL into
 //! a `FnEnv` assoc-list of `(define ...)`s - looking up the function's PARAMETER

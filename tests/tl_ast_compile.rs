@@ -3,7 +3,7 @@
 //! `selfhost/ast.tl` imports the TypeLisp reader, parses generic `Sexpr`
 //! trees into the shared `BinOp` / `Expr` / `Item` AST enums, and scores both an
 //! expression, a `define` form, a single-binding let, if, the comparison
-//! operators, string literals, and print forms. The Linux integration test
+//! operators, string literals, print forms, and begin sequences. The Linux integration test
 //! executes the same witness; this test keeps Windows coverage at compile time.
 
 use std::fs;
@@ -56,6 +56,7 @@ fn tl_ast_tl_compiles_to_assembly() {
         "_tl_parse_let:",
         "_tl_parse_if:",
         "_tl_parse_print:",
+        "_tl_parse_begin:",
         "_tl_parse_args:",
         "_tl_parse_params:",
         "_tl_parse_item:",
@@ -78,6 +79,7 @@ fn tl_ast_tl_compiles_to_assembly() {
         "call _tl_parse_expr",
         "call _tl_parse_if",
         "call _tl_parse_print",
+        "call _tl_parse_begin",
         "call _tl_parse_item",
         "call _tl_read",
         "call _tl_lex",
@@ -97,6 +99,7 @@ fn tl_ast_tl_compiles_to_assembly() {
         "ast: malformed let",
         "ast: malformed if",
         "ast: malformed print",
+        "ast: malformed begin",
         "ast: malformed argument list",
         "ast: malformed parameter list",
         "ast: malformed define header",

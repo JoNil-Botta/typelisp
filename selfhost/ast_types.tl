@@ -19,7 +19,8 @@
   (EIf Expr Expr Expr)
   (ECall String ExprList)
   (EStr String)
-  (EPrint Expr))
+  (EPrint Expr)
+  (EBegin ExprList))
 
 (defenum ExprList
   (ELNil)

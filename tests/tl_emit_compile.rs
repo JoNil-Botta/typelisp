@@ -1,6 +1,6 @@
 //! Cross-platform proof that the TypeLisp self-hosting emitter slice compiles.
 //!
-//! `examples/tl_emit.tl` is the first backend-shaped TypeLisp program for
+//! `selfhost/emit.tl` is the first backend-shaped TypeLisp program for
 //! #155/#156/#163: it imports the main-less emitter core, walks a tiny arithmetic
 //! `Expr` tree, wraps the emitted body in a runnable `main` + `_start` assembly
 //! skeleton, and prints that full `.s`. This test only compiles the program so it
@@ -14,7 +14,7 @@ use std::process::Command;
 #[test]
 fn tl_emit_tl_compiles_to_assembly() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let source_path = manifest_dir.join("examples").join("tl_emit.tl");
+    let source_path = manifest_dir.join("selfhost").join("emit.tl");
 
     let work_dir = manifest_dir.join("target").join("tl-emit-compile-test");
     fs::create_dir_all(&work_dir).expect("create tl_emit compile test work dir");
@@ -32,7 +32,7 @@ fn tl_emit_tl_compiles_to_assembly() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "tl_emit.tl compile step failed\nstdout:\n{}\nstderr:\n{}",
+        "emit.tl compile step failed\nstdout:\n{}\nstderr:\n{}",
         stdout,
         stderr,
     );

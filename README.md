@@ -9,7 +9,7 @@ x86_64 Linux assembly. Written in Rust with **zero third-party dependencies**
 - **Typed**: Every expression has a known type at compile time. No runtime type tagging.
 - **Native**: Compiles straight to x86_64 assembly, then `as` + `ld` to an ELF binary. No bytecode VM, no interpreter, no garbage collector.
 - **Zero dependencies**: Built with Rust `std` only. No third-party crates.
-- **Self-hostable front end**: A lexer, s-expression reader, and tree-walking evaluator for TypeLisp are themselves written in TypeLisp (see [`examples/`](examples)).
+- **Self-hostable front end**: A lexer, s-expression reader, and tree-walking evaluator for TypeLisp are themselves written in TypeLisp (see [`selfhost/`](selfhost)).
 
 ## Quick Start
 
@@ -118,15 +118,16 @@ Array and string indexing is bounds-checked at runtime.
 
 See [SPEC.md](SPEC.md) for the full language reference.
 
-## Self-hosting examples
+## Self-hosting sources
 
-The [`examples/`](examples) directory builds up a TypeLisp front end *written in
+The [`selfhost/`](selfhost) directory builds up a TypeLisp front end *written in
 TypeLisp*:
 
-- `tl_lexer.tl` — a tokenizer for TypeLisp's own s-expression syntax.
-- `tl_read.tl` — an s-expression reader producing a recursive `Sexpr` cons-cell tree (an importable module).
-- `tl_eval.tl` — a tree-walking evaluator over that tree, with integers, strings, cons pairs, and interpreted first-class closures.
-- `calc.tl` — the lexer + a recursive-descent parser + an evaluator wired end to end into one arithmetic pipeline.
+- `lexer.tl` — a tokenizer for TypeLisp's own s-expression syntax.
+- `read.tl` — an s-expression reader producing a recursive `Sexpr` cons-cell tree (an importable module).
+- `eval.tl` — a tree-walking evaluator over that tree, with integers, strings, cons pairs, and interpreted first-class closures.
+
+Smaller runnable examples, including `calc.tl`, remain in [`examples/`](examples).
 
 ## Architecture
 

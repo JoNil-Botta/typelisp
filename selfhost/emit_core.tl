@@ -1,6 +1,6 @@
-;; tl_emit_core.tl - Main-less M1 assembly emitter shared by demos/tests (#163).
+;; emit_core.tl - Main-less M1 assembly emitter shared by demos/tests (#163).
 
-(import "tl_ast_types.tl")
+(import "ast_types.tl")
 
 (defenum CEnv
   (CNil)

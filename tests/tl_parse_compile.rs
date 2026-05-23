@@ -1,6 +1,6 @@
 //! Cross-platform proof that the TypeLisp self-hosting PARSER slice compiles.
 //!
-//! `examples/tl_parse.tl` is the middle of the first end-to-end self-hosted
+//! `selfhost/parse.tl` is the middle of the first end-to-end self-hosted
 //! pipeline (#154/#163): it imports the `main`-less reader (`lex` + `read` + the
 //! `Sexpr` AST) and the `main`-less emitter core, adds `parse : Sexpr -> Expr`
 //! and `parse-op : String -> BinOp`, and `main` runs the whole pipeline over a
@@ -15,7 +15,7 @@ use std::process::Command;
 #[test]
 fn tl_parse_tl_compiles_to_assembly() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let source_path = manifest_dir.join("examples").join("tl_parse.tl");
+    let source_path = manifest_dir.join("selfhost").join("parse.tl");
 
     let work_dir = manifest_dir.join("target").join("tl-parse-compile-test");
     fs::create_dir_all(&work_dir).expect("create tl_parse compile test work dir");
@@ -33,7 +33,7 @@ fn tl_parse_tl_compiles_to_assembly() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "tl_parse.tl compile step failed\nstdout:\n{}\nstderr:\n{}",
+        "parse.tl compile step failed\nstdout:\n{}\nstderr:\n{}",
         stdout,
         stderr,
     );

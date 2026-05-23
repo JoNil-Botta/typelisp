@@ -1,45 +1,37 @@
-;; tl_lexer.tl - A lexer for TypeLisp's OWN s-expression syntax, written in
-;; TypeLisp itself. The first piece of the *real* self-hosting compiler front end
-;; (#27): it tokenizes actual TypeLisp source - the surface this very file is
-;; written in - rather than the arithmetic-calculator surface that `lexer.tl` /
-;; `calc.tl` exercise.
+;; lex.tl - The TypeLisp-syntax (s-expression) lexer factored out as a
+;; `main`-less, importable module (refs #27/#44).
 ;;
 ;; --------------------------------------------------------------------------
-;; What "TypeLisp's own syntax" means for the tokenizer.
+;; Why this module exists (the module signal for the reader, refs #44/#81).
 ;; --------------------------------------------------------------------------
-;; TypeLisp source is s-expressions: balanced parentheses around atoms. An atom
-;; is either an integer literal or a *symbol* - and in an s-expression language a
-;; symbol is everything else that is one contiguous lexeme: an operator (`+`), a
-;; comparison (`<=`), a keyword (`define`, `let`, `while`), a builtin name
-;; (`string->int`, `array-set!`), or a user name (`parse-expr`). So the lexer
-;; does NOT recognise a fixed operator alphabet the way the calculator lexer
-;; does; it slices each maximal symbol/int run out of the source. The token kinds
-;; collapse to: `(` `)` integer symbol end (see the imported `tl_token.tl`).
+;; `lexer.tl` is the *demo* program for the s-expression lexer: it carries a
+;; `main` that lexes a sample and tallies its symbols. But the next front-end
+;; component - the s-expression *reader* in `reader.tl` - wants to REUSE the
+;; lexer's `lex : (-> String (Array Token))` rather than re-derive it, and it
+;; carries its own `main` (read tokens into a recursive `Sexpr` tree, fold it).
 ;;
-;; The scan loop is the shape of a real lexer: a cursor over the input, a
-;; whitespace skip, single-char paren tokens, a digit run sliced into a
-;; `(TInt (string->int ...))`, and a symbol run sliced into a `(TSym ...)` with
-;; `substring`. An unexpected character aborts via the `panic` builtin (#45),
-;; exactly as a real lexer reports malformed input.
+;; The module loader (#44) is whole-program: it concatenates every imported
+;; module's declarations into a single program, then runs the unchanged
+;; `typecheck -> lower -> codegen` pipeline. So two modules that both declare a
+;; `main` and are loaded together produce a duplicate `main` symbol - the known
+;; module limitation. Importing `lexer.tl` (which HAS a `main`) into the
+;; reader (which also needs a `main`) would clash.
 ;;
-;; String literals (`"..."`) and `;` line comments are now lexed too: a `"`
-;; opens a string whose inner text is sliced into a `(TStr ...)` (closing quote
-;; skipped), and a `;` skips the rest of the line, emitting no token.
-;;
-;; Deferred - current scope boundaries, recorded as self-hosting signal:
-;;   - String-literal ESCAPES (`\"`, `\n`, ...): the inner text is sliced raw,
-;;     so `\"` does NOT continue the string and `\n` is two literal chars.
-;;   - Char literals (`#\a`), which need a `#`-prefixed state machine.
-;;   - Keyword classification: keywords are lexed as plain `TSym` tokens here; a
-;;     later pass (or the parser) distinguishes `define`/`let`/... from names.
-;;   - Digit char literals: `#\0` lexes as NUL, so digit/whitespace/symbol
-;;     classification compares the char's `i64` code point against ASCII
-;;     constants rather than against char literals.
+;; The fix is this `main`-less module: it holds the lexer's scanners and the
+;; public `lex` entry, `(import)`s the shared `main`-less `token.tl` token
+;; model, and declares NO `main`. The reader `(import "lex.tl")`s it and gets
+;; `lex` + `Token` (transitively `token.tl`) across the import boundary, and
+;; the concatenated program has exactly one `main` (the reader's). `lexer.tl`
+;; stays as the lexer's standalone demo. This mirrors how `calc.tl` imports the
+;; `main`-less `token.tl`: a `main`-less module is the unit of reuse, a
+;; `main`-bearing file is a runnable demo.
 
 ;; The shared token model: the `Token` enum and the `token-tag` / `token-int` /
-;; `token-sym` accessors. Resolved relative to this file, so it finds the
-;; co-located `tl_token.tl` (the `main`-less module pattern from #44/#116).
-(import "tl_token.tl")
+;; `token-sym` accessors and tag constants. Resolved relative to this file, so
+;; it finds the co-located `token.tl`. This is a transitive import: the reader
+;; imports this module, which imports `token.tl`; the loader's post-order DFS
+;; loads `token.tl` first, then this module, then the reader.
+(import "token.tl")
 
 ;; ASCII code point of a char, e.g. the digit char `7` -> 55.
 (define (code [c : char]) : i64
@@ -114,9 +106,14 @@
       j)))
 
 ;; Return the index of the closing `"` of a string literal whose inner text
-;; starts at `start` (just AFTER the opening quote). Scans forward to the next
-;; `"` (ASCII 34); running off the end is an unterminated literal and aborts via
-;; `panic`. NO escape handling (deferred). Same bounds-check discipline.
+;; starts at `start` (i.e. just AFTER the opening quote). `n` is the source
+;; length. Scans forward until a `"` (ASCII 34) is found and returns its index.
+;; Running off the end of the source with no closing quote is an unterminated
+;; string literal and aborts via `panic`, exactly as a real lexer reports it.
+;; NO escape handling: a `\"` is NOT treated as an escaped quote here - escape
+;; sequences are deferred (see the module header note). Same bounds-check
+;; discipline as the other scanners (the `< j n` guard is kept outside the
+;; `string-ref`).
 (define (scan-str-end [src : String] [start : i64] [n : i64]) : i64
   (let ([j : i64 start]
         [keep : bool true])
@@ -131,9 +128,11 @@
               (set! keep false))))
       j)))
 
-;; Return the end-of-line index that ends a `;` line comment whose body starts
-;; at `start`: the next newline (ASCII 10) or the end of the source (the newline
-;; is left for the whitespace skip). Same bounds-check discipline.
+;; Return the index of the end-of-line that ends a `;` line comment whose body
+;; starts at `start`. `n` is the source length. Scans forward until a newline
+;; (ASCII 10) or the end of the source, returning that index (the newline is
+;; left for the main loop's whitespace skip to consume). Same bounds-check
+;; discipline as the other scanners.
 (define (scan-comment-end [src : String] [start : i64] [n : i64]) : i64
   (let ([j : i64 start]
         [keep : bool true])
@@ -150,12 +149,13 @@
 ;; large enough to hold every token plus the TEnd sentinel) and returning the
 ;; token count. A `(` / `)` is a single-char paren token; a digit run is sliced
 ;; with `substring` and parsed with `string->int` into a `(TInt ...)`; a `"`
-;; opens a string literal whose inner text is sliced into a `(TStr ...)`
-;; (closing quote skipped); a `;` opens a line comment skipped to end-of-line
-;; (NO token); a symbol run is sliced with `substring` into a `(TSym ...)`; an
-;; unexpected char aborts via `panic`. The `"` and `;` cases are tested BEFORE
-;; the symbol path so they are not lexed as symbol chars. The terminating
-;; `TEnd` is recorded so a parser's cursor always has a sentinel to stop on.
+;; opens a string literal whose inner text is sliced with `substring` into a
+;; `(TStr ...)` (closing quote skipped); a `;` opens a line comment that is
+;; skipped to end-of-line and emits NO token; a symbol run is sliced with
+;; `substring` into a `(TSym ...)`; an unexpected char aborts via `panic`. The
+;; `"` and `;` cases are tested BEFORE the symbol path so they are not lexed as
+;; symbol chars. The terminating `TEnd` is recorded so a parser's cursor always
+;; has a sentinel to stop on.
 (define (lex-into [src : String] [toks : (Array Token)]) : i64
   (let ([i : i64 0]
         [n : i64 (string-length src)]
@@ -176,6 +176,9 @@
                         (set! count (+ count 1))
                         (set! i (+ i 1)))
                       (if (= (code c) 34)  ; '"' - a string literal
+                          ;; Inner text runs from just after the opening quote to
+                          ;; the closing quote; slice it into a TStr and skip the
+                          ;; closing quote. NO escape handling (deferred).
                           (let ([start : i64 (+ i 1)])
                             (let ([end : i64 (scan-str-end src start n)])
                               (begin
@@ -184,6 +187,8 @@
                                 (set! count (+ count 1))
                                 (set! i (+ end 1)))))
                           (if (= (code c) 59)  ; ';' - a line comment
+                              ;; Skip to end-of-line; emit no token. The newline
+                              ;; (if any) is left for the whitespace skip.
                               (set! i (scan-comment-end src (+ i 1) n))
                               (if (is-digit c)
                                   ;; A digit run -> one TInt, parsed from its substring.
@@ -217,70 +222,3 @@
     (begin
       (lex-into src toks)
       toks)))
-
-;; Count the TSym tokens in `toks` up to and including the TEnd sentinel: walk
-;; the array, tallying each token whose tag is `tag-sym`, and stop at TEnd. An
-;; observable, count-based result that depends on the symbol classification.
-(define (count-syms [toks : (Array Token)]) : i64
-  (let ([i : i64 0]
-        [syms : i64 0]
-        [keep : bool true])
-    (begin
-      (while keep
-        (let ([t : i64 (token-tag (array-ref toks i))])
-          (if (= t (tag-end))
-              (set! keep false)
-              (begin
-                (if (= t (tag-sym))
-                    (set! syms (+ syms 1))
-                    (set! syms syms))
-                (set! i (+ i 1))))))
-      syms)))
-
-;; Count the TStr tokens in `toks` up to the TEnd sentinel: same walk, tallying
-;; each token whose tag is `tag-str`. Depends on the string-literal lexing.
-(define (count-strs [toks : (Array Token)]) : i64
-  (let ([i : i64 0]
-        [strs : i64 0]
-        [keep : bool true])
-    (begin
-      (while keep
-        (let ([t : i64 (token-tag (array-ref toks i))])
-          (if (= t (tag-end))
-              (set! keep false)
-              (begin
-                (if (= t (tag-str))
-                    (set! strs (+ strs 1))
-                    (set! strs strs))
-                (set! i (+ i 1))))))
-      strs)))
-
-;; Total token count (every token before the TEnd sentinel). Depends on the
-;; comment skip producing NO token and a string literal being exactly ONE token.
-(define (count-tokens [toks : (Array Token)]) : i64
-  (let ([i : i64 0]
-        [keep : bool true])
-    (begin
-      (while keep
-        (if (= (token-tag (array-ref toks i)) (tag-end))
-            (set! keep false)
-            (set! i (+ i 1))))
-      i)))
-
-;; Lex a real TypeLisp s-expression sample exercising the new string-literal and
-;; line-comment scanners, and return an observable count. The source is
-;;   (foo "hi" 42) ; c
-;;   (bar)
-;; built from the escaped literal "(foo \"hi\" 42) ; c\n(bar)" (the host
-;; compiler decodes \" to a quote and \n to a newline). The TypeLisp lexer then
-;; tokenizes that runtime string - and does NOT itself decode escapes - into:
-;;   (  foo  "hi"  42  )  ; comment skipped...  (  bar  )  End
-;; i.e. TLParen TSym(foo) TStr(hi) TInt(42) TRParen <comment dropped>
-;;      TLParen TSym(bar) TRParen [+ TEnd]. That is 8 tokens with exactly 1 TStr;
-;; the `; c` comment contributes NO token (the newline ends it). `main` returns
-;; total tokens (8) + TStr count (1) = 9 - an observable exit code that depends
-;; on the string literal being one token, the comment being skipped, and the
-;; new TStr classification.
-(define (main) : i64
-  (let ([toks : (Array Token) (lex "(foo \"hi\" 42) ; c\n(bar)")])
-    (+ (count-tokens toks) (count-strs toks))))

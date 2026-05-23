@@ -1,6 +1,6 @@
 //! Cross-platform proof that the M1 Sexpr -> compiler AST parser compiles.
 //!
-//! `examples/tl_ast.tl` imports the TypeLisp reader, parses generic `Sexpr`
+//! `selfhost/ast.tl` imports the TypeLisp reader, parses generic `Sexpr`
 //! trees into the shared `BinOp` / `Expr` / `Item` AST enums, and scores both an
 //! expression, a `define` form, a single-binding let, if, the comparison
 //! operators, string literals, and print forms. The Linux integration test
@@ -13,7 +13,7 @@ use std::process::Command;
 #[test]
 fn tl_ast_tl_compiles_to_assembly() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let source_path = manifest_dir.join("examples").join("tl_ast.tl");
+    let source_path = manifest_dir.join("selfhost").join("ast.tl");
 
     let work_dir = manifest_dir.join("target").join("tl-ast-compile-test");
     fs::create_dir_all(&work_dir).expect("create tl_ast compile test work dir");
@@ -31,7 +31,7 @@ fn tl_ast_tl_compiles_to_assembly() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "tl_ast.tl compile step failed\nstdout:\n{}\nstderr:\n{}",
+        "ast.tl compile step failed\nstdout:\n{}\nstderr:\n{}",
         stdout,
         stderr,
     );

@@ -1,4 +1,4 @@
-;; tl_emit.tl - Milestone 1 self-hosting code emitter + program driver.
+;; emit.tl - Milestone 1 self-hosting code emitter + program driver.
 ;;
 ;; This is the backend half of the first self-hosted compiler slice (#155). It
 ;; lowers a tiny arithmetic Expr AST to x86_64 text using a stack discipline:
@@ -12,7 +12,7 @@
 ;; returns it, and `_start` exits with that value - so the printed `.s`, when
 ;; assembled (`as`) + linked (`ld`) + run, EXITS 7 for `(+ 1 (* 2 3))`.
 
-(import "tl_emit_core.tl")
+(import "emit_core.tl")
 
 (define (sample) : Expr
   (EBin (OpAdd) (EInt 1) (EBin (OpMul) (EInt 2) (EInt 3))))

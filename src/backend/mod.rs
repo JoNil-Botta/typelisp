@@ -4373,6 +4373,25 @@ mod tests {
     }
 
     #[test]
+    fn test_compile_i8_add_sub_use_8_bit_instructions() {
+        let add_asm = compile_ok("(define (f [a : i8] [b : i8]) : i8 (+ a b))");
+        assert!(add_asm.contains("addb %cl, %al"), "asm:\n{}", add_asm);
+        assert!(
+            !add_asm.contains("addq %rcx, %rax"),
+            "i8 add must not use 64-bit add; asm:\n{}",
+            add_asm
+        );
+
+        let sub_asm = compile_ok("(define (f [a : i8] [b : i8]) : i8 (- a b))");
+        assert!(sub_asm.contains("subb %cl, %al"), "asm:\n{}", sub_asm);
+        assert!(
+            !sub_asm.contains("subq %rcx, %rax"),
+            "i8 sub must not use 64-bit sub; asm:\n{}",
+            sub_asm
+        );
+    }
+
+    #[test]
     fn test_compile_i32_mul_uses_32_bit_instruction() {
         let asm = compile_ok("(define (f [a : i32] [b : i32]) : i32 (* a b))");
         assert!(asm.contains("imull %ecx, %eax"), "asm:\n{}", asm);
@@ -4548,6 +4567,17 @@ mod tests {
     }
 
     #[test]
+    fn test_compile_i8_neg_uses_8_bit_instruction() {
+        let asm = compile_unop_param(UnOp::Neg, Type::I8);
+        assert!(asm.contains("negb %al"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("negq %rax"),
+            "i8 neg must not use 64-bit neg; asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
     fn test_compile_i16_bit_not_uses_16_bit_instruction() {
         let asm = compile_unop_param(UnOp::BitNot, Type::I16);
         assert!(asm.contains("notw %ax"), "asm:\n{}", asm);
@@ -4631,6 +4661,17 @@ mod tests {
     fn test_compile_cast_widen_u8_to_i64_zero_extends() {
         // Widening cast u8 -> i64 must zero-extend the source.
         let asm = compile_ok("(define (f [x : u8]) : i64 (cast x : i64))");
+        assert!(
+            asm.contains("movzbq"),
+            "zero-extension expected; asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_compile_cast_widen_char_to_i64_zero_extends() {
+        // Widening cast char -> i64 must zero-extend the source byte.
+        let asm = compile_ok("(define (f [x : char]) : i64 (cast x : i64))");
         assert!(
             asm.contains("movzbq"),
             "zero-extension expected; asm:\n{}",

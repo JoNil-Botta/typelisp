@@ -23,7 +23,7 @@ pub enum Value {
     Global(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BinOp {
     Add,
     Sub,
@@ -50,7 +50,7 @@ pub enum BinOp {
     Shr,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum UnOp {
     Neg,
     /// Logical not (boolean operand): flips 0/1.

@@ -6,15 +6,24 @@
 
 (import "parse_core.tl")
 
-(define (compile-smoke [input-path : String] [output-path : String]) : unit
+(define (compile-smoke [input-path : String] [output-path : String]) : i64
   (let ([source : String (read-file input-path)])
-    (let ([program : ParsedProgram (parse-program (lex source))])
-      (match program
-        [(PProgram defs expr)
-         (let ([asm : String (emit-program-with-defs defs expr)])
-           (write-file output-path asm))]))))
+    (match (parse-program (lex source))
+      [(OkParsedProgram program)
+       (match program
+         [(PProgram defs expr)
+          (let ([asm : String (emit-program-with-defs defs expr)])
+            (begin
+              (write-file output-path asm)
+              0))])]
+      [(ErrParsedProgram message)
+       (begin
+         (print-error message)
+         1)])))
 
-(define (main) : unit
+(define (main) : i64
   (if (< (arg-count) 3)
-      (panic "compile-smoke: expected input and output paths")
+      (begin
+        (print-error "compile-smoke: expected input and output paths")
+        1)
       (compile-smoke (arg 1) (arg 2))))

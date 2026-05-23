@@ -73,6 +73,10 @@ impl TypeChecker {
             "print-str".into(),
             Type::Func(vec![Type::String], Box::new(Type::Unit)),
         );
+        globals.insert(
+            "print-error".into(),
+            Type::Func(vec![Type::String], Box::new(Type::Unit)),
+        );
         // Bootstrap-driver primitives: observe the Linux process argv that the
         // backend preserves from `_start`. `(arg i)` returns a heap-owned String.
         globals.insert("arg-count".into(), Type::Func(vec![], Box::new(Type::I64)));

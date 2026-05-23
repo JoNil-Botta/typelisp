@@ -2322,8 +2322,8 @@ fn tl_compile_smoke_rejects_malformed_while_with_specific_diagnostic() {
 
     assert_eq!(
         code,
-        Some(134),
-        "malformed while should abort through panic\nstdout:\n{}\nstderr:\n{}",
+        Some(1),
+        "malformed while should return a recoverable parse error\nstdout:\n{}\nstderr:\n{}",
         stdout,
         stderr,
     );
@@ -2341,13 +2341,29 @@ fn tl_compile_smoke_rejects_empty_begin_with_specific_diagnostic() {
 
     assert_eq!(
         code,
-        Some(134),
-        "empty begin should abort through panic\nstdout:\n{}\nstderr:\n{}",
+        Some(1),
+        "empty begin should return a recoverable parse error\nstdout:\n{}\nstderr:\n{}",
         stdout,
         stderr,
     );
     assert_eq!(stdout, "", "empty begin driver wrote stdout");
     assert_eq!(stderr, "parse: empty begin", "empty begin diagnostic");
+}
+
+#[test]
+fn tl_compile_smoke_rejects_malformed_if_without_panic_abort() {
+    let (code, stdout, stderr) =
+        run_compile_smoke_driver("tl_compile_smoke_malformed_if", "(if 1 2)");
+
+    assert_eq!(
+        code,
+        Some(1),
+        "malformed if should return a recoverable parse error\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(stdout, "", "malformed if driver wrote stdout");
+    assert_eq!(stderr, "parse: malformed if", "malformed if diagnostic");
 }
 
 fn tl_string_literal(text: &str) -> String {

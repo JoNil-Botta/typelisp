@@ -28,12 +28,28 @@
   (ELNil)
   (ELCons Expr ExprList))
 
+(defenum ResultExpr
+  (OkExpr Expr)
+  (ErrExpr String))
+
+(defenum ResultExprList
+  (OkExprList ExprList)
+  (ErrExprList String))
+
 (defenum StrList
   (SLNil)
   (SLCons String StrList))
 
+(defenum ResultStrList
+  (OkStrList StrList)
+  (ErrStrList String))
+
 (defenum Item
   (IDefFn String StrList Expr))
+
+(defenum ResultItem
+  (OkItem Item)
+  (ErrItem String))
 
 (defenum ItemList
   (ILNil)
@@ -41,3 +57,7 @@
 
 (defenum ParsedProgram
   (PProgram ItemList Expr))
+
+(defenum ResultParsedProgram
+  (OkParsedProgram ParsedProgram)
+  (ErrParsedProgram String))

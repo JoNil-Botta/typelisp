@@ -203,7 +203,7 @@ pub struct X86_64Backend {
     runtime_print_names: HashSet<String>,
     /// Whether the program references the bump allocator `tl_alloc` and the
     /// backend must therefore emit the self-contained allocator runtime
-    /// (mmap arena + bump pointer) into the program's `.s`.
+    /// (tracked mmap arenas + bump pointers) into the program's `.s`.
     needs_alloc_runtime: bool,
     /// Whether the backend must emit the raw `tl_alloc` runtime body. This is
     /// true when IR calls resolve to the allocator runtime, or when another
@@ -1388,7 +1388,7 @@ impl X86_64Backend {
     /// Whether the program references the bump allocator `tl_alloc` (through a
     /// direct `Call` or an `extern` declaration) and does not define its own
     /// `tl_alloc`. When true the backend emits the self-contained allocator
-    /// runtime (an `mmap`'d arena plus a bump pointer) into the program's `.s`
+    /// runtime (tracked `mmap`'d arenas plus bump pointers) into the program's `.s`
     /// so the symbol resolves without linking libc.
     fn needs_alloc_runtime(program: &Program) -> bool {
         let defines_own = program.functions.iter().any(|f| f.name == "tl_alloc");
@@ -1848,16 +1848,15 @@ impl X86_64Backend {
         self.emit("");
     }
 
-    /// Emit the `.bss` storage backing the bump allocator: the current bump
-    /// pointer and the one-past-the-end pointer of the active `mmap` arena.
-    /// Both start zeroed; a zero `tl_arena_ptr` signals "no arena yet" and
-    /// triggers lazy `mmap` on the first allocation.
+    /// Emit the `.bss` storage backing the bump allocator: a pointer to the
+    /// current arena record. Each mapped arena starts with a 32-byte header:
+    /// previous arena, payload base, current bump pointer, and end pointer.
+    /// A zero `tl_current_arena` signals "no arena yet" and triggers lazy
+    /// `mmap` on the first allocation.
     fn generate_alloc_runtime_data(&mut self) {
         self.emit("    .section .bss");
         self.emit("    .balign 8");
-        self.emit("tl_arena_ptr:");
-        self.emit("    .zero 8");
-        self.emit("tl_arena_end:");
+        self.emit("tl_current_arena:");
         self.emit("    .zero 8");
         self.emit("");
     }
@@ -1983,15 +1982,21 @@ impl X86_64Backend {
     ///
     /// ABI (System V): the byte count arrives in `%rdi`, the returned pointer
     /// leaves in `%rax`. The allocator rounds the request up to 8 bytes, then
-    /// bumps `tl_arena_ptr` within the active arena. When the arena is empty
-    /// (lazy init) or exhausted it `mmap`s a fresh anonymous arena of
-    /// `max(ARENA_SIZE, request)` bytes via the raw `mmap` syscall (no libc).
-    /// There is no `free` and no GC: the arena lives for the whole process,
-    /// matching the README's "minimal runtime".
+    /// bumps the current arena record's bump pointer. When the arena is empty
+    /// (lazy init) or exhausted it `mmap`s a fresh anonymous arena of at least
+    /// `max(ARENA_SIZE, request + header)` bytes via the raw `mmap` syscall
+    /// (no libc). Each arena records its previous arena so later region-reset
+    /// work can restore or discard arenas without changing today's process-
+    /// lifetime behavior.
     fn generate_alloc_runtime_functions(&mut self) {
         // Arena granule: 64 MiB. `mmap` syscall number is 9; PROT_READ|PROT_WRITE
         // = 3; MAP_PRIVATE|MAP_ANONYMOUS = 0x22; fd = -1; offset = 0. The 4th
         // syscall argument is passed in %r10 (not %rcx) per the syscall ABI.
+        // Arena header layout:
+        //   0: previous arena header pointer
+        //   8: payload base pointer
+        //  16: current bump pointer
+        //  24: one-past-the-end pointer
         self.emit("    .globl tl_alloc");
         self.emit("tl_alloc:");
         // Round the requested size up to an 8-byte boundary: size = (size+7)&~7.
@@ -2000,25 +2005,29 @@ impl X86_64Backend {
         self.emit("    andq $-8, %rdi");
         // %rsi holds the (aligned) request size for the duration of the routine.
         self.emit("    movq %rdi, %rsi");
-        // If no arena has been mapped yet (ptr == 0), go map one.
-        self.emit("    movq tl_arena_ptr(%rip), %rax");
-        self.emit("    testq %rax, %rax");
+        // If no arena has been mapped yet, go map one.
+        self.emit("    movq tl_current_arena(%rip), %r8");
+        self.emit("    testq %r8, %r8");
         self.emit("    jz .L_tl_alloc_new_arena");
+        self.emit("    movq 16(%r8), %rax");
         // Enough room left? new_ptr = ptr + size; if new_ptr <= end, bump.
         self.emit("    movq %rax, %rcx");
         self.emit("    addq %rsi, %rcx");
         self.emit("    jc .L_tl_alloc_abort"); // pointer overflow
-        self.emit("    cmpq tl_arena_end(%rip), %rcx");
+        self.emit("    cmpq 24(%r8), %rcx");
         self.emit("    ja .L_tl_alloc_new_arena");
         // Fast path: commit the bump and return the old pointer (already in %rax).
-        self.emit("    movq %rcx, tl_arena_ptr(%rip)");
+        self.emit("    movq %rcx, 16(%r8)");
         self.emit("    ret");
         self.emit(".L_tl_alloc_new_arena:");
-        // Choose arena length = max(ARENA_SIZE, aligned request). %rdx = len.
+        // Choose arena length = max(ARENA_SIZE, aligned request + 32-byte header).
         self.emit("    movq $0x4000000, %rdx");
-        self.emit("    cmpq %rdx, %rsi");
+        self.emit("    movq %rsi, %rcx");
+        self.emit("    addq $32, %rcx");
+        self.emit("    jc .L_tl_alloc_abort"); // request + header overflow
+        self.emit("    cmpq %rdx, %rcx");
         self.emit("    jbe .L_tl_alloc_len_ready");
-        self.emit("    movq %rsi, %rdx");
+        self.emit("    movq %rcx, %rdx");
         self.emit(".L_tl_alloc_len_ready:");
         // mmap(NULL, len, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0).
         // Preserve len and request size across the syscall (which clobbers
@@ -2043,10 +2052,18 @@ impl X86_64Backend {
         self.emit("    movq %rax, %rcx");
         self.emit("    addq %rdx, %rcx");
         self.emit("    jc .L_tl_alloc_abort"); // arena end overflow
-        self.emit("    movq %rcx, tl_arena_end(%rip)");
-        self.emit("    movq %rax, %rcx");
+        // Initialize the arena record at the start of the mapping and make it
+        // current. Payload starts immediately after the 32-byte header.
+        self.emit("    movq tl_current_arena(%rip), %r8");
+        self.emit("    movq %r8, 0(%rax)");
+        self.emit("    leaq 32(%rax), %r8");
+        self.emit("    movq %r8, 8(%rax)");
+        self.emit("    movq %rcx, 24(%rax)");
+        self.emit("    movq %r8, %rcx");
         self.emit("    addq %rsi, %rcx");
-        self.emit("    movq %rcx, tl_arena_ptr(%rip)");
+        self.emit("    movq %rcx, 16(%rax)");
+        self.emit("    movq %rax, tl_current_arena(%rip)");
+        self.emit("    movq %r8, %rax");
         self.emit("    ret");
         self.emit(".L_tl_alloc_abort:");
         // Self-contained trap: write diagnostic to stderr, then exit(134).
@@ -6397,26 +6414,22 @@ mod tests {
         assert!(asm.contains("    .globl tl_alloc"), "asm:\n{}", asm);
         assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
 
-        // Arena state lives in `.bss` as two 8-byte pointer slots.
+        // Arena state lives in `.bss` as the current arena-record pointer.
         assert!(asm.contains("    .section .bss"), "asm:\n{}", asm);
-        assert!(asm.contains("tl_arena_ptr:"), "asm:\n{}", asm);
-        assert!(asm.contains("tl_arena_end:"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_current_arena:"), "asm:\n{}", asm);
 
         // The request is rounded up to 8 bytes before bumping.
         assert!(asm.contains("    addq $7, %rdi"), "asm:\n{}", asm);
         assert!(asm.contains("    andq $-8, %rdi"), "asm:\n{}", asm);
 
-        // The bump pointer is read from / written back to the arena slot.
+        // The bump pointer is read from / written back to the current arena record.
         assert!(
-            asm.contains("movq tl_arena_ptr(%rip), %rax"),
+            asm.contains("movq tl_current_arena(%rip), %r8"),
             "asm:\n{}",
             asm
         );
-        assert!(
-            asm.contains("movq %rcx, tl_arena_ptr(%rip)"),
-            "asm:\n{}",
-            asm
-        );
+        assert!(asm.contains("movq 16(%r8), %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("movq %rcx, 16(%r8)"), "asm:\n{}", asm);
 
         // Lazy mmap: raw mmap syscall (rax=9) with PROT_READ|PROT_WRITE (3) and
         // MAP_PRIVATE|MAP_ANONYMOUS (0x22) in %r10, fd=-1, and a syscall.
@@ -6475,7 +6488,7 @@ mod tests {
         // its `.bss` arena state — keeping minimal programs minimal.
         let asm = compile_ok("(define (main) : i64 (+ 1 2))");
         assert!(!asm.contains("tl_alloc:"), "asm:\n{}", asm);
-        assert!(!asm.contains("tl_arena_ptr:"), "asm:\n{}", asm);
+        assert!(!asm.contains("tl_current_arena:"), "asm:\n{}", asm);
         assert!(!asm.contains("    .section .bss"), "asm:\n{}", asm);
     }
 
@@ -6521,7 +6534,7 @@ mod tests {
         };
         let asm = generate_assembly(&program).expect("user-defined tl_alloc should compile");
         // Only the user's definition exists; no runtime arena/.bss emitted.
-        assert!(!asm.contains("tl_arena_ptr:"), "asm:\n{}", asm);
+        assert!(!asm.contains("tl_current_arena:"), "asm:\n{}", asm);
         // The call targets the user's (mangled) function.
         assert!(asm.contains("_tl_tl_alloc:"), "asm:\n{}", asm);
         assert!(asm.contains("    call _tl_tl_alloc"), "asm:\n{}", asm);
@@ -6556,12 +6569,13 @@ mod tests {
         let asm = generate_assembly(&program_calling_tl_alloc())
             .expect("program calling tl_alloc should compile");
 
-        // There should be exactly three carry-check jumps to the abort label:
-        // request rounding, active-arena bump pointer, and fresh-arena end.
+        // There should be exactly four carry-check jumps to the abort label:
+        // request rounding, active-arena bump pointer, request+header length,
+        // and fresh-arena end.
         let jc_count = asm.matches("    jc .L_tl_alloc_abort").count();
         assert_eq!(
-            jc_count, 3,
-            "expected three carry guards (rounding + bump/end overflow), got {}\nasm:\n{}",
+            jc_count, 4,
+            "expected four carry guards (rounding + bump + header/end overflow), got {}\nasm:\n{}",
             jc_count, asm
         );
 
@@ -6572,6 +6586,38 @@ mod tests {
             "expected one mmap-failure guard, got {}\nasm:\n{}",
             js_count, asm
         );
+    }
+
+    #[test]
+    fn test_alloc_runtime_tracks_linked_arena_records() {
+        let asm = generate_assembly(&program_calling_tl_alloc())
+            .expect("program calling tl_alloc should compile");
+
+        // The old two-global allocator shape should be gone; the backend keeps
+        // one current-arena pointer and per-arena records in the mapped memory.
+        assert!(asm.contains("tl_current_arena:"), "asm:\n{}", asm);
+        assert!(!asm.contains("tl_arena_ptr:"), "asm:\n{}", asm);
+        assert!(!asm.contains("tl_arena_end:"), "asm:\n{}", asm);
+
+        // Fresh arenas store previous/base/bump/end in deterministic offsets:
+        //   0: previous arena
+        //   8: payload base
+        //  16: current bump
+        //  24: end pointer
+        let prev_link = "    movq tl_current_arena(%rip), %r8\n    movq %r8, 0(%rax)";
+        assert!(asm.contains(prev_link), "asm:\n{}", asm);
+        assert!(asm.contains("    leaq 32(%rax), %r8"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %r8, 8(%rax)"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %rcx, 24(%rax)"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %rcx, 16(%rax)"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("    movq %rax, tl_current_arena(%rip)"),
+            "asm:\n{}",
+            asm
+        );
+
+        // New arena length accounts for the 32-byte header before mmap.
+        assert!(asm.contains("    addq $32, %rcx"), "asm:\n{}", asm);
     }
 
     // ------------------------------------------------------------------

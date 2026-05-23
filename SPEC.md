@@ -657,6 +657,12 @@ They are not implemented by a separate C runtime.
 
 ## 7. Memory model
 
+TypeLisp currently has no source-level reference, borrow, lifetime, move-only,
+destructor, `drop`, `free`, or garbage-collector model. The implementation uses
+pointer-sized handles for several aggregate values, but those handles are not
+checked references in the source language. Future ownership/borrowing work is a
+separate design track.
+
 ### 7.1 Stack
 
 - Function parameters and local variables are allocated in RBP-relative stack slots.
@@ -670,6 +676,8 @@ They are not implemented by a separate C runtime.
 - Non-escaping aggregate fat/inline storage is usually kept in the current stack frame.
 - Allocation goes through `tl_alloc`, a backend-emitted bump allocator.
 - There is **no garbage collector** or `free`. Memory is leaked on every dynamic allocation.
+- Heap allocations are process-lifetime allocations: once allocated, they remain
+  live until the compiled program exits.
 
 ### 7.3 Globals
 
@@ -677,6 +685,35 @@ They are not implemented by a separate C runtime.
 - Mutable globals use `.data` with an initializer.
 - String literal bytes are stored in `.rodata`; a `String` value points to
   inline `{ptr,len}` storage whose `ptr` field points into `.rodata`.
+
+### 7.4 Aggregate handles and aliasing
+
+- Passing or assigning an aggregate value copies the value handle, not the
+  pointed-to storage. This applies to `String`, dynamic-array, enum, and struct
+  values in the current IR/ABI.
+- `String` values are immutable at the source level. String literals may share
+  `.rodata`; `substring`, `string-slice`, `string-append`, `string-concat`,
+  `read-file`, `arg`, and `int->string` return fresh heap-allocated string
+  storage. There is no source operation that mutates a string's bytes.
+- Dynamic arrays are shared mutable heap buffers. Copying or passing an
+  `(Array T)` value aliases the same `{ptr,len}` record and element buffer, so
+  `array-set!` through one handle is observable through another.
+- Struct and enum values are pointer-sized aggregate handles internally.
+  Structs are read-only at the source level today because `struct-set!` is not
+  implemented. Enum payloads are read by `match`; there is no enum mutation
+  operation.
+- Function calls pass aggregate handles by value. Returning an aggregate may
+  heap-promote storage that would otherwise be frame-local; this is storage
+  placement for safety, not ownership transfer or borrow checking.
+
+```lisp test=run name=dynamic-array-aliasing exit=42 stdout=""
+(define (main) : i64
+  (let ([a : (Array i64) (make-array i64 1)])
+    (let ([b : (Array i64) a])
+      (begin
+        (array-set! a 0 42)
+        (array-ref b 0)))))
+```
 
 ---
 

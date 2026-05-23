@@ -163,6 +163,21 @@ implemented yet.
 `substring`/`string-slice`, `string->int`, `int->string`; and `panic`/`error`.
 Array and string indexing is bounds-checked at runtime.
 
+### Memory and aliasing
+
+TypeLisp does not currently have source-level references, borrowing, ownership
+transfer, destructors, `free`, or a garbage collector. Aggregate values such as
+`String`, dynamic arrays, structs, and enums are implemented as pointer-sized
+handles in the IR/ABI, but those handles are not checked language references.
+
+`String` values are immutable at the source level. Dynamic arrays are shared
+mutable buffers: copying or passing an `(Array T)` value aliases the same
+storage, so `array-set!` through one handle is visible through another. Struct
+and enum values are pointer-shaped internally; structs are read-only today
+because `struct-set!` is not implemented. Heap allocation uses a
+backend-emitted `tl_alloc` bump allocator and allocations live until process
+exit. See [SPEC.md §7](SPEC.md) for the precise current model.
+
 See [SPEC.md](SPEC.md) for the full language reference.
 
 ## Self-hosting sources
@@ -209,7 +224,8 @@ structs + field access, dynamic arrays, strings, `extern`, and multi-file
 modules all compile to native code. See the
 [project roadmap](https://github.com/JoNil-Botta/typelisp/issues/8) and
 [SPEC.md §8](SPEC.md) for what is not yet supported (closures, tail calls,
-tuple/fixed-array by-value returns, `f32` codegen, GC, SPMD/SIMD).
+tuple/fixed-array by-value returns, `f32` codegen, GC/free,
+ownership/borrowing, SPMD/SIMD).
 
 ## Contributing
 

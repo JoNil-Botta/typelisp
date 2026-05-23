@@ -101,8 +101,10 @@ Name              ; a defenum / defstruct nominal type
 are ordinary modules imported with explicit paths such as
 `(import "stdlib/string.tl")`. `check`, `compile`, and `run` also accept
 `--stdlib-root <dir>` for resolving `stdlib/...` imports from a configured
-source tree. See [stdlib/README.md](stdlib/README.md) for the current stdlib
-layout and verification conventions.
+source tree. `TYPELISP_STDLIB_ROOT` can provide an optional fallback root after
+explicit CLI roots; prefer `--stdlib-root` for CI, bootstrap, and reproducible
+scripts. See [stdlib/README.md](stdlib/README.md) for the current stdlib layout
+and verification conventions.
 
 ### Enum and struct namespace rules
 

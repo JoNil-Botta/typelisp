@@ -9,9 +9,12 @@
 //! of forms in order, return the last value - the natural sequencing primitive,
 //! retiring the old `seq` two-arg-function workaround), USER-DEFINED FUNCTIONS plus
 //! RECURSION via top-level `(define (f x y z) body)` forms with MULTI-ARGUMENT
-//! calls, AND a tagged VALUE domain - `(defenum Value (VInt i64) (VStr String))`
-//! - so an expression now denotes a `VInt` or a `VStr` rather than a raw `i64`
-//! (integer-requiring contexts funnel through the `as-int` projection). Where the
+//! calls, FIRST-CLASS FUNCTIONS - `lambda` and CLOSURES, the `(VClosure params
+//! body captured-env)` value - AND a tagged VALUE domain - `(defenum Value (VInt
+//! i64) (VStr String) (VClosure Sexpr Sexpr Env))` - so an expression now denotes
+//! a `VInt`, a `VStr`, or a closure rather than a raw `i64` (integer-requiring
+//! contexts funnel through the `as-int` projection; `Value` and `Env` are mutually
+//! recursive enums, the `VClosure` carrying the env it captured). Where the
 //! lexer turns a source String into a flat `(Array Token)` and the reader consumes
 //! that token stream into the recursive cons-cell `Sexpr` AST `(SInt | SSym | SStr
 //! | SNil | SCons)`, the evaluator INTERPRETS that tree WITH RESPECT TO two
@@ -274,6 +277,61 @@ fn tl_eval_tl_compiles_to_assembly() {
         asm,
     );
 
+    // FIRST-CLASS FUNCTIONS - `lambda` + CLOSURES (#27): the value domain gains a
+    // `(VClosure params body captured-env)` variant, so the `lambda` special form
+    // is dispatched on the head-symbol text `"lambda"` (which must reach the
+    // read-only data) and APPLICATION is handled by `apply-value` (applies a
+    // `VClosure` to its arguments). A symbol-head call routes through `env-has`
+    // (is the head a closure-valued variable, applied via `apply-value`, or a
+    // top-level `define`, called through the `fenv`?), and the closure's
+    // parameters are layered over its CAPTURED env by the generalised
+    // `bind-args-onto` (the `bind-args` zip now extends a caller-supplied base
+    // env). The `lambda` form's parameter list and body are projected by
+    // `lambda-params` / `lambda-body`. Each of these helpers must be emitted.
+    assert!(
+        asm.contains(".string \"lambda\""),
+        "tl_eval assembly is missing the \"lambda\" dispatch string literal (lambda special form):\n{}",
+        asm,
+    );
+    for sym in [
+        "_tl_apply_value:",
+        "_tl_env_has:",
+        "_tl_bind_args_onto:",
+        "_tl_lambda_params:",
+        "_tl_lambda_body:",
+    ] {
+        assert!(
+            asm.contains(sym),
+            "tl_eval assembly is missing expected lambda/closure symbol {}:\n{}",
+            sym,
+            asm,
+        );
+    }
+
+    // Closure APPLICATION is genuinely wired: `eval-sexpr` calls `apply-value`
+    // (both for a computed-operator application `((lambda ...) a)` and for a
+    // closure-valued variable in head position), and `apply-value` re-enters
+    // `eval-sexpr` to evaluate the closure body. So a call to `apply-value` must
+    // be present, and `apply-value` must build the call env via `bind-args-onto`.
+    assert!(
+        asm.contains("call _tl_apply_value"),
+        "tl_eval assembly shows no apply-value call (closure application not wired):\n{}",
+        asm,
+    );
+    assert!(
+        asm.contains("call _tl_bind_args_onto"),
+        "tl_eval assembly shows no bind-args-onto call (closure arg binding not wired):\n{}",
+        asm,
+    );
+
+    // A symbol-head call probes the lexical env first via `env-has` to decide
+    // between applying a closure-valued variable and calling a top-level `define`.
+    assert!(
+        asm.contains("call _tl_env_has"),
+        "tl_eval assembly shows no env-has call (symbol-head closure-vs-define routing):\n{}",
+        asm,
+    );
+
     // The string ops are dispatched on their head-symbol text, so each op's
     // string literal must be emitted in the read-only data: `"string-length"`
     // (1 arg -> VInt byte count), `"substring"` (3 args -> VStr slice), and
@@ -452,20 +510,23 @@ fn tl_eval_tl_compiles_to_assembly() {
 
     // MULTI-ARGUMENT CALLS (#27): a user-function call binds its arguments by
     // ZIPPING the function's parameter list against the call's argument-expression
-    // list with `bind-args`. `bind-args` walks both lists in lock-step, evaluating
-    // each argument in the caller env and `EBind`-ing it to the matching parameter,
-    // so it is itself recursive (it recurses on the parameter/argument tails) and
-    // it calls back into `eval-sexpr` to evaluate each argument. So `eval-sexpr`
-    // calls `bind-args`, AND `bind-args` calls itself (a self-call: the recursive
-    // zip).
+    // list. The zip now lives in the generalised `bind-args-onto` (asserted above),
+    // which walks both lists in lock-step, evaluates each argument in the caller
+    // env, `EBind`s it to the matching parameter, and recurses on the tails;
+    // `bind-args` is the thin `base = ENil` wrapper a top-level call uses (a
+    // closure application instead passes the captured env). So a `bind-args` call
+    // (the top-level user-function path) must be present, AND the zip recursion -
+    // the `bind-args-onto` self-call - must be present (at least two
+    // `call _tl_bind_args_onto`, which the `call _tl_bind_args` substring also
+    // matches).
     assert!(
-        asm.contains("call _tl_bind_args"),
-        "tl_eval assembly shows no bind-args call (no multi-argument call binding):\n{}",
+        asm.contains("call _tl_bind_args\n") || asm.contains("call _tl_bind_args "),
+        "tl_eval assembly shows no bind-args call (no top-level multi-argument call binding):\n{}",
         asm,
     );
     assert!(
-        asm.matches("call _tl_bind_args").count() >= 2,
-        "tl_eval assembly shows no recursive bind-args self-call (param/arg zip):\n{}",
+        asm.matches("call _tl_bind_args_onto").count() >= 2,
+        "tl_eval assembly shows no recursive bind-args-onto self-call (param/arg zip):\n{}",
         asm,
     );
 

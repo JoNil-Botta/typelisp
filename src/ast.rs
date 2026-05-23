@@ -201,6 +201,18 @@ pub enum Expr {
         scrutinee: Box<Expr>,
         arms: Vec<(Pattern, Expr)>,
     },
+    /// SPMD foreach: `(foreach ([i : i64 start end]) body)` executes one
+    /// logical program instance for each integer `i` in the half-open range
+    /// `[start, end)`. The index binding is varying; `start` and `end` are
+    /// uniform. `body` must have type `unit`; the overall expression has type
+    /// `unit`. See SPEC.md §5.15.
+    Foreach {
+        index: Symbol,
+        index_ty: Type,
+        start: Box<Expr>,
+        end: Box<Expr>,
+        body: Box<Expr>,
+    },
     /// Struct field access: `(struct-get s field)`. Reads the named field of the
     /// struct value `s`.
     StructGet { expr: Box<Expr>, field: Symbol },

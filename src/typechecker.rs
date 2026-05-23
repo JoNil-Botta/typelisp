@@ -1036,14 +1036,16 @@ impl TypeChecker {
         match &scrut_ty {
             Type::Enum(n) => self.check_match_enum(n.clone(), arms, span),
             // A scalar (non-enum) scrutinee is matched by literal patterns plus
-            // a catch-all (`_`), e.g. `(match n [0 ..] [1 ..] [_ ..])`.
+            // a catch-all (`_`), except that bool is finite and can be covered
+            // exactly by `true` and `false`.
             other => self.check_match_scalar(other.clone(), scrutinee, arms, span),
         }
     }
 
     /// Type-check a `match` whose scrutinee is a scalar value, using literal and
-    /// wildcard patterns. Variant patterns are rejected (no enum), and the match
-    /// must end with a wildcard since the scalar value space is unbounded.
+    /// wildcard patterns. Variant patterns are rejected (no enum). Unbounded
+    /// scalar types must end with a wildcard, while bool can be exhausted by
+    /// covering both literal values.
     fn check_match_scalar(
         &mut self,
         scrut_ty: Type,
@@ -1053,6 +1055,7 @@ impl TypeChecker {
     ) -> Result<Type, TypeError> {
         let mut result_ty: Option<Type> = None;
         let mut has_wildcard = false;
+        let mut bool_literals_covered = [false; 2];
 
         for (pat, body) in arms {
             if has_wildcard {
@@ -1083,6 +1086,9 @@ impl TypeChecker {
                             ),
                             body.span(),
                         ));
+                    }
+                    if let (Type::Bool, Literal::Bool(value)) = (&scrut_ty, lit) {
+                        bool_literals_covered[*value as usize] = true;
                     }
                 }
                 other => {
@@ -1115,7 +1121,11 @@ impl TypeChecker {
             }
         }
 
-        if !has_wildcard {
+        let bool_literals_are_exhaustive = matches!(scrut_ty, Type::Bool)
+            && bool_literals_covered[false as usize]
+            && bool_literals_covered[true as usize];
+
+        if !has_wildcard && !bool_literals_are_exhaustive {
             return Err(TypeError::at(
                 format!("non-exhaustive match on {}: add a `_` arm", scrut_ty),
                 span,
@@ -2275,10 +2285,14 @@ mod tests {
     #[test]
     fn test_typecheck_match_bool_literals_well_typed() {
         let src = "(define (f [b : bool]) : i64 (match b [true 1] [false 0]))";
-        // bool literals do not need a wildcard if both values are covered? No:
-        // exhaustiveness over scalars always requires a `_`. This match has no
-        // wildcard, so it must be rejected.
-        assert!(check(src).is_err());
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_match_bool_literal_single_arm_non_exhaustive_is_err() {
+        let src = "(define (f [b : bool]) : i64 (match b [true 1]))";
+        let err = check(src).unwrap_err();
+        assert!(err.msg.contains("non-exhaustive"), "got: {}", err.msg);
     }
 
     #[test]

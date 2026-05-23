@@ -103,11 +103,21 @@
          (panic "parse: malformed binary expression")
          (EInt 0))]))
 
+;; parse-let: single- or multi-binding let, desugared into nested ELet nodes
+;; so later bindings can see earlier ones (sequential let* semantics).
+(define (parse-let-bindings [bindings : Sexpr] [body : Expr]) : Expr
+  (match bindings
+    [(SNil) body]
+    [(SCons (SCons (SSym name) (SCons value (SNil))) rest)
+     (ELet name (parse value) (parse-let-bindings rest body))]
+    [_ (begin
+         (panic "parse: malformed let binding")
+         (EInt 0))]))
+
 (define (parse-let [rest : Sexpr]) : Expr
   (match rest
-    [(SCons (SCons (SCons (SSym name) (SCons value (SNil))) (SNil))
-            (SCons body (SNil)))
-     (ELet name (parse value) (parse body))]
+    [(SCons bindings (SCons body (SNil)))
+     (parse-let-bindings bindings (parse body))]
     [_ (begin
          (panic "parse: malformed let")
          (EInt 0))]))

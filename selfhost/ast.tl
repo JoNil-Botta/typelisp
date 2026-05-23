@@ -27,11 +27,17 @@
         (sexpr-expect-nil after-b)
         (EBin op (parse-expr a) (parse-expr b))))))
 
+(define (parse-let-bindings [bindings : Sexpr] [body : Expr]) : Expr
+  (match bindings
+    [(SNil) body]
+    [(SCons (SCons (SSym name) (SCons value (SNil))) rest)
+     (ELet name (parse-expr value) (parse-let-bindings rest body))]
+    [_ (begin (panic "ast: malformed let binding") (EInt 0))]))
+
 (define (parse-let [rest : Sexpr]) : Expr
   (match rest
-    [(SCons (SCons (SCons (SSym name) (SCons value (SNil))) (SNil))
-            (SCons body (SNil)))
-     (ELet name (parse-expr value) (parse-expr body))]
+    [(SCons bindings (SCons body (SNil)))
+     (parse-let-bindings bindings (parse-expr body))]
     [_ (begin (panic "ast: malformed let") (EInt 0))]))
 
 (define (parse-set [rest : Sexpr]) : Expr

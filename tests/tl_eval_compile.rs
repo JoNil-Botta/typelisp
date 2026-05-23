@@ -283,6 +283,7 @@ fn tl_eval_tl_compiles_to_assembly() {
         "\"string-eq\"",
         "\"int->string\"",
         "\"string->int\"",
+        "\"string-append\"",
     ] {
         assert!(
             asm.contains(&format!(".string {op}")),
@@ -290,6 +291,24 @@ fn tl_eval_tl_compiles_to_assembly() {
             asm,
         );
     }
+
+    // The `string-append` dispatch arm lowers the host `string-append` builtin to
+    // a call into the emit-on-demand `tl_string_concat` runtime (it copies BOTH
+    // operands' bytes into ONE fresh heap String — see the backend's
+    // `generate_string_concat_runtime_functions`). Its definition AND at least one
+    // call site must be present: this is the load-bearing wiring that lets the
+    // interpreter BUILD strings, completing its string toolkit (measure / slice /
+    // compare / print / build).
+    assert!(
+        asm.contains("tl_string_concat:"),
+        "tl_eval assembly is missing the tl_string_concat runtime helper (string-append op):\n{}",
+        asm,
+    );
+    assert!(
+        asm.contains("call tl_string_concat"),
+        "tl_eval assembly shows no string-append call (string-append op not lowered):\n{}",
+        asm,
+    );
 
     // The `substring` dispatch arm lowers the host `substring` builtin to a call
     // into the emit-on-demand runtime `tl_substring` (a heap-allocated, runtime

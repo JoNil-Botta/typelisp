@@ -784,11 +784,12 @@ fn tl_emit_printed_program_assembles_links_and_exits_7() {
 /// End-to-end self-hosted pipeline (#154): `examples/tl_parse.tl` runs
 /// `(emit-program (parse (read (lex "(+ 1 (* 2 3))"))))`, taking SOURCE TEXT all
 /// the way to a runnable `.s` in TypeLisp - lex -> read -> parse -> emit. It
-/// imports the `main`-less reader (which transitively pulls in `lex` + the
-/// `Sexpr` AST) and duplicates the emitter helpers, so the printed `.s` is
-/// byte-identical to tl_emit's (both compute `(+ 1 (* 2 3))`). This test runs the
-/// driver, asserts the printed text, then assembles + links + runs it and asserts
-/// exit 7 - the same value the emitter proved, now reached THROUGH the parser.
+/// imports the shared AST types and the `main`-less reader (which transitively
+/// pulls in `lex` + the `Sexpr` AST), then duplicates only the emitter helpers.
+/// The printed `.s` is byte-identical to tl_emit's (both compute `(+ 1 (* 2 3))`).
+/// This test runs the driver, asserts the printed text, then assembles + links +
+/// runs it and asserts exit 7 - the same value the emitter proved, now reached
+/// THROUGH the parser.
 #[test]
 fn tl_parse_printed_program_assembles_links_and_exits_7() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -803,9 +804,8 @@ fn tl_parse_printed_program_assembles_links_and_exits_7() {
     let work_path = work_dir.join("tl_parse.tl");
     fs::copy(&source_path, &work_path).expect("copy tl_parse.tl to work dir");
 
-    // Copy the imported front-end modules alongside so the `(import)` chain
-    // (tl_parse -> tl_read -> tl_lex -> tl_token) resolves at load time.
-    for dep in ["tl_read.tl", "tl_lex.tl", "tl_token.tl"] {
+    // Copy imported modules alongside so the `(import)` chain resolves at load time.
+    for dep in ["tl_ast_types.tl", "tl_read.tl", "tl_lex.tl", "tl_token.tl"] {
         fs::copy(integration_dir.join(dep), work_dir.join(dep))
             .expect("copy imported front-end module to work dir");
     }

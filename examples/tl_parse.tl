@@ -20,7 +20,7 @@
 ;; proved, now reached THROUGH lex -> read -> parse.
 ;;
 ;; --------------------------------------------------------------------------
-;; The import decision: import the reader, duplicate the emitter helpers.
+;; The import decision: import shared AST types + reader, duplicate emitter helpers.
 ;; --------------------------------------------------------------------------
 ;; `tl_read.tl` is a `main`-less module (refs #44): `(import "tl_read.tl")` pulls
 ;; in `lex`, `read`, and the `Sexpr` AST (it transitively imports the `main`-less
@@ -29,35 +29,29 @@
 ;; lower -> codegen. That import is clean BECAUSE none of those modules declares a
 ;; `main`.
 ;;
+;; The shared `tl_ast_types.tl` module is also `main`-less, so `BinOp` / `Expr`
+;; come from the same AST definition used by `tl_emit.tl`.
+;;
 ;; The backend `tl_emit.tl`, by contrast, is a runnable DEMO and carries its own
 ;; `main`. Importing it here - where we ALSO need a `main` to drive the pipeline -
 ;; would concatenate two `main`s into one program and clash on the duplicate
-;; symbol (the known module limitation documented in tl_read.tl). So the tiny
-;; `BinOp` / `Expr` enums and the `emit-*` / `emit-program` helpers are DUPLICATED
-;; verbatim from tl_emit.tl below, with this note, pending a shared `main`-less
-;; emitter module (see #27). This is the same trade-off tl_eval.tl took: import
-;; the `main`-less front end, keep the `main`-bearing piece separate. The result
-;; COMPILES with exactly one `main` (this file's) and runs the real pipeline.
+;; symbol (the known module limitation documented in tl_read.tl). So only the
+;; `emit-*` / `emit-program` helpers are duplicated below, pending a shared
+;; `main`-less emitter module (see #27). This is the same trade-off tl_eval.tl
+;; took: import the `main`-less front end, keep the `main`-bearing piece separate.
+;; The result COMPILES with exactly one `main` (this file's) and runs the real
+;; pipeline.
 ;;
 ;; `string-eq` (used by `parse-op`) is a host builtin (see its many uses in
 ;; tl_eval.tl), not a module export, so it needs no import.
 
+(import "tl_ast_types.tl")
 (import "tl_read.tl")
 
 ;; ==========================================================================
 ;; Duplicated from tl_emit.tl (#155/#156) pending a shared module (see #27).
-;; The arithmetic target AST + its x86_64 emitter. Keep BYTE-IDENTICAL to
-;; tl_emit.tl so the pipeline emits exactly the assembly the emitter proved.
+;; The x86_64 emitter helpers. The AST comes from `tl_ast_types.tl`.
 ;; ==========================================================================
-
-(defenum BinOp
-  (OpAdd)
-  (OpSub)
-  (OpMul))
-
-(defenum Expr
-  (EInt i64)
-  (EBin BinOp Expr Expr))
 
 (define (emit-int [n : i64]) : String
   (string-append "    movq $" (string-append (int->string n) ", %rax\n")))
@@ -79,7 +73,9 @@
 (define (emit-expr [e : Expr]) : String
   (match e
     [(EInt n) (emit-int n)]
-    [(EBin op a b) (emit-bin op a b)]))
+    [(EVar _) (begin (panic "emit: variables are not in M1 arithmetic") "")]
+    [(EBin op a b) (emit-bin op a b)]
+    [(ECall _ _) (begin (panic "emit: calls are not in M1 arithmetic") "")]))
 
 (define (emit-program [e : Expr]) : String
   (string-append "    .text\n"

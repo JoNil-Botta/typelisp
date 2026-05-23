@@ -1,8 +1,8 @@
 //! Cross-platform proof that the TypeLisp self-hosting PARSER slice compiles.
 //!
 //! `examples/tl_parse.tl` is the middle of the first end-to-end self-hosted
-//! pipeline (#154): it `(import)`s the `main`-less reader (`lex` + `read` + the
-//! `Sexpr` AST), DUPLICATES the `main`-bearing emitter's `BinOp` / `Expr` + the
+//! pipeline (#154): it imports shared AST types and the `main`-less reader
+//! (`lex` + `read` + the `Sexpr` AST), DUPLICATES the `main`-bearing emitter's
 //! `emit-*` helpers (to avoid a double-`main` clash), adds `parse : Sexpr ->
 //! Expr` + `parse-op : String -> BinOp`, and `main` runs the whole pipeline -
 //! `(emit-program (parse (read (lex "(+ 1 (* 2 3))"))))` - printing the full

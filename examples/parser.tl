@@ -9,31 +9,30 @@
 ;;   term := int | '(' expr ')'
 ;;
 ;; (left-associative `+`) with a token cursor and recursive descent, exactly the
-;; shape a real parser needs: a `current`/`advance`/`expect` helper set over an
+;; shape a real parser needs: a `current`/`expect`/`advance` helper set over an
 ;; index into the token arrays, and mutually recursive `parse-expr`/`parse-term`.
 ;;
 ;; --------------------------------------------------------------------------
-;; AST representation (refs #13/#27): a FLAT postfix / RPN op stream, NOT a tree.
+;; AST representation (refs #13/#27): a REAL recursive `Expr` tree.
 ;; --------------------------------------------------------------------------
-;; The natural AST for this grammar is a recursive enum
+;; The AST is the natural recursive enum
 ;;   (defenum Expr (ENum i64) (EAdd Expr Expr))
-;; where an `EAdd` payload holds two `Expr` children. The TypeLisp typechecker
-;; currently *rejects* such recursive enums outright:
-;;   "recursive enum 'Expr' (variant 'EAdd') is not yet supported
-;;    (needs heap indirection, see #13)"
-;; (an enum value is inline `{ tag, payload }` storage, and a self-referential
-;; payload field would need to become an 8-byte heap pointer with per-node
-;; allocation in the constructor and a deref in every `match` arm — a layout +
-;; codegen change deferred to #13). Until recursive enums land, this parser emits
-;; the AST in a non-recursive but fully faithful form: a postfix op stream packed
-;; into an `(Array i64)`. Each cell is one of
-;;   OP-PUSH (0) followed by a literal value cell  -> "push integer N"
-;;   OP-ADD  (1)                                   -> "pop b, pop a, push a+b"
-;; This is a real abstract syntax encoding (the same information a tree carries,
-;; serialized in evaluation order); a tree-walking interpreter is replaced by a
-;; single linear pass over the op stream with an explicit value stack. When
-;; recursive enums are supported, `parse-expr`/`parse-term` can be retargeted to
-;; build `(EAdd a b)` / `(ENum n)` nodes with no change to the grammar logic.
+;; where an `EAdd` payload holds two `Expr` children. Recursive enum payloads
+;; landed in #111 (heap-pointer indirection, refs #13): each `Expr` child is an
+;; 8-byte heap pointer, so the layout is finite and every constructor that
+;; escapes via a return is promoted onto the heap. `parse-expr` folds left-
+;; associative `EAdd` nodes over the children produced by `parse-term`, and a
+;; recursive `eval` walks the tree with a `match`. This replaces the previous
+;; flat postfix / RPN op-stream encoding (and its value-stack folder) with a
+;; genuine tree-walking interpreter, validating recursive enums end-to-end.
+;;
+;; Cursor threading: a TypeLisp function returns a single value, and the parse
+;; routines must both *return an `Expr`* and *advance the input position*. The
+;; position is therefore an out-param: a single-cell `(Array i64)` (`cur`) whose
+;; element is the index of the token under the cursor. `current`/`advance`/
+;; `expect` read and bump that cell, and because arrays are heap references the
+;; mutation is visible to the caller across the recursive calls. This is the
+;; standard "parser threads a mutable cursor while returning a node" pattern.
 ;;
 ;; Token stream representation (mirrors `lexer.tl`): the tokens are stored as a
 ;; parallel pair of `(Array i64)` - a tag array (the Token kind, via `token-tag`)
@@ -46,6 +45,11 @@
   (TLParen)
   (TRParen)
   (TEnd))
+
+;; The real recursive AST: an integer literal, or the sum of two sub-expressions.
+(defenum Expr
+  (ENum i64)
+  (EAdd Expr Expr))
 
 ;; Numeric tag for a token kind, matching the lexer's encoding so a parser fed by
 ;; the lexer would agree on kinds. Exercises `match` over every Token variant.
@@ -74,117 +78,86 @@
 (define (tag-rparen) : i64 4)
 (define (tag-end) : i64 5)
 
-;; ---- AST op-code constants for the postfix op stream. ----
-(define (op-push) : i64 0)
-(define (op-add) : i64 1)
-
 ;; ---- Token cursor helpers over the parallel (tags, vals) arrays. ----
-;; The cursor is the `i64` index `pos`; `current-*` peek without consuming.
+;; The cursor position lives in `cur` (a single-cell out-param array); `current-*`
+;; peek the token under it without consuming, `advance` bumps it.
+
+;; Current cursor position.
+(define (cur-pos [cur : (Array i64)]) : i64
+  (array-ref cur 0))
 
 ;; Kind tag of the token under the cursor.
-(define (current-tag [tags : (Array i64)] [pos : i64]) : i64
-  (array-ref tags pos))
+(define (current-tag [tags : (Array i64)] [cur : (Array i64)]) : i64
+  (array-ref tags (cur-pos cur)))
 
 ;; Integer value of the token under the cursor (meaningful only for TInt).
-(define (current-val [vals : (Array i64)] [pos : i64]) : i64
-  (array-ref vals pos))
+(define (current-val [vals : (Array i64)] [cur : (Array i64)]) : i64
+  (array-ref vals (cur-pos cur)))
+
+;; Consume the current token: advance the cursor by one.
+(define (advance [cur : (Array i64)]) : unit
+  (array-set! cur 0 (+ (cur-pos cur) 1)))
 
 ;; `expect`: assert the cursor is on `want`, aborting via `panic` (#45) on a
-;; grammar violation - exactly how a real parser reports a syntax error. Returns
-;; the next cursor position (advance past the matched token).
-(define (expect [tags : (Array i64)] [pos : i64] [want : i64]) : i64
-  (if (= (array-ref tags pos) want)
-      (+ pos 1)
-      (begin
-        (panic "parser: unexpected token")
-        pos)))
-
-;; ---- Emit helper: append one op-code cell to the op stream and return the new
-;; length (the count of cells written so far). ----
-(define (emit [ops : (Array i64)] [len : i64] [code : i64]) : i64
-  (begin
-    (array-set! ops len code)
-    (+ len 1)))
+;; grammar violation - exactly how a real parser reports a syntax error - then
+;; consume the matched token.
+(define (expect [tags : (Array i64)] [cur : (Array i64)] [want : i64]) : unit
+  (if (= (current-tag tags cur) want)
+      (advance cur)
+      (panic "parser: unexpected token")))
 
 ;; ---- Recursive descent. ----
-;; Each parse routine threads two cursors: the input position `pos` over the
-;; token arrays, and the output length `len` over the op-stream array. Because a
-;; TypeLisp function returns a single value, the two are folded into one i64 by
-;; the convention `state = pos * BIG + len`, where BIG is larger than any
-;; op-stream length we will produce. `state-pos`/`state-len` unpack it. This is
-;; the standard "parser threads a mutable cursor" pattern expressed without
-;; out-params or a recursive struct.
-
-(define (big) : i64 1000000)
-
-(define (make-state [pos : i64] [len : i64]) : i64
-  (+ (* pos (big)) len))
-
-(define (state-pos [s : i64]) : i64
-  (/ s (big)))
-
-(define (state-len [s : i64]) : i64
-  (% s (big)))
+;; Each parse routine reads the token stream through the shared `cur` cursor and
+;; returns the `Expr` subtree it parsed, advancing `cur` past the tokens it
+;; consumed. `parse-expr` and `parse-term` are mutually recursive (a parenthesized
+;; term re-enters `parse-expr`).
 
 ;; term := int | '(' expr ')'
-;; Parse one term starting at `pos`, appending its postfix ops to `ops` starting
-;; at `len`; return the packed (pos, len) state after the term.
+;; Parse one term under the cursor and return its `Expr` node.
 (define (parse-term [tags : (Array i64)] [vals : (Array i64)]
-                    [ops : (Array i64)] [pos : i64] [len : i64]) : i64
-  (let ([t : i64 (current-tag tags pos)])
+                    [cur : (Array i64)]) : Expr
+  (let ([t : i64 (current-tag tags cur)])
     (if (= t (tag-int))
-        ;; A literal: emit OP-PUSH <value> and consume the TInt token.
-        (let ([len1 : i64 (emit ops len (op-push))])
-          (let ([len2 : i64 (emit ops len1 (current-val vals pos))])
-            (make-state (+ pos 1) len2)))
+        ;; A literal: build (ENum v) and consume the TInt token.
+        (let ([v : i64 (current-val vals cur)])
+          (begin
+            (advance cur)
+            (ENum v)))
         (if (= t (tag-lparen))
             ;; '(' expr ')': consume '(', parse the inner expr, consume ')'.
-            (let ([pos1 : i64 (expect tags pos (tag-lparen))])
-              (let ([inner : i64 (parse-expr tags vals ops pos1 len)])
-                (let ([pos2 : i64 (expect tags (state-pos inner) (tag-rparen))])
-                  (make-state pos2 (state-len inner)))))
+            (begin
+              (expect tags cur (tag-lparen))
+              (let ([inner : Expr (parse-expr tags vals cur)])
+                (begin
+                  (expect tags cur (tag-rparen))
+                  inner)))
             (begin
               (panic "parser: expected an integer or '('")
-              (make-state pos len))))))
+              ;; Dead code: `panic` never returns, but the `if` needs an `Expr`.
+              (ENum 0))))))
 
 ;; expr := term ('+' term)*  (left-associative '+').
 ;; Parse a term, then while the next token is '+', consume it, parse the next
-;; term, and emit OP-ADD - which in postfix combines the two most recent values,
-;; giving left-associative addition for free.
+;; term, and fold the accumulated tree into a new `(EAdd acc rhs)` node - giving
+;; a left-associative `+` AST: `1 + 2 + 3` parses to `(EAdd (EAdd 1 2) 3)`.
 (define (parse-expr [tags : (Array i64)] [vals : (Array i64)]
-                    [ops : (Array i64)] [pos : i64] [len : i64]) : i64
-  (let ([st : i64 (parse-term tags vals ops pos len)])
+                    [cur : (Array i64)]) : Expr
+  (let ([acc : Expr (parse-term tags vals cur)])
     (begin
-      (while (= (current-tag tags (state-pos st)) (tag-plus))
-        (let ([afterplus : i64 (+ (state-pos st) 1)])
-          (let ([rhs : i64 (parse-term tags vals ops afterplus (state-len st))])
-            (let ([len2 : i64 (emit ops (state-len rhs) (op-add))])
-              (set! st (make-state (state-pos rhs) len2))))))
-      st)))
+      (while (= (current-tag tags cur) (tag-plus))
+        (begin
+          (advance cur)
+          (set! acc (EAdd acc (parse-term tags vals cur)))))
+      acc)))
 
-;; ---- Evaluator: fold the postfix op stream with an explicit value stack. ----
-;; A single linear pass: OP-PUSH pushes the following value cell, OP-ADD pops two
-;; and pushes their sum. The final stack top is the expression's value.
-(define (eval-ops [ops : (Array i64)] [oplen : i64] [stack : (Array i64)]) : i64
-  (let ([i : i64 0]
-        [sp : i64 0])           ; stack pointer (count of values on the stack)
-    (begin
-      (while (< i oplen)
-        (let ([code : i64 (array-ref ops i)])
-          (if (= code (op-push))
-              (begin
-                (array-set! stack sp (array-ref ops (+ i 1)))
-                (set! sp (+ sp 1))
-                (set! i (+ i 2)))
-              (begin
-                ;; OP-ADD: pop b (top), pop a, push a + b.
-                (let ([b : i64 (array-ref stack (- sp 1))])
-                  (let ([a : i64 (array-ref stack (- sp 2))])
-                    (begin
-                      (array-set! stack (- sp 2) (+ a b))
-                      (set! sp (- sp 1)))))
-                (set! i (+ i 1))))))
-      (array-ref stack 0))))
+;; ---- Evaluator: a recursive tree walk over the real `Expr` AST. ----
+;; `ENum` yields its literal; `EAdd` recurses into both children and sums them.
+;; The bound recursive payloads (`a`/`b`) are pointers to the child enums, passed
+;; straight back into `eval`.
+(define (eval [e : Expr]) : i64
+  (match e
+    [(ENum n) n]
+    [(EAdd a b) (+ (eval a) (eval b))]))
 
 ;; ---- Build the token stream for the sample "1 + 2 + 3" by hand. ----
 ;; (A lexer would produce this; here we construct the parallel arrays directly so
@@ -211,19 +184,17 @@
     6))
 
 ;; Parse and evaluate "1 + 2 + 3":
-;;   - parse-expr emits the postfix op stream
-;;       PUSH 1, PUSH 2, ADD, PUSH 3, ADD
-;;     (left-associative: ((1 + 2) + 3)).
-;;   - eval-ops folds it to 6.
+;;   - parse-expr builds the real Expr tree (EAdd (EAdd (ENum 1) (ENum 2))
+;;     (ENum 3)) - left-associative.
+;;   - eval recursively folds it to 6.
 ;; `main` returns 6, an observable result an execution test can assert as the
 ;; process exit code.
 (define (main) : i64
   (let ([tags : (Array i64) (make-array i64 16)]
         [vals : (Array i64) (make-array i64 16)]
-        [ops : (Array i64) (make-array i64 64)]
-        [stack : (Array i64) (make-array i64 32)])
+        [cur : (Array i64) (make-array i64 1)])
     (begin
       (build-sample-tags tags)
       (build-sample-vals vals)
-      (let ([st : i64 (parse-expr tags vals ops 0 0)])
-        (eval-ops ops (state-len st) stack)))))
+      (array-set! cur 0 0)
+      (eval (parse-expr tags vals cur)))))

@@ -227,24 +227,28 @@
     [(SNil) 0]
     [(SCons h t) (+ (count-chars h) (count-chars t))]))
 
-;; main: lex a real nested s-expression that mixes integer atoms AND string
-;; and character literals, READ it into the `Sexpr` cons tree, and fold that tree
-;; three ways. The source `(greet "hi" #\space' 7 (msg #\newline' "yo" 35))`
-;; lexes (#128/#333: `"..."` is one TStr and `#\...'` is one TChar) to
-;;   (  greet  "hi"  #\space'  7  (  msg  #\newline'  "yo"  35  )  )  End
-;; and reads into the tree
-;;   (SCons (SSym "greet")
-;;     (SCons (SStr "hi")
-;;       (SCons (SChar space)
-;;         (SCons (SInt 7)
-;;           (SCons (SCons (SSym "msg")
-;;             (SCons (SChar newline) (SCons (SStr "yo") (SCons (SInt 35) (SNil)))))
-;;           (SNil)))))
-;; Its integer atoms are 7 and 35 (`sum-ints` => 42), and it has TWO string atoms
-;; - "hi" at the top level and "yo" nested one list deep (`count-strs` => 2) -
-;; plus TWO character atoms (`count-chars` => 2). The result is 42 + 2 + 2 = 46,
-;; an observable exit code that depends on the reader consuming both `TStr` and
-;; `TChar` tokens into distinct atoms at every depth.
+(define (sum-char-codes [s : Sexpr]) : i64
+  (match s
+    [(SInt _) 0]
+    [(SSym _) 0]
+    [(SStr _) 0]
+    [(SChar c) (code c)]
+    [(SNil) 0]
+    [(SCons h t) (+ (sum-char-codes h) (sum-char-codes t))]))
+
+;; main: lex a real nested s-expression that mixes integer, string, and
+;; character atoms, READ it into the `Sexpr` cons tree, and fold that tree. The
+;; source `(greet "hi" #x' 7 (msg "yo" #\space' #\newline' 35 #\n'))` lexes to
+;;   (  greet  "hi"  #x'  7  (  msg  "yo"  #\space'  #\newline'  35  #\n'  )  )  End
+;; and reads into a recursive tree containing two string atoms, four character
+;; atoms, and integer atoms summing to 42. The decoded character code sum is 172,
+;; so `main` returns 42 + 2 + 4 + 10 = 58 when the reader preserves char values.
 (define (main) : i64
-  (let ([tree : Sexpr (read (lex "(greet \"hi\" #\\space' 7 (msg #\\newline' \"yo\" 35))"))])
-    (+ (sum-ints tree) (+ (count-strs tree) (count-chars tree)))))
+  (let ([tree : Sexpr
+          (read (lex "(greet \"hi\" #x' 7 (msg \"yo\" #\\space' #\\newline' 35 #\\n'))"))])
+    (+ (sum-ints tree)
+       (+ (count-strs tree)
+          (+ (count-chars tree)
+             (if (= (sum-char-codes tree) 172)
+                 10
+                 0))))))

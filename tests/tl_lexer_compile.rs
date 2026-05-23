@@ -131,6 +131,7 @@ fn tl_lexer_tl_compiles_to_assembly() {
         "_tl_count_syms:",
         "_tl_count_strs:",
         "_tl_count_chars:",
+        "_tl_sum_char_codes:",
         "_tl_count_tokens:",
         "_tl_token_tag:",
         "_tl_token_int:",
@@ -166,6 +167,11 @@ fn tl_lexer_tl_compiles_to_assembly() {
     assert!(
         asm.contains("call _tl_count_chars"),
         "tl_lexer assembly shows no main -> count-chars call (char-literal tally):\n{}",
+        asm,
+    );
+    assert!(
+        asm.contains("call _tl_sum_char_codes"),
+        "tl_lexer assembly shows no main -> sum-char-codes call (char value check):\n{}",
         asm,
     );
 

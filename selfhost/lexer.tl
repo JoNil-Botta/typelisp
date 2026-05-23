@@ -394,6 +394,24 @@
                 (set! i (+ i 1))))))
       chars)))
 
+;; Sum character code points in TChar tokens so the demo observes decoded
+;; single, escaped, and named character values, not just token tags.
+(define (sum-char-codes [toks : (Array Token)]) : i64
+  (let ([i : i64 0]
+        [total : i64 0]
+        [keep : bool true])
+    (begin
+      (while keep
+        (let ([t : Token (array-ref toks i)])
+          (if (= (token-tag t) (tag-end))
+              (set! keep false)
+              (begin
+                (if (= (token-tag t) (tag-char))
+                    (set! total (+ total (code (token-char t))))
+                    (set! total total))
+                (set! i (+ i 1))))))
+      total)))
+
 ;; Total token count (every token before the TEnd sentinel). Depends on the
 ;; comment skip producing NO token and a string literal being exactly ONE token.
 (define (count-tokens [toks : (Array Token)]) : i64
@@ -409,19 +427,18 @@
 ;; Lex a real TypeLisp s-expression sample exercising string-literal,
 ;; char-literal, and line-comment scanners, and return an observable count. The
 ;; source is
-;;   (foo "hi" #\space' #\newline' #A' 42) ; c
+;;   (foo "hi" #x' #\n' #\space' #\newline' 42) ; c
 ;;   (bar)
-;; built from the escaped literal
-;; "(foo \"hi\" #\\space' #\\newline' #A' 42) ; c\n(bar)" (the host compiler
-;; decodes \" to a quote, \\ to a backslash, and \n to a newline). The TypeLisp
-;; lexer then tokenizes that runtime string into:
-;;   ( foo "hi" #\space' #\newline' #A' 42 ) ; comment skipped... ( bar ) End
-;; i.e. TLParen TSym(foo) TStr(hi) TChar(space) TChar(newline) TChar(A) TInt(42)
-;; TRParen <comment dropped> TLParen TSym(bar) TRParen [+ TEnd]. That is 11
-;; tokens with exactly 1 TStr and 3 TChar tokens; the `; c` comment contributes
-;; NO token. `main` returns total tokens (11) + TStr count (1) + TChar count (3)
-;; = 15 - an observable exit code that depends on strings, chars, and comments
-;; all staying distinct.
+;; built from an escaped string literal. It tokenizes into 12 tokens: the prior
+;; string/comment witness plus four TChar literals. The decoded char code sum is
+;; 172 (`x` 120 + newline 10 + space 32 + named newline 10). `main` returns total
+;; tokens (12) + TStr count (1) + TChar count (4) when that value sum matches,
+;; for an observable exit code of 17.
 (define (main) : i64
-  (let ([toks : (Array Token) (lex "(foo \"hi\" #\\space' #\\newline' #A' 42) ; c\n(bar)")])
-    (+ (count-tokens toks) (+ (count-strs toks) (count-chars toks)))))
+  (let ([toks : (Array Token)
+          (lex "(foo \"hi\" #x' #\\n' #\\space' #\\newline' 42) ; c\n(bar)")])
+    (+ (count-tokens toks)
+       (+ (count-strs toks)
+          (if (= (sum-char-codes toks) 172)
+              (count-chars toks)
+              0)))))

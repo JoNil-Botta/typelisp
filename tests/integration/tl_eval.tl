@@ -732,43 +732,39 @@
 
 ;; --------------------------------------------------------------------------
 ;; main: the whole front end composed - lex, read MANY forms, interpret with
-;; MULTI-ARGUMENT user functions, recursion, AND the `begin` sequencing form.
+;; MULTI-ARGUMENT user functions, recursion, multi-binding `let`, STRING OPS, and
+;; the `begin` sequencing form.
 ;; --------------------------------------------------------------------------
 ;; `(run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1)))))
-;;                (begin (print \"ab\") (print 7) (pow 2 5))")`:
+;;                (let ((s \"hello world\") (h (substring s 0 5)) (w (substring s 6 5))
+;;                      (n (string-length h)) (g (string-append h (string-append \" \" w)))
+;;                      (t (string-append g (int->string (pow 2 n)))))
+;;                  (begin
+;;                    (print t)
+;;                    (print (+ (string->int (substring t 11 2)) (string-eq g s)))
+;;                    (+ (string->int (substring t 11 2)) (string-eq g s)))))")`:
 ;;   - the program is TWO top-level forms: a recursive TWO-parameter `define` of
-;;     `pow`, then the trailing expression - a `(begin ...)` SPECIAL FORM, the new
-;;     SEQUENCING primitive that retires the old `seq` two-argument-function
-;;     workaround. (`begin` is dispatched as a special form BEFORE the user-call /
-;;     builtin paths, so it controls evaluation order directly rather than being a
-;;     call whose arguments happen to be evaluated left-to-right.)
-;;   - the program reader folds the `pow` define into the `FnEnv`, then evaluates
-;;     the `begin` against that function env.
-;;   - the `begin` has THREE sub-expressions, walked head-first by `eval-seq` and
-;;     each evaluated IN ORDER for its side effects, the LAST one's value returned:
-;;     FIRST `(print "ab")` - the string literal `"ab"` evaluates to `(VStr "ab")`,
-;;     printed via the `VStr` arm (host `print-string`) which writes the raw bytes
-;;     `ab` to STDOUT (NO trailing newline); SECOND `(print 7)` - `7` is `(VInt 7)`,
-;;     printed via the `VInt` arm (host `print`, which appends a newline), writing
-;;     `7\n`; THIRD `(pow 2 5)` - the recursive `pow` computes `(VInt 32)`, which is
-;;     NOT printed (it is the LAST form, evaluated only to produce the value). So
-;;     the first two forms run purely for their output side effects and the third's
-;;     value is the result of the whole `begin` - `(VInt 32)`. STDOUT is therefore
-;;     `ab7\n` and the program denotes `32`, so the process exit code is the wrapped
-;;     `32 & 0xff = 32` (within the mod-256 ceiling). The `7\n` printed before the
-;;     unprinted `32` is the load-bearing witness that `begin` evaluates EVERY
-;;     intermediate form for side effects yet returns ONLY the last form's value.
+;;     `pow`, then the trailing expression - a MULTI-BINDING `let` whose body is a
+;;     `(begin ...)` SPECIAL FORM. `begin` retires the old `seq` two-arg-function
+;;     workaround and is dispatched BEFORE the user-call / builtin paths, so it
+;;     controls evaluation order directly.
+;;   - the `let` is folded SEQUENTIALLY (`let*`): `s` is the source string, `h` and
+;;     `w` are `substring` slices, `n` is `(string-length h)`, `g` rebuilds the
+;;     source via nested `string-append`, and `t` appends `(int->string (pow 2 n))`
+;;     to produce `(VStr "hello world32")`.
+;;   - the `begin` has THREE sub-expressions, walked head-first by `eval-seq`:
+;;     FIRST `(print t)` prints the string bytes `hello world32`; SECOND the
+;;     printed sum slices `"32"` back out, parses it, and adds `(string-eq g s)` =
+;;     1, printing `33\n`; THIRD the same sum is evaluated but NOT printed, so the
+;;     `begin` result is `(VInt 33)`. STDOUT is therefore `hello world3233\n`, and
+;;     the program denotes `33`.
 ;; This single program proves the evaluator now (a) carries a tagged `Value`
-;; domain - BOTH a `(VStr ...)` and a `(VInt ...)` are PRINTABLE (the `VStr` arm
-;; dispatches to the host `print-string`, the `VInt` arm to the host `print`);
-;; (b) supports MULTI-ARGUMENT user functions with RECURSION through the shared
-;; function environment; and (c) exposes the `begin` SEQUENCING special form that
-;; evaluates a sequence of forms in order and returns the last value - the natural
-;; sequencing primitive, replacing the `seq` 2-arg-function stand-in (now retired).
-;; (The interpreter's full STRING TOOLKIT - measure / slice / compare / convert /
-;; build via `substring` / `string-length` / `string-eq` / `int->string` /
-;; `string->int` / `string-append` - remains wired in `eval-sexpr` and is exercised
-;; by the dedicated string integration cases. Deferred: lambda; closures; variadic
-;; arity; string-literal escapes.)
+;; domain - BOTH a `(VStr ...)` and a `(VInt ...)` are PRINTABLE; (b) supports
+;; MULTI-ARGUMENT user functions with RECURSION through the shared function
+;; environment; (c) supports MULTI-BINDING `let` with sequential scoping; (d)
+;; exposes the STRING TOOLKIT (`substring` / `string-length` / `string-eq` /
+;; `int->string` / `string->int` / `string-append`); and (e) exposes `begin`,
+;; which evaluates a sequence in order and returns only the last value. (Deferred:
+;; lambda; closures; variadic arity; string-literal escapes.)
 (define (main) : i64
-  (run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (begin (print \"ab\") (print 7) (pow 2 5))"))
+  (run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (let ((s \"hello world\") (h (substring s 0 5)) (w (substring s 6 5)) (n (string-length h)) (g (string-append h (string-append \" \" w))) (t (string-append g (int->string (pow 2 n))))) (begin (print t) (print (+ (string->int (substring t 11 2)) (string-eq g s))) (+ (string->int (substring t 11 2)) (string-eq g s))))"))

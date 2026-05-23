@@ -277,25 +277,28 @@ fn type_lisp_programs_compile_link_and_run() {
         // (integer + newline), a `VStr` via the host `print-string` (raw bytes, NO
         // newline). `main` runs `run-program` over the TWO-form program
         // `(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1)))))
-        //  (begin (print "ab") (print 7) (pow 2 5))`:
+        //  (let ((s "hello world") (h (substring s 0 5)) (w (substring s 6 5))
+        //        (n (string-length h)) (g (string-append h (string-append " " w)))
+        //        (t (string-append g (int->string (pow 2 n)))))
+        //    (begin
+        //      (print t)
+        //      (print (+ (string->int (substring t 11 2)) (string-eq g s)))
+        //      (+ (string->int (substring t 11 2)) (string-eq g s))))`:
         // the recursive TWO-parameter `pow` is folded into the `FnEnv`, then the
-        // trailing `(begin ...)` SPECIAL FORM (the new sequencing primitive that
-        // retires the old `seq` two-arg-function workaround) is evaluated: its
-        // THREE sub-expressions run in order for their side effects, the LAST one's
-        // value returned. FIRST `(print "ab")` prints `ab` via the `VStr` arm (host
-        // `print-string`, no newline); SECOND `(print 7)` prints `7\n` via the
-        // `VInt` arm (host `print`, with newline); THIRD `(pow 2 5)` computes
-        // `(VInt 32)` but is NOT printed (it is the last form, only its value is
-        // the result). So stdout is `ab7\n` and the `begin` denotes `(VInt 32)` -
-        // the `7\n` printed before the unprinted `32` witnesses that `begin` runs
-        // every intermediate form for side effects yet returns only the last value;
-        // printing to stdout escapes the old mod-256 exit-code ceiling, so the exit
-        // code is the wrapped `32 & 0xff = 32`. All three imported `main`-less
+        // trailing MULTI-BINDING `let` rebuilds `"hello world"` from substring
+        // slices via `string-append`, appends `(int->string (pow 2 n))` to form
+        // `"hello world32"`, and uses `begin` in the body. The first `begin` form
+        // prints that string with no newline; the second slices `"32"` back out,
+        // parses it, adds `(string-eq g s)` = 1, and prints `33\n`; the third
+        // evaluates the same sum but does NOT print it, so the `begin` denotes
+        // `(VInt 33)`. Stdout is `hello world3233\n`, proving `begin` sequences
+        // side effects while returning only the last value, and the exit code is
+        // `33`. All three imported `main`-less
         // modules are copied alongside so the `(import)` chain resolves.
         Case {
             name: "tl_eval",
-            exit_code: 32,
-            stdout: "ab7\n",
+            exit_code: 33,
+            stdout: "hello world3233\n",
             deps: &["tl_read.tl", "tl_lex.tl", "tl_token.tl"],
         },
         // refs #41: NESTED PATTERN MATCHING, standalone witness. A tree-walking
@@ -536,24 +539,22 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         // exercised through the explicit compile -> as -> ld -> run pipeline.
         // Runs `run-program` over the two-form program
         // `(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1)))))
-        //  (begin (print "ab") (print 7) (pow 2 5))`:
-        // `pow` is folded into the `FnEnv`, then the trailing `(begin ...)` SPECIAL
-        // FORM (the sequencing primitive that retires the old `seq` two-arg-function
-        // workaround) evaluates its THREE sub-expressions in order for their side
-        // effects, returning the LAST one's value: `(print "ab")` prints `ab` (the
-        // `VStr` arm, host `print-string`, no newline), `(print 7)` prints `7\n`
-        // (the `VInt` arm, host `print`, with newline), and `(pow 2 5)` = `(VInt 32)`
-        // is NOT printed (the last form, only its value is the result). So stdout is
-        // `ab7\n` and the `begin` denotes `(VInt 32)`, so the exit code is the
-        // wrapped `32 & 0xff = 32`. The reader (and transitively the lexer + token
+        //  (let ((s "hello world") ... (t (string-append g (int->string (pow 2 n)))))
+        //    (begin (print t) (print (+ ...)) (+ ...)))`:
+        // `pow` is folded into the `FnEnv`, then the trailing `let` exercises the
+        // interpreted string toolkit (`substring`, `string-length`, `string-append`,
+        // `int->string`, `string->int`, `string-eq`) and uses `begin` to sequence
+        // side-effecting prints before returning the final unprinted sum. Stdout is
+        // `hello world3233\n` and the `begin` denotes `(VInt 33)`, so the exit code
+        // is `33`. The reader (and transitively the lexer + token
         // model) is reused via the `main`-less `tl_read.tl` import - including its
         // lower-level `read-form` cursor entry, which the program reader drives to
         // read all top-level forms; all three imported modules are copied
         // alongside so the imports resolve.
         Case {
             name: "tl_eval",
-            exit_code: 32,
-            stdout: "ab7\n",
+            exit_code: 33,
+            stdout: "hello world3233\n",
             deps: &["tl_read.tl", "tl_lex.tl", "tl_token.tl"],
         },
         // refs #41: nested pattern matching, also through the explicit

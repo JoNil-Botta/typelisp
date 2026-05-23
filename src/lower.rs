@@ -247,11 +247,12 @@ impl ProgramLowerer {
                             &self.enums,
                             &self.structs,
                         );
-                        let (func, _result) = fn_lowerer.lower_expr_to_fn(value, &val_ty);
+                        let (lowered_fn, _result) = fn_lowerer.lower_expr_to_fn(value, &val_ty);
                         self.source_spans
                             .functions
                             .insert(init_fn_name, value.span());
-                        self.functions.push(func);
+                        self.functions.push(lowered_fn.function);
+                        self.functions.extend(lowered_fn.synthetic_functions);
                     }
                     self.globals.push((name.clone(), val_ty, init_value));
                 }
@@ -266,11 +267,12 @@ impl ProgramLowerer {
                         .map(|(n, t)| (n.clone(), self.resolve_type(t)))
                         .collect();
                     let ret = self.resolve_type(ret);
-                    let func = self.lower_function(name, &params, &ret, body);
+                    let lowered_fn = self.lower_function(name, &params, &ret, body);
                     self.source_spans
                         .functions
                         .insert(name.clone(), body.span());
-                    self.functions.push(func);
+                    self.functions.push(lowered_fn.function);
+                    self.functions.extend(lowered_fn.synthetic_functions);
                 }
                 ast::Decl::Extern { name, ty } => {
                     self.externs.push((name.clone(), self.resolve_type(ty)));
@@ -300,7 +302,7 @@ impl ProgramLowerer {
         params: &[(String, Type)],
         ret: &Type,
         body: &ast::Expr,
-    ) -> Function {
+    ) -> LoweredFunction {
         let fn_lowerer = FnLowerer::new(
             name,
             params,
@@ -377,6 +379,15 @@ struct FnLowerer {
     /// Used when storing aggregate values into dynamic-array buffers, because
     /// the buffer may be owned by the caller rather than this frame.
     force_heap_aggregate_storage: bool,
+    /// Synthetic top-level functions created while lowering lambda literals in
+    /// this function.
+    synthetic_functions: Vec<Function>,
+    lambda_counter: usize,
+}
+
+struct LoweredFunction {
+    function: Function,
+    synthetic_functions: Vec<Function>,
 }
 
 /// The kind of escaping aggregate whose constructor storage may be
@@ -570,6 +581,8 @@ impl FnLowerer {
             locals: Vec::new(),
             ret: ret.clone(),
             force_heap_aggregate_storage: false,
+            synthetic_functions: Vec::new(),
+            lambda_counter: 0,
         }
     }
 
@@ -641,6 +654,164 @@ impl FnLowerer {
         }
     }
 
+    fn infer_expr_type(&self, expr: &ast::Expr) -> Type {
+        self.infer_expr_type_with_locals(expr, &HashMap::new())
+    }
+
+    fn infer_expr_type_with_locals(
+        &self,
+        expr: &ast::Expr,
+        local_types: &HashMap<String, Type>,
+    ) -> Type {
+        match expr.unspan() {
+            ast::Expr::Literal(ast::Literal::Int(_)) => Type::I64,
+            ast::Expr::Literal(ast::Literal::Float(_)) => Type::F64,
+            ast::Expr::Literal(ast::Literal::Bool(_)) => Type::Bool,
+            ast::Expr::Literal(ast::Literal::Char(_)) => Type::Char,
+            ast::Expr::Literal(ast::Literal::String(_)) => Type::String,
+            ast::Expr::Literal(ast::Literal::Unit) => Type::Unit,
+            ast::Expr::Var(name) => {
+                if let Some(ty) = local_types.get(name) {
+                    ty.clone()
+                } else if let Some(&var) = self.vars.get(name) {
+                    self.value_type(&Value::Var(var))
+                } else {
+                    self.global_types
+                        .get(name)
+                        .or_else(|| self.function_types.get(name))
+                        .cloned()
+                        .or_else(|| {
+                            self.enums
+                                .lookup_variant(name)
+                                .and_then(|(enum_name, _tag, fields)| {
+                                    fields.is_empty().then(|| Type::Enum(enum_name.to_string()))
+                                })
+                        })
+                        .unwrap_or(Type::Unit)
+                }
+            }
+            ast::Expr::Binary { op, lhs, rhs } => match op {
+                ast::BinOp::Eq
+                | ast::BinOp::Ne
+                | ast::BinOp::Lt
+                | ast::BinOp::Le
+                | ast::BinOp::Gt
+                | ast::BinOp::Ge
+                | ast::BinOp::And
+                | ast::BinOp::Or => Type::Bool,
+                _ => {
+                    let lhs_ty = self.infer_expr_type_with_locals(lhs, local_types);
+                    if lhs_ty != Type::Unit {
+                        lhs_ty
+                    } else {
+                        self.infer_expr_type_with_locals(rhs, local_types)
+                    }
+                }
+            },
+            ast::Expr::Unary { op, expr } => match op {
+                ast::UnOp::Not => Type::Bool,
+                _ => self.infer_expr_type_with_locals(expr, local_types),
+            },
+            ast::Expr::Call { func, .. } => {
+                match self.infer_expr_type_with_locals(func, local_types) {
+                    Type::Func(_, ret) => *ret,
+                    Type::Enum(name) => Type::Enum(name),
+                    _ => Type::Unit,
+                }
+            }
+            ast::Expr::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                let then_ty = self.infer_expr_type_with_locals(then_branch, local_types);
+                if then_ty != Type::Unit {
+                    then_ty
+                } else {
+                    self.infer_expr_type_with_locals(else_branch, local_types)
+                }
+            }
+            ast::Expr::Let { bindings, body } => {
+                let mut scoped = local_types.clone();
+                for (name, ty, value) in bindings {
+                    let binding_ty = ty
+                        .as_ref()
+                        .map(|ty| self.resolve_type(ty))
+                        .unwrap_or_else(|| self.infer_expr_type_with_locals(value, &scoped));
+                    scoped.insert(name.clone(), binding_ty);
+                }
+                self.infer_expr_type_with_locals(body, &scoped)
+            }
+            ast::Expr::Begin(exprs) => exprs
+                .last()
+                .map(|expr| self.infer_expr_type_with_locals(expr, local_types))
+                .unwrap_or(Type::Unit),
+            ast::Expr::Ann { ty, .. } | ast::Expr::Cast { ty, .. } => self.resolve_type(ty),
+            ast::Expr::Lambda { params, ret, body } => {
+                let mut lambda_locals = HashMap::new();
+                for (name, ty) in params {
+                    lambda_locals.insert(name.clone(), self.resolve_type(ty));
+                }
+                let ret_ty = ret
+                    .as_ref()
+                    .map(|ty| self.resolve_type(ty))
+                    .unwrap_or_else(|| self.infer_expr_type_with_locals(body, &lambda_locals));
+                Type::Func(
+                    params.iter().map(|(_, ty)| self.resolve_type(ty)).collect(),
+                    Box::new(ret_ty),
+                )
+            }
+            ast::Expr::Tuple(elems) => Type::Tuple(
+                elems
+                    .iter()
+                    .map(|elem| self.infer_expr_type_with_locals(elem, local_types))
+                    .collect(),
+            ),
+            ast::Expr::Array(elems) => elems.first().map_or(Type::Unit, |first| {
+                Type::Array(
+                    Box::new(self.infer_expr_type_with_locals(first, local_types)),
+                    elems.len(),
+                )
+            }),
+            ast::Expr::MakeArray { elem_ty, .. } => {
+                Type::DynArray(Box::new(self.resolve_type(elem_ty)))
+            }
+            ast::Expr::ArrayRef { expr, .. } => {
+                match self.infer_expr_type_with_locals(expr, local_types) {
+                    Type::Array(elem, _) | Type::DynArray(elem) => *elem,
+                    _ => Type::Unit,
+                }
+            }
+            ast::Expr::StringRef { .. } => Type::Char,
+            ast::Expr::StructGet { expr, field } => {
+                match self.infer_expr_type_with_locals(expr, local_types) {
+                    Type::Struct(name) => self
+                        .structs
+                        .fields(&name)
+                        .and_then(|fields| fields.iter().find(|f| f.name == *field))
+                        .map(|field| self.resolve_type(&field.ty))
+                        .unwrap_or(Type::Unit),
+                    _ => Type::Unit,
+                }
+            }
+            ast::Expr::TupleRef { expr, index } => {
+                match self.infer_expr_type_with_locals(expr, local_types) {
+                    Type::Tuple(elems) => elems.get(*index).cloned().unwrap_or(Type::Unit),
+                    _ => Type::Unit,
+                }
+            }
+            ast::Expr::Match { arms, .. } => arms
+                .first()
+                .map(|(_, body)| self.infer_expr_type_with_locals(body, local_types))
+                .unwrap_or(Type::Unit),
+            ast::Expr::Set(_, _)
+            | ast::Expr::While { .. }
+            | ast::Expr::Foreach { .. }
+            | ast::Expr::ArraySet { .. } => Type::Unit,
+            ast::Expr::Spanned { expr, .. } => self.infer_expr_type_with_locals(expr, local_types),
+        }
+    }
+
     fn dummy_value_for_type(&self, ty: &Type) -> Value {
         match self.resolve_type(ty) {
             Type::I64
@@ -671,7 +842,7 @@ impl FnLowerer {
     }
 
     /// Lower a function body and produce a complete IR Function.
-    fn lower_body(mut self, body: &ast::Expr, ret_ty: &Type) -> Function {
+    fn lower_body(mut self, body: &ast::Expr, ret_ty: &Type) -> LoweredFunction {
         let result = if *ret_ty == Type::Unit {
             self.lower_expr(body)
         } else {
@@ -684,13 +855,17 @@ impl FnLowerer {
         }
 
         let blocks = self.builder.build();
-        Function {
+        let function = Function {
             name: self.name,
             params: self.params,
             ret: ret_ty.clone(),
             locals: self.locals,
             blocks,
             entry: "entry".into(),
+        };
+        LoweredFunction {
+            function,
+            synthetic_functions: self.synthetic_functions,
         }
     }
 
@@ -739,8 +914,7 @@ impl FnLowerer {
             ast::Expr::StructGet { expr, field } => self.lower_struct_get(expr, field),
             ast::Expr::Tuple(elems) => self.lower_tuple(elems),
             ast::Expr::TupleRef { expr, index } => self.lower_tuple_ref(expr, *index),
-            // Lambda lowering is still stubbed to unit for now.
-            ast::Expr::Lambda { .. } => Value::ConstUnit,
+            ast::Expr::Lambda { params, ret, body } => self.lower_lambda(params, ret, body),
             ast::Expr::Foreach {
                 index,
                 index_ty,
@@ -760,6 +934,54 @@ impl FnLowerer {
             ast::Literal::Char(c) => Value::ConstI8(*c as i8),
             ast::Literal::String(_) => Value::ConstUnit, // Not yet supported
             ast::Literal::Unit => Value::ConstUnit,
+        }
+    }
+
+    fn lower_lambda(
+        &mut self,
+        params: &[(String, Type)],
+        ret: &Option<Type>,
+        body: &ast::Expr,
+    ) -> Value {
+        let params: Vec<(String, Type)> = params
+            .iter()
+            .map(|(name, ty)| (name.clone(), self.resolve_type(ty)))
+            .collect();
+        let ret_ty = ret
+            .as_ref()
+            .map(|ty| self.resolve_type(ty))
+            .unwrap_or_else(|| self.infer_expr_type(body));
+        let name = self.fresh_lambda_name();
+        self.function_types.insert(
+            name.clone(),
+            Type::Func(
+                params.iter().map(|(_, ty)| ty.clone()).collect(),
+                Box::new(ret_ty.clone()),
+            ),
+        );
+
+        let lambda_lowerer = FnLowerer::new(
+            &name,
+            &params,
+            &ret_ty,
+            &self.function_types,
+            &self.global_types,
+            &self.enums,
+            &self.structs,
+        );
+        let lowered = lambda_lowerer.lower_body(body, &ret_ty);
+        self.synthetic_functions.extend(lowered.synthetic_functions);
+        self.synthetic_functions.push(lowered.function);
+        Value::Function(name)
+    }
+
+    fn fresh_lambda_name(&mut self) -> String {
+        loop {
+            let name = format!("__tl_lambda_{}_{}", self.name, self.lambda_counter);
+            self.lambda_counter += 1;
+            if !self.function_types.contains_key(&name) && !self.global_types.contains_key(&name) {
+                return name;
+            }
         }
     }
 
@@ -3326,7 +3548,7 @@ impl FnLowerer {
 
     /// Lower an expression to a standalone function with a Return.
     /// Used for global initializers.
-    fn lower_expr_to_fn(mut self, expr: &ast::Expr, ret_ty: &Type) -> (Function, Value) {
+    fn lower_expr_to_fn(mut self, expr: &ast::Expr, ret_ty: &Type) -> (LoweredFunction, Value) {
         let result = if *ret_ty == Type::Unit {
             self.lower_expr(expr)
         } else {
@@ -3334,7 +3556,7 @@ impl FnLowerer {
         };
         self.builder.emit(Instruction::Return(Some(result.clone())));
         let blocks = self.builder.build();
-        let func = Function {
+        let function = Function {
             name: self.name,
             params: self.params,
             ret: ret_ty.clone(),
@@ -3342,7 +3564,13 @@ impl FnLowerer {
             blocks,
             entry: "entry".into(),
         };
-        (func, result)
+        (
+            LoweredFunction {
+                function,
+                synthetic_functions: self.synthetic_functions,
+            },
+            result,
+        )
     }
 }
 
@@ -5412,24 +5640,114 @@ mod tests {
     }
 
     #[test]
-    fn test_lower_lambda_stub() {
-        // Lambda lowering is stubbed to ConstUnit.
+    fn test_lower_noncapturing_lambda_lifts_to_synthetic_function() {
         let prog = parse(
             r#"
             (define (get_fn) : (-> i64 i64)
-              (lambda ([x : i64]) : i64 x))
+              (lambda ([x : i64]) : i64 (+ x 1)))
         "#,
         )
         .unwrap();
         let ir = lower_program(&prog);
-        assert_eq!(ir.functions.len(), 1);
+        assert_eq!(ir.functions.len(), 2);
 
-        let has_unit_ret = ir.functions[0].blocks.iter().any(|b| {
-            b.instructions
-                .iter()
-                .any(|i| matches!(i, Instruction::Return(Some(Value::ConstUnit))))
+        let get_fn = ir
+            .functions
+            .iter()
+            .find(|f| f.name == "get_fn")
+            .expect("get_fn lowered");
+        let synthetic_name = get_fn.blocks.iter().find_map(|b| {
+            b.instructions.iter().find_map(|i| match i {
+                Instruction::Return(Some(Value::Function(name))) => Some(name.clone()),
+                _ => None,
+            })
         });
-        assert!(has_unit_ret);
+        assert_eq!(synthetic_name, Some("__tl_lambda_get_fn_0".into()));
+
+        let lambda = ir
+            .functions
+            .iter()
+            .find(|f| f.name == "__tl_lambda_get_fn_0")
+            .expect("synthetic lambda lowered");
+        assert_eq!(lambda.params, vec![(0, Type::I64)]);
+        assert_eq!(lambda.ret, Type::I64);
+        assert!(lambda.blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                matches!(
+                    i,
+                    Instruction::BinOp {
+                        op: BinOp::Add,
+                        lhs: Value::Var(0),
+                        rhs: Value::ConstI64(1),
+                        ty: Type::I64,
+                        ..
+                    }
+                )
+            })
+        }));
+    }
+
+    #[test]
+    fn test_lower_immediate_lambda_call_uses_indirect_function_pointer_call() {
+        let prog = parse(
+            r#"
+            (define (main) : i64
+              ((lambda ([x : i64]) : i64 (+ x 1)) 41))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let main = ir
+            .functions
+            .iter()
+            .find(|f| f.name == "main")
+            .expect("main lowered");
+        let indirect = main.blocks.iter().find_map(|b| {
+            b.instructions.iter().find_map(|i| match i {
+                Instruction::CallIndirect { func, args, ty, .. } => {
+                    Some((func.clone(), args.clone(), ty.clone()))
+                }
+                _ => None,
+            })
+        });
+        assert_eq!(
+            indirect,
+            Some((
+                Value::Function("__tl_lambda_main_0".into()),
+                vec![Value::ConstI64(41)],
+                Type::I64
+            ))
+        );
+    }
+
+    #[test]
+    fn test_lower_unit_returning_lambda_call() {
+        let prog = parse(
+            r#"
+            (define (main) : unit
+              ((lambda () : unit (print 1))))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let main = ir
+            .functions
+            .iter()
+            .find(|f| f.name == "main")
+            .expect("main lowered");
+        assert!(main.blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                matches!(
+                    i,
+                    Instruction::CallIndirect {
+                        dst: None,
+                        func: Value::Function(name),
+                        ty: Type::Unit,
+                        ..
+                    } if name == "__tl_lambda_main_0"
+                )
+            })
+        }));
     }
 
     #[test]

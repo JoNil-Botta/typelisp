@@ -5151,6 +5151,40 @@ mod tests {
     }
 
     #[test]
+    fn test_compile_noncapturing_lambda_literal_from_source() {
+        let asm = compile_ok(
+            r#"
+            (define (main) : i64
+              ((lambda ([x : i64]) : i64 (+ x 1)) 41))
+            "#,
+        );
+        assert!(asm.contains("_tl___tl_lambda_main_0:"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("    leaq _tl___tl_lambda_main_0(%rip), %rax"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(asm.contains("    call *%rax"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_inferred_lambda_return_with_local_let_from_source() {
+        let asm = compile_ok(
+            r#"
+            (define (main) : i64
+              ((lambda ([x : i64])
+                 (let ([y : i64 (+ x 1)])
+                   y))
+               41))
+            "#,
+        );
+        assert!(asm.contains("_tl___tl_lambda_main_0:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call *%rax"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
     fn test_compile_unit_named_function_pointer_value_arg_from_source() {
         let asm = compile_ok(
             r#"

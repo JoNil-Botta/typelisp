@@ -172,9 +172,9 @@ narrower or unsigned integer is required. Floating-point literals are always
 - Direct calls are resolved at compile time; indirect calls through function pointer values use `call *%rax`.
 - A named top-level function can be used as a non-capturing function pointer
   value, e.g. `(apply1 inc 41)` where `apply1` takes a `(-> i64 i64)`.
-- Lambda expressions parse and type-check for scalar returns, but backend
-  lowering for lambda literals is incomplete. Closures (captured environment)
-  are not supported.
+- Non-capturing `lambda` literals are lifted to deterministic synthetic
+  top-level functions and materialized as raw function pointer values.
+- Closures (captured environment) are not supported.
 
 ### 3.4 User-defined types
 
@@ -478,8 +478,14 @@ See §3.6.
 ### 5.14 `(lambda ([param : type] ...) [: ret_type] body)` — anonymous function
 
 - Parses and type-checks as a function value for supported scalar returns.
-- Backend lowering for lambda literals is incomplete today.
-- No closure captures.
+- Non-capturing lambdas lower to deterministic synthetic top-level functions
+  and evaluate to raw function pointer values.
+- Capturing lambdas are rejected; no captured environment representation exists
+  yet.
+
+```lisp test=ignore name=lambda-lift-immediate reason="integration tests cover executable lambda lifting"
+((lambda ([x : i64]) : i64 (+ x 1)) 41)
+```
 
 ### 5.15 SPMD `foreach`
 
@@ -789,6 +795,7 @@ source-level `free` replacement.
 - Booleans, characters, unit.
 - Control flow: `if`, `while`, `begin`.
 - Direct and indirect function calls.
+- Non-capturing lambda literals as raw function pointer values.
 - Local and global variables, `let`, `set!`.
 - `cast` with sign/zero extension and truncation.
 - Enums with pattern matching.

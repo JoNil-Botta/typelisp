@@ -150,6 +150,7 @@
   (AstExprAnn AstExpr AstType)
   (AstExprCast AstExpr AstType)
   (AstExprMatch AstExpr AstMatchArmList)
+  (AstExprForeach String AstType AstExpr AstExpr AstExpr)
   (AstExprStructGet AstExpr String))
 
 (defenum AstExprList
@@ -220,7 +221,8 @@
     [(AstExprAnn _ _) 20]
     [(AstExprCast _ _) 21]
     [(AstExprMatch _ _) 22]
-    [(AstExprStructGet _ _) 23]))
+    [(AstExprForeach _ _ _ _ _) 23]
+    [(AstExprStructGet _ _) 24]))
 
 (define (ast-decl-tag [decl : AstDecl]) : i64
   (match decl

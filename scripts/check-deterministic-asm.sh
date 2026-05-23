@@ -93,6 +93,8 @@ tl_lexer selfhost/lexer.tl
 tl_parse_core selfhost/parse_core.tl
 tl_parse selfhost/parse.tl
 tl_compile_smoke selfhost/compile_smoke.tl
+tl_compiler_parse_core selfhost/compiler_parse_core.tl
+tl_compiler_parse_smoke selfhost/compiler_parse_smoke.tl
 tl_read selfhost/read.tl
 tl_reader selfhost/reader.tl
 tl_token selfhost/token.tl

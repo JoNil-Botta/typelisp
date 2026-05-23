@@ -60,7 +60,7 @@
 ;; `c` is one of TypeLisp's symbol punctuation chars - the non-alphanumeric
 ;; characters that may appear in a symbol/operator name:
 ;;   `-` 45  `+` 43  `*` 42  `/` 47  `?` 63  `!` 33  `>` 62  `<` 60  `=` 61
-;;   `_` 95
+;;   `:` 58  `_` 95
 ;; This is what makes `+`, `<=`, `string->int`, and `array-set!` all lex as one
 ;; `TSym` rather than as separate operator tokens.
 (define (is-symbol-punct [c : char]) : bool
@@ -74,7 +74,8 @@
                             (or (= k 62)
                                 (or (= k 60)
                                     (or (= k 61)
-                                        (= k 95))))))))))))
+                                        (or (= k 58)
+                                            (= k 95)))))))))))))
 
 ;; `c` may appear in a symbol: a letter, a digit, or a symbol-punctuation char.
 ;; A symbol run is the maximal span of these starting at a non-digit symbol char.
@@ -260,7 +261,7 @@
 
 ;; Lex `src`, recording each emitted `Token` value into `toks` (which must be
 ;; large enough to hold every token plus the TEnd sentinel) and returning the
-;; token count. A `(` / `)` is a single-char paren token; a digit run is sliced
+;; token count. A `(` / `[` or `)` / `]` is a single-char paren token; a digit run is sliced
 ;; with `substring` and parsed with `string->int` into a `(TInt ...)`; a `"`
 ;; opens a string literal whose inner text is sliced into a `(TStr ...)`
 ;; (closing quote skipped); a `#` opens a char literal whose payload is recorded
@@ -278,12 +279,12 @@
         (let ([c : char (string-ref src i)])
           (if (is-space c)
               (set! i (+ i 1))
-              (if (= (code c) 40)        ; '('
+              (if (or (= (code c) 40) (= (code c) 91))        ; '(' or '['
                   (begin
                     (array-set! toks count TLParen)
                     (set! count (+ count 1))
                     (set! i (+ i 1)))
-                  (if (= (code c) 41)    ; ')'
+                  (if (or (= (code c) 41) (= (code c) 93))    ; ')' or ']'
                       (begin
                         (array-set! toks count TRParen)
                         (set! count (+ count 1))

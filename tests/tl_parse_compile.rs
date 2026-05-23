@@ -1,14 +1,12 @@
 //! Cross-platform proof that the TypeLisp self-hosting PARSER slice compiles.
 //!
 //! `examples/tl_parse.tl` is the middle of the first end-to-end self-hosted
-//! pipeline (#154): it imports shared AST types and the `main`-less reader
-//! (`lex` + `read` + the `Sexpr` AST), DUPLICATES the `main`-bearing emitter's
-//! `emit-*` helpers (to avoid a double-`main` clash), adds `parse : Sexpr ->
-//! Expr` + `parse-op : String -> BinOp`, and `main` runs the whole pipeline -
-//! `(emit-program (parse (read (lex "(+ 1 (* 2 3))"))))` - printing the full
-//! runnable `.s`. This test only COMPILES the program so it runs on Windows too;
-//! the Linux integration test executes it, assembles the printed text, and
-//! asserts exit 7.
+//! pipeline (#154/#163): it imports the `main`-less reader (`lex` + `read` + the
+//! `Sexpr` AST) and the `main`-less emitter core, adds `parse : Sexpr -> Expr`
+//! and `parse-op : String -> BinOp`, and `main` runs the whole pipeline over a
+//! single-binding let source - printing the full runnable `.s`. This test only
+//! COMPILES the program so it runs on Windows too; the Linux integration test
+//! executes it, assembles the printed text, and asserts exit 7.
 
 use std::fs;
 use std::path::PathBuf;
@@ -59,8 +57,12 @@ fn tl_parse_tl_compiles_to_assembly() {
     for sym in [
         "_tl_parse:",
         "_tl_parse_op:",
+        "_tl_parse_binary:",
+        "_tl_parse_let:",
         "_tl_lex:",
         "_tl_read:",
+        "_tl_cenv_lookup:",
+        "_tl_emit_let:",
         "_tl_emit_expr:",
         "_tl_emit_program:",
         "tl_int_to_string:",
@@ -82,6 +84,7 @@ fn tl_parse_tl_compiles_to_assembly() {
         "call _tl_read",
         "call _tl_parse",
         "call _tl_emit_program",
+        "call _tl_emit_let",
     ] {
         assert!(
             asm.contains(call),
@@ -93,7 +96,7 @@ fn tl_parse_tl_compiles_to_assembly() {
 
     // The literal source string the pipeline is run on appears as a data datum.
     assert!(
-        asm.contains(".string \"(+ 1 (* 2 3))\""),
+        asm.contains(".string \"(let ((x (* 2 3))) (+ x 1))\""),
         "tl_parse assembly is missing the source-string datum:\n{}",
         asm,
     );
@@ -107,6 +110,9 @@ fn tl_parse_tl_compiles_to_assembly() {
         ".string \"    addq %rcx, %rax\\n\"",
         ".string \"    subq %rcx, %rax\\n\"",
         ".string \"    imulq %rcx, %rax\\n\"",
+        ".string \"    sub $\"",
+        ".string \"    add $\"",
+        ".string \"(%rbp)\"",
         ".string \"    .text\\n\"",
         ".string \"    .globl _start\\n\\n\"",
         ".string \"_start:\\n\"",

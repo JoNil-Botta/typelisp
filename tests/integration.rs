@@ -258,15 +258,16 @@ fn type_lisp_programs_compile_link_and_run() {
             name: "tl_emit",
             exit_code: 0,
             stdout: TL_EMIT_PROGRAM_ASM,
-            deps: &["tl_ast_types.tl"],
+            deps: &["tl_emit_core.tl", "tl_ast_types.tl"],
         },
         // Self-hosting M1 (#154): parse the reader's generic Sexpr tree into
-        // the compiler AST shared with `tl_emit.tl`. The witness parses both the
-        // expression `(+ 1 (* 2 3))` and `(define (main) (+ 1 (* 2 3)))`, then
-        // returns a stable structural score: expr 46 + item 50 = 96.
+        // the compiler AST shared with `tl_emit.tl`. The witness parses the
+        // expression `(+ 1 (* 2 3))`, `(define (main) (+ 1 (* 2 3)))`, and a
+        // single-binding let, then returns a stable structural score:
+        // expr 46 + item 50 + let 48 = 144.
         Case {
             name: "tl_ast",
-            exit_code: 96,
+            exit_code: 144,
             stdout: "",
             deps: &["tl_ast_types.tl", "tl_read.tl", "tl_lex.tl", "tl_token.tl"],
         },
@@ -599,13 +600,13 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             name: "tl_emit",
             exit_code: 0,
             stdout: TL_EMIT_PROGRAM_ASM,
-            deps: &["tl_ast_types.tl"],
+            deps: &["tl_emit_core.tl", "tl_ast_types.tl"],
         },
         // Self-hosting M1 (#154): Sexpr -> compiler AST parser, also through
         // the explicit compile -> as -> ld -> run pipeline.
         Case {
             name: "tl_ast",
-            exit_code: 96,
+            exit_code: 144,
             stdout: "",
             deps: &["tl_ast_types.tl", "tl_read.tl", "tl_lex.tl", "tl_token.tl"],
         },
@@ -723,6 +724,14 @@ fn tl_emit_printed_program_assembles_links_and_exits_7() {
         work_dir.join("tl_ast_types.tl"),
     )
     .expect("copy tl_ast_types.tl to work dir");
+    fs::copy(
+        manifest_dir
+            .join("tests")
+            .join("integration")
+            .join("tl_emit_core.tl"),
+        work_dir.join("tl_emit_core.tl"),
+    )
+    .expect("copy tl_emit_core.tl to work dir");
 
     let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
         .arg("run")
@@ -781,15 +790,148 @@ fn tl_emit_printed_program_assembles_links_and_exits_7() {
     assert_eq!(stdout, "", "printed tl_emit program wrote stdout");
 }
 
-/// End-to-end self-hosted pipeline (#154): `examples/tl_parse.tl` runs
-/// `(emit-program (parse (read (lex "(+ 1 (* 2 3))"))))`, taking SOURCE TEXT all
-/// the way to a runnable `.s` in TypeLisp - lex -> read -> parse -> emit. It
-/// imports the shared AST types and the `main`-less reader (which transitively
-/// pulls in `lex` + the `Sexpr` AST), then duplicates only the emitter helpers.
-/// The printed `.s` is byte-identical to tl_emit's (both compute `(+ 1 (* 2 3))`).
-/// This test runs the driver, asserts the printed text, then assembles + links +
-/// runs it and asserts exit 7 - the same value the emitter proved, now reached
-/// THROUGH the parser.
+#[test]
+fn tl_emit_let_printed_programs_assemble_link_and_exit_expected() {
+    let cases = [
+        (
+            "let_7",
+            r#"(ELet "x"
+  (EBin (OpMul) (EInt 2) (EInt 3))
+  (EBin (OpAdd) (EVar "x") (EInt 1)))"#,
+            7,
+            &["    movq %rax, -8(%rbp)\n", "    movq -8(%rbp), %rax\n"][..],
+        ),
+        (
+            "let_square_25",
+            r#"(ELet "x"
+  (EInt 5)
+  (EBin (OpMul) (EVar "x") (EVar "x")))"#,
+            25,
+            &["    movq %rax, -8(%rbp)\n", "    movq -8(%rbp), %rax\n"][..],
+        ),
+        (
+            "nested_let_6",
+            r#"(ELet "x"
+  (EInt 2)
+  (ELet "y"
+    (EInt 3)
+    (EBin (OpMul) (EVar "x") (EVar "y"))))"#,
+            6,
+            &[
+                "    movq %rax, -8(%rbp)\n",
+                "    movq %rax, -16(%rbp)\n",
+                "    movq -8(%rbp), %rax\n",
+                "    movq -16(%rbp), %rax\n",
+            ][..],
+        ),
+    ];
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let integration_dir = manifest_dir.join("tests").join("integration");
+    let root_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("tl_emit_let_printed_programs");
+
+    for (name, expr, exit_code, snippets) in cases {
+        let work_dir = root_dir.join(name);
+        fs::create_dir_all(&work_dir).expect("create tl_emit let test work dir");
+
+        for dep in ["tl_emit_core.tl", "tl_ast_types.tl"] {
+            fs::copy(integration_dir.join(dep), work_dir.join(dep))
+                .expect("copy imported emitter module to work dir");
+        }
+
+        let source = format!(
+            "(import \"tl_emit_core.tl\")\n\n\
+             (define (sample) : Expr\n  {})\n\n\
+             (define (main) : unit\n  (print-string (emit-program (sample))))\n",
+            expr
+        );
+        let work_path = work_dir.join("driver.tl");
+        fs::write(&work_path, source).expect("write tl_emit let driver");
+
+        let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+            .arg("run")
+            .arg(&work_path)
+            .output()
+            .expect("run tl_emit let driver");
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{} driver exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+            name,
+            stdout,
+            stderr,
+        );
+        assert!(
+            stdout.contains("    sub $16, %rsp\n"),
+            "{} did not reserve the aligned let frame:\n{}",
+            name,
+            stdout,
+        );
+        assert!(
+            stdout.contains("    add $16, %rsp\n"),
+            "{} did not restore the aligned let frame:\n{}",
+            name,
+            stdout,
+        );
+        for snippet in snippets {
+            assert!(
+                stdout.contains(snippet),
+                "{} emitted assembly missing {:?}:\n{}",
+                name,
+                snippet,
+                stdout,
+            );
+        }
+
+        let asm_path = work_dir.join("printed.s");
+        let obj_path = work_dir.join("printed.o");
+        let bin_path = work_dir.join("printed");
+        fs::write(&asm_path, &output.stdout).expect("write printed assembly");
+
+        let status = Command::new("as")
+            .arg(&asm_path)
+            .arg("-o")
+            .arg(&obj_path)
+            .status()
+            .expect("run assembler on printed tl_emit let output");
+        assert!(status.success(), "{} assembly failed", name);
+
+        let status = Command::new("ld")
+            .arg(&obj_path)
+            .arg("-o")
+            .arg(&bin_path)
+            .status()
+            .expect("run linker on printed tl_emit let output");
+        assert!(status.success(), "{} linking failed", name);
+
+        let output = Command::new(&bin_path)
+            .output()
+            .expect("run binary assembled from printed tl_emit let output");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            output.status.code(),
+            Some(exit_code),
+            "{} printed program exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+            name,
+            stdout,
+            stderr,
+        );
+        assert_eq!(stdout, "", "{} printed program wrote stdout", name);
+    }
+}
+
+/// End-to-end self-hosted pipeline (#154/#163): `examples/tl_parse.tl` runs
+/// `(emit-program (parse (read (lex "(let ((x (* 2 3))) (+ x 1))"))))`,
+/// taking SOURCE TEXT all the way to a runnable `.s` in TypeLisp: lex -> read ->
+/// parse -> emit. This test runs the driver, checks the emitted let slot path,
+/// then assembles + links + runs it and asserts exit 7.
 #[test]
 fn tl_parse_printed_program_assembles_links_and_exits_7() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -805,7 +947,13 @@ fn tl_parse_printed_program_assembles_links_and_exits_7() {
     fs::copy(&source_path, &work_path).expect("copy tl_parse.tl to work dir");
 
     // Copy imported modules alongside so the `(import)` chain resolves at load time.
-    for dep in ["tl_ast_types.tl", "tl_read.tl", "tl_lex.tl", "tl_token.tl"] {
+    for dep in [
+        "tl_emit_core.tl",
+        "tl_ast_types.tl",
+        "tl_read.tl",
+        "tl_lex.tl",
+        "tl_token.tl",
+    ] {
         fs::copy(integration_dir.join(dep), work_dir.join(dep))
             .expect("copy imported front-end module to work dir");
     }
@@ -825,12 +973,20 @@ fn tl_parse_printed_program_assembles_links_and_exits_7() {
         stdout,
         stderr,
     );
-    // The pipeline emits exactly the emitter's program for `(+ 1 (* 2 3))`.
-    assert_eq!(
-        stdout, TL_EMIT_PROGRAM_ASM,
-        "tl_parse printed program differed\nstderr:\n{}",
-        stderr,
-    );
+    for snippet in [
+        "    sub $16, %rsp\n",
+        "    movq %rax, -8(%rbp)\n",
+        "    movq -8(%rbp), %rax\n",
+        "    add $16, %rsp\n",
+    ] {
+        assert!(
+            stdout.contains(snippet),
+            "tl_parse printed program missing {:?}\nstderr:\n{}\nstdout:\n{}",
+            snippet,
+            stderr,
+            stdout,
+        );
+    }
 
     let asm_path = work_dir.join("printed.s");
     let obj_path = work_dir.join("printed.o");

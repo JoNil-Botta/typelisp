@@ -1,10 +1,11 @@
 //! Cross-platform proof that the TypeLisp self-hosting emitter slice compiles.
 //!
 //! `examples/tl_emit.tl` is the first backend-shaped TypeLisp program for
-//! #155/#156: it walks a tiny arithmetic `Expr` tree, wraps the emitted body in
-//! a runnable `main` + `_start` assembly skeleton, and prints that full `.s`.
-//! This test only compiles the program so it runs on Windows too; the Linux
-//! integration test executes it, assembles the printed text, and asserts exit 7.
+//! #155/#156/#163: it imports the main-less emitter core, walks a tiny arithmetic
+//! `Expr` tree, wraps the emitted body in a runnable `main` + `_start` assembly
+//! skeleton, and prints that full `.s`. This test only compiles the program so it
+//! runs on Windows too; the Linux integration test executes it, assembles the
+//! printed text, and asserts exit 7.
 
 use std::fs;
 use std::path::PathBuf;
@@ -53,8 +54,14 @@ fn tl_emit_tl_compiles_to_assembly() {
     for sym in [
         "_tl_emit_int:",
         "_tl_emit_op:",
+        "_tl_cenv_lookup:",
+        "_tl_emit_var:",
         "_tl_emit_bin:",
+        "_tl_emit_let:",
+        "_tl_emit_expr_in:",
         "_tl_emit_expr:",
+        "_tl_max_let_depth:",
+        "_tl_frame_size:",
         "_tl_emit_program:",
         "_tl_sample:",
         "tl_int_to_string:",
@@ -71,8 +78,10 @@ fn tl_emit_tl_compiles_to_assembly() {
     }
 
     for call in [
-        "call _tl_emit_expr",
+        "call _tl_emit_expr_in",
+        "call _tl_emit_let",
         "call _tl_emit_op",
+        "call _tl_max_let_depth",
         "call tl_int_to_string",
         "call tl_string_concat",
         "call tl_print_str",
@@ -91,6 +100,10 @@ fn tl_emit_tl_compiles_to_assembly() {
         "    pushq %rax\\n",
         "    movq %rax, %rcx\\n",
         "    popq %rax\\n",
+        "    movq ",
+        "(%rbp)",
+        "    sub $",
+        "    add $",
         "    addq %rcx, %rax\\n",
         "    subq %rcx, %rax\\n",
         "    imulq %rcx, %rax\\n",

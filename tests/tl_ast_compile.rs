@@ -2,8 +2,9 @@
 //!
 //! `examples/tl_ast.tl` imports the TypeLisp reader, parses generic `Sexpr`
 //! trees into the shared `BinOp` / `Expr` / `Item` AST enums, and scores both an
-//! expression and a `define` form. The Linux integration test executes the same
-//! witness; this test keeps Windows coverage at compile time.
+//! expression, a `define` form, and a single-binding let. The Linux integration
+//! test executes the same witness; this test keeps Windows coverage at compile
+//! time.
 
 use std::fs;
 use std::path::PathBuf;
@@ -52,6 +53,7 @@ fn tl_ast_tl_compiles_to_assembly() {
     for sym in [
         "_tl_parse_expr:",
         "_tl_parse_binary:",
+        "_tl_parse_let:",
         "_tl_parse_args:",
         "_tl_parse_params:",
         "_tl_parse_item:",
@@ -88,6 +90,7 @@ fn tl_ast_tl_compiles_to_assembly() {
 
     for msg in [
         "ast: malformed expression",
+        "ast: malformed let",
         "ast: malformed argument list",
         "ast: malformed parameter list",
         "ast: malformed define header",
@@ -100,4 +103,10 @@ fn tl_ast_tl_compiles_to_assembly() {
             asm,
         );
     }
+
+    assert!(
+        asm.contains(".string \"(let ((x (* 2 3))) (+ x 1))\""),
+        "tl_ast assembly is missing the let source-string datum:\n{}",
+        asm,
+    );
 }

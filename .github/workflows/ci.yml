@@ -12,12 +12,8 @@ env:
 
 jobs:
   test:
-    name: Test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
+    name: Test
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -37,7 +33,6 @@ jobs:
         run: cargo build --verbose
 
       - name: Check native toolchain
-        if: runner.os == 'Linux'
         run: |
           command -v as
           command -v ld
@@ -59,13 +54,49 @@ jobs:
         run: cargo clippy -- -D warnings
 
       - name: Verify zero dependencies
-        if: runner.os == 'Linux'
         run: |
           if grep -qE '^\[dependencies\]|^\[dev-dependencies\]' Cargo.toml; then
             echo "ERROR: Cargo.toml contains dependencies. TypeLisp must have zero third-party crates."
             exit 1
           fi
           echo "OK: No third-party dependencies found."
+
+  test-windows:
+    name: Test (windows-latest)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build
+        run: cargo build --verbose
+
+      - name: Run tests
+        run: cargo test --verbose
+
+      - name: Test frontend CLI commands
+        run: |
+          cargo run --quiet -- tokenize examples/hello.tl
+          cargo run --quiet -- parse examples/hello.tl
+          cargo run --quiet -- check examples/hello.tl
+          cargo run --quiet -- compile tests/integration/factorial.tl -o target/ci-frontend-smoke.s
+
+      - name: Check formatting
+        run: cargo fmt -- --check
+
+      - name: Run clippy
+        run: cargo clippy -- -D warnings
 
   integration:
     name: Integration Tests

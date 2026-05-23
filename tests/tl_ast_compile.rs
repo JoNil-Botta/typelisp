@@ -100,6 +100,7 @@ fn tl_ast_tl_compiles_to_assembly() {
         "ast: malformed if",
         "ast: malformed print",
         "ast: malformed begin",
+        "ast: empty begin",
         "ast: malformed argument list",
         "ast: malformed parameter list",
         "ast: malformed define header",

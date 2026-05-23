@@ -753,20 +753,20 @@ fn tl_eval_tl_compiles_to_assembly() {
         asm,
     );
 
-    // The runtime result composes a CLOSURE witness, a CONS-LIST witness, and a
-    // recursive-list predicate witness:
+    // The runtime result composes a CLOSURE witness, a LIST-CONSTRUCTOR witness,
+    // and a recursive-list predicate witness:
     // `main`'s `begin` prints the string/recursion sum (`hello world3233\n`), two
-    // closure applications (`25\n`, `15\n`), then the cons-pair witness - it builds
-    // the 3-element list `(cons 1 (cons 2 (cons 3 0)))` and the pair `(cons 10 20)`,
-    // prints the list's second element via `(car (cdr ...))` (`2\n`), the pair (as
+    // closure applications (`25\n`, `15\n`), then the list/pair witness - it builds
+    // the 3-element list with `(list 1 2 3)` and the pair `(cons 10 20)`, prints
+    // the list's second element via `(car (cdr ...))` (`2\n`), the pair (as
     // `#<pair>`), the pair's car (`10\n`), the predicate observations (`1\n`,
     // `0\n`, `1\n`), and the recursive list length (`3\n`), then denotes the
-    // unprinted `(sum-list lst)` = `1 + 2 + 3` = `6`. All of this is computed by
-    // the interpreter at RUNTIME (not a compile-time constant in this evaluator's
-    // own source), so we do NOT assert the result appears in the assembly; the
-    // printed stdout (`hello world3233\n25\n15\n2\n#<pair>10\n1\n0\n1\n3\n`) and
-    // exit code (`6`) are asserted by the Linux-gated exec test in
-    // `tests/integration.rs`.
+    // unprinted `(sum-list (list 1 2 3 4 5))` = `1 + 2 + 3 + 4 + 5` = `15`. All of
+    // this is computed by the interpreter at RUNTIME (not a compile-time constant
+    // in this evaluator's own source), so we do NOT assert the result appears in
+    // the assembly; the printed stdout
+    // (`hello world3233\n25\n15\n2\n#<pair>10\n1\n0\n1\n3\n`) and exit code (`15`)
+    // are asserted by the Linux-gated exec test in `tests/integration.rs`.
 
     // The comparison operators fold a bool to the 1/0 integer-truth convention,
     // so the lowered evaluator must contain at least one signed integer comparison

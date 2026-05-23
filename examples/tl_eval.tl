@@ -507,8 +507,9 @@
 ;;
 ;; The recursive `eval-sexpr` calls thread BOTH envs so the result depends on the
 ;; whole nested shape, the bindings in scope, AND the program's functions.
-;; (Deferred: lambda, closures, variadic arity; mutual recursion IS supported -
-;; the whole `fenv` is shared.)
+;; Implemented here: lambda/closures and the variadic `list` special form.
+;; Deferred: variadic user-function arity. Mutual recursion IS supported because
+;; the whole `fenv` is shared.
 (define (eval-sexpr [s : Sexpr] [env : Env] [fenv : FnEnv]) : Value
   (match s
     [(SInt n) (VInt n)]

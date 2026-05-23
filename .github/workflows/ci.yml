@@ -12,8 +12,12 @@ env:
 
 jobs:
   test:
-    name: Test
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
 
@@ -33,12 +37,20 @@ jobs:
         run: cargo build --verbose
 
       - name: Check native toolchain
+        if: runner.os == 'Linux'
         run: |
           command -v as
           command -v ld
 
       - name: Run tests
         run: cargo test --verbose
+
+      - name: Test frontend CLI commands
+        run: |
+          cargo run --quiet -- tokenize examples/hello.tl
+          cargo run --quiet -- parse examples/hello.tl
+          cargo run --quiet -- check examples/hello.tl
+          cargo run --quiet -- compile tests/integration/factorial.tl -o target/ci-frontend-smoke.s
 
       - name: Check formatting
         run: cargo fmt -- --check
@@ -47,6 +59,7 @@ jobs:
         run: cargo clippy -- -D warnings
 
       - name: Verify zero dependencies
+        if: runner.os == 'Linux'
         run: |
           if grep -qE '^\[dependencies\]|^\[dev-dependencies\]' Cargo.toml; then
             echo "ERROR: Cargo.toml contains dependencies. TypeLisp must have zero third-party crates."

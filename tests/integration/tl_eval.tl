@@ -481,6 +481,34 @@
                                                         (as-str (eval-sexpr be env fenv)))
                                              1
                                              0)))))
+                             (if (string-eq name "int->string")
+                                 ;; STRING OP `(int->string n)`: rest is
+                                 ;; `(SCons n SNil)`. Evaluate the single argument,
+                                 ;; `as-int`-project it (a `VStr` here is a type
+                                 ;; error), call the host `int->string` builtin
+                                 ;; (the i64 -> decimal-text conversion), and
+                                 ;; re-wrap the fresh String result as `(VStr r)` -
+                                 ;; so an integer VALUE can be turned into a string
+                                 ;; VALUE inside an interpreted program.
+                                 (let ([arg : Sexpr (sexpr-head rest)]
+                                       [resti : Sexpr (sexpr-tail rest)])
+                                   (begin
+                                     (sexpr-expect-nil resti)
+                                     (VStr (int->string (as-int (eval-sexpr arg env fenv))))))
+                             (if (string-eq name "string->int")
+                                 ;; STRING OP `(string->int s)`: rest is
+                                 ;; `(SCons s SNil)`. Evaluate the single argument,
+                                 ;; `as-str`-project it (a `VInt` here is a type
+                                 ;; error), call the host `string->int` builtin (the
+                                 ;; decimal-string -> i64 parse), and re-wrap the
+                                 ;; i64 result as `(VInt r)` - the inverse of
+                                 ;; `int->string`, so a string VALUE denoting a
+                                 ;; number can be parsed back to an integer VALUE.
+                                 (let ([arg : Sexpr (sexpr-head rest)]
+                                       [restp2 : Sexpr (sexpr-tail rest)])
+                                   (begin
+                                     (sexpr-expect-nil restp2)
+                                     (VInt (string->int (as-str (eval-sexpr arg env fenv))))))
                              (if (is-builtin-op name)
                                  ;; A builtin binary call form `(op arg1 arg2)`: rest is
                                  ;; `(SCons arg1 (SCons arg2 SNil))`. Both operands must be
@@ -506,7 +534,7 @@
                                  ;; Arbitrary arity.
                                  (let ([params : Sexpr (lookup-fn-params fenv name)]
                                        [body : Sexpr (lookup-fn-body fenv name)])
-                                   (eval-sexpr body (bind-args params rest env fenv) fenv)))))))))]
+                                   (eval-sexpr body (bind-args params rest env fenv) fenv)))))))))))]
     [_ (begin (panic "eval: not an evaluable expression") (VInt 0))]))
 
 ;; --------------------------------------------------------------------------
@@ -638,8 +666,9 @@
 ;; MULTI-ARGUMENT user functions, recursion, multi-binding `let`, AND STRING OPS.
 ;; --------------------------------------------------------------------------
 ;; `(run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (define (seq a b) b)
-;;                (let ((s "hello world") (h (substring s 0 5)) (n (string-length h)))
-;;                  (seq (print h) (print (+ (pow 2 n) (string-eq h "hello")))))")`:
+;;                (let ((s "hello world") (h (substring s 0 5)) (n (string-length h))
+;;                      (t (int->string (pow 2 n))) (m (string->int t)))
+;;                  (seq (seq (print h) (print t)) (print (+ m (string-eq h "hello")))))")`:
 ;;   - the program is THREE top-level forms: a recursive TWO-parameter `define` of
 ;;     `pow`, a two-parameter `seq` whose body is just its SECOND argument (a
 ;;     left-to-right sequencer - the interpreted language has no `begin`, so a
@@ -649,26 +678,32 @@
 ;;     integer via `seq`.
 ;;   - the program reader folds both defines into the `FnEnv`, then evaluates the
 ;;     `let` against that function env.
-;;   - the `let` has THREE bindings, folded SEQUENTIALLY (`let*`):
+;;   - the `let` has FIVE bindings, folded SEQUENTIALLY (`let*`):
 ;;     `s -> (VStr "hello world")` (a first-class string VALUE), then
 ;;     `h -> (substring s 0 5)` whose initializer SEES the earlier `s` - the
 ;;     load-bearing proof that a later init resolves earlier bindings - so the
 ;;     `substring` STRING OP slices `[0, 5)` to `(VStr "hello")`, then
 ;;     `n -> (string-length h)` whose `string-length` STRING OP yields the byte
-;;     count `(VInt 5)`. Both string ops unwrap their operand via `as-str` /
-;;     `as-int` and re-wrap the host builtin's result.
-;;   - the body `(seq (print h) (print (+ (pow 2 n) (string-eq h "hello"))))`
-;;     evaluates its two arguments left-to-right in the caller env: FIRST
-;;     `(print h)` prints `h`'s `(VStr "hello")` via the `VStr` arm - the host
-;;     `print-string` builtin writes the raw bytes `hello` to STDOUT (NO trailing
-;;     newline); SECOND `(print (+ (pow 2 n) (string-eq h "hello")))` - `(pow 2 5)`
-;;     zips `(b e)` against `(2 5)` and recurses to `(VInt 32)`, `(string-eq h
-;;     "hello")` is the `string-eq` STRING OP folding byte-wise equality to the
-;;     1 (equal) integer-truth value, their sum is `(VInt 33)` - prints `33` via
-;;     the `VInt` arm (the host `print` appends a newline), so `33\n`. `seq`
-;;     returns its second arg `(VInt 33)`, so the `let` - and the whole program -
-;;     denotes `33`. STDOUT is therefore `hello33\n`. Because output is to STDOUT
-;;     we escape the mod-256 process-exit-code ceiling.
+;;     count `(VInt 5)`, then `t -> (int->string (pow 2 n))` - `(pow 2 5)` is the
+;;     recursive `(VInt 32)`, and the `int->string` STRING OP turns that integer
+;;     VALUE into the string VALUE `(VStr "32")`, then `m -> (string->int t)`
+;;     parses that string back with the `string->int` STRING OP to the `(VInt 32)`
+;;     it denotes - a round-trip through the new int<->string conversions. Each
+;;     op unwraps its operand via `as-str` / `as-int` and re-wraps the host
+;;     builtin's result.
+;;   - the body `(seq (seq (print h) (print t)) (print (+ m (string-eq h "hello"))))`
+;;     evaluates left-to-right in the caller env: FIRST `(print h)` prints `h`'s
+;;     `(VStr "hello")` via the `VStr` arm - the host `print-string` builtin writes
+;;     the raw bytes `hello` to STDOUT (NO trailing newline); SECOND `(print t)`
+;;     prints `t`'s `(VStr "32")` the same way, writing `32` (NO newline) - this is
+;;     the visible witness of `int->string`; THIRD `(print (+ m (string-eq h
+;;     "hello")))` - `m` is the `(VInt 32)` parsed by `string->int`, `(string-eq h
+;;     "hello")` folds byte-wise equality to the `1` integer-truth value, their sum
+;;     is `(VInt 33)` - prints `33` via the `VInt` arm (the host `print` appends a
+;;     newline), so `33\n`. The outer `seq` returns its second arg `(VInt 33)`, so
+;;     the `let` - and the whole program - denotes `33`. STDOUT is therefore
+;;     `hello3233\n`. Because output is to STDOUT we escape the mod-256
+;;     process-exit-code ceiling.
 ;; This single program proves the evaluator now (a) carries a tagged `Value`
 ;; domain - the env binds `VInt`s/`VStr`s, numeric contexts go through `as-int`,
 ;; string contexts through `as-str`, and BOTH a `(VStr ...)` and a `(VInt ...)`
@@ -676,10 +711,12 @@
 ;; arm to the host `print`); (b) supports MULTI-ARGUMENT user functions with
 ;; RECURSION through the shared function environment; (c) supports MULTI-BINDING
 ;; `let` with sequential (`let*`) scoping; and (d) exposes the STRING OPERATIONS
-;; `substring` / `string-length` / `string-eq`, each dispatched on the head symbol
-;; and operating on the tagged `Value` - all composed atop the reused lexer and
-;; reader. (Deferred: interpreted `string-append` dispatch now that the host
-;; compiler has `string-append`; lambda; closures; variadic arity;
-;; string-literal escapes.)
+;; `substring` / `string-length` / `string-eq` / `int->string` / `string->int`,
+;; each dispatched on the head symbol and operating on the tagged `Value` - the
+;; int<->string pair lets an interpreted program convert between integer and
+;; string VALUES (and build numeric strings) - all composed atop the reused lexer
+;; and reader. (Deferred: an interpreted `string-append` dispatch arm now that the
+;; host compiler has the `string-append` builtin (#136); lambda; closures;
+;; variadic arity; string-literal escapes.)
 (define (main) : i64
-  (run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (define (seq a b) b) (let ((s \"hello world\") (h (substring s 0 5)) (n (string-length h))) (seq (print h) (print (+ (pow 2 n) (string-eq h \"hello\")))))"))
+  (run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (define (seq a b) b) (let ((s \"hello world\") (h (substring s 0 5)) (n (string-length h)) (t (int->string (pow 2 n))) (m (string->int t))) (seq (seq (print h) (print t)) (print (+ m (string-eq h \"hello\")))))"))

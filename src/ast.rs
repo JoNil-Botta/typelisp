@@ -57,12 +57,21 @@ pub enum Pattern {
     Tuple(Vec<Pattern>),
     /// Irrefutable wildcard: `_`.
     Wildcard,
-    /// Variant pattern: `(Variant binding...)` or a nullary `Variant`.
-    /// The bindings name the variant's payload fields positionally.
-    Variant { name: Symbol, bindings: Vec<Symbol> },
+    /// Binding leaf: a bare identifier field that names (binds) the value at
+    /// this position. Irrefutable on its own; the refutability of an enclosing
+    /// `match` arm comes from the variant tags around it.
+    Binding(Symbol),
+    /// Variant pattern: `(Variant arg...)` or a nullary `Variant`. Each `arg`
+    /// is itself a (possibly nested) sub-pattern positionally matched against
+    /// the variant's payload fields: a bare identifier parses as `Binding`, `_`
+    /// as `Wildcard`, a nested `(Ctor ...)` as a sub-`Variant`, and a scalar
+    /// constant as `Literal`. This lets `match` destructure several enum layers
+    /// at once, e.g. `(SCons (SSym op) rest)`.
+    Variant { name: Symbol, args: Vec<Pattern> },
     /// Literal pattern: matches a scalar scrutinee against a constant, e.g.
     /// `0`, `true`, `#\a`. Refutable; used when matching on a scalar
-    /// (non-enum) value rather than an enum.
+    /// (non-enum) value rather than an enum, or as a nested sub-pattern testing
+    /// a scalar payload field for equality.
     Literal(Literal),
 }
 

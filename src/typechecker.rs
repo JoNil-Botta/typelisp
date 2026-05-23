@@ -1087,10 +1087,8 @@ impl TypeChecker {
                             body.span(),
                         ));
                     }
-                    if matches!(scrut_ty, Type::Bool) {
-                        if let Literal::Bool(value) = lit {
-                            bool_literals_covered[*value as usize] = true;
-                        }
+                    if let (Type::Bool, Literal::Bool(value)) = (&scrut_ty, lit) {
+                        bool_literals_covered[*value as usize] = true;
                     }
                 }
                 other => {

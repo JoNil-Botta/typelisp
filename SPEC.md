@@ -401,12 +401,14 @@ See §3.6.
 | `string=?` | `String String → bool` | Alias for `string-eq` |
 | `string-append` | `String String → String` | Concatenate two strings |
 | `string-concat` | `String String → String` | Alias for `string-append` |
+| `substring` | `String i64 i64 → String` | Fresh string of `len` bytes starting at byte offset `start` (a `[start, start+len)` slice). Bounds checked. |
+| `string-slice` | `String i64 i64 → String` | Alias for `substring` |
 | `string->int` | `String → i64` | Parse decimal integer from string |
 | `int->string` | `i64 → String` | Format integer as decimal string |
 | `panic` | `String → unit` | Print message to stderr and abort |
 | `error` | `String → unit` | Alias for `panic` |
 
-- `array-ref`, `array-set!`, and `string-ref` perform runtime bounds checks. Out-of-bounds calls the `tl_oob_abort` runtime trap (writes to stderr and exits with code 1).
+- `array-ref`, `array-set!`, `string-ref`, and `substring`/`string-slice` perform runtime bounds checks. Out-of-bounds calls the `tl_oob_abort` runtime trap (writes to stderr and exits with code 1). The slice range is checked with unsigned arithmetic, so a negative `start`/`len` wraps to a huge value and traps.
 - The `char-at` operator is an alias for `string-ref`.
 
 ### 6.2 Runtime functions (emitted by the backend)
@@ -436,6 +438,7 @@ They are not implemented by a separate C runtime.
 |-------|------------|
 | `string=?` | `string-eq` |
 | `string-concat` | `string-append` |
+| `string-slice` | `substring` |
 | `char-at` | `string-ref` |
 | `print-str` | `print-string` |
 
@@ -481,8 +484,9 @@ They are not implemented by a separate C runtime.
 - Structs with construction and field access.
 - Dynamic arrays: `make-array`, `array-ref`, `array-set!`, `length`.
 - Strings: literals, `string-ref`/`char-at`, `string-length`/`length`,
-  `string-eq`/`string=?`, `string-append`/`string-concat`, `string->int`,
-  `int->string`, `print-string`/`print-str`.
+  `string-eq`/`string=?`, `string-append`/`string-concat`,
+  `substring`/`string-slice`, `string->int`, `int->string`,
+  `print-string`/`print-str`.
 - `extern` declarations.
 - Multi-file modules via `import`.
 - Builtin `print`, `print-bool`, `print-float`, `print-char`,

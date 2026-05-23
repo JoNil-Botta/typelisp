@@ -220,9 +220,16 @@ fn tl_parse_core_tl_compiles_to_assembly() {
         "_tl_parse_let:",
         "_tl_parse_if:",
         "_tl_parse_print:",
+        "_tl_parse_args:",
+        "_tl_parse_params:",
+        "_tl_parse_item:",
+        "_tl_parse_program_forms:",
+        "_tl_parse_program:",
+        "_tl_item_list_append_one:",
         "_tl_lex:",
-        "_tl_read:",
+        "_tl_read_form:",
         "_tl_emit_program:",
+        "_tl_emit_program_with_defs:",
     ] {
         assert!(
             asm.contains(sym),
@@ -254,10 +261,14 @@ fn tl_compile_smoke_tl_compiles_to_assembly() {
     );
 
     for call in [
-        "call _tl_parse",
-        "call _tl_read",
+        "call _tl_parse_program",
+        "call _tl_read_form",
+        "call _tl_peek_tag",
         "call _tl_lex",
-        "call _tl_emit_program",
+        "call _tl_emit_program_with_defs",
+        "call _tl_emit_defs",
+        "call _tl_emit_def",
+        "call _tl_emit_call",
         "call .L_tl_arg_count",
         "call .L_tl_arg",
         "call .L_tl_read_file",

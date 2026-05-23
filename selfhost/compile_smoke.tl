@@ -8,8 +8,11 @@
 
 (define (compile-smoke [input-path : String] [output-path : String]) : unit
   (let ([source : String (read-file input-path)])
-    (let ([asm : String (emit-program (parse (read (lex source))))])
-      (write-file output-path asm))))
+    (let ([program : ParsedProgram (parse-program (lex source))])
+      (match program
+        [(PProgram defs expr)
+         (let ([asm : String (emit-program-with-defs defs expr)])
+           (write-file output-path asm))]))))
 
 (define (main) : unit
   (if (< (arg-count) 3)

@@ -1829,8 +1829,8 @@ fn tl_parse_printed_program_assembles_links_and_exits_1() {
 
 /// File-to-file bootstrap smoke (#226): a TypeLisp program reads source text
 /// and an output path from argv, runs the current selfhost
-/// lex -> read -> parse -> emit-program pipeline, writes `.s`, and the Rust
-/// harness handles the external assemble/link step.
+/// lex -> read-form -> parse-program -> emit-program-with-defs pipeline, writes
+/// `.s`, and the Rust harness handles the external assemble/link step.
 #[test]
 fn tl_compile_smoke_writes_assembly_file_and_output_exits_1() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -1935,6 +1935,116 @@ fn tl_compile_smoke_writes_assembly_file_and_output_exits_1() {
         stderr,
     );
     assert_eq!(stdout, "", "tl_compile_smoke output program wrote stdout");
+}
+
+#[test]
+fn tl_compile_smoke_writes_definition_program_and_output_exits_42() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let selfhost_dir = manifest_dir.join("selfhost");
+    let source_path = selfhost_dir.join("compile_smoke.tl");
+    let work_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("tl_compile_smoke_defs");
+    fs::create_dir_all(&work_dir).expect("create tl_compile_smoke defs test work dir");
+
+    let work_path = work_dir.join("compile_smoke.tl");
+    fs::copy(&source_path, &work_path).expect("copy compile_smoke.tl to work dir");
+
+    for dep in [
+        "parse_core.tl",
+        "emit_core.tl",
+        "sym_i64_env.tl",
+        "ast_types.tl",
+        "read.tl",
+        "lex.tl",
+        "token.tl",
+    ] {
+        fs::copy(selfhost_dir.join(dep), work_dir.join(dep))
+            .expect("copy imported selfhost module to work dir");
+    }
+
+    let input_path = work_dir.join("input_defs.tl");
+    let asm_path = work_dir.join("generated_defs.s");
+    let obj_path = work_dir.join("generated_defs.o");
+    let bin_path = work_dir.join("generated_defs");
+    fs::write(&input_path, "(define (double x) (+ x x))\n(double 21)")
+        .expect("write tl_compile_smoke defs input");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&work_path)
+        .arg(&input_path)
+        .arg(&asm_path)
+        .output()
+        .expect("run tl_compile_smoke defs");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "tl_compile_smoke defs driver exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(stdout, "", "tl_compile_smoke defs driver wrote stdout");
+    assert_eq!(stderr, "", "tl_compile_smoke defs driver wrote stderr");
+
+    let asm = fs::read_to_string(&asm_path).expect("read tl_compile_smoke defs output");
+    for snippet in [
+        "double:\n",
+        "main:\n",
+        "_start:\n",
+        "    call double\n",
+        "    addq %rcx, %rax\n",
+    ] {
+        assert!(
+            asm.contains(snippet),
+            "tl_compile_smoke defs output assembly missing {:?}:\n{}",
+            snippet,
+            asm,
+        );
+    }
+
+    let status = Command::new("as")
+        .arg(&asm_path)
+        .arg("-o")
+        .arg(&obj_path)
+        .status()
+        .expect("run assembler on tl_compile_smoke defs output");
+    assert!(
+        status.success(),
+        "assembling tl_compile_smoke defs output failed"
+    );
+
+    let status = Command::new("ld")
+        .arg(&obj_path)
+        .arg("-o")
+        .arg(&bin_path)
+        .status()
+        .expect("run linker on tl_compile_smoke defs output");
+    assert!(
+        status.success(),
+        "linking tl_compile_smoke defs output failed"
+    );
+
+    let output = Command::new(&bin_path)
+        .output()
+        .expect("run binary assembled from tl_compile_smoke defs output");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "tl_compile_smoke defs output program exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(
+        stdout, "",
+        "tl_compile_smoke defs output program wrote stdout"
+    );
 }
 
 fn tl_string_literal(text: &str) -> String {

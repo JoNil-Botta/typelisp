@@ -151,3 +151,6 @@ jobs:
             exit 1
           fi
           echo "Correctly detected type error"
+
+      - name: Compile and verify all examples
+        run: TYPELISP_BIN=./target/release/typelisp ./scripts/verify-examples.sh

@@ -250,31 +250,37 @@ fn type_lisp_programs_compile_link_and_run() {
             deps: &["tl_lex.tl", "tl_token.tl"],
         },
         // Self-hosting (#27): the s-expression EVALUATOR for TypeLisp's own
-        // syntax, now with FIRST-CLASS FUNCTIONS - `lambda` and CLOSURES (on top of
-        // variables, multi-binding `let`, `if`, comparisons, the `begin` SEQUENCING
-        // special form, recursion, multi-arg user functions, a tagged
-        // `(VInt/VStr/VClosure)` VALUE domain, and the string ops). A
-        // `(lambda (p...) body)` builds a `(VClosure params body captured-env)`
-        // VALUE capturing the current lexical env; applying it - whether as a
-        // computed operator `((lambda ...) a)` or as a closure-valued variable in
-        // head position `(f a)` - layers the parameters over that captured env via
-        // `bind-args-onto`, so the body's FREE variables resolve through the
-        // captured env. `Value` and `Env` are now mutually recursive enums (a
-        // `VClosure` carries an `Env`, an `EBind` carries a `Value`), each
-        // pointer-sized so the layout stays finite. `main` first keeps the prior
-        // runtime witness: a recursive `pow` define plus a string-heavy `let`
-        // inside `begin`, which prints `hello world32` and `33\n` while exercising
-        // recursion, multi-arg calls, the string toolkit, and `begin`. The later
-        // `begin` arms add closure coverage: immediate application
-        // `((lambda (x) (* x x)) 5)` -> `25\n`, captured free variable `n = 10`
-        // -> `15\n`, and a closure-valued let variable `(f 41)` -> final
-        // `(VInt 42)`. Stdout is `hello world3233\n25\n15\n`; exit code is
-        // `42 & 0xff = 42`. All three imported `main`-less modules are copied
-        // alongside so the `(import)` chain resolves.
+        // syntax, now with FIRST-CLASS FUNCTIONS (`lambda` + CLOSURES) AND CONS
+        // PAIRS / LINKED LISTS, on top of variables, multi-binding `let`, `if`,
+        // comparisons, the `begin` SEQUENCING special form, recursion, multi-arg
+        // user functions, and the string ops. The tagged VALUE domain is
+        // `(VInt/VStr/VClosure/VPair)`: a `(lambda (p...) body)` builds a
+        // `(VClosure params body captured-env)` capturing the current lexical env
+        // (applied as a computed operator `((lambda ...) a)` or a closure-valued
+        // variable `(f a)`, with free variables resolved through the captured env
+        // via `bind-args-onto`), and `(cons a b)` builds a `(VPair a b)` cell that
+        // `car` / `cdr` project (a pair PRINTS as the placeholder `#<pair>`).
+        // `Value` and `Env` are mutually recursive enums (a `VClosure` carries an
+        // `Env`, an `EBind` carries a `Value`), each pointer-sized so the layout
+        // stays finite. `main` runs `run-program` over a program that defines a
+        // recursive `pow` and the list accessor `second` = `(car (cdr xs))`, then a
+        // four-arm `begin`: (1) a string-heavy `let` prints `hello world32` and
+        // `33\n` (recursion, multi-arg calls, the string toolkit); (2) immediate
+        // application `((lambda (x) (* x x)) 5)` -> `25\n`; (3) captured free
+        // variable `n = 10` via `((lambda (x) (+ x n)) 5)` -> `15\n`; (4) the
+        // CONS-PAIR witness - `lst = (cons 1 (cons 2 (cons 3 0)))` (a 3-element
+        // singly-linked list, right-nested pairs terminated by the `0` NIL
+        // sentinel) and `p = (cons 10 20)`: prints the list's second element `2\n`,
+        // the pair as `#<pair>` (no newline), and the pair's car `10\n`, then
+        // denotes the UNPRINTED `(+ (car (cdr (cdr lst))) (cdr p))` = `3 + 20` =
+        // `(VInt 23)`. Stdout is `hello world3233\n25\n15\n2\n#<pair>10\n` and the
+        // exit code is `23`, proving the interpreter has both first-class functions
+        // AND can build/walk pairs and linked lists. All three imported `main`-less
+        // modules are copied alongside so the `(import)` chain resolves.
         Case {
             name: "tl_eval",
-            exit_code: 42,
-            stdout: "hello world3233\n25\n15\n",
+            exit_code: 23,
+            stdout: "hello world3233\n25\n15\n2\n#<pair>10\n",
             deps: &["tl_read.tl", "tl_lex.tl", "tl_token.tl"],
         },
         // refs #41: NESTED PATTERN MATCHING, standalone witness. A tree-walking
@@ -505,22 +511,29 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             deps: &["tl_lex.tl", "tl_token.tl"],
         },
         // Self-hosting (#27): the s-expression evaluator with FIRST-CLASS
-        // FUNCTIONS - `lambda` and CLOSURES (on top of variables, multi-binding
-        // `let`, `if`, comparisons, the `begin` SEQUENCING special form, recursion,
-        // multi-arg user functions, the tagged `(VInt/VStr/VClosure)` VALUE domain,
-        // and the string ops) - also exercised through the explicit
-        // compile -> as -> ld -> run pipeline. It preserves the prior executed
-        // recursion/string witness (`pow`, substring/string-append/int conversion,
-        // `hello world3233\n`) and then adds three closure cases: immediate
-        // application -> `25\n`, captured free variable -> `15\n`, and a
-        // closure-valued let variable returning final `42`. The reader (and
-        // transitively the lexer + token model) is reused via the `main`-less
-        // `tl_read.tl` import; all three imported modules are copied alongside so
-        // the imports resolve.
+        // FUNCTIONS (`lambda` + CLOSURES) AND CONS PAIRS / LINKED LISTS - on top of
+        // variables, multi-binding `let`, `if`, comparisons, the `begin` SEQUENCING
+        // special form, recursion, multi-arg user functions, the tagged
+        // `(VInt/VStr/VClosure/VPair)` VALUE domain, and the string ops - also
+        // exercised through the explicit compile -> as -> ld -> run pipeline. It
+        // preserves the prior executed recursion/string witness (`pow`,
+        // substring/string-append/int conversion, `hello world3233\n`), adds two
+        // closure cases (immediate application -> `25\n`, captured free variable ->
+        // `15\n`), and then the CONS-PAIR witness: `lst = (cons 1 (cons 2 (cons 3
+        // 0)))` (a 3-element singly-linked list, right-nested `(VPair ...)` cells
+        // terminated by the `0` NIL sentinel) and `p = (cons 10 20)`, printing the
+        // list's second element (`2\n`), the pair (as `#<pair>`), and the pair's car
+        // (`10\n`) before returning the unprinted `(+ (car (cdr (cdr lst))) (cdr p))`
+        // = `3 + 20` = `(VInt 23)`. Stdout is `hello world3233\n25\n15\n2\n#<pair>10\n`
+        // and the exit code is `23`. The reader (and transitively the lexer + token
+        // model) is reused via the `main`-less `tl_read.tl` import - including its
+        // lower-level `read-form` cursor entry, which the program reader drives to
+        // read all top-level forms; all three imported modules are copied
+        // alongside so the imports resolve.
         Case {
             name: "tl_eval",
-            exit_code: 42,
-            stdout: "hello world3233\n25\n15\n",
+            exit_code: 23,
+            stdout: "hello world3233\n25\n15\n2\n#<pair>10\n",
             deps: &["tl_read.tl", "tl_lex.tl", "tl_token.tl"],
         },
         // refs #41: nested pattern matching, also through the explicit

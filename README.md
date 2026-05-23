@@ -79,7 +79,7 @@ struct/enum fields, and (optionally) `let` bindings.
 i64 i32 i16 i8   u64 u32 u16 u8   f64   bool   char   unit   String
 (Array t)         ; dynamic, runtime-sized array
 (Array t n)       ; fixed-size array (literals/ref/set compile; returns rejected)
-(Tuple t1 t2 ...) ; (parses/type-checks; value lowering WIP)
+(Tuple t1 t2 ...) ; local tuple literals/ref compile; params/returns rejected
 (-> arg... ret)   ; function type
 Name              ; a defenum / defstruct nominal type
 ```
@@ -185,7 +185,7 @@ structs + field access, dynamic arrays, strings, `extern`, and multi-file
 modules all compile to native code. See the
 [project roadmap](https://github.com/JoNil-Botta/typelisp/issues/8) and
 [SPEC.md §8](SPEC.md) for what is not yet supported (closures, tail calls,
-tuple value lowering, fixed-array returns, `f32` codegen, GC).
+tuple/fixed-array by-value returns, `f32` codegen, GC).
 
 ## Contributing
 

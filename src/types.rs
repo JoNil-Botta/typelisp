@@ -33,7 +33,9 @@ pub enum Type {
     Never,
     /// Function type: (-> arg1 arg2 ... ret)
     Func(Vec<Type>, Box<Type>),
-    /// Tuple type: (Tuple t1 t2 ...)
+    /// Tuple type: (Tuple t1 t2 ...). As a *value* a tuple is a pointer to
+    /// inline element storage. The storage itself lays out fields sequentially
+    /// with natural alignment, but the value flowing through IR is pointer-sized.
     Tuple(Vec<Type>),
     /// Fixed-size array: (Array type size)
     Array(Box<Type>, usize),
@@ -111,7 +113,8 @@ impl Type {
             Type::I8 | Type::U8 | Type::Bool | Type::Char => 1,
             Type::Unit => 0,
             Type::Func(_, _) => 8, // function pointer
-            Type::Tuple(elems) => elems.iter().map(|e| e.size()).sum(),
+            // A tuple *value* is a pointer to its inline element storage.
+            Type::Tuple(_) => 8,
             Type::Array(ty, n) => ty.size() * n,
             // A dynamic-array *value* is a pointer to its inline `{ ptr, len }`
             // storage.
@@ -136,7 +139,7 @@ impl Type {
             Type::I16 | Type::U16 => 2,
             Type::I8 | Type::U8 | Type::Bool | Type::Char | Type::Unit => 1,
             Type::Func(_, _) => 8,
-            Type::Tuple(elems) => elems.iter().map(|e| e.align()).max().unwrap_or(1),
+            Type::Tuple(_) => 8,
             Type::Array(ty, _) => ty.align(),
             Type::DynArray(_) => 8,
             Type::Enum(_) => 8,

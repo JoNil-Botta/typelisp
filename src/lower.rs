@@ -342,6 +342,7 @@ enum AggKind {
     String,
     DynArray,
     Struct,
+    Tuple,
 }
 
 /// Whether a value of aggregate `kind` can escape the current function via its
@@ -440,6 +441,19 @@ fn type_kind_escapes_via_return_inner(
             found
         }
         Type::String => kind == AggKind::String,
+        Type::Tuple(elems) => {
+            kind == AggKind::Tuple
+                || elems.iter().any(|elem| {
+                    type_kind_escapes_via_return_inner(
+                        elem,
+                        kind,
+                        enums,
+                        structs,
+                        seen_enums,
+                        seen_structs,
+                    )
+                })
+        }
         Type::DynArray(elem) => {
             kind == AggKind::DynArray
                 || type_kind_escapes_via_return_inner(
@@ -451,9 +465,6 @@ fn type_kind_escapes_via_return_inner(
                     seen_structs,
                 )
         }
-        Type::Tuple(elems) => elems.iter().any(|elem| {
-            type_kind_escapes_via_return_inner(elem, kind, enums, structs, seen_enums, seen_structs)
-        }),
         Type::Array(elem, _) => {
             type_kind_escapes_via_return_inner(elem, kind, enums, structs, seen_enums, seen_structs)
         }
@@ -591,15 +602,14 @@ impl FnLowerer {
             | Type::Func(_, _)
             | Type::Enum(_)
             | Type::Struct(_)
+            | Type::Tuple(_)
             | Type::String
             | Type::DynArray(_) => Value::ConstI64(0),
             Type::I32 | Type::U32 => Value::ConstI32(0),
             Type::I8 | Type::U8 | Type::Char => Value::ConstI8(0),
             Type::Bool => Value::ConstBool(false),
             Type::F64 | Type::F32 => Value::ConstF64(0.0),
-            Type::Unit | Type::Never | Type::Tuple(_) | Type::Array(_, _) | Type::Var(_) => {
-                Value::ConstUnit
-            }
+            Type::Unit | Type::Never | Type::Array(_, _) | Type::Var(_) => Value::ConstUnit,
         }
     }
 
@@ -679,9 +689,10 @@ impl FnLowerer {
             ast::Expr::ArraySet { expr, index, value } => self.lower_array_set(expr, index, value),
             ast::Expr::StringRef { expr, index } => self.lower_string_ref(expr, index),
             ast::Expr::StructGet { expr, field } => self.lower_struct_get(expr, field),
-            // Tuple and Lambda lowering are still stubbed to unit for now.
-            ast::Expr::Tuple(_) | ast::Expr::Lambda { .. } => Value::ConstUnit,
-            ast::Expr::TupleRef { .. } => Value::ConstUnit,
+            ast::Expr::Tuple(elems) => self.lower_tuple(elems),
+            ast::Expr::TupleRef { expr, index } => self.lower_tuple_ref(expr, *index),
+            // Lambda lowering is still stubbed to unit for now.
+            ast::Expr::Lambda { .. } => Value::ConstUnit,
             ast::Expr::Spanned { expr, .. } => self.lower_expr(expr),
         }
     }
@@ -1814,6 +1825,74 @@ impl FnLowerer {
         }
 
         base_val
+    }
+
+    /// Construct a tuple value: reserve inline element storage, store each
+    /// element at its naturally aligned byte offset, and yield a pointer to the
+    /// storage. Tuple values are anonymous records with index-based fields.
+    fn lower_tuple(&mut self, elems: &[ast::Expr]) -> Value {
+        let elem_vals: Vec<Value> = elems.iter().map(|elem| self.lower_expr(elem)).collect();
+        let elem_tys: Vec<Type> = elem_vals
+            .iter()
+            .map(|value| self.resolve_type(&self.value_type(value)))
+            .collect();
+        let tuple_ty = Type::Tuple(elem_tys.clone());
+        let size = Self::tuple_storage_size(&elem_tys);
+
+        let promote = self.should_heap_promote_aggregate(AggKind::Tuple);
+        let base_val = self.reserve_aggregate_storage(size.max(1), tuple_ty, promote);
+
+        let offsets = Self::tuple_field_offsets(&elem_tys);
+        for ((elem, off), ty) in elem_vals.iter().zip(offsets.iter()).zip(elem_tys.iter()) {
+            if ty.size() == 0 {
+                continue;
+            }
+            let field_ptr = self.gep_byte(&base_val, *off);
+            self.builder.emit(Instruction::Store {
+                dst: Value::Var(field_ptr),
+                src: elem.clone(),
+                ty: ty.clone(),
+            });
+        }
+
+        base_val
+    }
+
+    /// Lower `(tuple-ref t i)`: compute the indexed field offset and load it.
+    fn lower_tuple_ref(&mut self, tuple: &ast::Expr, index: usize) -> Value {
+        let tuple_val = self.lower_expr(tuple);
+        let elem_tys = match self.value_type(&tuple_val) {
+            Type::Tuple(elems) => elems
+                .iter()
+                .map(|ty| self.resolve_type(ty))
+                .collect::<Vec<_>>(),
+            // Defensive: the typechecker rejects non-tuple inputs.
+            _ => return Value::ConstUnit,
+        };
+        let Some(elem_ty) = elem_tys.get(index).cloned() else {
+            return Value::ConstUnit;
+        };
+        if elem_ty.size() == 0 {
+            return self.dummy_value_for_type(&elem_ty);
+        }
+        let offsets = Self::tuple_field_offsets(&elem_tys);
+        let field_ptr = self.gep_byte(&tuple_val, offsets[index]);
+        let result = self.builder.fresh_var();
+        self.builder.emit(Instruction::Load {
+            dst: result,
+            src: Value::Var(field_ptr),
+            ty: elem_ty.clone(),
+        });
+        self.record_local(result, elem_ty);
+        Value::Var(result)
+    }
+
+    fn tuple_field_offsets(elems: &[Type]) -> Vec<usize> {
+        ast::StructRegistry::field_offsets_for_types(elems)
+    }
+
+    fn tuple_storage_size(elems: &[Type]) -> usize {
+        ast::StructRegistry::struct_size_for_types(elems)
     }
 
     /// Lower `(struct-get s field)`: compute the field's byte offset within the
@@ -4850,27 +4929,114 @@ mod tests {
         assert_eq!(ir.globals[0].2, Some(Value::ConstUnit));
     }
 
-    // ---- Stubs (currently unimplemented in lowerer) --------------------
+    // ---- Aggregate lowering edges ----------
 
     #[test]
-    fn test_lower_tuple_stub() {
-        // Tuple lowering is stubbed to ConstUnit.
+    fn test_lower_tuple_constructs_inline_storage() {
+        // Tuple values are pointers to naturally aligned inline element storage.
         let prog = parse(
             r#"
-            (define (make_pair [a : i64] [b : bool]) : (Tuple i64 bool)
-              (tuple a b))
+            (define (main) : i64
+              (let ([t : (Tuple bool i64) (tuple true 42)])
+                (tuple-ref t 1)))
         "#,
         )
         .unwrap();
         let ir = lower_program(&prog);
         assert_eq!(ir.functions.len(), 1);
 
-        let has_unit_ret = ir.functions[0].blocks.iter().any(|b| {
-            b.instructions
+        let instrs: Vec<&Instruction> = ir.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|block| block.instructions.iter())
+            .collect();
+
+        assert!(
+            instrs.iter().any(|instr| matches!(
+                instr,
+                Instruction::Alloc {
+                    ty: Type::Array(elem, 16),
+                    ..
+                } if **elem == Type::I8
+            )),
+            "expected 16-byte tuple storage allocation"
+        );
+        assert!(
+            instrs.iter().any(|instr| matches!(
+                instr,
+                Instruction::Store {
+                    src: Value::ConstBool(true),
+                    ty: Type::Bool,
+                    ..
+                }
+            )),
+            "expected bool element store"
+        );
+        assert!(
+            instrs.iter().any(|instr| matches!(
+                instr,
+                Instruction::Store {
+                    src: Value::ConstI64(42),
+                    ty: Type::I64,
+                    ..
+                }
+            )),
+            "expected i64 element store"
+        );
+        assert!(
+            instrs.iter().any(|instr| matches!(
+                instr,
+                Instruction::Gep {
+                    offset: Value::ConstI64(8),
+                    elem_ty: Type::I8,
+                    ..
+                }
+            )),
+            "expected aligned tuple field offset 8"
+        );
+        assert!(
+            instrs
                 .iter()
-                .any(|i| matches!(i, Instruction::Return(Some(Value::ConstUnit))))
-        });
-        assert!(has_unit_ret);
+                .any(|instr| matches!(instr, Instruction::Load { ty: Type::I64, .. })),
+            "expected tuple-ref field load"
+        );
+        assert!(
+            !instrs
+                .iter()
+                .any(|instr| matches!(instr, Instruction::Return(Some(Value::ConstUnit)))),
+            "tuple path must not lower to ConstUnit"
+        );
+    }
+
+    #[test]
+    fn test_lower_tuple_unit_literal_keeps_pointer_value() {
+        let prog = parse(
+            r#"
+            (define (main) : unit
+              (let ([t : (Tuple unit unit) (tuple unit unit)])
+                (tuple-ref t 1)))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let instrs = all_instrs(&ir);
+
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::Alloc { ty: Type::Array(elem, 8), .. } if **elem == Type::I8
+        )));
+        assert!(
+            !instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Store { ty: Type::Unit, .. })),
+            "unit tuple fields should not emit zero-sized stores"
+        );
+        assert!(
+            !instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Load { ty: Type::Unit, .. })),
+            "unit tuple refs should not emit zero-sized loads"
+        );
     }
 
     #[test]
@@ -4969,8 +5135,9 @@ mod tests {
     }
 
     #[test]
-    fn test_lower_tuple_ref_stub() {
-        // Tuple-ref lowering is stubbed to ConstUnit.
+    fn test_lower_tuple_ref_reads_tuple_parameter() {
+        // The lowerer can project from a tuple-typed value. The backend still
+        // rejects tuple parameters as an unsupported ABI surface.
         let prog = parse(
             r#"
             (define (first [t : (Tuple i64 bool)]) : i64
@@ -4981,12 +5148,28 @@ mod tests {
         let ir = lower_program(&prog);
         assert_eq!(ir.functions.len(), 1);
 
-        let has_unit_ret = ir.functions[0].blocks.iter().any(|b| {
-            b.instructions
+        let instrs: Vec<&Instruction> = ir.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|block| block.instructions.iter())
+            .collect();
+        assert!(
+            instrs.iter().any(|instr| matches!(
+                instr,
+                Instruction::Gep {
+                    offset: Value::ConstI64(0),
+                    elem_ty: Type::I8,
+                    ..
+                }
+            )),
+            "expected tuple field offset 0"
+        );
+        assert!(
+            instrs
                 .iter()
-                .any(|i| matches!(i, Instruction::Return(Some(Value::ConstUnit))))
-        });
-        assert!(has_unit_ret);
+                .any(|instr| matches!(instr, Instruction::Load { ty: Type::I64, .. })),
+            "expected i64 tuple field load"
+        );
     }
 
     #[test]

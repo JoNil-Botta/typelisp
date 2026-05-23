@@ -294,9 +294,11 @@ fn type_lisp_programs_compile_link_and_run() {
         // `cons` literal to every list op). THEN the RECURSIVE LIST PRINTER (#27):
         // `(print lst)` renders the proper list as `(1 2 3)`, `(print (list 1 (list
         // 2 3) 4))` a nested list as `(1 (2 3) 4)` (the inner pair element recurses
-        // parenthesised), and `(print p)` the IMPROPER pair `(cons 10 20)` as `(10)`
-        // (non-nil cdr dropped - the documented improper-tail limit); these three
-        // list renderings carry NO trailing newline (like the VStr/VClosure arms).
+        // parenthesised), `(print p)` the IMPROPER pair `(cons 10 20)` in DOTTED-PAIR
+        // notation as `(10 . 20)`, and `(print (cons 1 (cons 2 3)))` the longer
+        // improper list as `(1 2 . 3)` (proper-prefix elements normal, final non-nil
+        // cdr dotted); these list renderings carry NO trailing newline (like the
+        // VStr/VClosure arms).
         // THEN the HIGHER-ORDER showcase (#27): `map` and `filter` are define'd
         // functions whose first PARAMETER is a closure they CALL on each element
         // (`(f (car l))` / `(p (car l))`) - the symbol-head call resolves the
@@ -307,7 +309,7 @@ fn type_lisp_programs_compile_link_and_run() {
         // UNPRINTED `(sum-list (map (lambda (x) (* x x)) (list 1 2 3 4)))` - a numeric
         // witness that map yields a real list `sum-list` walks = `1+4+9+16` =
         // `(VInt 30)`. Stdout is
-        // `hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10)(1 4 9 16)(1 2)`
+        // `hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10 . 20)(1 2 . 3)(1 4 9 16)(1 2)`
         // and the exit code is `30`, proving the interpreter has first-class
         // functions (including closures passed AS ARGUMENTS to define'd functions),
         // can build (via the variadic `list` constructor) and walk pairs and linked
@@ -317,7 +319,7 @@ fn type_lisp_programs_compile_link_and_run() {
         Case {
             name: "tl_eval",
             exit_code: 30,
-            stdout: "hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10)(1 4 9 16)(1 2)",
+            stdout: "hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10 . 20)(1 2 . 3)(1 4 9 16)(1 2)",
             deps: &["tl_read.tl", "tl_lex.tl", "tl_token.tl"],
         },
         // refs #41: NESTED PATTERN MATCHING, standalone witness. A tree-walking
@@ -586,15 +588,16 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         // predicates - `(pair? lst)` `1\n`, `(null? lst)` `0\n`, `(null? 0)` `1\n` -
         // and the recursive `(list-len lst)` `3\n`, THEN the RECURSIVE LIST PRINTER
         // (#27): `(print lst)` -> `(1 2 3)`, `(print (list 1 (list 2 3) 4))` ->
-        // `(1 (2 3) 4)`, and `(print p)` -> `(10)` (improper pair, non-nil cdr
-        // dropped), all with no trailing newline, THEN the HIGHER-ORDER showcase:
+        // `(1 (2 3) 4)`, `(print p)` -> `(10 . 20)` (improper pair in dotted-pair
+        // notation), and `(print (cons 1 (cons 2 3)))` -> `(1 2 . 3)`, all with no
+        // trailing newline, THEN the HIGHER-ORDER showcase:
         // `map` / `filter` are define'd functions that CALL a closure-valued
         // parameter on each element, so `(print (map (lambda (x) (* x x))
         // (list 1 2 3 4)))` -> `(1 4 9 16)` and `(print (filter (lambda (x) (< x 3))
         // (list 1 2 3 4)))` -> `(1 2)`, before returning the unprinted
         // `(sum-list (map (lambda (x) (* x x)) (list 1 2 3 4)))` = `1+4+9+16` =
         // `(VInt 30)`. Stdout is
-        // `hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10)(1 4 9 16)(1 2)`
+        // `hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10 . 20)(1 2 . 3)(1 4 9 16)(1 2)`
         // and the exit code is `30`. The reader (and transitively the lexer + token
         // model) is reused via the `main`-less `tl_read.tl` import - including its
         // lower-level `read-form` cursor entry, which the program reader drives to
@@ -603,7 +606,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         Case {
             name: "tl_eval",
             exit_code: 30,
-            stdout: "hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10)(1 4 9 16)(1 2)",
+            stdout: "hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10 . 20)(1 2 . 3)(1 4 9 16)(1 2)",
             deps: &["tl_read.tl", "tl_lex.tl", "tl_token.tl"],
         },
         // refs #41: nested pattern matching, also through the explicit

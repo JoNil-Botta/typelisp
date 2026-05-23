@@ -140,7 +140,9 @@
 ;;                      spaces, then `)` - the recursive list rendering. The first
 ;;                      element `a` is printed here; the REST of the chain `d` is
 ;;                      walked by `print-list-tail`, which emits each subsequent
-;;                      element preceded by a space and closes the paren at the end.
+;;                      element preceded by a space, then either closes the paren
+;;                      (a proper list, terminated by the `(VInt 0)` nil) or, for an
+;;                      IMPROPER list, emits the dotted-pair tail ` . <cdr>)`.
 ;; NESTING falls out for free: a `(VPair ...)` ELEMENT re-enters `print-value`, so
 ;; `(list 1 (list 2 3) 4)` renders the inner pair parenthesised -> `(1 (2 3) 4)`.
 (define (print-value [v : Value]) : unit
@@ -163,26 +165,43 @@
 ;;                     `a` via `print-value` (so a nested list element recurses),
 ;;                     and continue down the chain on `d`.
 ;; IMPROPER TAIL (a cdr that is neither a pair nor the `(VInt 0)` nil sentinel - a
-;; non-zero int, a string, or a closure): this slice keeps it SIMPLE rather than
-;; introducing dotted-pair `(a . b)` syntax - it just stops and closes the paren,
-;; so e.g. `(cons 1 2)` renders as `(1)`. Documented limitation: an improper list's
-;; final non-nil cdr is not shown. (A proper list built by `cons` / `list` always
-;; terminates in `(VInt 0)`, so it renders fully and exactly.)
+;; non-zero int, a string, or a closure): the list is IMPROPER, so this renders the
+;; standard Lisp DOTTED-PAIR notation `(a . b)` - it emits a ` . ` separator (space,
+;; dot, space), then `print-value` of the non-nil cdr (so the tail recurses through
+;; the normal value printer: an int -> its decimal text, a string -> its bytes, a
+;; closure -> `#<closure>`), then closes the paren. So `(cons 10 20)` renders
+;; `(10 . 20)` and a left-nested-spine improper list `(cons 1 (cons 2 3))` renders
+;; `(1 2 . 3)` - every proper PREFIX element is printed by the `(VPair ...)` arm and
+;; only the FINAL non-nil cdr gets the dotted form. A proper list built by `cons` /
+;; `list` always terminates in `(VInt 0)`, so its tail hits the `(= n 0)` case and
+;; closes with a plain `)`, never a dot.
 (define (print-list-tail [rest : Value]) : unit
   (match rest
     [(VInt n)
      (if (= n 0)
          (print-string ")")
-         ;; improper tail: a non-nil integer cdr - stop and close (see note above).
-         (print-string ")"))]
+         ;; improper tail: a non-nil integer cdr - dotted pair `(... . n)`.
+         (begin
+           (print-string " . ")
+           (print-value (VInt n))
+           (print-string ")")))]
     [(VPair a d)
      (begin
        (print-string " ")
        (print-value a)
        (print-list-tail d))]
-    ;; improper tail: a string or closure cdr - stop and close (see note above).
-    [(VStr _) (print-string ")")]
-    [(VClosure _ _ _) (print-string ")")]))
+    ;; improper tail: a string cdr - dotted pair `(... . s)`.
+    [(VStr s)
+     (begin
+       (print-string " . ")
+       (print-value (VStr s))
+       (print-string ")"))]
+    ;; improper tail: a closure cdr - dotted pair `(... . #<closure>)`.
+    [(VClosure p b e)
+     (begin
+       (print-string " . ")
+       (print-value (VClosure p b e))
+       (print-string ")"))]))
 
 ;; --------------------------------------------------------------------------
 ;; The lexical environment: a cons-cell association list (refs #27/#111).
@@ -664,8 +683,9 @@
                        (begin
                          ;; A `VPair` now RENDERS AS A LIST (refs #27): the
                          ;; recursive `print-value` walks the cons chain and emits
-                         ;; `(e1 e2 ... en)` (nesting parenthesised, improper tails
-                         ;; closed early - see `print-value` / `print-list-tail`),
+                         ;; `(e1 e2 ... en)` (nesting parenthesised, an improper
+                         ;; final cdr rendered in dotted-pair form `(a . b)` - see
+                         ;; `print-value` / `print-list-tail`),
                          ;; replacing the old opaque `#<pair>` placeholder. Like the
                          ;; `VStr` / `VClosure` arms it writes RAW bytes with NO
                          ;; trailing newline (only the `VInt` arm appends one via the
@@ -685,9 +705,10 @@
                            ;; aborting; the closure value is still RETURNED so
                            ;; `(print f)` composes.
                            [(VClosure _ _ _) (print-string "#<closure>")]
-                           ;; A `VPair` prints as a proper list `(e1 e2 ... en)` via
-                           ;; the recursive `print-value` walk (nesting + improper-tail
-                           ;; handling documented there).
+                           ;; A `VPair` prints as a list `(e1 e2 ... en)` via the
+                           ;; recursive `print-value` walk (nesting parenthesised; an
+                           ;; improper final cdr rendered in dotted-pair form
+                           ;; `(a . b)` - handling documented there).
                            [(VPair _ _) (print-value v)])
                          v))))
                  (if (string-eq name "string-length")
@@ -1169,8 +1190,10 @@
 ;;     operation. THEN the new RECURSIVE LIST PRINTER: `(print lst)` renders the
 ;;     proper 3-element list as `(1 2 3)` (no newline), `(print (list 1 (list 2 3)
 ;;     4))` renders a NESTED list as `(1 (2 3) 4)` (the inner pair element recurses
-;;     parenthesised), and `(print p)` renders the IMPROPER pair `(cons 10 20)` as
-;;     `(10)` (the non-nil cdr `20` is dropped - the documented improper-tail limit).
+;;     parenthesised), and `(print p)` renders the IMPROPER pair `(cons 10 20)` in
+;;     DOTTED-PAIR notation as `(10 . 20)`, while `(print (cons 1 (cons 2 3)))`
+;;     renders the longer improper list `(1 2 . 3)` - every proper-prefix element
+;;     printed normally and only the final non-nil cdr `3` in dotted form.
 ;;     THEN the HIGHER-ORDER showcase, the payoff of closure-valued PARAMETERS: a
 ;;     define'd function takes a closure as a parameter and CALLS it (`(f (car l))`
 ;;     where `f` is bound to a `VClosure`, routed through `apply-value` because the
@@ -1185,7 +1208,7 @@
 ;;     `(VInt 30)`.
 ;;   - the outer `begin` returns the LAST arm, `(VInt 30)`, so the whole program
 ;;     denotes `30`. STDOUT is
-;;     `hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10)(1 4 9 16)(1 2)`;
+;;     `hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10 . 20)(1 2 . 3)(1 4 9 16)(1 2)`;
 ;;     printing to stdout escapes the mod-256 exit-code ceiling, and the exit code
 ;;     is `30`.
 ;; This program proves the evaluator now has FIRST-CLASS FUNCTIONS - a `lambda`
@@ -1194,9 +1217,10 @@
 ;; `bind-args-onto` - CONS PAIRS / LINKED LISTS - `cons` builds a `(VPair ...)`,
 ;; `car` / `cdr` project it, and a right-nested chain of pairs terminated by `0`
 ;; (NIL) is a singly-linked list, now also buildable in one form by the VARIADIC
-;; `(list e1 ... en)` SPECIAL FORM and PRINTABLE as a proper list `(e1 e2 ... en)`
-;; via the recursive `print-value` walk (nesting parenthesised; an improper tail
-;; closed early) - the `pair?` / `null?` LIST PREDICATES that let an interpreted
+;; `(list e1 ... en)` SPECIAL FORM and PRINTABLE as a list `(e1 e2 ... en)`
+;; via the recursive `print-value` walk (nesting parenthesised; an improper final
+;; cdr rendered in dotted-pair form `(a . b)`) - the `pair?` / `null?` LIST
+;; PREDICATES that let an interpreted
 ;; program write RECURSIVE LIST ALGORITHMS: `sum-list` and `list-len` recur on
 ;; `(cdr l)` and terminate by testing the structure of the value (a pair = more
 ;; list, the `0` NIL sentinel = done) - AND, the capstone, HIGHER-ORDER FUNCTIONS:
@@ -1210,8 +1234,8 @@
 ;; -> `(1 4 9 16)`, composing closures, pairs, the `list` constructor, recursion,
 ;; and list-printing. `Value` and `Env` are mutually recursive enums (a
 ;; `VClosure` carries an `Env`, an `EBind` carries a `Value`), each pointer-sized so
-;; the layout stays finite. (Deferred: variadic user-function arity; string-literal
-;; escapes; a dedicated nil variant; dotted-pair `(a . b)` rendering for improper
-;; lists.)
+;; the layout stays finite. Improper lists now render in DOTTED-PAIR notation
+;; `(a . b)` via `print-list-tail` (a non-nil final cdr). (Deferred: variadic
+;; user-function arity; string-literal escapes; a dedicated nil variant.)
 (define (main) : i64
-  (run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (define (second xs) (car (cdr xs))) (define (sum-list l) (if (pair? l) (+ (car l) (sum-list (cdr l))) 0)) (define (list-len l) (if (null? l) 0 (+ 1 (list-len (cdr l))))) (define (map f l) (if (pair? l) (cons (f (car l)) (map f (cdr l))) 0)) (define (filter p l) (if (pair? l) (if (p (car l)) (cons (car l) (filter p (cdr l))) (filter p (cdr l))) 0)) (begin (let ((s \"hello world\") (h (substring s 0 5)) (w (substring s 6 5)) (n (string-length h)) (g (string-append h (string-append \" \" w))) (t (string-append g (int->string (pow 2 n))))) (begin (print t) (print (+ (string->int (substring t 11 2)) (string-eq g s))) (+ (string->int (substring t 11 2)) (string-eq g s)))) (print ((lambda (x) (* x x)) 5)) (print (let ((n 10)) ((lambda (x) (+ x n)) 5))) (let ((lst (list 1 2 3)) (p (cons 10 20))) (begin (print (second lst)) (print (car p)) (print (pair? lst)) (print (null? lst)) (print (null? 0)) (print (list-len lst)) (print lst) (print (list 1 (list 2 3) 4)) (print p) (print (map (lambda (x) (* x x)) (list 1 2 3 4))) (print (filter (lambda (x) (< x 3)) (list 1 2 3 4))) (sum-list (map (lambda (x) (* x x)) (list 1 2 3 4))))))"))
+  (run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (define (second xs) (car (cdr xs))) (define (sum-list l) (if (pair? l) (+ (car l) (sum-list (cdr l))) 0)) (define (list-len l) (if (null? l) 0 (+ 1 (list-len (cdr l))))) (define (map f l) (if (pair? l) (cons (f (car l)) (map f (cdr l))) 0)) (define (filter p l) (if (pair? l) (if (p (car l)) (cons (car l) (filter p (cdr l))) (filter p (cdr l))) 0)) (begin (let ((s \"hello world\") (h (substring s 0 5)) (w (substring s 6 5)) (n (string-length h)) (g (string-append h (string-append \" \" w))) (t (string-append g (int->string (pow 2 n))))) (begin (print t) (print (+ (string->int (substring t 11 2)) (string-eq g s))) (+ (string->int (substring t 11 2)) (string-eq g s)))) (print ((lambda (x) (* x x)) 5)) (print (let ((n 10)) ((lambda (x) (+ x n)) 5))) (let ((lst (list 1 2 3)) (p (cons 10 20))) (begin (print (second lst)) (print (car p)) (print (pair? lst)) (print (null? lst)) (print (null? 0)) (print (list-len lst)) (print lst) (print (list 1 (list 2 3) 4)) (print p) (print (cons 1 (cons 2 3))) (print (map (lambda (x) (* x x)) (list 1 2 3 4))) (print (filter (lambda (x) (< x 3)) (list 1 2 3 4))) (sum-list (map (lambda (x) (* x x)) (list 1 2 3 4))))))"))

@@ -33,6 +33,7 @@ fi
 stdlib_manifest() {
     cat <<'EOF'
 string.tl
+test.tl
 EOF
 }
 
@@ -116,6 +117,66 @@ fi
 if [ -s "$STDERR" ]; then
     echo "FAIL: stdlib witness wrote unexpected stderr" >&2
     sed 's/^/  /' "$STDERR" >&2
+    exit 1
+fi
+
+TEST_WITNESS="$WORKDIR/stdlib_test_witness.tl"
+TEST_ASM="$WORKDIR/stdlib_test_witness.s"
+TEST_OBJ="$WORKDIR/stdlib_test_witness.o"
+TEST_BIN="$WORKDIR/stdlib_test_witness"
+TEST_STDOUT="$WORKDIR/stdlib_test_witness.stdout"
+TEST_STDERR="$WORKDIR/stdlib_test_witness.stderr"
+
+cat > "$TEST_WITNESS" <<'EOF'
+(import "stdlib/test.tl")
+
+(define (main) : i64
+  (begin
+    (assert-true true "true should pass")
+    (assert-false false "false should pass")
+    (assert-bool-eq true true "bool equality should pass")
+    (assert-i64-eq 42 42 "i64 equality should pass")
+    (assert-i32-eq (cast 7 : i32) (cast 7 : i32) "i32 equality should pass")
+    (assert-f64-eq 1.5 1.5 "f64 equality should pass")
+    (assert-char-eq #A' #A' "char equality should pass")
+    (assert-string-eq "hello" "hello" "string equality should pass")
+    42))
+EOF
+
+echo "[stdlib] compiling assertion witness with --stdlib-root"
+"$COMPILER" compile "$TEST_WITNESS" --stdlib-root "$ROOT/stdlib" -o "$TEST_ASM"
+
+as "$TEST_ASM" -o "$TEST_OBJ"
+ld "$TEST_OBJ" -o "$TEST_BIN"
+
+echo "[stdlib] running assertion witness -> expect exit 42"
+set +e
+"$TEST_BIN" > "$TEST_STDOUT" 2> "$TEST_STDERR"
+got=$?
+set -e
+
+if [ "$got" -ne 42 ]; then
+    echo "FAIL: stdlib assertion witness expected exit 42, got $got" >&2
+    if [ -s "$TEST_STDOUT" ]; then
+        echo "stdout:" >&2
+        sed 's/^/  /' "$TEST_STDOUT" >&2
+    fi
+    if [ -s "$TEST_STDERR" ]; then
+        echo "stderr:" >&2
+        sed 's/^/  /' "$TEST_STDERR" >&2
+    fi
+    exit 1
+fi
+
+if [ -s "$TEST_STDOUT" ]; then
+    echo "FAIL: stdlib assertion witness wrote unexpected stdout" >&2
+    sed 's/^/  /' "$TEST_STDOUT" >&2
+    exit 1
+fi
+
+if [ -s "$TEST_STDERR" ]; then
+    echo "FAIL: stdlib assertion witness wrote unexpected stderr" >&2
+    sed 's/^/  /' "$TEST_STDERR" >&2
     exit 1
 fi
 

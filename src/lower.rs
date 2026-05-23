@@ -1450,18 +1450,71 @@ impl FnLowerer {
         base_val
     }
 
-    /// Construct a dynamic-array value: reserve 16 bytes of inline fat
-    /// `{ ptr, len }` storage, allocate an element buffer of `len * sizeof(elem)`
-    /// bytes via the runtime bump allocator `tl_alloc`, store the buffer pointer
-    /// at offset 0 and the element count at offset 8, then yield a pointer to the
-    /// storage (the runtime representation of a dynamic array). Mirrors how enum
-    /// values and string literals are built (`lower_construct`) — only
-    /// Alloc/AddrOf/Gep/Store/Call, no new IR shape.
+    /// Construct a dynamic-array value: reject negative lengths and byte-count
+    /// overflow, reserve 16 bytes of inline fat `{ ptr, len }` storage, allocate
+    /// an element buffer of `len * sizeof(elem)` bytes via `tl_alloc`, store the
+    /// buffer pointer at offset 0 and the element count at offset 8, then yield
+    /// a pointer to the storage (the runtime representation of a dynamic array).
+    /// Mirrors how enum values and string literals are built (`lower_construct`)
+    /// using existing control flow plus Alloc/AddrOf/Gep/Store/Call.
     fn lower_make_array(&mut self, elem_ty: &Type, len: &ast::Expr) -> Value {
         let elem_ty = self.resolve_type(elem_ty);
         let elem_size = elem_ty.size() as i64;
         let len_raw = self.lower_expr(len);
         let len_val = self.cast_value(len_raw, Type::I64);
+
+        let check_max_label = self.builder.fresh_label("make_array_len_nonneg");
+        let fail_label = self.builder.fresh_label("make_array_len_fail");
+        let alloc_label = self.builder.fresh_label("make_array_len_ok");
+
+        let non_negative = self.builder.fresh_var();
+        self.builder.emit(Instruction::BinOp {
+            dst: non_negative,
+            op: BinOp::Le,
+            lhs: Value::ConstI64(0),
+            rhs: len_val.clone(),
+            ty: Type::Bool,
+        });
+        self.record_local(non_negative, Type::Bool);
+        self.builder.emit(Instruction::Branch {
+            cond: Value::Var(non_negative),
+            true_label: check_max_label.clone(),
+            false_label: fail_label.clone(),
+        });
+
+        self.builder.finish_block(&check_max_label);
+        let max_len = if elem_size == 0 {
+            i64::MAX
+        } else {
+            i64::MAX / elem_size
+        };
+        let within_max = self.builder.fresh_var();
+        self.builder.emit(Instruction::BinOp {
+            dst: within_max,
+            op: BinOp::Le,
+            lhs: len_val.clone(),
+            rhs: Value::ConstI64(max_len),
+            ty: Type::Bool,
+        });
+        self.record_local(within_max, Type::Bool);
+        self.builder.emit(Instruction::Branch {
+            cond: Value::Var(within_max),
+            true_label: alloc_label.clone(),
+            false_label: fail_label.clone(),
+        });
+
+        // Invalid lengths trap before tl_alloc can observe a negative or
+        // overflowed byte count. The call diverges; the jump is defensive.
+        self.builder.finish_block(&fail_label);
+        self.builder.emit(Instruction::Call {
+            dst: None,
+            func: "tl_oob_abort".into(),
+            args: vec![],
+            ty: Type::Unit,
+        });
+        self.builder.emit(Instruction::Jump(alloc_label.clone()));
+
+        self.builder.finish_block(&alloc_label);
 
         // byte_count = len * sizeof(elem). Computed in i64 so it feeds tl_alloc.
         let byte_count = self.builder.fresh_var();
@@ -4222,6 +4275,39 @@ mod tests {
         let prog = parse("(define (f [n : i64]) : i64 (begin (make-array i64 n) 0))").unwrap();
         let ir = lower_program(&prog);
         let instrs = all_instrs(&ir);
+
+        // Invalid lengths trap before the allocator sees a negative or
+        // overflowed byte count.
+        assert_eq!(
+            instrs
+                .iter()
+                .filter(|i| matches!(i, Instruction::Branch { .. }))
+                .count(),
+            2
+        );
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::BinOp {
+                op: BinOp::Le,
+                lhs: Value::ConstI64(0),
+                ty: Type::Bool,
+                ..
+            }
+        )));
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::BinOp {
+                op: BinOp::Le,
+                rhs: Value::ConstI64(1_152_921_504_606_846_975),
+                ty: Type::Bool,
+                ..
+            }
+        )));
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Call { func, .. } if func == "tl_oob_abort"))
+        );
 
         // Element-buffer size is computed as n * sizeof(i64) = n * 8.
         assert!(instrs.iter().any(|i| matches!(

@@ -133,8 +133,11 @@ narrower or unsigned integer is required. Floating-point literals are always
 
 **Dynamic array:** `(Array type)` - written without a size
 - Runtime-sized element buffer allocated with `tl_alloc`.
+- `make-array` rejects negative lengths and traps if `length * sizeof(type)`
+  would overflow an `i64` byte count before calling `tl_alloc`.
 - A dynamic-array value is a pointer to inline fat storage
   `(data_ptr : u64, length : i64)` - 16 bytes total.
+- The stored `length` field is always non-negative.
 - Not valid as a global initializer.
 
 ### 3.3 Function types
@@ -404,7 +407,7 @@ See §3.6.
 | `length` | `(Array t) → i64` | Get dynamic array length |
 | `length` | `String → i64` | Get string byte length |
 | `array-length` | `(Array t) → i64` | Get dynamic array length |
-| `make-array` | `type i64 → (Array type)` | Allocate dynamic array element buffer |
+| `make-array` | `type i64 → (Array type)` | Allocate dynamic array element buffer; invalid lengths trap |
 | `array-ref` | `(Array t) i64 → t` | Read element (bounds checked) |
 | `array-set!` | `(Array t) i64 t → unit` | Write element (bounds checked) |
 | `string-ref` | `String i64 → char` | Read byte from string (bounds checked) |
@@ -420,7 +423,14 @@ See §3.6.
 | `panic` | `String → unit` | Print message to stderr and abort |
 | `error` | `String → unit` | Alias for `panic` |
 
-- `array-ref`, `array-set!`, `string-ref`, and `substring`/`string-slice` perform runtime bounds checks. Out-of-bounds calls the `tl_oob_abort` runtime trap (writes to stderr and exits with code 1). The slice range is checked with unsigned arithmetic, so a negative `start`/`len` wraps to a huge value and traps.
+- `make-array` checks the runtime length before allocation. Negative lengths and
+  `length * sizeof(type)` overflow call the same `tl_oob_abort` runtime trap
+  used by bounds checks.
+- `array-ref`, `array-set!`, `string-ref`, and `substring`/`string-slice`
+  perform runtime bounds checks. Out-of-bounds calls the `tl_oob_abort` runtime
+  trap (writes to stderr and exits with code 134). The slice range is checked
+  with unsigned arithmetic, so a negative `start`/`len` wraps to a huge value
+  and traps.
 - The `char-at` operator is an alias for `string-ref`.
 
 ### 6.2 Runtime functions (emitted by the backend)

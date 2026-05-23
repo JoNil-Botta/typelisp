@@ -1,6 +1,6 @@
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 mod ast;
@@ -21,7 +21,7 @@ use ast::Program;
 use backend::generate_assembly;
 use diagnostic::format_diagnostic;
 use lower::lower_program;
-use module::{FsSource, LoadError, load_program};
+use module::{FsSource, LoadError, LoadedProgram, SourceFile, load_program};
 use optimizer::Optimizer;
 use parser::parse;
 use typechecker::TypeChecker;
@@ -38,29 +38,39 @@ fn parse_or_exit(source: &str, file: &str) -> Program {
     }
 }
 
-fn typecheck_or_exit(prog: &Program, source: &str, file: &str) {
+fn format_diagnostic_from_sources(diag: &diagnostic::Diagnostic, sources: &[SourceFile]) -> String {
+    let source = sources
+        .iter()
+        .find(|s| s.id == diag.span.file_id)
+        .or_else(|| sources.first());
+
+    match source {
+        Some(source) => format_diagnostic(
+            diag,
+            &source.source_text,
+            &source.path.display().to_string(),
+        ),
+        None => format_diagnostic(diag, "", "<unknown>"),
+    }
+}
+
+fn typecheck_or_exit(prog: &Program, sources: &[SourceFile]) {
     let mut tc = TypeChecker::new();
     if let Err(e) = tc.check_program(prog) {
-        eprint!("{}", format_diagnostic(&e.to_diagnostic(), source, file));
+        eprint!(
+            "{}",
+            format_diagnostic_from_sources(&e.to_diagnostic(), sources)
+        );
         std::process::exit(1);
     }
 }
 
 /// Load the module graph rooted at `entry`, concatenating all imported modules
-/// into one `Program`, or print a diagnostic and exit. Returns the combined
-/// program plus the entry module's `(path, source)` for downstream diagnostics.
-///
-/// Cross-module diagnostics (a type error pointing at the right *imported*
-/// file) are deferred to a later chunk (`file_id` on `Span`); the typecheck
-/// stage currently renders against the entry source. Parse errors, however,
-/// already point at the correct module because the loader carries the failing
-/// module's path + source.
-fn load_or_exit(entry: &PathBuf) -> (Program, String) {
+/// into one `Program`, or print a diagnostic and exit. The returned source map
+/// lets later semantic diagnostics render against the originating module.
+fn load_or_exit(entry: &Path) -> LoadedProgram {
     match load_program(entry, &FsSource) {
-        Ok((prog, _entry_canon)) => {
-            let entry_source = fs::read_to_string(entry).expect("Failed to read file");
-            (prog, entry_source)
-        }
+        Ok(loaded) => loaded,
         Err(LoadError::Io { path, source }) => {
             eprintln!("Error: cannot read module '{}': {}", path.display(), source);
             std::process::exit(1);
@@ -142,8 +152,8 @@ fn main() {
                 std::process::exit(1);
             }
             let file = PathBuf::from(&args[2]);
-            let (prog, source) = load_or_exit(&file);
-            typecheck_or_exit(&prog, &source, &file.display().to_string());
+            let loaded = load_or_exit(&file);
+            typecheck_or_exit(&loaded.program, &loaded.sources);
             println!("Type checking passed!");
         }
         "compile" => {
@@ -171,18 +181,18 @@ fn main() {
                 }
             }
 
-            let (prog, source) = load_or_exit(&file);
-            typecheck_or_exit(&prog, &source, &file.display().to_string());
+            let loaded = load_or_exit(&file);
+            typecheck_or_exit(&loaded.program, &loaded.sources);
 
             if emit_ir {
-                let mut ir_prog = lower_program(&prog);
+                let mut ir_prog = lower_program(&loaded.program);
                 Optimizer::optimize(&mut ir_prog);
                 let ir_text = format!("{:#?}", ir_prog);
                 let output_path = output.unwrap_or_else(|| file.with_extension("ir"));
                 fs::write(&output_path, ir_text).expect("Failed to write output");
                 println!("Generated: {}", output_path.display());
             } else {
-                let mut ir_prog = lower_program(&prog);
+                let mut ir_prog = lower_program(&loaded.program);
                 Optimizer::optimize(&mut ir_prog);
                 let asm = match generate_assembly(&ir_prog) {
                     Ok(asm) => asm,
@@ -203,10 +213,10 @@ fn main() {
                 std::process::exit(1);
             }
             let file = PathBuf::from(&args[2]);
-            let (prog, source) = load_or_exit(&file);
-            typecheck_or_exit(&prog, &source, &file.display().to_string());
+            let loaded = load_or_exit(&file);
+            typecheck_or_exit(&loaded.program, &loaded.sources);
 
-            let mut ir_prog = lower_program(&prog);
+            let mut ir_prog = lower_program(&loaded.program);
             Optimizer::optimize(&mut ir_prog);
             let asm = match generate_assembly(&ir_prog) {
                 Ok(asm) => asm,

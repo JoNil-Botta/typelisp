@@ -113,18 +113,24 @@ pub struct Lexer<'a> {
     input: &'a str,
     chars: std::str::Chars<'a>,
     current: Option<char>,
+    file_id: u32,
     line: usize,
     col: usize,
 }
 
 impl<'a> Lexer<'a> {
     pub fn new(input: &'a str) -> Self {
+        Self::new_with_file_id(input, 0)
+    }
+
+    pub fn new_with_file_id(input: &'a str, file_id: u32) -> Self {
         let mut chars = input.chars();
         let current = chars.next();
         Lexer {
             input,
             chars,
             current,
+            file_id,
             line: 1,
             col: 1,
         }
@@ -502,7 +508,7 @@ impl<'a> Lexer<'a> {
         let start_col = self.col;
         let token = self.next_token()?;
         // After reading, `self.line`/`self.col` point just past the token.
-        let span = Span::new(start_line, start_col, self.line, self.col);
+        let span = Span::with_file(self.file_id, start_line, start_col, self.line, self.col);
         Ok(SpannedToken { token, span })
     }
 

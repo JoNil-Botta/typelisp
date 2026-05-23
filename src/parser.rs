@@ -39,7 +39,11 @@ pub struct Parser<'a> {
 
 impl<'a> Parser<'a> {
     pub fn new(input: &'a str) -> Result<Self, ParseError> {
-        let mut lexer = Lexer::new(input);
+        Self::new_with_file_id(input, 0)
+    }
+
+    pub fn new_with_file_id(input: &'a str, file_id: u32) -> Result<Self, ParseError> {
+        let mut lexer = Lexer::new_with_file_id(input, file_id);
         let first = lexer.next_spanned().map_err(|e| ParseError {
             msg: e.msg.clone(),
             span: e.span(),
@@ -744,6 +748,11 @@ impl<'a> Parser<'a> {
 
 pub fn parse(input: &str) -> Result<Program, ParseError> {
     let mut parser = Parser::new(input)?;
+    parser.parse()
+}
+
+pub fn parse_with_file_id(input: &str, file_id: u32) -> Result<Program, ParseError> {
+    let mut parser = Parser::new_with_file_id(input, file_id)?;
     parser.parse()
 }
 

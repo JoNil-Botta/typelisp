@@ -16,7 +16,7 @@
 //! filesystem. The driver uses [`FsSource`], backed by `std::fs`/`std::path`.
 
 use crate::ast::{Decl, Program};
-use crate::parser::{ParseError, parse};
+use crate::parser::{ParseError, parse_with_file_id};
 use std::collections::HashSet;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -44,6 +44,23 @@ impl ModuleSource for FsSource {
     fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
         std::fs::canonicalize(path)
     }
+}
+
+/// One source file loaded into a whole-program compilation.
+#[derive(Debug, Clone)]
+pub struct SourceFile {
+    pub id: u32,
+    pub path: PathBuf,
+    pub source_text: String,
+}
+
+/// Result of loading a TypeLisp module graph.
+#[derive(Debug, Clone)]
+pub struct LoadedProgram {
+    pub program: Program,
+    #[allow(dead_code)]
+    pub entry: PathBuf,
+    pub sources: Vec<SourceFile>,
 }
 
 /// An error from loading the module graph.
@@ -96,7 +113,7 @@ fn resolve_import(importer: &Path, import_path: &str) -> PathBuf {
 ///
 /// `src` supplies file reads and canonicalization, making the loader testable
 /// without a real filesystem.
-pub fn load_program(entry: &Path, src: &dyn ModuleSource) -> Result<(Program, PathBuf), LoadError> {
+pub fn load_program(entry: &Path, src: &dyn ModuleSource) -> Result<LoadedProgram, LoadError> {
     let entry_canon = src.canonicalize(entry).map_err(|e| LoadError::Io {
         path: entry.to_path_buf(),
         source: e,
@@ -104,8 +121,13 @@ pub fn load_program(entry: &Path, src: &dyn ModuleSource) -> Result<(Program, Pa
 
     let mut visited: HashSet<PathBuf> = HashSet::new();
     let mut decls: Vec<Decl> = Vec::new();
-    load_module(&entry_canon, src, &mut visited, &mut decls)?;
-    Ok((Program { decls }, entry_canon))
+    let mut sources: Vec<SourceFile> = Vec::new();
+    load_module(&entry_canon, src, &mut visited, &mut decls, &mut sources)?;
+    Ok(LoadedProgram {
+        program: Program { decls },
+        entry: entry_canon,
+        sources,
+    })
 }
 
 /// Depth-first load a single module and its (transitive) imports into `decls`.
@@ -120,6 +142,7 @@ fn load_module(
     src: &dyn ModuleSource,
     visited: &mut HashSet<PathBuf>,
     decls: &mut Vec<Decl>,
+    sources: &mut Vec<SourceFile>,
 ) -> Result<(), LoadError> {
     // Mark visited *before* recursing so a cycle back to this module is a no-op.
     if !visited.insert(canon.to_path_buf()) {
@@ -130,7 +153,13 @@ fn load_module(
         path: canon.to_path_buf(),
         source: e,
     })?;
-    let prog = parse(&text).map_err(|e| LoadError::Parse {
+    let file_id = sources.len() as u32;
+    sources.push(SourceFile {
+        id: file_id,
+        path: canon.to_path_buf(),
+        source_text: text.clone(),
+    });
+    let prog = parse_with_file_id(&text, file_id).map_err(|e| LoadError::Parse {
         path: canon.to_path_buf(),
         source_text: text.clone(),
         error: Box::new(e),
@@ -145,7 +174,7 @@ fn load_module(
                 path: target.clone(),
                 source: e,
             })?;
-            load_module(&target_canon, src, visited, decls)?;
+            load_module(&target_canon, src, visited, decls, sources)?;
         }
     }
 
@@ -162,6 +191,8 @@ fn load_module(
 mod tests {
     use super::*;
     use crate::ast::Decl;
+    use crate::diagnostic::format_diagnostic;
+    use crate::typechecker::TypeChecker;
     use std::collections::HashMap;
 
     /// In-memory module source for tests. Paths are normalized logically
@@ -248,12 +279,18 @@ mod tests {
             ("a.tl", "(define (a) : i64 1)"),
             ("b.tl", "(import \"a.tl\")\n(define (b) : i64 (a))"),
         ]);
-        let (prog, entry) = load_program(Path::new("b.tl"), &src).unwrap();
-        assert_eq!(entry, PathBuf::from("b.tl"));
+        let loaded = load_program(Path::new("b.tl"), &src).unwrap();
+        assert_eq!(loaded.entry, PathBuf::from("b.tl"));
         // Imports are stripped; imported-before-importer order.
-        assert_eq!(decl_names(&prog), vec!["a", "b"]);
+        assert_eq!(decl_names(&loaded.program), vec!["a", "b"]);
         // No Import decls survive into the combined program.
-        assert!(!prog.decls.iter().any(|d| matches!(d, Decl::Import(_))));
+        assert!(
+            !loaded
+                .program
+                .decls
+                .iter()
+                .any(|d| matches!(d, Decl::Import(_)))
+        );
     }
 
     #[test]
@@ -264,8 +301,8 @@ mod tests {
             ("b.tl", "(import \"c.tl\")\n(define (b) : i64 (c))"),
             ("entry.tl", "(import \"b.tl\")\n(define (e) : i64 (b))"),
         ]);
-        let (prog, _) = load_program(Path::new("entry.tl"), &src).unwrap();
-        assert_eq!(decl_names(&prog), vec!["c", "b", "e"]);
+        let loaded = load_program(Path::new("entry.tl"), &src).unwrap();
+        assert_eq!(decl_names(&loaded.program), vec!["c", "b", "e"]);
     }
 
     #[test]
@@ -280,8 +317,8 @@ mod tests {
                 "(import \"b.tl\")\n(import \"c.tl\")\n(define (a) : i64 (+ (b) (c)))",
             ),
         ]);
-        let (prog, _) = load_program(Path::new("a.tl"), &src).unwrap();
-        let names = decl_names(&prog);
+        let loaded = load_program(Path::new("a.tl"), &src).unwrap();
+        let names = decl_names(&loaded.program);
         assert_eq!(names.iter().filter(|n| *n == "d").count(), 1, "{:?}", names);
         // d before b and c; b and c before a.
         assert_eq!(names, vec!["d", "b", "c", "a"]);
@@ -294,8 +331,8 @@ mod tests {
             ("a.tl", "(import \"b.tl\")\n(define (a) : i64 1)"),
             ("b.tl", "(import \"a.tl\")\n(define (b) : i64 2)"),
         ]);
-        let (prog, _) = load_program(Path::new("a.tl"), &src).unwrap();
-        let names = decl_names(&prog);
+        let loaded = load_program(Path::new("a.tl"), &src).unwrap();
+        let names = decl_names(&loaded.program);
         assert_eq!(names.iter().filter(|n| *n == "a").count(), 1);
         assert_eq!(names.iter().filter(|n| *n == "b").count(), 1);
         assert_eq!(names.len(), 2);
@@ -311,8 +348,8 @@ mod tests {
             ),
             ("src/lib/helper.tl", "(define (h) : i64 7)"),
         ]);
-        let (prog, _) = load_program(Path::new("src/main.tl"), &src).unwrap();
-        assert_eq!(decl_names(&prog), vec!["h", "m"]);
+        let loaded = load_program(Path::new("src/main.tl"), &src).unwrap();
+        assert_eq!(decl_names(&loaded.program), vec!["h", "m"]);
     }
 
     #[test]
@@ -330,8 +367,8 @@ mod tests {
                 "(import \"shared.tl\")\n(import \"a.tl\")\n(define (e) : i64 (s))",
             ),
         ]);
-        let (prog, _) = load_program(Path::new("entry.tl"), &src).unwrap();
-        let names = decl_names(&prog);
+        let loaded = load_program(Path::new("entry.tl"), &src).unwrap();
+        let names = decl_names(&loaded.program);
         assert_eq!(names.iter().filter(|n| *n == "s").count(), 1, "{:?}", names);
     }
 
@@ -363,5 +400,74 @@ mod tests {
             LoadError::Parse { path, .. } => assert_eq!(path, PathBuf::from("bad.tl")),
             other => panic!("expected Parse error, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn type_error_in_imported_module_keeps_imported_source_file() {
+        let src = MapSource::new(&[
+            ("bad.tl", "(define (bad) : i64 true)"),
+            (
+                "entry.tl",
+                "(import \"bad.tl\")\n(define (main) : i64 (bad))",
+            ),
+        ]);
+        let loaded = load_program(Path::new("entry.tl"), &src).unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&loaded.program).unwrap_err();
+        let source = loaded
+            .sources
+            .iter()
+            .find(|source| source.id == err.span.file_id)
+            .expect("diagnostic span file id must resolve");
+        let rendered = format_diagnostic(
+            &err.to_diagnostic(),
+            &source.source_text,
+            &source.path.display().to_string(),
+        );
+
+        assert_eq!(source.path, PathBuf::from("bad.tl"));
+        assert!(
+            rendered.contains("--> bad.tl:1:"),
+            "diagnostic should point at imported file:\n{}",
+            rendered
+        );
+        assert!(
+            rendered.contains(" 1 | (define (bad) : i64 true)"),
+            "diagnostic should render imported source:\n{}",
+            rendered
+        );
+    }
+
+    #[test]
+    fn duplicate_name_in_imported_module_keeps_duplicate_source_file() {
+        let src = MapSource::new(&[
+            ("a.tl", "(define (dup) : i64 1)"),
+            ("b.tl", "(define (dup) : i64 2)"),
+            (
+                "entry.tl",
+                "(import \"a.tl\")\n(import \"b.tl\")\n(define (main) : i64 (dup))",
+            ),
+        ]);
+        let loaded = load_program(Path::new("entry.tl"), &src).unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&loaded.program).unwrap_err();
+        let source = loaded
+            .sources
+            .iter()
+            .find(|source| source.id == err.span.file_id)
+            .expect("diagnostic span file id must resolve");
+        let rendered = format_diagnostic(
+            &err.to_diagnostic(),
+            &source.source_text,
+            &source.path.display().to_string(),
+        );
+
+        assert!(err.msg.contains("duplicate top-level name 'dup'"));
+        assert_eq!(source.path, PathBuf::from("b.tl"));
+        assert!(
+            rendered.contains("--> b.tl:1:"),
+            "diagnostic should point at duplicate imported file:\n{}",
+            rendered
+        );
     }
 }

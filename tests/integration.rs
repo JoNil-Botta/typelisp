@@ -285,18 +285,27 @@ fn type_lisp_programs_compile_link_and_run() {
         // parenthesised), and `(print p)` the IMPROPER pair `(cons 10 20)` as `(10)`
         // (non-nil cdr dropped - the documented improper-tail limit); these three
         // list renderings carry NO trailing newline (like the VStr/VClosure arms).
-        // The arm then denotes the UNPRINTED recursive `(sum-list (list 1 2 3 4 5))`
-        // = `1+2+3+4+5` = `(VInt 15)`. Stdout is
-        // `hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10)` and the
-        // exit code is `15`, proving the interpreter has first-class functions, can
-        // build (via the variadic `list` constructor) and walk pairs and linked lists,
-        // can express recursive list algorithms that terminate on the list's
-        // structure, AND now PRINTS a list as `(...)`. All three imported `main`-less
-        // modules are copied alongside so the `(import)` chain resolves.
+        // THEN the HIGHER-ORDER showcase (#27): `map` and `filter` are define'd
+        // functions whose first PARAMETER is a closure they CALL on each element
+        // (`(f (car l))` / `(p (car l))`) - the symbol-head call resolves the
+        // parameter to a `VClosure` in the value env and applies it via `apply-value`
+        // (first-class functions as ARGUMENTS). `(print (map (lambda (x) (* x x))
+        // (list 1 2 3 4)))` renders `(1 4 9 16)` and `(print (filter (lambda (x)
+        // (< x 3)) (list 1 2 3 4)))` renders `(1 2)`. The arm then denotes the
+        // UNPRINTED `(sum-list (map (lambda (x) (* x x)) (list 1 2 3 4)))` - a numeric
+        // witness that map yields a real list `sum-list` walks = `1+4+9+16` =
+        // `(VInt 30)`. Stdout is
+        // `hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10)(1 4 9 16)(1 2)`
+        // and the exit code is `30`, proving the interpreter has first-class
+        // functions (including closures passed AS ARGUMENTS to define'd functions),
+        // can build (via the variadic `list` constructor) and walk pairs and linked
+        // lists, can express recursive AND higher-order list algorithms, AND PRINTS a
+        // list as `(...)`. All three imported `main`-less modules are copied alongside
+        // so the `(import)` chain resolves.
         Case {
             name: "tl_eval",
-            exit_code: 15,
-            stdout: "hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10)",
+            exit_code: 30,
+            stdout: "hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10)(1 4 9 16)(1 2)",
             deps: &["tl_read.tl", "tl_lex.tl", "tl_token.tl"],
         },
         // refs #41: NESTED PATTERN MATCHING, standalone witness. A tree-walking
@@ -544,18 +553,23 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         // and the recursive `(list-len lst)` `3\n`, THEN the RECURSIVE LIST PRINTER
         // (#27): `(print lst)` -> `(1 2 3)`, `(print (list 1 (list 2 3) 4))` ->
         // `(1 (2 3) 4)`, and `(print p)` -> `(10)` (improper pair, non-nil cdr
-        // dropped), all with no trailing newline, before returning the unprinted
-        // recursive `(sum-list (list 1 2 3 4 5))` = `1+2+3+4+5` = `(VInt 15)`. Stdout
-        // is `hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10)` and
-        // the exit code is `15`. The reader (and transitively the lexer + token model)
-        // is reused via the `main`-less `tl_read.tl` import - including its lower-level
-        // `read-form` cursor entry, which the program reader drives to read all
-        // top-level forms; all three imported modules are copied alongside so the
-        // imports resolve.
+        // dropped), all with no trailing newline, THEN the HIGHER-ORDER showcase:
+        // `map` / `filter` are define'd functions that CALL a closure-valued
+        // parameter on each element, so `(print (map (lambda (x) (* x x))
+        // (list 1 2 3 4)))` -> `(1 4 9 16)` and `(print (filter (lambda (x) (< x 3))
+        // (list 1 2 3 4)))` -> `(1 2)`, before returning the unprinted
+        // `(sum-list (map (lambda (x) (* x x)) (list 1 2 3 4)))` = `1+4+9+16` =
+        // `(VInt 30)`. Stdout is
+        // `hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10)(1 4 9 16)(1 2)`
+        // and the exit code is `30`. The reader (and transitively the lexer + token
+        // model) is reused via the `main`-less `tl_read.tl` import - including its
+        // lower-level `read-form` cursor entry, which the program reader drives to
+        // read all top-level forms; all three imported modules are copied alongside
+        // so the imports resolve.
         Case {
             name: "tl_eval",
-            exit_code: 15,
-            stdout: "hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10)",
+            exit_code: 30,
+            stdout: "hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10)(1 4 9 16)(1 2)",
             deps: &["tl_read.tl", "tl_lex.tl", "tl_token.tl"],
         },
         // refs #41: nested pattern matching, also through the explicit

@@ -12,14 +12,7 @@
 ;; returns it, and `_start` exits with that value - so the printed `.s`, when
 ;; assembled (`as`) + linked (`ld`) + run, EXITS 7 for `(+ 1 (* 2 3))`.
 
-(defenum BinOp
-  (OpAdd)
-  (OpSub)
-  (OpMul))
-
-(defenum Expr
-  (EInt i64)
-  (EBin BinOp Expr Expr))
+(import "tl_ast_types.tl")
 
 (define (emit-int [n : i64]) : String
   (string-append "    movq $" (string-append (int->string n) ", %rax\n")))
@@ -41,7 +34,9 @@
 (define (emit-expr [e : Expr]) : String
   (match e
     [(EInt n) (emit-int n)]
-    [(EBin op a b) (emit-bin op a b)]))
+    [(EVar _) (begin (panic "emit: variables are not in M1 arithmetic") "")]
+    [(EBin op a b) (emit-bin op a b)]
+    [(ECall _ _) (begin (panic "emit: calls are not in M1 arithmetic") "")]))
 
 ;; emit-program: wrap the body asm in the complete backend-shaped `.s` skeleton.
 ;; `(-> Expr String)`. This mirrors the repository backend:

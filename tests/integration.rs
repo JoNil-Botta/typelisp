@@ -258,7 +258,17 @@ fn type_lisp_programs_compile_link_and_run() {
             name: "tl_emit",
             exit_code: 0,
             stdout: TL_EMIT_PROGRAM_ASM,
-            deps: &[],
+            deps: &["tl_ast_types.tl"],
+        },
+        // Self-hosting M1 (#154): parse the reader's generic Sexpr tree into
+        // the compiler AST shared with `tl_emit.tl`. The witness parses both the
+        // expression `(+ 1 (* 2 3))` and `(define (main) (+ 1 (* 2 3)))`, then
+        // returns a stable structural score: expr 46 + item 50 = 96.
+        Case {
+            name: "tl_ast",
+            exit_code: 96,
+            stdout: "",
+            deps: &["tl_ast_types.tl", "tl_read.tl", "tl_lex.tl", "tl_token.tl"],
         },
         // Self-hosting (#27): the lexer for TypeLisp's OWN s-expression syntax
         // (NOT the arithmetic-calculator surface). `tl_lexer.tl` tokenizes real
@@ -589,7 +599,15 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             name: "tl_emit",
             exit_code: 0,
             stdout: TL_EMIT_PROGRAM_ASM,
-            deps: &[],
+            deps: &["tl_ast_types.tl"],
+        },
+        // Self-hosting M1 (#154): Sexpr -> compiler AST parser, also through
+        // the explicit compile -> as -> ld -> run pipeline.
+        Case {
+            name: "tl_ast",
+            exit_code: 96,
+            stdout: "",
+            deps: &["tl_ast_types.tl", "tl_read.tl", "tl_lex.tl", "tl_token.tl"],
         },
         // Self-hosting (#27): the TypeLisp-syntax (s-expression) lexer - now with
         // string literals (`TStr`) and `;` line comments - also exercised through
@@ -697,6 +715,14 @@ fn tl_emit_printed_program_assembles_links_and_exits_7() {
 
     let work_path = work_dir.join("tl_emit.tl");
     fs::copy(&source_path, &work_path).expect("copy tl_emit.tl to work dir");
+    fs::copy(
+        manifest_dir
+            .join("tests")
+            .join("integration")
+            .join("tl_ast_types.tl"),
+        work_dir.join("tl_ast_types.tl"),
+    )
+    .expect("copy tl_ast_types.tl to work dir");
 
     let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
         .arg("run")

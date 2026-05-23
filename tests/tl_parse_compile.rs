@@ -3,7 +3,8 @@
 //! `selfhost/parse_core.tl` is the reusable middle of the first end-to-end
 //! self-hosted pipeline (#154/#163): it imports the `main`-less reader (`lex` +
 //! `read` + the `Sexpr` AST) and emitter core, then defines
-//! `parse : Sexpr -> Expr` and `parse-op : String -> BinOp`. `selfhost/parse.tl`
+//! `parse : Sexpr -> ResultExpr`, `parse-program : (Array Token) ->
+//! ResultParsedProgram`, and `parse-op : String -> BinOp`. `selfhost/parse.tl`
 //! remains the runnable demo that drives the whole pipeline over an embedded
 //! source and prints the full runnable `.s`. These tests only COMPILE the
 //! programs so they run on Windows too; the Linux integration tests execute the
@@ -190,7 +191,7 @@ fn tl_parse_tl_compiles_to_assembly() {
     ] {
         assert!(
             asm.contains(msg),
-            "tl_parse assembly is missing panic message {:?}:\n{}",
+            "tl_parse assembly is missing parse message {:?}:\n{}",
             msg,
             asm,
         );
@@ -255,6 +256,8 @@ fn tl_parse_core_tl_compiles_to_assembly() {
         "_tl_parse_begin:",
         "_tl_parse_args:",
         "_tl_parse_params:",
+        "_tl_parse_define_header:",
+        "_tl_parse_define_rest:",
         "_tl_parse_item:",
         "_tl_parse_program_forms:",
         "_tl_parse_program:",
@@ -283,7 +286,7 @@ fn tl_parse_core_tl_compiles_to_assembly() {
     ] {
         assert!(
             asm.contains(msg),
-            "tl_parse_core assembly is missing panic message {:?}:\n{}",
+            "tl_parse_core assembly is missing parse message {:?}:\n{}",
             msg,
             asm,
         );
@@ -321,6 +324,7 @@ fn tl_compile_smoke_tl_compiles_to_assembly() {
         "call _tl_peek_tag",
         "call _tl_lex",
         "call _tl_emit_program_with_defs",
+        "call tl_print_err",
         "call _tl_emit_defs",
         "call _tl_emit_def",
         "call _tl_emit_call",
@@ -351,6 +355,7 @@ fn tl_compile_smoke_tl_compiles_to_assembly() {
         "parse: malformed set!",
         "parse: malformed while",
         "parse: empty begin",
+        "parse: malformed if",
         "emit: empty begin",
     ] {
         assert!(

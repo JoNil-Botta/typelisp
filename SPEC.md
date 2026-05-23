@@ -430,6 +430,7 @@ See §3.6.
 | `print-newline` | `→ unit` | Print newline to stdout |
 | `print-string` | `String → unit` | Print string bytes to stdout |
 | `print-str` | `String → unit` | Alias for `print-string` |
+| `print-error` | `String → unit` | Print string bytes to stderr |
 | `arg-count` | `→ i64` | Get Linux process `argc` |
 | `arg` | `i64 → String` | Get argv entry as an owned String |
 | `read-file` | `String → String` | Read whole file contents; panics on error |
@@ -544,14 +545,15 @@ They are not implemented by a separate C runtime.
 - Strings: literals, `string-ref`/`char-at`, `string-length`/`length`,
   `string-eq`/`string=?`, `string-append`/`string-concat`,
   `substring`/`string-slice`, `string->int`, `int->string`,
-  `print-string`/`print-str`.
+  `print-string`/`print-str`, `print-error`.
 - Bootstrap I/O helpers: `arg-count`, `arg`, `read-file`, `write-file`,
   `file-exists?`.
 - `extern` declarations.
 - Multi-file modules via `import`.
 - Builtin `print`, `print-bool`, `print-float`, `print-char`,
-  `print-newline`, `print-string`/`print-str`, `string-append`/`string-concat`,
-  `read-file`, `write-file`, `file-exists?`, `panic`/`error`.
+  `print-newline`, `print-string`/`print-str`, `print-error`,
+  `string-append`/`string-concat`, `read-file`, `write-file`, `file-exists?`,
+  `panic`/`error`.
 
 ### 8.2 What does NOT work (yet)
 

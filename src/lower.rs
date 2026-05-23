@@ -1530,6 +1530,23 @@ impl FnLowerer {
         }
 
         if let ast::Expr::Var(name) = func.unspan()
+            && name == "print-error"
+            && args.len() == 1
+            && !self.vars.contains_key(name)
+            && !self.function_types.contains_key(name)
+        {
+            let s = self.lower_expr_as(&args[0], &Type::String);
+            let (ptr, len) = self.load_string_fields(&s);
+            self.builder.emit(Instruction::Call {
+                dst: None,
+                func: "tl_print_err".to_string(),
+                args: vec![Value::Var(ptr), Value::Var(len)],
+                ty: Type::Unit,
+            });
+            return Value::ConstUnit;
+        }
+
+        if let ast::Expr::Var(name) = func.unspan()
             && !self.vars.contains_key(name)
             && let Some(Type::Func(param_tys, ret_ty)) = self.function_types.get(name).cloned()
         {

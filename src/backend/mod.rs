@@ -84,6 +84,7 @@ pub struct X86_64Backend {
     /// `tl_abort` it takes a `(ptr, len)` argument, but unlike `tl_abort` it
     /// returns rather than terminating the process.
     needs_print_str_runtime: bool,
+    needs_print_err_runtime: bool,
     /// Whether the program references the private argc helper emitted for
     /// `(arg-count)`.
     needs_arg_count_runtime: bool,
@@ -818,6 +819,7 @@ impl X86_64Backend {
             needs_string_concat_runtime: false,
             needs_abort_runtime: false,
             needs_print_str_runtime: false,
+            needs_print_err_runtime: false,
             needs_arg_count_runtime: false,
             needs_arg_runtime: false,
             needs_read_file_runtime: false,
@@ -853,6 +855,7 @@ impl X86_64Backend {
         self.needs_substring_runtime = Self::needs_substring_runtime(program);
         self.needs_string_concat_runtime = Self::needs_string_concat_runtime(program);
         self.needs_print_str_runtime = Self::needs_print_str_runtime(program);
+        self.needs_print_err_runtime = Self::needs_print_err_runtime(program);
         self.needs_arg_count_runtime = Self::needs_arg_count_runtime(program);
         self.needs_arg_runtime = Self::needs_arg_runtime(program);
         self.needs_read_file_runtime = Self::needs_read_file_runtime(program);
@@ -931,6 +934,7 @@ impl X86_64Backend {
                 || (self.needs_string_concat_runtime && symbol == "tl_string_concat")
                 || (self.needs_abort_runtime && symbol == ABORT_RUNTIME_SYMBOL)
                 || (self.needs_print_str_runtime && symbol == "tl_print_str")
+                || (self.needs_print_err_runtime && symbol == "tl_print_err")
                 || (self.needs_arg_count_runtime && symbol == ARG_COUNT_RUNTIME_SYMBOL)
                 || (self.needs_arg_runtime && symbol == ARG_RUNTIME_SYMBOL)
                 || (self.needs_read_file_runtime && symbol == READ_FILE_RUNTIME_SYMBOL)
@@ -981,6 +985,9 @@ impl X86_64Backend {
         }
         if self.needs_print_str_runtime {
             self.generate_print_str_runtime_functions();
+        }
+        if self.needs_print_err_runtime {
+            self.generate_print_err_runtime_functions();
         }
         if self.needs_arg_count_runtime {
             self.generate_arg_count_runtime_functions();
@@ -1347,6 +1354,25 @@ impl X86_64Backend {
             .externs
             .iter()
             .any(|(name, _)| name == "tl_print_str");
+        referenced_in_calls || referenced_in_externs
+    }
+
+    fn needs_print_err_runtime(program: &Program) -> bool {
+        let defines_own = program.functions.iter().any(|f| f.name == "tl_print_err");
+        if defines_own {
+            return false;
+        }
+        let referenced_in_calls = program.functions.iter().any(|func| {
+            func.blocks.iter().any(|block| {
+                block.instructions.iter().any(|instr| {
+                    matches!(instr, Instruction::Call { func, .. } if func == "tl_print_err")
+                })
+            })
+        });
+        let referenced_in_externs = program
+            .externs
+            .iter()
+            .any(|(name, _)| name == "tl_print_err");
         referenced_in_calls || referenced_in_externs
     }
 
@@ -1915,6 +1941,19 @@ impl X86_64Backend {
         self.emit("    movq %rsi, %rdx");
         self.emit("    movq %rdi, %rsi");
         self.emit("    movq $1, %rdi");
+        self.emit("    movq $1, %rax");
+        self.emit("    syscall");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_print_err_runtime_functions(&mut self) {
+        self.emit("    .globl tl_print_err");
+        self.emit("tl_print_err:");
+        // write(2 /*fd=stderr*/, ptr, len). syscall number 1; args rdi/rsi/rdx.
+        self.emit("    movq %rsi, %rdx");
+        self.emit("    movq %rdi, %rsi");
+        self.emit("    movq $2, %rdi");
         self.emit("    movq $1, %rax");
         self.emit("    syscall");
         self.emit("    ret");
@@ -3817,6 +3856,8 @@ impl X86_64Backend {
             // The backend-provided print-string helper resolves to its raw
             // runtime symbol rather than being mangled to `_tl_tl_print_str`.
             "tl_print_str".into()
+        } else if name == "tl_print_err" && self.needs_print_err_runtime {
+            "tl_print_err".into()
         } else if name == ARG_COUNT_RUNTIME_SYMBOL && self.needs_arg_count_runtime {
             ARG_COUNT_RUNTIME_SYMBOL.into()
         } else if name == ARG_RUNTIME_SYMBOL && self.needs_arg_runtime {

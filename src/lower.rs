@@ -11,6 +11,7 @@ const ARG_COUNT_RUNTIME_SYMBOL: &str = ".L_tl_arg_count";
 const ARG_RUNTIME_SYMBOL: &str = ".L_tl_arg";
 const READ_FILE_RUNTIME_SYMBOL: &str = ".L_tl_read_file";
 const WRITE_FILE_RUNTIME_SYMBOL: &str = ".L_tl_write_file";
+const FILE_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists";
 
 /// Lowers a typed AST program into IR.
 pub fn lower_program(prog: &ast::Program) -> Program {
@@ -1073,6 +1074,27 @@ impl FnLowerer {
                 ty: Type::Unit,
             });
             return Value::ConstUnit;
+        }
+
+        // `(file-exists? path)` probes a path through the same NUL-terminated
+        // path-copy convention as the whole-file helpers, returning a bool.
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "file-exists?"
+            && args.len() == 1
+            && !self.vars.contains_key(name)
+            && !self.function_types.contains_key(name)
+        {
+            let path = self.lower_expr(&args[0]);
+            let (ptr, len) = self.load_string_fields(&path);
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: FILE_EXISTS_RUNTIME_SYMBOL.to_string(),
+                args: vec![Value::Var(ptr), Value::Var(len)],
+                ty: Type::Bool,
+            });
+            self.record_local(dst, Type::Bool);
+            return Value::Var(dst);
         }
 
         // `(substring s start len)` / `(string-slice s start len)` extracts the
@@ -3391,6 +3413,71 @@ mod tests {
                 |i| matches!(i, Instruction::Call { func, .. } if func == WRITE_FILE_RUNTIME_SYMBOL)
             ),
             "user-defined write-file must not lower to the builtin runtime"
+        );
+    }
+
+    #[test]
+    fn test_lower_file_exists_extracts_path_fields_and_calls_runtime() {
+        let prog = parse(r#"(define (f) : bool (file-exists? "input.txt"))"#).unwrap();
+        let ir = lower_program(&prog);
+        let instrs: Vec<&Instruction> = ir.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .collect();
+
+        let call = instrs.iter().find_map(|i| match i {
+            Instruction::Call { func, args, ty, .. } if func == FILE_EXISTS_RUNTIME_SYMBOL => {
+                Some((args, ty))
+            }
+            _ => None,
+        });
+        let (args, ty) = call.expect("expected a Call to file-exists? runtime");
+        assert_eq!(args.len(), 2, "file-exists? runtime takes path ptr/len");
+        assert_eq!(*ty, Type::Bool, "file-exists? yields a bool");
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Load { ty: Type::U64, .. })),
+            "expected a Load of the path data pointer"
+        );
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Load { ty: Type::I64, .. })),
+            "expected a Load of the path byte length"
+        );
+    }
+
+    #[test]
+    fn test_lower_user_defined_file_exists_shadows_builtin() {
+        let prog = parse(
+            r#"
+            (define (file-exists? [n : i64]) : i64 n)
+            (define (main) : i64 (file-exists? 7))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let main = ir
+            .functions
+            .iter()
+            .position(|func| func.name == "main")
+            .unwrap();
+
+        assert!(
+            ir.functions[main]
+                .blocks
+                .iter()
+                .flat_map(|b| b.instructions.iter())
+                .any(|i| matches!(i, Instruction::Call { func, .. } if func == "file-exists?")),
+            "expected ordinary call to user-defined file-exists?"
+        );
+        assert!(
+            !ir.functions[main].blocks.iter().flat_map(|b| b.instructions.iter()).any(
+                |i| matches!(i, Instruction::Call { func, .. } if func == FILE_EXISTS_RUNTIME_SYMBOL)
+            ),
+            "user-defined file-exists? must not lower to the builtin runtime"
         );
     }
 

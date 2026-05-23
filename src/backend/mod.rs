@@ -10,6 +10,7 @@ const ARG_COUNT_RUNTIME_SYMBOL: &str = ".L_tl_arg_count";
 const ARG_RUNTIME_SYMBOL: &str = ".L_tl_arg";
 const READ_FILE_RUNTIME_SYMBOL: &str = ".L_tl_read_file";
 const WRITE_FILE_RUNTIME_SYMBOL: &str = ".L_tl_write_file";
+const FILE_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists";
 
 /// x86_64 assembly code generator
 /// Target: Linux, System V AMD64 ABI
@@ -93,6 +94,10 @@ pub struct X86_64Backend {
     /// `(write-file path contents)`. The helper uses Linux syscalls, `tl_alloc`,
     /// and the panic/abort runtime.
     needs_write_file_runtime: bool,
+    /// Whether the program references the private file-exists helper emitted for
+    /// `(file-exists? path)`. The helper uses Linux syscalls, `tl_alloc`, and the
+    /// panic/abort runtime for unexpected errors.
+    needs_file_exists_runtime: bool,
     return_ty: Type,
     /// VarIds that are function parameters of the function currently being
     /// generated. Their `Alloc` instructions are no-ops because the parameter
@@ -810,6 +815,7 @@ impl X86_64Backend {
             needs_arg_runtime: false,
             needs_read_file_runtime: false,
             needs_write_file_runtime: false,
+            needs_file_exists_runtime: false,
             return_ty: Type::Unit,
             param_vars: HashSet::new(),
             current_fn: String::new(),
@@ -842,10 +848,12 @@ impl X86_64Backend {
         self.needs_arg_runtime = Self::needs_arg_runtime(program);
         self.needs_read_file_runtime = Self::needs_read_file_runtime(program);
         self.needs_write_file_runtime = Self::needs_write_file_runtime(program);
+        self.needs_file_exists_runtime = Self::needs_file_exists_runtime(program);
         self.needs_abort_runtime = Self::needs_abort_runtime(program)
             || self.needs_arg_runtime
             || self.needs_read_file_runtime
-            || self.needs_write_file_runtime;
+            || self.needs_write_file_runtime
+            || self.needs_file_exists_runtime;
         // Several backend runtimes allocate their buffers and fat values via a
         // raw `tl_alloc` call, so their presence forces the raw allocator
         // runtime to be emitted even when IR calls to a user-defined TypeLisp
@@ -856,7 +864,8 @@ impl X86_64Backend {
             || self.needs_string_concat_runtime
             || self.needs_arg_runtime
             || self.needs_read_file_runtime
-            || self.needs_write_file_runtime;
+            || self.needs_write_file_runtime
+            || self.needs_file_exists_runtime;
         let needs_print_runtime = !self.runtime_print_names.is_empty();
         let needs_argv_data = self.needs_arg_count_runtime || self.needs_arg_runtime;
         if needs_print_runtime {
@@ -878,6 +887,9 @@ impl X86_64Backend {
         }
         if self.needs_write_file_runtime {
             self.generate_write_file_runtime_data();
+        }
+        if self.needs_file_exists_runtime {
+            self.generate_file_exists_runtime_data();
         }
 
         self.emit("    .text");
@@ -904,7 +916,8 @@ impl X86_64Backend {
                 || (self.needs_arg_count_runtime && symbol == ARG_COUNT_RUNTIME_SYMBOL)
                 || (self.needs_arg_runtime && symbol == ARG_RUNTIME_SYMBOL)
                 || (self.needs_read_file_runtime && symbol == READ_FILE_RUNTIME_SYMBOL)
-                || (self.needs_write_file_runtime && symbol == WRITE_FILE_RUNTIME_SYMBOL);
+                || (self.needs_write_file_runtime && symbol == WRITE_FILE_RUNTIME_SYMBOL)
+                || (self.needs_file_exists_runtime && symbol == FILE_EXISTS_RUNTIME_SYMBOL);
             if !defined_inline {
                 self.emit(&format!("    .extern {}", symbol));
             }
@@ -956,6 +969,9 @@ impl X86_64Backend {
         }
         if self.needs_write_file_runtime {
             self.generate_write_file_runtime_functions();
+        }
+        if self.needs_file_exists_runtime {
+            self.generate_file_exists_runtime_functions();
         }
 
         // Generate functions
@@ -1320,6 +1336,22 @@ impl X86_64Backend {
         })
     }
 
+    /// Whether the program references the private file-exists helper emitted for
+    /// `(file-exists? path)`. The lowerer targets a private assembler label, so
+    /// it cannot collide with a user-defined TypeLisp function.
+    fn needs_file_exists_runtime(program: &Program) -> bool {
+        program.functions.iter().any(|func| {
+            func.blocks.iter().any(|block| {
+                block.instructions.iter().any(|instr| {
+                    matches!(
+                        instr,
+                        Instruction::Call { func, .. } if func == FILE_EXISTS_RUNTIME_SYMBOL
+                    )
+                })
+            })
+        })
+    }
+
     fn generate_print_runtime_data(&mut self) {
         self.emit("    .section .rodata");
         self.emit(".L_tl_bool_true:");
@@ -1650,6 +1682,14 @@ impl X86_64Backend {
         self.emit(".L_tl_write_file_error_msg:");
         self.emit("    .ascii \"tl: write-file failed\\n\"");
         self.emit("    .set .L_tl_write_file_error_msg_len, . - .L_tl_write_file_error_msg");
+        self.emit("");
+    }
+
+    fn generate_file_exists_runtime_data(&mut self) {
+        self.emit("    .section .rodata");
+        self.emit(".L_tl_file_exists_error_msg:");
+        self.emit("    .ascii \"tl: file-exists? failed\\n\"");
+        self.emit("    .set .L_tl_file_exists_error_msg_len, . - .L_tl_file_exists_error_msg");
         self.emit("");
     }
 
@@ -1999,6 +2039,76 @@ impl X86_64Backend {
         self.emit(".L_tl_write_file_error:");
         self.emit("    leaq .L_tl_write_file_error_msg(%rip), %rdi");
         self.emit("    movq $.L_tl_write_file_error_msg_len, %rsi");
+        self.emit(&format!("    call {}", ABORT_RUNTIME_SYMBOL));
+        self.emit("");
+    }
+
+    /// Emit the self-contained file-exists helper
+    /// `tl_file_exists(path_ptr, path_len) -> bool`.
+    ///
+    /// ABI (System V): `path_ptr` in `%rdi`, `path_len` in `%rsi`; the 0/1 bool
+    /// result leaves in `%rax`. The helper copies the TypeLisp path bytes into a
+    /// fresh NUL-terminated buffer, probes with Linux `access(path, F_OK)`, and
+    /// returns false for ENOENT. Other syscall/path failures abort until
+    /// recoverable file errors exist.
+    fn generate_file_exists_runtime_functions(&mut self) {
+        self.emit(&format!("{}:", FILE_EXISTS_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    sub $8, %rsp");
+        // %rbx = path_ptr, %r12 = path_len. Reject negative lengths, then
+        // allocate path_len + 1 bytes for the NUL-terminated syscall path.
+        self.emit("    movq %rdi, %rbx");
+        self.emit("    movq %rsi, %r12");
+        self.emit("    cmpq $0, %r12");
+        self.emit("    jl .L_tl_file_exists_error");
+        self.emit("    movq %r12, %rdi");
+        self.emit("    addq $1, %rdi");
+        self.emit("    js .L_tl_file_exists_error");
+        self.emit("    call tl_alloc");
+        self.emit("    movq %rax, %r13");
+        // Copy path_len bytes and append a trailing NUL.
+        self.emit("    xorq %rcx, %rcx");
+        self.emit(".L_tl_file_exists_path_copy_loop:");
+        self.emit("    cmpq %r12, %rcx");
+        self.emit("    jge .L_tl_file_exists_path_copy_done");
+        self.emit("    movzbl (%rbx,%rcx), %edx");
+        self.emit("    movb %dl, (%r13,%rcx)");
+        self.emit("    incq %rcx");
+        self.emit("    jmp .L_tl_file_exists_path_copy_loop");
+        self.emit(".L_tl_file_exists_path_copy_done:");
+        self.emit("    movb $0, (%r13,%r12)");
+
+        // exists = access(c_path, F_OK) == 0. ENOENT is an ordinary false result.
+        self.emit("    movq $21, %rax");
+        self.emit("    movq %r13, %rdi");
+        self.emit("    xorq %rsi, %rsi");
+        self.emit("    syscall");
+        self.emit("    testq %rax, %rax");
+        self.emit("    jz .L_tl_file_exists_true");
+        self.emit("    cmpq $-2, %rax");
+        self.emit("    je .L_tl_file_exists_false");
+        self.emit("    jmp .L_tl_file_exists_error");
+
+        self.emit(".L_tl_file_exists_true:");
+        self.emit("    movq $1, %rax");
+        self.emit("    jmp .L_tl_file_exists_return");
+        self.emit(".L_tl_file_exists_false:");
+        self.emit("    xorq %rax, %rax");
+        self.emit(".L_tl_file_exists_return:");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+
+        self.emit(".L_tl_file_exists_error:");
+        self.emit("    leaq .L_tl_file_exists_error_msg(%rip), %rdi");
+        self.emit("    movq $.L_tl_file_exists_error_msg_len, %rsi");
         self.emit(&format!("    call {}", ABORT_RUNTIME_SYMBOL));
         self.emit("");
     }
@@ -3484,8 +3594,29 @@ impl X86_64Backend {
         if name == "main" {
             "main".into()
         } else {
-            format!("_tl_{}", name.replace('-', "_"))
+            format!("_tl_{}", Self::asm_safe_symbol_name(name))
         }
+    }
+
+    fn asm_safe_symbol_name(name: &str) -> String {
+        let mut out = String::new();
+        for ch in name.chars() {
+            match ch {
+                'A'..='Z' | 'a'..='z' | '0'..='9' | '_' => out.push(ch),
+                '-' => out.push('_'),
+                '?' => out.push_str("_question"),
+                '!' => out.push_str("_bang"),
+                '+' => out.push_str("_plus"),
+                '*' => out.push_str("_star"),
+                '/' => out.push_str("_slash"),
+                '=' => out.push_str("_eq"),
+                '<' => out.push_str("_lt"),
+                '>' => out.push_str("_gt"),
+                ':' => out.push_str("_colon"),
+                _ => out.push_str(&format!("_u{:x}", ch as u32)),
+            }
+        }
+        out
     }
 
     fn call_symbol(&self, name: &str) -> String {
@@ -3540,6 +3671,8 @@ impl X86_64Backend {
             READ_FILE_RUNTIME_SYMBOL.into()
         } else if name == WRITE_FILE_RUNTIME_SYMBOL && self.needs_write_file_runtime {
             WRITE_FILE_RUNTIME_SYMBOL.into()
+        } else if name == FILE_EXISTS_RUNTIME_SYMBOL && self.needs_file_exists_runtime {
+            FILE_EXISTS_RUNTIME_SYMBOL.into()
         } else if self.extern_names.contains(name) {
             Self::extern_symbol(name)
         } else {
@@ -3548,7 +3681,7 @@ impl X86_64Backend {
     }
 
     fn extern_symbol(name: &str) -> String {
-        name.replace('-', "_")
+        Self::asm_safe_symbol_name(name)
     }
 
     fn runtime_symbol(name: &str) -> Option<String> {
@@ -5875,6 +6008,54 @@ mod tests {
         assert!(asm.contains("_tl_write_file:"), "asm:\n{}", asm);
         assert!(asm.contains("    call _tl_write_file"), "asm:\n{}", asm);
         assert!(!asm.contains(".L_tl_write_file:"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_file_exists_emits_runtime_alloc_syscall_and_abort_path() {
+        let asm = compile_ok(r#"(define (main) : bool (file-exists? "input.txt"))"#);
+
+        assert!(asm.contains(".L_tl_file_exists:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call .L_tl_file_exists"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call tl_alloc"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_abort:"), "asm:\n{}", asm);
+        assert!(asm.contains("tl: file-exists? failed"), "asm:\n{}", asm);
+        assert!(asm.contains("    movb $0, (%r13,%r12)"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $21, %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("    xorq %rsi, %rsi"), "asm:\n{}", asm);
+        assert!(asm.contains("    cmpq $-2, %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $1, %rax"), "asm:\n{}", asm);
+        assert!(!asm.contains("_tl_.L_tl_file_exists"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("    .extern .L_tl_file_exists"),
+            "asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_compile_no_file_exists_means_no_file_exists_runtime() {
+        let asm = compile_ok(r#"(define (main) : i64 (string-length "hi"))"#);
+        assert!(!asm.contains(".L_tl_file_exists"), "asm:\n{}", asm);
+        assert!(!asm.contains("tl: file-exists? failed"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_user_defined_file_exists_shadows_builtin() {
+        let asm = compile_ok(
+            r#"
+            (define (file-exists? [n : i64]) : i64 (+ n 1))
+            (define (main) : i64 (file-exists? 41))
+            "#,
+        );
+        assert!(asm.contains("_tl_file_exists_question:"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("    call _tl_file_exists_question"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(!asm.contains("_tl_file_exists?"), "asm:\n{}", asm);
+        assert!(!asm.contains(".L_tl_file_exists:"), "asm:\n{}", asm);
     }
 
     #[test]

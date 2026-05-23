@@ -2041,6 +2041,86 @@ fn write_file_invalid_path_aborts() {
     );
 }
 
+#[test]
+fn file_exists_builtin_reports_existing_and_missing_paths() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let work_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("file-exists");
+    fs::create_dir_all(&work_dir).expect("create file-exists test work dir");
+    let existing_path = work_dir.join("input.txt");
+    let missing_path = work_dir.join("missing.txt");
+    fs::write(&existing_path, "alpha\n").expect("write file-exists fixture");
+
+    let existing_literal = tl_string_literal(&existing_path.to_string_lossy());
+    let missing_literal = tl_string_literal(&missing_path.to_string_lossy());
+    let source = format!(
+        r#"(define (main) : i64
+  (let ([existing : bool (file-exists? "{}")]
+        [missing : bool (file-exists? "{}")])
+    (if existing
+        (if missing 1 7)
+        2)))"#,
+        existing_literal, missing_literal
+    );
+    let work_path = work_dir.join("file_exists.tl");
+    fs::write(&work_path, source).expect("write file-exists TypeLisp fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&work_path)
+        .output()
+        .expect("run typelisp file-exists fixture");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(7),
+        "file-exists fixture exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(stdout, "", "file-exists fixture wrote stdout");
+    assert_eq!(stderr, "", "file-exists fixture wrote stderr");
+}
+
+#[test]
+fn user_defined_file_exists_predicate_name_assembles() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let work_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("file-exists-shadow");
+    fs::create_dir_all(&work_dir).expect("create file-exists shadow test work dir");
+    let work_path = work_dir.join("file_exists_shadow.tl");
+    fs::write(
+        &work_path,
+        r#"
+(define (file-exists? [n : i64]) : i64 (+ n 1))
+(define (main) : i64 (file-exists? 41))
+"#,
+    )
+    .expect("write file-exists shadow TypeLisp fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&work_path)
+        .output()
+        .expect("run typelisp file-exists shadow fixture");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "file-exists shadow fixture exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+}
+
 fn source_path_for_case(manifest_dir: &PathBuf, name: &str) -> PathBuf {
     let integration_path = manifest_dir
         .join("tests")

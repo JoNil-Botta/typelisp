@@ -127,6 +127,13 @@ impl TypeChecker {
             "write-file".into(),
             Type::Func(vec![Type::String, Type::String], Box::new(Type::Unit)),
         );
+        // `(file-exists? path)` -> whether the path names an existing entry.
+        // Missing paths return false; unexpected syscall/path failures keep the
+        // v1 file-I/O panic-on-error convention.
+        globals.insert(
+            "file-exists?".into(),
+            Type::Func(vec![Type::String], Box::new(Type::Bool)),
+        );
         // `(substring s start len)` / `(string-slice s start len)` ->
         // `(-> String i64 i64 String)` — a fresh String holding the `len` bytes
         // of `s` beginning at byte offset `start` (a half-open `[start,
@@ -2565,6 +2572,39 @@ mod tests {
         let src = r#"
             (define (write-file [n : i64]) : i64 n)
             (define (main) : i64 (write-file 7))
+        "#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_file_exists_yields_bool() {
+        let src = r#"(define (f) : bool (file-exists? "input.tl"))"#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_file_exists_requires_string_path() {
+        let src = "(define (f) : bool (file-exists? 42))";
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_file_exists_arity_checked() {
+        let src = r#"(define (f) : bool (file-exists? "a" "b"))"#;
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_file_exists_result_is_not_i64() {
+        let src = r#"(define (f) : i64 (file-exists? "input.tl"))"#;
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_file_exists_builtin_can_be_shadowed() {
+        let src = r#"
+            (define (file-exists? [n : i64]) : i64 n)
+            (define (main) : i64 (file-exists? 7))
         "#;
         assert!(check(src).is_ok());
     }

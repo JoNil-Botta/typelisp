@@ -2207,6 +2207,42 @@ mod tests {
     }
 
     #[test]
+    fn test_typecheck_monomorphic_maybe_requires_absence_arm() {
+        let src = r#"
+            (defenum MaybeI64
+              (NoneI64)
+              (SomeI64 i64))
+            (define (value [m : MaybeI64]) : i64
+              (match m
+                [(SomeI64 v) v]))
+        "#;
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg.contains("missing variant(s) NoneI64"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_monomorphic_result_requires_error_arm() {
+        let src = r#"
+            (defenum ResultI64
+              (OkI64 i64)
+              (ErrI64 String))
+            (define (value [r : ResultI64]) : i64
+              (match r
+                [(OkI64 v) v]))
+        "#;
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg.contains("missing variant(s) ErrI64"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
     fn test_typecheck_match_binding_arity_is_err() {
         // Circle has one payload field; binding two is an error.
         let src = format!(

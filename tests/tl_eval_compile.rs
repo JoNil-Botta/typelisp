@@ -11,7 +11,10 @@
 //! RECURSION via top-level `(define (f x y z) body)` forms with MULTI-ARGUMENT
 //! calls, FIRST-CLASS FUNCTIONS - `lambda` and CLOSURES, the `(VClosure params
 //! body captured-env)` value, CONS PAIRS / LINKED LISTS - `(VPair Value Value)`
-//! cells built by `cons` and projected by `car` / `cdr` - AND a tagged VALUE
+//! cells built by `cons` and projected by `car` / `cdr` - the `pair?` / `null?`
+//! LIST PREDICATES that let an interpreted program write RECURSIVE LIST ALGORITHMS
+//! (`(pair? x)` true iff `x` is a `(VPair ...)`, `(null? x)` true iff `x` is the
+//! nil sentinel `(VInt 0)`, refs #141) - AND a tagged VALUE
 //! domain - `(defenum Value (VInt i64) (VStr String) (VClosure Sexpr Sexpr Env)
 //! (VPair Value Value))` - so an expression now denotes a `VInt`, a `VStr`, a
 //! closure, or a pair rather than a raw `i64` (integer-requiring
@@ -636,6 +639,40 @@ fn tl_eval_tl_compiles_to_assembly() {
         asm,
     );
 
+    // LIST PREDICATES (#27/#141): `(pair? x)` is true iff `x` evaluates to a
+    // `(VPair ...)` and `(null? x)` is true iff `x` is the nil sentinel `(VInt 0)`
+    // (this file reuses `(VInt 0)` as the empty-list NIL, #141), each dispatched in
+    // `eval-sexpr` on its head-symbol text and folded to the 1/0 integer-truth
+    // convention. Both are TOTAL over the value domain (a non-pair / non-nil is
+    // simply false, never a type error). So the two dispatch string literals must be
+    // emitted in the read-only data alongside the other builtins.
+    for op in ["\"pair?\"", "\"null?\""] {
+        assert!(
+            asm.contains(&format!(".string {op}")),
+            "tl_eval assembly is missing the dispatch string literal for the list \
+             predicate {op} (pair?/null?):\n{}",
+            asm,
+        );
+    }
+
+    // RECURSIVE LIST ALGORITHMS (#27): the predicates exist so an interpreted
+    // program can write recursive list functions that TERMINATE on the structure of
+    // the list. `main`'s program defines `sum-list` (recurs on `(cdr l)` while
+    // `(pair? l)`) and `list-len` (recurs until `(null? l)`), so the function names
+    // are folded into the `FnEnv` via `is-define` and a recursive self-call resolves
+    // through the shared `fenv`. The named functions are *interpreted* (their symbol
+    // text lives in the program String, not as TypeLisp `_tl_` labels), so we assert
+    // the predicate dispatch literals above plus the user-call wiring already
+    // asserted (`lookup-fn-body`, `bind-args`) cover the recursive-list demo; no new
+    // `_tl_sum_list:` label is emitted (the function lives in the interpreted
+    // program, not the host).
+    assert!(
+        !asm.contains("_tl_sum_list:"),
+        "sum-list is an INTERPRETED function (it lives in main's program String), so \
+         no host `_tl_sum_list:` label should be emitted:\n{}",
+        asm,
+    );
+
     // Building a `(VPair a b)` cons cell heap-allocates a two-field node (its fields
     // are `Value` pointers, #111), so the pair-building path goes through the
     // runtime allocator just like the `Sexpr` tree does. (`call tl_alloc` is already
@@ -685,17 +722,20 @@ fn tl_eval_tl_compiles_to_assembly() {
         asm,
     );
 
-    // The runtime result composes a CLOSURE witness and a CONS-LIST witness:
+    // The runtime result composes a CLOSURE witness, a CONS-LIST witness, and a
+    // recursive-list predicate witness:
     // `main`'s `begin` prints the string/recursion sum (`hello world3233\n`), two
     // closure applications (`25\n`, `15\n`), then the cons-pair witness - it builds
     // the 3-element list `(cons 1 (cons 2 (cons 3 0)))` and the pair `(cons 10 20)`,
     // prints the list's second element via `(car (cdr ...))` (`2\n`), the pair (as
-    // `#<pair>`), and the pair's car (`10\n`), then denotes
-    // `(+ (car (cdr (cdr lst))) (cdr p))` = `3 + 20` = `23`. All of this is computed
-    // by the interpreter at RUNTIME (not a compile-time constant in this evaluator's
+    // `#<pair>`), the pair's car (`10\n`), the predicate observations (`1\n`,
+    // `0\n`, `1\n`), and the recursive list length (`3\n`), then denotes the
+    // unprinted `(sum-list lst)` = `1 + 2 + 3` = `6`. All of this is computed by
+    // the interpreter at RUNTIME (not a compile-time constant in this evaluator's
     // own source), so we do NOT assert the result appears in the assembly; the
-    // printed stdout (`hello world3233\n25\n15\n2\n#<pair>10\n`) and exit code (`23`)
-    // are asserted by the Linux-gated exec test in `tests/integration.rs`.
+    // printed stdout (`hello world3233\n25\n15\n2\n#<pair>10\n1\n0\n1\n3\n`) and
+    // exit code (`6`) are asserted by the Linux-gated exec test in
+    // `tests/integration.rs`.
 
     // The comparison operators fold a bool to the 1/0 integer-truth convention,
     // so the lowered evaluator must contain at least one signed integer comparison

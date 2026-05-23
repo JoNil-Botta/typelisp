@@ -69,8 +69,14 @@
 ;; one, `car` / `cdr` project its first / second field. A singly-linked LIST is the
 ;; classic right-nested chain `(cons 1 (cons 2 (cons 3 0)))` whose final `cdr` is
 ;; the integer `0` used as the empty-list sentinel (NIL) - this slice deliberately
-;; reuses `(VInt 0)` as nil rather than adding a dedicated variant, so no
-;; `null?`/`nil` builtin is introduced yet (see the dispatch arms).
+;; reuses `(VInt 0)` as nil rather than adding a dedicated variant (refs #141), so
+;; there is still no separate `nil` value. The two LIST PREDICATES read against
+;; exactly this convention: `(pair? x)` is true iff `x` is a `(VPair ...)`, and
+;; `(null? x)` is true iff `x` is the nil sentinel `(VInt 0)` - together they let an
+;; interpreted recursive list algorithm detect the end of a list (see the dispatch
+;; arms). Both fold to the 1 / 0 integer-truth convention and are TOTAL over the
+;; value domain (a non-pair / non-nil is simply false, never a type error - unlike
+;; `car` / `cdr`).
 ;;
 ;; `eval-sexpr` returns a `Value`, the environment binds `Value`s, and the
 ;; arithmetic / comparison / `if`-condition contexts that require an integer go
@@ -708,6 +714,50 @@
                                        [(VInt _) (begin (panic "cdr: not a pair") (VInt 0))]
                                        [(VStr _) (begin (panic "cdr: not a pair") (VInt 0))]
                                        [(VClosure _ _ _) (begin (panic "cdr: not a pair") (VInt 0))])))
+                             (if (string-eq name "pair?")
+                                 ;; PREDICATE `(pair? x)` (refs #27): rest is
+                                 ;; `(SCons x SNil)`. Evaluate the single argument
+                                 ;; and ask whether the resulting `Value` is a CONS
+                                 ;; PAIR - a `(VPair ...)` cell. Folds to the
+                                 ;; 1 (true) / 0 (false) integer-truth convention as
+                                 ;; `(VInt r)`, matching the comparison operators and
+                                 ;; `null?`. This is the structural test a recursive
+                                 ;; list algorithm uses to tell a non-empty list
+                                 ;; (a pair) from the NIL terminator, so it can recur
+                                 ;; on `(cdr l)` only while there is more list - the
+                                 ;; termination witness for `sum-list` below. Unlike
+                                 ;; `car` / `cdr` it is TOTAL: a non-pair is simply
+                                 ;; `(VInt 0)` (false), never a type error.
+                                 (let ([pe : Sexpr (sexpr-head rest)]
+                                       [restP : Sexpr (sexpr-tail rest)])
+                                   (begin
+                                     (sexpr-expect-nil restP)
+                                     (match (eval-sexpr pe env fenv)
+                                       [(VPair _ _) (VInt 1)]
+                                       [(VInt _) (VInt 0)]
+                                       [(VStr _) (VInt 0)]
+                                       [(VClosure _ _ _) (VInt 0)])))
+                             (if (string-eq name "null?")
+                                 ;; PREDICATE `(null? x)` (refs #27/#141): rest is
+                                 ;; `(SCons x SNil)`. Evaluate the single argument and
+                                 ;; ask whether it is the EMPTY-LIST sentinel NIL.
+                                 ;; This file reuses `(VInt 0)` as nil (see the value
+                                 ;; domain notes: a list is a right-nested chain of
+                                 ;; pairs terminated by the integer `0`, no dedicated
+                                 ;; nil variant), so `null?` is true exactly when the
+                                 ;; value is `(VInt 0)`. Any other value - a non-zero
+                                 ;; int, a string, a closure, or a pair - is not nil.
+                                 ;; Folds to the 1 / 0 integer-truth convention as
+                                 ;; `(VInt r)`. Also TOTAL over the value domain.
+                                 (let ([pe : Sexpr (sexpr-head rest)]
+                                       [restN : Sexpr (sexpr-tail rest)])
+                                   (begin
+                                     (sexpr-expect-nil restN)
+                                     (match (eval-sexpr pe env fenv)
+                                       [(VInt n) (if (= n 0) (VInt 1) (VInt 0))]
+                                       [(VStr _) (VInt 0)]
+                                       [(VClosure _ _ _) (VInt 0)]
+                                       [(VPair _ _) (VInt 0)])))
                              (if (is-builtin-op name)
                                  ;; A builtin binary call form `(op arg1 arg2)`: rest is
                                  ;; `(SCons arg1 (SCons arg2 SNil))`. Both operands must be
@@ -742,7 +792,7 @@
                                      (apply-value (lookup env name) rest env fenv)
                                      (let ([params : Sexpr (lookup-fn-params fenv name)]
                                            [body : Sexpr (lookup-fn-body fenv name)])
-                                       (eval-sexpr body (bind-args params rest env fenv) fenv))))))))))))))))))]
+                                       (eval-sexpr body (bind-args params rest env fenv) fenv))))))))))))))))))))]
     ;; APPLICATION OF A COMPUTED OPERATOR `((<expr>) a b ...)`: the head is itself
     ;; a non-symbol form (a `lambda` literal, or any expression that evaluates to a
     ;; closure), so it falls through the symbol-head arm. Evaluate the head form in
@@ -932,11 +982,16 @@
 ;; --------------------------------------------------------------------------
 ;; main: the whole front end composed - lex, read MANY forms, interpret with
 ;; MULTI-ARGUMENT user functions, recursion, multi-binding `let`, string ops, the
-;; `begin` sequencing form, FIRST-CLASS FUNCTIONS (`lambda` + CLOSURES), AND CONS
-;; PAIRS / LINKED LISTS.
+;; `begin` sequencing form, FIRST-CLASS FUNCTIONS (`lambda` + CLOSURES), CONS
+;; PAIRS / LINKED LISTS, AND the `pair?` / `null?` LIST PREDICATES that let an
+;; interpreted recursive list algorithm test for the end of a list.
 ;; --------------------------------------------------------------------------
 ;; `(run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1)))))
 ;;                (define (second xs) (car (cdr xs)))
+;;                (define (sum-list l)
+;;                  (if (pair? l) (+ (car l) (sum-list (cdr l))) 0))
+;;                (define (list-len l)
+;;                  (if (null? l) 0 (+ 1 (list-len (cdr l)))))
 ;;                (begin
 ;;                  (let ((s \"hello world\") ...)
 ;;                    (begin (print t) (print (+ ...)) (+ ...)))
@@ -944,11 +999,18 @@
 ;;                  (print (let ((n 10)) ((lambda (x) (+ x n)) 5)))
 ;;                  (let ((lst (cons 1 (cons 2 (cons 3 0)))) (p (cons 10 20)))
 ;;                    (begin (print (second lst)) (print p) (print (car p))
-;;                           (+ (car (cdr (cdr lst))) (cdr p))))))")`:
-;;   - the program starts with a recursive TWO-parameter `define` of `pow` and the
+;;                           (print (pair? lst)) (print (null? lst))
+;;                           (print (null? 0)) (print (list-len lst))
+;;                           (sum-list lst)))))")`:
+;;   - the program starts with a recursive TWO-parameter `define` of `pow`, the
 ;;     ONE-parameter `define` of `second` (just `(car (cdr xs))` - a list accessor
-;;     built FROM the new pair primitives), then a trailing `(begin ...)` SPECIAL
-;;     FORM with FOUR sub-expressions walked head-first by `eval-seq`.
+;;     built FROM the pair primitives), and two RECURSIVE LIST functions that the
+;;     new predicates make possible: `sum-list` sums a list, recurring on `(cdr l)`
+;;     only WHILE `(pair? l)` is true (the pair is the non-empty-list witness; the
+;;     `0` NIL terminator is not a pair, so the recursion bottoms out at the base
+;;     case `0`), and `list-len` counts the elements, recurring until `(null? l)`
+;;     detects the `0` NIL sentinel. Then a trailing `(begin ...)` SPECIAL FORM
+;;     with FOUR sub-expressions walked head-first by `eval-seq`.
 ;;   - FIRST arm (string/recursion witness): a MULTI-BINDING `let` rebuilds
 ;;     `"hello world"` from `substring` slices via nested `string-append`, appends
 ;;     `(int->string (pow 2 n))` to produce `"hello world32"`, prints that string,
@@ -963,26 +1025,34 @@
 ;;     VARIABLE. The lambda CAPTURES `n -> 10`; applying it to `5` binds `x -> 5`
 ;;     onto the captured env so `(+ x n)` -> `(VInt 15)`. `(print 15)` writes
 ;;     `15\n` - the load-bearing closure-capture proof.
-;;   - FOURTH (the CONS-PAIR / LINKED-LIST witness): `lst` is the 3-element
-;;     singly-linked list `(cons 1 (cons 2 (cons 3 0)))` - a right-nested chain of
-;;     `(VPair ...)` cells terminated by the `0` NIL sentinel - and `p` is the
-;;     heterogeneous pair `(cons 10 20)`. The inner `begin` prints the list's
+;;   - FOURTH (the CONS-PAIR / LINKED-LIST / RECURSIVE-LIST witness): `lst` is the
+;;     3-element singly-linked list `(cons 1 (cons 2 (cons 3 0)))` - a right-nested
+;;     chain of `(VPair ...)` cells terminated by the `0` NIL sentinel - and `p` is
+;;     the heterogeneous pair `(cons 10 20)`. The inner `begin` prints the list's
 ;;     second element via `(second lst)` = `(car (cdr lst))` (`2\n`), the pair as
 ;;     the placeholder `#<pair>` (no newline - a pair has no flat textual form),
-;;     and the pair's car `10\n`, then denotes the UNPRINTED
-;;     `(+ (car (cdr (cdr lst))) (cdr p))` = `3 + 20` = `(VInt 23)`.
-;;   - the outer `begin` returns the LAST arm, `(VInt 23)`, so the whole program
-;;     denotes `23`. STDOUT is `hello world3233\n25\n15\n2\n#<pair>10\n`; printing
-;;     to stdout escapes the mod-256 exit-code ceiling, and the exit code is `23`.
-;; This program proves the evaluator now has BOTH FIRST-CLASS FUNCTIONS - a
-;; `lambda` special form building a `(VClosure params body captured-env)`, applied
-;; as a computed operator or a closure-valued variable, with true CLOSURE capture
-;; via `bind-args-onto` - AND CONS PAIRS / LINKED LISTS: `cons` builds a
-;; `(VPair ...)`, `car` / `cdr` project it (the pair PRINTS as `#<pair>`), and a
-;; right-nested chain of pairs terminated by `0` (NIL) is a singly-linked list
-;; walked with composed `car`/`cdr`. `Value` and `Env` are mutually recursive
-;; enums (a `VClosure` carries an `Env`, an `EBind` carries a `Value`), each
-;; pointer-sized so the layout stays finite. (Deferred: variadic arity;
-;; string-literal escapes; a dedicated nil/`null?`; recursive list printing.)
+;;     the pair's car `10\n`, then EXERCISES THE NEW PREDICATES: `(pair? lst)` is
+;;     `1\n` (a non-empty list IS a pair), `(null? lst)` is `0\n` (it is not the NIL
+;;     terminator), `(null? 0)` is `1\n` (the `0` sentinel IS nil), and the
+;;     recursive `(list-len lst)` walks the chain to `3\n`. The arm then denotes the
+;;     UNPRINTED recursive `(sum-list lst)` = `1 + 2 + 3 + 0` = `(VInt 6)`.
+;;   - the outer `begin` returns the LAST arm, `(VInt 6)`, so the whole program
+;;     denotes `6`. STDOUT is `hello world3233\n25\n15\n2\n#<pair>10\n1\n0\n1\n3\n`;
+;;     printing to stdout escapes the mod-256 exit-code ceiling, and the exit code
+;;     is `6`.
+;; This program proves the evaluator now has FIRST-CLASS FUNCTIONS - a `lambda`
+;; special form building a `(VClosure params body captured-env)`, applied as a
+;; computed operator or a closure-valued variable, with true CLOSURE capture via
+;; `bind-args-onto` - CONS PAIRS / LINKED LISTS - `cons` builds a `(VPair ...)`,
+;; `car` / `cdr` project it (the pair PRINTS as `#<pair>`), and a right-nested chain
+;; of pairs terminated by `0` (NIL) is a singly-linked list - AND, the milestone of
+;; this slice, the `pair?` / `null?` LIST PREDICATES that let an interpreted program
+;; write RECURSIVE LIST ALGORITHMS: `sum-list` and `list-len` recur on `(cdr l)`
+;; and terminate by testing the structure of the value (a pair = more list, the `0`
+;; NIL sentinel = done), composing closures, pairs, and recursion. `Value` and
+;; `Env` are mutually recursive enums (a `VClosure` carries an `Env`, an `EBind`
+;; carries a `Value`), each pointer-sized so the layout stays finite. (Deferred:
+;; variadic arity; string-literal escapes; a dedicated nil variant; recursive list
+;; printing.)
 (define (main) : i64
-  (run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (define (second xs) (car (cdr xs))) (begin (let ((s \"hello world\") (h (substring s 0 5)) (w (substring s 6 5)) (n (string-length h)) (g (string-append h (string-append \" \" w))) (t (string-append g (int->string (pow 2 n))))) (begin (print t) (print (+ (string->int (substring t 11 2)) (string-eq g s))) (+ (string->int (substring t 11 2)) (string-eq g s)))) (print ((lambda (x) (* x x)) 5)) (print (let ((n 10)) ((lambda (x) (+ x n)) 5))) (let ((lst (cons 1 (cons 2 (cons 3 0)))) (p (cons 10 20))) (begin (print (second lst)) (print p) (print (car p)) (+ (car (cdr (cdr lst))) (cdr p)))))"))
+  (run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (define (second xs) (car (cdr xs))) (define (sum-list l) (if (pair? l) (+ (car l) (sum-list (cdr l))) 0)) (define (list-len l) (if (null? l) 0 (+ 1 (list-len (cdr l))))) (begin (let ((s \"hello world\") (h (substring s 0 5)) (w (substring s 6 5)) (n (string-length h)) (g (string-append h (string-append \" \" w))) (t (string-append g (int->string (pow 2 n))))) (begin (print t) (print (+ (string->int (substring t 11 2)) (string-eq g s))) (+ (string->int (substring t 11 2)) (string-eq g s)))) (print ((lambda (x) (* x x)) 5)) (print (let ((n 10)) ((lambda (x) (+ x n)) 5))) (let ((lst (cons 1 (cons 2 (cons 3 0)))) (p (cons 10 20))) (begin (print (second lst)) (print p) (print (car p)) (print (pair? lst)) (print (null? lst)) (print (null? 0)) (print (list-len lst)) (sum-list lst))))"))

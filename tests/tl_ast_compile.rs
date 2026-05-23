@@ -54,6 +54,7 @@ fn tl_ast_tl_compiles_to_assembly() {
         "_tl_parse_expr:",
         "_tl_parse_binary:",
         "_tl_parse_let:",
+        "_tl_parse_if:",
         "_tl_parse_args:",
         "_tl_parse_params:",
         "_tl_parse_item:",
@@ -74,6 +75,7 @@ fn tl_ast_tl_compiles_to_assembly() {
 
     for call in [
         "call _tl_parse_expr",
+        "call _tl_parse_if",
         "call _tl_parse_item",
         "call _tl_read",
         "call _tl_lex",
@@ -91,6 +93,7 @@ fn tl_ast_tl_compiles_to_assembly() {
     for msg in [
         "ast: malformed expression",
         "ast: malformed let",
+        "ast: malformed if",
         "ast: malformed argument list",
         "ast: malformed parameter list",
         "ast: malformed define header",
@@ -107,6 +110,11 @@ fn tl_ast_tl_compiles_to_assembly() {
     assert!(
         asm.contains(".string \"(let ((x (* 2 3))) (+ x 1))\""),
         "tl_ast assembly is missing the let source-string datum:\n{}",
+        asm,
+    );
+    assert!(
+        asm.contains(".string \"(if (< 1 2) (= 3 3) 0)\""),
+        "tl_ast assembly is missing the if source-string datum:\n{}",
         asm,
     );
 }

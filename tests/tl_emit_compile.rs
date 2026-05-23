@@ -58,6 +58,8 @@ fn tl_emit_tl_compiles_to_assembly() {
         "_tl_emit_var:",
         "_tl_emit_bin:",
         "_tl_emit_let:",
+        "_tl_emit_if:",
+        "_tl_fresh_label:",
         "_tl_emit_expr_in:",
         "_tl_emit_expr:",
         "_tl_max_let_depth:",
@@ -80,6 +82,8 @@ fn tl_emit_tl_compiles_to_assembly() {
     for call in [
         "call _tl_emit_expr_in",
         "call _tl_emit_let",
+        "call _tl_emit_if",
+        "call _tl_fresh_label",
         "call _tl_emit_op",
         "call _tl_max_let_depth",
         "call tl_int_to_string",
@@ -107,6 +111,17 @@ fn tl_emit_tl_compiles_to_assembly() {
         "    addq %rcx, %rax\\n",
         "    subq %rcx, %rax\\n",
         "    imulq %rcx, %rax\\n",
+        // refs #167: comparison and conditional-branch lowering. The `<`/`=`
+        // operators stage a `cmpq` + `setl`/`sete` + `movzbq`; `if` emits a
+        // `cmpq $0` test, a `je` to a fresh `.Lelse_` label, a `jmp` to a fresh
+        // `.Lend_` label, and the two local labels themselves.
+        "    cmpq %rcx, %rax\\n    setl %al\\n    movzbq %al, %rax\\n",
+        "    cmpq %rcx, %rax\\n    sete %al\\n    movzbq %al, %rax\\n",
+        "    cmpq $0, %rax\\n",
+        "    je ",
+        "    jmp ",
+        ".Lelse_",
+        ".Lend_",
         "    .text\\n",
         "    .globl main\\n",
         "    .globl _start\\n\\n",

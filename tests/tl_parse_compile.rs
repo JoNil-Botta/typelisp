@@ -4,9 +4,9 @@
 //! pipeline (#154/#163): it imports the `main`-less reader (`lex` + `read` + the
 //! `Sexpr` AST) and the `main`-less emitter core, adds `parse : Sexpr -> Expr`
 //! and `parse-op : String -> BinOp`, and `main` runs the whole pipeline over a
-//! single-binding let source - printing the full runnable `.s`. This test only
-//! COMPILES the program so it runs on Windows too; the Linux integration test
-//! executes it, assembles the printed text, and asserts exit 7.
+//! source that uses let, if, and comparison - printing the full runnable `.s`.
+//! This test only COMPILES the program so it runs on Windows too; the Linux
+//! integration test executes it, assembles the printed text, and asserts exit 1.
 
 use std::fs;
 use std::path::PathBuf;
@@ -59,10 +59,13 @@ fn tl_parse_tl_compiles_to_assembly() {
         "_tl_parse_op:",
         "_tl_parse_binary:",
         "_tl_parse_let:",
+        "_tl_parse_if:",
         "_tl_lex:",
         "_tl_read:",
         "_tl_cenv_lookup:",
         "_tl_emit_let:",
+        "_tl_emit_if:",
+        "_tl_fresh_label:",
         "_tl_emit_expr:",
         "_tl_emit_program:",
         "tl_int_to_string:",
@@ -83,8 +86,11 @@ fn tl_parse_tl_compiles_to_assembly() {
         "call _tl_lex",
         "call _tl_read",
         "call _tl_parse",
+        "call _tl_parse_if",
         "call _tl_emit_program",
         "call _tl_emit_let",
+        "call _tl_emit_if",
+        "call _tl_fresh_label",
     ] {
         assert!(
             asm.contains(call),
@@ -95,8 +101,9 @@ fn tl_parse_tl_compiles_to_assembly() {
     }
 
     // The literal source string the pipeline is run on appears as a data datum.
+    // refs #167: the demo now exercises let + if + comparison together.
     assert!(
-        asm.contains(".string \"(let ((x (* 2 3))) (+ x 1))\""),
+        asm.contains(".string \"(let ((x 5)) (if (< x 10) 1 0))\""),
         "tl_parse assembly is missing the source-string datum:\n{}",
         asm,
     );
@@ -110,6 +117,15 @@ fn tl_parse_tl_compiles_to_assembly() {
         ".string \"    addq %rcx, %rax\\n\"",
         ".string \"    subq %rcx, %rax\\n\"",
         ".string \"    imulq %rcx, %rax\\n\"",
+        // refs #167: the emitter's comparison + conditional-branch string
+        // constants are compiled into the program regardless of the input.
+        ".string \"    cmpq %rcx, %rax\\n    setl %al\\n    movzbq %al, %rax\\n\"",
+        ".string \"    cmpq %rcx, %rax\\n    sete %al\\n    movzbq %al, %rax\\n\"",
+        ".string \"    cmpq $0, %rax\\n\"",
+        ".string \"    je \"",
+        ".string \"    jmp \"",
+        ".string \".Lelse_\"",
+        ".string \".Lend_\"",
         ".string \"    sub $\"",
         ".string \"    add $\"",
         ".string \"(%rbp)\"",

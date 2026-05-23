@@ -28,13 +28,16 @@
 
 ;; The token kinds TypeLisp's s-expression surface needs: an opening paren, a
 ;; closing paren, an integer literal, a symbol (any operator / keyword / name -
-;; carries the sliced lexeme text), and an end-of-stream sentinel.
+;; carries the sliced lexeme text), a string literal (`"..."`, carries the
+;; sliced inner text), and an end-of-stream sentinel. `TStr` is appended last so
+;; the existing variants/tags keep their stable ordering for every importer.
 (defenum Token
   (TLParen)
   (TRParen)
   (TInt i64)
   (TSym String)
-  (TEnd))
+  (TEnd)
+  (TStr String))
 
 ;; Numeric tag for a token kind: a parser's cursor classifies the token under it
 ;; by tag. Exercises `match` over every Token variant, including the
@@ -45,7 +48,8 @@
     [(TRParen) 2]
     [(TInt _) 3]
     [(TSym _) 4]
-    [(TEnd) 5]))
+    [(TEnd) 5]
+    [(TStr _) 6]))
 
 ;; Integer payload of a TInt token (0 for any other kind): projects the literal
 ;; value back out of the enum, the way a parser reads a numeric literal.
@@ -55,7 +59,8 @@
     [(TRParen) 0]
     [(TInt v) v]
     [(TSym _) 0]
-    [(TEnd) 0]))
+    [(TEnd) 0]
+    [(TStr _) 0]))
 
 ;; Symbol text of a TSym token (the empty string for any other kind): projects
 ;; the sliced lexeme back out of the enum, the way a parser reads a symbol/name.
@@ -65,7 +70,21 @@
     [(TRParen) ""]
     [(TInt _) ""]
     [(TSym s) s]
-    [(TEnd) ""]))
+    [(TEnd) ""]
+    [(TStr _) ""]))
+
+;; String text of a TStr token (the empty string for any other kind): projects
+;; the sliced inner text of a `"..."` literal back out of the enum, the way a
+;; parser reads a string-literal datum. Distinct from `token-sym` so a `TStr`
+;; and a `TSym` with the same characters stay distinguishable.
+(define (token-str [t : Token]) : String
+  (match t
+    [(TLParen) ""]
+    [(TRParen) ""]
+    [(TInt _) ""]
+    [(TSym _) ""]
+    [(TEnd) ""]
+    [(TStr s) s]))
 
 ;; ---- Token-kind tag constants (kept in sync with `token-tag`). ----
 ;; A parser compares a token's tag against these to drive its descent.
@@ -74,3 +93,4 @@
 (define (tag-int) : i64 3)
 (define (tag-sym) : i64 4)
 (define (tag-end) : i64 5)
+(define (tag-str) : i64 6)

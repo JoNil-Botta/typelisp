@@ -190,16 +190,19 @@ fn type_lisp_programs_compile_link_and_run() {
         },
         // Self-hosting (#27): the lexer for TypeLisp's OWN s-expression syntax
         // (NOT the arithmetic-calculator surface). `tl_lexer.tl` tokenizes real
-        // TypeLisp source - balanced parens, integer literals, and *symbols*
-        // (operators / keywords / names are all one `TSym` kind) - into a real
-        // `(Array Token)`, slicing each symbol/int lexeme out of the source with
-        // `substring` (and parsing ints with `string->int`). `main` lexes
-        // "(define (f x) (+ x 1))" and returns the TSym count: the symbols are
-        // `define f x + x` => 5. The token model lives in the `main`-less
-        // `tl_token.tl`, imported by `tl_lexer.tl` and copied alongside.
+        // TypeLisp source - balanced parens, integer literals, *symbols*
+        // (operators / keywords / names are all one `TSym` kind), STRING LITERALS
+        // (`"..."` => `TStr`), and `;` line comments (skipped) - into a real
+        // `(Array Token)`, slicing each lexeme out of the source with `substring`
+        // (and parsing ints with `string->int`). `main` lexes the escaped sample
+        // "(foo \"hi\" 42) ; c\n(bar)" into TLParen TSym(foo) TStr(hi) TInt(42)
+        // TRParen TLParen TSym(bar) TRParen (the `; c` comment drops out): 8
+        // tokens with 1 TStr, so it returns total (8) + TStr count (1) = 9. The
+        // token model lives in the `main`-less `tl_token.tl`, imported by
+        // `tl_lexer.tl` and copied alongside.
         Case {
             name: "tl_lexer",
-            exit_code: 5,
+            exit_code: 9,
             stdout: "",
             deps: &["tl_token.tl"],
         },
@@ -428,14 +431,16 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             stdout: "",
             deps: &["token.tl"],
         },
-        // Self-hosting (#27): the TypeLisp-syntax (s-expression) lexer, also
-        // exercised through the explicit compile -> as -> ld -> run pipeline.
-        // Lexes "(define (f x) (+ x 1))" into a real `(Array Token)` and returns
-        // the TSym count (`define f x + x` => 5). The `main`-less `tl_token.tl`
-        // is copied alongside so the `(import)` resolves.
+        // Self-hosting (#27): the TypeLisp-syntax (s-expression) lexer - now with
+        // string literals (`TStr`) and `;` line comments - also exercised through
+        // the explicit compile -> as -> ld -> run pipeline. Lexes the escaped
+        // sample "(foo \"hi\" 42) ; c\n(bar)" into 8 tokens (1 of them a TStr;
+        // the `; c` comment is skipped) and returns total (8) + TStr count (1) =
+        // 9. The `main`-less `tl_token.tl` is copied alongside so the `(import)`
+        // resolves.
         Case {
             name: "tl_lexer",
-            exit_code: 5,
+            exit_code: 9,
             stdout: "",
             deps: &["tl_token.tl"],
         },

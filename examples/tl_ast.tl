@@ -43,6 +43,11 @@
      (EIf (parse-expr c) (parse-expr t) (parse-expr e))]
     [_ (begin (panic "ast: malformed if") (EInt 0))]))
 
+(define (parse-print [rest : Sexpr]) : Expr
+  (match rest
+    [(SCons arg (SNil)) (EPrint (parse-expr arg))]
+    [_ (begin (panic "ast: malformed print") (EInt 0))]))
+
 (define (parse-args [s : Sexpr]) : ExprList
   (match s
     [(SNil) ELNil]
@@ -53,6 +58,7 @@
   (match s
     [(SInt n) (EInt n)]
     [(SSym name) (EVar name)]
+    [(SStr s) (EStr s)]
     [(SCons (SSym op) rest)
      (if (string-eq op "+")
          (parse-binary (OpAdd) rest)
@@ -76,7 +82,9 @@
                                              (parse-let rest)
                                              (if (string-eq op "if")
                                                  (parse-if rest)
-                                                 (ECall op (parse-args rest)))))))))))))]
+                                                 (if (string-eq op "print")
+                                                     (parse-print rest)
+                                                     (ECall op (parse-args rest))))))))))))))]
     [_ (begin (panic "ast: malformed expression") (EInt 0))]))
 
 (define (parse-params [s : Sexpr]) : StrList
@@ -133,7 +141,9 @@
     [(ELet name value body)
      (+ (string-length name) (+ (expr-score value) (expr-score body)))]
     [(EIf c t e) (+ (expr-score c) (+ (expr-score t) (expr-score e)))]
-    [(ECall name args) (+ (string-length name) (expr-list-score args))]))
+    [(ECall name args) (+ (string-length name) (expr-list-score args))]
+    [(EStr s) (string-length s)]
+    [(EPrint e) (+ 100 (expr-score e))]))
 
 (define (item-score [i : Item]) : i64
   (match i
@@ -148,4 +158,6 @@
            (+ (expr-score (parse-expr (read (lex "(<= 3 3)"))))
               (+ (expr-score (parse-expr (read (lex "(> 5 2)"))))
                  (+ (expr-score (parse-expr (read (lex "(>= 5 5)"))))
-                    (expr-score (parse-expr (read (lex "(!= 7 8)")))))))))))
+                    (+ (expr-score (parse-expr (read (lex "(!= 7 8)"))))
+                       (+ (expr-score (parse-expr (read (lex "\"hi\""))))
+                          (expr-score (parse-expr (read (lex "(print \"ok\")")))))))))))))

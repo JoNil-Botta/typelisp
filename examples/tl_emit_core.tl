@@ -53,6 +53,121 @@
     [(SLNil) 0]
     [(SLCons _ rest) (+ 1 (str-list-count rest))]))
 
+(define (str-list-append-one [xs : StrList] [s : String]) : StrList
+  (match xs
+    [(SLNil) (SLCons s SLNil)]
+    [(SLCons head rest) (SLCons head (str-list-append-one rest s))]))
+
+(define (expr-list-collect-strings [xs : ExprList] [acc : StrList]) : StrList
+  (match xs
+    [(ELNil) acc]
+    [(ELCons e rest) (expr-list-collect-strings rest (collect-strings e acc))]))
+
+(define (collect-strings [e : Expr] [acc : StrList]) : StrList
+  (match e
+    [(EInt _) acc]
+    [(EVar _) acc]
+    [(EBin _ a b) (collect-strings b (collect-strings a acc))]
+    [(ELet _ value body) (collect-strings body (collect-strings value acc))]
+    [(EIf c t e) (collect-strings e (collect-strings t (collect-strings c acc)))]
+    [(ECall _ args) (expr-list-collect-strings args acc)]
+    [(EStr s) (str-list-append-one acc s)]
+    [(EPrint e) (collect-strings e acc)]))
+
+(define (collect-item-strings [item : Item] [acc : StrList]) : StrList
+  (match item
+    [(IDefFn _ _ body) (collect-strings body acc)]))
+
+(define (collect-items-strings [items : ItemList] [acc : StrList]) : StrList
+  (match items
+    [(ILNil) acc]
+    [(ILCons item rest) (collect-items-strings rest (collect-item-strings item acc))]))
+
+(define (string-index-in [needle : String] [xs : StrList] [idx : i64]) : i64
+  (match xs
+    [(SLNil) (begin (panic "emit: missing string literal") 0)]
+    [(SLCons s rest)
+     (if (string-eq needle s)
+         idx
+         (string-index-in needle rest (+ idx 1)))]))
+
+(define (string-index [needle : String] [strings : StrList]) : i64
+  (string-index-in needle strings 0))
+
+(define (char-code [c : char]) : i64
+  (cast c : i64))
+
+(define (octal-digit [n : i64]) : String
+  (if (= n 0)
+      "0"
+      (if (= n 1)
+          "1"
+          (if (= n 2)
+              "2"
+              (if (= n 3)
+                  "3"
+                  (if (= n 4)
+                      "4"
+                      (if (= n 5)
+                          "5"
+                          (if (= n 6)
+                              "6"
+                              "7"))))))))
+
+(define (octal-escape [n : i64]) : String
+  (string-append "\\"
+    (string-append (octal-digit (/ n 64))
+      (string-append (octal-digit (% (/ n 8) 8))
+        (octal-digit (% n 8))))))
+
+(define (escape-string-byte [text : String] [idx : i64] [k : i64]) : String
+  (if (= k 34)
+      "\\\""
+      (if (= k 92)
+          "\\\\"
+          (if (= k 10)
+              "\\n"
+              (if (= k 9)
+                  "\\t"
+                  (if (= k 13)
+                      "\\r"
+                      (if (and (>= k 32) (<= k 126))
+                          (substring text idx 1)
+                          (octal-escape k))))))))
+
+(define (escape-string [text : String]) : String
+  (let ([i : i64 0]
+        [n : i64 (string-length text)]
+        [out : String ""])
+    (begin
+      (while (< i n)
+        (let ([k : i64 (char-code (string-ref text i))])
+          (begin
+            (set! out (string-append out (escape-string-byte text i k)))
+            (set! i (+ i 1)))))
+      out)))
+
+(define (quoted-gas-string [text : String]) : String
+  (string-append "\"" (string-append (escape-string text) "\"")))
+
+(define (string-label [idx : i64]) : String
+  (string-append ".Lstr_" (int->string idx)))
+
+(define (emit-rodata-entries [strings : StrList] [idx : i64]) : String
+  (match strings
+    [(SLNil) ""]
+    [(SLCons s rest)
+     (string-append (string-label idx)
+       (string-append ":\n    .string "
+         (string-append (quoted-gas-string s)
+           (string-append "\n" (emit-rodata-entries rest (+ idx 1))))))]))
+
+(define (emit-rodata [strings : StrList]) : String
+  (match strings
+    [(SLNil) ""]
+    [_ (string-append "    .section .rodata\n"
+         (string-append (emit-rodata-entries strings 0) "\n"))]))
+
 (define (max-let-depth [e : Expr]) : i64
   (match e
     [(EInt _) 0]
@@ -62,7 +177,9 @@
      (max-i64 (max-let-depth value) (+ 1 (max-let-depth body)))]
     [(EIf c t e)
      (max-i64 (max-let-depth c) (max-i64 (max-let-depth t) (max-let-depth e)))]
-    [(ECall _ args) (expr-list-max-let-depth args)]))
+    [(ECall _ args) (expr-list-max-let-depth args)]
+    [(EStr _) 0]
+    [(EPrint e) (max-let-depth e)]))
 
 (define (frame-size [e : Expr]) : i64
   (round-up-16 (* 8 (max-let-depth e))))
@@ -130,47 +247,47 @@
   (string-append "    movq "
     (string-append (emit-slot (cenv-lookup env name)) ", %rax\n")))
 
-(define (emit-bin [env : CEnv] [depth : i64] [lc : (Array i64)] [op : BinOp] [a : Expr] [b : Expr]) : String
-  (string-append (emit-expr-in env depth lc a)
+(define (emit-bin [strings : StrList] [env : CEnv] [depth : i64] [lc : (Array i64)] [op : BinOp] [a : Expr] [b : Expr]) : String
+  (string-append (emit-expr-in strings env depth lc a)
     (string-append "    pushq %rax\n"
-      (string-append (emit-expr-in env depth lc b)
+      (string-append (emit-expr-in strings env depth lc b)
         (string-append "    movq %rax, %rcx\n"
           (string-append "    popq %rax\n"
             (emit-op op)))))))
 
-(define (emit-let [env : CEnv] [depth : i64] [lc : (Array i64)] [name : String] [value : Expr] [body : Expr]) : String
+(define (emit-let [strings : StrList] [env : CEnv] [depth : i64] [lc : (Array i64)] [name : String] [value : Expr] [body : Expr]) : String
   (let ([next-depth : i64 (+ depth 1)])
     (let ([off : i64 (slot-offset next-depth)])
-      (string-append (emit-expr-in env depth lc value)
+      (string-append (emit-expr-in strings env depth lc value)
         (string-append "    movq %rax, "
           (string-append (emit-slot off)
             (string-append "\n"
-              (emit-expr-in (CBind name off env) next-depth lc body))))))))
+              (emit-expr-in strings (CBind name off env) next-depth lc body))))))))
 
-(define (emit-if [env : CEnv] [depth : i64] [lc : (Array i64)] [c : Expr] [t : Expr] [e : Expr]) : String
+(define (emit-if [strings : StrList] [env : CEnv] [depth : i64] [lc : (Array i64)] [c : Expr] [t : Expr] [e : Expr]) : String
   (let ([lelse : String (fresh-label lc ".Lelse_")]
         [lend : String (fresh-label lc ".Lend_")])
-    (string-append (emit-expr-in env depth lc c)
+    (string-append (emit-expr-in strings env depth lc c)
       (string-append "    cmpq $0, %rax\n"
         (string-append "    je "
           (string-append lelse
             (string-append "\n"
-              (string-append (emit-expr-in env depth lc t)
+              (string-append (emit-expr-in strings env depth lc t)
                 (string-append "    jmp "
                   (string-append lend
                     (string-append "\n"
                       (string-append lelse
                         (string-append ":\n"
-                          (string-append (emit-expr-in env depth lc e)
+                          (string-append (emit-expr-in strings env depth lc e)
                             (string-append lend ":\n")))))))))))))))
 
-(define (emit-call-arg-pushes [env : CEnv] [depth : i64] [lc : (Array i64)] [args : ExprList]) : String
+(define (emit-call-arg-pushes [strings : StrList] [env : CEnv] [depth : i64] [lc : (Array i64)] [args : ExprList]) : String
   (match args
     [(ELNil) ""]
     [(ELCons arg rest)
-     (string-append (emit-expr-in env depth lc arg)
+     (string-append (emit-expr-in strings env depth lc arg)
        (string-append "    pushq %rax\n"
-         (emit-call-arg-pushes env depth lc rest)))]))
+         (emit-call-arg-pushes strings env depth lc rest)))]))
 
 (define (emit-call-arg-pops [argc : i64]) : String
   (if (= argc 0)
@@ -180,25 +297,47 @@
           (string-append (arg-reg idx)
             (string-append "\n" (emit-call-arg-pops idx)))))))
 
-(define (emit-call [env : CEnv] [depth : i64] [lc : (Array i64)] [name : String] [args : ExprList]) : String
+(define (emit-call [strings : StrList] [env : CEnv] [depth : i64] [lc : (Array i64)] [name : String] [args : ExprList]) : String
   (let ([argc : i64 (checked-max-six (expr-list-count args) "emit: too many call args")])
-    (string-append (emit-call-arg-pushes env depth lc args)
+    (string-append (emit-call-arg-pushes strings env depth lc args)
       (string-append (emit-call-arg-pops argc)
         (string-append "    call " (string-append name "\n"))))))
 
-(define (emit-expr-in [env : CEnv] [depth : i64] [lc : (Array i64)] [e : Expr]) : String
+(define (emit-str [strings : StrList] [s : String]) : String
+  (string-append "    leaq "
+    (string-append (string-label (string-index s strings)) "(%rip), %rax\n")))
+
+(define (emit-print [strings : StrList] [arg : Expr]) : String
+  (match arg
+    [(EStr s)
+     (let ([label : String (string-label (string-index s strings))])
+       (string-append "    leaq "
+         (string-append label
+           (string-append "(%rip), %rsi\n"
+             (string-append "    movq $"
+               (string-append (int->string (string-length s))
+                 (string-append ", %rdx\n"
+                   (string-append "    movq $1, %rdi\n"
+                     (string-append "    movq $1, %rax\n"
+                        (string-append "    syscall\n"
+                          "    movq $0, %rax\n"))))))))))]
+    [_ (begin (panic "emit: print expects string literal") "")]))
+
+(define (emit-expr-in [strings : StrList] [env : CEnv] [depth : i64] [lc : (Array i64)] [e : Expr]) : String
   (match e
     [(EInt n) (emit-int n)]
     [(EVar name) (emit-var env name)]
-    [(EBin op a b) (emit-bin env depth lc op a b)]
-    [(ELet name value body) (emit-let env depth lc name value body)]
-    [(EIf c t e) (emit-if env depth lc c t e)]
-    [(ECall name args) (emit-call env depth lc name args)]))
+    [(EBin op a b) (emit-bin strings env depth lc op a b)]
+    [(ELet name value body) (emit-let strings env depth lc name value body)]
+    [(EIf c t e) (emit-if strings env depth lc c t e)]
+    [(ECall name args) (emit-call strings env depth lc name args)]
+    [(EStr s) (emit-str strings s)]
+    [(EPrint arg) (emit-print strings arg)]))
 
 (define (function-frame-size [params : StrList] [body : Expr]) : i64
   (round-up-16 (* 8 (+ (str-list-count params) (max-let-depth body)))))
 
-(define (emit-def [lc : (Array i64)] [item : Item]) : String
+(define (emit-def [strings : StrList] [lc : (Array i64)] [item : Item]) : String
   (match item
     [(IDefFn name params body)
      (let ([nparams : i64 (checked-max-six (str-list-count params) "emit: too many params")])
@@ -209,21 +348,21 @@
                (string-append "    mov %rsp, %rbp\n"
                  (string-append (emit-stack-sub frame)
                    (string-append (emit-param-spills params 0)
-                     (string-append (emit-expr-in (bind-params params 1 CNil) nparams lc body)
+                     (string-append (emit-expr-in strings (bind-params params 1 CNil) nparams lc body)
                        (string-append "    mov %rbp, %rsp\n"
                          (string-append "    pop %rbp\n"
                            "    ret\n\n")))))))))))]))
 
-(define (emit-defs [lc : (Array i64)] [items : ItemList]) : String
+(define (emit-defs [strings : StrList] [lc : (Array i64)] [items : ItemList]) : String
   (match items
     [(ILNil) ""]
-    [(ILCons item rest) (string-append (emit-def lc item) (emit-defs lc rest))]))
+    [(ILCons item rest) (string-append (emit-def strings lc item) (emit-defs strings lc rest))]))
 
 (define (emit-expr [e : Expr]) : String
   (let ([lc : (Array i64) (make-array i64 1)])
     (begin
       (array-set! lc 0 0)
-      (emit-expr-in CNil 0 lc e))))
+      (emit-expr-in (collect-strings e SLNil) CNil 0 lc e))))
 
 (define (emit-entry [frame : i64] [body : String]) : String
   (string-append "main:\n"
@@ -244,14 +383,16 @@
 ;; `emit-program` stays as the no-define compatibility wrapper.
 (define (emit-program-with-defs [defs : ItemList] [e : Expr]) : String
   (let ([frame : i64 (frame-size e)]
+        [strings : StrList (collect-strings e (collect-items-strings defs SLNil))]
         [lc : (Array i64) (make-array i64 1)])
     (begin
       (array-set! lc 0 0)
-      (string-append "    .text\n"
-        (string-append "    .globl main\n"
-          (string-append "    .globl _start\n\n"
-            (string-append (emit-defs lc defs)
-              (emit-entry frame (emit-expr-in CNil 0 lc e)))))))))
+      (string-append (emit-rodata strings)
+        (string-append "    .text\n"
+          (string-append "    .globl main\n"
+            (string-append "    .globl _start\n\n"
+              (string-append (emit-defs strings lc defs)
+                (emit-entry frame (emit-expr-in strings CNil 0 lc e))))))))))
 
 (define (emit-program [e : Expr]) : String
   (emit-program-with-defs ILNil e))

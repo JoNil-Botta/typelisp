@@ -105,6 +105,13 @@
          (panic "parse: malformed if")
          (EInt 0))]))
 
+(define (parse-print [rest : Sexpr]) : Expr
+  (match rest
+    [(SCons arg (SNil)) (EPrint (parse arg))]
+    [_ (begin
+         (panic "parse: malformed print")
+         (EInt 0))]))
+
 ;; parse: project the small source subset onto the typed `Expr` AST the emitter
 ;; consumes: ints, variables, binary arithmetic, and one-binding `let`.
 ;; Malformed input aborts via `panic`; the trailing `(EInt 0)` arms are
@@ -113,12 +120,15 @@
   (match s
     [(SInt n) (EInt n)]
     [(SSym name) (EVar name)]
+    [(SStr s) (EStr s)]
     [(SCons (SSym op) rest)
      (if (string-eq op "let")
          (parse-let rest)
          (if (string-eq op "if")
              (parse-if rest)
-             (parse-binary (parse-op op) rest)))]
+             (if (string-eq op "print")
+                 (parse-print rest)
+                 (parse-binary (parse-op op) rest))))]
     [_ (begin
          (panic "parse: malformed expression")
          (EInt 0))]))

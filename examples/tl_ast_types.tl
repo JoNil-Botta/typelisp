@@ -17,7 +17,9 @@
   (EBin BinOp Expr Expr)
   (ELet String Expr Expr)
   (EIf Expr Expr Expr)
-  (ECall String ExprList))
+  (ECall String ExprList)
+  (EStr String)
+  (EPrint Expr))
 
 (defenum ExprList
   (ELNil)

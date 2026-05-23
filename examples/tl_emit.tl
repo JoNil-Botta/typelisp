@@ -12,54 +12,7 @@
 ;; returns it, and `_start` exits with that value - so the printed `.s`, when
 ;; assembled (`as`) + linked (`ld`) + run, EXITS 7 for `(+ 1 (* 2 3))`.
 
-(import "tl_ast_types.tl")
-
-(define (emit-int [n : i64]) : String
-  (string-append "    movq $" (string-append (int->string n) ", %rax\n")))
-
-(define (emit-op [op : BinOp]) : String
-  (match op
-    [(OpAdd) "    addq %rcx, %rax\n"]
-    [(OpSub) "    subq %rcx, %rax\n"]
-    [(OpMul) "    imulq %rcx, %rax\n"]))
-
-(define (emit-bin [op : BinOp] [a : Expr] [b : Expr]) : String
-  (string-append (emit-expr a)
-    (string-append "    pushq %rax\n"
-      (string-append (emit-expr b)
-        (string-append "    movq %rax, %rcx\n"
-          (string-append "    popq %rax\n"
-            (emit-op op)))))))
-
-(define (emit-expr [e : Expr]) : String
-  (match e
-    [(EInt n) (emit-int n)]
-    [(EVar _) (begin (panic "emit: variables are not in M1 arithmetic") "")]
-    [(EBin op a b) (emit-bin op a b)]
-    [(ECall _ _) (begin (panic "emit: calls are not in M1 arithmetic") "")]))
-
-;; emit-program: wrap the body asm in the complete backend-shaped `.s` skeleton.
-;; `(-> Expr String)`. This mirrors the repository backend:
-;;   .text / .globl main / .globl _start
-;;   main: prologue, emitted body, epilogue, ret
-;;   _start: call main, move %rax to the exit-status arg, exit syscall
-;; Assembled + linked + run, this `.s` exits with the value the expression
-;; computes (7 for `(+ 1 (* 2 3))`).
-(define (emit-program [e : Expr]) : String
-  (string-append "    .text\n"
-    (string-append "    .globl main\n"
-      (string-append "    .globl _start\n\n"
-        (string-append "main:\n"
-          (string-append "    push %rbp\n"
-            (string-append "    mov %rsp, %rbp\n"
-              (string-append (emit-expr e)
-                (string-append "    pop %rbp\n"
-                  (string-append "    ret\n\n"
-                    (string-append "_start:\n"
-                      (string-append "    call main\n"
-                        (string-append "    movq %rax, %rdi\n"
-                          (string-append "    movq $60, %rax\n"
-                            "    syscall\n"))))))))))))))
+(import "tl_emit_core.tl")
 
 (define (sample) : Expr
   (EBin (OpAdd) (EInt 1) (EBin (OpMul) (EInt 2) (EInt 3))))

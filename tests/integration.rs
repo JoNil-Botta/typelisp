@@ -173,6 +173,19 @@ fn type_lisp_programs_compile_link_and_run() {
             stdout: "",
             deps: &[],
         },
+        // Self-hosting (#27, phase 4): the whole TypeLisp front end composed end
+        // to end. `calc.tl` lexes the source "2 + 3 * 4" into a real
+        // `(Array Token)`, the recursive-descent precedence parser reads tokens
+        // straight out of that array into a real recursive `Expr` AST, and a
+        // tree-walking `eval` folds it: `(eval (parse (lex "2 + 3 * 4")))`. `*`
+        // binds tighter than `+`, so the result is 2 + (3 * 4) = 14, NOT
+        // (2 + 3) * 4 = 20 — proving the composed pipeline honours precedence.
+        Case {
+            name: "calc",
+            exit_code: 14,
+            stdout: "",
+            deps: &[],
+        },
     ];
 
     for case in cases {
@@ -326,6 +339,17 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         // `eval`; `*` binds tighter than `+`, so `main` returns 2 + 3*4 = 14.
         Case {
             name: "parser",
+            exit_code: 14,
+            stdout: "",
+            deps: &[],
+        },
+        // Self-hosting (#27, phase 4): the whole TypeLisp front end composed end
+        // to end, also through the explicit compile -> as -> ld -> run pipeline.
+        // Lexes "2 + 3 * 4" into a real `(Array Token)`, parses it into the
+        // recursive `Expr` AST, and folds it with `eval`; `main` returns
+        // 2 + (3 * 4) = 14.
+        Case {
+            name: "calc",
             exit_code: 14,
             stdout: "",
             deps: &[],

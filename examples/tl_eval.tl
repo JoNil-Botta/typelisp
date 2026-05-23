@@ -860,38 +860,44 @@
 ;; `begin` sequencing form, AND (the new milestone) FIRST-CLASS FUNCTIONS -
 ;; `lambda` and CLOSURES.
 ;; --------------------------------------------------------------------------
-;; `(run-program "(begin
+;; `(run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1)))))
+;;                (begin
+;;                  (let ((s \"hello world\") ...)
+;;                    (begin (print t) (print (+ ...)) (+ ...)))
 ;;                  (print ((lambda (x) (* x x)) 5))
 ;;                  (print (let ((n 10)) ((lambda (x) (+ x n)) 5)))
 ;;                  (let ((f (lambda (x) (+ x 1)))) (f 41)))")`:
-;;   - the program is ONE trailing expression: a `(begin ...)` SPECIAL FORM (the
-;;     natural sequencer - evaluate each form in order, return the LAST) threading
-;;     three LAMBDA exercises. No `define` is needed; `begin` replaces the old
-;;     `seq` two-arg-function workaround.
-;;   - FIRST `((lambda (x) (* x x)) 5)`: the operator is itself a `(lambda ...)`
+;;   - the program starts with a recursive TWO-parameter `define` of `pow`, then a
+;;     trailing `(begin ...)` SPECIAL FORM. The first `begin` arm is the previous
+;;     string/recursion witness: a MULTI-BINDING `let` rebuilds `"hello world"`
+;;     from `substring` slices via nested `string-append`, appends
+;;     `(int->string (pow 2 n))` to produce `"hello world32"`, prints that string,
+;;     prints the parsed/string-equality sum `33`, and returns that same `33`.
+;;     This keeps runtime coverage for top-level function calls, recursion,
+;;     multi-argument binding, the string toolkit, and `begin` sequencing.
+;;   - SECOND `((lambda (x) (* x x)) 5)`: the operator is itself a `(lambda ...)`
 ;;     form, so it falls through the symbol-head dispatch to the COMPUTED-OPERATOR
 ;;     arm `(SCons head rest)`. Evaluating the head yields `(VClosure (x) (* x x)
 ;;     <env>)`; `apply-value` zips its one parameter `x` against the argument `5`
 ;;     (bound onto the captured env via `bind-args-onto`) and evaluates `(* x x)`
 ;;     in that env -> `(VInt 25)`. `(print 25)` writes `25\n` (the `VInt` arm, host
 ;;     `print`).
-;;   - SECOND `(let ((n 10)) ((lambda (x) (+ x n)) 5))`: a CLOSURE OVER A FREE
+;;   - THIRD `(let ((n 10)) ((lambda (x) (+ x n)) 5))`: a CLOSURE OVER A FREE
 ;;     VARIABLE. The lambda is evaluated with `n -> (VInt 10)` in scope, so the
 ;;     `(VClosure ...)` CAPTURES that env. Applying it to `5` binds `x -> 5` onto
 ;;     the captured env, so the body `(+ x n)` resolves the free `n` to the captured
 ;;     `10` -> `(VInt 15)`. This is the load-bearing proof of CLOSURE CAPTURE: the
 ;;     free `n` is NOT in the argument list, it comes from the environment captured
 ;;     at lambda-creation time. `(print 15)` writes `15\n`.
-;;   - THIRD `(let ((f (lambda (x) (+ x 1)))) (f 41))`: a closure BOUND TO A LET
+;;   - FOURTH `(let ((f (lambda (x) (+ x 1)))) (f 41))`: a closure BOUND TO A LET
 ;;     VARIABLE and called BY NAME. The head `f` is a symbol, but it names a
 ;;     closure-valued VARIABLE in `env` (not a top-level `define`), so the symbol-
 ;;     head call path's `env-has` probe routes it to `apply-value` on the looked-up
 ;;     `VClosure` rather than a `fenv` lookup. `(+ x 1)` with `x -> 41` -> `(VInt 42)`.
-;;   - `begin` walks the three sub-expressions head-first via `eval-seq`, returning
+;;   - `begin` walks the four sub-expressions head-first via `eval-seq`, returning
 ;;     the LAST, `(VInt 42)`, so the whole program denotes `42`. STDOUT is
-;;     `25\n15\n` (printed by the first two `begin` forms); printing to stdout
-;;     escapes the mod-256 exit-code ceiling, and the exit code is the wrapped
-;;     `42 & 0xff = 42`.
+;;     `hello world3233\n25\n15\n`; printing to stdout escapes the mod-256
+;;     exit-code ceiling, and the exit code is the wrapped `42 & 0xff = 42`.
 ;; This program proves the evaluator now has FIRST-CLASS FUNCTIONS: a `lambda`
 ;; special form that builds a `(VClosure params body captured-env)` VALUE capturing
 ;; the current lexical env; APPLICATION of a closure whether it appears as a
@@ -904,4 +910,4 @@
 ;; finite. (Deferred: variadic arity; string-literal escapes; recursive lambdas
 ;; bound by name - top-level `define` recursion already covers self-reference.)
 (define (main) : i64
-  (run-program "(begin (print ((lambda (x) (* x x)) 5)) (print (let ((n 10)) ((lambda (x) (+ x n)) 5))) (let ((f (lambda (x) (+ x 1)))) (f 41)))"))
+  (run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (begin (let ((s \"hello world\") (h (substring s 0 5)) (w (substring s 6 5)) (n (string-length h)) (g (string-append h (string-append \" \" w))) (t (string-append g (int->string (pow 2 n))))) (begin (print t) (print (+ (string->int (substring t 11 2)) (string-eq g s))) (+ (string->int (substring t 11 2)) (string-eq g s)))) (print ((lambda (x) (* x x)) 5)) (print (let ((n 10)) ((lambda (x) (+ x n)) 5))) (let ((f (lambda (x) (+ x 1)))) (f 41)))"))

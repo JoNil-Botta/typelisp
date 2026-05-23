@@ -261,26 +261,20 @@ fn type_lisp_programs_compile_link_and_run() {
         // `bind-args-onto`, so the body's FREE variables resolve through the
         // captured env. `Value` and `Env` are now mutually recursive enums (a
         // `VClosure` carries an `Env`, an `EBind` carries a `Value`), each
-        // pointer-sized so the layout stays finite. `main` runs `run-program` over
-        // the single trailing expression
-        // `(begin (print ((lambda (x) (* x x)) 5))
-        //         (print (let ((n 10)) ((lambda (x) (+ x n)) 5)))
-        //         (let ((f (lambda (x) (+ x 1)))) (f 41)))`:
-        // FIRST `((lambda (x) (* x x)) 5)` is an immediate application of a computed
-        // operator -> `(VInt 25)`, printed as `25\n`; SECOND `(let ((n 10))
-        // ((lambda (x) (+ x n)) 5))` is a CLOSURE capturing the free `n` = 10, so
-        // the body `(+ x n)` with `x` = 5 yields `(VInt 15)`, printed as `15\n`;
-        // THIRD `(let ((f (lambda (x) (+ x 1)))) (f 41))` binds a closure to the
-        // let variable `f` and calls it BY NAME (routed via the `env-has` probe to
-        // closure application, not a `fenv` lookup) -> `(VInt 42)`. `begin` walks
-        // the three forms in order via `eval-seq` and returns the LAST, so the
-        // program denotes `42`; stdout is `25\n15\n` and the exit code is
+        // pointer-sized so the layout stays finite. `main` first keeps the prior
+        // runtime witness: a recursive `pow` define plus a string-heavy `let`
+        // inside `begin`, which prints `hello world32` and `33\n` while exercising
+        // recursion, multi-arg calls, the string toolkit, and `begin`. The later
+        // `begin` arms add closure coverage: immediate application
+        // `((lambda (x) (* x x)) 5)` -> `25\n`, captured free variable `n = 10`
+        // -> `15\n`, and a closure-valued let variable `(f 41)` -> final
+        // `(VInt 42)`. Stdout is `hello world3233\n25\n15\n`; exit code is
         // `42 & 0xff = 42`. All three imported `main`-less modules are copied
         // alongside so the `(import)` chain resolves.
         Case {
             name: "tl_eval",
             exit_code: 42,
-            stdout: "25\n15\n",
+            stdout: "hello world3233\n25\n15\n",
             deps: &["tl_read.tl", "tl_lex.tl", "tl_token.tl"],
         },
         // refs #41: NESTED PATTERN MATCHING, standalone witness. A tree-walking
@@ -515,27 +509,18 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         // `let`, `if`, comparisons, the `begin` SEQUENCING special form, recursion,
         // multi-arg user functions, the tagged `(VInt/VStr/VClosure)` VALUE domain,
         // and the string ops) - also exercised through the explicit
-        // compile -> as -> ld -> run pipeline. A `(lambda (p...) body)` builds a
-        // `(VClosure params body captured-env)` VALUE; applying it (as a computed
-        // operator `((lambda ...) a)` or as a closure-valued variable `(f a)`)
-        // layers the parameters over the captured env via `bind-args-onto`, so free
-        // variables resolve through the captured env. Runs `run-program` over the
-        // single trailing expression
-        // `(begin (print ((lambda (x) (* x x)) 5))
-        //         (print (let ((n 10)) ((lambda (x) (+ x n)) 5)))
-        //         (let ((f (lambda (x) (+ x 1)))) (f 41)))`:
-        // immediate application `((lambda (x) (* x x)) 5)` -> 25 (printed `25\n`),
-        // a closure over the free `n` = 10 `((lambda (x) (+ x n)) 5)` -> 15
-        // (printed `15\n`), and a closure bound to the let variable `f` called by
-        // name `(f 41)` -> 42; `begin` returns the last, so the program denotes
-        // `42`, stdout is `25\n15\n`, exit code `42 & 0xff = 42`. The reader (and
+        // compile -> as -> ld -> run pipeline. It preserves the prior executed
+        // recursion/string witness (`pow`, substring/string-append/int conversion,
+        // `hello world3233\n`) and then adds three closure cases: immediate
+        // application -> `25\n`, captured free variable -> `15\n`, and a
+        // closure-valued let variable returning final `42`. The reader (and
         // transitively the lexer + token model) is reused via the `main`-less
         // `tl_read.tl` import; all three imported modules are copied alongside so
         // the imports resolve.
         Case {
             name: "tl_eval",
             exit_code: 42,
-            stdout: "25\n15\n",
+            stdout: "hello world3233\n25\n15\n",
             deps: &["tl_read.tl", "tl_lex.tl", "tl_token.tl"],
         },
         // refs #41: nested pattern matching, also through the explicit

@@ -125,6 +125,21 @@
 (define (digit-value [c : char]) : i64
   (- (code c) 48))
 
+;; Return the end index (exclusive) of the digit run that starts at `start`.
+;; Keep the bounds check outside the `string-ref`; boolean `and` is not a
+;; short-circuit guard in lowered TypeLisp code.
+(define (scan-int-end [src : String] [start : i64] [n : i64]) : i64
+  (let ([j : i64 start]
+        [keep : bool true])
+    (begin
+      (while keep
+        (if (< j n)
+            (if (is-digit (string-ref src j))
+                (set! j (+ j 1))
+                (set! keep false))
+            (set! keep false)))
+      j)))
+
 ;; Classify a single non-digit, non-space char into its operator/paren Token,
 ;; building a real `Token` value. An unexpected char aborts via the `panic`
 ;; builtin (#45) - exactly as a real lexer reports malformed input; the trailing
@@ -165,9 +180,10 @@
               (set! i (+ i 1))
               (if (is-digit c)
                   ;; Accumulate a run of digits into one TInt token.
-                  (let ([acc : i64 0])
+                  (let ([end : i64 (scan-int-end src i n)]
+                        [acc : i64 0])
                     (begin
-                      (while (and (< i n) (is-digit (string-ref src i)))
+                      (while (< i end)
                         (begin
                           (set! acc (+ (* acc 10) (digit-value (string-ref src i))))
                           (set! i (+ i 1))))

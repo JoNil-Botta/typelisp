@@ -583,6 +583,7 @@ impl<'a> Parser<'a> {
                 let end = self.expect_rparen_span()?;
                 (Expr::ArraySet { expr, index, value }, end)
             }
+            Token::Ident(s) if s == "foreach" => self.parse_foreach_expr()?,
             Token::Ident(s) if s == "string-ref" || s == "char-at" => {
                 // (string-ref s i) / (char-at s i)
                 self.advance()?;
@@ -634,6 +635,32 @@ impl<'a> Parser<'a> {
         };
 
         Ok(Expr::spanned(expr, start.merge(&end)))
+    }
+
+    fn parse_foreach_expr(&mut self) -> Result<(Expr, Span), ParseError> {
+        // (foreach ([i : i64 start end]) body)
+        self.advance()?;
+        self.expect(Token::LParen)?;
+        self.expect(Token::LBracket)?;
+        let index = self.expect_ident()?;
+        self.expect(Token::Colon)?;
+        let index_ty = self.parse_type()?;
+        let start = Box::new(self.parse_expr()?);
+        let end_expr = Box::new(self.parse_expr()?);
+        self.expect(Token::RBracket)?;
+        self.expect(Token::RParen)?;
+        let body = Box::new(self.parse_expr()?);
+        let end = self.expect_rparen_span()?;
+        Ok((
+            Expr::Foreach(Box::new(ForeachExpr {
+                index,
+                index_ty,
+                start,
+                end: end_expr,
+                body,
+            })),
+            end,
+        ))
     }
 
     /// Parse a `match` arm pattern. Recursive, so a variant's arguments may
@@ -842,6 +869,37 @@ mod tests {
                 assert_eq!(rhs.span(), Span::new(1, 46, 1, 47));
             }
             other => panic!("expected binary body, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_foreach_spmd_surface() {
+        let prog = parse(
+            "(define (map [a : (Array i64)] [out : (Array i64)] [n : i64]) : unit \
+               (foreach ([i : i64 0 n]) \
+                 (array-set! out i (array-ref a i))))",
+        )
+        .unwrap();
+        let body = match &prog.decls[0] {
+            Decl::DefFn { body, .. } => body.unspan(),
+            other => panic!("expected DefFn, got {:?}", other),
+        };
+        match body {
+            Expr::Foreach(foreach) => {
+                let ForeachExpr {
+                    index,
+                    index_ty,
+                    start,
+                    end,
+                    body,
+                } = &**foreach;
+                assert_eq!(index, "i");
+                assert_eq!(index_ty, &Type::I64);
+                assert_eq!(start.unspan(), &Expr::Literal(Literal::Int(0)));
+                assert_eq!(end.unspan(), &Expr::Var("n".into()));
+                assert!(matches!(body.unspan(), Expr::ArraySet { .. }));
+            }
+            other => panic!("expected Foreach, got {:?}", other),
         }
     }
 

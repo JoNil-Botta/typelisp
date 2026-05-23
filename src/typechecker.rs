@@ -2,7 +2,7 @@ use crate::ast::*;
 use crate::diagnostic::Diagnostic;
 use crate::span::Span;
 use crate::types::Type;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 #[derive(Debug, Clone)]
@@ -35,6 +35,131 @@ pub struct TypeChecker {
     func_ret: Option<Type>,
     enums: EnumRegistry,
     structs: StructRegistry,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SpmdVariability {
+    Uniform,
+    Varying,
+}
+
+impl SpmdVariability {
+    fn join(self, other: Self) -> Self {
+        if matches!(self, Self::Varying) || matches!(other, Self::Varying) {
+            Self::Varying
+        } else {
+            Self::Uniform
+        }
+    }
+
+    fn is_varying(self) -> bool {
+        matches!(self, Self::Varying)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SpmdExprInfo {
+    ty: Type,
+    variability: SpmdVariability,
+}
+
+impl SpmdExprInfo {
+    fn uniform(ty: Type) -> Self {
+        Self {
+            ty,
+            variability: SpmdVariability::Uniform,
+        }
+    }
+
+    fn varying(ty: Type) -> Self {
+        Self {
+            ty,
+            variability: SpmdVariability::Varying,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SpmdContext {
+    index_name: String,
+    outer_names: HashSet<String>,
+    local_scopes: Vec<HashSet<String>>,
+    varying_scopes: Vec<HashSet<String>>,
+}
+
+impl SpmdContext {
+    fn new(index_name: String, outer_names: HashSet<String>) -> Self {
+        let mut locals = HashSet::new();
+        locals.insert(index_name.clone());
+        let mut varying = HashSet::new();
+        varying.insert(index_name.clone());
+        Self {
+            index_name,
+            outer_names,
+            local_scopes: vec![locals],
+            varying_scopes: vec![varying],
+        }
+    }
+
+    fn push_scope(&mut self) {
+        self.local_scopes.push(HashSet::new());
+        self.varying_scopes.push(HashSet::new());
+    }
+
+    fn pop_scope(&mut self) {
+        self.local_scopes.pop();
+        self.varying_scopes.pop();
+    }
+
+    fn add_local(&mut self, name: String, variability: SpmdVariability) {
+        self.local_scopes.last_mut().unwrap().insert(name.clone());
+        if variability.is_varying() {
+            self.varying_scopes.last_mut().unwrap().insert(name);
+        }
+    }
+
+    fn mark_varying(&mut self, name: &str) {
+        for idx in (0..self.local_scopes.len()).rev() {
+            if self.local_scopes[idx].contains(name) {
+                self.varying_scopes[idx].insert(name.to_string());
+                return;
+            }
+        }
+    }
+
+    fn variability_of(&self, name: &str) -> SpmdVariability {
+        for idx in (0..self.local_scopes.len()).rev() {
+            if self.local_scopes[idx].contains(name) {
+                return if self.varying_scopes[idx].contains(name) {
+                    SpmdVariability::Varying
+                } else {
+                    SpmdVariability::Uniform
+                };
+            }
+        }
+        SpmdVariability::Uniform
+    }
+
+    fn is_outer_assignment(&self, name: &str) -> bool {
+        self.outer_names.contains(name)
+            && !self
+                .local_scopes
+                .iter()
+                .rev()
+                .any(|scope| scope.contains(name))
+    }
+
+    fn is_current_index(&self, name: &str) -> bool {
+        if name != self.index_name {
+            return false;
+        }
+        for (idx, scope) in self.local_scopes.iter().enumerate().rev() {
+            if scope.contains(name) {
+                return idx == 0;
+            }
+        }
+        false
+    }
 }
 
 impl TypeChecker {
@@ -221,6 +346,13 @@ impl TypeChecker {
 
     fn pop_scope(&mut self) {
         self.env.pop();
+    }
+
+    fn bound_names(&self) -> HashSet<String> {
+        self.env
+            .iter()
+            .flat_map(|scope| scope.keys().cloned())
+            .collect()
     }
 
     pub fn check_program(&mut self, prog: &Program) -> Result<(), TypeError> {
@@ -956,6 +1088,14 @@ impl TypeChecker {
                 self.check_expr(body)?;
                 Ok(Type::Unit)
             }
+            Expr::Foreach(foreach) => self.check_foreach(
+                &foreach.index,
+                &foreach.index_ty,
+                &foreach.start,
+                &foreach.end,
+                &foreach.body,
+                span,
+            ),
             Expr::Begin(exprs) => {
                 let mut last_ty = Type::Unit;
                 for e in exprs {
@@ -1027,6 +1167,724 @@ impl TypeChecker {
                 Ok(ty)
             }
             Expr::Spanned { expr, .. } => self.check_expr(expr),
+        }
+    }
+
+    fn check_foreach(
+        &mut self,
+        index: &str,
+        index_ty: &Type,
+        start: &Expr,
+        end: &Expr,
+        body: &Expr,
+        span: Span,
+    ) -> Result<Type, TypeError> {
+        let index_ty = self.resolve_type(index_ty);
+        if index_ty != Type::I64 {
+            return Err(TypeError::at(
+                format!("foreach index must have type i64, got {}", index_ty),
+                span,
+            ));
+        }
+
+        let start_ty = self.check_expr(start)?;
+        if !self.type_compatible(&Type::I64, &start_ty) {
+            return Err(TypeError::at(
+                format!("foreach start must be a uniform i64, got {}", start_ty),
+                start.span(),
+            ));
+        }
+        let end_ty = self.check_expr(end)?;
+        if !self.type_compatible(&Type::I64, &end_ty) {
+            return Err(TypeError::at(
+                format!("foreach end must be a uniform i64, got {}", end_ty),
+                end.span(),
+            ));
+        }
+
+        let outer_names = self.bound_names();
+        self.push_scope();
+        self.bind(index.to_string(), Type::I64);
+        let mut spmd = SpmdContext::new(index.to_string(), outer_names);
+        let body_info = self.check_spmd_expr(body, &mut spmd);
+        self.pop_scope();
+        let body_info = body_info?;
+
+        if !self.type_compatible(&Type::Unit, &body_info.ty) {
+            return Err(TypeError::at(
+                format!("foreach body must have type unit, got {}", body_info.ty),
+                body.span(),
+            ));
+        }
+        Ok(Type::Unit)
+    }
+
+    fn check_spmd_expr(
+        &mut self,
+        expr: &Expr,
+        spmd: &mut SpmdContext,
+    ) -> Result<SpmdExprInfo, TypeError> {
+        let span = expr.span();
+        match expr.unspan() {
+            Expr::Literal(lit) => {
+                let ty = match lit {
+                    Literal::Int(_) => Type::I64,
+                    Literal::Float(_) => Type::F64,
+                    Literal::Bool(_) => Type::Bool,
+                    Literal::Char(_) => Type::Char,
+                    Literal::String(_) => Type::String,
+                    Literal::Unit => Type::Unit,
+                };
+                Ok(SpmdExprInfo::uniform(ty))
+            }
+            Expr::Var(name) => {
+                if name == "program-index" || name == "program-count" {
+                    return Err(TypeError::at(
+                        format!("{} is not supported in the initial SPMD surface", name),
+                        span,
+                    ));
+                }
+                let ty = self
+                    .lookup(name)
+                    .ok_or_else(|| TypeError::at(format!("unbound variable: {}", name), span))?;
+                Ok(SpmdExprInfo {
+                    ty,
+                    variability: spmd.variability_of(name),
+                })
+            }
+            Expr::Binary { op, lhs, rhs } => {
+                let lhs_info = self.check_spmd_expr(lhs, spmd)?;
+                let rhs_info = self.check_spmd_expr(rhs, spmd)?;
+                let result_ty = self.check_binary_types(*op, &lhs_info.ty, &rhs_info.ty, span)?;
+                Ok(SpmdExprInfo {
+                    ty: result_ty,
+                    variability: lhs_info.variability.join(rhs_info.variability),
+                })
+            }
+            Expr::Unary { op, expr } => {
+                let info = self.check_spmd_expr(expr, spmd)?;
+                let result_ty = self.check_unary_type(*op, &info.ty, span)?;
+                Ok(SpmdExprInfo {
+                    ty: result_ty,
+                    variability: info.variability,
+                })
+            }
+            Expr::Call { func, args } => {
+                if let Expr::Var(name) = func.unspan()
+                    && (name == "program-index" || name == "program-count")
+                {
+                    return Err(TypeError::at(
+                        format!("{} is not supported in the initial SPMD surface", name),
+                        span,
+                    ));
+                }
+
+                let func_info = self.check_spmd_expr(func, spmd)?;
+                if func_info.variability.is_varying() {
+                    return Err(TypeError::at(
+                        "SPMD calls through varying function values are not supported",
+                        func.span(),
+                    ));
+                }
+
+                let mut arg_infos = Vec::new();
+                for arg in args {
+                    let info = self.check_spmd_expr(arg, spmd)?;
+                    if info.variability.is_varying() {
+                        return Err(TypeError::at(
+                            "SPMD user calls with varying arguments are not supported",
+                            arg.span(),
+                        ));
+                    }
+                    arg_infos.push(info);
+                }
+
+                if let Expr::Var(name) = func.unspan()
+                    && (name == "array-length" || name == "length")
+                    && arg_infos.len() == 1
+                    && matches!(arg_infos[0].ty, Type::DynArray(_))
+                {
+                    return Ok(SpmdExprInfo::uniform(Type::I64));
+                }
+
+                match func_info.ty {
+                    Type::Func(param_tys, ret_ty) => {
+                        if param_tys.len() != arg_infos.len() {
+                            return Err(TypeError::at(
+                                format!(
+                                    "function expects {} arguments, got {}",
+                                    param_tys.len(),
+                                    arg_infos.len()
+                                ),
+                                span,
+                            ));
+                        }
+                        for (expected, (arg, info)) in
+                            param_tys.iter().zip(args.iter().zip(arg_infos.iter()))
+                        {
+                            if !self.type_compatible(expected, &info.ty) {
+                                return Err(TypeError::at(
+                                    format!(
+                                        "argument type mismatch: expected {}, got {}",
+                                        expected, info.ty
+                                    ),
+                                    arg.span(),
+                                ));
+                            }
+                        }
+                        Ok(SpmdExprInfo::uniform(*ret_ty))
+                    }
+                    Type::Enum(enum_name)
+                        if matches!(func.unspan(), Expr::Var(name)
+                            if self
+                                .enums
+                                .lookup_variant(name)
+                                .is_some_and(|(owner, _, fields)| owner == enum_name && fields.is_empty())) =>
+                    {
+                        if !args.is_empty() {
+                            let name = match func.unspan() {
+                                Expr::Var(n) => n,
+                                _ => unreachable!(),
+                            };
+                            return Err(TypeError::at(
+                                format!(
+                                    "nullary enum variant '{}' takes no arguments, got {}",
+                                    name,
+                                    args.len()
+                                ),
+                                span,
+                            ));
+                        }
+                        Ok(SpmdExprInfo::uniform(Type::Enum(enum_name)))
+                    }
+                    other => Err(TypeError::at(
+                        format!("expected function type, got {}", other),
+                        func.span(),
+                    )),
+                }
+            }
+            Expr::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                let cond_info = self.check_spmd_expr(cond, spmd)?;
+                if cond_info.variability.is_varying() {
+                    return Err(TypeError::at(
+                        "SPMD varying if conditions are not supported in the initial surface",
+                        cond.span(),
+                    ));
+                }
+                if !self.type_compatible(&Type::Bool, &cond_info.ty) {
+                    return Err(TypeError::at(
+                        format!("if condition must be bool, got {}", cond_info.ty),
+                        cond.span(),
+                    ));
+                }
+                let then_info = self.check_spmd_expr(then_branch, spmd)?;
+                let else_info = self.check_spmd_expr(else_branch, spmd)?;
+                let Some(result_ty) = self.merge_branch_types(&then_info.ty, &else_info.ty) else {
+                    return Err(TypeError::at(
+                        format!(
+                            "if branches have different types: {} and {}",
+                            then_info.ty, else_info.ty
+                        ),
+                        span,
+                    ));
+                };
+                Ok(SpmdExprInfo {
+                    ty: result_ty,
+                    variability: then_info.variability.join(else_info.variability),
+                })
+            }
+            Expr::Let { bindings, body } => {
+                self.push_scope();
+                spmd.push_scope();
+                let result = (|| {
+                    for (name, ty, value) in bindings {
+                        let val_info = self.check_spmd_expr(value, spmd)?;
+                        let declared = ty.as_ref().map(|t| self.resolve_type(t));
+                        let binding_ty = if let Some(expected) = &declared {
+                            if !self.type_compatible(expected, &val_info.ty) {
+                                return Err(TypeError::at(
+                                    format!(
+                                        "let binding '{}' type mismatch: expected {}, got {}",
+                                        name, expected, val_info.ty
+                                    ),
+                                    value.span(),
+                                ));
+                            }
+                            expected.clone()
+                        } else {
+                            val_info.ty
+                        };
+                        self.bind(name.clone(), binding_ty);
+                        spmd.add_local(name.clone(), val_info.variability);
+                    }
+                    self.check_spmd_expr(body, spmd)
+                })();
+                self.pop_scope();
+                spmd.pop_scope();
+                result
+            }
+            Expr::Lambda { .. } => Err(TypeError::at(
+                "SPMD lambda expressions are not supported in the initial surface",
+                span,
+            )),
+            Expr::Tuple(elems) => {
+                let mut tys = Vec::new();
+                let mut variability = SpmdVariability::Uniform;
+                for elem in elems {
+                    let info = self.check_spmd_expr(elem, spmd)?;
+                    variability = variability.join(info.variability);
+                    tys.push(info.ty);
+                }
+                if variability.is_varying() {
+                    return Err(TypeError::at(
+                        "SPMD varying tuple values are not supported in the initial surface",
+                        span,
+                    ));
+                }
+                Ok(SpmdExprInfo::uniform(Type::Tuple(tys)))
+            }
+            Expr::TupleRef { expr, index } => {
+                let info = self.check_spmd_expr(expr, spmd)?;
+                if info.variability.is_varying() {
+                    return Err(TypeError::at(
+                        "SPMD tuple-ref on varying values is not supported",
+                        expr.span(),
+                    ));
+                }
+                match info.ty {
+                    Type::Tuple(elems) => {
+                        if *index >= elems.len() {
+                            return Err(TypeError::at(
+                                format!(
+                                    "tuple index {} out of bounds (len {})",
+                                    index,
+                                    elems.len()
+                                ),
+                                span,
+                            ));
+                        }
+                        Ok(SpmdExprInfo::uniform(elems[*index].clone()))
+                    }
+                    other => Err(TypeError::at(
+                        format!("tuple-ref requires tuple type, got {}", other),
+                        expr.span(),
+                    )),
+                }
+            }
+            Expr::Array(elems) => {
+                if elems.is_empty() {
+                    return Err(TypeError::at("cannot infer type of empty array", span));
+                }
+                let first = self.check_spmd_expr(&elems[0], spmd)?;
+                if first.variability.is_varying() {
+                    return Err(TypeError::at(
+                        "SPMD varying fixed-array literals are not supported",
+                        elems[0].span(),
+                    ));
+                }
+                for elem in &elems[1..] {
+                    let info = self.check_spmd_expr(elem, spmd)?;
+                    if info.variability.is_varying() {
+                        return Err(TypeError::at(
+                            "SPMD varying fixed-array literals are not supported",
+                            elem.span(),
+                        ));
+                    }
+                    if !self.types_equal(&first.ty, &info.ty) {
+                        return Err(TypeError::at(
+                            "array elements must have same type",
+                            elem.span(),
+                        ));
+                    }
+                }
+                Ok(SpmdExprInfo::uniform(Type::Array(
+                    Box::new(first.ty),
+                    elems.len(),
+                )))
+            }
+            Expr::MakeArray { elem_ty, len } => {
+                let elem_ty = self.resolve_type(elem_ty);
+                let len_info = self.check_spmd_expr(len, spmd)?;
+                if len_info.variability.is_varying() {
+                    return Err(TypeError::at(
+                        "SPMD make-array length must be uniform",
+                        len.span(),
+                    ));
+                }
+                if !len_info.ty.is_integer() {
+                    return Err(TypeError::at(
+                        format!("make-array length must be integer, got {}", len_info.ty),
+                        len.span(),
+                    ));
+                }
+                if !is_dyn_array_elem_supported(&elem_ty) {
+                    return Err(TypeError::at(
+                        format!(
+                            "make-array element type {} is not yet supported \
+                             (dynamic arrays currently hold scalar elements)",
+                            elem_ty
+                        ),
+                        span,
+                    ));
+                }
+                Ok(SpmdExprInfo::uniform(Type::DynArray(Box::new(elem_ty))))
+            }
+            Expr::ArrayRef { expr, index } => {
+                let arr_info = self.check_spmd_expr(expr, spmd)?;
+                if arr_info.variability.is_varying() {
+                    return Err(TypeError::at(
+                        "SPMD array-ref base must be uniform",
+                        expr.span(),
+                    ));
+                }
+                let index_info = self.check_spmd_expr(index, spmd)?;
+                if !index_info.ty.is_integer() {
+                    return Err(TypeError::at(
+                        format!("array index must be integer, got {}", index_info.ty),
+                        index.span(),
+                    ));
+                }
+                let elem_ty = match arr_info.ty {
+                    Type::DynArray(elem_ty) => *elem_ty,
+                    Type::Array(elem_ty, _) if !index_info.variability.is_varying() => *elem_ty,
+                    Type::Array(_, _) => {
+                        return Err(TypeError::at(
+                            "SPMD varying array-ref requires a dynamic array",
+                            expr.span(),
+                        ));
+                    }
+                    other => {
+                        return Err(TypeError::at(
+                            format!("array-ref requires array type, got {}", other),
+                            expr.span(),
+                        ));
+                    }
+                };
+                if index_info.variability.is_varying() {
+                    self.check_spmd_varying_lane_type(&elem_ty, expr.span())?;
+                    if !spmd_index_is_contiguous(index, spmd) {
+                        return Err(TypeError::at(
+                            "SPMD varying array indexes must be the foreach index or a simple uniform offset",
+                            index.span(),
+                        ));
+                    }
+                    Ok(SpmdExprInfo::varying(elem_ty))
+                } else {
+                    Ok(SpmdExprInfo::uniform(elem_ty))
+                }
+            }
+            Expr::ArraySet { expr, index, value } => {
+                let arr_info = self.check_spmd_expr(expr, spmd)?;
+                if arr_info.variability.is_varying() {
+                    return Err(TypeError::at(
+                        "SPMD array-set! base must be uniform",
+                        expr.span(),
+                    ));
+                }
+                let elem_ty = match arr_info.ty {
+                    Type::DynArray(elem_ty) => *elem_ty,
+                    Type::Array(_, _) => {
+                        return Err(TypeError::at(
+                            "SPMD array-set! requires a dynamic array",
+                            expr.span(),
+                        ));
+                    }
+                    other => {
+                        return Err(TypeError::at(
+                            format!("array-set! requires array type, got {}", other),
+                            expr.span(),
+                        ));
+                    }
+                };
+                let index_info = self.check_spmd_expr(index, spmd)?;
+                if !index_info.ty.is_integer() {
+                    return Err(TypeError::at(
+                        format!("array index must be integer, got {}", index_info.ty),
+                        index.span(),
+                    ));
+                }
+                if !index_info.variability.is_varying() || !spmd_index_is_contiguous(index, spmd) {
+                    return Err(TypeError::at(
+                        "SPMD array-set! requires the foreach index or a simple uniform offset",
+                        index.span(),
+                    ));
+                }
+                self.check_spmd_varying_lane_type(&elem_ty, expr.span())?;
+
+                let value_info = self.check_spmd_expr(value, spmd)?;
+                if !self.type_compatible(&elem_ty, &value_info.ty) {
+                    return Err(TypeError::at(
+                        format!(
+                            "array-set! value type mismatch: array holds {}, got {}",
+                            elem_ty, value_info.ty
+                        ),
+                        value.span(),
+                    ));
+                }
+                if value_info.variability.is_varying() {
+                    self.check_spmd_varying_lane_type(&value_info.ty, value.span())?;
+                }
+                Ok(SpmdExprInfo::uniform(Type::Unit))
+            }
+            Expr::StringRef { expr, index } => {
+                let str_info = self.check_spmd_expr(expr, spmd)?;
+                if str_info.variability.is_varying() {
+                    return Err(TypeError::at(
+                        "SPMD string-ref base must be uniform",
+                        expr.span(),
+                    ));
+                }
+                if str_info.ty != Type::String {
+                    return Err(TypeError::at(
+                        format!("string-ref requires String, got {}", str_info.ty),
+                        expr.span(),
+                    ));
+                }
+                let index_info = self.check_spmd_expr(index, spmd)?;
+                if index_info.variability.is_varying() {
+                    return Err(TypeError::at(
+                        "SPMD varying string-ref indexes are not supported",
+                        index.span(),
+                    ));
+                }
+                if !index_info.ty.is_integer() {
+                    return Err(TypeError::at(
+                        format!("string index must be integer, got {}", index_info.ty),
+                        index.span(),
+                    ));
+                }
+                Ok(SpmdExprInfo::uniform(Type::Char))
+            }
+            Expr::While { cond, body } => {
+                let cond_info = self.check_spmd_expr(cond, spmd)?;
+                if cond_info.variability.is_varying() {
+                    return Err(TypeError::at(
+                        "SPMD varying while conditions are not supported in the initial surface",
+                        cond.span(),
+                    ));
+                }
+                if !self.type_compatible(&Type::Bool, &cond_info.ty) {
+                    return Err(TypeError::at(
+                        format!("while condition must be bool, got {}", cond_info.ty),
+                        cond.span(),
+                    ));
+                }
+                self.check_spmd_expr(body, spmd)?;
+                Ok(SpmdExprInfo::uniform(Type::Unit))
+            }
+            Expr::Foreach(_) => Err(TypeError::at(
+                "nested SPMD foreach is not supported in the initial surface",
+                span,
+            )),
+            Expr::Begin(exprs) => {
+                let mut last = SpmdExprInfo::uniform(Type::Unit);
+                for expr in exprs {
+                    last = self.check_spmd_expr(expr, spmd)?;
+                }
+                Ok(last)
+            }
+            Expr::Set(name, value) => {
+                if spmd.is_current_index(name) {
+                    return Err(TypeError::at(
+                        "cannot assign to the SPMD foreach index",
+                        span,
+                    ));
+                }
+                let value_info = self.check_spmd_expr(value, spmd)?;
+                let var_ty = self.lookup(name).ok_or_else(|| {
+                    TypeError::at(format!("unbound variable in set!: {}", name), span)
+                })?;
+                if spmd.is_outer_assignment(name) {
+                    return Err(TypeError::at(
+                        "SPMD set! to a binding outside the foreach is not supported; reductions are future work",
+                        span,
+                    ));
+                }
+                if !self.type_compatible(&var_ty, &value_info.ty) {
+                    return Err(TypeError::at(
+                        format!(
+                            "set! type mismatch: variable {} has type {}, got {}",
+                            name, var_ty, value_info.ty
+                        ),
+                        value.span(),
+                    ));
+                }
+                if value_info.variability.is_varying() {
+                    spmd.mark_varying(name);
+                }
+                Ok(SpmdExprInfo::uniform(Type::Unit))
+            }
+            Expr::Ann { expr, ty } => {
+                let ty = self.resolve_type(ty);
+                let info = self.check_spmd_expr(expr, spmd)?;
+                if !self.type_compatible(&ty, &info.ty) {
+                    return Err(TypeError::at(
+                        format!("type annotation mismatch: expected {}, got {}", ty, info.ty),
+                        span,
+                    ));
+                }
+                Ok(SpmdExprInfo {
+                    ty,
+                    variability: info.variability,
+                })
+            }
+            Expr::Cast { expr, ty } => {
+                let ty = self.resolve_type(ty);
+                let info = self.check_spmd_expr(expr, spmd)?;
+                let castable = |t: &Type| t.is_integer() || matches!(t, Type::Char);
+                if !castable(&info.ty) || !castable(&ty) {
+                    return Err(TypeError::at(
+                        format!(
+                            "cast requires integer/char source and target, got {} -> {}",
+                            info.ty, ty
+                        ),
+                        span,
+                    ));
+                }
+                Ok(SpmdExprInfo {
+                    ty,
+                    variability: info.variability,
+                })
+            }
+            Expr::Match { .. } => Err(TypeError::at(
+                "SPMD match is not supported in the initial surface",
+                span,
+            )),
+            Expr::StructGet { expr, field } => {
+                let info = self.check_spmd_expr(expr, spmd)?;
+                if info.variability.is_varying() {
+                    return Err(TypeError::at(
+                        "SPMD struct-get on varying values is not supported",
+                        expr.span(),
+                    ));
+                }
+                let Type::Struct(name) = &info.ty else {
+                    return Err(TypeError::at(
+                        format!("struct-get requires a struct value, got {}", info.ty),
+                        expr.span(),
+                    ));
+                };
+                match self.structs.lookup_field(name, field) {
+                    Some((_idx, fty)) => Ok(SpmdExprInfo::uniform(fty.clone())),
+                    None => Err(TypeError::at(
+                        format!("struct '{}' has no field '{}'", name, field),
+                        span,
+                    )),
+                }
+            }
+            Expr::Spanned { expr, .. } => self.check_spmd_expr(expr, spmd),
+        }
+    }
+
+    fn check_binary_types(
+        &self,
+        op: BinOp,
+        lhs_ty: &Type,
+        rhs_ty: &Type,
+        span: Span,
+    ) -> Result<Type, TypeError> {
+        match op {
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
+                if !lhs_ty.is_numeric() || !rhs_ty.is_numeric() {
+                    return Err(TypeError::at(
+                        format!(
+                            "arithmetic operator requires numeric types, got {} and {}",
+                            lhs_ty, rhs_ty
+                        ),
+                        span,
+                    ));
+                }
+                if !self.types_equal(lhs_ty, rhs_ty) {
+                    return Err(TypeError::at(
+                        format!("type mismatch in arithmetic: {} and {}", lhs_ty, rhs_ty),
+                        span,
+                    ));
+                }
+                Ok(lhs_ty.clone())
+            }
+            BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
+                if !self.types_equal(lhs_ty, rhs_ty) {
+                    return Err(TypeError::at(
+                        format!("comparison type mismatch: {} and {}", lhs_ty, rhs_ty),
+                        span,
+                    ));
+                }
+                Ok(Type::Bool)
+            }
+            BinOp::And | BinOp::Or => {
+                if lhs_ty != &Type::Bool || rhs_ty != &Type::Bool {
+                    return Err(TypeError::at(
+                        format!(
+                            "logical operator requires bool, got {} and {}",
+                            lhs_ty, rhs_ty
+                        ),
+                        span,
+                    ));
+                }
+                Ok(Type::Bool)
+            }
+            BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
+                if !lhs_ty.is_integer() || !rhs_ty.is_integer() {
+                    return Err(TypeError::at(
+                        format!(
+                            "bitwise operator requires integer types, got {} and {}",
+                            lhs_ty, rhs_ty
+                        ),
+                        span,
+                    ));
+                }
+                Ok(lhs_ty.clone())
+            }
+        }
+    }
+
+    fn check_unary_type(&self, op: UnOp, ty: &Type, span: Span) -> Result<Type, TypeError> {
+        match op {
+            UnOp::Neg => {
+                if !ty.is_numeric() {
+                    return Err(TypeError::at(
+                        format!("negation requires numeric type, got {}", ty),
+                        span,
+                    ));
+                }
+                Ok(ty.clone())
+            }
+            UnOp::Not => {
+                if ty != &Type::Bool {
+                    return Err(TypeError::at(
+                        format!("not requires bool, got {}", ty),
+                        span,
+                    ));
+                }
+                Ok(Type::Bool)
+            }
+            UnOp::BitNot => {
+                if !ty.is_integer() {
+                    return Err(TypeError::at(
+                        format!("bit-not requires integer, got {}", ty),
+                        span,
+                    ));
+                }
+                Ok(ty.clone())
+            }
+        }
+    }
+
+    fn check_spmd_varying_lane_type(&self, ty: &Type, span: Span) -> Result<(), TypeError> {
+        if is_supported_spmd_lane_type(ty) {
+            Ok(())
+        } else {
+            Err(TypeError::at(
+                format!(
+                    "SPMD varying lane type {} is not supported; expected i32, i64, or f64",
+                    ty
+                ),
+                span,
+            ))
         }
     }
 
@@ -1450,6 +2308,91 @@ impl TypeChecker {
             (Type::DynArray(a), Type::DynArray(b)) => self.types_equal(a, b),
             _ => a == b,
         }
+    }
+}
+
+fn is_supported_spmd_lane_type(ty: &Type) -> bool {
+    matches!(ty, Type::I32 | Type::I64 | Type::F64)
+}
+
+fn spmd_index_is_contiguous(expr: &Expr, spmd: &SpmdContext) -> bool {
+    match expr.unspan() {
+        Expr::Spanned { expr, .. } | Expr::Ann { expr, .. } | Expr::Cast { expr, .. } => {
+            spmd_index_is_contiguous(expr, spmd)
+        }
+        Expr::Var(name) => spmd.is_current_index(name),
+        Expr::Binary {
+            op: BinOp::Add,
+            lhs,
+            rhs,
+        } => {
+            (spmd_index_is_contiguous(lhs, spmd) && spmd_expr_is_uniform(rhs, spmd))
+                || (spmd_expr_is_uniform(lhs, spmd) && spmd_index_is_contiguous(rhs, spmd))
+        }
+        Expr::Binary {
+            op: BinOp::Sub,
+            lhs,
+            rhs,
+        } => spmd_index_is_contiguous(lhs, spmd) && spmd_expr_is_uniform(rhs, spmd),
+        _ => false,
+    }
+}
+
+fn spmd_expr_is_uniform(expr: &Expr, spmd: &SpmdContext) -> bool {
+    match expr.unspan() {
+        Expr::Spanned { expr, .. } | Expr::Ann { expr, .. } | Expr::Cast { expr, .. } => {
+            spmd_expr_is_uniform(expr, spmd)
+        }
+        Expr::Literal(_) => true,
+        Expr::Var(name) => !spmd.variability_of(name).is_varying(),
+        Expr::Unary { expr, .. } => spmd_expr_is_uniform(expr, spmd),
+        Expr::Binary { lhs, rhs, .. } => {
+            spmd_expr_is_uniform(lhs, spmd) && spmd_expr_is_uniform(rhs, spmd)
+        }
+        Expr::Call { func, args } => {
+            spmd_expr_is_uniform(func, spmd)
+                && args.iter().all(|arg| spmd_expr_is_uniform(arg, spmd))
+        }
+        Expr::If {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            spmd_expr_is_uniform(cond, spmd)
+                && spmd_expr_is_uniform(then_branch, spmd)
+                && spmd_expr_is_uniform(else_branch, spmd)
+        }
+        Expr::Let { bindings, body } => {
+            bindings
+                .iter()
+                .all(|(_, _, value)| spmd_expr_is_uniform(value, spmd))
+                && spmd_expr_is_uniform(body, spmd)
+        }
+        Expr::Tuple(elems) | Expr::Array(elems) | Expr::Begin(elems) => {
+            elems.iter().all(|elem| spmd_expr_is_uniform(elem, spmd))
+        }
+        Expr::TupleRef { expr, .. }
+        | Expr::StructGet { expr, .. }
+        | Expr::MakeArray { len: expr, .. } => spmd_expr_is_uniform(expr, spmd),
+        Expr::ArrayRef { expr, index } | Expr::StringRef { expr, index } => {
+            spmd_expr_is_uniform(expr, spmd) && spmd_expr_is_uniform(index, spmd)
+        }
+        Expr::ArraySet { expr, index, value } => {
+            spmd_expr_is_uniform(expr, spmd)
+                && spmd_expr_is_uniform(index, spmd)
+                && spmd_expr_is_uniform(value, spmd)
+        }
+        Expr::While { cond, body } => {
+            spmd_expr_is_uniform(cond, spmd) && spmd_expr_is_uniform(body, spmd)
+        }
+        Expr::Set(_, value) => spmd_expr_is_uniform(value, spmd),
+        Expr::Match { scrutinee, arms } => {
+            spmd_expr_is_uniform(scrutinee, spmd)
+                && arms
+                    .iter()
+                    .all(|(_, body)| spmd_expr_is_uniform(body, spmd))
+        }
+        Expr::Foreach(_) | Expr::Lambda { .. } => false,
     }
 }
 
@@ -3299,6 +4242,123 @@ mod tests {
         // it must keep type-checking.
         let src = "(define (f [a : (Array i64 3)]) : i64 (array-ref a 0))";
         assert!(check(src).is_ok());
+    }
+
+    // ------------------------------------------------------------------
+    // Initial SPMD `foreach` surface — Issue #343
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_typecheck_spmd_foreach_accepts_supported_lane_kernels() {
+        for lane_ty in ["i32", "i64", "f64"] {
+            let src = format!(
+                "(define (map [a : (Array {lane_ty})] [b : (Array {lane_ty})] \
+                   [out : (Array {lane_ty})] [start : i64] [n : i64]) : unit \
+                   (foreach ([i : i64 start n]) \
+                     (array-set! out i (+ (array-ref a i) (array-ref b i)))))"
+            );
+            assert!(check(&src).is_ok(), "lane type should pass: {lane_ty}");
+        }
+    }
+
+    #[test]
+    fn test_typecheck_spmd_foreach_requires_i64_range() {
+        let src = "(define (f [a : (Array i64)] [out : (Array i64)] [n : bool]) : unit \
+                   (foreach ([i : i64 0 n]) (array-set! out i (array-ref a i))))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg.contains("foreach end must be a uniform i64"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_spmd_foreach_body_must_be_unit() {
+        let src = "(define (f [a : (Array i64)] [n : i64]) : unit \
+                   (foreach ([i : i64 0 n]) (array-ref a i)))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg.contains("foreach body must have type unit"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_spmd_rejects_varying_if() {
+        let src = "(define (f [a : (Array i64)] [out : (Array i64)] [n : i64]) : unit \
+                   (foreach ([i : i64 0 n]) \
+                     (if (> (array-ref a i) 0) \
+                         (array-set! out i (array-ref a i)) \
+                         (array-set! out i 0))))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg.contains("SPMD varying if conditions"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_spmd_rejects_outer_set_reduction() {
+        let src = "(define (sum [a : (Array i64)] [n : i64]) : unit \
+                   (let ([acc : i64 0]) \
+                     (foreach ([i : i64 0 n]) \
+                       (set! acc (+ acc (array-ref a i))))))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg.contains("reductions are future work"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_spmd_rejects_varying_call_args() {
+        let src = "(define (f [a : (Array i64)] [n : i64]) : unit \
+                   (foreach ([i : i64 0 n]) (print (array-ref a i))))";
+        let err = check(src).unwrap_err();
+        assert!(err.msg.contains("varying arguments"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_spmd_rejects_unsupported_lane_type() {
+        let src = "(define (f [a : (Array bool)] [out : (Array bool)] [n : i64]) : unit \
+                   (foreach ([i : i64 0 n]) (array-set! out i (array-ref a i))))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg
+                .contains("SPMD varying lane type bool is not supported"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_spmd_rejects_index_arrays() {
+        let src = "(define (f [ix : (Array i64)] [out : (Array i64)] [n : i64]) : unit \
+                   (foreach ([i : i64 0 n]) \
+                     (let ([j : i64 (array-ref ix i)]) \
+                       (array-set! out j 1))))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg.contains("foreach index or a simple uniform offset"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_spmd_rejects_program_index_builtins() {
+        let src = "(define (f [out : (Array i64)] [n : i64]) : unit \
+                   (foreach ([i : i64 0 n]) (array-set! out i (program-index))))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg.contains("program-index is not supported"),
+            "got: {}",
+            err.msg
+        );
     }
 
     // ------------------------------------------------------------------

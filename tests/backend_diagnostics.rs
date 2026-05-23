@@ -95,3 +95,44 @@ fn aggregate_backend_rejection_renders_source_diagnostic() {
         stderr
     );
 }
+
+#[test]
+fn spmd_foreach_lowering_rejection_renders_source_diagnostic() {
+    let output = compile_source(
+        "backend-diagnostics-spmd",
+        "spmd_foreach.tl",
+        "(define (map [a : (Array i64)] [out : (Array i64)] [n : i64]) : unit\n  (foreach ([i : i64 0 n])\n    (array-set! out i (array-ref a i))))",
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "compile unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert_eq!(stdout, "", "failed compile should not write stdout");
+    assert!(
+        stderr.contains(
+            "SPMD foreach is parsed and type-checked, but lowering/codegen is not implemented yet (#344)"
+        ),
+        "stderr did not explain the missing lowering:\n{}",
+        stderr
+    );
+    assert!(
+        stderr.contains("spmd_foreach.tl:2:"),
+        "diagnostic should point at foreach line:\n{}",
+        stderr
+    );
+    assert!(
+        stderr.contains(" 2 |   (foreach ([i : i64 0 n])"),
+        "diagnostic should include the foreach line:\n{}",
+        stderr
+    );
+    assert!(
+        stderr.contains("^"),
+        "diagnostic should include a caret:\n{}",
+        stderr
+    );
+}

@@ -12,6 +12,8 @@ const ARG_RUNTIME_SYMBOL: &str = ".L_tl_arg";
 const READ_FILE_RUNTIME_SYMBOL: &str = ".L_tl_read_file";
 const WRITE_FILE_RUNTIME_SYMBOL: &str = ".L_tl_write_file";
 const FILE_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists";
+const SPMD_FOREACH_UNSUPPORTED_MESSAGE: &str =
+    "SPMD foreach is parsed and type-checked, but lowering/codegen is not implemented yet (#344)";
 
 /// Lowers a typed AST program into IR.
 #[allow(dead_code)]
@@ -151,6 +153,7 @@ impl ProgramLowerer {
                 }
             }
             ast::Expr::Ann { ty, .. } => ty.clone(),
+            ast::Expr::Foreach(_) => Type::Unit,
             _ => Type::Unit,
         }
     }
@@ -177,6 +180,7 @@ impl ProgramLowerer {
                         .insert(name.clone(), self.resolve_type(ty));
                 }
                 ast::Decl::Def { name, ty, value } => {
+                    self.record_unsupported_expr(value);
                     let val_ty = ty
                         .as_ref()
                         .map(|ty| self.resolve_type(ty))
@@ -237,6 +241,7 @@ impl ProgramLowerer {
                     ret,
                     body,
                 } => {
+                    self.record_unsupported_expr(body);
                     let params: Vec<(String, Type)> = params
                         .iter()
                         .map(|(n, t)| (n.clone(), self.resolve_type(t)))
@@ -288,6 +293,10 @@ impl ProgramLowerer {
         );
         fn_lowerer.lower_body(body, ret)
     }
+
+    fn record_unsupported_expr(&mut self, expr: &ast::Expr) {
+        collect_unsupported_expr(expr, &mut self.source_spans.unsupported_features);
+    }
 }
 
 /// Extracts an IR Value from a constant AST expression, if possible.
@@ -323,6 +332,79 @@ fn extract_const_cast(expr: &ast::Expr, to_ty: &Type) -> Option<Value> {
         Type::I8 => Some(Value::ConstI8(value as i8)),
         Type::U8 | Type::Char => Some(Value::ConstI8(value as u8 as i8)),
         _ => None,
+    }
+}
+
+fn collect_unsupported_expr(expr: &ast::Expr, unsupported: &mut Vec<(String, crate::span::Span)>) {
+    let mut stack = vec![expr];
+    while let Some(expr) = stack.pop() {
+        match expr.unspan() {
+            ast::Expr::Spanned { expr, .. }
+            | ast::Expr::Ann { expr, .. }
+            | ast::Expr::Cast { expr, .. }
+            | ast::Expr::Unary { expr, .. }
+            | ast::Expr::TupleRef { expr, .. }
+            | ast::Expr::StructGet { expr, .. }
+            | ast::Expr::MakeArray { len: expr, .. }
+            | ast::Expr::Set(_, expr) => stack.push(expr),
+            ast::Expr::Binary { lhs, rhs, .. } => {
+                stack.push(rhs);
+                stack.push(lhs);
+            }
+            ast::Expr::Call { func, args } => {
+                for arg in args.iter().rev() {
+                    stack.push(arg);
+                }
+                stack.push(func);
+            }
+            ast::Expr::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                stack.push(else_branch);
+                stack.push(then_branch);
+                stack.push(cond);
+            }
+            ast::Expr::Let { bindings, body } => {
+                stack.push(body);
+                for (_, _, value) in bindings.iter().rev() {
+                    stack.push(value);
+                }
+            }
+            ast::Expr::Lambda { body, .. } => stack.push(body),
+            ast::Expr::Tuple(elems) | ast::Expr::Array(elems) | ast::Expr::Begin(elems) => {
+                for elem in elems.iter().rev() {
+                    stack.push(elem);
+                }
+            }
+            ast::Expr::ArrayRef { expr, index } | ast::Expr::StringRef { expr, index } => {
+                stack.push(index);
+                stack.push(expr);
+            }
+            ast::Expr::ArraySet { expr, index, value } => {
+                stack.push(value);
+                stack.push(index);
+                stack.push(expr);
+            }
+            ast::Expr::While { cond, body } => {
+                stack.push(body);
+                stack.push(cond);
+            }
+            ast::Expr::Foreach(foreach) => {
+                unsupported.push((SPMD_FOREACH_UNSUPPORTED_MESSAGE.to_string(), expr.span()));
+                stack.push(&foreach.body);
+                stack.push(&foreach.end);
+                stack.push(&foreach.start);
+            }
+            ast::Expr::Match { scrutinee, arms } => {
+                for (_, body) in arms.iter().rev() {
+                    stack.push(body);
+                }
+                stack.push(scrutinee);
+            }
+            ast::Expr::Literal(_) | ast::Expr::Var(_) => {}
+        }
     }
 }
 
@@ -587,6 +669,11 @@ impl FnLowerer {
                     || self.expr_diverges(body)
             }
             ast::Expr::While { cond, .. } => self.expr_diverges(cond),
+            ast::Expr::Foreach(foreach) => {
+                self.expr_diverges(&foreach.start)
+                    || self.expr_diverges(&foreach.end)
+                    || self.expr_diverges(&foreach.body)
+            }
             ast::Expr::Begin(exprs) => exprs.iter().any(|expr| self.expr_diverges(expr)),
             ast::Expr::Call { func, args } => {
                 self.is_builtin_diverging_call(func, args)
@@ -693,6 +780,7 @@ impl FnLowerer {
             } => self.lower_if(cond, then_branch, else_branch),
             ast::Expr::Let { bindings, body } => self.lower_let(bindings, body),
             ast::Expr::While { cond, body } => self.lower_while(cond, body),
+            ast::Expr::Foreach(_) => Value::ConstUnit,
             ast::Expr::Begin(exprs) => self.lower_begin(exprs),
             ast::Expr::Call { func, args } => self.lower_call(func, args),
             ast::Expr::Match { scrutinee, arms } => self.lower_match(scrutinee, arms),

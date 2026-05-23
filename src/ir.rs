@@ -172,6 +172,7 @@ pub struct Program {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SourceSpans {
     pub functions: HashMap<String, Span>,
+    pub unsupported_features: Vec<(String, Span)>,
 }
 
 /// IR Builder for constructing functions

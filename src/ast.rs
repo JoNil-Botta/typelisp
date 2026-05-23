@@ -186,6 +186,8 @@ pub enum Expr {
     StringRef { expr: Box<Expr>, index: Box<Expr> },
     /// While loop: (while cond body)
     While { cond: Box<Expr>, body: Box<Expr> },
+    /// SPMD foreach: (foreach ([index : i64 start end]) body)
+    Foreach(Box<ForeachExpr>),
     /// Begin / sequence: (begin e1 e2 ...)
     Begin(Vec<Expr>),
     /// Set! for mutable variables: (set! name expr)
@@ -204,6 +206,15 @@ pub enum Expr {
     /// Struct field access: `(struct-get s field)`. Reads the named field of the
     /// struct value `s`.
     StructGet { expr: Box<Expr>, field: Symbol },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ForeachExpr {
+    pub index: Symbol,
+    pub index_ty: Type,
+    pub start: Box<Expr>,
+    pub end: Box<Expr>,
+    pub body: Box<Expr>,
 }
 
 /// A complete program

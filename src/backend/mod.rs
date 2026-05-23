@@ -210,6 +210,10 @@ fn validate_program_source_spans(
     program: &Program,
     source_spans: &SourceSpans,
 ) -> Result<(), BackendError> {
+    if let Some((message, span)) = source_spans.unsupported_features.first() {
+        return Err(BackendError::at(message.clone(), Some(*span)));
+    }
+
     for func in &program.functions {
         let span = source_spans.functions.get(&func.name).copied();
         if !is_backend_abi_value_type(&func.ret) {

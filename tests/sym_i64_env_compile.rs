@@ -5,7 +5,7 @@
 //! self-hosting): a functional `SymI64Env` with head-first lookup, shadowing,
 //! and key equality via `string-eq`. It exercises `defenum`, recursive
 //! `match`, `string-eq`, `substring`, and `string-append` in a single
-//! runnable integration driver that imports the main-less module copy.
+//! runnable integration driver that imports the canonical selfhost module.
 
 use std::fs;
 use std::path::PathBuf;
@@ -25,7 +25,7 @@ fn sym_i64_env_tl_compiles_to_assembly() {
     let entry_path = work_dir.join("sym_i64_env.tl");
     fs::copy(&source_path, &entry_path).expect("copy sym_i64_env.tl to work dir");
     fs::copy(&core_path, work_dir.join("sym_i64_env_core.tl"))
-        .expect("copy sym_i64_env_core.tl to work dir");
+        .expect("copy selfhost sym_i64_env.tl to work dir");
     let asm_path = work_dir.join("sym_i64_env.s");
 
     let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
@@ -132,20 +132,4 @@ fn sym_i64_env_tl_compiles_to_assembly() {
         "sym_i64_env assembly shows no recursive sym-i64-lookup self-call (bind-chain walk):\n{}",
         asm,
     );
-}
-
-#[test]
-fn integration_sym_i64_env_core_matches_selfhost_module() {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let selfhost_module = fs::read_to_string(manifest_dir.join("selfhost").join("sym_i64_env.tl"))
-        .expect("read selfhost sym_i64_env.tl");
-    let integration_copy = fs::read_to_string(
-        manifest_dir
-            .join("tests")
-            .join("integration")
-            .join("sym_i64_env_core.tl"),
-    )
-    .expect("read integration sym_i64_env_core.tl");
-
-    assert_eq!(integration_copy, selfhost_module);
 }

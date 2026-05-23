@@ -260,6 +260,8 @@ Imports another TypeLisp file. All top-level definitions from the imported file 
   root is searched by stripping the leading `stdlib/` and joining the remainder
   to the root. Local project files therefore take precedence over configured
   stdlib roots.
+- The current stdlib source-tree layout and verification convention is
+  documented in `stdlib/README.md`.
 - There is no package manifest, dependency resolver, package-qualified import
   syntax, or implicit prelude yet.
 

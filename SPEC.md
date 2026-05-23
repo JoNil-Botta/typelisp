@@ -188,10 +188,12 @@ There are no explicit type aliases. Identifiers naming enums or structs are reso
 (cast expr : target_type)
 ```
 
-- Narrowing: truncates to the target width.
-- Widening: sign-extends for signed types, zero-extends for unsigned types.
+- Narrowing keeps the low N bits, where N is the target width. The resulting
+  bits are interpreted using the target type's signedness.
+- Widening sign-extends signed integer sources and zero-extends unsigned
+  integer sources.
 - `char` → integer: zero-extends the byte value.
-- Integer → `char`: truncates to low byte.
+- Integer → `char`: truncates to the low byte.
 - No implicit conversions.
 
 ---
@@ -289,6 +291,7 @@ All operators are prefix functions (or special forms):
 | `+` | integer integer → integer | Addition |
 | `-` | integer integer → integer | Subtraction |
 | `*` | integer integer → integer | Multiplication |
+| `neg` | integer → integer | Unary negation |
 | `/` | integer integer → integer | Signed division |
 | `%` | integer integer → integer | Remainder |
 | `and` | bool bool → bool | Logical AND (short-circuit: **no** — both evaluated) |
@@ -300,6 +303,9 @@ All operators are prefix functions (or special forms):
 | `shr` | integer integer → integer | Right shift (arithmetic for signed, logical for unsigned) |
 
 - Integer arithmetic operators require matching operand types and return that type.
+- Integer `+`, `-`, `*`, and `neg` wrap modulo 2^N, where N is the result type
+  width. Signed integer results use two's-complement interpretation of those
+  wrapped bits.
 - Bitwise and shift operators accept integer operands and return the left-hand
   operand type.
 - `+`, `-`, `*`, `/` also operate on `f64`; `%` on floating-point values is

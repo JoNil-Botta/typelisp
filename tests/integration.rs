@@ -135,6 +135,12 @@ fn type_lisp_programs_compile_link_and_run() {
             deps: &[],
         },
         Case {
+            name: "overflow_casts",
+            exit_code: 0,
+            stdout: "",
+            deps: &[],
+        },
+        Case {
             name: "string_length",
             exit_code: 5,
             stdout: "",

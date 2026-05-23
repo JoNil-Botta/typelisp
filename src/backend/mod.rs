@@ -1816,12 +1816,6 @@ impl X86_64Backend {
         self.emit("");
     }
 
-    /// Emit the self-contained out-of-bounds abort `tl_oob_abort()`. It writes a
-    /// diagnostic to fd 2 via the `write(2)` syscall, then terminates the process
-    /// with the conventional "aborted" status 134 via the `exit(2)` syscall. It
-    /// is zero-dependency (no libc) and never returns. Bounds-checked array
-    /// accesses `Call` this symbol on the out-of-bounds path; because it is a
-    /// `Call` the optimizer's dead-code elimination cannot drop the check.
     /// The abort message written to fd 2 (stderr) on illegal shift counts.
     fn generate_shift_runtime_data(&mut self) {
         self.emit("    .section .rodata");

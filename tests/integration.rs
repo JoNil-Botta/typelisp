@@ -1092,6 +1092,172 @@ fn tl_emit_if_printed_programs_assemble_link_and_exit_expected() {
 }
 
 #[test]
+fn tl_emit_cmp_ext_printed_programs_assemble_link_and_exit_expected() {
+    let cases = [
+        (
+            "le_true_1",
+            r#"(EIf
+  (EBin (OpLe) (EInt 3) (EInt 3))
+  (EInt 1)
+  (EInt 0))"#,
+            1,
+            &["    setle %al\n", "    cmpq $0, %rax\n"][..],
+        ),
+        (
+            "le_false_0",
+            r#"(EIf
+  (EBin (OpLe) (EInt 4) (EInt 3))
+  (EInt 1)
+  (EInt 0))"#,
+            0,
+            &["    setle %al\n", "    cmpq $0, %rax\n"][..],
+        ),
+        (
+            "gt_true_1",
+            r#"(EIf
+  (EBin (OpGt) (EInt 5) (EInt 2))
+  (EInt 1)
+  (EInt 0))"#,
+            1,
+            &["    setg %al\n", "    cmpq $0, %rax\n"][..],
+        ),
+        (
+            "gt_false_0",
+            r#"(EIf
+  (EBin (OpGt) (EInt 2) (EInt 5))
+  (EInt 1)
+  (EInt 0))"#,
+            0,
+            &["    setg %al\n", "    cmpq $0, %rax\n"][..],
+        ),
+        (
+            "ge_true_1",
+            r#"(EIf
+  (EBin (OpGe) (EInt 5) (EInt 5))
+  (EInt 1)
+  (EInt 0))"#,
+            1,
+            &["    setge %al\n", "    cmpq $0, %rax\n"][..],
+        ),
+        (
+            "ge_false_0",
+            r#"(EIf
+  (EBin (OpGe) (EInt 2) (EInt 5))
+  (EInt 1)
+  (EInt 0))"#,
+            0,
+            &["    setge %al\n", "    cmpq $0, %rax\n"][..],
+        ),
+        (
+            "ne_true_1",
+            r#"(EIf
+  (EBin (OpNe) (EInt 7) (EInt 8))
+  (EInt 1)
+  (EInt 0))"#,
+            1,
+            &["    setne %al\n", "    cmpq $0, %rax\n"][..],
+        ),
+        (
+            "ne_false_0",
+            r#"(EIf
+  (EBin (OpNe) (EInt 7) (EInt 7))
+  (EInt 1)
+  (EInt 0))"#,
+            0,
+            &["    setne %al\n", "    cmpq $0, %rax\n"][..],
+        ),
+    ];
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let integration_dir = manifest_dir.join("tests").join("integration");
+    let root_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("tl_emit_cmp_ext_printed_programs");
+
+    for (name, expr, exit_code, snippets) in cases {
+        let work_dir = root_dir.join(name);
+        fs::create_dir_all(&work_dir).expect("create tl_emit cmp ext test work dir");
+
+        for dep in ["tl_emit_core.tl", "tl_ast_types.tl"] {
+            fs::copy(integration_dir.join(dep), work_dir.join(dep))
+                .expect("copy imported emitter module to work dir");
+        }
+
+        let source = format!(
+            "(import \"tl_emit_core.tl\")\n\n\
+             (define (sample) : Expr\n  {})\n\n\
+             (define (main) : unit\n  (print-string (emit-program (sample))))\n",
+            expr
+        );
+        let work_path = work_dir.join("driver.tl");
+        fs::write(&work_path, source).expect("write tl_emit cmp ext driver");
+
+        let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+            .arg("run")
+            .arg(&work_path)
+            .output()
+            .expect("run tl_emit cmp ext driver");
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{} driver exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+            name,
+            stdout,
+            stderr,
+        );
+        for snippet in snippets {
+            assert!(
+                stdout.contains(snippet),
+                "{} emitted assembly missing {:?}:\n{}",
+                name,
+                snippet,
+                stdout,
+            );
+        }
+
+        let asm_path = work_dir.join("printed.s");
+        let obj_path = work_dir.join("printed.o");
+        let bin_path = work_dir.join("printed");
+        fs::write(&asm_path, &output.stdout).expect("write printed assembly");
+
+        let status = Command::new("as")
+            .arg(&asm_path)
+            .arg("-o")
+            .arg(&obj_path)
+            .status()
+            .expect("run assembler on printed tl_emit cmp ext output");
+        assert!(status.success(), "{} assembly failed", name);
+
+        let status = Command::new("ld")
+            .arg(&obj_path)
+            .arg("-o")
+            .arg(&bin_path)
+            .status()
+            .expect("run linker on printed tl_emit cmp ext output");
+        assert!(status.success(), "{} linking failed", name);
+
+        let output = Command::new(&bin_path)
+            .output()
+            .expect("run binary assembled from printed tl_emit cmp ext output");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            output.status.code(),
+            Some(exit_code),
+            "{} printed program exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+            name,
+            stdout,
+            stderr,
+        );
+        assert_eq!(stdout, "", "{} printed program wrote stdout", name);
+    }
+}
+
+#[test]
 fn tl_emit_def_call_printed_programs_assemble_link_and_exit_expected() {
     let cases = [
         (

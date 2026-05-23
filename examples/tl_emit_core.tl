@@ -120,7 +120,11 @@
     [(OpSub) "    subq %rcx, %rax\n"]
     [(OpMul) "    imulq %rcx, %rax\n"]
     [(OpLt) "    cmpq %rcx, %rax\n    setl %al\n    movzbq %al, %rax\n"]
-    [(OpEq) "    cmpq %rcx, %rax\n    sete %al\n    movzbq %al, %rax\n"]))
+    [(OpEq) "    cmpq %rcx, %rax\n    sete %al\n    movzbq %al, %rax\n"]
+    [(OpLe) "    cmpq %rcx, %rax\n    setle %al\n    movzbq %al, %rax\n"]
+    [(OpGt) "    cmpq %rcx, %rax\n    setg %al\n    movzbq %al, %rax\n"]
+    [(OpGe) "    cmpq %rcx, %rax\n    setge %al\n    movzbq %al, %rax\n"]
+    [(OpNe) "    cmpq %rcx, %rax\n    setne %al\n    movzbq %al, %rax\n"]))
 
 (define (emit-var [env : CEnv] [name : String]) : String
   (string-append "    movq "

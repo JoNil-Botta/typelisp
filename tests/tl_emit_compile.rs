@@ -144,6 +144,12 @@ fn tl_emit_tl_compiles_to_assembly() {
         // `.Lend_` label, and the two local labels themselves.
         "    cmpq %rcx, %rax\\n    setl %al\\n    movzbq %al, %rax\\n",
         "    cmpq %rcx, %rax\\n    sete %al\\n    movzbq %al, %rax\\n",
+        // refs #173: extended comparison operators `<=` `>` `>=` `!=` reuse the
+        // same `cmpq` + `setX` + `movzbq` template; only the setcc mnemonic varies.
+        "    cmpq %rcx, %rax\\n    setle %al\\n    movzbq %al, %rax\\n",
+        "    cmpq %rcx, %rax\\n    setg %al\\n    movzbq %al, %rax\\n",
+        "    cmpq %rcx, %rax\\n    setge %al\\n    movzbq %al, %rax\\n",
+        "    cmpq %rcx, %rax\\n    setne %al\\n    movzbq %al, %rax\\n",
         "    cmpq $0, %rax\\n",
         "    je ",
         "    jmp ",

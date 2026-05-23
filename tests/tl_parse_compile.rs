@@ -121,6 +121,11 @@ fn tl_parse_tl_compiles_to_assembly() {
         // constants are compiled into the program regardless of the input.
         ".string \"    cmpq %rcx, %rax\\n    setl %al\\n    movzbq %al, %rax\\n\"",
         ".string \"    cmpq %rcx, %rax\\n    sete %al\\n    movzbq %al, %rax\\n\"",
+        // refs #173: extended comparison operator string constants in emit-op.
+        ".string \"    cmpq %rcx, %rax\\n    setle %al\\n    movzbq %al, %rax\\n\"",
+        ".string \"    cmpq %rcx, %rax\\n    setg %al\\n    movzbq %al, %rax\\n\"",
+        ".string \"    cmpq %rcx, %rax\\n    setge %al\\n    movzbq %al, %rax\\n\"",
+        ".string \"    cmpq %rcx, %rax\\n    setne %al\\n    movzbq %al, %rax\\n\"",
         ".string \"    cmpq $0, %rax\\n\"",
         ".string \"    je \"",
         ".string \"    jmp \"",

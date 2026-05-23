@@ -828,7 +828,12 @@ impl FnLowerer {
             Type::I8 | Type::U8 | Type::Char => Value::ConstI8(0),
             Type::Bool => Value::ConstBool(false),
             Type::F64 | Type::F32 => Value::ConstF64(0.0),
-            Type::Unit | Type::Never | Type::Array(_, _) | Type::Var(_) => Value::ConstUnit,
+            Type::Unit
+            | Type::Never
+            | Type::Array(_, _)
+            | Type::Vector(_, _)
+            | Type::Mask(_)
+            | Type::Var(_) => Value::ConstUnit,
         }
     }
 

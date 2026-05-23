@@ -723,6 +723,19 @@ fn validate_function(func: &Function, global_types: &HashMap<String, Type>) -> R
                     check_operand(offset, global_types)
                         .map_err(|w| unsupported_value(&func.name, &w))?;
                 }
+                Instruction::LaneId { .. }
+                | Instruction::Splat { .. }
+                | Instruction::VectorBinOp { .. }
+                | Instruction::VectorCompare { .. }
+                | Instruction::MaskBinOp { .. }
+                | Instruction::MaskNot { .. }
+                | Instruction::Select { .. }
+                | Instruction::VectorLoad { .. }
+                | Instruction::VectorStore { .. }
+                | Instruction::PredicatedStore { .. }
+                | Instruction::TailMask { .. } => {
+                    return unsupported("vector/mask IR requires a SIMD backend target");
+                }
             }
         }
     }
@@ -828,7 +841,12 @@ fn is_backend_local_type(ty: &Type) -> bool {
 
 fn is_sized_backend_type(ty: &Type) -> bool {
     match ty {
-        Type::F32 | Type::Var(_) | Type::Unit | Type::Never => false,
+        Type::F32
+        | Type::Vector(_, _)
+        | Type::Mask(_)
+        | Type::Var(_)
+        | Type::Unit
+        | Type::Never => false,
         Type::Tuple(elems) => elems.iter().all(is_sized_backend_type) && ty.size() > 0,
         Type::Array(elem, len) => *len > 0 && is_sized_backend_type(elem),
         _ => true,
@@ -3614,6 +3632,19 @@ impl X86_64Backend {
                 self.emit("    addq %rcx, %rax");
                 self.store_gpr_value("%rax", dst_offset, &dst_ty);
             }
+            Instruction::LaneId { .. }
+            | Instruction::Splat { .. }
+            | Instruction::VectorBinOp { .. }
+            | Instruction::VectorCompare { .. }
+            | Instruction::MaskBinOp { .. }
+            | Instruction::MaskNot { .. }
+            | Instruction::Select { .. }
+            | Instruction::VectorLoad { .. }
+            | Instruction::VectorStore { .. }
+            | Instruction::PredicatedStore { .. }
+            | Instruction::TailMask { .. } => {
+                self.emit("    # vector/mask IR rejected by backend validation");
+            }
             // Phi nodes are lowered to predecessor moves by `eliminate_phis`
             // before instruction selection. If one reaches this point, there is
             // no standalone assembly instruction to emit for it.
@@ -4711,6 +4742,38 @@ mod tests {
         .expect_err("backend should reject unsupported local slot types");
         assert!(
             err.contains("local %0 has type f32"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_reject_vector_mask_ir_before_codegen() {
+        let err = generate_assembly(&Program {
+            functions: vec![Function {
+                name: "main".into(),
+                params: vec![],
+                ret: Type::Unit,
+                locals: vec![(0, Type::I64)],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![
+                        Instruction::LaneId {
+                            dst: 0,
+                            lanes: 4,
+                            ty: Type::I64,
+                        },
+                        Instruction::Return(None),
+                    ],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![],
+        })
+        .expect_err("scalar backend should reject vector/mask IR");
+        assert!(
+            err.contains("vector/mask IR requires a SIMD backend target"),
             "unexpected error: {}",
             err
         );

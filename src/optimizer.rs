@@ -673,6 +673,51 @@ impl Optimizer {
                 Self::add_value_uses(base, used);
                 Self::add_value_uses(offset, used);
             }
+            Instruction::Splat { value, .. } => Self::add_value_uses(value, used),
+            Instruction::VectorBinOp { lhs, rhs, .. }
+            | Instruction::VectorCompare { lhs, rhs, .. }
+            | Instruction::MaskBinOp { lhs, rhs, .. } => {
+                Self::add_value_uses(lhs, used);
+                Self::add_value_uses(rhs, used);
+            }
+            Instruction::MaskNot { src, .. } => Self::add_value_uses(src, used),
+            Instruction::Select {
+                mask,
+                on_true,
+                on_false,
+                ..
+            } => {
+                Self::add_value_uses(mask, used);
+                Self::add_value_uses(on_true, used);
+                Self::add_value_uses(on_false, used);
+            }
+            Instruction::VectorLoad { base, index, .. } => {
+                Self::add_value_uses(base, used);
+                Self::add_value_uses(index, used);
+            }
+            Instruction::VectorStore {
+                base, index, value, ..
+            } => {
+                Self::add_value_uses(base, used);
+                Self::add_value_uses(index, used);
+                Self::add_value_uses(value, used);
+            }
+            Instruction::PredicatedStore {
+                base,
+                index,
+                value,
+                mask,
+                ..
+            } => {
+                Self::add_value_uses(base, used);
+                Self::add_value_uses(index, used);
+                Self::add_value_uses(value, used);
+                Self::add_value_uses(mask, used);
+            }
+            Instruction::TailMask { index, len, .. } => {
+                Self::add_value_uses(index, used);
+                Self::add_value_uses(len, used);
+            }
             Instruction::Phi { incoming, .. } => {
                 for (val, _) in incoming {
                     Self::add_value_uses(val, used);
@@ -840,6 +885,10 @@ impl Optimizer {
     }
 
     fn can_copy_propagate(src: &Value, ty: &Type) -> bool {
+        if matches!(ty, Type::Vector(_, _) | Type::Mask(_)) {
+            return false;
+        }
+
         match src {
             Value::Var(_) | Value::Function(_) => true,
             Value::ConstI64(_)
@@ -894,6 +943,51 @@ impl Optimizer {
                 substitute(base);
                 substitute(offset);
             }
+            Instruction::Splat { value, .. } => substitute(value),
+            Instruction::VectorBinOp { lhs, rhs, .. }
+            | Instruction::VectorCompare { lhs, rhs, .. }
+            | Instruction::MaskBinOp { lhs, rhs, .. } => {
+                substitute(lhs);
+                substitute(rhs);
+            }
+            Instruction::MaskNot { src, .. } => substitute(src),
+            Instruction::Select {
+                mask,
+                on_true,
+                on_false,
+                ..
+            } => {
+                substitute(mask);
+                substitute(on_true);
+                substitute(on_false);
+            }
+            Instruction::VectorLoad { base, index, .. } => {
+                substitute(base);
+                substitute(index);
+            }
+            Instruction::VectorStore {
+                base, index, value, ..
+            } => {
+                substitute(base);
+                substitute(index);
+                substitute(value);
+            }
+            Instruction::PredicatedStore {
+                base,
+                index,
+                value,
+                mask,
+                ..
+            } => {
+                substitute(base);
+                substitute(index);
+                substitute(value);
+                substitute(mask);
+            }
+            Instruction::TailMask { index, len, .. } => {
+                substitute(index);
+                substitute(len);
+            }
             Instruction::Phi { .. } => {}
             _ => {}
         }
@@ -909,10 +1003,21 @@ impl Optimizer {
             | Instruction::Load { dst, .. }
             | Instruction::AddrOf { dst, .. }
             | Instruction::Gep { dst, .. }
+            | Instruction::LaneId { dst, .. }
+            | Instruction::Splat { dst, .. }
+            | Instruction::VectorBinOp { dst, .. }
+            | Instruction::VectorCompare { dst, .. }
+            | Instruction::MaskBinOp { dst, .. }
+            | Instruction::MaskNot { dst, .. }
+            | Instruction::Select { dst, .. }
+            | Instruction::VectorLoad { dst, .. }
+            | Instruction::TailMask { dst, .. }
             | Instruction::Phi { dst, .. } => Some(*dst),
             Instruction::Alloc { var, .. } => Some(*var),
             Instruction::Call { dst, .. } | Instruction::CallIndirect { dst, .. } => *dst,
             Instruction::Store { .. }
+            | Instruction::VectorStore { .. }
+            | Instruction::PredicatedStore { .. }
             | Instruction::Branch { .. }
             | Instruction::Jump(_)
             | Instruction::Return(_) => None,
@@ -988,7 +1093,7 @@ impl CseValue {
 
 #[cfg(test)]
 mod tests {
-    use crate::ir::{BasicBlock, BinOp, Function, Instruction, Program, UnOp, Value};
+    use crate::ir::{BasicBlock, BinOp, Function, Instruction, MaskBinOp, Program, UnOp, Value};
     use crate::lower::lower_program;
     use crate::parser::parse;
     use crate::types::Type;
@@ -1787,6 +1892,143 @@ mod tests {
         assert!(matches!(
             func.blocks[1].instructions[0],
             Instruction::BinOp { dst: 3, .. }
+        ));
+    }
+
+    #[test]
+    fn test_vector_ir_is_not_cse_rewritten_by_scalar_optimizer() {
+        let vec_ty = Type::Vector(Box::new(Type::I64), 4);
+        let mut program = Program {
+            functions: vec![Function {
+                name: "f".into(),
+                params: vec![(0, vec_ty.clone()), (1, vec_ty.clone())],
+                ret: Type::Unit,
+                locals: vec![(2, vec_ty.clone()), (3, vec_ty)],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![
+                        Instruction::VectorBinOp {
+                            dst: 2,
+                            op: BinOp::Add,
+                            lhs: Value::Var(0),
+                            rhs: Value::Var(1),
+                            lanes: 4,
+                            elem_ty: Type::I64,
+                        },
+                        Instruction::VectorBinOp {
+                            dst: 3,
+                            op: BinOp::Add,
+                            lhs: Value::Var(0),
+                            rhs: Value::Var(1),
+                            lanes: 4,
+                            elem_ty: Type::I64,
+                        },
+                        Instruction::Return(None),
+                    ],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![],
+        };
+
+        Optimizer::optimize(&mut program);
+
+        let instrs = &program.functions[0].blocks[0].instructions;
+        assert_eq!(
+            instrs
+                .iter()
+                .filter(|instr| matches!(instr, Instruction::VectorBinOp { .. }))
+                .count(),
+            2,
+            "vector ops need explicit vector-aware CSE: {instrs:?}"
+        );
+        assert!(
+            !instrs
+                .iter()
+                .any(|instr| matches!(instr, Instruction::Mov { dst: 3, .. })),
+            "scalar CSE must not rewrite vector op to a move: {instrs:?}"
+        );
+    }
+
+    #[test]
+    fn test_vector_copy_is_not_propagated_by_scalar_optimizer() {
+        let vec_ty = Type::Vector(Box::new(Type::I64), 4);
+        let mut func = Function {
+            name: "f".into(),
+            params: vec![(0, vec_ty.clone()), (1, vec_ty.clone())],
+            ret: Type::Unit,
+            locals: vec![(2, vec_ty.clone()), (3, vec_ty)],
+            blocks: vec![BasicBlock {
+                label: "entry".into(),
+                instructions: vec![
+                    Instruction::Mov {
+                        dst: 2,
+                        src: Value::Var(0),
+                        ty: Type::Vector(Box::new(Type::I64), 4),
+                    },
+                    Instruction::VectorBinOp {
+                        dst: 3,
+                        op: BinOp::Add,
+                        lhs: Value::Var(2),
+                        rhs: Value::Var(1),
+                        lanes: 4,
+                        elem_ty: Type::I64,
+                    },
+                    Instruction::Return(None),
+                ],
+            }],
+            entry: "entry".into(),
+        };
+
+        assert!(
+            !Optimizer::copy_propagation(&mut func),
+            "vector copies should wait for a vector-aware propagation pass"
+        );
+        assert!(matches!(
+            func.blocks[0].instructions[1],
+            Instruction::VectorBinOp {
+                lhs: Value::Var(2),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_mask_copy_is_not_propagated_by_scalar_optimizer() {
+        let mut func = Function {
+            name: "f".into(),
+            params: vec![(0, Type::Mask(4)), (1, Type::Mask(4))],
+            ret: Type::Unit,
+            locals: vec![(2, Type::Mask(4)), (3, Type::Mask(4))],
+            blocks: vec![BasicBlock {
+                label: "entry".into(),
+                instructions: vec![
+                    Instruction::Mov {
+                        dst: 2,
+                        src: Value::Var(0),
+                        ty: Type::Mask(4),
+                    },
+                    Instruction::MaskBinOp {
+                        dst: 3,
+                        op: MaskBinOp::And,
+                        lhs: Value::Var(2),
+                        rhs: Value::Var(1),
+                        lanes: 4,
+                    },
+                    Instruction::Return(None),
+                ],
+            }],
+            entry: "entry".into(),
+        };
+
+        assert!(!Optimizer::copy_propagation(&mut func));
+        assert!(matches!(
+            func.blocks[0].instructions[1],
+            Instruction::MaskBinOp {
+                lhs: Value::Var(2),
+                ..
+            }
         ));
     }
 }

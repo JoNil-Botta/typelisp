@@ -57,6 +57,14 @@ pub enum Type {
     /// it is pointer-sized everywhere it flows through the IR — exactly like an
     /// enum, but with no tag (a struct is a single, untagged record).
     Struct(String),
+    /// Internal SIMD vector type used by backend-oriented IR. This is not a
+    /// public source type in the initial SPMD surface.
+    #[allow(dead_code)]
+    Vector(Box<Type>, usize),
+    /// Internal SIMD lane mask type used by backend-oriented IR. This is not a
+    /// public source type in the initial SPMD surface.
+    #[allow(dead_code)]
+    Mask(usize),
     /// Type variable for polymorphism / inference
     Var(String),
 }
@@ -97,6 +105,8 @@ impl fmt::Display for Type {
             Type::DynArray(ty) => write!(f, "(Array {})", ty),
             Type::Enum(name) => write!(f, "{}", name),
             Type::Struct(name) => write!(f, "{}", name),
+            Type::Vector(elem, lanes) => write!(f, "(Vector {} {})", elem, lanes),
+            Type::Mask(lanes) => write!(f, "(Mask {})", lanes),
             Type::Var(name) => write!(f, "'{}'", name),
         }
     }
@@ -125,6 +135,8 @@ impl Type {
             Type::Struct(_) => 8,
             // A string *value* is a pointer to its inline `{ ptr, len }` storage.
             Type::String => 8,
+            Type::Vector(elem, lanes) => elem.size() * lanes,
+            Type::Mask(lanes) => *lanes,
             Type::Never => panic!("cannot compute size of never type"),
             Type::Var(_) => panic!("cannot compute size of type variable"),
         }
@@ -145,6 +157,8 @@ impl Type {
             Type::Enum(_) => 8,
             Type::Struct(_) => 8,
             Type::String => 8,
+            Type::Vector(elem, _) => elem.align(),
+            Type::Mask(_) => 1,
             Type::Never => panic!("cannot compute alignment of never type"),
             Type::Var(_) => panic!("cannot compute alignment of type variable"),
         }
@@ -200,6 +214,16 @@ impl Type {
     #[allow(dead_code)]
     pub fn is_float(&self) -> bool {
         matches!(self, Type::F64 | Type::F32)
+    }
+
+    #[allow(dead_code)]
+    pub fn is_vector(&self) -> bool {
+        matches!(self, Type::Vector(_, _))
+    }
+
+    #[allow(dead_code)]
+    pub fn is_mask(&self) -> bool {
+        matches!(self, Type::Mask(_))
     }
 }
 

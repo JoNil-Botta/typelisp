@@ -2218,6 +2218,30 @@ fn tl_compile_smoke_writes_function_set_body_and_output_exits_42() {
 }
 
 #[test]
+fn tl_compile_smoke_writes_while_program_and_output_exits_42() {
+    let (code, stdout, stderr, _asm) = run_compile_smoke_generated_program(
+        "tl_compile_smoke_while",
+        "(let ((i 0)) (let ((acc 0)) (begin (while (< i 6) (begin (set! acc (+ acc 7)) (set! i (+ i 1)))) acc)))",
+        &[
+            ".Lwhile_",
+            ".Lwend_",
+            "    jmp .Lwhile_",
+            "    movq $0, %rax\n    movq -16(%rbp), %rax\n",
+        ],
+    );
+
+    assert_eq!(
+        code,
+        Some(42),
+        "tl_compile_smoke while output program exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(stdout, "", "tl_compile_smoke while output stdout");
+    assert_eq!(stderr, "", "tl_compile_smoke while output stderr");
+}
+
+#[test]
 fn tl_compile_smoke_rejects_empty_begin_with_specific_diagnostic() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let selfhost_dir = manifest_dir.join("selfhost");

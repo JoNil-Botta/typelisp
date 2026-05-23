@@ -5,9 +5,10 @@
 ;; tree - it walks the s-expression and computes the tagged VALUE it denotes
 ;; (a `(VInt n)` or a `(VStr s)`, the value domain generalised from a raw i64 so
 ;; it can carry strings), now with
-;; VARIABLES, a `let` special form, an `if`, comparisons, AND - the milestone of
-;; a real language - USER-DEFINED FUNCTIONS plus RECURSION via top-level
-;; `(define (f x) body)` forms threaded through a function environment.
+;; VARIABLES, a MULTI-BINDING `let` special form, an `if`, comparisons, AND - the
+;; milestone of a real language - USER-DEFINED FUNCTIONS plus RECURSION via
+;; top-level `(define (f x y z) body)` forms threaded through a function
+;; environment.
 ;;
 ;;   String --lex--> (Array Token) --read-form*--> (Sexpr ...)
 ;;          --eval--> Value --as-int--> i64
@@ -15,7 +16,7 @@
 ;; A WHOLE PROGRAM is now a sequence of top-level forms: zero or more
 ;; `(define (f x y z) body)` definitions - each with an arbitrary-arity parameter
 ;; LIST - followed by ONE trailing expression. This composes the whole front end:
-;; `(run-program "(define (pow b e) ...) (pow 2 10)")`.
+;; `(run-program "(define (pow b e) ...) (let ((b 2) (e 10) (r (pow b e))) ...))"`.
 ;;
 ;; --------------------------------------------------------------------------
 ;; How the reader and lexer are reused (the KEY module signal, refs #44/#81).
@@ -76,9 +77,10 @@
 ;; recursive enum (recursive enum payloads, #111, make this finite): `ENil` is the
 ;; empty environment, and `(EBind name value rest)` extends an environment `rest`
 ;; with one binding `name -> value`, where the value is now a tagged `Value`
-;; (`VInt`/`VStr`) rather than a raw `i64`. A `let` pushes a fresh `EBind` frame in
-;; front of the current environment; because lookup walks the chain head-first, an
-;; inner binding SHADOWS an outer one of the same name - lexical scoping for free.
+;; (`VInt`/`VStr`) rather than a raw `i64`. A multi-binding `let` pushes one fresh
+;; `EBind` frame per pair, sequentially, in front of the current environment;
+;; because lookup walks the chain head-first, an inner binding SHADOWS an outer one
+;; of the same name - lexical scoping for free.
 (defenum Env
   (ENil)
   (EBind String Value Env))

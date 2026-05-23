@@ -10,21 +10,19 @@
 //! calls, AND a tagged VALUE domain - `(defenum Value (VInt i64) (VStr String))`
 //! - so an expression now denotes a `VInt` or a `VStr` rather than a raw `i64`
 //! (integer-requiring contexts funnel through the `as-int` projection). Where the
-//! lexer
-//! turns a source String into a flat
-//! `(Array Token)` and the reader consumes that token stream into the recursive
-//! cons-cell `Sexpr` AST `(SInt | SSym | SStr | SNil | SCons)`, the evaluator
-//! INTERPRETS that tree WITH RESPECT TO two environments - a value `Env` and a
-//! function `FnEnv`: it resolves bare symbols via recursive `lookup`, pushes an
-//! `EBind` frame for `(let ((x e1)) body)`, dispatches `if` without evaluating the
-//! untaken branch, folds `= < > <= >=` to 1/0 integer truth values, evaluates
-//! builtin binary arithmetic, and OTHERWISE treats the head symbol as a CALL into
-//! a `FnEnv` assoc-list of `(define ...)`s - looking up the function's PARAMETER
-//! LIST and body, ZIPPING the parameter list against the argument expressions
-//! with `bind-args` (each argument evaluated in the caller env) to build a fresh
-//! callee env, and evaluating the body in that env with the SAME `FnEnv`, so a
-//! body can call itself (RECURSION) or any sibling with any arity. A whole
-//! PROGRAM is now a
+//! lexer turns a source String into a flat `(Array Token)` and the reader consumes
+//! that token stream into the recursive cons-cell `Sexpr` AST `(SInt | SSym | SStr
+//! | SNil | SCons)`, the evaluator INTERPRETS that tree WITH RESPECT TO two
+//! environments - a value `Env` and a function `FnEnv`: it resolves bare symbols
+//! via recursive `lookup`, folds a multi-binding `let` into sequential `EBind`
+//! frames, dispatches `if` without evaluating the untaken branch, folds
+//! `= < > <= >=` to 1/0 integer truth values, evaluates builtin binary arithmetic,
+//! and OTHERWISE treats the head symbol as a CALL into a `FnEnv` assoc-list of
+//! `(define ...)`s - looking up the function's PARAMETER LIST and body, ZIPPING
+//! the parameter list against the argument expressions with `bind-args` (each
+//! argument evaluated in the caller env) to build a fresh callee env, and
+//! evaluating the body in that env with the SAME `FnEnv`, so a body can call
+//! itself (RECURSION) or any sibling with any arity. A whole PROGRAM is now a
 //! sequence of top-level forms - zero or more `(define ...)`s then a trailing
 //! expression - read with the reader's lower-level `read-form` cursor API (the
 //! plain `read` returns only the first datum). It does NOT
@@ -430,11 +428,12 @@ fn tl_eval_tl_compiles_to_assembly() {
         asm,
     );
 
-    // 1024 is the printed witness: `main` evaluates `(pow 2 10) => 1024` and
-    // prints it. The literal `1024` is built by the interpreter's arithmetic at
-    // RUNTIME (not a compile-time constant in this evaluator's own source), so we
-    // do NOT assert it appears in the assembly; the printed value is asserted on
-    // stdout by the Linux-gated exec test in `tests/integration.rs`.
+    // 1024 is the printed integer witness: `main` evaluates a multi-binding `let`
+    // whose last binding computes `(pow b e) => 1024`, then prints `r` after first
+    // printing a string. The literal `1024` is built by the interpreter's
+    // arithmetic at RUNTIME (not a compile-time constant in this evaluator's own
+    // source), so we do NOT assert it appears in the assembly; the printed stdout
+    // is asserted by the Linux-gated exec test in `tests/integration.rs`.
 
     // The comparison operators fold a bool to the 1/0 integer-truth convention,
     // so the lowered evaluator must contain at least one signed integer comparison

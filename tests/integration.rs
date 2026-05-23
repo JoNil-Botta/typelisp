@@ -244,14 +244,17 @@ fn type_lisp_programs_compile_link_and_run() {
         // `(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (pow 2 7)`: the
         // program reader folds the recursive TWO-parameter `pow` define into the
         // `FnEnv`, then evaluates `(pow 2 7)` - which zips `(b e)` against `(2 7)`
-        // and recurses to 2^7 = 128. (128 fits a byte; 2^10 = 1024 would wrap mod
-        // 256 to an unobservable 0.) All three imported
-        // `main`-less modules are copied alongside so the `(import)` chain
-        // resolves.
+        // and recurses to 2^10 = 1024. `main` now PRINTS the result via the host
+        // `print` builtin, so the FULL value `1024` is emitted to stdout (with a
+        // trailing newline) - escaping the mod-256 exit-code ceiling that capped
+        // the old `(pow 2 7) => 128` exit-code witness (1024 wraps to 0 as a raw
+        // exit code). The interpreted language also gained a `(print e)` special
+        // form. All three imported `main`-less modules are copied alongside so the
+        // `(import)` chain resolves.
         Case {
             name: "tl_eval",
-            exit_code: 128,
-            stdout: "",
+            exit_code: 0,
+            stdout: "1024\n",
             deps: &["tl_read.tl", "tl_lex.tl", "tl_token.tl"],
         },
         // refs #41: NESTED PATTERN MATCHING, standalone witness. A tree-walking
@@ -471,16 +474,19 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         // Runs `run-program` over the two-form program
         // `(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (pow 2 7)`: the
         // recursive TWO-parameter `pow` define is folded into the `FnEnv`, then
-        // `(pow 2 7)` zips `(b e)` against `(2 7)` via `bind-args` and recurses to
-        // 2^7 = 128. The reader (and transitively the lexer + token
+        // `(pow 2 10)` zips `(b e)` against `(2 10)` via `bind-args` and recurses
+        // to 2^10 = 1024, which `main` PRINTS to stdout via the host `print`
+        // builtin (full value + newline) - escaping the mod-256 exit-code ceiling -
+        // and the interpreted language also gained a `(print e)` special form. The
+        // reader (and transitively the lexer + token
         // model) is reused via the `main`-less `tl_read.tl` import - including its
         // lower-level `read-form` cursor entry, which the program reader drives to
         // read all top-level forms; all three imported modules are copied
         // alongside so the imports resolve.
         Case {
             name: "tl_eval",
-            exit_code: 128,
-            stdout: "",
+            exit_code: 0,
+            stdout: "1024\n",
             deps: &["tl_read.tl", "tl_lex.tl", "tl_token.tl"],
         },
         // refs #41: nested pattern matching, also through the explicit

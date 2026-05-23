@@ -326,6 +326,38 @@ fn tl_eval_tl_compiles_to_assembly() {
         asm,
     );
 
+    // PRINTING (#27): the interpreter now has OUTPUT. `eval-sexpr` dispatches a
+    // `(print e)` SPECIAL FORM on the head symbol text `"print"`, so that string
+    // literal must be emitted in the read-only data alongside the other special
+    // forms.
+    assert!(
+        asm.contains(".string \"print\""),
+        "tl_eval assembly is missing the \"print\" dispatch string literal (print special form):\n{}",
+        asm,
+    );
+
+    // Both the `(print e)` special form AND `main`'s final-result print lower the
+    // host `print` builtin to a call into the runtime `tl_print_i64` helper (which
+    // writes the full integer + a newline to stdout - escaping the mod-256
+    // exit-code ceiling). Its definition and at least one call site must be
+    // present.
+    assert!(
+        asm.contains("tl_print_i64:"),
+        "tl_eval assembly is missing the tl_print_i64 runtime helper (host print builtin):\n{}",
+        asm,
+    );
+    assert!(
+        asm.contains("call tl_print_i64"),
+        "tl_eval assembly shows no host print call (no integer output):\n{}",
+        asm,
+    );
+
+    // 1024 is the printed witness: `main` evaluates `(pow 2 10) => 1024` and
+    // prints it. The literal `1024` is built by the interpreter's arithmetic at
+    // RUNTIME (not a compile-time constant in this evaluator's own source), so we
+    // do NOT assert it appears in the assembly; the printed value is asserted on
+    // stdout by the Linux-gated exec test in `tests/integration.rs`.
+
     // The comparison operators fold a bool to the 1/0 integer-truth convention,
     // so the lowered evaluator must contain at least one signed integer comparison
     // (cmp + a set/conditional-move or conditional jump). `cmp` proves the

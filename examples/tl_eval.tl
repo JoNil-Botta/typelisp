@@ -12,7 +12,10 @@
 ;; A WHOLE PROGRAM is now a sequence of top-level forms: zero or more
 ;; `(define (f x y z) body)` definitions - each with an arbitrary-arity parameter
 ;; LIST - followed by ONE trailing expression. This composes the whole front end:
-;; `(run-program "(define (pow b e) ...) (pow 2 10)")`.
+;; `(run-program "(define (pow b e) ...) (pow 2 10)")`. `main` then PRINTS the
+;; final i64 result to stdout via the host `print` builtin, so the FULL value is
+;; emitted - escaping the mod-256 process exit-code ceiling - and the interpreted
+;; language gains OUTPUT (also via a `(print e)` special form inside `eval-sexpr`).
 ;;
 ;; --------------------------------------------------------------------------
 ;; How the reader and lexer are reused (the KEY module signal, refs #44/#81).
@@ -274,6 +277,12 @@
 ;;                               `(EBind x v env)` - lexical scoping.
 ;;                             - "if": short-circuit - evaluate the condition, then
 ;;                               evaluate only the taken branch.
+;;                             - "print": the OUTPUT special form `(print e)` -
+;;                               eval the single argument in the current env/fenv,
+;;                               emit it to stdout via the HOST `print` builtin
+;;                               (full integer + newline, escaping the mod-256
+;;                               exit-code ceiling), and RETURN that value so
+;;                               `(print x)` composes inside larger expressions.
 ;;                             - a builtin binary op `+ - * / = < > <= >=`: project
 ;;                               the two argument sub-exprs, eval each in `env`
 ;;                               (threading `fenv` so calls nest), then dispatch on
@@ -333,6 +342,23 @@
                        (if (= c 0)
                            (eval-sexpr else-e env fenv)
                            (eval-sexpr then-e env fenv)))))))
+             (if (string-eq name "print")
+                 ;; The `print` SPECIAL FORM `(print e)`: rest is
+                 ;; `(SCons e SNil)`. Evaluate the single argument in the CURRENT
+                 ;; env/fenv to an i64, emit it to stdout via the HOST `print`
+                 ;; builtin (which writes the full integer + a newline - escaping
+                 ;; the mod-256 exit-code ceiling), and RETURN that value so
+                 ;; `(print x)` COMPOSES inside larger expressions, e.g.
+                 ;; `(+ (print 1) (print 2))`. Exactly one argument: the tail past
+                 ;; `e` must be SNil.
+                 (let ([arg : Sexpr (sexpr-head rest)]
+                       [restp : Sexpr (sexpr-tail rest)])
+                   (begin
+                     (sexpr-expect-nil restp)
+                     (let ([v : i64 (eval-sexpr arg env fenv)])
+                       (begin
+                         (print v)
+                         v))))
              (if (is-builtin-op name)
                  ;; A builtin binary call form `(op arg1 arg2)`: rest is
                  ;; `(SCons arg1 (SCons arg2 SNil))`.
@@ -355,7 +381,7 @@
                  ;; resolves recursive and sibling calls. Arbitrary arity.
                  (let ([params : Sexpr (lookup-fn-params fenv name)]
                        [body : Sexpr (lookup-fn-body fenv name)])
-                   (eval-sexpr body (bind-args params rest env fenv) fenv)))))]
+                   (eval-sexpr body (bind-args params rest env fenv) fenv))))))]
     [_ (begin (panic "eval: not an evaluable expression") 0)]))
 
 ;; --------------------------------------------------------------------------
@@ -482,28 +508,41 @@
 
 ;; --------------------------------------------------------------------------
 ;; main: the whole front end composed - lex, read MANY forms, interpret with
-;; MULTI-ARGUMENT user functions and recursion.
+;; MULTI-ARGUMENT user functions and recursion, and PRINT the result.
 ;; --------------------------------------------------------------------------
-;; `(run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (pow 2 7)")`:
+;; `(run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (pow 2 10)")`:
 ;;   - the program is TWO top-level forms: one recursive TWO-parameter `define` of
-;;     `pow`, then the trailing call `(pow 2 7)`.
+;;     `pow`, then the trailing call `(pow 2 10)`.
 ;;   - the program reader folds the `define` into
 ;;     `(FBind "pow" (b e) body FNil)` - the param LIST `(b e)` kept verbatim -
-;;     then evaluates `(pow 2 7)` against that function env.
-;;   - the call zips the params `(b e)` against the args `(2 7)` via `bind-args`,
-;;     building the callee env `(EBind "b" 2 (EBind "e" 7 ENil))`. The body then
-;;     recurses on the SECOND argument: `pow(2,7) = 2*pow(2,6) = ... = 2^7`,
+;;     then evaluates `(pow 2 10)` against that function env.
+;;   - the call zips the params `(b e)` against the args `(2 10)` via `bind-args`,
+;;     building the callee env `(EBind "b" 2 (EBind "e" 10 ENil))`. The body then
+;;     recurses on the SECOND argument: `pow(2,10) = 2*pow(2,9) = ... = 2^10`,
 ;;     bottoming out at the `(< e 1)` base case which returns 1.
-;;   - 2^7 = 128, used as the process exit code. (The exponent is chosen so the
-;;     result fits a byte: a process exit code is taken mod 256, so e.g. 2^10 =
-;;     1024 would wrap to an unobservable 0. 128 is a distinct, observable
-;;     witness that still exercises seven levels of two-argument recursion.)
+;;   - 2^10 = 1024. `main` PRINTS this via the host `print` builtin, so the FULL
+;;     value `1024` is emitted to stdout (with a trailing newline) - escaping the
+;;     mod-256 process exit-code ceiling that capped the old `(pow 2 7) => 128`
+;;     witness (1024 would wrap to an unobservable 0 as a raw exit code). The
+;;     value is also returned, so the interpreter still yields its result and
+;;     `print` COMPOSES (it returns its argument); the exit code is now incidental.
 ;; This single program proves the evaluator now supports MULTI-ARGUMENT user
 ;; functions: the parameter list `(b e)` is zipped against the argument list, both
 ;; parameters are in scope in the body, and RECURSION resolves through the shared
-;; function environment, all composed atop the reused lexer and reader. (An
-;; alternative three-arg witness, `(define (add3 a b c) (+ a (+ b c))) (add3 10 20
-;; 30)` => 60, exercises the zipping without recursion - both were verified on
-;; Linux.) (Deferred: lambda, closures, variadic arity.)
+;; function environment, all composed atop the reused lexer and reader - and the
+;; interpreted language now has OUTPUT, via both this final-result print AND the
+;; `(print e)` SPECIAL FORM dispatched in `eval-sexpr`. (An alternative three-arg
+;; witness, `(define (add3 a b c) (+ a (+ b c))) (add3 10 20 30)` => 60, exercises
+;; the zipping without recursion.) (Deferred: lambda, closures, variadic arity.)
 (define (main) : i64
-  (run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (pow 2 7)"))
+  (let ([result : i64
+         (run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (pow 2 10)")])
+    (begin
+      ;; Emit the FULL result to stdout via the host `print` builtin (an integer
+      ;; + newline). This is what escapes the mod-256 process exit-code ceiling:
+      ;; `(pow 2 10)` is 1024, which would wrap to an unobservable 0 if only used
+      ;; as an exit code, but prints as the full `1024` on stdout. The value is
+      ;; also returned, so the interpreter still yields its result (the exit code
+      ;; is now merely incidental: 1024 & 0xff = 0).
+      (print result)
+      result)))

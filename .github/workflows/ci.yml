@@ -40,6 +40,9 @@ jobs:
       - name: Run tests
         run: cargo test --verbose
 
+      - name: Check deterministic assembly output
+        run: scripts/check-deterministic-asm.sh
+
       - name: Test frontend CLI commands
         run: |
           cargo run --quiet -- tokenize examples/hello.tl

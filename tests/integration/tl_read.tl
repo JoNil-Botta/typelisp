@@ -48,11 +48,17 @@
 ;; child an 8-byte heap pointer, so the layout is finite and every constructed
 ;; node that escapes via a return is heap-promoted. The reader builds this tree;
 ;; the evaluator that imports this module walks it with a `match`-based recursion.
+;; `SStr` carries the inner text of a `"..."` string-literal datum: the reader
+;; consumes the lexer's `TStr` token (#128) into it, so a quoted string reads as a
+;; distinct atom rather than being conflated with a `SSym` of the same characters.
+;; `SStr` is appended last so the existing variants keep their stable ordering for
+;; every importer.
 (defenum Sexpr
   (SInt i64)
   (SSym String)
   (SNil)
-  (SCons Sexpr Sexpr))
+  (SCons Sexpr Sexpr)
+  (SStr String))
 
 ;; --------------------------------------------------------------------------
 ;; The reader cursor: a single mutable index into the `(Array Token)`.
@@ -89,6 +95,7 @@
 ;; it, advancing the cursor past the tokens it consumed.
 ;;   TInt n  -> (SInt n)            an integer atom
 ;;   TSym s  -> (SSym s)            a symbol atom
+;;   TStr s  -> (SStr s)            a string-literal atom (`"..."`, refs #128)
 ;;   TLParen -> read-list           consume '(' then read a list to its ')'
 ;;   TRParen -> error                a stray ')' with no opening '(' is malformed
 ;;   TEnd    -> error                end of stream where a form was expected
@@ -108,20 +115,28 @@
               (begin
                 (advance cur)
                 (SSym s)))
-            (if (= t (tag-lparen))
-                ;; A list: consume '(' and read forms until the matching ')'.
-                (begin
-                  (advance cur)
-                  (read-list toks cur))
-                (if (= t (tag-rparen))
+            (if (= t (tag-str))
+                ;; A string-literal atom: project the inner text out of the TStr
+                ;; (via the imported `token-str` accessor, #128) and consume it.
+                ;; `SStr` keeps it distinct from a same-character `SSym`.
+                (let ([s : String (token-str (peek-tok toks cur))])
+                  (begin
+                    (advance cur)
+                    (SStr s)))
+                (if (= t (tag-lparen))
+                    ;; A list: consume '(' and read forms until the matching ')'.
                     (begin
-                      (panic "reader: unexpected ')'")
-                      ;; Dead code: `panic` never returns, but the `if` needs a Sexpr.
-                      SNil)
-                    ;; tag-end (or anything else): premature end of stream.
-                    (begin
-                      (panic "reader: unexpected end of input")
-                      SNil)))))))
+                      (advance cur)
+                      (read-list toks cur))
+                    (if (= t (tag-rparen))
+                        (begin
+                          (panic "reader: unexpected ')'")
+                          ;; Dead code: `panic` never returns, but the `if` needs a Sexpr.
+                          SNil)
+                        ;; tag-end (or anything else): premature end of stream.
+                        (begin
+                          (panic "reader: unexpected end of input")
+                          SNil))))))))
 
 ;; read-list: the cursor is positioned just AFTER an opening '('. Read forms
 ;; until the matching ')', returning the proper list `(SCons f1 (SCons f2 ...

@@ -188,10 +188,12 @@ fn tl_eval_tl_compiles_to_assembly() {
     );
 
     // The reader and lexer are REUSED across the import boundary, not re-derived:
-    // the imported per-form `read-form` cursor entry and the imported `lex` entry
-    // are emitted. The program reader walks MULTIPLE top-level forms by driving
-    // `read-form` directly (the single-datum `read` is no longer the entry).
-    for sym in ["_tl_read_form:", "_tl_lex:"] {
+    // the imported per-form `read-form` cursor entry, the imported `lex` entry,
+    // and the imported `token-str` accessor are emitted. The reader now consumes
+    // the lexer's `TStr` token (#128) into the new `(SStr String)` atom via
+    // `token-str`, so the accessor crosses the import boundary into the evaluator's
+    // program just like `read-form` / `lex` do.
+    for sym in ["_tl_read_form:", "_tl_lex:", "_tl_token_str:"] {
         assert!(
             asm.contains(sym),
             "tl_eval assembly is missing expected imported reader/lexer symbol {}:\n{}",
@@ -199,6 +201,18 @@ fn tl_eval_tl_compiles_to_assembly() {
             asm,
         );
     }
+
+    // EXHAUSTIVE over the new variant (#27/#128): adding `(SStr String)` to the
+    // imported `Sexpr` enum forces every `match` over `Sexpr` in the evaluator to
+    // gain an arm for it. `eval-sexpr` has an explicit `(SStr _)` arm - this
+    // interpreter is i64-valued, so there are no string VALUES in this slice and
+    // evaluating a string-literal atom aborts. Its panic message string must be
+    // emitted in the read-only data, witnessing the new arm survived to codegen.
+    assert!(
+        asm.contains(".string \"eval: strings not supported\""),
+        "tl_eval assembly is missing the SStr-arm panic message (strings unsupported):\n{}",
+        asm,
+    );
 
     // `eval-sexpr` is genuinely recursive: it evaluates each argument sub-expr by
     // calling itself, so the result depends on the whole nested tree shape.

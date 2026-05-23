@@ -209,17 +209,22 @@ fn type_lisp_programs_compile_link_and_run() {
         // Self-hosting (#27): the s-expression READER for TypeLisp's own syntax -
         // the canonical Lisp reader. `tl_reader.tl` consumes the lexer's
         // `(Array Token)` into the recursive cons-cell `Sexpr` AST
-        // (SInt | SSym | SNil | SCons) with a token cursor and mutually
+        // (SInt | SSym | SStr | SNil | SCons) with a token cursor and mutually
         // recursive `read-form` / `read-list`. It REUSES the lexer by importing
         // `lex` from the `main`-less `tl_lex.tl` (which transitively imports the
         // `main`-less `tl_token.tl`), so the whole program has one `main` - the
-        // reader's. `main` reads "(+ 1 (* 2 3))" into the Sexpr tree and folds it
-        // with `sum-ints`, summing every integer atom: 1 + 2 + 3 => 6 (the nested
-        // inner list contributes 2 and 3). Both imported `main`-less modules are
-        // copied alongside so the `(import)` chain resolves.
+        // reader's. The reader now also consumes the lexer's `TStr` token (#128)
+        // into a new `(SStr String)` atom, kept distinct from a same-character
+        // `SSym` (#27). `main` reads `(greet "hi" 7 (msg "yo" 35))` into the Sexpr
+        // tree and folds it two ways: `sum-ints` sums every integer atom
+        // (7 + 35 => 42) and `count-strs` tallies every `SStr` atom - "hi" at the
+        // top level and "yo" nested one list deep => 2 - so the result is
+        // 42 + 2 => 44, witnessing BOTH that integers still read through nesting
+        // AND that `"..."` literals read into `SStr` at every depth. Both imported
+        // `main`-less modules are copied alongside so the `(import)` chain resolves.
         Case {
             name: "tl_reader",
-            exit_code: 6,
+            exit_code: 44,
             stdout: "",
             deps: &["tl_lex.tl", "tl_token.tl"],
         },
@@ -445,14 +450,17 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             deps: &["tl_token.tl"],
         },
         // Self-hosting (#27): the s-expression reader, also exercised through the
-        // explicit compile -> as -> ld -> run pipeline. Reads "(+ 1 (* 2 3))"
-        // into the recursive cons-cell `Sexpr` AST and folds it with `sum-ints`
-        // (sum of every integer atom): 1 + 2 + 3 => 6. The lexer is reused via
-        // the `main`-less `tl_lex.tl` import (which transitively imports
-        // `tl_token.tl`); both are copied alongside so the imports resolve.
+        // explicit compile -> as -> ld -> run pipeline. Reads
+        // `(greet "hi" 7 (msg "yo" 35))` into the recursive cons-cell `Sexpr` AST
+        // and folds it two ways: `sum-ints` sums every integer atom (7 + 35 => 42)
+        // and `count-strs` tallies every `SStr` atom the reader produced from the
+        // lexer's `TStr` tokens (#128) - "hi" and the nested "yo" => 2 - so the
+        // result is 42 + 2 => 44. The lexer is reused via the `main`-less
+        // `tl_lex.tl` import (which transitively imports `tl_token.tl`); both are
+        // copied alongside so the imports resolve.
         Case {
             name: "tl_reader",
-            exit_code: 6,
+            exit_code: 44,
             stdout: "",
             deps: &["tl_lex.tl", "tl_token.tl"],
         },

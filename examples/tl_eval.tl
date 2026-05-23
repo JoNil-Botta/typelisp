@@ -129,6 +129,7 @@
   (match s
     [(SInt _) (begin (panic "eval: expected a cons cell (car of an atom)") SNil)]
     [(SSym _) (begin (panic "eval: expected a cons cell (car of an atom)") SNil)]
+    [(SStr _) (begin (panic "eval: expected a cons cell (car of an atom)") SNil)]
     [(SNil) (begin (panic "eval: expected a cons cell (car of nil / too few args)") SNil)]
     [(SCons h _) h]))
 
@@ -137,6 +138,7 @@
   (match s
     [(SInt _) (begin (panic "eval: expected a cons cell (cdr of an atom)") SNil)]
     [(SSym _) (begin (panic "eval: expected a cons cell (cdr of an atom)") SNil)]
+    [(SStr _) (begin (panic "eval: expected a cons cell (cdr of an atom)") SNil)]
     [(SNil) (begin (panic "eval: expected a cons cell (cdr of nil / too few args)") SNil)]
     [(SCons _ t) t]))
 
@@ -148,6 +150,7 @@
     [(SNil) unit]
     [(SInt _) (panic "eval: too many arguments")]
     [(SSym _) (panic "eval: too many arguments")]
+    [(SStr _) (panic "eval: too many arguments")]
     [(SCons _ _) (panic "eval: too many arguments")]))
 
 ;; --------------------------------------------------------------------------
@@ -300,6 +303,11 @@
   (match s
     [(SInt n) n]
     [(SSym name) (lookup env name)]
+    ;; A string-literal atom (#27/#128): the reader now produces `SStr` for a
+    ;; `"..."` datum, but this interpreter is i64-valued - there are no string
+    ;; VALUES in this slice - so evaluating one is unsupported and aborts, exactly
+    ;; how the empty list does. (Deferred: real string values / string ops.)
+    [(SStr _) (begin (panic "eval: strings not supported") 0)]
     [(SNil) (begin (panic "eval: cannot evaluate the empty list") 0)]
     [(SCons (SSym name) rest)
      (if (string-eq name "let")
@@ -381,7 +389,8 @@
                (bind-args ptail atail caller fenv))]
        [(SNil) (begin (panic "eval: too few arguments in call") ENil)]
        [(SInt _) (begin (panic "eval: malformed argument list") ENil)]
-       [(SSym _) (begin (panic "eval: malformed argument list") ENil)])]
+       [(SSym _) (begin (panic "eval: malformed argument list") ENil)]
+       [(SStr _) (begin (panic "eval: malformed argument list") ENil)])]
     [_ (begin (panic "eval: malformed parameter list") ENil)]))
 
 ;; is-builtin-op: is `name` one of the fixed binary builtins? This is the dispatch

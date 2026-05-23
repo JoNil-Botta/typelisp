@@ -14,6 +14,20 @@ struct Case {
     deps: &'static [&'static str],
 }
 
+const TL_EMIT_BODY_ASM: &str = concat!(
+    "    movq $1, %rax\n",
+    "    pushq %rax\n",
+    "    movq $2, %rax\n",
+    "    pushq %rax\n",
+    "    movq $3, %rax\n",
+    "    movq %rax, %rcx\n",
+    "    popq %rax\n",
+    "    imulq %rcx, %rax\n",
+    "    movq %rax, %rcx\n",
+    "    popq %rax\n",
+    "    addq %rcx, %rax\n",
+);
+
 #[test]
 fn type_lisp_programs_compile_link_and_run() {
     let cases = [
@@ -220,6 +234,17 @@ fn type_lisp_programs_compile_link_and_run() {
             exit_code: 14,
             stdout: "",
             deps: &["token.tl"],
+        },
+        // Self-hosting M1 (#155): the first backend-shaped TypeLisp emitter.
+        // `tl_emit.tl` builds the arithmetic Expr tree `(+ 1 (* 2 3))`, walks it
+        // with `emit-expr`, and prints the body assembly text. This test asserts
+        // the exact printed stack-machine instruction sequence; wrapping it in a
+        // full `_start`/`main` skeleton is the follow-up driver issue (#156).
+        Case {
+            name: "tl_emit",
+            exit_code: 0,
+            stdout: TL_EMIT_BODY_ASM,
+            deps: &[],
         },
         // Self-hosting (#27): the lexer for TypeLisp's OWN s-expression syntax
         // (NOT the arithmetic-calculator surface). `tl_lexer.tl` tokenizes real
@@ -542,6 +567,15 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             exit_code: 14,
             stdout: "",
             deps: &["token.tl"],
+        },
+        // Self-hosting M1 (#155): the TypeLisp emitter for the arithmetic Expr
+        // subset, also through the explicit compile -> as -> ld -> run pipeline.
+        // It prints exactly the stack-machine body assembly for `(+ 1 (* 2 3))`.
+        Case {
+            name: "tl_emit",
+            exit_code: 0,
+            stdout: TL_EMIT_BODY_ASM,
+            deps: &[],
         },
         // Self-hosting (#27): the TypeLisp-syntax (s-expression) lexer - now with
         // string literals (`TStr`) and `;` line comments - also exercised through

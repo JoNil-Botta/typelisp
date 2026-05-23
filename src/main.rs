@@ -32,6 +32,7 @@ use parser::parse;
 use typechecker::TypeChecker;
 
 const TYPELISP_STDLIB_ROOT_ENV: &str = "TYPELISP_STDLIB_ROOT";
+const DRIVER_STACK_SIZE: usize = 32 * 1024 * 1024;
 
 /// Parse `source`, or print a located diagnostic (file:line:col with a source
 /// snippet and caret) and exit. `file` is used for the diagnostic header.
@@ -253,6 +254,17 @@ fn package_or_exit<T>(result: Result<T, PackageError>) -> T {
 }
 
 fn main() {
+    let handle = std::thread::Builder::new()
+        .name("typelisp-driver".into())
+        .stack_size(DRIVER_STACK_SIZE)
+        .spawn(run_driver)
+        .expect("failed to start typelisp driver thread");
+    if let Err(payload) = handle.join() {
+        std::panic::resume_unwind(payload);
+    }
+}
+
+fn run_driver() {
     let args: Vec<String> = env::args().collect();
 
     if args.len() < 2 {

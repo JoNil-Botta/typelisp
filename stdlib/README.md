@@ -12,6 +12,9 @@ default installed-root discovery, namespace isolation, or an implicit prelude.
 
 - `string.tl`: string utility functions built on compiler/runtime primitives.
   Import it with `(import "stdlib/string.tl")`.
+- `test.tl`: minimal assertion helpers for TypeLisp fixtures. Assertions are
+  silent on success and call `panic` with the caller-supplied message on
+  failure. Import it with `(import "stdlib/test.tl")`.
 
 ## Importing Stdlib Modules
 
@@ -19,6 +22,7 @@ Stdlib modules are imported explicitly:
 
 ```lisp
 (import "stdlib/string.tl")
+(import "stdlib/test.tl")
 ```
 
 For imports whose path starts with `stdlib/`, the loader first tries the path

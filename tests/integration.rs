@@ -820,6 +820,13 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             stdout: "hello|\nhello|\nhello|\nfound\n|empty-left\n|empty-right\n|all-space\ncontains\nmissing\nhippo\nabx\n",
             deps: &["stdlib/string.tl"],
         },
+        // refs #357: minimal TypeLisp-native assertion helpers from stdlib/test.tl.
+        Case {
+            name: "stdlib_test",
+            exit_code: 42,
+            stdout: "",
+            deps: &["stdlib/test.tl"],
+        },
     ];
 
     for case in cases {
@@ -2862,6 +2869,9 @@ fn dep_source_path(manifest_dir: &Path, source_dir: &Path, dep: &str) -> PathBuf
     }
     if dep == "stdlib/string.tl" {
         return manifest_dir.join("stdlib").join("string.tl");
+    }
+    if dep == "stdlib/test.tl" {
+        return manifest_dir.join("stdlib").join("test.tl");
     }
     source_dir.join(dep)
 }

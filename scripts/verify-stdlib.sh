@@ -33,6 +33,7 @@ fi
 stdlib_manifest() {
     cat <<'EOF'
 string.tl
+test.tl
 EOF
 }
 
@@ -67,19 +68,16 @@ STDERR="$WORKDIR/stdlib_string_witness.stderr"
 
 cat > "$WITNESS" <<'EOF'
 (import "stdlib/string.tl")
+(import "stdlib/test.tl")
 
 (define (main) : i64
-  (if (string-eq (string-trim "  hello  ") "hello")
-      (if (string-contains "hello" "ell")
-          (if (string-contains "hello" "zzz")
-              3
-              (if (string-eq (string-replace "hello" "ell" "ipp") "hippo")
-                  (if (string-eq (string-replace "abc" "c" "x") "abx")
-                      42
-                      5)
-                  4))
-          2)
-      1))
+  (begin
+    (assert-string-eq (string-trim "  hello  ") "hello" "string trim assertion failed")
+    (assert-true (string-contains "hello" "ell") "string contains assertion failed")
+    (assert-false (string-contains "hello" "zzz") "string missing assertion failed")
+    (assert-string-eq (string-replace "hello" "ell" "ipp") "hippo" "string replace middle assertion failed")
+    (assert-string-eq (string-replace "abc" "c" "x") "abx" "string replace tail assertion failed")
+    42))
 EOF
 
 echo "[stdlib] compiling witness with --stdlib-root"
@@ -116,6 +114,51 @@ fi
 if [ -s "$STDERR" ]; then
     echo "FAIL: stdlib witness wrote unexpected stderr" >&2
     sed 's/^/  /' "$STDERR" >&2
+    exit 1
+fi
+
+FAIL_WITNESS="$WORKDIR/stdlib_test_fail_witness.tl"
+FAIL_ASM="$WORKDIR/stdlib_test_fail_witness.s"
+FAIL_OBJ="$WORKDIR/stdlib_test_fail_witness.o"
+FAIL_BIN="$WORKDIR/stdlib_test_fail_witness"
+FAIL_STDOUT="$WORKDIR/stdlib_test_fail_witness.stdout"
+FAIL_STDERR="$WORKDIR/stdlib_test_fail_witness.stderr"
+
+cat > "$FAIL_WITNESS" <<'EOF'
+(import "stdlib/test.tl")
+
+(define (main) : i64
+  (begin
+    (assert-i64-eq 1 2 "intentional stdlib assertion failure")
+    0))
+EOF
+
+echo "[stdlib] compiling failing assertion witness with --stdlib-root"
+"$COMPILER" compile "$FAIL_WITNESS" --stdlib-root "$ROOT/stdlib" -o "$FAIL_ASM"
+
+as "$FAIL_ASM" -o "$FAIL_OBJ"
+ld "$FAIL_OBJ" -o "$FAIL_BIN"
+
+echo "[stdlib] running failing assertion witness -> expect abort"
+set +e
+"$FAIL_BIN" > "$FAIL_STDOUT" 2> "$FAIL_STDERR"
+got=$?
+set -e
+
+if [ "$got" -ne 134 ]; then
+    echo "FAIL: failing assertion witness expected exit 134, got $got" >&2
+    exit 1
+fi
+
+if [ -s "$FAIL_STDOUT" ]; then
+    echo "FAIL: failing assertion witness wrote unexpected stdout" >&2
+    sed 's/^/  /' "$FAIL_STDOUT" >&2
+    exit 1
+fi
+
+if ! grep -F "intentional stdlib assertion failure" "$FAIL_STDERR" >/dev/null 2>&1; then
+    echo "FAIL: failing assertion stderr did not include supplied message" >&2
+    sed 's/^/  /' "$FAIL_STDERR" >&2
     exit 1
 fi
 

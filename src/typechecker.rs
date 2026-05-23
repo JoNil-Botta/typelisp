@@ -2664,6 +2664,33 @@ mod tests {
     }
 
     #[test]
+    fn test_typecheck_match_string_literals_well_typed() {
+        let src = r#"(define (classify [s : String]) : i64
+                       (match s ["if" 10] ["let" 20] [_ 0]))"#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_match_string_literals_require_wildcard() {
+        let src = r#"(define (classify [s : String]) : i64 (match s ["if" 10]))"#;
+        let err = check(src).unwrap_err();
+        assert!(err.msg.contains("non-exhaustive"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_nested_string_literal_pattern() {
+        let src = r#"
+            (defenum Token (TIdent String) (TEnd))
+            (define (classify [t : Token]) : i64
+              (match t
+                [(TIdent "if") 10]
+                [(TIdent _) 1]
+                [(TEnd) 0]))
+        "#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
     fn test_typecheck_match_bool_literals_well_typed() {
         let src = "(define (f [b : bool]) : i64 (match b [true 1] [false 0]))";
         assert!(check(src).is_ok());

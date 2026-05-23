@@ -1458,22 +1458,7 @@ impl FnLowerer {
         {
             let a = self.lower_expr_as(&args[0], &Type::String);
             let b = self.lower_expr_as(&args[1], &Type::String);
-            let (a_ptr, a_len) = self.load_string_fields(&a);
-            let (b_ptr, b_len) = self.load_string_fields(&b);
-            let dst = self.builder.fresh_var();
-            self.builder.emit(Instruction::Call {
-                dst: Some(dst),
-                func: "tl_string_eq".to_string(),
-                args: vec![
-                    Value::Var(a_ptr),
-                    Value::Var(a_len),
-                    Value::Var(b_ptr),
-                    Value::Var(b_len),
-                ],
-                ty: Type::Bool,
-            });
-            self.record_local(dst, Type::Bool);
-            return Value::Var(dst);
+            return self.lower_string_eq_values(&a, &b);
         }
 
         // `(string->int s)` parses the decimal string `s` to an i64. The operand
@@ -2080,6 +2065,10 @@ impl FnLowerer {
         // Heap-promote when a string value can escape via the function's return,
         // or when the current store context may outlive this frame.
         let promote = self.should_heap_promote_aggregate(AggKind::String);
+        self.lower_string_literal_storage(text, promote)
+    }
+
+    fn lower_string_literal_storage(&mut self, text: &str, promote: bool) -> Value {
         let base_val = self.reserve_aggregate_storage(STRING_FAT_SIZE, Type::String, promote);
 
         // Store the data pointer at offset 0. `ConstStr` is materialized by the
@@ -2935,6 +2924,45 @@ impl FnLowerer {
         (ptr_dst, len_dst)
     }
 
+    /// Compare two runtime String fat values by byte content.
+    fn lower_string_eq_values(&mut self, a: &Value, b: &Value) -> Value {
+        let (a_ptr, a_len) = self.load_string_fields(a);
+        let (b_ptr, b_len) = self.load_string_fields(b);
+        let dst = self.builder.fresh_var();
+        self.builder.emit(Instruction::Call {
+            dst: Some(dst),
+            func: "tl_string_eq".to_string(),
+            args: vec![
+                Value::Var(a_ptr),
+                Value::Var(a_len),
+                Value::Var(b_ptr),
+                Value::Var(b_len),
+            ],
+            ty: Type::Bool,
+        });
+        self.record_local(dst, Type::Bool);
+        Value::Var(dst)
+    }
+
+    fn lower_literal_pattern_condition(&mut self, matched: &Value, lit: &ast::Literal) -> Value {
+        if let (Type::String, ast::Literal::String(text)) = (self.value_type(matched), lit) {
+            let literal = self.lower_string_literal_storage(text, false);
+            return self.lower_string_eq_values(matched, &literal);
+        }
+
+        let lit_val = self.lower_literal(lit);
+        let cmp = self.builder.fresh_var();
+        self.builder.emit(Instruction::BinOp {
+            dst: cmp,
+            op: BinOp::Eq,
+            lhs: matched.clone(),
+            rhs: lit_val,
+            ty: Type::Bool,
+        });
+        self.record_local(cmp, Type::Bool);
+        Value::Var(cmp)
+    }
+
     /// Emit `dst = gep base, byte_offset : i8` — a pointer `byte_offset` bytes
     /// into the storage `base` points at. The i8 element type makes the Gep
     /// offset a raw byte count.
@@ -3073,24 +3101,12 @@ impl FnLowerer {
                     // Scalar match arm: compare the scrutinee value against the
                     // literal constant, then dispatch like a variant arm. No
                     // payload bindings.
-                    let lit_val = self.lower_literal(lit);
-
                     let arm_label = self.builder.fresh_label("match_arm");
                     let next_label = self.builder.fresh_label("match_next");
 
-                    // scrutinee == literal ? The backend recovers the compare
-                    // width/signedness from the operands' value types.
-                    let cmp = self.builder.fresh_var();
-                    self.builder.emit(Instruction::BinOp {
-                        dst: cmp,
-                        op: BinOp::Eq,
-                        lhs: dispatch_val.clone(),
-                        rhs: lit_val,
-                        ty: Type::Bool,
-                    });
-                    self.record_local(cmp, Type::Bool);
+                    let cmp = self.lower_literal_pattern_condition(&dispatch_val, lit);
                     self.builder.emit(Instruction::Branch {
-                        cond: Value::Var(cmp),
+                        cond: cmp,
                         true_label: arm_label.clone(),
                         false_label: next_label.clone(),
                     });
@@ -3233,19 +3249,10 @@ impl FnLowerer {
                 }
                 ast::Pattern::Literal(lit) => {
                     let loaded = self.load_field(base, *off, fty);
-                    let lit_val = self.lower_literal(lit);
-                    let cmp = self.builder.fresh_var();
-                    self.builder.emit(Instruction::BinOp {
-                        dst: cmp,
-                        op: BinOp::Eq,
-                        lhs: Value::Var(loaded),
-                        rhs: lit_val,
-                        ty: Type::Bool,
-                    });
-                    self.record_local(cmp, Type::Bool);
+                    let cmp = self.lower_literal_pattern_condition(&Value::Var(loaded), lit);
                     let cont_label = self.builder.fresh_label("match_lit");
                     self.builder.emit(Instruction::Branch {
-                        cond: Value::Var(cmp),
+                        cond: cmp,
                         true_label: cont_label.clone(),
                         false_label: fail_label.clone(),
                     });
@@ -7055,6 +7062,61 @@ mod tests {
             })
         });
         assert!(cmp_const_42, "expected an Eq against ConstI64(42)");
+    }
+
+    #[test]
+    fn test_lower_string_scalar_match_calls_string_eq() {
+        let src = r#"(define (classify [s : String]) : i64
+                       (match s ["if" 10] ["let" 20] [_ 0]))"#;
+        let prog = parse(src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir
+            .functions
+            .iter()
+            .position(|f| f.name == "classify")
+            .unwrap();
+
+        let string_eq_calls = count(&ir, f, |i| {
+            matches!(i, Instruction::Call { func, args, ty, .. }
+                if func == "tl_string_eq" && args.len() == 4 && *ty == Type::Bool)
+        });
+        assert_eq!(
+            string_eq_calls, 2,
+            "expected one tl_string_eq call per string literal arm"
+        );
+        assert_eq!(
+            count(&ir, f, |i| matches!(i, Instruction::Branch { .. })),
+            2,
+            "expected one branch per string literal arm"
+        );
+    }
+
+    #[test]
+    fn test_lower_nested_string_literal_pattern_calls_string_eq() {
+        let src = r#"
+            (defenum Token (TIdent String) (TEnd))
+            (define (classify [t : Token]) : i64
+              (match t
+                [(TIdent "if") 10]
+                [(TIdent _) 1]
+                [(TEnd) 0]))
+        "#;
+        let prog = parse(src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir
+            .functions
+            .iter()
+            .position(|f| f.name == "classify")
+            .unwrap();
+
+        let string_eq_calls = count(&ir, f, |i| {
+            matches!(i, Instruction::Call { func, args, ty, .. }
+                if func == "tl_string_eq" && args.len() == 4 && *ty == Type::Bool)
+        });
+        assert_eq!(
+            string_eq_calls, 1,
+            "expected nested string literal sub-pattern to call tl_string_eq"
+        );
     }
 
     #[test]

@@ -695,6 +695,11 @@ impl<'a> Parser<'a> {
                 self.advance()?;
                 Ok(Pattern::Literal(Literal::Char(val)))
             }
+            Token::String(s) => {
+                let val = s.clone();
+                self.advance()?;
+                Ok(Pattern::Literal(Literal::String(val)))
+            }
             Token::Ident(s) => {
                 let name = s.clone();
                 self.advance()?;
@@ -1076,6 +1081,47 @@ mod tests {
                 assert_eq!(arms[0].0, Pattern::Literal(Literal::Int(0)));
                 assert_eq!(arms[1].0, Pattern::Literal(Literal::Int(1)));
                 assert_eq!(arms[2].0, Pattern::Wildcard);
+            }
+            other => panic!("expected Match, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_string_literal_patterns() {
+        let prog = parse(r#"(define (f [s : String]) : i64 (match s ["if" 10] ["let" 20] [_ 0]))"#)
+            .unwrap();
+        let body = match &prog.decls[0] {
+            Decl::DefFn { body, .. } => body.unspan(),
+            other => panic!("expected DefFn, got {:?}", other),
+        };
+        match body {
+            Expr::Match { arms, .. } => {
+                assert_eq!(arms.len(), 3);
+                assert_eq!(arms[0].0, Pattern::Literal(Literal::String("if".into())));
+                assert_eq!(arms[1].0, Pattern::Literal(Literal::String("let".into())));
+                assert_eq!(arms[2].0, Pattern::Wildcard);
+            }
+            other => panic!("expected Match, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_nested_string_literal_pattern() {
+        let prog =
+            parse(r#"(define (f [t : Token]) : i64 (match t [(TIdent "if") 1] [_ 0]))"#).unwrap();
+        let body = match &prog.decls[0] {
+            Decl::DefFn { body, .. } => body.unspan(),
+            other => panic!("expected DefFn, got {:?}", other),
+        };
+        match body {
+            Expr::Match { arms, .. } => {
+                assert_eq!(
+                    arms[0].0,
+                    Pattern::Variant {
+                        name: "TIdent".into(),
+                        args: vec![Pattern::Literal(Literal::String("if".into()))],
+                    }
+                );
             }
             other => panic!("expected Match, got {:?}", other),
         }

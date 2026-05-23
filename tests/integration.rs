@@ -385,6 +385,29 @@ fn type_lisp_programs_compile_link_and_run() {
             stdout: "PASS: empty-miss\nPASS: single-hit-contains\nPASS: single-hit-value\nPASS: single-miss\nPASS: shadow-newest\nPASS: outer-preserved-a\nPASS: outer-no-b\nPASS: inner-sees-a\nPASS: inner-sees-b\nPASS: substring-key-hit\nPASS: append-key-hit\nPASS: chain-x\nPASS: chain-y\nPASS: chain-z\nAll sym-i64-env tests passed.\n",
             deps: &["sym_i64_env_core.tl"],
         },
+        // Self-hosting M1 (#154): the first front-end-shaped TypeLisp AST+parser.
+        // `tl_ast_expr.tl` lexes `(+ 1 (* 2 3))` with `lex`, reads it into an
+        // `Sexpr` tree with `read-form`, and parses it into the typed `Expr` AST
+        // via `parse-expr`. The parsed tree should be
+        // `(EBin (OpAdd) (EInt 1) (EBin (OpMul) (EInt 2) (EInt 3)))`;
+        // the score-expr function verifies the shape and returns 10.
+        Case {
+            name: "tl_ast_expr",
+            exit_code: 10,
+            stdout: "",
+            deps: &["tl_ast.tl", "tl_read.tl", "tl_lex.tl", "tl_token.tl"],
+        },
+        // Self-hosting M1 (#154): parser test for a top-level function item.
+        // `tl_ast_item.tl` lexes `(define (main) (+ 1 (* 2 3)))` and parses it
+        // into an `IDefFn` with name "main", zero parameters, and the same
+        // body expression as above. The packed score verifies name, param count,
+        // and body shape: (0 * 100) + 10 = 10.
+        Case {
+            name: "tl_ast_item",
+            exit_code: 10,
+            stdout: "",
+            deps: &["tl_ast.tl", "tl_read.tl", "tl_lex.tl", "tl_token.tl"],
+        },
     ];
 
     for case in cases {
@@ -674,6 +697,24 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             exit_code: 0,
             stdout: "PASS: empty-miss\nPASS: single-hit-contains\nPASS: single-hit-value\nPASS: single-miss\nPASS: shadow-newest\nPASS: outer-preserved-a\nPASS: outer-no-b\nPASS: inner-sees-a\nPASS: inner-sees-b\nPASS: substring-key-hit\nPASS: append-key-hit\nPASS: chain-x\nPASS: chain-y\nPASS: chain-z\nAll sym-i64-env tests passed.\n",
             deps: &["sym_i64_env_core.tl"],
+        },
+        // Self-hosting M1 (#154): parser witness through explicit build pipeline.
+        // `tl_ast_expr.tl` parses `(+ 1 (* 2 3))` into the typed `Expr` AST and
+        // returns score 10.
+        Case {
+            name: "tl_ast_expr",
+            exit_code: 10,
+            stdout: "",
+            deps: &["tl_ast.tl", "tl_read.tl", "tl_lex.tl", "tl_token.tl"],
+        },
+        // Self-hosting M1 (#154): item parser witness through explicit build pipeline.
+        // `tl_ast_item.tl` parses `(define (main) (+ 1 (* 2 3)))` into an `IDefFn`
+        // and returns packed score 10 (0 params * 100 + body score 10).
+        Case {
+            name: "tl_ast_item",
+            exit_code: 10,
+            stdout: "",
+            deps: &["tl_ast.tl", "tl_read.tl", "tl_lex.tl", "tl_token.tl"],
         },
     ];
 

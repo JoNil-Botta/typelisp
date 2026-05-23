@@ -124,22 +124,20 @@ impl Optimizer {
 
     fn eval_binop(op: BinOp, lhs: Value, rhs: Value) -> Option<Value> {
         match (op, lhs, rhs) {
-            (BinOp::Add, Value::ConstI64(a), Value::ConstI64(b)) => Some(Value::ConstI64(a + b)),
-            (BinOp::Sub, Value::ConstI64(a), Value::ConstI64(b)) => Some(Value::ConstI64(a - b)),
-            (BinOp::Mul, Value::ConstI64(a), Value::ConstI64(b)) => Some(Value::ConstI64(a * b)),
+            (BinOp::Add, Value::ConstI64(a), Value::ConstI64(b)) => {
+                a.checked_add(b).map(Value::ConstI64)
+            }
+            (BinOp::Sub, Value::ConstI64(a), Value::ConstI64(b)) => {
+                a.checked_sub(b).map(Value::ConstI64)
+            }
+            (BinOp::Mul, Value::ConstI64(a), Value::ConstI64(b)) => {
+                a.checked_mul(b).map(Value::ConstI64)
+            }
             (BinOp::Div, Value::ConstI64(a), Value::ConstI64(b)) => {
-                if b != 0 {
-                    Some(Value::ConstI64(a / b))
-                } else {
-                    None
-                }
+                a.checked_div(b).map(Value::ConstI64)
             }
             (BinOp::Mod, Value::ConstI64(a), Value::ConstI64(b)) => {
-                if b != 0 {
-                    Some(Value::ConstI64(a % b))
-                } else {
-                    None
-                }
+                a.checked_rem(b).map(Value::ConstI64)
             }
             (BinOp::Eq, Value::ConstI64(a), Value::ConstI64(b)) => Some(Value::ConstBool(a == b)),
             (BinOp::Ne, Value::ConstI64(a), Value::ConstI64(b)) => Some(Value::ConstBool(a != b)),
@@ -162,9 +160,15 @@ impl Optimizer {
             (BinOp::Shr, Value::ConstI64(a), Value::ConstI64(b)) => {
                 Some(Value::ConstI64(a.wrapping_shr(b as u32 & 63)))
             }
-            (BinOp::Add, Value::ConstI32(a), Value::ConstI32(b)) => Some(Value::ConstI32(a + b)),
-            (BinOp::Sub, Value::ConstI32(a), Value::ConstI32(b)) => Some(Value::ConstI32(a - b)),
-            (BinOp::Mul, Value::ConstI32(a), Value::ConstI32(b)) => Some(Value::ConstI32(a * b)),
+            (BinOp::Add, Value::ConstI32(a), Value::ConstI32(b)) => {
+                a.checked_add(b).map(Value::ConstI32)
+            }
+            (BinOp::Sub, Value::ConstI32(a), Value::ConstI32(b)) => {
+                a.checked_sub(b).map(Value::ConstI32)
+            }
+            (BinOp::Mul, Value::ConstI32(a), Value::ConstI32(b)) => {
+                a.checked_mul(b).map(Value::ConstI32)
+            }
             (BinOp::Add, Value::ConstF64(a), Value::ConstF64(b)) => Some(Value::ConstF64(a + b)),
             (BinOp::Sub, Value::ConstF64(a), Value::ConstF64(b)) => Some(Value::ConstF64(a - b)),
             (BinOp::Mul, Value::ConstF64(a), Value::ConstF64(b)) => Some(Value::ConstF64(a * b)),
@@ -181,8 +185,8 @@ impl Optimizer {
 
     fn eval_unop(op: UnOp, src: Value) -> Option<Value> {
         match (op, src) {
-            (UnOp::Neg, Value::ConstI64(a)) => Some(Value::ConstI64(-a)),
-            (UnOp::Neg, Value::ConstI32(a)) => Some(Value::ConstI32(-a)),
+            (UnOp::Neg, Value::ConstI64(a)) => a.checked_neg().map(Value::ConstI64),
+            (UnOp::Neg, Value::ConstI32(a)) => a.checked_neg().map(Value::ConstI32),
             (UnOp::Neg, Value::ConstF64(a)) => Some(Value::ConstF64(-a)),
             (UnOp::Not, Value::ConstBool(a)) => Some(Value::ConstBool(!a)),
             (UnOp::BitNot, Value::ConstI64(a)) => Some(Value::ConstI64(!a)),
@@ -443,7 +447,7 @@ impl Optimizer {
 
 #[cfg(test)]
 mod tests {
-    use crate::ir::{Instruction, Value};
+    use crate::ir::{BinOp, Instruction, UnOp, Value};
     use crate::lower::lower_program;
     use crate::optimizer::Optimizer;
     use crate::parser::parse;
@@ -487,5 +491,33 @@ mod tests {
             Instruction::Return(Some(Value::ConstI64(0))) => {}
             _ => panic!("Expected Return(ConstI64(0)), got {:?}", last),
         }
+    }
+
+    #[test]
+    fn test_constant_folding_skips_overflowing_integer_ops() {
+        assert_eq!(
+            Optimizer::eval_binop(BinOp::Mul, Value::ConstI64(i64::MAX), Value::ConstI64(2)),
+            None
+        );
+        assert_eq!(
+            Optimizer::eval_binop(BinOp::Add, Value::ConstI64(i64::MAX), Value::ConstI64(1)),
+            None
+        );
+        assert_eq!(
+            Optimizer::eval_binop(BinOp::Sub, Value::ConstI64(i64::MIN), Value::ConstI64(1)),
+            None
+        );
+        assert_eq!(
+            Optimizer::eval_binop(BinOp::Div, Value::ConstI64(i64::MIN), Value::ConstI64(-1)),
+            None
+        );
+        assert_eq!(
+            Optimizer::eval_binop(BinOp::Mod, Value::ConstI64(i64::MIN), Value::ConstI64(-1)),
+            None
+        );
+        assert_eq!(
+            Optimizer::eval_unop(UnOp::Neg, Value::ConstI64(i64::MIN)),
+            None
+        );
     }
 }

@@ -19,7 +19,7 @@ cd typelisp
 cargo build --release
 
 # Type-check, compile, or run a program (run requires `as`/`ld` on Linux):
-./target/release/typelisp check   examples/hello.tl
+./target/release/typelisp debug check examples/hello.tl
 ./target/release/typelisp compile examples/hello.tl     # writes examples/hello.s
 ./target/release/typelisp run     examples/hello.tl
 ./target/release/typelisp build                         # builds nearest typelisp.pkg
@@ -217,13 +217,16 @@ Source (.tl)
 ## CLI
 
 ```bash
-typelisp tokenize file.tl    # Print token stream
-typelisp parse    file.tl    # Print AST
-typelisp check    file.tl    # Type check
-typelisp compile  file.tl    # Generate assembly (.s); -o <path>, --emit-ir
-typelisp run      file.tl    # Compile, assemble, link, and run (needs as/ld)
-typelisp build              # Build nearest typelisp.pkg to package assembly
+typelisp debug tokenize file.tl    # Print token stream
+typelisp debug parse    file.tl    # Print AST
+typelisp debug check    file.tl    # Type check
+typelisp compile        file.tl    # Generate assembly (.s); -o <path>, --emit-ir
+typelisp run            file.tl    # Compile, assemble, link, and run (needs as/ld)
+typelisp build                    # Build nearest typelisp.pkg to package assembly
 ```
+
+The older top-level `tokenize`, `parse`, and `check` commands remain as
+compatibility aliases.
 
 ## Status
 

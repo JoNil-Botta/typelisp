@@ -115,19 +115,21 @@
     (or (= k 32) (or (= k 9) (or (= k 10) (= k 13))))))
 
 (define (fmt-is-symbol-punct [c : char]) : bool
-  (let ([k : i64 (fmt-code c)])
-    (or (= k 45)
-        (or (= k 43)
-            (or (= k 42)
-                (or (= k 47)
-                    (or (= k 63)
-                        (or (= k 33)
-                            (or (= k 62)
-                                (or (= k 60)
-                                    (or (= k 61)
-                                        (or (= k 95)
-                                            (or (= k 36)
-                                                (or (= k 37) (= k 38)))))))))))))))
+  (match (fmt-code c)
+    [45 true]
+    [43 true]
+    [42 true]
+    [47 true]
+    [63 true]
+    [33 true]
+    [62 true]
+    [60 true]
+    [61 true]
+    [95 true]
+    [36 true]
+    [37 true]
+    [38 true]
+    [_ false]))
 
 (define (fmt-is-symbol-char [c : char]) : bool
   (or (fmt-is-alpha c) (or (fmt-is-digit c) (fmt-is-symbol-punct c))))

@@ -545,7 +545,7 @@ fn is_backend_local_type(ty: &Type) -> bool {
 
 fn is_sized_backend_type(ty: &Type) -> bool {
     match ty {
-        Type::F32 | Type::Var(_) | Type::Unit => false,
+        Type::F32 | Type::Var(_) | Type::Unit | Type::Never => false,
         Type::Tuple(elems) => elems.iter().all(is_sized_backend_type) && ty.size() > 0,
         Type::Array(elem, len) => *len > 0 && is_sized_backend_type(elem),
         _ => true,
@@ -6064,6 +6064,35 @@ mod tests {
         let asm = compile_ok(r#"(define (main) : unit (error "boom"))"#);
         assert!(asm.contains(".L_tl_abort:"), "asm:\n{}", asm);
         assert!(asm.contains("    call .L_tl_abort"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_panic_can_stand_in_for_i64_return() {
+        let asm = compile_ok(r#"(define (main) : i64 (panic "boom"))"#);
+        assert!(asm.contains(".L_tl_abort:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call .L_tl_abort"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_panic_can_stand_in_for_i64_branch() {
+        let asm = compile_ok(r#"(define (main) : i64 (if true 1 (panic "boom")))"#);
+        assert!(asm.contains(".L_tl_abort:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call .L_tl_abort"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_panic_can_stand_in_for_i64_match_arm() {
+        let asm = compile_ok(
+            r#"
+            (define (main) : i64
+              (match 0 [0 (panic "zero")] [_ 1]))
+            "#,
+        );
+        assert!(asm.contains(".L_tl_abort:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call .L_tl_abort"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
     }
 
     #[test]

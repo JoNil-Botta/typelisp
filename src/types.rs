@@ -27,6 +27,10 @@ pub enum Type {
     String,
     /// Unit / void
     Unit,
+    /// Internal bottom type for expressions that never produce a value.
+    /// This is not user-denotable syntax; the typechecker uses it for builtin
+    /// `panic` / `error` and coerces it at expected-type sites.
+    Never,
     /// Function type: (-> arg1 arg2 ... ret)
     Func(Vec<Type>, Box<Type>),
     /// Tuple type: (Tuple t1 t2 ...)
@@ -72,6 +76,7 @@ impl fmt::Display for Type {
             Type::Char => write!(f, "char"),
             Type::String => write!(f, "String"),
             Type::Unit => write!(f, "unit"),
+            Type::Never => write!(f, "never"),
             Type::Func(args, ret) => {
                 write!(f, "(->")?;
                 for arg in args {
@@ -117,6 +122,7 @@ impl Type {
             Type::Struct(_) => 8,
             // A string *value* is a pointer to its inline `{ ptr, len }` storage.
             Type::String => 8,
+            Type::Never => panic!("cannot compute size of never type"),
             Type::Var(_) => panic!("cannot compute size of type variable"),
         }
     }
@@ -136,6 +142,7 @@ impl Type {
             Type::Enum(_) => 8,
             Type::Struct(_) => 8,
             Type::String => 8,
+            Type::Never => panic!("cannot compute alignment of never type"),
             Type::Var(_) => panic!("cannot compute alignment of type variable"),
         }
     }

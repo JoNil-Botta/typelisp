@@ -86,8 +86,8 @@
 ;; Classify a single (non-digit, non-letter, non-space) char into its Token,
 ;; building an actual `Token` value so enum construction is exercised. An
 ;; unexpected char aborts via the `panic` builtin (#45); the trailing `TEnd` is
-;; dead code that only satisfies the `Token` result type, since `panic` yields
-;; unit and never returns.
+;; compatibility-style dead code, though builtin `panic` can now satisfy the
+;; `Token` result directly.
 (define (single-token [c : char]) : Token
   (if (= (code c) 43)                ; '+'
       TPlus

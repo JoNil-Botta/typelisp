@@ -451,8 +451,8 @@ See §3.6.
 | `string-slice` | `String i64 i64 → String` | Alias for `substring` |
 | `string->int` | `String → i64` | Parse decimal integer from string |
 | `int->string` | `i64 → String` | Format integer as decimal string |
-| `panic` | `String → unit` | Print message to stderr and abort |
-| `error` | `String → unit` | Alias for `panic` |
+| `panic` | `String → never` (internal) | Print message to stderr and abort |
+| `error` | `String → never` (internal) | Alias for `panic` |
 
 - `make-array` checks the runtime length before allocation. Negative lengths and
   `length * sizeof(type)` overflow call the same `tl_oob_abort` runtime trap
@@ -588,14 +588,24 @@ TypeLisp has one built-in error-handling mechanism today: **panic**.
 - Panic is a terminal operation; it never returns normally.
 - `error` is an alias for `panic`.
 
-The type checker still gives `panic` and `error` the result type `unit`.
-TypeLisp does not have a bottom/never type yet, so a panic expression cannot be
-used directly where another type is required. Put the panic in a `begin` and add
-a dummy value of the surrounding type after it when a non-unit branch must type
-check.
+The type checker gives builtin `panic` and `error` a compiler-internal bottom
+type. It is not user-denotable syntax, but it can satisfy any expected type and
+can merge with concrete `if` branch or `match` arm result types. The lowerer
+still emits a destination-less `.L_tl_abort` call; the internal type is never a
+runtime value.
+
+```lisp test=compile name=panic-never-branch
+(define (parse-or-zero [ok : bool]) : i64
+  (if ok
+    1
+    (panic "parse failed")))
+```
+
+The older dummy-value style also remains valid, but it is no longer required
+for builtin `panic`/`error`:
 
 ```lisp test=compile name=panic-dummy-value
-(define (parse-or-zero [ok : bool]) : i64
+(define (parse-or-zero-compat [ok : bool]) : i64
   (if ok
     1
     (begin
@@ -646,8 +656,8 @@ domain enum and handle every variant with `match`.
      (result-score (read-small "no"))))
 ```
 
-Issue #45 tracks the remaining design work around generics, bottom/never
-typing for `panic`, `?`-style propagation, and richer diagnostic payloads.
+Issue #45 tracks the remaining design work around generics, `?`-style
+propagation, and richer diagnostic payloads.
 
 ---
 

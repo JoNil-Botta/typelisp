@@ -97,8 +97,8 @@
 ;; Classify a single non-digit, non-space char into its operator/paren Token,
 ;; building a real `Token` value. An unexpected char aborts via the `panic`
 ;; builtin (#45) - exactly as a real lexer reports malformed input; the trailing
-;; `TEnd` is dead code that only satisfies the `Token` result type, since `panic`
-;; yields unit and never returns.
+;; `TEnd` is compatibility-style dead code, though builtin `panic` can now
+;; satisfy the `Token` result directly.
 (define (single-token [c : char]) : Token
   (let ([k : i64 (code c)])
     (if (= k 43)            ; '+'
@@ -210,7 +210,8 @@
                   inner)))
             (begin
               (panic "parser: expected an integer or '('")
-              ;; Dead code: `panic` never returns, but the `if` needs an `Expr`.
+              ;; Compatibility-style dead code; builtin `panic` can now satisfy
+              ;; the `Expr` result directly.
               (ENum 0))))))
 
 ;; term := factor (('*' | '/') factor)*  (left-associative '*' / '/').

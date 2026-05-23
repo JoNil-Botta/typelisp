@@ -2,16 +2,30 @@
 set -eu
 
 usage() {
-    echo "usage: $0 [--self-test]" >&2
+    echo "usage: $0 [--self-test] [typelisp-binary]" >&2
 }
 
 self_test=0
-if [ "${1:-}" = "--self-test" ]; then
-    self_test=1
-elif [ "${1:-}" != "" ]; then
-    usage
-    exit 2
-fi
+compiler_arg=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --self-test)
+            self_test=1
+            ;;
+        -*)
+            usage
+            exit 2
+            ;;
+        *)
+            if [ -n "$compiler_arg" ]; then
+                usage
+                exit 2
+            fi
+            compiler_arg=$1
+            ;;
+    esac
+    shift
+done
 
 case "$(uname -s)" in
     Linux*) ;;
@@ -28,7 +42,9 @@ WORKDIR=${DETERMINISTIC_ASM_DIR:-target/deterministic-asm}
 RUN1="$WORKDIR/run1"
 RUN2="$WORKDIR/run2"
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
+if [ -n "$compiler_arg" ]; then
+    COMPILER=$compiler_arg
+elif [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
     cargo build --quiet
@@ -42,23 +58,45 @@ fi
 
 corpus() {
     cat <<'EOF'
-tl_lexer tests/integration/tl_lexer.tl
-tl_reader tests/integration/tl_reader.tl
-tl_eval tests/integration/tl_eval.tl
+arithmetic tests/integration/arithmetic.tl
+calc tests/integration/calc.tl
+control_flow tests/integration/control_flow.tl
+enum_match tests/integration/enum_match.tl
+enum_string_payload tests/integration/enum_string_payload.tl
+factorial tests/integration/factorial.tl
+fibonacci tests/integration/fibonacci.tl
+functions tests/integration/functions.tl
+hello tests/integration/hello.tl
+lexer tests/integration/lexer.tl
+many_args tests/integration/many_args.tl
+modules_main tests/integration/modules_main.tl
+narrow_div_mod tests/integration/narrow_div_mod.tl
+nested_eval tests/integration/nested_eval.tl
+nullary_variant_call tests/integration/nullary_variant_call.tl
+parser tests/integration/parser.tl
+print tests/integration/print.tl
+print_char tests/integration/print_char.tl
+print_string tests/integration/print_string.tl
+string_append tests/integration/string_append.tl
+string_eq tests/integration/string_eq.tl
+string_length tests/integration/string_length.tl
+substring tests/integration/substring.tl
+sym_i64_env tests/integration/sym_i64_env.tl
+tl_alloc tests/integration/tl_alloc.tl
 tl_ast tests/integration/tl_ast.tl
 tl_emit tests/integration/tl_emit.tl
+tl_eval tests/integration/tl_eval.tl
+tl_lex tests/integration/tl_lex.tl
+tl_lexer tests/integration/tl_lexer.tl
 tl_parse tests/integration/tl_parse.tl
-calc tests/integration/calc.tl
-modules_main tests/integration/modules_main.tl
+tl_read tests/integration/tl_read.tl
+tl_reader tests/integration/tl_reader.tl
+tl_token tests/integration/tl_token.tl
+token tests/integration/token.tl
 tree tests/integration/tree.tl
-enum_string_payload tests/integration/enum_string_payload.tl
-substring tests/integration/substring.tl
-string_eq tests/integration/string_eq.tl
-string_append tests/integration/string_append.tl
-print_string tests/integration/print_string.tl
-nested_eval tests/integration/nested_eval.tl
+unit_functions tests/integration/unit_functions.tl
+unit_main tests/integration/unit_main.tl
 char_literals examples/char_literals.tl
-sym_i64_env tests/integration/sym_i64_env.tl
 EOF
 }
 
@@ -69,6 +107,10 @@ compile_pass() {
     mkdir -p "$out_dir"
     corpus | while read -r name source; do
         [ -n "$name" ] || continue
+        if [ ! -f "$source" ]; then
+            echo "corpus file not found: $source" >&2
+            exit 1
+        fi
         out="$out_dir/$name.s"
         echo "[$pass_name] $source -> $out"
         "$COMPILER" compile "$source" -o "$out"
@@ -110,7 +152,8 @@ if [ "$self_test" -eq 1 ]; then
         exit 1
     fi
 
-    printf '\n# deterministic-asm self-test mutation\n' >> "$RUN2/tl_lexer.s"
+    first_name=$(corpus | sed -n '1s/ .*//p')
+    printf '\n# deterministic-asm self-test mutation\n' >> "$RUN2/$first_name.s"
     if compare_outputs; then
         echo "--self-test failed: mutated output was not detected" >&2
         exit 1

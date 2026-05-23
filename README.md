@@ -134,6 +134,27 @@ definition diagnostics. This package slice has no registry, version solving,
 lockfile, workspace model, namespace isolation, qualified symbol lookup, or
 native executable build promise.
 
+Documentation comments can contain checked examples. `typelisp doc --test
+<file.tl>` extracts fenced `typelisp` or `tl` blocks from `;;;;` module docs and
+attached `;;;` item docs, writes each example to a deterministic temporary
+source file, type-checks it, and removes the temporary directory before exiting.
+
+```lisp
+;;;; ```typelisp
+;;;; (define (main) : i64 42)
+;;;; ```
+
+;;; ```tl expect-error
+;;; (define (bad) : i64 true)
+;;; ```
+(define documented : i64 1)
+```
+
+Examples are standalone TypeLisp source snippets. By default an example must
+parse, resolve imports, and type-check. Add `expect-error` after the language tag
+when the example is intended to fail. Ordinary `;` and `;;` comments are not
+documentation and are ignored by the doctest scanner.
+
 ### Enum and struct namespace rules
 
 TypeLisp keeps **type names** and **value names** in separate namespaces:

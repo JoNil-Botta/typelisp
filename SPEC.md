@@ -88,6 +88,16 @@ comments before the main Rust lexer discards comments:
   module doc, unsupported top-level form, or unrelated source text clears the
   pending item doc block. A pending block at EOF is ignored.
 
+Documentation tests are fenced examples inside those public documentation
+comments. `typelisp doc --test <file.tl>` recognizes Markdown code fences whose
+info string starts with `typelisp` or `tl`, extracts them from `;;;;` module docs
+and attached `;;;` item docs, and checks each example as a standalone TypeLisp
+source file. An example passes when it parses, resolves imports, and type-checks.
+Adding `expect-error` after the language tag inverts the expectation so the
+example must fail during loading, parsing, or type checking. Other fence
+languages are ignored; unknown TypeLisp fence options, empty TypeLisp examples,
+and unterminated TypeLisp fences are malformed doctests.
+
 ### 2.3 String escapes
 
 | Escape | Meaning |

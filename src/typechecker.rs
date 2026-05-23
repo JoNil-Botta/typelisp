@@ -2,7 +2,7 @@ use crate::ast::*;
 use crate::diagnostic::Diagnostic;
 use crate::span::Span;
 use crate::types::Type;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 #[derive(Debug, Clone)]
@@ -403,31 +403,14 @@ impl TypeChecker {
                     } else {
                         self.check_expr(value)?
                     };
-                    if type_contains_enum(&inferred) {
+                    if let Some(reason) =
+                        unsupported_global_aggregate_reason(&inferred, &self.enums, &self.structs)
+                    {
                         return Err(TypeError::at(
-                            "global definitions with enum values are not yet supported \
-                             because enum constructors currently produce stack-owned storage",
-                            value.span(),
-                        ));
-                    }
-                    if type_contains_string_value(&inferred) {
-                        return Err(TypeError::at(
-                            "global definitions with string values are not yet supported \
-                             because string literals currently produce stack-owned storage",
-                            value.span(),
-                        ));
-                    }
-                    if type_contains_dyn_array_value(&inferred) {
-                        return Err(TypeError::at(
-                            "global definitions with dynamic-array values are not yet supported \
-                             because the fat array value is stack-owned storage",
-                            value.span(),
-                        ));
-                    }
-                    if type_contains_struct_value(&inferred) {
-                        return Err(TypeError::at(
-                            "global definitions with struct values are not yet supported \
-                             because struct constructors currently produce stack-owned storage",
+                            format!(
+                                "global definition '{}' has unsupported aggregate type {}: {}",
+                                name, inferred, reason
+                            ),
                             value.span(),
                         ));
                     }
@@ -447,9 +430,9 @@ impl TypeChecker {
                     // aggregate constructors that can escape via `return`, so the
                     // returned pointer outlives the frame instead of dangling
                     // (see `type_kind_escapes_via_return` in src/lower.rs). The
-                    // former hard rejections here have been lifted. Escapes via
-                    // *global* initializers are still rejected because that storage
-                    // path is not yet heap-promoted.
+                    // former hard rejections here have been lifted. Runtime
+                    // global initializers use the same hidden-function return
+                    // path, so their aggregate results are heap-promoted too.
                     let func_ty = Type::Func(
                         params.iter().map(|(_, t)| self.resolve_type(t)).collect(),
                         Box::new(ret),
@@ -1002,7 +985,7 @@ impl TypeChecker {
                     ));
                 };
                 match self.structs.lookup_field(name, field) {
-                    Some((_idx, fty)) => Ok(fty.clone()),
+                    Some((_idx, fty)) => Ok(self.resolve_type(fty)),
                     None => Err(TypeError::at(
                         format!("struct '{}' has no field '{}'", name, field),
                         span,
@@ -1513,6 +1496,128 @@ fn type_mentions_struct(ty: &Type, name: &str) -> bool {
     }
 }
 
+fn unsupported_global_aggregate_reason(
+    ty: &Type,
+    enums: &EnumRegistry,
+    structs: &StructRegistry,
+) -> Option<String> {
+    let resolved = structs.resolve_type(&enums.resolve_type(ty));
+    let mut seen_enums = HashSet::new();
+    let mut seen_structs = HashSet::new();
+    unsupported_global_aggregate_reason_inner(
+        &resolved,
+        true,
+        enums,
+        structs,
+        &mut seen_enums,
+        &mut seen_structs,
+    )
+}
+
+fn unsupported_global_aggregate_reason_inner(
+    ty: &Type,
+    top_level: bool,
+    enums: &EnumRegistry,
+    structs: &StructRegistry,
+    seen_enums: &mut HashSet<String>,
+    seen_structs: &mut HashSet<String>,
+) -> Option<String> {
+    match ty {
+        Type::Tuple(elems) => {
+            if top_level {
+                return Some(
+                    "top-level tuple globals require by-value tuple ABI, which is not yet wired; \
+                     wrap the value in a struct or enum"
+                        .into(),
+                );
+            }
+            for (idx, elem) in elems.iter().enumerate() {
+                let elem = structs.resolve_type(&enums.resolve_type(elem));
+                if let Some(reason) = unsupported_global_aggregate_reason_inner(
+                    &elem,
+                    false,
+                    enums,
+                    structs,
+                    seen_enums,
+                    seen_structs,
+                ) {
+                    return Some(format!("tuple element {} {}", idx, reason));
+                }
+            }
+            None
+        }
+        Type::Array(_, _) => Some(
+            "uses fixed-size array storage, which is inline and is not heap-promoted by \
+             runtime global initializers yet"
+                .into(),
+        ),
+        Type::Enum(name) => {
+            if !seen_enums.insert(name.clone()) {
+                return None;
+            }
+            let found = enums.variants(name).and_then(|variants| {
+                for variant in variants {
+                    for (idx, field) in variant.fields.iter().enumerate() {
+                        let field = structs.resolve_type(&enums.resolve_type(field));
+                        if let Some(reason) = unsupported_global_aggregate_reason_inner(
+                            &field,
+                            false,
+                            enums,
+                            structs,
+                            seen_enums,
+                            seen_structs,
+                        ) {
+                            return Some(format!(
+                                "variant '{}' field {} {}",
+                                variant.name, idx, reason
+                            ));
+                        }
+                    }
+                }
+                None
+            });
+            seen_enums.remove(name);
+            found
+        }
+        Type::Struct(name) => {
+            if !seen_structs.insert(name.clone()) {
+                return None;
+            }
+            let found = structs.fields(name).and_then(|fields| {
+                for field in fields {
+                    let field_ty = structs.resolve_type(&enums.resolve_type(&field.ty));
+                    if let Some(reason) = unsupported_global_aggregate_reason_inner(
+                        &field_ty,
+                        false,
+                        enums,
+                        structs,
+                        seen_enums,
+                        seen_structs,
+                    ) {
+                        return Some(format!("field '{}' {}", field.name, reason));
+                    }
+                }
+                None
+            });
+            seen_structs.remove(name);
+            found
+        }
+        Type::DynArray(elem) => {
+            let elem = structs.resolve_type(&enums.resolve_type(elem));
+            if is_dyn_array_elem_supported(&elem) {
+                None
+            } else {
+                Some(format!(
+                    "dynamic-array globals require supported element types; element type {} \
+                     is not yet supported",
+                    elem
+                ))
+            }
+        }
+        _ => None,
+    }
+}
+
 fn type_contains_enum(ty: &Type) -> bool {
     match ty {
         Type::Enum(_) => true,
@@ -1995,6 +2100,67 @@ mod tests {
         .unwrap();
         let mut tc = TypeChecker::new();
         assert!(tc.check_program(&prog).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_runtime_aggregate_globals_allowed() {
+        let prog = parse(
+            r#"
+            (defenum MaybeI64 (Some i64) (None))
+            (defstruct Pair (x i64) (y i64))
+            (defstruct Nested (label String) (choice MaybeI64))
+
+            (define greeting "hello")
+            (define choice : MaybeI64 (Some 8))
+            (define pair (Pair 10 11))
+            (define cells : (Array i64) (make-array i64 3))
+            (define nested : Nested (Nested "ok" (Some 3)))
+
+            (define (main) : i64
+              (+ (+ (+ (string-length greeting) (length cells))
+                    (+ (struct-get pair x) (struct-get pair y)))
+                 (+ (match choice [(Some n) n] [None 0])
+                    (+ (string-length (struct-get nested label))
+                       (match (struct-get nested choice) [(Some n) n] [None 0])))))
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        assert!(tc.check_program(&prog).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_tuple_global_reports_precise_unsupported_aggregate() {
+        let prog = parse(r#"(define bad : (Tuple String i64) (tuple "x" 1))"#).unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(
+            err.msg
+                .contains("unsupported aggregate type (Tuple String i64)"),
+            "err: {}",
+            err
+        );
+        assert!(err.msg.contains("top-level tuple globals"), "err: {}", err);
+    }
+
+    #[test]
+    fn test_typecheck_nested_fixed_array_global_reports_precise_unsupported_aggregate() {
+        let prog = parse(
+            r#"
+            (defstruct HasArray (items (Array i64 3)))
+            (define bad : HasArray (HasArray (array 1 2 3)))
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(
+            err.msg.contains("unsupported aggregate type HasArray"),
+            "err: {}",
+            err
+        );
+        assert!(err.msg.contains("field 'items'"), "err: {}", err);
+        assert!(err.msg.contains("fixed-size array storage"), "err: {}", err);
     }
 
     #[test]
@@ -2671,10 +2837,11 @@ mod tests {
     }
 
     #[test]
-    fn test_typecheck_string_global_is_rejected() {
+    fn test_typecheck_string_global_is_accepted() {
+        // Runtime global initializers use the hidden-function return path, so
+        // string literal storage is heap-promoted instead of dangling.
         let src = r#"(define greeting "hello")"#;
-        let err = check(src).unwrap_err();
-        assert!(err.msg.contains("string values"), "got: {}", err.msg);
+        assert!(check(src).is_ok());
     }
 
     #[test]
@@ -3438,12 +3605,11 @@ mod tests {
     }
 
     #[test]
-    fn test_typecheck_struct_global_is_rejected() {
-        // A global initialized to a struct value is rejected (stack-owned
-        // constructor storage), mirroring the enum/string global guard.
+    fn test_typecheck_struct_global_is_accepted() {
+        // Runtime global initializers use the hidden-function return path, so
+        // struct constructor storage is heap-promoted instead of dangling.
         let src = format!("{POINT}\n(define origin (Point 0 0))");
-        let err = check(&src).unwrap_err();
-        assert!(err.msg.contains("struct values"), "got: {}", err.msg);
+        assert!(check(&src).is_ok());
     }
 
     #[test]

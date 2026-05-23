@@ -248,8 +248,8 @@ fn validate_global(name: &str, ty: &Type, init: Option<&Value>) -> Result<(), St
     if !is_global_data_type(ty) {
         return Err(format!(
             "backend: global '{}' has unsupported type {}. \
-             The x86_64 backend currently supports scalar integer, bool, char, f64 \
-             and unit globals.",
+             The x86_64 backend currently supports scalar integer, bool, char, f64, \
+             unit, and pointer-sized String, enum, struct, and dynamic-array globals.",
             name, ty
         ));
     }
@@ -653,6 +653,10 @@ fn is_global_data_type(ty: &Type) -> bool {
             | Type::Char
             | Type::F64
             | Type::Unit
+            | Type::String
+            | Type::DynArray(_)
+            | Type::Enum(_)
+            | Type::Struct(_)
     )
 }
 
@@ -1118,7 +1122,8 @@ impl X86_64Backend {
             self.emit("    movq %rax, .L_tl_argv(%rip)");
         }
         // Initialize non-constant globals: call their __global_init_* function
-        // and store the returned value (in %rax for integers, %xmm0 for f64).
+        // and store the returned value (%rax for integer/pointer values, %xmm0
+        // for f64).
         for (name, ty, init) in &program.globals {
             if init.is_some() {
                 continue;
@@ -1131,7 +1136,12 @@ impl X86_64Backend {
                     Type::F64 => {
                         self.emit(&format!("    movsd %xmm0, {}(%rip)", symbol));
                     }
-                    Type::I64 | Type::U64 => {
+                    Type::I64
+                    | Type::U64
+                    | Type::String
+                    | Type::DynArray(_)
+                    | Type::Enum(_)
+                    | Type::Struct(_) => {
                         self.emit(&format!("    movq %rax, {}(%rip)", symbol));
                     }
                     Type::I32 | Type::U32 => {
@@ -4420,6 +4430,56 @@ mod tests {
             "global initializers must run before main:\n{}",
             start
         );
+    }
+
+    #[test]
+    fn test_non_constant_aggregate_global_initializers_store_pointer_values() {
+        let asm = compile_ok(
+            r#"
+            (defenum MaybeI64 (Some i64) (None))
+            (defstruct Pair (x i64) (y i64))
+            (defstruct Nested (label String) (choice MaybeI64))
+
+            (define greeting "hello")
+            (define choice : MaybeI64 (Some 8))
+            (define pair (Pair 10 11))
+            (define cells (make-array i64 3))
+            (define nested : Nested (Nested "ok" (Some 3)))
+
+            (define (main) : i64
+              (+ (+ (+ (string-length greeting) (length cells))
+                    (+ (struct-get pair x) (struct-get pair y)))
+                 (+ (match choice [(Some n) n] [None 0])
+                    (+ (string-length (struct-get nested label))
+                       (match (struct-get nested choice) [(Some n) n] [None 0])))))
+            "#,
+        );
+
+        for name in ["greeting", "choice", "pair", "cells", "nested"] {
+            assert!(
+                asm.contains(&format!("    .comm _tl_{}, 8, 8", name)),
+                "expected pointer-sized .comm for {name}, got:\n{asm}"
+            );
+            assert!(
+                asm.contains(&format!("    call _tl___global_init_{}", name)),
+                "expected runtime global initializer call for {name}, got:\n{asm}"
+            );
+            assert!(
+                asm.contains(&format!("    movq %rax, _tl_{}(%rip)", name)),
+                "expected pointer store after initializer for {name}, got:\n{asm}"
+            );
+        }
+        assert!(
+            asm.contains("    movq _tl_greeting(%rip), %rax"),
+            "expected string global load, got:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("    movq _tl_cells(%rip), %rax"),
+            "expected dynamic-array global load, got:\n{}",
+            asm
+        );
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
     }
 
     #[test]

@@ -90,6 +90,12 @@ fn type_lisp_programs_compile_link_and_run() {
             deps: &[],
         },
         Case {
+            name: "aggregate_globals",
+            exit_code: 42,
+            stdout: "",
+            deps: &[],
+        },
+        Case {
             name: "control_flow",
             exit_code: 15,
             stdout: "",
@@ -498,6 +504,12 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         Case {
             name: "global_initializer",
             exit_code: 120,
+            stdout: "",
+            deps: &[],
+        },
+        Case {
+            name: "aggregate_globals",
+            exit_code: 42,
             stdout: "",
             deps: &[],
         },

@@ -19,7 +19,10 @@ const SYSV_INTEGER_ARG_REGS: [&str; 6] = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8",
 const SYSV_FLOAT_ARG_REGS: [&str; 8] = [
     "%xmm0", "%xmm1", "%xmm2", "%xmm3", "%xmm4", "%xmm5", "%xmm6", "%xmm7",
 ];
+const WIN64_INTEGER_ARG_REGS: [&str; 4] = ["%rcx", "%rdx", "%r8", "%r9"];
+const WIN64_FLOAT_ARG_REGS: [&str; 4] = ["%xmm0", "%xmm1", "%xmm2", "%xmm3"];
 const LINUX_LINK_LIBS: [&str; 1] = ["-lc"];
+const WINDOWS_LINK_LIBS: [&str; 0] = [];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendArch {
@@ -29,11 +32,15 @@ pub enum BackendArch {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendOs {
     Linux,
+    #[allow(dead_code)]
+    Windows,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendAbi {
     SystemV,
+    #[allow(dead_code)]
+    WindowsX64,
 }
 
 /// Concrete backend target. Today only Linux x86_64 System V is emitted, but
@@ -52,9 +59,20 @@ impl BackendTarget {
         os: BackendOs::Linux,
         abi: BackendAbi::SystemV,
     };
+    #[allow(dead_code)]
+    pub const WINDOWS_X86_64: Self = Self {
+        arch: BackendArch::X86_64,
+        os: BackendOs::Windows,
+        abi: BackendAbi::WindowsX64,
+    };
 
     pub const fn linux_x86_64_system_v() -> Self {
         Self::LINUX_X86_64_SYSTEM_V
+    }
+
+    #[allow(dead_code)]
+    pub const fn windows_x86_64() -> Self {
+        Self::WINDOWS_X86_64
     }
 
     fn calling_convention(self) -> CallingConvention {
@@ -62,21 +80,44 @@ impl BackendTarget {
             (BackendArch::X86_64, BackendOs::Linux, BackendAbi::SystemV) => CallingConvention {
                 integer_arg_regs: &SYSV_INTEGER_ARG_REGS,
                 float_arg_regs: &SYSV_FLOAT_ARG_REGS,
+                shared_arg_register_slots: None,
                 incoming_stack_base_offset: 16,
+                outgoing_shadow_space: 0,
+                outgoing_stack_base_offset: 0,
                 stack_arg_size: 8,
                 return_gpr: "%rax",
                 return_float_reg: "%xmm0",
             },
+            (BackendArch::X86_64, BackendOs::Windows, BackendAbi::WindowsX64) => {
+                CallingConvention {
+                    integer_arg_regs: &WIN64_INTEGER_ARG_REGS,
+                    float_arg_regs: &WIN64_FLOAT_ARG_REGS,
+                    shared_arg_register_slots: Some(4),
+                    incoming_stack_base_offset: 48,
+                    outgoing_shadow_space: 32,
+                    outgoing_stack_base_offset: 32,
+                    stack_arg_size: 8,
+                    return_gpr: "%rax",
+                    return_float_reg: "%xmm0",
+                }
+            }
+            _ => panic!("unsupported backend target: {:?}", self),
         }
     }
 
     fn entry_policy(self) -> EntryPolicy {
         match (self.arch, self.os, self.abi) {
             (BackendArch::X86_64, BackendOs::Linux, BackendAbi::SystemV) => EntryPolicy {
-                symbol: "_start",
-                exit_syscall_number: 60,
+                symbol: Some("_start"),
+                exit_syscall_number: Some(60),
                 exit_status_reg: "%rdi",
             },
+            (BackendArch::X86_64, BackendOs::Windows, BackendAbi::WindowsX64) => EntryPolicy {
+                symbol: None,
+                exit_syscall_number: None,
+                exit_status_reg: "%rcx",
+            },
+            _ => panic!("unsupported backend target: {:?}", self),
         }
     }
 
@@ -84,8 +125,15 @@ impl BackendTarget {
         match (self.arch, self.os, self.abi) {
             (BackendArch::X86_64, BackendOs::Linux, BackendAbi::SystemV) => RuntimePolicy {
                 emits_linux_syscall_helpers: true,
+                emits_windows_runtime_helpers: false,
                 uses_libc_print_runtime: true,
             },
+            (BackendArch::X86_64, BackendOs::Windows, BackendAbi::WindowsX64) => RuntimePolicy {
+                emits_linux_syscall_helpers: false,
+                emits_windows_runtime_helpers: false,
+                uses_libc_print_runtime: false,
+            },
+            _ => panic!("unsupported backend target: {:?}", self),
         }
     }
 
@@ -97,6 +145,13 @@ impl BackendTarget {
                 dynamic_linker: Some("/lib64/ld-linux-x86-64.so.2"),
                 libraries: &LINUX_LINK_LIBS,
             },
+            (BackendArch::X86_64, BackendOs::Windows, BackendAbi::WindowsX64) => BackendToolchain {
+                assembler: "clang",
+                linker: "lld-link",
+                dynamic_linker: None,
+                libraries: &WINDOWS_LINK_LIBS,
+            },
+            _ => panic!("unsupported backend target: {:?}", self),
         }
     }
 }
@@ -119,7 +174,10 @@ pub struct BackendToolchain {
 struct CallingConvention {
     integer_arg_regs: &'static [&'static str],
     float_arg_regs: &'static [&'static str],
+    shared_arg_register_slots: Option<usize>,
     incoming_stack_base_offset: i32,
+    outgoing_shadow_space: i32,
+    outgoing_stack_base_offset: i32,
     stack_arg_size: i32,
     return_gpr: &'static str,
     return_float_reg: &'static str,
@@ -131,24 +189,26 @@ impl CallingConvention {
     }
 
     fn outgoing_stack_arg_offset(self, stack_arg: i32) -> i32 {
-        stack_arg * self.stack_arg_size
+        self.outgoing_stack_base_offset + stack_arg * self.stack_arg_size
     }
 
     fn outgoing_stack_arg_space(self, stack_arg_count: usize) -> i32 {
-        ((stack_arg_count as i32 * self.stack_arg_size) + 15) & !15
+        (self.outgoing_shadow_space + (stack_arg_count as i32 * self.stack_arg_size) + 15) & !15
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 struct EntryPolicy {
-    symbol: &'static str,
-    exit_syscall_number: i64,
+    symbol: Option<&'static str>,
+    exit_syscall_number: Option<i64>,
     exit_status_reg: &'static str,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct RuntimePolicy {
     emits_linux_syscall_helpers: bool,
+    #[allow(dead_code)]
+    emits_windows_runtime_helpers: bool,
     uses_libc_print_runtime: bool,
 }
 
@@ -1164,7 +1224,9 @@ impl X86_64Backend {
         self.emit("    .text");
         self.emit("    .globl main");
         let entry_policy = self.target.entry_policy();
-        self.emit(&format!("    .globl {}", entry_policy.symbol));
+        if let Some(symbol) = entry_policy.symbol {
+            self.emit(&format!("    .globl {}", symbol));
+        }
         self.emit("");
 
         // Generate extern declarations
@@ -1275,82 +1337,83 @@ impl X86_64Backend {
             .map(|f| f.ret.clone())
             .unwrap_or(Type::I64);
 
-        self.emit("");
-        self.emit(&format!("{}:", entry_policy.symbol));
-        if needs_argv_data {
-            self.emit("    movq (%rsp), %rax");
-            self.emit("    movq %rax, .L_tl_argc(%rip)");
-            self.emit("    leaq 8(%rsp), %rax");
-            self.emit("    movq %rax, .L_tl_argv(%rip)");
-        }
-        // Initialize non-constant globals: call their __global_init_* function
-        // and store the returned value (%rax for integer/pointer values, %xmm0
-        // for f64).
-        for (name, ty, init) in &program.globals {
-            if init.is_some() {
-                continue;
+        if let Some(entry_symbol) = entry_policy.symbol {
+            self.emit("");
+            self.emit(&format!("{}:", entry_symbol));
+            if needs_argv_data {
+                self.emit("    movq (%rsp), %rax");
+                self.emit("    movq %rax, .L_tl_argc(%rip)");
+                self.emit("    leaq 8(%rsp), %rax");
+                self.emit("    movq %rax, .L_tl_argv(%rip)");
             }
-            let init_fn = format!("__global_init_{}", name);
-            if program.functions.iter().any(|f| f.name == init_fn) {
-                self.emit(&format!("    call {}", Self::mangle_name(&init_fn)));
-                let symbol = Self::mangle_name(name);
-                let calling_convention = self.target.calling_convention();
-                match ty {
-                    Type::F64 => {
-                        self.emit(&format!(
-                            "    movsd {}, {}(%rip)",
-                            calling_convention.return_float_reg, symbol
-                        ));
+            // Initialize non-constant globals: call their __global_init_* function
+            // and store the returned value (%rax for integer/pointer values, %xmm0
+            // for f64).
+            for (name, ty, init) in &program.globals {
+                if init.is_some() {
+                    continue;
+                }
+                let init_fn = format!("__global_init_{}", name);
+                if program.functions.iter().any(|f| f.name == init_fn) {
+                    self.emit_call(&Self::mangle_name(&init_fn));
+                    let symbol = Self::mangle_name(name);
+                    let calling_convention = self.target.calling_convention();
+                    match ty {
+                        Type::F64 => {
+                            self.emit(&format!(
+                                "    movsd {}, {}(%rip)",
+                                calling_convention.return_float_reg, symbol
+                            ));
+                        }
+                        Type::I64
+                        | Type::U64
+                        | Type::String
+                        | Type::DynArray(_)
+                        | Type::Enum(_)
+                        | Type::Struct(_) => {
+                            self.emit(&format!(
+                                "    movq {}, {}(%rip)",
+                                calling_convention.return_gpr, symbol
+                            ));
+                        }
+                        Type::I32 | Type::U32 => {
+                            self.emit(&format!(
+                                "    movl {}, {}(%rip)",
+                                Self::gpr32(calling_convention.return_gpr),
+                                symbol
+                            ));
+                        }
+                        Type::I16 | Type::U16 => {
+                            self.emit(&format!(
+                                "    movw {}, {}(%rip)",
+                                Self::gpr16(calling_convention.return_gpr),
+                                symbol
+                            ));
+                        }
+                        Type::I8 | Type::U8 | Type::Bool | Type::Char => {
+                            self.emit(&format!(
+                                "    movb {}, {}(%rip)",
+                                Self::gpr8(calling_convention.return_gpr),
+                                symbol
+                            ));
+                        }
+                        Type::Unit => {}
+                        _ => {}
                     }
-                    Type::I64
-                    | Type::U64
-                    | Type::String
-                    | Type::DynArray(_)
-                    | Type::Enum(_)
-                    | Type::Struct(_) => {
-                        self.emit(&format!(
-                            "    movq {}, {}(%rip)",
-                            calling_convention.return_gpr, symbol
-                        ));
-                    }
-                    Type::I32 | Type::U32 => {
-                        self.emit(&format!(
-                            "    movl {}, {}(%rip)",
-                            Self::gpr32(calling_convention.return_gpr),
-                            symbol
-                        ));
-                    }
-                    Type::I16 | Type::U16 => {
-                        self.emit(&format!(
-                            "    movw {}, {}(%rip)",
-                            Self::gpr16(calling_convention.return_gpr),
-                            symbol
-                        ));
-                    }
-                    Type::I8 | Type::U8 | Type::Bool | Type::Char => {
-                        self.emit(&format!(
-                            "    movb {}, {}(%rip)",
-                            Self::gpr8(calling_convention.return_gpr),
-                            symbol
-                        ));
-                    }
-                    Type::Unit => {}
-                    _ => {}
                 }
             }
+            self.emit_call("main");
+            if main_ret == Type::Unit {
+                let status_reg = Self::gpr32(entry_policy.exit_status_reg);
+                self.emit(&format!("    xor {}, {}", status_reg, status_reg));
+            } else {
+                self.emit(&format!("    movq %rax, {}", entry_policy.exit_status_reg));
+            }
+            if let Some(exit_syscall_number) = entry_policy.exit_syscall_number {
+                self.emit(&format!("    movq ${}, %rax", exit_syscall_number));
+                self.emit("    syscall");
+            }
         }
-        self.emit("    call main");
-        if main_ret == Type::Unit {
-            let status_reg = Self::gpr32(entry_policy.exit_status_reg);
-            self.emit(&format!("    xor {}, {}", status_reg, status_reg));
-        } else {
-            self.emit(&format!("    movq %rax, {}", entry_policy.exit_status_reg));
-        }
-        self.emit(&format!(
-            "    movq ${}, %rax",
-            entry_policy.exit_syscall_number
-        ));
-        self.emit("    syscall");
 
         self.output.clone()
     }
@@ -3045,15 +3108,33 @@ impl X86_64Backend {
         let calling_convention = self.target.calling_convention();
         let param_regs = calling_convention.integer_arg_regs;
         let xmm_regs = calling_convention.float_arg_regs;
-        // System V AMD64: integer and floating-point arguments consume
-        // *independent* register sequences, so we track two counters. Each
-        // argument register is written at the width of its declared type so a
-        // narrow parameter does not clobber adjacent slots.
+        // System V AMD64 consumes independent integer and floating-point
+        // register sequences. Windows x64 consumes one shared four-argument
+        // register window, choosing GPR or XMM by argument type.
         let mut int_param = 0;
         let mut float_param = 0;
         let mut stack_param = 0;
+        let mut arg_position = 0;
         for (var, ty) in &func.params {
+            if *ty == Type::Unit {
+                continue;
+            }
             let offset = self.var_offsets[var];
+            if let Some(shared_slots) = calling_convention.shared_arg_register_slots {
+                if arg_position < shared_slots {
+                    let reg = if *ty == Type::F64 {
+                        xmm_regs[arg_position]
+                    } else {
+                        param_regs[arg_position]
+                    };
+                    self.store_incoming_register_param(reg, offset, ty);
+                } else {
+                    self.store_incoming_stack_param(stack_param, offset, ty);
+                    stack_param += 1;
+                }
+                arg_position += 1;
+                continue;
+            }
             match ty {
                 Type::I64
                 | Type::U64
@@ -3063,10 +3144,7 @@ impl X86_64Backend {
                 | Type::String
                 | Type::DynArray(_) => {
                     if int_param < param_regs.len() {
-                        self.emit(&format!(
-                            "    movq {}, {}(%rbp)",
-                            param_regs[int_param], offset
-                        ));
+                        self.store_incoming_register_param(param_regs[int_param], offset, ty);
                     } else {
                         self.store_incoming_stack_param(stack_param, offset, ty);
                         stack_param += 1;
@@ -3075,11 +3153,7 @@ impl X86_64Backend {
                 }
                 Type::I32 | Type::U32 => {
                     if int_param < param_regs.len() {
-                        self.emit(&format!(
-                            "    movl {}, {}(%rbp)",
-                            Self::gpr32(param_regs[int_param]),
-                            offset
-                        ));
+                        self.store_incoming_register_param(param_regs[int_param], offset, ty);
                     } else {
                         self.store_incoming_stack_param(stack_param, offset, ty);
                         stack_param += 1;
@@ -3088,11 +3162,7 @@ impl X86_64Backend {
                 }
                 Type::I16 | Type::U16 => {
                     if int_param < param_regs.len() {
-                        self.emit(&format!(
-                            "    movw {}, {}(%rbp)",
-                            Self::gpr16(param_regs[int_param]),
-                            offset
-                        ));
+                        self.store_incoming_register_param(param_regs[int_param], offset, ty);
                     } else {
                         self.store_incoming_stack_param(stack_param, offset, ty);
                         stack_param += 1;
@@ -3101,11 +3171,7 @@ impl X86_64Backend {
                 }
                 Type::I8 | Type::U8 | Type::Bool | Type::Char => {
                     if int_param < param_regs.len() {
-                        self.emit(&format!(
-                            "    movb {}, {}(%rbp)",
-                            Self::gpr8(param_regs[int_param]),
-                            offset
-                        ));
+                        self.store_incoming_register_param(param_regs[int_param], offset, ty);
                     } else {
                         self.store_incoming_stack_param(stack_param, offset, ty);
                         stack_param += 1;
@@ -3114,10 +3180,7 @@ impl X86_64Backend {
                 }
                 Type::F64 => {
                     if float_param < xmm_regs.len() {
-                        self.emit(&format!(
-                            "    movsd {}, {}(%rbp)",
-                            xmm_regs[float_param], offset
-                        ));
+                        self.store_incoming_register_param(xmm_regs[float_param], offset, ty);
                     } else {
                         self.store_incoming_stack_param(stack_param, offset, ty);
                         stack_param += 1;
@@ -3588,15 +3651,59 @@ impl X86_64Backend {
         }
     }
 
+    fn store_incoming_register_param(&mut self, reg: &str, local_offset: i32, ty: &Type) {
+        if *ty == Type::F64 {
+            self.emit(&format!("    movsd {}, {}(%rbp)", reg, local_offset));
+            return;
+        }
+
+        match ty.size() {
+            8 => self.emit(&format!("    movq {}, {}(%rbp)", reg, local_offset)),
+            4 => self.emit(&format!(
+                "    movl {}, {}(%rbp)",
+                Self::gpr32(reg),
+                local_offset
+            )),
+            2 => self.emit(&format!(
+                "    movw {}, {}(%rbp)",
+                Self::gpr16(reg),
+                local_offset
+            )),
+            1 => self.emit(&format!(
+                "    movb {}, {}(%rbp)",
+                Self::gpr8(reg),
+                local_offset
+            )),
+            _ => {}
+        }
+    }
+
     fn load_call_args(&mut self, args: &[Value]) -> i32 {
         let calling_convention = self.target.calling_convention();
         let param_regs = calling_convention.integer_arg_regs;
         let xmm_regs = calling_convention.float_arg_regs;
         let mut int_arg = 0;
         let mut float_arg = 0;
+        let mut arg_position = 0;
         let mut stack_args = Vec::new();
         for arg in args {
             let arg_ty = self.value_type(arg).unwrap_or(Type::I64);
+            if arg_ty == Type::Unit {
+                continue;
+            }
+            if let Some(shared_slots) = calling_convention.shared_arg_register_slots {
+                if arg_position < shared_slots {
+                    if arg_ty == Type::F64 {
+                        self.load_value(arg, xmm_regs[arg_position], &arg_ty);
+                    } else {
+                        self.load_value(arg, param_regs[arg_position], &arg_ty);
+                    }
+                } else {
+                    stack_args.push((arg.clone(), arg_ty));
+                }
+                arg_position += 1;
+                continue;
+            }
             if arg_ty == Type::F64 {
                 if float_arg < xmm_regs.len() {
                     self.load_value(arg, xmm_regs[float_arg], &Type::F64);
@@ -3622,6 +3729,15 @@ impl X86_64Backend {
             }
         }
         stack_arg_space
+    }
+
+    fn emit_call(&mut self, symbol: &str) {
+        let stack_arg_space = self.target.calling_convention().outgoing_stack_arg_space(0);
+        if stack_arg_space > 0 {
+            self.emit(&format!("    sub ${}, %rsp", stack_arg_space));
+        }
+        self.emit(&format!("    call {}", symbol));
+        self.release_call_args(stack_arg_space);
     }
 
     fn store_stack_call_arg(&mut self, stack_arg: i32, arg: &Value, ty: &Type) {
@@ -4292,16 +4408,18 @@ mod tests {
         assert_eq!(calling_convention.incoming_stack_arg_offset(0), 16);
         assert_eq!(calling_convention.outgoing_stack_arg_offset(1), 8);
         assert_eq!(calling_convention.outgoing_stack_arg_space(2), 16);
+        assert_eq!(calling_convention.shared_arg_register_slots, None);
         assert_eq!(calling_convention.return_gpr, "%rax");
         assert_eq!(calling_convention.return_float_reg, "%xmm0");
 
         let entry = target.entry_policy();
-        assert_eq!(entry.symbol, "_start");
-        assert_eq!(entry.exit_syscall_number, 60);
+        assert_eq!(entry.symbol, Some("_start"));
+        assert_eq!(entry.exit_syscall_number, Some(60));
         assert_eq!(entry.exit_status_reg, "%rdi");
 
         let runtime = target.runtime_policy();
         assert!(runtime.emits_linux_syscall_helpers);
+        assert!(!runtime.emits_windows_runtime_helpers);
         assert!(runtime.uses_libc_print_runtime);
 
         let toolchain = target.toolchain();
@@ -4312,6 +4430,47 @@ mod tests {
             Some("/lib64/ld-linux-x86-64.so.2")
         );
         assert_eq!(toolchain.libraries, &["-lc"]);
+    }
+
+    #[test]
+    fn test_windows_x64_target_policy() {
+        let target = BackendTarget::windows_x86_64();
+        assert_eq!(target.arch, BackendArch::X86_64);
+        assert_eq!(target.os, BackendOs::Windows);
+        assert_eq!(target.abi, BackendAbi::WindowsX64);
+
+        let calling_convention = target.calling_convention();
+        assert_eq!(
+            calling_convention.integer_arg_regs,
+            &["%rcx", "%rdx", "%r8", "%r9"]
+        );
+        assert_eq!(
+            calling_convention.float_arg_regs,
+            &["%xmm0", "%xmm1", "%xmm2", "%xmm3"]
+        );
+        assert_eq!(calling_convention.shared_arg_register_slots, Some(4));
+        assert_eq!(calling_convention.incoming_stack_arg_offset(0), 48);
+        assert_eq!(calling_convention.outgoing_stack_arg_offset(0), 32);
+        assert_eq!(calling_convention.outgoing_stack_arg_space(0), 32);
+        assert_eq!(calling_convention.outgoing_stack_arg_space(1), 48);
+        assert_eq!(calling_convention.return_gpr, "%rax");
+        assert_eq!(calling_convention.return_float_reg, "%xmm0");
+
+        let entry = target.entry_policy();
+        assert_eq!(entry.symbol, None);
+        assert_eq!(entry.exit_syscall_number, None);
+        assert_eq!(entry.exit_status_reg, "%rcx");
+
+        let runtime = target.runtime_policy();
+        assert!(!runtime.emits_linux_syscall_helpers);
+        assert!(!runtime.emits_windows_runtime_helpers);
+        assert!(!runtime.uses_libc_print_runtime);
+
+        let toolchain = target.toolchain();
+        assert_eq!(toolchain.assembler, "clang");
+        assert_eq!(toolchain.linker, "lld-link");
+        assert_eq!(toolchain.dynamic_linker, None);
+        assert!(toolchain.libraries.is_empty());
     }
 
     #[test]
@@ -4369,6 +4528,68 @@ mod tests {
         assert!(start.contains("    movq %rax, %rdi"), "start:\n{}", start);
         assert!(start.contains("    movq $60, %rax"), "start:\n{}", start);
         assert!(start.contains("    syscall"), "start:\n{}", start);
+    }
+
+    #[test]
+    fn test_windows_target_entry_policy_omits_linux_start_and_exit_syscall() {
+        let asm = compile_ok_for_target("(define (main) : i64 3)", BackendTarget::windows_x86_64());
+
+        assert!(asm.contains("    .globl main"), "asm:\n{}", asm);
+        assert!(!asm.contains("    .globl _start"), "asm:\n{}", asm);
+        assert!(!asm.contains("\n_start:"), "asm:\n{}", asm);
+        assert!(!asm.contains("    movq $60, %rax"), "asm:\n{}", asm);
+        assert!(!asm.contains("    syscall"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_windows_target_integer_args_use_win64_registers_and_shadow_space() {
+        let asm = compile_ok_for_target(
+            r#"
+            (define (sum5 [a : i64] [b : i64] [c : i64] [d : i64] [e : i64]) : i64
+              (+ (+ (+ (+ a b) c) d) e))
+            (define (main) : i64 (sum5 1 2 3 4 5))
+            "#,
+            BackendTarget::windows_x86_64(),
+        );
+
+        assert!(asm.contains("    movq %rcx, -8(%rbp)"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %rdx, -16(%rbp)"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %r8, -24(%rbp)"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %r9, -32(%rbp)"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq 48(%rbp), %r11"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $1, %rcx"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $2, %rdx"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $3, %r8"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $4, %r9"), "asm:\n{}", asm);
+        assert!(asm.contains("    sub $48, %rsp"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %r11, 32(%rsp)"), "asm:\n{}", asm);
+        assert!(asm.contains("    call _tl_sum5"), "asm:\n{}", asm);
+        assert!(asm.contains("    add $48, %rsp"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_windows_target_float_args_use_win64_xmm_registers_and_shadow_space() {
+        let asm = compile_ok_for_target(
+            r#"
+            (define (fifth [a : f64] [b : f64] [c : f64] [d : f64] [e : f64]) : f64 e)
+            (define (main) : f64 (fifth 1.0 2.0 3.0 4.0 5.0))
+            "#,
+            BackendTarget::windows_x86_64(),
+        );
+
+        assert!(asm.contains("    movsd %xmm0, -8(%rbp)"), "asm:\n{}", asm);
+        assert!(asm.contains("    movsd %xmm1, -16(%rbp)"), "asm:\n{}", asm);
+        assert!(asm.contains("    movsd %xmm2, -24(%rbp)"), "asm:\n{}", asm);
+        assert!(asm.contains("    movsd %xmm3, -32(%rbp)"), "asm:\n{}", asm);
+        assert!(asm.contains("    movsd 48(%rbp), %xmm15"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %rax, %xmm0"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %rax, %xmm1"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %rax, %xmm2"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %rax, %xmm3"), "asm:\n{}", asm);
+        assert!(asm.contains("    sub $48, %rsp"), "asm:\n{}", asm);
+        assert!(asm.contains("    movsd %xmm15, 32(%rsp)"), "asm:\n{}", asm);
+        assert!(asm.contains("    call _tl_fifth"), "asm:\n{}", asm);
+        assert!(asm.contains("    add $48, %rsp"), "asm:\n{}", asm);
     }
 
     #[test]

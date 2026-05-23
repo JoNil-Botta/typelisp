@@ -5,7 +5,7 @@
 //! self-hosting): a functional `SymI64Env` with head-first lookup, shadowing,
 //! and key equality via `string-eq`. It exercises `defenum`, recursive
 //! `match`, `string-eq`, `substring`, and `string-append` in a single
-//! self-contained TypeLisp module.
+//! runnable integration driver that imports the main-less core module.
 
 use std::fs;
 use std::path::PathBuf;
@@ -18,14 +18,22 @@ fn sym_i64_env_tl_compiles_to_assembly() {
         .join("tests")
         .join("integration")
         .join("sym_i64_env.tl");
+    let core_path = manifest_dir
+        .join("tests")
+        .join("integration")
+        .join("sym_i64_env_core.tl");
 
     let work_dir = manifest_dir.join("target").join("sym-i64-env-compile-test");
     fs::create_dir_all(&work_dir).expect("create sym_i64_env compile test work dir");
+    let entry_path = work_dir.join("sym_i64_env.tl");
+    fs::copy(&source_path, &entry_path).expect("copy sym_i64_env.tl to work dir");
+    fs::copy(&core_path, work_dir.join("sym_i64_env_core.tl"))
+        .expect("copy sym_i64_env_core.tl to work dir");
     let asm_path = work_dir.join("sym_i64_env.s");
 
     let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
         .arg("compile")
-        .arg(&source_path)
+        .arg(&entry_path)
         .arg("-o")
         .arg(&asm_path)
         .output()

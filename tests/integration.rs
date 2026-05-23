@@ -330,7 +330,7 @@ fn type_lisp_programs_compile_link_and_run() {
             name: "sym_i64_env",
             exit_code: 0,
             stdout: "PASS: empty-miss\nPASS: single-hit-contains\nPASS: single-hit-value\nPASS: single-miss\nPASS: shadow-newest\nPASS: outer-preserved-a\nPASS: outer-no-b\nPASS: inner-sees-a\nPASS: inner-sees-b\nPASS: substring-key-hit\nPASS: append-key-hit\nPASS: chain-x\nPASS: chain-y\nPASS: chain-z\nAll sym-i64-env tests passed.\n",
-            deps: &[],
+            deps: &["sym_i64_env_core.tl"],
         },
     ];
 
@@ -599,7 +599,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             name: "sym_i64_env",
             exit_code: 0,
             stdout: "PASS: empty-miss\nPASS: single-hit-contains\nPASS: single-hit-value\nPASS: single-miss\nPASS: shadow-newest\nPASS: outer-preserved-a\nPASS: outer-no-b\nPASS: inner-sees-a\nPASS: inner-sees-b\nPASS: substring-key-hit\nPASS: append-key-hit\nPASS: chain-x\nPASS: chain-y\nPASS: chain-z\nAll sym-i64-env tests passed.\n",
-            deps: &[],
+            deps: &["sym_i64_env_core.tl"],
         },
     ];
 

@@ -1775,6 +1775,21 @@ mod tests {
     }
 
     #[test]
+    fn test_typecheck_duplicate_enum_variant_across_modules_error() {
+        let prog = concat_modules(
+            "(defenum Imported (Shared))",
+            "(import \"a.tl\")\n(defenum Local (Shared))",
+        );
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(
+            err.msg.contains("duplicate top-level name 'Shared'"),
+            "err: {}",
+            err
+        );
+    }
+
+    #[test]
     fn test_typecheck_duplicate_enum_type_name_error() {
         let src = r#"
             (defenum Shape (Circle))
@@ -1918,6 +1933,29 @@ mod tests {
                (match s [(Circle r) (* r r)] [(Square w) (* w w)] [Nothing 0]))"
         );
         assert!(check(&src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_bare_nullary_variant_pattern_is_variant() {
+        let src = "\
+            (defenum Color (Red) (Green))\n\
+            (define (score [c : Color]) : i64 \
+              (match c [Red 1] [Green 2]))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_bare_enum_pattern_identifier_is_not_catch_all() {
+        let src = "\
+            (defenum Color (Red) (Green))\n\
+            (define (score [c : Color]) : i64 \
+              (match c [other 1] [_ 0]))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg.contains("unknown variant 'other' in match"),
+            "err: {}",
+            err
+        );
     }
 
     #[test]

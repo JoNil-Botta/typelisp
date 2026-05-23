@@ -164,8 +164,12 @@ narrower or unsigned integer is required. Floating-point literals are always
 - Each variant has a numeric **tag** (0-based index).
 - Layout: `(tag : u64, payload ...)` — tag word + maximum payload size across all variants.
 - Nullary variants have no payload; they occupy only the tag word.
+- Variant constructor and pattern names are global, unqualified value names.
+  Reusing the same variant name in another enum is rejected.
 - Pattern matching via `match` (§5.13) is exhaustive and type-checked.
 - Enum values are heap-allocated when returned from functions (to avoid variable-sized stack slots).
+- Module-qualified or enum-qualified variant names are future work; write `Red`
+  or `(Some x)` today, not `Color.Red` or `Color::Red`.
 
 #### 3.4.2 Structs (product types)
 
@@ -387,6 +391,8 @@ See §3.6.
 - Enum scrutinees support variant patterns such as `Red` and `(Some value)`.
 - Scalar scrutinees support literal patterns plus `_`.
 - Bindings in enum patterns introduce variables for payload fields.
+- A bare identifier at the top level of an enum `match` arm is resolved as a
+  nullary variant name. It is not a fresh catch-all binding; use `_` for that.
 - The `_` wildcard matches any remaining value (used for exhaustiveness).
 - All arms must return the same type.
 - Enum values are heap-allocated on return from functions (see §3.4.1).

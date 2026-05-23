@@ -73,6 +73,13 @@ impl TypeChecker {
             "print-str".into(),
             Type::Func(vec![Type::String], Box::new(Type::Unit)),
         );
+        // Bootstrap-driver primitives: observe the Linux process argv that the
+        // backend preserves from `_start`. `(arg i)` returns a heap-owned String.
+        globals.insert("arg-count".into(), Type::Func(vec![], Box::new(Type::I64)));
+        globals.insert(
+            "arg".into(),
+            Type::Func(vec![Type::I64], Box::new(Type::String)),
+        );
         // `(string-length s)` / `(length s)` -> the byte length of a string.
         globals.insert(
             "string-length".into(),
@@ -1577,6 +1584,54 @@ mod tests {
                 (print-char #A')
                 (print-newline)
                 0))
+        "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        assert!(tc.check_program(&prog).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_argv_builtins() {
+        let prog = parse(
+            r#"
+            (define (main) : i64
+              (+ (arg-count) (string-length (arg 0))))
+        "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        assert!(tc.check_program(&prog).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_arg_index_must_be_i64() {
+        let prog = parse(r#"(define (main) : String (arg "0"))"#).unwrap();
+        let mut tc = TypeChecker::new();
+        assert!(tc.check_program(&prog).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_arg_arity_checked() {
+        let prog = parse(r#"(define (main) : String (arg 0 1))"#).unwrap();
+        let mut tc = TypeChecker::new();
+        assert!(tc.check_program(&prog).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_arg_count_arity_checked() {
+        let prog = parse("(define (main) : i64 (arg-count 0))").unwrap();
+        let mut tc = TypeChecker::new();
+        assert!(tc.check_program(&prog).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_argv_builtins_can_be_shadowed() {
+        let prog = parse(
+            r#"
+            (define (arg-count) : i64 9)
+            (define (arg [n : i64]) : i64 n)
+            (define (main) : i64 (+ (arg-count) (arg 1)))
         "#,
         )
         .unwrap();

@@ -101,7 +101,7 @@ fn print_usage() {
     eprintln!("    typelisp parse <file.tl>       Show AST");
     eprintln!("    typelisp check <file.tl>       Type check");
     eprintln!("    typelisp compile <file.tl>     Generate assembly");
-    eprintln!("    typelisp run <file.tl>         Compile and execute");
+    eprintln!("    typelisp run <file.tl> [args...] Compile and execute");
     eprintln!();
     eprintln!("    --emit-ir                      Emit intermediate representation");
     eprintln!();
@@ -260,6 +260,7 @@ fn main() {
 
             // Run
             let status = Command::new(&bin_path)
+                .args(&args[3..])
                 .status()
                 .expect("Failed to run binary");
             std::process::exit(status.code().unwrap_or(1));

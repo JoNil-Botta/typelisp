@@ -59,6 +59,7 @@ fi
 corpus() {
     cat <<'EOF'
 arithmetic tests/integration/arithmetic.tl
+argv tests/integration/argv.tl
 calc tests/integration/calc.tl
 control_flow tests/integration/control_flow.tl
 enum_match tests/integration/enum_match.tl

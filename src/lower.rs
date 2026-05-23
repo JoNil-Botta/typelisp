@@ -7,6 +7,8 @@ use crate::types::{
 use std::collections::{HashMap, HashSet};
 
 const ABORT_RUNTIME_SYMBOL: &str = ".L_tl_abort";
+const ARG_COUNT_RUNTIME_SYMBOL: &str = ".L_tl_arg_count";
+const ARG_RUNTIME_SYMBOL: &str = ".L_tl_arg";
 
 /// Lowers a typed AST program into IR.
 pub fn lower_program(prog: &ast::Program) -> Program {
@@ -888,6 +890,45 @@ impl FnLowerer {
                 dst: Some(dst),
                 func: "tl_int_to_string".to_string(),
                 args: vec![n_val],
+                ty: Type::String,
+            });
+            self.record_local(dst, Type::String);
+            return Value::Var(dst);
+        }
+
+        // `(arg-count)` observes the Linux argc value captured by `_start`.
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "arg-count"
+            && args.is_empty()
+            && !self.vars.contains_key(name)
+            && !self.function_types.contains_key(name)
+        {
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: ARG_COUNT_RUNTIME_SYMBOL.to_string(),
+                args: vec![],
+                ty: Type::I64,
+            });
+            self.record_local(dst, Type::I64);
+            return Value::Var(dst);
+        }
+
+        // `(arg i)` returns a heap-owned String copy of argv[i]. The runtime
+        // handles bounds checks and preserves the returned fat value on the heap.
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "arg"
+            && args.len() == 1
+            && !self.vars.contains_key(name)
+            && !self.function_types.contains_key(name)
+        {
+            let idx_raw = self.lower_expr(&args[0]);
+            let idx = self.cast_value(idx_raw, Type::I64);
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: ARG_RUNTIME_SYMBOL.to_string(),
+                args: vec![idx],
                 ty: Type::String,
             });
             self.record_local(dst, Type::String);
@@ -2903,6 +2944,110 @@ mod tests {
                     |i| matches!(i, Instruction::Call { func, .. } if func == ABORT_RUNTIME_SYMBOL)
                 ),
             "user-defined panic must not lower to the builtin abort runtime"
+        );
+    }
+
+    #[test]
+    fn test_lower_arg_count_calls_runtime() {
+        let prog = parse("(define (main) : i64 (arg-count))").unwrap();
+        let ir = lower_program(&prog);
+        let call = ir.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .find_map(|i| match i {
+                Instruction::Call { func, args, ty, .. } if func == ARG_COUNT_RUNTIME_SYMBOL => {
+                    Some((args, ty))
+                }
+                _ => None,
+            })
+            .expect("expected arg-count runtime call");
+        assert!(call.0.is_empty(), "arg-count takes no args");
+        assert_eq!(*call.1, Type::I64);
+    }
+
+    #[test]
+    fn test_lower_arg_calls_runtime() {
+        let prog = parse("(define (main) : String (arg 0))").unwrap();
+        let ir = lower_program(&prog);
+        let call = ir.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .find_map(|i| match i {
+                Instruction::Call { func, args, ty, .. } if func == ARG_RUNTIME_SYMBOL => {
+                    Some((args, ty))
+                }
+                _ => None,
+            })
+            .expect("expected arg runtime call");
+        assert_eq!(call.0.len(), 1, "arg takes one index");
+        assert_eq!(*call.1, Type::String);
+    }
+
+    #[test]
+    fn test_lower_user_defined_arg_shadows_builtin() {
+        let prog = parse(
+            r#"
+            (define (arg [n : i64]) : i64 n)
+            (define (main) : i64 (arg 7))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let main = ir
+            .functions
+            .iter()
+            .position(|func| func.name == "main")
+            .unwrap();
+
+        assert!(
+            ir.functions[main]
+                .blocks
+                .iter()
+                .flat_map(|b| b.instructions.iter())
+                .any(|i| matches!(i, Instruction::Call { func, .. } if func == "arg")),
+            "expected ordinary call to user-defined arg"
+        );
+        assert!(
+            !ir.functions[main]
+                .blocks
+                .iter()
+                .flat_map(|b| b.instructions.iter())
+                .any(|i| matches!(i, Instruction::Call { func, .. } if func == ARG_RUNTIME_SYMBOL)),
+            "user-defined arg must not lower to the argv runtime"
+        );
+    }
+
+    #[test]
+    fn test_lower_user_defined_arg_count_shadows_builtin() {
+        let prog = parse(
+            r#"
+            (define (arg-count) : i64 9)
+            (define (main) : i64 (arg-count))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let main = ir
+            .functions
+            .iter()
+            .position(|func| func.name == "main")
+            .unwrap();
+
+        assert!(
+            ir.functions[main]
+                .blocks
+                .iter()
+                .flat_map(|b| b.instructions.iter())
+                .any(|i| matches!(i, Instruction::Call { func, .. } if func == "arg-count")),
+            "expected ordinary call to user-defined arg-count"
+        );
+        assert!(
+            !ir.functions[main].blocks.iter().flat_map(|b| b.instructions.iter()).any(
+                |i| matches!(i, Instruction::Call { func, .. } if func == ARG_COUNT_RUNTIME_SYMBOL)
+            ),
+            "user-defined arg-count must not lower to the argv runtime"
         );
     }
 

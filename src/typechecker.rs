@@ -73,6 +73,13 @@ impl TypeChecker {
             "print-str".into(),
             Type::Func(vec![Type::String], Box::new(Type::Unit)),
         );
+        // Bootstrap-driver primitives: observe the Linux process argv that the
+        // backend preserves from `_start`. `(arg i)` returns a heap-owned String.
+        globals.insert("arg-count".into(), Type::Func(vec![], Box::new(Type::I64)));
+        globals.insert(
+            "arg".into(),
+            Type::Func(vec![Type::I64], Box::new(Type::String)),
+        );
         // `(string-length s)` / `(length s)` -> the byte length of a string.
         globals.insert(
             "string-length".into(),
@@ -105,6 +112,13 @@ impl TypeChecker {
         globals.insert(
             "int->string".into(),
             Type::Func(vec![Type::I64], Box::new(Type::String)),
+        );
+        // `(read-file path)` -> the full file contents as a heap-owned String.
+        // V1 is Linux/compiler-driver oriented and panic-on-error; recoverable
+        // file errors are deferred until the Result/Option model is settled.
+        globals.insert(
+            "read-file".into(),
+            Type::Func(vec![Type::String], Box::new(Type::String)),
         );
         // `(substring s start len)` / `(string-slice s start len)` ->
         // `(-> String i64 i64 String)` — a fresh String holding the `len` bytes
@@ -1585,6 +1599,54 @@ mod tests {
     }
 
     #[test]
+    fn test_typecheck_argv_builtins() {
+        let prog = parse(
+            r#"
+            (define (main) : i64
+              (+ (arg-count) (string-length (arg 0))))
+        "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        assert!(tc.check_program(&prog).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_arg_index_must_be_i64() {
+        let prog = parse(r#"(define (main) : String (arg "0"))"#).unwrap();
+        let mut tc = TypeChecker::new();
+        assert!(tc.check_program(&prog).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_arg_arity_checked() {
+        let prog = parse(r#"(define (main) : String (arg 0 1))"#).unwrap();
+        let mut tc = TypeChecker::new();
+        assert!(tc.check_program(&prog).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_arg_count_arity_checked() {
+        let prog = parse("(define (main) : i64 (arg-count 0))").unwrap();
+        let mut tc = TypeChecker::new();
+        assert!(tc.check_program(&prog).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_argv_builtins_can_be_shadowed() {
+        let prog = parse(
+            r#"
+            (define (arg-count) : i64 9)
+            (define (arg [n : i64]) : i64 n)
+            (define (main) : i64 (+ (arg-count) (arg 1)))
+        "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        assert!(tc.check_program(&prog).is_ok());
+    }
+
+    #[test]
     fn test_typecheck_error() {
         let prog = parse(
             r#"
@@ -2426,6 +2488,39 @@ mod tests {
         // (a function's i64 return) is a mismatch.
         let src = "(define (f) : i64 (int->string 5))";
         assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_read_file_yields_string() {
+        let src = r#"(define (f) : String (read-file "input.tl"))"#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_read_file_requires_string_path() {
+        let src = "(define (f) : String (read-file 42))";
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_read_file_arity_checked() {
+        let src = r#"(define (f) : String (read-file "a" "b"))"#;
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_read_file_result_is_not_i64() {
+        let src = r#"(define (f) : i64 (read-file "input.tl"))"#;
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_read_file_builtin_can_be_shadowed() {
+        let src = r#"
+            (define (read-file [n : i64]) : i64 n)
+            (define (main) : i64 (read-file 7))
+        "#;
+        assert!(check(src).is_ok());
     }
 
     // ------------------------------------------------------------------

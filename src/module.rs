@@ -205,14 +205,16 @@ fn resolve_import_canonical(
 
     match src.canonicalize(&primary_target) {
         Ok(primary_canon) => {
-            if stdlib_suffix.is_some() && !options.stdlib_roots.is_empty() {
+            if let Some(suffix) = &stdlib_suffix
+                && !options.stdlib_roots.is_empty()
+            {
                 match src.read(&primary_canon) {
                     Ok(_) => return Ok((primary_canon, primary_request)),
                     Err(primary_read_error) => {
                         if let Some(resolved) = try_stdlib_roots(
                             importer,
                             import_path,
-                            stdlib_suffix.as_ref().expect("suffix exists"),
+                            suffix,
                             src,
                             &searched_stdlib_roots,
                         ) {
@@ -229,12 +231,11 @@ fn resolve_import_canonical(
             Ok((primary_canon, primary_request))
         }
         Err(primary_error) => {
-            if let Some(suffix) = stdlib_suffix {
-                if let Some(resolved) =
+            if let Some(suffix) = stdlib_suffix
+                && let Some(resolved) =
                     try_stdlib_roots(importer, import_path, &suffix, src, &searched_stdlib_roots)
-                {
-                    return Ok(resolved);
-                }
+            {
+                return Ok(resolved);
             }
             Err(io_load_error(
                 &primary_target,

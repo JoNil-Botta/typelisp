@@ -631,13 +631,61 @@ fn tl_eval_tl_compiles_to_assembly() {
         );
     }
 
-    // A `VPair` is PRINTABLE: the `print` special form stays total over the value
-    // domain by emitting the placeholder `#<pair>` for a pair (a pair has no flat
-    // textual rendering), so that literal must reach the read-only data and at least
-    // one `tl_print_str` call (the host `print-string` builtin) backs it.
+    // RECURSIVE LIST PRINTING (#27): a `VPair` no longer prints as the opaque
+    // placeholder `#<pair>` - the `print` special form's pair arm now delegates to
+    // the recursive `print-value` walk, which renders a proper list as
+    // `(e1 e2 ... en)` (nesting parenthesised; an improper tail closed early). So the
+    // old `#<pair>` placeholder literal must be GONE, and the two new mutually
+    // recursive printer helpers - `print-value` (dispatches on value shape) and
+    // `print-list-tail` (walks the cdr chain emitting space-separated elements) -
+    // must both be emitted as their own functions.
     assert!(
-        asm.contains(".string \"#<pair>\""),
-        "tl_eval assembly is missing the \"#<pair>\" placeholder literal (VPair print arm):\n{}",
+        !asm.contains(".string \"#<pair>\""),
+        "tl_eval should no longer emit the \"#<pair>\" placeholder (VPair now prints as \
+         a proper list `(...)` via the recursive print-value walk):\n{}",
+        asm,
+    );
+    for sym in ["_tl_print_value:", "_tl_print_list_tail:"] {
+        assert!(
+            asm.contains(sym),
+            "tl_eval assembly is missing the recursive list-printer helper {} \
+             (VPair print arm):\n{}",
+            sym,
+            asm,
+        );
+    }
+
+    // The list parens / element separator are emitted as string literals consumed by
+    // the host `print-string` builtin: the opening `(`, the single-space separator
+    // ` `, and the closing `)` reach the read-only data, and the list rendering is
+    // backed by `tl_print_str` calls (asserted above for the VStr arm).
+    for lit in ["\"(\"", "\")\"", "\" \""] {
+        assert!(
+            asm.contains(&format!(".string {lit}")),
+            "tl_eval assembly is missing the list-rendering literal {lit} \
+             (print-value/print-list-tail):\n{}",
+            asm,
+        );
+    }
+
+    // The list printer is genuinely RECURSIVE: `print-value` and `print-list-tail`
+    // call each other to walk the cons chain (and a nested pair element re-enters
+    // `print-value`), so the `print` arm's dispatch call PLUS the mutual-recursion
+    // call sites mean at least two `call _tl_print_value` sites must be present.
+    assert!(
+        asm.contains("call _tl_print_value"),
+        "tl_eval assembly shows no print-value call (VPair list-printing not wired):\n{}",
+        asm,
+    );
+    assert!(
+        asm.matches("call _tl_print_value").count() >= 2,
+        "tl_eval assembly shows no recursive print-value call (cons-chain / nested-list \
+         walk):\n{}",
+        asm,
+    );
+    assert!(
+        asm.contains("call _tl_print_list_tail"),
+        "tl_eval assembly shows no print-list-tail call (cdr-chain walk not wired):\n{}",
         asm,
     );
 
@@ -753,20 +801,21 @@ fn tl_eval_tl_compiles_to_assembly() {
         asm,
     );
 
-    // The runtime result composes a CLOSURE witness, a LIST-CONSTRUCTOR witness,
-    // and a recursive-list predicate witness:
+    // The runtime result composes a CLOSURE witness, a LIST-CONSTRUCTOR witness, a
+    // recursive-list predicate witness, AND the RECURSIVE LIST PRINTER:
     // `main`'s `begin` prints the string/recursion sum (`hello world3233\n`), two
     // closure applications (`25\n`, `15\n`), then the list/pair witness - it builds
     // the 3-element list with `(list 1 2 3)` and the pair `(cons 10 20)`, prints
-    // the list's second element via `(car (cdr ...))` (`2\n`), the pair (as
-    // `#<pair>`), the pair's car (`10\n`), the predicate observations (`1\n`,
-    // `0\n`, `1\n`), and the recursive list length (`3\n`), then denotes the
-    // unprinted `(sum-list (list 1 2 3 4 5))` = `1 + 2 + 3 + 4 + 5` = `15`. All of
-    // this is computed by the interpreter at RUNTIME (not a compile-time constant
-    // in this evaluator's own source), so we do NOT assert the result appears in
-    // the assembly; the printed stdout
-    // (`hello world3233\n25\n15\n2\n#<pair>10\n1\n0\n1\n3\n`) and exit code (`15`)
-    // are asserted by the Linux-gated exec test in `tests/integration.rs`.
+    // the list's second element via `(car (cdr ...))` (`2\n`), the pair's car
+    // (`10\n`), the predicate observations (`1\n`, `0\n`, `1\n`), and the recursive
+    // list length (`3\n`), THEN the recursive list printer renders the proper list
+    // `(1 2 3)`, a nested list `(1 (2 3) 4)`, and the improper pair `(10)`, before
+    // denoting the unprinted `(sum-list (list 1 2 3 4 5))` = `1 + 2 + 3 + 4 + 5` =
+    // `15`. All of this is computed by the interpreter at RUNTIME (not a
+    // compile-time constant in this evaluator's own source), so we do NOT assert the
+    // result appears in the assembly; the printed stdout
+    // (`hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10)`) and exit
+    // code (`15`) are asserted by the Linux-gated exec test in `tests/integration.rs`.
 
     // The comparison operators fold a bool to the 1/0 integer-truth convention,
     // so the lowered evaluator must contain at least one signed integer comparison

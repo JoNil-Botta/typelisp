@@ -689,15 +689,7 @@ impl Optimizer {
     }
 
     fn has_side_effects(instr: &Instruction) -> bool {
-        matches!(
-            instr,
-            Instruction::Store { .. }
-                | Instruction::Call { .. }
-                | Instruction::CallIndirect { .. }
-                | Instruction::Branch { .. }
-                | Instruction::Jump(_)
-                | Instruction::Return(_)
-        )
+        instr.effect().has_side_effect()
     }
 
     /// Basic-block local common subexpression elimination for pure operations.
@@ -739,14 +731,7 @@ impl Optimizer {
     }
 
     fn cse_invalidates_available_expressions(instr: &Instruction) -> bool {
-        matches!(
-            instr,
-            Instruction::Load { .. }
-                | Instruction::Store { .. }
-                | Instruction::Call { .. }
-                | Instruction::CallIndirect { .. }
-                | Instruction::Alloc { .. }
-        )
+        instr.effect().invalidates_cse()
     }
 
     /// Strength reduction: replace expensive ops with cheaper ones

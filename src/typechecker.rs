@@ -173,12 +173,32 @@ impl TypeChecker {
         self.structs = StructRegistry::from_program(prog);
 
         // Check for duplicate top-level names across the whole program.
-        // Every name bound into the global scope must be unique so that
-        // neither the typechecker silently shadows a prior binding nor the
-        // backend emits duplicate `.globl _tl_<name>` symbols.
-        let mut seen: HashMap<String, Span> = HashMap::new();
+        // Value-level names share the backend symbol namespace; nominal types
+        // share the type-resolution namespace. Keep them separate so an enum
+        // type can intentionally have a same-named constructor variant.
+        let mut seen_values: HashMap<String, Span> = HashMap::new();
+        let mut seen_types: HashMap<String, Span> = HashMap::new();
         for decl in &prog.decls {
-            let names: Vec<(String, Span)> = match decl {
+            let type_name: Option<(String, Span)> = match decl {
+                Decl::DefEnum { name, .. } | Decl::DefStruct { name, .. } => {
+                    Some((name.clone(), Span::default()))
+                }
+                _ => None,
+            };
+            if let Some((name, span)) = type_name {
+                if let Some(prev_span) = seen_types.get(&name) {
+                    return Err(TypeError::at(
+                        format!(
+                            "duplicate top-level type name '{}' (already defined at {:?})",
+                            name, prev_span,
+                        ),
+                        span,
+                    ));
+                }
+                seen_types.insert(name, span);
+            }
+
+            let value_names: Vec<(String, Span)> = match decl {
                 Decl::Def { name, value, .. } => {
                     vec![(name.clone(), value.span())]
                 }
@@ -188,16 +208,17 @@ impl TypeChecker {
                 Decl::Extern { name, .. } => {
                     vec![(name.clone(), Span::default())]
                 }
-                Decl::DefEnum { name: _, variants } => {
-                    variants.iter().map(|v| (v.name.clone(), Span::default())).collect()
-                }
+                Decl::DefEnum { name: _, variants } => variants
+                    .iter()
+                    .map(|v| (v.name.clone(), Span::default()))
+                    .collect(),
                 Decl::DefStruct { name, .. } => {
                     vec![(name.clone(), Span::default())]
                 }
                 Decl::Import(_) => vec![],
             };
-            for (name, span) in names {
-                if let Some(prev_span) = seen.get(&name) {
+            for (name, span) in value_names {
+                if let Some(prev_span) = seen_values.get(&name) {
                     return Err(TypeError::at(
                         format!(
                             "duplicate top-level name '{}' (already defined at {:?})",
@@ -206,7 +227,7 @@ impl TypeChecker {
                         span,
                     ));
                 }
-                seen.insert(name, span);
+                seen_values.insert(name, span);
             }
         }
 
@@ -1569,7 +1590,11 @@ mod tests {
         );
         let mut tc = TypeChecker::new();
         let err = tc.check_program(&prog).unwrap_err();
-        assert!(err.msg.contains("duplicate top-level name 'foo'"), "err: {}", err);
+        assert!(
+            err.msg.contains("duplicate top-level name 'foo'"),
+            "err: {}",
+            err
+        );
     }
 
     #[test]
@@ -1583,7 +1608,11 @@ mod tests {
         .unwrap();
         let mut tc = TypeChecker::new();
         let err = tc.check_program(&prog).unwrap_err();
-        assert!(err.msg.contains("duplicate top-level name 'foo'"), "err: {}", err);
+        assert!(
+            err.msg.contains("duplicate top-level name 'foo'"),
+            "err: {}",
+            err
+        );
     }
 
     #[test]
@@ -1595,7 +1624,43 @@ mod tests {
         let prog = parse(src).unwrap();
         let mut tc = TypeChecker::new();
         let err = tc.check_program(&prog).unwrap_err();
-        assert!(err.msg.contains("duplicate top-level name 'Foo'"), "err: {}", err);
+        assert!(
+            err.msg.contains("duplicate top-level name 'Foo'"),
+            "err: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_typecheck_duplicate_enum_type_name_error() {
+        let src = r#"
+            (defenum Shape (Circle))
+            (defenum Shape (Square))
+        "#;
+        let prog = parse(src).unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(
+            err.msg.contains("duplicate top-level type name 'Shape'"),
+            "err: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_typecheck_duplicate_nominal_type_name_error() {
+        let src = r#"
+            (defenum Shape (Circle))
+            (defstruct Shape (x i64))
+        "#;
+        let prog = parse(src).unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(
+            err.msg.contains("duplicate top-level type name 'Shape'"),
+            "err: {}",
+            err
+        );
     }
 
     #[test]
@@ -1609,7 +1674,11 @@ mod tests {
         .unwrap();
         let mut tc = TypeChecker::new();
         let err = tc.check_program(&prog).unwrap_err();
-        assert!(err.msg.contains("duplicate top-level name 'Point'"), "err: {}", err);
+        assert!(
+            err.msg.contains("duplicate top-level name 'Point'"),
+            "err: {}",
+            err
+        );
     }
 
     #[test]
@@ -1623,7 +1692,11 @@ mod tests {
         .unwrap();
         let mut tc = TypeChecker::new();
         let err = tc.check_program(&prog).unwrap_err();
-        assert!(err.msg.contains("duplicate top-level name 'foo'"), "err: {}", err);
+        assert!(
+            err.msg.contains("duplicate top-level name 'foo'"),
+            "err: {}",
+            err
+        );
     }
 
     #[test]

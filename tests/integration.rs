@@ -828,6 +828,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             deps: &[
                 "compiler_parse_core.tl",
                 "compiler_ast_types.tl",
+                "sym_i64_env.tl",
                 "read.tl",
                 "lex.tl",
                 "token.tl",

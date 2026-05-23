@@ -378,8 +378,8 @@
 ;;
 ;; The recursive `eval-sexpr` calls thread BOTH envs so the result depends on the
 ;; whole nested shape, the bindings in scope, AND the program's functions.
-;; (Deferred: interpreted `string-append` / concat dispatch, lambda, closures,
-;; variadic arity; mutual recursion IS supported - the whole `fenv` is shared.)
+;; (Deferred: lambda, closures, variadic arity; mutual recursion IS supported -
+;; the whole `fenv` is shared.)
 (define (eval-sexpr [s : Sexpr] [env : Env] [fenv : FnEnv]) : Value
   (match s
     [(SInt n) (VInt n)]

@@ -11,6 +11,7 @@ mod lexer;
 mod lower;
 mod module;
 mod optimizer;
+mod package;
 mod parser;
 mod runtime;
 mod span;
@@ -26,6 +27,7 @@ use module::{
     load_program_with_options,
 };
 use optimizer::Optimizer;
+use package::{PackageError, discover_manifest, load_manifest};
 use parser::parse;
 use typechecker::TypeChecker;
 
@@ -67,6 +69,23 @@ fn typecheck_or_exit(prog: &Program, sources: &[SourceFile]) {
             format_diagnostic_from_sources(&e.to_diagnostic(), sources)
         );
         std::process::exit(1);
+    }
+}
+
+fn optimized_ir_or_exit(loaded: &LoadedProgram) -> ir::Program {
+    typecheck_or_exit(&loaded.program, &loaded.sources);
+    let mut ir_prog = lower_program(&loaded.program);
+    Optimizer::optimize(&mut ir_prog);
+    ir_prog
+}
+
+fn assembly_or_exit(ir_prog: &ir::Program) -> String {
+    match generate_assembly(ir_prog) {
+        Ok(asm) => asm,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
     }
 }
 
@@ -116,13 +135,17 @@ fn print_usage() {
     eprintln!("    typelisp check <file.tl> [--stdlib-root <dir>...]");
     eprintln!("    typelisp compile <file.tl> [-o <file>] [--emit-ir] [--stdlib-root <dir>...]");
     eprintln!("    typelisp run <file.tl> [--stdlib-root <dir>...] [-- args...]");
+    eprintln!("    typelisp build [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]");
     eprintln!();
     eprintln!("    --emit-ir                      Emit intermediate representation");
+    eprintln!("    --manifest-path <file>         Package manifest for build");
     eprintln!("    --stdlib-root <dir>            Search root for stdlib/... imports");
     eprintln!("    TYPELISP_STDLIB_ROOT           Optional fallback root for stdlib/... imports");
     eprintln!();
     eprintln!("Options for compile:");
     eprintln!("    -o <file>                      Output assembly file");
+    eprintln!("Options for build:");
+    eprintln!("    --manifest-path <file>         Defaults to nearest typelisp.pkg upward");
 }
 
 fn missing_option_value(option: &str) -> ! {
@@ -180,6 +203,49 @@ fn parse_run_options(args: &[String], mut i: usize) -> (LoadOptions, Vec<String>
         load_options_with_env_stdlib_root(stdlib_roots),
         runtime_args,
     )
+}
+
+fn parse_build_options(args: &[String], mut i: usize) -> (Option<PathBuf>, LoadOptions) {
+    let mut manifest_path = None;
+    let mut stdlib_roots = Vec::new();
+
+    while i < args.len() {
+        if args[i] == "--manifest-path" {
+            if i + 1 >= args.len() {
+                missing_option_value("--manifest-path");
+            }
+            if manifest_path.is_some() {
+                eprintln!("Error: --manifest-path was provided more than once");
+                std::process::exit(1);
+            }
+            manifest_path = Some(PathBuf::from(&args[i + 1]));
+            i += 2;
+        } else if args[i] == "--stdlib-root" {
+            if i + 1 >= args.len() {
+                missing_option_value("--stdlib-root");
+            }
+            stdlib_roots.push(PathBuf::from(&args[i + 1]));
+            i += 2;
+        } else {
+            eprintln!("Error: unknown build flag: {}", args[i]);
+            std::process::exit(1);
+        }
+    }
+
+    (
+        manifest_path,
+        load_options_with_env_stdlib_root(stdlib_roots),
+    )
+}
+
+fn package_or_exit<T>(result: Result<T, PackageError>) -> T {
+    match result {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("Error: {}", err);
+            std::process::exit(1);
+        }
+    }
 }
 
 fn main() {
@@ -266,29 +332,42 @@ fn main() {
 
             let options = load_options_with_env_stdlib_root(stdlib_roots);
             let loaded = load_or_exit(&file, &options);
-            typecheck_or_exit(&loaded.program, &loaded.sources);
+            let ir_prog = optimized_ir_or_exit(&loaded);
 
             if emit_ir {
-                let mut ir_prog = lower_program(&loaded.program);
-                Optimizer::optimize(&mut ir_prog);
                 let ir_text = format!("{:#?}", ir_prog);
                 let output_path = output.unwrap_or_else(|| file.with_extension("ir"));
                 fs::write(&output_path, ir_text).expect("Failed to write output");
                 println!("Generated: {}", output_path.display());
             } else {
-                let mut ir_prog = lower_program(&loaded.program);
-                Optimizer::optimize(&mut ir_prog);
-                let asm = match generate_assembly(&ir_prog) {
-                    Ok(asm) => asm,
-                    Err(e) => {
-                        eprintln!("Error: {}", e);
-                        std::process::exit(1);
-                    }
-                };
+                let asm = assembly_or_exit(&ir_prog);
                 let output_path = output.unwrap_or_else(|| file.with_extension("s"));
                 fs::write(&output_path, asm).expect("Failed to write output");
                 println!("Generated: {}", output_path.display());
             }
+        }
+        "build" => {
+            let (manifest_path, options) = parse_build_options(&args, 2);
+            let manifest_path = match manifest_path {
+                Some(path) => path,
+                None => {
+                    let cwd = env::current_dir().unwrap_or_else(|err| {
+                        eprintln!("Error: cannot read current directory: {}", err);
+                        std::process::exit(1);
+                    });
+                    package_or_exit(discover_manifest(&cwd))
+                }
+            };
+            let manifest = package_or_exit(load_manifest(&manifest_path));
+            let loaded = load_or_exit(&manifest.entry_path(), &options);
+            let ir_prog = optimized_ir_or_exit(&loaded);
+            let asm = assembly_or_exit(&ir_prog);
+            let output_path = manifest.output_asm_path();
+            if let Some(parent) = output_path.parent() {
+                fs::create_dir_all(parent).expect("Failed to create package output directory");
+            }
+            fs::write(&output_path, asm).expect("Failed to write package assembly");
+            println!("Generated: {}", output_path.display());
         }
         "run" => {
             if args.len() < 3 {
@@ -299,17 +378,8 @@ fn main() {
             let file = PathBuf::from(&args[2]);
             let (options, runtime_args) = parse_run_options(&args, 3);
             let loaded = load_or_exit(&file, &options);
-            typecheck_or_exit(&loaded.program, &loaded.sources);
-
-            let mut ir_prog = lower_program(&loaded.program);
-            Optimizer::optimize(&mut ir_prog);
-            let asm = match generate_assembly(&ir_prog) {
-                Ok(asm) => asm,
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    std::process::exit(1);
-                }
-            };
+            let ir_prog = optimized_ir_or_exit(&loaded);
+            let asm = assembly_or_exit(&ir_prog);
             let asm_path = file.with_extension("s");
             fs::write(&asm_path, asm).expect("Failed to write assembly");
 

@@ -68,6 +68,17 @@
     [(VInt n) n]
     [(VStr _) (begin (panic "type error: expected int") 0)]))
 
+;; as-str: the STRING counterpart of `as-int` - project the String out of a
+;; `Value`, used wherever a string operand is required (the `string-length` /
+;; `substring` / `string-eq` builtins below). A `VInt` in such a position is a
+;; type error in the interpreted program (e.g. `(string-length 5)`), reported by
+;; aborting via `panic` - the same malformed-program channel `as-int` uses for a
+;; string in a numeric context.
+(define (as-str [v : Value]) : String
+  (match v
+    [(VStr s) s]
+    [(VInt _) (begin (panic "type error: expected string") "")]))
+
 ;; --------------------------------------------------------------------------
 ;; The lexical environment: a cons-cell association list (refs #27/#111).
 ;; --------------------------------------------------------------------------
@@ -336,10 +347,13 @@
 ;;                               `as-int` it (0 = false), then evaluate only the
 ;;                               taken branch.
 ;;                             - "print": evaluate the single argument, emit it via
-;;                               the host `print` builtin (a `VInt` prints its
-;;                               integer + newline; a `VStr` is NOT yet printable -
-;;                               see deferral), and RETURN that value so `(print x)`
-;;                               composes inside a larger expression.
+;;                               the matching host builtin (`VInt` via `print`,
+;;                               `VStr` via `print-string`), and RETURN that value
+;;                               so `(print x)` composes inside a larger expression.
+;;                             - string ops `string-length` / `substring` /
+;;                               `string-eq`: eval their argument sub-exprs, project
+;;                               with `as-str` / `as-int`, call the host builtin,
+;;                               then re-wrap the result as a tagged `Value`.
 ;;                             - a builtin binary op `+ - * / = < > <= >=`: project
 ;;                               the two argument sub-exprs, eval each in `env`
 ;;                               (threading `fenv` so calls nest), `as-int` both,
@@ -364,7 +378,7 @@
 ;;
 ;; The recursive `eval-sexpr` calls thread BOTH envs so the result depends on the
 ;; whole nested shape, the bindings in scope, AND the program's functions.
-;; (Deferred: multi-binding `let`, lambda, closures, variadic arity; mutual
+;; (Deferred: `string-append` / concat, lambda, closures, variadic arity; mutual
 ;; recursion IS supported - the whole `fenv` is shared.)
 (define (eval-sexpr [s : Sexpr] [env : Env] [fenv : FnEnv]) : Value
   (match s
@@ -372,8 +386,8 @@
     [(SSym name) (lookup env name)]
     ;; A string-literal atom (#27/#128): the reader produces `SStr` for a `"..."`
     ;; datum. The value domain now carries strings, so it evaluates to itself as a
-    ;; `(VStr s)` - a first-class string VALUE that can be bound, returned, and
-    ;; passed (string OPERATIONS and `VStr` PRINTING remain deferred).
+    ;; `(VStr s)` - a first-class string VALUE that can be bound, returned, passed,
+    ;; printed, and consumed by the string-operation dispatch arms below.
     [(SStr s) (VStr s)]
     [(SNil) (begin (panic "eval: cannot evaluate the empty list") (VInt 0))]
     [(SCons (SSym name) rest)
@@ -421,32 +435,78 @@
                            [(VInt n) (print n)]
                            [(VStr s) (print-string s)])
                          v))))
-                 (if (is-builtin-op name)
-                     ;; A builtin binary call form `(op arg1 arg2)`: rest is
-                     ;; `(SCons arg1 (SCons arg2 SNil))`. Both operands must be
-                     ;; integers, so each is `as-int`-projected; the i64 result is
-                     ;; re-wrapped as `(VInt r)`.
-                     (let ([arg1 : Sexpr (sexpr-head rest)]
-                           [rest2 : Sexpr (sexpr-tail rest)])
-                       (let ([arg2 : Sexpr (sexpr-head rest2)]
-                             [rest3 : Sexpr (sexpr-tail rest2)])
-                         (begin
-                           (sexpr-expect-nil rest3)
-                           (let ([a : i64 (as-int (eval-sexpr arg1 env fenv))]
-                                 [b : i64 (as-int (eval-sexpr arg2 env fenv))])
-                             (VInt (eval-builtin name a b))))))
-                     ;; OTHERWISE: a USER-FUNCTION CALL `(f a b c)`. `rest` is the
-                     ;; ARGUMENT-EXPRESSION list `(SCons a (SCons b (SCons c SNil)))`.
-                     ;; Look up `f`'s PARAMETER LIST and body in the shared `fenv`,
-                     ;; then build the callee env by zipping the parameter list
-                     ;; against the argument list with `bind-args` (each argument
-                     ;; evaluated in the CURRENT env, so caller variables resolve),
-                     ;; and evaluate the body in that callee env with the SAME
-                     ;; `fenv` - so the body resolves recursive and sibling calls.
-                     ;; Arbitrary arity.
-                     (let ([params : Sexpr (lookup-fn-params fenv name)]
-                           [body : Sexpr (lookup-fn-body fenv name)])
-                       (eval-sexpr body (bind-args params rest env fenv) fenv))))))]
+                 (if (string-eq name "string-length")
+                     ;; STRING OP `(string-length s)`: rest is `(SCons s SNil)`.
+                     ;; Evaluate the single argument, `as-str`-project it (a `VInt`
+                     ;; here is a type error), call the host `string-length`
+                     ;; builtin, and re-wrap its i64 byte-count as `(VInt r)`.
+                     (let ([arg : Sexpr (sexpr-head rest)]
+                           [restl : Sexpr (sexpr-tail rest)])
+                       (begin
+                         (sexpr-expect-nil restl)
+                         (VInt (string-length (as-str (eval-sexpr arg env fenv))))))
+                     (if (string-eq name "substring")
+                         ;; STRING OP `(substring s i n)`: rest is
+                         ;; `(SCons s (SCons i (SCons n SNil)))`. Evaluate all three
+                         ;; sub-exprs, `as-str` the source and `as-int` the start /
+                         ;; length, call the host `substring` builtin (a half-open
+                         ;; `[i, i+n)` slice, bounds-checked at runtime), and re-wrap
+                         ;; the fresh String result as `(VStr r)`.
+                         (let ([se : Sexpr (sexpr-head rest)]
+                               [rests : Sexpr (sexpr-tail rest)])
+                           (let ([ie : Sexpr (sexpr-head rests)]
+                                 [rests2 : Sexpr (sexpr-tail rests)])
+                             (let ([ne : Sexpr (sexpr-head rests2)]
+                                   [rests3 : Sexpr (sexpr-tail rests2)])
+                               (begin
+                                 (sexpr-expect-nil rests3)
+                                 (VStr (substring (as-str (eval-sexpr se env fenv))
+                                                  (as-int (eval-sexpr ie env fenv))
+                                                  (as-int (eval-sexpr ne env fenv))))))))
+                         (if (string-eq name "string-eq")
+                             ;; STRING OP `(string-eq a b)`: rest is
+                             ;; `(SCons a (SCons b SNil))`. Evaluate both operands,
+                             ;; `as-str` each, call the host byte-wise `string-eq`
+                             ;; builtin (a `bool`), and fold its result to the
+                             ;; 1 (equal) / 0 (unequal) integer-truth convention as
+                             ;; `(VInt r)` - matching how the comparison operators
+                             ;; encode booleans.
+                             (let ([ae : Sexpr (sexpr-head rest)]
+                                   [reste : Sexpr (sexpr-tail rest)])
+                               (let ([be : Sexpr (sexpr-head reste)]
+                                     [reste2 : Sexpr (sexpr-tail reste)])
+                                 (begin
+                                   (sexpr-expect-nil reste2)
+                                   (VInt (if (string-eq (as-str (eval-sexpr ae env fenv))
+                                                        (as-str (eval-sexpr be env fenv)))
+                                             1
+                                             0)))))
+                             (if (is-builtin-op name)
+                                 ;; A builtin binary call form `(op arg1 arg2)`: rest is
+                                 ;; `(SCons arg1 (SCons arg2 SNil))`. Both operands must be
+                                 ;; integers, so each is `as-int`-projected; the i64 result is
+                                 ;; re-wrapped as `(VInt r)`.
+                                 (let ([arg1 : Sexpr (sexpr-head rest)]
+                                       [rest2 : Sexpr (sexpr-tail rest)])
+                                   (let ([arg2 : Sexpr (sexpr-head rest2)]
+                                         [rest3 : Sexpr (sexpr-tail rest2)])
+                                     (begin
+                                       (sexpr-expect-nil rest3)
+                                       (let ([a : i64 (as-int (eval-sexpr arg1 env fenv))]
+                                             [b : i64 (as-int (eval-sexpr arg2 env fenv))])
+                                         (VInt (eval-builtin name a b))))))
+                                 ;; OTHERWISE: a USER-FUNCTION CALL `(f a b c)`. `rest` is the
+                                 ;; ARGUMENT-EXPRESSION list `(SCons a (SCons b (SCons c SNil)))`.
+                                 ;; Look up `f`'s PARAMETER LIST and body in the shared `fenv`,
+                                 ;; then build the callee env by zipping the parameter list
+                                 ;; against the argument list with `bind-args` (each argument
+                                 ;; evaluated in the CURRENT env, so caller variables resolve),
+                                 ;; and evaluate the body in that callee env with the SAME
+                                 ;; `fenv` - so the body resolves recursive and sibling calls.
+                                 ;; Arbitrary arity.
+                                 (let ([params : Sexpr (lookup-fn-params fenv name)]
+                                       [body : Sexpr (lookup-fn-body fenv name)])
+                                   (eval-sexpr body (bind-args params rest env fenv) fenv)))))))))]
     [_ (begin (panic "eval: not an evaluable expression") (VInt 0))]))
 
 ;; --------------------------------------------------------------------------
@@ -575,46 +635,50 @@
 
 ;; --------------------------------------------------------------------------
 ;; main: the whole front end composed - lex, read MANY forms, interpret with
-;; MULTI-ARGUMENT user functions, recursion, AND multi-binding `let`.
+;; MULTI-ARGUMENT user functions, recursion, multi-binding `let`, AND STRING OPS.
 ;; --------------------------------------------------------------------------
 ;; `(run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (define (seq a b) b)
-;;                (let ((b 2) (e 10) (r (pow b e))) (seq (print \"hi\") (print r)))")`:
+;;                (let ((s "hello world") (h (substring s 0 5)) (n (string-length h)))
+;;                  (seq (print h) (print (+ (pow 2 n) (string-eq h "hello")))))")`:
 ;;   - the program is THREE top-level forms: a recursive TWO-parameter `define` of
 ;;     `pow`, a two-parameter `seq` whose body is just its SECOND argument (a
 ;;     left-to-right sequencer - the interpreted language has no `begin`, so a
 ;;     two-arg function whose arguments are evaluated in order, returning the last,
 ;;     stands in for one), then the trailing expression - a MULTI-BINDING `let`
-;;     over `pow` whose body prints BOTH a string and the result via `seq`.
+;;     exercising the new STRING OPERATIONS whose body prints BOTH a STRING and an
+;;     integer via `seq`.
 ;;   - the program reader folds both defines into the `FnEnv`, then evaluates the
 ;;     `let` against that function env.
-;;   - the `let` has THREE bindings, folded SEQUENTIALLY (`let*`): `b -> (VInt 2)`,
-;;     then `e -> (VInt 10)`, then `r -> (pow b e)` whose initializer `(pow b e)`
-;;     SEES the earlier `b` and `e` bindings - the load-bearing proof that a later
-;;     initializer resolves variables bound by earlier pairs in the SAME `let`.
-;;     The call zips the params `(b e)` against the args `(2 10)` via `bind-args`,
-;;     building the callee env `(EBind "b" (VInt 2) (EBind "e" (VInt 10) ENil))`.
-;;     The body then recurses on the SECOND argument: `pow(2,10) = 2*pow(2,9) =
-;;     ... = 2^10`, bottoming out at the `(< e 1)` base case which returns `(VInt
-;;     1)`, so `r` binds `(VInt 1024)`.
-;;   - the body `(seq (print "hi") (print r))` evaluates its two arguments
-;;     left-to-right in the caller env: FIRST `(print "hi")` evaluates the string
-;;     literal to `(VStr "hi")` and prints it via the new `VStr` arm - the host
-;;     `print-string` builtin writes the raw bytes `hi` to STDOUT (NO trailing
-;;     newline) and the form returns the `(VStr "hi")`; SECOND `(print r)` prints
-;;     `r`'s `(VInt 1024)` via the `VInt` arm - the host `print` appends a newline,
-;;     so `1024\n`. `seq` returns its second arg `(VInt 1024)`, so the `let` - and
-;;     the whole program - denotes `1024`. STDOUT is therefore `hi1024\n`. Because
-;;     output is to STDOUT we escape the mod-256 process-exit-code ceiling: stdout
-;;     shows the full `1024` even though the exit code (`1024 & 0xff`) wraps to 0.
+;;   - the `let` has THREE bindings, folded SEQUENTIALLY (`let*`):
+;;     `s -> (VStr "hello world")` (a first-class string VALUE), then
+;;     `h -> (substring s 0 5)` whose initializer SEES the earlier `s` - the
+;;     load-bearing proof that a later init resolves earlier bindings - so the
+;;     `substring` STRING OP slices `[0, 5)` to `(VStr "hello")`, then
+;;     `n -> (string-length h)` whose `string-length` STRING OP yields the byte
+;;     count `(VInt 5)`. Both string ops unwrap their operand via `as-str` /
+;;     `as-int` and re-wrap the host builtin's result.
+;;   - the body `(seq (print h) (print (+ (pow 2 n) (string-eq h "hello"))))`
+;;     evaluates its two arguments left-to-right in the caller env: FIRST
+;;     `(print h)` prints `h`'s `(VStr "hello")` via the `VStr` arm - the host
+;;     `print-string` builtin writes the raw bytes `hello` to STDOUT (NO trailing
+;;     newline); SECOND `(print (+ (pow 2 n) (string-eq h "hello")))` - `(pow 2 5)`
+;;     zips `(b e)` against `(2 5)` and recurses to `(VInt 32)`, `(string-eq h
+;;     "hello")` is the `string-eq` STRING OP folding byte-wise equality to the
+;;     1 (equal) integer-truth value, their sum is `(VInt 33)` - prints `33` via
+;;     the `VInt` arm (the host `print` appends a newline), so `33\n`. `seq`
+;;     returns its second arg `(VInt 33)`, so the `let` - and the whole program -
+;;     denotes `33`. STDOUT is therefore `hello33\n`. Because output is to STDOUT
+;;     we escape the mod-256 process-exit-code ceiling.
 ;; This single program proves the evaluator now (a) carries a tagged `Value`
-;; domain - the env binds `VInt`s/`VStr`s, arithmetic/`if` go through `as-int`,
-;; and BOTH a `(VStr "hi")` and a `(VInt 1024)` are PRINTABLE (the `VStr` arm
-;; dispatches to the host `print-string`, the `VInt` arm to the host `print`);
-;; (b) supports MULTI-ARGUMENT user functions with RECURSION through the shared
-;; function environment; and (c) supports MULTI-BINDING `let` with sequential
-;; (`let*`) scoping - all composed atop the reused lexer and reader. A string
-;; VALUE is now not only first-class (bound, returned, passed) but also
-;; OUTPUTTABLE. (Deferred: string OPERATIONS; lambda; closures; variadic arity;
-;; string-literal escapes.)
+;; domain - the env binds `VInt`s/`VStr`s, numeric contexts go through `as-int`,
+;; string contexts through `as-str`, and BOTH a `(VStr ...)` and a `(VInt ...)`
+;; are PRINTABLE (the `VStr` arm dispatches to the host `print-string`, the `VInt`
+;; arm to the host `print`); (b) supports MULTI-ARGUMENT user functions with
+;; RECURSION through the shared function environment; (c) supports MULTI-BINDING
+;; `let` with sequential (`let*`) scoping; and (d) exposes the STRING OPERATIONS
+;; `substring` / `string-length` / `string-eq`, each dispatched on the head symbol
+;; and operating on the tagged `Value` - all composed atop the reused lexer and
+;; reader. (Deferred: `string-append` - needs a host concat builtin; lambda;
+;; closures; variadic arity; string-literal escapes.)
 (define (main) : i64
-  (run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (define (seq a b) b) (let ((b 2) (e 10) (r (pow b e))) (seq (print \"hi\") (print r)))"))
+  (run-program "(define (pow b e) (if (< e 1) 1 (* b (pow b (- e 1))))) (define (seq a b) b) (let ((s \"hello world\") (h (substring s 0 5)) (n (string-length h))) (seq (print h) (print (+ (pow 2 n) (string-eq h \"hello\")))))"))

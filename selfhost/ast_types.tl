@@ -9,12 +9,15 @@
   (OpLe)
   (OpGt)
   (OpGe)
-  (OpNe))
+  (OpNe)
+  (OpAnd)
+  (OpOr))
 
 (defenum Expr
   (EInt i64)
   (EVar String)
   (EBin BinOp Expr Expr)
+  (ENot Expr)
   (ELet String Expr Expr)
   (EIf Expr Expr Expr)
   (EWhile Expr Expr)

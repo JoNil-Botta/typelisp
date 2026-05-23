@@ -24,6 +24,9 @@
 (define (parse-tag-gt) : i64 16)
 (define (parse-tag-ge) : i64 17)
 (define (parse-tag-ne) : i64 18)
+(define (parse-tag-and) : i64 19)
+(define (parse-tag-or) : i64 20)
+(define (parse-tag-not) : i64 21)
 
 (define (parse-dispatch-env) : SymI64Env
   (let ([e0 : SymI64Env (sym-i64-empty)])
@@ -41,7 +44,10 @@
                           (let ([e12 : SymI64Env (sym-i64-bind e11 "<=" (parse-tag-le))])
                             (let ([e13 : SymI64Env (sym-i64-bind e12 ">" (parse-tag-gt))])
                               (let ([e14 : SymI64Env (sym-i64-bind e13 ">=" (parse-tag-ge))])
-                                (sym-i64-bind e14 "!=" (parse-tag-ne))))))))))))))))))
+                                (let ([e15 : SymI64Env (sym-i64-bind e14 "!=" (parse-tag-ne))])
+                                  (let ([e16 : SymI64Env (sym-i64-bind e15 "and" (parse-tag-and))])
+                                    (let ([e17 : SymI64Env (sym-i64-bind e16 "or" (parse-tag-or))])
+                                      (sym-i64-bind e17 "not" (parse-tag-not)))))))))))))))))))))
 
 (define (parse-dispatch-tag [dispatch : SymI64Env] [op : String]) : i64
   (match (sym-i64-lookup dispatch op)
@@ -63,13 +69,17 @@
                           (OpLe)
                           (if (= tag (parse-tag-gt))
                               (OpGt)
-                              (if (= tag (parse-tag-ge))
-                                  (OpGe)
-                                  (if (= tag (parse-tag-ne))
-                                      (OpNe)
-                                      (begin
-                                        (panic "parse: unknown operator")
-                                        (OpAdd))))))))))))
+                                  (if (= tag (parse-tag-ge))
+                                      (OpGe)
+                                      (if (= tag (parse-tag-ne))
+                                          (OpNe)
+                                          (if (= tag (parse-tag-and))
+                                              (OpAnd)
+                                              (if (= tag (parse-tag-or))
+                                                  (OpOr)
+                                                  (begin
+                                                    (panic "parse: unknown operator")
+                                                    (OpAdd))))))))))))))
 
 (define (parse-op [op : String]) : BinOp
   (parse-op-tag (parse-dispatch-tag (parse-dispatch-env) op)))
@@ -91,12 +101,16 @@
                               true
                               (if (= tag (parse-tag-ge))
                                   true
-                                  (= tag (parse-tag-ne)))))))))))
+                                  (if (= tag (parse-tag-ne))
+                                      true
+                                      (if (= tag (parse-tag-and))
+                                          true
+                                          (= tag (parse-tag-or)))))))))))))
 
 (define (is-binary-op [op : String]) : bool
   (is-binary-tag (parse-dispatch-tag (parse-dispatch-env) op)))
 
-(define (parse-binary [dispatch : SymI64Env] [op : BinOp] [rest : Sexpr]) : ResultExpr
+(define (parse-binary [dispatch : SymI64Env] [op : BinOp] [rest : Sexpr] [tag : i64]) : ResultExpr
   (match rest
     [(SCons a (SCons b (SNil)))
      (match (parse-with-dispatch dispatch a)
@@ -105,7 +119,19 @@
           [(OkExpr right) (OkExpr (EBin op left right))]
           [(ErrExpr message) (ErrExpr message)])]
        [(ErrExpr message) (ErrExpr message)])]
-    [_ (ErrExpr "parse: malformed binary expression")]))
+    [_ (if (= tag (parse-tag-and))
+           (ErrExpr "parse: malformed and")
+           (if (= tag (parse-tag-or))
+               (ErrExpr "parse: malformed or")
+               (ErrExpr "parse: malformed binary expression")))]))
+
+(define (parse-not [dispatch : SymI64Env] [rest : Sexpr]) : ResultExpr
+  (match rest
+    [(SCons arg (SNil))
+     (match (parse-with-dispatch dispatch arg)
+       [(OkExpr parsed-arg) (OkExpr (ENot parsed-arg))]
+       [(ErrExpr message) (ErrExpr message)])]
+    [_ (ErrExpr "parse: malformed not")]))
 
 ;; parse-let: single- or multi-binding let, desugared into nested ELet nodes
 ;; so later bindings can see earlier ones (sequential let* semantics).
@@ -210,11 +236,13 @@
                            (parse-set dispatch rest)
                             (if (= tag (parse-tag-begin))
                                 (parse-begin dispatch rest)
-                                (if (is-binary-tag tag)
-                                    (parse-binary dispatch (parse-op-tag tag) rest)
-                                    (match (parse-args dispatch rest)
-                                      [(OkExprList args) (OkExpr (ECall op args))]
-                                      [(ErrExprList message) (ErrExpr message)])))))))))]
+                                (if (= tag (parse-tag-not))
+                                    (parse-not dispatch rest)
+                                    (if (is-binary-tag tag)
+                                        (parse-binary dispatch (parse-op-tag tag) rest tag)
+                                        (match (parse-args dispatch rest)
+                                          [(OkExprList args) (OkExpr (ECall op args))]
+                                          [(ErrExprList message) (ErrExpr message)]))))))))))]
     [_ (ErrExpr "parse: malformed expression")]))
 
 (define (parse [s : Sexpr]) : ResultExpr

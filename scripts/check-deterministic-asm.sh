@@ -103,6 +103,26 @@ char_literals examples/char_literals.tl
 EOF
 }
 
+compile_source_for_case() {
+    name=$1
+    source=$2
+    out_dir=$3
+
+    case "$name" in
+        sym_i64_env)
+            input_dir="$out_dir/.inputs/$name"
+            rm -rf "$input_dir"
+            mkdir -p "$input_dir"
+            cp "$source" "$input_dir/sym_i64_env.tl"
+            cp selfhost/sym_i64_env.tl "$input_dir/sym_i64_env_core.tl"
+            echo "$input_dir/sym_i64_env.tl"
+            ;;
+        *)
+            echo "$source"
+            ;;
+    esac
+}
+
 compile_pass() {
     pass_name=$1
     out_dir=$2
@@ -115,8 +135,9 @@ compile_pass() {
             exit 1
         fi
         out="$out_dir/$name.s"
-        echo "[$pass_name] $source -> $out"
-        "$COMPILER" compile "$source" -o "$out"
+        compile_source=$(compile_source_for_case "$name" "$source" "$out_dir")
+        echo "[$pass_name] $compile_source -> $out"
+        "$COMPILER" compile "$compile_source" -o "$out"
     done
 }
 

@@ -1,16 +1,17 @@
 #![cfg(target_os = "linux")]
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 struct Case {
     name: &'static str,
     exit_code: i32,
     stdout: &'static str,
-    /// Additional source files (relative to tests/integration/) that the entry
-    /// program imports; copied into the work dir preserving their relative path
-    /// so `(import ...)` resolves. Empty for single-file programs.
+    /// Additional source files that the entry program imports; copied into the
+    /// work dir preserving their relative path so `(import ...)` resolves.
+    /// Most deps are relative to the entry source directory; `sym_i64_env_core.tl`
+    /// is sourced from the canonical selfhost module.
     deps: &'static [&'static str],
 }
 
@@ -2389,6 +2390,32 @@ fn source_path_for_case(manifest_dir: &PathBuf, name: &str) -> PathBuf {
     manifest_dir.join("selfhost").join(selfhost_file)
 }
 
+fn dep_source_path(manifest_dir: &Path, source_dir: &Path, dep: &str) -> PathBuf {
+    if dep == "sym_i64_env_core.tl" {
+        return manifest_dir.join("selfhost").join("sym_i64_env.tl");
+    }
+    source_dir.join(dep)
+}
+
+fn copy_case_deps(manifest_dir: &Path, source_dir: &Path, work_dir: &Path, deps: &[&str]) {
+    for dep in deps {
+        let dep_src = dep_source_path(manifest_dir, source_dir, dep);
+        let dep_dst = work_dir.join(dep);
+        if let Some(parent) = dep_dst.parent() {
+            fs::create_dir_all(parent).expect("create dep work dir");
+        }
+        fs::copy(&dep_src, &dep_dst).unwrap_or_else(|err| {
+            panic!(
+                "copy imported module {} from {} to {}: {}",
+                dep,
+                dep_src.display(),
+                dep_dst.display(),
+                err
+            )
+        });
+    }
+}
+
 fn run_case_explicit_build(case: &Case) {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let source_path = source_path_for_case(&manifest_dir, case.name);
@@ -2402,14 +2429,7 @@ fn run_case_explicit_build(case: &Case) {
 
     // Copy any imported helper modules alongside the entry file.
     let source_dir = source_path.parent().expect("case source path has parent");
-    for dep in case.deps {
-        let dep_src = source_dir.join(dep);
-        let dep_dst = work_dir.join(dep);
-        if let Some(parent) = dep_dst.parent() {
-            fs::create_dir_all(parent).expect("create dep work dir");
-        }
-        fs::copy(&dep_src, &dep_dst).expect("copy imported module to work dir");
-    }
+    copy_case_deps(&manifest_dir, source_dir, &work_dir, case.deps);
 
     let asm_path = work_path.with_extension("s");
     let obj_path = work_path.with_extension("o");
@@ -2489,14 +2509,7 @@ fn run_case(case: &Case) {
     // Copy any imported helper modules alongside the entry file, preserving
     // their relative path so `(import "...")` resolves at load time.
     let source_dir = source_path.parent().expect("case source path has parent");
-    for dep in case.deps {
-        let dep_src = source_dir.join(dep);
-        let dep_dst = work_dir.join(dep);
-        if let Some(parent) = dep_dst.parent() {
-            fs::create_dir_all(parent).expect("create dep work dir");
-        }
-        fs::copy(&dep_src, &dep_dst).expect("copy imported module to work dir");
-    }
+    copy_case_deps(&manifest_dir, source_dir, &work_dir, case.deps);
 
     let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
         .arg("run")

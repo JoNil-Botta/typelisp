@@ -277,7 +277,13 @@ fn tl_eval_tl_compiles_to_assembly() {
     // `"string-eq"` (2 args -> VInt 1/0). Note `"string-eq"` is ALSO the operator-
     // dispatch builtin's name, but here it is the interpreted-language head symbol
     // the evaluator recognises.
-    for op in ["\"string-length\"", "\"substring\"", "\"string-eq\""] {
+    for op in [
+        "\"string-length\"",
+        "\"substring\"",
+        "\"string-eq\"",
+        "\"int->string\"",
+        "\"string->int\"",
+    ] {
         assert!(
             asm.contains(&format!(".string {op}")),
             "tl_eval assembly is missing the dispatch string literal for the string op {op}:\n{}",
@@ -306,6 +312,38 @@ fn tl_eval_tl_compiles_to_assembly() {
     // a dedicated runtime helper, so we assert the dispatch literal (above) plus the
     // `as-str` unwrap (above) cover its wiring; no `tl_string_length:` symbol is
     // required.
+
+    // The `int->string` dispatch arm (1 arg -> VStr) lowers the host `int->string`
+    // builtin to a call into the emit-on-demand runtime `tl_int_to_string`, which
+    // heap-allocates the decimal-text String of an i64 (so it outlives the frame).
+    // Its definition and at least one call site must be present.
+    assert!(
+        asm.contains("tl_int_to_string:"),
+        "tl_eval assembly is missing the tl_int_to_string runtime helper (int->string op):\n{}",
+        asm,
+    );
+    assert!(
+        asm.contains("call tl_int_to_string"),
+        "tl_eval assembly shows no int->string call (int->string string op not lowered):\n{}",
+        asm,
+    );
+
+    // The `string->int` dispatch arm (1 arg -> VInt) lowers the host `string->int`
+    // builtin to a call into the emit-on-demand runtime `tl_string_to_int`, which
+    // parses the decimal string's bytes to an i64. Its definition and at least one
+    // call site must be present. (The imported lexer also parses numeric literals
+    // with `string->int`, so this helper is shared; the evaluator's own dispatch arm
+    // adds a further call.)
+    assert!(
+        asm.contains("tl_string_to_int:"),
+        "tl_eval assembly is missing the tl_string_to_int runtime helper (string->int op):\n{}",
+        asm,
+    );
+    assert!(
+        asm.contains("call tl_string_to_int"),
+        "tl_eval assembly shows no string->int call (string->int string op not lowered):\n{}",
+        asm,
+    );
 
     // EXHAUSTIVE over the SStr variant (#27/#128) AND the value domain (#27): the
     // reader's `(SStr String)` atom now evaluates to a first-class `(VStr s)`

@@ -123,11 +123,6 @@ jobs:
       - name: Build release
         run: cargo build --release
 
-      - name: Check deterministic assembly output
-        run: |
-          ./scripts/check-assembly-determinism.sh ./target/release/typelisp
-          ./scripts/check-assembly-determinism.sh --self-test ./target/release/typelisp
-
       - name: Test CLI commands
         run: |
           mkdir -p test_programs

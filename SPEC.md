@@ -150,7 +150,7 @@ narrower or unsigned integer is required. Floating-point literals are always
 
 #### 3.4.1 Enums (sum types)
 
-```lisp
+```lisp test=ignore name=enum-template reason=template
 (defenum Name
   (Variant1 field1_type field2_type ...)
   (Variant2)
@@ -166,7 +166,7 @@ narrower or unsigned integer is required. Floating-point literals are always
 
 #### 3.4.2 Structs (product types)
 
-```lisp
+```lisp test=check name=struct-declaration
 (defstruct Point
   (x i64)
   (y i64))
@@ -184,7 +184,7 @@ There are no explicit type aliases. Identifiers naming enums or structs are reso
 
 ### 3.6 Type conversions (casts)
 
-```lisp
+```lisp test=ignore name=cast-placeholder reason=placeholder
 (cast expr : target_type)
 ```
 
@@ -206,7 +206,7 @@ Declares a global variable with a constant literal initializer.
 **Not supported:** `String`, structs, enums, arrays, dynamic arrays, function pointers.
 
 Example:
-```lisp
+```lisp test=check name=scalar-globals
 (define answer : i64 42)
 (define pi : f64 3.14)
 (define flag : bool true)
@@ -229,7 +229,7 @@ string. External symbols are emitted without the `_tl_` TypeLisp function
 prefix; hyphens are converted to underscores for assembler-safe symbol names.
 
 Example:
-```lisp
+```lisp test=check name=extern-declaration
 (extern foreign-add : (-> i64 i64 i64))
 ```
 
@@ -270,7 +270,7 @@ See §3.4.
 
 ### 5.3 Function calls
 
-```lisp
+```lisp test=ignore name=call-placeholder reason=placeholder
 (func arg1 arg2 ...)
 ```
 
@@ -520,7 +520,7 @@ They are not implemented by a separate C runtime.
 
 TypeLisp has one error-handling mechanism today: **panic**.
 
-```lisp
+```lisp test=ignore name=panic-expression reason=not-standalone
 (panic "message")
 ```
 
@@ -596,7 +596,7 @@ Options:
 
 ### Hello world (factorial)
 
-```lisp
+```lisp test=run name=factorial exit=120 stdout=""
 (define (factorial [n : i64]) : i64
   (if (= n 0)
       1
@@ -608,7 +608,7 @@ Options:
 
 ### Enum with match
 
-```lisp
+```lisp test=run name=enum-match exit=42 stdout=""
 (defenum Color (Red i64) (Green i64) (Blue i64))
 
 (define (color-value [c : Color]) : i64
@@ -623,7 +623,7 @@ Options:
 
 ### Struct
 
-```lisp
+```lisp test=run name=struct-access exit=7 stdout=""
 (defstruct Point (x i64) (y i64))
 
 (define (main) : i64
@@ -633,7 +633,7 @@ Options:
 
 ### Dynamic array
 
-```lisp
+```lisp test=run name=dynamic-array exit=30 stdout=""
 (define (main) : i64
   (let ([arr : (Array i64) (make-array i64 5)])
     (begin
@@ -644,13 +644,13 @@ Options:
 
 ### String operations
 
-```lisp
+```lisp test=run name=string-length exit=5 stdout=""
 (define (main) : i64
   (let ([s : String "hello"])
     (string-length s)))  ; returns 5
 ```
 
-```lisp
+```lisp test=run name=print-string exit=0 stdout="hello\n"
 (define (main) : i64
   (begin
     (print-string "hello\n")
@@ -659,7 +659,7 @@ Options:
 
 ### Extern call
 
-```lisp
+```lisp test=run name=extern-tl-alloc exit=0 stdout=""
 (extern tl_alloc : (-> i64 u64))
 
 (define (main) : i64

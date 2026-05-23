@@ -220,24 +220,17 @@ fn type_lisp_programs_compile_link_and_run() {
             stdout: "",
             deps: &["tl_lex.tl", "tl_token.tl"],
         },
-        // Self-hosting (#27): the s-expression EVALUATOR for TypeLisp's own syntax
-        // - a tiny tree-walking interpreter, now with CONDITIONALS. `tl_eval.tl`
-        // walks the recursive cons-cell `Sexpr` AST and INTERPRETS it: an
-        // `(SInt n)` is `n`, and an `(SCons (SSym name) rest)` call form binds the
-        // operator symbol `name` and the argument spine `rest` in ONE nested
-        // pattern (#41). The head dispatch handles the `if` SPECIAL FORM
-        // `(if cond then else)` - short-circuit: eval `cond`, then eval ONLY the
-        // taken branch - ahead of the strict binary operators `+ - * /` and the
-        // comparison operators `= < > <= >=` (which fold their bool to the 1/0
-        // integer-truth convention), dispatched on `name` via `string-eq`. It
-        // REUSES the whole front end by importing `read` + the `Sexpr` enum from
-        // the `main`-less `tl_read.tl` (which transitively imports the `main`-less
-        // `tl_lex.tl` -> `tl_token.tl`), so the whole program has one `main` - the
-        // evaluator's. `main` runs `(eval-sexpr (read (lex "(if (< 2 3) (* 5 5)
-        // 0)")))`: the guard `(< 2 3)` is 1 (true), so the `if` short-circuits to
-        // the THEN branch `(* 5 5)` = 25 and the ELSE branch `0` is never walked.
-        // All three imported `main`-less modules are copied alongside so the
-        // `(import)` chain resolves.
+        // Self-hosting (#27): the s-expression EVALUATOR for TypeLisp's own
+        // syntax - a tiny tree-walking interpreter with VARIABLES, lexical `let`,
+        // short-circuit `if`, and comparison operators. `tl_eval.tl` walks the
+        // recursive cons-cell `Sexpr` AST with respect to an environment:
+        // `(SSym name)` resolves via recursive assoc-list `lookup`, `let` pushes
+        // `(EBind x v env)`, and `(SCons (SSym name) rest)` binds the
+        // operator/keyword by nested pattern (#41). `main` runs
+        // `(eval-sexpr (read (lex "(let ((x 5)) (if (< x 6) (* x x) 0))")) ENil)`;
+        // the comparison resolves `x`, the `if` takes only the THEN branch, and
+        // `(* x x)` returns 25. All three imported `main`-less modules are copied
+        // alongside so the `(import)` chain resolves.
         Case {
             name: "tl_eval",
             exit_code: 25,
@@ -449,14 +442,14 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             stdout: "",
             deps: &["tl_lex.tl", "tl_token.tl"],
         },
-        // Self-hosting (#27): the s-expression evaluator (now with CONDITIONALS),
-        // also exercised through the explicit compile -> as -> ld -> run pipeline.
-        // Runs `(eval-sexpr (read (lex "(if (< 2 3) (* 5 5) 0)")))`: the guard
-        // `(< 2 3)` is 1 (true), so the `if` short-circuits to the THEN branch
-        // `(* 5 5)` = 25 (the ELSE branch is never evaluated). The reader (and
-        // transitively the lexer + token model) is reused via the `main`-less
-        // `tl_read.tl` import; all three imported modules are copied alongside so
-        // the imports resolve.
+        // Self-hosting (#27): the s-expression evaluator with variables, `let`,
+        // `if`, and comparisons, also exercised through the explicit
+        // compile -> as -> ld -> run pipeline. Runs
+        // `(eval-sexpr (read (lex "(let ((x 5)) (if (< x 6) (* x x) 0))")) ENil)`:
+        // `x` binds to 5, the comparison is true, the `if` evaluates only the
+        // THEN branch, and `(* x x)` returns 25. The reader (and transitively the
+        // lexer + token model) is reused via the `main`-less `tl_read.tl` import;
+        // all three imported modules are copied alongside so the imports resolve.
         Case {
             name: "tl_eval",
             exit_code: 25,

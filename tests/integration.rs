@@ -224,6 +224,15 @@ fn type_lisp_programs_compile_link_and_run() {
             stdout: "",
             deps: &[],
         },
+        // refs #228: monomorphic Maybe/Result convention. Named functions
+        // return absence and success/error enums, and callers handle every
+        // variant with explicit exhaustive matches. main = 42 + 10 + 7 + 6.
+        Case {
+            name: "maybe_result",
+            exit_code: 65,
+            stdout: "",
+            deps: &[],
+        },
         // refs #13/#27: recursive enum payloads. Builds `(EAdd (ENum 1)
         // (ENum 2))` as a heap-allocated tree (each `Expr` child is an 8-byte
         // heap pointer) and folds it with a recursive `eval`. `main` returns 3.
@@ -577,6 +586,14 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         Case {
             name: "enum_string_payload",
             exit_code: 5,
+            stdout: "",
+            deps: &[],
+        },
+        // refs #228: monomorphic Maybe/Result convention, also through the
+        // explicit compile -> as -> ld -> run pipeline.
+        Case {
+            name: "maybe_result",
+            exit_code: 65,
             stdout: "",
             deps: &[],
         },

@@ -536,7 +536,7 @@ They are not implemented by a separate C runtime.
 
 ## 9. Error handling
 
-TypeLisp has one error-handling mechanism today: **panic**.
+TypeLisp has one built-in error-handling mechanism today: **panic**.
 
 ```lisp test=ignore name=panic-expression reason=not-standalone
 (panic "message")
@@ -544,10 +544,54 @@ TypeLisp has one error-handling mechanism today: **panic**.
 
 - Prints the message to stderr.
 - Calls the private runtime helper `.L_tl_abort` (which prints and exits).
-- Panic is a terminal operation — it never returns normally.
+- Panic is a terminal operation; it never returns normally.
 - `error` is an alias for `panic`.
 
-There is no `Result` or `Option` type yet. Request was filed as issue #45 (research stage).
+Recoverable failures are represented with ordinary monomorphic enums. There
+are no built-in generic `Option<T>` / `Result<T,E>` types, no `?` operator,
+and no early-return sugar yet. Code that can recover should define an explicit
+domain enum and handle every variant with `match`.
+
+- Use `Maybe*` names for absence-only APIs, such as lookup hit/miss.
+- Use `Result*` names for APIs that distinguish success from an error value.
+- Matches must be exhaustive; omitted variants are rejected by the type checker.
+
+```lisp test=compile name=monomorphic-maybe-result
+(defenum MaybeI64
+  (NoneI64)
+  (SomeI64 i64))
+
+(defenum ResultI64
+  (OkI64 i64)
+  (ErrI64 String))
+
+(define (find-answer [name : String]) : MaybeI64
+  (if (string-eq name "answer")
+    (SomeI64 42)
+    NoneI64))
+
+(define (read-small [text : String]) : ResultI64
+  (if (string-eq text "7")
+    (OkI64 7)
+    (ErrI64 (string-append "bad: " text))))
+
+(define (maybe-score [m : MaybeI64]) : i64
+  (match m
+    [(SomeI64 value) value]
+    [(NoneI64) 0]))
+
+(define (result-score [r : ResultI64]) : i64
+  (match r
+    [(OkI64 value) value]
+    [(ErrI64 message) (string-length message)]))
+
+(define (main) : i64
+  (+ (maybe-score (find-answer "answer"))
+     (result-score (read-small "no"))))
+```
+
+Issue #45 tracks the remaining design work around generics, bottom/never
+typing for `panic`, `?`-style propagation, and richer diagnostic payloads.
 
 ---
 

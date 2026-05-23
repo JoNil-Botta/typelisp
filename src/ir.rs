@@ -1,4 +1,6 @@
+use crate::span::Span;
 use crate::types::Type;
+use std::collections::HashMap;
 use std::fmt;
 
 /// Intermediate Representation using a simple 3-address code form.
@@ -162,6 +164,14 @@ pub struct Program {
     pub functions: Vec<Function>,
     pub globals: Vec<(String, Type, Option<Value>)>,
     pub externs: Vec<(String, Type)>,
+}
+
+/// Optional source provenance for lowered IR. Kept outside [`Program`] so the
+/// existing optimizer and backend data model remain unchanged; CLI diagnostic
+/// paths pass this side table alongside the IR when they want source snippets.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SourceSpans {
+    pub functions: HashMap<String, Span>,
 }
 
 /// IR Builder for constructing functions

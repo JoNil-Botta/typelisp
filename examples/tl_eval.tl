@@ -347,10 +347,13 @@
 ;;                               `as-int` it (0 = false), then evaluate only the
 ;;                               taken branch.
 ;;                             - "print": evaluate the single argument, emit it via
-;;                               the host `print` builtin (a `VInt` prints its
-;;                               integer + newline; a `VStr` is NOT yet printable -
-;;                               see deferral), and RETURN that value so `(print x)`
-;;                               composes inside a larger expression.
+;;                               the matching host builtin (`VInt` via `print`,
+;;                               `VStr` via `print-string`), and RETURN that value
+;;                               so `(print x)` composes inside a larger expression.
+;;                             - string ops `string-length` / `substring` /
+;;                               `string-eq`: eval their argument sub-exprs, project
+;;                               with `as-str` / `as-int`, call the host builtin,
+;;                               then re-wrap the result as a tagged `Value`.
 ;;                             - a builtin binary op `+ - * / = < > <= >=`: project
 ;;                               the two argument sub-exprs, eval each in `env`
 ;;                               (threading `fenv` so calls nest), `as-int` both,
@@ -375,7 +378,7 @@
 ;;
 ;; The recursive `eval-sexpr` calls thread BOTH envs so the result depends on the
 ;; whole nested shape, the bindings in scope, AND the program's functions.
-;; (Deferred: multi-binding `let`, lambda, closures, variadic arity; mutual
+;; (Deferred: `string-append` / concat, lambda, closures, variadic arity; mutual
 ;; recursion IS supported - the whole `fenv` is shared.)
 (define (eval-sexpr [s : Sexpr] [env : Env] [fenv : FnEnv]) : Value
   (match s
@@ -383,8 +386,8 @@
     [(SSym name) (lookup env name)]
     ;; A string-literal atom (#27/#128): the reader produces `SStr` for a `"..."`
     ;; datum. The value domain now carries strings, so it evaluates to itself as a
-    ;; `(VStr s)` - a first-class string VALUE that can be bound, returned, and
-    ;; passed (string OPERATIONS and `VStr` PRINTING remain deferred).
+    ;; `(VStr s)` - a first-class string VALUE that can be bound, returned, passed,
+    ;; printed, and consumed by the string-operation dispatch arms below.
     [(SStr s) (VStr s)]
     [(SNil) (begin (panic "eval: cannot evaluate the empty list") (VInt 0))]
     [(SCons (SSym name) rest)

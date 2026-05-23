@@ -318,6 +318,10 @@ All operators are prefix functions (or special forms):
   signed dividend is the minimum value for its width and the divisor is `-1`
   (since the mathematical result is not representable). Both cases abort
   the process with a diagnostic written to stderr and exit status 135.
+- `shl` and `shr` trap at runtime when the shift count is outside the range
+  `0 <= count < bit_width(lhs)`. Negative counts and counts equal to or
+  greater than the left-hand operand's bit width are rejected. Both cases
+  abort the process with a diagnostic written to stderr and exit status 129.
 
 ### 5.5 Comparison operators
 

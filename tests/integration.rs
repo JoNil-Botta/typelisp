@@ -2983,3 +2983,91 @@ fn unsigned_u16_division_by_zero_traps() {
         "u16 div-zero trap stderr differed"
     );
 }
+
+#[test]
+fn shift_count_equal_to_width_traps() {
+    let output = run_inline_source(
+        "shl_count_width_trap",
+        "shl_count_width_trap.tl",
+        r#"
+(define (main) : i64
+  (begin
+    (shl 1 64)
+    0))
+"#,
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(129),
+        "shl count == width should abort 129\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert_eq!(stdout, "", "shl-width trap should not write stdout");
+    assert_eq!(
+        stderr, "tl: shift count out of range\n",
+        "shl-width trap stderr differed"
+    );
+}
+
+#[test]
+fn shift_negative_count_traps() {
+    let output = run_inline_source(
+        "shl_neg_count_trap",
+        "shl_neg_count_trap.tl",
+        r#"
+(define (main) : i64
+  (begin
+    (shl 1 -1)
+    0))
+"#,
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(129),
+        "shl negative count should abort 129\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert_eq!(stdout, "", "shl-neg trap should not write stdout");
+    assert_eq!(
+        stderr, "tl: shift count out of range\n",
+        "shl-neg trap stderr differed"
+    );
+}
+
+#[test]
+fn valid_shl_at_zero_and_max_count() {
+    let output = run_inline_source(
+        "valid_shl",
+        "valid_shl.tl",
+        r#"
+(define (main) : i64
+  (begin
+    (let ([a : i64 (shl 1 0)])
+    (let ([b : i64 (shl 2 1)])
+    (let ([c : i64 (shr 128 1)])
+      (if (and (and (= a 1) (= b 4)) (= c 64))
+        42
+        1))))))
+"#,
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "valid shifts should exit 42\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert_eq!(stdout, "", "valid shifts should not write stdout");
+    assert_eq!(stderr, "", "valid shifts should not write stderr");
+}

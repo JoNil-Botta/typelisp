@@ -663,6 +663,11 @@ impl FnLowerer {
             return self.lower_guarded_divmod(ir_op, lhs_val, rhs_val, &operand_ty, &result_ty);
         }
 
+        // Guard integer shifts against out-of-range shift counts.
+        if matches!(ir_op, BinOp::Shl | BinOp::Shr) && operand_ty.is_integer() {
+            return self.lower_guarded_shift(ir_op, lhs_val, rhs_val, &operand_ty, &result_ty);
+        }
+
         let dst = self.builder.fresh_var();
         self.builder.emit(Instruction::BinOp {
             dst,
@@ -769,6 +774,86 @@ impl FnLowerer {
         self.builder.emit(Instruction::Jump(ok_label.clone()));
 
         // Safe block: emit the actual BinOp.
+        self.builder.finish_block(&ok_label);
+        let dst = self.builder.fresh_var();
+        self.builder.emit(Instruction::BinOp {
+            dst,
+            op: ir_op,
+            lhs: lhs_val,
+            rhs: rhs_val,
+            ty: result_ty.clone(),
+        });
+        self.record_local(dst, result_ty.clone());
+        Value::Var(dst)
+    }
+
+    fn lower_guarded_shift(
+        &mut self,
+        ir_op: BinOp,
+        lhs_val: Value,
+        rhs_val: Value,
+        operand_ty: &Type,
+        result_ty: &Type,
+    ) -> Value {
+        let count_ty = self.value_type(&rhs_val);
+        let bit_width = operand_ty.bit_width() as i64;
+        let signed_count = count_ty.is_signed();
+
+        let trap_label = self.builder.fresh_label("shift_trap");
+        let check_upper = self.builder.fresh_label("shift_upper");
+        let ok_label = self.builder.fresh_label("shift_ok");
+
+        if signed_count {
+            // Signed count: guard against negative shift counts.
+            let zero_const = Self::int_compare_const(0, &count_ty);
+            let count_neg = self.builder.fresh_var();
+            self.builder.emit(Instruction::BinOp {
+                dst: count_neg,
+                op: BinOp::Lt,
+                lhs: rhs_val.clone(),
+                rhs: zero_const,
+                ty: Type::Bool,
+            });
+            self.record_local(count_neg, Type::Bool);
+            self.builder.emit(Instruction::Branch {
+                cond: Value::Var(count_neg),
+                true_label: trap_label.clone(),
+                false_label: check_upper.clone(),
+            });
+        } else {
+            // Unsigned count: skip negative check.
+            self.builder.emit(Instruction::Jump(check_upper.clone()));
+        }
+
+        // Guard: count >= bit_width.
+        self.builder.finish_block(&check_upper);
+        let width_const = Self::int_compare_const(bit_width, &count_ty);
+        let count_too_large = self.builder.fresh_var();
+        self.builder.emit(Instruction::BinOp {
+            dst: count_too_large,
+            op: BinOp::Ge,
+            lhs: rhs_val.clone(),
+            rhs: width_const,
+            ty: Type::Bool,
+        });
+        self.record_local(count_too_large, Type::Bool);
+        self.builder.emit(Instruction::Branch {
+            cond: Value::Var(count_too_large),
+            true_label: trap_label.clone(),
+            false_label: ok_label.clone(),
+        });
+
+        // Trap block.
+        self.builder.finish_block(&trap_label);
+        self.builder.emit(Instruction::Call {
+            dst: None,
+            func: "tl_shift_abort".into(),
+            args: vec![],
+            ty: Type::Unit,
+        });
+        self.builder.emit(Instruction::Jump(ok_label.clone()));
+
+        // Safe block: emit the actual shift.
         self.builder.finish_block(&ok_label);
         let dst = self.builder.fresh_var();
         self.builder.emit(Instruction::BinOp {
@@ -4830,7 +4915,12 @@ mod tests {
         // Miscompile bug 2: shl previously lowered to BinOp::Add.
         let prog = parse("(define (f [a : i64] [b : i64]) : i64 (shl a b))").unwrap();
         let ir = lower_program(&prog);
-        let op = first_binop(&ir);
+        let op = ir.functions[0].blocks.iter().find_map(|b| {
+            b.instructions.iter().find_map(|i| match i {
+                Instruction::BinOp { op: BinOp::Shl, .. } => Some(BinOp::Shl),
+                _ => None,
+            })
+        });
         assert_eq!(op, Some(BinOp::Shl));
         assert_ne!(op, Some(BinOp::Add), "shl must not lower to Add");
     }
@@ -4840,7 +4930,12 @@ mod tests {
         // shr previously lowered to BinOp::Sub.
         let prog = parse("(define (f [a : i64] [b : i64]) : i64 (shr a b))").unwrap();
         let ir = lower_program(&prog);
-        let op = first_binop(&ir);
+        let op = ir.functions[0].blocks.iter().find_map(|b| {
+            b.instructions.iter().find_map(|i| match i {
+                Instruction::BinOp { op: BinOp::Shr, .. } => Some(BinOp::Shr),
+                _ => None,
+            })
+        });
         assert_eq!(op, Some(BinOp::Shr));
         assert_ne!(op, Some(BinOp::Sub), "shr must not lower to Sub");
     }
@@ -4866,7 +4961,9 @@ mod tests {
             let ir = lower_program(&prog);
             let binop = ir.functions[0].blocks.iter().find_map(|b| {
                 b.instructions.iter().find_map(|i| match i {
-                    Instruction::BinOp { op, ty, .. } => Some((*op, ty.clone())),
+                    Instruction::BinOp { op, ty, .. } if *op == expected_op => {
+                        Some((*op, ty.clone()))
+                    }
                     _ => None,
                 })
             });

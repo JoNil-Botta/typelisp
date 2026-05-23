@@ -39,6 +39,7 @@ pub struct X86_64Backend {
     /// (emitted by guarded integer division/remainder) and the backend must
     /// emit the self-contained abort runtime into the `.s`.
     needs_div_runtime: bool,
+    needs_shift_runtime: bool,
     /// Whether the program references the string-equality helper
     /// `tl_string_eq` and the backend must therefore emit the self-contained
     /// (libc-free, syscall-free) byte-comparison runtime into the program's
@@ -809,6 +810,7 @@ impl X86_64Backend {
             emits_alloc_runtime: false,
             needs_oob_runtime: false,
             needs_div_runtime: false,
+            needs_shift_runtime: false,
             needs_string_eq_runtime: false,
             needs_string_to_int_runtime: false,
             needs_int_to_string_runtime: false,
@@ -844,6 +846,7 @@ impl X86_64Backend {
         self.needs_alloc_runtime = Self::needs_alloc_runtime(program);
         self.needs_oob_runtime = Self::needs_oob_runtime(program);
         self.needs_div_runtime = Self::needs_div_runtime(program);
+        self.needs_shift_runtime = Self::needs_shift_runtime(program);
         self.needs_string_eq_runtime = Self::needs_string_eq_runtime(program);
         self.needs_string_to_int_runtime = Self::needs_string_to_int_runtime(program);
         self.needs_int_to_string_runtime = Self::needs_int_to_string_runtime(program);
@@ -892,6 +895,9 @@ impl X86_64Backend {
         if self.needs_div_runtime {
             self.generate_div_runtime_data();
         }
+        if self.needs_shift_runtime {
+            self.generate_shift_runtime_data();
+        }
         if self.needs_read_file_runtime {
             self.generate_read_file_runtime_data();
         }
@@ -917,6 +923,7 @@ impl X86_64Backend {
                 || (self.emits_alloc_runtime && symbol == "tl_alloc")
                 || (self.needs_oob_runtime && symbol == "tl_oob_abort")
                 || (self.needs_div_runtime && symbol == "tl_div_abort")
+                || (self.needs_shift_runtime && symbol == "tl_shift_abort")
                 || (self.needs_string_eq_runtime && symbol == "tl_string_eq")
                 || (self.needs_string_to_int_runtime && symbol == "tl_string_to_int")
                 || (self.needs_int_to_string_runtime && symbol == "tl_int_to_string")
@@ -950,6 +957,9 @@ impl X86_64Backend {
         }
         if self.needs_div_runtime {
             self.generate_div_runtime_functions();
+        }
+        if self.needs_shift_runtime {
+            self.generate_shift_runtime_functions();
         }
         if self.needs_string_eq_runtime {
             self.generate_string_eq_runtime_functions();
@@ -1152,6 +1162,25 @@ impl X86_64Backend {
             .externs
             .iter()
             .any(|(name, _)| name == "tl_div_abort");
+        referenced_in_calls || referenced_in_externs
+    }
+
+    fn needs_shift_runtime(program: &Program) -> bool {
+        let defines_own = program.functions.iter().any(|f| f.name == "tl_shift_abort");
+        if defines_own {
+            return false;
+        }
+        let referenced_in_calls = program.functions.iter().any(|func| {
+            func.blocks.iter().any(|block| {
+                block.instructions.iter().any(|instr| {
+                    matches!(instr, Instruction::Call { func, .. } if func == "tl_shift_abort")
+                })
+            })
+        });
+        let referenced_in_externs = program
+            .externs
+            .iter()
+            .any(|(name, _)| name == "tl_shift_abort");
         referenced_in_calls || referenced_in_externs
     }
 
@@ -1783,6 +1812,39 @@ impl X86_64Backend {
         self.emit("    syscall");
         self.emit("    movq $60, %rax");
         self.emit("    movq $135, %rdi");
+        self.emit("    syscall");
+        self.emit("");
+    }
+
+    /// Emit the self-contained out-of-bounds abort `tl_oob_abort()`. It writes a
+    /// diagnostic to fd 2 via the `write(2)` syscall, then terminates the process
+    /// with the conventional "aborted" status 134 via the `exit(2)` syscall. It
+    /// is zero-dependency (no libc) and never returns. Bounds-checked array
+    /// accesses `Call` this symbol on the out-of-bounds path; because it is a
+    /// `Call` the optimizer's dead-code elimination cannot drop the check.
+    /// The abort message written to fd 2 (stderr) on illegal shift counts.
+    fn generate_shift_runtime_data(&mut self) {
+        self.emit("    .section .rodata");
+        self.emit(".L_tl_shift_msg:");
+        self.emit("    .ascii \"tl: shift count out of range\\n\"");
+        self.emit("    .set .L_tl_shift_msg_len, . - .L_tl_shift_msg");
+        self.emit("");
+    }
+
+    /// Emit the self-contained shift abort `tl_shift_abort()`. It writes a
+    /// diagnostic to fd 2 via the `write(2)` syscall, then terminates the
+    /// process with status 129 via the `exit(2)` syscall. Because it is a `Call`
+    /// the optimizer cannot drop the guard.
+    fn generate_shift_runtime_functions(&mut self) {
+        self.emit("    .globl tl_shift_abort");
+        self.emit("tl_shift_abort:");
+        self.emit("    movq $1, %rax");
+        self.emit("    movq $2, %rdi");
+        self.emit("    leaq .L_tl_shift_msg(%rip), %rsi");
+        self.emit("    movq $.L_tl_shift_msg_len, %rdx");
+        self.emit("    syscall");
+        self.emit("    movq $60, %rax");
+        self.emit("    movq $129, %rdi");
         self.emit("    syscall");
         self.emit("");
     }
@@ -3728,6 +3790,8 @@ impl X86_64Backend {
             "tl_oob_abort".into()
         } else if name == "tl_div_abort" && self.needs_div_runtime {
             "tl_div_abort".into()
+        } else if name == "tl_shift_abort" && self.needs_shift_runtime {
+            "tl_shift_abort".into()
         } else if name == ABORT_RUNTIME_SYMBOL && self.needs_abort_runtime {
             // The backend-provided message-abort runtime (emitted on demand by
             // `panic`/`error`) resolves to its private assembler label rather
@@ -5175,6 +5239,36 @@ mod tests {
         assert!(
             !asm.contains("shlq %cl, %rax"),
             "u8 shift must not use 64-bit shl; asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_compile_shl_has_guard_and_tl_shift_abort() {
+        let asm = compile_ok("(define (f [a : i64] [b : i64]) : i64 (shl a b))");
+        assert!(
+            asm.contains("tl_shift_abort:"),
+            "asm must contain tl_shift_abort runtime:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("call tl_shift_abort"),
+            "asm must call tl_shift_abort:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("    shlq %cl, %rax"),
+            "asm must still contain the shift instruction:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_compile_shr_unsigned_has_guard() {
+        let asm = compile_ok("(define (f [a : u64] [b : u64]) : u64 (shr a b))");
+        assert!(
+            asm.contains("call tl_shift_abort"),
+            "unsigned shr must also guard:\n{}",
             asm
         );
     }

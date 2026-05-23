@@ -387,6 +387,8 @@ See §3.6.
 | `print-float` | `f64 → unit` | Print floating-point value to stdout + newline |
 | `print-char` | `char → unit` | Print ASCII character to stdout |
 | `print-newline` | `→ unit` | Print newline to stdout |
+| `print-string` | `String → unit` | Print string bytes to stdout |
+| `print-str` | `String → unit` | Alias for `print-string` |
 | `length` | `(Array t) → i64` | Get dynamic array length |
 | `length` | `String → i64` | Get string byte length |
 | `array-length` | `(Array t) → i64` | Get dynamic array length |
@@ -417,6 +419,7 @@ They are not implemented by a separate C runtime.
 | `tl_print_f64` | Print floating-point value |
 | `tl_print_char` | Print character |
 | `tl_print_newline` | Print newline |
+| `tl_print_str` | Print string bytes |
 | `tl_alloc` | Allocate bump-allocator memory |
 | `tl_string_eq` | String comparison |
 | `tl_string_to_int` | Parse integer |
@@ -430,6 +433,7 @@ They are not implemented by a separate C runtime.
 |-------|------------|
 | `string=?` | `string-eq` |
 | `char-at` | `string-ref` |
+| `print-str` | `print-string` |
 
 ---
 
@@ -473,11 +477,11 @@ They are not implemented by a separate C runtime.
 - Structs with construction and field access.
 - Dynamic arrays: `make-array`, `array-ref`, `array-set!`, `length`.
 - Strings: literals, `string-ref`/`char-at`, `string-length`/`length`,
-  `string-eq`/`string=?`, `string->int`, `int->string`.
+  `string-eq`/`string=?`, `string->int`, `int->string`, `print-string`/`print-str`.
 - `extern` declarations.
 - Multi-file modules via `import`.
 - Builtin `print`, `print-bool`, `print-float`, `print-char`,
-  `print-newline`, `panic`/`error`.
+  `print-newline`, `print-string`/`print-str`, `panic`/`error`.
 
 ### 8.2 What does NOT work (yet)
 
@@ -633,6 +637,13 @@ Options:
 (define (main) : i64
   (let ([s : String "hello"])
     (string-length s)))  ; returns 5
+```
+
+```lisp
+(define (main) : i64
+  (begin
+    (print-string "hello\n")
+    0))  ; prints hello + newline, returns 0
 ```
 
 ### Extern call

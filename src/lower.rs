@@ -932,6 +932,30 @@ impl FnLowerer {
             return Value::ConstUnit;
         }
 
+        // `(print-string s)` / `(print-str s)` writes a String's bytes to fd 1
+        // (stdout). The operand is a pointer to inline fat `{ ptr, len }`
+        // storage; extract the data pointer (offset 0) and byte length (offset 8)
+        // and dispatch to the emit-on-demand runtime `tl_print_str(ptr, len)`,
+        // which issues a single `write(2)` syscall and returns. A `Call` (with
+        // `dst: None`, like `panic`) is used so the write survives DCE — the
+        // optimizer treats `Load`/`Gep` as pure. The expression yields unit.
+        if let ast::Expr::Var(name) = func.unspan()
+            && (name == "print-string" || name == "print-str")
+            && args.len() == 1
+            && !self.vars.contains_key(name)
+            && !self.function_types.contains_key(name)
+        {
+            let s = self.lower_expr(&args[0]);
+            let (ptr, len) = self.load_string_fields(&s);
+            self.builder.emit(Instruction::Call {
+                dst: None,
+                func: "tl_print_str".to_string(),
+                args: vec![Value::Var(ptr), Value::Var(len)],
+                ty: Type::Unit,
+            });
+            return Value::ConstUnit;
+        }
+
         // Evaluate arguments left-to-right
         let arg_vals: Vec<Value> = args.iter().map(|a| self.lower_expr(a)).collect();
 
@@ -2706,6 +2730,88 @@ mod tests {
             .flat_map(|b| b.instructions.iter())
             .any(|i| matches!(i, Instruction::Call { func, .. } if func == ABORT_RUNTIME_SYMBOL));
         assert!(has_abort, "error should lower to a Call tl_abort");
+    }
+
+    #[test]
+    fn test_lower_print_string_extracts_fields_and_calls_runtime() {
+        // `(print-string s)` lowers to: extract the operand's data pointer (U64)
+        // and length (I64) fields, then a `Call tl_print_str` with the two args.
+        // The call has no destination and ty unit; a `Call` (not an inline write)
+        // is used so it survives DCE, mirroring `panic`.
+        let prog = parse(r#"(define (f) : unit (print-string "hi"))"#).unwrap();
+        let ir = lower_program(&prog);
+        let instrs: Vec<&Instruction> = ir.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .collect();
+
+        let call = instrs.iter().find_map(|i| match i {
+            Instruction::Call {
+                func,
+                args,
+                ty,
+                dst,
+                ..
+            } if func == "tl_print_str" => Some((args, ty, dst)),
+            _ => None,
+        });
+        let (args, ty, dst) = call.expect("expected a Call to tl_print_str");
+        assert_eq!(args.len(), 2, "tl_print_str takes the data ptr and len");
+        assert_eq!(*ty, Type::Unit, "print-string yields unit");
+        assert!(dst.is_none(), "the print-str call has no destination");
+
+        // Both the data-pointer (U64) and length (I64) fields are loaded.
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Load { ty: Type::U64, .. })),
+            "expected a Load of the U64 data-pointer field"
+        );
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Load { ty: Type::I64, .. })),
+            "expected a Load of the I64 length field"
+        );
+    }
+
+    #[test]
+    fn test_lower_print_str_aliases_print_string() {
+        // `(print-str s)` lowers identically to `(print-string s)` — a
+        // `Call tl_print_str`.
+        let prog = parse(r#"(define (f) : unit (print-str "hi"))"#).unwrap();
+        let ir = lower_program(&prog);
+        let has_call = ir.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .any(|i| matches!(i, Instruction::Call { func, .. } if func == "tl_print_str"));
+        assert!(has_call, "print-str should lower to a Call tl_print_str");
+    }
+
+    #[test]
+    fn test_lower_user_defined_print_string_shadows_builtin() {
+        // A user function named `print-string` shadows the builtin: lowering must
+        // follow the ordinary call path, not force the runtime `tl_print_str`.
+        let prog = parse(
+            r#"
+            (define (print-string [n : i64]) : i64 n)
+            (define (f) : i64 (print-string 7))
+            "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let has_runtime = ir
+            .functions
+            .iter()
+            .flat_map(|f| f.blocks.iter())
+            .flat_map(|b| b.instructions.iter())
+            .any(|i| matches!(i, Instruction::Call { func, .. } if func == "tl_print_str"));
+        assert!(
+            !has_runtime,
+            "user-defined print-string must not lower to the tl_print_str runtime"
+        );
     }
 
     #[test]

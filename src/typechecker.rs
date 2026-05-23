@@ -61,6 +61,18 @@ impl TypeChecker {
             "print-newline".into(),
             Type::Func(vec![], Box::new(Type::Unit)),
         );
+        // `(print-string s)` / `(print-str s)` -> write a String's bytes to fd 1
+        // (stdout) via a `write(2)` syscall, then yield unit. The companion of
+        // `print-char`/`print-newline` for whole strings; unblocks printing
+        // String values (e.g. the interpreter's VStr). `print-str` is an alias.
+        globals.insert(
+            "print-string".into(),
+            Type::Func(vec![Type::String], Box::new(Type::Unit)),
+        );
+        globals.insert(
+            "print-str".into(),
+            Type::Func(vec![Type::String], Box::new(Type::Unit)),
+        );
         // `(string-length s)` / `(length s)` -> the byte length of a string.
         globals.insert(
             "string-length".into(),
@@ -2430,6 +2442,50 @@ mod tests {
     fn test_typecheck_panic_result_not_i64() {
         // The result is unit, not i64 — using it where i64 is expected fails.
         let src = r#"(define (f) : i64 (panic "boom"))"#;
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_print_string_is_unit() {
+        // `(print-string s)` : `(-> String unit)` — a string-literal argument
+        // yields unit, so it type-checks as the body of a unit-returning fn.
+        let src = r#"(define (f) : unit (print-string "hello"))"#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_print_str_alias_is_unit() {
+        // `print-str` is the alias of `print-string` with identical
+        // `(-> String unit)` type.
+        let src = r#"(define (f) : unit (print-str "hello"))"#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_print_string_on_param() {
+        // A String *parameter* prints fine (the caller owns the storage).
+        let src = "(define (f [s : String]) : unit (print-string s))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_print_string_arg_type_checked() {
+        // The argument must be a String; an i64 operand is rejected.
+        let src = "(define (f) : unit (print-string 42))";
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_print_string_arity_checked() {
+        // `print-string` is unary; a second argument is an arity error.
+        let src = r#"(define (f) : unit (print-string "a" "b"))"#;
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_print_string_result_not_i64() {
+        // The result is unit, not i64 — using it where i64 is expected fails.
+        let src = r#"(define (f) : i64 (print-string "hi"))"#;
         assert!(check(src).is_err());
     }
 

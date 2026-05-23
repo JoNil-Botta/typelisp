@@ -111,10 +111,9 @@ fn tl_lexer_tl_compiles_to_assembly() {
 
     // The lexer's functions were emitted (TypeLisp prefixes user symbols with
     // `_tl_`): the public `lex` entry, the scan-into loop, the int/symbol run
-    // scanners, the new string-literal and line-comment scanners, the TSym /
-    // TStr / total-token tallies, and the imported token accessors `token.tl`
-    // contributes across the import boundary (`token-tag` / `token-int` /
-    // `token-sym` / `token-str`).
+    // scanners, the string-literal / char-literal / line-comment scanners, the
+    // TSym / TStr / TChar / total-token tallies, and the imported token
+    // accessors `token.tl` contributes across the import boundary.
     for sym in [
         "_tl_lex:",
         "_tl_lex_into:",
@@ -122,13 +121,22 @@ fn tl_lexer_tl_compiles_to_assembly() {
         "_tl_scan_symbol_end:",
         "_tl_scan_str_end:",
         "_tl_scan_comment_end:",
+        "_tl_starts_named_char:",
+        "_tl_scan_char_name_end:",
+        "_tl_require_char_close:",
+        "_tl_named_char:",
+        "_tl_escaped_char:",
+        "_tl_char_literal_value:",
+        "_tl_char_literal_end:",
         "_tl_count_syms:",
         "_tl_count_strs:",
+        "_tl_count_chars:",
         "_tl_count_tokens:",
         "_tl_token_tag:",
         "_tl_token_int:",
         "_tl_token_sym:",
         "_tl_token_str:",
+        "_tl_token_char:",
     ] {
         assert!(
             asm.contains(sym),
@@ -138,9 +146,8 @@ fn tl_lexer_tl_compiles_to_assembly() {
         );
     }
 
-    // `main` drives the lexer: it lexes the sample then tallies the total token
-    // count and the TStr count, so the lexing entry and both new tally helpers
-    // are called.
+    // `main` drives the lexer: it lexes the sample then tallies total tokens,
+    // TStrs, and TChars, so the lexing entry and all tally helpers are called.
     assert!(
         asm.contains("call _tl_lex"),
         "tl_lexer assembly shows no main -> lex call (lexing step):\n{}",
@@ -154,6 +161,11 @@ fn tl_lexer_tl_compiles_to_assembly() {
     assert!(
         asm.contains("call _tl_count_strs"),
         "tl_lexer assembly shows no main -> count-strs call (string-literal tally):\n{}",
+        asm,
+    );
+    assert!(
+        asm.contains("call _tl_count_chars"),
+        "tl_lexer assembly shows no main -> count-chars call (char-literal tally):\n{}",
         asm,
     );
 

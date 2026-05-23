@@ -5406,6 +5406,35 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
+    // Recursive enums (heap-pointer indirection) — refs #13/#27
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_compile_recursive_enum_tree_build_and_eval() {
+        // Building `(EAdd (ENum 1) (ENum 2))` and a recursive `eval` over it
+        // compiles cleanly through the backend: every node is heap-allocated via
+        // the bump allocator (whose body is emitted in this unit), the recursive
+        // payload pointers are stored/loaded, and `eval` recurses on itself.
+        let asm = compile_ok(
+            "(defenum Expr (ENum i64) (EAdd Expr Expr))\n\
+             (define (mk) : Expr (EAdd (ENum 1) (ENum 2)))\n\
+             (define (eval [e : Expr]) : i64 \
+               (match e [(ENum n) n] [(EAdd l r) (+ (eval l) (eval r))]))",
+        );
+
+        // Nodes are heap-allocated; the bump allocator body is emitted here.
+        assert!(asm.contains("    call tl_alloc"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        // The uniform 24-byte Expr storage (tag + two 8-byte pointer fields) is
+        // requested from the allocator.
+        assert!(asm.contains("$24"), "asm:\n{}", asm);
+        // `eval` recurses on itself (the call target is the mangled `eval`).
+        assert!(asm.contains("call _tl_eval"), "asm:\n{}", asm);
+        // No unhandled instructions slipped through.
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    // ------------------------------------------------------------------
     // Structs / records — Issue #18
     // ------------------------------------------------------------------
 

@@ -690,11 +690,7 @@ impl FnLowerer {
         let ok_label = self.builder.fresh_label("div_ok");
 
         // Guard 1: divisor == 0.
-        let zero_const = match operand_ty.size() {
-            1 => Value::ConstI8(0),
-            4 => Value::ConstI32(0),
-            _ => Value::ConstI64(0),
-        };
+        let zero_const = Self::int_compare_const(0, operand_ty);
         let rhs_zero = self.builder.fresh_var();
         self.builder.emit(Instruction::BinOp {
             dst: rhs_zero,
@@ -717,11 +713,7 @@ impl FnLowerer {
             self.builder.finish_block(&guard2_label);
 
             // (a) rhs == -1.
-            let neg1_const = match operand_ty.size() {
-                1 => Value::ConstI8(-1),
-                4 => Value::ConstI32(-1),
-                _ => Value::ConstI64(-1),
-            };
+            let neg1_const = Self::int_compare_const(-1, operand_ty);
             let rhs_neg1 = self.builder.fresh_var();
             self.builder.emit(Instruction::BinOp {
                 dst: rhs_neg1,
@@ -741,12 +733,7 @@ impl FnLowerer {
 
             // (b) lhs == MIN.
             self.builder.finish_block(&overflow_check);
-            let min_const = match operand_ty {
-                Type::I8 => Value::ConstI8(i8::MIN),
-                Type::I32 => Value::ConstI32(i32::MIN),
-                Type::I64 => Value::ConstI64(i64::MIN),
-                _ => Value::ConstI64(i16::MIN as i64),
-            };
+            let min_const = Self::signed_min_compare_const(operand_ty);
             let lhs_min = self.builder.fresh_var();
             self.builder.emit(Instruction::BinOp {
                 dst: lhs_min,
@@ -793,6 +780,31 @@ impl FnLowerer {
         });
         self.record_local(dst, result_ty.clone());
         Value::Var(dst)
+    }
+
+    fn int_compare_const(value: i64, ty: &Type) -> Value {
+        match ty {
+            Type::I8 | Type::U8 => Value::ConstI8(value as i8),
+            // IR has no 16-bit immediate variant. The backend compares the
+            // low `%cx`/`%ax` registers for i16/u16 operations.
+            Type::I16 => Value::ConstI64(value as i16 as i64),
+            Type::U16 => Value::ConstI64(value as u16 as i64),
+            Type::I32 | Type::U32 => Value::ConstI32(value as i32),
+            Type::I64 => Value::ConstI64(value),
+            Type::U64 => Value::ConstI64(value as u64 as i64),
+            _ => unreachable!("division guard constants are only used for integer operands"),
+        }
+    }
+
+    fn signed_min_compare_const(ty: &Type) -> Value {
+        match ty {
+            Type::I8 => Value::ConstI8(i8::MIN),
+            // IR has no 16-bit immediate variant. See `int_compare_const`.
+            Type::I16 => Value::ConstI64(i16::MIN as i64),
+            Type::I32 => Value::ConstI32(i32::MIN),
+            Type::I64 => Value::ConstI64(i64::MIN),
+            _ => unreachable!("signed division overflow guard requires a signed integer type"),
+        }
     }
 
     fn lower_unary(&mut self, op: ast::UnOp, expr: &ast::Expr) -> Value {

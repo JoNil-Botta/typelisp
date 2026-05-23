@@ -2646,3 +2646,90 @@ fn signed_min_divided_by_neg_one_traps() {
         "MIN/-1 trap stderr differed"
     );
 }
+
+#[test]
+fn signed_i16_min_divided_by_neg_one_traps() {
+    let output = run_inline_source(
+        "i16_min_div_neg1_trap",
+        "i16_min_div_neg1_trap.tl",
+        r#"
+(define (main) : i64
+  (begin
+    (/ (cast -32768 : i16) (cast -1 : i16))
+    0))
+"#,
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(135),
+        "i16 MIN / -1 should abort 135\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert_eq!(stdout, "", "i16 MIN/-1 trap should not write stdout");
+    assert_eq!(
+        stderr, "tl: integer division or remainder error\n",
+        "i16 MIN/-1 trap stderr differed"
+    );
+}
+
+#[test]
+fn signed_i16_min_remainder_by_neg_one_traps() {
+    let output = run_inline_source(
+        "i16_min_rem_neg1_trap",
+        "i16_min_rem_neg1_trap.tl",
+        r#"
+(define (main) : i64
+  (begin
+    (% (cast -32768 : i16) (cast -1 : i16))
+    0))
+"#,
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(135),
+        "i16 MIN % -1 should abort 135\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert_eq!(stdout, "", "i16 MIN%-1 trap should not write stdout");
+    assert_eq!(
+        stderr, "tl: integer division or remainder error\n",
+        "i16 MIN%-1 trap stderr differed"
+    );
+}
+
+#[test]
+fn unsigned_u16_division_by_zero_traps() {
+    let output = run_inline_source(
+        "u16_div_zero_trap",
+        "u16_div_zero_trap.tl",
+        r#"
+(define (main) : i64
+  (begin
+    (/ (cast 1 : u16) (cast 0 : u16))
+    0))
+"#,
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(135),
+        "u16 division by zero should abort 135\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert_eq!(stdout, "", "u16 div-zero trap should not write stdout");
+    assert_eq!(
+        stderr, "tl: integer division or remainder error\n",
+        "u16 div-zero trap stderr differed"
+    );
+}

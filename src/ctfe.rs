@@ -15,20 +15,6 @@ pub enum CtfeError {
     Message { msg: String, span: Span },
 }
 
-impl CtfeError {
-    pub fn msg(&self) -> String {
-        match self {
-            CtfeError::Message { msg, .. } => msg.clone(),
-        }
-    }
-
-    pub fn span(&self) -> Span {
-        match self {
-            CtfeError::Message { span, .. } => *span,
-        }
-    }
-}
-
 /// A compile-time value in the first scalar slice.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CtfeValue {
@@ -47,16 +33,6 @@ impl CtfeValue {
             CtfeValue::Bool(_) => Type::Bool,
             CtfeValue::Char(_) => Type::Char,
             CtfeValue::Unit => Type::Unit,
-        }
-    }
-
-    pub fn to_literal(&self) -> Literal {
-        match self {
-            CtfeValue::I64(n) => Literal::Int(*n),
-            CtfeValue::F64(n) => Literal::Float(*n),
-            CtfeValue::Bool(b) => Literal::Bool(*b),
-            CtfeValue::Char(c) => Literal::Char(*c),
-            CtfeValue::Unit => Literal::Unit,
         }
     }
 }
@@ -108,13 +84,6 @@ impl CtfeEvaluator {
         Self {
             scopes: vec![HashMap::new()],
             fuel: 10_000,
-        }
-    }
-
-    pub fn with_fuel(fuel: u64) -> Self {
-        Self {
-            scopes: vec![HashMap::new()],
-            fuel,
         }
     }
 

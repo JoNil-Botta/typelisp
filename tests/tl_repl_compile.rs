@@ -63,6 +63,10 @@ fn repl_tl_compiles_to_assembly() {
         "_tl_repl_help_text:",
         "_tl_repl_prompt:",
         "_tl_repl_dot_command_question:",
+        "_tl_repl_type_command:",
+        "_tl_repl_type_render:",
+        "_tl_repl_handle_type_command:",
+        "_tl_repl_handle_input:",
         "_tl_repl_handle_line:",
         "_tl_repl_loop:",
     ] {

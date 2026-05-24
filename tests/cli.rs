@@ -2240,28 +2240,55 @@ fn host_action_run_source_plan_forwards_output_and_status() {
 
 // --- selfhost REPL command driver: piped stdin (#591) ---
 
-// Compiles and runs `selfhost/repl.tl` with the given piped stdin. The driver
-// is a normal `main`-bearing program, so it goes through `typelisp run` (with
-// the host target on Windows, matching the other run-based CLI tests). The
-// source is copied into a unique per-test fixture dir so the generated
-// executable does not collide between tests running in parallel ("Text file
-// busy" otherwise).
+// Builds and runs `selfhost/repl.tl` with the given piped stdin. The selfhost
+// source tree is copied into a unique per-test fixture dir so imports resolve
+// and generated object/executable files do not land in the canonical source dir.
 fn run_selfhost_repl(name: &str, stdin: &str) -> Output {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let source = manifest_dir.join("selfhost").join("repl.tl");
+    let selfhost_dir = manifest_dir.join("selfhost");
     let dir = fixture_dir(name);
-    let work_source = dir.join("repl.tl");
-    fs::copy(&source, &work_source).expect("copy repl.tl to work dir");
-    let source_arg = work_source
-        .to_str()
-        .expect("repl path is utf-8")
-        .to_string();
-    let mut args = vec!["run", source_arg.as_str()];
-    if cfg!(target_os = "windows") {
-        args.push("--target");
-        args.push("windows-x86_64");
+    for entry in fs::read_dir(&selfhost_dir).expect("read selfhost dir") {
+        let path = entry.expect("read selfhost entry").path();
+        if path.extension().and_then(|ext| ext.to_str()) == Some("tl") {
+            let file_name = path.file_name().expect("selfhost source has file name");
+            fs::copy(&path, dir.join(file_name)).expect("copy selfhost source dependency");
+        }
     }
-    typelisp_with_stdin(&args, stdin)
+    let source = dir.join("repl.tl");
+    let exe = dir.join(if cfg!(target_os = "windows") {
+        "repl.exe"
+    } else {
+        "repl"
+    });
+
+    let mut build = Command::new(env!("CARGO_BIN_EXE_typelisp"));
+    build.arg("build").arg(&source).arg("-o").arg(&exe);
+    if cfg!(target_os = "windows") {
+        build.arg("--target").arg("windows-x86_64");
+    }
+    let build_output = build.output().expect("build selfhost repl");
+    assert!(
+        build_output.status.success(),
+        "selfhost repl build failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let mut child = Command::new(&exe)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn selfhost repl");
+
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin is piped")
+        .write_all(stdin.as_bytes())
+        .expect("write selfhost repl stdin");
+
+    child.wait_with_output().expect("wait for selfhost repl")
 }
 
 #[test]
@@ -2273,6 +2300,7 @@ fn selfhost_repl_help_and_exit_from_piped_stdin() {
     let out = stdout(&output);
     assert!(out.contains("TypeLisp REPL commands:"), "stdout:\n{}", out);
     assert!(out.contains(".help"), "stdout:\n{}", out);
+    assert!(out.contains(".type <expr>"), "stdout:\n{}", out);
     assert!(out.contains(".exit"), "stdout:\n{}", out);
 }
 
@@ -2320,4 +2348,62 @@ fn selfhost_repl_non_command_input_reports_unimplemented() {
         "stderr:\n{}",
         stderr(&output)
     );
+}
+
+#[test]
+fn selfhost_repl_type_prints_literal_and_session_decl_types() {
+    let output = run_selfhost_repl(
+        "repl-type",
+        ".type 42\n(define answer : i64 41)\n.type (+ answer 1)\n.exit\n",
+    );
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stderr(&output), "", "stderr:\n{}", stderr(&output));
+    let out = stdout(&output);
+    assert!(out.contains("i64"), "stdout:\n{}", out);
+    assert!(
+        out.matches("i64").count() >= 2,
+        "stdout should show both inferred i64 results:\n{}",
+        out
+    );
+}
+
+#[test]
+fn selfhost_repl_type_rejects_empty_and_declaration_and_continues() {
+    let output = run_selfhost_repl(
+        "repl-type-errors",
+        ".type\n.type (define answer : i64 41)\n.type true\n.exit\n",
+    );
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    let err = stderr(&output);
+    assert!(
+        err.contains("Error: .type expects an expression"),
+        "stderr:\n{}",
+        err
+    );
+    assert!(
+        err.contains("Error: .type expects an expression, got a declaration"),
+        "stderr:\n{}",
+        err
+    );
+    assert!(
+        stdout(&output).contains("bool"),
+        "stdout:\n{}",
+        stdout(&output)
+    );
+}
+
+#[test]
+fn selfhost_repl_type_checks_without_running_code() {
+    let output = run_selfhost_repl(
+        "repl-type-no-run",
+        ".type (begin (print-string \"ran\") 1)\n.exit\n",
+    );
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stderr(&output), "", "stderr:\n{}", stderr(&output));
+    let out = stdout(&output);
+    assert!(out.contains("i64"), "stdout:\n{}", out);
+    assert!(!out.contains("ran"), "stdout:\n{}", out);
 }

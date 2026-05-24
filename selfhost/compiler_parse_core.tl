@@ -98,6 +98,14 @@
   (OkAstProgram AstProgram)
   (ErrAstProgram String))
 
+(defenum AstReplItem
+  (AstReplDecl AstDecl)
+  (AstReplExpr AstExpr))
+
+(defenum ResultAstReplItem
+  (OkAstReplItem AstReplItem)
+  (ErrAstReplItem String))
+
 (defenum ResultAstDeclListDiagnostic
   (OkAstDeclListDiagnostic AstDeclList)
   (ErrAstDeclListDiagnostic CompilerDiagnostic))
@@ -1567,6 +1575,29 @@
   (match (lex-spanned-result src)
     [(OkSpannedTokens toks) (parse-ast-program toks)]
     [(ErrSpannedTokens err) (ErrAstProgram (source-error-message err))]))
+
+(define (parse-ast-repl-source [src : String]) : ResultAstReplItem
+  (match (lex-spanned-result src)
+    [(OkSpannedTokens toks)
+      (let ([cur : (Array i64) (make-array i64 1)]
+        [dispatch : SymI64Env (parse-ast-program-dispatch)])
+        (begin
+          (array-set! cur 0 0)
+          (if (= (peek-spanned-tag toks cur) (tag-end))
+            (ErrAstReplItem "parse: expected REPL input")
+            (match (read-form-spanned-result toks cur)
+              [(OkSpannedSexpr form)
+                (if (= (peek-spanned-tag toks cur) (tag-end))
+                  (match (parse-ast-decl dispatch form)
+                    [(OkAstDecl decl) (OkAstReplItem (AstReplDecl decl))]
+                    [(ErrAstDecl _)
+                      (match (parse-ast-expr dispatch form)
+                        [(OkAstExpr expr) (OkAstReplItem (AstReplExpr expr))]
+                        [(ErrAstExpr message) (ErrAstReplItem message)])])
+                  (ErrAstReplItem "parse: trailing tokens after REPL input"))]
+              [(ErrSpannedSexpr err)
+                (ErrAstReplItem (source-error-message err))]))))]
+    [(ErrSpannedTokens err) (ErrAstReplItem (source-error-message err))]))
 
 (define (parse-ast-program-forms-diagnostic
   [path : String]

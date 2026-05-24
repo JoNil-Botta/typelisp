@@ -1648,6 +1648,27 @@
 (define (typecheck-compiler-program [program : AstProgram]) : ResultCompilerTypecheck
   (typecheck-compiler-program-with-paths program AstDeclPathNil))
 
+(define (typecheck-compiler-repl-expr [decls : AstDeclList] [expr : AstExpr]) : ResultTcType
+  (let ([program : AstProgram (AstProgram decls)])
+    (match (build-compiler-symbols program)
+      [(OkCompilerSymbols symbols)
+        (match (build-compiler-registries program)
+          [(OkCompilerRegistries registries)
+            (let ([ctx : TcContext (TcContext program symbols registries)])
+              (match (tc-build-top-env ctx program)
+                [(OkTcEnv top-env)
+                  (match (tc-check-decls
+                    ctx
+                    top-env
+                    decls
+                    (CompilerTypecheckSummary 0 0 0))
+                    [(OkCompilerTypecheck _) (tc-expr ctx top-env expr)]
+                    [(ErrCompilerTypecheck diag)
+                      (ErrTcType (compiler-diagnostic-message diag))])]
+                [(ErrTcEnv message) (ErrTcType message)]))]
+          [(ErrCompilerRegistries message) (ErrTcType message)])]
+      [(ErrCompilerSymbols message) (ErrTcType message)])))
+
 (define (typecheck-compiler-source [src : String]) : ResultCompilerTypecheck
   (match (parse-ast-source src)
     [(OkAstProgram program) (typecheck-compiler-program program)]

@@ -259,9 +259,160 @@
     [(IrBlockCons block rest)
      (IrBlockCons (opt-dce-block set block) (opt-dce-block-list set rest))]))
 
+;; --- block-local common subexpression elimination (#546) --------------------
+;;
+;; Within a single basic block, track an available-expression table mapping a
+;; pure scalar `BinOp`/`UnOp` expression (operator + operand values) to the var
+;; that first computed it. A later identical expression is rewritten to an
+;; `IrInstrMov` from that earlier var. Scope is intentionally block-local and
+;; only covers pure scalar arithmetic; memory ops are not CSE'd.
+;;
+;; Invalidation keeps this correct even though the IR is not strictly SSA: when
+;; an instruction (re)defines a var, every table entry whose key references that
+;; var as an operand — or whose result is that var — is dropped. Calls, stores
+;; (`Store`/`StorePtr`), and all control-flow boundaries clear the whole table
+;; (conservative, matching the spec). Commutative operands are NOT canonicalized
+;; in this slice.
+
+(defenum OptExprKey
+  (OptBinKey CompilerIrBinOp CompilerIrValue CompilerIrValue)
+  (OptUnKey CompilerIrUnOp CompilerIrValue))
+
+(defenum OptExprTable
+  (OptExprNil)
+  (OptExprCons OptExprKey i64 OptExprTable))
+
+(define (opt-binop-tag [op : CompilerIrBinOp]) : i64
+  (match op
+    [(IrBinAdd) 0]
+    [(IrBinSub) 1]
+    [(IrBinMul) 2]
+    [(IrBinDiv) 3]
+    [(IrBinMod) 4]
+    [(IrBinEq) 5]
+    [(IrBinNe) 6]
+    [(IrBinLt) 7]
+    [(IrBinLe) 8]
+    [(IrBinGt) 9]
+    [(IrBinGe) 10]
+    [(IrBinAnd) 11]
+    [(IrBinOr) 12]
+    [(IrBinBitAnd) 13]
+    [(IrBinBitOr) 14]
+    [(IrBinBitXor) 15]
+    [(IrBinShl) 16]
+    [(IrBinShr) 17]))
+
+(define (opt-binop-eq [a : CompilerIrBinOp] [b : CompilerIrBinOp]) : bool
+  (= (opt-binop-tag a) (opt-binop-tag b)))
+
+(define (opt-unop-tag [op : CompilerIrUnOp]) : i64
+  (match op
+    [(IrUnNeg) 0]
+    [(IrUnNot) 1]
+    [(IrUnBitNot) 2]))
+
+(define (opt-unop-eq [a : CompilerIrUnOp] [b : CompilerIrUnOp]) : bool
+  (= (opt-unop-tag a) (opt-unop-tag b)))
+
+(define (opt-value-eq [a : CompilerIrValue] [b : CompilerIrValue]) : bool
+  (match a
+    [(IrValueVar ia) (match b [(IrValueVar ib) (= ia ib)] [_ false])]
+    [(IrValueGlobal ga) (match b [(IrValueGlobal gb) (string-eq ga gb)] [_ false])]
+    [(IrValueI64 na) (match b [(IrValueI64 nb) (= na nb)] [_ false])]
+    [(IrValueF64 fa) (match b [(IrValueF64 fb) (= fa fb)] [_ false])]
+    [(IrValueBool ba) (match b [(IrValueBool bb) (if ba bb (not bb))] [_ false])]
+    [(IrValueChar ca) (match b [(IrValueChar cb) (= ca cb)] [_ false])]
+    [(IrValueString sa) (match b [(IrValueString sb) (string-eq sa sb)] [_ false])]
+    [(IrValueUnit) (match b [(IrValueUnit) true] [_ false])]))
+
+(define (opt-expr-key-eq [a : OptExprKey] [b : OptExprKey]) : bool
+  (match a
+    [(OptBinKey opa la ra)
+     (match b
+       [(OptBinKey opb lb rb)
+        (and (opt-binop-eq opa opb) (and (opt-value-eq la lb) (opt-value-eq ra rb)))]
+       [(OptUnKey _ _) false])]
+    [(OptUnKey opa va)
+     (match b
+       [(OptUnKey opb vb) (and (opt-unop-eq opa opb) (opt-value-eq va vb))]
+       [(OptBinKey _ _ _) false])]))
+
+(define (opt-expr-lookup [table : OptExprTable] [key : OptExprKey]) : CompilerIrMaybeValue
+  (match table
+    [(OptExprNil) (IrNoValue)]
+    [(OptExprCons k var rest)
+     (if (opt-expr-key-eq k key)
+         (IrSomeValue (IrValueVar var))
+         (opt-expr-lookup rest key))]))
+
+(define (opt-value-is-var? [value : CompilerIrValue] [var : i64]) : bool
+  (match value
+    [(IrValueVar id) (= id var)]
+    [_ false]))
+
+(define (opt-key-uses-var? [key : OptExprKey] [var : i64]) : bool
+  (match key
+    [(OptBinKey _ l r) (or (opt-value-is-var? l var) (opt-value-is-var? r var))]
+    [(OptUnKey _ v) (opt-value-is-var? v var)]))
+
+;; Drop every entry whose key references `var` (a stale operand) or whose result
+;; is `var` (a stale definition).
+(define (opt-expr-invalidate-var [table : OptExprTable] [var : i64]) : OptExprTable
+  (match table
+    [(OptExprNil) (OptExprNil)]
+    [(OptExprCons k v rest)
+     (let ([rest2 : OptExprTable (opt-expr-invalidate-var rest var)])
+       (if (or (opt-key-uses-var? k var) (= v var))
+           rest2
+           (OptExprCons k v rest2)))]))
+
+(defenum OptCseResult
+  (OptCseResult OptExprTable CompilerIrInstr))
+
+(define (opt-cse-instr [table : OptExprTable] [instr : CompilerIrInstr]) : OptCseResult
+  (match instr
+    [(IrInstrBinOp dst op l r ty)
+     (let ([t1 : OptExprTable (opt-expr-invalidate-var table dst)])
+       (let ([key : OptExprKey (OptBinKey op l r)])
+         (match (opt-expr-lookup t1 key)
+           [(IrSomeValue earlier) (OptCseResult t1 (IrInstrMov dst earlier ty))]
+           [(IrNoValue) (OptCseResult (OptExprCons key dst t1) instr)])))]
+    [(IrInstrUnOp dst op v ty)
+     (let ([t1 : OptExprTable (opt-expr-invalidate-var table dst)])
+       (let ([key : OptExprKey (OptUnKey op v)])
+         (match (opt-expr-lookup t1 key)
+           [(IrSomeValue earlier) (OptCseResult t1 (IrInstrMov dst earlier ty))]
+           [(IrNoValue) (OptCseResult (OptExprCons key dst t1) instr)])))]
+    ;; Other defining instructions: invalidate their dst, keep the instruction.
+    [(IrInstrMov dst _ _) (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrAlloc dst _) (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrAddrOf dst _) (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrGep dst _ _ _) (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrLoad dst _ _) (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrCast dst _ _ _) (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrPhi dst _ _) (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    ;; Calls, stores, and control flow clear all available expressions.
+    [(IrInstrCall _ _ _ _) (OptCseResult (OptExprNil) instr)]
+    [(IrInstrStore _ _ _) (OptCseResult (OptExprNil) instr)]
+    [(IrInstrStorePtr _ _ _) (OptCseResult (OptExprNil) instr)]
+    [(IrInstrJump _) (OptCseResult (OptExprNil) instr)]
+    [(IrInstrBranch _ _ _) (OptCseResult (OptExprNil) instr)]
+    [(IrInstrReturn _) (OptCseResult (OptExprNil) instr)]))
+
+(define (opt-cse-instrs [table : OptExprTable] [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (match instrs
+    [(IrInstrNil) (IrInstrNil)]
+    [(IrInstrCons instr rest)
+     (match (opt-cse-instr table instr)
+       [(OptCseResult new-table new-instr)
+        (IrInstrCons new-instr (opt-cse-instrs new-table rest))])]))
+
 (define (optimize-block [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
-    [(IrBlock label instrs) (IrBlock label (opt-fold-instrs (OptConstNil) instrs))]))
+    [(IrBlock label instrs)
+     ;; Fold scalar constants first, then eliminate repeated pure expressions.
+     (IrBlock label (opt-cse-instrs (OptExprNil) (opt-fold-instrs (OptConstNil) instrs)))]))
 
 (define (optimize-block-list [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
@@ -393,5 +544,44 @@
         (if (opt-used-contains used 0)
             (if (= (compiler-ir-instr-list-count cleaned) 3)
                 42
+                2)
+            1)))))
+
+;; `[BinOp v2 = v0 + v1, BinOp v3 = v0 + v1]` with non-constant operands: CSE
+;; rewrites the second into `Mov v3 = v2` (two arithmetic instrs -> one).
+(define (opt-cse-self-test-instrs) : CompilerIrInstrList
+  (IrInstrCons (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
+    (IrInstrCons (IrInstrBinOp 3 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
+      (IrInstrNil))))
+
+;; A store between the two identical expressions clears the table, so the second
+;; expression is preserved (no cross-store CSE).
+(define (opt-cse-store-clears-instrs) : CompilerIrInstrList
+  (IrInstrCons (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
+    (IrInstrCons (IrInstrStore "g" (IrValueI64 0) (AstTyI64))
+      (IrInstrCons (IrInstrBinOp 3 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
+        (IrInstrNil)))))
+
+;; Redefining an operand (`v0`) between the two expressions invalidates the
+;; available entry, so the second expression is preserved (correctness on
+;; non-SSA IR).
+(define (opt-cse-operand-redef-instrs) : CompilerIrInstrList
+  (IrInstrCons (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
+    (IrInstrCons (IrInstrMov 0 (IrValueI64 5) (AstTyI64))
+      (IrInstrCons (IrInstrBinOp 3 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
+        (IrInstrNil)))))
+
+;; Returns 42 when CSE eliminates the repeated pure expression (2 arithmetic
+;; instrs -> 1) yet preserves the second expression both across an intervening
+;; store and across an operand redefinition (still 2 arithmetic instrs each).
+(define (compiler-optimize-cse-self-test) : i64
+  (let ([cse : CompilerIrInstrList (opt-cse-instrs (OptExprNil) (opt-cse-self-test-instrs))])
+    (let ([store : CompilerIrInstrList (opt-cse-instrs (OptExprNil) (opt-cse-store-clears-instrs))])
+      (let ([redef : CompilerIrInstrList (opt-cse-instrs (OptExprNil) (opt-cse-operand-redef-instrs))])
+        (if (= (opt-count-arith-instrs cse) 1)
+            (if (= (opt-count-arith-instrs store) 2)
+                (if (= (opt-count-arith-instrs redef) 2)
+                    42
+                    3)
                 2)
             1)))))

@@ -119,6 +119,7 @@ fn selfhost_backend_windows_runtime_helpers_emit_assemble_link_and_run() {
     }
     assert!(!asm.contains("    syscall"), "asm:\n{}", asm);
     assert!(!asm.contains("\n_start:"), "asm:\n{}", asm);
+    assert!(!asm.contains("tl_current_arena:"), "asm:\n{}", asm);
     for helper in [
         ".extern tl_alloc\n",
         ".extern tl_oob_abort\n",

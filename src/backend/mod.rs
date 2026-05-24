@@ -22,7 +22,7 @@ const SYSV_FLOAT_ARG_REGS: [&str; 8] = [
 const WIN64_INTEGER_ARG_REGS: [&str; 4] = ["%rcx", "%rdx", "%r8", "%r9"];
 const WIN64_FLOAT_ARG_REGS: [&str; 4] = ["%xmm0", "%xmm1", "%xmm2", "%xmm3"];
 const LINUX_LINK_LIBS: [&str; 1] = ["-lc"];
-const WINDOWS_LINK_LIBS: [&str; 0] = [];
+const WINDOWS_LINK_LIBS: [&str; 1] = ["msvcrt.lib"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendArch {
@@ -179,8 +179,8 @@ impl BackendTarget {
             },
             (BackendArch::X86_64, BackendOs::Windows, BackendAbi::WindowsX64) => RuntimePolicy {
                 emits_linux_syscall_helpers: false,
-                emits_windows_runtime_helpers: false,
-                uses_libc_print_runtime: false,
+                emits_windows_runtime_helpers: true,
+                uses_libc_print_runtime: true,
             },
             _ => panic!("unsupported backend target: {:?}", self),
         }
@@ -256,7 +256,6 @@ struct EntryPolicy {
 #[derive(Debug, Clone, Copy)]
 struct RuntimePolicy {
     emits_linux_syscall_helpers: bool,
-    #[allow(dead_code)]
     emits_windows_runtime_helpers: bool,
     uses_libc_print_runtime: bool,
 }
@@ -1271,8 +1270,10 @@ impl X86_64Backend {
             || self.needs_file_exists_runtime
             || needs_argv_data;
         debug_assert!(
-            runtime_policy.emits_linux_syscall_helpers || !needs_linux_syscall_runtime,
-            "target runtime policy cannot emit the requested Linux syscall helpers"
+            runtime_policy.emits_linux_syscall_helpers
+                || runtime_policy.emits_windows_runtime_helpers
+                || !needs_linux_syscall_runtime,
+            "target runtime policy cannot emit the requested runtime helpers"
         );
         if needs_print_runtime {
             self.generate_print_runtime_data();
@@ -1342,7 +1343,9 @@ impl X86_64Backend {
                 self.emit(&format!("    .extern {}", symbol));
             }
         }
-        if needs_print_runtime && runtime_policy.uses_libc_print_runtime {
+        if runtime_policy.emits_windows_runtime_helpers {
+            self.generate_windows_runtime_externs(needs_print_runtime);
+        } else if needs_print_runtime && runtime_policy.uses_libc_print_runtime {
             self.emit("    .extern printf");
             self.emit("    .extern fflush");
         }
@@ -1503,6 +1506,57 @@ impl X86_64Backend {
         }
 
         self.output.clone()
+    }
+
+    fn generate_windows_runtime_externs(&mut self, needs_print_runtime: bool) {
+        let mut externs = BTreeSet::new();
+
+        if needs_print_runtime {
+            externs.insert("_write");
+            if self.runtime_print_names.contains("print-float") {
+                externs.insert("printf");
+                externs.insert("fflush");
+            }
+        }
+        if self.emits_alloc_runtime {
+            externs.insert("malloc");
+            externs.insert("_write");
+            externs.insert("exit");
+        }
+        if self.needs_oob_runtime
+            || self.needs_div_runtime
+            || self.needs_shift_runtime
+            || self.needs_abort_runtime
+            || self.needs_print_str_runtime
+            || self.needs_print_err_runtime
+        {
+            externs.insert("_write");
+        }
+        if self.needs_oob_runtime
+            || self.needs_div_runtime
+            || self.needs_shift_runtime
+            || self.needs_abort_runtime
+        {
+            externs.insert("exit");
+        }
+        if self.needs_read_file_runtime {
+            externs.insert("_open");
+            externs.insert("_lseeki64");
+            externs.insert("_read");
+            externs.insert("_close");
+        }
+        if self.needs_write_file_runtime {
+            externs.insert("_open");
+            externs.insert("_write");
+            externs.insert("_close");
+        }
+        if self.needs_file_exists_runtime {
+            externs.insert("_access");
+        }
+
+        for symbol in externs {
+            self.emit(&format!("    .extern {}", symbol));
+        }
     }
 
     fn runtime_print_names(program: &Program) -> HashSet<String> {
@@ -1886,6 +1940,11 @@ impl X86_64Backend {
     }
 
     fn generate_print_runtime_functions(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.generate_windows_print_runtime_functions();
+            return;
+        }
+
         self.emit("    .globl tl_print_i64");
         self.emit("tl_print_i64:");
         self.emit("    push %rbp");
@@ -1998,12 +2057,132 @@ impl X86_64Backend {
         self.emit("");
     }
 
+    fn generate_windows_print_runtime_functions(&mut self) {
+        self.emit("    .globl tl_print_i64");
+        self.emit("tl_print_i64:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    sub $48, %rsp");
+        self.emit("    leaq -1(%rbp), %r10");
+        self.emit("    movb $10, (%r10)");
+        self.emit("    movq %rcx, %rax");
+        self.emit("    movq $1, %rcx");
+        self.emit("    cmpq $0, %rax");
+        self.emit("    jne .L_tl_print_i64_win_nonzero");
+        self.emit("    movb $48, -2(%rbp)");
+        self.emit("    leaq -2(%rbp), %r10");
+        self.emit("    movq $2, %rdx");
+        self.emit("    jmp .L_tl_print_i64_win_write");
+        self.emit(".L_tl_print_i64_win_nonzero:");
+        self.emit("    movq $0, %r8");
+        self.emit("    cmpq $0, %rax");
+        self.emit("    jge .L_tl_print_i64_win_abs_ready");
+        self.emit("    negq %rax");
+        self.emit("    movq $1, %r8");
+        self.emit(".L_tl_print_i64_win_abs_ready:");
+        self.emit("    movq $10, %r9");
+        self.emit(".L_tl_print_i64_win_digit_loop:");
+        self.emit("    xorq %rdx, %rdx");
+        self.emit("    divq %r9");
+        self.emit("    addb $48, %dl");
+        self.emit("    decq %r10");
+        self.emit("    movb %dl, (%r10)");
+        self.emit("    incq %rcx");
+        self.emit("    testq %rax, %rax");
+        self.emit("    jne .L_tl_print_i64_win_digit_loop");
+        self.emit("    testq %r8, %r8");
+        self.emit("    jz .L_tl_print_i64_win_len_ready");
+        self.emit("    decq %r10");
+        self.emit("    movb $45, (%r10)");
+        self.emit("    incq %rcx");
+        self.emit(".L_tl_print_i64_win_len_ready:");
+        self.emit("    movq %rcx, %rdx");
+        self.emit(".L_tl_print_i64_win_write:");
+        self.emit("    movq %rdx, %r8");
+        self.emit("    movq %r10, %rdx");
+        self.emit("    movq $1, %rcx");
+        self.emit_call("_write");
+        self.emit("    mov %rbp, %rsp");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+
+        self.emit("    .globl tl_print_bool");
+        self.emit("tl_print_bool:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    testb %cl, %cl");
+        self.emit("    jz .L_tl_print_bool_win_false");
+        self.emit("    leaq .L_tl_bool_true(%rip), %rdx");
+        self.emit("    movq $5, %r8");
+        self.emit("    jmp .L_tl_print_bool_win_write");
+        self.emit(".L_tl_print_bool_win_false:");
+        self.emit("    leaq .L_tl_bool_false(%rip), %rdx");
+        self.emit("    movq $6, %r8");
+        self.emit(".L_tl_print_bool_win_write:");
+        self.emit("    movq $1, %rcx");
+        self.emit_call("_write");
+        self.emit("    mov %rbp, %rsp");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+
+        self.emit("    .globl tl_print_f64");
+        self.emit("tl_print_f64:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    movsd %xmm0, %xmm1");
+        self.emit("    movq %xmm0, %rdx");
+        self.emit("    leaq .L_tl_fmt_f64(%rip), %rcx");
+        self.emit_call("printf");
+        self.emit("    xorq %rcx, %rcx");
+        self.emit_call("fflush");
+        self.emit("    mov %rbp, %rsp");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+
+        self.emit("    .globl tl_print_char");
+        self.emit("tl_print_char:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    sub $16, %rsp");
+        self.emit("    movb %cl, -1(%rbp)");
+        self.emit("    leaq -1(%rbp), %rdx");
+        self.emit("    movq $1, %r8");
+        self.emit("    movq $1, %rcx");
+        self.emit_call("_write");
+        self.emit("    mov %rbp, %rsp");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+
+        self.emit("    .globl tl_print_newline");
+        self.emit("tl_print_newline:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    sub $16, %rsp");
+        self.emit("    movb $10, -1(%rbp)");
+        self.emit("    leaq -1(%rbp), %rdx");
+        self.emit("    movq $1, %r8");
+        self.emit("    movq $1, %rcx");
+        self.emit_call("_write");
+        self.emit("    mov %rbp, %rsp");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
     /// Emit the `.bss` storage backing the bump allocator: a pointer to the
     /// current arena record. Each mapped arena starts with a 32-byte header:
     /// previous arena, payload base, current bump pointer, and end pointer.
     /// A zero `tl_current_arena` signals "no arena yet" and triggers lazy
     /// `mmap` on the first allocation.
     fn generate_alloc_runtime_data(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            return;
+        }
+
         self.emit("    .section .bss");
         self.emit("    .balign 8");
         self.emit("tl_current_arena:");
@@ -2392,6 +2571,11 @@ impl X86_64Backend {
     /// work can restore or discard arenas without changing today's process-
     /// lifetime behavior.
     fn generate_alloc_runtime_functions(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.generate_windows_alloc_runtime_functions();
+            return;
+        }
+
         // Arena granule: 64 MiB. `mmap` syscall number is 9; PROT_READ|PROT_WRITE
         // = 3; MAP_PRIVATE|MAP_ANONYMOUS = 0x22; fd = -1; offset = 0. The 4th
         // syscall argument is passed in %r10 (not %rcx) per the syscall ABI.
@@ -2481,6 +2665,31 @@ impl X86_64Backend {
         self.emit("");
     }
 
+    fn generate_windows_alloc_runtime_functions(&mut self) {
+        self.emit("    .globl tl_alloc");
+        self.emit("tl_alloc:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    testq %rcx, %rcx");
+        self.emit("    jg .L_tl_alloc_win_size_ready");
+        self.emit("    movq $1, %rcx");
+        self.emit(".L_tl_alloc_win_size_ready:");
+        self.emit_call("malloc");
+        self.emit("    testq %rax, %rax");
+        self.emit("    jz .L_tl_alloc_abort");
+        self.emit("    mov %rbp, %rsp");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit(".L_tl_alloc_abort:");
+        self.emit("    movq $2, %rcx");
+        self.emit("    leaq .L_tl_alloc_msg(%rip), %rdx");
+        self.emit("    movq $.L_tl_alloc_msg_len, %r8");
+        self.emit_call("_write");
+        self.emit("    movq $134, %rcx");
+        self.emit_call("exit");
+        self.emit("");
+    }
+
     /// The abort message written to fd 2 (stderr) on an out-of-bounds access.
     fn generate_oob_runtime_data(&mut self) {
         self.emit("    .section .rodata");
@@ -2529,6 +2738,16 @@ impl X86_64Backend {
     /// process with status 135 via the `exit(2)` syscall. Because it is a `Call`
     /// the optimizer cannot drop the guard.
     fn generate_div_runtime_functions(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.generate_windows_fixed_abort_runtime_function(
+                "tl_div_abort",
+                ".L_tl_div_msg",
+                ".L_tl_div_msg_len",
+                135,
+            );
+            return;
+        }
+
         self.emit("    .globl tl_div_abort");
         self.emit("tl_div_abort:");
         self.emit("    movq $1, %rax");
@@ -2556,6 +2775,16 @@ impl X86_64Backend {
     /// process with status 129 via the `exit(2)` syscall. Because it is a `Call`
     /// the optimizer cannot drop the guard.
     fn generate_shift_runtime_functions(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.generate_windows_fixed_abort_runtime_function(
+                "tl_shift_abort",
+                ".L_tl_shift_msg",
+                ".L_tl_shift_msg_len",
+                129,
+            );
+            return;
+        }
+
         self.emit("    .globl tl_shift_abort");
         self.emit("tl_shift_abort:");
         self.emit("    movq $1, %rax");
@@ -2576,6 +2805,16 @@ impl X86_64Backend {
     /// accesses `Call` this symbol on the out-of-bounds path; because it is a
     /// `Call` the optimizer's dead-code elimination cannot drop the check.
     fn generate_oob_runtime_functions(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.generate_windows_fixed_abort_runtime_function(
+                "tl_oob_abort",
+                ".L_tl_oob_msg",
+                ".L_tl_oob_msg_len",
+                134,
+            );
+            return;
+        }
+
         self.emit("    .globl tl_oob_abort");
         self.emit("tl_oob_abort:");
         // write(2 /*fd=stderr*/, msg, len). syscall number 1; args rdi/rsi/rdx.
@@ -2605,6 +2844,11 @@ impl X86_64Backend {
     /// wants fd in `%rdi`, buf in `%rsi`, count in `%rdx`, so the operands are
     /// shuffled (`%rdx <- len`, `%rsi <- ptr`, `%rdi <- 2`) before the syscall.
     fn generate_abort_runtime_functions(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.generate_windows_abort_runtime_functions();
+            return;
+        }
+
         self.emit(&format!("{}:", ABORT_RUNTIME_SYMBOL));
         // write(2 /*fd=stderr*/, ptr, len). syscall number 1; args rdi/rsi/rdx.
         // Move len (rsi) -> rdx before clobbering rsi with ptr (rdi).
@@ -2634,6 +2878,11 @@ impl X86_64Backend {
     /// wants fd in `%rdi`, buf in `%rsi`, count in `%rdx`, so the operands are
     /// shuffled (`%rdx <- len`, `%rsi <- ptr`, `%rdi <- 1`) before the syscall.
     fn generate_print_str_runtime_functions(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.generate_windows_write_buffer_runtime_function("tl_print_str", 1);
+            return;
+        }
+
         self.emit("    .globl tl_print_str");
         self.emit("tl_print_str:");
         // write(1 /*fd=stdout*/, ptr, len). syscall number 1; args rdi/rsi/rdx.
@@ -2648,6 +2897,11 @@ impl X86_64Backend {
     }
 
     fn generate_print_err_runtime_functions(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.generate_windows_write_buffer_runtime_function("tl_print_err", 2);
+            return;
+        }
+
         self.emit("    .globl tl_print_err");
         self.emit("tl_print_err:");
         // write(2 /*fd=stderr*/, ptr, len). syscall number 1; args rdi/rsi/rdx.
@@ -2656,6 +2910,54 @@ impl X86_64Backend {
         self.emit("    movq $2, %rdi");
         self.emit("    movq $1, %rax");
         self.emit("    syscall");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_windows_fixed_abort_runtime_function(
+        &mut self,
+        symbol: &str,
+        msg_label: &str,
+        len_label: &str,
+        status: i64,
+    ) {
+        self.emit(&format!("    .globl {}", symbol));
+        self.emit(&format!("{}:", symbol));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    movq $2, %rcx");
+        self.emit(&format!("    leaq {}(%rip), %rdx", msg_label));
+        self.emit(&format!("    movq ${}, %r8", len_label));
+        self.emit_call("_write");
+        self.emit(&format!("    movq ${}, %rcx", status));
+        self.emit_call("exit");
+        self.emit("");
+    }
+
+    fn generate_windows_abort_runtime_functions(&mut self) {
+        self.emit(&format!("{}:", ABORT_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    movq %rdx, %r8");
+        self.emit("    movq %rcx, %rdx");
+        self.emit("    movq $2, %rcx");
+        self.emit_call("_write");
+        self.emit("    movq $134, %rcx");
+        self.emit_call("exit");
+        self.emit("");
+    }
+
+    fn generate_windows_write_buffer_runtime_function(&mut self, symbol: &str, fd: i64) {
+        self.emit(&format!("    .globl {}", symbol));
+        self.emit(&format!("{}:", symbol));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    movq %rdx, %r8");
+        self.emit("    movq %rcx, %rdx");
+        self.emit(&format!("    movq ${}, %rcx", fd));
+        self.emit_call("_write");
+        self.emit("    mov %rbp, %rsp");
+        self.emit("    pop %rbp");
         self.emit("    ret");
         self.emit("");
     }
@@ -2673,6 +2975,10 @@ impl X86_64Backend {
     /// heap fat-string `{ ptr, len }` pointer. Invalid indexes abort through the
     /// existing message-abort runtime.
     fn generate_arg_runtime_functions(&mut self) {
+        let calling_convention = self.target.calling_convention();
+        let arg0 = calling_convention.integer_arg_regs[0];
+        let arg1 = calling_convention.integer_arg_regs[1];
+
         self.emit(&format!("{}:", ARG_RUNTIME_SYMBOL));
         self.emit("    push %rbp");
         self.emit("    mov %rsp, %rbp");
@@ -2680,7 +2986,7 @@ impl X86_64Backend {
         self.emit("    push %r12");
         self.emit("    push %r13");
         self.emit("    sub $8, %rsp");
-        self.emit("    movq %rdi, %rbx");
+        self.emit(&format!("    movq {}, %rbx", arg0));
         self.emit("    cmpq $0, %rbx");
         self.emit("    jl .L_tl_arg_oob");
         self.emit("    movq .L_tl_argc(%rip), %rax");
@@ -2695,8 +3001,8 @@ impl X86_64Backend {
         self.emit("    incq %r12");
         self.emit("    jmp .L_tl_arg_len_loop");
         self.emit(".L_tl_arg_len_done:");
-        self.emit("    movq %r12, %rdi");
-        self.emit("    call tl_alloc");
+        self.emit(&format!("    movq %r12, {}", arg0));
+        self.emit_call("tl_alloc");
         self.emit("    movq %rax, %r13");
         self.emit("    xorq %rcx, %rcx");
         self.emit(".L_tl_arg_copy_loop:");
@@ -2707,8 +3013,8 @@ impl X86_64Backend {
         self.emit("    incq %rcx");
         self.emit("    jmp .L_tl_arg_copy_loop");
         self.emit(".L_tl_arg_copy_done:");
-        self.emit("    movq $16, %rdi");
-        self.emit("    call tl_alloc");
+        self.emit(&format!("    movq $16, {}", arg0));
+        self.emit_call("tl_alloc");
         self.emit("    movq %r13, 0(%rax)");
         self.emit("    movq %r12, 8(%rax)");
         self.emit("    add $8, %rsp");
@@ -2718,9 +3024,9 @@ impl X86_64Backend {
         self.emit("    pop %rbp");
         self.emit("    ret");
         self.emit(".L_tl_arg_oob:");
-        self.emit("    leaq .L_tl_arg_oob_msg(%rip), %rdi");
-        self.emit("    movq $.L_tl_arg_oob_msg_len, %rsi");
-        self.emit(&format!("    call {}", ABORT_RUNTIME_SYMBOL));
+        self.emit(&format!("    leaq .L_tl_arg_oob_msg(%rip), {}", arg0));
+        self.emit(&format!("    movq $.L_tl_arg_oob_msg_len, {}", arg1));
+        self.emit_call(ABORT_RUNTIME_SYMBOL);
         self.emit("");
     }
 
@@ -2735,6 +3041,11 @@ impl X86_64Backend {
     /// fat value. V1 is compiler-driver oriented and aborts on any syscall,
     /// short-read, or path-length error until recoverable file errors exist.
     fn generate_read_file_runtime_functions(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.generate_windows_read_file_runtime_functions();
+            return;
+        }
+
         self.emit(&format!("{}:", READ_FILE_RUNTIME_SYMBOL));
         self.emit("    push %rbp");
         self.emit("    mov %rsp, %rbp");
@@ -2846,6 +3157,11 @@ impl X86_64Backend {
     /// oriented and aborts on any syscall, partial-write, or length error until
     /// recoverable file errors exist.
     fn generate_write_file_runtime_functions(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.generate_windows_write_file_runtime_functions();
+            return;
+        }
+
         self.emit(&format!("{}:", WRITE_FILE_RUNTIME_SYMBOL));
         self.emit("    push %rbp");
         self.emit("    mov %rsp, %rbp");
@@ -2941,6 +3257,11 @@ impl X86_64Backend {
     /// returns false for ENOENT. Other syscall/path failures abort until
     /// recoverable file errors exist.
     fn generate_file_exists_runtime_functions(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.generate_windows_file_exists_runtime_functions();
+            return;
+        }
+
         self.emit(&format!("{}:", FILE_EXISTS_RUNTIME_SYMBOL));
         self.emit("    push %rbp");
         self.emit("    mov %rsp, %rbp");
@@ -3002,6 +3323,221 @@ impl X86_64Backend {
         self.emit("");
     }
 
+    fn generate_windows_read_file_runtime_functions(&mut self) {
+        self.emit(&format!("{}:", READ_FILE_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq %rcx, %rbx");
+        self.emit("    movq %rdx, %r12");
+        self.emit("    cmpq $0, %r12");
+        self.emit("    jl .L_tl_read_file_error");
+        self.emit("    movq %r12, %rcx");
+        self.emit("    addq $1, %rcx");
+        self.emit("    js .L_tl_read_file_error");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rax, %r13");
+        self.emit("    xorq %r10, %r10");
+        self.emit(".L_tl_read_file_path_copy_loop:");
+        self.emit("    cmpq %r12, %r10");
+        self.emit("    jge .L_tl_read_file_path_copy_done");
+        self.emit("    movzbl (%rbx,%r10), %edx");
+        self.emit("    movb %dl, (%r13,%r10)");
+        self.emit("    incq %r10");
+        self.emit("    jmp .L_tl_read_file_path_copy_loop");
+        self.emit(".L_tl_read_file_path_copy_done:");
+        self.emit("    movb $0, (%r13,%r12)");
+
+        // _open(c_path, _O_RDONLY | _O_BINARY, 0).
+        self.emit("    movq %r13, %rcx");
+        self.emit("    movq $0x8000, %rdx");
+        self.emit("    xorq %r8, %r8");
+        self.emit_call("_open");
+        self.emit("    testl %eax, %eax");
+        self.emit("    js .L_tl_read_file_error");
+        self.emit("    movslq %eax, %rbx");
+
+        // file_len = _lseeki64(fd, 0, SEEK_END), then rewind.
+        self.emit("    movq %rbx, %rcx");
+        self.emit("    xorq %rdx, %rdx");
+        self.emit("    movq $2, %r8");
+        self.emit_call("_lseeki64");
+        self.emit("    cmpq $0, %rax");
+        self.emit("    jl .L_tl_read_file_close_error");
+        self.emit("    movq %rax, %r12");
+        self.emit("    movq %rbx, %rcx");
+        self.emit("    xorq %rdx, %rdx");
+        self.emit("    xorq %r8, %r8");
+        self.emit_call("_lseeki64");
+        self.emit("    cmpq $0, %rax");
+        self.emit("    jl .L_tl_read_file_close_error");
+
+        self.emit("    movq %r12, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rax, %r13");
+        self.emit("    movq %rbx, %rcx");
+        self.emit("    movq %r13, %rdx");
+        self.emit("    movq %r12, %r8");
+        self.emit_call("_read");
+        self.emit("    movslq %eax, %rax");
+        self.emit("    cmpq %r12, %rax");
+        self.emit("    jne .L_tl_read_file_close_error");
+
+        self.emit("    movq %rbx, %rcx");
+        self.emit_call("_close");
+        self.emit("    testl %eax, %eax");
+        self.emit("    js .L_tl_read_file_error");
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %r13, 0(%rax)");
+        self.emit("    movq %r12, 8(%rax)");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+
+        self.emit(".L_tl_read_file_close_error:");
+        self.emit("    movq %rbx, %rcx");
+        self.emit_call("_close");
+        self.emit(".L_tl_read_file_error:");
+        self.emit("    leaq .L_tl_read_file_error_msg(%rip), %rcx");
+        self.emit("    movq $.L_tl_read_file_error_msg_len, %rdx");
+        self.emit_call(ABORT_RUNTIME_SYMBOL);
+        self.emit("");
+    }
+
+    fn generate_windows_write_file_runtime_functions(&mut self) {
+        self.emit(&format!("{}:", WRITE_FILE_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    push %r15");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq %rcx, %rbx");
+        self.emit("    movq %rdx, %r12");
+        self.emit("    movq %r8, %r13");
+        self.emit("    movq %r9, %r14");
+        self.emit("    cmpq $0, %r12");
+        self.emit("    jl .L_tl_write_file_error");
+        self.emit("    cmpq $0, %r14");
+        self.emit("    jl .L_tl_write_file_error");
+        self.emit("    movq %r12, %rcx");
+        self.emit("    addq $1, %rcx");
+        self.emit("    js .L_tl_write_file_error");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rax, %r15");
+        self.emit("    xorq %r10, %r10");
+        self.emit(".L_tl_write_file_path_copy_loop:");
+        self.emit("    cmpq %r12, %r10");
+        self.emit("    jge .L_tl_write_file_path_copy_done");
+        self.emit("    movzbl (%rbx,%r10), %edx");
+        self.emit("    movb %dl, (%r15,%r10)");
+        self.emit("    incq %r10");
+        self.emit("    jmp .L_tl_write_file_path_copy_loop");
+        self.emit(".L_tl_write_file_path_copy_done:");
+        self.emit("    movb $0, (%r15,%r12)");
+
+        // _open(c_path, _O_WRONLY | _O_CREAT | _O_TRUNC | _O_BINARY, 0600).
+        self.emit("    movq %r15, %rcx");
+        self.emit("    movq $0x8301, %rdx");
+        self.emit("    movq $0x180, %r8");
+        self.emit_call("_open");
+        self.emit("    testl %eax, %eax");
+        self.emit("    js .L_tl_write_file_error");
+        self.emit("    movslq %eax, %r15");
+
+        self.emit("    movq %r15, %rcx");
+        self.emit("    movq %r13, %rdx");
+        self.emit("    movq %r14, %r8");
+        self.emit_call("_write");
+        self.emit("    movslq %eax, %rax");
+        self.emit("    cmpq %r14, %rax");
+        self.emit("    jne .L_tl_write_file_close_error");
+
+        self.emit("    movq %r15, %rcx");
+        self.emit_call("_close");
+        self.emit("    testl %eax, %eax");
+        self.emit("    js .L_tl_write_file_error");
+        self.emit("    xorq %rax, %rax");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r15");
+        self.emit("    pop %r14");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+
+        self.emit(".L_tl_write_file_close_error:");
+        self.emit("    movq %r15, %rcx");
+        self.emit_call("_close");
+        self.emit(".L_tl_write_file_error:");
+        self.emit("    leaq .L_tl_write_file_error_msg(%rip), %rcx");
+        self.emit("    movq $.L_tl_write_file_error_msg_len, %rdx");
+        self.emit_call(ABORT_RUNTIME_SYMBOL);
+        self.emit("");
+    }
+
+    fn generate_windows_file_exists_runtime_functions(&mut self) {
+        self.emit(&format!("{}:", FILE_EXISTS_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq %rcx, %rbx");
+        self.emit("    movq %rdx, %r12");
+        self.emit("    cmpq $0, %r12");
+        self.emit("    jl .L_tl_file_exists_error");
+        self.emit("    movq %r12, %rcx");
+        self.emit("    addq $1, %rcx");
+        self.emit("    js .L_tl_file_exists_error");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rax, %r13");
+        self.emit("    xorq %r10, %r10");
+        self.emit(".L_tl_file_exists_path_copy_loop:");
+        self.emit("    cmpq %r12, %r10");
+        self.emit("    jge .L_tl_file_exists_path_copy_done");
+        self.emit("    movzbl (%rbx,%r10), %edx");
+        self.emit("    movb %dl, (%r13,%r10)");
+        self.emit("    incq %r10");
+        self.emit("    jmp .L_tl_file_exists_path_copy_loop");
+        self.emit(".L_tl_file_exists_path_copy_done:");
+        self.emit("    movb $0, (%r13,%r12)");
+
+        self.emit("    movq %r13, %rcx");
+        self.emit("    xorq %rdx, %rdx");
+        self.emit_call("_access");
+        self.emit("    testl %eax, %eax");
+        self.emit("    jz .L_tl_file_exists_true");
+        self.emit("    xorq %rax, %rax");
+        self.emit("    jmp .L_tl_file_exists_return");
+        self.emit(".L_tl_file_exists_true:");
+        self.emit("    movq $1, %rax");
+        self.emit(".L_tl_file_exists_return:");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+
+        self.emit(".L_tl_file_exists_error:");
+        self.emit("    leaq .L_tl_file_exists_error_msg(%rip), %rcx");
+        self.emit("    movq $.L_tl_file_exists_error_msg_len, %rdx");
+        self.emit_call(ABORT_RUNTIME_SYMBOL);
+        self.emit("");
+    }
+
     /// Emit the self-contained string-equality helper
     /// `tl_string_eq(a_ptr, a_len, b_ptr, b_len) -> i64 (0/1)`.
     ///
@@ -3013,6 +3549,11 @@ impl X86_64Backend {
     /// It is pure: no `syscall`, no libc, no memory writes (it only reads the
     /// operand buffers), so it is safe to emit unconditionally when referenced.
     fn generate_string_eq_runtime_functions(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.generate_windows_string_eq_runtime_functions();
+            return;
+        }
+
         self.emit("    .globl tl_string_eq");
         self.emit("tl_string_eq:");
         // Lengths differ -> not equal.
@@ -3043,6 +3584,32 @@ impl X86_64Backend {
         self.emit("");
     }
 
+    fn generate_windows_string_eq_runtime_functions(&mut self) {
+        self.emit("    .globl tl_string_eq");
+        self.emit("tl_string_eq:");
+        // Windows x64: a_ptr=%rcx, a_len=%rdx, b_ptr=%r8, b_len=%r9.
+        self.emit("    cmpq %r9, %rdx");
+        self.emit("    jne .L_tl_string_eq_false");
+        self.emit(".L_tl_string_eq_loop:");
+        self.emit("    testq %rdx, %rdx");
+        self.emit("    jz .L_tl_string_eq_true");
+        self.emit("    movzbl (%rcx), %eax");
+        self.emit("    movzbl (%r8), %r10d");
+        self.emit("    cmpb %r10b, %al");
+        self.emit("    jne .L_tl_string_eq_false");
+        self.emit("    incq %rcx");
+        self.emit("    incq %r8");
+        self.emit("    decq %rdx");
+        self.emit("    jmp .L_tl_string_eq_loop");
+        self.emit(".L_tl_string_eq_true:");
+        self.emit("    movq $1, %rax");
+        self.emit("    ret");
+        self.emit(".L_tl_string_eq_false:");
+        self.emit("    xorq %rax, %rax");
+        self.emit("    ret");
+        self.emit("");
+    }
+
     /// Emit the self-contained decimal-parse helper
     /// `tl_string_to_int(ptr, len) -> i64`.
     ///
@@ -3057,6 +3624,11 @@ impl X86_64Backend {
     /// the operand buffer; no `syscall`, no libc, no writes), so it is safe to
     /// emit unconditionally when referenced.
     fn generate_string_to_int_runtime_functions(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.generate_windows_string_to_int_runtime_functions();
+            return;
+        }
+
         self.emit("    .globl tl_string_to_int");
         self.emit("tl_string_to_int:");
         // acc = 0 (%rax accumulates the result), neg = 0 (%r8 records the sign).
@@ -3094,6 +3666,40 @@ impl X86_64Backend {
         self.emit("");
     }
 
+    fn generate_windows_string_to_int_runtime_functions(&mut self) {
+        self.emit("    .globl tl_string_to_int");
+        self.emit("tl_string_to_int:");
+        // Windows x64: ptr=%rcx, len=%rdx. Keep the cursor in caller-saved %r10.
+        self.emit("    movq %rcx, %r10");
+        self.emit("    xorq %rax, %rax");
+        self.emit("    xorq %r8, %r8");
+        self.emit("    testq %rdx, %rdx");
+        self.emit("    jz .L_tl_string_to_int_done");
+        self.emit("    movzbl (%r10), %ecx");
+        self.emit("    cmpb $45, %cl");
+        self.emit("    jne .L_tl_string_to_int_loop");
+        self.emit("    movq $1, %r8");
+        self.emit("    incq %r10");
+        self.emit("    decq %rdx");
+        self.emit(".L_tl_string_to_int_loop:");
+        self.emit("    testq %rdx, %rdx");
+        self.emit("    jz .L_tl_string_to_int_apply_sign");
+        self.emit("    imulq $10, %rax, %rax");
+        self.emit("    movzbl (%r10), %ecx");
+        self.emit("    subq $48, %rcx");
+        self.emit("    addq %rcx, %rax");
+        self.emit("    incq %r10");
+        self.emit("    decq %rdx");
+        self.emit("    jmp .L_tl_string_to_int_loop");
+        self.emit(".L_tl_string_to_int_apply_sign:");
+        self.emit("    testq %r8, %r8");
+        self.emit("    jz .L_tl_string_to_int_done");
+        self.emit("    negq %rax");
+        self.emit(".L_tl_string_to_int_done:");
+        self.emit("    ret");
+        self.emit("");
+    }
+
     /// Emit the self-contained integer-to-string helper
     /// `tl_int_to_string(n) -> ptr`.
     ///
@@ -3110,6 +3716,8 @@ impl X86_64Backend {
     /// `n`'s digits/length and the data pointer are kept in callee-saved
     /// registers (`%rbx`/`%r12`/`%r13`) across the `tl_alloc` calls.
     fn generate_int_to_string_runtime_functions(&mut self) {
+        let arg0 = self.target.calling_convention().integer_arg_regs[0];
+
         self.emit("    .globl tl_int_to_string");
         self.emit("tl_int_to_string:");
         self.emit("    push %rbp");
@@ -3122,17 +3730,17 @@ impl X86_64Backend {
         self.emit("    push %r12");
         self.emit("    push %r13");
         self.emit("    sub $72, %rsp");
-        // Digit generation (mirrors tl_print_i64). %rsi = descending write
+        // Digit generation (mirrors tl_print_i64). %r10 = descending write
         // cursor, starting one past the top of the scratch region; %rcx = digit
         // count. %rax holds the working magnitude.
-        self.emit("    leaq 72(%rsp), %rsi");
+        self.emit("    leaq 72(%rsp), %r10");
         self.emit("    movq $0, %rcx");
-        self.emit("    movq %rdi, %rax");
+        self.emit(&format!("    movq {}, %rax", arg0));
         self.emit("    cmpq $0, %rax");
         self.emit("    jne .L_tl_int_to_string_nonzero");
         // Zero: a single '0' digit.
-        self.emit("    decq %rsi");
-        self.emit("    movb $48, (%rsi)");
+        self.emit("    decq %r10");
+        self.emit("    movb $48, (%r10)");
         self.emit("    incq %rcx");
         self.emit("    jmp .L_tl_int_to_string_digits_done");
         self.emit(".L_tl_int_to_string_nonzero:");
@@ -3148,25 +3756,25 @@ impl X86_64Backend {
         self.emit("    xorq %rdx, %rdx");
         self.emit("    divq %r9");
         self.emit("    addb $48, %dl");
-        self.emit("    decq %rsi");
-        self.emit("    movb %dl, (%rsi)");
+        self.emit("    decq %r10");
+        self.emit("    movb %dl, (%r10)");
         self.emit("    incq %rcx");
         self.emit("    testq %rax, %rax");
         self.emit("    jne .L_tl_int_to_string_digit_loop");
         // Prepend the '-' sign for negatives.
         self.emit("    testq %r8, %r8");
         self.emit("    jz .L_tl_int_to_string_digits_done");
-        self.emit("    decq %rsi");
-        self.emit("    movb $45, (%rsi)");
+        self.emit("    decq %r10");
+        self.emit("    movb $45, (%r10)");
         self.emit("    incq %rcx");
         self.emit(".L_tl_int_to_string_digits_done:");
         // %rbx = pointer to the first digit; %r12 = byte length. Both survive the
         // upcoming `tl_alloc` calls (callee-saved).
-        self.emit("    movq %rsi, %rbx");
+        self.emit("    movq %r10, %rbx");
         self.emit("    movq %rcx, %r12");
         // data = tl_alloc(len). The returned heap pointer is saved in %r13.
-        self.emit("    movq %r12, %rdi");
-        self.emit("    call tl_alloc");
+        self.emit(&format!("    movq %r12, {}", arg0));
+        self.emit_call("tl_alloc");
         self.emit("    movq %rax, %r13");
         // Copy the `len` digit bytes from the scratch buffer (%rbx) into the heap
         // data buffer (%r13), front to back.
@@ -3180,8 +3788,8 @@ impl X86_64Backend {
         self.emit("    jmp .L_tl_int_to_string_copy_loop");
         self.emit(".L_tl_int_to_string_copy_done:");
         // fat = tl_alloc(16); store { data_ptr (offset 0), len (offset 8) }.
-        self.emit("    movq $16, %rdi");
-        self.emit("    call tl_alloc");
+        self.emit(&format!("    movq $16, {}", arg0));
+        self.emit_call("tl_alloc");
         self.emit("    movq %r13, 0(%rax)");
         self.emit("    movq %r12, 8(%rax)");
         // %rax already holds the fat pointer — the return value.
@@ -3211,6 +3819,11 @@ impl X86_64Backend {
     /// in callee-saved registers (`%rbx`/`%r12`/`%r13`). It heap-allocates so the
     /// result outlives the caller's frame; it is safe to emit when referenced.
     fn generate_substring_runtime_functions(&mut self) {
+        let calling_convention = self.target.calling_convention();
+        let arg0 = calling_convention.integer_arg_regs[0];
+        let arg1 = calling_convention.integer_arg_regs[1];
+        let arg2 = calling_convention.integer_arg_regs[2];
+
         self.emit("    .globl tl_substring");
         self.emit("tl_substring:");
         self.emit("    push %rbp");
@@ -3224,12 +3837,12 @@ impl X86_64Backend {
         self.emit("    sub $8, %rsp");
         // %rbx = copy source = src_ptr + start; %r12 = slice_len. Both survive
         // the upcoming `tl_alloc` calls (callee-saved).
-        self.emit("    movq %rdi, %rbx");
-        self.emit("    addq %rsi, %rbx");
-        self.emit("    movq %rdx, %r12");
+        self.emit(&format!("    movq {}, %rbx", arg0));
+        self.emit(&format!("    addq {}, %rbx", arg1));
+        self.emit(&format!("    movq {}, %r12", arg2));
         // data = tl_alloc(slice_len). The returned heap pointer is saved in %r13.
-        self.emit("    movq %r12, %rdi");
-        self.emit("    call tl_alloc");
+        self.emit(&format!("    movq %r12, {}", arg0));
+        self.emit_call("tl_alloc");
         self.emit("    movq %rax, %r13");
         // Copy the `slice_len` bytes from the source (%rbx) into the heap data
         // buffer (%r13), front to back.
@@ -3243,8 +3856,8 @@ impl X86_64Backend {
         self.emit("    jmp .L_tl_substring_copy_loop");
         self.emit(".L_tl_substring_copy_done:");
         // fat = tl_alloc(16); store { data_ptr (offset 0), len (offset 8) }.
-        self.emit("    movq $16, %rdi");
-        self.emit("    call tl_alloc");
+        self.emit(&format!("    movq $16, {}", arg0));
+        self.emit_call("tl_alloc");
         self.emit("    movq %r13, 0(%rax)");
         self.emit("    movq %r12, 8(%rax)");
         // %rax already holds the fat pointer — the return value.
@@ -3273,6 +3886,12 @@ impl X86_64Backend {
     /// heap-allocates so the result outlives the caller's frame; it is safe to
     /// emit when referenced.
     fn generate_string_concat_runtime_functions(&mut self) {
+        let calling_convention = self.target.calling_convention();
+        let arg0 = calling_convention.integer_arg_regs[0];
+        let arg1 = calling_convention.integer_arg_regs[1];
+        let arg2 = calling_convention.integer_arg_regs[2];
+        let arg3 = calling_convention.integer_arg_regs[3];
+
         self.emit("    .globl tl_string_concat");
         self.emit("tl_string_concat:");
         self.emit("    push %rbp");
@@ -3290,15 +3909,15 @@ impl X86_64Backend {
         // Stash the operands in callee-saved registers: %rbx = a_ptr, %r12 =
         // a_len, %r13 = b_ptr, %r14 = b_len. All survive the upcoming `tl_alloc`
         // calls.
-        self.emit("    movq %rdi, %rbx");
-        self.emit("    movq %rsi, %r12");
-        self.emit("    movq %rdx, %r13");
-        self.emit("    movq %rcx, %r14");
+        self.emit(&format!("    movq {}, %rbx", arg0));
+        self.emit(&format!("    movq {}, %r12", arg1));
+        self.emit(&format!("    movq {}, %r13", arg2));
+        self.emit(&format!("    movq {}, %r14", arg3));
         // data = tl_alloc(a_len + b_len). The returned heap pointer is saved in
         // %r15.
-        self.emit("    movq %r12, %rdi");
-        self.emit("    addq %r14, %rdi");
-        self.emit("    call tl_alloc");
+        self.emit(&format!("    movq %r12, {}", arg0));
+        self.emit(&format!("    addq %r14, {}", arg0));
+        self.emit_call("tl_alloc");
         self.emit("    movq %rax, %r15");
         // Copy a_len bytes from a_ptr (%rbx) into the heap data buffer (%r15) at
         // offset 0, front to back.
@@ -3327,8 +3946,8 @@ impl X86_64Backend {
         self.emit(".L_tl_string_concat_copy_b_done:");
         // fat = tl_alloc(16); store { data_ptr (offset 0), total_len (offset 8) }.
         // total_len = a_len + b_len, recomputed from the preserved %r12/%r14.
-        self.emit("    movq $16, %rdi");
-        self.emit("    call tl_alloc");
+        self.emit(&format!("    movq $16, {}", arg0));
+        self.emit_call("tl_alloc");
         self.emit("    movq %r15, 0(%rax)");
         self.emit("    movq %r12, %rdx");
         self.emit("    addq %r14, %rdx");
@@ -3455,6 +4074,14 @@ impl X86_64Backend {
 
         if self.stack_size > 0 {
             self.emit(&format!("    sub ${}, %rsp", self.stack_size));
+        }
+
+        if self.target.runtime_policy().emits_windows_runtime_helpers
+            && func.name == "main"
+            && (self.needs_arg_count_runtime || self.needs_arg_runtime)
+        {
+            self.emit("    movq %rcx, .L_tl_argc(%rip)");
+            self.emit("    movq %rdx, .L_tl_argv(%rip)");
         }
 
         // Move parameters to stack slots. Each argument register is written at
@@ -4820,6 +5447,12 @@ mod tests {
         generate_assembly_for_target(&ir, target).expect("backend should accept this program")
     }
 
+    fn assert_windows_runtime_has_no_linux_syscalls(asm: &str) {
+        assert!(!asm.contains("    syscall"), "asm:\n{}", asm);
+        assert!(!asm.contains("\n_start:"), "asm:\n{}", asm);
+        assert!(!asm.contains("    movq $60, %rax"), "asm:\n{}", asm);
+    }
+
     /// Compile source expecting the backend to reject it.
     fn compile_err(source: &str) -> String {
         let prog = parse(source).expect("parse failed");
@@ -4914,14 +5547,14 @@ mod tests {
 
         let runtime = target.runtime_policy();
         assert!(!runtime.emits_linux_syscall_helpers);
-        assert!(!runtime.emits_windows_runtime_helpers);
-        assert!(!runtime.uses_libc_print_runtime);
+        assert!(runtime.emits_windows_runtime_helpers);
+        assert!(runtime.uses_libc_print_runtime);
 
         let toolchain = target.toolchain();
         assert_eq!(toolchain.assembler, "clang");
         assert_eq!(toolchain.linker, "lld-link");
         assert_eq!(toolchain.dynamic_linker, None);
-        assert!(toolchain.libraries.is_empty());
+        assert_eq!(toolchain.libraries, &["msvcrt.lib"]);
     }
 
     #[test]
@@ -5124,6 +5757,138 @@ mod tests {
             "asm:\n{}",
             explicit_asm
         );
+    }
+
+    #[test]
+    fn test_windows_target_print_helpers_use_crt_calls() {
+        let asm = compile_ok_for_target(
+            r#"
+            (define (main) : i64
+              (begin
+                (print 42)
+                (print-bool true)
+                (print-float 3.5)
+                (print-char #A')
+                (print-newline)
+                (print-string "hi")
+                0))
+            "#,
+            BackendTarget::windows_x86_64(),
+        );
+
+        assert_windows_runtime_has_no_linux_syscalls(&asm);
+        assert!(asm.contains("    .extern _write"), "asm:\n{}", asm);
+        assert!(asm.contains("    .extern printf"), "asm:\n{}", asm);
+        assert!(asm.contains("    .extern fflush"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_print_i64:"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_print_bool:"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_print_f64:"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_print_char:"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_print_newline:"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_print_str:"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %xmm0, %rdx"), "asm:\n{}", asm);
+        assert!(asm.contains("    call printf"), "asm:\n{}", asm);
+        assert!(asm.contains("    call fflush"), "asm:\n{}", asm);
+        assert!(asm.contains("    call _write"), "asm:\n{}", asm);
+        assert!(asm.contains("    movb %cl, -1(%rbp)"), "asm:\n{}", asm);
+        assert!(asm.contains("    sub $32, %rsp"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_windows_target_allocator_and_allocating_string_helpers_use_crt() {
+        let asm = compile_ok_for_target(
+            r#"
+            (define (main) : i64
+              (begin
+                (int->string 42)
+                (substring "abcd" 1 2)
+                (string-append "a" "b")
+                0))
+            "#,
+            BackendTarget::windows_x86_64(),
+        );
+
+        assert_windows_runtime_has_no_linux_syscalls(&asm);
+        assert!(asm.contains("    .extern malloc"), "asm:\n{}", asm);
+        assert!(asm.contains("    .extern exit"), "asm:\n{}", asm);
+        assert!(asm.contains("    .extern _write"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call malloc"), "asm:\n{}", asm);
+        assert!(asm.contains("    jz .L_tl_alloc_abort"), "asm:\n{}", asm);
+        assert!(!asm.contains("tl_current_arena:"), "asm:\n{}", asm);
+        assert!(!asm.contains("    movq $9, %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_int_to_string:"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_substring:"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_string_concat:"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %r12, %rcx"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $16, %rcx"), "asm:\n{}", asm);
+        assert!(asm.contains("    call tl_alloc"), "asm:\n{}", asm);
+        assert!(asm.contains("    sub $32, %rsp"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_windows_target_argv_helpers_capture_crt_main_args() {
+        let asm = compile_ok_for_target(
+            "(define (main) : i64 (+ (arg-count) (string-length (arg 0))))",
+            BackendTarget::windows_x86_64(),
+        );
+
+        assert_windows_runtime_has_no_linux_syscalls(&asm);
+        assert!(asm.contains(".L_tl_argc:"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_argv:"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_arg_count:"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_arg:"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("    movq %rcx, .L_tl_argc(%rip)"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("    movq %rdx, .L_tl_argv(%rip)"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(asm.contains("    call .L_tl_arg"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %rcx, %rbx"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %r12, %rcx"), "asm:\n{}", asm);
+        assert!(asm.contains("    call tl_alloc"), "asm:\n{}", asm);
+        assert!(asm.contains("    call .L_tl_abort"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_windows_target_file_helpers_use_crt_calls() {
+        let asm = compile_ok_for_target(
+            r#"
+            (define (main) : i64
+              (begin
+                (read-file "input.txt")
+                (write-file "out.txt" "hi")
+                (if (file-exists? "input.txt") 1 0)))
+            "#,
+            BackendTarget::windows_x86_64(),
+        );
+
+        assert_windows_runtime_has_no_linux_syscalls(&asm);
+        for symbol in ["_open", "_lseeki64", "_read", "_write", "_close", "_access"] {
+            assert!(
+                asm.contains(&format!("    .extern {}", symbol)),
+                "missing extern {symbol}; asm:\n{}",
+                asm
+            );
+            assert!(
+                asm.contains(&format!("    call {}", symbol)),
+                "missing call {symbol}; asm:\n{}",
+                asm
+            );
+        }
+        assert!(asm.contains(".L_tl_read_file:"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_write_file:"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_file_exists:"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $0x8000, %rdx"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $0x8301, %rdx"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $0x180, %r8"), "asm:\n{}", asm);
+        assert!(!asm.contains("    movq $257, %rax"), "asm:\n{}", asm);
+        assert!(!asm.contains("    movq $-100, %rdi"), "asm:\n{}", asm);
     }
 
     #[test]
@@ -5594,6 +6359,8 @@ mod tests {
         assert!(asm.contains("    call tl_print_bool"), "asm:\n{}", asm);
         assert!(!asm.contains("    call _tl_print"), "asm:\n{}", asm);
         assert!(asm.contains("tl_print_i64:"), "asm:\n{}", asm);
+        assert!(asm.contains("    leaq -1(%rbp), %rsi"), "asm:\n{}", asm);
+        assert!(asm.contains("    movb $10, (%rsi)"), "asm:\n{}", asm);
         assert!(asm.contains("tl_print_bool:"), "asm:\n{}", asm);
         assert!(asm.contains(".L_tl_bool_true:"), "asm:\n{}", asm);
         assert!(asm.contains("    syscall"), "asm:\n{}", asm);

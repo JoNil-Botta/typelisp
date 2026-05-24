@@ -111,6 +111,8 @@ fn compiler_lower_tl_compiles_to_assembly() {
         "_tl_lower_state_finish_block:",
         "_tl_lower_compiler_program_checked:",
         "_tl_compiler_lower_self_test:",
+        // Scalar-match phi-shape self-test assertion (#602).
+        "_tl_compiler_lower_match_phi_shape_ok_question:",
         "_tl_compiler_ir_program_summary:",
         "_tl_typecheck_compiler_program:",
         "_tl_parse_ast_source:",

@@ -1172,16 +1172,63 @@
                                 (= (compiler-ir-summary-vars summary) 21)))))))]
     [(ErrCompilerLower _) false]))
 
+;; Count `IrInstrPhi` nodes, to assert the merge-phi shape of lowered scalar
+;; matches (#602): value-returning matches emit a merge phi, unit matches none.
+(define (lower-test-instr-phi-count [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrPhi _ _ _) 1]
+    [_ 0]))
+
+(define (lower-test-instrs-phi-count [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+     (+ (lower-test-instr-phi-count instr) (lower-test-instrs-phi-count rest))]))
+
+(define (lower-test-blocks-phi-count [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+     (match block
+       [(IrBlock _ instrs)
+        (+ (lower-test-instrs-phi-count instrs) (lower-test-blocks-phi-count rest))])]))
+
+;; Phi count of the function named `name`, or -1 when no such function exists
+;; (so a missing function fails both the `> 0` and `= 0` assertions below).
+(define (lower-test-function-phi-count [funcs : CompilerIrFunctionList] [name : String]) : i64
+  (match funcs
+    [(IrFunctionNil) (- 0 1)]
+    [(IrFunctionCons func rest)
+     (match func
+       [(IrFunction fname _ _ _ blocks)
+        (if (string-eq fname name)
+            (lower-test-blocks-phi-count blocks)
+            (lower-test-function-phi-count rest name))])]))
+
+;; The value-returning scalar matches (`classify`/`flag-score`/`sign`) each emit
+;; a merge phi; the unit-typed match (`announce`) emits no value phi.
+(define (compiler-lower-match-phi-shape-ok? [src : String]) : bool
+  (match (lower-compiler-source src)
+    [(OkCompilerLower program)
+     (match program
+       [(IrProgram _ functions _)
+        (and (> (lower-test-function-phi-count functions "classify") 0)
+             (and (> (lower-test-function-phi-count functions "flag-score") 0)
+                  (and (> (lower-test-function-phi-count functions "sign") 0)
+                       (= (lower-test-function-phi-count functions "announce") 0))))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-self-test) : i64
   (if (and (compiler-lower-ok-summary? (compiler-lower-smoke-source))
            (and (compiler-lower-ok? (compiler-lower-match-source))
-                (and (compiler-lower-ok? (compiler-lower-array-length-source))
-                     (and (compiler-lower-ok? (compiler-lower-stdio-source))
-                          (and (compiler-lower-ok? (compiler-lower-aggregate-source))
-                               (and (compiler-lower-error-ok? (compiler-typecheck-branch-mismatch-source)
-                                                              "typecheck: if branches must match")
-                                    (compiler-lower-error-ok? (compiler-lower-unsupported-source)
-                                                              "lower: unsupported expression")))))))
+                (and (compiler-lower-match-phi-shape-ok? (compiler-lower-match-source))
+                     (and (compiler-lower-ok? (compiler-lower-array-length-source))
+                          (and (compiler-lower-ok? (compiler-lower-stdio-source))
+                               (and (compiler-lower-ok? (compiler-lower-aggregate-source))
+                                    (and (compiler-lower-error-ok? (compiler-typecheck-branch-mismatch-source)
+                                                                   "typecheck: if branches must match")
+                                         (compiler-lower-error-ok? (compiler-lower-unsupported-source)
+                                                                   "lower: unsupported expression"))))))))
       42
       (begin
         (panic "lower: smoke score mismatch")

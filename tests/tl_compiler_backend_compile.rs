@@ -88,6 +88,9 @@ fn compiler_backend_tl_compiles_to_assembly() {
         "_tl_compiler_backend_call_symbol:",
         "_tl_compiler_backend_runtime_plan:",
         "_tl_compiler_backend_runtime_functions:",
+        "_tl_compiler_backend_runtime_functions_for_target:",
+        "_tl_compiler_backend_runtime_windows_alloc_functions:",
+        "_tl_compiler_backend_runtime_windows_read_stdin_line_functions:",
         "_tl_compiler_backend_runtime_read_stdin_line_functions:",
         "_tl_compiler_backend_runtime_read_stdin_bytes_functions:",
         "_tl_compiler_backend_runtime_stdin_eof_functions:",
@@ -97,7 +100,7 @@ fn compiler_backend_tl_compiles_to_assembly() {
         "_tl_compiler_backend_target_model_ok_question:",
         "_tl_compiler_backend_target_windows_abi_ok_question:",
         "_tl_compiler_backend_target_windows_callee_save_ok_question:",
-        "_tl_compiler_backend_target_windows_runtime_deferred_ok_question:",
+        "_tl_compiler_backend_target_windows_runtime_ok_question:",
         "_tl_compiler_backend_deterministic_ok_question:",
         "_tl_compiler_backend_string_ok_question:",
         "_tl_compiler_backend_aggregate_ok_question:",
@@ -117,7 +120,6 @@ fn compiler_backend_tl_compiles_to_assembly() {
 
     for message in [
         "backend: too many call args",
-        "backend: Windows runtime helpers not yet implemented (#648)",
         "backend: too many params",
         "backend: unsupported global initializer",
         "backend: smoke output mismatch",
@@ -140,6 +142,10 @@ fn compiler_backend_tl_compiles_to_assembly() {
         ".L_tl_flush_stdout:\\n",
         ".L_tl_stdin_eof_flag:\\n",
         "tl: stdin failed",
+        ".extern malloc\\n",
+        "    call malloc\\n",
+        "    call _read\\n",
+        "    call fflush\\n",
         "(make-array i64 2)",
         "make_array_len_ok",
         "    jne .Lmain_while_body.1\\n",
@@ -151,6 +157,10 @@ fn compiler_backend_tl_compiles_to_assembly() {
     ] {
         assert_message(&asm, message, "compiler_backend");
     }
+    assert!(
+        !asm.contains("backend: Windows runtime helpers not yet implemented (#648)"),
+        "compiler_backend should no longer carry the old Windows runtime rejection:\n{asm}",
+    );
 }
 
 #[test]
@@ -188,6 +198,7 @@ fn compiler_backend_runtime_fixture_tl_compiles_to_assembly() {
 
     assert_no_todo(&asm, "compiler_backend_runtime_fixture");
     for sym in [
+        "_tl_compiler_backend_runtime_fixture_emit:",
         "_tl_compiler_backend_runtime_helper_program:",
         "_tl_compiler_backend_runtime_helper_asm_ok_question:",
         "_tl_compiler_backend_emit_program:",

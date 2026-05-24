@@ -48,6 +48,132 @@ fn windows_target_compiles_links_and_runs_native_executables() {
     }
 }
 
+#[test]
+fn selfhost_backend_windows_runtime_helpers_emit_assemble_link_and_run() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let fixture_path = manifest_dir
+        .join("selfhost")
+        .join("compiler_backend_runtime_fixture.tl");
+    let work_dir = manifest_dir
+        .join("target")
+        .join("windows-native-tests")
+        .join("selfhost_backend_runtime_helpers");
+    fs::create_dir_all(&work_dir).expect("create selfhost Windows runtime helper test dir");
+
+    let asm_path = work_dir.join("runtime_helpers.s");
+    let obj_path = work_dir.join("runtime_helpers.obj");
+    let bin_path = work_dir.join("runtime_helpers.exe");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&fixture_path)
+        .arg("--target")
+        .arg("windows-x86_64")
+        .arg("--")
+        .arg(&asm_path)
+        .arg("windows-x86_64")
+        .output()
+        .expect("run selfhost backend runtime fixture for Windows target");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "selfhost Windows runtime fixture failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let asm = fs::read_to_string(&asm_path)
+        .expect("read selfhost Windows runtime helper assembly")
+        .replace("\r\n", "\n")
+        .replace('\r', "\n");
+    for snippet in [
+        ".globl main\n",
+        ".globl tl_alloc\n",
+        "\ntl_alloc:\n",
+        ".globl tl_oob_abort\n",
+        "\ntl_oob_abort:\n",
+        ".globl tl_substring\n",
+        "\ntl_substring:\n",
+        ".globl tl_string_concat\n",
+        "\ntl_string_concat:\n",
+        "\n.L_tl_read_stdin_line:\n",
+        "\n.L_tl_read_stdin_bytes:\n",
+        "\n.L_tl_stdin_eof:\n",
+        "\n.L_tl_flush_stdout:\n",
+        "    .extern malloc\n",
+        "    .extern _write\n",
+        "    .extern exit\n",
+        "    .extern _read\n",
+        "    .extern fflush\n",
+        "    call malloc\n",
+        "    call _write\n",
+        "    call _read\n",
+        "    call fflush\n",
+    ] {
+        assert!(
+            asm.contains(snippet),
+            "selfhost Windows runtime helper assembly missing {:?}:\n{}",
+            snippet,
+            asm
+        );
+    }
+    assert!(!asm.contains("    syscall"), "asm:\n{}", asm);
+    assert!(!asm.contains("\n_start:"), "asm:\n{}", asm);
+    for helper in [
+        ".extern tl_alloc\n",
+        ".extern tl_oob_abort\n",
+        ".extern tl_substring\n",
+        ".extern tl_string_concat\n",
+        ".extern .L_tl_read_stdin_line\n",
+        ".extern .L_tl_read_stdin_bytes\n",
+        ".extern .L_tl_stdin_eof\n",
+        ".extern .L_tl_flush_stdout\n",
+    ] {
+        assert!(
+            !asm.contains(helper),
+            "runtime helper should be defined inline, not extern: {helper}\n{asm}"
+        );
+    }
+
+    let status = Command::new("clang")
+        .arg("--target=x86_64-pc-windows-msvc")
+        .arg("-c")
+        .arg(&asm_path)
+        .arg("-o")
+        .arg(&obj_path)
+        .status()
+        .expect("assemble selfhost Windows runtime helper output");
+    assert!(
+        status.success(),
+        "assembling selfhost Windows runtime helper output failed"
+    );
+
+    let status = Command::new("lld-link")
+        .arg("/NOLOGO")
+        .arg(&obj_path)
+        .arg(format!("/OUT:{}", bin_path.display()))
+        .arg("/SUBSYSTEM:CONSOLE")
+        .arg("msvcrt.lib")
+        .arg("legacy_stdio_definitions.lib")
+        .status()
+        .expect("link selfhost Windows runtime helper output");
+    assert!(
+        status.success(),
+        "linking selfhost Windows runtime helper output failed"
+    );
+
+    let output = Command::new(&bin_path)
+        .output()
+        .expect("run selfhost Windows runtime helper binary");
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "selfhost Windows runtime helper binary exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 fn native_cases() -> Vec<Case> {
     vec![
         case("hello", 42, ""),

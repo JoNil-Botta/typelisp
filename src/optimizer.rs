@@ -718,6 +718,13 @@ impl Optimizer {
                 Self::add_value_uses(value, used);
                 Self::add_value_uses(mask, used);
             }
+            Instruction::PredicatedLoad {
+                base, index, mask, ..
+            } => {
+                Self::add_value_uses(base, used);
+                Self::add_value_uses(index, used);
+                Self::add_value_uses(mask, used);
+            }
             Instruction::TailMask { index, len, .. } => {
                 Self::add_value_uses(index, used);
                 Self::add_value_uses(len, used);
@@ -991,6 +998,13 @@ impl Optimizer {
                 substitute(value);
                 substitute(mask);
             }
+            Instruction::PredicatedLoad {
+                base, index, mask, ..
+            } => {
+                substitute(base);
+                substitute(index);
+                substitute(mask);
+            }
             Instruction::TailMask { index, len, .. } => {
                 substitute(index);
                 substitute(len);
@@ -1020,6 +1034,7 @@ impl Optimizer {
             | Instruction::MaskReduce { dst, .. }
             | Instruction::Select { dst, .. }
             | Instruction::VectorLoad { dst, .. }
+            | Instruction::PredicatedLoad { dst, .. }
             | Instruction::TailMask { dst, .. }
             | Instruction::Phi { dst, .. } => Some(*dst),
             Instruction::Alloc { var, .. } => Some(*var),

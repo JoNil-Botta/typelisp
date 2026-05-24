@@ -1651,6 +1651,57 @@
               1
               0))))]))
 
+;; True only when `src` fails to parse with exactly the wanted diagnostic. The
+
+;; counterpart to the success-path smoke: it pins the parser's rejection
+
+;; messages so a regression that drops or relabels an error is caught (#655).
+
+(define (compiler-parse-error-ok? [src : String] [want : String]) : bool
+  (match (parse-ast-source src)
+    [(ErrAstProgram message) (string-eq message want)]
+    [(OkAstProgram _) false]))
+
+;; Minimal complete programs that lex cleanly but reach a specific parser
+
+;; rejection, one per representative special form.
+
+(define (compiler-parse-malformed-binary-source) : String
+  "(define (main) : i64 (+ 1))")
+
+(define (compiler-parse-malformed-if-source) : String
+  "(define (main) : i64 (if true 1))")
+
+(define (compiler-parse-malformed-while-source) : String
+  "(define (main) : i64 (while true))")
+
+(define (compiler-parse-malformed-set-source) : String
+  "(define (main) : i64 (set! x))")
+
+(define (compiler-parse-cond-no-else-source) : String
+  "(define (main) : i64 (cond))")
+
+(define (compiler-parse-error-tests-ok?) : bool
+  (and
+    (compiler-parse-error-ok?
+      (compiler-parse-malformed-binary-source)
+      "parse: malformed binary expression")
+    (and
+      (compiler-parse-error-ok?
+        (compiler-parse-malformed-if-source)
+        "parse: malformed if")
+      (and
+        (compiler-parse-error-ok?
+          (compiler-parse-malformed-while-source)
+          "parse: malformed while")
+        (and
+          (compiler-parse-error-ok?
+            (compiler-parse-malformed-set-source)
+            "parse: malformed set!")
+          (compiler-parse-error-ok?
+            (compiler-parse-cond-no-else-source)
+            "parse: cond requires final else arm"))))))
+
 (define (compiler-parse-smoke) : i64
   (match (parse-ast-source (compiler-parse-smoke-source))
     [(OkAstProgram program)
@@ -1659,7 +1710,11 @@
         (and
           (compiler-parse-nested-expr-span-ok?)
           (compiler-parse-error-span-ok?)))
-        42
+        (if (compiler-parse-error-tests-ok?)
+          42
+          (begin
+            (panic "parse: error-path self-tests failed")
+            0))
         (begin
           (panic "parse: compiler AST smoke score mismatch")
           0))]

@@ -90,6 +90,8 @@ fn compiler_parse_core_tl_compiles_to_assembly() {
         "_tl_compiler_parse_smoke:",
         "_tl_compiler_parse_nested_expr_span_ok_question:",
         "_tl_compiler_parse_error_span_ok_question:",
+        "_tl_compiler_parse_error_ok_question:",
+        "_tl_compiler_parse_error_tests_ok_question:",
         "_tl_read_form_spanned_result:",
         "_tl_lex_spanned_result:",
         "_tl_read_form:",
@@ -109,6 +111,12 @@ fn compiler_parse_core_tl_compiles_to_assembly() {
         "parse: cond requires final else arm",
         "parse: cond else arm must be final",
         "parse: compiler AST smoke score mismatch",
+        // Error-path self-test diagnostics (#655).
+        "parse: malformed binary expression",
+        "parse: malformed if",
+        "parse: malformed while",
+        "parse: malformed set!",
+        "parse: error-path self-tests failed",
     ] {
         assert_message(&asm, message, "compiler_parse_core");
     }

@@ -1171,6 +1171,114 @@ fn doc_generates_markdown_with_custom_output() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
+fn doc_generates_module_graph_navigation() {
+    let dir = fixture_dir("doc-module-graph");
+    let stdlib_root = dir.join("repo-stdlib");
+    fs::create_dir_all(&stdlib_root).expect("create stdlib root");
+
+    let local = dir.join("local.tl");
+    fs::write(
+        &local,
+        r#";;;; Local module docs.
+
+;;; Local answer docs.
+(define local-answer : i64 7)
+"#,
+    )
+    .expect("write local doc source");
+
+    let stdlib = stdlib_root.join("docfixture.tl");
+    fs::write(
+        &stdlib,
+        r#";;;; Stdlib module docs.
+
+;;; Stdlib answer docs.
+(define stdlib-answer : i64 35)
+"#,
+    )
+    .expect("write stdlib doc source");
+
+    let entry = dir.join("entry.tl");
+    fs::write(
+        &entry,
+        r#";;;; Entry module docs.
+
+(import "local.tl")
+(import "local.tl")
+(import "stdlib/docfixture.tl")
+
+;;; Entry docs.
+(define (main) : i64 (+ local-answer stdlib-answer))
+"#,
+    )
+    .expect("write entry doc source");
+
+    let out = dir.join("graph.md");
+    let output = typelisp(&[
+        "doc",
+        entry.to_str().unwrap(),
+        "-o",
+        out.to_str().unwrap(),
+        "--stdlib-root",
+        stdlib_root.to_str().unwrap(),
+    ]);
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    let md = fs::read_to_string(&out).expect("read generated graph markdown");
+    let entry_path = fs::canonicalize(&entry)
+        .expect("canonicalize entry")
+        .display()
+        .to_string();
+    let local_path = fs::canonicalize(&local)
+        .expect("canonicalize local")
+        .display()
+        .to_string();
+    let stdlib_path = fs::canonicalize(&stdlib)
+        .expect("canonicalize stdlib")
+        .display()
+        .to_string();
+
+    assert!(
+        md.contains("## Modules"),
+        "expected module navigation:\n{md}"
+    );
+    assert!(
+        md.contains(&format!("- [{entry_path}](#")),
+        "expected entry module nav link:\n{md}"
+    );
+    assert!(
+        md.contains(&format!("Source: `{local_path}`")),
+        "expected local source path:\n{md}"
+    );
+    assert!(
+        md.contains(&format!("Source: `{stdlib_path}`")),
+        "expected stdlib source path:\n{md}"
+    );
+    assert!(
+        md.contains("Entry module docs.")
+            && md.contains("Local module docs.")
+            && md.contains("Stdlib module docs."),
+        "expected docs from entry, local, and stdlib modules:\n{md}"
+    );
+    assert_eq!(
+        md.matches("Local module docs.").count(),
+        1,
+        "repeated import should not duplicate local docs:\n{md}"
+    );
+
+    let entry_idx = md.find(&format!("## {entry_path}")).expect("entry section");
+    let local_idx = md.find(&format!("## {local_path}")).expect("local section");
+    let stdlib_idx = md
+        .find(&format!("## {stdlib_path}"))
+        .expect("stdlib section");
+    assert!(
+        entry_idx < local_idx && local_idx < stdlib_idx,
+        "expected stable loader source order:\n{md}"
+    );
+}
+
+#[test]
 fn doc_generate_missing_file_shows_usage() {
     let output = typelisp(&["doc"]);
     assert!(!output.status.success(), "expected failure on missing arg");

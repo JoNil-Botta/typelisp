@@ -104,8 +104,13 @@ end
 
 case|selfhost_compile|selfhost/compile.tl|assembly|exactly-one|direct
 contains|_tl_compile_cli_config:
+contains|_tl_compile_cli_target:
 contains|_tl_compiler_driver_compile_file:
+contains|_tl_compiler_driver_compile_file_for_target:
+contains|_tl_compiler_backend_emit_program_with_spans_for_target:
 contains|compile: expected source path
+contains|compile: --target requires a value
+contains|Error: unknown target '
 contains|--emit-ir
 end
 
@@ -183,7 +188,10 @@ end
 
 case|selfhost_compiler_driver_core|selfhost/compiler_driver_core.tl|assembly|skip|direct
 contains|_tl_compiler_driver_compile_file:
+contains|_tl_compiler_driver_compile_file_for_target:
 contains|_tl_compiler_driver_emit_file:
+contains|_tl_compiler_driver_emit_file_for_target:
+contains|_tl_compiler_backend_emit_program_with_spans_for_target:
 contains|_tl_compiler_backend_emit_source:
 end
 
@@ -294,6 +302,33 @@ end
 case|selfhost_doc_extract_smoke|selfhost/doc_extract_smoke.tl|assembly|exactly-one|direct
 contains|_tl_doc_extract_smoke:
 contains|_tl_doc_extract_source:
+end
+
+case|selfhost_doc_html|selfhost/doc_html.tl|assembly|skip|direct
+contains|_tl_doc_html_render_module_page:
+contains|_tl_doc_html_render_module_graph:
+contains|_tl_doc_html_render_source:
+contains|_tl_doc_html_escape:
+contains|_tl_doc_html_smoke:
+contains|_tl_doc_render_anchor:
+contains|_tl_doc_extract_source:
+contains|_tl_format_lex:
+contains|<!doctype html>
+contains|typelisp-docs.css
+contains|tl-doc-module-nav
+contains|&quot;
+contains|tl-smoke-60-38-62-46tl
+contains|doc-html: item anchor missing
+contains|No documented declarations.
+end
+
+case|selfhost_doc_html_smoke|selfhost/doc_html_smoke.tl|assembly|exactly-one|direct
+contains|_tl_doc_html_smoke:
+contains|_tl_doc_html_render_module_page:
+contains|_tl_doc_html_render_module_graph:
+contains|_tl_doc_render_anchor:
+contains|_tl_doc_extract_source:
+contains|_tl_format_lex:
 end
 
 case|selfhost_doc_render|selfhost/doc_render.tl|assembly|skip|direct

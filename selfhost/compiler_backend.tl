@@ -1135,7 +1135,9 @@
     [(BackendTargetWindows) 4]))
 
 ;; Number of f64 argument registers (#750). System V uses xmm0..xmm7 (8) and
+
 ;; Windows shares its 4 positional slots, so the float bank also tops out at 4.
+
 (define (compiler-backend-call-float-register-count
   [target : CompilerBackendTarget]) : i64
   (match target
@@ -1153,9 +1155,13 @@
     (backend-cat4 "    addq $" (int->string space) ", %rsp\n" "")))
 
 ;; Whether the argument at the given bank indexes is passed on the stack
+
 ;; (#750). Windows shares one positional slot bank (`position`); System V keeps
+
 ;; the integer and float banks independent, so an arg spills only once its own
+
 ;; bank is exhausted (rdi..r9 / xmm0..xmm7).
+
 (define (compiler-backend-stack-call-arg-for-banks?
   [target : CompilerBackendTarget]
   [is-f64 : bool]
@@ -1217,28 +1223,37 @@
       [_ local-types])))
 
 ;; Byte offset from %rsp where the `stack-idx`-th stack-passed OUTGOING argument
+
 ;; is stored (#750). Stack args are numbered sequentially in argument order (0,
+
 ;; 1, ...) independent of which register bank overflowed. System V packs them at
+
 ;; 0,8,16,...; Windows packs them after the 32-byte shadow space.
+
 (define (compiler-backend-outgoing-stack-arg-offset
   [target : CompilerBackendTarget]
   [stack-idx : i64]) : i64
   (+ (compiler-backend-outgoing-shadow-space target) (* stack-idx 8)))
 
 ;; Byte offset from %rbp where the `stack-idx`-th INCOMING stack argument lives
+
 ;; (#750). System V's first stack arg sits at 16(%rbp) (saved %rbp + return
+
 ;; address); Windows adds its 32-byte shadow space (48(%rbp)).
+
 (define (compiler-backend-incoming-stack-arg-offset
   [target : CompilerBackendTarget]
   [stack-idx : i64]) : i64
-  (+
-    (+ 16 (compiler-backend-outgoing-shadow-space target))
-    (* stack-idx 8)))
+  (+ (+ 16 (compiler-backend-outgoing-shadow-space target)) (* stack-idx 8)))
 
 ;; Count the OUTGOING arguments that must be passed on the stack (#750). Walks
+
 ;; the args in order, tracking the integer/float/position banks exactly as
+
 ;; `compiler-backend-emit-call-args` does, and counts every arg whose bank is
+
 ;; already full.
+
 (define (compiler-backend-call-stack-arg-count
   [target : CompilerBackendTarget]
   [args : CompilerIrValueList]
@@ -1284,8 +1299,11 @@
               stack-count))))]))
 
 ;; Total %rsp adjustment reserved for a call's stack-passed args (#750):
+
 ;; `roundup16(shadow + stack-arg-count * 8)`. System V has no shadow space, so
+
 ;; this is 0 whenever every arg fits in registers.
+
 (define (compiler-backend-call-arg-space
   [target : CompilerBackendTarget]
   [args : CompilerIrValueList]
@@ -1297,9 +1315,7 @@
     (if (and (= stack-count 0) (not (compiler-backend-target-windows? target)))
       0
       (compiler-backend-round-up-16
-        (+
-          (compiler-backend-outgoing-shadow-space target)
-          (* stack-count 8))))))
+        (+ (compiler-backend-outgoing-shadow-space target) (* stack-count 8))))))
 
 (define (compiler-backend-emit-call-args
   [target : CompilerBackendTarget]
@@ -1327,8 +1343,18 @@
             [(AstTypeCons _ tail) tail]
             [(AstTypeNil) AstTypeNil])])
         (let ([is-f64 : bool (compiler-backend-f64-type? arg-ty)])
-          (let ([next-int : i64 (if is-f64 int-idx (+ int-idx 1))]
-            [next-float : i64 (if is-f64 (+ float-idx 1) float-idx)])
+          (let ([next-int
+              :
+              i64
+              (if is-f64
+                int-idx
+                (+ int-idx 1))]
+            [next-float
+              :
+              i64
+              (if is-f64
+                (+ float-idx 1)
+                float-idx)])
             (if (compiler-backend-stack-call-arg-for-banks?
               target
               is-f64
@@ -1600,27 +1626,27 @@
             0
             0
             func-diag)
-          [(OkCompilerBackend args-asm)
-            (OkCompilerBackend
-              (string-append
-                (compiler-backend-emit-call-space-sub call-space)
+            [(OkCompilerBackend args-asm)
+              (OkCompilerBackend
                 (string-append
-                  args-asm
-                  (backend-cat5
-                    "    call "
-                    (compiler-backend-call-symbol name plan functions externs)
-                    "\n"
-                    (string-append
-                      (compiler-backend-emit-call-space-add call-space)
-                      (compiler-backend-emit-store-typed-var-with-plan
-                        assignments
-                        dst
-                        (if (compiler-backend-f64-type? ty)
-                          "%xmm0"
-                          "%rax")
-                        ty))
-                    ""))))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])))]
+                  (compiler-backend-emit-call-space-sub call-space)
+                  (string-append
+                    args-asm
+                    (backend-cat5
+                      "    call "
+                      (compiler-backend-call-symbol name plan functions externs)
+                      "\n"
+                      (string-append
+                        (compiler-backend-emit-call-space-add call-space)
+                        (compiler-backend-emit-store-typed-var-with-plan
+                          assignments
+                          dst
+                          (if (compiler-backend-f64-type? ty)
+                            "%xmm0"
+                            "%rax")
+                          ty))
+                      ""))))]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)])))]
     [(IrInstrStore name value ty)
       (match (compiler-backend-emit-load-typed-value-with-plan
         assignments
@@ -1818,10 +1844,15 @@
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
 
 ;; Move INCOMING parameters into their local frame slots (#750). Register
+
 ;; params come from rdi/rsi/.. (or xmm0..) per the calling convention; params
+
 ;; beyond a bank's registers are read back from the caller's stack frame at
+
 ;; `compiler-backend-incoming-stack-arg-offset`, indexed by a sequential
+
 ;; stack-param counter that mirrors the call site.
+
 (define (compiler-backend-emit-param-spills
   [target : CompilerBackendTarget]
   [assignments : CompilerRegAssignmentList]
@@ -1836,8 +1867,18 @@
       (match param
         [(IrParam _ ty var-id)
           (let ([is-f64 : bool (compiler-backend-f64-type? ty)])
-            (let ([next-int : i64 (if is-f64 int-idx (+ int-idx 1))]
-              [next-float : i64 (if is-f64 (+ float-idx 1) float-idx)])
+            (let ([next-int
+                :
+                i64
+                (if is-f64
+                  int-idx
+                  (+ int-idx 1))]
+              [next-float
+                :
+                i64
+                (if is-f64
+                  (+ float-idx 1)
+                  float-idx)])
               (if (compiler-backend-stack-call-arg-for-banks?
                 target
                 is-f64
@@ -1911,7 +1952,8 @@
                               reg
                               ty)
                             tail))]
-                      [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+                      [(ErrCompilerBackend message)
+                        (ErrCompilerBackend message)])]
                   [(ErrBackendReg _)
                     (ErrCompilerBackend
                       (compiler-diagnostic-at-start
@@ -3952,8 +3994,11 @@ tl_string_concat:
       (if (> x 44) x 0))))")
 
 ;; SysV call with more than six integer args (#750): args 7+ spill to the
+
 ;; stack. `add8` reads its last two (stack-passed) params, exercising both the
+
 ;; outgoing stack stores at the call and the incoming stack reads in the callee.
+
 (define (compiler-backend-stack-int-args-source) : String
   "(define (add8
   [a : i64]
@@ -3969,6 +4014,7 @@ tl_string_concat:
   (add8 1 2 3 4 5 6 7 8))")
 
 ;; SysV call with more than eight f64 args (#750): xmm0..xmm7 then stack.
+
 (define (compiler-backend-stack-f64-args-source) : String
   "(define (sum10
   [a : f64]
@@ -3986,9 +4032,13 @@ tl_string_concat:
   (if (< (sum10 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0) 20.0) 1 0))")
 
 ;; Mixed int/f64 call that exhausts both banks and spills (#750): the integer
+
 ;; and float register indexes advance independently under System V. There are 7
+
 ;; integer args (rdi..r9 then one stacked) and 9 f64 args (xmm0..xmm7 then one
+
 ;; stacked); `mix` returns the sum of the two stack-passed args.
+
 (define (compiler-backend-stack-mixed-args-source) : String
   "(define (mix
   [i0 : i64]
@@ -4012,13 +4062,21 @@ tl_string_concat:
   (mix 1 2 3 4 5 6 7 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0))")
 
 ;; #750 RUN-LEVEL witness source: a self-contained program that exercises all
+
 ;; three spill paths (integer, f64, and mixed) and returns 96 only when every
+
 ;; stack-passed argument arrives with the correct value and ordering. Emitted by
+
 ;; the stack-args fixture, then assembled, linked, and run by the integration
+
 ;; suite. `add8` returns g*10+h (78) so a swapped/wrong-offset int stack arg
+
 ;; changes the result; `f10check` checks the two spilled xmm-overflow floats
+
 ;; (1); `mixcheck` keeps the integer and float banks independent and returns the
+
 ;; spilled integer (17) only when the spilled float carries its value. 78+1+17.
+
 (define (compiler-backend-stack-args-fixture-source) : String
   "(define (add8
   [a : i64]
@@ -4570,12 +4628,15 @@ tl_string_concat:
     [(ErrCompilerBackend _) false]))
 
 ;; #750: a SysV call with seven integer args no longer rejects as "too many
+
 ;; call args". The 7th arg spills: 16-byte call space is reserved, the spilled
+
 ;; value is staged through %r11 and stored at 0(%rsp), and `add8` reads its
+
 ;; stack-passed params back from 16(%rbp)/24(%rbp).
+
 (define (compiler-backend-stack-int-args-ok?) : bool
-  (match (compiler-backend-emit-source
-    (compiler-backend-stack-int-args-source))
+  (match (compiler-backend-emit-source (compiler-backend-stack-int-args-source))
     [(OkCompilerBackend asm)
       (and
         (not (compiler-backend-string-contains? asm "too many call args"))
@@ -4588,37 +4649,50 @@ tl_string_concat:
               (and
                 (compiler-backend-string-contains? asm "    call _tl_add8\n")
                 (and
-                  (compiler-backend-string-contains? asm "    movq 16(%rbp), %rax\n")
+                  (compiler-backend-string-contains?
+                    asm
+                    "    movq 16(%rbp), %rax\n")
                   (compiler-backend-string-contains?
                     asm
                     "    movq 24(%rbp), %rax\n")))))))]
     [(ErrCompilerBackend _) false]))
 
 ;; #750: a SysV call with ten f64 args uses xmm0..xmm7 then spills two on the
+
 ;; stack through %xmm15; the callee reads them back via movsd from the incoming
+
 ;; stack slots.
+
 (define (compiler-backend-stack-f64-args-ok?) : bool
-  (match (compiler-backend-emit-source
-    (compiler-backend-stack-f64-args-source))
+  (match (compiler-backend-emit-source (compiler-backend-stack-f64-args-source))
     [(OkCompilerBackend asm)
       (and
         (not (compiler-backend-string-contains? asm "too many call args"))
         (and
           (compiler-backend-string-contains? asm "    subq $16, %rsp\n")
           (and
-            (compiler-backend-string-contains? asm "    movsd %xmm15, 0(%rsp)\n")
+            (compiler-backend-string-contains?
+              asm
+              "    movsd %xmm15, 0(%rsp)\n")
             (and
-              (compiler-backend-string-contains? asm "    movsd %xmm15, 8(%rsp)\n")
+              (compiler-backend-string-contains?
+                asm
+                "    movsd %xmm15, 8(%rsp)\n")
               (and
-                (compiler-backend-string-contains? asm "    movsd 16(%rbp), %xmm0\n")
+                (compiler-backend-string-contains?
+                  asm
+                  "    movsd 16(%rbp), %xmm0\n")
                 (compiler-backend-string-contains?
                   asm
                   "    movsd 24(%rbp), %xmm0\n"))))))]
     [(ErrCompilerBackend _) false]))
 
 ;; #750: a mixed call spilling one int and one f64 keeps the integer and float
+
 ;; register banks independent and uses the right scratch register for each
+
 ;; spilled arg.
+
 (define (compiler-backend-stack-mixed-args-ok?) : bool
   (match (compiler-backend-emit-source
     (compiler-backend-stack-mixed-args-source))
@@ -4628,12 +4702,16 @@ tl_string_concat:
         (and
           (compiler-backend-string-contains? asm "    movq %r11, 0(%rsp)\n")
           (and
-            (compiler-backend-string-contains? asm "    movsd %xmm15, 8(%rsp)\n")
+            (compiler-backend-string-contains?
+              asm
+              "    movsd %xmm15, 8(%rsp)\n")
             (compiler-backend-string-contains? asm "    call _tl_mix\n"))))]
     [(ErrCompilerBackend _) false]))
 
 ;; #750: the Windows positional ABI still reserves 32-byte shadow space, stacks
+
 ;; args after the first four, and stores them after the shadow space.
+
 (define (compiler-backend-stack-windows-args-ok?) : bool
   (match (compiler-backend-emit-source-for-target
     (compiler-backend-stack-int-args-source)
@@ -4646,7 +4724,9 @@ tl_string_concat:
           (and
             (compiler-backend-string-contains? asm "    movq %r11, 32(%rsp)\n")
             (and
-              (compiler-backend-string-contains? asm "    movq %r11, 56(%rsp)\n")
+              (compiler-backend-string-contains?
+                asm
+                "    movq %r11, 56(%rsp)\n")
               (compiler-backend-string-contains?
                 asm
                 "    movq 48(%rbp), %rax\n")))))]

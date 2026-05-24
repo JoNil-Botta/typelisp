@@ -151,10 +151,109 @@
     [(IrBlockCons block rest)
      (IrBlockCons (optimize-block block) (optimize-block-list rest))]))
 
+;; --- dead-code elimination (#544) --------------------------------------------
+;;
+;; Conservative DCE: collect every IR var id used as an operand across the whole
+;; function, then drop pure temporary-producing instructions (Mov/BinOp/UnOp)
+;; whose destination var is never used. Calls, stores, jumps, branches, returns,
+;; and phi nodes are always preserved (side effects / control flow / SSA merges),
+;; matching the Rust optimizer's first DCE slice. No CFG rewriting.
+
+(defenum OptIntSet
+  (OptIntNil)
+  (OptIntCons i64 OptIntSet))
+
+(define (opt-int-member? [set : OptIntSet] [x : i64]) : bool
+  (match set
+    [(OptIntNil) false]
+    [(OptIntCons v rest) (if (= v x) true (opt-int-member? rest x))]))
+
+(define (opt-int-add [set : OptIntSet] [x : i64]) : OptIntSet
+  (if (opt-int-member? set x) set (OptIntCons x set)))
+
+(define (dce-collect-value [used : OptIntSet] [value : CompilerIrValue]) : OptIntSet
+  (match value
+    [(IrValueVar id) (opt-int-add used id)]
+    [_ used]))
+
+(define (dce-collect-args [used : OptIntSet] [args : CompilerIrValueList]) : OptIntSet
+  (match args
+    [(IrValueNil) used]
+    [(IrValueCons value rest) (dce-collect-args (dce-collect-value used value) rest)]))
+
+(define (dce-collect-phi-inputs [used : OptIntSet] [inputs : CompilerIrPhiInputList]) : OptIntSet
+  (match inputs
+    [(IrPhiInputNil) used]
+    [(IrPhiInputCons input rest)
+     (match input
+       [(IrPhiInput value _) (dce-collect-phi-inputs (dce-collect-value used value) rest)])]))
+
+(define (dce-collect-maybe [used : OptIntSet] [maybe : CompilerIrMaybeValue]) : OptIntSet
+  (match maybe
+    [(IrNoValue) used]
+    [(IrSomeValue value) (dce-collect-value used value)]))
+
+(define (dce-collect-instr [used : OptIntSet] [instr : CompilerIrInstr]) : OptIntSet
+  (match instr
+    [(IrInstrMov _ value _) (dce-collect-value used value)]
+    [(IrInstrAlloc _ _) used]
+    [(IrInstrAddrOf _ src) (opt-int-add used src)]
+    [(IrInstrGep _ base offset _) (dce-collect-value (dce-collect-value used base) offset)]
+    [(IrInstrLoad _ src _) (dce-collect-value used src)]
+    [(IrInstrStorePtr ptr value _) (dce-collect-value (dce-collect-value used ptr) value)]
+    [(IrInstrCast _ src _ _) (dce-collect-value used src)]
+    [(IrInstrBinOp _ _ l r _) (dce-collect-value (dce-collect-value used l) r)]
+    [(IrInstrUnOp _ _ value _) (dce-collect-value used value)]
+    [(IrInstrCall _ _ args _) (dce-collect-args used args)]
+    [(IrInstrStore _ value _) (dce-collect-value used value)]
+    [(IrInstrJump _) used]
+    [(IrInstrBranch cond _ _) (dce-collect-value used cond)]
+    [(IrInstrReturn maybe) (dce-collect-maybe used maybe)]
+    [(IrInstrPhi _ inputs _) (dce-collect-phi-inputs used inputs)]))
+
+(define (dce-collect-instrs [used : OptIntSet] [instrs : CompilerIrInstrList]) : OptIntSet
+  (match instrs
+    [(IrInstrNil) used]
+    [(IrInstrCons instr rest) (dce-collect-instrs (dce-collect-instr used instr) rest)]))
+
+(define (dce-collect-blocks [used : OptIntSet] [blocks : CompilerIrBlockList]) : OptIntSet
+  (match blocks
+    [(IrBlockNil) used]
+    [(IrBlockCons block rest)
+     (match block
+       [(IrBlock _ instrs) (dce-collect-blocks (dce-collect-instrs used instrs) rest)])]))
+
+;; A pure temporary def whose destination is unused may be removed.
+(define (dce-instr-removable? [instr : CompilerIrInstr] [used : OptIntSet]) : bool
+  (match instr
+    [(IrInstrMov dst _ _) (not (opt-int-member? used dst))]
+    [(IrInstrBinOp dst _ _ _ _) (not (opt-int-member? used dst))]
+    [(IrInstrUnOp dst _ _ _) (not (opt-int-member? used dst))]
+    [_ false]))
+
+(define (dce-filter-instrs [instrs : CompilerIrInstrList] [used : OptIntSet]) : CompilerIrInstrList
+  (match instrs
+    [(IrInstrNil) (IrInstrNil)]
+    [(IrInstrCons instr rest)
+     (if (dce-instr-removable? instr used)
+         (dce-filter-instrs rest used)
+         (IrInstrCons instr (dce-filter-instrs rest used)))]))
+
+(define (dce-filter-blocks [blocks : CompilerIrBlockList] [used : OptIntSet]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) (IrBlockNil)]
+    [(IrBlockCons block rest)
+     (match block
+       [(IrBlock label instrs)
+        (IrBlockCons (IrBlock label (dce-filter-instrs instrs used)) (dce-filter-blocks rest used))])]))
+
+(define (optimize-dce-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (dce-filter-blocks blocks (dce-collect-blocks (OptIntNil) blocks)))
+
 (define (optimize-function [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
     [(IrFunction name params ret-ty frame blocks)
-     (IrFunction name params ret-ty frame (optimize-block-list blocks))]))
+     (IrFunction name params ret-ty frame (optimize-dce-blocks (optimize-block-list blocks)))]))
 
 (define (optimize-function-list [funcs : CompilerIrFunctionList]) : CompilerIrFunctionList
   (match funcs
@@ -199,16 +298,48 @@
       (IrInstrCons (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
         (IrInstrNil)))))
 
+(define (opt-count-instrs [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons _ rest) (+ 1 (opt-count-instrs rest))]))
+
+;; `[Mov v0=20, Mov v1=22, BinOp v2=v0+v1, Mov v3=99, Return v2]`. After folding,
+;; v0/v1/v3 become unused literal Movs; only v2 (returned) is live.
+(define (opt-dce-self-test-instrs) : CompilerIrInstrList
+  (IrInstrCons (IrInstrMov 0 (IrValueI64 20) (AstTyI64))
+    (IrInstrCons (IrInstrMov 1 (IrValueI64 22) (AstTyI64))
+      (IrInstrCons (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
+        (IrInstrCons (IrInstrMov 3 (IrValueI64 99) (AstTyI64))
+          (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueVar 2)))
+            (IrInstrNil)))))))
+
+(define (opt-dce-once [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (dce-filter-instrs instrs (dce-collect-instrs (OptIntNil) instrs)))
+
+;; Folds then runs DCE: 5 instrs -> 2 (`Mov v2=42` + `Return v2`), the only live
+;; Mov keeps value 42, the Return (control flow) survives, and DCE is idempotent.
+(define (compiler-optimize-dce-ok?) : bool
+  (let ([folded : CompilerIrInstrList (opt-fold-instrs (OptConstNil) (opt-dce-self-test-instrs))])
+    (let ([dced : CompilerIrInstrList (opt-dce-once folded)])
+      (let ([dced2 : CompilerIrInstrList (opt-dce-once dced)])
+        (and (= (opt-count-instrs folded) 5)
+             (and (= (opt-count-instrs dced) 2)
+                  (and (= (opt-count-instrs dced2) 2)
+                       (= (opt-sum-mov-i64 dced) 42))))))))
+
 ;; Returns 42 when folding turns the one arithmetic instruction into a `Mov`
-;; literal whose value (20 + 22) is correct: before has 1 arithmetic instr,
-;; after has 0, and the sum of all Mov i64 values is 20 + 22 + 42 = 84.
+;; literal whose value (20 + 22) is correct (before has 1 arithmetic instr,
+;; after has 0, sum of all Mov i64 values is 20 + 22 + 42 = 84) and DCE removes
+;; the unused temporaries while keeping the live value and control flow.
 (define (compiler-optimize-self-test) : i64
   (let ([instrs : CompilerIrInstrList (opt-self-test-instrs)])
     (let ([optimized : CompilerIrInstrList (opt-fold-instrs (OptConstNil) instrs)])
       (if (= (opt-count-arith-instrs instrs) 1)
           (if (= (opt-count-arith-instrs optimized) 0)
               (if (= (opt-sum-mov-i64 optimized) 84)
-                  42
+                  (if (compiler-optimize-dce-ok?)
+                      42
+                      4)
                   3)
               2)
           1))))

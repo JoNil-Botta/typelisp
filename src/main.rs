@@ -188,7 +188,7 @@ fn print_usage() {
     eprintln!();
     eprintln!("    --emit-ir                      Emit intermediate representation");
     eprintln!(
-        "    --backend-mode <mode>          scalar, avx2, or avx512; avx2 supports simple foreach maps"
+        "    --backend-mode <mode>          scalar, avx2, or avx512; avx2/avx512 support simple foreach maps"
     );
     eprintln!("    --target <target>              linux-x86_64 or windows-x86_64");
     eprintln!("    --manifest-path <file>         Package manifest for build");

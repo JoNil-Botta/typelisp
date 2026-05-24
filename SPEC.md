@@ -239,6 +239,39 @@ There are no explicit type aliases. Identifiers naming enums or structs are reso
   currently accepts only integer/char source and target types.
 - No implicit conversions.
 
+### 3.7 Region-tagged types (v1)
+
+A value allocated inside a `(with-region r ...)` scope carries a **region tag**
+in its type, written `(in r T)` where `r` is the region name and `T` is the
+underlying heap-allocated type. Region tags are a compile-time-only
+annotation; they do not change ABI representation, runtime size, or data
+layout. The tag exists solely to enable static escape checking.
+
+**Region-taggable types** are the heap-allocated aggregate kinds whose storage
+can be created inside a region scope:
+- `String`
+- `(Array T)` — dynamic array
+- Enum and struct values returned from functions inside the region
+- Tuple values (when tuple-by-value ABI support lands)
+
+Scalars (`i64`, `bool`, `char`, `f64`, etc.), function values, and fixed-size
+arrays are **not** region-tagged because they do not allocate through `tl_alloc`.
+
+A region-tagged type `(in r T)` is a **subtype** of the plain type `T` for
+operations that do not escape the region: field access, `array-ref`,
+`array-set!`, `match` arms, `print-string`, and function calls whose parameter
+types accept `T`. It is **not** a subtype where the value would leave the
+region's scope: as the result of the `with-region` form, stored into an outer
+`let` or global, captured by an escaping closure, or returned from an enclosing
+function.
+
+**v1 confinement rule:** Region-tagged values do not cross function boundaries.
+A function parameter or return type is written without a region tag; passing a
+region-tagged value to a function or returning it from one is an escape error.
+Region-polymorphic functions (`(forall (r) ...)`) are deferred to a follow-up
+slice; every function type in v1 is region-agnostic and therefore cannot
+accept or produce region-tagged handles.
+
 ---
 
 ## 4. Top-level forms
@@ -743,6 +776,51 @@ Negative examples for later parser/typechecker tests:
 
 ---
 
+### 5.16 `(with-region ident body ...)` — scoped region
+
+Introduces a temporary allocation region named `ident` whose lifetime is
+the lexical scope of the form's body. The body is a non-empty expression
+sequence; the last expression is the result. Subregions are expressed by
+nesting `with-region` forms.
+
+```lisp test=check name=with-region-basic
+(define (main) : i64
+  (with-region r
+    (let ([s : String (int->string 42)])
+      (begin
+        (print-string s)
+        0))))
+```
+
+**Static escape checking:** Values allocated inside a region are typed as
+`(in r T)` (see §3.7). The typechecker rejects any attempt to let a
+region-tagged value escape its scope:
+
+- As the result of the `with-region` form (`(with-region r (make-array i64 5))`).
+- Stored into an outer `let`, `set!`, or global binding.
+- Captured by a lambda whose closure outlives the region.
+- Returned from an enclosing function.
+- Passed to a function call (v1 confinement — function parameters have no
+  region tag).
+
+**Nested regions:** Inner and outer regions are distinct. A value allocated in
+an inner region may not escape to the outer region, and a value from an outer
+region may be used inside an inner region (it does not gain the inner tag).
+
+**Lowering contract:** Each `with-region` lowers to a `tl_region_mark` at
+entry, the body with all region-allocating operations implicitly targeting the
+active region, and a `tl_region_reset` at exit that restores the mark. Because
+the body result must be region-free, the reset is safe: no live handle refers
+to storage allocated after the mark.
+
+**Non-Linux targets:** `with-region` remains a typechecked scope. On targets
+where `tl_region_mark` / `tl_region_reset` are unavailable the runtime does
+not perform a reset; the semantics match minus reclamation. The form still
+prevents escapes, so programs compile and run identically, but allocations
+accumulate in the process-lifetime arena instead of being reclaimed.
+
+---
+
 ## 6. Built-in functions and runtime
 
 ### 6.1 Builtin functions (lowered to IR calls)
@@ -880,7 +958,44 @@ coverage across every aggregate allocation shape. That may be revisited later,
 but it is larger than the immediate need for long-running tools.
 
 The first reclamation mechanism is explicit region reset at tool-owned phase
-boundaries (#418, #419). Programs opt in by declaring backend-provided externs:
+boundaries (#418, #419). TypeLisp provides two surfaces for this:
+
+#### Source-level scoped region (v1) — `with-region`
+
+The `(with-region ident body ...)` form (§5.16) gives programs a lexically
+scoped, type-safe region. The typechecker ensures no region-tagged value
+escapes the body, so the lowering can safely insert `tl_region_mark` at entry
+and `tl_region_reset` at exit without risk of use-after-free. This is the
+preferred v1 surface for long-running tools that want deterministic, safe
+reclamation between phases.
+
+```lisp test=check name=with-region-example
+(define (process-phase [input : String]) : i64
+  (with-region phase
+    (let ([buf : (Array i64) (make-array i64 100)])
+      (begin
+        (array-set! buf 0 42)
+        (array-ref buf 0)))))
+```
+
+Allocation sites inside a `with-region` scope target the active region:
+- String operations that create fresh storage (`substring`, `string-append`,
+  `string-concat`, `read-file`, `int->string`, `arg`), `make-array`, and
+  returned aggregate storage from calls inside the region.
+- The body result must be region-free (scalars, or aggregates allocated *before*
+  the `with-region`).
+
+Nested `with-region` forms create independent subregions whose values do not
+mix. Inner-region values cannot escape to the outer region; outer-region values
+can be used inside the inner region without restriction (they carry the outer
+tag, not the inner one).
+
+On non-Linux targets `with-region` still type-checks and scopes but does not
+reclaim, matching the semantic contract minus the reset.
+
+#### Low-level extern helpers (unsafe by convention)
+
+Programs that need manual control may still declare the raw backend externs:
 
 ```lisp test=check name=region-extern-helpers
 (extern tl_region_mark : (-> u64))
@@ -1306,6 +1421,7 @@ expr          ::= literal
                 | "(" "foreach" foreach-clause expr ")"
                 | "(" "spmd-reduce" reduce-op foreach-clause expr expr ")"
                 | "(" "lambda" "(" param* ")" [":" type] expr ")"
+                | "(" "with-region" ident expr+ ")"
                 | "(" expr expr* ")"          ; function call
 
 binding       ::= "[" ident [":" type] expr "]"
@@ -1328,6 +1444,7 @@ type          ::= "i64" | "i32" | "i16" | "i8"
                 | "(" "Tuple" type+ ")"
                 | "(" "Array" type [integer] ")"
                 | "(" "->" type+ ")"
+                | "(" "in" ident type ")"              ; region-tagged (v1)
                 | ident                                ; enum or struct name
 
 ident         ::= [a-zA-Z_][a-zA-Z0-9_!?+-=*/<>:]*

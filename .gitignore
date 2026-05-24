@@ -25,3 +25,8 @@ target_ra
 # Added by cargo
 
 /target
+
+# Self-host build artifacts
+selfhost/*.o
+selfhost/*.s
+selfhost/compiler_backend_runtime_fixture

@@ -232,14 +232,20 @@ and does not add general per-object `free` or GC yet. `String` buffers, dynamic
 array storage, returned enum/struct storage, and self-hosted data structures all
 remain heap allocations. General `free` is deferred until ownership, borrowing,
 and reference semantics are designed, because current aggregate handles can be
-copied freely. A tracing GC is also larger than the next step. The first
-reclamation mechanism is explicit region reset for tool-owned phase boundaries:
-programs may declare extern-only `tl_region_mark` and `tl_region_reset` helpers
-to snapshot and restore the allocator bump pointer. Resetting a region
-invalidates every heap handle allocated after its mark and is only valid when a
-compiler, formatter, package-tooling, or REPL phase has discarded those values.
-Resetting mark `0` clears all current arenas; invalid nonzero marks abort. The
-region helpers are currently emitted only for the Linux x86_64 System V target.
+copied freely. A tracing GC is also larger than the next step.
+
+The first safe reclamation surface is `(with-region r body ...)` — a
+lexically scoped region with **static escape checking**. The typechecker
+rejects any region-tagged value that would leave the scope, so the compiler
+can safely lower the form to `tl_region_mark` / `tl_region_reset` around the
+body. This makes region cleanup safe by construction, unlike the raw extern
+helpers below. See [SPEC.md §5.16](SPEC.md) and §7.3 for the full contract.
+
+Programs that need manual control may still declare low-level extern helpers:
+`tl_region_mark` and `tl_region_reset` snapshot and restore the bump allocator.
+These are unsafe-by-convention — the caller must prove no live handle escapes
+the reset — and are currently emitted only for the Linux x86_64 System V
+target. See [SPEC.md §7.3](SPEC.md) for details.
 
 See [SPEC.md](SPEC.md) for the full language reference.
 

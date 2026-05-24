@@ -1718,6 +1718,40 @@ fn check_rejects_region_allocating_builtin_escape() {
 }
 
 #[test]
+fn check_rejects_stdlib_allocating_result_escape_from_nested_region() {
+    let dir = fixture_dir("stdlib-region-escape");
+    let source = dir.join("main.tl");
+    fs::write(
+        &source,
+        r#"(import "stdlib/string.tl")
+
+(define (main) : String
+  (with-region outer
+    (with-region inner
+      (string-trim "  scoped  "))))
+"#,
+    )
+    .expect("write source");
+    let source_arg = source.to_str().expect("source path is utf-8");
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let stdlib_root = manifest_dir.join("stdlib");
+    let stdlib_arg = stdlib_root.to_str().expect("stdlib path is utf-8");
+
+    let output = typelisp(&["check", source_arg, "--stdlib-root", stdlib_arg]);
+
+    assert!(!output.status.success());
+    assert_eq!(stdout(&output), "");
+    let stderr = stderr(&output);
+    assert!(
+        stderr.contains("region-tagged value")
+            && stderr.contains("cannot escape with-region 'inner'"),
+        "stderr:\n{}",
+        stderr
+    );
+    assert!(stderr.contains("error[E0200]"), "stderr:\n{}", stderr);
+}
+
+#[test]
 fn check_reports_explicit_unsupported_float_cast_diagnostic() {
     let dir = fixture_dir("unsupported-float-cast");
     let source = dir.join("main.tl");

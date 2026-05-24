@@ -19,6 +19,38 @@ installed-root discovery, namespace isolation, or an implicit prelude.
 - `test.tl`: minimal assertion helpers for TypeLisp fixtures. Import it with
   `(import "stdlib/test.tl")`.
 
+## Arena Allocation Policy
+
+The stdlib does not own an allocator API. Stdlib functions allocate only by
+calling compiler/runtime primitives such as `substring`, `string-append`,
+`read-file`, `int->string`, and aggregate constructors. Those allocations use
+the active arena: the default program-lifetime arena outside any scoped arena,
+or the innermost scoped arena inside `(with-region ...)`. The arena model uses
+the term "scoped arena" for this behavior; issue #801 tracks the source spelling
+migration from `(with-region ...)` to `(with-arena ...)`.
+
+Current function signatures cannot write arena lifetimes yet (#802), so stdlib
+APIs keep plain `String`/aggregate signatures. The checker conservatively tags
+aggregate results from stdlib calls made inside a scoped arena as arena-owned,
+which prevents those values from escaping the scope. When written arena
+lifetimes exist, stdlib signatures should distinguish owned arena results from
+returned caller-owned values.
+
+| Functions | Allocation behavior |
+|-----------|---------------------|
+| `is-char-whitespace`, `char-eq`, `string-contains`, `string-contains-char`, `is-string-prefix-at` | Non-allocating string/char inspection. |
+| `string-trim-left`, `string-trim-right`, `string-trim` | Return fresh `String` storage from `substring`, allocated in the active arena. |
+| `string-replace` | Returns fresh `String` storage from `substring`/`string-append` when a replacement is made; returns the caller-provided `s` when `old` is not present. |
+| `read-file-or` | Performs host/runtime file inspection; returns fresh active-arena `String` storage from `read-file` when the path exists, otherwise returns the caller-provided `fallback`. |
+| `append-file` | Performs host/runtime IO; allocates temporary active-arena strings through `read-file-or` and `string-append`, then writes the result. |
+| `file-nonempty?` | Performs host/runtime IO; allocates a temporary active-arena `String` through `read-file` only when the path exists. |
+| `assert-*` helpers in `test.tl` | Non-allocating checks on success; failures call `panic` with the caller-provided message. |
+
+No current stdlib function returns a borrow-typed `str`, mutates a
+caller-provided buffer, or manually calls `tl_region_mark` / `tl_region_reset`.
+Those policies should remain explicit when borrowed strings, mutable buffers,
+and unsafe reset APIs are added.
+
 ## Importing Stdlib Modules
 
 Stdlib modules are imported explicitly:

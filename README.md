@@ -230,18 +230,21 @@ because `struct-set!` is not implemented. Heap allocation uses a
 backend-emitted `tl_alloc` bump allocator and allocations live until process
 exit. See [SPEC.md §7](SPEC.md) for the precise current model.
 
-The v1 reclamation direction keeps that process-lifetime arena as the default
-and does not add general per-object `free` or GC yet. `String` buffers, dynamic
-array storage, returned enum/struct storage, and self-hosted data structures all
-remain heap allocations. General `free` is deferred until ownership, borrowing,
-and reference semantics are designed, because current aggregate handles can be
-copied freely. A tracing GC is also larger than the next step.
+The v1 reclamation direction keeps the program-lifetime arena as the default
+allocation target and does not add general per-object `free` or GC yet.
+`String` buffers, dynamic array storage, returned enum/struct storage, and
+self-hosted data structures all remain heap allocations in the active arena.
+General `free` is deferred until ownership, borrowing, and reference semantics
+are designed, because current aggregate handles can be copied freely. A tracing
+GC is also larger than the next step.
 
 The first safe reclamation surface is `(with-region r body ...)` — a
-lexically scoped region with **static escape checking**. The typechecker
-rejects any region-tagged value that would leave the scope, so the compiler
+lexically scoped arena with **static escape checking**. The arena model uses
+"scoped arena" for this behavior; issue #801 tracks the planned
+`(with-arena ...)` spelling. The typechecker rejects any arena-tagged value
+that would leave the scope, so the compiler
 can safely lower the form to `tl_region_mark` / `tl_region_reset` around the
-body. This makes region cleanup safe by construction, unlike the raw extern
+body. This makes scoped cleanup safe by construction, unlike the raw extern
 helpers below. See [SPEC.md §5.16](SPEC.md) and §7.3 for the full contract.
 
 Programs that need manual control may still declare low-level extern helpers:

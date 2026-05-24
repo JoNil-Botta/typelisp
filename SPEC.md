@@ -990,6 +990,35 @@ Allocation sites inside a `with-region` scope target the active region:
 - The body result must be region-free (scalars, or aggregates allocated *before*
   the `with-region`).
 
+The arena-model terminology calls the default allocation target the
+program-lifetime arena and calls each nested `with-region` body a scoped arena.
+The current source spelling remains `(with-region ...)`; issue #801 tracks the
+planned `(with-arena ...)` spelling/alias. Unless a function explicitly says
+otherwise, allocation always uses the active arena: the innermost scoped arena,
+or the default program-lifetime arena when no scoped arena is active.
+
+#### Standard library and builtin allocation policy
+
+Current stdlib signatures cannot write arena lifetimes yet (#802), so the
+checker conservatively treats aggregate results from calls inside a scoped
+arena as tagged with that arena. This is stricter than the future model for
+functions that may return caller-owned data, but it prevents active-arena
+values from escaping until explicit lifetime signatures exist.
+
+| Category | Members | Arena behavior |
+|----------|---------|----------------|
+| Non-allocating inspection | `length`/`array-length` on arrays, `length`/`string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string->int`, stdlib string predicates such as `string-contains` | Reads caller-provided handles and returns scalars. |
+| Returns active-arena owned data | `make-array`, `arg`, `read-file`, `read-stdin-line`, `read-stdin-bytes`, `string-append`/`string-concat`, `substring`/`string-slice`, `int->string`, stdlib trimming/replacement helpers when they build a new string | Fresh storage is allocated in the active arena and cannot escape a scoped arena. |
+| Returns caller-provided data | `stdlib/string.tl` `string-replace` when no match is found; `stdlib/io.tl` `read-file-or` when the path is missing | The current type system cannot express this borrowed/caller-owned distinction, so calls inside a scoped arena are still treated conservatively as arena-tagged aggregate results. |
+| Mutates caller-provided storage | `array-set!` | Mutates the array buffer named by the caller; it does not allocate. Region checks reject storing shorter-lived aggregate handles into longer-lived containers. |
+| Host/runtime IO | `print*`, `panic`/`error`, `flush-stdout`, `write-file`, `file-exists?`, stdlib IO helpers | Performs target IO; any temporary strings used by the helper allocate in the active arena. |
+
+No current stdlib function returns a borrow-typed `str`, because owned
+`String`/borrowed `str` is still tracked by #807. No current stdlib function
+manually resets arenas; safe scoped cleanup is owned by `with-region`/the
+future `with-arena` form, while raw `tl_region_mark` and `tl_region_reset`
+remain low-level unsafe-by-convention helpers.
+
 Nested `with-region` forms create independent subregions whose values do not
 mix. Inner-region values cannot escape to the outer region; outer-region values
 can be used inside the inner region without restriction (they carry the outer

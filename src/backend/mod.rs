@@ -10,6 +10,8 @@ use std::fmt;
 
 #[allow(dead_code)]
 pub(crate) mod liveness;
+#[allow(dead_code)]
+pub(crate) mod regalloc;
 
 const ABORT_RUNTIME_SYMBOL: &str = ".L_tl_abort";
 const ARG_COUNT_RUNTIME_SYMBOL: &str = ".L_tl_arg_count";

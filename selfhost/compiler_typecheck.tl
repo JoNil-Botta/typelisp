@@ -453,6 +453,11 @@
     [(AstTyU8) true]
     [_ false]))
 
+(define (tc-float-type? [ty : AstType]) : bool
+  (match ty
+    [(AstTyF64) true]
+    [_ false]))
+
 (define (tc-castable-type? [ty : AstType]) : bool
   (if (tc-integer-type? ty)
     true
@@ -668,6 +673,10 @@
     [(AstBinLe) (tc-compare-binop-type left right)]
     [(AstBinGt) (tc-compare-binop-type left right)]
     [(AstBinGe) (tc-compare-binop-type left right)]
+    [(AstBinAdd) (tc-arithmetic-binop-type left right)]
+    [(AstBinSub) (tc-arithmetic-binop-type left right)]
+    [(AstBinMul) (tc-arithmetic-binop-type left right)]
+    [(AstBinDiv) (tc-arithmetic-binop-type left right)]
     [_ (tc-integer-binop-type left right)]))
 
 (define (tc-integer-binop-type [left : AstType] [right : AstType]) : ResultTcType
@@ -675,10 +684,17 @@
     (OkTcType left)
     (ErrTcType "typecheck: integer operator expects matching integer operands")))
 
+(define (tc-arithmetic-binop-type [left : AstType] [right : AstType]) : ResultTcType
+  (if (and (tc-float-type? left) (tc-type-eq left right))
+    (OkTcType left)
+    (tc-integer-binop-type left right)))
+
 (define (tc-compare-binop-type [left : AstType] [right : AstType]) : ResultTcType
-  (if (and (tc-integer-type? left) (tc-type-eq left right))
+  (if (and (tc-float-type? left) (tc-type-eq left right))
     (OkTcType (AstTyBool))
-    (ErrTcType "typecheck: comparison expects matching integer operands")))
+    (if (and (tc-integer-type? left) (tc-type-eq left right))
+      (OkTcType (AstTyBool))
+      (ErrTcType "typecheck: comparison expects matching integer operands"))))
 
 (define (tc-unop-type [op : AstUnOp] [ty : AstType]) : ResultTcType
   (match op
@@ -687,7 +703,7 @@
         (OkTcType (AstTyBool))
         (ErrTcType "typecheck: not expects bool"))]
     [(AstUnNeg)
-      (if (tc-integer-type? ty)
+      (if (or (tc-integer-type? ty) (tc-float-type? ty))
         (OkTcType ty)
         (ErrTcType "typecheck: neg expects integer"))]
     [(AstUnBitNot)

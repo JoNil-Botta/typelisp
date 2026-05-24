@@ -22,7 +22,7 @@ const SYSV_FLOAT_ARG_REGS: [&str; 8] = [
 const WIN64_INTEGER_ARG_REGS: [&str; 4] = ["%rcx", "%rdx", "%r8", "%r9"];
 const WIN64_FLOAT_ARG_REGS: [&str; 4] = ["%xmm0", "%xmm1", "%xmm2", "%xmm3"];
 const LINUX_LINK_LIBS: [&str; 1] = ["-lc"];
-const WINDOWS_LINK_LIBS: [&str; 1] = ["msvcrt.lib"];
+const WINDOWS_LINK_LIBS: [&str; 2] = ["msvcrt.lib", "legacy_stdio_definitions.lib"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendArch {
@@ -1446,7 +1446,7 @@ impl X86_64Backend {
 
         // Generate functions
         for func in &program.functions {
-            self.generate_function(func);
+            self.generate_function(func, program);
         }
 
         // Generate main if not present
@@ -1472,62 +1472,7 @@ impl X86_64Backend {
                 self.emit("    leaq 8(%rsp), %rax");
                 self.emit("    movq %rax, .L_tl_argv(%rip)");
             }
-            // Initialize non-constant globals: call their __global_init_* function
-            // and store the returned value (%rax for integer/pointer values, %xmm0
-            // for f64).
-            for (name, ty, init) in &program.globals {
-                if init.is_some() {
-                    continue;
-                }
-                let init_fn = format!("__global_init_{}", name);
-                if program.functions.iter().any(|f| f.name == init_fn) {
-                    self.emit_call(&Self::mangle_name(&init_fn));
-                    let symbol = Self::mangle_name(name);
-                    let calling_convention = self.target.calling_convention();
-                    match ty {
-                        Type::F64 => {
-                            self.emit(&format!(
-                                "    movsd {}, {}(%rip)",
-                                calling_convention.return_float_reg, symbol
-                            ));
-                        }
-                        Type::I64
-                        | Type::U64
-                        | Type::String
-                        | Type::DynArray(_)
-                        | Type::Enum(_)
-                        | Type::Struct(_) => {
-                            self.emit(&format!(
-                                "    movq {}, {}(%rip)",
-                                calling_convention.return_gpr, symbol
-                            ));
-                        }
-                        Type::I32 | Type::U32 => {
-                            self.emit(&format!(
-                                "    movl {}, {}(%rip)",
-                                Self::gpr32(calling_convention.return_gpr),
-                                symbol
-                            ));
-                        }
-                        Type::I16 | Type::U16 => {
-                            self.emit(&format!(
-                                "    movw {}, {}(%rip)",
-                                Self::gpr16(calling_convention.return_gpr),
-                                symbol
-                            ));
-                        }
-                        Type::I8 | Type::U8 | Type::Bool | Type::Char => {
-                            self.emit(&format!(
-                                "    movb {}, {}(%rip)",
-                                Self::gpr8(calling_convention.return_gpr),
-                                symbol
-                            ));
-                        }
-                        Type::Unit => {}
-                        _ => {}
-                    }
-                }
-            }
+            self.emit_global_initializers(program);
             self.emit_call("main");
             if main_ret == Type::Unit {
                 let status_reg = Self::gpr32(entry_policy.exit_status_reg);
@@ -1542,6 +1487,65 @@ impl X86_64Backend {
         }
 
         self.output.clone()
+    }
+
+    fn emit_global_initializers(&mut self, program: &Program) {
+        // Initialize non-constant globals: call their __global_init_* function
+        // and store the returned value (%rax for integer/pointer values, %xmm0
+        // for f64).
+        for (name, ty, init) in &program.globals {
+            if init.is_some() {
+                continue;
+            }
+            let init_fn = format!("__global_init_{}", name);
+            if program.functions.iter().any(|f| f.name == init_fn) {
+                self.emit_call(&Self::mangle_name(&init_fn));
+                let symbol = Self::mangle_name(name);
+                let calling_convention = self.target.calling_convention();
+                match ty {
+                    Type::F64 => {
+                        self.emit(&format!(
+                            "    movsd {}, {}(%rip)",
+                            calling_convention.return_float_reg, symbol
+                        ));
+                    }
+                    Type::I64
+                    | Type::U64
+                    | Type::String
+                    | Type::DynArray(_)
+                    | Type::Enum(_)
+                    | Type::Struct(_) => {
+                        self.emit(&format!(
+                            "    movq {}, {}(%rip)",
+                            calling_convention.return_gpr, symbol
+                        ));
+                    }
+                    Type::I32 | Type::U32 => {
+                        self.emit(&format!(
+                            "    movl {}, {}(%rip)",
+                            Self::gpr32(calling_convention.return_gpr),
+                            symbol
+                        ));
+                    }
+                    Type::I16 | Type::U16 => {
+                        self.emit(&format!(
+                            "    movw {}, {}(%rip)",
+                            Self::gpr16(calling_convention.return_gpr),
+                            symbol
+                        ));
+                    }
+                    Type::I8 | Type::U8 | Type::Bool | Type::Char => {
+                        self.emit(&format!(
+                            "    movb {}, {}(%rip)",
+                            Self::gpr8(calling_convention.return_gpr),
+                            symbol
+                        ));
+                    }
+                    Type::Unit => {}
+                    _ => {}
+                }
+            }
+        }
     }
 
     fn generate_windows_runtime_externs(&mut self, needs_print_runtime: bool) {
@@ -3769,9 +3773,9 @@ impl X86_64Backend {
         // Digit generation (mirrors tl_print_i64). %r10 = descending write
         // cursor, starting one past the top of the scratch region; %rcx = digit
         // count. %rax holds the working magnitude.
+        self.emit(&format!("    movq {}, %rax", arg0));
         self.emit("    leaq 72(%rsp), %r10");
         self.emit("    movq $0, %rcx");
-        self.emit(&format!("    movq {}, %rax", arg0));
         self.emit("    cmpq $0, %rax");
         self.emit("    jne .L_tl_int_to_string_nonzero");
         // Zero: a single '0' digit.
@@ -4019,11 +4023,16 @@ impl X86_64Backend {
                 self.emit_global_initializer(ty, init.as_ref());
             } else {
                 // Non-constant initializer: emit as common symbol (.bss)
+                let align = ty.align().max(1);
+                let common_align = match self.target.os {
+                    BackendOs::Linux => align,
+                    BackendOs::Windows => align.trailing_zeros() as usize,
+                };
                 self.emit(&format!(
                     "    .comm {}, {}, {}",
                     symbol,
                     ty.size(),
-                    ty.align().max(1)
+                    common_align
                 ));
             }
         }
@@ -4060,7 +4069,7 @@ impl X86_64Backend {
         }
     }
 
-    fn generate_function(&mut self, func: &Function) {
+    fn generate_function(&mut self, func: &Function, program: &Program) {
         let name = Self::mangle_name(&func.name);
         self.current_fn = name.clone();
         self.emit(&format!("{}:", name));
@@ -4118,6 +4127,9 @@ impl X86_64Backend {
         {
             self.emit("    movq %rcx, .L_tl_argc(%rip)");
             self.emit("    movq %rdx, .L_tl_argv(%rip)");
+        }
+        if self.target.runtime_policy().emits_windows_runtime_helpers && func.name == "main" {
+            self.emit_global_initializers(program);
         }
 
         // Move parameters to stack slots. Each argument register is written at
@@ -4646,6 +4658,10 @@ impl X86_64Backend {
                     } else {
                         self.load_value(v, calling_convention.return_gpr, &ret_ty);
                     }
+                } else if self.target.runtime_policy().emits_windows_runtime_helpers
+                    && self.current_fn == "main"
+                {
+                    self.emit("    xor %eax, %eax");
                 }
                 // Epilogue
                 self.emit("    mov %rbp, %rsp");
@@ -5621,7 +5637,10 @@ mod tests {
         assert_eq!(toolchain.assembler, "clang");
         assert_eq!(toolchain.linker, "lld-link");
         assert_eq!(toolchain.dynamic_linker, None);
-        assert_eq!(toolchain.libraries, &["msvcrt.lib"]);
+        assert_eq!(
+            toolchain.libraries,
+            &["msvcrt.lib", "legacy_stdio_definitions.lib"]
+        );
     }
 
     #[test]
@@ -5744,6 +5763,21 @@ mod tests {
         assert!(!asm.contains("\n_start:"), "asm:\n{}", asm);
         assert!(!asm.contains("    movq $60, %rax"), "asm:\n{}", asm);
         assert!(!asm.contains("    syscall"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_windows_target_unit_main_returns_zero_to_crt() {
+        let asm = compile_ok_for_target(
+            "(define (main) : unit (begin))",
+            BackendTarget::windows_x86_64(),
+        );
+        let main = asm.split("main:").nth(1).expect("expected main function");
+
+        assert!(
+            main.contains("    xor %eax, %eax"),
+            "unit main should return zero to the CRT:\n{}",
+            main
+        );
     }
 
     #[test]
@@ -5891,6 +5925,29 @@ mod tests {
         assert!(asm.contains("    movq $16, %rcx"), "asm:\n{}", asm);
         assert!(asm.contains("    call tl_alloc"), "asm:\n{}", asm);
         assert!(asm.contains("    sub $32, %rsp"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_windows_target_int_to_string_preserves_rcx_argument() {
+        let asm = compile_ok_for_target(
+            "(define (main) : i64 (begin (int->string 42) 0))",
+            BackendTarget::windows_x86_64(),
+        );
+        let int_to_string = asm
+            .split("tl_int_to_string:")
+            .nth(1)
+            .expect("expected tl_int_to_string runtime");
+        let load_arg = int_to_string
+            .find("    movq %rcx, %rax")
+            .expect("expected Windows arg load");
+        let clear_digit_count = int_to_string
+            .find("    movq $0, %rcx")
+            .expect("expected digit count clear");
+        assert!(
+            load_arg < clear_digit_count,
+            "tl_int_to_string must copy the Windows arg before reusing %rcx:\n{}",
+            int_to_string
+        );
     }
 
     #[test]
@@ -6334,6 +6391,41 @@ mod tests {
     }
 
     #[test]
+    fn test_windows_target_non_constant_global_initializer_uses_coff_comm_alignment() {
+        let asm = compile_ok_for_target(
+            r#"
+            (define (add [a : i64] [b : i64]) : i64 (+ a b))
+            (define result : i64 (add 1 2))
+            (define (main) : i64 result)
+            "#,
+            BackendTarget::windows_x86_64(),
+        );
+
+        assert!(
+            asm.contains("    .comm _tl_result, 8, 3"),
+            "expected COFF log2 .comm alignment for result, got:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("    call _tl___global_init_result"),
+            "expected init call, got:\n{}",
+            asm
+        );
+        let main = asm.split("main:").nth(1).expect("expected main function");
+        let init_call = main
+            .find("    call _tl___global_init_result")
+            .expect("expected init call in Windows main");
+        let global_load = main
+            .find("    movq _tl_result(%rip), %rax")
+            .expect("expected global load in Windows main");
+        assert!(
+            init_call < global_load,
+            "Windows main must initialize globals before reading them:\n{}",
+            main
+        );
+    }
+
+    #[test]
     fn test_non_constant_global_initializer_can_use_arg_count() {
         let asm = compile_ok(
             r#"
@@ -6358,6 +6450,35 @@ mod tests {
             init_call < main_call,
             "global initializers must run before main:\n{}",
             start
+        );
+    }
+
+    #[test]
+    fn test_windows_target_global_initializer_can_use_arg_count() {
+        let asm = compile_ok_for_target(
+            r#"
+            (define count : i64 (arg-count))
+            (define (main) : i64 count)
+            "#,
+            BackendTarget::windows_x86_64(),
+        );
+        let main = asm.split("main:").nth(1).expect("expected main function");
+        let argc_save = main
+            .find("    movq %rcx, .L_tl_argc(%rip)")
+            .expect("expected argc capture");
+        let argv_save = main
+            .find("    movq %rdx, .L_tl_argv(%rip)")
+            .expect("expected argv capture");
+        let init_call = main
+            .find("    call _tl___global_init_count")
+            .expect("expected global init call");
+        let main_load = main
+            .find("    movq _tl_count(%rip), %rax")
+            .expect("expected initialized global load");
+        assert!(
+            argc_save < init_call && argv_save < init_call && init_call < main_load,
+            "Windows main must capture CRT argv before global init and read after init:\n{}",
+            main
         );
     }
 

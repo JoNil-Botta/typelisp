@@ -125,6 +125,31 @@ fn compiler_lower_tl_compiles_to_assembly() {
 }
 
 #[test]
+fn compiler_liveness_tl_compiles_to_assembly() {
+    let asm = compile_selfhost_source(
+        "compiler_liveness.tl",
+        "tl-compiler-liveness-compile-test",
+        "compiler_liveness.s",
+    );
+
+    assert_no_todo(&asm, "compiler_liveness");
+
+    for sym in [
+        "_tl_compiler_live_analyze_function:",
+        "_tl_compiler_live_block_use_def:",
+        "_tl_compiler_live_block_successors:",
+        "_tl_compiler_live_instr_uses:",
+        "_tl_compiler_live_instr_defs:",
+        "_tl_compiler_live_after:",
+        "_tl_compiler_live_self_test:",
+    ] {
+        assert_symbol(&asm, sym, "compiler_liveness");
+    }
+
+    assert_message(&asm, "liveness: smoke mismatch", "compiler_liveness");
+}
+
+#[test]
 fn compiler_lower_smoke_tl_compiles_to_assembly() {
     let asm = compile_selfhost_source(
         "compiler_lower_smoke.tl",
@@ -146,5 +171,31 @@ fn compiler_lower_smoke_tl_compiles_to_assembly() {
         "_tl_compiler_ir_summary_score:",
     ] {
         assert_symbol(&asm, sym, "compiler_lower_smoke");
+    }
+}
+
+#[test]
+fn compiler_liveness_smoke_tl_compiles_to_assembly() {
+    let asm = compile_selfhost_source(
+        "compiler_liveness_smoke.tl",
+        "tl-compiler-liveness-smoke-compile-test",
+        "compiler_liveness_smoke.s",
+    );
+
+    assert_no_todo(&asm, "compiler_liveness_smoke");
+    assert_eq!(
+        asm.matches("\nmain:").count() + usize::from(asm.starts_with("main:")),
+        1,
+        "compiler_liveness_smoke assembly must have exactly one main:\n{asm}",
+    );
+
+    for sym in [
+        "_tl_compiler_live_self_test:",
+        "_tl_compiler_live_analyze_function:",
+        "_tl_compiler_live_straight_ok_question:",
+        "_tl_compiler_live_branch_ok_question:",
+        "_tl_compiler_live_phi_ok_question:",
+    ] {
+        assert_symbol(&asm, sym, "compiler_liveness_smoke");
     }
 }

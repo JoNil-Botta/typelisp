@@ -212,6 +212,16 @@ fn native_cases() -> Vec<Case> {
             ],
         ),
         case_with_deps(
+            "compiler_liveness_smoke",
+            42,
+            "",
+            &[
+                "compiler_liveness.tl",
+                "compiler_ir_types.tl",
+                "compiler_ast_types.tl",
+            ],
+        ),
+        case_with_deps(
             "compiler_backend_smoke",
             42,
             "",
@@ -347,6 +357,7 @@ fn source_path_for_case(manifest_dir: &Path, name: &str) -> PathBuf {
         "compiler_symbols_smoke" => "compiler_symbols_smoke.tl",
         "compiler_typecheck_smoke" => "compiler_typecheck_smoke.tl",
         "compiler_lower_smoke" => "compiler_lower_smoke.tl",
+        "compiler_liveness_smoke" => "compiler_liveness_smoke.tl",
         "compiler_backend_smoke" => "compiler_backend_smoke.tl",
         "doc_extract_smoke" => "doc_extract_smoke.tl",
         "doc_render_smoke" => "doc_render_smoke.tl",

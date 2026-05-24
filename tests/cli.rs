@@ -1870,7 +1870,7 @@ fn doc_test_passes_when_docs_have_no_examples() {
 }
 
 #[test]
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn fmt_formats_source_files_in_place() {
     let dir = fixture_dir("fmt-in-place");
     let first = dir.join("first.tl");
@@ -1904,7 +1904,7 @@ fn fmt_formats_source_files_in_place() {
 }
 
 #[test]
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn fmt_check_reports_changes_without_writing() {
     let dir = fixture_dir("fmt-check");
     let source = dir.join("main.tl");

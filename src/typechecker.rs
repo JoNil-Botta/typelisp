@@ -565,10 +565,15 @@ impl TypeChecker {
     }
 
     pub fn check_program(&mut self, prog: &Program) -> Result<(), TypeError> {
+        let expanded = ExpandedProgram::from_program(prog);
+        self.check_expanded_program(&expanded)
+    }
+
+    pub fn check_expanded_program(&mut self, prog: &ExpandedProgram) -> Result<(), TypeError> {
         // Build the enum and struct registries up front so declared types and
         // constructors can be resolved/registered in the first pass.
-        self.enums = EnumRegistry::from_program(prog);
-        self.structs = StructRegistry::from_program(prog);
+        self.enums = EnumRegistry::from_expanded_program(prog);
+        self.structs = StructRegistry::from_expanded_program(prog);
 
         // Check for duplicate top-level names across the whole program.
         // Value-level names share the backend symbol namespace; nominal types
@@ -576,10 +581,12 @@ impl TypeChecker {
         // type can intentionally have a same-named constructor variant.
         let mut seen_values: HashMap<String, Span> = HashMap::new();
         let mut seen_types: HashMap<String, Span> = HashMap::new();
-        for decl in &prog.decls {
+        for expanded in &prog.decls {
+            let decl = &expanded.decl;
+            let decl_span = expanded.origin.diagnostic_span();
             let type_name: Option<(String, Span)> = match decl {
                 Decl::DefEnum { name, .. } | Decl::DefStruct { name, .. } => {
-                    Some((name.clone(), Span::default()))
+                    Some((name.clone(), decl_span))
                 }
                 _ => None,
             };
@@ -604,14 +611,14 @@ impl TypeChecker {
                     vec![(name.clone(), body.span())]
                 }
                 Decl::Extern { name, .. } => {
-                    vec![(name.clone(), Span::default())]
+                    vec![(name.clone(), decl_span)]
                 }
                 Decl::DefEnum { name: _, variants } => variants
                     .iter()
-                    .map(|v| (v.name.clone(), Span::default()))
+                    .map(|v| (v.name.clone(), decl_span))
                     .collect(),
                 Decl::DefStruct { name, .. } => {
-                    vec![(name.clone(), Span::default())]
+                    vec![(name.clone(), decl_span)]
                 }
                 Decl::Import(_) => vec![],
             };
@@ -647,7 +654,8 @@ impl TypeChecker {
         // rather than miscompiled. (A field that is itself a *pointer-sized*
         // aggregate value — `(Array Expr)` dyn array, another enum/struct — is
         // fine; only inline-carrying compounds are rejected.)
-        for decl in &prog.decls {
+        for expanded in &prog.decls {
+            let decl = &expanded.decl;
             if let Decl::DefEnum { name, variants } = decl {
                 for v in variants {
                     for f in &v.fields {
@@ -675,7 +683,8 @@ impl TypeChecker {
         // fields `(-> field... EnumName)`, a nullary variant just `EnumName`.
         // This makes constructor calls type-check through the ordinary call
         // path (arity + per-argument checks come for free).
-        for decl in &prog.decls {
+        for expanded in &prog.decls {
+            let decl = &expanded.decl;
             if let Decl::DefEnum { name, variants } = decl {
                 for v in variants {
                     let fields: Vec<Type> = v
@@ -697,7 +706,8 @@ impl TypeChecker {
         // directly or via a compound type) require heap indirection and are out
         // of scope for this slice (deferred). Reject them rather than looping
         // forever computing the inline layout.
-        for decl in &prog.decls {
+        for expanded in &prog.decls {
+            let decl = &expanded.decl;
             if let Decl::DefStruct { name, fields } = decl {
                 for f in fields {
                     if type_mentions_struct(
@@ -722,7 +732,8 @@ impl TypeChecker {
         // so a construction `(Name v1 .. vn)` type-checks through the ordinary
         // call path (arity + per-argument checks come for free), exactly like an
         // enum variant constructor.
-        for decl in &prog.decls {
+        for expanded in &prog.decls {
+            let decl = &expanded.decl;
             if let Decl::DefStruct { name, fields } = decl {
                 let field_tys: Vec<Type> = fields
                     .iter()
@@ -734,7 +745,8 @@ impl TypeChecker {
         }
 
         // First pass: collect all declarations
-        for decl in &prog.decls {
+        for expanded in &prog.decls {
+            let decl = &expanded.decl;
             match decl {
                 Decl::Def { name, ty, value } => {
                     let inferred = if let Some(ty) = ty {
@@ -807,7 +819,8 @@ impl TypeChecker {
         }
 
         // Second pass: check function bodies
-        for decl in &prog.decls {
+        for expanded in &prog.decls {
+            let decl = &expanded.decl;
             if let Decl::DefFn {
                 name,
                 params,
@@ -2120,6 +2133,76 @@ mod tests {
         let prog = parse("(define x : i64 42)").unwrap();
         let mut tc = TypeChecker::new();
         assert!(tc.check_program(&prog).is_ok());
+    }
+
+    #[test]
+    fn test_expanded_program_records_parsed_decl_origins() {
+        let prog = parse(
+            "(define x : i64 42)\n\
+             (define (main) : i64 x)",
+        )
+        .unwrap();
+        let expanded = ExpandedProgram::from_program(&prog);
+
+        assert_eq!(expanded.decls.len(), 2);
+        assert!(matches!(
+            expanded.decls[0].origin,
+            DeclOrigin::Parsed { ordinal: 0, .. }
+        ));
+        assert!(matches!(
+            expanded.decls[1].origin,
+            DeclOrigin::Parsed { ordinal: 1, .. }
+        ));
+        assert_eq!(
+            expanded.decls[0].origin.diagnostic_span(),
+            prog.decls[0].diagnostic_span()
+        );
+    }
+
+    #[test]
+    fn test_check_expanded_program_uses_generated_origin_for_duplicate_diagnostic() {
+        let first = parse("(define value : i64 1)")
+            .unwrap()
+            .decls
+            .into_iter()
+            .next()
+            .unwrap();
+        let generated = parse("(extern value : i64)")
+            .unwrap()
+            .decls
+            .into_iter()
+            .next()
+            .unwrap();
+        let generated_span = Span::new(9, 3, 9, 18);
+        let expanded = ExpandedProgram {
+            decls: vec![
+                ExpandedDecl {
+                    decl: first,
+                    origin: DeclOrigin::Parsed {
+                        ordinal: 0,
+                        span: Span::new(1, 1, 1, 21),
+                    },
+                },
+                ExpandedDecl {
+                    decl: generated,
+                    origin: DeclOrigin::Generated(GeneratedDeclOrigin {
+                        generator_span: Span::new(7, 1, 7, 20),
+                        generated_name: Some("value".into()),
+                        expansion_key: "test-generator:value".into(),
+                        item_span: Some(generated_span),
+                    }),
+                },
+            ],
+        };
+        let mut tc = TypeChecker::new();
+        let err = tc.check_expanded_program(&expanded).unwrap_err();
+
+        assert!(
+            err.msg.contains("duplicate top-level name 'value'"),
+            "got: {}",
+            err.msg
+        );
+        assert_eq!(err.span, generated_span);
     }
 
     #[test]

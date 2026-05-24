@@ -385,6 +385,20 @@
     [(LowerExpr ptr-state ptr _)
       (lower-state-emit ptr-state (IrInstrStorePtr ptr value ty))]))
 
+(define (lower-load-at-offset
+  [state : LowerState]
+  [base : CompilerIrValue]
+  [offset : i64]
+  [ty : AstType]) : LowerExpr
+  (match (lower-gep-byte state base offset)
+    [(LowerExpr ptr-state ptr _)
+      (match (lower-state-alloc-var ptr-state)
+        [(LowerAlloc allocated var-id)
+          (LowerExpr
+            (lower-state-emit allocated (IrInstrLoad var-id ptr ty))
+            (IrValueVar var-id)
+            ty)])]))
+
 (define (lower-store-values
   [ctx : TcContext]
   [state : LowerState]
@@ -413,6 +427,61 @@
                 rest-types
                 (+ offset (lower-type-size ctx resolved)))))]
         [(AstTypeNil) (ErrLowerState "lower: constructor arity mismatch")])]))
+
+(define (lower-bind-variant-payloads
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [base : CompilerIrValue]
+  [patterns : AstPatternList]
+  [types : AstTypeList]
+  [cursor : i64]) : ResultLowerEnv
+  (match patterns
+    [(AstPatternNil)
+      (match types
+        [(AstTypeNil) (OkLowerEnv state env type-env)]
+        [_ (ErrLowerEnv "lower: enum payload pattern arity mismatch")])]
+    [(AstPatternCons pattern rest-patterns)
+      (match types
+        [(AstTypeCons ty rest-types)
+          (let ([resolved : AstType (tc-resolve-type ctx ty)])
+            (let ([offset
+                :
+                i64
+                (lower-align-up cursor (lower-type-align ctx resolved))]
+              [next-cursor : i64 (+ offset (lower-type-size ctx resolved))])
+              (match pattern
+                [(AstPatWildcard)
+                  (lower-bind-variant-payloads
+                    ctx
+                    state
+                    env
+                    type-env
+                    base
+                    rest-patterns
+                    rest-types
+                    next-cursor)]
+                [(AstPatBinding name)
+                  (match (lower-load-at-offset state base offset resolved)
+                    [(LowerExpr load-state value _)
+                      (match value
+                        [(IrValueVar field-var)
+                          (lower-bind-variant-payloads
+                            ctx
+                            load-state
+                            (sym-i64-bind env name field-var)
+                            (tc-bind type-env name resolved)
+                            base
+                            rest-patterns
+                            rest-types
+                            next-cursor)]
+                        [_
+                          (ErrLowerEnv
+                            "lower: internal enum payload load failed")])])]
+                [_ (ErrLowerEnv "lower: unsupported enum payload pattern")])))]
+        [(AstTypeNil)
+          (ErrLowerEnv "lower: enum payload pattern arity mismatch")])]))
 
 (define (lower-field-info-from-list
   [ctx : TcContext]
@@ -1222,7 +1291,9 @@
 
 ;; value-typed match merges arm results with an `IrInstrPhi`; a `unit`-typed
 
-;; match emits no value phi. Enum/variant dispatch stays in #517.
+;; match emits no value phi. Enum matches reuse the same merge path, but load the
+
+;; heap tag once and dispatch variant arms by tag (#517).
 
 (define (lower-match
   [ctx : TcContext]
@@ -1244,18 +1315,59 @@
                   (IrInstrMov scrut-var scrut-value scrut-ty))
                 "match_merge")
                 [(LowerLabel merge-state merge-label)
-                  (lower-match-arms
-                    ctx
-                    merge-state
-                    env
-                    type-env
-                    scrut-var
-                    scrut-ty
-                    arms
-                    merge-label
-                    expr-ty
-                    IrPhiInputNil)])])])]
+                  (match (tc-resolve-type ctx scrut-ty)
+                    [(AstTyEnum _)
+                      (lower-match-enum
+                        ctx
+                        merge-state
+                        env
+                        type-env
+                        scrut-var
+                        scrut-ty
+                        arms
+                        merge-label
+                        expr-ty)]
+                    [_
+                      (lower-match-arms
+                        ctx
+                        merge-state
+                        env
+                        type-env
+                        scrut-var
+                        scrut-ty
+                        arms
+                        merge-label
+                        expr-ty
+                        IrPhiInputNil)])])])])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+(define (lower-match-enum
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [scrut-var : i64]
+  [scrut-ty : AstType]
+  [arms : AstMatchArmList]
+  [merge-label : String]
+  [expr-ty : AstType]) : ResultLowerExpr
+  (match (lower-load-at-offset state (IrValueVar scrut-var) 0 (AstTyI64))
+    [(LowerExpr tag-state tag-value _)
+      (match tag-value
+        [(IrValueVar tag-var)
+          (lower-match-enum-arms
+            ctx
+            tag-state
+            env
+            type-env
+            scrut-var
+            scrut-ty
+            tag-var
+            arms
+            merge-label
+            expr-ty
+            IrPhiInputNil)]
+        [_ (ErrLowerExpr "lower: internal enum tag load failed")])]))
 
 (define (lower-match-arms
   [ctx : TcContext]
@@ -1327,6 +1439,289 @@
                     expr-ty
                     phi-inputs)]
                 [_ (ErrLowerExpr "lower: unsupported match pattern")])])])]))
+
+(define (lower-match-enum-arms
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [scrut-var : i64]
+  [scrut-ty : AstType]
+  [tag-var : i64]
+  [arms : AstMatchArmList]
+  [merge-label : String]
+  [expr-ty : AstType]
+  [phi-inputs : CompilerIrPhiInputList]) : ResultLowerExpr
+  (match arms
+    [(AstMatchArmNil) (ErrLowerExpr "lower: match with no arms")]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm pat body)
+          (match rest
+            [(AstMatchArmNil)
+              (match pat
+                [(AstPatWildcard)
+                  (lower-match-catch-all
+                    ctx
+                    state
+                    env
+                    type-env
+                    scrut-var
+                    scrut-ty
+                    arm
+                    merge-label
+                    expr-ty
+                    phi-inputs)]
+                [(AstPatBinding variant-name)
+                  (lower-match-variant-final
+                    ctx
+                    state
+                    env
+                    type-env
+                    scrut-var
+                    variant-name
+                    AstPatternNil
+                    body
+                    merge-label
+                    expr-ty
+                    phi-inputs)]
+                [(AstPatVariant variant-name args)
+                  (lower-match-variant-final
+                    ctx
+                    state
+                    env
+                    type-env
+                    scrut-var
+                    variant-name
+                    args
+                    body
+                    merge-label
+                    expr-ty
+                    phi-inputs)]
+                [_ (ErrLowerExpr "lower: unsupported enum match pattern")])]
+            [_
+              (match pat
+                [(AstPatWildcard)
+                  (lower-match-catch-all
+                    ctx
+                    state
+                    env
+                    type-env
+                    scrut-var
+                    scrut-ty
+                    arm
+                    merge-label
+                    expr-ty
+                    phi-inputs)]
+                [(AstPatBinding variant-name)
+                  (lower-match-variant-arm
+                    ctx
+                    state
+                    env
+                    type-env
+                    scrut-var
+                    scrut-ty
+                    tag-var
+                    variant-name
+                    AstPatternNil
+                    body
+                    rest
+                    merge-label
+                    expr-ty
+                    phi-inputs)]
+                [(AstPatVariant variant-name args)
+                  (lower-match-variant-arm
+                    ctx
+                    state
+                    env
+                    type-env
+                    scrut-var
+                    scrut-ty
+                    tag-var
+                    variant-name
+                    args
+                    body
+                    rest
+                    merge-label
+                    expr-ty
+                    phi-inputs)]
+                [_ (ErrLowerExpr "lower: unsupported enum match pattern")])])])]))
+
+(define (lower-match-variant-final
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [scrut-var : i64]
+  [variant-name : String]
+  [args : AstPatternList]
+  [body : AstExpr]
+  [merge-label : String]
+  [expr-ty : AstType]
+  [phi-inputs : CompilerIrPhiInputList]) : ResultLowerExpr
+  (match ctx
+    [(TcContext program _ registries)
+      (match (compiler-registries-lookup-variant registries variant-name)
+        [(SomeI64 handle)
+          (match (compiler-registries-variant-fields program handle)
+            [(OkAstTypeList fields)
+              (match (lower-bind-variant-payloads
+                ctx
+                state
+                env
+                type-env
+                (IrValueVar scrut-var)
+                args
+                fields
+                8)
+                [(OkLowerEnv body-start body-env body-type-env)
+                  (match (lower-expr ctx body-start body-env body-type-env body)
+                    [(OkLowerExpr body-lowered)
+                      (match body-lowered
+                        [(LowerExpr body-state body-value _)
+                          (let ([body-end-label
+                              :
+                              String
+                              (lower-state-current-label body-state)])
+                            (lower-match-finish
+                              (lower-state-emit
+                                body-state
+                                (IrInstrJump merge-label))
+                              merge-label
+                              expr-ty
+                              (IrPhiInputCons
+                                (IrPhiInput body-value body-end-label)
+                                phi-inputs)))])]
+                    [(ErrLowerExpr message) (ErrLowerExpr message)])]
+                [(ErrLowerEnv message) (ErrLowerExpr message)])]
+            [(ErrAstTypeList message) (ErrLowerExpr message)])]
+        [(NoneI64)
+          (ErrLowerExpr (string-append "lower: unknown variant " variant-name))])]))
+
+(define (lower-match-variant-body
+  [ctx : TcContext]
+  [body-start : LowerState]
+  [next-label : String]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [scrut-var : i64]
+  [scrut-ty : AstType]
+  [tag-var : i64]
+  [fields : AstTypeList]
+  [args : AstPatternList]
+  [body : AstExpr]
+  [rest : AstMatchArmList]
+  [merge-label : String]
+  [expr-ty : AstType]
+  [phi-inputs : CompilerIrPhiInputList]) : ResultLowerExpr
+  (match (lower-bind-variant-payloads
+    ctx
+    body-start
+    env
+    type-env
+    (IrValueVar scrut-var)
+    args
+    fields
+    8)
+    [(OkLowerEnv bound-state body-env body-type-env)
+      (match (lower-expr ctx bound-state body-env body-type-env body)
+        [(OkLowerExpr body-lowered)
+          (match body-lowered
+            [(LowerExpr body-state body-value _)
+              (let ([body-end-label
+                  :
+                  String
+                  (lower-state-current-label body-state)])
+                (lower-match-enum-arms
+                  ctx
+                  (lower-state-finish-block
+                    (lower-state-emit body-state (IrInstrJump merge-label))
+                    next-label)
+                  env
+                  type-env
+                  scrut-var
+                  scrut-ty
+                  tag-var
+                  rest
+                  merge-label
+                  expr-ty
+                  (IrPhiInputCons
+                    (IrPhiInput body-value body-end-label)
+                    phi-inputs)))])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [(ErrLowerEnv message) (ErrLowerExpr message)]))
+
+(define (lower-match-variant-arm
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [scrut-var : i64]
+  [scrut-ty : AstType]
+  [tag-var : i64]
+  [variant-name : String]
+  [args : AstPatternList]
+  [body : AstExpr]
+  [rest : AstMatchArmList]
+  [merge-label : String]
+  [expr-ty : AstType]
+  [phi-inputs : CompilerIrPhiInputList]) : ResultLowerExpr
+  (match ctx
+    [(TcContext program _ registries)
+      (match (compiler-registries-lookup-variant registries variant-name)
+        [(SomeI64 handle)
+          (match (compiler-registries-variant-fields program handle)
+            [(OkAstTypeList fields)
+              (match (lower-state-alloc-var state)
+                [(LowerAlloc eq-alloc eq-var)
+                  (let ([eq-state
+                      :
+                      LowerState
+                      (lower-state-emit
+                        eq-alloc
+                        (IrInstrBinOp
+                          eq-var
+                          IrBinEq
+                          (IrValueVar tag-var)
+                          (IrValueI64
+                            (compiler-registry-handle-child-index handle))
+                          (AstTyI64)))])
+                    (match (lower-state-fresh-label eq-state "match_arm")
+                      [(LowerLabel body-label-state body-label)
+                        (match (lower-state-fresh-label
+                          body-label-state
+                          "match_next")
+                          [(LowerLabel next-label-state next-label)
+                            (let ([body-start
+                                :
+                                LowerState
+                                (lower-state-finish-block
+                                  (lower-state-emit
+                                    next-label-state
+                                    (IrInstrBranch
+                                      (IrValueVar eq-var)
+                                      body-label
+                                      next-label))
+                                  body-label)])
+                              (lower-match-variant-body
+                                ctx
+                                body-start
+                                next-label
+                                env
+                                type-env
+                                scrut-var
+                                scrut-ty
+                                tag-var
+                                fields
+                                args
+                                body
+                                rest
+                                merge-label
+                                expr-ty
+                                phi-inputs))])]))])]
+            [(ErrAstTypeList message) (ErrLowerExpr message)])]
+        [(NoneI64)
+          (ErrLowerExpr (string-append "lower: unknown variant " variant-name))])]))
 
 (define (lower-match-literal-arm
   [ctx : TcContext]
@@ -1701,6 +2096,29 @@
 (define (main) : i64
   (get-y (make-point 20 22)))")
 
+(define (compiler-lower-enum-match-source) : String
+  "(defenum Maybe (None) (Some i64) (Pair i64 i64))
+(define (score [m : Maybe]) : i64
+  (match m
+    [None 0]
+    [(Some v) (+ v 1)]
+    [(Pair left _) left]))
+(define (zero-call [m : Maybe]) : i64
+  (match m
+    [(None) 0]
+    [_ 1]))
+(define (or-zero [m : Maybe]) : i64
+  (match m
+    [(Some v) v]
+    [_ 0]))
+(define (touch [m : Maybe]) : unit
+  (match m
+    [None unit]
+    [(Some _) unit]
+    [(Pair _ _) unit]))
+(define (main) : i64
+  (+ (score (Some 4)) (+ (zero-call None) (or-zero (Pair 3 4)))))")
+
 (define (compiler-lower-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(OkCompilerLower _) true]
@@ -1732,11 +2150,24 @@
     [(IrInstrPhi _ _ _) 1]
     [_ 0]))
 
+(define (lower-test-instr-load-count [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrLoad _ _ _) 1]
+    [_ 0]))
+
 (define (lower-test-instrs-phi-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
     [(IrInstrNil) 0]
     [(IrInstrCons instr rest)
       (+ (lower-test-instr-phi-count instr) (lower-test-instrs-phi-count rest))]))
+
+(define (lower-test-instrs-load-count [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (lower-test-instr-load-count instr)
+        (lower-test-instrs-load-count rest))]))
 
 (define (lower-test-blocks-phi-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -1747,6 +2178,16 @@
           (+
             (lower-test-instrs-phi-count instrs)
             (lower-test-blocks-phi-count rest))])]))
+
+(define (lower-test-blocks-load-count [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instrs-load-count instrs)
+            (lower-test-blocks-load-count rest))])]))
 
 ;; Phi count of the function named `name`, or -1 when no such function exists
 
@@ -1763,6 +2204,18 @@
           (if (string-eq fname name)
             (lower-test-blocks-phi-count blocks)
             (lower-test-function-phi-count rest name))])]))
+
+(define (lower-test-function-load-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]) : i64
+  (match funcs
+    [(IrFunctionNil) (- 0 1)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ blocks)
+          (if (string-eq fname name)
+            (lower-test-blocks-load-count blocks)
+            (lower-test-function-load-count rest name))])]))
 
 ;; The value-returning scalar matches (`classify`/`flag-score`/`sign`) each emit
 
@@ -1782,6 +2235,24 @@
                 (= (lower-test-function-phi-count functions "announce") 0))))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-enum-match-shape-ok? [src : String]) : bool
+  (match (lower-compiler-source src)
+    [(OkCompilerLower program)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (> (lower-test-function-phi-count functions "score") 0)
+            (and
+              (> (lower-test-function-phi-count functions "zero-call") 0)
+              (and
+                (> (lower-test-function-phi-count functions "or-zero") 0)
+                (and
+                  (= (lower-test-function-phi-count functions "touch") 0)
+                  (and
+                    (> (lower-test-function-load-count functions "score") 1)
+                    (> (lower-test-function-load-count functions "or-zero") 1))))))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-self-test) : i64
   (if (and
     (compiler-lower-ok-summary? (compiler-lower-smoke-source))
@@ -1790,18 +2261,23 @@
       (and
         (compiler-lower-match-phi-shape-ok? (compiler-lower-match-source))
         (and
-          (compiler-lower-ok? (compiler-lower-array-length-source))
+          (compiler-lower-ok? (compiler-lower-enum-match-source))
           (and
-            (compiler-lower-ok? (compiler-lower-stdio-source))
+            (compiler-lower-enum-match-shape-ok?
+              (compiler-lower-enum-match-source))
             (and
-              (compiler-lower-ok? (compiler-lower-aggregate-source))
+              (compiler-lower-ok? (compiler-lower-array-length-source))
               (and
-                (compiler-lower-error-ok?
-                  (compiler-typecheck-branch-mismatch-source)
-                  "typecheck: if branches must match")
-                (compiler-lower-error-ok?
-                  (compiler-lower-unsupported-source)
-                  "lower: unsupported expression"))))))))
+                (compiler-lower-ok? (compiler-lower-stdio-source))
+                (and
+                  (compiler-lower-ok? (compiler-lower-aggregate-source))
+                  (and
+                    (compiler-lower-error-ok?
+                      (compiler-typecheck-branch-mismatch-source)
+                      "typecheck: if branches must match")
+                    (compiler-lower-error-ok?
+                      (compiler-lower-unsupported-source)
+                      "lower: unsupported expression"))))))))))
     42
     (begin
       (panic "lower: smoke score mismatch")

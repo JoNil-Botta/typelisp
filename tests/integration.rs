@@ -78,6 +78,17 @@ fn type_lisp_programs_compile_link_and_run() {
             deps: &["format_cst.tl", "format_tokens.tl"],
         },
         Case {
+            name: "format_core_integration",
+            exit_code: 42,
+            stdout: "",
+            deps: &[
+                "format_core.tl",
+                "format_cst.tl",
+                "format_tokens.tl",
+                "format_doc.tl",
+            ],
+        },
+        Case {
             name: "factorial",
             exit_code: 120,
             stdout: "",
@@ -576,6 +587,17 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             exit_code: 42,
             stdout: "",
             deps: &["format_cst.tl", "format_tokens.tl"],
+        },
+        Case {
+            name: "format_core_integration",
+            exit_code: 42,
+            stdout: "",
+            deps: &[
+                "format_core.tl",
+                "format_cst.tl",
+                "format_tokens.tl",
+                "format_doc.tl",
+            ],
         },
         Case {
             name: "factorial",
@@ -3387,6 +3409,9 @@ fn dep_source_path(manifest_dir: &Path, source_dir: &Path, dep: &str) -> PathBuf
     }
     if dep == "format_cst.tl" {
         return manifest_dir.join("selfhost").join("format_cst.tl");
+    }
+    if dep == "format_core.tl" {
+        return manifest_dir.join("selfhost").join("format_core.tl");
     }
     if dep == "format_tokens.tl" {
         return manifest_dir.join("selfhost").join("format_tokens.tl");

@@ -222,11 +222,14 @@ and does not add general per-object `free` or GC yet. `String` buffers, dynamic
 array storage, returned enum/struct storage, and self-hosted data structures all
 remain heap allocations. General `free` is deferred until ownership, borrowing,
 and reference semantics are designed, because current aggregate handles can be
-copied freely. A tracing GC is also larger than the next step. The planned first
+copied freely. A tracing GC is also larger than the next step. The first
 reclamation mechanism is explicit region reset for tool-owned phase boundaries:
-resetting a region invalidates every heap handle allocated after its mark and is
-only valid when a compiler, formatter, package-tooling, or REPL phase has
-discarded those values. See #320, #418, and #419 for the split follow-up work.
+programs may declare extern-only `tl_region_mark` and `tl_region_reset` helpers
+to snapshot and restore the allocator bump pointer. Resetting a region
+invalidates every heap handle allocated after its mark and is only valid when a
+compiler, formatter, package-tooling, or REPL phase has discarded those values.
+Resetting mark `0` clears all current arenas; invalid nonzero marks abort. The
+region helpers are currently emitted only for the Linux x86_64 System V target.
 
 See [SPEC.md](SPEC.md) for the full language reference.
 

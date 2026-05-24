@@ -1251,8 +1251,11 @@ and emits a console `.exe`.
 `tokenize`, `parse`, and `check` are also accepted as top-level compatibility
 aliases for the corresponding `debug` commands.
 
-`repl` currently supports dot commands only: `.help` prints command help, and
-`.exit` terminates the session. Form evaluation is reserved for later work.
+`repl` currently supports `.help`, `.type <expr>`, and `.exit`. Top-level
+declarations are remembered for later `.type` commands. `.type` parses and
+typechecks the expression against the current session and prints the inferred
+type without compiling or running native code. Form evaluation is reserved for
+later work.
 
 ---
 

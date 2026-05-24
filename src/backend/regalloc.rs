@@ -254,9 +254,11 @@ fn unsupported_def_vars(func: &Function) -> BTreeSet<VarId> {
                 Instruction::LaneId { dst, .. }
                 | Instruction::Splat { dst, .. }
                 | Instruction::VectorBinOp { dst, .. }
+                | Instruction::VectorReduce { dst, .. }
                 | Instruction::VectorCompare { dst, .. }
                 | Instruction::MaskBinOp { dst, .. }
                 | Instruction::MaskNot { dst, .. }
+                | Instruction::MaskReduce { dst, .. }
                 | Instruction::Select { dst, .. }
                 | Instruction::VectorLoad { dst, .. }
                 | Instruction::TailMask { dst, .. } => {
@@ -322,7 +324,7 @@ fn sort_active(active: &mut [ActiveInterval]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::{BasicBlock, Value};
+    use crate::ir::{BasicBlock, MaskReduceOp, Value, VectorReduceOp};
 
     fn block(instructions: Vec<Instruction>) -> BasicBlock {
         BasicBlock {
@@ -463,21 +465,45 @@ mod tests {
     fn excludes_values_defined_by_vector_or_mask_ops() {
         let func = function(
             vec![],
-            vec![(0, Type::I64)],
+            vec![
+                (0, Type::Vector(Box::new(Type::I64), 4)),
+                (1, Type::I64),
+                (2, Type::Mask(4)),
+                (3, Type::Bool),
+            ],
             vec![
                 Instruction::LaneId {
                     dst: 0,
                     lanes: 4,
                     ty: Type::I64,
                 },
-                Instruction::Return(Some(Value::Var(0))),
+                Instruction::VectorReduce {
+                    dst: 1,
+                    op: VectorReduceOp::Sum,
+                    src: Value::Var(0),
+                    lanes: 4,
+                    elem_ty: Type::I64,
+                },
+                Instruction::MaskReduce {
+                    dst: 3,
+                    op: MaskReduceOp::Any,
+                    src: Value::Var(2),
+                    lanes: 4,
+                },
+                Instruction::Return(Some(Value::Var(1))),
             ],
         );
 
         let plan = plan_for(&func, BackendTarget::linux_x86_64_system_v());
 
         assert!(plan.ineligible.contains(&0));
+        assert!(plan.ineligible.contains(&1));
+        assert!(plan.ineligible.contains(&2));
+        assert!(plan.ineligible.contains(&3));
         assert!(!plan.assignments.contains_key(&0));
+        assert!(!plan.assignments.contains_key(&1));
+        assert!(!plan.assignments.contains_key(&2));
+        assert!(!plan.assignments.contains_key(&3));
     }
 
     #[test]

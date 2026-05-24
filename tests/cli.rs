@@ -214,6 +214,14 @@ fn lsp_is_listed_in_usage() {
 }
 
 #[test]
+fn fmt_is_listed_in_usage() {
+    let output = typelisp(&["--help"]);
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert!(stderr(&output).contains("typelisp fmt"));
+}
+
+#[test]
 fn lsp_initialize_shutdown_exit_over_stdio() {
     let output = run_lsp(&[
         lsp_initialize(1),
@@ -1048,6 +1056,63 @@ fn doc_test_passes_when_docs_have_no_examples() {
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     assert_eq!(stdout(&output), "Doc tests passed: 0 example(s)\n");
     assert_doctest_temp_cleaned(&source);
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn fmt_formats_source_files_in_place() {
+    let dir = fixture_dir("fmt-in-place");
+    let first = dir.join("first.tl");
+    let second = dir.join("second.tl");
+    let source = r#"(define (main [x : i64]) : i64 (begin (print-string "x") x))"#;
+    let expected = r#"(define (main [x : i64]) : i64
+  (begin
+    (print-string "x")
+    x))"#;
+    fs::write(&first, source).expect("write first source");
+    fs::write(&second, source).expect("write second source");
+
+    let output = typelisp(&["fmt", first.to_str().unwrap(), second.to_str().unwrap()]);
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stdout(&output), "");
+    assert_eq!(stderr(&output), "");
+    assert_eq!(
+        fs::read_to_string(&first).expect("read first source"),
+        expected
+    );
+    assert_eq!(
+        fs::read_to_string(&second).expect("read second source"),
+        expected
+    );
+
+    let check = typelisp(&["fmt", "--check", first.to_str().unwrap()]);
+    assert!(check.status.success(), "stderr:\n{}", stderr(&check));
+    assert_eq!(stdout(&check), "");
+    assert_eq!(stderr(&check), "");
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn fmt_check_reports_changes_without_writing() {
+    let dir = fixture_dir("fmt-check");
+    let source = dir.join("main.tl");
+    let original = r#"(define (main [x : i64]) : i64 (begin (print-string "x") x))"#;
+    fs::write(&source, original).expect("write source");
+
+    let output = typelisp(&["fmt", "--check", source.to_str().unwrap()]);
+
+    assert!(!output.status.success(), "stdout:\n{}", stdout(&output));
+    assert_eq!(stdout(&output), "");
+    assert!(
+        stderr(&output).contains("fmt: would reformat"),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    assert_eq!(
+        fs::read_to_string(&source).expect("read source after check"),
+        original
+    );
 }
 
 #[test]

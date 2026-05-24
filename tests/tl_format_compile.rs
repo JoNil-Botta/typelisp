@@ -301,3 +301,62 @@ fn tl_format_rules_tl_compiles_to_assembly() {
         );
     }
 }
+
+#[test]
+fn tl_format_driver_tl_compiles_to_assembly() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source_path = manifest_dir.join("selfhost").join("format.tl");
+
+    let work_dir = manifest_dir
+        .join("target")
+        .join("tl-format-driver-compile-test");
+    fs::create_dir_all(&work_dir).expect("create format driver compile test work dir");
+    let asm_path = work_dir.join("format.s");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("compile")
+        .arg(&source_path)
+        .arg("-o")
+        .arg(&asm_path)
+        .output()
+        .expect("run typelisp compile");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "format.tl compile step failed\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+
+    let asm = fs::read_to_string(&asm_path).expect("read generated format driver assembly");
+
+    assert!(
+        !asm.contains("# TODO"),
+        "format driver assembly still contains a # TODO marker:\n{}",
+        asm,
+    );
+
+    for sym in [
+        "_tl_fmt_format_file:",
+        "_tl_fmt_files:",
+        "_tl_format_rules_render_source_width:",
+        "tl_string_eq:",
+        ".L_tl_write_file:",
+        ".L_tl_read_file:",
+    ] {
+        assert!(
+            asm.contains(sym),
+            "format driver assembly is missing expected symbol {}:\n{}",
+            sym,
+            asm,
+        );
+    }
+
+    assert!(
+        asm.contains(".string \"fmt: would reformat \""),
+        "format driver assembly is missing check-mode diagnostic:\n{}",
+        asm,
+    );
+}

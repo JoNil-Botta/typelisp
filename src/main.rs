@@ -177,6 +177,7 @@ fn print_usage() {
     eprintln!(
         "    typelisp build [--manifest-path <typelisp.pkg>] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...]"
     );
+    eprintln!("    typelisp fmt [--check] <file.tl>... [--stdlib-root <dir>...]");
     eprintln!("    typelisp doc <file.tl> [-o <out.md>] [--stdlib-root <dir>...]");
     eprintln!("    typelisp doc --test <file.tl> [--stdlib-root <dir>...]");
     eprintln!();
@@ -199,6 +200,10 @@ fn print_usage() {
     eprintln!("Options for build:");
     eprintln!("    -o <exe>                       Source build executable output path");
     eprintln!("    --manifest-path <file>         Defaults to nearest typelisp.pkg upward");
+    eprintln!("Options for fmt:");
+    eprintln!(
+        "    --check                        Report files that would change without writing them"
+    );
     eprintln!("Options for doc:");
     eprintln!("    --test <file.tl>               Check TypeLisp fenced examples in docs");
 }
@@ -214,6 +219,11 @@ fn print_doc_usage() {
     eprintln!("Usage:");
     eprintln!("    typelisp doc <file.tl> [-o <out.md>] [--stdlib-root <dir>...]");
     eprintln!("    typelisp doc --test <file.tl> [--stdlib-root <dir>...]");
+}
+
+fn print_fmt_usage() {
+    eprintln!("Usage:");
+    eprintln!("    typelisp fmt [--check] <file.tl>... [--stdlib-root <dir>...]");
 }
 
 fn find_selfhost_file(relative: &str) -> Option<PathBuf> {
@@ -329,6 +339,76 @@ fn run_debug_command(args: &[String]) {
             print_debug_usage();
             std::process::exit(1);
         }
+    }
+}
+
+fn run_fmt_command(args: &[String]) {
+    if args.len() < 3 {
+        eprintln!("Error: missing file argument");
+        print_fmt_usage();
+        std::process::exit(1);
+    }
+
+    let mut check = false;
+    let mut files = Vec::new();
+    let mut stdlib_roots = Vec::new();
+
+    let mut i = 2;
+    while i < args.len() {
+        match args[i].as_str() {
+            "help" | "--help" | "-h" if files.is_empty() => {
+                print_fmt_usage();
+                return;
+            }
+            "--check" => {
+                check = true;
+                i += 1;
+            }
+            "--stdlib-root" => {
+                if i + 1 >= args.len() {
+                    missing_option_value("--stdlib-root");
+                }
+                stdlib_roots.push(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
+            flag if flag.starts_with('-') => {
+                eprintln!("Error: unknown fmt flag: {}", flag);
+                print_fmt_usage();
+                std::process::exit(1);
+            }
+            _ => {
+                files.push(PathBuf::from(&args[i]));
+                i += 1;
+            }
+        }
+    }
+
+    if files.is_empty() {
+        missing_file_argument(print_fmt_usage);
+    }
+
+    let driver = find_selfhost_file("selfhost/format.tl").unwrap_or_else(|| {
+        eprintln!("Error: could not find selfhost/format.tl in the repo or near the executable");
+        std::process::exit(1);
+    });
+
+    let options = load_options_with_env_stdlib_root(stdlib_roots);
+    let mut runtime_args = Vec::new();
+    if check {
+        runtime_args.push("--check".to_string());
+    }
+    runtime_args.extend(files.iter().map(|file| file.display().to_string()));
+
+    let output = native_or_exit(native::run_source_file_in_temp_dir(
+        &driver,
+        &options,
+        &runtime_args,
+        BackendTarget::default(),
+    ));
+    write_stream_or_exit(io::stdout(), &output.stdout, "stdout");
+    write_stream_or_exit(io::stderr(), &output.stderr, "stderr");
+    if !output.status.success() {
+        std::process::exit(output.status.code().unwrap_or(1));
     }
 }
 
@@ -668,6 +748,9 @@ fn run_cli() {
         }
         "doc" => {
             run_doc_command(&args);
+        }
+        "fmt" => {
+            run_fmt_command(&args);
         }
         "lsp" => {
             let options = parse_stdlib_roots(&args, 2);

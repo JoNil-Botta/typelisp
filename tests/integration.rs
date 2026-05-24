@@ -1201,6 +1201,8 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             stdout: "",
             deps: &[
                 "compiler_backend.tl",
+                "compiler_regalloc.tl",
+                "compiler_liveness.tl",
                 "compiler_lower.tl",
                 "compiler_ir_types.tl",
                 "compiler_typecheck.tl",
@@ -1362,6 +1364,8 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
         &[
             "compiler_driver_core.tl",
             "compiler_backend.tl",
+            "compiler_regalloc.tl",
+            "compiler_liveness.tl",
             "compiler_optimize.tl",
             "compiler_lower.tl",
             "compiler_ir_types.tl",

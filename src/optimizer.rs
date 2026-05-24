@@ -657,7 +657,7 @@ impl Optimizer {
                 Self::add_value_uses(dst, used);
                 Self::add_value_uses(src, used);
             }
-            Instruction::Call { args, .. } => {
+            Instruction::Call { args, .. } | Instruction::TailCall { args, .. } => {
                 for arg in args {
                     Self::add_value_uses(arg, used);
                 }
@@ -930,7 +930,7 @@ impl Optimizer {
                 substitute(dst);
                 substitute(src);
             }
-            Instruction::Call { args, .. } => {
+            Instruction::Call { args, .. } | Instruction::TailCall { args, .. } => {
                 for arg in args {
                     substitute(arg);
                 }
@@ -1028,6 +1028,7 @@ impl Optimizer {
             | Instruction::VectorStore { .. }
             | Instruction::PredicatedStore { .. }
             | Instruction::Branch { .. }
+            | Instruction::TailCall { .. }
             | Instruction::Jump(_)
             | Instruction::Return(_) => None,
         }
@@ -1419,6 +1420,44 @@ mod tests {
                 lhs: Value::Var(0),
                 ..
             }
+        ));
+    }
+
+    #[test]
+    fn test_dead_code_elimination_treats_tail_call_args_as_uses() {
+        let mut func = Function {
+            name: "loop".into(),
+            params: vec![(0, Type::I64)],
+            ret: Type::I64,
+            locals: vec![(1, Type::I64)],
+            blocks: vec![BasicBlock {
+                label: "entry".into(),
+                instructions: vec![
+                    Instruction::Mov {
+                        dst: 1,
+                        src: Value::Var(0),
+                        ty: Type::I64,
+                    },
+                    Instruction::TailCall {
+                        func: "loop".into(),
+                        args: vec![Value::Var(1)],
+                        ty: Type::I64,
+                    },
+                ],
+            }],
+            entry: "entry".into(),
+        };
+
+        assert!(!Optimizer::dead_code_elimination(&mut func));
+        assert!(matches!(
+            func.blocks[0].instructions.as_slice(),
+            [
+                Instruction::Mov { dst: 1, .. },
+                Instruction::TailCall {
+                    args,
+                    ..
+                }
+            ] if args == &[Value::Var(1)]
         ));
     }
 

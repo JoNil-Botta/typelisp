@@ -446,6 +446,11 @@ pub struct X86_64Backend {
     /// target — the IR carries bare block labels (e.g. `then.0`) which must be
     /// qualified with the function symbol to resolve.
     current_fn: String,
+    /// Bare IR entry label of the function currently being generated. Self-tail
+    /// calls jump here after rewriting parameter slots, bypassing the prologue.
+    current_entry_label: String,
+    /// Ordered parameters for the function currently being generated.
+    current_params: Vec<(VarId, Type)>,
     /// String-literal bytes interned into `.rodata`, mapped to their emitted
     /// label. A `Value::ConstStr` materializes as the address of its label.
     /// Built in a pre-pass over the program so the bytes are emitted once and
@@ -692,6 +697,14 @@ fn validate_function(
                             .map_err(|w| unsupported_value(&func.name, &w))?;
                     }
                 }
+                Instruction::TailCall {
+                    func: target,
+                    args,
+                    ty,
+                } => {
+                    validate_tail_call(func, target, args, ty, &var_types, global_types)
+                        .map_err(|w| unsupported_function_message(&func.name, &w))?;
+                }
                 Instruction::Return(Some(v)) => {
                     if func.ret == Type::Unit {
                         validate_unit_value(v, &var_types, global_types)
@@ -919,6 +932,83 @@ fn validate_function(
         }
     }
     Ok(())
+}
+
+fn validate_tail_call(
+    current: &Function,
+    target: &str,
+    args: &[Value],
+    ty: &Type,
+    var_types: &HashMap<VarId, Type>,
+    global_types: &HashMap<String, Type>,
+) -> Result<(), String> {
+    if target != current.name {
+        return Err(format!(
+            "tail call target '{}' is not the current function '{}'",
+            target, current.name
+        ));
+    }
+    if ty != &current.ret {
+        return Err(format!(
+            "tail call result type {} does not match return type {}",
+            ty, current.ret
+        ));
+    }
+    if args.len() != current.params.len() {
+        return Err(format!(
+            "tail call to '{}' has {} args but function has {} params",
+            target,
+            args.len(),
+            current.params.len()
+        ));
+    }
+
+    for ((param_var, param_ty), arg) in current.params.iter().zip(args.iter()) {
+        if *param_ty == Type::Unit {
+            validate_unit_value(arg, var_types, global_types).map_err(|err| {
+                format!(
+                    "tail call argument for unit parameter %{}: {}",
+                    param_var, err
+                )
+            })?;
+            continue;
+        }
+
+        check_operand(arg, global_types)
+            .map_err(|err| format!("tail call argument for parameter %{}: {}", param_var, err))?;
+        if !tail_call_arg_matches_param(arg, param_ty, var_types, global_types) {
+            let actual = validate_value_type(arg, var_types, global_types)
+                .map_or_else(|| "unknown".to_string(), |ty| ty.to_string());
+            return Err(format!(
+                "tail call argument for parameter %{} has type {}, expected {}",
+                param_var, actual, param_ty
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn tail_call_arg_matches_param(
+    arg: &Value,
+    param_ty: &Type,
+    var_types: &HashMap<VarId, Type>,
+    global_types: &HashMap<String, Type>,
+) -> bool {
+    match (
+        arg,
+        param_ty,
+        validate_value_type(arg, var_types, global_types),
+    ) {
+        (_, expected, Some(actual)) if &actual == expected => true,
+        (Value::Function(_), Type::Func(_, _), _) => true,
+        (Value::ConstI64(_) | Value::ConstI32(_) | Value::ConstI8(_), ty, _)
+            if ty.is_integer() || matches!(ty, Type::Char) =>
+        {
+            true
+        }
+        _ => false,
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1531,6 +1621,8 @@ impl X86_64Backend {
             return_ty: Type::Unit,
             param_vars: HashSet::new(),
             current_fn: String::new(),
+            current_entry_label: String::new(),
+            current_params: Vec::new(),
             interned_strings: HashMap::new(),
         }
     }
@@ -2650,7 +2742,9 @@ impl X86_64Backend {
                     intern(s);
                 }
             }
-            Instruction::Call { args, .. } | Instruction::CallIndirect { args, .. } => {
+            Instruction::Call { args, .. }
+            | Instruction::CallIndirect { args, .. }
+            | Instruction::TailCall { args, .. } => {
                 for a in args {
                     if let Value::ConstStr(s) = a {
                         intern(s);
@@ -2728,7 +2822,7 @@ impl X86_64Backend {
                 Self::collect_function_value(dst, names);
                 Self::collect_function_value(src, names);
             }
-            Instruction::Call { args, .. } => {
+            Instruction::Call { args, .. } | Instruction::TailCall { args, .. } => {
                 for arg in args {
                     Self::collect_function_value(arg, names);
                 }
@@ -2842,10 +2936,14 @@ impl X86_64Backend {
         let saved_return_ty = self.return_ty.clone();
         let saved_param_vars = std::mem::take(&mut self.param_vars);
         let saved_current_fn = std::mem::take(&mut self.current_fn);
+        let saved_current_entry_label = std::mem::take(&mut self.current_entry_label);
+        let saved_current_params = std::mem::take(&mut self.current_params);
 
         self.stack_size = 0;
         self.return_ty = ret_ty.clone();
         self.current_fn = Self::closure_entry_label(name);
+        self.current_entry_label.clear();
+        self.current_params.clear();
         self.emit(&format!("{}:", self.current_fn));
         self.emit("    push %rbp");
         self.emit("    mov %rsp, %rbp");
@@ -2890,6 +2988,8 @@ impl X86_64Backend {
         self.return_ty = saved_return_ty;
         self.param_vars = saved_param_vars;
         self.current_fn = saved_current_fn;
+        self.current_entry_label = saved_current_entry_label;
+        self.current_params = saved_current_params;
     }
 
     fn store_closure_entry_user_args(&mut self, arg_tys: &[Type]) {
@@ -4549,6 +4649,8 @@ impl X86_64Backend {
         self.address_vars.clear();
         self.return_ty = func.ret.clone();
         self.param_vars = func.params.iter().map(|(v, _)| *v).collect();
+        self.current_entry_label = func.entry.clone();
+        self.current_params = func.params.clone();
 
         // Allocate space for parameters (so their Alloc no-ops have a slot) and
         // locals.
@@ -4969,6 +5071,9 @@ impl X86_64Backend {
                 self.emit("    call *%rax");
                 self.release_call_args(stack_arg_space);
                 self.store_call_result(dst, ty);
+            }
+            Instruction::TailCall { func: _, args, .. } => {
+                self.generate_tail_call(args);
             }
             Instruction::Branch {
                 cond,
@@ -5569,6 +5674,42 @@ impl X86_64Backend {
                 self.store_gpr_value(calling_convention.return_gpr, dst_offset, ty);
             }
         }
+    }
+
+    fn generate_tail_call(&mut self, args: &[Value]) {
+        let params = self.current_params.clone();
+        let mut staged = Vec::new();
+
+        for ((param_var, param_ty), arg) in params.iter().zip(args.iter()) {
+            if *param_ty == Type::Unit {
+                continue;
+            }
+
+            if *param_ty == Type::F64 {
+                self.load_value(arg, "%xmm15", param_ty);
+                self.emit("    sub $8, %rsp");
+                self.emit("    movsd %xmm15, (%rsp)");
+            } else {
+                self.load_value(arg, "%r11", param_ty);
+                self.emit("    push %r11");
+            }
+            staged.push((*param_var, param_ty.clone()));
+        }
+
+        for (param_var, param_ty) in staged.iter().rev() {
+            let offset = self.var_offsets[param_var];
+            if *param_ty == Type::F64 {
+                self.emit("    movsd (%rsp), %xmm15");
+                self.emit("    add $8, %rsp");
+                self.store_xmm_value("%xmm15", offset);
+            } else {
+                self.emit("    pop %r11");
+                self.store_gpr_value("%r11", offset, param_ty);
+            }
+        }
+
+        let entry_label = self.current_entry_label.clone();
+        self.emit(&format!("    jmp {}", self.block_label(&entry_label)));
     }
 
     fn is_pointer_deref_var(&self, var: VarId, access_ty: &Type) -> bool {
@@ -6205,6 +6346,8 @@ mod tests {
     use crate::optimizer::Optimizer;
     use crate::parser::parse;
     use std::collections::BTreeSet;
+    #[cfg(target_os = "linux")]
+    use std::process::Command;
 
     /// Compile source through the full pipeline (parse -> lower -> optimize ->
     /// codegen), returning generated assembly text.
@@ -8629,6 +8772,43 @@ mod tests {
     }
 
     #[test]
+    fn test_liveness_tracks_tail_call_arguments_as_terminator_inputs() {
+        let func = Function {
+            name: "tail_liveness".into(),
+            params: vec![(0, Type::I64), (1, Type::I64)],
+            ret: Type::I64,
+            locals: vec![(2, Type::I64)],
+            blocks: vec![BasicBlock {
+                label: "entry".into(),
+                instructions: vec![
+                    Instruction::BinOp {
+                        dst: 2,
+                        op: BinOp::Add,
+                        lhs: Value::Var(0),
+                        rhs: Value::Var(1),
+                        ty: Type::I64,
+                    },
+                    Instruction::TailCall {
+                        func: "tail_liveness".into(),
+                        args: vec![Value::Var(2), Value::Var(1)],
+                        ty: Type::I64,
+                    },
+                ],
+            }],
+            entry: "entry".into(),
+        };
+
+        let analysis = liveness::analyze(&func);
+        let entry = analysis.block("entry").expect("entry block");
+        assert_var_set(&entry.uses, &[0, 1]);
+        assert_var_set(&entry.defs, &[2]);
+        assert_var_set(&entry.live_in, &[0, 1]);
+        assert_var_set(&entry.live_out, &[]);
+        assert_live_after(&analysis, "entry", 0, &[1, 2]);
+        assert_live_after(&analysis, "entry", 1, &[]);
+    }
+
+    #[test]
     fn test_liveness_marks_address_taken_vars() {
         let func = Function {
             name: "address_taken".into(),
@@ -8689,6 +8869,205 @@ mod tests {
             "asm:\n{}",
             asm
         );
+    }
+
+    fn self_tail_sum_program() -> Program {
+        Program {
+            functions: vec![
+                Function {
+                    name: "sum_down".into(),
+                    params: vec![(0, Type::I64), (1, Type::I64)],
+                    ret: Type::I64,
+                    locals: vec![(2, Type::Bool), (3, Type::I64), (4, Type::I64)],
+                    blocks: vec![
+                        BasicBlock {
+                            label: "entry".into(),
+                            instructions: vec![
+                                Instruction::BinOp {
+                                    dst: 2,
+                                    op: BinOp::Le,
+                                    lhs: Value::Var(0),
+                                    rhs: Value::ConstI64(0),
+                                    ty: Type::Bool,
+                                },
+                                Instruction::Branch {
+                                    cond: Value::Var(2),
+                                    true_label: "done".into(),
+                                    false_label: "recurse".into(),
+                                },
+                            ],
+                        },
+                        BasicBlock {
+                            label: "recurse".into(),
+                            instructions: vec![
+                                Instruction::BinOp {
+                                    dst: 3,
+                                    op: BinOp::Sub,
+                                    lhs: Value::Var(0),
+                                    rhs: Value::ConstI64(1),
+                                    ty: Type::I64,
+                                },
+                                Instruction::BinOp {
+                                    dst: 4,
+                                    op: BinOp::Add,
+                                    lhs: Value::Var(1),
+                                    rhs: Value::Var(0),
+                                    ty: Type::I64,
+                                },
+                                Instruction::TailCall {
+                                    func: "sum_down".into(),
+                                    args: vec![Value::Var(3), Value::Var(4)],
+                                    ty: Type::I64,
+                                },
+                            ],
+                        },
+                        BasicBlock {
+                            label: "done".into(),
+                            instructions: vec![Instruction::Return(Some(Value::Var(1)))],
+                        },
+                    ],
+                    entry: "entry".into(),
+                },
+                Function {
+                    name: "main".into(),
+                    params: vec![],
+                    ret: Type::I64,
+                    locals: vec![(10, Type::I64)],
+                    blocks: vec![BasicBlock {
+                        label: "entry".into(),
+                        instructions: vec![
+                            Instruction::Call {
+                                dst: Some(10),
+                                func: "sum_down".into(),
+                                args: vec![Value::ConstI64(5), Value::ConstI64(0)],
+                                ty: Type::I64,
+                            },
+                            Instruction::Return(Some(Value::Var(10))),
+                        ],
+                    }],
+                    entry: "entry".into(),
+                },
+            ],
+            globals: vec![],
+            externs: vec![],
+        }
+    }
+
+    #[test]
+    fn test_backend_self_tail_call_rewrites_params_and_jumps_to_entry() {
+        let asm = generate_assembly(&self_tail_sum_program())
+            .expect("self tail-call program should compile");
+
+        assert!(
+            asm.contains("    jmp _tl_sum_down.entry"),
+            "tail call should jump to the entry block:\n{}",
+            asm
+        );
+        assert_eq!(
+            asm.matches("    call _tl_sum_down").count(),
+            1,
+            "only main should call sum_down; self tail recursion must be a jump:\n{}",
+            asm
+        );
+        assert!(asm.contains("    push %r11"), "asm:\n{}", asm);
+        assert!(asm.contains("    pop %r11"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
+    fn test_backend_rejects_non_self_tail_call() {
+        let err = generate_assembly(&Program {
+            functions: vec![Function {
+                name: "f".into(),
+                params: vec![(0, Type::I64)],
+                ret: Type::I64,
+                locals: vec![],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![Instruction::TailCall {
+                        func: "g".into(),
+                        args: vec![Value::Var(0)],
+                        ty: Type::I64,
+                    }],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![],
+        })
+        .expect_err("non-self tail calls should be rejected");
+
+        assert!(
+            err.contains("tail call target 'g' is not the current function 'f'"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_backend_rejects_tail_call_arity_mismatch() {
+        let err = generate_assembly(&Program {
+            functions: vec![Function {
+                name: "f".into(),
+                params: vec![(0, Type::I64), (1, Type::I64)],
+                ret: Type::I64,
+                locals: vec![],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![Instruction::TailCall {
+                        func: "f".into(),
+                        args: vec![Value::Var(0)],
+                        ty: Type::I64,
+                    }],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![],
+        })
+        .expect_err("tail call arity mismatch should be rejected");
+
+        assert!(
+            err.contains("tail call to 'f' has 1 args but function has 2 params"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_self_tail_call_hand_built_ir_assembles_links_and_runs() {
+        let asm = generate_assembly(&self_tail_sum_program())
+            .expect("self tail-call program should compile");
+        let root = std::env::temp_dir().join(format!("typelisp-tail-call-{}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("create tail-call test directory");
+        let asm_path = root.join("tailcall.s");
+        let obj_path = root.join("tailcall.o");
+        let bin_path = root.join("tailcall");
+        std::fs::write(&asm_path, asm).expect("write tail-call assembly");
+
+        let assemble = Command::new("as")
+            .arg(&asm_path)
+            .arg("-o")
+            .arg(&obj_path)
+            .status()
+            .expect("run assembler");
+        assert!(assemble.success(), "assembling tail-call program failed");
+
+        let link = Command::new("ld")
+            .arg(&obj_path)
+            .arg("-o")
+            .arg(&bin_path)
+            .status()
+            .expect("run linker");
+        assert!(link.success(), "linking tail-call program failed");
+
+        let output = Command::new(&bin_path)
+            .output()
+            .expect("run tail-call program");
+        assert_eq!(output.status.code(), Some(15), "output: {:?}", output);
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     // ---- Locals: `let` / `set!` (Alloc/Store/Load) (issue #36) ---------

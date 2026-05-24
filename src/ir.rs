@@ -178,6 +178,14 @@ pub enum Instruction {
         args: Vec<Value>,
         ty: Type,
     },
+    /// Direct tail call. The first lowering/codegen slice supports only
+    /// self-recursive calls; the backend validates that before emission.
+    #[allow(dead_code)]
+    TailCall {
+        func: String,
+        args: Vec<Value>,
+        ty: Type,
+    },
     /// Conditional branch: if cond goto true_label else false_label
     Branch {
         cond: Value,
@@ -374,9 +382,10 @@ impl Instruction {
             | Instruction::Alloc { .. } => IrEffect::MemoryWrite,
             Instruction::Call { func, .. } => classify_direct_call_effect(func),
             Instruction::CallIndirect { .. } => IrEffect::Unknown,
-            Instruction::Branch { .. } | Instruction::Jump(_) | Instruction::Return(_) => {
-                IrEffect::ControlFlow
-            }
+            Instruction::TailCall { .. }
+            | Instruction::Branch { .. }
+            | Instruction::Jump(_)
+            | Instruction::Return(_) => IrEffect::ControlFlow,
         }
     }
 }
@@ -646,6 +655,16 @@ impl fmt::Display for Instruction {
                     write!(f, "{}", arg)?;
                 }
                 write!(f, ")")
+            }
+            Instruction::TailCall { func, args, ty } => {
+                write!(f, "  tailcall {}(", func)?;
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", arg)?;
+                }
+                write!(f, ") : {}", ty)
             }
             Instruction::Branch {
                 cond,
@@ -1128,6 +1147,15 @@ mod tests {
             IrEffect::Unknown
         );
         assert_eq!(
+            Instruction::TailCall {
+                func: "f".into(),
+                args: vec![Value::Var(0)],
+                ty: i64_ty(),
+            }
+            .effect(),
+            IrEffect::ControlFlow
+        );
+        assert_eq!(
             Instruction::Branch {
                 cond: Value::ConstBool(true),
                 true_label: "t".into(),
@@ -1355,5 +1383,17 @@ mod tests {
 
         assert_eq!(instr.to_string(), "  %9 = tail_mask %1, %2 : 8");
         assert_eq!(instr.effect(), IrEffect::Pure);
+    }
+
+    #[test]
+    fn tail_call_ir_pretty_prints_direct_target_args_and_return_type() {
+        let instr = Instruction::TailCall {
+            func: "fact_loop".into(),
+            args: vec![Value::Var(3), Value::ConstI64(1)],
+            ty: Type::I64,
+        };
+
+        assert_eq!(instr.to_string(), "  tailcall fact_loop(%3, 1) : i64");
+        assert_eq!(instr.effect(), IrEffect::ControlFlow);
     }
 }

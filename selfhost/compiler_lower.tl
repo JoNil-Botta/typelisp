@@ -458,6 +458,18 @@
                 (+ offset (lower-type-size ctx resolved)))))]
         [(AstTypeNil) (ErrLowerState "lower: constructor arity mismatch")])]))
 
+;; Bind a matched variant's payload fields. Irrefutable subpatterns (wildcard,
+
+;; binding) just load/bind; a refutable literal subpattern (#651) loads the
+
+;; field, compares it to the literal, and on mismatch branches to `fail-label`
+
+;; (the enclosing arm's next-arm test) so matching continues. Nested variant
+
+;; subpatterns are still deferred. `fail-label` is unused when every subpattern
+
+;; is irrefutable.
+
 (define (lower-bind-variant-payloads
   [ctx : TcContext]
   [state : LowerState]
@@ -466,7 +478,8 @@
   [base : CompilerIrValue]
   [patterns : AstPatternList]
   [types : AstTypeList]
-  [cursor : i64]) : ResultLowerEnv
+  [cursor : i64]
+  [fail-label : String]) : ResultLowerEnv
   (match patterns
     [(AstPatternNil)
       (match types
@@ -491,7 +504,8 @@
                     base
                     rest-patterns
                     rest-types
-                    next-cursor)]
+                    next-cursor
+                    fail-label)]
                 [(AstPatBinding name)
                   (match (lower-load-at-offset state base offset resolved)
                     [(LowerExpr load-state value _)
@@ -505,13 +519,69 @@
                             base
                             rest-patterns
                             rest-types
-                            next-cursor)]
+                            next-cursor
+                            fail-label)]
                         [_
                           (ErrLowerEnv
                             "lower: internal enum payload load failed")])])]
-                [_ (ErrLowerEnv "lower: unsupported enum payload pattern")])))]
+                [(AstPatLiteral lit)
+                  (match (lower-load-at-offset state base offset resolved)
+                    [(LowerExpr load-state field-value _)
+                      (match (lower-state-alloc-var load-state)
+                        [(LowerAlloc eq-alloc eq-var)
+                          (match (lower-state-fresh-label
+                            (lower-state-emit
+                              eq-alloc
+                              (IrInstrBinOp
+                                eq-var
+                                IrBinEq
+                                field-value
+                                (lower-literal-value lit)
+                                resolved))
+                            "payload_ok")
+                            [(LowerLabel ok-state ok-label)
+                              (lower-bind-variant-payloads
+                                ctx
+                                (lower-state-finish-block
+                                  (lower-state-emit
+                                    ok-state
+                                    (IrInstrBranch
+                                      (IrValueVar eq-var)
+                                      ok-label
+                                      fail-label))
+                                  ok-label)
+                                env
+                                type-env
+                                base
+                                rest-patterns
+                                rest-types
+                                next-cursor
+                                fail-label)])])])]
+                [_
+                  (ErrLowerEnv
+                    "lower: unsupported enum payload pattern (nested variant subpatterns not yet supported)")])))]
         [(AstTypeNil)
           (ErrLowerEnv "lower: enum payload pattern arity mismatch")])]))
+
+;; A payload subpattern is refutable when it can fail to match at run time. Only
+
+;; literal and (deferred) nested-variant subpatterns are refutable here; binding,
+
+;; var, wildcard, and tuple subpatterns always match structurally.
+
+(define (lower-pattern-refutable? [pattern : AstPattern]) : bool
+  (match pattern
+    [(AstPatLiteral _) true]
+    [(AstPatVariant _ _) true]
+    [_ false]))
+
+(define (lower-pattern-list-refutable? [patterns : AstPatternList]) : bool
+  (match patterns
+    [(AstPatternNil) false]
+    [(AstPatternCons pattern rest)
+      (if (lower-pattern-refutable? pattern)
+        true
+        (lower-pattern-list-refutable? rest))]))
 
 (define (lower-field-info-from-list
   [ctx : TcContext]
@@ -2279,35 +2349,47 @@
         [(SomeI64 handle)
           (match (compiler-registries-variant-fields program handle)
             [(OkAstTypeList fields)
-              (match (lower-bind-variant-payloads
-                ctx
-                state
-                env
-                type-env
-                (IrValueVar scrut-var)
-                args
-                fields
-                8)
-                [(OkLowerEnv body-start body-env body-type-env)
-                  (match (lower-expr ctx body-start body-env body-type-env body)
-                    [(OkLowerExpr body-lowered)
-                      (match body-lowered
-                        [(LowerExpr body-state body-value _)
-                          (let ([body-end-label
-                              :
-                              String
-                              (lower-state-current-label body-state)])
-                            (lower-match-finish
-                              (lower-state-emit
-                                body-state
-                                (IrInstrJump merge-label))
-                              merge-label
-                              expr-ty
-                              (IrPhiInputCons
-                                (IrPhiInput body-value body-end-label)
-                                phi-inputs)))])]
-                    [(ErrLowerExpr message) (ErrLowerExpr message)])]
-                [(ErrLowerEnv message) (ErrLowerExpr message)])]
+              ;; The final arm has no next-arm continuation, so a refutable
+              ;; payload subpattern here would have nowhere to fall through to;
+              ;; require a trailing catch-all instead (#651).
+              (if (lower-pattern-list-refutable? args)
+                (ErrLowerExpr
+                  "lower: refutable payload pattern in final match arm requires a trailing catch-all")
+                (match (lower-bind-variant-payloads
+                  ctx
+                  state
+                  env
+                  type-env
+                  (IrValueVar scrut-var)
+                  args
+                  fields
+                  8
+                  merge-label)
+                  [(OkLowerEnv body-start body-env body-type-env)
+                    (match (lower-expr
+                      ctx
+                      body-start
+                      body-env
+                      body-type-env
+                      body)
+                      [(OkLowerExpr body-lowered)
+                        (match body-lowered
+                          [(LowerExpr body-state body-value _)
+                            (let ([body-end-label
+                                :
+                                String
+                                (lower-state-current-label body-state)])
+                              (lower-match-finish
+                                (lower-state-emit
+                                  body-state
+                                  (IrInstrJump merge-label))
+                                merge-label
+                                expr-ty
+                                (IrPhiInputCons
+                                  (IrPhiInput body-value body-end-label)
+                                  phi-inputs)))])]
+                      [(ErrLowerExpr message) (ErrLowerExpr message)])]
+                  [(ErrLowerEnv message) (ErrLowerExpr message)]))]
             [(ErrAstTypeList message) (ErrLowerExpr message)])]
         [(NoneI64)
           (ErrLowerExpr (string-append "lower: unknown variant " variant-name))])]))
@@ -2336,7 +2418,8 @@
     (IrValueVar scrut-var)
     args
     fields
-    8)
+    8
+    next-label)
     [(OkLowerEnv bound-state body-env body-type-env)
       (match (lower-expr ctx bound-state body-env body-type-env body)
         [(OkLowerExpr body-lowered)
@@ -2865,6 +2948,21 @@
 (define (main) : i64
   (+ (score (Some 4)) (+ (zero-call None) (or-zero (Pair 3 4)))))")
 
+;; A refutable literal payload subpattern (#651): `(Some 0)` tests the payload
+
+;; and, on mismatch, falls through to the `(Some n)` binding arm. The trailing
+
+;; `(Some n)` keeps the match exhaustive.
+
+(define (compiler-lower-enum-literal-payload-source) : String
+  "(defenum Maybe (None) (Some i64))
+(define (classify [m : Maybe]) : i64
+  (match m
+    [(Some 0) 100]
+    [(Some n) n]
+    [None 5]))
+(define (main) : i64 0)")
+
 (define (compiler-lower-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(OkCompilerLower _) true]
@@ -3091,7 +3189,9 @@
       (and
         (compiler-lower-match-phi-shape-ok? (compiler-lower-match-source))
         (and
-          (compiler-lower-ok? (compiler-lower-enum-match-source))
+          (and
+            (compiler-lower-ok? (compiler-lower-enum-match-source))
+            (compiler-lower-ok? (compiler-lower-enum-literal-payload-source)))
           (and
             (compiler-lower-enum-match-shape-ok?
               (compiler-lower-enum-match-source))

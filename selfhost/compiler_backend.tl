@@ -2870,6 +2870,36 @@ tl_string_concat:
       (compiler-backend-string-contains? asm "call tl_oob_abort")]
     [(ErrCompilerBackend _) false]))
 
+;; A refutable literal payload match (#651) lowers to a payload comparison that
+
+;; branches to the next arm; confirm the resulting CFG reaches valid assembly.
+
+(define (compiler-backend-literal-payload-source) : String
+  "(defenum Maybe (None) (Some i64))
+(define (classify [m : Maybe]) : i64
+  (match m
+    [(Some 0) 100]
+    [(Some n) n]
+    [None 5]))
+(define (main) : i64 (classify (Some 0)))")
+
+;; Confirm the refutable literal payload (#651) reaches valid assembly: the
+
+;; function compiles and emits a `payload_ok` block (the in-bounds branch of the
+
+;; payload comparison). `compiler-backend-asm-ok?` is smoke-source specific, so
+
+;; check source-specific markers instead.
+
+(define (compiler-backend-literal-payload-ok?) : bool
+  (match (compiler-backend-emit-source
+    (compiler-backend-literal-payload-source))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "_tl_classify:\n")
+        (compiler-backend-string-contains? asm "_payload_ok"))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-self-test) : i64
   (if (and
     (compiler-backend-target-model-ok? (compiler-backend-smoke-source))
@@ -2884,7 +2914,9 @@ tl_string_concat:
             (and
               (compiler-backend-memory-op-ok?)
               (and
-                (compiler-backend-aggregate-ok?)
+                (and
+                  (compiler-backend-aggregate-ok?)
+                  (compiler-backend-literal-payload-ok?))
                 (and
                   (compiler-backend-enum-match-ok?)
                   (and

@@ -14,6 +14,8 @@ installed-root discovery, namespace isolation, or an implicit prelude.
 
 - `io.tl`: file I/O helpers built on compiler/runtime primitives. Import it
   with `(import "stdlib/io.tl")`.
+- `env.tl`: recoverable environment-variable lookup and PATH-style list helpers
+  for selfhost tools. Import it with `(import "stdlib/env.tl")`.
 - `json.tl`: JSON value parser and serializer for tool protocols and data
   exchange. Import it with `(import "stdlib/json.tl")`.
 - `process.tl`: process command/output/error data model for selfhost tools.
@@ -49,6 +51,7 @@ returned caller-owned values.
 | `read-file-or` | Performs host/runtime file inspection; returns fresh active-arena `String` storage from `read-file` when the path exists, otherwise returns the caller-provided `fallback`. |
 | `append-file` | Performs host/runtime IO; allocates temporary active-arena strings through `read-file-or` and `string-append`, then writes the result. |
 | `file-nonempty?` | Performs host/runtime IO; allocates a temporary active-arena `String` through `read-file` only when the path exists. |
+| `env-get`, `env-get-or`, `env-path-separator`, `env-split-path-list`, `env-path-list`, `env-path-join` | Read host/runtime environment state and construct active-arena `String` and `EnvPathList` values. Missing variables return recoverable `EnvMissing` / `ErrEnvPathList` values. |
 | `process-*` helpers | Construct process command/output/error aggregates in the active arena. `process-run` and `process-output` currently return structured errors and do not spawn child processes. |
 | `assert-*` helpers in `test.tl` | Non-allocating checks on success; failures call `panic` with the caller-provided message. |
 
@@ -63,6 +66,7 @@ Stdlib modules are imported explicitly:
 
 ```lisp
 (import "stdlib/io.tl")
+(import "stdlib/env.tl")
 (import "stdlib/json.tl")
 (import "stdlib/process.tl")
 (import "stdlib/string.tl")

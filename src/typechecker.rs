@@ -203,6 +203,21 @@ impl TypeChecker {
             "file-exists?".into(),
             Type::Func(vec![Type::String], Box::new(Type::Bool)),
         );
+        // Environment helpers for selfhost tooling. The raw builtins expose a
+        // recoverable exists/value split so stdlib/env.tl can distinguish
+        // missing variables from present-but-empty variables.
+        globals.insert(
+            "env-var-exists?".into(),
+            Type::Func(vec![Type::String], Box::new(Type::Bool)),
+        );
+        globals.insert(
+            "env-var-value".into(),
+            Type::Func(vec![Type::String], Box::new(Type::String)),
+        );
+        globals.insert(
+            "env-path-separator-raw".into(),
+            Type::Func(vec![], Box::new(Type::String)),
+        );
         // Stdio helpers for bootstrap tools. Reads return heap-owned Strings and
         // update the sticky EOF observation consumed by `(stdin-eof?)`.
         globals.insert(
@@ -366,6 +381,8 @@ impl TypeChecker {
                     | "read-file"
                     | "write-file"
                     | "file-exists?"
+                    | "env-var-exists?"
+                    | "env-var-value"
                     | "panic"
                     | "error"
             )
@@ -5574,6 +5591,30 @@ mod tests {
         let src = r#"
             (define (file-exists? [n : i64]) : i64 n)
             (define (main) : i64 (file-exists? 7))
+        "#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_env_builtins_have_expected_types() {
+        assert!(check(r#"(define (f) : bool (env-var-exists? "PATH"))"#).is_ok());
+        assert!(check(r#"(define (f) : String (env-var-value "PATH"))"#).is_ok());
+        assert!(check("(define (f) : String (env-path-separator-raw))").is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_env_builtins_validate_args() {
+        assert!(check("(define (f) : bool (env-var-exists? 42))").is_err());
+        assert!(check("(define (f) : String (env-var-value 42))").is_err());
+        assert!(check(r#"(define (f) : String (env-path-separator-raw "x"))"#).is_err());
+        assert!(check(r#"(define (f) : i64 (env-var-value "PATH"))"#).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_env_builtins_can_be_shadowed() {
+        let src = r#"
+            (define (env-var-value [n : i64]) : i64 n)
+            (define (main) : i64 (env-var-value 7))
         "#;
         assert!(check(src).is_ok());
     }

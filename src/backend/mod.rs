@@ -19,6 +19,9 @@ const ARG_RUNTIME_SYMBOL: &str = ".L_tl_arg";
 const READ_FILE_RUNTIME_SYMBOL: &str = ".L_tl_read_file";
 const WRITE_FILE_RUNTIME_SYMBOL: &str = ".L_tl_write_file";
 const FILE_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists";
+const ENV_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_env_exists";
+const ENV_VALUE_RUNTIME_SYMBOL: &str = ".L_tl_env_value";
+const ENV_PATH_SEPARATOR_RUNTIME_SYMBOL: &str = ".L_tl_env_path_separator";
 const READ_STDIN_LINE_RUNTIME_SYMBOL: &str = ".L_tl_read_stdin_line";
 const READ_STDIN_BYTES_RUNTIME_SYMBOL: &str = ".L_tl_read_stdin_bytes";
 const STDIN_EOF_RUNTIME_SYMBOL: &str = ".L_tl_stdin_eof";
@@ -452,6 +455,12 @@ pub struct X86_64Backend {
     /// `(file-exists? path)`. The helper uses Linux syscalls, `tl_alloc`, and the
     /// panic/abort runtime for unexpected errors.
     needs_file_exists_runtime: bool,
+    /// Whether the program references private environment helpers emitted for
+    /// stdlib/env.tl. The value and path-separator helpers allocate heap Strings;
+    /// the exists helper reads process environment state without allocation.
+    needs_env_exists_runtime: bool,
+    needs_env_value_runtime: bool,
+    needs_env_path_separator_runtime: bool,
     /// Whether the program references stdin helpers. The read helpers allocate
     /// heap Strings and update a backend-owned EOF flag; `stdin-eof?` reads that
     /// flag; `flush-stdout` is a target-specific stdout flush/no-op helper.
@@ -1964,6 +1973,9 @@ impl X86_64Backend {
             needs_read_file_runtime: false,
             needs_write_file_runtime: false,
             needs_file_exists_runtime: false,
+            needs_env_exists_runtime: false,
+            needs_env_value_runtime: false,
+            needs_env_path_separator_runtime: false,
             needs_read_stdin_line_runtime: false,
             needs_read_stdin_bytes_runtime: false,
             needs_stdin_eof_runtime: false,
@@ -2027,6 +2039,9 @@ impl X86_64Backend {
         self.needs_read_file_runtime = Self::needs_read_file_runtime(program);
         self.needs_write_file_runtime = Self::needs_write_file_runtime(program);
         self.needs_file_exists_runtime = Self::needs_file_exists_runtime(program);
+        self.needs_env_exists_runtime = Self::needs_env_exists_runtime(program);
+        self.needs_env_value_runtime = Self::needs_env_value_runtime(program);
+        self.needs_env_path_separator_runtime = Self::needs_env_path_separator_runtime(program);
         self.needs_read_stdin_line_runtime = Self::needs_read_stdin_line_runtime(program);
         self.needs_read_stdin_bytes_runtime = Self::needs_read_stdin_bytes_runtime(program);
         self.needs_stdin_eof_runtime = Self::needs_stdin_eof_runtime(program);
@@ -2053,10 +2068,13 @@ impl X86_64Backend {
             || self.needs_read_file_runtime
             || self.needs_write_file_runtime
             || self.needs_file_exists_runtime
+            || self.needs_env_value_runtime
+            || self.needs_env_path_separator_runtime
             || self.needs_read_stdin_line_runtime
             || self.needs_read_stdin_bytes_runtime;
         let needs_print_runtime = !self.runtime_print_names.is_empty();
         let needs_argv_data = self.needs_arg_count_runtime || self.needs_arg_runtime;
+        let needs_env_data = self.needs_env_exists_runtime || self.needs_env_value_runtime;
         let needs_stdin_data = self.needs_read_stdin_line_runtime
             || self.needs_read_stdin_bytes_runtime
             || self.needs_stdin_eof_runtime;
@@ -2075,9 +2093,13 @@ impl X86_64Backend {
             || self.needs_read_file_runtime
             || self.needs_write_file_runtime
             || self.needs_file_exists_runtime
+            || self.needs_env_exists_runtime
+            || self.needs_env_value_runtime
+            || self.needs_env_path_separator_runtime
             || self.needs_read_stdin_line_runtime
             || self.needs_read_stdin_bytes_runtime
-            || needs_argv_data;
+            || needs_argv_data
+            || needs_env_data;
         debug_assert!(
             runtime_policy.emits_linux_syscall_helpers
                 || runtime_policy.emits_windows_runtime_helpers
@@ -2098,6 +2120,9 @@ impl X86_64Backend {
         }
         if needs_argv_data {
             self.generate_argv_runtime_data();
+        }
+        if needs_env_data {
+            self.generate_env_runtime_data();
         }
         if needs_stdin_data {
             self.generate_stdin_runtime_data();
@@ -2161,6 +2186,10 @@ impl X86_64Backend {
                 || (self.needs_read_file_runtime && symbol == READ_FILE_RUNTIME_SYMBOL)
                 || (self.needs_write_file_runtime && symbol == WRITE_FILE_RUNTIME_SYMBOL)
                 || (self.needs_file_exists_runtime && symbol == FILE_EXISTS_RUNTIME_SYMBOL)
+                || (self.needs_env_exists_runtime && symbol == ENV_EXISTS_RUNTIME_SYMBOL)
+                || (self.needs_env_value_runtime && symbol == ENV_VALUE_RUNTIME_SYMBOL)
+                || (self.needs_env_path_separator_runtime
+                    && symbol == ENV_PATH_SEPARATOR_RUNTIME_SYMBOL)
                 || (self.needs_read_stdin_line_runtime && symbol == READ_STDIN_LINE_RUNTIME_SYMBOL)
                 || (self.needs_read_stdin_bytes_runtime
                     && symbol == READ_STDIN_BYTES_RUNTIME_SYMBOL)
@@ -2238,6 +2267,15 @@ impl X86_64Backend {
         if self.needs_file_exists_runtime {
             self.generate_file_exists_runtime_functions();
         }
+        if self.needs_env_exists_runtime {
+            self.generate_env_exists_runtime_functions();
+        }
+        if self.needs_env_value_runtime {
+            self.generate_env_value_runtime_functions();
+        }
+        if self.needs_env_path_separator_runtime {
+            self.generate_env_path_separator_runtime_functions();
+        }
         if self.needs_read_stdin_line_runtime {
             self.generate_read_stdin_line_runtime_functions();
         }
@@ -2280,6 +2318,11 @@ impl X86_64Backend {
                 self.emit("    movq %rax, .L_tl_argc(%rip)");
                 self.emit("    leaq 8(%rsp), %rax");
                 self.emit("    movq %rax, .L_tl_argv(%rip)");
+            }
+            if needs_env_data {
+                self.emit("    movq (%rsp), %rax");
+                self.emit("    leaq 16(%rsp,%rax,8), %rax");
+                self.emit("    movq %rax, .L_tl_envp(%rip)");
             }
             self.emit_global_initializers(program);
             self.emit_call("main");
@@ -2407,6 +2450,9 @@ impl X86_64Backend {
         }
         if self.needs_file_exists_runtime {
             externs.insert("_access");
+        }
+        if self.needs_env_exists_runtime || self.needs_env_value_runtime {
+            externs.insert("getenv");
         }
         if self.needs_read_stdin_line_runtime || self.needs_read_stdin_bytes_runtime {
             externs.insert("_read");
@@ -2814,6 +2860,45 @@ impl X86_64Backend {
         })
     }
 
+    fn needs_env_exists_runtime(program: &Program) -> bool {
+        program.functions.iter().any(|func| {
+            func.blocks.iter().any(|block| {
+                block.instructions.iter().any(|instr| {
+                    matches!(
+                        instr,
+                        Instruction::Call { func, .. } if func == ENV_EXISTS_RUNTIME_SYMBOL
+                    )
+                })
+            })
+        })
+    }
+
+    fn needs_env_value_runtime(program: &Program) -> bool {
+        program.functions.iter().any(|func| {
+            func.blocks.iter().any(|block| {
+                block.instructions.iter().any(|instr| {
+                    matches!(
+                        instr,
+                        Instruction::Call { func, .. } if func == ENV_VALUE_RUNTIME_SYMBOL
+                    )
+                })
+            })
+        })
+    }
+
+    fn needs_env_path_separator_runtime(program: &Program) -> bool {
+        program.functions.iter().any(|func| {
+            func.blocks.iter().any(|block| {
+                block.instructions.iter().any(|instr| {
+                    matches!(
+                        instr,
+                        Instruction::Call { func, .. } if func == ENV_PATH_SEPARATOR_RUNTIME_SYMBOL
+                    )
+                })
+            })
+        })
+    }
+
     fn needs_read_stdin_line_runtime(program: &Program) -> bool {
         program.functions.iter().any(|func| {
             func.blocks.iter().any(|block| {
@@ -3141,6 +3226,18 @@ impl X86_64Backend {
             self.emit("    .ascii \"tl: argv index out of bounds\\n\"");
             self.emit("    .set .L_tl_arg_oob_msg_len, . - .L_tl_arg_oob_msg");
         }
+        self.emit("");
+    }
+
+    fn generate_env_runtime_data(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            return;
+        }
+
+        self.emit("    .data");
+        self.emit("    .balign 8");
+        self.emit(".L_tl_envp:");
+        self.emit("    .quad 0");
         self.emit("");
     }
 
@@ -4404,6 +4501,292 @@ impl X86_64Backend {
         self.emit("    leaq .L_tl_file_exists_error_msg(%rip), %rdi");
         self.emit("    movq $.L_tl_file_exists_error_msg_len, %rsi");
         self.emit(&format!("    call {}", ABORT_RUNTIME_SYMBOL));
+        self.emit("");
+    }
+
+    fn generate_env_exists_runtime_functions(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.generate_windows_env_exists_runtime_functions();
+            return;
+        }
+
+        self.emit(&format!("{}:", ENV_EXISTS_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq %rdi, %r12");
+        self.emit("    movq %rsi, %r13");
+        self.emit("    cmpq $0, %r13");
+        self.emit("    jle .L_tl_env_exists_false");
+        self.emit("    movq .L_tl_envp(%rip), %rbx");
+        self.emit(".L_tl_env_exists_next:");
+        self.emit("    movq (%rbx), %rdx");
+        self.emit("    testq %rdx, %rdx");
+        self.emit("    jz .L_tl_env_exists_false");
+        self.emit("    xorq %rcx, %rcx");
+        self.emit(".L_tl_env_exists_compare_loop:");
+        self.emit("    cmpq %r13, %rcx");
+        self.emit("    jge .L_tl_env_exists_name_done");
+        self.emit("    movzbl (%r12,%rcx), %eax");
+        self.emit("    cmpb %al, (%rdx,%rcx)");
+        self.emit("    jne .L_tl_env_exists_advance");
+        self.emit("    incq %rcx");
+        self.emit("    jmp .L_tl_env_exists_compare_loop");
+        self.emit(".L_tl_env_exists_name_done:");
+        self.emit("    cmpb $61, (%rdx,%r13)");
+        self.emit("    je .L_tl_env_exists_true");
+        self.emit(".L_tl_env_exists_advance:");
+        self.emit("    addq $8, %rbx");
+        self.emit("    jmp .L_tl_env_exists_next");
+        self.emit(".L_tl_env_exists_true:");
+        self.emit("    movq $1, %rax");
+        self.emit("    jmp .L_tl_env_exists_return");
+        self.emit(".L_tl_env_exists_false:");
+        self.emit("    xorq %rax, %rax");
+        self.emit(".L_tl_env_exists_return:");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_env_value_runtime_functions(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.generate_windows_env_value_runtime_functions();
+            return;
+        }
+
+        self.emit(&format!("{}:", ENV_VALUE_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    push %r15");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq %rdi, %r12");
+        self.emit("    movq %rsi, %r13");
+        self.emit("    cmpq $0, %r13");
+        self.emit("    jle .L_tl_env_value_empty");
+        self.emit("    movq .L_tl_envp(%rip), %rbx");
+        self.emit(".L_tl_env_value_next:");
+        self.emit("    movq (%rbx), %rdx");
+        self.emit("    testq %rdx, %rdx");
+        self.emit("    jz .L_tl_env_value_empty");
+        self.emit("    xorq %rcx, %rcx");
+        self.emit(".L_tl_env_value_compare_loop:");
+        self.emit("    cmpq %r13, %rcx");
+        self.emit("    jge .L_tl_env_value_name_done");
+        self.emit("    movzbl (%r12,%rcx), %eax");
+        self.emit("    cmpb %al, (%rdx,%rcx)");
+        self.emit("    jne .L_tl_env_value_advance");
+        self.emit("    incq %rcx");
+        self.emit("    jmp .L_tl_env_value_compare_loop");
+        self.emit(".L_tl_env_value_name_done:");
+        self.emit("    cmpb $61, (%rdx,%r13)");
+        self.emit("    je .L_tl_env_value_found");
+        self.emit(".L_tl_env_value_advance:");
+        self.emit("    addq $8, %rbx");
+        self.emit("    jmp .L_tl_env_value_next");
+        self.emit(".L_tl_env_value_found:");
+        self.emit("    leaq 1(%rdx,%r13), %r14");
+        self.emit("    xorq %r15, %r15");
+        self.emit(".L_tl_env_value_len_loop:");
+        self.emit("    cmpb $0, (%r14,%r15)");
+        self.emit("    je .L_tl_env_value_alloc");
+        self.emit("    incq %r15");
+        self.emit("    jmp .L_tl_env_value_len_loop");
+        self.emit(".L_tl_env_value_empty:");
+        self.emit("    xorq %r15, %r15");
+        self.emit("    movq $1, %rdi");
+        self.emit("    call tl_alloc");
+        self.emit("    movq %rax, %rbx");
+        self.emit("    jmp .L_tl_env_value_fat");
+        self.emit(".L_tl_env_value_alloc:");
+        self.emit("    movq %r15, %rdi");
+        self.emit("    cmpq $0, %rdi");
+        self.emit("    jg .L_tl_env_value_alloc_ready");
+        self.emit("    movq $1, %rdi");
+        self.emit(".L_tl_env_value_alloc_ready:");
+        self.emit("    call tl_alloc");
+        self.emit("    movq %rax, %rbx");
+        self.emit("    xorq %rcx, %rcx");
+        self.emit(".L_tl_env_value_copy_loop:");
+        self.emit("    cmpq %r15, %rcx");
+        self.emit("    jge .L_tl_env_value_fat");
+        self.emit("    movzbl (%r14,%rcx), %edx");
+        self.emit("    movb %dl, (%rbx,%rcx)");
+        self.emit("    incq %rcx");
+        self.emit("    jmp .L_tl_env_value_copy_loop");
+        self.emit(".L_tl_env_value_fat:");
+        self.emit("    movq $16, %rdi");
+        self.emit("    call tl_alloc");
+        self.emit("    movq %rbx, 0(%rax)");
+        self.emit("    movq %r15, 8(%rax)");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r15");
+        self.emit("    pop %r14");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_env_path_separator_runtime_functions(&mut self) {
+        let separator_byte = if self.target.runtime_policy().emits_windows_runtime_helpers {
+            59
+        } else {
+            58
+        };
+        let arg0 = self.target.calling_convention().integer_arg_regs[0];
+
+        self.emit(&format!("{}:", ENV_PATH_SEPARATOR_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    sub $8, %rsp");
+        self.emit(&format!("    movq $1, {}", arg0));
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rax, %rbx");
+        self.emit(&format!("    movb ${}, (%rbx)", separator_byte));
+        self.emit(&format!("    movq $16, {}", arg0));
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rbx, 0(%rax)");
+        self.emit("    movq $1, 8(%rax)");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_windows_env_exists_runtime_functions(&mut self) {
+        self.emit(&format!("{}:", ENV_EXISTS_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq %rcx, %rbx");
+        self.emit("    movq %rdx, %r12");
+        self.emit("    cmpq $0, %r12");
+        self.emit("    jle .L_tl_env_exists_windows_false");
+        self.emit("    movq %r12, %rcx");
+        self.emit("    addq $1, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rax, %r13");
+        self.emit("    xorq %r10, %r10");
+        self.emit(".L_tl_env_exists_windows_copy_loop:");
+        self.emit("    cmpq %r12, %r10");
+        self.emit("    jge .L_tl_env_exists_windows_copy_done");
+        self.emit("    movzbl (%rbx,%r10), %edx");
+        self.emit("    movb %dl, (%r13,%r10)");
+        self.emit("    incq %r10");
+        self.emit("    jmp .L_tl_env_exists_windows_copy_loop");
+        self.emit(".L_tl_env_exists_windows_copy_done:");
+        self.emit("    movb $0, (%r13,%r12)");
+        self.emit("    movq %r13, %rcx");
+        self.emit_call("getenv");
+        self.emit("    testq %rax, %rax");
+        self.emit("    jz .L_tl_env_exists_windows_false");
+        self.emit("    movq $1, %rax");
+        self.emit("    jmp .L_tl_env_exists_windows_return");
+        self.emit(".L_tl_env_exists_windows_false:");
+        self.emit("    xorq %rax, %rax");
+        self.emit(".L_tl_env_exists_windows_return:");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_windows_env_value_runtime_functions(&mut self) {
+        self.emit(&format!("{}:", ENV_VALUE_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    push %r15");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq %rcx, %rbx");
+        self.emit("    movq %rdx, %r12");
+        self.emit("    cmpq $0, %r12");
+        self.emit("    jle .L_tl_env_value_windows_empty");
+        self.emit("    movq %r12, %rcx");
+        self.emit("    addq $1, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rax, %r13");
+        self.emit("    xorq %r10, %r10");
+        self.emit(".L_tl_env_value_windows_name_copy_loop:");
+        self.emit("    cmpq %r12, %r10");
+        self.emit("    jge .L_tl_env_value_windows_name_copy_done");
+        self.emit("    movzbl (%rbx,%r10), %edx");
+        self.emit("    movb %dl, (%r13,%r10)");
+        self.emit("    incq %r10");
+        self.emit("    jmp .L_tl_env_value_windows_name_copy_loop");
+        self.emit(".L_tl_env_value_windows_name_copy_done:");
+        self.emit("    movb $0, (%r13,%r12)");
+        self.emit("    movq %r13, %rcx");
+        self.emit_call("getenv");
+        self.emit("    testq %rax, %rax");
+        self.emit("    jz .L_tl_env_value_windows_empty");
+        self.emit("    movq %rax, %r14");
+        self.emit("    xorq %r15, %r15");
+        self.emit(".L_tl_env_value_windows_len_loop:");
+        self.emit("    cmpb $0, (%r14,%r15)");
+        self.emit("    je .L_tl_env_value_windows_alloc");
+        self.emit("    incq %r15");
+        self.emit("    jmp .L_tl_env_value_windows_len_loop");
+        self.emit(".L_tl_env_value_windows_empty:");
+        self.emit("    xorq %r15, %r15");
+        self.emit("    movq $1, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rax, %rbx");
+        self.emit("    jmp .L_tl_env_value_windows_fat");
+        self.emit(".L_tl_env_value_windows_alloc:");
+        self.emit("    movq %r15, %rcx");
+        self.emit("    cmpq $0, %rcx");
+        self.emit("    jg .L_tl_env_value_windows_alloc_ready");
+        self.emit("    movq $1, %rcx");
+        self.emit(".L_tl_env_value_windows_alloc_ready:");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rax, %rbx");
+        self.emit("    xorq %r10, %r10");
+        self.emit(".L_tl_env_value_windows_copy_loop:");
+        self.emit("    cmpq %r15, %r10");
+        self.emit("    jge .L_tl_env_value_windows_fat");
+        self.emit("    movzbl (%r14,%r10), %edx");
+        self.emit("    movb %dl, (%rbx,%r10)");
+        self.emit("    incq %r10");
+        self.emit("    jmp .L_tl_env_value_windows_copy_loop");
+        self.emit(".L_tl_env_value_windows_fat:");
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rbx, 0(%rax)");
+        self.emit("    movq %r15, 8(%rax)");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r15");
+        self.emit("    pop %r14");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
         self.emit("");
     }
 
@@ -7386,6 +7769,13 @@ impl X86_64Backend {
             WRITE_FILE_RUNTIME_SYMBOL.into()
         } else if name == FILE_EXISTS_RUNTIME_SYMBOL && self.needs_file_exists_runtime {
             FILE_EXISTS_RUNTIME_SYMBOL.into()
+        } else if name == ENV_EXISTS_RUNTIME_SYMBOL && self.needs_env_exists_runtime {
+            ENV_EXISTS_RUNTIME_SYMBOL.into()
+        } else if name == ENV_VALUE_RUNTIME_SYMBOL && self.needs_env_value_runtime {
+            ENV_VALUE_RUNTIME_SYMBOL.into()
+        } else if name == ENV_PATH_SEPARATOR_RUNTIME_SYMBOL && self.needs_env_path_separator_runtime
+        {
+            ENV_PATH_SEPARATOR_RUNTIME_SYMBOL.into()
         } else if name == READ_STDIN_LINE_RUNTIME_SYMBOL && self.needs_read_stdin_line_runtime {
             READ_STDIN_LINE_RUNTIME_SYMBOL.into()
         } else if name == READ_STDIN_BYTES_RUNTIME_SYMBOL && self.needs_read_stdin_bytes_runtime {
@@ -12428,6 +12818,94 @@ mod tests {
         );
         assert!(!asm.contains("_tl_file_exists?"), "asm:\n{}", asm);
         assert!(!asm.contains(".L_tl_file_exists:"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_env_helpers_emit_runtime_alloc_and_envp_capture() {
+        let asm = compile_ok(
+            r#"
+            (define (main) : i64
+              (if (env-var-exists? "PATH")
+                (+ (string-length (env-var-value "PATH"))
+                   (string-length (env-path-separator-raw)))
+                0))
+            "#,
+        );
+
+        assert!(asm.contains(".L_tl_env_exists:"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_env_value:"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_env_path_separator:"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_envp:"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("    leaq 16(%rsp,%rax,8), %rax"),
+            "envp must be captured after argv and its null terminator:\n{}",
+            asm
+        );
+        assert!(asm.contains("    call .L_tl_env_exists"), "asm:\n{}", asm);
+        assert!(asm.contains("    call .L_tl_env_value"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("    call .L_tl_env_path_separator"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call tl_alloc"), "asm:\n{}", asm);
+        assert!(asm.contains("    movb $58, (%rbx)"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("    .extern .L_tl_env_exists"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("    .extern .L_tl_env_value"),
+            "asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_windows_target_env_helpers_use_crt_getenv_and_semicolon_separator() {
+        let asm = compile_ok_for_target(
+            r#"
+            (define (main) : i64
+              (if (env-var-exists? "PATH")
+                (+ (string-length (env-var-value "PATH"))
+                   (string-length (env-path-separator-raw)))
+                0))
+            "#,
+            BackendTarget::windows_x86_64(),
+        );
+
+        assert!(asm.contains(".L_tl_env_exists:"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_env_value:"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_env_path_separator:"), "asm:\n{}", asm);
+        assert!(asm.contains("    .extern getenv"), "asm:\n{}", asm);
+        assert!(asm.contains("    call getenv"), "asm:\n{}", asm);
+        assert!(asm.contains("    movb $59, (%rbx)"), "asm:\n{}", asm);
+        assert!(!asm.contains("\n_start:"), "asm:\n{}", asm);
+        assert!(!asm.contains(".L_tl_envp:"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_no_env_helpers_means_no_env_runtime() {
+        let asm = compile_ok(r#"(define (main) : i64 (string-length "hi"))"#);
+        assert!(!asm.contains(".L_tl_env_exists"), "asm:\n{}", asm);
+        assert!(!asm.contains(".L_tl_env_value"), "asm:\n{}", asm);
+        assert!(!asm.contains(".L_tl_env_path_separator"), "asm:\n{}", asm);
+        assert!(!asm.contains(".L_tl_envp"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_user_defined_env_value_shadows_builtin() {
+        let asm = compile_ok(
+            r#"
+            (define (env-var-value [n : i64]) : i64 (+ n 1))
+            (define (main) : i64 (env-var-value 41))
+            "#,
+        );
+        assert!(asm.contains("_tl_env_var_value:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call _tl_env_var_value"), "asm:\n{}", asm);
+        assert!(!asm.contains(".L_tl_env_value:"), "asm:\n{}", asm);
     }
 
     #[test]

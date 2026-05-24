@@ -65,6 +65,7 @@ stdlib_build_run() {
 stdlib_manifest() {
     cat <<'EOF'
 io.tl
+env.tl
 json.tl
 process.tl
 string.tl
@@ -381,6 +382,132 @@ fi
 if [ -s "$PROCESS_STDERR" ]; then
     echo "FAIL: stdlib process witness wrote unexpected stderr" >&2
     sed 's/^/  /' "$PROCESS_STDERR" >&2
+    exit 1
+fi
+
+ENV_WITNESS="$WORKDIR/stdlib_env_witness.tl"
+ENV_BIN="$WORKDIR/stdlib_env_witness"
+ENV_STDOUT="$WORKDIR/stdlib_env_witness.stdout"
+ENV_STDERR="$WORKDIR/stdlib_env_witness.stderr"
+
+if [ "$HOST_OS" = windows ]; then
+    TYPELISP_STDLIB_ENV_SEPARATOR=";"
+    TYPELISP_STDLIB_ENV_PATH_LIST="alpha;beta;;gamma;"
+else
+    TYPELISP_STDLIB_ENV_SEPARATOR=":"
+    TYPELISP_STDLIB_ENV_PATH_LIST="alpha:beta::gamma:"
+fi
+TYPELISP_STDLIB_ENV_PRESENT="present-value"
+TYPELISP_STDLIB_ENV_EMPTY=
+export TYPELISP_STDLIB_ENV_SEPARATOR
+export TYPELISP_STDLIB_ENV_PATH_LIST
+export TYPELISP_STDLIB_ENV_PRESENT
+export TYPELISP_STDLIB_ENV_EMPTY
+
+cat > "$ENV_WITNESS" <<'EOF'
+(import "stdlib/env.tl")
+
+(define (env-witness-present) : bool
+  (match (env-get "TYPELISP_STDLIB_ENV_PRESENT")
+    [(EnvSome value) (string-eq value "present-value")]
+    [(EnvMissing) false]))
+
+(define (env-witness-empty) : bool
+  (match (env-get "TYPELISP_STDLIB_ENV_EMPTY")
+    [(EnvSome value) (string-eq value "")]
+    [(EnvMissing) false]))
+
+(define (env-witness-missing) : bool
+  (match (env-get "TYPELISP_STDLIB_ENV_DOES_NOT_EXIST")
+    [(EnvMissing) true]
+    [(EnvSome _) false]))
+
+(define (env-witness-path-list) : bool
+  (match (env-path-list "TYPELISP_STDLIB_ENV_PATH_LIST")
+    [(OkEnvPathList items)
+      (if (= (env-path-list-count items) 5)
+        (string-eq
+          (env-path-join items)
+          (env-get-or "TYPELISP_STDLIB_ENV_PATH_LIST" "missing"))
+        false)]
+    [(ErrEnvPathList _) false]))
+
+(define (env-witness-empty-path-list) : bool
+  (match (env-path-list "TYPELISP_STDLIB_ENV_EMPTY")
+    [(OkEnvPathList items)
+      (and (= (env-path-list-count items) 0) (string-eq (env-path-join items) ""))]
+    [(ErrEnvPathList _) false]))
+
+(define (env-witness-missing-path-list) : bool
+  (match (env-path-list "TYPELISP_STDLIB_ENV_DOES_NOT_EXIST")
+    [(ErrEnvPathList message) (string-eq message "env: variable is not set")]
+    [(OkEnvPathList _) false]))
+
+(define (env-witness-separator) : bool
+  (string-eq
+    (env-path-separator)
+    (env-get-or "TYPELISP_STDLIB_ENV_SEPARATOR" "missing")))
+
+(define (env-witness-process-override) : bool
+  (let ([command
+      :
+      ProcessCommand
+      (env-process-command-with
+        (process-command "tool" (process-args-empty))
+        "TYPELISP_STDLIB_ENV_PRESENT"
+        (env-get-or "TYPELISP_STDLIB_ENV_PRESENT" "missing"))])
+    (match (process-command-env command)
+      [(ProcessEnvCons name value _)
+        (and
+          (string-eq name "TYPELISP_STDLIB_ENV_PRESENT")
+          (string-eq value "present-value"))]
+      [_ false])))
+
+(define (main) : i64
+  (if (env-witness-present)
+    (if (env-witness-empty)
+      (if (env-witness-missing)
+        (if (env-present? "PATH")
+          (if (env-witness-separator)
+            (if (env-witness-path-list)
+              (if (env-witness-empty-path-list)
+                (if (env-witness-missing-path-list)
+                  (if (env-witness-process-override) 42 9)
+                  8)
+                7)
+              6)
+            5)
+          4)
+        3)
+      2)
+    1))
+EOF
+
+echo "[stdlib] building+running env witness (--stdlib-root)"
+stdlib_build_run "$ENV_WITNESS" "$ENV_BIN"
+
+if [ "$got" -ne 42 ]; then
+    echo "FAIL: stdlib env witness expected exit 42, got $got" >&2
+    if [ -s "$ENV_STDOUT" ]; then
+        echo "stdout:" >&2
+        sed 's/^/  /' "$ENV_STDOUT" >&2
+    fi
+    if [ -s "$ENV_STDERR" ]; then
+        echo "stderr:" >&2
+        sed 's/^/  /' "$ENV_STDERR" >&2
+    fi
+    exit 1
+fi
+
+if [ -s "$ENV_STDOUT" ]; then
+    echo "FAIL: stdlib env witness wrote unexpected stdout" >&2
+    sed 's/^/  /' "$ENV_STDOUT" >&2
+    exit 1
+fi
+
+if [ -s "$ENV_STDERR" ]; then
+    echo "FAIL: stdlib env witness wrote unexpected stderr" >&2
+    sed 's/^/  /' "$ENV_STDERR" >&2
     exit 1
 fi
 

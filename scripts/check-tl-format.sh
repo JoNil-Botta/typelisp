@@ -56,6 +56,7 @@ git ls-files '*.tl' |
 cat > "$EXCLUDED_FILES" <<'EOF'
 selfhost/compile.tl
 selfhost/compiler_load.tl
+selfhost/lsp_frame.tl
 tests/integration/overflow_casts.tl
 EOF
 

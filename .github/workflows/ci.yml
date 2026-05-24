@@ -46,6 +46,9 @@ jobs:
       - name: Verify public tools without Rust harness
         run: TYPELISP_BIN=target/debug/typelisp scripts/verify-public-tools.sh
 
+      - name: Verify TypeLisp doctests without Rust harness
+        run: TYPELISP_BIN=target/debug/typelisp scripts/verify-doc-tests.sh
+
       - name: Verify selfhost compile manifest without Rust harness
         run: TYPELISP_BIN=target/debug/typelisp scripts/verify-selfhost-compile-manifest.sh
 
@@ -100,6 +103,10 @@ jobs:
       - name: Verify public tools without Rust harness
         shell: bash
         run: TYPELISP_BIN=target/debug/typelisp.exe scripts/verify-public-tools.sh
+
+      - name: Verify TypeLisp doctests without Rust harness
+        shell: bash
+        run: TYPELISP_BIN=target/debug/typelisp.exe scripts/verify-doc-tests.sh
 
       - name: Verify selfhost compile manifest without Rust harness
         shell: bash
@@ -208,6 +215,9 @@ jobs:
 
       - name: Verify stdlib documentation
         run: TYPELISP_BIN=./target/release/typelisp ./scripts/verify-stdlib-docs.sh
+
+      - name: Verify TypeLisp doctests
+        run: TYPELISP_BIN=./target/release/typelisp ./scripts/verify-doc-tests.sh
 
       - name: Check TypeLisp source formatting
         run: TYPELISP_BIN=./target/release/typelisp ./scripts/check-tl-format.sh

@@ -116,7 +116,9 @@ lookup behavior.
    doctest example that runs with `--stdlib-root`.
 8. Run `scripts/verify-stdlib-docs.sh` to generate Markdown and run doctests
    for every stdlib module.
-9. Link user-facing docs or tests to the new module when appropriate.
+9. Run `scripts/verify-doc-tests.sh` to confirm the repository-wide doctest
+   discovery gate picks up the new documented module without a manifest edit.
+10. Link user-facing docs or tests to the new module when appropriate.
 
 The verifier intentionally fails when a new top-level `stdlib/*.tl` module or a
 new `stdlib/tests/*.tl` fixture is not listed in its corresponding manifest.
@@ -125,3 +127,6 @@ decision.
 
 The documentation verifier discovers every `stdlib/*.tl` file directly and
 fails when module docs, item docs, generated Markdown, or doctests regress.
+The repository doctest verifier discovers documented TypeLisp files under the
+source and test trees automatically, so new doctest fences in stdlib modules do
+not require a separate doctest manifest update.

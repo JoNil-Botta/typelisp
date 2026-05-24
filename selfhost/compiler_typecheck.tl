@@ -243,13 +243,27 @@
                                                                 (AstTyNever)))])
                                                             (tc-bind
                                                               (tc-bind
-                                                                e28
-                                                                "error"
+                                                                (tc-bind
+                                                                  (tc-bind
+                                                                    (tc-bind
+                                                                      e28
+                                                                      "error"
+                                                                      (tc-fn1
+                                                                        (AstTyString)
+                                                                        (AstTyNever)))
+                                                                    (tc-default-boundary-name)
+                                                                    (AstTyUnit))
+                                                                  "env-var-exists?"
+                                                                  (tc-fn1
+                                                                    (AstTyString)
+                                                                    (AstTyBool)))
+                                                                "env-var-value"
                                                                 (tc-fn1
                                                                   (AstTyString)
-                                                                  (AstTyNever)))
-                                                              (tc-default-boundary-name)
-                                                              (AstTyUnit))))))))))))))))))))))))))))))))
+                                                                  (AstTyString)))
+                                                              "env-path-separator"
+                                                              (tc-fn0
+                                                                (AstTyString)))))))))))))))))))))))))))))))))
 
 (define (tc-lookup [env : TcTypeEnv] [name : String]) : ResultTcType
   (match env
@@ -2624,6 +2638,12 @@
         (string-length (read-stdin-line))
         (string-length (read-stdin-bytes 3)))))")
 
+(define (compiler-typecheck-env-source) : String
+  "(define (main [name : String]) : String
+  (if (env-var-exists? name)
+    (env-var-value name)
+    (env-path-separator)))")
+
 (define (compiler-typecheck-tuple-oob-source) : String
   "(define (main) : i64 (tuple-ref (tuple 1 true) 2))")
 
@@ -2671,40 +2691,42 @@
       (and
         (compiler-typecheck-ok-score? (compiler-typecheck-stdio-source) 10)
         (and
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-tuple-oob-source)
-            "typecheck: tuple index out of bounds")
+          (compiler-typecheck-ok-score? (compiler-typecheck-env-source) 10)
           (and
             (compiler-typecheck-error-ok?
-              (compiler-typecheck-array-mismatch-source)
-              "typecheck: array elements must have same type")
+              (compiler-typecheck-tuple-oob-source)
+              "typecheck: tuple index out of bounds")
             (and
               (compiler-typecheck-error-ok?
-                (compiler-typecheck-string-index-source)
-                "typecheck: string index must be integer")
+                (compiler-typecheck-array-mismatch-source)
+                "typecheck: array elements must have same type")
               (and
-                (compiler-typecheck-ok-score?
-                  (compiler-typecheck-string-shadow-source)
-                  30)
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-string-index-source)
+                  "typecheck: string index must be integer")
                 (and
-                  (compiler-typecheck-error-ok?
-                    (compiler-typecheck-cast-bad-source)
-                    "typecheck: cast requires integer/char source and target")
+                  (compiler-typecheck-ok-score?
+                    (compiler-typecheck-string-shadow-source)
+                    30)
                   (and
-                    (compiler-typecheck-ok-score?
-                      (compiler-typecheck-char-range-source)
-                      20)
+                    (compiler-typecheck-error-ok?
+                      (compiler-typecheck-cast-bad-source)
+                      "typecheck: cast requires integer/char source and target")
                     (and
                       (compiler-typecheck-ok-score?
-                        (compiler-typecheck-never-branch-source)
-                        10)
+                        (compiler-typecheck-char-range-source)
+                        20)
                       (and
-                        (compiler-typecheck-error-ok?
-                          (compiler-typecheck-foreach-body-source)
-                          "typecheck: foreach body must be unit")
-                        (compiler-typecheck-error-ok?
-                          (compiler-typecheck-lambda-ret-source)
-                          "typecheck: lambda return type mismatch")))))))))))))
+                        (compiler-typecheck-ok-score?
+                          (compiler-typecheck-never-branch-source)
+                          10)
+                        (and
+                          (compiler-typecheck-error-ok?
+                            (compiler-typecheck-foreach-body-source)
+                            "typecheck: foreach body must be unit")
+                          (compiler-typecheck-error-ok?
+                            (compiler-typecheck-lambda-ret-source)
+                            "typecheck: lambda return type mismatch"))))))))))))))
 
 (define (compiler-typecheck-nominal-source) : String
   "(defenum Maybe (None) (Some i64))

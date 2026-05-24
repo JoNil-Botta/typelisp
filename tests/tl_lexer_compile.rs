@@ -146,6 +146,7 @@ fn tl_lexer_tl_compiles_to_assembly() {
         "_tl_count_tokens:",
         "_tl_lexer_token_spans_ok_question:",
         "_tl_lexer_spanned_error_ok_question:",
+        "_tl_lex_percent_symbol_ok_question:",
         "_tl_lex_span_self_test:",
         "_tl_index_line:",
         "_tl_index_col:",
@@ -185,6 +186,12 @@ fn tl_lexer_tl_compiles_to_assembly() {
             "tl_lexer assembly is missing expected recoverable lexer message {message:?}:\n{asm}",
         );
     }
+
+    assert!(
+        asm.contains("(% n 16)"),
+        "tl_lexer assembly is missing the modulo-operator lexing regression source:\n{}",
+        asm,
+    );
 
     // `main` drives the lexer: it lexes the sample then tallies total tokens,
     // TStrs and TChars, and checks the recoverable error entrypoint.

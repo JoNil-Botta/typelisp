@@ -133,7 +133,9 @@
               (= c #!')
               (or
                 (= c #>')
-                (or (= c #<') (or (= c #=') (or (= c #:') (= c #_'))))))))))))
+                (or
+                  (= c #<')
+                  (or (= c #=') (or (= c #:') (or (= c #_') (= c #%')))))))))))))
 
 ;; `c` may appear in a symbol: a letter, a digit, or a symbol-punctuation char.
 
@@ -643,6 +645,14 @@
         (panic (source-error-message err))
         (make-array SpannedToken 1))]))
 
+(define (lex-percent-symbol-ok?) : bool
+  (match (lex-result "(% n 16)")
+    [(OkTokens toks)
+      (and
+        (= (token-tag (array-ref toks 1)) (tag-sym))
+        (string-eq (token-sym (array-ref toks 1)) "%"))]
+    [(ErrTokens _) false]))
+
 ;; Returns 42 when the spanned lexer records correct 1-based line/column
 
 ;; positions, including a token inside a nested list and the trailing EOF.
@@ -677,6 +687,8 @@
                         (=
                           (token-tag (spanned-token-tok (array-ref s 7)))
                           (tag-end)))))))))))
-        42
+        (if (lex-percent-symbol-ok?)
+          42
+          1)
         1)]
     [(ErrSpannedTokens _) 2]))

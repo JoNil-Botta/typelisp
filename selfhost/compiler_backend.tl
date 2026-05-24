@@ -1891,6 +1891,27 @@
               "\n"
               (compiler-backend-emit-externs rest plan)))])]))
 
+;; External CRT symbols the target's runtime helpers reference. The Windows x64
+
+;; alloc/oob helpers call `malloc`/`_write`/`exit`, which must be declared
+
+;; external; the Linux helpers use syscalls and need none. (#648)
+
+(define (compiler-backend-runtime-target-externs
+  [target : CompilerBackendTarget]
+  [plan : CompilerBackendRuntimePlan]) : String
+  (if (compiler-backend-target-windows? target)
+    (match plan
+      [(BackendRuntimePlan alloc oob _ _ _ _ _ _)
+        (string-append
+          (if alloc
+            ".extern malloc\n"
+            "")
+          (if (or alloc oob)
+            ".extern _write\n.extern exit\n"
+            ""))])
+    ""))
+
 (define (compiler-backend-runtime-alloc-data) : String
   "    .section .rodata
 .L_tl_alloc_msg:
@@ -1986,6 +2007,73 @@ tl_oob_abort:
     movq $60, %rax
     movq $134, %rdi
     syscall
+
+")
+
+;; Windows x64 allocation helper (#648): mirrors the Rust backend's
+
+;; `generate_windows_alloc_runtime_functions`. Uses the CRT `malloc` (size in
+
+;; %rcx) instead of the Linux `mmap` syscall, with a 32-byte outgoing shadow
+
+;; space around each call (keeping %rsp 16-byte aligned). On failure it writes
+
+;; the alloc message to stderr via `_write` and terminates with `exit(134)`.
+
+(define (compiler-backend-runtime-alloc-functions-windows) : String
+  "    .globl tl_alloc
+tl_alloc:
+    push %rbp
+    mov %rsp, %rbp
+    testq %rcx, %rcx
+    jg .L_tl_alloc_win_size_ready
+    movq $1, %rcx
+.L_tl_alloc_win_size_ready:
+    sub $32, %rsp
+    call malloc
+    add $32, %rsp
+    testq %rax, %rax
+    jz .L_tl_alloc_abort
+    mov %rbp, %rsp
+    pop %rbp
+    ret
+.L_tl_alloc_abort:
+    movq $2, %rcx
+    leaq .L_tl_alloc_msg(%rip), %rdx
+    movq $.L_tl_alloc_msg_len, %r8
+    sub $32, %rsp
+    call _write
+    add $32, %rsp
+    movq $134, %rcx
+    sub $32, %rsp
+    call exit
+    add $32, %rsp
+
+")
+
+;; Windows x64 out-of-bounds abort helper (#648): mirrors the Rust backend's
+
+;; `generate_windows_fixed_abort_runtime_function`. Writes the fixed OOB message
+
+;; to stderr via the CRT `_write` and terminates with `exit(134)` instead of the
+
+;; Linux `write`/`exit` syscalls.
+
+(define (compiler-backend-runtime-oob-functions-windows) : String
+  "    .globl tl_oob_abort
+tl_oob_abort:
+    push %rbp
+    mov %rsp, %rbp
+    movq $2, %rcx
+    leaq .L_tl_oob_msg(%rip), %rdx
+    movq $.L_tl_oob_msg_len, %r8
+    sub $32, %rsp
+    call _write
+    add $32, %rsp
+    movq $134, %rcx
+    sub $32, %rsp
+    call exit
+    add $32, %rsp
 
 ")
 
@@ -2232,48 +2320,55 @@ tl_string_concat:
 
 ")
 
-(define (compiler-backend-runtime-functions [plan : CompilerBackendRuntimePlan]) : String
-  (match plan
-    [(BackendRuntimePlan
-        alloc
-        oob
-        substring
-        concat
-        read-line
-        read-bytes
-        stdin-eof
-        flush-stdout)
-      (string-append
-        (if alloc
-          (compiler-backend-runtime-alloc-functions)
-          "")
+(define (compiler-backend-runtime-functions
+  [target : CompilerBackendTarget]
+  [plan : CompilerBackendRuntimePlan]) : String
+  (let ([windows : bool (compiler-backend-target-windows? target)])
+    (match plan
+      [(BackendRuntimePlan
+          alloc
+          oob
+          substring
+          concat
+          read-line
+          read-bytes
+          stdin-eof
+          flush-stdout)
         (string-append
-          (if oob
-            (compiler-backend-runtime-oob-functions)
+          (if alloc
+            (if windows
+              (compiler-backend-runtime-alloc-functions-windows)
+              (compiler-backend-runtime-alloc-functions))
             "")
           (string-append
-            (if substring
-              (compiler-backend-runtime-substring-functions)
+            (if oob
+              (if windows
+                (compiler-backend-runtime-oob-functions-windows)
+                (compiler-backend-runtime-oob-functions))
               "")
             (string-append
-              (if concat
-                (compiler-backend-runtime-concat-functions)
+              (if substring
+                (compiler-backend-runtime-substring-functions)
                 "")
               (string-append
-                (if read-line
-                  (compiler-backend-runtime-read-stdin-line-functions)
+                (if concat
+                  (compiler-backend-runtime-concat-functions)
                   "")
                 (string-append
-                  (if read-bytes
-                    (compiler-backend-runtime-read-stdin-bytes-functions)
+                  (if read-line
+                    (compiler-backend-runtime-read-stdin-line-functions)
                     "")
                   (string-append
-                    (if stdin-eof
-                      (compiler-backend-runtime-stdin-eof-functions)
+                    (if read-bytes
+                      (compiler-backend-runtime-read-stdin-bytes-functions)
                       "")
-                    (if flush-stdout
-                      (compiler-backend-runtime-flush-stdout-functions)
-                      ""))))))))]))
+                    (string-append
+                      (if stdin-eof
+                        (compiler-backend-runtime-stdin-eof-functions)
+                        "")
+                      (if flush-stdout
+                        (compiler-backend-runtime-flush-stdout-functions)
+                        ""))))))))])))
 
 ;; Argument register for call arg `idx` under the target's calling convention.
 
@@ -2352,11 +2447,36 @@ tl_string_concat:
                 concat
                 (or read-line (or read-bytes (or stdin-eof flush-stdout))))))))]))
 
+;; Which runtime helpers the Windows x64 target can currently emit: the
+
+;; allocation and out-of-bounds helpers (#648). The substring/concat/stdio
+
+;; helpers are still Linux-syscall-only and remain deferred, so a Windows plan
+
+;; that needs any of them cannot be emitted yet.
+
+(define (compiler-backend-runtime-plan-windows-ok?
+  [plan : CompilerBackendRuntimePlan]) : bool
+  (match plan
+    [(BackendRuntimePlan
+        _
+        _
+        substring
+        concat
+        read-line
+        read-bytes
+        stdin-eof
+        flush-stdout)
+      (not
+        (or
+          substring
+          (or concat (or read-line (or read-bytes (or stdin-eof flush-stdout))))))]))
+
 (define (compiler-backend-target-runtime-ok?
   [target : CompilerBackendTarget]
   [plan : CompilerBackendRuntimePlan]) : bool
   (if (compiler-backend-target-windows? target)
-    (compiler-backend-runtime-plan-empty? plan)
+    (compiler-backend-runtime-plan-windows-ok? plan)
     true))
 
 ;; Emit a full program for `target`. Windows x64 has ABI-correct user function
@@ -2413,10 +2533,14 @@ tl_string_concat:
                                       (compiler-backend-emit-string-rodata
                                         strings))
                                     (compiler-backend-runtime-data plan))
-                                  (compiler-backend-emit-externs externs plan))
+                                  (string-append
+                                    (compiler-backend-emit-externs externs plan)
+                                    (compiler-backend-runtime-target-externs
+                                      target
+                                      plan)))
                                 (compiler-backend-target-entry-text target))
                               functions-asm)
-                            (compiler-backend-runtime-functions plan))
+                            (compiler-backend-runtime-functions target plan))
                           (compiler-backend-entry-for-target target))])
                       (OkCompilerBackend (text-buf-render buf)))]
                   [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
@@ -2996,7 +3120,9 @@ tl_string_concat:
                       (compiler-backend-target-windows-abi-ok?)
                       (and
                         (compiler-backend-target-windows-callee-save-ok?)
-                        (compiler-backend-target-windows-runtime-deferred-ok?)))))))))))))
+                        (and
+                          (compiler-backend-target-windows-runtime-deferred-ok?)
+                          (compiler-backend-target-windows-runtime-alloc-oob-ok?))))))))))))))
 
 (define (compiler-backend-target-linux-matches-default? [src : String]) : bool
   (match (compiler-backend-emit-source-for-target src (BackendTargetLinux))
@@ -3074,15 +3200,59 @@ tl_string_concat:
         (compiler-backend-string-contains? asm ", %r12\n"))]
     [(ErrCompilerBackend _) false]))
 
+;; A program whose runtime plan still needs a Linux-syscall-only helper
+
+;; (`substring`), which the Windows target cannot emit yet.
+
+(define (compiler-backend-windows-deferred-source) : String
+  "(define (main) : i64
+  (string-length (substring \"hello\" 1 3)))")
+
+;; The substring/concat/stdio helpers remain deferred on Windows: a program
+
+;; needing one of them is rejected with the #648 diagnostic.
+
 (define (compiler-backend-target-windows-runtime-deferred-ok?) : bool
   (match (compiler-backend-emit-source-for-target
-    (compiler-backend-aggregate-source)
+    (compiler-backend-windows-deferred-source)
     (BackendTargetWindows))
     [(OkCompilerBackend _) false]
     [(ErrCompilerBackend message)
       (string-eq
         (compiler-diagnostic-message message)
         "backend: Windows runtime helpers not yet implemented (#648)")]))
+
+;; The allocation and out-of-bounds helpers are now emitted for the Windows
+
+;; target (#648): an aggregate program (which heap-allocates via `tl_alloc`)
+
+;; emits the CRT-based `tl_alloc` helper — calling `malloc`, declaring it
+
+;; `.extern`, and using no Linux `syscall` — and the fixed OOB helper string
+
+;; uses `_write`/`exit` rather than syscalls.
+
+(define (compiler-backend-target-windows-runtime-alloc-oob-ok?) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-aggregate-source)
+    (BackendTargetWindows))
+    [(OkCompilerBackend asm)
+      (backend-and4
+        (backend-and4
+          (compiler-backend-string-contains? asm "tl_alloc:\n")
+          (compiler-backend-string-contains? asm "    call malloc\n")
+          (compiler-backend-string-contains? asm ".extern malloc\n")
+          (not (compiler-backend-string-contains? asm "syscall\n")))
+        (compiler-backend-string-contains?
+          (compiler-backend-runtime-oob-functions-windows)
+          "tl_oob_abort:\n")
+        (compiler-backend-string-contains?
+          (compiler-backend-runtime-oob-functions-windows)
+          "    call _write\n")
+        (compiler-backend-string-contains?
+          (compiler-backend-runtime-oob-functions-windows)
+          "    call exit\n"))]
+    [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-deterministic-ok? [src : String]) : bool
   (match (compiler-backend-emit-source src)

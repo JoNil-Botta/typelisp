@@ -2,6 +2,8 @@
 
 (import "compiler_symbols.tl")
 
+(import "compiler_diagnostic.tl")
+
 (defenum TcTypeEnv
   (TcTypeNil)
   (TcTypeBind String AstType TcTypeEnv))
@@ -34,7 +36,29 @@
 
 (defenum ResultCompilerTypecheck
   (OkCompilerTypecheck CompilerTypecheckSummary)
-  (ErrCompilerTypecheck String))
+  (ErrCompilerTypecheck CompilerDiagnostic))
+
+;; The typechecker receives an already-loaded program and so does not know the
+;; source path; it builds diagnostics with an empty path (the CLI driver stamps
+;; the real path before rendering). Synthetic/internal errors fall back to 1:1.
+(define (tc-diag-at-start [message : String]) : CompilerDiagnostic
+  (compiler-diagnostic-at-start "" message))
+
+;; Locate an error at the nearest available declaration body span. A top-level
+;; `define` body is wrapped in `AstExprSpanned`, so its span points the
+;; diagnostic at the offending declaration's expression; otherwise fall back 1:1.
+(define (tc-decl-diag [decl : AstDecl] [message : String]) : CompilerDiagnostic
+  (match decl
+    [(AstDeclDefFn _ _ _ body)
+      (match body
+        [(AstExprSpanned _ span)
+          (CompilerDiagnostic
+            ""
+            (struct-get span start-line)
+            (struct-get span start-col)
+            message)]
+        [_ (tc-diag-at-start message)])]
+    [_ (tc-diag-at-start message)]))
 
 (define (tc-empty-env) : TcTypeEnv
   TcTypeNil)
@@ -1384,7 +1408,7 @@
       (match (tc-check-decl ctx top-env decl)
         [(OkTcUnit)
           (tc-check-decls ctx top-env rest (tc-summary-add-decl summary decl))]
-        [(ErrTcUnit message) (ErrCompilerTypecheck message)])]))
+        [(ErrTcUnit message) (ErrCompilerTypecheck (tc-decl-diag decl message))])]))
 
 (define (typecheck-compiler-program [program : AstProgram]) : ResultCompilerTypecheck
   (match (build-compiler-symbols program)
@@ -1401,14 +1425,15 @@
                       top-env
                       decls
                       (CompilerTypecheckSummary 0 0 0))])]
-              [(ErrTcEnv message) (ErrCompilerTypecheck message)]))]
-        [(ErrCompilerRegistries message) (ErrCompilerTypecheck message)])]
-    [(ErrCompilerSymbols message) (ErrCompilerTypecheck message)]))
+              [(ErrTcEnv message) (ErrCompilerTypecheck (tc-diag-at-start message))]))]
+        [(ErrCompilerRegistries message)
+          (ErrCompilerTypecheck (tc-diag-at-start message))])]
+    [(ErrCompilerSymbols message) (ErrCompilerTypecheck (tc-diag-at-start message))]))
 
 (define (typecheck-compiler-source [src : String]) : ResultCompilerTypecheck
   (match (parse-ast-source src)
     [(OkAstProgram program) (typecheck-compiler-program program)]
-    [(ErrAstProgram message) (ErrCompilerTypecheck message)]))
+    [(ErrAstProgram message) (ErrCompilerTypecheck (tc-diag-at-start message))]))
 
 (define (compiler-typecheck-smoke-source) : String
   "(extern print-i64 : (-> i64 unit))
@@ -1427,7 +1452,7 @@
 
 (define (compiler-typecheck-error-ok? [src : String] [want : String]) : bool
   (match (typecheck-compiler-source src)
-    [(ErrCompilerTypecheck message) (string-eq message want)]
+    [(ErrCompilerTypecheck diag) (string-eq (compiler-diagnostic-message diag) want)]
     [(OkCompilerTypecheck _) false]))
 
 (define (compiler-typecheck-ok-score? [src : String] [want : i64]) : bool
@@ -1579,6 +1604,25 @@
             (compiler-typecheck-duplicate-variant-source)
             "symbols: duplicate enum variant Same"))))))
 
+;; A type error whose offending expression (`missing`) is on source line 2, so
+;; the diagnostic must locate it there (not at the 1:1 fallback) — proving the
+;; typechecker carries the nearest declaration-body `AstExprSpanned` span (#681).
+(define (compiler-typecheck-located-source) : String
+  "(define (main) : i64
+  missing)")
+
+(define (compiler-typecheck-located-ok?) : bool
+  (match (typecheck-compiler-source (compiler-typecheck-located-source))
+    [(ErrCompilerTypecheck diag)
+      (if (= (compiler-diagnostic-line diag) 2)
+        (if (> (compiler-diagnostic-col diag) 0)
+          (string-eq
+            (compiler-diagnostic-message diag)
+            "typecheck: unbound name missing")
+          false)
+        false)]
+    [(OkCompilerTypecheck _) false]))
+
 (define (compiler-typecheck-self-test) : i64
   (match (typecheck-compiler-source (compiler-typecheck-smoke-source))
     [(OkCompilerTypecheck summary)
@@ -1598,12 +1642,14 @@
                 "typecheck: if branches must match")
               (and
                 (compiler-typecheck-aggregate-tests-ok?)
-                (compiler-typecheck-nominal-tests-ok?))))))
+                (and
+                  (compiler-typecheck-nominal-tests-ok?)
+                  (compiler-typecheck-located-ok?)))))))
         42
         (begin
           (panic "typecheck: smoke score mismatch")
           0))]
-    [(ErrCompilerTypecheck message)
+    [(ErrCompilerTypecheck diag)
       (begin
-        (panic message)
+        (panic (compiler-diagnostic-message diag))
         0)]))

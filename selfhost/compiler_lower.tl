@@ -2473,7 +2473,10 @@
                   [(ErrTcEnv message) (ErrCompilerLower message)]))]
             [(ErrCompilerRegistries message) (ErrCompilerLower message)])]
         [(ErrCompilerSymbols message) (ErrCompilerLower message)])]
-    [(ErrCompilerTypecheck message) (ErrCompilerLower message)]))
+    ;; The lower/backend diagnostic-payload migration is a separate phase (#604
+    ;; follow-up), so flatten the typecheck diagnostic back to its message here.
+    [(ErrCompilerTypecheck diag)
+      (ErrCompilerLower (compiler-diagnostic-message diag))]))
 
 (define (lower-compiler-source [src : String]) : ResultCompilerLower
   (match (parse-ast-source src)

@@ -52,7 +52,7 @@ returned caller-owned values.
 | `append-file` | Performs host/runtime IO; allocates temporary active-arena strings through `read-file-or` and `string-append`, then writes the result. |
 | `file-nonempty?` | Performs host/runtime IO; allocates a temporary active-arena `String` through `read-file` only when the path exists. |
 | `env-get`, `env-path-list`, `env-path-split`, `env-path-join` | Environment values and split/join results allocate fresh active-arena Strings/lists when runtime values are read or string pieces are created; missing variables return explicit `EnvNo*` options. |
-| `process-*` helpers | Construct process command/output/error aggregates in the active arena. `process-run` and `process-output` currently return structured errors and do not spawn child processes. |
+| `process-*` helpers | Construct process command/output/error aggregates in the active arena. Validators inspect argv/env/cwd metadata without allocation; `process-run` and `process-output` currently return structured errors and do not spawn child processes. |
 | `assert-*` helpers in `test.tl` | Non-allocating checks on success; failures call `panic` with the caller-provided message. |
 
 No current stdlib function returns a borrow-typed `str`, mutates a

@@ -16,6 +16,20 @@
 
 ;;;;
 
+;;;; ```typelisp
+
+;;;; (import "stdlib/process.tl")
+
+;;;; (define args : ProcessStringList
+
+;;;;   (process-args-cons "hello" (process-args-empty)))
+
+;;;; (define cmd : ProcessCommand (process-command "echo" args))
+
+;;;; (define ok : bool (process-command-valid? cmd))
+
+;;;; ```
+
 ;;; Immutable list of process argument strings in argv order.
 
 (defenum ProcessStringList
@@ -69,6 +83,13 @@
 (define (process-args-empty) : ProcessStringList
   (ProcessStringNil))
 
+;;; Return the number of argv entries in `args`.
+
+(define (process-args-count [args : ProcessStringList]) : i64
+  (match args
+    [(ProcessStringNil) 0]
+    [(ProcessStringCons _ rest) (+ 1 (process-args-count rest))]))
+
 ;;; Prepend an argument string to an argv list.
 
 (define (process-args-cons [value : String] [rest : ProcessStringList]) : ProcessStringList
@@ -78,6 +99,13 @@
 
 (define (process-env-empty) : ProcessEnvList
   (ProcessEnvNil))
+
+;;; Return the number of env overrides in `env`.
+
+(define (process-env-count [env : ProcessEnvList]) : i64
+  (match env
+    [(ProcessEnvNil) 0]
+    [(ProcessEnvCons _ _ rest) (+ 1 (process-env-count rest))]))
 
 ;;; Prepend an environment override to an env list.
 
@@ -233,6 +261,36 @@
     [(ProcessUnsupported _) true]
     [_ false]))
 
+;;; Return the first env validation error, or `ProcessNoString`.
+
+(define (process-env-validation-error [env : ProcessEnvList]) : ProcessMaybeString
+  (match env
+    [(ProcessEnvNil) (ProcessNoString)]
+    [(ProcessEnvCons name _ rest)
+      (if (string-eq name "")
+        (ProcessSomeString "process: environment variable name is empty")
+        (process-env-validation-error rest))]))
+
+;;; Return the first command validation error, or `ProcessNoString`.
+
+(define (process-command-validation-error [command : ProcessCommand]) : ProcessMaybeString
+  (if (string-eq (process-command-executable command) "")
+    (ProcessSomeString "process: executable path is empty")
+    (match (process-command-cwd command)
+      [(ProcessSomeString cwd)
+        (if (string-eq cwd "")
+          (ProcessSomeString "process: cwd path is empty")
+          (process-env-validation-error (process-command-env command)))]
+      [(ProcessNoString)
+        (process-env-validation-error (process-command-env command))])))
+
+;;; Return true when `command` passes stdlib validation.
+
+(define (process-command-valid? [command : ProcessCommand]) : bool
+  (match (process-command-validation-error command)
+    [(ProcessNoString) true]
+    [(ProcessSomeString _) false]))
+
 ;;; Run a command and capture stdout, stderr, and exit status.
 
 ;;;
@@ -242,11 +300,12 @@
 ;;; return a structured unsupported diagnostic.
 
 (define (process-output [command : ProcessCommand]) : ResultProcessOutput
-  (if (string-eq (process-command-executable command) "")
-    (ErrProcessOutput
-      (ProcessInvalidCommand "process: executable path is empty"))
-    (ErrProcessOutput
-      (ProcessUnsupported "process: runtime execution is not implemented"))))
+  (match (process-command-validation-error command)
+    [(ProcessSomeString message)
+      (ErrProcessOutput (ProcessInvalidCommand message))]
+    [(ProcessNoString)
+      (ErrProcessOutput
+        (ProcessUnsupported "process: runtime execution is not implemented"))]))
 
 ;;; Run a command using the same captured-output path as `process-output`.
 

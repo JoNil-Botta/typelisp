@@ -937,6 +937,139 @@ replacement.
         (array-ref b 0)))))
 ```
 
+### 7.6 Scoped regions (`with-region`)
+
+> **Status:** The `(with-region ...)` surface form parses today (#548). The
+> region-typed handle checking specified here is implemented by the typechecker
+> in #549, with `tl_region_mark`/`tl_region_reset` lowering in a later slice.
+> This section is the normative model those follow-ups implement (#547/#523).
+
+A **region** is a lexically scoped allocation arena whose lifetime is a block of
+code. Regions are the *safe*, source-level counterpart to the unsafe extern
+`tl_region_reset` of §7.3: instead of the caller proving values are dead, the
+typechecker proves region-allocated values cannot escape, so the reset at scope
+exit is always sound.
+
+#### Syntax
+
+```
+(with-region <region-name> <body-expr> ...)
+```
+
+- `<region-name>` is an identifier naming the region. The body is a non-empty
+  expression sequence and the **last expression is the form's result**.
+- The region's lifetime is exactly the dynamic extent of the body.
+- Subregions are expressed by **nesting** `with-region` forms; nested regions
+  reset in stack (LIFO) order.
+
+```lisp test=ignore name=with-region-nested reason="region typing is #549; lowering is a later slice"
+(define (main) : i64
+  (with-region outer
+    (let ([a : (Array i64) (make-array i64 4)])
+      (begin
+        (array-set! a 0 10)
+        (with-region inner
+          (let ([b : (Array i64) (make-array i64 2)])
+            (array-set! b 0 (array-ref a 0))))  ; inner arena reclaimed here
+        (array-ref a 0)))))                       ; outer arena reclaimed at form exit -> 10
+```
+
+#### Region-tagged values
+
+Within `(with-region r ...)`, `r` is the **active region**: every heap
+allocation performed lexically in the body allocates into `r` and produces a
+**region-tagged** value. A value of type `T` allocated in `r` has the
+region-qualified type written `T @ r` ("`T` in region `r`") in diagnostics.
+
+Allocation into the active region is **ambient** — there is no explicit
+`alloc-in` form in v1. Region tagging is **structural**: a value transitively
+containing an `r`-tagged handle (a tuple/struct field, array element, or closure
+capture) is itself `r`-tagged.
+
+Values that are **not** region-tagged, and so may freely cross region
+boundaries: scalars (`i64`, `bool`, `char`, `f64`, …), string **literals**
+(their bytes live in `.rodata`, not an arena), and handles allocated *outside*
+the active region (in an enclosing region, or before any region).
+
+#### Escape rule (static escape checking)
+
+A region-tagged value `T @ r` may not **escape** its `(with-region r ...)`
+scope. A value escapes when it — or any value transitively containing an
+`r`-tagged handle — becomes reachable through a name or storage whose lifetime
+outlives `r`. The typechecker rejects, as compile-time type errors:
+
+- the form's **result** being `r`-tagged (the result must be region-free);
+- **storing** an `r`-tagged value into a binding that outlives the region: an
+  outer `let`, a global, or `set!` to an outer/global name;
+- **capturing** an `r`-tagged value in a closure that itself escapes the region
+  (returned, stored outside, or used as the form result);
+- in v1, **passing** an `r`-tagged value across any function-call boundary (see
+  confinement below).
+
+Each rejection names the region and the offending site, e.g.
+`region escape: value of type (Array i64) @ r escapes region 'r' as the with-region result`.
+
+#### v1 simplification: confinement to the body
+
+v1 has **no region-polymorphic function types**, so region-tagged values are
+**confined to the `with-region` body**: created, read, and mutated within the
+body, but never crossing a function-call boundary (argument or return) and never
+appearing in a function signature. A body may still call functions freely, as
+long as it does not hand them region-tagged values.
+
+Region polymorphism — function types parameterized over a region so helpers can
+accept and return region-tagged values — is deferred to a follow-up. Until then,
+keep region-local work inline in the body.
+
+#### Allocation-site policy
+
+While `r` is active, every `tl_alloc`-backed allocation performed lexically in
+the body uses `r` and is `r`-tagged:
+
+- fresh string storage from `substring`, `string-slice`, `string-append`,
+  `string-concat`, `int->string`, and the runtime-provided `read-file` / `arg`
+  strings;
+- dynamic-array element buffers and `{ptr,len}` fat values from `make-array`;
+- heap-promoted returned/escaping struct and enum storage constructed in the
+  body;
+- closure environments allocated for capturing lambdas created in the body.
+
+String **literals** are unaffected (`.rodata`, never arena-allocated).
+Allocations performed by functions *called* from the body are governed by where
+those allocations lexically occur, not by the caller's active region — a
+consequence of v1 confinement (callees never observe `r`).
+
+#### Lowering contract
+
+`(with-region r body...)` lowers to, in order:
+
+1. `mark = tl_region_mark()` — captured **before** any body allocation;
+2. the body, allocating into the arena;
+3. `tl_region_reset(mark)` — **after** the result value is fully materialized.
+
+Because the escape rule guarantees the result is region-free (a scalar, a
+`.rodata` string, or a handle allocated before `mark`), the result survives the
+reset. Nested `with-region` forms produce nested mark/reset pairs that reset in
+LIFO order, matching `tl_region_reset`'s arena-stack discipline (§7.3). The body
+result is materialized into the enclosing region (or the process-lifetime arena
+at top level), never into `r`.
+
+#### Non-Linux targets
+
+`tl_region_mark`/`tl_region_reset` are emitted only for Linux x86_64 (§7.3). On
+other targets `(with-region ...)` remains a fully type-checked scope — the
+escape rule is enforced identically — but it lowers **without** the mark/reset
+pair, falling back to the process-lifetime arena (§7.2). Semantics are therefore
+identical across targets except that region-local allocations are not reclaimed
+on non-Linux; programs stay portable and correct, only less memory-efficient
+there.
+
+```lisp test=ignore name=with-region-escape-rejected reason="region escape checking is #549"
+(define (leak) : (Array i64)
+  (with-region r
+    (make-array i64 8)))  ; rejected: (Array i64) @ r escapes as the with-region result
+```
+
 ---
 
 ## 8. Backend capabilities and limitations

@@ -241,6 +241,14 @@ compiler, formatter, package-tooling, or REPL phase has discarded those values.
 Resetting mark `0` clears all current arenas; invalid nonzero marks abort. The
 region helpers are currently emitted only for the Linux x86_64 System V target.
 
+The *safe* source-level counterpart is the lexically scoped
+`(with-region <name> <body>...)` form: heap allocated inside the body is tagged
+with the region, the typechecker rejects region-tagged values that escape the
+scope, and the region's arena is reset on exit (a no-op fallback on non-Linux
+targets). The form parses today; region-typed escape checking and mark/reset
+lowering are in-progress follow-ups. See
+[SPEC.md §7.6](SPEC.md) for the normative model, escape rule, and examples.
+
 See [SPEC.md](SPEC.md) for the full language reference.
 
 ## Self-hosting sources

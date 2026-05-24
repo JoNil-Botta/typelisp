@@ -1372,6 +1372,7 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
             "compiler_typecheck.tl",
             "compiler_symbols.tl",
             "compiler_load.tl",
+            "compiler_diagnostic.tl",
             "compiler_parse_core.tl",
             "compiler_ast_types.tl",
             "sym_i64_env.tl",
@@ -1420,6 +1421,32 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
         "(import \"helper.tl\")\n(import \"shared.tl\")\n(define (main) : i64 (+ (helper) shared))\n",
     )
     .expect("write compiler_driver input fixture");
+
+    let bad_reader_path = work_dir.join("bad_reader.tl");
+    let bad_reader_output_path = work_dir.join("bad_reader.s");
+    let _ = fs::remove_file(&bad_reader_output_path);
+    fs::write(&bad_reader_path, "(define (main) : i64\n")
+        .expect("write compiler_driver reader error fixture");
+    let bad_reader = Command::new(&driver_bin)
+        .arg(&bad_reader_path)
+        .arg(&bad_reader_output_path)
+        .output()
+        .expect("run compiler_driver reader error fixture");
+    assert_eq!(bad_reader.status.code(), Some(1));
+    assert_eq!(String::from_utf8_lossy(&bad_reader.stdout), "");
+    let bad_reader_stderr = String::from_utf8_lossy(&bad_reader.stderr);
+    let expected_prefix = format!(
+        "{}:2:1: reader: unterminated list (missing ')')",
+        bad_reader_path.display()
+    );
+    assert!(
+        bad_reader_stderr.contains(&expected_prefix),
+        "compiler_driver reader diagnostic missing location\nexpected: {expected_prefix}\nstderr:\n{bad_reader_stderr}"
+    );
+    assert!(
+        !bad_reader_output_path.exists(),
+        "compiler_driver wrote assembly for reader error"
+    );
 
     for output_path in [&asm_path, &asm_again_path] {
         let run = Command::new(&driver_bin)
@@ -1532,6 +1559,7 @@ fn selfhost_check_driver_reports_success_and_errors() {
         &work_dir,
         &[
             "compiler_load.tl",
+            "compiler_diagnostic.tl",
             "compiler_typecheck.tl",
             "compiler_symbols.tl",
             "compiler_parse_core.tl",

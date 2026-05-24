@@ -4,26 +4,38 @@
 
 (import "compiler_load.tl")
 
+(import "compiler_diagnostic.tl")
+
 (import "compiler_optimize.tl")
 
-(define (compiler-driver-emit-file [input-path : String]) : ResultCompilerBackend
-  (match (compiler-load-file input-path (sym-i64-empty))
-    [(OkCompilerLoad decls _)
+(defenum ResultCompilerDriverEmit
+  (OkCompilerDriverEmit String)
+  (ErrCompilerDriverEmit CompilerDiagnostic))
+
+(define (compiler-driver-emit-file [input-path : String]) : ResultCompilerDriverEmit
+  (match (compiler-load-file-diagnostic input-path (sym-i64-empty))
+    [(OkCompilerLoadDiagnostic decls _)
       (match (lower-compiler-program (AstProgram decls))
         [(OkCompilerLower program)
-          (compiler-backend-emit-program (optimize-program program))]
-        [(ErrCompilerLower message) (ErrCompilerBackend message)])]
-    [(ErrCompilerLoad message) (ErrCompilerBackend message)]))
+          (match (compiler-backend-emit-program (optimize-program program))
+            [(OkCompilerBackend asm) (OkCompilerDriverEmit asm)]
+            [(ErrCompilerBackend message)
+              (ErrCompilerDriverEmit
+                (compiler-diagnostic-at-start input-path message))])]
+        [(ErrCompilerLower message)
+          (ErrCompilerDriverEmit
+            (compiler-diagnostic-at-start input-path message))])]
+    [(ErrCompilerLoadDiagnostic diag) (ErrCompilerDriverEmit diag)]))
 
 (define (compiler-driver-compile-file
   [input-path : String]
   [output-path : String]) : i64
   (match (compiler-driver-emit-file input-path)
-    [(OkCompilerBackend asm)
+    [(OkCompilerDriverEmit asm)
       (begin
         (write-file output-path asm)
         0)]
-    [(ErrCompilerBackend message)
+    [(ErrCompilerDriverEmit diag)
       (begin
-        (print-error message)
+        (print-error (compiler-diagnostic-render diag))
         1)]))

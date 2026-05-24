@@ -2,11 +2,25 @@
 
 (import "compiler_parse_core.tl")
 
+(import "compiler_diagnostic.tl")
+
 (import "sym_i64_env.tl")
 
 (defenum ResultCompilerLoad
   (OkCompilerLoad AstDeclList SymI64Env)
   (ErrCompilerLoad String))
+
+(defenum ResultCompilerLoadDiagnostic
+  (OkCompilerLoadDiagnostic AstDeclList SymI64Env)
+  (ErrCompilerLoadDiagnostic CompilerDiagnostic))
+
+(defenum ResultCompilerLoadParse
+  (OkCompilerLoadParse AstProgram)
+  (ErrCompilerLoadParse CompilerDiagnostic))
+
+(defenum ResultCompilerLoadDeclListDiagnostic
+  (OkCompilerLoadDeclListDiagnostic AstDeclList)
+  (ErrCompilerLoadDeclListDiagnostic CompilerDiagnostic))
 
 (define (compiler-load-char-code-at [text : String] [idx : i64]) : i64
   (cast (string-ref text idx) : i64))
@@ -120,6 +134,109 @@
             [(OkCompilerLoad rest-decls rest-seen)
               (OkCompilerLoad (AstDeclCons decl rest-decls) rest-seen)]
             [(ErrCompilerLoad message) (ErrCompilerLoad message)])])]))
+
+(define (compiler-load-parse-program-forms-diagnostic
+  [path : String]
+  [dispatch : SymI64Env]
+  [toks : (Array SpannedToken)]
+  [cur : (Array i64)]) : ResultCompilerLoadDeclListDiagnostic
+  (if (= (peek-spanned-tag toks cur) (tag-end))
+    (OkCompilerLoadDeclListDiagnostic AstDeclNil)
+    (match (read-form-spanned-result toks cur)
+      [(OkSpannedSexpr form)
+        (match (parse-ast-decl dispatch form)
+          [(OkAstDecl decl)
+            (match (compiler-load-parse-program-forms-diagnostic
+              path
+              dispatch
+              toks
+              cur)
+              [(OkCompilerLoadDeclListDiagnostic rest)
+                (OkCompilerLoadDeclListDiagnostic (AstDeclCons decl rest))]
+              [(ErrCompilerLoadDeclListDiagnostic diag)
+                (ErrCompilerLoadDeclListDiagnostic diag)])]
+          [(ErrAstDecl message)
+            (ErrCompilerLoadDeclListDiagnostic
+              (compiler-diagnostic-at-span
+                path
+                (spanned-sexpr-span form)
+                message))])]
+      [(ErrSpannedSexpr err)
+        (ErrCompilerLoadDeclListDiagnostic
+          (compiler-diagnostic-from-source-error path err))])))
+
+(define (compiler-load-parse-program-diagnostic
+  [path : String]
+  [toks : (Array SpannedToken)]) : ResultCompilerLoadParse
+  (let ([cur : (Array i64) (make-array i64 1)])
+    (let ([dispatch : SymI64Env (compiler-parse-dispatch-env)])
+      (begin
+        (array-set! cur 0 0)
+        (match (compiler-load-parse-program-forms-diagnostic
+          path
+          dispatch
+          toks
+          cur)
+          [(OkCompilerLoadDeclListDiagnostic decls)
+            (OkCompilerLoadParse (AstProgram decls))]
+          [(ErrCompilerLoadDeclListDiagnostic diag) (ErrCompilerLoadParse diag)])))))
+
+(define (compiler-load-parse-source-diagnostic [path : String] [src : String]) : ResultCompilerLoadParse
+  (match (lex-spanned-result src)
+    [(OkSpannedTokens toks) (compiler-load-parse-program-diagnostic path toks)]
+    [(ErrSpannedTokens err)
+      (ErrCompilerLoadParse (compiler-diagnostic-from-source-error path err))]))
+
+(define (compiler-load-decls-diagnostic
+  [decls : AstDeclList]
+  [importer-path : String]
+  [seen : SymI64Env]) : ResultCompilerLoadDiagnostic
+  (match decls
+    [(AstDeclNil) (OkCompilerLoadDiagnostic AstDeclNil seen)]
+    [(AstDeclCons decl rest)
+      (match decl
+        [(AstDeclImport import-path)
+          (let ([resolved
+              :
+              String
+              (compiler-load-resolve-import importer-path import-path)])
+            (match (compiler-load-file-diagnostic resolved seen)
+              [(OkCompilerLoadDiagnostic imported-decls import-seen)
+                (match (compiler-load-decls-diagnostic
+                  rest
+                  importer-path
+                  import-seen)
+                  [(OkCompilerLoadDiagnostic rest-decls rest-seen)
+                    (OkCompilerLoadDiagnostic
+                      (compiler-load-decl-list-append imported-decls rest-decls)
+                      rest-seen)]
+                  [(ErrCompilerLoadDiagnostic diag)
+                    (ErrCompilerLoadDiagnostic diag)])]
+              [(ErrCompilerLoadDiagnostic diag)
+                (ErrCompilerLoadDiagnostic diag)]))]
+        [_
+          (match (compiler-load-decls-diagnostic rest importer-path seen)
+            [(OkCompilerLoadDiagnostic rest-decls rest-seen)
+              (OkCompilerLoadDiagnostic (AstDeclCons decl rest-decls) rest-seen)]
+            [(ErrCompilerLoadDiagnostic diag) (ErrCompilerLoadDiagnostic diag)])])]))
+
+(define (compiler-load-file-diagnostic [path : String] [seen : SymI64Env]) : ResultCompilerLoadDiagnostic
+  (if (sym-i64-contains seen path)
+    (OkCompilerLoadDiagnostic AstDeclNil seen)
+    (if (file-exists? path)
+      (match (compiler-load-parse-source-diagnostic path (read-file path))
+        [(OkCompilerLoadParse program)
+          (match program
+            [(AstProgram decls)
+              (compiler-load-decls-diagnostic
+                decls
+                path
+                (sym-i64-bind seen path 1))])]
+        [(ErrCompilerLoadParse diag) (ErrCompilerLoadDiagnostic diag)])
+      (ErrCompilerLoadDiagnostic
+        (compiler-diagnostic-at-start
+          path
+          (string-append "compiler-load: cannot read import " path))))))
 
 (define (compiler-load-file [path : String] [seen : SymI64Env]) : ResultCompilerLoad
   (if (sym-i64-contains seen path)

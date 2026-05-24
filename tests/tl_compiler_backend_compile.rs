@@ -177,6 +177,28 @@ fn compiler_backend_runtime_fixture_tl_compiles_to_assembly() {
 }
 
 #[test]
+fn compiler_diagnostic_tl_compiles_to_assembly() {
+    let asm = compile_selfhost_source(
+        "compiler_diagnostic.tl",
+        "tl-compiler-diagnostic-compile-test",
+        "compiler_diagnostic.s",
+    );
+
+    assert_no_todo(&asm, "compiler_diagnostic");
+    for sym in [
+        "_tl_compiler_diagnostic_at:",
+        "_tl_compiler_diagnostic_at_span:",
+        "_tl_compiler_diagnostic_from_source_error:",
+        "_tl_compiler_diagnostic_render:",
+        "_tl_compiler_diagnostic_smoke:",
+    ] {
+        assert_symbol(&asm, sym, "compiler_diagnostic");
+    }
+
+    assert_message(&asm, "example.tl:2:7: parse: bad", "compiler_diagnostic");
+}
+
+#[test]
 fn compiler_driver_tl_compiles_to_assembly() {
     let asm = compile_selfhost_source(
         "compiler_driver.tl",
@@ -194,6 +216,9 @@ fn compiler_driver_tl_compiles_to_assembly() {
     for sym in [
         "_tl_compiler_driver_compile_file:",
         "_tl_compiler_driver_emit_file:",
+        "_tl_compiler_diagnostic_render:",
+        "_tl_compiler_load_file_diagnostic:",
+        "_tl_compiler_load_parse_source_diagnostic:",
         "_tl_compiler_load_file:",
         "_tl_compiler_load_resolve_import:",
         "_tl_compiler_backend_emit_source:",
@@ -208,6 +233,7 @@ fn compiler_driver_tl_compiles_to_assembly() {
     for message in [
         "compiler-driver: expected input and output paths",
         "compiler-load: cannot read import ",
+        "reader: unterminated list (missing ')')",
         "lower: unsupported expression",
     ] {
         assert_message(&asm, message, "compiler_driver");

@@ -78,6 +78,59 @@
 (define (compiler-backend-char-code [c : char]) : i64
   (cast c : i64))
 
+(define (compiler-backend-symbol-char [text : String] [idx : i64] [k : i64]) : String
+  (if (or (and (>= k 65) (<= k 90))
+          (or (and (>= k 97) (<= k 122))
+              (or (and (>= k 48) (<= k 57))
+                  (= k 95))))
+      (substring text idx 1)
+      (if (= k 45)
+          "_"
+          (if (= k 63)
+              "_question"
+              (if (= k 33)
+                  "_bang"
+                  (if (= k 43)
+                      "_plus"
+                      (if (= k 42)
+                          "_star"
+                          (if (= k 47)
+                              "_slash"
+                              (if (= k 61)
+                                  "_eq"
+                                  (if (= k 60)
+                                      "_lt"
+                                      (if (= k 62)
+                                          "_gt"
+                                          (if (= k 58)
+                                              "_colon"
+                                              (string-append "_u" (compiler-backend-hex-byte k))))))))))))))
+
+(define (compiler-backend-asm-safe-symbol [name : String]) : String
+  (let ([i : i64 0]
+        [n : i64 (string-length name)]
+        [out : String ""])
+    (begin
+      (while (< i n)
+        (let ([k : i64 (compiler-backend-char-code-at name i)])
+          (begin
+            (set! out (string-append out (compiler-backend-symbol-char name i k)))
+            (set! i (+ i 1)))))
+      out)))
+
+(define (compiler-backend-user-symbol [name : String]) : String
+  (if (string-eq name "main")
+      "main"
+      (string-append "_tl_" (compiler-backend-asm-safe-symbol name))))
+
+(define (compiler-backend-call-symbol [name : String] [plan : CompilerBackendRuntimePlan] [functions : CompilerIrFunctionList] [externs : CompilerIrExternList]) : String
+  (if (and (compiler-backend-plan-provides? plan name)
+           (not (compiler-backend-function-list-defines? functions name)))
+      name
+      (if (compiler-backend-extern-list-references? externs name)
+          (compiler-backend-asm-safe-symbol name)
+          (compiler-backend-user-symbol name))))
+
 (define (compiler-backend-type-size [ty : AstType]) : i64
   (match ty
     [(AstTyI64) 8]
@@ -224,7 +277,9 @@
 (define (compiler-backend-emit-load-value [value : CompilerIrValue] [reg : String]) : ResultCompilerBackend
   (match value
     [(IrValueVar id) (OkCompilerBackend (backend-cat5 "    movq " (compiler-backend-slot id) ", " reg "\n"))]
-    [(IrValueGlobal name) (OkCompilerBackend (backend-cat5 "    movq " name "(%rip), " reg "\n"))]
+    [(IrValueGlobal name)
+     (OkCompilerBackend
+       (backend-cat5 "    movq " (compiler-backend-user-symbol name) "(%rip), " reg "\n"))]
     [(IrValueI64 n) (OkCompilerBackend (backend-cat5 "    movq $" (int->string n) ", " reg "\n"))]
     [(IrValueBool b)
      (if b
@@ -272,7 +327,10 @@
     [(IrValueVar id)
      (OkCompilerBackend (compiler-backend-emit-load-memory (compiler-backend-slot id) ty))]
     [(IrValueGlobal name)
-     (OkCompilerBackend (compiler-backend-emit-load-memory (backend-cat3 name "(%rip)" "") ty))]
+     (OkCompilerBackend
+       (compiler-backend-emit-load-memory
+         (backend-cat3 (compiler-backend-user-symbol name) "(%rip)" "")
+         ty))]
     [_ (compiler-backend-emit-load-value value "%rax")]))
 
 (define (compiler-backend-binop-asm [op : CompilerIrBinOp]) : String
@@ -444,7 +502,7 @@
         (OkCompilerBackend (string-append load "    movq %rbp, %rsp\n    popq %rbp\n    ret\n"))]
        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
 
-(define (compiler-backend-emit-instr [function : String] [blocks : CompilerIrBlockList] [current-label : String] [instr : CompilerIrInstr]) : ResultCompilerBackend
+(define (compiler-backend-emit-instr [function : String] [blocks : CompilerIrBlockList] [current-label : String] [instr : CompilerIrInstr] [plan : CompilerBackendRuntimePlan] [functions : CompilerIrFunctionList] [externs : CompilerIrExternList]) : ResultCompilerBackend
   (match instr
     [(IrInstrMov dst src _) 
      (match (compiler-backend-emit-load-value src "%rax")
@@ -464,13 +522,21 @@
        [(OkCompilerBackend args-asm)
         (OkCompilerBackend
           (string-append args-asm
-            (backend-cat5 "    call " name "\n" (compiler-backend-emit-store-var dst "%rax") "")))]
+            (backend-cat5
+              "    call "
+              (compiler-backend-call-symbol name plan functions externs)
+              "\n"
+              (compiler-backend-emit-store-var dst "%rax")
+              "")))]
        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
     [(IrInstrStore name value _)
-     (match (compiler-backend-emit-load-value value "%rax")
-       [(OkCompilerBackend load)
-        (OkCompilerBackend (string-append load (backend-cat4 "    movq %rax, " name "(%rip)\n" "")))]
-       [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+      (match (compiler-backend-emit-load-value value "%rax")
+        [(OkCompilerBackend load)
+         (OkCompilerBackend
+           (string-append
+             load
+             (backend-cat4 "    movq %rax, " (compiler-backend-user-symbol name) "(%rip)\n" "")))]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
     [(IrInstrJump target)
      (match (compiler-backend-emit-phi-edge-copies blocks target current-label)
        [(OkCompilerBackend copies)
@@ -494,33 +560,33 @@
     [(IrInstrReturn value) (compiler-backend-emit-return value)]
     [(IrInstrPhi _ _ _) (OkCompilerBackend "")]))
 
-(define (compiler-backend-emit-instrs [function : String] [blocks : CompilerIrBlockList] [current-label : String] [instrs : CompilerIrInstrList]) : ResultCompilerBackend
+(define (compiler-backend-emit-instrs [function : String] [blocks : CompilerIrBlockList] [current-label : String] [instrs : CompilerIrInstrList] [plan : CompilerBackendRuntimePlan] [functions : CompilerIrFunctionList] [externs : CompilerIrExternList]) : ResultCompilerBackend
   (match instrs
     [(IrInstrNil) (OkCompilerBackend "")]
     [(IrInstrCons instr rest)
-     (match (compiler-backend-emit-instr function blocks current-label instr)
+     (match (compiler-backend-emit-instr function blocks current-label instr plan functions externs)
        [(OkCompilerBackend head)
-        (match (compiler-backend-emit-instrs function blocks current-label rest)
+        (match (compiler-backend-emit-instrs function blocks current-label rest plan functions externs)
           [(OkCompilerBackend tail) (OkCompilerBackend (string-append head tail))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
 
-(define (compiler-backend-emit-block [function : String] [blocks : CompilerIrBlockList] [block : CompilerIrBlock]) : ResultCompilerBackend
+(define (compiler-backend-emit-block [function : String] [blocks : CompilerIrBlockList] [block : CompilerIrBlock] [plan : CompilerBackendRuntimePlan] [functions : CompilerIrFunctionList] [externs : CompilerIrExternList]) : ResultCompilerBackend
   (match block
     [(IrBlock label instrs)
-     (match (compiler-backend-emit-instrs function blocks label instrs)
+     (match (compiler-backend-emit-instrs function blocks label instrs plan functions externs)
        [(OkCompilerBackend body)
         (OkCompilerBackend
           (backend-cat4 (compiler-backend-asm-label function label) ":\n" body ""))]
        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
 
-(define (compiler-backend-emit-blocks [function : String] [all-blocks : CompilerIrBlockList] [blocks : CompilerIrBlockList]) : ResultCompilerBackend
+(define (compiler-backend-emit-blocks [function : String] [all-blocks : CompilerIrBlockList] [blocks : CompilerIrBlockList] [plan : CompilerBackendRuntimePlan] [functions : CompilerIrFunctionList] [externs : CompilerIrExternList]) : ResultCompilerBackend
   (match blocks
     [(IrBlockNil) (OkCompilerBackend "")]
     [(IrBlockCons block rest)
-     (match (compiler-backend-emit-block function all-blocks block)
+     (match (compiler-backend-emit-block function all-blocks block plan functions externs)
        [(OkCompilerBackend head)
-        (match (compiler-backend-emit-blocks function all-blocks rest)
+        (match (compiler-backend-emit-blocks function all-blocks rest plan functions externs)
           [(OkCompilerBackend tail) (OkCompilerBackend (string-append head tail))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
@@ -540,36 +606,37 @@
              [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
        [(ErrBackendReg _) (ErrCompilerBackend "backend: too many params")])]))
 
-(define (compiler-backend-emit-function [func : CompilerIrFunction]) : ResultCompilerBackend
+(define (compiler-backend-emit-function [func : CompilerIrFunction] [functions : CompilerIrFunctionList] [externs : CompilerIrExternList] [plan : CompilerBackendRuntimePlan]) : ResultCompilerBackend
   (match func
     [(IrFunction name params _ vars blocks)
      (match (compiler-backend-emit-param-spills params 0)
-       [(OkCompilerBackend spills)
-        (match (compiler-backend-emit-blocks name blocks blocks)
-          [(OkCompilerBackend body)
-           (let ([frame : i64 (compiler-backend-frame-size vars)])
-             (OkCompilerBackend
-               (backend-cat5
-                 ".globl "
-                 name
-                 "\n"
-                 (backend-cat5
-                   name
-                   ":\n    pushq %rbp\n    movq %rsp, %rbp\n"
-                   (compiler-backend-emit-stack-sub frame)
-                   (string-append spills body)
-                   "\n")
-                 "")))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+        [(OkCompilerBackend spills)
+         (let ([symbol : String (compiler-backend-user-symbol name)])
+           (match (compiler-backend-emit-blocks symbol blocks blocks plan functions externs)
+             [(OkCompilerBackend body)
+              (let ([frame : i64 (compiler-backend-frame-size vars)])
+                (OkCompilerBackend
+                  (backend-cat5
+                  ".globl "
+                  symbol
+                  "\n"
+                  (backend-cat5
+                    symbol
+                    ":\n    pushq %rbp\n    movq %rsp, %rbp\n"
+                    (compiler-backend-emit-stack-sub frame)
+                    (string-append spills body)
+                    "\n")
+                  "")))]
+             [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
 
-(define (compiler-backend-emit-functions [functions : CompilerIrFunctionList]) : ResultCompilerBackend
+(define (compiler-backend-emit-functions [functions : CompilerIrFunctionList] [all-functions : CompilerIrFunctionList] [externs : CompilerIrExternList] [plan : CompilerBackendRuntimePlan]) : ResultCompilerBackend
   (match functions
     [(IrFunctionNil) (OkCompilerBackend "")]
     [(IrFunctionCons func rest)
-     (match (compiler-backend-emit-function func)
+     (match (compiler-backend-emit-function func all-functions externs plan)
        [(OkCompilerBackend head)
-        (match (compiler-backend-emit-functions rest)
+        (match (compiler-backend-emit-functions rest all-functions externs plan)
           [(OkCompilerBackend tail) (OkCompilerBackend (string-append head tail))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
@@ -724,7 +791,8 @@
          (OkCompilerBackend "    .quad 0\n"))]
     [(IrValueChar c) (OkCompilerBackend (backend-cat3 "    .quad " (int->string (compiler-backend-char-code c)) "\n"))]
     [(IrValueUnit) (OkCompilerBackend "    .quad 0\n")]
-    [(IrValueGlobal name) (OkCompilerBackend (backend-cat3 "    .quad " name "\n"))]
+    [(IrValueGlobal name)
+     (OkCompilerBackend (backend-cat3 "    .quad " (compiler-backend-user-symbol name) "\n"))]
     [(IrValueString text) (OkCompilerBackend (backend-cat3 "    .quad " (compiler-backend-string-fat-label text) "\n"))]
     [_ (ErrCompilerBackend "backend: unsupported global initializer")]))
 
@@ -733,7 +801,9 @@
     [(IrGlobal name _ value)
      (match (compiler-backend-global-value-asm value)
        [(OkCompilerBackend value-asm)
-        (OkCompilerBackend (backend-cat5 ".globl " name "\n" (backend-cat3 name ":\n" value-asm) ""))]
+        (let ([symbol : String (compiler-backend-user-symbol name)])
+          (OkCompilerBackend
+            (backend-cat5 ".globl " symbol "\n" (backend-cat3 symbol ":\n" value-asm) "")))]
        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
 
 (define (compiler-backend-emit-globals [globals : CompilerIrGlobalList]) : ResultCompilerBackend
@@ -813,10 +883,6 @@
                      concat
                      false))))]))
 
-;; Selfhost IR currently stores raw assembly labels for both user functions and
-;; backend runtime helpers. Until the backend grows a separate mangled TypeLisp
-;; symbol namespace, helper/user name conflicts are rejected when the helper body
-;; must be emitted in the same assembly unit.
 (define (compiler-backend-runtime-plan-for [functions : CompilerIrFunctionList] [externs : CompilerIrExternList]) : ResultBackendRuntimePlan
   (let ([defines-alloc : bool (compiler-backend-function-list-defines? functions "tl_alloc")]
         [defines-oob : bool (compiler-backend-function-list-defines? functions "tl_oob_abort")]
@@ -835,16 +901,8 @@
           [needs-concat : bool (and (not defines-concat) (or extern-concat calls-concat))]
           [direct-alloc : bool (and (not defines-alloc) (or extern-alloc calls-alloc))])
       (let ([needs-alloc : bool (or direct-alloc (or needs-substring needs-concat))])
-        (if (and defines-alloc (or extern-alloc (or needs-substring needs-concat)))
-            (ErrBackendRuntimePlan "backend: runtime helper tl_alloc conflicts with user function")
-            (if (and defines-oob extern-oob)
-                (ErrBackendRuntimePlan "backend: runtime helper tl_oob_abort conflicts with user function")
-                (if (and defines-substring extern-substring)
-                    (ErrBackendRuntimePlan "backend: runtime helper tl_substring conflicts with user function")
-                    (if (and defines-concat extern-concat)
-                        (ErrBackendRuntimePlan "backend: runtime helper tl_string_concat conflicts with user function")
-                        (OkBackendRuntimePlan
-                          (BackendRuntimePlan needs-alloc needs-oob needs-substring needs-concat))))))))))
+        (OkBackendRuntimePlan
+          (BackendRuntimePlan needs-alloc needs-oob needs-substring needs-concat))))))
 
 (define (compiler-backend-runtime-plan [program : CompilerIrProgram]) : ResultBackendRuntimePlan
   (match program
@@ -855,10 +913,14 @@
     [(IrExternNil) ""]
     [(IrExternCons item rest)
      (match item
-       [(IrExtern name _)
-        (if (compiler-backend-plan-provides? plan name)
-            (compiler-backend-emit-externs rest plan)
-            (backend-cat4 ".extern " name "\n" (compiler-backend-emit-externs rest plan)))])]))
+        [(IrExtern name _)
+         (if (compiler-backend-plan-provides? plan name)
+             (compiler-backend-emit-externs rest plan)
+             (backend-cat4
+               ".extern "
+               (compiler-backend-asm-safe-symbol name)
+               "\n"
+               (compiler-backend-emit-externs rest plan)))])]))
 
 (define (compiler-backend-runtime-alloc-data) : String
   "    .section .rodata
@@ -1044,29 +1106,29 @@ tl_string_concat:
        [(IrProgram globals functions externs)
         (match (compiler-backend-emit-globals globals)
           [(OkCompilerBackend globals-asm)
-           (match (compiler-backend-emit-functions functions)
+           (match (compiler-backend-emit-functions functions functions externs plan)
              [(OkCompilerBackend functions-asm)
-               (let ([strings : BackendStringList (compiler-backend-collect-program-strings program)]
-                     [buf : TextBuf
-                      (text-buf-append
-                        (text-buf-append
-                          (text-buf-append
-                            (text-buf-append
-                              (text-buf-append
-                                (text-buf-append
-                                  (text-buf-append
-                                    (text-buf-append
-                                      (text-buf-append (text-buf-empty) ".data\n")
-                                      globals-asm)
-                                    (compiler-backend-emit-string-rodata strings))
-                                  (compiler-backend-runtime-data plan))
-                                (compiler-backend-emit-externs externs plan))
-                              ".text\n.globl _start\n")
+              (let ([strings : BackendStringList (compiler-backend-collect-program-strings program)]
+                    [buf : TextBuf
+                     (text-buf-append
+                       (text-buf-append
+                         (text-buf-append
+                           (text-buf-append
+                             (text-buf-append
+                               (text-buf-append
+                                 (text-buf-append
+                                   (text-buf-append
+                                     (text-buf-append (text-buf-empty) ".data\n")
+                                     globals-asm)
+                                   (compiler-backend-emit-string-rodata strings))
+                                 (compiler-backend-runtime-data plan))
+                               (compiler-backend-emit-externs externs plan))
+                             ".text\n.globl _start\n")
                            functions-asm)
                          (compiler-backend-runtime-functions plan))
                        (compiler-backend-entry))])
                 (OkCompilerBackend (text-buf-render buf)))]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+             [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
     [(ErrBackendRuntimePlan message) (ErrCompilerBackend message)]))
 
@@ -1238,12 +1300,12 @@ tl_string_concat:
 (define (compiler-backend-user-helper-name-ok?) : bool
   (match (compiler-backend-emit-program (compiler-backend-user-helper-name-program))
     [(OkCompilerBackend asm)
-     (and (compiler-backend-string-contains? asm "tl_alloc:\n")
-          (and (compiler-backend-string-contains? asm "    call tl_alloc\n")
+     (and (compiler-backend-string-contains? asm ".globl _tl_tl_alloc\n")
+          (and (compiler-backend-string-contains? asm "    call _tl_tl_alloc\n")
                (not (compiler-backend-string-contains? asm ".L_tl_alloc_msg"))))]
     [(ErrCompilerBackend _) false]))
 
-(define (compiler-backend-runtime-conflict-program) : CompilerIrProgram
+(define (compiler-backend-runtime-coexist-program) : CompilerIrProgram
   (IrProgram
     IrGlobalNil
     (IrFunctionCons
@@ -1259,14 +1321,44 @@ tl_string_concat:
               (IrInstrReturn (IrSomeValue (IrValueI64 7)))
               IrInstrNil))
           IrBlockNil))
-      IrFunctionNil)
+      (IrFunctionCons
+        (IrFunction
+          "main"
+          IrParamNil
+          (AstTyI64)
+          2
+          (IrBlockCons
+            (IrBlock
+              "entry"
+              (IrInstrCons
+                (IrInstrCall 0 "tl_alloc" IrValueNil (AstTyI64))
+                (IrInstrCons
+                  (IrInstrCall
+                    1
+                    "tl_substring"
+                    (IrValueCons
+                      (IrValueI64 0)
+                      (IrValueCons
+                        (IrValueI64 0)
+                        (IrValueCons (IrValueI64 0) IrValueNil)))
+                    (AstTyI64))
+                  (IrInstrCons
+                    (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+                    IrInstrNil))))
+            IrBlockNil))
+        IrFunctionNil))
     (IrExternCons (IrExtern "tl_substring" (AstTyI64)) IrExternNil)))
 
-(define (compiler-backend-runtime-conflict-ok?) : bool
-  (match (compiler-backend-emit-program (compiler-backend-runtime-conflict-program))
-    [(ErrCompilerBackend message)
-     (string-eq message "backend: runtime helper tl_alloc conflicts with user function")]
-    [(OkCompilerBackend _) false]))
+(define (compiler-backend-runtime-coexist-ok?) : bool
+  (match (compiler-backend-emit-program (compiler-backend-runtime-coexist-program))
+    [(OkCompilerBackend asm)
+     (and (compiler-backend-string-contains? asm ".globl _tl_tl_alloc\n")
+          (and (compiler-backend-string-contains? asm ".globl tl_alloc\n")
+               (and (compiler-backend-string-contains? asm ".globl tl_substring\n")
+                    (and (compiler-backend-string-contains? asm "    call _tl_tl_alloc\n")
+                         (and (compiler-backend-string-contains? asm "    call tl_substring\n")
+                              (not (compiler-backend-string-contains? asm ".extern tl_substring\n")))))))]
+    [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-smoke-source) : String
   "(define answer : i64 40)
@@ -1293,9 +1385,9 @@ tl_string_concat:
             (and (compiler-backend-string-contains? asm ".globl _start\n")
                  (and (compiler-backend-string-contains? asm "_start:\n")
                       (and (compiler-backend-string-contains? asm "main:\n")
-                           (and (compiler-backend-string-contains? asm "inc:\n")
-                                (and (compiler-backend-string-contains? asm "answer:\n")
-                                     (and (compiler-backend-string-contains? asm "    call inc\n")
+                           (and (compiler-backend-string-contains? asm "_tl_inc:\n")
+                                (and (compiler-backend-string-contains? asm "_tl_answer:\n")
+                                     (and (compiler-backend-string-contains? asm "    call _tl_inc\n")
                                           (and (compiler-backend-string-contains? asm "    setl %al\n")
                                                (and (compiler-backend-string-contains? asm "    setg %al\n")
                                                     (and (compiler-backend-string-contains? asm "    cmpq $0, %rax\n")
@@ -1315,7 +1407,7 @@ tl_string_concat:
                (and (compiler-backend-string-contains? asm "    .string \"hi\"\n")
                     (and (compiler-backend-string-contains? asm "    .quad .L_tl_str_data_6869\n")
                          (and (compiler-backend-string-contains? asm "    .quad 2\n")
-                              (and (compiler-backend-string-contains? asm "greeting:\n    .quad .L_tl_str_6869\n")
+                              (and (compiler-backend-string-contains? asm "_tl_greeting:\n    .quad .L_tl_str_6869\n")
                                    (compiler-backend-string-contains? asm "    leaq .L_tl_str_6869(%rip), %rax\n")))))))]
     [(ErrCompilerBackend _) false]))
 
@@ -1333,7 +1425,14 @@ tl_string_concat:
     [(OkCompilerBackend _) false]))
 
 (define (compiler-backend-instr-contains? [instr : CompilerIrInstr] [needle : String]) : bool
-  (match (compiler-backend-emit-instr "test" IrBlockNil "entry" instr)
+  (match (compiler-backend-emit-instr
+           "_tl_test"
+           IrBlockNil
+           "entry"
+           instr
+           (BackendRuntimePlan false false false false)
+           IrFunctionNil
+           IrExternNil)
     [(OkCompilerBackend asm) (compiler-backend-string-contains? asm needle)]
     [(ErrCompilerBackend _) false]))
 
@@ -1363,7 +1462,7 @@ tl_string_concat:
                                                            "backend: too many call args")
                                (and (compiler-backend-runtime-helper-asm-ok?)
                                     (and (compiler-backend-user-helper-name-ok?)
-                                         (compiler-backend-runtime-conflict-ok?))))))))
+                                         (compiler-backend-runtime-coexist-ok?))))))))
       42
       (begin
         (panic "backend: smoke output mismatch")

@@ -367,13 +367,14 @@ fn type_lisp_programs_compile_link_and_run() {
         // (operators / keywords / names are all one `TSym` kind), string literals,
         // character literals, and `;` line comments (skipped) - into a real
         // `(Array Token)`. `main` lexes a sample with `#x'`, `#\n'`, `#\space'`,
-        // and `#\newline'`, verifies their decoded code sum, and returns
-        // 12 tokens + 1 string + 4 chars = 17.
+        // and `#\newline'`, verifies their decoded code sum, checks the
+        // recoverable `lex-result` error path, and returns 12 tokens + 1 string
+        // + 4 chars = 17.
         Case {
             name: "tl_lexer",
             exit_code: 17,
             stdout: "",
-            deps: &["token.tl"],
+            deps: &["lex.tl", "token.tl"],
         },
         // Self-hosting (#27): the s-expression READER for TypeLisp's own syntax -
         // the canonical Lisp reader. `reader.tl` consumes the lexer's
@@ -748,13 +749,14 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         // string literals (`TStr`), char literals (`TChar`), and `;` line comments
         // - also exercised through the explicit compile -> as -> ld -> run
         // pipeline. The sample includes `#x'`, `#\n'`, `#\space'`, and
-        // `#\newline'`; `main` verifies their decoded code sum and returns
-        // 12 tokens + 1 string + 4 chars = 17.
+        // `#\newline'`; `main` verifies their decoded code sum, checks the
+        // recoverable `lex-result` error path, and returns 12 tokens + 1 string
+        // + 4 chars = 17.
         Case {
             name: "tl_lexer",
             exit_code: 17,
             stdout: "",
-            deps: &["token.tl"],
+            deps: &["lex.tl", "token.tl"],
         },
         // Self-hosting (#27): the s-expression reader, also exercised through the
         // explicit compile -> as -> ld -> run pipeline. Reads

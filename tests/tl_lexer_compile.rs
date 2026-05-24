@@ -7,10 +7,9 @@
 //! actually written in - balanced parens, integer literals, and *symbols*
 //! (operators / keywords / names are all one `TSym` kind) - NOT the
 //! arithmetic-calculator surface that `lexer.tl` / `calc.tl` tokenize. It
-//! `(import)`s the `main`-less token model `token.tl`, so compiling it also
-//! exercises the module loader (#44): the import is resolved relative to
-//! `lexer.tl`, the co-located `token.tl` is loaded, and its declarations
-//! are concatenated into one program.
+//! `(import)`s the reusable `lex.tl`, which transitively imports the
+//! `main`-less token model `token.tl`, so compiling it also exercises the
+//! module loader (#44).
 //!
 //! Like the other `*_compile.rs` tests this only invokes the `compile`
 //! subcommand, so it runs everywhere - including the Windows dev box - and
@@ -56,10 +55,9 @@ fn tl_lexer_tl_compiles_to_assembly() {
         asm,
     );
 
-    // Multi-file organization (#44): the imported `main`-less `token.tl`
-    // contributes its `Token`/accessors but no `main`, so the concatenated
-    // program has EXACTLY one `main:` - the import composes with no
-    // duplicate-symbol clash.
+    // Multi-file organization (#44): imported `lex.tl` / `token.tl` contribute
+    // reusable declarations but no `main`, so the concatenated program has
+    // EXACTLY one `main:` - the import composes with no duplicate-symbol clash.
     assert_eq!(
         asm.matches("\nmain:").count() + usize::from(asm.starts_with("main:")),
         1,
@@ -101,8 +99,8 @@ fn tl_lexer_tl_compiles_to_assembly() {
         asm,
     );
 
-    // The unexpected-character path lowers `(panic ...)` to the private abort
-    // runtime, exactly as a real lexer reports malformed input.
+    // The legacy compatibility wrapper still lowers `(panic ...)` to the
+    // private abort runtime for callers that have not switched to `lex-result`.
     assert!(
         asm.contains("call .L_tl_abort"),
         "tl_lexer assembly is missing the panic/lex-error abort path (.L_tl_abort):\n{}",
@@ -110,24 +108,33 @@ fn tl_lexer_tl_compiles_to_assembly() {
     );
 
     // The lexer's functions were emitted (TypeLisp prefixes user symbols with
-    // `_tl_`): the public `lex` entry, the scan-into loop, the int/symbol run
-    // scanners, the string-literal / char-literal / line-comment scanners, the
-    // TSym / TStr / TChar / total-token tallies, and the imported token
-    // accessors `token.tl` contributes across the import boundary.
+    // `_tl_`): the recoverable `lex-result`, legacy `lex`, scan helpers, demo
+    // tallies, and imported token accessors across the module boundary.
     for sym in [
+        "_tl_lex_result:",
         "_tl_lex:",
+        "_tl_lex_check:",
+        "_tl_lex_check_step:",
+        "_tl_lex_check_char_end:",
+        "_tl_lex_ok_question:",
         "_tl_lex_into:",
+        "_tl_scan_str_end_result:",
         "_tl_scan_int_end:",
         "_tl_scan_symbol_end:",
         "_tl_scan_str_end:",
         "_tl_scan_comment_end:",
         "_tl_starts_named_char:",
         "_tl_scan_char_name_end:",
+        "_tl_char_close_error:",
         "_tl_require_char_close:",
+        "_tl_named_char_result:",
         "_tl_named_char:",
         "_tl_escaped_char:",
+        "_tl_char_literal_value_result:",
         "_tl_char_literal_value:",
+        "_tl_char_literal_end_result:",
         "_tl_char_literal_end:",
+        "_tl_lexer_recoverable_error_ok_question:",
         "_tl_count_syms:",
         "_tl_count_strs:",
         "_tl_count_chars:",
@@ -147,11 +154,29 @@ fn tl_lexer_tl_compiles_to_assembly() {
         );
     }
 
+    for message in [
+        "lexer: unterminated string literal",
+        "lexer: expected ' after character",
+        "lexer: unterminated character literal",
+        "lexer: unknown named character literal",
+        "lexer: unexpected character",
+    ] {
+        assert!(
+            asm.contains(message),
+            "tl_lexer assembly is missing expected recoverable lexer message {message:?}:\n{asm}",
+        );
+    }
+
     // `main` drives the lexer: it lexes the sample then tallies total tokens,
-    // TStrs, and TChars, so the lexing entry and all tally helpers are called.
+    // TStrs and TChars, and checks the recoverable error entrypoint.
     assert!(
         asm.contains("call _tl_lex"),
         "tl_lexer assembly shows no main -> lex call (lexing step):\n{}",
+        asm,
+    );
+    assert!(
+        asm.contains("call _tl_lex_result"),
+        "tl_lexer assembly shows no main -> lex-result call (recoverable error path):\n{}",
         asm,
     );
     assert!(

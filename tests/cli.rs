@@ -690,6 +690,106 @@ fn compile_rejects_unknown_backend_mode() {
 
 #[cfg(target_os = "linux")]
 #[test]
+fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let driver_source = manifest_dir.join("selfhost").join("compile.tl");
+    let dir = fixture_dir("selfhost-compile-cli");
+    let driver_bin = dir.join("selfhost-compile");
+    let driver_source_arg = driver_source.to_str().expect("driver path is utf-8");
+    let driver_bin_arg = driver_bin.to_str().expect("driver output path is utf-8");
+
+    let build = typelisp(&["build", driver_source_arg, "-o", driver_bin_arg]);
+    assert!(
+        build.status.success(),
+        "selfhost compile driver build failed\nstdout:\n{}\nstderr:\n{}",
+        stdout(&build),
+        stderr(&build)
+    );
+
+    let source = dir.join("main.tl");
+    let explicit_asm = dir.join("custom-output.s");
+    fs::write(&source, "(define (main) : i64 42)\n").expect("write source");
+    let source_arg = source.to_str().expect("source path is utf-8");
+    let explicit_asm_arg = explicit_asm.to_str().expect("explicit asm path is utf-8");
+
+    let explicit = Command::new(&driver_bin)
+        .args([source_arg, "-o", explicit_asm_arg])
+        .output()
+        .expect("run selfhost compile driver with -o");
+    assert!(
+        explicit.status.success(),
+        "selfhost compile -o failed\nstdout:\n{}\nstderr:\n{}",
+        stdout(&explicit),
+        stderr(&explicit)
+    );
+    assert_eq!(stdout(&explicit), "");
+    assert_eq!(stderr(&explicit), "");
+    let explicit_text = fs::read_to_string(&explicit_asm).expect("read explicit asm");
+    assert!(
+        explicit_text.contains("main:"),
+        "explicit assembly:\n{}",
+        explicit_text
+    );
+
+    let default_source = dir.join("default.tl");
+    fs::write(&default_source, "(define (main) : i64 7)\n").expect("write default source");
+    let default_source_arg = default_source
+        .to_str()
+        .expect("default source path is utf-8");
+    let default = Command::new(&driver_bin)
+        .arg(default_source_arg)
+        .output()
+        .expect("run selfhost compile driver with default output");
+    assert!(
+        default.status.success(),
+        "selfhost compile default output failed\nstdout:\n{}\nstderr:\n{}",
+        stdout(&default),
+        stderr(&default)
+    );
+    assert_eq!(stdout(&default), "");
+    assert_eq!(stderr(&default), "");
+    assert!(
+        default_source.with_extension("s").is_file(),
+        "default .s output was not written"
+    );
+
+    let unsupported = Command::new(&driver_bin)
+        .args([source_arg, "--emit-ir"])
+        .output()
+        .expect("run selfhost compile driver with unsupported flag");
+    assert!(!unsupported.status.success());
+    assert_eq!(stdout(&unsupported), "");
+    assert!(
+        stderr(&unsupported)
+            .contains("compile: --emit-ir is not supported by the selfhost compile driver yet"),
+        "stderr:\n{}",
+        stderr(&unsupported)
+    );
+
+    let bad_source = dir.join("bad.tl");
+    let bad_asm = dir.join("bad.s");
+    fs::write(&bad_source, "(define (main) : i64 true)\n").expect("write bad source");
+    let bad_source_arg = bad_source.to_str().expect("bad source path is utf-8");
+    let bad_asm_arg = bad_asm.to_str().expect("bad asm path is utf-8");
+    let failure = Command::new(&driver_bin)
+        .args([bad_source_arg, "-o", bad_asm_arg])
+        .output()
+        .expect("run selfhost compile driver on invalid source");
+    assert!(!failure.status.success());
+    assert_eq!(stdout(&failure), "");
+    assert!(
+        stderr(&failure).contains("typecheck: return type mismatch"),
+        "stderr:\n{}",
+        stderr(&failure)
+    );
+    assert!(
+        !bad_asm.exists(),
+        "failing selfhost compile should not write assembly"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn run_accepts_backend_mode_flag_with_avx512() {
     let dir = fixture_dir("backend-mode-run-avx512");
     let source = write_main_source(&dir);

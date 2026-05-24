@@ -644,23 +644,20 @@ fn repl_accumulates_multiline_declaration_input() {
     assert_eq!(stderr(&output), "");
 }
 
+// Compiling and running a scratch program needs a native toolchain, so the
+// expression-evaluation REPL tests are gated to Linux like the other run-based
+// CLI tests in this file.
+#[cfg(target_os = "linux")]
 #[test]
 fn repl_accumulates_multiline_expression_input() {
     let output = typelisp_with_stdin(&["repl"], "(+ 1\n  2)\n.exit\n");
 
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
-    assert_eq!(stdout(&output), "");
-    let stderr = stderr(&output);
-    assert_eq!(
-        stderr
-            .matches("REPL evaluation is not implemented yet")
-            .count(),
-        1,
-        "stderr:\n{}",
-        stderr
-    );
+    assert_eq!(stdout(&output), "3\n");
+    assert_eq!(stderr(&output), "");
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn repl_delimiters_ignore_strings_chars_and_comments() {
     let input = r#"(begin
@@ -673,16 +670,11 @@ fn repl_delimiters_ignore_strings_chars_and_comments() {
     let output = typelisp_with_stdin(&["repl"], input);
 
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
-    assert_eq!(stdout(&output), "");
+    // The string body prints first (no newline), then the begin's i64 value 1.
+    // Reaching this output at all proves the `)`/`(` inside the string, char,
+    // and comment never tripped the input delimiter counter.
+    assert_eq!(stdout(&output), "not closing )1\n");
     let stderr = stderr(&output);
-    assert_eq!(
-        stderr
-            .matches("REPL evaluation is not implemented yet")
-            .count(),
-        1,
-        "stderr:\n{}",
-        stderr
-    );
     assert!(
         !stderr.contains("incomplete REPL input"),
         "stderr:\n{}",
@@ -696,16 +688,96 @@ fn repl_eof_during_incomplete_input_reports_diagnostic() {
 
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     assert_eq!(stdout(&output), "");
-    let stderr = stderr(&output);
     assert!(
-        stderr.contains("Error: incomplete REPL input at EOF"),
+        stderr(&output).contains("Error: incomplete REPL input at EOF"),
         "stderr:\n{}",
-        stderr
+        stderr(&output)
     );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn repl_evaluates_scalar_expression() {
+    let output = typelisp_with_stdin(&["repl"], "(+ 20 22)\n.exit\n");
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stdout(&output), "42\n");
+    assert_eq!(stderr(&output), "");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn repl_expression_uses_session_declaration() {
+    let output = typelisp_with_stdin(
+        &["repl"],
+        "(define (double [x : i64]) : i64 (* x 2))\n(double 21)\n.exit\n",
+    );
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stdout(&output), "42\n");
+    assert_eq!(stderr(&output), "");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn repl_prints_supported_display_types() {
+    let output = typelisp_with_stdin(
+        &["repl"],
+        "10\ntrue\n3.5\n#Z'\n\"hi\"\n(print-newline)\n.exit\n",
+    );
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    // i64, bool, f64, char, String each render with one trailing newline; the
+    // unit `(print-newline)` runs for its effect (a blank line).
+    assert_eq!(stdout(&output), "10\ntrue\n3.5\nZ\nhi\n\n");
+    assert_eq!(stderr(&output), "");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn repl_invalid_expression_does_not_disturb_session() {
+    let output = typelisp_with_stdin(
+        &["repl"],
+        "(define (double [x : i64]) : i64 (* x 2))\n(+ 1 true)\n(double 4)\n.exit\n",
+    );
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    // The ill-typed expression is rejected but the session is untouched, so the
+    // later call still resolves the persisted declaration.
+    assert_eq!(stdout(&output), "8\n");
     assert!(
-        !stderr.contains("REPL evaluation is not implemented yet"),
+        stderr(&output).contains("numeric types"),
         "stderr:\n{}",
-        stderr
+        stderr(&output)
+    );
+}
+
+#[test]
+fn repl_rejects_undisplayable_result_type() {
+    let output = typelisp_with_stdin(&["repl"], "(tuple 1 2)\n.exit\n");
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stdout(&output), "");
+    assert!(
+        stderr(&output).contains("cannot display a value of type"),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn repl_rejects_duplicate_declaration() {
+    let output = typelisp_with_stdin(
+        &["repl"],
+        "(define (f) : i64 1)\n(define (f) : i64 2)\n.exit\n",
+    );
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stdout(&output), "");
+    assert!(
+        stderr(&output).contains("duplicate top-level name"),
+        "stderr:\n{}",
+        stderr(&output)
     );
 }
 

@@ -1352,24 +1352,12 @@ impl FnLowerer {
         for capture in captures {
             let ptr = self.gep_byte(&env, capture.offset);
             let handle = self.lower_var(&capture.name);
-            // `String` and dynamic-array captures are pointer-sized handles to a
-            // fat `{ ptr, len }` value that may live on the creator's frame.
-            // Since the environment can outlive that frame, snapshot the fat
-            // value onto the heap so the stored handle cannot dangle. A
-            // scalar-field tuple/struct/enum is a pointer handle to inline POD
-            // storage, snapshotted with a shallow byte copy (#542 tuples, #540
-            // structs/enums). Scalars and function values are copied by value
-            // directly. (Fixed-array capture is rejected by the typechecker, so
-            // no `Array` arm is needed here.)
-            let src = match self.resolve_type(&capture.ty) {
-                Type::String | Type::DynArray(_) => {
-                    self.snapshot_fat_value_to_heap(&handle, capture.ty.clone())
-                }
-                ty @ (Type::Tuple(_) | Type::Struct(_) | Type::Enum(_)) => {
-                    self.snapshot_storage_to_heap(&handle, ty)
-                }
-                _ => handle,
-            };
+            // Captured handles may point at storage owned by the creator's
+            // frame. Snapshot the captured value into heap storage, recursively
+            // rewriting nested aggregate fields so they cannot dangle after the
+            // creator returns (#584). Scalars and function values are copied by
+            // value directly. Fixed-array capture is rejected by the typechecker.
+            let src = self.snapshot_capture_value_to_heap(&handle, capture.ty.clone());
             let storage_ty = Self::backend_value_type(&capture.ty);
             self.builder.emit(Instruction::Store {
                 dst: Value::Var(ptr),
@@ -1392,6 +1380,55 @@ impl FnLowerer {
             ty: Type::U64,
         });
         desc
+    }
+
+    fn snapshot_capture_value_to_heap(&mut self, handle: &Value, storage_ty: Type) -> Value {
+        let mut seen_enums = HashSet::new();
+        let mut seen_structs = HashSet::new();
+        self.snapshot_capture_value_to_heap_inner(
+            handle,
+            storage_ty,
+            &mut seen_enums,
+            &mut seen_structs,
+        )
+    }
+
+    fn snapshot_capture_value_to_heap_inner(
+        &mut self,
+        handle: &Value,
+        storage_ty: Type,
+        seen_enums: &mut HashSet<String>,
+        seen_structs: &mut HashSet<String>,
+    ) -> Value {
+        match self.resolve_type(&storage_ty) {
+            ty @ (Type::String | Type::DynArray(_)) => self.snapshot_fat_value_to_heap(handle, ty),
+            ty @ Type::Tuple(_) => {
+                let dst = self.snapshot_storage_to_heap(handle, ty.clone());
+                self.deep_copy_nested_storage_fields(&dst, &ty, seen_enums, seen_structs);
+                dst
+            }
+            Type::Struct(name) => {
+                if !seen_structs.insert(name.clone()) {
+                    return handle.clone();
+                }
+                let ty = Type::Struct(name.clone());
+                let dst = self.snapshot_storage_to_heap(handle, ty.clone());
+                self.deep_copy_nested_storage_fields(&dst, &ty, seen_enums, seen_structs);
+                seen_structs.remove(&name);
+                dst
+            }
+            Type::Enum(name) => {
+                if !seen_enums.insert(name.clone()) {
+                    return handle.clone();
+                }
+                let ty = Type::Enum(name.clone());
+                let dst = self.snapshot_storage_to_heap(handle, ty.clone());
+                self.deep_copy_nested_storage_fields(&dst, &ty, seen_enums, seen_structs);
+                seen_enums.remove(&name);
+                dst
+            }
+            _ => handle.clone(),
+        }
     }
 
     /// Snapshot a 16-byte fat aggregate value (`String` or dynamic array) into
@@ -1441,13 +1478,10 @@ impl FnLowerer {
         dst
     }
 
-    /// Snapshot a scalar aggregate value (tuple, struct, or enum) into fresh heap
-    /// storage and return a handle to the copy. These values are pointer handles
-    /// to inline POD storage of a statically known size; copying those bytes onto
-    /// the heap lets a captured handle outlive its creator frame without dangling
-    /// (#542 tuples, #540 structs/enums). The typechecker only admits
-    /// scalar-field aggregates here, so a shallow byte copy is a complete,
-    /// non-sharing snapshot.
+    /// Snapshot aggregate inline storage (tuple, struct, or enum) into fresh
+    /// heap storage and return a handle to the copy. The initial copy is shallow;
+    /// callers that allow nested handles must rewrite those copied fields to
+    /// point at their own heap snapshots.
     fn snapshot_storage_to_heap(&mut self, handle: &Value, storage_ty: Type) -> Value {
         // An aggregate *value* is pointer-sized (`Type::size() == 8`), so the
         // inline storage size must come from the field layout, not `size()`.
@@ -1467,6 +1501,147 @@ impl FnLowerer {
         let dst = self.reserve_aggregate_storage(size.max(1), storage_ty, true);
         self.copy_storage_bytes(handle, &dst, size);
         dst
+    }
+
+    fn deep_copy_nested_storage_fields(
+        &mut self,
+        dst: &Value,
+        storage_ty: &Type,
+        seen_enums: &mut HashSet<String>,
+        seen_structs: &mut HashSet<String>,
+    ) {
+        match storage_ty {
+            Type::Tuple(elems) => {
+                let elems: Vec<Type> = elems.iter().map(|elem| self.resolve_type(elem)).collect();
+                let offsets = Self::tuple_field_offsets(&elems);
+                self.deep_copy_nested_fields(
+                    dst,
+                    elems.iter().zip(offsets.iter()),
+                    seen_enums,
+                    seen_structs,
+                );
+            }
+            Type::Struct(name) => {
+                let fields = self.resolved_struct_fields(name);
+                let offsets = self.structs.field_offsets(&fields);
+                let field_tys: Vec<Type> = fields.iter().map(|field| field.ty.clone()).collect();
+                self.deep_copy_nested_fields(
+                    dst,
+                    field_tys.iter().zip(offsets.iter()),
+                    seen_enums,
+                    seen_structs,
+                );
+            }
+            Type::Enum(name) => {
+                self.deep_copy_enum_payload_fields(dst, name, seen_enums, seen_structs)
+            }
+            _ => {}
+        }
+    }
+
+    fn deep_copy_nested_fields<'a, I>(
+        &mut self,
+        dst: &Value,
+        fields: I,
+        seen_enums: &mut HashSet<String>,
+        seen_structs: &mut HashSet<String>,
+    ) where
+        I: IntoIterator<Item = (&'a Type, &'a usize)>,
+    {
+        for (field_ty, off) in fields {
+            let field_ty = self.resolve_type(field_ty);
+            if !self.capture_field_needs_heap_snapshot(&field_ty) || field_ty.size() == 0 {
+                continue;
+            }
+            let loaded = Value::Var(self.load_field(dst, *off, &field_ty));
+            let snapshot = self.snapshot_capture_value_to_heap_inner(
+                &loaded,
+                field_ty.clone(),
+                seen_enums,
+                seen_structs,
+            );
+            let field_ptr = self.gep_byte(dst, *off);
+            self.builder.emit(Instruction::Store {
+                dst: Value::Var(field_ptr),
+                src: snapshot,
+                ty: field_ty,
+            });
+        }
+    }
+
+    fn deep_copy_enum_payload_fields(
+        &mut self,
+        dst: &Value,
+        enum_name: &str,
+        seen_enums: &mut HashSet<String>,
+        seen_structs: &mut HashSet<String>,
+    ) {
+        let Some(variants) = self
+            .enums
+            .variants(enum_name)
+            .map(|variants| variants.to_vec())
+        else {
+            return;
+        };
+        let mut cases = Vec::new();
+        for (tag, variant) in variants.iter().enumerate() {
+            let field_tys: Vec<Type> = variant
+                .fields
+                .iter()
+                .map(|field| self.resolve_type(field))
+                .collect();
+            if !field_tys
+                .iter()
+                .any(|field| self.capture_field_needs_heap_snapshot(field))
+            {
+                continue;
+            }
+            let offsets = self.enums.field_offsets(&field_tys);
+            cases.push((tag, field_tys, offsets));
+        }
+        if cases.is_empty() {
+            return;
+        }
+
+        let tag = Value::Var(self.load_field(dst, 0, &Type::I64));
+        let done_label = self.builder.fresh_label("capture_enum_done");
+        for (tag_idx, field_tys, offsets) in cases {
+            let arm_label = self.builder.fresh_label("capture_enum_arm");
+            let next_label = self.builder.fresh_label("capture_enum_next");
+            let cmp = self.builder.fresh_var();
+            self.builder.emit(Instruction::BinOp {
+                dst: cmp,
+                op: BinOp::Eq,
+                lhs: tag.clone(),
+                rhs: Value::ConstI64(tag_idx as i64),
+                ty: Type::Bool,
+            });
+            self.record_local(cmp, Type::Bool);
+            self.builder.emit(Instruction::Branch {
+                cond: Value::Var(cmp),
+                true_label: arm_label.clone(),
+                false_label: next_label.clone(),
+            });
+
+            self.builder.finish_block(&arm_label);
+            self.deep_copy_nested_fields(
+                dst,
+                field_tys.iter().zip(offsets.iter()),
+                seen_enums,
+                seen_structs,
+            );
+            self.builder.emit(Instruction::Jump(done_label.clone()));
+            self.builder.finish_block(&next_label);
+        }
+        self.builder.emit(Instruction::Jump(done_label.clone()));
+        self.builder.finish_block(&done_label);
+    }
+
+    fn capture_field_needs_heap_snapshot(&self, ty: &Type) -> bool {
+        matches!(
+            self.resolve_type(ty),
+            Type::String | Type::DynArray(_) | Type::Tuple(_) | Type::Struct(_) | Type::Enum(_)
+        )
     }
 
     /// Copy `size` bytes from `src` to `dst` (both pointer handles) using the
@@ -6693,6 +6868,103 @@ mod tests {
             alloc_sizes,
             vec![Value::ConstI64(8), Value::ConstI64(16), Value::ConstI64(16)],
             "expected env(8) + tuple-storage snapshot(16) + descriptor(16) heap allocations"
+        );
+    }
+
+    #[test]
+    fn test_lower_capturing_lambda_deep_copies_struct_string_field() {
+        // Capturing a struct with a String field first snapshots the struct's
+        // inline storage, then rewrites the copied String field to point at a
+        // heap snapshot of the fat `{ ptr, len }` value (#584).
+        let prog = parse(
+            r#"
+            (defstruct Named (id i64) (name String))
+            (define (get_fn) : (-> i64)
+              (let ([n : Named (Named 40 "hi")])
+                (lambda () : i64 (+ (struct-get n id) (string-length (struct-get n name))))))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let get_fn = ir
+            .functions
+            .iter()
+            .find(|f| f.name == "get_fn")
+            .expect("get_fn lowered");
+        let alloc_sizes: Vec<Value> = get_fn
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .filter_map(|i| match i {
+                Instruction::Call { func, args, .. } if func == "tl_alloc" => args.first().cloned(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            alloc_sizes,
+            vec![
+                Value::ConstI64(8),
+                Value::ConstI64(16),
+                Value::ConstI64(16),
+                Value::ConstI64(16)
+            ],
+            "expected env(8) + struct snapshot(16) + nested String snapshot(16) + descriptor(16)"
+        );
+    }
+
+    #[test]
+    fn test_lower_capturing_lambda_deep_copies_enum_payload_tag_aware() {
+        // Enum capture branches on the copied tag and only deep-copies the
+        // active variant's aggregate payload fields (#584).
+        let prog = parse(
+            r#"
+            (defenum Msg (Text String) (Code i64))
+            (define (get_fn) : (-> i64)
+              (let ([m : Msg (Text "hi")])
+                (lambda () : i64 (match m [(Text s) (string-length s)] [(Code n) n]))))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let get_fn = ir
+            .functions
+            .iter()
+            .find(|f| f.name == "get_fn")
+            .expect("get_fn lowered");
+        let alloc_sizes: Vec<Value> = get_fn
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .filter_map(|i| match i {
+                Instruction::Call { func, args, .. } if func == "tl_alloc" => args.first().cloned(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            alloc_sizes,
+            vec![
+                Value::ConstI64(8),
+                Value::ConstI64(16),
+                Value::ConstI64(16),
+                Value::ConstI64(16)
+            ],
+            "expected env(8) + enum snapshot(16) + active String snapshot(16) + descriptor(16)"
+        );
+        assert!(
+            get_fn.blocks.iter().any(|block| {
+                block.instructions.iter().any(|instr| {
+                    matches!(
+                        instr,
+                        Instruction::Branch {
+                            true_label,
+                            false_label,
+                            ..
+                        } if true_label.starts_with("capture_enum_arm")
+                            && false_label.starts_with("capture_enum_next")
+                    )
+                })
+            }),
+            "expected capture lowering to branch on the copied enum tag"
         );
     }
 

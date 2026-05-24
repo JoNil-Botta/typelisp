@@ -71,6 +71,9 @@ fn compiler_backend_tl_compiles_to_assembly() {
         "_tl_compiler_backend_emit_phi_edge_copies:",
         "_tl_compiler_backend_emit_call_args:",
         "_tl_compiler_backend_emit_param_spills:",
+        "_tl_compiler_backend_runtime_plan:",
+        "_tl_compiler_backend_runtime_functions:",
+        "_tl_compiler_backend_runtime_helper_program:",
         "_tl_compiler_backend_self_test:",
         "_tl_compiler_backend_deterministic_ok_question:",
         "_tl_lower_compiler_source:",
@@ -88,6 +91,8 @@ fn compiler_backend_tl_compiles_to_assembly() {
         ".globl _start\\n",
         "_start:\\n    call main\\n",
         "    call inc\\n",
+        "    call tl_alloc\\n",
+        ".globl tl_string_concat\\n",
         "    jne .Lmain_while_body.1\\n",
         "    jmp .Lmain_while_header.0\\n",
         "    setl %al\\n",
@@ -119,6 +124,24 @@ fn compiler_backend_smoke_tl_compiles_to_assembly() {
         "_tl_lower_compiler_source:",
     ] {
         assert_symbol(&asm, sym, "compiler_backend_smoke");
+    }
+}
+
+#[test]
+fn compiler_backend_runtime_fixture_tl_compiles_to_assembly() {
+    let asm = compile_selfhost_source(
+        "compiler_backend_runtime_fixture.tl",
+        "tl-compiler-backend-runtime-fixture-compile-test",
+        "compiler_backend_runtime_fixture.s",
+    );
+
+    assert_no_todo(&asm, "compiler_backend_runtime_fixture");
+    for sym in [
+        "_tl_compiler_backend_runtime_helper_program:",
+        "_tl_compiler_backend_runtime_helper_asm_ok_question:",
+        "_tl_compiler_backend_emit_program:",
+    ] {
+        assert_symbol(&asm, sym, "compiler_backend_runtime_fixture");
     }
 }
 

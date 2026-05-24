@@ -1098,6 +1098,98 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
 }
 
 #[test]
+fn selfhost_backend_runtime_helpers_emit_assemble_link_and_run() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let fixture_path = manifest_dir
+        .join("selfhost")
+        .join("compiler_backend_runtime_fixture.tl");
+    let work_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("compiler_backend_runtime_helpers");
+    fs::create_dir_all(&work_dir).expect("create backend runtime helper test work dir");
+
+    let asm_path = work_dir.join("runtime_helpers.s");
+    let obj_path = work_dir.join("runtime_helpers.o");
+    let bin_path = work_dir.join("runtime_helpers");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&fixture_path)
+        .arg("--")
+        .arg(&asm_path)
+        .output()
+        .expect("run compiler_backend_runtime_fixture");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "runtime fixture failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let asm = fs::read_to_string(&asm_path).expect("read runtime helper fixture assembly");
+    for snippet in [
+        ".globl tl_alloc\n",
+        "\ntl_alloc:\n",
+        ".globl tl_oob_abort\n",
+        "\ntl_oob_abort:\n",
+        ".globl tl_substring\n",
+        "\ntl_substring:\n",
+        ".globl tl_string_concat\n",
+        "\ntl_string_concat:\n",
+        ".L_tl_substring_copy_loop:\n",
+        ".L_tl_string_concat_copy_b:\n",
+        "    call tl_alloc\n",
+    ] {
+        assert!(
+            asm.contains(snippet),
+            "runtime helper assembly missing {:?}:\n{}",
+            snippet,
+            asm
+        );
+    }
+    for helper in [
+        ".extern tl_alloc\n",
+        ".extern tl_oob_abort\n",
+        ".extern tl_substring\n",
+        ".extern tl_string_concat\n",
+    ] {
+        assert!(
+            !asm.contains(helper),
+            "runtime helper should be defined inline, not extern: {helper}\n{asm}"
+        );
+    }
+
+    let status = Command::new("as")
+        .arg(&asm_path)
+        .arg("-o")
+        .arg(&obj_path)
+        .status()
+        .expect("assemble runtime helper fixture output");
+    assert!(status.success(), "assembling runtime helper output failed");
+
+    let status = Command::new("ld")
+        .arg(&obj_path)
+        .arg("-o")
+        .arg(&bin_path)
+        .status()
+        .expect("link runtime helper fixture output");
+    assert!(status.success(), "linking runtime helper output failed");
+
+    let output = Command::new(&bin_path)
+        .output()
+        .expect("run runtime helper fixture binary");
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "runtime helper binary exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let selfhost_dir = manifest_dir.join("selfhost");

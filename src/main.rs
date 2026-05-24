@@ -26,7 +26,7 @@ mod types;
 use ast::Program;
 use backend::{BackendMode, BackendTarget, generate_assembly_with_spans_for_target};
 use diagnostic::format_diagnostic;
-use lower::{LowerMode, LoweredProgram, lower_program_with_spans_for_mode};
+use lower::{LowerMode, LoweredProgram, lower_program_with_spans_for_target};
 use module::{
     FsSource, LoadError, LoadOptions, LoadedProgram, SourceFile, load_program,
     load_program_with_options,
@@ -87,8 +87,11 @@ fn lower_mode_for_backend(mode: BackendMode) -> LowerMode {
 
 fn optimized_ir_or_exit(loaded: &LoadedProgram, target: BackendTarget) -> LoweredProgram {
     typecheck_or_exit(&loaded.program, &loaded.sources);
-    let mut lowered =
-        lower_program_with_spans_for_mode(&loaded.program, lower_mode_for_backend(target.mode));
+    let mut lowered = lower_program_with_spans_for_target(
+        &loaded.program,
+        lower_mode_for_backend(target.mode),
+        target.supports_region_runtime(),
+    );
     Optimizer::optimize(&mut lowered.program);
     lowered
 }

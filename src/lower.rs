@@ -46,12 +46,29 @@ pub fn lower_program_with_spans(prog: &ast::Program) -> LoweredProgram {
 }
 
 pub fn lower_program_with_spans_for_mode(prog: &ast::Program, mode: LowerMode) -> LoweredProgram {
-    let mut lowerer = ProgramLowerer::new(mode);
+    // The region-reset runtime helpers exist only on the Linux target, so the
+    // default (target-agnostic) entry assumes they are available; callers that
+    // know the target use `lower_program_with_spans_for_target`.
+    lower_program_with_spans_for_target(prog, mode, true)
+}
+
+/// Like `lower_program_with_spans_for_mode`, but tells the lowerer whether the
+/// target supports the `tl_region_mark`/`tl_region_reset` runtime helpers.
+/// `(with-region ...)` only lowers to mark/reset when they are available;
+/// otherwise it falls back to running the body in the process-lifetime arena
+/// with no reset (SPEC §7.6).
+pub fn lower_program_with_spans_for_target(
+    prog: &ast::Program,
+    mode: LowerMode,
+    region_reset_supported: bool,
+) -> LoweredProgram {
+    let mut lowerer = ProgramLowerer::new(mode, region_reset_supported);
     lowerer.lower(prog)
 }
 
 struct ProgramLowerer {
     mode: LowerMode,
+    region_reset_supported: bool,
     functions: Vec<Function>,
     globals: Vec<(String, Type, Option<Value>)>,
     externs: Vec<(String, Type)>,
@@ -63,9 +80,10 @@ struct ProgramLowerer {
 }
 
 impl ProgramLowerer {
-    fn new(mode: LowerMode) -> Self {
+    fn new(mode: LowerMode, region_reset_supported: bool) -> Self {
         ProgramLowerer {
             mode,
+            region_reset_supported,
             functions: Vec::new(),
             globals: Vec::new(),
             externs: Vec::new(),
@@ -90,6 +108,7 @@ impl ProgramLowerer {
             enums: &self.enums,
             structs: &self.structs,
             mode: self.mode,
+            region_reset_supported: self.region_reset_supported,
         }
     }
 
@@ -368,6 +387,7 @@ fn extract_const_cast(expr: &ast::Expr, to_ty: &Type) -> Option<Value> {
 struct FnLowerer {
     name: String,
     mode: LowerMode,
+    region_reset_supported: bool,
     builder: IrBuilder,
     vars: HashMap<String, VarId>,
     /// Real type of every IR variable we create (params, locals, temporaries).
@@ -433,6 +453,7 @@ struct FnLowererContext<'a> {
     enums: &'a ast::EnumRegistry,
     structs: &'a ast::StructRegistry,
     mode: LowerMode,
+    region_reset_supported: bool,
 }
 
 struct CaptureEnv {
@@ -638,6 +659,7 @@ impl FnLowerer {
         FnLowerer {
             name: name.to_string(),
             mode: context.mode,
+            region_reset_supported: context.region_reset_supported,
             builder,
             vars,
             var_types,
@@ -670,6 +692,7 @@ impl FnLowerer {
             enums: &self.enums,
             structs: &self.structs,
             mode: self.mode,
+            region_reset_supported: self.region_reset_supported,
         }
     }
 
@@ -1134,12 +1157,7 @@ impl FnLowerer {
             ast::Expr::Let { bindings, body } => self.lower_let(bindings, body),
             ast::Expr::While { cond, body } => self.lower_while(cond, body),
             ast::Expr::Begin(exprs) => self.lower_begin(exprs),
-            // #548 adds only the surface form: lower the body as an expression
-            // sequence (the last expression is the result). The region scope is a
-            // no-op here — `tl_region_mark`/`tl_region_reset` reclamation is a
-            // later lowering slice (#547/#549), and not resetting only means the
-            // arena lives to process exit, which is safe.
-            ast::Expr::WithRegion { body, .. } => self.lower_begin(body),
+            ast::Expr::WithRegion { body, .. } => self.lower_with_region(body),
             ast::Expr::Call { func, args } => self.lower_call(func, args),
             ast::Expr::Comptime { expr } => match CtfeEvaluator::new().eval(expr) {
                 Ok(CtfeValue::I64(n)) => Value::ConstI64(n),
@@ -2980,6 +2998,36 @@ impl FnLowerer {
             last = self.lower_expr(expr);
         }
         last
+    }
+
+    /// Lower `(with-region r body...)` (#550). On a target that provides the
+    /// region runtime helpers, take a mark at entry, run the body in the active
+    /// arena, then reset to the mark on scope exit so the body's allocations are
+    /// reclaimed; the body's value — kept region-free by the escape checker
+    /// (#607) — is returned afterward. On targets without the helpers, run the
+    /// body in the process-lifetime arena with no reset (SPEC §7.6) so region
+    /// programs stay portable. (Until #607 lands, an escaping region value is
+    /// unsafe-after-reset, as documented on #550.)
+    fn lower_with_region(&mut self, body: &[ast::Expr]) -> Value {
+        if !self.region_reset_supported {
+            return self.lower_begin(body);
+        }
+        let mark = self.builder.fresh_var();
+        self.builder.emit(Instruction::Call {
+            dst: Some(mark),
+            func: "tl_region_mark".into(),
+            args: vec![],
+            ty: Type::U64,
+        });
+        self.record_local(mark, Type::U64);
+        let result = self.lower_begin(body);
+        self.builder.emit(Instruction::Call {
+            dst: None,
+            func: "tl_region_reset".into(),
+            args: vec![Value::Var(mark)],
+            ty: Type::Unit,
+        });
+        result
     }
 
     /// Whether `func(args)` in tail position is a direct self-recursive call
@@ -5346,6 +5394,76 @@ mod tests {
                 .any(|i| matches!(i, Instruction::Call { func, .. } if func == "inc"))
         });
         assert!(!calls_top_level_inc);
+    }
+
+    #[test]
+    fn test_lower_with_region_wraps_body_in_mark_and_reset() {
+        // On a region-runtime target the body is bracketed by tl_region_mark /
+        // tl_region_reset (#550); the body's region-free result is returned.
+        let prog = parse(
+            r#"
+            (define (main) : i64
+              (with-region r
+                (let ([s : String (string-append "a" "b")])
+                  (string-length s))))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let main = ir
+            .functions
+            .iter()
+            .find(|f| f.name == "main")
+            .expect("main lowered");
+        let calls: Vec<&str> = main
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .filter_map(|i| match i {
+                Instruction::Call { func, .. } => Some(func.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            calls.contains(&"tl_region_mark"),
+            "expected a tl_region_mark at region entry; calls: {calls:?}"
+        );
+        assert!(
+            calls.contains(&"tl_region_reset"),
+            "expected a tl_region_reset at region exit; calls: {calls:?}"
+        );
+    }
+
+    #[test]
+    fn test_lower_with_region_no_reset_without_region_runtime() {
+        // On a target without the region helpers, with-region runs the body in
+        // the process-lifetime arena with no mark/reset (SPEC §7.6), so the
+        // program stays portable instead of referencing unsupported helpers.
+        let prog = parse(
+            r#"
+            (define (main) : i64
+              (with-region r
+                (let ([s : String (string-append "a" "b")])
+                  (string-length s))))
+        "#,
+        )
+        .unwrap();
+        let lowered = lower_program_with_spans_for_target(&prog, LowerMode::Scalar, false);
+        let main = lowered
+            .program
+            .functions
+            .iter()
+            .find(|f| f.name == "main")
+            .expect("main lowered");
+        assert!(
+            !main
+                .blocks
+                .iter()
+                .flat_map(|b| b.instructions.iter())
+                .any(|i| matches!(i, Instruction::Call { func, .. }
+                    if func == "tl_region_mark" || func == "tl_region_reset")),
+            "a target without region helpers must not emit tl_region_mark/tl_region_reset"
+        );
     }
 
     #[test]

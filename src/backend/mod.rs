@@ -125,6 +125,16 @@ impl BackendTarget {
         Self { mode, ..self }
     }
 
+    /// Whether this target provides the `tl_region_mark`/`tl_region_reset`
+    /// runtime helpers. They exist only for linux-x86_64 System V today, so on
+    /// other targets `(with-region ...)` lowers without a reset (SPEC §7.6).
+    pub const fn supports_region_runtime(self) -> bool {
+        matches!(
+            (self.arch, self.os, self.abi),
+            (BackendArch::X86_64, BackendOs::Linux, BackendAbi::SystemV)
+        )
+    }
+
     pub const fn as_str(self) -> &'static str {
         match (self.arch, self.os, self.abi) {
             (BackendArch::X86_64, BackendOs::Linux, BackendAbi::SystemV) => "linux-x86_64",
@@ -7108,12 +7118,8 @@ pub fn generate_assembly_with_spans_for_target(
 fn validate_target_runtime_support(program: &Program, target: BackendTarget) -> Result<(), String> {
     let needs_region_runtime = X86_64Backend::needs_region_mark_runtime(program)
         || X86_64Backend::needs_region_reset_runtime(program);
-    let supports_region_runtime = matches!(
-        (target.arch, target.os, target.abi),
-        (BackendArch::X86_64, BackendOs::Linux, BackendAbi::SystemV)
-    );
 
-    if needs_region_runtime && !supports_region_runtime {
+    if needs_region_runtime && !target.supports_region_runtime() {
         return Err(
             "backend: tl_region_mark/tl_region_reset runtime helpers are only supported for linux-x86_64-system-v targets"
                 .into(),

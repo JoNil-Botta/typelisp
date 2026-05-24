@@ -1134,23 +1134,77 @@
     [(BackendTargetLinux) 6]
     [(BackendTargetWindows) 4]))
 
+(define (compiler-backend-float-call-register-count
+  [target : CompilerBackendTarget]) : i64
+  (match target
+    [(BackendTargetLinux) 8]
+    [(BackendTargetWindows) 4]))
+
+(define (compiler-backend-stack-call-arg?
+  [target : CompilerBackendTarget]
+  [ty : AstType]
+  [int-idx : i64]
+  [float-idx : i64]
+  [idx : i64]) : bool
+  (match target
+    [(BackendTargetLinux)
+      (if (compiler-backend-f64-type? ty)
+        (>= float-idx (compiler-backend-float-call-register-count target))
+        (>= int-idx (compiler-backend-call-register-count target)))]
+    [(BackendTargetWindows)
+      (>= idx (compiler-backend-call-register-count target))]))
+
+(define (compiler-backend-call-stack-arg-count
+  [target : CompilerBackendTarget]
+  [args : CompilerIrValueList]
+  [types : AstTypeList]
+  [int-idx : i64]
+  [float-idx : i64]
+  [idx : i64]) : i64
+  (match args
+    [(IrValueNil) 0]
+    [(IrValueCons _ rest)
+      (let ([arg-ty
+          :
+          AstType
+          (match types
+            [(AstTypeCons ty _) ty]
+            [(AstTypeNil) (AstTyI64)])]
+        [rest-types
+          :
+          AstTypeList
+          (match types
+            [(AstTypeCons _ tail) tail]
+            [(AstTypeNil) AstTypeNil])])
+        (+
+          (if (compiler-backend-stack-call-arg?
+            target
+            arg-ty
+            int-idx
+            float-idx
+            idx)
+            1
+            0)
+          (compiler-backend-call-stack-arg-count
+            target
+            rest
+            rest-types
+            (if (compiler-backend-f64-type? arg-ty)
+              int-idx
+              (+ int-idx 1))
+            (if (compiler-backend-f64-type? arg-ty)
+              (+ float-idx 1)
+              float-idx)
+            (+ idx 1))))]))
+
 (define (compiler-backend-call-arg-space
   [target : CompilerBackendTarget]
-  [arg-count : i64]) : i64
-  (match target
-    [(BackendTargetLinux) 0]
-    [(BackendTargetWindows)
-      (let ([reg-count : i64 (compiler-backend-call-register-count target)])
-        (let ([stack-count
-            :
-            i64
-            (if (> arg-count reg-count)
-              (- arg-count reg-count)
-              0)])
-          (compiler-backend-round-up-16
-            (+
-              (compiler-backend-outgoing-shadow-space target)
-              (* stack-count 8)))))]))
+  [args : CompilerIrValueList]
+  [types : AstTypeList]) : i64
+  (compiler-backend-round-up-16
+    (+
+      (compiler-backend-outgoing-shadow-space target)
+      (* (compiler-backend-call-stack-arg-count target args types 0 0 0) 8))))
 
 (define (compiler-backend-emit-call-space-sub [space : i64]) : String
   (if (= space 0)
@@ -1161,14 +1215,6 @@
   (if (= space 0)
     ""
     (backend-cat4 "    addq $" (int->string space) ", %rsp\n" "")))
-
-(define (compiler-backend-stack-call-arg?
-  [target : CompilerBackendTarget]
-  [idx : i64]) : bool
-  (match target
-    [(BackendTargetLinux) false]
-    [(BackendTargetWindows)
-      (>= idx (compiler-backend-call-register-count target))]))
 
 (define (compiler-backend-param-type-list [params : CompilerIrParamList]) : AstTypeList
   (match params
@@ -1218,13 +1264,11 @@
 
 (define (compiler-backend-outgoing-stack-arg-offset
   [target : CompilerBackendTarget]
-  [idx : i64]) : i64
+  [stack-idx : i64]) : i64
   (match target
-    [(BackendTargetLinux) 0]
+    [(BackendTargetLinux) (* stack-idx 8)]
     [(BackendTargetWindows)
-      (+
-        (compiler-backend-outgoing-shadow-space target)
-        (* (- idx (compiler-backend-call-register-count target)) 8))]))
+      (+ (compiler-backend-outgoing-shadow-space target) (* stack-idx 8))]))
 
 (define (compiler-backend-emit-call-args
   [target : CompilerBackendTarget]
@@ -1234,6 +1278,7 @@
   [int-idx : i64]
   [float-idx : i64]
   [idx : i64]
+  [stack-idx : i64]
   [func-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (match args
     [(IrValueNil) (OkCompilerBackend "")]
@@ -1250,30 +1295,47 @@
           (match types
             [(AstTypeCons _ tail) tail]
             [(AstTypeNil) AstTypeNil])])
-        (if (compiler-backend-stack-call-arg? target idx)
-          (match (compiler-backend-emit-load-typed-value-with-plan
-            assignments
-            value
-            arg-ty)
+        (if (compiler-backend-stack-call-arg?
+          target
+          arg-ty
+          int-idx
+          float-idx
+          idx)
+          (match (if (compiler-backend-f64-type? arg-ty)
+            (compiler-backend-emit-load-f64-value-with-plan
+              assignments
+              value
+              "%xmm15")
+            (compiler-backend-emit-load-typed-value-with-plan
+              assignments
+              value
+              arg-ty))
             [(OkCompilerBackend head)
               (match (compiler-backend-emit-call-args
                 target
                 assignments
                 rest
                 rest-types
-                int-idx
-                float-idx
+                (if (compiler-backend-f64-type? arg-ty)
+                  int-idx
+                  (+ int-idx 1))
+                (if (compiler-backend-f64-type? arg-ty)
+                  (+ float-idx 1)
+                  float-idx)
                 (+ idx 1)
+                (+ stack-idx 1)
                 func-diag)
                 [(OkCompilerBackend tail)
                   (OkCompilerBackend
                     (backend-cat5
                       head
                       (if (compiler-backend-f64-type? arg-ty)
-                        "    movsd %xmm0, "
+                        "    movsd %xmm15, "
                         "    movq %rax, ")
                       (int->string
-                        (compiler-backend-outgoing-stack-arg-offset target idx))
+                        (compiler-backend-outgoing-stack-arg-offset
+                          target
+                          stack-idx))
                       "(%rsp)\n"
                       tail))]
                 [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
@@ -1312,6 +1374,7 @@
                       (+ float-idx 1)
                       float-idx)
                     (+ idx 1)
+                    stack-idx
                     func-diag)
                     [(OkCompilerBackend tail)
                       (OkCompilerBackend (string-append head tail))]
@@ -1491,42 +1554,45 @@
     [(IrInstrUnOp dst op src ty)
       (compiler-backend-emit-unop assignments dst op src ty)]
     [(IrInstrCall dst name args ty)
-      (let ([call-space
+      (let ([arg-types
           :
-          i64
-          (compiler-backend-call-arg-space
+          AstTypeList
+          (compiler-backend-call-param-types name functions externs)])
+        (let ([call-space
+            :
+            i64
+            (compiler-backend-call-arg-space target args arg-types)])
+          (match (compiler-backend-emit-call-args
             target
-            (compiler-backend-ir-value-list-count args))])
-        (match (compiler-backend-emit-call-args
-          target
-          assignments
-          args
-          (compiler-backend-call-param-types name functions externs)
-          0
-          0
-          0
-          func-diag)
-          [(OkCompilerBackend args-asm)
-            (OkCompilerBackend
-              (string-append
-                (compiler-backend-emit-call-space-sub call-space)
+            assignments
+            args
+            arg-types
+            0
+            0
+            0
+            0
+            func-diag)
+            [(OkCompilerBackend args-asm)
+              (OkCompilerBackend
                 (string-append
-                  args-asm
-                  (backend-cat5
-                    "    call "
-                    (compiler-backend-call-symbol name plan functions externs)
-                    "\n"
-                    (string-append
-                      (compiler-backend-emit-call-space-add call-space)
-                      (compiler-backend-emit-store-typed-var-with-plan
-                        assignments
-                        dst
-                        (if (compiler-backend-f64-type? ty)
-                          "%xmm0"
-                          "%rax")
-                        ty))
-                    ""))))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
+                  (compiler-backend-emit-call-space-sub call-space)
+                  (string-append
+                    args-asm
+                    (backend-cat5
+                      "    call "
+                      (compiler-backend-call-symbol name plan functions externs)
+                      "\n"
+                      (string-append
+                        (compiler-backend-emit-call-space-add call-space)
+                        (compiler-backend-emit-store-typed-var-with-plan
+                          assignments
+                          dst
+                          (if (compiler-backend-f64-type? ty)
+                            "%xmm0"
+                            "%rax")
+                          ty))
+                      ""))))]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)])))]
     [(IrInstrStore name value ty)
       (match (compiler-backend-emit-load-typed-value-with-plan
         assignments
@@ -1729,20 +1795,26 @@
   [params : CompilerIrParamList]
   [int-idx : i64]
   [float-idx : i64]
-  [idx : i64]) : ResultCompilerBackend
+  [idx : i64]
+  [stack-idx : i64]) : ResultCompilerBackend
   (match params
     [(IrParamNil) (OkCompilerBackend "")]
     [(IrParamCons param rest)
       (match param
         [(IrParam _ ty var-id)
-          (if (compiler-backend-stack-call-arg? target idx)
+          (if (compiler-backend-stack-call-arg? target ty int-idx float-idx idx)
             (match (compiler-backend-emit-param-spills
               target
               assignments
               rest
-              int-idx
-              float-idx
-              (+ idx 1))
+              (if (compiler-backend-f64-type? ty)
+                int-idx
+                (+ int-idx 1))
+              (if (compiler-backend-f64-type? ty)
+                (+ float-idx 1)
+                float-idx)
+              (+ idx 1)
+              (+ stack-idx 1))
               [(OkCompilerBackend tail)
                 (OkCompilerBackend
                   (string-append
@@ -1754,7 +1826,7 @@
                             16
                             (compiler-backend-outgoing-stack-arg-offset
                               target
-                              idx)))
+                              stack-idx)))
                         "(%rbp), %xmm0\n"
                         "")
                       (backend-cat4
@@ -1764,7 +1836,7 @@
                             16
                             (compiler-backend-outgoing-stack-arg-offset
                               target
-                              idx)))
+                              stack-idx)))
                         "(%rbp), %rax\n"
                         ""))
                     (string-append
@@ -1799,7 +1871,8 @@
                   (if (compiler-backend-f64-type? ty)
                     (+ float-idx 1)
                     float-idx)
-                  (+ idx 1))
+                  (+ idx 1)
+                  stack-idx)
                   [(OkCompilerBackend tail)
                     (OkCompilerBackend
                       (string-append
@@ -1847,6 +1920,7 @@
                 target
                 assignments
                 params
+                0
                 0
                 0
                 0)
@@ -3846,9 +3920,21 @@ tl_string_concat:
         (set! x (+ x 1)))
       (if (> x 44) x 0))))")
 
-(define (compiler-backend-too-many-call-source) : String
+(define (compiler-backend-stack-int-call-source) : String
   "(extern f : (-> i64 i64 i64 i64 i64 i64 i64 i64))
 (define (main) : i64 (f 1 2 3 4 5 6 7))")
+
+(define (compiler-backend-stack-int-param-source) : String
+  "(define (take7 [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64] [g : i64]) : i64
+  (+ a g))
+(define (main) : i64
+  (take7 1 2 3 4 5 6 7))")
+
+(define (compiler-backend-stack-f64-call-source) : String
+  "(extern mix : (-> f64 f64 f64 f64 f64 f64 f64 f64 f64 f64))
+(define (callmix) : f64
+  (mix 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0))
+(define (main) : i64 0)")
 
 (define (compiler-backend-string-source) : String
   "(define greeting : String \"hi\")
@@ -4343,6 +4429,67 @@ tl_string_concat:
                   (compiler-backend-string-contains? asm "    setb %al\n")))))))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-stack-int-call-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-stack-int-call-source))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    subq $16, %rsp\n")
+        (and
+          (compiler-backend-string-contains? asm "    movq %rax, 0(%rsp)\n")
+          (and
+            (compiler-backend-string-contains? asm "    call f\n")
+            (compiler-backend-string-contains? asm "    addq $16, %rsp\n"))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-stack-int-param-ok?) : bool
+  (match (compiler-backend-emit-source
+    (compiler-backend-stack-int-param-source))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "_tl_take7:\n")
+        (and
+          (compiler-backend-string-contains? asm "    movq 16(%rbp), %rax\n")
+          (and
+            (compiler-backend-string-contains? asm "    call _tl_take7\n")
+            (compiler-backend-string-contains? asm "    movq %rax, 0(%rsp)\n"))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-stack-f64-call-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-stack-f64-call-source))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    subq $16, %rsp\n")
+        (and
+          (compiler-backend-string-contains? asm "    movsd %xmm15, 0(%rsp)\n")
+          (and
+            (compiler-backend-string-contains? asm "    call mix\n")
+            (compiler-backend-string-contains? asm "    addq $16, %rsp\n"))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-windows-mixed-stack-call-source) : String
+  "(extern extmix : (-> i64 f64 i64 f64 f64 f64))
+(define (callmix) : f64
+  (extmix 1 2.0 3 4.0 5.0))
+(define (main) : i64 0)")
+
+(define (compiler-backend-target-windows-mixed-stack-abi-ok?) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-windows-mixed-stack-call-source)
+    (BackendTargetWindows))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    subq $48, %rsp\n")
+        (and
+          (compiler-backend-string-contains? asm "    movq %r12, %rcx\n")
+          (and
+            (compiler-backend-string-contains?
+              asm
+              "    movsd %xmm15, 32(%rsp)\n")
+            (and
+              (compiler-backend-string-contains? asm "    call extmix\n")
+              (compiler-backend-string-contains? asm "    addq $48, %rsp\n")))))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-self-test) : i64
   (if (and
     (compiler-backend-target-model-ok? (compiler-backend-smoke-source))
@@ -4369,14 +4516,18 @@ tl_string_concat:
                       (and
                         (compiler-backend-f64-ok?)
                         (and
-                          (compiler-backend-error-ok?
-                            (compiler-backend-too-many-call-source)
-                            "backend: too many call args")
+                          (compiler-backend-stack-int-call-ok?)
                           (and
-                            (compiler-backend-runtime-helper-asm-ok?)
+                            (compiler-backend-stack-int-param-ok?)
                             (and
-                              (compiler-backend-user-helper-name-ok?)
-                              (compiler-backend-runtime-coexist-ok?)))))))))))))))
+                              (compiler-backend-stack-f64-call-ok?)
+                              (and
+                                (compiler-backend-target-windows-mixed-stack-abi-ok?)
+                                (and
+                                  (compiler-backend-runtime-helper-asm-ok?)
+                                  (and
+                                    (compiler-backend-user-helper-name-ok?)
+                                    (compiler-backend-runtime-coexist-ok?))))))))))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

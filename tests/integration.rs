@@ -1531,48 +1531,93 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
         "compiler_driver build did not write binary"
     );
 
-    let backend_error_input_path = work_dir.join("backend_error_input.tl");
-    let backend_error_asm_path = work_dir.join("backend_error_generated.s");
-    let _ = fs::remove_file(&backend_error_asm_path);
+    let stack_args_input_path = work_dir.join("stack_args_input.tl");
+    let stack_args_asm_path = work_dir.join("stack_args_generated.s");
+    let stack_args_obj_path = work_dir.join("stack_args_generated.o");
+    let stack_args_bin_path = work_dir.join("stack_args_generated");
+    let _ = fs::remove_file(&stack_args_asm_path);
     fs::write(
-        &backend_error_input_path,
-        "(extern f : (-> i64 i64 i64 i64 i64 i64 i64 i64))\n\
-         (define (main) : i64 (f 1 2 3 4 5 6 7))\n",
+        &stack_args_input_path,
+        "(define (take7 [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64] [g : i64]) : i64\n\
+           (+ a (+ b (+ c (+ d (+ e (+ f g)))))))\n\
+         (define (main) : i64 (take7 1 2 3 4 5 6 21))\n",
     )
-    .expect("write compiler_driver backend diagnostic fixture");
+    .expect("write compiler_driver stack args fixture");
 
-    let backend_error = Command::new(&driver_bin)
-        .arg(&backend_error_input_path)
-        .arg(&backend_error_asm_path)
+    let stack_args = Command::new(&driver_bin)
+        .arg(&stack_args_input_path)
+        .arg(&stack_args_asm_path)
         .output()
-        .expect("run compiler_driver backend diagnostic fixture");
+        .expect("run compiler_driver stack args fixture");
     assert_eq!(
-        backend_error.status.code(),
-        Some(1),
-        "compiler_driver backend diagnostic fixture exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&backend_error.stdout),
-        String::from_utf8_lossy(&backend_error.stderr)
+        stack_args.status.code(),
+        Some(0),
+        "compiler_driver stack args fixture exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&stack_args.stdout),
+        String::from_utf8_lossy(&stack_args.stderr)
     );
     assert_eq!(
-        String::from_utf8_lossy(&backend_error.stdout),
+        String::from_utf8_lossy(&stack_args.stdout),
         "",
-        "compiler_driver backend diagnostic fixture stdout"
+        "compiler_driver stack args fixture stdout"
     );
-    // #605: the backend now stamps the too-many-call-args diagnostic with the
-    // offending function's real source span from the lowering provenance side
-    // table (`main`'s body `(f 1 2 3 4 5 6 7)` on line 2, column 22) instead of
-    // the previous `1:1` fallback.
     assert_eq!(
-        String::from_utf8_lossy(&backend_error.stderr),
-        format!(
-            "{}:2:22: backend: too many call args",
-            backend_error_input_path.display()
-        ),
-        "compiler_driver backend diagnostic fixture stderr"
+        String::from_utf8_lossy(&stack_args.stderr),
+        "",
+        "compiler_driver stack args fixture stderr"
     );
+
+    let stack_args_asm =
+        fs::read_to_string(&stack_args_asm_path).expect("read stack args assembly");
+    for snippet in [
+        "    movq 16(%rbp), %rax\n",
+        "    subq $16, %rsp\n",
+        "    movq %rax, 0(%rsp)\n",
+        "    call _tl_take7\n",
+        "    addq $16, %rsp\n",
+    ] {
+        assert!(
+            stack_args_asm.contains(snippet),
+            "compiler_driver stack args assembly missing {:?}:\n{}",
+            snippet,
+            stack_args_asm
+        );
+    }
+
+    let status = Command::new("as")
+        .arg(&stack_args_asm_path)
+        .arg("-o")
+        .arg(&stack_args_obj_path)
+        .status()
+        .expect("run assembler on compiler_driver stack args output");
     assert!(
-        !backend_error_asm_path.exists(),
-        "backend diagnostic fixture should not write assembly"
+        status.success(),
+        "assembling compiler_driver stack args output failed"
+    );
+
+    let status = Command::new("ld")
+        .arg(&stack_args_obj_path)
+        .arg("-o")
+        .arg(&stack_args_bin_path)
+        .arg("-dynamic-linker")
+        .arg("/lib64/ld-linux-x86-64.so.2")
+        .arg("-lc")
+        .status()
+        .expect("run linker on compiler_driver stack args output");
+    assert!(
+        status.success(),
+        "linking compiler_driver stack args output failed"
+    );
+
+    let output = Command::new(&stack_args_bin_path)
+        .output()
+        .expect("run binary assembled from compiler_driver stack args output");
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "compiler_driver stack args program exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
 
     let input_path = work_dir.join("input.tl");

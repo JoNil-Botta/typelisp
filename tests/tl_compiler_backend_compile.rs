@@ -121,3 +121,35 @@ fn compiler_backend_smoke_tl_compiles_to_assembly() {
         assert_symbol(&asm, sym, "compiler_backend_smoke");
     }
 }
+
+#[test]
+fn compiler_driver_tl_compiles_to_assembly() {
+    let asm = compile_selfhost_source(
+        "compiler_driver.tl",
+        "tl-compiler-driver-compile-test",
+        "compiler_driver.s",
+    );
+
+    assert_no_todo(&asm, "compiler_driver");
+    assert_eq!(
+        asm.matches("\nmain:").count() + usize::from(asm.starts_with("main:")),
+        1,
+        "compiler_driver assembly must have exactly one main:\n{asm}",
+    );
+
+    for sym in [
+        "_tl_compiler_driver_compile_file:",
+        "_tl_compiler_backend_emit_source:",
+        "_tl_lower_compiler_source:",
+        "_tl_parse_ast_source:",
+    ] {
+        assert_symbol(&asm, sym, "compiler_driver");
+    }
+
+    for message in [
+        "compiler-driver: expected input and output paths",
+        "lower: unsupported expression",
+    ] {
+        assert_message(&asm, message, "compiler_driver");
+    }
+}

@@ -77,6 +77,9 @@ struct/enum fields, and (optionally) `let` bindings.
 (cast 300 : u8)
 ```
 
+`cast` currently supports integer/char widening, narrowing, and truncation only.
+`f64` arithmetic is supported, but floating-point casts are not implemented yet.
+
 ### Types
 
 ```

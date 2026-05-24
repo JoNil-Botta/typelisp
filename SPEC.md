@@ -232,6 +232,9 @@ There are no explicit type aliases. Identifiers naming enums or structs are reso
   integer sources.
 - `char` → integer: zero-extends the byte value.
 - Integer → `char`: truncates to the low byte.
+- Floating-point casts are not supported yet. `f64` arithmetic, comparison,
+  arguments, returns, and `print-float` are supported, but `(cast ...)`
+  currently accepts only integer/char source and target types.
 - No implicit conversions.
 
 ---
@@ -480,7 +483,8 @@ as the head of the final `cond` arm.
 
 ### 5.12 `(cast expr : type)` — type conversion
 
-See §3.6.
+See §3.6. Casts currently cover integer/char widening, narrowing, and
+truncation only; floating-point conversions are deferred.
 
 ### 5.13 `(match scrutinee [pattern expr] ...)` — pattern matching
 
@@ -869,6 +873,7 @@ replacement.
 |---------|--------|
 | `f32` type | Rejected by backend validation |
 | `f32` local/parameter type | Rejected by backend validation |
+| Floating-point casts in `(cast ...)` | Not implemented; casts currently support integer/char conversions only |
 | Tuple by-value ABI | Function parameters/returns rejected by backend validation |
 | Fixed-array by-value return | Rejected by backend validation |
 | Tuple/Struct/Enum/String globals | Rejected by backend validation |

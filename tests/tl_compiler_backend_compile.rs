@@ -175,6 +175,8 @@ fn compiler_driver_tl_compiles_to_assembly() {
         "_tl_compiler_backend_emit_source:",
         "_tl_lower_compiler_source:",
         "_tl_parse_ast_source:",
+        // The driver runs the optimizer between lowering and backend emission.
+        "_tl_optimize_program:",
     ] {
         assert_symbol(&asm, sym, "compiler_driver");
     }
@@ -186,4 +188,46 @@ fn compiler_driver_tl_compiles_to_assembly() {
     ] {
         assert_message(&asm, message, "compiler_driver");
     }
+}
+
+#[test]
+fn compiler_optimize_tl_compiles_to_assembly() {
+    let asm = compile_selfhost_source(
+        "compiler_optimize.tl",
+        "tl-compiler-optimize-compile-test",
+        "compiler_optimize.s",
+    );
+
+    assert_no_todo(&asm, "compiler_optimize");
+    for sym in [
+        "_tl_optimize_program:",
+        "_tl_optimize_function:",
+        "_tl_opt_fold_instrs:",
+        "_tl_opt_fold_binop:",
+        "_tl_opt_const_lookup:",
+        "_tl_compiler_optimize_self_test:",
+    ] {
+        assert_symbol(&asm, sym, "compiler_optimize");
+    }
+}
+
+#[test]
+fn compiler_optimize_smoke_tl_compiles_to_assembly() {
+    let asm = compile_selfhost_source(
+        "compiler_optimize_smoke.tl",
+        "tl-compiler-optimize-smoke-compile-test",
+        "compiler_optimize_smoke.s",
+    );
+
+    assert_no_todo(&asm, "compiler_optimize_smoke");
+    assert_eq!(
+        asm.matches("\nmain:").count() + usize::from(asm.starts_with("main:")),
+        1,
+        "compiler_optimize_smoke assembly must have exactly one main:\n{asm}",
+    );
+    assert_symbol(
+        &asm,
+        "_tl_compiler_optimize_self_test:",
+        "compiler_optimize_smoke",
+    );
 }

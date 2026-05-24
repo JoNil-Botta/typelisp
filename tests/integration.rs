@@ -1055,6 +1055,19 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
                 "compiler_ast_types.tl",
             ],
         },
+        // refs #543: selfhost optimizer pass framework + scalar constant folding.
+        // The smoke folds a constant `BinOp` into a `Mov` literal and checks the
+        // arithmetic instruction count drops while the folded value is correct.
+        Case {
+            name: "compiler_optimize_smoke",
+            exit_code: 42,
+            stdout: "",
+            deps: &[
+                "compiler_optimize.tl",
+                "compiler_ir_types.tl",
+                "compiler_ast_types.tl",
+            ],
+        },
         // refs #447: first selfhost backend emitter over the real compiler IR.
         // The smoke parses, typechecks, lowers, emits deterministic Linux x86_64
         // assembly text, and verifies representative labels/instructions.
@@ -1214,6 +1227,7 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
         &work_dir,
         &[
             "compiler_backend.tl",
+            "compiler_optimize.tl",
             "compiler_lower.tl",
             "compiler_ir_types.tl",
             "compiler_typecheck.tl",
@@ -3549,6 +3563,7 @@ fn source_path_for_case(manifest_dir: &PathBuf, name: &str) -> PathBuf {
         "compiler_typecheck_smoke" => "compiler_typecheck_smoke.tl",
         "compiler_lower_smoke" => "compiler_lower_smoke.tl",
         "compiler_liveness_smoke" => "compiler_liveness_smoke.tl",
+        "compiler_optimize_smoke" => "compiler_optimize_smoke.tl",
         "compiler_backend_smoke" => "compiler_backend_smoke.tl",
         "doc_extract_smoke" => "doc_extract_smoke.tl",
         "doc_render_smoke" => "doc_render_smoke.tl",

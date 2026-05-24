@@ -207,6 +207,13 @@ fn instruction_uses(instr: &Instruction) -> BTreeSet<VarId> {
             collect_value_vars(value, &mut uses);
             collect_value_vars(mask, &mut uses);
         }
+        Instruction::PredicatedLoad {
+            base, index, mask, ..
+        } => {
+            collect_value_vars(base, &mut uses);
+            collect_value_vars(index, &mut uses);
+            collect_value_vars(mask, &mut uses);
+        }
         Instruction::TailMask { index, len, .. } => {
             collect_value_vars(index, &mut uses);
             collect_value_vars(len, &mut uses);
@@ -246,6 +253,7 @@ fn instruction_defs(instr: &Instruction) -> BTreeSet<VarId> {
         | Instruction::MaskReduce { dst, .. }
         | Instruction::Select { dst, .. }
         | Instruction::VectorLoad { dst, .. }
+        | Instruction::PredicatedLoad { dst, .. }
         | Instruction::TailMask { dst, .. }
         | Instruction::Phi { dst, .. } => {
             defs.insert(*dst);

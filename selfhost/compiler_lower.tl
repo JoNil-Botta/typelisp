@@ -19,7 +19,14 @@
 (import "compiler_ctfe.tl")
 
 (defenum LowerState
-  (LowerState i64 i64 String CompilerIrInstrList CompilerIrBlockList))
+  (LowerState
+    i64
+    i64
+    String
+    CompilerIrInstrList
+    CompilerIrBlockList
+    String
+    CompilerSourceSpans))
 
 (defenum LowerAlloc
   (LowerAlloc LowerState i64))
@@ -51,7 +58,7 @@
   (ErrLowerValue CompilerDiagnostic))
 
 (defenum ResultLowerFunction
-  (OkLowerFunction CompilerIrFunction)
+  (OkLowerFunction CompilerIrFunction CompilerSourceSpans)
   (ErrLowerFunction CompilerDiagnostic))
 
 ;; `lower-decls` also threads the `CompilerSourceSpans` provenance side table
@@ -173,59 +180,130 @@
 
 (define (lower-state-next-var [state : LowerState]) : i64
   (match state
-    [(LowerState next-var _ _ _ _) next-var]))
+    [(LowerState next-var _ _ _ _ _ _) next-var]))
 
 (define (lower-state-current-label [state : LowerState]) : String
   (match state
-    [(LowerState _ _ label _ _) label]))
+    [(LowerState _ _ label _ _ _ _) label]))
+
+(define (lower-state-spans [state : LowerState]) : CompilerSourceSpans
+  (match state
+    [(LowerState _ _ _ _ _ _ spans) spans]))
 
 (define (lower-state-alloc-var [state : LowerState]) : LowerAlloc
   (match state
-    [(LowerState next-var next-label current-label current-instrs blocks)
+    [(LowerState
+        next-var
+        next-label
+        current-label
+        current-instrs
+        blocks
+        function
+        spans)
       (LowerAlloc
         (LowerState
           (+ next-var 1)
           next-label
           current-label
           current-instrs
-          blocks)
+          blocks
+          function
+          spans)
         next-var)]))
 
 (define (lower-state-fresh-label [state : LowerState] [prefix : String]) : LowerLabel
   (match state
-    [(LowerState next-var next-label current-label current-instrs blocks)
+    [(LowerState
+        next-var
+        next-label
+        current-label
+        current-instrs
+        blocks
+        function
+        spans)
       (LowerLabel
         (LowerState
           next-var
           (+ next-label 1)
           current-label
           current-instrs
-          blocks)
+          blocks
+          function
+          spans)
         (string-append (string-append prefix ".") (int->string next-label)))]))
 
 (define (lower-state-emit [state : LowerState] [instr : CompilerIrInstr]) : LowerState
   (match state
-    [(LowerState next-var next-label current-label current-instrs blocks)
+    [(LowerState
+        next-var
+        next-label
+        current-label
+        current-instrs
+        blocks
+        function
+        spans)
       (LowerState
         next-var
         next-label
         current-label
         (lower-instr-list-append current-instrs instr)
-        blocks)]))
+        blocks
+        function
+        spans)]))
+
+(define (lower-state-record-instr-span
+  [state : LowerState]
+  [instr : CompilerIrInstr]
+  [span : AstSourceSpan]) : LowerState
+  (match state
+    [(LowerState
+        next-var
+        next-label
+        current-label
+        current-instrs
+        blocks
+        function
+        spans)
+      (LowerState
+        next-var
+        next-label
+        current-label
+        current-instrs
+        blocks
+        function
+        (compiler-source-spans-insert-instr spans function instr span))]))
+
+(define (lower-state-emit-at-expr
+  [state : LowerState]
+  [instr : CompilerIrInstr]
+  [expr : AstExpr]) : LowerState
+  (match (lower-ast-expr-span expr)
+    [(CompilerSomeSourceSpan span)
+      (lower-state-emit (lower-state-record-instr-span state instr span) instr)]
+    [(CompilerNoSourceSpan) (lower-state-emit state instr)]))
 
 (define (lower-state-finish-block [state : LowerState] [next-label : String]) : LowerState
   (match state
-    [(LowerState next-var next-label-id current-label current-instrs blocks)
+    [(LowerState
+        next-var
+        next-label-id
+        current-label
+        current-instrs
+        blocks
+        function
+        spans)
       (LowerState
         next-var
         next-label-id
         next-label
         IrInstrNil
-        (lower-block-list-append blocks (IrBlock current-label current-instrs)))]))
+        (lower-block-list-append blocks (IrBlock current-label current-instrs))
+        function
+        spans)]))
 
 (define (lower-state-build-blocks [state : LowerState]) : CompilerIrBlockList
   (match state
-    [(LowerState _ _ current-label current-instrs blocks)
+    [(LowerState _ _ current-label current-instrs blocks _ _)
       (lower-block-list-append blocks (IrBlock current-label current-instrs))]))
 
 (define (lower-materialize
@@ -239,6 +317,20 @@
           (lower-state-emit allocated (IrInstrMov var-id value ty))
           (IrValueVar var-id)
           ty))]))
+
+(define (lower-materialize-at-expr
+  [state : LowerState]
+  [value : CompilerIrValue]
+  [ty : AstType]
+  [expr : AstExpr]) : ResultLowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc allocated var-id)
+      (let ([instr : CompilerIrInstr (IrInstrMov var-id value ty)])
+        (OkLowerExpr
+          (LowerExpr
+            (lower-state-emit-at-expr allocated instr expr)
+            (IrValueVar var-id)
+            ty)))]))
 
 (define (lower-literal-value [lit : AstLiteral]) : CompilerIrValue
   (match lit
@@ -1017,7 +1109,7 @@
     [(AstExprSpanned inner _)
       (lower-expr-with-type ctx state env type-env inner origin expr-ty)]
     [(AstExprLiteral lit)
-      (lower-materialize state (lower-literal-value lit) expr-ty)]
+      (lower-materialize-at-expr state (lower-literal-value lit) expr-ty origin)]
     [(AstExprVar name)
       (lower-var-or-nullary-variant ctx state env type-env name expr-ty)]
     [(AstExprAnn inner _)
@@ -1032,7 +1124,7 @@
         [(OkLowerExpr lowered)
           (match lowered
             [(LowerExpr inner-state value _)
-              (lower-materialize inner-state value expr-ty)])]
+              (lower-materialize-at-expr inner-state value expr-ty origin)])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
     [(AstExprUnary op inner)
       (match (lower-expr ctx state env type-env inner)
@@ -1043,9 +1135,10 @@
                 [(LowerAlloc allocated var-id)
                   (OkLowerExpr
                     (LowerExpr
-                      (lower-state-emit
+                      (lower-state-emit-at-expr
                         allocated
-                        (IrInstrUnOp var-id (lower-unop op) value expr-ty))
+                        (IrInstrUnOp var-id (lower-unop op) value expr-ty)
+                        origin)
                       (IrValueVar var-id)
                       expr-ty))])])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
@@ -1062,20 +1155,21 @@
                         [(LowerAlloc allocated var-id)
                           (OkLowerExpr
                             (LowerExpr
-                              (lower-state-emit
+                              (lower-state-emit-at-expr
                                 allocated
                                 (IrInstrBinOp
                                   var-id
                                   (lower-binop op)
                                   left-value
                                   right-value
-                                  expr-ty))
+                                  expr-ty)
+                                origin)
                               (IrValueVar var-id)
                               expr-ty))])])]
                 [(ErrLowerExpr message) (ErrLowerExpr message)])])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
     [(AstExprCall func args)
-      (lower-call ctx state env type-env func args expr-ty)]
+      (lower-call ctx state env type-env func args expr-ty origin)]
     [(AstExprLet bindings body)
       (match (lower-let-bindings ctx state env type-env bindings)
         [(OkLowerEnv binding-state body-env body-type-env)
@@ -1091,9 +1185,10 @@
                 [(SomeI64 id)
                   (OkLowerExpr
                     (LowerExpr
-                      (lower-state-emit
+                      (lower-state-emit-at-expr
                         value-state
-                        (IrInstrMov id value-ir value-ty))
+                        (IrInstrMov id value-ir value-ty)
+                        origin)
                       IrValueUnit
                       expr-ty))]
                 [(NoneI64)
@@ -1101,9 +1196,10 @@
                     [(OkTcType store-ty)
                       (OkLowerExpr
                         (LowerExpr
-                          (lower-state-emit
+                          (lower-state-emit-at-expr
                             value-state
-                            (IrInstrStore name value-ir store-ty))
+                            (IrInstrStore name value-ir store-ty)
+                            origin)
                           IrValueUnit
                           expr-ty))]
                     [(ErrTcType _)
@@ -1577,18 +1673,21 @@
   [type-env : TcTypeEnv]
   [name : String]
   [args : AstExprList]
-  [result-ty : AstType]) : ResultLowerExpr
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
   (match (lower-args ctx state env type-env args)
     [(OkLowerArgs args-state values)
       (match (lower-state-alloc-var args-state)
         [(LowerAlloc allocated var-id)
-          (OkLowerExpr
-            (LowerExpr
-              (lower-state-emit
-                allocated
-                (IrInstrCall var-id name values result-ty))
-              (IrValueVar var-id)
-              result-ty))])]
+          (let ([instr
+              :
+              CompilerIrInstr
+              (IrInstrCall var-id name values result-ty)])
+            (OkLowerExpr
+              (LowerExpr
+                (lower-state-emit-at-expr allocated instr origin)
+                (IrValueVar var-id)
+                result-ty)))])]
     [(ErrLowerArgs message) (ErrLowerExpr message)]))
 
 (define (lower-substring-call
@@ -1598,11 +1697,12 @@
   [type-env : TcTypeEnv]
   [name : String]
   [args : AstExprList]
-  [result-ty : AstType]) : ResultLowerExpr
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
   (match args
     [(AstExprCons str (AstExprCons start (AstExprCons len (AstExprNil))))
       (lower-substring ctx state env type-env str start len)]
-    [_ (lower-direct-call ctx state env type-env name args result-ty)]))
+    [_ (lower-direct-call ctx state env type-env name args result-ty origin)]))
 
 (define (lower-string-concat-call
   [ctx : TcContext]
@@ -1611,11 +1711,12 @@
   [type-env : TcTypeEnv]
   [name : String]
   [args : AstExprList]
-  [result-ty : AstType]) : ResultLowerExpr
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
   (match args
     [(AstExprCons left (AstExprCons right (AstExprNil)))
       (lower-string-concat ctx state env type-env left right)]
-    [_ (lower-direct-call ctx state env type-env name args result-ty)]))
+    [_ (lower-direct-call ctx state env type-env name args result-ty origin)]))
 
 (define (lower-string-runtime-call
   [ctx : TcContext]
@@ -1624,10 +1725,11 @@
   [type-env : TcTypeEnv]
   [name : String]
   [args : AstExprList]
-  [result-ty : AstType]) : ResultLowerExpr
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
   (if (or (string-eq name "substring") (string-eq name "string-slice"))
-    (lower-substring-call ctx state env type-env name args result-ty)
-    (lower-string-concat-call ctx state env type-env name args result-ty)))
+    (lower-substring-call ctx state env type-env name args result-ty origin)
+    (lower-string-concat-call ctx state env type-env name args result-ty origin)))
 
 ;; Lower an unshadowed `(string-ref s i)` / `(char-at s i)` builtin call to the
 
@@ -1644,11 +1746,12 @@
   [type-env : TcTypeEnv]
   [name : String]
   [args : AstExprList]
-  [result-ty : AstType]) : ResultLowerExpr
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
   (match args
     [(AstExprCons str (AstExprCons index (AstExprNil)))
       (lower-string-ref ctx state env type-env str index)]
-    [_ (lower-direct-call ctx state env type-env name args result-ty)]))
+    [_ (lower-direct-call ctx state env type-env name args result-ty origin)]))
 
 (define (lower-call
   [ctx : TcContext]
@@ -1657,7 +1760,8 @@
   [type-env : TcTypeEnv]
   [func : AstExpr]
   [args : AstExprList]
-  [result-ty : AstType]) : ResultLowerExpr
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
   (match (ast-expr-unspan func)
     [(AstExprVar name)
       ;; `array-length`/`length` on a dynamic array, and `string-length`/`length`
@@ -1668,13 +1772,21 @@
       (if (and
         (lower-builtin-call-available? ctx env name)
         (or (string-eq name "string-ref") (string-eq name "char-at")))
-        (lower-string-ref-call ctx state env type-env name args result-ty)
+        (lower-string-ref-call
+          ctx
+          state
+          env
+          type-env
+          name
+          args
+          result-ty
+          origin)
         (if (and
           (lower-builtin-call-available? ctx env name)
           (or
             (string-eq name "array-length")
             (or (string-eq name "length") (string-eq name "string-length"))))
-          (lower-array-length ctx state env type-env name args result-ty)
+          (lower-array-length ctx state env type-env name args result-ty origin)
           (if (and
             (lower-builtin-call-available? ctx env name)
             (lower-string-runtime-builtin? name))
@@ -1685,7 +1797,8 @@
               type-env
               name
               args
-              result-ty)
+              result-ty
+              origin)
             (if (and
               (lower-builtin-call-available? ctx env name)
               (lower-stdio-builtin? name))
@@ -1696,10 +1809,19 @@
                 type-env
                 (lower-stdio-runtime-name name)
                 args
-                result-ty)
+                result-ty
+                origin)
               (match (sym-i64-lookup env name)
                 [(SomeI64 _)
-                  (lower-direct-call ctx state env type-env name args result-ty)]
+                  (lower-direct-call
+                    ctx
+                    state
+                    env
+                    type-env
+                    name
+                    args
+                    result-ty
+                    origin)]
                 [(NoneI64)
                   (match ctx
                     [(TcContext _ symbols registries)
@@ -1737,7 +1859,8 @@
                                   type-env
                                   name
                                   args
-                                  result-ty))]
+                                  result-ty
+                                  origin))]
                             [(NoneI64)
                               (lower-direct-call
                                 ctx
@@ -1746,7 +1869,8 @@
                                 type-env
                                 name
                                 args
-                                result-ty)])])])])))))]
+                                result-ty
+                                origin)])])])])))))]
     [_
       (ErrLowerExpr
         (lower-diagnostic-at-expr func "lower: only direct calls are supported"))]))
@@ -1770,7 +1894,8 @@
   [type-env : TcTypeEnv]
   [name : String]
   [args : AstExprList]
-  [result-ty : AstType]) : ResultLowerExpr
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
   (match args
     [(AstExprCons arr (AstExprNil))
       (match (tc-expr ctx type-env arr)
@@ -1779,10 +1904,19 @@
             [(AstTyDynArray _)
               (lower-array-length-load ctx state env type-env arr)]
             [(AstTyString) (lower-array-length-load ctx state env type-env arr)]
-            [_ (lower-direct-call ctx state env type-env name args result-ty)])]
+            [_
+              (lower-direct-call
+                ctx
+                state
+                env
+                type-env
+                name
+                args
+                result-ty
+                origin)])]
         [(ErrTcType _)
-          (lower-direct-call ctx state env type-env name args result-ty)])]
-    [_ (lower-direct-call ctx state env type-env name args result-ty)]))
+          (lower-direct-call ctx state env type-env name args result-ty origin)])]
+    [_ (lower-direct-call ctx state env type-env name args result-ty origin)]))
 
 (define (lower-array-length-load
   [ctx : TcContext]
@@ -3100,14 +3234,26 @@
   [name : String]
   [params : AstParamList]
   [ret : AstType]
-  [body : AstExpr]) : ResultLowerFunction
+  [body : AstExpr]
+  [spans : CompilerSourceSpans]) : ResultLowerFunction
   (let ([param-count : i64 (lower-param-count params)])
     (let ([env : SymI64Env (lower-bind-params params 0 (sym-i64-empty))]
       [type-env : TcTypeEnv (tc-bind-params ctx top-env params)]
+      [function-spans
+        :
+        CompilerSourceSpans
+        (lower-record-function-span spans name body)]
       [state
         :
         LowerState
-        (LowerState param-count 0 "entry" IrInstrNil IrBlockNil)]
+        (LowerState
+          param-count
+          0
+          "entry"
+          IrInstrNil
+          IrBlockNil
+          name
+          function-spans)]
       [ret-ty : AstType (tc-resolve-type ctx ret)])
       (match (lower-expr ctx state env type-env body)
         [(OkLowerExpr lowered)
@@ -3125,7 +3271,8 @@
                     (lower-param-list ctx params 0)
                     ret-ty
                     (lower-state-next-var final-state)
-                    (lower-state-build-blocks final-state))))])]
+                    (lower-state-build-blocks final-state))
+                  (lower-state-spans final-state)))])]
         [(ErrLowerExpr message) (ErrLowerFunction message)]))))
 
 (define (lower-global-value [expr : AstExpr]) : ResultLowerValue
@@ -3196,8 +3343,8 @@
               (IrExtern name (tc-resolve-type ctx ty)))
             spans)]
         [(AstDeclDefFn name params ret body)
-          (match (lower-function ctx top-env name params ret body)
-            [(OkLowerFunction func)
+          (match (lower-function ctx top-env name params ret body spans)
+            [(OkLowerFunction func function-spans)
               (lower-decls
                 ctx
                 top-env
@@ -3205,7 +3352,7 @@
                 globals
                 (lower-function-list-append functions func)
                 externs
-                (lower-record-function-span spans name body))]
+                function-spans)]
             [(ErrLowerFunction message) (ErrLowerDecls message)])]
         [(AstDeclImport _)
           (lower-decls ctx top-env rest globals functions externs spans)]
@@ -3507,11 +3654,15 @@
 
 ;;
 
-;; the spans table must hold exactly those two entries, keyed by function name,
+;; the function spans table must hold exactly those two entries, keyed by name,
 
 ;;
 
-;; recording each function body's source start line.
+;; recording each function body's source start line. The instruction/value span
+
+;;
+
+;; side table should also receive entries from expression-backed emits (#744).
 
 (define (compiler-lower-span-start-line-ok?
   [spans : CompilerSourceSpans]
@@ -3528,7 +3679,9 @@
         (= (compiler-source-spans-count spans) 2)
         (and
           (compiler-lower-span-start-line-ok? spans "inc" 3)
-          (compiler-lower-span-start-line-ok? spans "main" 5)))]
+          (and
+            (compiler-lower-span-start-line-ok? spans "main" 5)
+            (> (compiler-source-spans-instr-count spans) 0))))]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-ok-summary? [src : String]) : bool

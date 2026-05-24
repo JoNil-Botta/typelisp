@@ -26,7 +26,7 @@
 
 (defenum AstLiteral
   (AstLitInt i64)
-  (AstLitFloat f64)
+  (AstLitFloat String)
   (AstLitBool bool)
   (AstLitChar char)
   (AstLitString String)

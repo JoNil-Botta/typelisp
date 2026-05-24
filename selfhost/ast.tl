@@ -125,6 +125,10 @@
     [(SInt n) (EInt n)]
     [(SSym name) (EVar name)]
     [(SStr s) (EStr s)]
+    [(SFloat _)
+      (begin
+        (panic "ast: unsupported float literal")
+        (EInt 0))]
     [(SChar _)
       (begin
         (panic "ast: unsupported char literal")

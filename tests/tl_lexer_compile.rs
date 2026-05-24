@@ -124,6 +124,9 @@ fn tl_lexer_tl_compiles_to_assembly() {
         "_tl_lex_into_spanned:",
         "_tl_scan_str_end_result:",
         "_tl_scan_int_end:",
+        "_tl_float_tail_question:",
+        "_tl_scan_number_end:",
+        "_tl_number_float_question:",
         "_tl_scan_symbol_end:",
         "_tl_scan_str_end:",
         "_tl_string_escape_piece:",
@@ -144,11 +147,13 @@ fn tl_lexer_tl_compiles_to_assembly() {
         "_tl_count_syms:",
         "_tl_count_strs:",
         "_tl_count_chars:",
+        "_tl_count_floats:",
         "_tl_sum_char_codes:",
         "_tl_count_tokens:",
         "_tl_lexer_token_spans_ok_question:",
         "_tl_lexer_spanned_error_ok_question:",
         "_tl_lex_percent_symbol_ok_question:",
+        "_tl_lex_float_token_ok_question:",
         "_tl_lex_span_self_test:",
         "_tl_lex_string_escapes_ok_question:",
         "_tl_lex_span_positions_ok_question:",
@@ -169,6 +174,7 @@ fn tl_lexer_tl_compiles_to_assembly() {
         "_tl_token_sym:",
         "_tl_token_str:",
         "_tl_token_char:",
+        "_tl_token_float:",
     ] {
         assert!(
             asm.contains(sym),
@@ -197,9 +203,19 @@ fn tl_lexer_tl_compiles_to_assembly() {
         "tl_lexer assembly is missing the modulo-operator lexing regression source:\n{}",
         asm,
     );
+    assert!(
+        asm.contains("1.5"),
+        "tl_lexer assembly is missing the float literal regression source:\n{}",
+        asm,
+    );
+    assert!(
+        asm.contains("3.14"),
+        "tl_lexer assembly is missing the 3.14 float token self-test source:\n{}",
+        asm,
+    );
 
     // `main` drives the lexer: it lexes the sample then tallies total tokens,
-    // TStrs and TChars, and checks the recoverable error entrypoint.
+    // TStrs, TChars, and TFloats, and checks the recoverable error entrypoint.
     assert!(
         asm.contains("call _tl_lex"),
         "tl_lexer assembly shows no main -> lex call (lexing step):\n{}",
@@ -223,6 +239,11 @@ fn tl_lexer_tl_compiles_to_assembly() {
     assert!(
         asm.contains("call _tl_count_chars"),
         "tl_lexer assembly shows no main -> count-chars call (char-literal tally):\n{}",
+        asm,
+    );
+    assert!(
+        asm.contains("call _tl_count_floats"),
+        "tl_lexer assembly shows no main -> count-floats call (float-literal tally):\n{}",
         asm,
     );
     assert!(

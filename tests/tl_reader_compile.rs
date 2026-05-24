@@ -6,7 +6,7 @@
 //! front end (#27): the canonical Lisp reader. Where the lexer turns a source
 //! String into a flat `(Array Token)`, the reader consumes that token stream
 //! into the recursive cons-cell tree the parens describe - the `Sexpr` AST
-//! `(SInt | SSym | SStr | SChar | SNil | SCons)`. It does NOT re-derive tokenization: it
+//! `(SInt | SSym | SStr | SChar | SFloat | SNil | SCons)`. It does NOT re-derive tokenization: it
 //! `(import)`s the lexer's `lex` from the `main`-less module `lex.tl`, which
 //! itself imports the `main`-less token model `token.tl`. So compiling it
 //! also exercises the module loader (#44) transitively: `token.tl` and
@@ -98,8 +98,9 @@ fn tl_reader_tl_compiles_to_assembly() {
     // The reader's own functions were emitted (TypeLisp prefixes user symbols
     // with `_tl_`): the public `read` / `read-result` entries, the mutually
     // recursive result-form/result-list helpers, the compatibility wrappers,
-    // and the folds that observe `SStr` (#27/#128) and `SChar` (#333) atoms
-    // produced from the lexer's `TStr` / `TChar` tokens.
+    // and the folds that observe `SStr` (#27/#128), `SChar` (#333), and
+    // `SFloat` atoms produced from the lexer's `TStr` / `TChar` / `TFloat`
+    // tokens.
     for sym in [
         "_tl_read:",
         "_tl_read_result:",
@@ -116,6 +117,7 @@ fn tl_reader_tl_compiles_to_assembly() {
         "_tl_sum_ints:",
         "_tl_count_strs:",
         "_tl_count_chars:",
+        "_tl_count_floats:",
         "_tl_sum_char_codes:",
         "_tl_reader_error_score:",
         "_tl_reader_nested_list_spans_ok_question:",
@@ -132,8 +134,9 @@ fn tl_reader_tl_compiles_to_assembly() {
     // The lexer is REUSED across the import boundary, not re-derived: the
     // imported `lex` entry and the imported `token.tl` accessors are emitted
     // and called. `token-tag` classifies each token under the cursor;
-    // `token-str` / `token-char` project payloads so the reader can build
-    // `SStr` and `SChar` atoms from `TStr` and `TChar` tokens.
+    // `token-str` / `token-char` / `token-float` project payloads so the reader
+    // can build `SStr`, `SChar`, and `SFloat` atoms from `TStr`, `TChar`, and
+    // `TFloat` tokens.
     for sym in [
         "_tl_lex:",
         "_tl_lex_spanned:",
@@ -143,6 +146,7 @@ fn tl_reader_tl_compiles_to_assembly() {
         "_tl_token_sym:",
         "_tl_token_str:",
         "_tl_token_char:",
+        "_tl_token_float:",
         "_tl_spanned_token_token:",
         "_tl_spanned_token_span:",
         "_tl_source_error_message:",
@@ -175,8 +179,8 @@ fn tl_reader_tl_compiles_to_assembly() {
         "tl_reader assembly shows no main -> sum-ints call (tree fold):\n{}",
         asm,
     );
-    // The string and char folds are also called from `main` to OBSERVE the
-    // `SStr` and `SChar` atoms (#27/#128/#333).
+    // The string, char, and float folds are also called from `main` to OBSERVE
+    // the `SStr`, `SChar`, and `SFloat` atoms (#27/#128/#333/#665).
     assert!(
         asm.contains("call _tl_count_strs"),
         "tl_reader assembly shows no main -> count-strs call (SStr fold):\n{}",
@@ -188,12 +192,17 @@ fn tl_reader_tl_compiles_to_assembly() {
         asm,
     );
     assert!(
+        asm.contains("call _tl_count_floats"),
+        "tl_reader assembly shows no main -> count-floats call (SFloat fold):\n{}",
+        asm,
+    );
+    assert!(
         asm.contains("call _tl_sum_char_codes"),
         "tl_reader assembly shows no main -> sum-char-codes call (char value check):\n{}",
         asm,
     );
 
-    // The reader consumes the lexer's `TStr` / `TChar` tokens into distinct
+    // The reader consumes the lexer's `TStr` / `TChar` / `TFloat` tokens into distinct
     // atoms via imported payload accessors, exactly as `token-int` / `token-sym`
     // drive the SInt / SSym reads.
     assert!(
@@ -204,6 +213,11 @@ fn tl_reader_tl_compiles_to_assembly() {
     assert!(
         asm.contains("call _tl_token_char"),
         "tl_reader assembly shows no token-char projection call (TChar -> SChar read):\n{}",
+        asm,
+    );
+    assert!(
+        asm.contains("call _tl_token_float"),
+        "tl_reader assembly shows no token-float projection call (TFloat -> SFloat read):\n{}",
         asm,
     );
 

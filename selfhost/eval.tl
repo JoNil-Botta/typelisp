@@ -562,6 +562,10 @@
       (begin
         (panic "eval: expected a cons cell (car of an atom)")
         SNil)]
+    [(SFloat _)
+      (begin
+        (panic "eval: expected a cons cell (car of an atom)")
+        SNil)]
     [(SChar _)
       (begin
         (panic "eval: expected a cons cell (car of an atom)")
@@ -588,6 +592,10 @@
       (begin
         (panic "eval: expected a cons cell (cdr of an atom)")
         SNil)]
+    [(SFloat _)
+      (begin
+        (panic "eval: expected a cons cell (cdr of an atom)")
+        SNil)]
     [(SChar _)
       (begin
         (panic "eval: expected a cons cell (cdr of an atom)")
@@ -610,6 +618,7 @@
     [(SInt _) (panic "eval: too many arguments")]
     [(SSym _) (panic "eval: too many arguments")]
     [(SStr _) (panic "eval: too many arguments")]
+    [(SFloat _) (panic "eval: too many arguments")]
     [(SChar _) (panic "eval: too many arguments")]
     [(SCons _ _) (panic "eval: too many arguments")]))
 
@@ -694,6 +703,10 @@
         (panic "eval: malformed let binding list")
         acc)]
     [(SStr _)
+      (begin
+        (panic "eval: malformed let binding list")
+        acc)]
+    [(SFloat _)
       (begin
         (panic "eval: malformed let binding list")
         acc)]
@@ -810,6 +823,10 @@
       (begin
         (panic "eval: malformed begin body")
         (VInt 0))]
+    [(SFloat _)
+      (begin
+        (panic "eval: malformed begin body")
+        (VInt 0))]
     [(SChar _)
       (begin
         (panic "eval: malformed begin body")
@@ -875,6 +892,10 @@
         (panic "eval: malformed list elements")
         (VInt 0))]
     [(SStr _)
+      (begin
+        (panic "eval: malformed list elements")
+        (VInt 0))]
+    [(SFloat _)
       (begin
         (panic "eval: malformed list elements")
         (VInt 0))]
@@ -1140,6 +1161,10 @@
     ;; `(VStr s)` - a first-class string VALUE that can be bound, returned, passed,
     ;; printed, and consumed by the string-operation dispatch arms below.
     [(SStr s) (VStr s)]
+    [(SFloat _)
+      (begin
+        (panic "eval: float literal not supported yet")
+        (VInt 0))]
     [(SChar _)
       (begin
         (panic "eval: char literal not supported yet")
@@ -1710,6 +1735,10 @@
           (begin
             (panic "eval: malformed argument list")
             base)]
+        [(SFloat _)
+          (begin
+            (panic "eval: malformed argument list")
+            base)]
         [(SChar _)
           (begin
             (panic "eval: malformed argument list")
@@ -2161,6 +2190,7 @@
     [(SInt n) (OkValue (VInt n))]
     [(SSym name) (lookup-result env name)]
     [(SStr s) (OkValue (VStr s))]
+    [(SFloat _) (ErrValue "eval: float literal not supported yet")]
     [(SChar _) (ErrValue "eval: char literal not supported yet")]
     [(SNil) (ErrValue "eval: cannot evaluate the empty list")]
     [(SCons (SSym name) rest) (eval-symbol-call-result name rest env fenv)]

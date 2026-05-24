@@ -901,6 +901,7 @@
 (define (parse-ast-pattern [dispatch : SymI64Env] [s : Sexpr]) : ResultAstPattern
   (match s
     [(SInt n) (OkAstPattern (AstPatLiteral (AstLitInt n)))]
+    [(SFloat text) (OkAstPattern (AstPatLiteral (AstLitFloat text)))]
     [(SStr text) (OkAstPattern (AstPatLiteral (AstLitString text)))]
     [(SChar c) (OkAstPattern (AstPatLiteral (AstLitChar c)))]
     [(SSym name)
@@ -1366,6 +1367,8 @@
   (match s
     [(SpSInt n _)
       (OkAstExpr (ast-expr-wrap-span (AstExprLiteral (AstLitInt n)) s))]
+    [(SpSFloat text _)
+      (OkAstExpr (ast-expr-wrap-span (AstExprLiteral (AstLitFloat text)) s))]
     [(SpSStr text _)
       (OkAstExpr (ast-expr-wrap-span (AstExprLiteral (AstLitString text)) s))]
     [(SpSChar c _)
@@ -1659,6 +1662,19 @@
                 [(ErrSpannedSexpr _) false])))]
         [(ErrSpannedTokens _) false]))))
 
+(define (compiler-parse-float-literal-ok?) : bool
+  (match (parse-ast-source "(define (main) : f64 1.5)")
+    [(OkAstProgram (AstProgram decls))
+      (match decls
+        [(AstDeclCons (AstDeclDefFn name _ (AstTyF64) body) _)
+          (and
+            (string-eq name "main")
+            (match (ast-expr-unspan body)
+              [(AstExprLiteral (AstLitFloat text)) (string-eq text "1.5")]
+              [_ false]))]
+        [_ false])]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-parse-smoke-source) : String
   "(import \"stdlib/test.tl\")
 (defstruct Point (x i64) (y i64))
@@ -1745,7 +1761,9 @@
         (= (compiler-parse-smoke-score program) 36)
         (and
           (compiler-parse-nested-expr-span-ok?)
-          (compiler-parse-error-span-ok?)))
+          (and
+            (compiler-parse-error-span-ok?)
+            (compiler-parse-float-literal-ok?))))
         (if (compiler-parse-error-tests-ok?)
           42
           (begin

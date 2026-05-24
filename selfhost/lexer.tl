@@ -30,7 +30,7 @@
 
 ;; does; it slices each maximal symbol/int run out of the source. The token kinds
 
-;; collapse to: `(` `)` integer symbol end (see the imported `token.tl`).
+;; collapse to: `(` `)` integer float symbol end (see the imported `token.tl`).
 
 ;;
 
@@ -38,7 +38,7 @@
 
 ;; whitespace skip, single-char paren tokens, a digit run sliced into a
 
-;; `(TInt (string->int ...))`, and a symbol run sliced into a `(TSym ...)` with
+;; `(TInt (string->int ...))` or text-carried `(TFloat ...)`, and a symbol run sliced into a `(TSym ...)` with
 
 ;; `substring`, string literals, char literals, and line comments. The reusable
 
@@ -134,6 +134,24 @@
               (set! i (+ i 1))))))
       chars)))
 
+;; Count the TFloat tokens in `toks` up to the TEnd sentinel. Float payloads are
+
+;; kept as source text so later selfhost stages do not need string->f64.
+
+(define (count-floats [toks : (Array Token)]) : i64
+  (let ([i : i64 0] [floats : i64 0] [keep : bool true])
+    (begin
+      (while keep
+        (let ([t : i64 (token-tag (array-ref toks i))])
+          (if (= t (tag-end))
+            (set! keep false)
+            (begin
+              (if (= t (tag-float))
+                (set! floats (+ floats 1))
+                (set! floats floats))
+              (set! i (+ i 1))))))
+      floats)))
+
 ;; Sum character code points in TChar tokens so the demo observes decoded
 
 ;; single, escaped, and named character values, not just token tags.
@@ -184,39 +202,41 @@
 
 ;; Lex a real TypeLisp s-expression sample exercising string-literal,
 
-;; char-literal, and line-comment scanners, and return an observable count. The
+;; float-literal, char-literal, and line-comment scanners, and return an observable count. The
 
 ;; source is
 
-;;   (foo "hi" #x' #\n' #\space' #\newline' 42) ; c
+;;   (foo "hi" #x' #\n' #\space' #\newline' 42 1.5) ; c
 
 ;;   (bar)
 
-;; built from an escaped string literal. It tokenizes into 12 tokens: the prior
+;; built from an escaped string literal. It tokenizes into 13 tokens: the prior
 
-;; string/comment witness plus four TChar literals. The decoded char code sum is
+;; string/comment witness plus four TChar literals plus one TFloat literal. The decoded char code sum is
 
 ;; 172 (`x` 120 + newline 10 + space 32 + named newline 10). `main` also checks
 
 ;; the recoverable lexer entrypoint returns a String error for malformed input.
 
-;; It returns total tokens (12) + TStr count (1) + TChar count (4) when those
+;; It returns total tokens (13) + TStr count (1) + TChar count (4) + TFloat count (1) when those
 
-;; checks pass, for an observable exit code of 17.
+;; checks pass, for an observable exit code of 19.
 
 (define (main) : i64
   (let ([toks
       :
       (Array Token)
-      (lex "(foo \"hi\" #x' #\\n' #\\space' #\\newline' 42) ; c\n(bar)")])
+      (lex "(foo \"hi\" #x' #\\n' #\\space' #\\newline' 42 1.5) ; c\n(bar)")])
     (+
       (count-tokens toks)
       (+
         (count-strs toks)
-        (if (and
-          (= (sum-char-codes toks) 172)
-          (and
-            (lexer-recoverable-error-ok?)
-            (and (lexer-token-spans-ok?) (lexer-spanned-error-ok?))))
-          (count-chars toks)
-          0)))))
+        (+
+          (count-floats toks)
+          (if (and
+            (= (sum-char-codes toks) 172)
+            (and
+              (lexer-recoverable-error-ok?)
+              (and (lexer-token-spans-ok?) (lexer-spanned-error-ok?))))
+            (count-chars toks)
+            0))))))

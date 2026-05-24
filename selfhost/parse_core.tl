@@ -300,6 +300,7 @@
     [(SInt n) (OkExpr (EInt n))]
     [(SSym name) (OkExpr (EVar name))]
     [(SStr s) (OkExpr (EStr s))]
+    [(SFloat _) (ErrExpr "parse: unsupported float literal")]
     [(SChar _) (ErrExpr "parse: unsupported char literal")]
     [(SCons (SSym op) rest)
       (let ([tag : i64 (parse-dispatch-tag dispatch op)])

@@ -39,7 +39,7 @@
   (IrValueVar i64)
   (IrValueGlobal String)
   (IrValueI64 i64)
-  (IrValueF64 f64)
+  (IrValueF64 String)
   (IrValueBool bool)
   (IrValueChar char)
   (IrValueString String)

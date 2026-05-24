@@ -446,6 +446,11 @@ pub struct X86_64Backend {
     /// target — the IR carries bare block labels (e.g. `then.0`) which must be
     /// qualified with the function symbol to resolve.
     current_fn: String,
+    /// Bare IR entry label of the function currently being generated. Self-tail
+    /// calls jump here after rewriting parameter slots, bypassing the prologue.
+    current_entry_label: String,
+    /// Ordered parameters for the function currently being generated.
+    current_params: Vec<(VarId, Type)>,
     /// String-literal bytes interned into `.rodata`, mapped to their emitted
     /// label. A `Value::ConstStr` materializes as the address of its label.
     /// Built in a pre-pass over the program so the bytes are emitted once and
@@ -692,6 +697,14 @@ fn validate_function(
                             .map_err(|w| unsupported_value(&func.name, &w))?;
                     }
                 }
+                Instruction::TailCall {
+                    func: target,
+                    args,
+                    ty,
+                } => {
+                    validate_tail_call(func, target, args, ty, &var_types, global_types)
+                        .map_err(|w| unsupported_function_message(&func.name, &w))?;
+                }
                 Instruction::Return(Some(v)) => {
                     if func.ret == Type::Unit {
                         validate_unit_value(v, &var_types, global_types)
@@ -900,6 +913,75 @@ fn validate_function(
                         return unsupported(&what);
                     }
                 }
+                Instruction::PredicatedStore {
+                    base,
+                    index,
+                    value,
+                    mask,
+                    lanes,
+                    elem_ty,
+                } => {
+                    if mode != BackendMode::Avx512 {
+                        return unsupported(
+                            "predicated vector memory IR requires the AVX-512 backend target",
+                        );
+                    }
+                    if let Err(what) = validate_predicated_store(
+                        base,
+                        index,
+                        value,
+                        mask,
+                        *lanes,
+                        elem_ty,
+                        mode,
+                        &var_types,
+                        global_types,
+                    ) {
+                        return unsupported(&what);
+                    }
+                }
+                Instruction::PredicatedLoad {
+                    dst,
+                    base,
+                    index,
+                    mask,
+                    lanes,
+                    elem_ty,
+                } => {
+                    if mode != BackendMode::Avx512 {
+                        return unsupported(
+                            "predicated vector memory IR requires the AVX-512 backend target",
+                        );
+                    }
+                    if let Err(what) = validate_predicated_load(
+                        *dst,
+                        base,
+                        index,
+                        mask,
+                        *lanes,
+                        elem_ty,
+                        mode,
+                        &var_types,
+                        global_types,
+                    ) {
+                        return unsupported(&what);
+                    }
+                }
+                Instruction::TailMask {
+                    dst,
+                    index,
+                    len,
+                    lanes,
+                } => {
+                    if mode != BackendMode::Avx512 {
+                        return unsupported("tail-mask IR requires the AVX-512 backend target");
+                    }
+                    if let Err(what) =
+                        validate_tail_mask(*dst, index, len, *lanes, &var_types, global_types)
+                    {
+                        return unsupported(&what);
+                    }
+                }
                 Instruction::LaneId { .. }
                 | Instruction::Splat { .. }
                 | Instruction::VectorCompare { .. }
@@ -907,9 +989,7 @@ fn validate_function(
                 | Instruction::MaskBinOp { .. }
                 | Instruction::MaskNot { .. }
                 | Instruction::MaskReduce { .. }
-                | Instruction::Select { .. }
-                | Instruction::PredicatedStore { .. }
-                | Instruction::TailMask { .. } => {
+                | Instruction::Select { .. } => {
                     if mode == BackendMode::Avx2 || mode == BackendMode::Avx512 {
                         return unsupported("unsupported vector/mask IR for this backend mode");
                     }
@@ -919,6 +999,83 @@ fn validate_function(
         }
     }
     Ok(())
+}
+
+fn validate_tail_call(
+    current: &Function,
+    target: &str,
+    args: &[Value],
+    ty: &Type,
+    var_types: &HashMap<VarId, Type>,
+    global_types: &HashMap<String, Type>,
+) -> Result<(), String> {
+    if target != current.name {
+        return Err(format!(
+            "tail call target '{}' is not the current function '{}'",
+            target, current.name
+        ));
+    }
+    if ty != &current.ret {
+        return Err(format!(
+            "tail call result type {} does not match return type {}",
+            ty, current.ret
+        ));
+    }
+    if args.len() != current.params.len() {
+        return Err(format!(
+            "tail call to '{}' has {} args but function has {} params",
+            target,
+            args.len(),
+            current.params.len()
+        ));
+    }
+
+    for ((param_var, param_ty), arg) in current.params.iter().zip(args.iter()) {
+        if *param_ty == Type::Unit {
+            validate_unit_value(arg, var_types, global_types).map_err(|err| {
+                format!(
+                    "tail call argument for unit parameter %{}: {}",
+                    param_var, err
+                )
+            })?;
+            continue;
+        }
+
+        check_operand(arg, global_types)
+            .map_err(|err| format!("tail call argument for parameter %{}: {}", param_var, err))?;
+        if !tail_call_arg_matches_param(arg, param_ty, var_types, global_types) {
+            let actual = validate_value_type(arg, var_types, global_types)
+                .map_or_else(|| "unknown".to_string(), |ty| ty.to_string());
+            return Err(format!(
+                "tail call argument for parameter %{} has type {}, expected {}",
+                param_var, actual, param_ty
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn tail_call_arg_matches_param(
+    arg: &Value,
+    param_ty: &Type,
+    var_types: &HashMap<VarId, Type>,
+    global_types: &HashMap<String, Type>,
+) -> bool {
+    match (
+        arg,
+        param_ty,
+        validate_value_type(arg, var_types, global_types),
+    ) {
+        (_, expected, Some(actual)) if &actual == expected => true,
+        (Value::Function(_), Type::Func(_, _), _) => true,
+        (Value::ConstI64(_) | Value::ConstI32(_) | Value::ConstI8(_), ty, _)
+            if ty.is_integer() || matches!(ty, Type::Char) =>
+        {
+            true
+        }
+        _ => false,
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1016,6 +1173,138 @@ fn validate_vector_store(
     check_operand(base, global_types)?;
     check_operand(index, global_types)?;
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_predicated_store(
+    base: &Value,
+    index: &Value,
+    value: &Value,
+    mask: &Value,
+    lanes: usize,
+    elem_ty: &Type,
+    mode: BackendMode,
+    var_types: &HashMap<VarId, Type>,
+    global_types: &HashMap<String, Type>,
+) -> Result<(), String> {
+    validate_vector_shape(elem_ty, lanes, mode)?;
+    validate_dyn_array_base(
+        base,
+        elem_ty,
+        var_types,
+        global_types,
+        "predicated store base",
+    )?;
+    validate_integer_index(index, var_types, global_types, "predicated store index")?;
+    validate_vector_value(
+        value,
+        elem_ty,
+        lanes,
+        var_types,
+        global_types,
+        "predicated store value",
+    )?;
+    validate_mask_value(
+        mask,
+        lanes,
+        var_types,
+        global_types,
+        "predicated store mask",
+    )?;
+    check_operand(base, global_types)?;
+    check_operand(index, global_types)?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_predicated_load(
+    dst: VarId,
+    base: &Value,
+    index: &Value,
+    mask: &Value,
+    lanes: usize,
+    elem_ty: &Type,
+    mode: BackendMode,
+    var_types: &HashMap<VarId, Type>,
+    global_types: &HashMap<String, Type>,
+) -> Result<(), String> {
+    validate_vector_shape(elem_ty, lanes, mode)?;
+    validate_vector_var(
+        dst,
+        elem_ty,
+        lanes,
+        var_types,
+        "predicated load destination",
+    )?;
+    validate_dyn_array_base(
+        base,
+        elem_ty,
+        var_types,
+        global_types,
+        "predicated load base",
+    )?;
+    validate_integer_index(index, var_types, global_types, "predicated load index")?;
+    validate_mask_value(mask, lanes, var_types, global_types, "predicated load mask")?;
+    check_operand(base, global_types)?;
+    check_operand(index, global_types)?;
+    Ok(())
+}
+
+fn validate_tail_mask(
+    dst: VarId,
+    index: &Value,
+    len: &Value,
+    lanes: usize,
+    var_types: &HashMap<VarId, Type>,
+    global_types: &HashMap<String, Type>,
+) -> Result<(), String> {
+    validate_mask_lanes(lanes)?;
+    validate_mask_var(dst, lanes, var_types, "tail mask destination")?;
+    validate_integer_index(index, var_types, global_types, "tail mask index")?;
+    validate_integer_index(len, var_types, global_types, "tail mask length")?;
+    check_operand(index, global_types)?;
+    check_operand(len, global_types)?;
+    Ok(())
+}
+
+/// AVX-512 lane masks are valid for the supported vector shapes only.
+fn validate_mask_lanes(lanes: usize) -> Result<(), String> {
+    match lanes {
+        8 | 16 => Ok(()),
+        _ => Err(format!("unsupported AVX-512 mask lane count {}", lanes)),
+    }
+}
+
+fn validate_mask_var(
+    var: VarId,
+    lanes: usize,
+    var_types: &HashMap<VarId, Type>,
+    role: &str,
+) -> Result<(), String> {
+    let expected = Type::Mask(lanes);
+    match var_types.get(&var) {
+        Some(ty) if *ty == expected => Ok(()),
+        Some(ty) => Err(format!(
+            "{role} %{} has type {}, expected {}",
+            var, ty, expected
+        )),
+        None => Err(format!("{role} %{} has no recorded type", var)),
+    }
+}
+
+fn validate_mask_value(
+    value: &Value,
+    lanes: usize,
+    var_types: &HashMap<VarId, Type>,
+    global_types: &HashMap<String, Type>,
+    role: &str,
+) -> Result<(), String> {
+    let expected = Type::Mask(lanes);
+    match validate_value_type(value, var_types, global_types) {
+        Some(ty) if ty == expected => Ok(()),
+        Some(ty) => Err(format!("{role} has type {}, expected {}", ty, expected)),
+        None => Err(format!("{role} has unknown type")),
+    }
 }
 
 fn validate_vector_shape(elem_ty: &Type, lanes: usize, mode: BackendMode) -> Result<(), String> {
@@ -1206,6 +1495,9 @@ fn is_backend_local_type_for_mode(ty: &Type, mode: BackendMode) -> bool {
     if mode == BackendMode::Avx512 && is_avx512_vector_local_type(ty) {
         return true;
     }
+    if mode == BackendMode::Avx512 && is_avx512_mask_local_type(ty) {
+        return true;
+    }
     *ty == Type::Unit || is_sized_backend_type(ty)
 }
 
@@ -1231,6 +1523,13 @@ fn is_avx512_vector_local_type(ty: &Type) -> bool {
         }
         _ => false,
     }
+}
+
+/// Lane masks live in their own stack slot as a small integer bitmask that is
+/// loaded into a `k` register on demand. The lane counts mirror the supported
+/// AVX-512 vector shapes (8 x 64-bit, 16 x 32-bit).
+fn is_avx512_mask_local_type(ty: &Type) -> bool {
+    matches!(ty, Type::Mask(8) | Type::Mask(16))
 }
 
 fn is_sized_backend_type(ty: &Type) -> bool {
@@ -1531,6 +1830,8 @@ impl X86_64Backend {
             return_ty: Type::Unit,
             param_vars: HashSet::new(),
             current_fn: String::new(),
+            current_entry_label: String::new(),
+            current_params: Vec::new(),
             interned_strings: HashMap::new(),
         }
     }
@@ -2650,7 +2951,9 @@ impl X86_64Backend {
                     intern(s);
                 }
             }
-            Instruction::Call { args, .. } | Instruction::CallIndirect { args, .. } => {
+            Instruction::Call { args, .. }
+            | Instruction::CallIndirect { args, .. }
+            | Instruction::TailCall { args, .. } => {
                 for a in args {
                     if let Value::ConstStr(s) = a {
                         intern(s);
@@ -2728,7 +3031,7 @@ impl X86_64Backend {
                 Self::collect_function_value(dst, names);
                 Self::collect_function_value(src, names);
             }
-            Instruction::Call { args, .. } => {
+            Instruction::Call { args, .. } | Instruction::TailCall { args, .. } => {
                 for arg in args {
                     Self::collect_function_value(arg, names);
                 }
@@ -2777,6 +3080,13 @@ impl X86_64Backend {
                 Self::collect_function_value(base, names);
                 Self::collect_function_value(index, names);
                 Self::collect_function_value(value, names);
+                Self::collect_function_value(mask, names);
+            }
+            Instruction::PredicatedLoad {
+                base, index, mask, ..
+            } => {
+                Self::collect_function_value(base, names);
+                Self::collect_function_value(index, names);
                 Self::collect_function_value(mask, names);
             }
             Instruction::TailMask { index, len, .. } => {
@@ -2842,10 +3152,14 @@ impl X86_64Backend {
         let saved_return_ty = self.return_ty.clone();
         let saved_param_vars = std::mem::take(&mut self.param_vars);
         let saved_current_fn = std::mem::take(&mut self.current_fn);
+        let saved_current_entry_label = std::mem::take(&mut self.current_entry_label);
+        let saved_current_params = std::mem::take(&mut self.current_params);
 
         self.stack_size = 0;
         self.return_ty = ret_ty.clone();
         self.current_fn = Self::closure_entry_label(name);
+        self.current_entry_label.clear();
+        self.current_params.clear();
         self.emit(&format!("{}:", self.current_fn));
         self.emit("    push %rbp");
         self.emit("    mov %rsp, %rbp");
@@ -2890,6 +3204,8 @@ impl X86_64Backend {
         self.return_ty = saved_return_ty;
         self.param_vars = saved_param_vars;
         self.current_fn = saved_current_fn;
+        self.current_entry_label = saved_current_entry_label;
+        self.current_params = saved_current_params;
     }
 
     fn store_closure_entry_user_args(&mut self, arg_tys: &[Type]) {
@@ -4549,6 +4865,8 @@ impl X86_64Backend {
         self.address_vars.clear();
         self.return_ty = func.ret.clone();
         self.param_vars = func.params.iter().map(|(v, _)| *v).collect();
+        self.current_entry_label = func.entry.clone();
+        self.current_params = func.params.clone();
 
         // Allocate space for parameters (so their Alloc no-ops have a slot) and
         // locals.
@@ -4970,6 +5288,9 @@ impl X86_64Backend {
                 self.release_call_args(stack_arg_space);
                 self.store_call_result(dst, ty);
             }
+            Instruction::TailCall { func: _, args, .. } => {
+                self.generate_tail_call(args);
+            }
             Instruction::Branch {
                 cond,
                 true_label,
@@ -5154,6 +5475,34 @@ impl X86_64Backend {
             } if self.target.mode == BackendMode::Avx512 => {
                 self.generate_avx512_vector_store(base, index, value, *lanes, elem_ty);
             }
+            Instruction::TailMask {
+                dst,
+                index,
+                len,
+                lanes,
+            } if self.target.mode == BackendMode::Avx512 => {
+                self.generate_avx512_tail_mask(*dst, index, len, *lanes);
+            }
+            Instruction::PredicatedLoad {
+                dst,
+                base,
+                index,
+                mask,
+                lanes,
+                elem_ty,
+            } if self.target.mode == BackendMode::Avx512 => {
+                self.generate_avx512_predicated_load(*dst, base, index, mask, *lanes, elem_ty);
+            }
+            Instruction::PredicatedStore {
+                base,
+                index,
+                value,
+                mask,
+                lanes,
+                elem_ty,
+            } if self.target.mode == BackendMode::Avx512 => {
+                self.generate_avx512_predicated_store(base, index, value, mask, *lanes, elem_ty);
+            }
             Instruction::LaneId { .. }
             | Instruction::Splat { .. }
             | Instruction::VectorBinOp { .. }
@@ -5166,6 +5515,7 @@ impl X86_64Backend {
             | Instruction::VectorLoad { .. }
             | Instruction::VectorStore { .. }
             | Instruction::PredicatedStore { .. }
+            | Instruction::PredicatedLoad { .. }
             | Instruction::TailMask { .. } => {
                 self.emit("    # vector/mask IR rejected by backend validation");
             }
@@ -5303,6 +5653,97 @@ impl X86_64Backend {
         let addr = Self::indexed_addr("%rax", "%rcx", elem_ty);
         let move_mnemonic = Self::vector_move_mnemonic(elem_ty);
         self.emit(&format!("    {} %zmm0, {}", move_mnemonic, addr));
+    }
+
+    /// Build the contiguous tail mask `index + lane < len` as a small integer
+    /// bitmask in the destination mask slot: `active = clamp(len - index, 0,
+    /// lanes)` and `bitmask = (1 << active) - 1`. The bitmask is loaded into a
+    /// `k` register on demand by predicated loads/stores.
+    fn generate_avx512_tail_mask(&mut self, dst: VarId, index: &Value, len: &Value, lanes: usize) {
+        let index_ty = self.value_type(index).unwrap_or(Type::I64);
+        let len_ty = self.value_type(len).unwrap_or(Type::I64);
+        self.load_value(index, "%rax", &index_ty);
+        self.load_value(len, "%rcx", &len_ty);
+        self.emit("    subq %rax, %rcx");
+        self.emit(&format!("    movq ${}, %rax", lanes));
+        self.emit("    cmpq %rax, %rcx");
+        self.emit("    cmovgq %rax, %rcx");
+        self.emit("    xorq %rax, %rax");
+        self.emit("    cmpq %rax, %rcx");
+        self.emit("    cmovlq %rax, %rcx");
+        self.emit("    movq $1, %rdx");
+        self.emit("    shlq %cl, %rdx");
+        self.emit("    decq %rdx");
+        let dst_offset = self.var_offsets[&dst];
+        self.emit(&format!("    movw %dx, {}(%rbp)", dst_offset));
+    }
+
+    fn generate_avx512_predicated_load(
+        &mut self,
+        dst: VarId,
+        base: &Value,
+        index: &Value,
+        mask: &Value,
+        _lanes: usize,
+        elem_ty: &Type,
+    ) {
+        self.load_mask_into_k1(mask);
+        self.load_dyn_array_data_ptr(base, "%rax");
+        self.load_vector_index(index, "%rcx");
+        let addr = Self::indexed_addr("%rax", "%rcx", elem_ty);
+        let move_mnemonic = Self::masked_vector_move_mnemonic(elem_ty);
+        // Zero-masking: inactive lanes read as zero, so the full-width store of
+        // the destination register below is well defined.
+        self.emit(&format!(
+            "    {} {}, %zmm0{{%k1}}{{z}}",
+            move_mnemonic, addr
+        ));
+        let dst_offset = self.var_offsets[&dst];
+        self.store_vector_reg("%zmm0", dst_offset, elem_ty);
+    }
+
+    fn generate_avx512_predicated_store(
+        &mut self,
+        base: &Value,
+        index: &Value,
+        value: &Value,
+        mask: &Value,
+        _lanes: usize,
+        elem_ty: &Type,
+    ) {
+        self.load_mask_into_k1(mask);
+        self.load_vector_value(value, "%zmm0", elem_ty);
+        self.load_dyn_array_data_ptr(base, "%rax");
+        self.load_vector_index(index, "%rcx");
+        let addr = Self::indexed_addr("%rax", "%rcx", elem_ty);
+        let move_mnemonic = Self::masked_vector_move_mnemonic(elem_ty);
+        // Merge-masking: only active lanes are written to memory.
+        self.emit(&format!("    {} %zmm0, {}{{%k1}}", move_mnemonic, addr));
+    }
+
+    /// Load a lane mask from its stack slot into `%k1`. Masks are stored as a
+    /// 16-bit integer bitmask (one bit per lane), covering the 8- and 16-lane
+    /// AVX-512 shapes. `k0` is intentionally avoided because AVX-512 treats it
+    /// as the implicit all-ones / no-mask register.
+    fn load_mask_into_k1(&mut self, mask: &Value) {
+        let Value::Var(var) = mask else {
+            self.emit("    # unsupported mask value rejected by backend validation");
+            return;
+        };
+        let offset = self.var_offsets[var];
+        self.emit(&format!("    movzwl {}(%rbp), %eax", offset));
+        self.emit("    kmovw %eax, %k1");
+    }
+
+    /// EVEX masked move mnemonic for predicated loads/stores. Unlike the
+    /// unmasked `vmovdqu`/`vmovupd` forms, these size-tagged encodings accept a
+    /// `k` mask register.
+    fn masked_vector_move_mnemonic(elem_ty: &Type) -> &'static str {
+        match elem_ty {
+            Type::F64 => "vmovupd",
+            _ if elem_ty.size() == 4 => "vmovdqu32",
+            _ => "vmovdqu64",
+        }
     }
 
     fn load_dyn_array_data_ptr(&mut self, base: &Value, reg: &str) {
@@ -5569,6 +6010,42 @@ impl X86_64Backend {
                 self.store_gpr_value(calling_convention.return_gpr, dst_offset, ty);
             }
         }
+    }
+
+    fn generate_tail_call(&mut self, args: &[Value]) {
+        let params = self.current_params.clone();
+        let mut staged = Vec::new();
+
+        for ((param_var, param_ty), arg) in params.iter().zip(args.iter()) {
+            if *param_ty == Type::Unit {
+                continue;
+            }
+
+            if *param_ty == Type::F64 {
+                self.load_value(arg, "%xmm15", param_ty);
+                self.emit("    sub $8, %rsp");
+                self.emit("    movsd %xmm15, (%rsp)");
+            } else {
+                self.load_value(arg, "%r11", param_ty);
+                self.emit("    push %r11");
+            }
+            staged.push((*param_var, param_ty.clone()));
+        }
+
+        for (param_var, param_ty) in staged.iter().rev() {
+            let offset = self.var_offsets[param_var];
+            if *param_ty == Type::F64 {
+                self.emit("    movsd (%rsp), %xmm15");
+                self.emit("    add $8, %rsp");
+                self.store_xmm_value("%xmm15", offset);
+            } else {
+                self.emit("    pop %r11");
+                self.store_gpr_value("%r11", offset, param_ty);
+            }
+        }
+
+        let entry_label = self.current_entry_label.clone();
+        self.emit(&format!("    jmp {}", self.block_label(&entry_label)));
     }
 
     fn is_pointer_deref_var(&self, var: VarId, access_ty: &Type) -> bool {
@@ -6205,6 +6682,8 @@ mod tests {
     use crate::optimizer::Optimizer;
     use crate::parser::parse;
     use std::collections::BTreeSet;
+    #[cfg(target_os = "linux")]
+    use std::process::Command;
 
     /// Compile source through the full pipeline (parse -> lower -> optimize ->
     /// codegen), returning generated assembly text.
@@ -6711,6 +7190,247 @@ mod tests {
             "expected %zmm registers; asm:\n{}",
             asm
         );
+    }
+
+    #[test]
+    fn test_avx512_tail_mask_and_predicated_memory_emit_kmask_i64() {
+        // Hand-built IR: build a tail mask, masked-load a tail, and masked-store
+        // it back, exercising k-mask emission without a foreach lowerer.
+        let func = Function {
+            name: "masked_kernel".into(),
+            params: vec![
+                (0, Type::DynArray(Box::new(Type::I64))),
+                (1, Type::DynArray(Box::new(Type::I64))),
+                (2, Type::I64),
+                (3, Type::I64),
+            ],
+            ret: Type::Unit,
+            locals: vec![
+                (4, Type::Mask(8)),
+                (5, Type::Vector(Box::new(Type::I64), 8)),
+            ],
+            blocks: vec![BasicBlock {
+                label: "entry".into(),
+                instructions: vec![
+                    Instruction::TailMask {
+                        dst: 4,
+                        index: Value::Var(3),
+                        len: Value::Var(2),
+                        lanes: 8,
+                    },
+                    Instruction::PredicatedLoad {
+                        dst: 5,
+                        base: Value::Var(0),
+                        index: Value::Var(3),
+                        mask: Value::Var(4),
+                        lanes: 8,
+                        elem_ty: Type::I64,
+                    },
+                    Instruction::PredicatedStore {
+                        base: Value::Var(1),
+                        index: Value::Var(3),
+                        value: Value::Var(5),
+                        mask: Value::Var(4),
+                        lanes: 8,
+                        elem_ty: Type::I64,
+                    },
+                    Instruction::Return(None),
+                ],
+            }],
+            entry: "entry".into(),
+        };
+
+        let program = Program {
+            functions: vec![func],
+            globals: vec![],
+            externs: vec![],
+        };
+
+        let asm = generate_assembly_for_target(
+            &program,
+            BackendTarget::default().with_mode(BackendMode::Avx512),
+        )
+        .expect("AVX-512 backend should accept tail-mask and predicated memory IR");
+
+        // Tail-mask lowering: clamp(len - index, 0, lanes) -> (1 << active) - 1.
+        assert!(asm.contains("cmovgq"), "expected high clamp; asm:\n{}", asm);
+        assert!(asm.contains("cmovlq"), "expected low clamp; asm:\n{}", asm);
+        assert!(
+            asm.contains("shlq %cl, %rdx"),
+            "expected bitmask shift; asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("decq %rdx"),
+            "expected bitmask -1; asm:\n{}",
+            asm
+        );
+        // k-mask register usage (k1, never the implicit no-mask register k0).
+        assert!(
+            asm.contains("kmovw %eax, %k1"),
+            "expected kmovw into k1; asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("%k0"),
+            "k0 must not be used as an active mask; asm:\n{}",
+            asm
+        );
+        // EVEX masked load (zero-masking) and masked store (merge-masking).
+        assert!(
+            asm.contains("vmovdqu64 (%rax,%rcx,8), %zmm0{%k1}{z}"),
+            "expected zero-masked load; asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("vmovdqu64 %zmm0, (%rax,%rcx,8){%k1}"),
+            "expected merge-masked store; asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_avx512_predicated_memory_i32_and_f64_shapes() {
+        let func = Function {
+            name: "masked_shapes".into(),
+            params: vec![
+                (0, Type::DynArray(Box::new(Type::I32))),
+                (1, Type::DynArray(Box::new(Type::F64))),
+                (2, Type::I64),
+                (3, Type::I64),
+            ],
+            ret: Type::Unit,
+            locals: vec![
+                (4, Type::Mask(16)),
+                (5, Type::Vector(Box::new(Type::I32), 16)),
+                (6, Type::Mask(8)),
+                (7, Type::Vector(Box::new(Type::F64), 8)),
+            ],
+            blocks: vec![BasicBlock {
+                label: "entry".into(),
+                instructions: vec![
+                    Instruction::TailMask {
+                        dst: 4,
+                        index: Value::Var(3),
+                        len: Value::Var(2),
+                        lanes: 16,
+                    },
+                    Instruction::PredicatedLoad {
+                        dst: 5,
+                        base: Value::Var(0),
+                        index: Value::Var(3),
+                        mask: Value::Var(4),
+                        lanes: 16,
+                        elem_ty: Type::I32,
+                    },
+                    Instruction::PredicatedStore {
+                        base: Value::Var(0),
+                        index: Value::Var(3),
+                        value: Value::Var(5),
+                        mask: Value::Var(4),
+                        lanes: 16,
+                        elem_ty: Type::I32,
+                    },
+                    Instruction::TailMask {
+                        dst: 6,
+                        index: Value::Var(3),
+                        len: Value::Var(2),
+                        lanes: 8,
+                    },
+                    Instruction::PredicatedLoad {
+                        dst: 7,
+                        base: Value::Var(1),
+                        index: Value::Var(3),
+                        mask: Value::Var(6),
+                        lanes: 8,
+                        elem_ty: Type::F64,
+                    },
+                    Instruction::PredicatedStore {
+                        base: Value::Var(1),
+                        index: Value::Var(3),
+                        value: Value::Var(7),
+                        mask: Value::Var(6),
+                        lanes: 8,
+                        elem_ty: Type::F64,
+                    },
+                    Instruction::Return(None),
+                ],
+            }],
+            entry: "entry".into(),
+        };
+
+        let program = Program {
+            functions: vec![func],
+            globals: vec![],
+            externs: vec![],
+        };
+
+        let asm = generate_assembly_for_target(
+            &program,
+            BackendTarget::default().with_mode(BackendMode::Avx512),
+        )
+        .expect("AVX-512 backend should accept i32 and f64 predicated memory IR");
+
+        assert!(
+            asm.contains("vmovdqu32 (%rax,%rcx,4), %zmm0{%k1}{z}"),
+            "expected i32 masked load; asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("vmovdqu32 %zmm0, (%rax,%rcx,4){%k1}"),
+            "expected i32 masked store; asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("vmovupd (%rax,%rcx,8), %zmm0{%k1}{z}"),
+            "expected f64 masked load; asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("vmovupd %zmm0, (%rax,%rcx,8){%k1}"),
+            "expected f64 masked store; asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_avx2_rejects_tail_mask_and_predicated_memory() {
+        // The AVX2 backend has no k-mask registers; mask locals (and therefore
+        // tail-mask / predicated memory IR) must be rejected cleanly.
+        let program = Program {
+            functions: vec![Function {
+                name: "masked_kernel".into(),
+                params: vec![
+                    (0, Type::DynArray(Box::new(Type::I64))),
+                    (1, Type::I64),
+                    (2, Type::I64),
+                ],
+                ret: Type::Unit,
+                locals: vec![(3, Type::Mask(8))],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![
+                        Instruction::TailMask {
+                            dst: 3,
+                            index: Value::Var(2),
+                            len: Value::Var(1),
+                            lanes: 8,
+                        },
+                        Instruction::Return(None),
+                    ],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![],
+        };
+
+        let err = generate_assembly_for_target(
+            &program,
+            BackendTarget::default().with_mode(BackendMode::Avx2),
+        )
+        .expect_err("AVX2 backend should reject AVX-512 mask IR");
+        assert!(err.contains("(Mask 8)"), "unexpected error: {}", err);
     }
 
     #[test]
@@ -8629,6 +9349,43 @@ mod tests {
     }
 
     #[test]
+    fn test_liveness_tracks_tail_call_arguments_as_terminator_inputs() {
+        let func = Function {
+            name: "tail_liveness".into(),
+            params: vec![(0, Type::I64), (1, Type::I64)],
+            ret: Type::I64,
+            locals: vec![(2, Type::I64)],
+            blocks: vec![BasicBlock {
+                label: "entry".into(),
+                instructions: vec![
+                    Instruction::BinOp {
+                        dst: 2,
+                        op: BinOp::Add,
+                        lhs: Value::Var(0),
+                        rhs: Value::Var(1),
+                        ty: Type::I64,
+                    },
+                    Instruction::TailCall {
+                        func: "tail_liveness".into(),
+                        args: vec![Value::Var(2), Value::Var(1)],
+                        ty: Type::I64,
+                    },
+                ],
+            }],
+            entry: "entry".into(),
+        };
+
+        let analysis = liveness::analyze(&func);
+        let entry = analysis.block("entry").expect("entry block");
+        assert_var_set(&entry.uses, &[0, 1]);
+        assert_var_set(&entry.defs, &[2]);
+        assert_var_set(&entry.live_in, &[0, 1]);
+        assert_var_set(&entry.live_out, &[]);
+        assert_live_after(&analysis, "entry", 0, &[1, 2]);
+        assert_live_after(&analysis, "entry", 1, &[]);
+    }
+
+    #[test]
     fn test_liveness_marks_address_taken_vars() {
         let func = Function {
             name: "address_taken".into(),
@@ -8689,6 +9446,205 @@ mod tests {
             "asm:\n{}",
             asm
         );
+    }
+
+    fn self_tail_sum_program() -> Program {
+        Program {
+            functions: vec![
+                Function {
+                    name: "sum_down".into(),
+                    params: vec![(0, Type::I64), (1, Type::I64)],
+                    ret: Type::I64,
+                    locals: vec![(2, Type::Bool), (3, Type::I64), (4, Type::I64)],
+                    blocks: vec![
+                        BasicBlock {
+                            label: "entry".into(),
+                            instructions: vec![
+                                Instruction::BinOp {
+                                    dst: 2,
+                                    op: BinOp::Le,
+                                    lhs: Value::Var(0),
+                                    rhs: Value::ConstI64(0),
+                                    ty: Type::Bool,
+                                },
+                                Instruction::Branch {
+                                    cond: Value::Var(2),
+                                    true_label: "done".into(),
+                                    false_label: "recurse".into(),
+                                },
+                            ],
+                        },
+                        BasicBlock {
+                            label: "recurse".into(),
+                            instructions: vec![
+                                Instruction::BinOp {
+                                    dst: 3,
+                                    op: BinOp::Sub,
+                                    lhs: Value::Var(0),
+                                    rhs: Value::ConstI64(1),
+                                    ty: Type::I64,
+                                },
+                                Instruction::BinOp {
+                                    dst: 4,
+                                    op: BinOp::Add,
+                                    lhs: Value::Var(1),
+                                    rhs: Value::Var(0),
+                                    ty: Type::I64,
+                                },
+                                Instruction::TailCall {
+                                    func: "sum_down".into(),
+                                    args: vec![Value::Var(3), Value::Var(4)],
+                                    ty: Type::I64,
+                                },
+                            ],
+                        },
+                        BasicBlock {
+                            label: "done".into(),
+                            instructions: vec![Instruction::Return(Some(Value::Var(1)))],
+                        },
+                    ],
+                    entry: "entry".into(),
+                },
+                Function {
+                    name: "main".into(),
+                    params: vec![],
+                    ret: Type::I64,
+                    locals: vec![(10, Type::I64)],
+                    blocks: vec![BasicBlock {
+                        label: "entry".into(),
+                        instructions: vec![
+                            Instruction::Call {
+                                dst: Some(10),
+                                func: "sum_down".into(),
+                                args: vec![Value::ConstI64(5), Value::ConstI64(0)],
+                                ty: Type::I64,
+                            },
+                            Instruction::Return(Some(Value::Var(10))),
+                        ],
+                    }],
+                    entry: "entry".into(),
+                },
+            ],
+            globals: vec![],
+            externs: vec![],
+        }
+    }
+
+    #[test]
+    fn test_backend_self_tail_call_rewrites_params_and_jumps_to_entry() {
+        let asm = generate_assembly(&self_tail_sum_program())
+            .expect("self tail-call program should compile");
+
+        assert!(
+            asm.contains("    jmp _tl_sum_down.entry"),
+            "tail call should jump to the entry block:\n{}",
+            asm
+        );
+        assert_eq!(
+            asm.matches("    call _tl_sum_down").count(),
+            1,
+            "only main should call sum_down; self tail recursion must be a jump:\n{}",
+            asm
+        );
+        assert!(asm.contains("    push %r11"), "asm:\n{}", asm);
+        assert!(asm.contains("    pop %r11"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
+    fn test_backend_rejects_non_self_tail_call() {
+        let err = generate_assembly(&Program {
+            functions: vec![Function {
+                name: "f".into(),
+                params: vec![(0, Type::I64)],
+                ret: Type::I64,
+                locals: vec![],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![Instruction::TailCall {
+                        func: "g".into(),
+                        args: vec![Value::Var(0)],
+                        ty: Type::I64,
+                    }],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![],
+        })
+        .expect_err("non-self tail calls should be rejected");
+
+        assert!(
+            err.contains("tail call target 'g' is not the current function 'f'"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_backend_rejects_tail_call_arity_mismatch() {
+        let err = generate_assembly(&Program {
+            functions: vec![Function {
+                name: "f".into(),
+                params: vec![(0, Type::I64), (1, Type::I64)],
+                ret: Type::I64,
+                locals: vec![],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![Instruction::TailCall {
+                        func: "f".into(),
+                        args: vec![Value::Var(0)],
+                        ty: Type::I64,
+                    }],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![],
+        })
+        .expect_err("tail call arity mismatch should be rejected");
+
+        assert!(
+            err.contains("tail call to 'f' has 1 args but function has 2 params"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_self_tail_call_hand_built_ir_assembles_links_and_runs() {
+        let asm = generate_assembly(&self_tail_sum_program())
+            .expect("self tail-call program should compile");
+        let root = std::env::temp_dir().join(format!("typelisp-tail-call-{}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("create tail-call test directory");
+        let asm_path = root.join("tailcall.s");
+        let obj_path = root.join("tailcall.o");
+        let bin_path = root.join("tailcall");
+        std::fs::write(&asm_path, asm).expect("write tail-call assembly");
+
+        let assemble = Command::new("as")
+            .arg(&asm_path)
+            .arg("-o")
+            .arg(&obj_path)
+            .status()
+            .expect("run assembler");
+        assert!(assemble.success(), "assembling tail-call program failed");
+
+        let link = Command::new("ld")
+            .arg(&obj_path)
+            .arg("-o")
+            .arg(&bin_path)
+            .status()
+            .expect("run linker");
+        assert!(link.success(), "linking tail-call program failed");
+
+        let output = Command::new(&bin_path)
+            .output()
+            .expect("run tail-call program");
+        assert_eq!(output.status.code(), Some(15), "output: {:?}", output);
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     // ---- Locals: `let` / `set!` (Alloc/Store/Load) (issue #36) ---------

@@ -160,7 +160,7 @@ pub(crate) fn instruction_uses(instr: &Instruction) -> BTreeSet<VarId> {
         Instruction::AddrOf { src, .. } => {
             uses.insert(*src);
         }
-        Instruction::Call { args, .. } => {
+        Instruction::Call { args, .. } | Instruction::TailCall { args, .. } => {
             collect_value_slice_vars(args, &mut uses);
         }
         Instruction::CallIndirect { func, args, .. } => {
@@ -207,6 +207,13 @@ pub(crate) fn instruction_uses(instr: &Instruction) -> BTreeSet<VarId> {
             collect_value_vars(value, &mut uses);
             collect_value_vars(mask, &mut uses);
         }
+        Instruction::PredicatedLoad {
+            base, index, mask, ..
+        } => {
+            collect_value_vars(base, &mut uses);
+            collect_value_vars(index, &mut uses);
+            collect_value_vars(mask, &mut uses);
+        }
         Instruction::TailMask { index, len, .. } => {
             collect_value_vars(index, &mut uses);
             collect_value_vars(len, &mut uses);
@@ -246,6 +253,7 @@ pub(crate) fn instruction_defs(instr: &Instruction) -> BTreeSet<VarId> {
         | Instruction::MaskReduce { dst, .. }
         | Instruction::Select { dst, .. }
         | Instruction::VectorLoad { dst, .. }
+        | Instruction::PredicatedLoad { dst, .. }
         | Instruction::TailMask { dst, .. }
         | Instruction::Phi { dst, .. } => {
             defs.insert(*dst);
@@ -262,6 +270,7 @@ pub(crate) fn instruction_defs(instr: &Instruction) -> BTreeSet<VarId> {
         | Instruction::VectorStore { .. }
         | Instruction::PredicatedStore { .. }
         | Instruction::Branch { .. }
+        | Instruction::TailCall { .. }
         | Instruction::Jump(_)
         | Instruction::Return(_) => {}
     }

@@ -6,6 +6,21 @@
 
 (import "doc_extract.tl")
 
+(defenum DocModule
+  (DocModule String DocExtraction))
+
+(defenum DocModuleList
+  (DocModuleNil)
+  (DocModuleCons DocModule DocModuleList))
+
+(define (doc-module-path [module : DocModule]) : String
+  (match module
+    [(DocModule path _) path]))
+
+(define (doc-module-docs [module : DocModule]) : DocExtraction
+  (match module
+    [(DocModule _ docs) docs]))
+
 (define (doc-render-code [c : char]) : i64
   (cast c : i64))
 
@@ -135,6 +150,60 @@
       (doc-render-module-doc (doc-extraction-module-doc docs))
       (string-append "## Items\n\n"
                      (doc-render-items (doc-extraction-items docs))))))
+
+(define (doc-render-module-nav-item [module : DocModule]) : String
+  (let ([path : String (doc-module-path module)])
+    (string-append "- ["
+                   (string-append
+                     (doc-render-escape-markdown path)
+                     (string-append "](#"
+                                    (string-append
+                                      (doc-render-anchor path)
+                                      ")\n"))))))
+
+(define (doc-render-module-nav [modules : DocModuleList]) : String
+  (match modules
+    [(DocModuleNil) ""]
+    [(DocModuleCons module rest)
+     (string-append (doc-render-module-nav-item module)
+                    (doc-render-module-nav rest))]))
+
+(define (doc-render-module-section [module : DocModule]) : String
+  (let ([path : String (doc-module-path module)]
+        [docs : DocExtraction (doc-module-docs module)])
+    (string-append
+      "<a id=\""
+      (string-append
+        (doc-render-anchor path)
+        (string-append
+          "\"></a>\n\n## "
+          (string-append
+            (doc-render-escape-markdown path)
+            (string-append
+              "\n\nSource: `"
+              (string-append
+                (doc-render-escape-markdown path)
+                (string-append
+                  "`\n\n"
+                  (string-append
+                    (doc-render-module-doc (doc-extraction-module-doc docs))
+                    (doc-render-items (doc-extraction-items docs))))))))))))
+
+(define (doc-render-module-sections [modules : DocModuleList]) : String
+  (match modules
+    [(DocModuleNil) ""]
+    [(DocModuleCons module rest)
+     (string-append (doc-render-module-section module)
+                    (doc-render-module-sections rest))]))
+
+(define (doc-render-module-graph-markdown [modules : DocModuleList]) : String
+  (string-append
+    "# TypeLisp Documentation\n\n"
+    (string-append
+      "## Modules\n\n"
+      (string-append
+        (doc-render-module-nav modules)
+        (string-append "\n" (doc-render-module-sections modules))))))
 
 (define (doc-render-smoke-source) : String
   ";;;; Module docs with `code`, [links], <tag>, & amp.

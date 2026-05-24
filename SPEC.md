@@ -521,8 +521,10 @@ truncation only; floating-point conversions are deferred.
 ### 5.15 SPMD `foreach`
 
 This section defines the initial SPMD source surface. The current compiler
-parses and type-checks this form and lowers it to scalar reference loops; later
-issues own vector IR and AVX backends.
+parses and type-checks `foreach`, lowers it to scalar reference loops, and has
+an AVX2 backend path for a first contiguous map/zip subset. The reduction
+surface below is the next source contract; parser/typechecker, scalar lowering,
+IR, and backend support are tracked by follow-up issues.
 
 Initial syntax:
 
@@ -600,11 +602,90 @@ Tail behavior:
 - Inactive tail lanes must not perform bounds checks, loads, stores, calls, or
   other side effects.
 
+SPMD reductions:
+
+The first reduction surface is an explicit expression form:
+
+```lisp test=ignore name=spmd-reduce-sum-i64 reason="future SPMD reduction example"
+(define (sum-i64 [xs : (Array i64)] [n : i64]) : i64
+  (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))
+```
+
+```lisp test=ignore name=spmd-reduce-any-bool reason="future SPMD reduction example"
+(define (contains-zero [xs : (Array i64)] [n : i64]) : bool
+  (spmd-reduce any ([i : i64 0 n]) false (= (array-ref xs i) 0)))
+```
+
+```lisp test=ignore name=spmd-reduce-max-seeded reason="future SPMD reduction example"
+(define (max-i64-seeded [xs : (Array i64)] [n : i64] [seed : i64]) : i64
+  (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))
+```
+
+Syntax:
+
+- `(spmd-reduce op ([i : i64 start end]) init value)` evaluates to one scalar
+  result.
+- `op` is a fixed operator symbol, not an expression. The first supported
+  operators are `sum`, `min`, `max`, `all`, and `any`.
+- The range clause has the same half-open `[start, end)` meaning as `foreach`.
+
+Evaluation and empty ranges:
+
+- `start`, `end`, and `init` are uniform expressions evaluated once before any
+  logical iteration. `init` is the accumulator seed and the empty-range result.
+- `value` is evaluated once for each logical `i` in increasing index order in
+  the scalar semantics. If `end <= start`, `value` is not evaluated.
+- The semantic result is the same as a scalar left fold:
+  - `sum`: `acc = (+ acc value)`.
+  - `min`: `acc = (if (< value acc) value acc)`.
+  - `max`: `acc = (if (> value acc) value acc)`.
+  - `all`: `acc = (and acc value)`.
+  - `any`: `acc = (or acc value)`.
+- Integer `sum` uses the existing modulo-wrapping integer `+` semantics.
+- `f64 sum` uses the same ordered scalar `+` semantics as an explicit loop.
+  SIMD backends must preserve that observable result or leave `f64 sum` on the
+  scalar path until a future relaxed-floating-point mode exists.
+
+Type rules for the first slice:
+
+- `sum` supports `i32`, `i64`, and `f64`.
+- `min` and `max` support `i32` and `i64`.
+- `all` and `any` support `bool`.
+- `init` and `value` must have the same supported type for the chosen `op`, and
+  the result type is that same type.
+- `f32`, narrow integer widths, unsigned integer widths, `char`, `String`,
+  structs, enums, tuples, arrays, function values, public vector types, and
+  public mask types are rejected in the first reduction slice.
+
+Purity and varying rules for the first slice:
+
+- The `value` expression may use the varying index, dynamic-array reads,
+  arithmetic/comparison/boolean operators over supported types, and local `let`
+  bindings whose values satisfy the same rules.
+- `value` must not perform writes or other side effects. In particular, `set!`,
+  `array-set!`, `print*`, file I/O, `panic`/`error`, nested `foreach`, nested
+  `spmd-reduce`, and user-defined calls with varying arguments are rejected in
+  the first slice.
+- Reductions by mutating an outer variable inside `foreach` remain rejected.
+  Use `spmd-reduce` so scalar fallback and SIMD lowering have one explicit
+  accumulator contract.
+
+Cross-lane operations:
+
+- `spmd-reduce` is the only public cross-lane source operation in this slice.
+- Scans/prefix reductions, shuffles, broadcasts, lane extraction/insertion,
+  public `program-index`/`program-count`, gathers/scatters, atomics, task
+  parallelism, and public vector/mask values remain deferred.
+- IR and backend work may add private horizontal-reduction primitives as needed
+  to implement `spmd-reduce`; those primitives are not user-denotable source
+  operations.
+
 Unsupported in the initial SPMD surface:
 
 - Public vector types, public mask types, `program-index`, and `program-count`.
 - Gather/scatter, indirect indexing through arrays, and non-contiguous memory.
-- Reductions, scans, cross-lane operations, atomics, and overlapping writes.
+- Scans, general cross-lane operations, atomics, and overlapping writes.
+- Reduction-by-mutation through `set!` to an outer accumulator.
 - Varying `if`/`while`, early exits, `break`, and `continue`.
 - User-defined function calls with varying arguments or varying returns.
 - Struct, enum, tuple, string, function, and nested array lane values.
@@ -620,13 +701,23 @@ Negative examples for later parser/typechecker tests:
         (array-set! out i (array-ref xs i)))))
 ```
 
-```lisp test=ignore name=spmd-reject-reduction reason="future SPMD negative example"
+```lisp test=ignore name=spmd-reject-mutation-reduction reason="future SPMD negative example"
 (define (sum-array [xs : (Array i64)] [n : i64]) : i64
   (let ([sum : i64 0])
     (begin
       (foreach ([i : i64 0 n])
         (set! sum (+ sum (array-ref xs i))))
       sum)))
+```
+
+```lisp test=ignore name=spmd-reject-f64-min reason="future SPMD negative example"
+(define (min-f64 [xs : (Array f64)] [n : i64] [seed : f64]) : f64
+  (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))
+```
+
+```lisp test=ignore name=spmd-reject-shuffle reason="future SPMD negative example"
+(define (bad-cross-lane [xs : (Array i64)] [n : i64]) : i64
+  (spmd-reduce shuffle ([i : i64 0 n]) 0 (array-ref xs i)))
 ```
 
 ```lisp test=ignore name=spmd-reject-varying-call reason="future SPMD negative example"
@@ -881,12 +972,13 @@ replacement.
 | Tail call optimization | Not implemented |
 | `struct-set!` | Not implemented |
 | Garbage collection / general `free` | Not implemented; allocation is process-lifetime by default with unsafe explicit region reset for tool-owned phase boundaries |
-| SPMD / SIMD `foreach` | Scalar reference lowering only; vector IR and AVX backends not implemented |
+| SPMD / SIMD `foreach` | Scalar reference lowering implemented; AVX2 supports a first contiguous map/zip subset |
+| SPMD reductions and public cross-lane ops | Source semantics specified; parser/typechecker/lowering/backend support pending |
 | Windows region helpers | `tl_region_mark`/`tl_region_reset` are Linux-only |
 | Complete source locations for all semantic errors | Partial |
 | REPL evaluation | Minimal stdio command loop exists; form evaluation is not implemented |
 | Package manager | Not implemented |
-| LSP / IDE support | Not implemented |
+| LSP / IDE support | Stdio diagnostics server implemented; richer IDE features pending |
 
 ---
 
@@ -1195,10 +1287,14 @@ expr          ::= literal
                 | "(" "ann" expr ":" type ")"
                 | "(" "cast" expr ":" type ")"
                 | "(" "match" expr match-arm+ ")"
+                | "(" "foreach" foreach-clause expr ")"
+                | "(" "spmd-reduce" reduce-op foreach-clause expr expr ")"
                 | "(" "lambda" "(" param* ")" [":" type] expr ")"
                 | "(" expr expr* ")"          ; function call
 
 binding       ::= "[" ident [":" type] expr "]"
+foreach-clause ::= "(" "[" ident ":" type expr expr "]" ")"
+reduce-op     ::= "sum" | "min" | "max" | "all" | "any"
 cond-arm      ::= "[" expr expr "]"
                 | "[" "else" expr "]"         ; required final arm
 match-arm     ::= "[" pattern expr "]"

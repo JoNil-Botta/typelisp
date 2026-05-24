@@ -184,9 +184,10 @@ TypeLisp keeps **type names** and **value names** in separate namespaces:
 ### Expression forms
 
 `if`, `let`, `while`, `begin`, `set!`, `match` (incl. nested/recursive enum
-patterns and `_`), `ann`, `cast`, plus arithmetic (`+ - * / %`), comparison
-(`= != < <= > >=`), boolean (`and` `or`), and bitwise/shift (`bit-and` `bit-or`
-`bit-xor` `shl` `shr`) operators. `struct-get` reads a struct field.
+patterns and `_`), `ann`, `cast`, `foreach`, plus arithmetic (`+ - * / %`),
+comparison (`= != < <= > >=`), boolean (`and` `or`), and bitwise/shift
+(`bit-and` `bit-or` `bit-xor` `shl` `shr`) operators. `struct-get` reads a
+struct field.
 
 Named top-level functions and `lambda` literals can be passed as pointer-sized
 closure descriptor values. Non-capturing lambdas use static descriptors.
@@ -195,7 +196,8 @@ environments; aggregate captures and mutation of captured names are still
 rejected.
 SPMD/SIMD `foreach` is documented in [SPEC.md section 5.15](SPEC.md). The
 compiler parses and type-checks the first source form and lowers it to scalar
-reference loops; vector IR and AVX backend support are not implemented yet.
+reference loops; `--backend-mode avx2` supports a first contiguous map/zip
+subset. `spmd-reduce` reduction semantics are specified but not implemented yet.
 
 ### Builtins
 
@@ -268,6 +270,7 @@ Source (.tl)
 typelisp debug tokenize file.tl    # Print token stream
 typelisp debug parse    file.tl    # Print AST
 typelisp debug check    file.tl    # Type check
+typelisp lsp                      # Start stdio LSP diagnostics server
 typelisp repl                     # Start minimal stdio REPL (.help, .exit)
 typelisp compile        file.tl    # Generate assembly (.s); -o <path>, --target <target>, --emit-ir, --backend-mode <mode>
 typelisp build          file.tl    # Build native executable; -o <path>, --target <target>, --backend-mode <mode>
@@ -282,8 +285,9 @@ The `repl` command currently provides a minimal stdio command loop. It supports
 `.help` and `.exit`; TypeLisp evaluation is planned in follow-up work.
 
 `compile`, `run`, and `build` accept `--backend-mode scalar|avx2|avx512`.
-`scalar` is the default and only implemented mode today; `avx2` and `avx512`
-parse but are rejected until SIMD code generation lands.
+`scalar` is the default. `avx2` supports a first contiguous SPMD `foreach`
+map/zip subset and otherwise falls back or rejects unsupported vector IR;
+`avx512` parses but is rejected until that backend lands.
 
 `compile`, `run`, and source-file `build` accept
 `--target linux-x86_64|windows-x86_64`. Linux is the default target. Windows
@@ -296,11 +300,12 @@ Implemented: lexer, parser, type checker, IR lowering, optimizer, and working
 x86_64 Linux/Windows backend targets. Integers, floats (`f64`), bool/char/unit,
 `if`/`while`/`begin`, local & global variables, direct and indirect calls,
 `cast`, enums + `match`, structs + field access, dynamic arrays, strings,
-`extern`, and multi-file modules all compile to native code. See the
+`extern`, multi-file modules, scalar `foreach`, and an initial AVX2 `foreach`
+map/zip path all compile to native code. See the
 [project roadmap](https://github.com/JoNil-Botta/typelisp/issues/8) and
-[SPEC.md §8](SPEC.md) for what is not yet supported (closures, tail calls,
-tuple/fixed-array by-value returns, `f32` codegen, general GC/free,
-ownership/borrowing, SPMD/SIMD).
+[SPEC.md §8](SPEC.md) for what is not yet supported (aggregate captures, tail
+calls, tuple/fixed-array by-value returns, `f32` codegen, general GC/free,
+ownership/borrowing, and later SPMD/SIMD reductions/cross-lane work).
 
 ## Contributing
 

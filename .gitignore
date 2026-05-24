@@ -30,3 +30,11 @@ target_ra
 selfhost/*.o
 selfhost/*.s
 selfhost/compiler_backend_runtime_fixture
+
+# Local Claude Code state
+.claude/
+
+# Build artifacts from integration fixtures (.tl are the tracked inputs)
+tests/integration/*.s
+tests/integration/*.exe
+tests/integration/*.obj

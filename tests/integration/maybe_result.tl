@@ -30,7 +30,7 @@
 
 (define (main) : i64
   (let ([hit : i64 (maybe-score (find-answer "answer") 0)]
-        [miss : i64 (maybe-score (find-answer "missing") 10)]
-        [ok : i64 (result-score (read-small "7"))]
-        [err : i64 (result-score (read-small "no"))])
+    [miss : i64 (maybe-score (find-answer "missing") 10)]
+    [ok : i64 (result-score (read-small "7"))]
+    [err : i64 (result-score (read-small "no"))])
     (+ (+ hit miss) (+ ok err))))

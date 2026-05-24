@@ -1,1 +1,3 @@
-(begin (print "hi") 7)
+(begin
+  (print "hi")
+  7)

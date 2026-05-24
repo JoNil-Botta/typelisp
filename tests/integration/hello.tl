@@ -1,1 +1,2 @@
-(define (main) : i64 42)
+(define (main) : i64
+  42)

@@ -1,7 +1,11 @@
 ;; format_tokens.tl - Comment-preserving tokens for the formatter (#326).
+
 ;;
+
 ;; This lexer is separate from lex.tl because a formatter must keep source
+
 ;; spelling and comments. Whitespace is skipped for now; comments are retained
+
 ;; as trivia tokens so later layout rules can place them deliberately.
 
 (defenum FormatToken
@@ -26,22 +30,53 @@
   (tokens (Array FormatToken))
   (count i64))
 
-(define (fmt-tag-lparen) : i64 1)
-(define (fmt-tag-rparen) : i64 2)
-(define (fmt-tag-lbracket) : i64 3)
-(define (fmt-tag-rbracket) : i64 4)
-(define (fmt-tag-colon) : i64 5)
-(define (fmt-tag-quote) : i64 6)
-(define (fmt-tag-backtick) : i64 7)
-(define (fmt-tag-dot) : i64 8)
-(define (fmt-tag-comma) : i64 9)
-(define (fmt-tag-comma-at) : i64 10)
-(define (fmt-tag-int) : i64 11)
-(define (fmt-tag-symbol) : i64 12)
-(define (fmt-tag-string) : i64 13)
-(define (fmt-tag-char) : i64 14)
-(define (fmt-tag-comment) : i64 15)
-(define (fmt-tag-end) : i64 16)
+(define (fmt-tag-lparen) : i64
+  1)
+
+(define (fmt-tag-rparen) : i64
+  2)
+
+(define (fmt-tag-lbracket) : i64
+  3)
+
+(define (fmt-tag-rbracket) : i64
+  4)
+
+(define (fmt-tag-colon) : i64
+  5)
+
+(define (fmt-tag-quote) : i64
+  6)
+
+(define (fmt-tag-backtick) : i64
+  7)
+
+(define (fmt-tag-dot) : i64
+  8)
+
+(define (fmt-tag-comma) : i64
+  9)
+
+(define (fmt-tag-comma-at) : i64
+  10)
+
+(define (fmt-tag-int) : i64
+  11)
+
+(define (fmt-tag-symbol) : i64
+  12)
+
+(define (fmt-tag-string) : i64
+  13)
+
+(define (fmt-tag-char) : i64
+  14)
+
+(define (fmt-tag-comment) : i64
+  15)
+
+(define (fmt-tag-end) : i64
+  16)
 
 (define (format-token-tag [tok : FormatToken]) : i64
   (match tok
@@ -88,14 +123,13 @@
   (struct-get stream count))
 
 (define (format-token-tag-count [stream : FormatTokenStream] [wanted : i64]) : i64
-  (let ([i : i64 0]
-        [hits : i64 0])
+  (let ([i : i64 0] [hits : i64 0])
     (begin
       (while (< i (struct-get stream count))
         (begin
           (if (= (format-token-tag (format-token-at stream i)) wanted)
-              (set! hits (+ hits 1))
-              (set! hits hits))
+            (set! hits (+ hits 1))
+            (set! hits hits))
           (set! i (+ i 1))))
       hits)))
 
@@ -107,8 +141,7 @@
 
 (define (fmt-is-alpha [c : char]) : bool
   (let ([k : i64 (fmt-code c)])
-    (or (and (>= k 65) (<= k 90))
-        (and (>= k 97) (<= k 122)))))
+    (or (and (>= k 65) (<= k 90)) (and (>= k 97) (<= k 122)))))
 
 (define (fmt-is-space [c : char]) : bool
   (let ([k : i64 (fmt-code c)])
@@ -137,198 +170,234 @@
 (define (fmt-starts-number [src : String] [i : i64] [n : i64]) : bool
   (let ([c : char (string-ref src i)])
     (if (fmt-is-digit c)
-        true
-        (if (= (fmt-code c) 45)
-            (if (< (+ i 1) n)
-                (fmt-is-digit (string-ref src (+ i 1)))
-                false)
-            false))))
+      true
+      (if (= (fmt-code c) 45)
+        (if (< (+ i 1) n)
+          (fmt-is-digit (string-ref src (+ i 1)))
+          false)
+        false))))
 
 (define (fmt-scan-number-end [src : String] [start : i64] [n : i64]) : i64
-  (let ([j : i64 start]
-        [seen-dot : bool false]
-        [keep : bool true])
+  (let ([j : i64 start] [seen-dot : bool false] [keep : bool true])
     (begin
       (while keep
         (if (< j n)
-            (let ([k : i64 (fmt-code (string-ref src j))])
-              (if (and (= k 46) (not seen-dot))
-                  (begin
-                    (set! seen-dot true)
-                    (set! j (+ j 1)))
-                  (if (or (and (>= k 48) (<= k 57)) (= k 95))
-                      (set! j (+ j 1))
-                      (set! keep false))))
-            (set! keep false)))
+          (let ([k : i64 (fmt-code (string-ref src j))])
+            (if (and (= k 46) (not seen-dot))
+              (begin
+                (set! seen-dot true)
+                (set! j (+ j 1)))
+              (if (or (and (>= k 48) (<= k 57)) (= k 95))
+                (set! j (+ j 1))
+                (set! keep false))))
+          (set! keep false)))
       j)))
 
 (define (fmt-scan-symbol-end [src : String] [start : i64] [n : i64]) : i64
-  (let ([j : i64 start]
-        [keep : bool true])
+  (let ([j : i64 start] [keep : bool true])
     (begin
       (while keep
         (if (< j n)
-            (if (fmt-is-symbol-char (string-ref src j))
-                (set! j (+ j 1))
-                (set! keep false))
-            (set! keep false)))
+          (if (fmt-is-symbol-char (string-ref src j))
+            (set! j (+ j 1))
+            (set! keep false))
+          (set! keep false)))
       j)))
 
 (define (fmt-scan-comment-end [src : String] [start : i64] [n : i64]) : i64
-  (let ([j : i64 start]
-        [keep : bool true])
+  (let ([j : i64 start] [keep : bool true])
     (begin
       (while keep
         (if (< j n)
-            (if (= (fmt-code (string-ref src j)) 10)
-                (set! keep false)
-                (set! j (+ j 1)))
-            (set! keep false)))
+          (if (= (fmt-code (string-ref src j)) 10)
+            (set! keep false)
+            (set! j (+ j 1)))
+          (set! keep false)))
       j)))
 
 (define (fmt-scan-string-end [src : String] [start : i64] [n : i64]) : i64
-  (let ([j : i64 start]
-        [escaped : bool false]
-        [keep : bool true])
+  (let ([j : i64 start] [escaped : bool false] [keep : bool true])
     (begin
       (while keep
         (if (< j n)
-            (let ([k : i64 (fmt-code (string-ref src j))])
-              (if escaped
+          (let ([k : i64 (fmt-code (string-ref src j))])
+            (if escaped
+              (begin
+                (set! escaped false)
+                (set! j (+ j 1)))
+              (if (= k 92)
+                (begin
+                  (set! escaped true)
+                  (set! j (+ j 1)))
+                (if (= k 34)
                   (begin
-                    (set! escaped false)
-                    (set! j (+ j 1)))
-                  (if (= k 92)
-                      (begin
-                        (set! escaped true)
-                        (set! j (+ j 1)))
-                      (if (= k 34)
-                          (begin
-                            (set! j (+ j 1))
-                            (set! keep false))
-                          (set! j (+ j 1))))))
-            (begin
-              (panic "format lexer: unterminated string literal")
-              (set! keep false))))
+                    (set! j (+ j 1))
+                    (set! keep false))
+                  (set! j (+ j 1))))))
+          (begin
+            (panic "format lexer: unterminated string literal")
+            (set! keep false))))
       j)))
 
 (define (fmt-scan-char-end [src : String] [start : i64] [n : i64]) : i64
-  (let ([j : i64 start]
-        [keep : bool true])
+  (let ([j : i64 start] [keep : bool true])
     (begin
+      (if (< j n)
+        (set! j (+ j 1))
+        (begin
+          (panic "format lexer: unterminated character literal")
+          (set! keep false)))
       (while keep
         (if (< j n)
-            (if (= (fmt-code (string-ref src j)) 39)
-                (begin
-                  (set! j (+ j 1))
-                  (set! keep false))
-                (set! j (+ j 1)))
+          (if (= (fmt-code (string-ref src j)) 39)
             (begin
-              (panic "format lexer: unterminated character literal")
-              (set! keep false))))
+              (set! j (+ j 1))
+              (set! keep false))
+            (set! j (+ j 1)))
+          (begin
+            (panic "format lexer: unterminated character literal")
+            (set! keep false))))
       j)))
 
-(define (fmt-store-token [tokens : (Array FormatToken)] [count : i64] [tok : FormatToken]) : unit
+(define (fmt-store-token
+  [tokens : (Array FormatToken)]
+  [count : i64]
+  [tok : FormatToken]) : unit
   (array-set! tokens count tok))
 
 (define (format-lex [src : String]) : FormatTokenStream
   (let ([n : i64 (string-length src)]
-        [tokens : (Array FormatToken) (make-array FormatToken (+ (string-length src) 1))]
-        [i : i64 0]
-        [count : i64 0])
+    [tokens
+      :
+      (Array FormatToken)
+      (make-array FormatToken (+ (string-length src) 1))]
+    [i : i64 0]
+    [count : i64 0])
     (begin
       (while (< i n)
         (let ([c : char (string-ref src i)]
-              [k : i64 (fmt-code (string-ref src i))])
+          [k : i64 (fmt-code (string-ref src i))])
           (if (fmt-is-space c)
-              (set! i (+ i 1))
-              (if (= k 59)
-                  (let ([end : i64 (fmt-scan-comment-end src i n)])
+            (set! i (+ i 1))
+            (if (= k 59)
+              (let ([end : i64 (fmt-scan-comment-end src i n)])
+                (begin
+                  (fmt-store-token
+                    tokens
+                    count
+                    (FmtComment (substring src i (- end i))))
+                  (set! count (+ count 1))
+                  (set! i end)))
+              (if (= k 40)
+                (begin
+                  (fmt-store-token tokens count (FmtLParen))
+                  (set! count (+ count 1))
+                  (set! i (+ i 1)))
+                (if (= k 41)
+                  (begin
+                    (fmt-store-token tokens count (FmtRParen))
+                    (set! count (+ count 1))
+                    (set! i (+ i 1)))
+                  (if (= k 91)
                     (begin
-                      (fmt-store-token tokens count (FmtComment (substring src i (- end i))))
+                      (fmt-store-token tokens count (FmtLBracket))
                       (set! count (+ count 1))
-                      (set! i end)))
-                  (if (= k 40)
+                      (set! i (+ i 1)))
+                    (if (= k 93)
                       (begin
-                        (fmt-store-token tokens count (FmtLParen))
+                        (fmt-store-token tokens count (FmtRBracket))
                         (set! count (+ count 1))
                         (set! i (+ i 1)))
-                      (if (= k 41)
+                      (if (= k 58)
+                        (begin
+                          (fmt-store-token tokens count (FmtColon))
+                          (set! count (+ count 1))
+                          (set! i (+ i 1)))
+                        (if (= k 39)
                           (begin
-                            (fmt-store-token tokens count (FmtRParen))
+                            (fmt-store-token tokens count (FmtQuote))
                             (set! count (+ count 1))
                             (set! i (+ i 1)))
-                          (if (= k 91)
+                          (if (= k 96)
+                            (begin
+                              (fmt-store-token tokens count (FmtBacktick))
+                              (set! count (+ count 1))
+                              (set! i (+ i 1)))
+                            (if (= k 46)
                               (begin
-                                (fmt-store-token tokens count (FmtLBracket))
+                                (fmt-store-token tokens count (FmtDot))
                                 (set! count (+ count 1))
                                 (set! i (+ i 1)))
-                              (if (= k 93)
+                              (if (= k 44)
+                                (if (< (+ i 1) n)
+                                  (if (= (fmt-code (string-ref src (+ i 1))) 64)
+                                    (begin
+                                      (fmt-store-token
+                                        tokens
+                                        count
+                                        (FmtCommaAt))
+                                      (set! count (+ count 1))
+                                      (set! i (+ i 2)))
+                                    (begin
+                                      (fmt-store-token tokens count (FmtComma))
+                                      (set! count (+ count 1))
+                                      (set! i (+ i 1))))
                                   (begin
-                                    (fmt-store-token tokens count (FmtRBracket))
+                                    (fmt-store-token tokens count (FmtComma))
                                     (set! count (+ count 1))
-                                    (set! i (+ i 1)))
-                                  (if (= k 58)
+                                    (set! i (+ i 1))))
+                                (if (= k 34)
+                                  (let ([end
+                                      :
+                                      i64
+                                      (fmt-scan-string-end src (+ i 1) n)])
+                                    (begin
+                                      (fmt-store-token
+                                        tokens
+                                        count
+                                        (FmtString (substring src i (- end i))))
+                                      (set! count (+ count 1))
+                                      (set! i end)))
+                                  (if (= k 35)
+                                    (let ([end
+                                        :
+                                        i64
+                                        (fmt-scan-char-end src (+ i 1) n)])
                                       (begin
-                                        (fmt-store-token tokens count (FmtColon))
+                                        (fmt-store-token
+                                          tokens
+                                          count
+                                          (FmtChar (substring src i (- end i))))
                                         (set! count (+ count 1))
-                                        (set! i (+ i 1)))
-                                      (if (= k 39)
+                                        (set! i end)))
+                                    (if (fmt-starts-number src i n)
+                                      (let ([end
+                                          :
+                                          i64
+                                          (fmt-scan-number-end src i n)])
+                                        (begin
+                                          (fmt-store-token
+                                            tokens
+                                            count
+                                            (FmtInt (substring src i (- end i))))
+                                          (set! count (+ count 1))
+                                          (set! i end)))
+                                      (if (fmt-is-symbol-char c)
+                                        (let ([end
+                                            :
+                                            i64
+                                            (fmt-scan-symbol-end src i n)])
                                           (begin
-                                            (fmt-store-token tokens count (FmtQuote))
+                                            (fmt-store-token
+                                              tokens
+                                              count
+                                              (FmtSymbol
+                                                (substring src i (- end i))))
                                             (set! count (+ count 1))
-                                            (set! i (+ i 1)))
-                                          (if (= k 96)
-                                              (begin
-                                                (fmt-store-token tokens count (FmtBacktick))
-                                                (set! count (+ count 1))
-                                                (set! i (+ i 1)))
-                                              (if (= k 46)
-                                                  (begin
-                                                    (fmt-store-token tokens count (FmtDot))
-                                                    (set! count (+ count 1))
-                                                    (set! i (+ i 1)))
-                                                  (if (= k 44)
-                                                      (if (< (+ i 1) n)
-                                                          (if (= (fmt-code (string-ref src (+ i 1))) 64)
-                                                              (begin
-                                                                (fmt-store-token tokens count (FmtCommaAt))
-                                                                (set! count (+ count 1))
-                                                                (set! i (+ i 2)))
-                                                              (begin
-                                                                (fmt-store-token tokens count (FmtComma))
-                                                                (set! count (+ count 1))
-                                                                (set! i (+ i 1))))
-                                                          (begin
-                                                            (fmt-store-token tokens count (FmtComma))
-                                                            (set! count (+ count 1))
-                                                            (set! i (+ i 1))))
-                                                      (if (= k 34)
-                                                          (let ([end : i64 (fmt-scan-string-end src (+ i 1) n)])
-                                                            (begin
-                                                              (fmt-store-token tokens count (FmtString (substring src i (- end i))))
-                                                              (set! count (+ count 1))
-                                                              (set! i end)))
-                                                          (if (= k 35)
-                                                              (let ([end : i64 (fmt-scan-char-end src (+ i 1) n)])
-                                                                (begin
-                                                                  (fmt-store-token tokens count (FmtChar (substring src i (- end i))))
-                                                                  (set! count (+ count 1))
-                                                                  (set! i end)))
-                                                              (if (fmt-starts-number src i n)
-                                                                  (let ([end : i64 (fmt-scan-number-end src i n)])
-                                                                    (begin
-                                                                      (fmt-store-token tokens count (FmtInt (substring src i (- end i))))
-                                                                      (set! count (+ count 1))
-                                                                      (set! i end)))
-                                                                  (if (fmt-is-symbol-char c)
-                                                                      (let ([end : i64 (fmt-scan-symbol-end src i n)])
-                                                                        (begin
-                                                                          (fmt-store-token tokens count (FmtSymbol (substring src i (- end i))))
-                                                                          (set! count (+ count 1))
-                                                                          (set! i end)))
-                                                                      (begin
-                                                                        (panic "format lexer: unexpected character")
-                                                                        (set! i (+ i 1))))))))))))))))))))
+                                            (set! i end)))
+                                        (begin
+                                          (panic
+                                            "format lexer: unexpected character")
+                                          (set! i (+ i 1))))))))))))))))))))
       (fmt-store-token tokens count (FmtEnd))
       (FormatTokenStream tokens (+ count 1)))))

@@ -1,7 +1,11 @@
 ;; format_doc.tl - Small document algebra for the self-hosted formatter (#213).
+
 ;;
+
 ;; The formatter front end and rule traversal are separate issues. This module
+
 ;; owns the reusable layout engine: callers build `Doc` values, then render them
+
 ;; with deterministic width-aware grouping and indentation.
 
 (defenum Doc
@@ -16,7 +20,8 @@
 (defenum RenderedDoc
   (Rendered String i64))
 
-(define (format-width) : i64 80)
+(define (format-width) : i64
+  80)
 
 (define (doc-empty) : Doc
   (DEmpty))
@@ -33,9 +38,10 @@
 (define (doc-append [left : Doc] [right : Doc]) : Doc
   (match left
     [(DEmpty) right]
-    [_ (match right
-         [(DEmpty) left]
-         [_ (DConcat left right)])]))
+    [_
+      (match right
+        [(DEmpty) left]
+        [_ (DConcat left right)])]))
 
 (define (doc-nest [indent : i64] [doc : Doc]) : Doc
   (DNest indent doc))
@@ -44,8 +50,7 @@
   (DGroup doc))
 
 (define (spaces [count : i64]) : String
-  (let ([i : i64 0]
-        [out : String ""])
+  (let ([i : i64 0] [out : String ""])
     (begin
       (while (< i count)
         (begin
@@ -77,26 +82,31 @@
 (define (render-newline [indent : i64]) : RenderedDoc
   (Rendered (string-append "\n" (spaces indent)) indent))
 
-(define (render-doc-in [doc : Doc] [width : i64] [indent : i64] [col : i64] [flat : bool]) : RenderedDoc
+(define (render-doc-in
+  [doc : Doc]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]) : RenderedDoc
   (match doc
     [(DEmpty) (Rendered "" col)]
     [(DText text) (Rendered text (+ col (string-length text)))]
     [(DSoftLine)
-     (if flat
-         (Rendered " " (+ col 1))
-         (render-newline indent))]
+      (if flat
+        (Rendered " " (+ col 1))
+        (render-newline indent))]
     [(DHardLine) (render-newline indent)]
     [(DConcat left right)
-     (match (render-doc-in left width indent col flat)
-       [(Rendered left-text left-col)
-        (match (render-doc-in right width indent left-col flat)
-          [(Rendered right-text right-col)
-           (Rendered (string-append left-text right-text) right-col)])])]
+      (match (render-doc-in left width indent col flat)
+        [(Rendered left-text left-col)
+          (match (render-doc-in right width indent left-col flat)
+            [(Rendered right-text right-col)
+              (Rendered (string-append left-text right-text) right-col)])])]
     [(DNest extra inner) (render-doc-in inner width (+ indent extra) col flat)]
     [(DGroup inner)
-     (if (fits-flat inner (- width col))
-         (render-doc-in inner width indent col true)
-         (render-doc-in inner width indent col false))]))
+      (if (fits-flat inner (- width col))
+        (render-doc-in inner width indent col true)
+        (render-doc-in inner width indent col false))]))
 
 (define (render-doc-width [doc : Doc] [width : i64]) : String
   (rendered-text (render-doc-in doc width 0 0 false)))
@@ -106,32 +116,22 @@
 
 (define (sample-group-doc) : Doc
   (DGroup
-    (DNest 2
-      (DConcat
-        (DText "alpha")
-        (DConcat
-          (DSoftLine)
-          (DText "beta"))))))
+    (DNest 2 (DConcat (DText "alpha") (DConcat (DSoftLine) (DText "beta"))))))
 
 (define (sample-hard-line-doc) : Doc
-  (DGroup
-    (DConcat
-      (DText "a")
-      (DConcat
-        (DHardLine)
-        (DText "b")))))
+  (DGroup (DConcat (DText "a") (DConcat (DHardLine) (DText "b")))))
 
 (define (format-doc-self-test) : i64
   (let ([flat : String (render-doc-width (sample-group-doc) 80)]
-        [broken : String (render-doc-width (sample-group-doc) 6)]
-        [hard : String (render-doc-width (sample-hard-line-doc) 80)]
-        [empty : String (render-doc (doc-append (doc-empty) (DText "x")))])
+    [broken : String (render-doc-width (sample-group-doc) 6)]
+    [hard : String (render-doc-width (sample-hard-line-doc) 80)]
+    [empty : String (render-doc (doc-append (doc-empty) (DText "x")))])
     (if (string-eq flat "alpha beta")
-        (if (string-eq broken "alpha\n  beta")
-            (if (string-eq hard "a\nb")
-                (if (string-eq empty "x")
-                    42
-                    4)
-                3)
-            2)
-        1)))
+      (if (string-eq broken "alpha\n  beta")
+        (if (string-eq hard "a\nb")
+          (if (string-eq empty "x")
+            42
+            4)
+          3)
+        2)
+      1)))

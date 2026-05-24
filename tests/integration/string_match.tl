@@ -16,9 +16,12 @@
     [(TEnd) 0]))
 
 (define (main) : i64
-  (+ (op-score "+")
-     (+ (op-score "/")
-        (+ (token-score (TIdent "if"))
-           (+ (token-score (TIdent "while"))
-              (+ (token-score (TEnd))
-                 (op-score "*")))))))
+  (+
+    (op-score "+")
+    (+
+      (op-score "/")
+      (+
+        (token-score (TIdent "if"))
+        (+
+          (token-score (TIdent "while"))
+          (+ (token-score (TEnd)) (op-score "*")))))))

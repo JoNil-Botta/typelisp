@@ -1,4 +1,8 @@
-(defenum BinOp (OpAdd) (OpSub) (OpMul) (OpUnknown))
+(defenum BinOp
+  (OpAdd)
+  (OpSub)
+  (OpMul)
+  (OpUnknown))
 
 (define (parse-op [op : i64]) : BinOp
   (cond
@@ -15,7 +19,6 @@
     [(OpUnknown) 0]))
 
 (define (main) : i64
-  (+ (score (parse-op 43))
-     (+ (score (parse-op 45))
-        (+ (score (parse-op 42))
-           (score (parse-op 47))))))
+  (+
+    (score (parse-op 43))
+    (+ (score (parse-op 45)) (+ (score (parse-op 42)) (score (parse-op 47))))))

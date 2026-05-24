@@ -1938,6 +1938,7 @@ fn selfhost_check_driver_reports_success_and_errors() {
         &selfhost_dir,
         &work_dir,
         &[
+            "compiler_check_core.tl",
             "compiler_load.tl",
             "compiler_typecheck.tl",
             "compiler_symbols.tl",

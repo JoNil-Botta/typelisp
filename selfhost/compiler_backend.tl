@@ -2856,32 +2856,48 @@ tl_string_concat:
             (IrInstrCast 6 (IrValueVar 5) (AstTyI8) (AstTyI64))
             "    movsbq -48(%rbp), %rax\n"))))))
 
+;; A source exercising `array-ref`, used to confirm the lowerer's bounds-check
+
+;; trap (#528) reaches the backend as a `call tl_oob_abort`.
+
+(define (compiler-backend-array-access-source) : String
+  "(define (get [a : (Array i64)] [i : i64]) : i64 (array-ref a i))
+(define (main) : i64 0)")
+
+(define (compiler-backend-array-access-asm-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-array-access-source))
+    [(OkCompilerBackend asm)
+      (compiler-backend-string-contains? asm "call tl_oob_abort")]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-self-test) : i64
   (if (and
     (compiler-backend-target-model-ok? (compiler-backend-smoke-source))
     (and
-      (compiler-backend-source-ok? (compiler-backend-smoke-source))
+      (compiler-backend-array-access-asm-ok?)
       (and
-        (compiler-backend-deterministic-ok? (compiler-backend-smoke-source))
+        (compiler-backend-source-ok? (compiler-backend-smoke-source))
         (and
-          (compiler-backend-string-ok?)
+          (compiler-backend-deterministic-ok? (compiler-backend-smoke-source))
           (and
-            (compiler-backend-memory-op-ok?)
+            (compiler-backend-string-ok?)
             (and
-              (compiler-backend-aggregate-ok?)
+              (compiler-backend-memory-op-ok?)
               (and
-                (compiler-backend-enum-match-ok?)
+                (compiler-backend-aggregate-ok?)
                 (and
-                  (compiler-backend-regalloc-ok?)
+                  (compiler-backend-enum-match-ok?)
                   (and
-                    (compiler-backend-error-ok?
-                      (compiler-backend-too-many-call-source)
-                      "backend: too many call args")
+                    (compiler-backend-regalloc-ok?)
                     (and
-                      (compiler-backend-runtime-helper-asm-ok?)
+                      (compiler-backend-error-ok?
+                        (compiler-backend-too-many-call-source)
+                        "backend: too many call args")
                       (and
-                        (compiler-backend-user-helper-name-ok?)
-                        (compiler-backend-runtime-coexist-ok?))))))))))))
+                        (compiler-backend-runtime-helper-asm-ok?)
+                        (and
+                          (compiler-backend-user-helper-name-ok?)
+                          (compiler-backend-runtime-coexist-ok?)))))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

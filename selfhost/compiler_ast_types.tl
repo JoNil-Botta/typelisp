@@ -1,12 +1,21 @@
 ;; compiler_ast_types.tl - Self-hosted model of the real TypeLisp AST (#334).
+
 ;;
+
 ;; This module is intentionally separate from ast_types.tl, which remains the
+
 ;; smaller compile_smoke AST. The types below mirror Rust's src/ast.rs and
+
 ;; src/types.rs closely enough for the future Sexpr -> real-AST parser to target
+
 ;; them without committing to typechecking, lowering, or code generation yet.
+
 ;;
+
 ;; Deferred on purpose: parser result/error wrappers, typechecker registries,
+
 ;; inferred types, and lowered IR metadata. Source spans are represented as data
+
 ;; but later parser work decides when they are populated.
 
 (defstruct AstSourceSpan
@@ -235,18 +244,19 @@
 
 (define (compiler-ast-smoke) : i64
   (let ([i64-ty : AstType (AstTyI64)]
-        [string-ty : AstType (AstTyString)]
-        [arg-tys : AstTypeList
-         (AstTypeCons i64-ty (AstTypeCons string-ty AstTypeNil))]
-        [fn-ty : AstType (AstTyFunc arg-tys i64-ty)]
-        [lit : AstLiteral (AstLitInt 41)]
-        [one : AstExpr (AstExprLiteral (AstLitInt 1))]
-        [expr : AstExpr
-         (AstExprBinary (AstBinAdd) (AstExprLiteral lit) one)]
-        [param : AstParam (AstParam "x" i64-ty)]
-        [params : AstParamList (AstParamCons param AstParamNil)]
-        [decl : AstDecl (AstDeclDefFn "main" params i64-ty expr)]
-        [program : AstProgram (AstProgram (AstDeclCons decl AstDeclNil))])
+    [string-ty : AstType (AstTyString)]
+    [arg-tys
+      :
+      AstTypeList
+      (AstTypeCons i64-ty (AstTypeCons string-ty AstTypeNil))]
+    [fn-ty : AstType (AstTyFunc arg-tys i64-ty)]
+    [lit : AstLiteral (AstLitInt 41)]
+    [one : AstExpr (AstExprLiteral (AstLitInt 1))]
+    [expr : AstExpr (AstExprBinary (AstBinAdd) (AstExprLiteral lit) one)]
+    [param : AstParam (AstParam "x" i64-ty)]
+    [params : AstParamList (AstParamCons param AstParamNil)]
+    [decl : AstDecl (AstDeclDefFn "main" params i64-ty expr)]
+    [program : AstProgram (AstProgram (AstDeclCons decl AstDeclNil))])
     (match program
       [(AstProgram _)
-       (+ (ast-type-tag fn-ty) (+ (ast-expr-tag expr) (ast-decl-tag decl)))])))
+        (+ (ast-type-tag fn-ty) (+ (ast-expr-tag expr) (ast-decl-tag decl)))])))

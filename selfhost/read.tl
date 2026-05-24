@@ -1,59 +1,111 @@
 ;; read.tl - The s-expression READER for TypeLisp's own syntax, factored out
+
 ;; as a `main`-less, importable module (refs #27/#44).
+
 ;;
+
 ;; --------------------------------------------------------------------------
+
 ;; Why this module exists (the module signal for the evaluator, refs #44/#81).
+
 ;; --------------------------------------------------------------------------
+
 ;; `reader.tl` is the *demo* program for the s-expression reader: it carries a
+
 ;; `main` that reads a sample and folds the resulting tree with `sum-ints`. But
+
 ;; the next front-end component - the s-expression *evaluator* in `eval.tl` -
+
 ;; wants to REUSE the reader's `read : (-> (Array Token) Sexpr)` and the `Sexpr`
+
 ;; AST it builds, rather than re-derive them, and it carries its own `main`
+
 ;; (interpret the read tree to an i64).
+
 ;;
+
 ;; The module loader (#44) is whole-program: it concatenates every imported
+
 ;; module's declarations into a single program, then runs the unchanged
+
 ;; `typecheck -> lower -> codegen` pipeline. So two modules that both declare a
+
 ;; `main` and are loaded together produce a duplicate `main` symbol - the known
+
 ;; module limitation. Importing `reader.tl` (which HAS a `main`) into the
+
 ;; evaluator (which also needs a `main`) would clash.
+
 ;;
+
 ;; The fix is this `main`-less module: it holds the reader's cursor helpers, the
+
 ;; mutually recursive `read-form` / `read-list`, the public `read` entry, AND the
+
 ;; `Sexpr` AST definition, `(import)`s the shared `main`-less `lex.tl` (which
+
 ;; transitively imports the `main`-less `token.tl`), and declares NO `main`.
+
 ;; The evaluator `(import "read.tl")`s it and gets `read` + `lex` + the
+
 ;; `Sexpr` enum across the import boundary, and the concatenated program has
+
 ;; exactly one `main` (the evaluator's). `reader.tl` stays as the reader's
+
 ;; standalone demo. This mirrors how `lex.tl` was factored from the
+
 ;; `main`-bearing `lexer.tl`: a `main`-less module is the unit of reuse, a
+
 ;; `main`-bearing file is a runnable demo.
 
 ;; The shared lexer: the public `lex : (-> String (Array Token))`, factored into
+
 ;; a `main`-less module. `lex.tl` in turn imports the `main`-less
+
 ;; `token.tl` token model, so this single import transitively pulls in BOTH
+
 ;; the `lex` entry and the `Token` enum + token accessors/tag constants.
+
 ;; Resolved relative to this file, so it finds the co-located `lex.tl`.
+
 (import "lex.tl")
 
 ;; --------------------------------------------------------------------------
+
 ;; The Sexpr AST: cons cells, the way Lisp represents read source (refs #13/#27).
+
 ;; --------------------------------------------------------------------------
+
 ;; An s-expression is an atom (an integer or a symbol), the empty list, or a cons
+
 ;; cell pairing a head s-expression with a tail s-expression. A *proper list*
+
 ;; `(a b c)` is the right-nested spine `(SCons a (SCons b (SCons c (SNil))))`,
+
 ;; terminated by `SNil` - exactly the cons-cell encoding of a list in any Lisp.
+
 ;; `SCons` carries two `Sexpr` children; recursive enum payloads (#111) make each
+
 ;; child an 8-byte heap pointer, so the layout is finite and every constructed
+
 ;; node that escapes via a return is heap-promoted. The reader builds this tree;
+
 ;; the evaluator that imports this module walks it with a `match`-based recursion.
+
 ;; `SStr` carries the inner text of a `"..."` string-literal datum: the reader
+
 ;; consumes the lexer's `TStr` token (#128) into it, so a quoted string reads as a
+
 ;; distinct atom rather than being conflated with a `SSym` of the same characters.
+
 ;; `SChar` carries a `#x'` / `#\x'` character-literal datum (#333), likewise
+
 ;; keeping chars distinct from symbols, ints, and strings. `SStr` and `SChar`
+
 ;; are appended last so the existing variants keep their stable ordering for
+
 ;; every importer.
+
 (defenum Sexpr
   (SInt i64)
   (SSym String)
@@ -92,30 +144,43 @@
     [(SpSInt n _) (SInt n)]
     [(SpSSym sym _) (SSym sym)]
     [(SpSNil _) SNil]
-    [(SpSCons head tail _) (SCons (spanned-sexpr-form head) (spanned-sexpr-form tail))]
+    [(SpSCons head tail _)
+      (SCons (spanned-sexpr-form head) (spanned-sexpr-form tail))]
     [(SpSStr text _) (SStr text)]
     [(SpSChar c _) (SChar c)]))
 
 ;; --------------------------------------------------------------------------
+
 ;; The reader cursor: a single mutable index into the `(Array Token)`.
+
 ;; --------------------------------------------------------------------------
+
 ;; A TypeLisp function returns a single value, but the reader must both *return
+
 ;; an `Sexpr`* and *advance past the tokens it consumed*. So the position is an
+
 ;; out-param: a single-cell `(Array i64)` (`cur`) holding the index of the token
+
 ;; under the cursor. Because arrays are heap references, a mutation through `cur`
+
 ;; is visible to the caller across the recursive `read-form` / `read-list` calls.
 
 ;; Current cursor position (index of the token under the cursor).
+
 (define (cur-pos [cur : (Array i64)]) : i64
   (array-ref cur 0))
 
 ;; Kind tag of the token under the cursor, via the imported `token-tag`. This is
+
 ;; the load-bearing cross-import call: the reader classifies a `Token` produced
+
 ;; by the imported `lex` using the accessor defined in the imported token model.
+
 (define (peek-tag [toks : (Array Token)] [cur : (Array i64)]) : i64
   (token-tag (array-ref toks (cur-pos cur))))
 
 ;; The `Token` value under the cursor (for projecting its int/symbol payload).
+
 (define (peek-tok [toks : (Array Token)] [cur : (Array i64)]) : Token
   (array-ref toks (cur-pos cur)))
 
@@ -126,163 +191,202 @@
   (token-tag (spanned-token-token (peek-spanned-token toks cur))))
 
 ;; Consume the current token: advance the cursor by one.
+
 (define (advance [cur : (Array i64)]) : unit
   (array-set! cur 0 (+ (cur-pos cur) 1)))
 
 ;; --------------------------------------------------------------------------
+
 ;; The reader proper: `read-form` and `read-list`, mutually recursive.
+
 ;; --------------------------------------------------------------------------
 
 ;; read-form: read exactly one s-expression starting at the cursor and return
+
 ;; it, advancing the cursor past the tokens it consumed.
+
 ;;   TInt n  -> (SInt n)            an integer atom
+
 ;;   TSym s  -> (SSym s)            a symbol atom
+
 ;;   TStr s  -> (SStr s)            a string-literal atom (`"..."`, refs #128)
+
 ;;   TChar c -> (SChar c)           a character-literal atom (`#x'`, refs #333)
+
 ;;   TLParen -> read-list           consume '(' then read a list to its ')'
+
 ;;   TRParen -> error                a stray ')' with no opening '(' is malformed
+
 ;;   TEnd    -> error                end of stream where a form was expected
+
 ;; A grammar violation returns a recoverable `ErrSexpr String`; the compatibility
+
 ;; wrappers below still panic for callers that have not moved to `read-result`.
-(define (read-form-spanned-result [toks : (Array SpannedToken)] [cur : (Array i64)]) : ResultSpannedSexpr
+
+(define (read-form-spanned-result
+  [toks : (Array SpannedToken)]
+  [cur : (Array i64)]) : ResultSpannedSexpr
   (let ([st : SpannedToken (peek-spanned-token toks cur)])
     (let ([tok : Token (spanned-token-token st)]
-          [span : SourceSpan (spanned-token-span st)])
+      [span : SourceSpan (spanned-token-span st)])
       (let ([t : i64 (token-tag tok)])
         (if (= t (tag-int))
-            (let ([v : i64 (token-int tok)])
+          (let ([v : i64 (token-int tok)])
+            (begin
+              (advance cur)
+              (OkSpannedSexpr (SpSInt v span))))
+          (if (= t (tag-sym))
+            (let ([s : String (token-sym tok)])
               (begin
                 (advance cur)
-                (OkSpannedSexpr (SpSInt v span))))
-            (if (= t (tag-sym))
-                (let ([s : String (token-sym tok)])
+                (OkSpannedSexpr (SpSSym s span))))
+            (if (= t (tag-str))
+              (let ([s : String (token-str tok)])
+                (begin
+                  (advance cur)
+                  (OkSpannedSexpr (SpSStr s span))))
+              (if (= t (tag-char))
+                (let ([c : char (token-char tok)])
                   (begin
                     (advance cur)
-                    (OkSpannedSexpr (SpSSym s span))))
-                (if (= t (tag-str))
-                    (let ([s : String (token-str tok)])
-                      (begin
-                        (advance cur)
-                        (OkSpannedSexpr (SpSStr s span))))
-                    (if (= t (tag-char))
-                        (let ([c : char (token-char tok)])
-                          (begin
-                            (advance cur)
-                            (OkSpannedSexpr (SpSChar c span))))
-                        (if (= t (tag-lparen))
-                            (begin
-                              (advance cur)
-                              (read-list-spanned-result toks cur span))
-                            (if (= t (tag-rparen))
-                                (ErrSpannedSexpr (SourceError "reader: unexpected ')'" span))
-                                (ErrSpannedSexpr (SourceError "reader: unexpected end of input" span))))))))))))
+                    (OkSpannedSexpr (SpSChar c span))))
+                (if (= t (tag-lparen))
+                  (begin
+                    (advance cur)
+                    (read-list-spanned-result toks cur span))
+                  (if (= t (tag-rparen))
+                    (ErrSpannedSexpr
+                      (SourceError "reader: unexpected ')'" span))
+                    (ErrSpannedSexpr
+                      (SourceError "reader: unexpected end of input" span))))))))))))
 
-(define (read-list-spanned-result [toks : (Array SpannedToken)] [cur : (Array i64)] [open-span : SourceSpan]) : ResultSpannedSexpr
+(define (read-list-spanned-result
+  [toks : (Array SpannedToken)]
+  [cur : (Array i64)]
+  [open-span : SourceSpan]) : ResultSpannedSexpr
   (let ([st : SpannedToken (peek-spanned-token toks cur)])
     (let ([span : SourceSpan (spanned-token-span st)]
-          [t : i64 (token-tag (spanned-token-token st))])
+      [t : i64 (token-tag (spanned-token-token st))])
       (if (= t (tag-rparen))
-          (begin
-            (advance cur)
-            (OkSpannedSexpr (SpSNil (merge-spans open-span span))))
-          (if (= t (tag-end))
-              (ErrSpannedSexpr (SourceError "reader: unterminated list (missing ')')" span))
-              (match (read-form-spanned-result toks cur)
-                [(OkSpannedSexpr head)
-                 (match (read-list-spanned-result toks cur open-span)
-                   [(OkSpannedSexpr tail)
-                    (OkSpannedSexpr
-                      (SpSCons head tail (merge-spans open-span (spanned-sexpr-span tail))))]
-                   [(ErrSpannedSexpr err) (ErrSpannedSexpr err)])]
-                [(ErrSpannedSexpr err) (ErrSpannedSexpr err)]))))))
+        (begin
+          (advance cur)
+          (OkSpannedSexpr (SpSNil (merge-spans open-span span))))
+        (if (= t (tag-end))
+          (ErrSpannedSexpr
+            (SourceError "reader: unterminated list (missing ')')" span))
+          (match (read-form-spanned-result toks cur)
+            [(OkSpannedSexpr head)
+              (match (read-list-spanned-result toks cur open-span)
+                [(OkSpannedSexpr tail)
+                  (OkSpannedSexpr
+                    (SpSCons
+                      head
+                      tail
+                      (merge-spans open-span (spanned-sexpr-span tail))))]
+                [(ErrSpannedSexpr err) (ErrSpannedSexpr err)])]
+            [(ErrSpannedSexpr err) (ErrSpannedSexpr err)]))))))
 
 (define (read-form-result [toks : (Array Token)] [cur : (Array i64)]) : ResultSexpr
   (let ([t : i64 (peek-tag toks cur)])
     (if (= t (tag-int))
-        ;; An integer atom: project the literal out of the TInt and consume it.
-        (let ([v : i64 (token-int (peek-tok toks cur))])
+      ;; An integer atom: project the literal out of the TInt and consume it.
+      (let ([v : i64 (token-int (peek-tok toks cur))])
+        (begin
+          (advance cur)
+          (OkSexpr (SInt v))))
+      (if (= t (tag-sym))
+        ;; A symbol atom: project the lexeme out of the TSym and consume it.
+        (let ([s : String (token-sym (peek-tok toks cur))])
           (begin
             (advance cur)
-            (OkSexpr (SInt v))))
-        (if (= t (tag-sym))
-            ;; A symbol atom: project the lexeme out of the TSym and consume it.
-            (let ([s : String (token-sym (peek-tok toks cur))])
+            (OkSexpr (SSym s))))
+        (if (= t (tag-str))
+          ;; A string-literal atom: project the inner text out of the TStr
+          ;; (via the imported `token-str` accessor, #128) and consume it.
+          ;; `SStr` keeps it distinct from a same-character `SSym`.
+          (let ([s : String (token-str (peek-tok toks cur))])
+            (begin
+              (advance cur)
+              (OkSexpr (SStr s))))
+          (if (= t (tag-char))
+            ;; A character-literal atom: project the char out of the
+            ;; TChar token (via imported `token-char`) and consume it.
+            (let ([c : char (token-char (peek-tok toks cur))])
               (begin
                 (advance cur)
-                (OkSexpr (SSym s))))
-            (if (= t (tag-str))
-                ;; A string-literal atom: project the inner text out of the TStr
-                ;; (via the imported `token-str` accessor, #128) and consume it.
-                ;; `SStr` keeps it distinct from a same-character `SSym`.
-                (let ([s : String (token-str (peek-tok toks cur))])
-                  (begin
-                    (advance cur)
-                    (OkSexpr (SStr s))))
-                (if (= t (tag-char))
-                    ;; A character-literal atom: project the char out of the
-                    ;; TChar token (via imported `token-char`) and consume it.
-                    (let ([c : char (token-char (peek-tok toks cur))])
-                      (begin
-                        (advance cur)
-                        (OkSexpr (SChar c))))
-                    (if (= t (tag-lparen))
-                        ;; A list: consume '(' and read forms until the matching ')'.
-                        (begin
-                          (advance cur)
-                          (read-list-result toks cur))
-                        (if (= t (tag-rparen))
-                            (ErrSexpr "reader: unexpected ')'")
-                            ;; tag-end (or anything else): premature end of stream.
-                            (ErrSexpr "reader: unexpected end of input")))))))))
+                (OkSexpr (SChar c))))
+            (if (= t (tag-lparen))
+              ;; A list: consume '(' and read forms until the matching ')'.
+              (begin
+                (advance cur)
+                (read-list-result toks cur))
+              (if (= t (tag-rparen))
+                (ErrSexpr "reader: unexpected ')'")
+                ;; tag-end (or anything else): premature end of stream.
+                (ErrSexpr "reader: unexpected end of input")))))))))
 
 ;; read-list: the cursor is positioned just AFTER an opening '('. Read forms
+
 ;; until the matching ')', returning the proper list `(SCons f1 (SCons f2 ...
+
 ;; (SNil)))`. Built by right-recursion so the spine comes out in source order
+
 ;; with NO reversal: read the head form, then recurse to read the rest of the
+
 ;; list, and cons the two. The base case is the ')' that closes this list -
+
 ;; consume it and return `SNil`. Hitting `TEnd` before a ')' is an unterminated
+
 ;; list and returns `ErrSexpr`. Nesting is handled for free: a head form that is
+
 ;; itself a '(' re-enters `read-form-result` -> `read-list-result`, which reads
+
 ;; the inner list to ITS ')' and advances the shared cursor past it before this
+
 ;; level reads its next sibling.
+
 (define (read-list-result [toks : (Array Token)] [cur : (Array i64)]) : ResultSexpr
   (let ([t : i64 (peek-tag toks cur)])
     (if (= t (tag-rparen))
-        ;; End of this list: consume the ')' and terminate the spine with SNil.
-        (begin
-          (advance cur)
-          (OkSexpr SNil))
-        (if (= t (tag-end))
-            (ErrSexpr "reader: unterminated list (missing ')')")
-            ;; A list element: read the head form (which advances the cursor past
-            ;; it, however deeply nested), then recurse for the tail and cons.
-            (match (read-form-result toks cur)
-              [(OkSexpr head)
-               (match (read-list-result toks cur)
-                 [(OkSexpr tail) (OkSexpr (SCons head tail))]
-                 [(ErrSexpr message) (ErrSexpr message)])]
-              [(ErrSexpr message) (ErrSexpr message)])))))
+      ;; End of this list: consume the ')' and terminate the spine with SNil.
+      (begin
+        (advance cur)
+        (OkSexpr SNil))
+      (if (= t (tag-end))
+        (ErrSexpr "reader: unterminated list (missing ')')")
+        ;; A list element: read the head form (which advances the cursor past
+        ;; it, however deeply nested), then recurse for the tail and cons.
+        (match (read-form-result toks cur)
+          [(OkSexpr head)
+            (match (read-list-result toks cur)
+              [(OkSexpr tail) (OkSexpr (SCons head tail))]
+              [(ErrSexpr message) (ErrSexpr message)])]
+          [(ErrSexpr message) (ErrSexpr message)])))))
 
 (define (read-form [toks : (Array Token)] [cur : (Array i64)]) : Sexpr
   (match (read-form-result toks cur)
     [(OkSexpr form) form]
     [(ErrSexpr message)
-     (begin
-       (panic message)
-       SNil)]))
+      (begin
+        (panic message)
+        SNil)]))
 
 (define (read-list [toks : (Array Token)] [cur : (Array i64)]) : Sexpr
   (match (read-list-result toks cur)
     [(OkSexpr list) list]
     [(ErrSexpr message)
-     (begin
-       (panic message)
-       SNil)]))
+      (begin
+        (panic message)
+        SNil)]))
 
 ;; read: the public entry point. Read a single top-level form from the front of
+
 ;; `toks` (a cursor starting at index 0) and return its `Sexpr` tree. (Trailing
+
 ;; tokens after the first form are ignored here, as a top-level `read` returns
+
 ;; one datum at a time.)
+
 (define (read-result [toks : (Array Token)]) : ResultSexpr
   (let ([cur : (Array i64) (make-array i64 1)])
     (begin
@@ -299,14 +403,14 @@
   (match (read-spanned-result toks)
     [(OkSpannedSexpr form) form]
     [(ErrSpannedSexpr err)
-     (begin
-       (panic (source-error-message err))
-       (SpSNil (source-error-span err)))]))
+      (begin
+        (panic (source-error-message err))
+        (SpSNil (source-error-span err)))]))
 
 (define (read [toks : (Array Token)]) : Sexpr
   (match (read-result toks)
     [(OkSexpr form) form]
     [(ErrSexpr message)
-     (begin
-       (panic message)
-       SNil)]))
+      (begin
+        (panic message)
+        SNil)]))

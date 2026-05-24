@@ -1,1 +1,2 @@
-(define (main) : unit unit)
+(define (main) : unit
+  unit)

@@ -1,4 +1,5 @@
-(define seen : i64 0)
+(define seen : i64
+  0)
 
 (define (inc [x : i64]) : i64
   (+ x 1))
@@ -22,7 +23,9 @@
   (begin
     (apply0u mark)
     (if (= (apply1 inc 41) 42)
-        (if (= (shadow-inc dec 43) 42)
-            (if (= seen 42) 42 3)
-            2)
-        1)))
+      (if (= (shadow-inc dec 43) 42)
+        (if (= seen 42)
+          42
+          3)
+        2)
+      1)))

@@ -1,6 +1,12 @@
 (define (sum8
-    [a : i64] [b : i64] [c : i64] [d : i64]
-    [e : i64] [f : i64] [g : i64] [h : i64]) : i64
+  [a : i64]
+  [b : i64]
+  [c : i64]
+  [d : i64]
+  [e : i64]
+  [f : i64]
+  [g : i64]
+  [h : i64]) : i64
   (+ (+ (+ (+ (+ (+ (+ a b) c) d) e) f) g) h))
 
 (define (main) : i64

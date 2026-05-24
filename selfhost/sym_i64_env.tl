@@ -1,4 +1,5 @@
 ; sym_i64_env module - Immutable scoped String -> i64 symbol table.
+
 ; A focused child of #42: functional binding, head-first lookup, shadowing.
 
 (defenum MaybeI64

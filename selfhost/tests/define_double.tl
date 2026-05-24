@@ -1,2 +1,4 @@
-(define (double x) (+ x x))
+(define (double x)
+  (+ x x))
+
 (double 21)

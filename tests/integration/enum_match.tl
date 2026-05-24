@@ -1,4 +1,7 @@
-(defenum Color (Red i64) (Green i64) (Blue i64))
+(defenum Color
+  (Red i64)
+  (Green i64)
+  (Blue i64))
 
 (define (color-value [c : Color]) : i64
   (match c

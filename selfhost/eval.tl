@@ -691,7 +691,8 @@
   (match bindings
     [(SNil) acc]
     [(SCons pair more)
-      (let ([var : String (let-var pair)]
+      (let (
+        [var : String (let-var pair)]
         [v : Value (eval-sexpr (let-init pair) acc fenv)])
         (eval-let-bindings more (EBind var v acc) fenv))]
     [(SInt _)
@@ -1219,11 +1220,14 @@
                 ;; sub-exprs, assert exactly three, then SHORT-CIRCUIT: eval cond,
                 ;; `as-int` it, and eval ONLY the taken branch. `0` is false, anything
                 ;; else true (a `VStr` condition is a type error, caught by `as-int`).
-                (let ([cond-e : Sexpr (sexpr-head rest)]
+                (let (
+                  [cond-e : Sexpr (sexpr-head rest)]
                   [restc : Sexpr (sexpr-tail rest)])
-                  (let ([then-e : Sexpr (sexpr-head restc)]
+                  (let (
+                    [then-e : Sexpr (sexpr-head restc)]
                     [restt : Sexpr (sexpr-tail restc)])
-                    (let ([else-e : Sexpr (sexpr-head restt)]
+                    (let (
+                      [else-e : Sexpr (sexpr-head restt)]
                       [reste : Sexpr (sexpr-tail restt)])
                       (begin
                         (sexpr-expect-nil reste)
@@ -1240,7 +1244,8 @@
                   ;; bytes (NO trailing newline) via the host `print-string` builtin
                   ;; (the write(2)-syscall string emitter, #13/#27) - so STRING values
                   ;; are now printable too, not a deferred abort.
-                  (let ([arg : Sexpr (sexpr-head rest)]
+                  (let (
+                    [arg : Sexpr (sexpr-head rest)]
                     [restp : Sexpr (sexpr-tail rest)])
                     (begin
                       (sexpr-expect-nil restp)
@@ -1281,7 +1286,8 @@
                     ;; Evaluate the single argument, `as-str`-project it (a `VInt`
                     ;; here is a type error), call the host `string-length`
                     ;; builtin, and re-wrap its i64 byte-count as `(VInt r)`.
-                    (let ([arg : Sexpr (sexpr-head rest)]
+                    (let (
+                      [arg : Sexpr (sexpr-head rest)]
                       [restl : Sexpr (sexpr-tail rest)])
                       (begin
                         (sexpr-expect-nil restl)
@@ -1294,11 +1300,14 @@
                       ;; length, call the host `substring` builtin (a half-open
                       ;; `[i, i+n)` slice, bounds-checked at runtime), and re-wrap
                       ;; the fresh String result as `(VStr r)`.
-                      (let ([se : Sexpr (sexpr-head rest)]
+                      (let (
+                        [se : Sexpr (sexpr-head rest)]
                         [rests : Sexpr (sexpr-tail rest)])
-                        (let ([ie : Sexpr (sexpr-head rests)]
+                        (let (
+                          [ie : Sexpr (sexpr-head rests)]
                           [rests2 : Sexpr (sexpr-tail rests)])
-                          (let ([ne : Sexpr (sexpr-head rests2)]
+                          (let (
+                            [ne : Sexpr (sexpr-head rests2)]
                             [rests3 : Sexpr (sexpr-tail rests2)])
                             (begin
                               (sexpr-expect-nil rests3)
@@ -1315,9 +1324,11 @@
                         ;; 1 (equal) / 0 (unequal) integer-truth convention as
                         ;; `(VInt r)` - matching how the comparison operators
                         ;; encode booleans.
-                        (let ([ae : Sexpr (sexpr-head rest)]
+                        (let (
+                          [ae : Sexpr (sexpr-head rest)]
                           [reste : Sexpr (sexpr-tail rest)])
-                          (let ([be : Sexpr (sexpr-head reste)]
+                          (let (
+                            [be : Sexpr (sexpr-head reste)]
                             [reste2 : Sexpr (sexpr-tail reste)])
                             (begin
                               (sexpr-expect-nil reste2)
@@ -1336,7 +1347,8 @@
                           ;; re-wrap the fresh String result as `(VStr r)` -
                           ;; so an integer VALUE can be turned into a string
                           ;; VALUE inside an interpreted program.
-                          (let ([arg : Sexpr (sexpr-head rest)]
+                          (let (
+                            [arg : Sexpr (sexpr-head rest)]
                             [resti : Sexpr (sexpr-tail rest)])
                             (begin
                               (sexpr-expect-nil resti)
@@ -1351,7 +1363,8 @@
                             ;; i64 result as `(VInt r)` - the inverse of
                             ;; `int->string`, so a string VALUE denoting a
                             ;; number can be parsed back to an integer VALUE.
-                            (let ([arg : Sexpr (sexpr-head rest)]
+                            (let (
+                              [arg : Sexpr (sexpr-head rest)]
                               [restp2 : Sexpr (sexpr-tail rest)])
                               (begin
                                 (sexpr-expect-nil restp2)
@@ -1370,9 +1383,11 @@
                               ;; interpreter's string toolkit: it can now BUILD
                               ;; strings, not only measure / slice / compare /
                               ;; print them.
-                              (let ([ae : Sexpr (sexpr-head rest)]
+                              (let (
+                                [ae : Sexpr (sexpr-head rest)]
                                 [restA : Sexpr (sexpr-tail rest)])
-                                (let ([be : Sexpr (sexpr-head restA)]
+                                (let (
+                                  [be : Sexpr (sexpr-head restA)]
                                   [restA2 : Sexpr (sexpr-tail restA)])
                                   (begin
                                     (sexpr-expect-nil restA2)
@@ -1392,9 +1407,11 @@
                                 ;; (ints, strings, or further pairs), which is
                                 ;; exactly what makes a singly-linked LIST a
                                 ;; right-nested chain of pairs.
-                                (let ([ae : Sexpr (sexpr-head rest)]
+                                (let (
+                                  [ae : Sexpr (sexpr-head rest)]
                                   [restC : Sexpr (sexpr-tail rest)])
-                                  (let ([be : Sexpr (sexpr-head restC)]
+                                  (let (
+                                    [be : Sexpr (sexpr-head restC)]
                                     [restC2 : Sexpr (sexpr-tail restC)])
                                     (begin
                                       (sexpr-expect-nil restC2)
@@ -1409,7 +1426,8 @@
                                   ;; program - abort via `panic` (the same channel
                                   ;; `as-int` / `as-str` use). `(VInt 0)` is the
                                   ;; neutral fall-through after the panic.
-                                  (let ([pe : Sexpr (sexpr-head rest)]
+                                  (let (
+                                    [pe : Sexpr (sexpr-head rest)]
                                     [restR : Sexpr (sexpr-tail rest)])
                                     (begin
                                       (sexpr-expect-nil restR)
@@ -1432,7 +1450,8 @@
                                     ;; Evaluate the single argument and project the
                                     ;; SECOND field of the pair - the REST of a list.
                                     ;; A non-pair value is a type error - abort.
-                                    (let ([pe : Sexpr (sexpr-head rest)]
+                                    (let (
+                                      [pe : Sexpr (sexpr-head rest)]
                                       [restD : Sexpr (sexpr-tail rest)])
                                       (begin
                                         (sexpr-expect-nil restD)
@@ -1464,7 +1483,8 @@
                                       ;; termination witness for `sum-list` below. Unlike
                                       ;; `car` / `cdr` it is TOTAL: a non-pair is simply
                                       ;; `(VInt 0)` (false), never a type error.
-                                      (let ([pe : Sexpr (sexpr-head rest)]
+                                      (let (
+                                        [pe : Sexpr (sexpr-head rest)]
                                         [restP : Sexpr (sexpr-tail rest)])
                                         (begin
                                           (sexpr-expect-nil restP)
@@ -1485,7 +1505,8 @@
                                         ;; int, a string, a closure, or a pair - is not nil.
                                         ;; Folds to the 1 / 0 integer-truth convention as
                                         ;; `(VInt r)`. Also TOTAL over the value domain.
-                                        (let ([pe : Sexpr (sexpr-head rest)]
+                                        (let (
+                                          [pe : Sexpr (sexpr-head rest)]
                                           [restN : Sexpr (sexpr-tail rest)])
                                           (begin
                                             (sexpr-expect-nil restN)
@@ -1502,23 +1523,19 @@
                                           ;; `(SCons arg1 (SCons arg2 SNil))`. Both operands must be
                                           ;; integers, so each is `as-int`-projected; the i64 result is
                                           ;; re-wrapped as `(VInt r)`.
-                                          (let ([arg1 : Sexpr (sexpr-head rest)]
+                                          (let (
+                                            [arg1 : Sexpr (sexpr-head rest)]
                                             [rest2 : Sexpr (sexpr-tail rest)])
-                                            (let ([arg2
-                                                :
-                                                Sexpr
-                                                (sexpr-head rest2)]
+                                            (let (
+                                              [arg2 : Sexpr (sexpr-head rest2)]
                                               [rest3 : Sexpr (sexpr-tail rest2)])
                                               (begin
                                                 (sexpr-expect-nil rest3)
-                                                (let ([a
-                                                    :
-                                                    i64
+                                                (let (
+                                                  [a : i64
                                                     (as-int
                                                       (eval-sexpr arg1 env fenv))]
-                                                  [b
-                                                    :
-                                                    i64
+                                                  [b : i64
                                                     (as-int
                                                       (eval-sexpr arg2 env fenv))])
                                                   (VInt (eval-builtin name a b))))))
@@ -1544,13 +1561,10 @@
                                               rest
                                               env
                                               fenv)
-                                            (let ([params
-                                                :
-                                                Sexpr
+                                            (let (
+                                              [params : Sexpr
                                                 (lookup-fn-params fenv name)]
-                                              [body
-                                                :
-                                                Sexpr
+                                              [body : Sexpr
                                                 (lookup-fn-body fenv name)])
                                               (eval-sexpr
                                                 body
@@ -2297,7 +2311,9 @@
 ;; trailing expression denotes after all definitions are in scope.
 
 (define (run-program-panic [src : String]) : i64
-  (let ([toks : (Array Token) (lex src)] [cur : (Array i64) (make-array i64 1)])
+  (let (
+    [toks : (Array Token) (lex src)]
+    [cur : (Array i64) (make-array i64 1)])
     (begin
       (array-set! cur 0 0)
       (run-forms-panic toks cur FNil))))
@@ -2314,7 +2330,9 @@
         (ErrI64 "eval: a non-final top-level form must be a (define ...)")))))
 
 (define (run-program-result [src : String]) : ResultI64
-  (let ([toks : (Array Token) (lex src)] [cur : (Array i64) (make-array i64 1)])
+  (let (
+    [toks : (Array Token) (lex src)]
+    [cur : (Array i64) (make-array i64 1)])
     (begin
       (array-set! cur 0 0)
       (run-forms toks cur FNil))))

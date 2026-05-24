@@ -113,199 +113,141 @@
 (define (tc-default-env) : TcTypeEnv
   (let ([e0 : TcTypeEnv (tc-empty-env)])
     (let ([e1 : TcTypeEnv (tc-bind e0 "print" (tc-fn1 (AstTyI64) (AstTyUnit)))])
-      (let ([e2
-          :
-          TcTypeEnv
-          (tc-bind e1 "print-bool" (tc-fn1 (AstTyBool) (AstTyUnit)))])
-        (let ([e3
-            :
-            TcTypeEnv
-            (tc-bind e2 "print-float" (tc-fn1 (AstTyF64) (AstTyUnit)))])
-          (let ([e4
-              :
-              TcTypeEnv
-              (tc-bind e3 "print-char" (tc-fn1 (AstTyChar) (AstTyUnit)))])
-            (let ([e5
-                :
-                TcTypeEnv
-                (tc-bind e4 "print-newline" (tc-fn0 (AstTyUnit)))])
-              (let ([e6
-                  :
-                  TcTypeEnv
-                  (tc-bind e5 "print-string" (tc-fn1 (AstTyString) (AstTyUnit)))])
-                (let ([e7
-                    :
-                    TcTypeEnv
-                    (tc-bind e6 "print-str" (tc-fn1 (AstTyString) (AstTyUnit)))])
-                  (let ([e8
-                      :
-                      TcTypeEnv
-                      (tc-bind
-                        e7
-                        "print-error"
-                        (tc-fn1 (AstTyString) (AstTyUnit)))])
-                    (let ([e9
-                        :
-                        TcTypeEnv
-                        (tc-bind e8 "arg-count" (tc-fn0 (AstTyI64)))])
-                      (let ([e10
-                          :
-                          TcTypeEnv
-                          (tc-bind e9 "arg" (tc-fn1 (AstTyI64) (AstTyString)))])
-                        (let ([e11
-                            :
-                            TcTypeEnv
+      (let ([e2 : TcTypeEnv
+        (tc-bind e1 "print-bool" (tc-fn1 (AstTyBool) (AstTyUnit)))])
+        (let ([e3 : TcTypeEnv
+          (tc-bind e2 "print-float" (tc-fn1 (AstTyF64) (AstTyUnit)))])
+          (let ([e4 : TcTypeEnv
+            (tc-bind e3 "print-char" (tc-fn1 (AstTyChar) (AstTyUnit)))])
+            (let ([e5 : TcTypeEnv
+              (tc-bind e4 "print-newline" (tc-fn0 (AstTyUnit)))])
+              (let ([e6 : TcTypeEnv
+                (tc-bind e5 "print-string" (tc-fn1 (AstTyString) (AstTyUnit)))])
+                (let ([e7 : TcTypeEnv
+                  (tc-bind e6 "print-str" (tc-fn1 (AstTyString) (AstTyUnit)))])
+                  (let ([e8 : TcTypeEnv
+                    (tc-bind
+                      e7
+                      "print-error"
+                      (tc-fn1 (AstTyString) (AstTyUnit)))])
+                    (let ([e9 : TcTypeEnv
+                      (tc-bind e8 "arg-count" (tc-fn0 (AstTyI64)))])
+                      (let ([e10 : TcTypeEnv
+                        (tc-bind e9 "arg" (tc-fn1 (AstTyI64) (AstTyString)))])
+                        (let ([e11 : TcTypeEnv
+                          (tc-bind
+                            e10
+                            "string-length"
+                            (tc-fn1 (AstTyString) (AstTyI64)))])
+                          (let ([e12 : TcTypeEnv
                             (tc-bind
-                              e10
-                              "string-length"
+                              e11
+                              "length"
                               (tc-fn1 (AstTyString) (AstTyI64)))])
-                          (let ([e12
-                              :
-                              TcTypeEnv
+                            (let ([e13 : TcTypeEnv
                               (tc-bind
-                                e11
-                                "length"
-                                (tc-fn1 (AstTyString) (AstTyI64)))])
-                            (let ([e13
-                                :
-                                TcTypeEnv
+                                e12
+                                "string-eq"
+                                (tc-fn2 (AstTyString) (AstTyString) (AstTyBool)))])
+                              (let ([e14 : TcTypeEnv
                                 (tc-bind
-                                  e12
-                                  "string-eq"
+                                  e13
+                                  "string=?"
                                   (tc-fn2
                                     (AstTyString)
                                     (AstTyString)
                                     (AstTyBool)))])
-                              (let ([e14
-                                  :
-                                  TcTypeEnv
+                                (let ([e15 : TcTypeEnv
                                   (tc-bind
-                                    e13
-                                    "string=?"
-                                    (tc-fn2
-                                      (AstTyString)
-                                      (AstTyString)
-                                      (AstTyBool)))])
-                                (let ([e15
-                                    :
-                                    TcTypeEnv
+                                    e14
+                                    "string->int"
+                                    (tc-fn1 (AstTyString) (AstTyI64)))])
+                                  (let ([e16 : TcTypeEnv
                                     (tc-bind
-                                      e14
-                                      "string->int"
-                                      (tc-fn1 (AstTyString) (AstTyI64)))])
-                                  (let ([e16
-                                      :
-                                      TcTypeEnv
+                                      e15
+                                      "int->string"
+                                      (tc-fn1 (AstTyI64) (AstTyString)))])
+                                    (let ([e17 : TcTypeEnv
                                       (tc-bind
-                                        e15
-                                        "int->string"
-                                        (tc-fn1 (AstTyI64) (AstTyString)))])
-                                    (let ([e17
-                                        :
-                                        TcTypeEnv
+                                        e16
+                                        "read-file"
+                                        (tc-fn1 (AstTyString) (AstTyString)))])
+                                      (let ([e18 : TcTypeEnv
                                         (tc-bind
-                                          e16
-                                          "read-file"
-                                          (tc-fn1 (AstTyString) (AstTyString)))])
-                                      (let ([e18
-                                          :
-                                          TcTypeEnv
+                                          e17
+                                          "write-file"
+                                          (tc-fn2
+                                            (AstTyString)
+                                            (AstTyString)
+                                            (AstTyUnit)))])
+                                        (let ([e19 : TcTypeEnv
                                           (tc-bind
-                                            e17
-                                            "write-file"
-                                            (tc-fn2
-                                              (AstTyString)
-                                              (AstTyString)
-                                              (AstTyUnit)))])
-                                        (let ([e19
-                                            :
-                                            TcTypeEnv
+                                            e18
+                                            "file-exists?"
+                                            (tc-fn1 (AstTyString) (AstTyBool)))])
+                                          (let ([e20 : TcTypeEnv
                                             (tc-bind
-                                              e18
-                                              "file-exists?"
-                                              (tc-fn1 (AstTyString) (AstTyBool)))])
-                                          (let ([e20
-                                              :
-                                              TcTypeEnv
+                                              e19
+                                              "substring"
+                                              (tc-fn3
+                                                (AstTyString)
+                                                (AstTyI64)
+                                                (AstTyI64)
+                                                (AstTyString)))])
+                                            (let ([e21 : TcTypeEnv
                                               (tc-bind
-                                                e19
-                                                "substring"
+                                                e20
+                                                "string-slice"
                                                 (tc-fn3
                                                   (AstTyString)
                                                   (AstTyI64)
                                                   (AstTyI64)
                                                   (AstTyString)))])
-                                            (let ([e21
-                                                :
-                                                TcTypeEnv
+                                              (let ([e22 : TcTypeEnv
                                                 (tc-bind
-                                                  e20
-                                                  "string-slice"
-                                                  (tc-fn3
+                                                  e21
+                                                  "string-append"
+                                                  (tc-fn2
                                                     (AstTyString)
-                                                    (AstTyI64)
-                                                    (AstTyI64)
+                                                    (AstTyString)
                                                     (AstTyString)))])
-                                              (let ([e22
-                                                  :
-                                                  TcTypeEnv
+                                                (let ([e23 : TcTypeEnv
                                                   (tc-bind
-                                                    e21
-                                                    "string-append"
+                                                    e22
+                                                    "string-concat"
                                                     (tc-fn2
                                                       (AstTyString)
                                                       (AstTyString)
                                                       (AstTyString)))])
-                                                (let ([e23
-                                                    :
-                                                    TcTypeEnv
+                                                  (let ([e24 : TcTypeEnv
                                                     (tc-bind
-                                                      e22
-                                                      "string-concat"
-                                                      (tc-fn2
-                                                        (AstTyString)
-                                                        (AstTyString)
-                                                        (AstTyString)))])
-                                                  (let ([e24
-                                                      :
-                                                      TcTypeEnv
+                                                      e23
+                                                      "read-stdin-line"
+                                                      (tc-fn0 (AstTyString)))])
+                                                    (let ([e25 : TcTypeEnv
                                                       (tc-bind
-                                                        e23
-                                                        "read-stdin-line"
-                                                        (tc-fn0 (AstTyString)))])
-                                                    (let ([e25
-                                                        :
-                                                        TcTypeEnv
+                                                        e24
+                                                        "read-stdin-bytes"
+                                                        (tc-fn1
+                                                          (AstTyI64)
+                                                          (AstTyString)))])
+                                                      (let ([e26 : TcTypeEnv
                                                         (tc-bind
-                                                          e24
-                                                          "read-stdin-bytes"
-                                                          (tc-fn1
-                                                            (AstTyI64)
-                                                            (AstTyString)))])
-                                                      (let ([e26
-                                                          :
-                                                          TcTypeEnv
+                                                          e25
+                                                          "stdin-eof?"
+                                                          (tc-fn0 (AstTyBool)))])
+                                                        (let ([e27 : TcTypeEnv
                                                           (tc-bind
-                                                            e25
-                                                            "stdin-eof?"
-                                                            (tc-fn0 (AstTyBool)))])
-                                                        (let ([e27
-                                                            :
-                                                            TcTypeEnv
+                                                            e26
+                                                            "flush-stdout"
+                                                            (tc-fn0 (AstTyUnit)))])
+                                                          (let ([e28 : TcTypeEnv
                                                             (tc-bind
-                                                              e26
-                                                              "flush-stdout"
-                                                              (tc-fn0
-                                                                (AstTyUnit)))])
-                                                          (let ([e28
-                                                              :
-                                                              TcTypeEnv
-                                                              (tc-bind
-                                                                e27
-                                                                "panic"
-                                                                (tc-fn1
-                                                                  (AstTyString)
-                                                                  (AstTyNever)))])
+                                                              e27
+                                                              "panic"
+                                                              (tc-fn1
+                                                                (AstTyString)
+                                                                (AstTyNever)))])
                                                             (tc-bind
                                                               (tc-bind
                                                                 e28
@@ -534,10 +476,8 @@
     (match value-regions
       [(TcStringNil) OkTcUnit]
       [_
-        (let ([target-regions
-            :
-            TcStringList
-            (tc-type-collect-regions target-ty)])
+        (let ([target-regions : TcStringList
+          (tc-type-collect-regions target-ty)])
           (if (and
             (tc-type-contains-any-region target-ty)
             (tc-region-list-can-flow-into env value-regions target-regions))
@@ -706,7 +646,8 @@
     (if (tc-never-type? b)
       (OkTcType a)
       (if (tc-type-eq a b)
-        (let ([a-regions : TcStringList (tc-type-collect-regions a)]
+        (let (
+          [a-regions : TcStringList (tc-type-collect-regions a)]
           [b-regions : TcStringList (tc-type-collect-regions b)])
           (if (tc-string-list-eq a-regions b-regions)
             (OkTcType a)
@@ -1168,16 +1109,13 @@
       (match fn-ty
         [(AstTyFunc params ret)
           (let ([call-name : TcMaybeString (tc-expr-var-name func)])
-            (let ([allow-region-args
-                :
-                bool
+            (let (
+              [allow-region-args : bool
                 (match call-name
                   [(TcSomeString name)
                     (tc-call-allows-region-args? ctx env name)]
                   [(TcNoString) false])]
-              [constructor-target
-                :
-                AstMaybeType
+              [constructor-target : AstMaybeType
                 (match call-name
                   [(TcSomeString name)
                     (if (tc-constructor-name? ctx name)
@@ -1645,10 +1583,8 @@
               (tc-context-program ctx)
               handle)
               [(OkAstTypeList fields)
-                (let ([resolved-fields
-                    :
-                    AstTypeList
-                    (tc-resolve-type-list ctx fields)])
+                (let ([resolved-fields : AstTypeList
+                  (tc-resolve-type-list ctx fields)])
                   (tc-bind-sub-pattern-list
                     ctx
                     env
@@ -2187,10 +2123,8 @@
                 (match (tc-expr ctx env end)
                   [(OkTcType end-ty)
                     (if (tc-integer-type? end-ty)
-                      (let ([body-env
-                          :
-                          TcTypeEnv
-                          (tc-bind env index resolved-index-ty)])
+                      (let ([body-env : TcTypeEnv
+                        (tc-bind env index resolved-index-ty)])
                         (match (tc-expr ctx body-env body)
                           [(OkTcType body-ty)
                             (match (tc-expect
@@ -2310,15 +2244,12 @@
   (match decls
     [(AstDeclNil) (OkCompilerTypecheck summary)]
     [(AstDeclCons decl rest)
-      (let ([decl-path
-          :
-          String
+      (let (
+        [decl-path : String
           (match paths
             [(AstDeclPathCons path _) path]
             [(AstDeclPathNil) ""])]
-        [rest-paths
-          :
-          AstDeclPathList
+        [rest-paths : AstDeclPathList
           (match paths
             [(AstDeclPathCons _ path-rest) path-rest]
             [(AstDeclPathNil) AstDeclPathNil])])

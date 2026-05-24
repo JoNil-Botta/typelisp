@@ -553,15 +553,12 @@
 (define (compiler-registries-smoke-score
   [program : AstProgram]
   [registries : CompilerRegistries]) : i64
-  (let ([some : MaybeI64 (compiler-registries-lookup-variant registries "Some")]
+  (let (
+    [some : MaybeI64 (compiler-registries-lookup-variant registries "Some")]
     [none : MaybeI64 (compiler-registries-lookup-variant registries "None")]
-    [x-field
-      :
-      MaybeI64
+    [x-field : MaybeI64
       (compiler-registries-lookup-struct-field registries "Point" "x")]
-    [y-field
-      :
-      MaybeI64
+    [y-field : MaybeI64
       (compiler-registries-lookup-struct-field registries "Point" "y")])
     (+
       (compiler-registry-lookup-score
@@ -656,10 +653,8 @@
     [(OkCompilerRegistries _) false]))
 
 (define (compiler-registry-large-owner-handle-ok?) : bool
-  (let ([handle
-      :
-      i64
-      (compiler-registry-make-handle (compiler-symbol-kind-enum-variant) 1234 5)])
+  (let ([handle : i64
+    (compiler-registry-make-handle (compiler-symbol-kind-enum-variant) 1234 5)])
     (and
       (=
         (compiler-registry-handle-kind handle)

@@ -83,7 +83,10 @@
 ;; observable, count-based result that depends on the symbol classification.
 
 (define (count-syms [toks : (Array Token)]) : i64
-  (let ([i : i64 0] [syms : i64 0] [keep : bool true])
+  (let (
+    [i : i64 0]
+    [syms : i64 0]
+    [keep : bool true])
     (begin
       (while keep
         (let ([t : i64 (token-tag (array-ref toks i))])
@@ -101,7 +104,10 @@
 ;; each token whose tag is `tag-str`. Depends on the string-literal lexing.
 
 (define (count-strs [toks : (Array Token)]) : i64
-  (let ([i : i64 0] [strs : i64 0] [keep : bool true])
+  (let (
+    [i : i64 0]
+    [strs : i64 0]
+    [keep : bool true])
     (begin
       (while keep
         (let ([t : i64 (token-tag (array-ref toks i))])
@@ -121,7 +127,10 @@
 ;; chars observably distinct from symbols, ints, and strings.
 
 (define (count-chars [toks : (Array Token)]) : i64
-  (let ([i : i64 0] [chars : i64 0] [keep : bool true])
+  (let (
+    [i : i64 0]
+    [chars : i64 0]
+    [keep : bool true])
     (begin
       (while keep
         (let ([t : i64 (token-tag (array-ref toks i))])
@@ -139,7 +148,10 @@
 ;; kept as source text so later selfhost stages do not need string->f64.
 
 (define (count-floats [toks : (Array Token)]) : i64
-  (let ([i : i64 0] [floats : i64 0] [keep : bool true])
+  (let (
+    [i : i64 0]
+    [floats : i64 0]
+    [keep : bool true])
     (begin
       (while keep
         (let ([t : i64 (token-tag (array-ref toks i))])
@@ -157,7 +169,10 @@
 ;; single, escaped, and named character values, not just token tags.
 
 (define (sum-char-codes [toks : (Array Token)]) : i64
-  (let ([i : i64 0] [total : i64 0] [keep : bool true])
+  (let (
+    [i : i64 0]
+    [total : i64 0]
+    [keep : bool true])
     (begin
       (while keep
         (let ([t : Token (array-ref toks i)])
@@ -175,7 +190,9 @@
 ;; comment skip producing NO token and a string literal being exactly ONE token.
 
 (define (count-tokens [toks : (Array Token)]) : i64
-  (let ([i : i64 0] [keep : bool true])
+  (let (
+    [i : i64 0]
+    [keep : bool true])
     (begin
       (while keep
         (if (= (token-tag (array-ref toks i)) (tag-end))
@@ -223,10 +240,8 @@
 ;; checks pass, for an observable exit code of 19.
 
 (define (main) : i64
-  (let ([toks
-      :
-      (Array Token)
-      (lex "(foo \"hi\" #x' #\\n' #\\space' #\\newline' 42 1.5) ; c\n(bar)")])
+  (let ([toks : (Array Token)
+    (lex "(foo \"hi\" #x' #\\n' #\\space' #\\newline' 42 1.5) ; c\n(bar)")])
     (+
       (count-tokens toks)
       (+

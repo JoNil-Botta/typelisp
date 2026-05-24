@@ -3,7 +3,9 @@
 (import "compiler_check_core.tl")
 
 (define (selfhost-check-extra-args-status [i : i64]) : i64
-  (let ([n : i64 (arg-count)] [status : i64 0])
+  (let (
+    [n : i64 (arg-count)]
+    [status : i64 0])
     (begin
       (while (and (= status 0) (< i n))
         (let ([a : String (arg i)])

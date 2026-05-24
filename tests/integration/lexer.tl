@@ -191,7 +191,10 @@
 ;; run sliced out with `substring`, and single-char tokens.
 
 (define (lex [src : String] [toks : (Array Token)]) : i64
-  (let ([i : i64 0] [n : i64 (string-length src)] [count : i64 0])
+  (let (
+    [i : i64 0]
+    [n : i64 (string-length src)]
+    [count : i64 0])
     (begin
       (while (< i n)
         (let ([c : char (string-ref src i)])
@@ -199,7 +202,9 @@
             (set! i (+ i 1))
             (if (is-alpha c)
               ;; Accumulate a run of identifier chars into one TIdent token.
-              (let ([start : i64 i] [end : i64 (ident-end src i n)])
+              (let (
+                [start : i64 i]
+                [end : i64 (ident-end src i n)])
                 (begin
                   (array-set! toks count (ident-token src start end))
                   (set! count (+ count 1))

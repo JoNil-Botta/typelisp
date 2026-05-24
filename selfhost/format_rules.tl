@@ -22,6 +22,11 @@
         [_ false])]
     [_ false]))
 
+(define (format-rules-node-colon? [node : FormatCst]) : bool
+  (match node
+    [(FmtCstAtom tok) (= (format-token-tag tok) (fmt-tag-colon))]
+    [_ false]))
+
 (define (format-rules-node-comment? [node : FormatCst]) : bool
   (match node
     [(FmtCstComment _) true]
@@ -159,6 +164,104 @@
               (doc-text ")")))))]
     [_ (format-rules-first-or-line-form-doc "define" rest)]))
 
+(define (format-rules-let-binding-annotated-doc
+  [name : FormatCst]
+  [colon : FormatCst]
+  [typ : FormatCst]
+  [init : FormatCst]) : Doc
+  (doc-group
+    (doc-append
+      (doc-text "[")
+      (doc-append
+        (format-rules-cst-doc name)
+        (doc-append
+          (format-rules-space (format-rules-cst-doc colon))
+          (doc-append
+            (format-rules-space (format-rules-cst-doc typ))
+            (doc-append
+              (doc-nest
+                2
+                (doc-append (doc-soft-line) (format-rules-cst-doc init)))
+              (doc-text "]"))))))))
+
+(define (format-rules-let-binding-unannotated-doc
+  [name : FormatCst]
+  [init : FormatCst]) : Doc
+  (doc-group
+    (doc-append
+      (doc-text "[")
+      (doc-append
+        (format-rules-cst-doc name)
+        (doc-append
+          (doc-nest 2 (doc-append (doc-soft-line) (format-rules-cst-doc init)))
+          (doc-text "]"))))))
+
+(define (format-rules-let-binding-doc [node : FormatCst]) : Doc
+  (match node
+    [(FmtCstBracketList items)
+      (match items
+        [(FmtCstCons
+            name
+            (FmtCstCons colon (FmtCstCons typ (FmtCstCons init FmtCstNil))))
+          (if (format-rules-node-colon? colon)
+            (format-rules-let-binding-annotated-doc name colon typ init)
+            (format-rules-delimited-doc "[" items "]"))]
+        [(FmtCstCons name (FmtCstCons init FmtCstNil))
+          (format-rules-let-binding-unannotated-doc name init)]
+        [_ (format-rules-delimited-doc "[" items "]")])]
+    [_ (format-rules-cst-doc node)]))
+
+(define (format-rules-let-binding-lines-doc [items : FormatCstList]) : Doc
+  (match items
+    [(FmtCstNil) (doc-empty)]
+    [(FmtCstCons node rest)
+      (doc-append
+        (doc-hard-line)
+        (doc-append
+          (format-rules-let-binding-doc node)
+          (format-rules-let-binding-lines-doc rest)))]))
+
+(define (format-rules-let-bindings-vertical-doc [items : FormatCstList]) : Doc
+  (doc-append
+    (doc-text "(")
+    (doc-append
+      (doc-nest 2 (format-rules-let-binding-lines-doc items))
+      (doc-text ")"))))
+
+(define (format-rules-let-bindings-inline-doc [items : FormatCstList]) : Doc
+  (match items
+    [(FmtCstCons node FmtCstNil)
+      (doc-group
+        (doc-append
+          (doc-text "(")
+          (doc-append (format-rules-let-binding-doc node) (doc-text ")"))))]
+    [_ (format-rules-let-bindings-vertical-doc items)]))
+
+(define (format-rules-let-bindings-doc [items : FormatCstList]) : Doc
+  (if (and
+    (= (fmt-list-count items) 1)
+    (= (fmt-cst-list-comment-count items) 0))
+    (format-rules-let-bindings-inline-doc items)
+    (format-rules-let-bindings-vertical-doc items)))
+
+(define (format-rules-let-doc [rest : FormatCstList]) : Doc
+  (match rest
+    [(FmtCstCons bindings body)
+      (match bindings
+        [(FmtCstList binding-items)
+          (doc-append
+            (doc-text "(")
+            (doc-append
+              (doc-text "let")
+              (doc-append
+                (format-rules-space
+                  (format-rules-let-bindings-doc binding-items))
+                (doc-append
+                  (doc-nest 2 (format-rules-hard-tail-doc body))
+                  (doc-text ")")))))]
+        [_ (format-rules-first-or-line-form-doc "let" rest)])]
+    [_ (format-rules-first-or-line-form-doc "let" rest)]))
+
 (define (format-rules-special-list-doc
   [head : FormatCst]
   [rest : FormatCstList]) : Doc
@@ -173,7 +276,7 @@
           (if (format-rules-node-symbol? head "defstruct")
             (format-rules-first-or-line-form-doc "defstruct" rest)
             (if (format-rules-node-symbol? head "let")
-              (format-rules-first-or-line-form-doc "let" rest)
+              (format-rules-let-doc rest)
               (if (format-rules-node-symbol? head "if")
                 (format-rules-first-or-line-form-doc "if" rest)
                 (if (format-rules-node-symbol? head "while")
@@ -252,17 +355,12 @@
   "(begin\n  ; keep\n  (print-string \"x\"))")
 
 (define (format-rules-self-test) : i64
-  (let ([decls
-      :
-      String
+  (let (
+    [decls : String
       (format-rules-render-source-width (format-rules-decls-source) 80)]
-    [flow
-      :
-      String
+    [flow : String
       (format-rules-render-source-width (format-rules-flow-source) 80)]
-    [comments
-      :
-      String
+    [comments : String
       (format-rules-render-source-width (format-rules-comments-source) 80)])
     (if (string-eq decls (format-rules-decls-expected))
       (if (string-eq flow (format-rules-flow-expected))

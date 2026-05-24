@@ -233,7 +233,8 @@
   [toks : (Array SpannedToken)]
   [cur : (Array i64)]) : ResultSpannedSexpr
   (let ([st : SpannedToken (peek-spanned-token toks cur)])
-    (let ([tok : Token (spanned-token-token st)]
+    (let (
+      [tok : Token (spanned-token-token st)]
       [span : SourceSpan (spanned-token-span st)])
       (let ([t : i64 (token-tag tok)])
         (if (= t (tag-int))
@@ -276,7 +277,8 @@
   [cur : (Array i64)]
   [open-span : SourceSpan]) : ResultSpannedSexpr
   (let ([st : SpannedToken (peek-spanned-token toks cur)])
-    (let ([span : SourceSpan (spanned-token-span st)]
+    (let (
+      [span : SourceSpan (spanned-token-span st)]
       [t : i64 (token-tag (spanned-token-token st))])
       (if (= t (tag-rparen))
         (begin

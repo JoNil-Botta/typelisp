@@ -27,7 +27,9 @@
         (set! i (+ i 1))))))
 
 (define (eq-i64 [a : (Array i64)] [b : (Array i64)] [n : i64]) : bool
-  (let ([i : i64 0] [ok : bool true])
+  (let (
+    [i : i64 0]
+    [ok : bool true])
     (begin
       (while (< i n)
         (begin
@@ -38,7 +40,8 @@
       ok)))
 
 (define (case-i64 [n : i64]) : bool
-  (let ([a : (Array i64) (make-array i64 n)]
+  (let (
+    [a : (Array i64) (make-array i64 n)]
     [b : (Array i64) (make-array i64 n)]
     [got : (Array i64) (make-array i64 n)]
     [want : (Array i64) (make-array i64 n)])
@@ -77,7 +80,9 @@
         (set! i (+ i 1))))))
 
 (define (eq-i32 [a : (Array i32)] [b : (Array i32)] [n : i64]) : bool
-  (let ([i : i64 0] [ok : bool true])
+  (let (
+    [i : i64 0]
+    [ok : bool true])
     (begin
       (while (< i n)
         (begin
@@ -88,7 +93,8 @@
       ok)))
 
 (define (case-i32 [n : i64]) : bool
-  (let ([a : (Array i32) (make-array i32 n)]
+  (let (
+    [a : (Array i32) (make-array i32 n)]
     [b : (Array i32) (make-array i32 n)]
     [got : (Array i32) (make-array i32 n)]
     [want : (Array i32) (make-array i32 n)])
@@ -127,7 +133,9 @@
         (set! i (+ i 1))))))
 
 (define (eq-f64 [a : (Array f64)] [b : (Array f64)] [n : i64]) : bool
-  (let ([i : i64 0] [ok : bool true])
+  (let (
+    [i : i64 0]
+    [ok : bool true])
     (begin
       (while (< i n)
         (begin
@@ -138,7 +146,8 @@
       ok)))
 
 (define (case-f64 [n : i64]) : bool
-  (let ([a : (Array f64) (make-array f64 n)]
+  (let (
+    [a : (Array f64) (make-array f64 n)]
     [b : (Array f64) (make-array f64 n)]
     [got : (Array f64) (make-array f64 n)]
     [want : (Array f64) (make-array f64 n)])
@@ -149,7 +158,8 @@
       (eq-f64 got want n))))
 
 (define (case-end-bound-evaluated-once) : bool
-  (let ([bounds : (Array i64) (make-array i64 1)]
+  (let (
+    [bounds : (Array i64) (make-array i64 1)]
     [out : (Array i64) (make-array i64 3)])
     (begin
       (array-set! bounds 0 3)

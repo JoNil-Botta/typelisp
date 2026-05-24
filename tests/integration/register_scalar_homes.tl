@@ -1,5 +1,6 @@
 (define (scalar-homes [seed : i64]) : i64
-  (let ([a : i64 5]
+  (let (
+    [a : i64 5]
     [b : i64 7]
     [c : i64 11]
     [d : i64 13]
@@ -15,7 +16,10 @@
       (+ (+ (+ a b) (+ c d)) (+ e f)))))
 
 (define (narrow-homes) : i64
-  (let ([s : i8 (cast -1 : i8)] [u : u8 (cast 255 : u8)] [ok : bool true])
+  (let (
+    [s : i8 (cast -1 : i8)]
+    [u : u8 (cast 255 : u8)]
+    [ok : bool true])
     (if ok
       (+ (cast s : i64) (cast u : i64))
       0)))

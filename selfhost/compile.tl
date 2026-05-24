@@ -31,7 +31,8 @@
   (and (> (string-length value) 0) (= (string-ref value 0) #-')))
 
 (define (compile-cli-default-output [input-path : String]) : String
-  (let ([n : i64 (string-length input-path)]
+  (let (
+    [n : i64 (string-length input-path)]
     [i : i64 0]
     [last-dot : i64 -1]
     [last-sep : i64 -1])

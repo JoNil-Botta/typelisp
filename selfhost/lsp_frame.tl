@@ -33,7 +33,8 @@
   (or (= c #\space') (= c #\tab')))
 
 (define (lsp-frame-trim-right-space-cr [text : String]) : String
-  (let ([i : i64 (string-length text)]
+  (let (
+    [i : i64 (string-length text)]
     [end : i64 (string-length text)]
     [done : bool false])
     (begin
@@ -49,7 +50,8 @@
       (substring text 0 end))))
 
 (define (lsp-frame-trim-left-space [text : String]) : String
-  (let ([n : i64 (string-length text)]
+  (let (
+    [n : i64 (string-length text)]
     [i : i64 0]
     [start : i64 0]
     [done : bool false])
@@ -68,7 +70,8 @@
   (lsp-frame-trim-left-space (lsp-frame-trim-right-space-cr text)))
 
 (define (lsp-frame-starts-with? [text : String] [prefix : String]) : bool
-  (let ([text-len : i64 (string-length text)]
+  (let (
+    [text-len : i64 (string-length text)]
     [prefix-len : i64 (string-length prefix)]
     [i : i64 0]
     [ok : bool true])
@@ -89,7 +92,10 @@
   (and (>= c #0') (<= c #9')))
 
 (define (lsp-frame-decimal? [text : String]) : bool
-  (let ([n : i64 (string-length text)] [i : i64 0] [ok : bool true])
+  (let (
+    [n : i64 (string-length text)]
+    [i : i64 0]
+    [ok : bool true])
     (if (= n 0)
       false
       (begin
@@ -105,11 +111,9 @@
 
 (define (lsp-frame-parse-content-length [line : String]) : LspLengthParse
   (if (lsp-frame-starts-with? line "Content-Length:")
-    (let ([value
-        :
-        String
-        (lsp-frame-trim-header-value
-          (substring line 15 (- (string-length line) 15)))])
+    (let ([value : String
+      (lsp-frame-trim-header-value
+        (substring line 15 (- (string-length line) 15)))])
       (if (lsp-frame-decimal? value)
         (let ([n : i64 (string->int value)])
           (if (< n 0)
@@ -119,7 +123,8 @@
     LspLengthIgnore))
 
 (define (lsp-frame-read-message) : LspFrameRead
-  (let ([content-length : i64 -1]
+  (let (
+    [content-length : i64 -1]
     [saw-header : bool false]
     [done : bool false]
     [clean-eof : bool false]
@@ -127,10 +132,8 @@
     (begin
       (while (not done)
         (if (string-eq err "")
-          (let ([line
-              :
-              String
-              (lsp-frame-trim-right-space-cr (read-stdin-line))])
+          (let ([line : String
+            (lsp-frame-trim-right-space-cr (read-stdin-line))])
             (if (stdin-eof?)
               (if (= (string-length line) 0)
                 (if saw-header
@@ -193,7 +196,9 @@
     "\"}}"))
 
 (define (lsp-frame-run) : i64
-  (let ([done : bool false] [status : i64 0])
+  (let (
+    [done : bool false]
+    [status : i64 0])
     (begin
       (while (not done)
         (match (lsp-frame-read-message)

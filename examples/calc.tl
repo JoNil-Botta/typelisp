@@ -138,7 +138,9 @@
 ;; short-circuit guard in lowered TypeLisp code.
 
 (define (scan-int-end [src : String] [start : i64] [n : i64]) : i64
-  (let ([j : i64 start] [keep : bool true])
+  (let (
+    [j : i64 start]
+    [keep : bool true])
     (begin
       (while keep
         (if (< j n)
@@ -188,7 +190,10 @@
 ;; parser's cursor always has a sentinel to stop on.
 
 (define (lex [src : String] [toks : (Array Token)]) : i64
-  (let ([i : i64 0] [n : i64 (string-length src)] [count : i64 0])
+  (let (
+    [i : i64 0]
+    [n : i64 (string-length src)]
+    [count : i64 0])
     (begin
       (while (< i n)
         (let ([c : char (string-ref src i)])
@@ -196,7 +201,9 @@
             (set! i (+ i 1))
             (if (is-digit c)
               ;; Accumulate a run of digits into one TInt token.
-              (let ([end : i64 (scan-int-end src i n)] [acc : i64 0])
+              (let (
+                [end : i64 (scan-int-end src i n)]
+                [acc : i64 0])
                 (begin
                   (while (< i end)
                     (begin

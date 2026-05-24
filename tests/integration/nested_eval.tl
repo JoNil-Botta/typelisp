@@ -78,9 +78,12 @@
     ;; Nested pattern: head must itself be `(SSym name)`. Binds `name : String`
     ;; (one level down) and `rest : Sexpr` together.
     [(SCons (SSym name) rest)
-      (let ([arg1 : Sexpr (sexpr-head rest)]
+      (let (
+        [arg1 : Sexpr (sexpr-head rest)]
         [arg2 : Sexpr (sexpr-head (sexpr-tail rest))])
-        (let ([a : i64 (eval-sexpr arg1)] [b : i64 (eval-sexpr arg2)])
+        (let (
+          [a : i64 (eval-sexpr arg1)]
+          [b : i64 (eval-sexpr arg2)])
           (if (string-eq name "+")
             (+ a b)
             (if (string-eq name "-")
@@ -111,9 +114,7 @@
 ;;         SNil)))
 
 (define (main) : i64
-  (let ([inner
-      :
-      Sexpr
-      (SCons (SSym "*") (SCons (SInt 2) (SCons (SInt 3) SNil)))])
+  (let ([inner : Sexpr
+    (SCons (SSym "*") (SCons (SInt 2) (SCons (SInt 3) SNil)))])
     (let ([prog : Sexpr (SCons (SSym "+") (SCons (SInt 1) (SCons inner SNil)))])
       (eval-sexpr prog))))

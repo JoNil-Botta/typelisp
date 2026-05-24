@@ -25,6 +25,43 @@ const FLOW_EXPECTED: &str = "(define (main [x : i64]) : i64\n  (begin\n    (let 
 const COMMENTS_EXPECTED: &str = "(begin\n  ; keep\n  (print-string \"x\"))";
 const CHAR_LITERAL_EXPECTED: &str = "(define (is-quote [c : char]) : bool\n  (= c #''))";
 const NEGATIVE_INT_EXPECTED: &str = "(define (main) : i64\n  -128)";
+const LET_BINDINGS_EXPECTED: &str = r#"(define (one) : i64
+  (let ([x : i64 1])
+    x))
+
+(define (multi) : i64
+  (let (
+    [flat : String
+      (format-core-render-source-width "(foo [bar 1] baz)\n; leading\n(qux)" 80)]
+    [narrow : String (format-core-render-source-width "(alpha beta gamma)" 10)]
+    [atom : String (format-core-render (FmtCstAtom (FmtSymbol "name")))])
+    0))
+
+(define (long) : i64
+  (let ([value : i64
+    (add-very-long-name alpha beta gamma delta epsilon zeta eta theta)])
+    value))
+
+(define (unannotated) : i64
+  (let (
+    [x 1]
+    [y (+ x 1)])
+    y))
+
+(define (commented) : i64
+  (let (
+    ; keep first binding
+    [x : i64 1]
+    ; keep second binding
+    [y : i64 2])
+    (+ x y)))
+
+(define (nested) : i64
+  (let (
+    [x : i64 1]
+    [y : i64 2])
+    (let ([z : i64 (+ x y)])
+      z)))"#;
 
 #[test]
 fn fmt_produces_golden_output_and_is_idempotent() {
@@ -46,6 +83,7 @@ fn fmt_produces_golden_output_and_is_idempotent() {
             ("flow", FLOW_EXPECTED),
             ("comments", COMMENTS_EXPECTED),
             ("char_literal", CHAR_LITERAL_EXPECTED),
+            ("let_bindings", LET_BINDINGS_EXPECTED),
             ("negative_int", NEGATIVE_INT_EXPECTED),
         ];
 

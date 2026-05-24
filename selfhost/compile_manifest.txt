@@ -400,6 +400,8 @@ end
 
 case|selfhost_format_rules|selfhost/format_rules.tl|assembly|skip|direct
 contains|_tl_format_rules_define_doc:
+contains|_tl_format_rules_let_binding_annotated_doc:
+contains|_tl_format_rules_let_doc:
 contains|_tl_format_rules_render_source_width:
 contains|_tl_format_rules_self_test:
 end

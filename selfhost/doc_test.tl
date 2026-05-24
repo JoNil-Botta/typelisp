@@ -132,13 +132,16 @@
   [text : String]
   [prefix : String]
   [start : i64]) : bool
-  (let ([text-len : i64 (string-length text)]
+  (let (
+    [text-len : i64 (string-length text)]
     [prefix-len : i64 (string-length prefix)])
     (if (< start 0)
       false
       (if (> (+ start prefix-len) text-len)
         false
-        (let ([i : i64 0] [ok : bool true])
+        (let (
+          [i : i64 0]
+          [ok : bool true])
           (begin
             (while ok
               (if (< i prefix-len)
@@ -152,11 +155,15 @@
   (doc-test-string-prefix-at? text prefix 0))
 
 (define (doc-test-string-contains? [text : String] [needle : String]) : bool
-  (let ([text-len : i64 (string-length text)]
+  (let (
+    [text-len : i64 (string-length text)]
     [needle-len : i64 (string-length needle)])
     (if (= needle-len 0)
       true
-      (let ([i : i64 0] [found : bool false] [done : bool false])
+      (let (
+        [i : i64 0]
+        [found : bool false]
+        [done : bool false])
         (begin
           (while (not done)
             (if (<= (+ i needle-len) text-len)
@@ -169,7 +176,8 @@
           found)))))
 
 (define (doc-test-trim-left [text : String]) : String
-  (let ([n : i64 (string-length text)]
+  (let (
+    [n : i64 (string-length text)]
     [i : i64 0]
     [start : i64 0]
     [done : bool false])
@@ -185,7 +193,10 @@
       (substring text start (- n start)))))
 
 (define (doc-test-string-blank? [text : String]) : bool
-  (let ([n : i64 (string-length text)] [i : i64 0] [blank : bool true])
+  (let (
+    [n : i64 (string-length text)]
+    [i : i64 0]
+    [blank : bool true])
     (begin
       (while (< i n)
         (if blank
@@ -198,7 +209,10 @@
       blank)))
 
 (define (doc-test-word-end [text : String] [start : i64]) : i64
-  (let ([n : i64 (string-length text)] [i : i64 start] [keep : bool true])
+  (let (
+    [n : i64 (string-length text)]
+    [i : i64 start]
+    [keep : bool true])
     (begin
       (while keep
         (if (< i n)
@@ -209,7 +223,9 @@
       i)))
 
 (define (doc-test-line-end [src : String] [start : i64] [n : i64]) : i64
-  (let ([i : i64 start] [keep : bool true])
+  (let (
+    [i : i64 start]
+    [keep : bool true])
     (begin
       (while keep
         (if (< i n)
@@ -273,12 +289,11 @@
     (if (and (string-eq prefix ";;;") (doc-test-string-prefix? trimmed ";;;;"))
       (DocTestNoString)
       (if (doc-test-string-prefix? trimmed prefix)
-        (let ([prefix-len : i64 (string-length prefix)]
+        (let (
+          [prefix-len : i64 (string-length prefix)]
           [trimmed-len : i64 (string-length trimmed)])
-          (let ([body
-              :
-              String
-              (substring trimmed prefix-len (- trimmed-len prefix-len))])
+          (let ([body : String
+            (substring trimmed prefix-len (- trimmed-len prefix-len))])
             (if (> (string-length body) 0)
               (if (= (string-ref body 0) #\space')
                 (DocTestSomeString
@@ -289,7 +304,8 @@
 
 (define (doc-test-starts-with-form-head? [text : String] [head : String]) : bool
   (if (doc-test-string-prefix? text head)
-    (let ([head-len : i64 (string-length head)]
+    (let (
+      [head-len : i64 (string-length head)]
       [text-len : i64 (string-length text)])
       (if (= head-len text-len)
         true
@@ -301,11 +317,9 @@
   (let ([trimmed : String (doc-test-trim-left line)])
     (if (> (string-length trimmed) 0)
       (if (= (string-ref trimmed 0) #(')
-        (let ([rest
-            :
-            String
-            (doc-test-trim-left
-              (substring trimmed 1 (- (string-length trimmed) 1)))])
+        (let ([rest : String
+          (doc-test-trim-left
+            (substring trimmed 1 (- (string-length trimmed) 1)))])
           (or
             (doc-test-starts-with-form-head? rest "define")
             (or
@@ -324,10 +338,9 @@
     (if (= (string-length trimmed) 0)
       (DocTestFenceTypeLisp expectation)
       (let ([end : i64 (doc-test-word-end trimmed 0)])
-        (let ([option : String (substring trimmed 0 end)]
-          [rest
-            :
-            String
+        (let (
+          [option : String (substring trimmed 0 end)]
+          [rest : String
             (substring trimmed end (- (string-length trimmed) end))])
           (if (string-eq option "expect-error")
             (doc-test-parse-fence-options rest line-number (DocTestExpectError))
@@ -344,10 +357,9 @@
     (if (= (string-length trimmed) 0)
       (DocTestFenceIgnore)
       (let ([end : i64 (doc-test-word-end trimmed 0)])
-        (let ([language : String (substring trimmed 0 end)]
-          [rest
-            :
-            String
+        (let (
+          [language : String (substring trimmed 0 end)]
+          [rest : String
             (substring trimmed end (- (string-length trimmed) end))])
           (if (or (string-eq language "typelisp") (string-eq language "tl"))
             (doc-test-parse-fence-options rest line-number (DocTestExpectPass))
@@ -417,10 +429,8 @@
     [(DocTestLineCons line rest)
       (let ([trimmed : String (doc-test-trim-left (doc-test-line-text line))])
         (if (doc-test-string-prefix? trimmed "```")
-          (let ([info
-              :
-              String
-              (substring trimmed 3 (- (string-length trimmed) 3))])
+          (let ([info : String
+            (substring trimmed 3 (- (string-length trimmed) 3))])
             (match (doc-test-parse-fence-info info (doc-test-line-number line))
               [(DocTestFenceIgnore)
                 (doc-test-scan-doc-block
@@ -449,14 +459,13 @@
   (doc-test-scan-doc-block (doc-test-line-list-reverse lines) state))
 
 (define (doc-test-extract-source [src : String]) : DocTestExtraction
-  (let ([n : i64 (string-length src)]
+  (let (
+    [n : i64 (string-length src)]
     [pos : i64 0]
     [line-number : i64 1]
     [module-lines : DocTestLineList DocTestLineNil]
     [pending-lines : DocTestLineList DocTestLineNil]
-    [state
-      :
-      DocTestScanState
+    [state : DocTestScanState
       (DocTestScanState DocTestExampleNil DocTestErrorNil 1)])
     (begin
       (while (< pos n)
@@ -584,12 +593,10 @@
 (define (doc-test-run-failure-render [failure : DocTestRunFailure]) : String
   (match failure
     [(DocTestRunFailure path line index message)
-      (let ([location
-          :
-          String
-          (string-append
-            path
-            (string-append ":" (string-append (int->string line) ": ")))])
+      (let ([location : String
+        (string-append
+          path
+          (string-append ":" (string-append (int->string line) ": ")))])
         (string-append location message))]))
 
 (define (doc-test-unexpected-pass-message [index : i64]) : String
@@ -636,11 +643,10 @@
   [path : String]
   [example : DocTestExample]
   [stdlib-roots : CompilerLoadRootList]) : DocTestMaybeFailure
-  (let ([index : i64 (doc-test-example-index example)]
+  (let (
+    [index : i64 (doc-test-example-index example)]
     [source-line : i64 (doc-test-example-source-line example)]
-    [expect-error
-      :
-      bool
+    [expect-error : bool
       (doc-test-expectation-error? (doc-test-example-expectation example))]
     [code : String (doc-test-example-code example)])
     (match (compiler-check-source-with-roots path code stdlib-roots)
@@ -945,10 +951,8 @@
 ;; (`expect-error`) example, so it must run clean: two examples, no failures.
 
 (define (doc-test-run-smoke-pass-ok?) : bool
-  (let ([report
-      :
-      DocTestRunReport
-      (doc-test-run-source "docs/ok.tl" (doc-test-smoke-source))])
+  (let ([report : DocTestRunReport
+    (doc-test-run-source "docs/ok.tl" (doc-test-smoke-source))])
     (if (= (doc-test-run-report-count report) 2)
       (doc-test-run-report-ok? report)
       false)))
@@ -958,10 +962,8 @@
 ;; fence line (1), example index (1), and the rendered diagnostic message.
 
 (define (doc-test-run-smoke-unexpected-error-ok?) : bool
-  (let ([report
-      :
-      DocTestRunReport
-      (doc-test-run-source "docs/bad.tl" (doc-test-run-unexpected-error-source))])
+  (let ([report : DocTestRunReport
+    (doc-test-run-source "docs/bad.tl" (doc-test-run-unexpected-error-source))])
     (match (doc-test-run-report-failures report)
       [(DocTestRunFailureCons failure (DocTestRunFailureNil))
         (if (= (doc-test-run-failure-index failure) 1)
@@ -978,10 +980,8 @@
 ;; An `expect-error` example that checks successfully is a failure.
 
 (define (doc-test-run-smoke-unexpected-pass-ok?) : bool
-  (let ([report
-      :
-      DocTestRunReport
-      (doc-test-run-source "docs/bad.tl" (doc-test-run-unexpected-pass-source))])
+  (let ([report : DocTestRunReport
+    (doc-test-run-source "docs/bad.tl" (doc-test-run-unexpected-pass-source))])
     (match (doc-test-run-report-failures report)
       [(DocTestRunFailureCons failure (DocTestRunFailureNil))
         (doc-test-string-contains?
@@ -994,10 +994,8 @@
 ;; become three runner failures with no examples.
 
 (define (doc-test-run-smoke-malformed-ok?) : bool
-  (let ([report
-      :
-      DocTestRunReport
-      (doc-test-run-source "docs/malformed.tl" (doc-test-malformed-source))])
+  (let ([report : DocTestRunReport
+    (doc-test-run-source "docs/malformed.tl" (doc-test-malformed-source))])
     (if (= (doc-test-run-report-count report) 0)
       (=
         (doc-test-run-failure-list-count (doc-test-run-report-failures report))
@@ -1007,10 +1005,8 @@
 ;; A source with no examples reports success with a zero count.
 
 (define (doc-test-run-smoke-empty-ok?) : bool
-  (let ([report
-      :
-      DocTestRunReport
-      (doc-test-run-source "docs/empty.tl" (doc-test-run-empty-source))])
+  (let ([report : DocTestRunReport
+    (doc-test-run-source "docs/empty.tl" (doc-test-run-empty-source))])
     (if (= (doc-test-run-report-count report) 0)
       (doc-test-run-report-ok? report)
       false)))
@@ -1018,15 +1014,13 @@
 ;; The rendered failure carries the path, line, and message.
 
 (define (doc-test-run-smoke-render-ok?) : bool
-  (let ([rendered
-      :
-      String
-      (doc-test-run-failure-render
-        (DocTestRunFailure
-          "docs/bad.tl"
-          4
-          2
-          "doctest example 2 was expected to pass
+  (let ([rendered : String
+    (doc-test-run-failure-render
+      (DocTestRunFailure
+        "docs/bad.tl"
+        4
+        2
+        "doctest example 2 was expected to pass
 typecheck: return type mismatch"))])
     (if (doc-test-string-contains? rendered "docs/bad.tl:4:")
       (if (doc-test-string-contains? rendered "doctest example 2")
@@ -1041,13 +1035,10 @@ typecheck: return type mismatch"))])
 ;; the `doc tests failed: M failure(s) across N example(s)` summary with status 1.
 
 (define (doc-test-run-smoke-report-render-ok?) : bool
-  (let ([pass-report
-      :
-      DocTestRunReport
+  (let (
+    [pass-report : DocTestRunReport
       (doc-test-run-source "docs/ok.tl" (doc-test-smoke-source))]
-    [fail-report
-      :
-      DocTestRunReport
+    [fail-report : DocTestRunReport
       (doc-test-run-source "docs/bad.tl" (doc-test-run-unexpected-error-source))])
     (if (= (doc-test-run-report-status pass-report) 0)
       (if (string-eq

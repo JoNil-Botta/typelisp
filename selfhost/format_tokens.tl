@@ -123,7 +123,9 @@
   (struct-get stream count))
 
 (define (format-token-tag-count [stream : FormatTokenStream] [wanted : i64]) : i64
-  (let ([i : i64 0] [hits : i64 0])
+  (let (
+    [i : i64 0]
+    [hits : i64 0])
     (begin
       (while (< i (struct-get stream count))
         (begin
@@ -177,7 +179,10 @@
         false))))
 
 (define (fmt-scan-number-end [src : String] [start : i64] [n : i64]) : i64
-  (let ([j : i64 start] [seen-dot : bool false] [keep : bool true])
+  (let (
+    [j : i64 start]
+    [seen-dot : bool false]
+    [keep : bool true])
     (begin
       (if (and (< j n) (= (string-ref src j) #-'))
         (set! j (+ j 1))
@@ -196,7 +201,9 @@
       j)))
 
 (define (fmt-scan-symbol-end [src : String] [start : i64] [n : i64]) : i64
-  (let ([j : i64 start] [keep : bool true])
+  (let (
+    [j : i64 start]
+    [keep : bool true])
     (begin
       (while keep
         (if (< j n)
@@ -207,7 +214,9 @@
       j)))
 
 (define (fmt-scan-comment-end [src : String] [start : i64] [n : i64]) : i64
-  (let ([j : i64 start] [keep : bool true])
+  (let (
+    [j : i64 start]
+    [keep : bool true])
     (begin
       (while keep
         (if (< j n)
@@ -218,7 +227,10 @@
       j)))
 
 (define (fmt-scan-string-end [src : String] [start : i64] [n : i64]) : i64
-  (let ([j : i64 start] [escaped : bool false] [keep : bool true])
+  (let (
+    [j : i64 start]
+    [escaped : bool false]
+    [keep : bool true])
     (begin
       (while keep
         (if (< j n)
@@ -242,7 +254,9 @@
       j)))
 
 (define (fmt-scan-char-end [src : String] [start : i64] [n : i64]) : i64
-  (let ([j : i64 start] [keep : bool true])
+  (let (
+    [j : i64 start]
+    [keep : bool true])
     (begin
       (if (< j n)
         (set! j (+ j 1))
@@ -268,10 +282,9 @@
   (array-set! tokens count tok))
 
 (define (format-lex [src : String]) : FormatTokenStream
-  (let ([n : i64 (string-length src)]
-    [tokens
-      :
-      (Array FormatToken)
+  (let (
+    [n : i64 (string-length src)]
+    [tokens : (Array FormatToken)
       (make-array FormatToken (+ (string-length src) 1))]
     [i : i64 0]
     [count : i64 0])
@@ -348,10 +361,8 @@
                                     (set! count (+ count 1))
                                     (set! i (+ i 1))))
                                 (if (= c #"')
-                                  (let ([end
-                                      :
-                                      i64
-                                      (fmt-scan-string-end src (+ i 1) n)])
+                                  (let ([end : i64
+                                    (fmt-scan-string-end src (+ i 1) n)])
                                     (begin
                                       (fmt-store-token
                                         tokens
@@ -360,10 +371,8 @@
                                       (set! count (+ count 1))
                                       (set! i end)))
                                   (if (= c ##')
-                                    (let ([end
-                                        :
-                                        i64
-                                        (fmt-scan-char-end src (+ i 1) n)])
+                                    (let ([end : i64
+                                      (fmt-scan-char-end src (+ i 1) n)])
                                       (begin
                                         (fmt-store-token
                                           tokens
@@ -372,10 +381,8 @@
                                         (set! count (+ count 1))
                                         (set! i end)))
                                     (if (fmt-starts-number src i n)
-                                      (let ([end
-                                          :
-                                          i64
-                                          (fmt-scan-number-end src i n)])
+                                      (let ([end : i64
+                                        (fmt-scan-number-end src i n)])
                                         (begin
                                           (fmt-store-token
                                             tokens
@@ -384,10 +391,8 @@
                                           (set! count (+ count 1))
                                           (set! i end)))
                                       (if (fmt-is-symbol-char c)
-                                        (let ([end
-                                            :
-                                            i64
-                                            (fmt-scan-symbol-end src i n)])
+                                        (let ([end : i64
+                                          (fmt-scan-symbol-end src i n)])
                                           (begin
                                             (fmt-store-token
                                               tokens

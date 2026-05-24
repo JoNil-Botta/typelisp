@@ -47,10 +47,8 @@
     (let ([e : SymI64Env (sym-i64-bind (sym-i64-empty) "a" 10)])
       (check-false (sym-i64-contains e "b") "single-miss"))
     ; Shadowing returns newest binding
-    (let ([e
-        :
-        SymI64Env
-        (sym-i64-bind (sym-i64-bind (sym-i64-empty) "a" 10) "a" 20)])
+    (let ([e : SymI64Env
+      (sym-i64-bind (sym-i64-bind (sym-i64-empty) "a" 10) "a" 20)])
       (check-equal
         (match (sym-i64-lookup e "a")
           [(SomeI64 v) v]
@@ -58,7 +56,8 @@
         20
         "shadow-newest"))
     ; Saved outer env preserved after inner bind
-    (let ([outer : SymI64Env (sym-i64-bind (sym-i64-empty) "a" 10)]
+    (let (
+      [outer : SymI64Env (sym-i64-bind (sym-i64-empty) "a" 10)]
       [inner : SymI64Env (sym-i64-bind outer "b" 20)])
       (begin
         (check-equal
@@ -89,13 +88,11 @@
       (let ([key : String (string-append "foo" "bar")])
         (check-true (sym-i64-contains e key) "append-key-hit")))
     ; Multi-bind chain
-    (let ([e
-        :
-        SymI64Env
-        (sym-i64-bind
-          (sym-i64-bind (sym-i64-bind (sym-i64-empty) "x" 1) "y" 2)
-          "z"
-          3)])
+    (let ([e : SymI64Env
+      (sym-i64-bind
+        (sym-i64-bind (sym-i64-bind (sym-i64-empty) "x" 1) "y" 2)
+        "z"
+        3)])
       (begin
         (check-equal
           (match (sym-i64-lookup e "x")

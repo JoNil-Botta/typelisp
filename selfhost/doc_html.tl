@@ -37,7 +37,10 @@
             (substring text idx 1)))))))
 
 (define (doc-html-escape [text : String]) : String
-  (let ([i : i64 0] [n : i64 (string-length text)] [out : String ""])
+  (let (
+    [i : i64 0]
+    [n : i64 (string-length text)]
+    [out : String ""])
     (begin
       (while (< i n)
         (begin
@@ -54,7 +57,10 @@
         (doc-html-escape-one text idx)))))
 
 (define (doc-html-escape-text [text : String]) : String
-  (let ([i : i64 0] [n : i64 (string-length text)] [out : String ""])
+  (let (
+    [i : i64 0]
+    [n : i64 (string-length text)]
+    [out : String ""])
     (begin
       (while (< i n)
         (begin
@@ -104,7 +110,8 @@
     "</code></pre>\n"))
 
 (define (doc-html-item-nav-entry [item : DocItem]) : String
-  (let ([name : String (doc-item-name item)]
+  (let (
+    [name : String (doc-item-name item)]
     [anchor : String (doc-render-anchor (doc-item-name item))])
     (doc-html-cat5
       "<li><a href=\"#"
@@ -131,7 +138,8 @@
         "</ul>\n</nav>\n")]))
 
 (define (doc-html-item [item : DocItem]) : String
-  (let ([name : String (doc-item-name item)]
+  (let (
+    [name : String (doc-item-name item)]
     [anchor : String (doc-render-anchor (doc-item-name item))]
     [kind : String (doc-kind-name (doc-item-kind item))])
     (doc-html-cat5
@@ -166,7 +174,8 @@
     [_ (doc-html-item-list items)]))
 
 (define (doc-html-module-nav-entry [module : DocModule]) : String
-  (let ([path : String (doc-module-path module)]
+  (let (
+    [path : String (doc-module-path module)]
     [anchor : String (doc-render-anchor (doc-module-path module))])
     (doc-html-cat5
       "<li><a href=\"#"
@@ -193,7 +202,8 @@
         "</ul>\n</nav>\n")]))
 
 (define (doc-html-module-section [module : DocModule]) : String
-  (let ([path : String (doc-module-path module)]
+  (let (
+    [path : String (doc-module-path module)]
     [docs : DocExtraction (doc-module-docs module)]
     [anchor : String (doc-render-anchor (doc-module-path module))])
     (doc-html-cat5
@@ -274,15 +284,13 @@
       false)))
 
 (define (doc-html-smoke) : i64
-  (let ([docs : DocExtraction (doc-extract-source (doc-html-smoke-source))]
-    [second-docs
-      :
-      DocExtraction
+  (let (
+    [docs : DocExtraction (doc-extract-source (doc-html-smoke-source))]
+    [second-docs : DocExtraction
       (doc-extract-source (doc-html-second-smoke-source))])
-    (let ([page : String (doc-html-render-module-page "smoke<&>.tl" docs)]
-      [graph
-        :
-        String
+    (let (
+      [page : String (doc-html-render-module-page "smoke<&>.tl" docs)]
+      [graph : String
         (doc-html-render-module-graph
           (DocModuleCons
             (DocModule "smoke<&>.tl" docs)

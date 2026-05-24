@@ -7,7 +7,9 @@
 ; A String captured and used while the creator scope is still live.
 
 (define (case-string-immediate) : bool
-  (let ([s : String "hello"] [f : (-> i64) (lambda () : i64 (string-length s))])
+  (let (
+    [s : String "hello"]
+    [f : (-> i64) (lambda () : i64 (string-length s))])
     (= (f) 5)))
 
 ; A String literal captured by a closure that OUTLIVES the frame that created
@@ -46,7 +48,9 @@
 ; Mixed capture: a scalar and a String captured together.
 
 (define (case-mixed) : bool
-  (let ([n : i64 40] [s : String "ab"])
+  (let (
+    [n : i64 40]
+    [s : String "ab"])
     (= ((lambda () : i64 (+ n (string-length s)))) 42)))
 
 (define (main) : i64

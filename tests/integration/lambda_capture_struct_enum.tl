@@ -15,7 +15,8 @@
 ; Struct captured and read while the creator scope is still live.
 
 (define (case-struct-immediate) : bool
-  (let ([p : Point (Point 40 2)]
+  (let (
+    [p : Point (Point 40 2)]
     [f : (-> i64) (lambda () : i64 (+ (struct-get p x) (struct-get p y)))])
     (= (f) 42)))
 

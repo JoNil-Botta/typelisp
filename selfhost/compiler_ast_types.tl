@@ -260,11 +260,10 @@
     [(AstDeclImport _) 6]))
 
 (define (compiler-ast-smoke) : i64
-  (let ([i64-ty : AstType (AstTyI64)]
+  (let (
+    [i64-ty : AstType (AstTyI64)]
     [string-ty : AstType (AstTyString)]
-    [arg-tys
-      :
-      AstTypeList
+    [arg-tys : AstTypeList
       (AstTypeCons i64-ty (AstTypeCons string-ty AstTypeNil))]
     [fn-ty : AstType (AstTyFunc arg-tys i64-ty)]
     [lit : AstLiteral (AstLitInt 41)]

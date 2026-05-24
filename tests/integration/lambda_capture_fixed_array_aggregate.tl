@@ -47,10 +47,8 @@
   (= ((make-point-array-reader)) 42))
 
 (define (make-nested-array-reader) : (-> i64)
-  (let ([grid
-      :
-      (Array (Array String 2) 2)
-      (array (array "ab" "c") (array "def" "ghij"))])
+  (let ([grid : (Array (Array String 2) 2)
+    (array (array "ab" "c") (array "def" "ghij"))])
     (lambda
       ()
       :

@@ -68,21 +68,15 @@
     [(OkProcessOutput _) (panic message)]))
 
 (define (main) : i64
-  (let ([args
-      :
-      ProcessStringList
-      (process-args-cons
-        "hello"
-        (process-args-cons "world" (process-args-empty)))])
-    (let ([command
-        :
-        ProcessCommand
-        (process-command-with-env
-          (process-command-with-stdin
-            (process-command-with-cwd (process-command "echo" args) "target")
-            "stdin")
-          "TL_TEST"
-          "1")])
+  (let ([args : ProcessStringList
+    (process-args-cons "hello" (process-args-cons "world" (process-args-empty)))])
+    (let ([command : ProcessCommand
+      (process-command-with-env
+        (process-command-with-stdin
+          (process-command-with-cwd (process-command "echo" args) "target")
+          "stdin")
+        "TL_TEST"
+        "1")])
       (begin
         (assert-string-eq
           (process-command-executable command)

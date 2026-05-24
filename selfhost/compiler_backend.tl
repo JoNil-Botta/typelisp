@@ -214,10 +214,8 @@
     [(CompilerRegAssignmentCons item rest)
       (match item
         [(CompilerRegAssignment var _)
-          (let ([tail
-              :
-              CompilerRegAssignmentList
-              (compiler-backend-drop-param-assignments rest params)])
+          (let ([tail : CompilerRegAssignmentList
+            (compiler-backend-drop-param-assignments rest params)])
             (if (compiler-backend-param-var? params var)
               tail
               (CompilerRegAssignmentCons item tail)))])]))
@@ -435,7 +433,10 @@
                             (compiler-backend-char-code c)))))))))))))))
 
 (define (compiler-backend-asm-safe-symbol [name : String]) : String
-  (let ([i : i64 0] [n : i64 (string-length name)] [out : String ""])
+  (let (
+    [i : i64 0]
+    [n : i64 (string-length name)]
+    [out : String ""])
     (begin
       (while (< i n)
         (let ([c : char (string-ref name i)])
@@ -586,7 +587,10 @@
               (compiler-backend-octal-escape (compiler-backend-char-code c)))))))))
 
 (define (compiler-backend-escape-string [text : String]) : String
-  (let ([i : i64 0] [n : i64 (string-length text)] [out : String ""])
+  (let (
+    [i : i64 0]
+    [n : i64 (string-length text)]
+    [out : String ""])
     (begin
       (while (< i n)
         (let ([c : char (string-ref text i)])
@@ -603,7 +607,10 @@
     (string-append (compiler-backend-escape-string text) "\"")))
 
 (define (compiler-backend-string-label-suffix [text : String]) : String
-  (let ([i : i64 0] [n : i64 (string-length text)] [out : String ""])
+  (let (
+    [i : i64 0]
+    [n : i64 (string-length text)]
+    [out : String ""])
     (begin
       (while (< i n)
         (begin
@@ -1267,10 +1274,8 @@
   [name : String]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]) : AstTypeList
-  (let ([local-types
-      :
-      AstTypeList
-      (compiler-backend-function-param-types functions name)])
+  (let ([local-types : AstTypeList
+    (compiler-backend-function-param-types functions name)])
     (match local-types
       [(AstTypeNil) (compiler-backend-extern-param-types externs name)]
       [_ local-types])))
@@ -1318,15 +1323,12 @@
   (match args
     [(IrValueNil) stack-count]
     [(IrValueCons value rest)
-      (let ([arg-ty
-          :
-          AstType
+      (let (
+        [arg-ty : AstType
           (match types
             [(AstTypeCons ty _) ty]
             [(AstTypeNil) (AstTyI64)])]
-        [rest-types
-          :
-          AstTypeList
+        [rest-types : AstTypeList
           (match types
             [(AstTypeCons _ tail) tail]
             [(AstTypeNil) AstTypeNil])])
@@ -1361,10 +1363,8 @@
   [target : CompilerBackendTarget]
   [args : CompilerIrValueList]
   [types : AstTypeList]) : i64
-  (let ([stack-count
-      :
-      i64
-      (compiler-backend-call-stack-arg-count target args types 0 0 0 0)])
+  (let ([stack-count : i64
+    (compiler-backend-call-stack-arg-count target args types 0 0 0 0)])
     (if (and (= stack-count 0) (not (compiler-backend-target-windows? target)))
       0
       (compiler-backend-round-up-16
@@ -1383,28 +1383,22 @@
   (match args
     [(IrValueNil) (OkCompilerBackend "")]
     [(IrValueCons value rest)
-      (let ([arg-ty
-          :
-          AstType
+      (let (
+        [arg-ty : AstType
           (match types
             [(AstTypeCons ty _) ty]
             [(AstTypeNil) (AstTyI64)])]
-        [rest-types
-          :
-          AstTypeList
+        [rest-types : AstTypeList
           (match types
             [(AstTypeCons _ tail) tail]
             [(AstTypeNil) AstTypeNil])])
         (let ([is-f64 : bool (compiler-backend-f64-type? arg-ty)])
-          (let ([next-int
-              :
-              i64
+          (let (
+            [next-int : i64
               (if is-f64
                 int-idx
                 (+ int-idx 1))]
-            [next-float
-              :
-              i64
+            [next-float : i64
               (if is-f64
                 (+ float-idx 1)
                 float-idx)])
@@ -1629,15 +1623,8 @@
   [externs : CompilerIrExternList]
   [spans : CompilerSourceSpans]
   [func-diag : CompilerDiagnostic]) : ResultCompilerBackend
-  (let ([instr-diag
-      :
-      CompilerDiagnostic
-      (compiler-backend-instr-diagnostic
-        spans
-        source-function
-        instr
-        func-diag
-        "")])
+  (let ([instr-diag : CompilerDiagnostic
+    (compiler-backend-instr-diagnostic spans source-function instr func-diag "")])
     (match instr
       [(IrInstrMov dst src ty)
         (match (compiler-backend-emit-load-typed-value-with-plan
@@ -1702,14 +1689,10 @@
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
       [(IrInstrCall dst name args ty)
-        (let ([param-types
-            :
-            AstTypeList
-            (compiler-backend-call-param-types name functions externs)])
-          (let ([call-space
-              :
-              i64
-              (compiler-backend-call-arg-space target args param-types)])
+        (let ([param-types : AstTypeList
+          (compiler-backend-call-param-types name functions externs)])
+          (let ([call-space : i64
+            (compiler-backend-call-arg-space target args param-types)])
             (match (compiler-backend-emit-call-args
               target
               assignments
@@ -1993,15 +1976,12 @@
       (match param
         [(IrParam _ ty var-id)
           (let ([is-f64 : bool (compiler-backend-f64-type? ty)])
-            (let ([next-int
-                :
-                i64
+            (let (
+              [next-int : i64
                 (if is-f64
                   int-idx
                   (+ int-idx 1))]
-              [next-float
-                :
-                i64
+              [next-float : i64
                 (if is-f64
                   (+ float-idx 1)
                   float-idx)])
@@ -2112,22 +2092,15 @@
       ;; The provenance fallback diagnostic for this function (#605): backend
       ;; errors raised while emitting its body stamp this function's source span
       ;; (or `1:1` when none was recorded) rather than always `1:1`.
-      (let ([func-diag
-          :
-          CompilerDiagnostic
-          (compiler-backend-function-diagnostic spans name "")])
+      (let ([func-diag : CompilerDiagnostic
+        (compiler-backend-function-diagnostic spans name "")])
         (let ([reg-plan : CompilerRegPlan (compiler-reg-plan-function func)])
-          (let ([raw-assignments
-              :
-              CompilerRegAssignmentList
-              (compiler-reg-plan-assignments reg-plan)])
-            (let ([assignments
-                :
-                CompilerRegAssignmentList
+          (let ([raw-assignments : CompilerRegAssignmentList
+            (compiler-reg-plan-assignments reg-plan)])
+            (let (
+              [assignments : CompilerRegAssignmentList
                 (compiler-backend-drop-param-assignments raw-assignments params)]
-              [types
-                :
-                CompilerRegVarTypeList
+              [types : CompilerRegVarTypeList
                 (compiler-reg-function-var-types func)])
               (match (compiler-backend-emit-param-spills
                 target
@@ -2155,11 +2128,9 @@
                       spans
                       func-diag)
                       [(OkCompilerBackend body)
-                        (let ([frame
-                            :
-                            i64
-                            (compiler-backend-frame-size
-                              (compiler-backend-frame-slots vars assignments))])
+                        (let ([frame : i64
+                          (compiler-backend-frame-size
+                            (compiler-backend-frame-slots vars assignments))])
                           (OkCompilerBackend
                             (backend-cat5
                               ".globl "
@@ -2725,237 +2696,127 @@
 (define (compiler-backend-runtime-plan-for
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]) : ResultBackendRuntimePlan
-  (let ([defines-alloc
-      :
-      bool
+  (let (
+    [defines-alloc : bool
       (compiler-backend-function-list-defines? functions "tl_alloc")]
-    [defines-oob
-      :
-      bool
+    [defines-oob : bool
       (compiler-backend-function-list-defines? functions "tl_oob_abort")]
-    [defines-substring
-      :
-      bool
+    [defines-substring : bool
       (compiler-backend-function-list-defines? functions "tl_substring")]
-    [defines-concat
-      :
-      bool
+    [defines-concat : bool
       (compiler-backend-function-list-defines? functions "tl_string_concat")]
-    [defines-string-eq
-      :
-      bool
+    [defines-string-eq : bool
       (compiler-backend-function-list-defines? functions "tl_string_eq")]
-    [defines-string-to-int
-      :
-      bool
+    [defines-string-to-int : bool
       (compiler-backend-function-list-defines? functions "tl_string_to_int")]
-    [defines-int-to-string
-      :
-      bool
+    [defines-int-to-string : bool
       (compiler-backend-function-list-defines? functions "tl_int_to_string")]
-    [defines-print-err
-      :
-      bool
+    [defines-print-err : bool
       (compiler-backend-function-list-defines? functions "tl_print_err")]
-    [defines-region-mark
-      :
-      bool
+    [defines-region-mark : bool
       (compiler-backend-function-list-defines? functions "tl_region_mark")]
-    [defines-region-reset
-      :
-      bool
+    [defines-region-reset : bool
       (compiler-backend-function-list-defines? functions "tl_region_reset")]
-    [extern-alloc
-      :
-      bool
+    [extern-alloc : bool
       (compiler-backend-extern-list-references? externs "tl_alloc")]
-    [extern-oob
-      :
-      bool
+    [extern-oob : bool
       (compiler-backend-extern-list-references? externs "tl_oob_abort")]
-    [extern-substring
-      :
-      bool
+    [extern-substring : bool
       (compiler-backend-extern-list-references? externs "tl_substring")]
-    [extern-concat
-      :
-      bool
+    [extern-concat : bool
       (compiler-backend-extern-list-references? externs "tl_string_concat")]
-    [extern-string-eq
-      :
-      bool
+    [extern-string-eq : bool
       (compiler-backend-extern-list-references? externs "tl_string_eq")]
-    [extern-string-to-int
-      :
-      bool
+    [extern-string-to-int : bool
       (compiler-backend-extern-list-references? externs "tl_string_to_int")]
-    [extern-int-to-string
-      :
-      bool
+    [extern-int-to-string : bool
       (compiler-backend-extern-list-references? externs "tl_int_to_string")]
-    [extern-abort
-      :
-      bool
+    [extern-abort : bool
       (compiler-backend-extern-list-references? externs ".L_tl_abort")]
-    [extern-print-err
-      :
-      bool
+    [extern-print-err : bool
       (compiler-backend-extern-list-references? externs "tl_print_err")]
-    [extern-arg-count
-      :
-      bool
+    [extern-arg-count : bool
       (compiler-backend-extern-list-references? externs ".L_tl_arg_count")]
-    [extern-arg
-      :
-      bool
+    [extern-arg : bool
       (compiler-backend-extern-list-references? externs ".L_tl_arg")]
-    [extern-read-file
-      :
-      bool
+    [extern-read-file : bool
       (compiler-backend-extern-list-references? externs ".L_tl_read_file")]
-    [extern-write-file
-      :
-      bool
+    [extern-write-file : bool
       (compiler-backend-extern-list-references? externs ".L_tl_write_file")]
-    [extern-file-exists
-      :
-      bool
+    [extern-file-exists : bool
       (compiler-backend-extern-list-references? externs ".L_tl_file_exists")]
-    [extern-read-line
-      :
-      bool
+    [extern-read-line : bool
       (compiler-backend-extern-list-references? externs ".L_tl_read_stdin_line")]
-    [extern-read-bytes
-      :
-      bool
+    [extern-read-bytes : bool
       (compiler-backend-extern-list-references?
         externs
         ".L_tl_read_stdin_bytes")]
-    [extern-stdin-eof
-      :
-      bool
+    [extern-stdin-eof : bool
       (compiler-backend-extern-list-references? externs ".L_tl_stdin_eof")]
-    [extern-flush-stdout
-      :
-      bool
+    [extern-flush-stdout : bool
       (compiler-backend-extern-list-references? externs ".L_tl_flush_stdout")]
-    [extern-region-mark
-      :
-      bool
+    [extern-region-mark : bool
       (compiler-backend-extern-list-references? externs "tl_region_mark")]
-    [extern-region-reset
-      :
-      bool
+    [extern-region-reset : bool
       (compiler-backend-extern-list-references? externs "tl_region_reset")]
-    [calls-alloc
-      :
-      bool
+    [calls-alloc : bool
       (compiler-backend-function-list-calls? functions "tl_alloc")]
-    [calls-oob
-      :
-      bool
+    [calls-oob : bool
       (compiler-backend-function-list-calls? functions "tl_oob_abort")]
-    [calls-substring
-      :
-      bool
+    [calls-substring : bool
       (compiler-backend-function-list-calls? functions "tl_substring")]
-    [calls-concat
-      :
-      bool
+    [calls-concat : bool
       (compiler-backend-function-list-calls? functions "tl_string_concat")]
-    [calls-string-eq
-      :
-      bool
+    [calls-string-eq : bool
       (compiler-backend-function-list-calls? functions "tl_string_eq")]
-    [calls-string-to-int
-      :
-      bool
+    [calls-string-to-int : bool
       (compiler-backend-function-list-calls? functions "tl_string_to_int")]
-    [calls-int-to-string
-      :
-      bool
+    [calls-int-to-string : bool
       (compiler-backend-function-list-calls? functions "tl_int_to_string")]
-    [calls-abort
-      :
-      bool
+    [calls-abort : bool
       (compiler-backend-function-list-calls? functions ".L_tl_abort")]
-    [calls-print-err
-      :
-      bool
+    [calls-print-err : bool
       (compiler-backend-function-list-calls? functions "tl_print_err")]
-    [calls-arg-count
-      :
-      bool
+    [calls-arg-count : bool
       (compiler-backend-function-list-calls? functions ".L_tl_arg_count")]
-    [calls-arg
-      :
-      bool
+    [calls-arg : bool
       (compiler-backend-function-list-calls? functions ".L_tl_arg")]
-    [calls-read-file
-      :
-      bool
+    [calls-read-file : bool
       (compiler-backend-function-list-calls? functions ".L_tl_read_file")]
-    [calls-write-file
-      :
-      bool
+    [calls-write-file : bool
       (compiler-backend-function-list-calls? functions ".L_tl_write_file")]
-    [calls-file-exists
-      :
-      bool
+    [calls-file-exists : bool
       (compiler-backend-function-list-calls? functions ".L_tl_file_exists")]
-    [calls-read-line
-      :
-      bool
+    [calls-read-line : bool
       (compiler-backend-function-list-calls? functions ".L_tl_read_stdin_line")]
-    [calls-read-bytes
-      :
-      bool
+    [calls-read-bytes : bool
       (compiler-backend-function-list-calls? functions ".L_tl_read_stdin_bytes")]
-    [calls-stdin-eof
-      :
-      bool
+    [calls-stdin-eof : bool
       (compiler-backend-function-list-calls? functions ".L_tl_stdin_eof")]
-    [calls-flush-stdout
-      :
-      bool
+    [calls-flush-stdout : bool
       (compiler-backend-function-list-calls? functions ".L_tl_flush_stdout")]
-    [calls-region-mark
-      :
-      bool
+    [calls-region-mark : bool
       (compiler-backend-function-list-calls? functions "tl_region_mark")]
-    [calls-region-reset
-      :
-      bool
+    [calls-region-reset : bool
       (compiler-backend-function-list-calls? functions "tl_region_reset")])
-    (let ([needs-oob : bool (and (not defines-oob) (or extern-oob calls-oob))]
-      [needs-substring
-        :
-        bool
+    (let (
+      [needs-oob : bool (and (not defines-oob) (or extern-oob calls-oob))]
+      [needs-substring : bool
         (and (not defines-substring) (or extern-substring calls-substring))]
-      [needs-concat
-        :
-        bool
+      [needs-concat : bool
         (and (not defines-concat) (or extern-concat calls-concat))]
-      [needs-string-eq
-        :
-        bool
+      [needs-string-eq : bool
         (and (not defines-string-eq) (or extern-string-eq calls-string-eq))]
-      [needs-string-to-int
-        :
-        bool
+      [needs-string-to-int : bool
         (and
           (not defines-string-to-int)
           (or extern-string-to-int calls-string-to-int))]
-      [needs-int-to-string
-        :
-        bool
+      [needs-int-to-string : bool
         (and
           (not defines-int-to-string)
           (or extern-int-to-string calls-int-to-string))]
       [direct-abort : bool (or extern-abort calls-abort)]
-      [needs-print-err
-        :
-        bool
+      [needs-print-err : bool
         (and (not defines-print-err) (or extern-print-err calls-print-err))]
       [needs-arg-count : bool (or extern-arg-count calls-arg-count)]
       [needs-arg : bool (or extern-arg calls-arg)]
@@ -2966,33 +2827,24 @@
       [needs-read-bytes : bool (or extern-read-bytes calls-read-bytes)]
       [needs-stdin-eof : bool (or extern-stdin-eof calls-stdin-eof)]
       [needs-flush-stdout : bool (or extern-flush-stdout calls-flush-stdout)]
-      [needs-region-mark
-        :
-        bool
+      [needs-region-mark : bool
         (and
           (not defines-region-mark)
           (or extern-region-mark calls-region-mark))]
-      [needs-region-reset
-        :
-        bool
+      [needs-region-reset : bool
         (and
           (not defines-region-reset)
           (or extern-region-reset calls-region-reset))]
-      [direct-alloc
-        :
-        bool
+      [direct-alloc : bool
         (and (not defines-alloc) (or extern-alloc calls-alloc))])
-      (let ([needs-abort
-          :
-          bool
+      (let (
+        [needs-abort : bool
           (or
             direct-abort
             (or
               needs-arg
               (or needs-read-file (or needs-write-file needs-file-exists))))]
-        [needs-alloc
-          :
-          bool
+        [needs-alloc : bool
           (or
             direct-alloc
             (or
@@ -4922,158 +4774,119 @@ tl_string_concat:
         flush-stdout
         region-mark
         region-reset)
-      (let ([alloc-asm
-          :
-          String
+      (let (
+        [alloc-asm : String
           (if alloc
             (if (compiler-backend-target-windows? target)
               (compiler-backend-runtime-windows-alloc-functions)
               (compiler-backend-runtime-alloc-functions))
             "")]
-        [oob-asm
-          :
-          String
+        [oob-asm : String
           (if oob
             (if (compiler-backend-target-windows? target)
               (compiler-backend-runtime-windows-oob-functions)
               (compiler-backend-runtime-oob-functions))
             "")]
-        [substring-asm
-          :
-          String
+        [substring-asm : String
           (if substring
             (if (compiler-backend-target-windows? target)
               (compiler-backend-runtime-windows-substring-functions)
               (compiler-backend-runtime-substring-functions))
             "")]
-        [concat-asm
-          :
-          String
+        [concat-asm : String
           (if concat
             (if (compiler-backend-target-windows? target)
               (compiler-backend-runtime-windows-concat-functions)
               (compiler-backend-runtime-concat-functions))
             "")]
-        [string-eq-asm
-          :
-          String
+        [string-eq-asm : String
           (if string-eq
             (if (compiler-backend-target-windows? target)
               (compiler-backend-runtime-windows-string-eq-functions)
               (compiler-backend-runtime-string-eq-functions))
             "")]
-        [string-to-int-asm
-          :
-          String
+        [string-to-int-asm : String
           (if string-to-int
             (if (compiler-backend-target-windows? target)
               (compiler-backend-runtime-windows-string-to-int-functions)
               (compiler-backend-runtime-string-to-int-functions))
             "")]
-        [int-to-string-asm
-          :
-          String
+        [int-to-string-asm : String
           (if int-to-string
             (if (compiler-backend-target-windows? target)
               (compiler-backend-runtime-windows-int-to-string-functions)
               (compiler-backend-runtime-int-to-string-functions))
             "")]
-        [abort-asm
-          :
-          String
+        [abort-asm : String
           (if abort
             (if (compiler-backend-target-windows? target)
               (compiler-backend-runtime-windows-abort-functions)
               (compiler-backend-runtime-abort-functions))
             "")]
-        [print-err-asm
-          :
-          String
+        [print-err-asm : String
           (if print-err
             (if (compiler-backend-target-windows? target)
               (compiler-backend-runtime-windows-print-err-functions)
               (compiler-backend-runtime-print-err-functions))
             "")]
-        [arg-count-asm
-          :
-          String
+        [arg-count-asm : String
           (if arg-count
             (if (compiler-backend-target-windows? target)
               (compiler-backend-runtime-windows-arg-count-functions)
               (compiler-backend-runtime-arg-count-functions))
             "")]
-        [arg-asm
-          :
-          String
+        [arg-asm : String
           (if arg
             (if (compiler-backend-target-windows? target)
               (compiler-backend-runtime-windows-arg-functions)
               (compiler-backend-runtime-arg-functions))
             "")]
-        [read-file-asm
-          :
-          String
+        [read-file-asm : String
           (if read-file
             (if (compiler-backend-target-windows? target)
               (compiler-backend-runtime-windows-read-file-functions)
               (compiler-backend-runtime-read-file-functions))
             "")]
-        [write-file-asm
-          :
-          String
+        [write-file-asm : String
           (if write-file
             (if (compiler-backend-target-windows? target)
               (compiler-backend-runtime-windows-write-file-functions)
               (compiler-backend-runtime-write-file-functions))
             "")]
-        [file-exists-asm
-          :
-          String
+        [file-exists-asm : String
           (if file-exists
             (if (compiler-backend-target-windows? target)
               (compiler-backend-runtime-windows-file-exists-functions)
               (compiler-backend-runtime-file-exists-functions))
             "")]
-        [read-line-asm
-          :
-          String
+        [read-line-asm : String
           (if read-line
             (if (compiler-backend-target-windows? target)
               (compiler-backend-runtime-windows-read-stdin-line-functions)
               (compiler-backend-runtime-read-stdin-line-functions))
             "")]
-        [read-bytes-asm
-          :
-          String
+        [read-bytes-asm : String
           (if read-bytes
             (if (compiler-backend-target-windows? target)
               (compiler-backend-runtime-windows-read-stdin-bytes-functions)
               (compiler-backend-runtime-read-stdin-bytes-functions))
             "")]
-        [stdin-eof-asm
-          :
-          String
+        [stdin-eof-asm : String
           (if stdin-eof
             (compiler-backend-runtime-stdin-eof-functions)
             "")]
-        [flush-stdout-asm
-          :
-          String
+        [flush-stdout-asm : String
           (if flush-stdout
             (if (compiler-backend-target-windows? target)
               (compiler-backend-runtime-windows-flush-stdout-functions)
               (compiler-backend-runtime-flush-stdout-functions))
             "")]
-        [region-mark-asm
-          :
-          String
+        [region-mark-asm : String
           (compiler-backend-runtime-linux-only
             target
             region-mark
             (compiler-backend-runtime-region-mark-functions))]
-        [region-reset-asm
-          :
-          String
+        [region-reset-asm : String
           (compiler-backend-runtime-linux-only
             target
             region-reset
@@ -5364,17 +5177,12 @@ tl_string_concat:
                   plan
                   spans)
                   [(OkCompilerBackend functions-asm)
-                    (let ([strings
-                        :
-                        BackendStringList
+                    (let (
+                      [strings : BackendStringList
                         (compiler-backend-collect-program-strings program)]
-                      [floats
-                        :
-                        BackendStringList
+                      [floats : BackendStringList
                         (compiler-backend-collect-program-f64s program)]
-                      [buf
-                        :
-                        TextBuf
+                      [buf : TextBuf
                         (text-buf-append
                           (text-buf-append
                             (text-buf-append
@@ -5434,13 +5242,16 @@ tl_string_concat:
   [text : String]
   [prefix : String]
   [start : i64]) : bool
-  (let ([text-len : i64 (string-length text)]
+  (let (
+    [text-len : i64 (string-length text)]
     [prefix-len : i64 (string-length prefix)])
     (if (< start 0)
       false
       (if (> (+ start prefix-len) text-len)
         false
-        (let ([i : i64 0] [ok : bool true])
+        (let (
+          [i : i64 0]
+          [ok : bool true])
           (begin
             (while ok
               (if (< i prefix-len)
@@ -5451,11 +5262,15 @@ tl_string_concat:
             (= i prefix-len)))))))
 
 (define (compiler-backend-string-contains? [text : String] [needle : String]) : bool
-  (let ([text-len : i64 (string-length text)]
+  (let (
+    [text-len : i64 (string-length text)]
     [needle-len : i64 (string-length needle)])
     (if (= needle-len 0)
       true
-      (let ([i : i64 0] [found : bool false] [done : bool false])
+      (let (
+        [i : i64 0]
+        [found : bool false]
+        [done : bool false])
         (begin
           (while (not done)
             (if (<= (+ i needle-len) text-len)
@@ -5567,9 +5382,8 @@ tl_string_concat:
   (match (compiler-backend-emit-program
     (compiler-backend-runtime-helper-program))
     [(OkCompilerBackend asm)
-      (let ([base-labels
-          :
-          bool
+      (let (
+        [base-labels : bool
           (and
             (backend-and4
               (compiler-backend-string-contains? asm ".globl tl_alloc\n")
@@ -5577,9 +5391,7 @@ tl_string_concat:
               (compiler-backend-string-contains? asm ".globl tl_oob_abort\n")
               (compiler-backend-string-contains? asm "tl_oob_abort:\n"))
             (compiler-backend-string-contains? asm "tl_current_arena:\n"))]
-        [string-labels
-          :
-          bool
+        [string-labels : bool
           (backend-and8
             (compiler-backend-string-contains? asm ".globl tl_substring\n")
             (compiler-backend-string-contains? asm "tl_substring:\n")
@@ -5589,9 +5401,7 @@ tl_string_concat:
             (compiler-backend-string-contains? asm "tl_string_eq:\n")
             (compiler-backend-string-contains? asm ".globl tl_string_to_int\n")
             (compiler-backend-string-contains? asm "tl_string_to_int:\n"))]
-        [driver-labels
-          :
-          bool
+        [driver-labels : bool
           (backend-and8
             (compiler-backend-string-contains? asm ".globl tl_int_to_string\n")
             (compiler-backend-string-contains? asm "tl_int_to_string:\n")
@@ -5601,25 +5411,19 @@ tl_string_concat:
             (compiler-backend-string-contains? asm ".L_tl_arg:\n")
             (compiler-backend-string-contains? asm ".L_tl_read_file:\n")
             (compiler-backend-string-contains? asm ".L_tl_write_file:\n"))]
-        [file-labels
-          :
-          bool
+        [file-labels : bool
           (backend-and4
             (compiler-backend-string-contains? asm ".L_tl_file_exists:\n")
             (compiler-backend-string-contains? asm ".L_tl_abort:\n")
             (compiler-backend-string-contains? asm ".L_tl_argc:\n")
             (compiler-backend-string-contains? asm ".L_tl_argv:\n"))]
-        [stdio-labels
-          :
-          bool
+        [stdio-labels : bool
           (backend-and4
             (compiler-backend-string-contains? asm ".L_tl_read_stdin_line:\n")
             (compiler-backend-string-contains? asm ".L_tl_read_stdin_bytes:\n")
             (compiler-backend-string-contains? asm ".L_tl_stdin_eof:\n")
             (compiler-backend-string-contains? asm ".L_tl_flush_stdout:\n"))]
-        [no-externs
-          :
-          bool
+        [no-externs : bool
           (and
             (backend-and8
               (not (compiler-backend-string-contains? asm ".extern tl_alloc\n"))
@@ -6404,9 +6208,8 @@ tl_string_concat:
   [want-message : String]
   [want-line : i64]
   [want-col : i64]) : bool
-  (let ([spans
-      :
-      CompilerSourceSpans
+  (let (
+    [spans : CompilerSourceSpans
       (compiler-source-spans-insert-instr
         (compiler-source-spans-insert
           (compiler-source-spans-empty)
@@ -6415,9 +6218,7 @@ tl_string_concat:
         "main"
         instr
         (compiler-backend-test-span want-line want-col))]
-    [program
-      :
-      CompilerIrProgram
+    [program : CompilerIrProgram
       (IrProgram
         IrGlobalNil
         (IrFunctionCons

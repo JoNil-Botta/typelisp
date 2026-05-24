@@ -245,7 +245,9 @@ case|selfhost_compiler_parse_core|selfhost/compiler_parse_core.tl|assembly|skip|
 contains|_tl_parse_ast_source:
 contains|_tl_parse_ast_program:
 contains|_tl_parse_ast_decl:
+contains|_tl_compiler_parse_abstraction_policy_message:
 contains|parse: malformed define
+contains|source-level generics or traits
 end
 
 case|selfhost_compiler_parse_smoke|selfhost/compiler_parse_smoke.tl|assembly|exactly-one|direct
@@ -278,7 +280,9 @@ end
 case|selfhost_compiler_typecheck|selfhost/compiler_typecheck.tl|assembly|skip|direct
 contains|_tl_typecheck_compiler_program:
 contains|_tl_compiler_typecheck_self_test:
+contains|_tl_tc_source_type_policy_message:
 contains|typecheck: return type mismatch
+contains|source-level type parameters
 end
 
 case|selfhost_compiler_typecheck_smoke|selfhost/compiler_typecheck_smoke.tl|assembly|exactly-one|direct

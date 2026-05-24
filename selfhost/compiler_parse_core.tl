@@ -119,6 +119,31 @@
     [(SSym text) (string-eq text ":")]
     [_ false]))
 
+(define (compiler-parse-abstraction-policy-message) : String
+  "parse: TypeLisp does not support source-level generics or traits; use comptime-decl and comptime-generated concrete declarations instead (#893/#913/#483)")
+
+(define (compiler-parse-generic-type-policy-message [name : String]) : String
+  (string-append
+    "parse: unknown type constructor "
+    (string-append
+      name
+      "; TypeLisp has no source-level generic type constructors; use comptime-decl and comptime-generated concrete declarations instead (#893/#913/#483)")))
+
+(define (compiler-parse-policy-form? [name : String]) : bool
+  (if (string-eq name "defgeneric")
+    true
+    (if (string-eq name "generic")
+      true
+      (if (string-eq name "deftrait")
+        true
+        (if (string-eq name "trait")
+          true
+          (if (string-eq name "interface")
+            true
+            (if (string-eq name "impl")
+              true
+              (string-eq name "where"))))))))
+
 (define (ast-source-span-from-source-span [span : SourceSpan]) : AstSourceSpan
   (AstSourceSpan
     (span-start-line span)
@@ -760,7 +785,7 @@
                   [(SCons _ (SCons _ (SNil)))
                     (ErrAstType "parse: region name must be an identifier")]
                   [_ (ErrAstType "parse: malformed region type")])
-                (ErrAstType "parse: unknown type constructor"))))))]
+                (ErrAstType (compiler-parse-generic-type-policy-message head)))))))]
     [_ (ErrAstType "parse: expected type")]))
 
 (define (parse-ast-param [dispatch : SymI64Env] [s : Sexpr]) : ResultAstParam
@@ -1512,7 +1537,9 @@
                   (parse-ast-import rest)
                   (if (= tag (compiler-parse-tag-decl-comptime-decl))
                     (parse-ast-comptime-decl dispatch rest)
-                    (ErrAstDecl "parse: expected declaration"))))))))]
+                    (if (compiler-parse-policy-form? head)
+                      (ErrAstDecl (compiler-parse-abstraction-policy-message))
+                      (ErrAstDecl "parse: expected declaration")))))))))]
     [_ (ErrAstDecl "parse: malformed declaration")]))
 
 (define (parse-ast-program-forms
@@ -1799,6 +1826,15 @@
 (define (compiler-parse-comptime-decl-extra-source) : String
   "(comptime-decl (defstruct Point (x i64)) (defenum Maybe (None)))")
 
+(define (compiler-parse-defgeneric-policy-source) : String
+  "(defgeneric Box [T] (value T))")
+
+(define (compiler-parse-trait-policy-source) : String
+  "(trait Printable (print-self : (-> Self unit)))")
+
+(define (compiler-parse-generic-type-policy-source) : String
+  "(define value : (Option i64) 0)")
+
 (define (compiler-parse-comptime-decl-error-tests-ok?) : bool
   (and
     (compiler-parse-error-ok?
@@ -1811,6 +1847,19 @@
       (compiler-parse-error-ok?
         (compiler-parse-comptime-decl-extra-source)
         "parse: comptime-decl expects exactly one template"))))
+
+(define (compiler-parse-abstraction-policy-tests-ok?) : bool
+  (and
+    (compiler-parse-error-ok?
+      (compiler-parse-defgeneric-policy-source)
+      (compiler-parse-abstraction-policy-message))
+    (and
+      (compiler-parse-error-ok?
+        (compiler-parse-trait-policy-source)
+        (compiler-parse-abstraction-policy-message))
+      (compiler-parse-error-ok?
+        (compiler-parse-generic-type-policy-source)
+        (compiler-parse-generic-type-policy-message "Option")))))
 
 (define (compiler-parse-error-tests-ok?) : bool
   (and
@@ -1841,7 +1890,9 @@
                 (compiler-parse-error-ok?
                   (compiler-parse-region-type-bad-source)
                   "parse: region name must be an identifier")
-                (compiler-parse-comptime-decl-error-tests-ok?)))))))))
+                (and
+                  (compiler-parse-comptime-decl-error-tests-ok?)
+                  (compiler-parse-abstraction-policy-tests-ok?))))))))))
 
 (define (compiler-parse-smoke) : i64
   (match (parse-ast-source (compiler-parse-smoke-source))

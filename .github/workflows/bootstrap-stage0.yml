@@ -1,0 +1,142 @@
+name: Bootstrap Stage0
+
+# On every merge to main, build release binaries and publish them as permanent
+# GitHub releases. A lightweight "stage0-latest" release is recreated with the
+# same assets, giving CI a stable download URL while permanent releases remain.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  build-linux:
+    name: Build Stage0 (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Stage binary
+        run: |
+          cp target/release/typelisp typelisp-stage0-linux
+          strip typelisp-stage0-linux
+          file typelisp-stage0-linux
+          ls -lh typelisp-stage0-linux
+
+      - name: Upload stage0 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage0-linux
+          path: typelisp-stage0-linux
+          if-no-files-found: error
+
+  build-windows:
+    name: Build Stage0 (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Stage binary
+        shell: pwsh
+        run: |
+          Copy-Item .\target\release\typelisp.exe .\typelisp-stage0-windows.exe
+          Get-Item .\typelisp-stage0-windows.exe
+
+      - name: Upload stage0 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage0-windows
+          path: typelisp-stage0-windows.exe
+          if-no-files-found: error
+
+  publish:
+    name: Publish Stage0 Releases
+    runs-on: ubuntu-latest
+    needs:
+      - build-linux
+      - build-windows
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download stage0 artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: stage0-artifacts
+          merge-multiple: true
+
+      - name: Verify staged assets
+        run: |
+          test -s stage0-artifacts/typelisp-stage0-linux
+          test -s stage0-artifacts/typelisp-stage0-windows.exe
+          chmod +x stage0-artifacts/typelisp-stage0-linux
+          file stage0-artifacts/typelisp-stage0-linux
+          ls -lh stage0-artifacts
+
+      - name: Create permanent release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="stage0-$(date -u +%Y%m%d-%H%M%S)-r${{ github.run_id }}"
+          notes="$(cat <<EOF
+          Bootstrap compiler built from commit ${{ github.sha }}.
+
+          Assets:
+          - typelisp-stage0-linux
+          - typelisp-stage0-windows.exe
+          EOF
+          )"
+
+          gh release create "$tag" \
+            --title "Stage0 $tag" \
+            --notes "$notes" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "${{ github.sha }}" \
+            stage0-artifacts/typelisp-stage0-linux \
+            stage0-artifacts/typelisp-stage0-windows.exe
+
+          echo "PERMANENT_TAG=$tag" >> "$GITHUB_ENV"
+
+      - name: Update latest convenience release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete stage0-latest --yes \
+            --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+          git push origin :refs/tags/stage0-latest 2>/dev/null || true
+
+          notes="$(cat <<EOF
+          Latest bootstrap compiler built from commit ${{ github.sha }}.
+
+          Permanent copy: $PERMANENT_TAG
+
+          Stable asset URLs:
+          - https://github.com/${{ github.repository }}/releases/download/stage0-latest/typelisp-stage0-linux
+          - https://github.com/${{ github.repository }}/releases/download/stage0-latest/typelisp-stage0-windows.exe
+          EOF
+          )"
+
+          gh release create stage0-latest \
+            --title "Stage0 latest" \
+            --notes "$notes" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "${{ github.sha }}" \
+            stage0-artifacts/typelisp-stage0-linux \
+            stage0-artifacts/typelisp-stage0-windows.exe

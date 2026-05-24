@@ -16,6 +16,9 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   with `(import "stdlib/io.tl")`.
 - `json.tl`: JSON value parser and serializer for tool protocols and data
   exchange. Import it with `(import "stdlib/json.tl")`.
+- `process.tl`: process command/output/error data model for selfhost tools.
+  Runtime execution currently returns structured unsupported diagnostics rather
+  than using Rust host actions. Import it with `(import "stdlib/process.tl")`.
 - `string.tl`: string utility functions built on compiler/runtime primitives.
   Import it with `(import "stdlib/string.tl")`.
 - `test.tl`: minimal assertion helpers for TypeLisp fixtures. Import it with
@@ -46,6 +49,7 @@ returned caller-owned values.
 | `read-file-or` | Performs host/runtime file inspection; returns fresh active-arena `String` storage from `read-file` when the path exists, otherwise returns the caller-provided `fallback`. |
 | `append-file` | Performs host/runtime IO; allocates temporary active-arena strings through `read-file-or` and `string-append`, then writes the result. |
 | `file-nonempty?` | Performs host/runtime IO; allocates a temporary active-arena `String` through `read-file` only when the path exists. |
+| `process-*` helpers | Construct process command/output/error aggregates in the active arena. `process-run` and `process-output` currently return structured errors and do not spawn child processes. |
 | `assert-*` helpers in `test.tl` | Non-allocating checks on success; failures call `panic` with the caller-provided message. |
 
 No current stdlib function returns a borrow-typed `str`, mutates a
@@ -60,6 +64,7 @@ Stdlib modules are imported explicitly:
 ```lisp
 (import "stdlib/io.tl")
 (import "stdlib/json.tl")
+(import "stdlib/process.tl")
 (import "stdlib/string.tl")
 (import "stdlib/test.tl")
 ```

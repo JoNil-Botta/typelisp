@@ -1223,6 +1223,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             stdout: "",
             deps: &[
                 "compiler_lower.tl",
+                "compiler_ctfe.tl",
                 "compiler_ir_types.tl",
                 "compiler_typecheck.tl",
                 "compiler_symbols.tl",
@@ -1296,6 +1297,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
                 "compiler_regalloc.tl",
                 "compiler_liveness.tl",
                 "compiler_lower.tl",
+                "compiler_ctfe.tl",
                 "compiler_ir_types.tl",
                 "compiler_typecheck.tl",
                 "compiler_symbols.tl",
@@ -1471,6 +1473,7 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
             "compiler_liveness.tl",
             "compiler_optimize.tl",
             "compiler_lower.tl",
+            "compiler_ctfe.tl",
             "compiler_ir_types.tl",
             "compiler_typecheck.tl",
             "compiler_symbols.tl",

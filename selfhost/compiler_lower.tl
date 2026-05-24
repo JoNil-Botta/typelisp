@@ -16,6 +16,8 @@
 
 (import "compiler_ir_types.tl")
 
+(import "compiler_ctfe.tl")
+
 (defenum LowerState
   (LowerState i64 i64 String CompilerIrInstrList CompilerIrBlockList))
 
@@ -1083,13 +1085,17 @@
       (lower-array-ref ctx state env type-env arr index)]
     [(AstExprArraySet arr index value)
       (lower-array-set ctx state env type-env arr index value)]
-    ;; `(comptime expr)` is parsed and type-checked (#718) but not yet evaluated;
-    ;; CTFE + folding to a literal lands in #719.
-    [(AstExprComptime _)
-      (ErrLowerExpr
-        (lower-diagnostic-at-expr
-          origin
-          "lower: comptime evaluation not yet implemented (#719)"))]
+    ;; `(comptime expr)` folds to a literal via the scalar CTFE evaluator (#719).
+    ;; Successful folds reuse the ordinary literal path; CTFE rejections (free
+    ;; runtime vars, unsupported forms, f64 -> #735) surface as lower errors.
+    [(AstExprComptime inner)
+      (match (compiler-ctfe-eval inner (ctfe-env-empty) (ctfe-fuel-limit))
+        [(OkCtfe value _)
+          (lower-materialize
+            state
+            (lower-literal-value (ctfe-value-to-literal value))
+            expr-ty)]
+        [(ErrCtfe diag) (ErrLowerExpr diag)])]
     [_
       (ErrLowerExpr
         (lower-diagnostic-at-expr origin "lower: unsupported expression"))]))
@@ -3214,12 +3220,26 @@
   "(define (main) : (Tuple i64 bool)
   (tuple 1 true))")
 
-;; `(comptime expr)` parses and type-checks (inner type), but lowering reserves
+;; `(comptime expr)` folds to a literal via the scalar CTFE evaluator (#719).
 
-;; it until the evaluator (#719) lands (#718).
+;; These fixtures exercise arithmetic, `if`, and `let` folds, plus the
 
-(define (compiler-lower-comptime-reserved-source) : String
+;; runtime-variable and deferred-f64 (#735) rejection paths.
+
+(define (compiler-lower-comptime-arith-source) : String
   "(define (main) : i64 (comptime (+ 1 2)))")
+
+(define (compiler-lower-comptime-if-source) : String
+  "(define (main) : i64 (comptime (if (< 1 2) (* 6 7) 0)))")
+
+(define (compiler-lower-comptime-let-source) : String
+  "(define (main) : i64 (comptime (let ([x 40]) (+ x 2))))")
+
+(define (compiler-lower-comptime-runtime-var-source) : String
+  "(define (main [x : i64]) : i64 (comptime x))")
+
+(define (compiler-lower-comptime-f64-source) : String
+  "(define (main) : f64 (comptime 1.5))")
 
 (define (compiler-lower-error-ok? [src : String] [want : String]) : bool
   (match (lower-compiler-source src)
@@ -3546,6 +3566,104 @@
             (lower-test-blocks-call-count blocks name)
             (lower-test-functions-call-count rest name))])]))
 
+;; CTFE fold verification (#719): a folded `(comptime ...)` lowers to a literal,
+
+;; so the function body must contain a `Mov` of the expected i64 literal and no
+
+;; `BinOp`/`UnOp` instructions (the arithmetic was evaluated at compile time).
+
+(define (lower-test-instr-i64-mov-count [instr : CompilerIrInstr] [want : i64]) : i64
+  (match instr
+    [(IrInstrMov _ value _)
+      (match value
+        [(IrValueI64 n)
+          (if (= n want)
+            1
+            0)]
+        [_ 0])]
+    [_ 0]))
+
+(define (lower-test-instr-binop-count [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrBinOp _ _ _ _ _) 1]
+    [(IrInstrUnOp _ _ _ _) 1]
+    [_ 0]))
+
+(define (lower-test-instrs-i64-mov-count
+  [instrs : CompilerIrInstrList]
+  [want : i64]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (lower-test-instr-i64-mov-count instr want)
+        (lower-test-instrs-i64-mov-count rest want))]))
+
+(define (lower-test-instrs-binop-count [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (lower-test-instr-binop-count instr)
+        (lower-test-instrs-binop-count rest))]))
+
+(define (lower-test-blocks-i64-mov-count
+  [blocks : CompilerIrBlockList]
+  [want : i64]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instrs-i64-mov-count instrs want)
+            (lower-test-blocks-i64-mov-count rest want))])]))
+
+(define (lower-test-blocks-binop-count [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instrs-binop-count instrs)
+            (lower-test-blocks-binop-count rest))])]))
+
+(define (lower-test-function-i64-mov-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]
+  [want : i64]) : i64
+  (match funcs
+    [(IrFunctionNil) 0]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ blocks)
+          (if (string-eq fname name)
+            (lower-test-blocks-i64-mov-count blocks want)
+            (lower-test-function-i64-mov-count rest name want))])]))
+
+(define (lower-test-function-binop-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]) : i64
+  (match funcs
+    [(IrFunctionNil) (- 0 1)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ blocks)
+          (if (string-eq fname name)
+            (lower-test-blocks-binop-count blocks)
+            (lower-test-function-binop-count rest name))])]))
+
+(define (compiler-lower-comptime-fold-ok? [src : String] [want : i64]) : bool
+  (match (lower-compiler-source src)
+    [(OkCompilerLower program)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (> (lower-test-function-i64-mov-count functions "main" want) 0)
+            (= (lower-test-function-binop-count functions "main") 0))])]
+    [(ErrCompilerLower _) false]))
+
 ;; The value-returning scalar matches (`classify`/`flag-score`/`sign`) each emit
 
 ;; a merge phi; the unit-typed match (`announce`) emits no value phi.
@@ -3694,9 +3812,25 @@
                               (compiler-lower-error-ok?
                                 (compiler-lower-unsupported-source)
                                 "lower: unsupported expression")
-                              (compiler-lower-error-ok?
-                                (compiler-lower-comptime-reserved-source)
-                                "lower: comptime evaluation not yet implemented (#719)")))))))))))))))
+                              (and
+                                (compiler-lower-comptime-fold-ok?
+                                  (compiler-lower-comptime-arith-source)
+                                  3)
+                                (and
+                                  (compiler-lower-comptime-fold-ok?
+                                    (compiler-lower-comptime-if-source)
+                                    42)
+                                  (and
+                                    (compiler-lower-comptime-fold-ok?
+                                      (compiler-lower-comptime-let-source)
+                                      42)
+                                    (and
+                                      (compiler-lower-error-ok?
+                                        (compiler-lower-comptime-runtime-var-source)
+                                        "compile-time evaluation cannot reference runtime variable 'x'")
+                                      (compiler-lower-error-ok?
+                                        (compiler-lower-comptime-f64-source)
+                                        "comptime: f64 compile-time evaluation not yet supported (#735)")))))))))))))))))))
     42
     (begin
       (panic "lower: smoke score mismatch")

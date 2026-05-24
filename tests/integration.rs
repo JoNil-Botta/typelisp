@@ -1170,6 +1170,12 @@ fn selfhost_backend_runtime_helpers_emit_assemble_link_and_run() {
         "\ntl_substring:\n",
         ".globl tl_string_concat\n",
         "\ntl_string_concat:\n",
+        "\n.L_tl_read_stdin_line:\n",
+        "\n.L_tl_read_stdin_bytes:\n",
+        "\n.L_tl_stdin_eof:\n",
+        "\n.L_tl_flush_stdout:\n",
+        ".L_tl_stdin_eof_flag:\n",
+        "tl: stdin failed",
         ".L_tl_substring_copy_loop:\n",
         ".L_tl_string_concat_copy_b:\n",
         "    call tl_alloc\n",
@@ -1186,6 +1192,10 @@ fn selfhost_backend_runtime_helpers_emit_assemble_link_and_run() {
         ".extern tl_oob_abort\n",
         ".extern tl_substring\n",
         ".extern tl_string_concat\n",
+        ".extern .L_tl_read_stdin_line\n",
+        ".extern .L_tl_read_stdin_bytes\n",
+        ".extern .L_tl_stdin_eof\n",
+        ".extern .L_tl_flush_stdout\n",
     ] {
         assert!(
             !asm.contains(helper),

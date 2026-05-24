@@ -88,8 +88,12 @@
                                             (let ([e21 : TcTypeEnv (tc-bind e20 "string-slice" (tc-fn3 (AstTyString) (AstTyI64) (AstTyI64) (AstTyString)))])
                                               (let ([e22 : TcTypeEnv (tc-bind e21 "string-append" (tc-fn2 (AstTyString) (AstTyString) (AstTyString)))])
                                                 (let ([e23 : TcTypeEnv (tc-bind e22 "string-concat" (tc-fn2 (AstTyString) (AstTyString) (AstTyString)))])
-                                                  (let ([e24 : TcTypeEnv (tc-bind e23 "panic" (tc-fn1 (AstTyString) (AstTyNever)))])
-                                                    (tc-bind e24 "error" (tc-fn1 (AstTyString) (AstTyNever)))))))))))))))))))))))))))))
+                                                  (let ([e24 : TcTypeEnv (tc-bind e23 "read-stdin-line" (tc-fn0 (AstTyString)))])
+                                                    (let ([e25 : TcTypeEnv (tc-bind e24 "read-stdin-bytes" (tc-fn1 (AstTyI64) (AstTyString)))])
+                                                      (let ([e26 : TcTypeEnv (tc-bind e25 "stdin-eof?" (tc-fn0 (AstTyBool)))])
+                                                        (let ([e27 : TcTypeEnv (tc-bind e26 "flush-stdout" (tc-fn0 (AstTyUnit)))])
+                                                          (let ([e28 : TcTypeEnv (tc-bind e27 "panic" (tc-fn1 (AstTyString) (AstTyNever)))])
+                                                            (tc-bind e28 "error" (tc-fn1 (AstTyString) (AstTyNever)))))))))))))))))))))))))))))))))
 
 (define (tc-lookup [env : TcTypeEnv] [name : String]) : ResultTcType
   (match env
@@ -1035,6 +1039,14 @@
   (string-append (substring s 0 (length s))
                  (int->string (string->int \"7\"))))")
 
+(define (compiler-typecheck-stdio-source) : String
+  "(define (main) : i64
+  (begin
+    (flush-stdout)
+    (if (stdin-eof?)
+        (string-length (read-stdin-line))
+        (string-length (read-stdin-bytes 3)))))")
+
 (define (compiler-typecheck-tuple-oob-source) : String
   "(define (main) : i64 (tuple-ref (tuple 1 true) 2))")
 
@@ -1057,25 +1069,26 @@
 
 (define (compiler-typecheck-aggregate-tests-ok?) : bool
   (and (compiler-typecheck-ok-score? (compiler-typecheck-aggregate-source) 20)
-       (and (compiler-typecheck-ok-score? (compiler-typecheck-builtin-source) 10)
-            (and (compiler-typecheck-error-ok?
-                   (compiler-typecheck-tuple-oob-source)
-                   "typecheck: tuple index out of bounds")
-                 (and (compiler-typecheck-error-ok?
-                        (compiler-typecheck-array-mismatch-source)
-                        "typecheck: array elements must have same type")
-                      (and (compiler-typecheck-error-ok?
-                             (compiler-typecheck-string-index-source)
-                             "typecheck: string index must be integer")
-                           (and (compiler-typecheck-error-ok?
-                                  (compiler-typecheck-cast-bad-source)
-                                  "typecheck: cast requires integer/char source and target")
-                                (and (compiler-typecheck-error-ok?
-                                       (compiler-typecheck-foreach-body-source)
-                                       "typecheck: foreach body must be unit")
-                                     (compiler-typecheck-error-ok?
-                                       (compiler-typecheck-lambda-ret-source)
-                                       "typecheck: lambda return type mismatch")))))))))
+        (and (compiler-typecheck-ok-score? (compiler-typecheck-builtin-source) 10)
+             (and (compiler-typecheck-ok-score? (compiler-typecheck-stdio-source) 10)
+                  (and (compiler-typecheck-error-ok?
+                         (compiler-typecheck-tuple-oob-source)
+                         "typecheck: tuple index out of bounds")
+                       (and (compiler-typecheck-error-ok?
+                              (compiler-typecheck-array-mismatch-source)
+                              "typecheck: array elements must have same type")
+                            (and (compiler-typecheck-error-ok?
+                                   (compiler-typecheck-string-index-source)
+                                   "typecheck: string index must be integer")
+                                 (and (compiler-typecheck-error-ok?
+                                        (compiler-typecheck-cast-bad-source)
+                                        "typecheck: cast requires integer/char source and target")
+                                      (and (compiler-typecheck-error-ok?
+                                             (compiler-typecheck-foreach-body-source)
+                                             "typecheck: foreach body must be unit")
+                                           (compiler-typecheck-error-ok?
+                                             (compiler-typecheck-lambda-ret-source)
+                                             "typecheck: lambda return type mismatch"))))))))))
 (define (compiler-typecheck-nominal-source) : String
   "(defenum Maybe (None) (Some i64))
 (defstruct Point (x i64) (y i64))

@@ -174,6 +174,31 @@
     [(AstTyUnit) IrNoValue]
     [_ (IrSomeValue value)]))
 
+(define (lower-top-level-value-defined? [ctx : TcContext] [name : String]) : bool
+  (match ctx
+    [(TcContext _ symbols _)
+     (match (compiler-symbols-lookup-value symbols name)
+       [(SomeI64 _) true]
+       [(NoneI64) false])]))
+
+(define (lower-stdio-builtin? [name : String]) : bool
+  (if (string-eq name "read-stdin-line")
+      true
+      (if (string-eq name "read-stdin-bytes")
+          true
+          (if (string-eq name "stdin-eof?")
+              true
+              (string-eq name "flush-stdout")))))
+
+(define (lower-stdio-runtime-name [name : String]) : String
+  (if (string-eq name "read-stdin-line")
+      ".L_tl_read_stdin_line"
+      (if (string-eq name "read-stdin-bytes")
+          ".L_tl_read_stdin_bytes"
+          (if (string-eq name "stdin-eof?")
+              ".L_tl_stdin_eof"
+              ".L_tl_flush_stdout"))))
+
 (define (lower-expr [ctx : TcContext] [state : LowerState] [env : SymI64Env] [type-env : TcTypeEnv] [expr : AstExpr]) : ResultLowerExpr
   (match (tc-expr ctx type-env expr)
     [(OkTcType expr-ty) (lower-expr-with-type ctx state env type-env expr expr-ty)]
@@ -272,10 +297,19 @@
      ;; `array-length`/`length` on a dynamic array load the fat value's length
      ;; field directly instead of calling a runtime symbol (#528). `length` on
      ;; other types (e.g. String) keeps the ordinary direct-call path.
-     (if (or (string-eq name "array-length") (string-eq name "length"))
-         (lower-array-length ctx state env type-env name args result-ty)
-         (lower-direct-call ctx state env type-env name args result-ty))]
-    [_ (ErrLowerExpr "lower: only direct calls are supported")]))
+      (if (or (string-eq name "array-length") (string-eq name "length"))
+          (lower-array-length ctx state env type-env name args result-ty)
+          (if (and (lower-stdio-builtin? name) (not (lower-top-level-value-defined? ctx name)))
+              (lower-direct-call
+                ctx
+                state
+                env
+                type-env
+                (lower-stdio-runtime-name name)
+                args
+                result-ty)
+              (lower-direct-call ctx state env type-env name args result-ty)))]
+     [_ (ErrLowerExpr "lower: only direct calls are supported")]))
 
 (define (lower-direct-call [ctx : TcContext] [state : LowerState] [env : SymI64Env] [type-env : TcTypeEnv] [name : String] [args : AstExprList] [result-ty : AstType]) : ResultLowerExpr
   (match (lower-args ctx state env type-env args)
@@ -776,6 +810,14 @@
 (define (dyn-len-alias [a : (Array i64)]) : i64 (length a))
 (define (main) : i64 0)")
 
+(define (compiler-lower-stdio-source) : String
+  "(define (main) : i64
+  (begin
+    (flush-stdout)
+    (if (stdin-eof?)
+        (string-length (read-stdin-line))
+        (string-length (read-stdin-bytes 3)))))")
+
 (define (compiler-lower-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(OkCompilerLower _) true]
@@ -795,12 +837,13 @@
 
 (define (compiler-lower-self-test) : i64
   (if (and (compiler-lower-ok-summary? (compiler-lower-smoke-source))
-           (and (compiler-lower-ok? (compiler-lower-match-source))
-                (and (compiler-lower-ok? (compiler-lower-array-length-source))
-                     (and (compiler-lower-error-ok? (compiler-typecheck-branch-mismatch-source)
-                                                    "typecheck: if branches must match")
-                          (compiler-lower-error-ok? (compiler-lower-unsupported-source)
-                                                    "lower: unsupported expression")))))
+            (and (compiler-lower-ok? (compiler-lower-match-source))
+                 (and (compiler-lower-ok? (compiler-lower-array-length-source))
+                      (and (compiler-lower-ok? (compiler-lower-stdio-source))
+                           (and (compiler-lower-error-ok? (compiler-typecheck-branch-mismatch-source)
+                                                          "typecheck: if branches must match")
+                                (compiler-lower-error-ok? (compiler-lower-unsupported-source)
+                                                          "lower: unsupported expression"))))))
       42
       (begin
         (panic "lower: smoke score mismatch")

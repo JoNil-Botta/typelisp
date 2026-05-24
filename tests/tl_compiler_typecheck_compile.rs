@@ -100,6 +100,8 @@ fn compiler_typecheck_tl_compiles_to_assembly() {
         "typecheck: smoke score mismatch",
         "(extern print-i64 : (-> i64 unit))",
         "[fixed : (Array i64 3) (array 1 2 3)]",
+        "(read-stdin-bytes 3)",
+        "(flush-stdout)",
         "(defenum Maybe (None) (Some i64))",
         "(defstruct Point (x i64) (y i64))",
     ] {

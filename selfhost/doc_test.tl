@@ -1,16 +1,32 @@
-;; doc_test.tl - Self-hosted TypeLisp doctest extraction layer (#722).
+;; doc_test.tl - Self-hosted TypeLisp doctest extraction (#722) + runner (#724).
 
 ;;
 
-;; This module only extracts TypeLisp fenced examples from public doc comments.
+;; Extraction pulls TypeLisp fenced examples from public doc comments, mirroring
 
-;; It mirrors the Rust doctest runner's source scanning policy: module docs
+;; the Rust doctest runner's source scanning policy: module docs (`;;;;`) are
 
-;; (`;;;;`) are scanned as standalone doc blocks, item docs (`;;;`) attach only
+;; scanned as standalone doc blocks, item docs (`;;;`) attach only to the next
 
-;; to the next supported top-level declaration, ordinary comments are ignored,
+;; supported top-level declaration, ordinary comments are ignored, and unattached
 
-;; and unattached item docs are dropped.
+;; item docs are dropped.
+
+;;
+
+;; The runner (#724) checks each extracted example through the in-memory
+
+;; virtual-source loader/typechecker (`compiler-check-source`, #723): normal
+
+;; examples must check successfully, `expect-error` examples must fail, and a
+
+;; malformed fence (an extraction error) is itself a failure. Each failure
+
+;; records the source path, the fence's source line, the example index, and the
+
+;; rendered diagnostic when one is available.
+
+(import "compiler_check_core.tl")
 
 (defenum DocTestExpectation
   (DocTestExpectPass)
@@ -487,6 +503,235 @@
 (define (doc-test-extract-file [path : String]) : DocTestExtraction
   (doc-test-extract-source (read-file path)))
 
+;; --- runner (#724) ----------------------------------------------------------
+
+;; A single doctest failure: the doc'd source path, the fence's 1-based source
+
+;; line, the example index (`-1` for a fence-level extraction error that has no
+
+;; example), and a human-readable reason (the rendered diagnostic when one is
+
+;; available).
+
+(defenum DocTestRunFailure
+  (DocTestRunFailure String i64 i64 String))
+
+(defenum DocTestRunFailureList
+  (DocTestRunFailureNil)
+  (DocTestRunFailureCons DocTestRunFailure DocTestRunFailureList))
+
+;; Outcome of running a source: how many examples were checked and which failed.
+
+(defenum DocTestRunReport
+  (DocTestRunReport i64 DocTestRunFailureList))
+
+(defenum DocTestMaybeFailure
+  (DocTestNoFailure)
+  (DocTestSomeFailure DocTestRunFailure))
+
+(define (doc-test-run-failure-path [failure : DocTestRunFailure]) : String
+  (match failure
+    [(DocTestRunFailure path _ _ _) path]))
+
+(define (doc-test-run-failure-line [failure : DocTestRunFailure]) : i64
+  (match failure
+    [(DocTestRunFailure _ line _ _) line]))
+
+(define (doc-test-run-failure-index [failure : DocTestRunFailure]) : i64
+  (match failure
+    [(DocTestRunFailure _ _ index _) index]))
+
+(define (doc-test-run-failure-message [failure : DocTestRunFailure]) : String
+  (match failure
+    [(DocTestRunFailure _ _ _ message) message]))
+
+(define (doc-test-run-report-count [report : DocTestRunReport]) : i64
+  (match report
+    [(DocTestRunReport count _) count]))
+
+(define (doc-test-run-report-failures [report : DocTestRunReport]) : DocTestRunFailureList
+  (match report
+    [(DocTestRunReport _ failures) failures]))
+
+(define (doc-test-run-failure-list-count [failures : DocTestRunFailureList]) : i64
+  (match failures
+    [(DocTestRunFailureNil) 0]
+    [(DocTestRunFailureCons _ rest)
+      (+ 1 (doc-test-run-failure-list-count rest))]))
+
+(define (doc-test-run-report-ok? [report : DocTestRunReport]) : bool
+  (match (doc-test-run-report-failures report)
+    [(DocTestRunFailureNil) true]
+    [(DocTestRunFailureCons _ _) false]))
+
+(define (doc-test-run-failure-list-append
+  [failures : DocTestRunFailureList]
+  [failure : DocTestRunFailure]) : DocTestRunFailureList
+  (match failures
+    [(DocTestRunFailureNil)
+      (DocTestRunFailureCons failure DocTestRunFailureNil)]
+    [(DocTestRunFailureCons head rest)
+      (DocTestRunFailureCons
+        head
+        (doc-test-run-failure-list-append rest failure))]))
+
+;; Render a failure as `path:line: example N: message`. Fence-level extraction
+
+;; errors (index `-1`) omit the example number.
+
+(define (doc-test-run-failure-render [failure : DocTestRunFailure]) : String
+  (match failure
+    [(DocTestRunFailure path line index message)
+      (let ([location
+          :
+          String
+          (string-append
+            path
+            (string-append ":" (string-append (int->string line) ": ")))])
+        (if (< index 0)
+          (string-append location message)
+          (string-append
+            location
+            (string-append
+              "example "
+              (string-append (int->string index) (string-append ": " message))))))]))
+
+;; Check one extracted example through the virtual-source typechecker, comparing
+
+;; the outcome against its expectation. Imports inside the example resolve
+
+;; relative to `path` (the doc'd source file).
+
+(define (doc-test-check-example [path : String] [example : DocTestExample]) : DocTestMaybeFailure
+  (let ([index : i64 (doc-test-example-index example)]
+    [source-line : i64 (doc-test-example-source-line example)]
+    [expect-error
+      :
+      bool
+      (doc-test-expectation-error? (doc-test-example-expectation example))]
+    [code : String (doc-test-example-code example)])
+    (match (compiler-check-source path code)
+      [(OkCompilerCheck _)
+        (if expect-error
+          (DocTestSomeFailure
+            (DocTestRunFailure
+              path
+              source-line
+              index
+              "expected a compile error, but the example checked successfully"))
+          (DocTestNoFailure))]
+      [(ErrCompilerCheck diag)
+        (if expect-error
+          (DocTestNoFailure)
+          (DocTestSomeFailure
+            (DocTestRunFailure
+              path
+              source-line
+              index
+              (compiler-diagnostic-render diag))))])))
+
+(define (doc-test-run-examples
+  [path : String]
+  [examples : DocTestExampleList]
+  [failures : DocTestRunFailureList]) : DocTestRunFailureList
+  (match examples
+    [(DocTestExampleNil) failures]
+    [(DocTestExampleCons example rest)
+      (match (doc-test-check-example path example)
+        [(DocTestNoFailure) (doc-test-run-examples path rest failures)]
+        [(DocTestSomeFailure failure)
+          (doc-test-run-examples
+            path
+            rest
+            (doc-test-run-failure-list-append failures failure))])]))
+
+;; A malformed/empty/unterminated fence is a runner failure too; it has no
+
+;; example index, so it is recorded with index `-1`.
+
+(define (doc-test-errors-to-failures
+  [path : String]
+  [errors : DocTestErrorList]
+  [failures : DocTestRunFailureList]) : DocTestRunFailureList
+  (match errors
+    [(DocTestErrorNil) failures]
+    [(DocTestErrorCons err rest)
+      (doc-test-errors-to-failures
+        path
+        rest
+        (doc-test-run-failure-list-append
+          failures
+          (DocTestRunFailure
+            path
+            (doc-test-error-line err)
+            -1
+            (doc-test-error-message err))))]))
+
+;; Extract and check every example in `source` (attributed to `path`). Extraction
+
+;; errors are folded in as failures first, then each example is checked. A source
+
+;; with no examples and no errors reports success with a zero count.
+
+(define (doc-test-run-source [path : String] [source : String]) : DocTestRunReport
+  (match (doc-test-extract-source source)
+    [(DocTestExtraction examples errors)
+      (DocTestRunReport
+        (doc-test-example-list-count examples)
+        (doc-test-run-examples
+          path
+          examples
+          (doc-test-errors-to-failures path errors DocTestRunFailureNil)))]))
+
+(define (doc-test-run-file [path : String]) : DocTestRunReport
+  (doc-test-run-source path (read-file path)))
+
+;; Exit status for a report: 0 when every example passed (or there were none),
+
+;; 1 otherwise. Callers turn this directly into a process exit code.
+
+(define (doc-test-run-report-status [report : DocTestRunReport]) : i64
+  (if (doc-test-run-report-ok? report)
+    0
+    1))
+
+;; Render every failure as `path:line: ...`, one per line, in extraction order.
+
+(define (doc-test-run-failures-render [failures : DocTestRunFailureList]) : String
+  (match failures
+    [(DocTestRunFailureNil) ""]
+    [(DocTestRunFailureCons failure rest)
+      (string-append
+        (string-append (doc-test-run-failure-render failure) "\n")
+        (doc-test-run-failures-render rest))]))
+
+;; Human-readable report text. Success mirrors the Rust CLI's
+
+;; `Doc tests passed: N example(s)` line; failure mirrors its
+
+;; `doc tests failed: M failure(s) across N example(s)` summary followed by each
+
+;; rendered failure.
+
+(define (doc-test-run-report-render [report : DocTestRunReport]) : String
+  (match report
+    [(DocTestRunReport count failures)
+      (match failures
+        [(DocTestRunFailureNil)
+          (string-append
+            "Doc tests passed: "
+            (string-append (int->string count) " example(s)"))]
+        [(DocTestRunFailureCons _ _)
+          (string-append
+            (doc-test-cat3
+              "doc tests failed: "
+              (int->string (doc-test-run-failure-list-count failures))
+              (doc-test-cat3
+                " failure(s) across "
+                (int->string count)
+                " example(s)\n"))
+            (doc-test-run-failures-render failures))])]))
+
 (define (doc-test-smoke-source) : String
   ";;;; Module docs
 ;;;; ```typelisp
@@ -615,3 +860,190 @@
         (begin
           (panic "doc-test: unexpected extraction error")
           0))]))
+
+;; --- runner self-test (#724) ------------------------------------------------
+
+;; A normal example whose body fails to typecheck (i64 return, bool body).
+
+(define (doc-test-run-unexpected-error-source) : String
+  ";;;; ```typelisp
+;;;; (define (main) : i64 true)
+;;;; ```
+")
+
+;; An `expect-error` example that actually checks successfully.
+
+(define (doc-test-run-unexpected-pass-source) : String
+  ";;;; ```typelisp expect-error
+;;;; (define (main) : i64 0)
+;;;; ```
+")
+
+;; A file with no doctest fences at all.
+
+(define (doc-test-run-empty-source) : String
+  ";; just an ordinary comment, no doctest fence
+(define answer : i64 1)
+")
+
+;; The shared smoke source has one passing and one correctly-erroring
+
+;; (`expect-error`) example, so it must run clean: two examples, no failures.
+
+(define (doc-test-run-smoke-pass-ok?) : bool
+  (let ([report
+      :
+      DocTestRunReport
+      (doc-test-run-source "docs/ok.tl" (doc-test-smoke-source))])
+    (if (= (doc-test-run-report-count report) 2)
+      (doc-test-run-report-ok? report)
+      false)))
+
+;; A normal example that fails to check yields exactly one failure carrying the
+
+;; fence line (1), example index (1), and the rendered diagnostic message.
+
+(define (doc-test-run-smoke-unexpected-error-ok?) : bool
+  (let ([report
+      :
+      DocTestRunReport
+      (doc-test-run-source "docs/bad.tl" (doc-test-run-unexpected-error-source))])
+    (match (doc-test-run-report-failures report)
+      [(DocTestRunFailureCons failure (DocTestRunFailureNil))
+        (if (= (doc-test-run-failure-index failure) 1)
+          (if (= (doc-test-run-failure-line failure) 1)
+            (if (string-eq (doc-test-run-failure-path failure) "docs/bad.tl")
+              (doc-test-string-contains?
+                (doc-test-run-failure-message failure)
+                "return type mismatch")
+              false)
+            false)
+          false)]
+      [_ false])))
+
+;; An `expect-error` example that checks successfully is a failure.
+
+(define (doc-test-run-smoke-unexpected-pass-ok?) : bool
+  (let ([report
+      :
+      DocTestRunReport
+      (doc-test-run-source "docs/bad.tl" (doc-test-run-unexpected-pass-source))])
+    (match (doc-test-run-report-failures report)
+      [(DocTestRunFailureCons failure (DocTestRunFailureNil))
+        (doc-test-string-contains?
+          (doc-test-run-failure-message failure)
+          "expected a compile error")]
+      [_ false])))
+
+;; Malformed fences (the shared malformed source's three extraction errors)
+
+;; become three runner failures with no examples.
+
+(define (doc-test-run-smoke-malformed-ok?) : bool
+  (let ([report
+      :
+      DocTestRunReport
+      (doc-test-run-source "docs/malformed.tl" (doc-test-malformed-source))])
+    (if (= (doc-test-run-report-count report) 0)
+      (=
+        (doc-test-run-failure-list-count (doc-test-run-report-failures report))
+        3)
+      false)))
+
+;; A source with no examples reports success with a zero count.
+
+(define (doc-test-run-smoke-empty-ok?) : bool
+  (let ([report
+      :
+      DocTestRunReport
+      (doc-test-run-source "docs/empty.tl" (doc-test-run-empty-source))])
+    (if (= (doc-test-run-report-count report) 0)
+      (doc-test-run-report-ok? report)
+      false)))
+
+;; The rendered failure carries the path, line, and message.
+
+(define (doc-test-run-smoke-render-ok?) : bool
+  (let ([rendered
+      :
+      String
+      (doc-test-run-failure-render
+        (DocTestRunFailure "docs/bad.tl" 4 2 "typecheck: return type mismatch"))])
+    (if (doc-test-string-contains? rendered "docs/bad.tl:4:")
+      (if (doc-test-string-contains? rendered "example 2:")
+        (doc-test-string-contains? rendered "return type mismatch")
+        false)
+      false)))
+
+;; The report-level text mirrors the Rust CLI: a clean run renders the
+
+;; `Doc tests passed: N example(s)` line with status 0, and a failing run renders
+
+;; the `doc tests failed: M failure(s) across N example(s)` summary with status 1.
+
+(define (doc-test-run-smoke-report-render-ok?) : bool
+  (let ([pass-report
+      :
+      DocTestRunReport
+      (doc-test-run-source "docs/ok.tl" (doc-test-smoke-source))]
+    [fail-report
+      :
+      DocTestRunReport
+      (doc-test-run-source "docs/bad.tl" (doc-test-run-unexpected-error-source))])
+    (if (= (doc-test-run-report-status pass-report) 0)
+      (if (string-eq
+        (doc-test-run-report-render pass-report)
+        "Doc tests passed: 2 example(s)")
+        (if (= (doc-test-run-report-status fail-report) 1)
+          (if (doc-test-string-contains?
+            (doc-test-run-report-render fail-report)
+            "doc tests failed: 1 failure(s) across 1 example(s)")
+            (doc-test-string-contains?
+              (doc-test-run-report-render fail-report)
+              "return type mismatch")
+            false)
+          false)
+        false)
+      false)))
+
+(define (doc-test-run-smoke) : i64
+  (if (doc-test-run-smoke-pass-ok?)
+    (if (doc-test-run-smoke-unexpected-error-ok?)
+      (if (doc-test-run-smoke-unexpected-pass-ok?)
+        (if (doc-test-run-smoke-malformed-ok?)
+          (if (doc-test-run-smoke-empty-ok?)
+            (if (doc-test-run-smoke-render-ok?)
+              (if (doc-test-run-smoke-report-render-ok?)
+                42
+                (begin
+                  (panic "doc-test-run: report render mismatch")
+                  0))
+              (begin
+                (panic "doc-test-run: render mismatch")
+                0))
+            (begin
+              (panic "doc-test-run: empty-source mismatch")
+              0))
+          (begin
+            (panic "doc-test-run: malformed mismatch")
+            0))
+        (begin
+          (panic "doc-test-run: unexpected-pass mismatch")
+          0))
+      (begin
+        (panic "doc-test-run: unexpected-error mismatch")
+        0))
+    (begin
+      (panic "doc-test-run: pass-case mismatch")
+      0)))
+
+;; Combined smoke: extraction (#722) then runner (#724). Returns 42 iff both
+
+;; self-test batteries pass.
+
+(define (doc-test-smoke-all) : i64
+  (if (= (doc-test-smoke) 42)
+    (doc-test-run-smoke)
+    (begin
+      (panic "doc-test: extraction smoke regressed")
+      0)))

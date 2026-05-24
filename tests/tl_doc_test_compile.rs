@@ -67,6 +67,14 @@ fn doc_test_tl_compiles_to_assembly() {
         "_tl_doc_test_scan_doc_block:",
         "_tl_doc_test_supported_item_declaration_question:",
         "_tl_doc_test_smoke:",
+        // Runner (#724).
+        "_tl_doc_test_run_source:",
+        "_tl_doc_test_check_example:",
+        "_tl_doc_test_run_examples:",
+        "_tl_doc_test_errors_to_failures:",
+        "_tl_doc_test_run_failure_render:",
+        "_tl_doc_test_run_smoke:",
+        "_tl_doc_test_smoke_all:",
     ] {
         assert_symbol(&asm, sym, "doc_test");
     }
@@ -80,6 +88,9 @@ fn doc_test_tl_compiles_to_assembly() {
         "doc-test: example metadata mismatch",
         "doc-test: ordinary comment example mismatch",
         "doc-test: malformed metadata mismatch",
+        // Runner (#724) diagnostics/messages.
+        "expected a compile error, but the example checked successfully",
+        "doc-test-run: unexpected-error mismatch",
     ] {
         assert_literal(&asm, literal, "doc_test");
     }
@@ -101,7 +112,9 @@ fn doc_test_smoke_tl_compiles_to_assembly() {
     );
 
     for sym in [
+        "_tl_doc_test_smoke_all:",
         "_tl_doc_test_smoke:",
+        "_tl_doc_test_run_smoke:",
         "_tl_doc_test_extract_source:",
         "_tl_doc_test_parse_fence_info:",
     ] {

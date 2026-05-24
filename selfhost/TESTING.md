@@ -64,6 +64,21 @@ follow-up issue. If the source should compile or run on Windows, also update the
 selfhost source mapping and dependency staging in `tests/windows_native.rs` and
 the no-Rust platform runner plan.
 
+### Selfhost compile manifest
+
+The no-Rust replacement for compile/symbol smoke coverage is
+[`compile_manifest.txt`](compile_manifest.txt), checked by
+[`../scripts/verify-selfhost-compile-manifest.sh`](../scripts/verify-selfhost-compile-manifest.sh).
+The runner compiles each manifest case with an already-built TypeLisp compiler,
+rejects generated `# TODO` assembly, applies the case's `main:` label policy,
+and checks representative symbol/literal markers in the emitted assembly.
+
+Every top-level `selfhost/*.tl` file must appear as a manifest `case` or a
+`decision` line. This makes new modules and smoke drivers fail CI until they
+have an explicit compile-coverage decision. Staged cases cover integration
+drivers whose imports need temporary sibling names, such as the text buffer and
+symbol-table drivers.
+
 ### No-Rust replacement policy
 
 New behavior should first get TypeLisp-owned coverage: a module-local self-test,
@@ -80,6 +95,8 @@ For new selfhost tests:
   compiler boundary.
 - Add standalone source programs to `selfhost/tests/` when the external compiler
   driver should accept or reject them, then update `scripts/verify-selfhost.sh`.
+- Add compile/symbol smoke coverage to `selfhost/compile_manifest.txt` for new
+  top-level selfhost modules or smoke drivers, or add an explicit `decision`.
 - Add public command, package, docs, LSP, REPL, formatter, or platform cases to
   `scripts/verify-public-tools.sh` or the narrower verification script that
   owns that layer.
@@ -123,6 +140,7 @@ cargo fmt
 cargo test --test tl_compiler_parse_compile
 cargo test --test tl_compiler_lower_compile
 cargo test --test tl_compiler_backend_compile
+TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-selfhost-compile-manifest.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/check-tl-format.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-public-tools.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-selfhost.sh
@@ -146,6 +164,8 @@ Linux environment.
   `tests/windows_native.rs` whenever imports change.
 - Use `selfhost/tests/` plus `scripts/verify-selfhost.sh` for source programs
   that should be accepted or rejected by `compile_smoke.tl`.
+- Keep `selfhost/compile_manifest.txt` in sync with top-level selfhost sources
+  and compile/symbol smoke expectations.
 - Update `RUST_TEST_COVERAGE.md` whenever adding or changing Rust tests.
 - Prefer naming conventions and representative examples in docs and comments;
   avoid maintaining long file lists that will go stale.

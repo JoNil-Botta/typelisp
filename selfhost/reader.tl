@@ -385,8 +385,8 @@
       [(SpSCons _ tail outer-span)
        (match tail
          [(SpSCons inner _ _)
-          (and (span-eq? outer-span 1 1 1 8)
-               (span-eq? (spanned-sexpr-span inner) 1 4 1 7))]
+          (and (span-eq? outer-span 1 1 1 7)
+               (span-eq? (spanned-sexpr-span inner) 1 4 1 6))]
          [_ false])]
       [_ false])))
 

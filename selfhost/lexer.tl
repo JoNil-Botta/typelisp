@@ -132,13 +132,7 @@
     [(OkTokens _) false]))
 
 (define (lexer-token-spans-ok?) : bool
-  (let ([toks : (Array SpannedToken) (lex-spanned "a\n (b)")])
-    (let ([a : SourceSpan (spanned-token-span (array-ref toks 0))]
-          [open : SourceSpan (spanned-token-span (array-ref toks 1))]
-          [eof : SourceSpan (spanned-token-span (array-ref toks 4))])
-      (and (span-eq? a 1 1 1 2)
-           (and (span-eq? open 2 2 2 3)
-                (span-eq? eof 2 5 2 5))))))
+  (= (lex-span-self-test) 42))
 
 (define (lexer-spanned-error-ok?) : bool
   (match (lex-spanned-result "ok\n@")

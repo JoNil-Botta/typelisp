@@ -97,7 +97,7 @@
 
 ;; `c` is ASCII whitespace.
 (define (is-space [c : char]) : bool
-  (or (= c #\space') (or (= c #\tab') (= c #\newline'))))
+  (or (= c #\space') (or (= c #\tab') (or (= c #\newline') (= (cast c : i64) 13)))))
 
 ;; Return the end index (exclusive) of the digit run that starts at `start` in
 ;; `src`. `n` is the source length. The bounds check is kept outside the
@@ -355,7 +355,7 @@
              (set! i n))]))
       (if (lex-ok? message)
           (OkLexCheck i)
-          (ErrLexCheck (SourceError message (source-point-span src err-pos)))))))
+          (ErrLexCheck (source-error-at src err-pos message))))))
 
 (define (lex-check [src : String]) : ResultLexI64
   (match (lex-check-spanned src)
@@ -366,7 +366,15 @@
 ;; large enough to hold every token plus the TEnd sentinel) and returning the
 ;; token count. Compatibility callers use this panic-on-error path through
 ;; `lex`; the recoverable `lex-result` validates with `lex-check` first.
-(define (lex-spanned-into [src : String] [toks : (Array SpannedToken)]) : i64
+(define (lex-into [src : String] [toks : (Array Token)]) : i64
+  (lex-into-spanned src toks (make-array i64 (array-length toks))))
+
+;; Core scanner. Fills `toks` with the token stream and, in parallel, records
+;; each token's starting byte index into `starts[count]` (#599). `lex-into`
+;; passes a throwaway `starts` array so the plain token path is unchanged;
+;; `lex-spanned-result` passes a real one and converts each start index to a
+;; 1-based line/column. Returns the token count (excluding the trailing TEnd).
+(define (lex-into-spanned [src : String] [toks : (Array Token)] [starts : (Array i64)]) : i64
   (let ([i : i64 0]
         [n : i64 (string-length src)]
         [count : i64 0])
@@ -377,24 +385,23 @@
               (set! i (+ i 1))
               (if (or (= c #(') (= c #['))
                   (begin
-                    (array-set! toks count
-                      (SpannedToken TLParen (source-span src i (+ i 1))))
+                    (array-set! starts count i)
+                    (array-set! toks count TLParen)
                     (set! count (+ count 1))
                     (set! i (+ i 1)))
                   (if (or (= c #)') (= c #]'))
                       (begin
-                        (array-set! toks count
-                          (SpannedToken TRParen (source-span src i (+ i 1))))
+                        (array-set! starts count i)
+                        (array-set! toks count TRParen)
                         (set! count (+ count 1))
                         (set! i (+ i 1)))
                       (if (= c #"')  ; '"' - a string literal
                           (let ([start : i64 (+ i 1)])
                             (let ([end : i64 (scan-str-end src start n)])
                               (begin
+                                (array-set! starts count i)
                                 (array-set! toks count
-                                  (SpannedToken
-                                    (TStr (substring src start (- end start)))
-                                    (source-span src i (+ end 1))))
+                                  (TStr (substring src start (- end start))))
                                 (set! count (+ count 1))
                                 (set! i (+ end 1)))))
                           (if (= c #;')  ; ';' - a line comment
@@ -403,74 +410,115 @@
                                   (let ([value : char (char-literal-value src i n)])
                                     (let ([end : i64 (char-literal-end src i n)])
                                       (begin
-                                        (array-set! toks count
-                                          (SpannedToken (TChar value) (source-span src i end)))
+                                        (array-set! starts count i)
+                                        (array-set! toks count (TChar value))
                                         (set! count (+ count 1))
                                         (set! i end))))
                                   (if (is-digit c)
                                       (let ([end : i64 (scan-int-end src i n)])
                                         (begin
+                                          (array-set! starts count i)
                                           (array-set! toks count
-                                            (SpannedToken
-                                              (TInt (string->int (substring src i (- end i))))
-                                              (source-span src i end)))
+                                            (TInt (string->int (substring src i (- end i)))))
                                           (set! count (+ count 1))
                                           (set! i end)))
                                       (if (is-symbol-char c)
                                           (let ([end : i64 (scan-symbol-end src i n)])
                                             (begin
+                                              (array-set! starts count i)
                                               (array-set! toks count
-                                                (SpannedToken
-                                                  (TSym (substring src i (- end i)))
-                                                  (source-span src i end)))
+                                                (TSym (substring src i (- end i))))
                                               (set! count (+ count 1))
                                               (set! i end)))
                                           (begin
                                             (panic "lexer: unexpected character")
                                             (set! i (+ i 1)))))))))))))
-      (array-set! toks count (SpannedToken TEnd (source-point-span src n)))
+      (array-set! starts count n)
+      (array-set! toks count TEnd)
       count)))
-
-(define (copy-spanned-tokens [spanned : (Array SpannedToken)] [toks : (Array Token)]) : i64
-  (let ([i : i64 0]
-        [keep : bool true])
-    (begin
-      (while keep
-        (let ([tok : Token (spanned-token-token (array-ref spanned i))])
-          (begin
-            (array-set! toks i tok)
-            (if (= (token-tag tok) (tag-end))
-                (set! keep false)
-                (set! i (+ i 1))))))
-      i)))
-
-(define (lex-into [src : String] [toks : (Array Token)]) : i64
-  (let ([spanned : (Array SpannedToken) (make-array SpannedToken (+ (string-length src) 1))])
-    (begin
-      (lex-spanned-into src spanned)
-      (copy-spanned-tokens spanned toks))))
 
 ;; `lex : (-> String (Array Token))` - the public entry point. Size the token
 ;; array by an upper bound (every char yields at most one token, plus the TEnd
 ;; sentinel), lex into it, then return that exact array. The trailing TEnd marks
 ;; the logical end even though the backing array may be larger.
+(define (lex-result [src : String]) : ResultTokens
+  (match (lex-check src)
+    [(OkLexI64 _)
+     (let ([toks : (Array Token) (make-array Token (+ (string-length src) 1))])
+       (begin
+         (lex-into src toks)
+         (OkTokens toks)))]
+    [(ErrLexI64 message) (ErrTokens message)]))
+
+(define (lex [src : String]) : (Array Token)
+  (match (lex-result src)
+    [(OkTokens toks) toks]
+    [(ErrTokens message)
+     (begin
+       (panic message)
+       (make-array Token 1))]))
+
+;; ---- Spanned token stream (#599) --------------------------------------------
+;; A position-bearing token stream parallel to `lex`/`lex-result`. Each token is
+;; paired with the 1-based line/column of its starting byte; the trailing `TEnd`
+;; carries the position one past the last character. The plain `Token` path
+;; above is untouched, so existing callers keep working.
+
+;; 1-based line of byte index `idx` in `src`: 1 + the number of newlines before
+;; `idx`.
+(define (index-line [src : String] [idx : i64]) : i64
+  (let ([line : i64 1]
+        [k : i64 0])
+    (begin
+      (while (< k idx)
+        (begin
+          (if (= (string-ref src k) #\newline') (set! line (+ line 1)) unit)
+          (set! k (+ k 1))))
+      line)))
+
+;; 1-based column of byte index `idx`: characters since the last newline (the
+;; first column is 1).
+(define (index-col [src : String] [idx : i64]) : i64
+  (let ([col : i64 1]
+        [k : i64 0])
+    (begin
+      (while (< k idx)
+        (begin
+          (if (= (string-ref src k) #\newline') (set! col 1) (set! col (+ col 1)))
+          (set! k (+ k 1))))
+      col)))
+
+(define (fill-spanned [src : String] [toks : (Array Token)] [starts : (Array i64)] [stoks : (Array SpannedToken)] [total : i64]) : unit
+  (let ([k : i64 0])
+    (while (< k total)
+      (begin
+        (let ([at : i64 (array-ref starts k)])
+          (array-set! stoks k
+            (SpannedToken (array-ref toks k)
+                          (index-line src at)
+                          (index-col src at))))
+        (set! k (+ k 1))))))
+
+(define (source-error-at [src : String] [idx : i64] [message : String]) : SourceError
+  (let ([line : i64 (index-line src idx)]
+        [col : i64 (index-col src idx)])
+    (SourceError message (SourceSpan line col line col))))
+
+;; `lex-spanned-result : (-> String ResultSpannedTokens)` - lex into a token +
+;; start-index pair of arrays, then materialize `count + 1` spanned tokens
+;; (including the trailing TEnd).
 (define (lex-spanned-result [src : String]) : ResultSpannedTokens
   (match (lex-check-spanned src)
     [(OkLexCheck _)
-     (let ([toks : (Array SpannedToken) (make-array SpannedToken (+ (string-length src) 1))])
-       (begin
-         (lex-spanned-into src toks)
-         (OkSpannedTokens toks)))]
+     (let ([cap : i64 (+ (string-length src) 1)])
+       (let ([toks : (Array Token) (make-array Token cap)]
+             [starts : (Array i64) (make-array i64 cap)])
+         (let ([count : i64 (lex-into-spanned src toks starts)])
+           (let ([stoks : (Array SpannedToken) (make-array SpannedToken (+ count 1))])
+             (begin
+               (fill-spanned src toks starts stoks (+ count 1))
+               (OkSpannedTokens stoks))))))]
     [(ErrLexCheck err) (ErrSpannedTokens err)]))
-
-(define (lex-result [src : String]) : ResultTokens
-  (match (lex-spanned-result src)
-    [(OkSpannedTokens spanned)
-     (let ([toks : (Array Token) (make-array Token (+ (string-length src) 1))])
-       (begin
-         (copy-spanned-tokens spanned toks)
-         (OkTokens toks)))]
-    [(ErrSpannedTokens err) (ErrTokens (source-error-message err))]))
 
 (define (lex-spanned [src : String]) : (Array SpannedToken)
   (match (lex-spanned-result src)
@@ -480,10 +528,24 @@
        (panic (source-error-message err))
        (make-array SpannedToken 1))]))
 
-(define (lex [src : String]) : (Array Token)
-  (match (lex-result src)
-    [(OkTokens toks) toks]
-    [(ErrTokens message)
-     (begin
-       (panic message)
-       (make-array Token 1))]))
+;; Returns 42 when the spanned lexer records correct 1-based line/column
+;; positions, including a token inside a nested list and the trailing EOF.
+;; Source `"(a\n  (b c))"` lexes to:
+;;   0:'(' 1:1   1:'a' 1:2   2:'(' 2:3   3:'b' 2:4   4:'c' 2:6
+;;   5:')' 2:7   6:')' 2:8   7:TEnd 2:9
+(define (lex-span-self-test) : i64
+  (match (lex-spanned-result "(a\n  (b c))")
+    [(OkSpannedTokens s)
+     (if (and (= (spanned-token-line (array-ref s 0)) 1)
+          (and (= (spanned-token-col (array-ref s 0)) 1)
+           (and (= (spanned-token-col (array-ref s 1)) 2)
+            (and (= (spanned-token-line (array-ref s 2)) 2)
+             (and (= (spanned-token-col (array-ref s 2)) 3)
+              (and (= (spanned-token-col (array-ref s 3)) 4)
+               (and (= (spanned-token-col (array-ref s 4)) 6)
+                (and (= (spanned-token-line (array-ref s 7)) 2)
+                 (and (= (spanned-token-col (array-ref s 7)) 9)
+                      (= (token-tag (spanned-token-tok (array-ref s 7))) (tag-end)))))))))))
+         42
+         1)]
+    [(ErrSpannedTokens _) 2]))

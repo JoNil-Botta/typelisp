@@ -132,3 +132,38 @@ fn compiler_typecheck_smoke_tl_compiles_to_assembly() {
         assert_symbol(&asm, sym, "compiler_typecheck_smoke");
     }
 }
+
+#[test]
+fn selfhost_check_tl_compiles_to_assembly() {
+    let asm = compile_selfhost_source(
+        "check.tl",
+        "tl-selfhost-check-compile-test",
+        "selfhost_check.s",
+    );
+
+    assert_no_todo(&asm, "selfhost_check");
+    assert_eq!(
+        asm.matches("\nmain:").count() + usize::from(asm.starts_with("main:")),
+        1,
+        "selfhost_check assembly must have exactly one main:\n{asm}",
+    );
+
+    for sym in [
+        "_tl_selfhost_check_file:",
+        "_tl_selfhost_check_extra_args_status:",
+        "_tl_compiler_load_file:",
+        "_tl_typecheck_compiler_program:",
+    ] {
+        assert_symbol(&asm, sym, "selfhost_check");
+    }
+
+    for message in [
+        "selfhost-check: expected input path",
+        "selfhost-check: --stdlib-root is not supported yet",
+        "selfhost-check: unexpected argument ",
+        "compiler-load: cannot read import ",
+        "typecheck: return type mismatch",
+    ] {
+        assert_message(&asm, message, "selfhost_check");
+    }
+}

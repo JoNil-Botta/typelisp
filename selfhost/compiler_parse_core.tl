@@ -1045,13 +1045,15 @@
 (define (parse-ast-program-forms [dispatch : SymI64Env] [toks : (Array Token)] [cur : (Array i64)]) : ResultAstDeclList
   (if (= (peek-tag toks cur) (tag-end))
       (OkAstDeclList AstDeclNil)
-      (let ([form : Sexpr (read-form toks cur)])
-        (match (parse-ast-decl dispatch form)
-          [(OkAstDecl decl)
-           (match (parse-ast-program-forms dispatch toks cur)
-             [(OkAstDeclList rest) (OkAstDeclList (AstDeclCons decl rest))]
-             [(ErrAstDeclList message) (ErrAstDeclList message)])]
-          [(ErrAstDecl message) (ErrAstDeclList message)]))))
+      (match (read-form-result toks cur)
+        [(OkSexpr form)
+         (match (parse-ast-decl dispatch form)
+           [(OkAstDecl decl)
+            (match (parse-ast-program-forms dispatch toks cur)
+              [(OkAstDeclList rest) (OkAstDeclList (AstDeclCons decl rest))]
+              [(ErrAstDeclList message) (ErrAstDeclList message)])]
+           [(ErrAstDecl message) (ErrAstDeclList message)])]
+        [(ErrSexpr message) (ErrAstDeclList message)])))
 
 (define (parse-ast-program [toks : (Array Token)]) : ResultAstProgram
   (let ([cur : (Array i64) (make-array i64 1)])
@@ -1063,7 +1065,9 @@
           [(ErrAstDeclList message) (ErrAstProgram message)])))))
 
 (define (parse-ast-source [src : String]) : ResultAstProgram
-  (parse-ast-program (lex src)))
+  (match (lex-result src)
+    [(OkTokens toks) (parse-ast-program toks)]
+    [(ErrTokens message) (ErrAstProgram message)]))
 
 (define (ast-decl-list-count [decls : AstDeclList]) : i64
   (match decls

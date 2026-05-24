@@ -53,10 +53,6 @@
   (message String)
   (span SourceSpan))
 
-(defstruct SpannedToken
-  (token Token)
-  (span SourceSpan))
-
 (define (span-start-line [span : SourceSpan]) : i64
   (struct-get span start-line))
 
@@ -80,46 +76,6 @@
 
 (define (source-error-span [err : SourceError]) : SourceSpan
   (struct-get err span))
-
-(define (spanned-token-token [tok : SpannedToken]) : Token
-  (struct-get tok token))
-
-(define (spanned-token-span [tok : SpannedToken]) : SourceSpan
-  (struct-get tok span))
-
-(define (source-line-at [src : String] [idx : i64]) : i64
-  (let ([i : i64 0]
-        [line : i64 1])
-    (begin
-      (while (< i idx)
-        (begin
-          (if (= (string-ref src i) #\newline')
-              (set! line (+ line 1))
-              (set! line line))
-          (set! i (+ i 1))))
-      line)))
-
-(define (source-col-at [src : String] [idx : i64]) : i64
-  (let ([i : i64 0]
-        [col : i64 1])
-    (begin
-      (while (< i idx)
-        (begin
-          (if (= (string-ref src i) #\newline')
-              (set! col 1)
-              (set! col (+ col 1)))
-          (set! i (+ i 1))))
-      col)))
-
-(define (source-span [src : String] [start : i64] [end : i64]) : SourceSpan
-  (SourceSpan
-    (source-line-at src start)
-    (source-col-at src start)
-    (source-line-at src end)
-    (source-col-at src end)))
-
-(define (source-point-span [src : String] [idx : i64]) : SourceSpan
-  (source-span src idx idx))
 
 (define (merge-spans [start : SourceSpan] [end : SourceSpan]) : SourceSpan
   (SourceSpan
@@ -191,6 +147,36 @@
     [(TEnd) #\nul']
     [(TStr _) #\nul']
     [(TChar c) c]))
+
+;; A token paired with the 1-based source line and column where its lexeme
+;; begins (#599). The reader/parser recover positions from these so later
+;; diagnostics can point at the originating source location. `TEnd` carries the
+;; position one past the last character. This is additive: the plain `Token`
+;; stream and its accessors are unchanged, so existing callers keep working.
+(defenum SpannedToken
+  (SpannedToken Token i64 i64))
+
+(define (spanned-token-tok [s : SpannedToken]) : Token
+  (match s
+    [(SpannedToken t _ _) t]))
+
+(define (spanned-token-line [s : SpannedToken]) : i64
+  (match s
+    [(SpannedToken _ line _) line]))
+
+(define (spanned-token-col [s : SpannedToken]) : i64
+  (match s
+    [(SpannedToken _ _ col) col]))
+
+(define (spanned-token-token [s : SpannedToken]) : Token
+  (spanned-token-tok s))
+
+(define (spanned-token-span [s : SpannedToken]) : SourceSpan
+  (SourceSpan
+    (spanned-token-line s)
+    (spanned-token-col s)
+    (spanned-token-line s)
+    (spanned-token-col s)))
 
 ;; ---- Token-kind tag constants (kept in sync with `token-tag`). ----
 ;; A parser compares a token's tag against these to drive its descent.

@@ -951,16 +951,7 @@ impl FnLowerer {
 
     /// Lower a function body and produce a complete IR Function.
     fn lower_body(mut self, body: &ast::Expr, ret_ty: &Type) -> LoweredFunction {
-        let result = if *ret_ty == Type::Unit {
-            self.lower_expr(body)
-        } else {
-            self.lower_expr_as(body, ret_ty)
-        };
-        if *ret_ty == Type::Unit {
-            self.builder.emit(Instruction::Return(None));
-        } else {
-            self.builder.emit(Instruction::Return(Some(result)));
-        }
+        self.lower_tail_expr(body, ret_ty);
 
         let blocks = self.builder.build();
         let function = Function {
@@ -975,6 +966,145 @@ impl FnLowerer {
             function,
             synthetic_functions: self.synthetic_functions,
         }
+    }
+
+    /// Whether `tail_expr`, when reached in tail position, contains a direct
+    /// self-recursive call that is itself in tail position (#560). Used to avoid
+    /// rebuilding tail control flow for bodies that have no eligible tail call.
+    fn expr_has_tail_self_call(&self, tail_expr: &ast::Expr, ret_ty: &Type) -> bool {
+        match tail_expr.unspan() {
+            ast::Expr::Spanned { expr, .. } => self.expr_has_tail_self_call(expr, ret_ty),
+            ast::Expr::Ann { expr, ty } => {
+                self.resolve_type(ty) == self.resolve_type(ret_ty)
+                    && self.expr_has_tail_self_call(expr, ret_ty)
+            }
+            ast::Expr::Cast { expr, ty } => {
+                let cast_ty = self.resolve_type(ty);
+                let inner_ty = self.resolve_type(&self.infer_expr_type(expr));
+                cast_ty == self.resolve_type(ret_ty)
+                    && inner_ty == cast_ty
+                    && self.expr_has_tail_self_call(expr, ret_ty)
+            }
+            ast::Expr::Begin(exprs) => exprs
+                .last()
+                .is_some_and(|expr| self.expr_has_tail_self_call(expr, ret_ty)),
+            ast::Expr::Let { body, .. } => self.expr_has_tail_self_call(body, ret_ty),
+            ast::Expr::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                self.expr_has_tail_self_call(then_branch, ret_ty)
+                    || self.expr_has_tail_self_call(else_branch, ret_ty)
+            }
+            ast::Expr::Match { arms, .. } => arms
+                .iter()
+                .any(|(_, body)| self.expr_has_tail_self_call(body, ret_ty)),
+            ast::Expr::Call { func, args } => self.is_tail_self_call_target(func, args, ret_ty),
+            _ => false,
+        }
+    }
+
+    /// Lower `tail_expr` in tail position: a direct self-recursive call whose
+    /// result is returned directly becomes a `TailCall` (the backend rewrites
+    /// it to argument staging + a jump to the entry block, #559). Tail position
+    /// is preserved through `begin`'s final expression, both `if` branches,
+    /// `match` arms, `let` bodies, type-preserving `ann`/`cast`, and spans.
+    /// Anything else is lowered as a value and returned.
+    fn lower_tail_expr(&mut self, tail_expr: &ast::Expr, ret_ty: &Type) {
+        if !self.expr_has_tail_self_call(tail_expr, ret_ty) {
+            self.emit_tail_return(tail_expr, ret_ty);
+            return;
+        }
+
+        match tail_expr.unspan() {
+            ast::Expr::Spanned { expr, .. } => {
+                self.lower_tail_expr(expr, ret_ty);
+            }
+            ast::Expr::Ann { expr: inner, ty } => {
+                let ann_ty = self.resolve_type(ty);
+                if ann_ty == self.resolve_type(ret_ty) {
+                    self.lower_tail_expr(inner, ret_ty);
+                } else {
+                    self.emit_tail_return(tail_expr, ret_ty);
+                }
+            }
+            ast::Expr::Cast { expr: inner, ty } => {
+                let cast_ty = self.resolve_type(ty);
+                let inner_ty = self.resolve_type(&self.infer_expr_type(inner));
+                if cast_ty == self.resolve_type(ret_ty) && inner_ty == cast_ty {
+                    self.lower_tail_expr(inner, ret_ty);
+                } else {
+                    self.emit_tail_return(tail_expr, ret_ty);
+                }
+            }
+            ast::Expr::Begin(exprs) => self.lower_begin_tail(exprs, ret_ty),
+            ast::Expr::Let { bindings, body } => {
+                self.lower_let_bindings(bindings);
+                self.lower_tail_expr(body, ret_ty);
+            }
+            ast::Expr::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => self.lower_if_tail(cond, then_branch, else_branch, ret_ty),
+            ast::Expr::Match { scrutinee, arms } => self.lower_match_tail(scrutinee, arms, ret_ty),
+            ast::Expr::Call { func, args } if self.try_lower_tail_self_call(func, args, ret_ty) => {
+            }
+            _ => self.emit_tail_return(tail_expr, ret_ty),
+        }
+    }
+
+    fn emit_tail_return(&mut self, expr: &ast::Expr, ret_ty: &Type) {
+        let result = if *ret_ty == Type::Unit {
+            self.lower_expr(expr)
+        } else {
+            self.lower_expr_as(expr, ret_ty)
+        };
+        self.emit_tail_return_value(result, ret_ty);
+    }
+
+    fn emit_tail_return_value(&mut self, value: Value, ret_ty: &Type) {
+        if *ret_ty == Type::Unit {
+            self.builder.emit(Instruction::Return(None));
+        } else {
+            self.builder.emit(Instruction::Return(Some(value)));
+        }
+    }
+
+    fn lower_begin_tail(&mut self, exprs: &[ast::Expr], ret_ty: &Type) {
+        if let Some((last, prefix)) = exprs.split_last() {
+            for expr in prefix {
+                self.lower_expr(expr);
+            }
+            self.lower_tail_expr(last, ret_ty);
+        } else {
+            self.emit_tail_return_value(Value::ConstUnit, ret_ty);
+        }
+    }
+
+    fn lower_if_tail(
+        &mut self,
+        cond: &ast::Expr,
+        then_branch: &ast::Expr,
+        else_branch: &ast::Expr,
+        ret_ty: &Type,
+    ) {
+        let cond_val = self.lower_expr_as(cond, &Type::Bool);
+        let then_label = self.builder.fresh_label("then");
+        let else_label = self.builder.fresh_label("else");
+
+        self.builder.emit(Instruction::Branch {
+            cond: cond_val,
+            true_label: then_label.clone(),
+            false_label: else_label.clone(),
+        });
+
+        self.builder.finish_block(&then_label);
+        self.lower_tail_expr(then_branch, ret_ty);
+
+        self.builder.finish_block(&else_label);
+        self.lower_tail_expr(else_branch, ret_ty);
     }
 
     /// Lower an expression into a fresh IR variable holding its result.
@@ -2187,6 +2317,14 @@ impl FnLowerer {
         bindings: &[(String, Option<Type>, ast::Expr)],
         body: &ast::Expr,
     ) -> Value {
+        self.lower_let_bindings(bindings);
+        self.lower_expr(body)
+    }
+
+    /// Lower `let` bindings into the current block, leaving the body to the
+    /// caller. Shared by value-context `lower_let` and the tail-context path
+    /// (`lower_tail_expr`) so a `let` body can keep tail position.
+    fn lower_let_bindings(&mut self, bindings: &[(String, Option<Type>, ast::Expr)]) {
         for (name, ty, value) in bindings {
             // Resolve a declared binding type so a `Type::Var` naming an enum or
             // struct becomes the nominal type; otherwise fall back to the
@@ -2213,7 +2351,6 @@ impl FnLowerer {
             self.record_value_local(var, binding_ty);
             self.vars.insert(name.clone(), var);
         }
-        self.lower_expr(body)
     }
 
     fn lower_while(&mut self, cond: &ast::Expr, body: &ast::Expr) -> Value {
@@ -2843,6 +2980,61 @@ impl FnLowerer {
             last = self.lower_expr(expr);
         }
         last
+    }
+
+    /// Whether `func(args)` in tail position is a direct self-recursive call
+    /// eligible for tail-call optimization: the callee names the current
+    /// function (not shadowed by a local), the arity matches, and the callee's
+    /// return type equals the enclosing function's return type. Non-self,
+    /// indirect, mutual, closure, and runtime-helper calls are excluded (#560).
+    fn is_tail_self_call_target(
+        &self,
+        func: &ast::Expr,
+        args: &[ast::Expr],
+        ret_ty: &Type,
+    ) -> bool {
+        let ast::Expr::Var(name) = func.unspan() else {
+            return false;
+        };
+        if name != &self.name || self.has_local_value(name) {
+            return false;
+        }
+        let Some(Type::Func(param_tys, fn_ret_ty)) = self.function_types.get(name) else {
+            return false;
+        };
+        args.len() == param_tys.len() && self.resolve_type(fn_ret_ty) == self.resolve_type(ret_ty)
+    }
+
+    /// Emit a `TailCall` for an eligible direct self-recursive tail call,
+    /// returning whether it was emitted. The backend (#559) stages the argument
+    /// values, rewrites the parameter slots, and jumps to the entry block, so no
+    /// `Return` follows.
+    fn try_lower_tail_self_call(
+        &mut self,
+        func: &ast::Expr,
+        args: &[ast::Expr],
+        ret_ty: &Type,
+    ) -> bool {
+        if !self.is_tail_self_call_target(func, args, ret_ty) {
+            return false;
+        }
+        let ast::Expr::Var(name) = func.unspan() else {
+            return false;
+        };
+        let Some(Type::Func(param_tys, _)) = self.function_types.get(name).cloned() else {
+            return false;
+        };
+        let arg_vals: Vec<Value> = args
+            .iter()
+            .zip(param_tys.iter())
+            .map(|(arg, ty)| self.lower_expr_as(arg, &self.resolve_type(ty)))
+            .collect();
+        self.builder.emit(Instruction::TailCall {
+            func: name.clone(),
+            args: arg_vals,
+            ty: ret_ty.clone(),
+        });
+        true
     }
 
     fn lower_call(&mut self, func: &ast::Expr, args: &[ast::Expr]) -> Value {
@@ -4514,6 +4706,116 @@ impl FnLowerer {
     /// equality. Either way each refutable arm emits an `Eq` + `Branch`, a
     /// wildcard arm is the final fall-through, and a `Phi` in the merge block
     /// selects the result.
+    /// Tail-context `match`: like `lower_match`, but each arm body is lowered in
+    /// tail position (so a self-recursive tail call inside an arm becomes a
+    /// `TailCall`) instead of merging arm results into a value (#560).
+    fn lower_match_tail(
+        &mut self,
+        scrutinee: &ast::Expr,
+        arms: &[(ast::Pattern, ast::Expr)],
+        ret_ty: &Type,
+    ) {
+        if arms.is_empty() {
+            self.emit_tail_return_value(self.dummy_value_for_type(ret_ty), ret_ty);
+            return;
+        }
+
+        let scrut = self.lower_expr(scrutinee);
+        let scrut_ty = self.value_type(&scrut);
+        let dispatch_val = if matches!(scrut_ty, Type::Enum(_)) {
+            let tag_ptr = self.gep_byte(&scrut, 0);
+            let tag_val = self.builder.fresh_var();
+            self.builder.emit(Instruction::Load {
+                dst: tag_val,
+                src: Value::Var(tag_ptr),
+                ty: Type::I64,
+            });
+            self.record_local(tag_val, Type::I64);
+            Value::Var(tag_val)
+        } else {
+            scrut.clone()
+        };
+
+        let n = arms.len();
+        for (i, (pat, body)) in arms.iter().enumerate() {
+            let is_last = i + 1 == n;
+            let nullary;
+            let pat = match pat {
+                ast::Pattern::Binding(name) if self.enums.lookup_variant(name).is_some() => {
+                    nullary = ast::Pattern::Variant {
+                        name: name.clone(),
+                        args: Vec::new(),
+                    };
+                    &nullary
+                }
+                other => other,
+            };
+
+            match pat {
+                ast::Pattern::Wildcard => {
+                    self.lower_tail_expr(body, ret_ty);
+                    return;
+                }
+                ast::Pattern::Variant { name, args } => {
+                    let tag = self
+                        .enums
+                        .lookup_variant(name)
+                        .expect("typechecked variant exists")
+                        .1;
+
+                    let arm_label = self.builder.fresh_label("match_arm");
+                    let next_label = self.builder.fresh_label("match_next");
+
+                    let cmp = self.builder.fresh_var();
+                    self.builder.emit(Instruction::BinOp {
+                        dst: cmp,
+                        op: BinOp::Eq,
+                        lhs: dispatch_val.clone(),
+                        rhs: Value::ConstI64(tag as i64),
+                        ty: Type::Bool,
+                    });
+                    self.record_local(cmp, Type::Bool);
+                    self.builder.emit(Instruction::Branch {
+                        cond: Value::Var(cmp),
+                        true_label: arm_label.clone(),
+                        false_label: next_label.clone(),
+                    });
+
+                    self.builder.finish_block(&arm_label);
+                    self.lower_variant_args(&scrut, name, args, &next_label);
+                    self.lower_tail_expr(body, ret_ty);
+
+                    self.builder.finish_block(&next_label);
+                    if is_last {
+                        self.emit_tail_return_value(self.dummy_value_for_type(ret_ty), ret_ty);
+                    }
+                }
+                ast::Pattern::Literal(lit) => {
+                    let arm_label = self.builder.fresh_label("match_arm");
+                    let next_label = self.builder.fresh_label("match_next");
+
+                    let cmp = self.lower_literal_pattern_condition(&dispatch_val, lit);
+                    self.builder.emit(Instruction::Branch {
+                        cond: cmp,
+                        true_label: arm_label.clone(),
+                        false_label: next_label.clone(),
+                    });
+
+                    self.builder.finish_block(&arm_label);
+                    self.lower_tail_expr(body, ret_ty);
+
+                    self.builder.finish_block(&next_label);
+                    if is_last {
+                        self.emit_tail_return_value(self.dummy_value_for_type(ret_ty), ret_ty);
+                    }
+                }
+                _ => {
+                    // Var/Tuple patterns are rejected by the typechecker.
+                }
+            }
+        }
+    }
+
     fn lower_match(&mut self, scrutinee: &ast::Expr, arms: &[(ast::Pattern, ast::Expr)]) -> Value {
         let scrut = self.lower_expr(scrutinee);
 
@@ -5044,6 +5346,111 @@ mod tests {
                 .any(|i| matches!(i, Instruction::Call { func, .. } if func == "inc"))
         });
         assert!(!calls_top_level_inc);
+    }
+
+    #[test]
+    fn test_lower_tail_self_call_simple_if_branch() {
+        let prog = parse(
+            r#"
+            (define (loop [n : i64] [acc : i64]) : i64
+              (if (= n 0)
+                acc
+                (loop (- n 1) (+ acc 1))))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let loop_fn = ir
+            .functions
+            .iter()
+            .find(|f| f.name == "loop")
+            .expect("loop lowered");
+        let tail_calls = loop_fn
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .filter(|i| matches!(i, Instruction::TailCall { func, .. } if func == "loop"))
+            .count();
+        assert_eq!(
+            tail_calls, 1,
+            "expected one TailCall for the tail-recursive branch"
+        );
+        assert!(
+            !loop_fn
+                .blocks
+                .iter()
+                .flat_map(|b| b.instructions.iter())
+                .any(|i| matches!(i, Instruction::Call { func, .. } if func == "loop")),
+            "tail self recursion must not lower as an ordinary Call"
+        );
+    }
+
+    #[test]
+    fn test_lower_tail_self_call_through_tail_context_forms() {
+        // Tail position is preserved through let body, begin final expr, ann,
+        // match arm, and a return-type-preserving cast.
+        let prog = parse(
+            r#"
+            (define (loop [n : i64] [acc : i64]) : i64
+              (let ([next : i64 (- n 1)])
+                (begin
+                  (ann
+                    (match n
+                      [0 acc]
+                      [_ (cast (loop next (+ acc 1)) : i64)])
+                    : i64))))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let loop_fn = ir
+            .functions
+            .iter()
+            .find(|f| f.name == "loop")
+            .expect("loop lowered");
+        let tail_calls = loop_fn
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .filter(|i| matches!(i, Instruction::TailCall { func, .. } if func == "loop"))
+            .count();
+        assert_eq!(
+            tail_calls, 1,
+            "tail position should survive let/begin/ann/match/cast"
+        );
+    }
+
+    #[test]
+    fn test_lower_self_call_in_operand_position_stays_call() {
+        let prog = parse(
+            r#"
+            (define (loop [n : i64]) : i64
+              (+ 1 (loop (- n 1))))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let loop_fn = ir
+            .functions
+            .iter()
+            .find(|f| f.name == "loop")
+            .expect("loop lowered");
+        assert!(
+            loop_fn
+                .blocks
+                .iter()
+                .flat_map(|b| b.instructions.iter())
+                .any(|i| matches!(i, Instruction::Call { func, .. } if func == "loop")),
+            "an operand-position self call stays an ordinary Call"
+        );
+        assert!(
+            !loop_fn
+                .blocks
+                .iter()
+                .flat_map(|b| b.instructions.iter())
+                .any(|i| matches!(i, Instruction::TailCall { .. })),
+            "an operand-position self call must not become a TailCall"
+        );
     }
 
     #[test]

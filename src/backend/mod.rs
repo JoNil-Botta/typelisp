@@ -5,7 +5,7 @@ use crate::ir::{
 };
 use crate::span::Span;
 use crate::types::Type;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 
 const ABORT_RUNTIME_SYMBOL: &str = ".L_tl_abort";
@@ -307,6 +307,8 @@ pub struct X86_64Backend {
     var_offsets: HashMap<VarId, i32>,
     var_types: HashMap<VarId, Type>,
     global_types: HashMap<String, Type>,
+    function_sigs: HashMap<String, (Vec<Type>, Type)>,
+    closure_descriptor_names: BTreeSet<String>,
     address_vars: HashSet<VarId>,
     extern_names: HashSet<String>,
     runtime_print_names: HashSet<String>,
@@ -847,7 +849,7 @@ fn is_pointer_sized_type(ty: &Type) -> bool {
     // An enum value is a pointer to its inline tagged storage; a struct or tuple
     // is a pointer to inline field storage; a string and a dynamic array are
     // pointers to their inline `{ptr,len}` storage. All are pointer-sized like
-    // I64/U64/function pointers.
+    // I64/U64/closure descriptor pointers.
     matches!(
         ty,
         Type::I64
@@ -1158,6 +1160,8 @@ impl X86_64Backend {
             var_offsets: HashMap::new(),
             var_types: HashMap::new(),
             global_types: HashMap::new(),
+            function_sigs: HashMap::new(),
+            closure_descriptor_names: BTreeSet::new(),
             address_vars: HashSet::new(),
             extern_names: HashSet::new(),
             runtime_print_names: HashSet::new(),
@@ -1201,6 +1205,19 @@ impl X86_64Backend {
         for (name, _) in &program.externs {
             self.extern_names.insert(name.clone());
         }
+        self.function_sigs.clear();
+        for func in &program.functions {
+            let args = func.params.iter().map(|(_, ty)| ty.clone()).collect();
+            self.function_sigs
+                .insert(func.name.clone(), (args, func.ret.clone()));
+        }
+        for (name, ty) in &program.externs {
+            if let Type::Func(args, ret) = ty {
+                self.function_sigs
+                    .insert(name.clone(), (args.clone(), (**ret).clone()));
+            }
+        }
+        self.closure_descriptor_names = Self::collect_closure_descriptor_names(program);
         self.emits_alloc_runtime = false;
 
         self.generate_globals(&program.globals);
@@ -1287,6 +1304,7 @@ impl X86_64Backend {
         if self.needs_file_exists_runtime {
             self.generate_file_exists_runtime_data();
         }
+        self.generate_closure_descriptor_data();
 
         self.emit("    .text");
         self.emit("    .globl main");
@@ -1384,6 +1402,8 @@ impl X86_64Backend {
         if self.needs_file_exists_runtime {
             self.generate_file_exists_runtime_functions();
         }
+
+        self.generate_closure_entry_adapters();
 
         // Generate functions
         for func in &program.functions {
@@ -2085,6 +2105,259 @@ impl X86_64Backend {
             self.emit(&format!("    .string {}", Self::escape_string_bytes(&text)));
         }
         self.emit("");
+    }
+
+    fn collect_closure_descriptor_names(program: &Program) -> BTreeSet<String> {
+        let mut names = BTreeSet::new();
+        for (_, _, init) in &program.globals {
+            if let Some(value) = init {
+                Self::collect_function_value(value, &mut names);
+            }
+        }
+        for func in &program.functions {
+            for block in &func.blocks {
+                for instr in &block.instructions {
+                    Self::collect_function_values_in_instruction(instr, &mut names);
+                }
+            }
+        }
+        names
+    }
+
+    fn collect_function_values_in_instruction(instr: &Instruction, names: &mut BTreeSet<String>) {
+        match instr {
+            Instruction::BinOp { lhs, rhs, .. }
+            | Instruction::VectorBinOp { lhs, rhs, .. }
+            | Instruction::VectorCompare { lhs, rhs, .. }
+            | Instruction::MaskBinOp { lhs, rhs, .. } => {
+                Self::collect_function_value(lhs, names);
+                Self::collect_function_value(rhs, names);
+            }
+            Instruction::UnOp { src, .. }
+            | Instruction::Mov { src, .. }
+            | Instruction::Cast { src, .. }
+            | Instruction::Load { src, .. }
+            | Instruction::Branch { cond: src, .. }
+            | Instruction::Splat { value: src, .. }
+            | Instruction::MaskNot { src, .. } => {
+                Self::collect_function_value(src, names);
+            }
+            Instruction::Store { dst, src, .. } => {
+                Self::collect_function_value(dst, names);
+                Self::collect_function_value(src, names);
+            }
+            Instruction::Call { args, .. } => {
+                for arg in args {
+                    Self::collect_function_value(arg, names);
+                }
+            }
+            Instruction::CallIndirect { func, args, .. } => {
+                Self::collect_function_value(func, names);
+                for arg in args {
+                    Self::collect_function_value(arg, names);
+                }
+            }
+            Instruction::Return(Some(value)) => {
+                Self::collect_function_value(value, names);
+            }
+            Instruction::Gep { base, offset, .. } => {
+                Self::collect_function_value(base, names);
+                Self::collect_function_value(offset, names);
+            }
+            Instruction::Select {
+                mask,
+                on_true,
+                on_false,
+                ..
+            } => {
+                Self::collect_function_value(mask, names);
+                Self::collect_function_value(on_true, names);
+                Self::collect_function_value(on_false, names);
+            }
+            Instruction::VectorLoad { base, index, .. } => {
+                Self::collect_function_value(base, names);
+                Self::collect_function_value(index, names);
+            }
+            Instruction::VectorStore {
+                base, index, value, ..
+            } => {
+                Self::collect_function_value(base, names);
+                Self::collect_function_value(index, names);
+                Self::collect_function_value(value, names);
+            }
+            Instruction::PredicatedStore {
+                base,
+                index,
+                value,
+                mask,
+                ..
+            } => {
+                Self::collect_function_value(base, names);
+                Self::collect_function_value(index, names);
+                Self::collect_function_value(value, names);
+                Self::collect_function_value(mask, names);
+            }
+            Instruction::TailMask { index, len, .. } => {
+                Self::collect_function_value(index, names);
+                Self::collect_function_value(len, names);
+            }
+            Instruction::Phi { incoming, .. } => {
+                for (value, _) in incoming {
+                    Self::collect_function_value(value, names);
+                }
+            }
+            Instruction::AddrOf { .. }
+            | Instruction::Jump(_)
+            | Instruction::Alloc { .. }
+            | Instruction::LaneId { .. }
+            | Instruction::Return(None) => {}
+        }
+    }
+
+    fn collect_function_value(value: &Value, names: &mut BTreeSet<String>) {
+        if let Value::Function(name) = value {
+            names.insert(name.clone());
+        }
+    }
+
+    fn generate_closure_descriptor_data(&mut self) {
+        if self.closure_descriptor_names.is_empty() {
+            return;
+        }
+
+        let names: Vec<String> = self.closure_descriptor_names.iter().cloned().collect();
+        self.emit("    .section .rodata");
+        self.emit("    .balign 8");
+        for name in names {
+            if !self.function_sigs.contains_key(&name) {
+                continue;
+            }
+            self.emit(&format!("{}:", Self::closure_descriptor_label(&name)));
+            self.emit(&format!("    .quad {}", Self::closure_entry_label(&name)));
+            self.emit("    .quad 0");
+        }
+        self.emit("");
+    }
+
+    fn generate_closure_entry_adapters(&mut self) {
+        if self.closure_descriptor_names.is_empty() {
+            return;
+        }
+
+        let names: Vec<String> = self.closure_descriptor_names.iter().cloned().collect();
+        for name in names {
+            if let Some((arg_tys, ret_ty)) = self.function_sigs.get(&name).cloned() {
+                self.generate_closure_entry_adapter(&name, &arg_tys, &ret_ty);
+            }
+        }
+    }
+
+    fn generate_closure_entry_adapter(&mut self, name: &str, arg_tys: &[Type], ret_ty: &Type) {
+        let saved_stack_size = self.stack_size;
+        let saved_var_offsets = std::mem::take(&mut self.var_offsets);
+        let saved_var_types = std::mem::take(&mut self.var_types);
+        let saved_address_vars = std::mem::take(&mut self.address_vars);
+        let saved_return_ty = self.return_ty.clone();
+        let saved_param_vars = std::mem::take(&mut self.param_vars);
+        let saved_current_fn = std::mem::take(&mut self.current_fn);
+
+        self.stack_size = 0;
+        self.return_ty = ret_ty.clone();
+        self.current_fn = Self::closure_entry_label(name);
+        self.emit(&format!("{}:", self.current_fn));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+
+        for (idx, ty) in arg_tys.iter().enumerate() {
+            let var = idx as VarId;
+            self.var_types.insert(var, ty.clone());
+            if *ty == Type::Unit {
+                self.var_offsets.insert(var, 0);
+                continue;
+            }
+
+            let size = ty.size() as i32;
+            let align = ty.align() as i32;
+            self.stack_size = (self.stack_size + align - 1) & !(align - 1);
+            self.stack_size += size;
+            self.var_offsets.insert(var, -self.stack_size);
+        }
+
+        self.stack_size = (self.stack_size + 15) & !15;
+        if self.stack_size > 0 {
+            self.emit(&format!("    sub ${}, %rsp", self.stack_size));
+        }
+
+        self.store_closure_entry_user_args(arg_tys);
+
+        let call_args: Vec<Value> = (0..arg_tys.len())
+            .map(|idx| Value::Var(idx as VarId))
+            .collect();
+        let stack_arg_space = self.load_call_args(&call_args);
+        self.emit(&format!("    call {}", self.call_symbol(name)));
+        self.release_call_args(stack_arg_space);
+        self.emit("    mov %rbp, %rsp");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+
+        self.stack_size = saved_stack_size;
+        self.var_offsets = saved_var_offsets;
+        self.var_types = saved_var_types;
+        self.address_vars = saved_address_vars;
+        self.return_ty = saved_return_ty;
+        self.param_vars = saved_param_vars;
+        self.current_fn = saved_current_fn;
+    }
+
+    fn store_closure_entry_user_args(&mut self, arg_tys: &[Type]) {
+        let calling_convention = self.target.calling_convention();
+        let param_regs = calling_convention.integer_arg_regs;
+        let xmm_regs = calling_convention.float_arg_regs;
+        let mut int_param = 1;
+        let mut float_param = 0;
+        let mut stack_param = 0;
+        let mut arg_position = 1;
+
+        for (idx, ty) in arg_tys.iter().enumerate() {
+            if *ty == Type::Unit {
+                continue;
+            }
+            let offset = self.var_offsets[&(idx as VarId)];
+            if let Some(shared_slots) = calling_convention.shared_arg_register_slots {
+                if arg_position < shared_slots {
+                    let reg = if *ty == Type::F64 {
+                        xmm_regs[arg_position]
+                    } else {
+                        param_regs[arg_position]
+                    };
+                    self.store_incoming_register_param(reg, offset, ty);
+                } else {
+                    self.store_incoming_stack_param(stack_param, offset, ty);
+                    stack_param += 1;
+                }
+                arg_position += 1;
+                continue;
+            }
+
+            if *ty == Type::F64 {
+                if float_param < xmm_regs.len() {
+                    self.store_incoming_register_param(xmm_regs[float_param], offset, ty);
+                } else {
+                    self.store_incoming_stack_param(stack_param, offset, ty);
+                    stack_param += 1;
+                }
+                float_param += 1;
+            } else {
+                if int_param < param_regs.len() {
+                    self.store_incoming_register_param(param_regs[int_param], offset, ty);
+                } else {
+                    self.store_incoming_stack_param(stack_param, offset, ty);
+                    stack_param += 1;
+                }
+                int_param += 1;
+            }
+        }
     }
 
     /// Render `text` as a GAS string-literal token (`"..."`) with the bytes the
@@ -3548,11 +3821,14 @@ impl X86_64Backend {
                 args,
                 ty,
             } => {
-                let stack_arg_space = self.load_call_args(args);
+                let stack_arg_space = self.load_closure_call_args(args);
                 let func_ty = self
                     .value_type(func)
                     .unwrap_or_else(|| Type::Func(Vec::new(), Box::new(Type::Unit)));
-                self.load_value(func, "%rax", &func_ty);
+                self.load_value(func, "%r11", &func_ty);
+                let env_reg = self.target.calling_convention().integer_arg_regs[0];
+                self.emit(&format!("    movq 8(%r11), {}", env_reg));
+                self.emit("    movq (%r11), %rax");
                 self.emit("    call *%rax");
                 self.release_call_args(stack_arg_space);
                 self.store_call_result(dst, ty);
@@ -3828,6 +4104,60 @@ impl X86_64Backend {
         stack_arg_space
     }
 
+    fn load_closure_call_args(&mut self, args: &[Value]) -> i32 {
+        let calling_convention = self.target.calling_convention();
+        let param_regs = calling_convention.integer_arg_regs;
+        let xmm_regs = calling_convention.float_arg_regs;
+        let mut int_arg = 1;
+        let mut float_arg = 0;
+        let mut arg_position = 1;
+        let mut stack_args = Vec::new();
+
+        for arg in args {
+            let arg_ty = self.value_type(arg).unwrap_or(Type::I64);
+            if arg_ty == Type::Unit {
+                continue;
+            }
+            if let Some(shared_slots) = calling_convention.shared_arg_register_slots {
+                if arg_position < shared_slots {
+                    if arg_ty == Type::F64 {
+                        self.load_value(arg, xmm_regs[arg_position], &arg_ty);
+                    } else {
+                        self.load_value(arg, param_regs[arg_position], &arg_ty);
+                    }
+                } else {
+                    stack_args.push((arg.clone(), arg_ty));
+                }
+                arg_position += 1;
+                continue;
+            }
+            if arg_ty == Type::F64 {
+                if float_arg < xmm_regs.len() {
+                    self.load_value(arg, xmm_regs[float_arg], &Type::F64);
+                } else {
+                    stack_args.push((arg.clone(), arg_ty));
+                }
+                float_arg += 1;
+            } else {
+                if int_arg < param_regs.len() {
+                    self.load_value(arg, param_regs[int_arg], &arg_ty);
+                } else {
+                    stack_args.push((arg.clone(), arg_ty));
+                }
+                int_arg += 1;
+            }
+        }
+
+        let stack_arg_space = calling_convention.outgoing_stack_arg_space(stack_args.len());
+        if stack_arg_space > 0 {
+            self.emit(&format!("    sub ${}, %rsp", stack_arg_space));
+            for (idx, (arg, ty)) in stack_args.iter().enumerate() {
+                self.store_stack_call_arg(idx as i32, arg, ty);
+            }
+        }
+        stack_arg_space
+    }
+
     fn emit_call(&mut self, symbol: &str) {
         let stack_arg_space = self.target.calling_convention().outgoing_stack_arg_space(0);
         if stack_arg_space > 0 {
@@ -3956,7 +4286,7 @@ impl X86_64Backend {
                 self.emit(&format!("    leaq {}(%rip), {}", label, reg));
             }
             Value::Function(name) => {
-                let symbol = self.call_symbol(name);
+                let symbol = Self::closure_descriptor_label(name);
                 self.emit(&format!("    leaq {}(%rip), {}", symbol, reg));
             }
             Value::Var(v) => {
@@ -4313,6 +4643,14 @@ impl X86_64Backend {
             }
         }
         out
+    }
+
+    fn closure_descriptor_label(name: &str) -> String {
+        format!(".L_tl_fn_desc_{}", Self::asm_safe_symbol_name(name))
+    }
+
+    fn closure_entry_label(name: &str) -> String {
+        format!(".L_tl_fn_entry_{}", Self::asm_safe_symbol_name(name))
     }
 
     fn call_symbol(&self, name: &str) -> String {
@@ -5540,8 +5878,10 @@ mod tests {
             "#,
         );
         assert!(asm.contains("_tl_apply1:"), "asm:\n{}", asm);
-        assert!(asm.contains("    movq -16(%rbp), %rdi"), "asm:\n{}", asm);
-        assert!(asm.contains("    movq -8(%rbp), %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq -16(%rbp), %rsi"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq -8(%rbp), %r11"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq 8(%r11), %rdi"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq (%r11), %rax"), "asm:\n{}", asm);
         assert!(asm.contains("    call *%rax"), "asm:\n{}", asm);
         assert!(!asm.contains("    call _tl_f"), "asm:\n{}", asm);
         assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
@@ -5560,8 +5900,47 @@ mod tests {
             "#,
         );
         assert!(asm.contains("_tl_inc:"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_fn_desc_inc:"), "asm:\n{}", asm);
         assert!(
-            asm.contains("    leaq _tl_inc(%rip), %rdi"),
+            asm.contains("    .quad .L_tl_fn_entry_inc"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(asm.contains("    .quad 0"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_fn_entry_inc:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call _tl_inc"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("    leaq .L_tl_fn_desc_inc(%rip), %rdi"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(asm.contains("    call _tl_apply1"), "asm:\n{}", asm);
+        assert!(asm.contains("    call *%rax"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_extern_function_pointer_value_arg_from_source() {
+        let asm = compile_ok(
+            r#"
+            (extern host-inc : (-> i64 i64))
+            (define (apply1 [f : (-> i64 i64)] [x : i64]) : i64
+              (f x))
+            (define (main) : i64
+              (apply1 host-inc 41))
+            "#,
+        );
+        assert!(asm.contains("    .extern host_inc"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_fn_desc_host_inc:"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("    .quad .L_tl_fn_entry_host_inc"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(asm.contains(".L_tl_fn_entry_host_inc:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call host_inc"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("    leaq .L_tl_fn_desc_host_inc(%rip), %rdi"),
             "asm:\n{}",
             asm
         );
@@ -5580,7 +5959,27 @@ mod tests {
         );
         assert!(asm.contains("_tl___tl_lambda_main_0:"), "asm:\n{}", asm);
         assert!(
-            asm.contains("    leaq _tl___tl_lambda_main_0(%rip), %rax"),
+            asm.contains(".L_tl_fn_desc___tl_lambda_main_0:"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("    .quad .L_tl_fn_entry___tl_lambda_main_0"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains(".L_tl_fn_entry___tl_lambda_main_0:"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("    call _tl___tl_lambda_main_0"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("    leaq .L_tl_fn_desc___tl_lambda_main_0(%rip), %r11"),
             "asm:\n{}",
             asm
         );
@@ -5657,8 +6056,16 @@ mod tests {
             "#,
         );
         assert!(asm.contains("_tl_mark:"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_fn_desc_mark:"), "asm:\n{}", asm);
         assert!(
-            asm.contains("    leaq _tl_mark(%rip), %rdi"),
+            asm.contains("    .quad .L_tl_fn_entry_mark"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(asm.contains(".L_tl_fn_entry_mark:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call _tl_mark"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("    leaq .L_tl_fn_desc_mark(%rip), %rdi"),
             "asm:\n{}",
             asm
         );
@@ -5697,8 +6104,10 @@ mod tests {
         };
         let asm = generate_assembly(&program).expect("function-pointer call should compile");
         assert!(asm.contains("_tl_apply1:"), "asm:\n{}", asm);
-        assert!(asm.contains("    movq -16(%rbp), %rdi"), "asm:\n{}", asm);
-        assert!(asm.contains("    movq -8(%rbp), %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq -16(%rbp), %rsi"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq -8(%rbp), %r11"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq 8(%r11), %rdi"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq (%r11), %rax"), "asm:\n{}", asm);
         assert!(asm.contains("    call *%rax"), "asm:\n{}", asm);
         assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
     }

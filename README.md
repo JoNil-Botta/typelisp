@@ -184,9 +184,10 @@ patterns and `_`), `ann`, `cast`, plus arithmetic (`+ - * / %`), comparison
 `bit-xor` `shl` `shr`) operators. `struct-get` reads a struct field.
 
 Named top-level functions and non-capturing `lambda` literals can be passed as
-raw function pointer values. Lambda literals are lowered to deterministic
-synthetic top-level functions and can return the same pointer-backed aggregate
-values as named functions. Captured closures are still rejected.
+pointer-sized closure descriptor values. Lambda literals are lowered to
+deterministic synthetic top-level functions and can return the same
+pointer-backed aggregate values as named functions. Captured closures are still
+rejected.
 SPMD/SIMD `foreach` is documented in [SPEC.md section 5.15](SPEC.md). The
 compiler parses and type-checks the first source form and lowers it to scalar
 reference loops; vector IR and AVX backend support are not implemented yet.

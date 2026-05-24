@@ -1415,7 +1415,7 @@ fn check_reports_explicit_unsupported_float_cast_diagnostic() {
         stderr
     );
     assert!(
-        stderr.contains("casts currently support integer/char conversions only"),
+        stderr.contains("casts currently support integer/char and f64<->f32 conversions only"),
         "stderr:\n{}",
         stderr
     );

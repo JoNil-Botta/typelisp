@@ -351,6 +351,68 @@ fn lsp_checks_imports_relative_to_open_document() {
 }
 
 #[test]
+fn lsp_clears_stale_import_diagnostics_after_root_change() {
+    let dir = fixture_dir("lsp-import-clear-change");
+    let lib_path = dir.join("lib.tl");
+    fs::write(&lib_path, "(define imported : i64 true)\n").expect("write imported module");
+    let uri = file_uri(&dir.join("main.tl"));
+    let lib_uri = file_uri(&lib_path);
+    let output = run_lsp(&[
+        lsp_initialize(1),
+        lsp_did_open(&uri, "(import \"lib.tl\")\n(define (main) : i64 0)\n"),
+        lsp_did_change(&uri, "(define (main) : i64 0)\n"),
+        lsp_shutdown(2),
+        r#"{"jsonrpc":"2.0","method":"exit"}"#.to_string(),
+    ]);
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    let messages = lsp_messages(&output);
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains(&lib_uri) && message.contains(r#""code":"E0200""#)),
+        "messages: {messages:#?}"
+    );
+    let import_clears = messages
+        .iter()
+        .filter(|message| message.contains(&lib_uri) && message.contains(r#""diagnostics":[]"#))
+        .count();
+    assert_eq!(import_clears, 1, "messages: {messages:#?}");
+}
+
+#[test]
+fn lsp_clears_import_diagnostics_on_root_close() {
+    let dir = fixture_dir("lsp-import-clear-close");
+    let lib_path = dir.join("lib.tl");
+    fs::write(&lib_path, "(define imported : i64 true)\n").expect("write imported module");
+    let uri = file_uri(&dir.join("main.tl"));
+    let lib_uri = file_uri(&lib_path);
+    let output = run_lsp(&[
+        lsp_initialize(1),
+        lsp_did_open(&uri, "(import \"lib.tl\")\n(define (main) : i64 0)\n"),
+        lsp_did_close(&uri),
+        lsp_shutdown(2),
+        r#"{"jsonrpc":"2.0","method":"exit"}"#.to_string(),
+    ]);
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    let messages = lsp_messages(&output);
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains(&lib_uri) && message.contains(r#""code":"E0200""#)),
+        "messages: {messages:#?}"
+    );
+    let import_clears = messages
+        .iter()
+        .filter(|message| message.contains(&lib_uri) && message.contains(r#""diagnostics":[]"#))
+        .count();
+    assert_eq!(import_clears, 1, "messages: {messages:#?}");
+}
+
+#[test]
 fn repl_help_and_exit_from_piped_stdin() {
     let output = typelisp_with_stdin(&["repl"], ".help\n.exit\n");
 

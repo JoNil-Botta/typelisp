@@ -21,6 +21,7 @@ cargo build --release
 # Type-check, compile, build, or run a program.
 # Linux build/run require `as`/`ld`; Windows target build/run require `clang`/`lld-link`.
 ./target/release/typelisp debug check examples/hello.tl
+./target/release/typelisp fmt --check examples/hello.tl
 ./target/release/typelisp compile examples/hello.tl     # writes examples/hello.s
 ./target/release/typelisp build   examples/hello.tl     # writes examples/hello
 ./target/release/typelisp run     examples/hello.tl
@@ -276,6 +277,7 @@ typelisp compile        file.tl    # Generate assembly (.s); -o <path>, --target
 typelisp build          file.tl    # Build native executable; -o <path>, --target <target>, --backend-mode <mode>
 typelisp run            file.tl    # Compile, assemble, link, and run; --target <target>, --backend-mode <mode>
 typelisp build                    # Build nearest typelisp.pkg to package assembly; --target <target>, --backend-mode <mode>
+typelisp fmt            file.tl    # Format source in place; --check reports changes without writing
 ```
 
 The older top-level `tokenize`, `parse`, and `check` commands remain as

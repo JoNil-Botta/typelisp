@@ -66,6 +66,7 @@ stdlib_manifest() {
     cat <<'EOF'
 io.tl
 json.tl
+process.tl
 string.tl
 test.tl
 EOF
@@ -284,6 +285,102 @@ fi
 if [ -s "$TEST_STDERR" ]; then
     echo "FAIL: stdlib assertion witness wrote unexpected stderr" >&2
     sed 's/^/  /' "$TEST_STDERR" >&2
+    exit 1
+fi
+
+PROCESS_WITNESS="$WORKDIR/stdlib_process_witness.tl"
+PROCESS_BIN="$WORKDIR/stdlib_process_witness"
+PROCESS_STDOUT="$WORKDIR/stdlib_process_witness.stdout"
+PROCESS_STDERR="$WORKDIR/stdlib_process_witness.stderr"
+
+cat > "$PROCESS_WITNESS" <<'EOF'
+(import "stdlib/process.tl")
+
+(define (process-witness-command-shape [command : ProcessCommand]) : bool
+  (if (string-eq (process-command-executable command) "echo")
+    (match (process-command-cwd command)
+      [(ProcessSomeString cwd)
+        (if (string-eq cwd "target")
+          (match (process-command-stdin command)
+            [(ProcessSomeString input)
+              (if (string-eq input "stdin")
+                (match (process-command-env command)
+                  [(ProcessEnvCons name value _)
+                    (if (string-eq name "TL_TEST")
+                      (string-eq value "1")
+                      false)]
+                  [_ false])
+                false)]
+            [_ false])
+          false)]
+      [_ false])
+    false))
+
+(define (process-witness-invalid-command) : bool
+  (match (process-output (process-command "" (process-args-empty)))
+    [(ErrProcessOutput error)
+      (match error
+        [(ProcessInvalidCommand message)
+          (string-eq message "process: executable path is empty")]
+        [_ false])]
+    [_ false]))
+
+(define (process-witness-unsupported [command : ProcessCommand]) : bool
+  (match (process-run command)
+    [(ErrProcessOutput error)
+      (if (process-error-unsupported? error)
+        (string-eq
+          (process-error-message error)
+          "process: runtime execution is not implemented")
+        false)]
+    [_ false]))
+
+(define (main) : i64
+  (let ([command
+      :
+      ProcessCommand
+      (process-command-with-env
+        (process-command-with-stdin
+          (process-command-with-cwd
+            (process-command
+              "echo"
+              (process-args-cons "hello" (process-args-empty)))
+            "target")
+          "stdin")
+        "TL_TEST"
+        "1")])
+    (if (process-witness-command-shape command)
+      (if (process-witness-invalid-command)
+        (if (process-witness-unsupported command) 42 3)
+        2)
+      1)))
+EOF
+
+echo "[stdlib] building+running process API witness (--stdlib-root)"
+stdlib_build_run "$PROCESS_WITNESS" "$PROCESS_BIN"
+
+if [ "$got" -ne 42 ]; then
+    echo "FAIL: stdlib process witness expected exit 42, got $got" >&2
+    if [ -s "$PROCESS_STDOUT" ]; then
+        echo "stdout:" >&2
+        sed 's/^/  /' "$PROCESS_STDOUT" >&2
+    fi
+    if [ -s "$PROCESS_STDERR" ]; then
+        echo "stderr:" >&2
+        sed 's/^/  /' "$PROCESS_STDERR" >&2
+    fi
+    exit 1
+fi
+
+if [ -s "$PROCESS_STDOUT" ]; then
+    echo "FAIL: stdlib process witness wrote unexpected stdout" >&2
+    sed 's/^/  /' "$PROCESS_STDOUT" >&2
+    exit 1
+fi
+
+if [ -s "$PROCESS_STDERR" ]; then
+    echo "FAIL: stdlib process witness wrote unexpected stderr" >&2
+    sed 's/^/  /' "$PROCESS_STDERR" >&2
     exit 1
 fi
 

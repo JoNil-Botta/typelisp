@@ -5605,6 +5605,43 @@ mod tests {
     }
 
     #[test]
+    fn test_compile_aggregate_returning_lambdas_from_source() {
+        let asm = compile_ok(
+            r#"
+            (defenum Box (BoxI i64))
+            (defstruct Pair (x i64) (y i64))
+
+            (define (main) : i64
+              (let ([mk-string : (-> String) (lambda () : String "hello")]
+                    [mk-enum : (-> Box) (lambda () : Box (BoxI 11))]
+                    [mk-array : (-> (Array i64)) (lambda () : (Array i64) (make-array i64 13))]
+                    [mk-struct : (-> Pair) (lambda () : Pair (Pair 1 13))])
+                (+ (string-length (mk-string))
+                   (+ (match (mk-enum) [(BoxI n) n])
+                      (+ (array-length (mk-array))
+                         (struct-get (mk-struct) y))))))
+            "#,
+        );
+
+        for name in [
+            "_tl___tl_lambda_main_0:",
+            "_tl___tl_lambda_main_1:",
+            "_tl___tl_lambda_main_2:",
+            "_tl___tl_lambda_main_3:",
+        ] {
+            assert!(asm.contains(name), "asm:\n{}", asm);
+        }
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        assert!(
+            asm.matches("    call tl_alloc").count() >= 5,
+            "expected heap promotion for aggregate lambda returns:\n{}",
+            asm
+        );
+        assert!(asm.contains("    call *%rax"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
     fn test_compile_unit_named_function_pointer_value_arg_from_source() {
         let asm = compile_ok(
             r#"

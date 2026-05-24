@@ -490,9 +490,14 @@ See §3.6.
 
 ### 5.14 `(lambda ([param : type] ...) [: ret_type] body)` — anonymous function
 
-- Parses and type-checks as a function value for supported scalar returns.
+- Parses and type-checks as a function value for backend-supported return
+  types.
 - Non-capturing lambdas lower to deterministic synthetic top-level functions
   and evaluate to raw function pointer values.
+- Non-capturing lambdas can return scalar values and pointer-backed aggregate
+  values supported by named function returns, including `String`, enums,
+  structs, and dynamic arrays. Tuple and fixed-array by-value returns remain
+  unsupported by the backend.
 - Capturing lambdas are rejected; no captured environment representation exists
   yet.
 

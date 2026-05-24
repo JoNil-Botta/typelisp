@@ -440,6 +440,14 @@ struct SimpleVectorMap {
     lanes: usize,
 }
 
+#[derive(Debug, Clone)]
+struct SimpleVectorReduce {
+    array: VarId,
+    op: VectorReduceOp,
+    elem_ty: Type,
+    lanes: usize,
+}
+
 struct ForeachLoopState {
     index_ty: Type,
     storage_ty: Type,
@@ -2569,6 +2577,25 @@ impl FnLowerer {
         let init_val = self.lower_expr_as(init, &result_ty);
         self.vars = outer_vars.clone();
 
+        if self.mode == LowerMode::Avx2
+            && index_ty == Type::I64
+            && let Some(plan) = self.simple_vector_reduce(op, index, value, &result_ty)
+        {
+            return self.lower_avx2_spmd_reduce(
+                index,
+                value,
+                index_ty.clone(),
+                index_storage.clone(),
+                result_ty.clone(),
+                result_storage.clone(),
+                start_val.clone(),
+                end_val.clone(),
+                init_val.clone(),
+                outer_vars.clone(),
+                plan,
+            );
+        }
+
         let index_var = self.builder.fresh_var();
         self.builder.emit(Instruction::Alloc {
             var: index_var,
@@ -2637,6 +2664,165 @@ impl FnLowerer {
 
         self.builder.finish_block(&exit_label);
         Value::Var(acc_var)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_avx2_spmd_reduce(
+        &mut self,
+        index: &str,
+        value: &ast::Expr,
+        index_ty: Type,
+        index_storage: Type,
+        result_ty: Type,
+        result_storage: Type,
+        start_val: Value,
+        end_val: Value,
+        init_val: Value,
+        outer_vars: HashMap<String, VarId>,
+        plan: SimpleVectorReduce,
+    ) -> Value {
+        let index_var = self.builder.fresh_var();
+        self.builder.emit(Instruction::Alloc {
+            var: index_var,
+            ty: index_storage.clone(),
+        });
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(index_var),
+            src: start_val,
+            ty: index_storage.clone(),
+        });
+        self.record_value_local(index_var, index_ty.clone());
+
+        let acc_var = self.builder.fresh_var();
+        self.builder.emit(Instruction::Alloc {
+            var: acc_var,
+            ty: result_storage.clone(),
+        });
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(acc_var),
+            src: init_val,
+            ty: result_storage,
+        });
+        self.record_value_local(acc_var, result_ty.clone());
+
+        let array_len = self.load_fat_len(&Value::Var(plan.array), DYN_ARRAY_LEN_OFFSET);
+
+        let vector_header_label = self.builder.fresh_label("reduce_avx2_header");
+        let vector_body_label = self.builder.fresh_label("reduce_avx2_body");
+        let scalar_header_label = self.builder.fresh_label("reduce_tail_header");
+        let scalar_body_label = self.builder.fresh_label("reduce_tail_body");
+        let exit_label = self.builder.fresh_label("reduce_exit");
+
+        self.builder
+            .emit(Instruction::Jump(vector_header_label.clone()));
+
+        self.builder.finish_block(&vector_header_label);
+        let next_vector_index = self.emit_binop_value(
+            BinOp::Add,
+            Value::Var(index_var),
+            Value::ConstI64(plan.lanes as i64),
+            Type::I64,
+        );
+        let mut vector_ok = self.emit_binop_value(
+            BinOp::Ge,
+            Value::Var(index_var),
+            Value::ConstI64(0),
+            Type::Bool,
+        );
+        let no_index_overflow = self.emit_binop_value(
+            BinOp::Le,
+            Value::Var(index_var),
+            Value::ConstI64(i64::MAX - plan.lanes as i64),
+            Type::Bool,
+        );
+        vector_ok = self.emit_binop_value(BinOp::And, vector_ok, no_index_overflow, Type::Bool);
+        for bound in [end_val.clone(), array_len] {
+            let within =
+                self.emit_binop_value(BinOp::Le, next_vector_index.clone(), bound, Type::Bool);
+            vector_ok = self.emit_binop_value(BinOp::And, vector_ok, within, Type::Bool);
+        }
+        self.builder.emit(Instruction::Branch {
+            cond: vector_ok,
+            true_label: vector_body_label.clone(),
+            false_label: scalar_header_label.clone(),
+        });
+
+        self.builder.finish_block(&vector_body_label);
+        self.lower_avx2_vector_reduce_body(index_var, next_vector_index, acc_var, &plan);
+        self.builder.emit(Instruction::Jump(vector_header_label));
+
+        self.builder.finish_block(&scalar_header_label);
+        let in_range = self.emit_binop_value(BinOp::Lt, Value::Var(index_var), end_val, Type::Bool);
+        self.builder.emit(Instruction::Branch {
+            cond: in_range,
+            true_label: scalar_body_label.clone(),
+            false_label: exit_label.clone(),
+        });
+
+        self.builder.finish_block(&scalar_body_label);
+        self.vars = outer_vars.clone();
+        self.vars.insert(index.to_string(), index_var);
+        let value_val = self.lower_expr_as(value, &result_ty);
+        self.vars = outer_vars;
+        self.emit_reduce_combine(ast::ReduceOp::Sum, acc_var, value_val, &result_ty);
+
+        let next_index = self.emit_binop_value(
+            BinOp::Add,
+            Value::Var(index_var),
+            Value::ConstI64(1),
+            index_ty,
+        );
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(index_var),
+            src: next_index,
+            ty: index_storage,
+        });
+        self.builder.emit(Instruction::Jump(scalar_header_label));
+
+        self.builder.finish_block(&exit_label);
+        Value::Var(acc_var)
+    }
+
+    fn lower_avx2_vector_reduce_body(
+        &mut self,
+        index_var: VarId,
+        next_vector_index: Value,
+        acc_var: VarId,
+        plan: &SimpleVectorReduce,
+    ) {
+        let vector_ty = Type::Vector(Box::new(plan.elem_ty.clone()), plan.lanes);
+
+        let vector = self.builder.fresh_var();
+        self.builder.emit(Instruction::VectorLoad {
+            dst: vector,
+            base: Value::Var(plan.array),
+            index: Value::Var(index_var),
+            lanes: plan.lanes,
+            elem_ty: plan.elem_ty.clone(),
+        });
+        self.record_local(vector, vector_ty);
+
+        let chunk = self.builder.fresh_var();
+        self.builder.emit(Instruction::VectorReduce {
+            dst: chunk,
+            op: plan.op,
+            src: Value::Var(vector),
+            lanes: plan.lanes,
+            elem_ty: plan.elem_ty.clone(),
+        });
+        self.record_local(chunk, plan.elem_ty.clone());
+
+        self.emit_reduce_combine(
+            ast::ReduceOp::Sum,
+            acc_var,
+            Value::Var(chunk),
+            &plan.elem_ty,
+        );
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(index_var),
+            src: next_vector_index,
+            ty: Type::I64,
+        });
     }
 
     /// Fold the per-iteration `value` into the accumulator slot `acc_var`
@@ -3119,6 +3305,29 @@ impl FnLowerer {
             rhs_array,
             op,
             elem_ty: lhs_elem,
+            lanes,
+        })
+    }
+
+    fn simple_vector_reduce(
+        &self,
+        op: ast::ReduceOp,
+        index: &str,
+        value: &ast::Expr,
+        result_ty: &Type,
+    ) -> Option<SimpleVectorReduce> {
+        if op != ast::ReduceOp::Sum || !matches!(result_ty, Type::I64 | Type::I32) {
+            return None;
+        }
+        let (array, elem_ty) = self.array_ref_var_for_index(value, index)?;
+        if &elem_ty != result_ty {
+            return None;
+        }
+        let lanes = Self::avx2_lanes_for_elem(&elem_ty)?;
+        Some(SimpleVectorReduce {
+            array,
+            op: VectorReduceOp::Sum,
+            elem_ty,
             lanes,
         })
     }
@@ -5964,6 +6173,71 @@ mod tests {
             Instruction::VectorStore {
                 lanes: 4,
                 elem_ty: Type::I64,
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn test_lower_avx2_spmd_reduce_sum_emits_vector_loop_and_scalar_tail() {
+        let prog = parse(
+            r#"
+            (define (sum-i64 [xs : (Array i64)] [n : i64]) : i64
+              (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))
+
+            (define (sum-i32 [xs : (Array i32)] [n : i64]) : i32
+              (spmd-reduce sum ([i : i64 0 n]) (cast 0 : i32) (array-ref xs i)))
+        "#,
+        )
+        .unwrap();
+        let lowered = lower_program_with_spans_for_mode(&prog, LowerMode::Avx2);
+        let ir = lowered.program;
+        let instrs: Vec<_> = ir
+            .functions
+            .iter()
+            .flat_map(|f| f.blocks.iter())
+            .flat_map(|b| b.instructions.iter())
+            .collect();
+
+        assert!(
+            ir.functions.iter().any(|f| {
+                f.blocks
+                    .iter()
+                    .any(|b| b.label.starts_with("reduce_avx2_header."))
+            }),
+            "expected AVX2 reduction vector loop"
+        );
+        assert!(
+            ir.functions.iter().any(|f| {
+                f.blocks
+                    .iter()
+                    .any(|b| b.label.starts_with("reduce_tail_header."))
+            }),
+            "expected scalar reduction tail"
+        );
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::VectorLoad {
+                lanes: 4,
+                elem_ty: Type::I64,
+                ..
+            }
+        )));
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::VectorReduce {
+                op: VectorReduceOp::Sum,
+                lanes: 4,
+                elem_ty: Type::I64,
+                ..
+            }
+        )));
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::VectorReduce {
+                op: VectorReduceOp::Sum,
+                lanes: 8,
+                elem_ty: Type::I32,
                 ..
             }
         )));

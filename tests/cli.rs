@@ -680,6 +680,7 @@ fn compile_rejects_unknown_backend_mode() {
     );
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn run_accepts_backend_mode_flag_with_avx512() {
     let dir = fixture_dir("backend-mode-run-avx512");
@@ -838,6 +839,7 @@ fn check_reports_explicit_unsupported_float_cast_diagnostic() {
     assert!(stderr.contains("error[E0200]"), "stderr:\n{}", stderr);
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn build_source_accepts_avx512_backend_mode() {
     let dir = fixture_dir("backend-mode-source-build-avx512");

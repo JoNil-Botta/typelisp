@@ -923,6 +923,7 @@ struct ValidationTypes<'a> {
     global_types: &'a HashMap<String, Type>,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_vector_binop(
     dst: VarId,
     op: IrBinOp,
@@ -966,6 +967,7 @@ fn validate_vector_binop(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_vector_load(
     dst: VarId,
     base: &Value,
@@ -985,6 +987,7 @@ fn validate_vector_load(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_vector_store(
     base: &Value,
     index: &Value,

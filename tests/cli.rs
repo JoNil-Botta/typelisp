@@ -179,6 +179,34 @@ fn run_lsp(messages: &[String]) -> Output {
     typelisp_with_stdin(&["lsp"], &input)
 }
 
+#[cfg(target_os = "linux")]
+fn run_selfhost_lsp_frame(work_name: &str, stdin: &str) -> Output {
+    let dir = fixture_dir(work_name);
+    let source = dir.join("lsp_frame.tl");
+    fs::copy(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("selfhost")
+            .join("lsp_frame.tl"),
+        &source,
+    )
+    .expect("copy selfhost LSP frame source");
+    let source_arg = source.to_str().expect("source path is utf-8");
+    let mut args = vec!["run", source_arg];
+    if cfg!(target_os = "windows") {
+        args.push("--target");
+        args.push("windows-x86_64");
+    }
+    typelisp_with_stdin(&args, stdin)
+}
+
+#[cfg(target_os = "linux")]
+fn selfhost_lsp_error_body(message: &str) -> String {
+    format!(
+        r#"{{"jsonrpc":"2.0","id":null,"error":{{"code":-32700,"message":"{}"}}}}"#,
+        message
+    )
+}
+
 fn write_main_source(dir: &std::path::Path) -> PathBuf {
     let source = dir.join("main.tl");
     fs::write(&source, "(define (main) : i64 42)\n").expect("write source");
@@ -439,6 +467,130 @@ fn lsp_keeps_shared_import_diagnostics_after_one_root_change() {
         .filter(|message| message.contains(&lib_uri) && message.contains(r#""diagnostics":[]"#))
         .count();
     assert_eq!(import_clears, 0, "messages: {messages:#?}");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn selfhost_lsp_frame_reads_one_request() {
+    let request = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#;
+    let output = run_selfhost_lsp_frame("selfhost-lsp-frame-one", &lsp_frame(request));
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "selfhost LSP frame exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stderr(&output), "");
+    assert_eq!(
+        lsp_messages(&output),
+        vec![r#"{"jsonrpc":"2.0","id":null,"result":null}"#.to_string()]
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn selfhost_lsp_frame_reads_multiple_requests() {
+    let first = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#;
+    let second = r#"{"jsonrpc":"2.0","id":2,"method":"shutdown"}"#;
+    let input = format!("{}{}", lsp_frame(first), lsp_frame(second));
+    let output = run_selfhost_lsp_frame("selfhost-lsp-frame-multiple", &input);
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "selfhost LSP frame exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stderr(&output), "");
+    assert_eq!(
+        lsp_messages(&output),
+        vec![
+            r#"{"jsonrpc":"2.0","id":null,"result":null}"#.to_string(),
+            r#"{"jsonrpc":"2.0","id":null,"result":null}"#.to_string(),
+        ]
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn selfhost_lsp_frame_eof_before_header_exits_cleanly() {
+    let output = run_selfhost_lsp_frame("selfhost-lsp-frame-eof", "");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "selfhost LSP frame exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), "");
+    assert_eq!(stderr(&output), "");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn selfhost_lsp_frame_reports_missing_content_length() {
+    let output = run_selfhost_lsp_frame("selfhost-lsp-frame-missing-length", "X-Test: 1\r\n\r\n");
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "selfhost LSP frame exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stderr(&output), "lsp: missing Content-Length");
+    assert_eq!(
+        lsp_messages(&output),
+        vec![selfhost_lsp_error_body("lsp: missing Content-Length")]
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn selfhost_lsp_frame_reports_invalid_content_length() {
+    let output = run_selfhost_lsp_frame(
+        "selfhost-lsp-frame-invalid-length",
+        "Content-Length: nope\r\n\r\n",
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "selfhost LSP frame exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stderr(&output), "lsp: invalid Content-Length");
+    assert_eq!(
+        lsp_messages(&output),
+        vec![selfhost_lsp_error_body("lsp: invalid Content-Length")]
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn selfhost_lsp_frame_reports_truncated_payload() {
+    let output = run_selfhost_lsp_frame(
+        "selfhost-lsp-frame-truncated-payload",
+        "Content-Length: 10\r\n\r\nabc",
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "selfhost LSP frame exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stderr(&output), "lsp: truncated payload");
+    assert_eq!(
+        lsp_messages(&output),
+        vec![selfhost_lsp_error_body("lsp: truncated payload")]
+    );
 }
 
 #[test]

@@ -13,7 +13,7 @@
         (begin
           (write-file (arg 1) asm)
           0)]
-      [(ErrCompilerBackend message)
+      [(ErrCompilerBackend diag)
         (begin
-          (print-error message)
+          (print-error (compiler-diagnostic-render diag))
           1)])))

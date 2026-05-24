@@ -22,6 +22,14 @@ fn typelisp(args: &[&str]) -> Output {
         .expect("run typelisp CLI")
 }
 
+fn typelisp_with_path(args: &[&str], path: &std::path::Path) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .args(args)
+        .env("PATH", path)
+        .output()
+        .expect("run typelisp CLI")
+}
+
 fn write_main_source(dir: &std::path::Path) -> PathBuf {
     let source = dir.join("main.tl");
     fs::write(&source, "(define (main) : i64 42)\n").expect("write source");
@@ -126,6 +134,87 @@ fn compile_accepts_explicit_scalar_backend_mode() {
 }
 
 #[test]
+fn compile_accepts_windows_target_aliases() {
+    for target in ["windows-x86_64", "windows_x86_64"] {
+        let dir = fixture_dir(&format!("target-{target}"));
+        let source = dir.join("main.tl");
+        fs::write(
+            &source,
+            r#"(define (main) : i64
+  (begin
+    (print-string "hi")
+    42))
+"#,
+        )
+        .expect("write source");
+        let output_path = dir.join("main.s");
+        let source_arg = source.to_str().expect("source path is utf-8");
+        let output_arg = output_path.to_str().expect("output path is utf-8");
+
+        let output = typelisp(&["compile", source_arg, "--target", target, "-o", output_arg]);
+
+        assert!(
+            output.status.success(),
+            "{target} failed\nstdout:\n{}\nstderr:\n{}",
+            stdout(&output),
+            stderr(&output)
+        );
+        assert_eq!(stderr(&output), "", "{target} stderr");
+        let asm = fs::read_to_string(&output_path).expect("read assembly");
+        assert!(
+            asm.contains("    .globl main"),
+            "{target} assembly:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("    .globl _start"),
+            "{target} assembly:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("    .extern _write"),
+            "{target} assembly:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("    sub $32, %rsp"),
+            "{target} assembly:\n{}",
+            asm
+        );
+    }
+}
+
+#[test]
+fn target_flags_reject_unknown_target_across_commands() {
+    let dir = fixture_dir("target-unknown");
+    let source = write_main_source(&dir);
+    let source_arg = source.to_str().expect("source path is utf-8");
+
+    for args in [
+        vec!["compile", source_arg, "--target", "plan9-x86_64"],
+        vec!["build", source_arg, "--target", "plan9-x86_64"],
+        vec!["run", source_arg, "--target", "plan9-x86_64"],
+    ] {
+        let output = typelisp(&args);
+
+        assert!(
+            !output.status.success(),
+            "{args:?} unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+            stdout(&output),
+            stderr(&output)
+        );
+        assert_eq!(stdout(&output), "", "{args:?} wrote stdout");
+        assert!(
+            stderr(&output).contains(
+                "Error: unknown target 'plan9-x86_64'. Expected linux-x86_64 or windows-x86_64"
+            ),
+            "{args:?} stderr:\n{}",
+            stderr(&output)
+        );
+    }
+}
+
+#[test]
 fn compile_rejects_unimplemented_backend_modes() {
     for mode in ["avx2", "avx512"] {
         let dir = fixture_dir(&format!("backend-mode-{mode}"));
@@ -220,6 +309,25 @@ fn build_source_rejects_unimplemented_backend_mode() {
     let output = typelisp(&["build", source_arg, "--backend-mode", "avx2"]);
 
     assert_backend_mode_rejected(&output, "avx2");
+}
+
+#[test]
+fn build_source_reports_missing_assembler_with_target_and_tool() {
+    let dir = fixture_dir("build-missing-assembler");
+    let empty_path = dir.join("empty-path");
+    fs::create_dir_all(&empty_path).expect("create empty PATH dir");
+    let source = write_main_source(&dir);
+    let source_arg = source.to_str().expect("source path is utf-8");
+
+    let output = typelisp_with_path(&["build", source_arg], &empty_path);
+
+    assert!(!output.status.success());
+    assert_eq!(stdout(&output), "");
+    assert!(
+        stderr(&output).contains("Error: failed to run assembler 'as' for target linux-x86_64:"),
+        "stderr:\n{}",
+        stderr(&output)
+    );
 }
 
 #[test]

@@ -1,7 +1,7 @@
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, ExitStatus};
 
 mod ast;
 mod backend;
@@ -20,7 +20,7 @@ mod typechecker;
 mod types;
 
 use ast::Program;
-use backend::{BackendMode, BackendTarget, generate_assembly_with_spans_for_target};
+use backend::{BackendMode, BackendOs, BackendTarget, generate_assembly_with_spans_for_target};
 use diagnostic::format_diagnostic;
 use lower::{LoweredProgram, lower_program_with_spans};
 use module::{
@@ -151,16 +151,16 @@ fn print_usage() {
     eprintln!("    typelisp debug parse <file.tl>       Show AST");
     eprintln!("    typelisp debug check <file.tl> [--stdlib-root <dir>...]");
     eprintln!(
-        "    typelisp compile <file.tl> [-o <file>] [--emit-ir] [--backend-mode <mode>] [--stdlib-root <dir>...]"
+        "    typelisp compile <file.tl> [-o <file>] [--emit-ir] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...]"
     );
     eprintln!(
-        "    typelisp run <file.tl> [--backend-mode <mode>] [--stdlib-root <dir>...] [-- args...]"
+        "    typelisp run <file.tl> [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...] [-- args...]"
     );
     eprintln!(
-        "    typelisp build <file.tl> [-o <exe>] [--backend-mode <mode>] [--stdlib-root <dir>...]"
+        "    typelisp build <file.tl> [-o <exe>] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...]"
     );
     eprintln!(
-        "    typelisp build [--manifest-path <typelisp.pkg>] [--backend-mode <mode>] [--stdlib-root <dir>...]"
+        "    typelisp build [--manifest-path <typelisp.pkg>] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...]"
     );
     eprintln!("    typelisp doc --test <file.tl> [--stdlib-root <dir>...]");
     eprintln!();
@@ -173,6 +173,7 @@ fn print_usage() {
     eprintln!(
         "    --backend-mode <mode>          scalar, avx2, or avx512; only scalar is implemented"
     );
+    eprintln!("    --target <target>              linux-x86_64 or windows-x86_64");
     eprintln!("    --manifest-path <file>         Package manifest for build");
     eprintln!("    --stdlib-root <dir>            Search root for stdlib/... imports");
     eprintln!("    TYPELISP_STDLIB_ROOT           Optional fallback root for stdlib/... imports");
@@ -215,6 +216,19 @@ fn parse_backend_mode(value: &str) -> BackendMode {
         None => {
             eprintln!(
                 "Error: unknown backend mode '{}'. Expected scalar, avx2, or avx512",
+                value
+            );
+            std::process::exit(1);
+        }
+    }
+}
+
+fn parse_backend_target(value: &str) -> BackendTarget {
+    match BackendTarget::parse(value) {
+        Some(target) => target,
+        None => {
+            eprintln!(
+                "Error: unknown target '{}'. Expected linux-x86_64 or windows-x86_64",
                 value
             );
             std::process::exit(1);
@@ -349,6 +363,12 @@ fn parse_run_options(args: &[String], mut i: usize) -> (LoadOptions, Vec<String>
             }
             target = target.with_mode(parse_backend_mode(&args[i + 1]));
             i += 2;
+        } else if args[i] == "--target" {
+            if i + 1 >= args.len() {
+                missing_option_value("--target");
+            }
+            target = parse_backend_target(&args[i + 1]).with_mode(target.mode);
+            i += 2;
         } else if args[i] == "--stdlib-root" {
             if i + 1 >= args.len() {
                 missing_option_value("--stdlib-root");
@@ -421,6 +441,12 @@ fn parse_build_options(args: &[String], mut i: usize) -> BuildRequest {
             }
             target = target.with_mode(parse_backend_mode(&args[i + 1]));
             i += 2;
+        } else if args[i] == "--target" {
+            if i + 1 >= args.len() {
+                missing_option_value("--target");
+            }
+            target = parse_backend_target(&args[i + 1]).with_mode(target.mode);
+            i += 2;
         } else if args[i].starts_with('-') {
             eprintln!("Error: unknown build flag: {}", args[i]);
             std::process::exit(1);
@@ -484,6 +510,20 @@ fn create_parent_dirs(path: &Path, context: &str) {
     }
 }
 
+fn command_status_or_exit(mut command: Command, role: &str, target: BackendTarget) -> ExitStatus {
+    let tool = command.get_program().to_string_lossy().into_owned();
+    match command.status() {
+        Ok(status) => status,
+        Err(err) => {
+            eprintln!(
+                "Error: failed to run {} '{}' for target {}: {}",
+                role, tool, target, err
+            );
+            std::process::exit(1);
+        }
+    }
+}
+
 fn assemble_and_link_or_exit(
     asm_path: &Path,
     obj_path: &Path,
@@ -493,30 +533,63 @@ fn assemble_and_link_or_exit(
     let toolchain = target.toolchain();
 
     create_parent_dirs(obj_path, "object output");
-    let status = Command::new(toolchain.assembler)
-        .arg(asm_path)
-        .arg("-o")
-        .arg(obj_path)
-        .status()
-        .expect("Failed to run assembler");
+    let mut assembler = Command::new(toolchain.assembler);
+    match target.os {
+        BackendOs::Linux => {
+            assembler.arg(asm_path).arg("-o").arg(obj_path);
+        }
+        BackendOs::Windows => {
+            assembler
+                .arg("--target=x86_64-pc-windows-msvc")
+                .arg("-c")
+                .arg(asm_path)
+                .arg("-o")
+                .arg(obj_path);
+        }
+    }
+    let status = command_status_or_exit(assembler, "assembler", target);
     if !status.success() {
-        eprintln!("Assembly failed");
+        eprintln!(
+            "Error: assembler '{}' failed for target {} with status {}",
+            toolchain.assembler, target, status
+        );
         std::process::exit(1);
     }
 
     create_parent_dirs(bin_path, "executable output");
     let mut linker = Command::new(toolchain.linker);
-    linker.arg(obj_path).arg("-o").arg(bin_path);
-    if let Some(dynamic_linker) = toolchain.dynamic_linker {
-        linker.arg("-dynamic-linker").arg(dynamic_linker);
+    match target.os {
+        BackendOs::Linux => {
+            linker.arg(obj_path).arg("-o").arg(bin_path);
+            if let Some(dynamic_linker) = toolchain.dynamic_linker {
+                linker.arg("-dynamic-linker").arg(dynamic_linker);
+            }
+        }
+        BackendOs::Windows => {
+            linker
+                .arg("/NOLOGO")
+                .arg(obj_path)
+                .arg(format!("/OUT:{}", bin_path.display()))
+                .arg("/SUBSYSTEM:CONSOLE");
+        }
     }
     for lib in toolchain.libraries {
         linker.arg(lib);
     }
-    let status = linker.status().expect("Failed to run linker");
+    let status = command_status_or_exit(linker, "linker", target);
     if !status.success() {
-        eprintln!("Linking failed");
+        eprintln!(
+            "Error: linker '{}' failed for target {} with status {}",
+            toolchain.linker, target, status
+        );
         std::process::exit(1);
+    }
+}
+
+fn default_executable_path(file: &Path, target: BackendTarget) -> PathBuf {
+    match target.executable_extension() {
+        Some(extension) => file.with_extension(extension),
+        None => file.with_extension(""),
     }
 }
 
@@ -531,8 +604,8 @@ fn build_source_executable_or_exit(
     create_parent_dirs(&asm_path, "assembly output");
     fs::write(&asm_path, asm).expect("Failed to write assembly");
 
-    let obj_path = file.with_extension("o");
-    let bin_path = output.unwrap_or_else(|| file.with_extension(""));
+    let obj_path = file.with_extension(target.object_extension());
+    let bin_path = output.unwrap_or_else(|| default_executable_path(file, target));
     assemble_and_link_or_exit(&asm_path, &obj_path, &bin_path, target);
     bin_path
 }
@@ -617,6 +690,12 @@ fn run_cli() {
                     }
                     target = target.with_mode(parse_backend_mode(&args[i + 1]));
                     i += 2;
+                } else if args[i] == "--target" {
+                    if i + 1 >= args.len() {
+                        missing_option_value("--target");
+                    }
+                    target = parse_backend_target(&args[i + 1]).with_mode(target.mode);
+                    i += 2;
                 } else {
                     eprintln!("Warning: unknown flag: {}", args[i]);
                     i += 1;
@@ -686,10 +765,20 @@ fn run_cli() {
             let file = PathBuf::from(&args[2]);
             let (options, runtime_args, target) = parse_run_options(&args, 3);
             let bin_path = build_source_executable_or_exit(&file, &options, None, target);
-            let status = Command::new(&bin_path)
-                .args(&runtime_args)
-                .status()
-                .expect("Failed to run binary");
+            let mut binary = Command::new(&bin_path);
+            binary.args(&runtime_args);
+            let status = match binary.status() {
+                Ok(status) => status,
+                Err(err) => {
+                    eprintln!(
+                        "Error: failed to run executable '{}' for target {}: {}",
+                        bin_path.display(),
+                        target,
+                        err
+                    );
+                    std::process::exit(1);
+                }
+            };
             std::process::exit(status.code().unwrap_or(1));
         }
         "help" | "--help" | "-h" => {
@@ -700,5 +789,24 @@ fn run_cli() {
             print_usage();
             std::process::exit(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_source_executable_path_uses_target_extension() {
+        let file = Path::new("examples/main.tl");
+
+        assert_eq!(
+            default_executable_path(file, BackendTarget::linux_x86_64_system_v()),
+            PathBuf::from("examples/main")
+        );
+        assert_eq!(
+            default_executable_path(file, BackendTarget::windows_x86_64()),
+            PathBuf::from("examples/main.exe")
+        );
     }
 }

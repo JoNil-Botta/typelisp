@@ -131,7 +131,7 @@ fn block_use_def(instructions: &[Instruction]) -> (BTreeSet<VarId>, BTreeSet<Var
     (uses, defs)
 }
 
-fn instruction_uses(instr: &Instruction) -> BTreeSet<VarId> {
+pub(crate) fn instruction_uses(instr: &Instruction) -> BTreeSet<VarId> {
     let mut uses = BTreeSet::new();
 
     match instr {
@@ -225,7 +225,7 @@ fn instruction_uses(instr: &Instruction) -> BTreeSet<VarId> {
     uses
 }
 
-fn instruction_defs(instr: &Instruction) -> BTreeSet<VarId> {
+pub(crate) fn instruction_defs(instr: &Instruction) -> BTreeSet<VarId> {
     let mut defs = BTreeSet::new();
 
     match instr {

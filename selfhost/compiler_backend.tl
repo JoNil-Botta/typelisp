@@ -21,6 +21,14 @@
 (defenum CompilerBackendRuntimePlan
   (BackendRuntimePlan bool bool bool bool bool bool bool bool))
 
+;; Backend code-generation target (#646). Linux/System V is the only fully
+
+;; implemented target; the Windows x64 ABI, runtime, and entry land in #647-#649.
+
+(defenum CompilerBackendTarget
+  (BackendTargetLinux)
+  (BackendTargetWindows))
+
 (defenum ResultBackendRuntimePlan
   (OkBackendRuntimePlan CompilerBackendRuntimePlan)
   (ErrBackendRuntimePlan String))
@@ -2112,10 +2120,67 @@ tl_string_concat:
                       (compiler-backend-runtime-flush-stdout-functions)
                       ""))))))))]))
 
+;; Argument register for call arg `idx` under the target's calling convention.
+
+;; System V (Linux) uses rdi/rsi/rdx/rcx/r8/r9 via `compiler-backend-arg-reg`;
+
+;; Windows x64 passes the first four integer/pointer args in rcx/rdx/r8/r9.
+
+(define (compiler-backend-target-arg-reg
+  [target : CompilerBackendTarget]
+  [idx : i64]) : ResultBackendReg
+  (match target
+    [(BackendTargetLinux) (compiler-backend-arg-reg idx)]
+    [(BackendTargetWindows)
+      (if (= idx 0)
+        (OkBackendReg "%rcx")
+        (if (= idx 1)
+          (OkBackendReg "%rdx")
+          (if (= idx 2)
+            (OkBackendReg "%r8")
+            (if (= idx 3)
+              (OkBackendReg "%r9")
+              (ErrBackendReg "backend: too many call args")))))]))
+
+;; Caller-reserved outgoing shadow space in bytes: none on System V, 32 on
+
+;; Windows x64.
+
+(define (compiler-backend-outgoing-shadow-space
+  [target : CompilerBackendTarget]) : i64
+  (match target
+    [(BackendTargetLinux) 0]
+    [(BackendTargetWindows) 32]))
+
+;; Program entry section and global symbol. Linux links the bare `_start`;
+
+;; Windows links `main` through the CRT. (The Windows entry body is #647.)
+
+(define (compiler-backend-target-entry-text [target : CompilerBackendTarget]) : String
+  (match target
+    [(BackendTargetLinux) ".text\n.globl _start\n"]
+    [(BackendTargetWindows) ".text\n.globl main\n"]))
+
 (define (compiler-backend-entry) : String
   "_start:\n    call main\n    movq %rax, %rdi\n    movq $60, %rax\n    syscall\n")
 
+;; Emit a full program for `target`. Linux/System V is fully supported; the
+
+;; Windows path is a clear stub until its ABI/runtime/entry land in #647-#649.
+
+(define (compiler-backend-emit-program-for-target
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]) : ResultCompilerBackend
+  (match target
+    [(BackendTargetLinux) (compiler-backend-emit-program-linux program)]
+    [(BackendTargetWindows)
+      (ErrCompilerBackend
+        "backend: Windows x86_64 target not yet implemented (#647)")]))
+
 (define (compiler-backend-emit-program [program : CompilerIrProgram]) : ResultCompilerBackend
+  (compiler-backend-emit-program-for-target program (BackendTargetLinux)))
+
+(define (compiler-backend-emit-program-linux [program : CompilerIrProgram]) : ResultCompilerBackend
   (match (compiler-backend-runtime-plan program)
     [(OkBackendRuntimePlan plan)
       (match program
@@ -2151,7 +2216,8 @@ tl_string_concat:
                                       strings))
                                   (compiler-backend-runtime-data plan))
                                 (compiler-backend-emit-externs externs plan))
-                              ".text\n.globl _start\n")
+                              (compiler-backend-target-entry-text
+                                (BackendTargetLinux)))
                             functions-asm)
                           (compiler-backend-runtime-functions plan))
                         (compiler-backend-entry))])
@@ -2163,6 +2229,14 @@ tl_string_concat:
 (define (compiler-backend-emit-source [src : String]) : ResultCompilerBackend
   (match (lower-compiler-source src)
     [(OkCompilerLower program) (compiler-backend-emit-program program)]
+    [(ErrCompilerLower message) (ErrCompilerBackend message)]))
+
+(define (compiler-backend-emit-source-for-target
+  [src : String]
+  [target : CompilerBackendTarget]) : ResultCompilerBackend
+  (match (lower-compiler-source src)
+    [(OkCompilerLower program)
+      (compiler-backend-emit-program-for-target program target)]
     [(ErrCompilerLower message) (ErrCompilerBackend message)]))
 
 (define (compiler-backend-char-code-at [text : String] [idx : i64]) : i64
@@ -2666,6 +2740,72 @@ tl_string_concat:
                         "    movq %rsi, %r12\n")))))))))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-reg-is? [r : ResultBackendReg] [name : String]) : bool
+  (match r
+    [(OkBackendReg reg) (string-eq reg name)]
+    [(ErrBackendReg _) false]))
+
+(define (compiler-backend-reg-err? [r : ResultBackendReg]) : bool
+  (match r
+    [(OkBackendReg _) false]
+    [(ErrBackendReg _) true]))
+
+;; The target model (#646): per-target arg registers / shadow space / entry
+
+;; symbol; the Linux path is byte-identical to the default emitter and the
+
+;; Windows path is a clean stub until #647.
+
+(define (compiler-backend-target-model-ok? [src : String]) : bool
+  (and
+    (compiler-backend-reg-is?
+      (compiler-backend-target-arg-reg (BackendTargetLinux) 0)
+      "%rdi")
+    (and
+      (compiler-backend-reg-is?
+        (compiler-backend-target-arg-reg (BackendTargetWindows) 0)
+        "%rcx")
+      (and
+        (compiler-backend-reg-is?
+          (compiler-backend-target-arg-reg (BackendTargetWindows) 3)
+          "%r9")
+        (and
+          (compiler-backend-reg-err?
+            (compiler-backend-target-arg-reg (BackendTargetWindows) 4))
+          (and
+            (= (compiler-backend-outgoing-shadow-space (BackendTargetLinux)) 0)
+            (and
+              (=
+                (compiler-backend-outgoing-shadow-space (BackendTargetWindows))
+                32)
+              (and
+                (compiler-backend-string-contains?
+                  (compiler-backend-target-entry-text (BackendTargetLinux))
+                  "_start")
+                (and
+                  (compiler-backend-string-contains?
+                    (compiler-backend-target-entry-text (BackendTargetWindows))
+                    ".globl main")
+                  (and
+                    (compiler-backend-target-linux-matches-default? src)
+                    (compiler-backend-target-windows-stubbed? src)))))))))))
+
+(define (compiler-backend-target-linux-matches-default? [src : String]) : bool
+  (match (compiler-backend-emit-source-for-target src (BackendTargetLinux))
+    [(OkCompilerBackend linux-asm)
+      (match (compiler-backend-emit-source src)
+        [(OkCompilerBackend default-asm) (string-eq linux-asm default-asm)]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-target-windows-stubbed? [src : String]) : bool
+  (match (compiler-backend-emit-source-for-target src (BackendTargetWindows))
+    [(OkCompilerBackend _) false]
+    [(ErrCompilerBackend message)
+      (string-eq
+        message
+        "backend: Windows x86_64 target not yet implemented (#647)")]))
+
 (define (compiler-backend-deterministic-ok? [src : String]) : bool
   (match (compiler-backend-emit-source src)
     [(OkCompilerBackend first)
@@ -2718,28 +2858,30 @@ tl_string_concat:
 
 (define (compiler-backend-self-test) : i64
   (if (and
-    (compiler-backend-source-ok? (compiler-backend-smoke-source))
+    (compiler-backend-target-model-ok? (compiler-backend-smoke-source))
     (and
-      (compiler-backend-deterministic-ok? (compiler-backend-smoke-source))
+      (compiler-backend-source-ok? (compiler-backend-smoke-source))
       (and
-        (compiler-backend-string-ok?)
+        (compiler-backend-deterministic-ok? (compiler-backend-smoke-source))
         (and
-          (compiler-backend-memory-op-ok?)
+          (compiler-backend-string-ok?)
           (and
-            (compiler-backend-aggregate-ok?)
+            (compiler-backend-memory-op-ok?)
             (and
-              (compiler-backend-enum-match-ok?)
+              (compiler-backend-aggregate-ok?)
               (and
-                (compiler-backend-regalloc-ok?)
+                (compiler-backend-enum-match-ok?)
                 (and
-                  (compiler-backend-error-ok?
-                    (compiler-backend-too-many-call-source)
-                    "backend: too many call args")
+                  (compiler-backend-regalloc-ok?)
                   (and
-                    (compiler-backend-runtime-helper-asm-ok?)
+                    (compiler-backend-error-ok?
+                      (compiler-backend-too-many-call-source)
+                      "backend: too many call args")
                     (and
-                      (compiler-backend-user-helper-name-ok?)
-                      (compiler-backend-runtime-coexist-ok?)))))))))))
+                      (compiler-backend-runtime-helper-asm-ok?)
+                      (and
+                        (compiler-backend-user-helper-name-ok?)
+                        (compiler-backend-runtime-coexist-ok?))))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

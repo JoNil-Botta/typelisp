@@ -65,11 +65,17 @@ fn compiler_backend_tl_compiles_to_assembly() {
 
     for sym in [
         "_tl_compiler_backend_emit_source:",
+        "_tl_compiler_backend_emit_source_for_target:",
         "_tl_compiler_backend_emit_program:",
+        "_tl_compiler_backend_emit_program_for_target:",
+        "_tl_compiler_backend_emit_program_linux:",
         "_tl_compiler_backend_emit_function:",
         "_tl_compiler_backend_emit_instr:",
         "_tl_compiler_backend_emit_phi_edge_copies:",
         "_tl_compiler_backend_emit_call_args:",
+        "_tl_compiler_backend_target_arg_reg:",
+        "_tl_compiler_backend_outgoing_shadow_space:",
+        "_tl_compiler_backend_target_entry_text:",
         "_tl_compiler_backend_emit_param_spills:",
         "_tl_compiler_backend_emit_load_var_with_plan:",
         "_tl_compiler_backend_emit_store_var_with_plan:",
@@ -85,6 +91,7 @@ fn compiler_backend_tl_compiles_to_assembly() {
         "_tl_compiler_backend_runtime_flush_stdout_functions:",
         "_tl_compiler_backend_runtime_helper_program:",
         "_tl_compiler_backend_self_test:",
+        "_tl_compiler_backend_target_model_ok_question:",
         "_tl_compiler_backend_deterministic_ok_question:",
         "_tl_compiler_backend_string_ok_question:",
         "_tl_compiler_backend_aggregate_ok_question:",
@@ -103,6 +110,7 @@ fn compiler_backend_tl_compiles_to_assembly() {
 
     for message in [
         "backend: too many call args",
+        "backend: Windows x86_64 target not yet implemented (#647)",
         "backend: too many params",
         "backend: unsupported global initializer",
         "backend: smoke output mismatch",

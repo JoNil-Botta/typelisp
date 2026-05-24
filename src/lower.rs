@@ -1174,12 +1174,15 @@ impl FnLowerer {
                 end,
                 body,
             } => self.lower_foreach(index, index_ty, start, end, body),
-            // Parsing and type-checking accept `spmd-reduce` (#498), but scalar
-            // fallback lowering is a separate slice (#499). Reaching here means a
-            // well-typed reduction was sent to the backend before that lands.
-            ast::Expr::SpmdReduce { .. } => {
-                unimplemented!("spmd-reduce scalar lowering is not yet implemented (#499)")
-            }
+            ast::Expr::SpmdReduce {
+                op,
+                index,
+                index_ty,
+                start,
+                end,
+                init,
+                value,
+            } => self.lower_spmd_reduce(*op, index, index_ty, start, end, init, value),
             ast::Expr::Spanned { expr, .. } => self.lower_expr(expr),
         }
     }
@@ -2495,6 +2498,165 @@ impl FnLowerer {
 
         self.builder.finish_block(&exit_label);
         Value::ConstUnit
+    }
+
+    /// Scalar reference lowering for `(spmd-reduce op ([i : ity start end]) init
+    /// value)` (#499): `start`, `end`, and `init` are evaluated exactly once;
+    /// the result is a seeded ascending-index left fold over `[start, end)`. An
+    /// empty range yields `init` and never evaluates `value` (the loop body just
+    /// does not run). The accumulator and index live in mutable slots, mirroring
+    /// `lower_scalar_foreach`; the index is in scope only inside `value`.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_spmd_reduce(
+        &mut self,
+        op: ast::ReduceOp,
+        index: &str,
+        index_ty: &Type,
+        start: &ast::Expr,
+        end: &ast::Expr,
+        init: &ast::Expr,
+        value: &ast::Expr,
+    ) -> Value {
+        let index_ty = self.resolve_type(index_ty);
+        let index_storage = Self::backend_value_type(&index_ty);
+        let result_ty = self.infer_expr_type(init);
+        let result_storage = Self::backend_value_type(&result_ty);
+
+        let outer_vars = self.vars.clone();
+
+        // Uniform expressions, evaluated once before the loop.
+        let start_val = {
+            let value = self.lower_expr(start);
+            self.cast_value(value, index_ty.clone())
+        };
+        let end_val = {
+            let value = self.lower_expr(end);
+            let value = self.cast_value(value, index_ty.clone());
+            self.materialize_value(value, index_ty.clone())
+        };
+        let init_val = self.lower_expr_as(init, &result_ty);
+        self.vars = outer_vars.clone();
+
+        let index_var = self.builder.fresh_var();
+        self.builder.emit(Instruction::Alloc {
+            var: index_var,
+            ty: index_storage.clone(),
+        });
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(index_var),
+            src: start_val,
+            ty: index_storage.clone(),
+        });
+        self.record_value_local(index_var, index_ty.clone());
+
+        let acc_var = self.builder.fresh_var();
+        self.builder.emit(Instruction::Alloc {
+            var: acc_var,
+            ty: result_storage.clone(),
+        });
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(acc_var),
+            src: init_val,
+            ty: result_storage.clone(),
+        });
+        self.record_value_local(acc_var, result_ty.clone());
+
+        let header_label = self.builder.fresh_label("reduce_header");
+        let body_label = self.builder.fresh_label("reduce_body");
+        let exit_label = self.builder.fresh_label("reduce_exit");
+
+        self.builder.emit(Instruction::Jump(header_label.clone()));
+
+        self.builder.finish_block(&header_label);
+        let in_range = self.builder.fresh_var();
+        self.builder.emit(Instruction::BinOp {
+            dst: in_range,
+            op: BinOp::Lt,
+            lhs: Value::Var(index_var),
+            rhs: end_val,
+            ty: Type::Bool,
+        });
+        self.record_local(in_range, Type::Bool);
+        self.builder.emit(Instruction::Branch {
+            cond: Value::Var(in_range),
+            true_label: body_label.clone(),
+            false_label: exit_label.clone(),
+        });
+
+        self.builder.finish_block(&body_label);
+        self.vars = outer_vars.clone();
+        self.vars.insert(index.to_string(), index_var);
+        let value_val = self.lower_expr_as(value, &result_ty);
+        self.vars = outer_vars;
+        self.emit_reduce_combine(op, acc_var, value_val, &result_ty);
+
+        let next_index = self.emit_binop_value(
+            BinOp::Add,
+            Value::Var(index_var),
+            Self::int_compare_const(1, &index_ty),
+            index_ty.clone(),
+        );
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(index_var),
+            src: next_index,
+            ty: index_storage,
+        });
+        self.builder.emit(Instruction::Jump(header_label));
+
+        self.builder.finish_block(&exit_label);
+        Value::Var(acc_var)
+    }
+
+    /// Fold the per-iteration `value` into the accumulator slot `acc_var`
+    /// according to the reduction operator. `sum`/`all`/`any` are a direct
+    /// `BinOp` store; `min`/`max` conditionally store `value` only when it
+    /// compares strictly past the current accumulator.
+    fn emit_reduce_combine(
+        &mut self,
+        op: ast::ReduceOp,
+        acc_var: VarId,
+        value: Value,
+        result_ty: &Type,
+    ) {
+        let storage = Self::backend_value_type(result_ty);
+        let direct = match op {
+            ast::ReduceOp::Sum => Some(BinOp::Add),
+            ast::ReduceOp::All => Some(BinOp::And),
+            ast::ReduceOp::Any => Some(BinOp::Or),
+            ast::ReduceOp::Min | ast::ReduceOp::Max => None,
+        };
+        if let Some(binop) = direct {
+            let folded =
+                self.emit_binop_value(binop, Value::Var(acc_var), value, result_ty.clone());
+            self.builder.emit(Instruction::Store {
+                dst: Value::Var(acc_var),
+                src: folded,
+                ty: storage,
+            });
+            return;
+        }
+
+        let cmp_op = if op == ast::ReduceOp::Min {
+            BinOp::Lt
+        } else {
+            BinOp::Gt
+        };
+        let cmp = self.emit_binop_value(cmp_op, value.clone(), Value::Var(acc_var), Type::Bool);
+        let update_label = self.builder.fresh_label("reduce_update");
+        let cont_label = self.builder.fresh_label("reduce_keep");
+        self.builder.emit(Instruction::Branch {
+            cond: cmp,
+            true_label: update_label.clone(),
+            false_label: cont_label.clone(),
+        });
+        self.builder.finish_block(&update_label);
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(acc_var),
+            src: value,
+            ty: storage,
+        });
+        self.builder.emit(Instruction::Jump(cont_label.clone()));
+        self.builder.finish_block(&cont_label);
     }
 
     fn lower_avx2_vector_foreach(

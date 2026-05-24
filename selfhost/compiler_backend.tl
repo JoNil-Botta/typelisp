@@ -67,6 +67,26 @@
   [h : bool]) : bool
   (and (backend-and4 a b c d) (backend-and4 e f g h)))
 
+;; Best-available diagnostic for a backend error originating inside `function`
+;;
+;; (#605). When the lowering provenance side table has a source span for the
+;;
+;; function, the diagnostic is stamped with that real line/column via
+;;
+;; `compiler-diagnostic-from-ast-span`; otherwise it falls back to the previous
+;;
+;; `path:1:1` location. `function` is the raw IR function name (the key used by
+;;
+;; the spans table), not the mangled assembly symbol.
+(define (compiler-backend-function-diagnostic
+  [spans : CompilerSourceSpans]
+  [function : String]
+  [message : String]) : CompilerDiagnostic
+  (match (compiler-source-spans-lookup spans function)
+    [(CompilerSomeSourceSpan span)
+      (compiler-diagnostic-from-ast-span "" span message)]
+    [(CompilerNoSourceSpan) (compiler-diagnostic-at-start "" message)]))
+
 (define (compiler-backend-round-up-16 [n : i64]) : i64
   (if (= n 0)
     0
@@ -1202,7 +1222,8 @@
   [types : AstTypeList]
   [int-idx : i64]
   [float-idx : i64]
-  [idx : i64]) : ResultCompilerBackend
+  [idx : i64]
+  [func-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (match args
     [(IrValueNil) (OkCompilerBackend "")]
     [(IrValueCons value rest)
@@ -1231,7 +1252,8 @@
                 rest-types
                 int-idx
                 float-idx
-                (+ idx 1))
+                (+ idx 1)
+                func-diag)
                 [(OkCompilerBackend tail)
                   (OkCompilerBackend
                     (backend-cat5
@@ -1278,13 +1300,18 @@
                     (if (compiler-backend-f64-type? arg-ty)
                       (+ float-idx 1)
                       float-idx)
-                    (+ idx 1))
+                    (+ idx 1)
+                    func-diag)
                     [(OkCompilerBackend tail)
                       (OkCompilerBackend (string-append head tail))]
                     [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
                 [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+            ;; Too-many-call-args (and any other arg-register exhaustion): stamp
+            ;; the diagnostic with the offending function's source span (#605)
+            ;; instead of the previous `1:1` fallback.
             [(ErrBackendReg message)
-              (ErrCompilerBackend (compiler-diagnostic-at-start "" message))])))]))
+              (ErrCompilerBackend
+                (compiler-diagnostic-with-message func-diag message))])))]))
 
 (define (compiler-backend-phi-input-value
   [inputs : CompilerIrPhiInputList]
@@ -1417,7 +1444,8 @@
   [ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]) : ResultCompilerBackend
+  [externs : CompilerIrExternList]
+  [func-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (match instr
     [(IrInstrMov dst src ty)
       (match (compiler-backend-emit-load-typed-value-with-plan
@@ -1465,7 +1493,8 @@
           (compiler-backend-call-param-types name functions externs)
           0
           0
-          0)
+          0
+          func-diag)
           [(OkCompilerBackend args-asm)
             (OkCompilerBackend
               (string-append
@@ -1558,7 +1587,8 @@
   [ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]) : ResultCompilerBackend
+  [externs : CompilerIrExternList]
+  [func-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (match instrs
     [(IrInstrNil) (OkCompilerBackend "")]
     [(IrInstrCons instr rest)
@@ -1574,7 +1604,8 @@
         ret-ty
         plan
         functions
-        externs)
+        externs
+        func-diag)
         [(OkCompilerBackend head)
           (match (compiler-backend-emit-instrs
             target
@@ -1588,7 +1619,8 @@
             ret-ty
             plan
             functions
-            externs)
+            externs
+            func-diag)
             [(OkCompilerBackend tail)
               (OkCompilerBackend (string-append head tail))]
             [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
@@ -1605,7 +1637,8 @@
   [ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]) : ResultCompilerBackend
+  [externs : CompilerIrExternList]
+  [func-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (match block
     [(IrBlock label instrs)
       (match (compiler-backend-emit-instrs
@@ -1620,7 +1653,8 @@
         ret-ty
         plan
         functions
-        externs)
+        externs
+        func-diag)
         [(OkCompilerBackend body)
           (OkCompilerBackend
             (backend-cat4
@@ -1641,7 +1675,8 @@
   [ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]) : ResultCompilerBackend
+  [externs : CompilerIrExternList]
+  [func-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (match blocks
     [(IrBlockNil) (OkCompilerBackend "")]
     [(IrBlockCons block rest)
@@ -1656,7 +1691,8 @@
         ret-ty
         plan
         functions
-        externs)
+        externs
+        func-diag)
         [(OkCompilerBackend head)
           (match (compiler-backend-emit-blocks
             target
@@ -1669,7 +1705,8 @@
             ret-ty
             plan
             functions
-            externs)
+            externs
+            func-diag)
             [(OkCompilerBackend tail)
               (OkCompilerBackend (string-append head tail))]
             [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
@@ -1771,9 +1808,17 @@
   [func : CompilerIrFunction]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
-  [plan : CompilerBackendRuntimePlan]) : ResultCompilerBackend
+  [plan : CompilerBackendRuntimePlan]
+  [spans : CompilerSourceSpans]) : ResultCompilerBackend
   (match func
     [(IrFunction name params ret-ty vars blocks)
+      ;; The provenance fallback diagnostic for this function (#605): backend
+      ;; errors raised while emitting its body stamp this function's source span
+      ;; (or `1:1` when none was recorded) rather than always `1:1`.
+      (let ([func-diag
+          :
+          CompilerDiagnostic
+          (compiler-backend-function-diagnostic spans name "")])
       (let ([reg-plan : CompilerRegPlan (compiler-reg-plan-function func)])
         (let ([raw-assignments
             :
@@ -1807,7 +1852,8 @@
                     ret-ty
                     plan
                     functions
-                    externs)
+                    externs
+                    func-diag)
                     [(OkCompilerBackend body)
                       (let ([frame
                           :
@@ -1831,14 +1877,15 @@
                               "\n")
                             "")))]
                     [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))]))
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))]))
 
 (define (compiler-backend-emit-functions
   [target : CompilerBackendTarget]
   [functions : CompilerIrFunctionList]
   [all-functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
-  [plan : CompilerBackendRuntimePlan]) : ResultCompilerBackend
+  [plan : CompilerBackendRuntimePlan]
+  [spans : CompilerSourceSpans]) : ResultCompilerBackend
   (match functions
     [(IrFunctionNil) (OkCompilerBackend "")]
     [(IrFunctionCons func rest)
@@ -1847,14 +1894,16 @@
         func
         all-functions
         externs
-        plan)
+        plan
+        spans)
         [(OkCompilerBackend head)
           (match (compiler-backend-emit-functions
             target
             rest
             all-functions
             externs
-            plan)
+            plan
+            spans)
             [(OkCompilerBackend tail)
               (OkCompilerBackend (string-append head tail))]
             [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
@@ -3350,20 +3399,44 @@ tl_string_concat:
 
 ;; entry/calls and target-specific runtime helpers.
 
+;; Backend entry points come in two flavors (#605): the original
+;;
+;; program-only variants (kept for existing call sites and smoke tests) supply
+;;
+;; an empty provenance table, so backend diagnostics fall back to `path:1:1`;
+;;
+;; the `-with-spans` variants thread the lowering provenance side table so
+;;
+;; backend errors report the offending function's real source location.
 (define (compiler-backend-emit-program-for-target
   [program : CompilerIrProgram]
   [target : CompilerBackendTarget]) : ResultCompilerBackend
-  (compiler-backend-emit-program-target program target))
+  (compiler-backend-emit-program-target
+    program
+    target
+    (compiler-source-spans-empty)))
 
 (define (compiler-backend-emit-program [program : CompilerIrProgram]) : ResultCompilerBackend
   (compiler-backend-emit-program-for-target program (BackendTargetLinux)))
 
 (define (compiler-backend-emit-program-linux [program : CompilerIrProgram]) : ResultCompilerBackend
-  (compiler-backend-emit-program-target program (BackendTargetLinux)))
+  (compiler-backend-emit-program-for-target program (BackendTargetLinux)))
+
+(define (compiler-backend-emit-program-with-spans
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]) : ResultCompilerBackend
+  (compiler-backend-emit-program-target program (BackendTargetLinux) spans))
+
+(define (compiler-backend-emit-program-with-spans-for-target
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]
+  [target : CompilerBackendTarget]) : ResultCompilerBackend
+  (compiler-backend-emit-program-target program target spans))
 
 (define (compiler-backend-emit-program-target
   [program : CompilerIrProgram]
-  [target : CompilerBackendTarget]) : ResultCompilerBackend
+  [target : CompilerBackendTarget]
+  [spans : CompilerSourceSpans]) : ResultCompilerBackend
   (match (compiler-backend-runtime-plan program)
     [(OkBackendRuntimePlan plan)
       (if (compiler-backend-target-runtime-ok? target plan)
@@ -3376,7 +3449,8 @@ tl_string_concat:
                   functions
                   functions
                   externs
-                  plan)
+                  plan
+                  spans)
                   [(OkCompilerBackend functions-asm)
                     (let ([strings
                         :
@@ -3432,15 +3506,16 @@ tl_string_concat:
 
 (define (compiler-backend-emit-source [src : String]) : ResultCompilerBackend
   (match (lower-compiler-source src)
-    [(OkCompilerLower program) (compiler-backend-emit-program program)]
+    [(OkCompilerLower program spans)
+      (compiler-backend-emit-program-with-spans program spans)]
     [(ErrCompilerLower diag) (ErrCompilerBackend diag)]))
 
 (define (compiler-backend-emit-source-for-target
   [src : String]
   [target : CompilerBackendTarget]) : ResultCompilerBackend
   (match (lower-compiler-source src)
-    [(OkCompilerLower program)
-      (compiler-backend-emit-program-for-target program target)]
+    [(OkCompilerLower program spans)
+      (compiler-backend-emit-program-with-spans-for-target program spans target)]
     [(ErrCompilerLower diag) (ErrCompilerBackend diag)]))
 
 (define (compiler-backend-string-prefix-at?
@@ -4125,7 +4200,8 @@ tl_string_concat:
     (AstTyI64)
     (BackendRuntimePlan false false false false false false false false)
     IrFunctionNil
-    IrExternNil)
+    IrExternNil
+    (compiler-diagnostic-at-start "" ""))
     [(OkCompilerBackend asm) (compiler-backend-string-contains? asm needle)]
     [(ErrCompilerBackend _) false]))
 

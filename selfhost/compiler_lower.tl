@@ -54,15 +54,28 @@
   (OkLowerFunction CompilerIrFunction)
   (ErrLowerFunction CompilerDiagnostic))
 
+;; `lower-decls` also threads the `CompilerSourceSpans` provenance side table
+;;
+;; (#605) so each lowered function's source span is recorded alongside the IR.
 (defenum ResultLowerDecls
   (OkLowerDecls
     CompilerIrGlobalList
     CompilerIrFunctionList
-    CompilerIrExternList)
+    CompilerIrExternList
+    CompilerSourceSpans)
   (ErrLowerDecls CompilerDiagnostic))
 
+;; A successful lowering returns the IR `CompilerIrProgram` plus a
+;;
+;; `CompilerSourceSpans` side table (#605) mapping each lowered function's name
+;;
+;; to the `AstSourceSpan` of its source body, so backend diagnostics can report a
+;;
+;; real source location. The provenance table is kept outside the IR so the
+;;
+;; optimizer and liveness data model stay unchanged.
 (defenum ResultCompilerLower
-  (OkCompilerLower CompilerIrProgram)
+  (OkCompilerLower CompilerIrProgram CompilerSourceSpans)
   (ErrCompilerLower CompilerDiagnostic))
 
 (defenum LowerFieldInfo
@@ -83,6 +96,18 @@
     [(AstExprSpanned _ span)
       (compiler-diagnostic-from-ast-span "" span message)]
     [_ (lower-diagnostic message)]))
+
+;; Best-available source span for an expression: the outermost `AstExprSpanned`
+;;
+;; wrapper the parser attached (#605). Used to populate the lowering provenance
+;;
+;; side table from a function's body. Returns `CompilerNoSourceSpan` for an
+;;
+;; unspanned expression (synthesized IR has no source location).
+(define (lower-ast-expr-span [expr : AstExpr]) : CompilerMaybeSourceSpan
+  (match expr
+    [(AstExprSpanned _ span) (CompilerSomeSourceSpan span)]
+    [_ (CompilerNoSourceSpan)]))
 
 (define (lower-diagnostic-with-path [diag : CompilerDiagnostic] [path : String]) : CompilerDiagnostic
   (compiler-diagnostic-with-path diag path))
@@ -3094,15 +3119,31 @@
     [_
       (ErrLowerValue (lower-diagnostic "lower: unsupported global initializer"))]))
 
+;; Record `name -> body span` into the provenance table (#605). A function whose
+;;
+;; body carries no source span leaves the table unchanged, so the backend simply
+;;
+;; falls back to its default location for that function.
+(define (lower-record-function-span
+  [spans : CompilerSourceSpans]
+  [name : String]
+  [body : AstExpr]) : CompilerSourceSpans
+  (match (lower-ast-expr-span body)
+    [(CompilerSomeSourceSpan span)
+      (compiler-source-spans-insert spans name span)]
+    [(CompilerNoSourceSpan) spans]))
+
 (define (lower-decls
   [ctx : TcContext]
   [top-env : TcTypeEnv]
   [decls : AstDeclList]
   [globals : CompilerIrGlobalList]
   [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]) : ResultLowerDecls
+  [externs : CompilerIrExternList]
+  [spans : CompilerSourceSpans]) : ResultLowerDecls
   (match decls
-    [(AstDeclNil) (OkLowerDecls globals functions externs)]
+    [(AstDeclNil)
+      (OkLowerDecls globals functions externs spans)]
     [(AstDeclCons decl rest)
       (match decl
         [(AstDeclDef name _ expr)
@@ -3116,9 +3157,11 @@
                     rest
                     (lower-global-list-append globals (IrGlobal name ty value))
                     functions
-                    externs)]
+                    externs
+                    spans)]
                 [(ErrLowerValue message) (ErrLowerDecls message)])]
-            [(ErrTcType message) (ErrLowerDecls (lower-diagnostic message))])]
+            [(ErrTcType message)
+              (ErrLowerDecls (lower-diagnostic message))])]
         [(AstDeclExtern name ty)
           (lower-decls
             ctx
@@ -3128,7 +3171,8 @@
             functions
             (lower-extern-list-append
               externs
-              (IrExtern name (tc-resolve-type ctx ty))))]
+              (IrExtern name (tc-resolve-type ctx ty)))
+            spans)]
         [(AstDeclDefFn name params ret body)
           (match (lower-function ctx top-env name params ret body)
             [(OkLowerFunction func)
@@ -3138,14 +3182,15 @@
                 rest
                 globals
                 (lower-function-list-append functions func)
-                externs)]
+                externs
+                (lower-record-function-span spans name body))]
             [(ErrLowerFunction message) (ErrLowerDecls message)])]
         [(AstDeclImport _)
-          (lower-decls ctx top-env rest globals functions externs)]
+          (lower-decls ctx top-env rest globals functions externs spans)]
         [(AstDeclDefEnum _ _)
-          (lower-decls ctx top-env rest globals functions externs)]
+          (lower-decls ctx top-env rest globals functions externs spans)]
         [(AstDeclDefStruct _ _)
-          (lower-decls ctx top-env rest globals functions externs)])]))
+          (lower-decls ctx top-env rest globals functions externs spans)])]))
 
 (define (lower-compiler-program-checked
   [ctx : TcContext]
@@ -3159,9 +3204,10 @@
         decls
         IrGlobalNil
         IrFunctionNil
-        IrExternNil)
-        [(OkLowerDecls globals functions externs)
-          (OkCompilerLower (IrProgram globals functions externs))]
+        IrExternNil
+        (compiler-source-spans-empty))
+        [(OkLowerDecls globals functions externs spans)
+          (OkCompilerLower (IrProgram globals functions externs) spans)]
         [(ErrLowerDecls message) (ErrCompilerLower message)])]))
 
 (define (lower-compiler-program-unlocated [program : AstProgram]) : ResultCompilerLower
@@ -3187,7 +3233,7 @@
   [path : String]
   [program : AstProgram]) : ResultCompilerLower
   (match (lower-compiler-program-unlocated program)
-    [(OkCompilerLower ir) (OkCompilerLower ir)]
+    [(OkCompilerLower ir spans) (OkCompilerLower ir spans)]
     [(ErrCompilerLower diag)
       (ErrCompilerLower (lower-diagnostic-with-path diag path))]))
 
@@ -3245,7 +3291,7 @@
   (match (lower-compiler-source src)
     [(ErrCompilerLower diag)
       (string-eq (compiler-diagnostic-message diag) want)]
-    [(OkCompilerLower _) false]))
+    [(OkCompilerLower _ _) false]))
 
 ;; Scalar match lowering smoke (#568): an i64 literal match with a binding
 
@@ -3428,12 +3474,37 @@
 
 (define (compiler-lower-ok? [src : String]) : bool
   (match (lower-compiler-source src)
-    [(OkCompilerLower _) true]
+    [(OkCompilerLower _ _) true]
+    [(ErrCompilerLower _) false]))
+
+;; Provenance side-table smoke (#605): the smoke source defines two functions
+;;
+;; (`inc` on line 3 and `main` on line 4 with its body on line 5). After lowering
+;;
+;; the spans table must hold exactly those two entries, keyed by function name,
+;;
+;; recording each function body's source start line.
+(define (compiler-lower-span-start-line-ok?
+  [spans : CompilerSourceSpans]
+  [name : String]
+  [want-line : i64]) : bool
+  (match (compiler-source-spans-lookup spans name)
+    [(CompilerSomeSourceSpan span) (= (struct-get span start-line) want-line)]
+    [(CompilerNoSourceSpan) false]))
+
+(define (compiler-lower-spans-ok? [src : String]) : bool
+  (match (lower-compiler-source src)
+    [(OkCompilerLower _ spans)
+      (and
+        (= (compiler-source-spans-count spans) 2)
+        (and
+          (compiler-lower-span-start-line-ok? spans "inc" 3)
+          (compiler-lower-span-start-line-ok? spans "main" 5)))]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-ok-summary? [src : String]) : bool
   (match (lower-compiler-source src)
-    [(OkCompilerLower program)
+    [(OkCompilerLower program _)
       (let ([summary : CompilerIrSummary (compiler-ir-program-summary program)])
         (and
           (= (compiler-ir-summary-globals summary) 1)
@@ -3656,7 +3727,7 @@
 
 (define (compiler-lower-comptime-fold-ok? [src : String] [want : i64]) : bool
   (match (lower-compiler-source src)
-    [(OkCompilerLower program)
+    [(OkCompilerLower program _)
       (match program
         [(IrProgram _ functions _)
           (and
@@ -3670,7 +3741,7 @@
 
 (define (compiler-lower-match-phi-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
-    [(OkCompilerLower program)
+    [(OkCompilerLower program _)
       (match program
         [(IrProgram _ functions _)
           (and
@@ -3684,7 +3755,7 @@
 
 (define (compiler-lower-enum-match-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
-    [(OkCompilerLower program)
+    [(OkCompilerLower program _)
       (match program
         [(IrProgram _ functions _)
           (and
@@ -3702,7 +3773,7 @@
 
 (define (compiler-lower-make-array-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
-    [(OkCompilerLower program)
+    [(OkCompilerLower program _)
       (match program
         [(IrProgram _ functions _)
           (and
@@ -3712,7 +3783,7 @@
 
 (define (compiler-lower-string-runtime-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
-    [(OkCompilerLower program)
+    [(OkCompilerLower program _)
       (match program
         [(IrProgram _ functions _)
           (and
@@ -3740,7 +3811,7 @@
 
 (define (compiler-lower-string-shadow-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
-    [(OkCompilerLower program)
+    [(OkCompilerLower program _)
       (match program
         [(IrProgram _ functions _)
           (and
@@ -3764,7 +3835,9 @@
 
 (define (compiler-lower-self-test) : i64
   (if (and
-    (compiler-lower-ok-summary? (compiler-lower-smoke-source))
+    (and
+      (compiler-lower-ok-summary? (compiler-lower-smoke-source))
+      (compiler-lower-spans-ok? (compiler-lower-smoke-source)))
     (and
       (compiler-lower-ok? (compiler-lower-match-source))
       (and

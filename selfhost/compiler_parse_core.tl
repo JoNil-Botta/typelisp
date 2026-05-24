@@ -1065,7 +1065,9 @@
           [(ErrAstDeclList message) (ErrAstProgram message)])))))
 
 (define (parse-ast-source [src : String]) : ResultAstProgram
-  (parse-ast-program (lex src)))
+  (match (lex-result src)
+    [(OkTokens toks) (parse-ast-program toks)]
+    [(ErrTokens message) (ErrAstProgram message)]))
 
 (define (ast-decl-list-count [decls : AstDeclList]) : i64
   (match decls

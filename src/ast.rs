@@ -48,6 +48,42 @@ pub enum UnOp {
     BitNot,
 }
 
+/// SPMD reduction operator selected by `spmd-reduce`. The operator is a fixed
+/// symbol in source, not an expression. See SPEC.md §5.16.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReduceOp {
+    Sum,
+    Min,
+    Max,
+    All,
+    Any,
+}
+
+impl ReduceOp {
+    /// The source spelling of the operator, used in diagnostics.
+    pub fn name(self) -> &'static str {
+        match self {
+            ReduceOp::Sum => "sum",
+            ReduceOp::Min => "min",
+            ReduceOp::Max => "max",
+            ReduceOp::All => "all",
+            ReduceOp::Any => "any",
+        }
+    }
+
+    /// Parse a reduction operator from its source spelling, if recognized.
+    pub fn from_symbol(s: &str) -> Option<ReduceOp> {
+        match s {
+            "sum" => Some(ReduceOp::Sum),
+            "min" => Some(ReduceOp::Min),
+            "max" => Some(ReduceOp::Max),
+            "all" => Some(ReduceOp::All),
+            "any" => Some(ReduceOp::Any),
+            _ => None,
+        }
+    }
+}
+
 /// Pattern for destructuring bindings
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pattern {
@@ -214,6 +250,22 @@ pub enum Expr {
         start: Box<Expr>,
         end: Box<Expr>,
         body: Box<Expr>,
+    },
+    /// SPMD reduction: `(spmd-reduce op ([i : i64 start end]) init value)`.
+    /// Evaluates to one scalar result. `op` selects the fold (`sum`/`min`/`max`/
+    /// `all`/`any`). `start`, `end`, and `init` are uniform expressions evaluated
+    /// once before the logical loop; `init` is both the accumulator seed and the
+    /// empty-range result. `value` is evaluated once per logical index `i` in
+    /// increasing order and the result is a scalar left fold. The varying index
+    /// is in scope only inside `value`. See SPEC.md §5.16.
+    SpmdReduce {
+        op: ReduceOp,
+        index: Symbol,
+        index_ty: Type,
+        start: Box<Expr>,
+        end: Box<Expr>,
+        init: Box<Expr>,
+        value: Box<Expr>,
     },
     /// Struct field access: `(struct-get s field)`. Reads the named field of the
     /// struct value `s`.

@@ -732,6 +732,13 @@ impl FnLowerer {
             ast::Expr::Foreach {
                 start, end, body, ..
             } => self.expr_diverges(start) || self.expr_diverges(end) || self.expr_diverges(body),
+            ast::Expr::SpmdReduce {
+                start, end, init, ..
+            } => {
+                // `init` is always evaluated; `value` runs only for non-empty
+                // ranges, so it does not force divergence of the reduction.
+                self.expr_diverges(start) || self.expr_diverges(end) || self.expr_diverges(init)
+            }
             ast::Expr::Literal(_) | ast::Expr::Var(_) | ast::Expr::Lambda { .. } => false,
         }
     }
@@ -891,6 +898,10 @@ impl FnLowerer {
             | ast::Expr::While { .. }
             | ast::Expr::Foreach { .. }
             | ast::Expr::ArraySet { .. } => Type::Unit,
+            // A reduction's result type is the seed/result type held by `init`.
+            ast::Expr::SpmdReduce { init, .. } => {
+                self.infer_expr_type_with_locals(init, local_types)
+            }
             ast::Expr::Spanned { expr, .. } => self.infer_expr_type_with_locals(expr, local_types),
         }
     }
@@ -1018,6 +1029,12 @@ impl FnLowerer {
                 end,
                 body,
             } => self.lower_foreach(index, index_ty, start, end, body),
+            // Parsing and type-checking accept `spmd-reduce` (#498), but scalar
+            // fallback lowering is a separate slice (#499). Reaching here means a
+            // well-typed reduction was sent to the backend before that lands.
+            ast::Expr::SpmdReduce { .. } => {
+                unimplemented!("spmd-reduce scalar lowering is not yet implemented (#499)")
+            }
             ast::Expr::Spanned { expr, .. } => self.lower_expr(expr),
         }
     }
@@ -1228,6 +1245,22 @@ impl FnLowerer {
                 let original = local_bindings.clone();
                 local_bindings.insert(index.clone());
                 Self::collect_captured_names(body, candidates, local_bindings, captures);
+                *local_bindings = original;
+            }
+            ast::Expr::SpmdReduce {
+                index,
+                start,
+                end,
+                init,
+                value,
+                ..
+            } => {
+                Self::collect_captured_names(start, candidates, local_bindings, captures);
+                Self::collect_captured_names(end, candidates, local_bindings, captures);
+                Self::collect_captured_names(init, candidates, local_bindings, captures);
+                let original = local_bindings.clone();
+                local_bindings.insert(index.clone());
+                Self::collect_captured_names(value, candidates, local_bindings, captures);
                 *local_bindings = original;
             }
             ast::Expr::Spanned { expr, .. } => {

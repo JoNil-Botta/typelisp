@@ -47,12 +47,6 @@
   (DocNoDeclInfo)
   (DocDeclInfo DocItemKind String))
 
-(define (doc-code [c : char]) : i64
-  (cast c : i64))
-
-(define (doc-char-code-at [src : String] [idx : i64]) : i64
-  (doc-code (string-ref src idx)))
-
 (define (doc-kind-tag [kind : DocItemKind]) : i64
   (match kind
     [(DocKindDefine) 1]
@@ -107,18 +101,18 @@
 (define (doc-item-list-reverse [items : DocItemList]) : DocItemList
   (doc-item-list-reverse-into items DocItemNil))
 
-(define (doc-inline-space-code? [k : i64]) : bool
-  (or (= k 32) (= k 9)))
+(define (doc-inline-space? [c : char]) : bool
+  (or (= c #\space') (= c #\tab')))
 
-(define (doc-newline-code? [k : i64]) : bool
-  (or (= k 10) (= k 13)))
+(define (doc-newline? [c : char]) : bool
+  (or (= c #\newline') (= c #\return')))
 
 (define (doc-line-end [src : String] [start : i64] [n : i64]) : i64
   (let ([i : i64 start] [keep : bool true])
     (begin
       (while keep
         (if (< i n)
-          (if (doc-newline-code? (doc-char-code-at src i))
+          (if (doc-newline? (string-ref src i))
             (set! keep false)
             (set! i (+ i 1)))
           (set! keep false)))
@@ -141,7 +135,7 @@
     (begin
       (while keep
         (if (< i end)
-          (if (doc-inline-space-code? (doc-char-code-at src i))
+          (if (doc-inline-space? (string-ref src i))
             (set! i (+ i 1))
             (set! keep false))
           (set! keep false)))
@@ -158,9 +152,7 @@
           (begin
             (while ok
               (if (< i prefix-len)
-                (if (=
-                  (doc-char-code-at text (+ start i))
-                  (doc-char-code-at prefix i))
+                (if (= (string-ref text (+ start i)) (string-ref prefix i))
                   (set! i (+ i 1))
                   (set! ok false))
                 (set! ok false)))
@@ -210,16 +202,16 @@
     (begin
       (while keep
         (if (< i n)
-          (let ([k : i64 (doc-char-code-at src i)])
+          (let ([c : char (string-ref src i)])
             (if escaped
               (begin
                 (set! escaped false)
                 (set! i (+ i 1)))
-              (if (= k 92)
+              (if (= c #\\')
                 (begin
                   (set! escaped true)
                   (set! i (+ i 1)))
-                (if (= k 34)
+                (if (= c #"')
                   (begin
                     (set! i (+ i 1))
                     (set! keep false))
@@ -245,18 +237,18 @@
     (begin
       (while keep
         (if (< i n)
-          (let ([k : i64 (doc-char-code-at src i)])
-            (if (= k 59)
+          (let ([c : char (string-ref src i)])
+            (if (= c #;')
               (set! i (doc-next-line-start src (doc-line-end src i n) n))
-              (if (= k 34)
+              (if (= c #"')
                 (set! i (doc-scan-string-end src i n))
-                (if (= k 35)
+                (if (= c ##')
                   (set! i (doc-scan-char-literal-end src i n))
-                  (if (or (= k 40) (= k 91))
+                  (if (or (= c #(') (= c #['))
                     (begin
                       (set! depth (+ depth 1))
                       (set! i (+ i 1)))
-                    (if (or (= k 41) (= k 93))
+                    (if (or (= c #)') (= c #]'))
                       (begin
                         (set! depth (- depth 1))
                         (set! i (+ i 1))
@@ -337,8 +329,8 @@
                 (set! pending-doc "")
                 (set! pending-has false)
                 (set! i (doc-next-line-start src line-end n)))
-              (let ([k : i64 (doc-char-code-at src line-start)])
-                (if (= k 59)
+              (let ([c : char (string-ref src line-start)])
+                (if (= c #;')
                   (if (doc-string-prefix-at? src ";;;;" line-start)
                     (begin
                       (set!
@@ -365,7 +357,7 @@
                         (set! pending-doc "")
                         (set! pending-has false)
                         (set! i (doc-next-line-start src line-end n)))))
-                  (if (= k 40)
+                  (if (= c #(')
                     (let ([form-end : i64 (doc-scan-form-end src line-start n)])
                       (let ([signature
                           :

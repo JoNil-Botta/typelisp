@@ -28,55 +28,54 @@
 (define (doc-render-code [c : char]) : i64
   (cast c : i64))
 
-(define (doc-render-char-code-at [src : String] [idx : i64]) : i64
-  (doc-render-code (string-ref src idx)))
+(define (doc-render-alpha? [c : char]) : bool
+  (or (and (>= c #A') (<= c #Z')) (and (>= c #a') (<= c #z'))))
 
-(define (doc-render-alpha-code? [k : i64]) : bool
-  (or (and (>= k 65) (<= k 90)) (and (>= k 97) (<= k 122))))
+(define (doc-render-digit? [c : char]) : bool
+  (and (>= c #0') (<= c #9')))
 
-(define (doc-render-digit-code? [k : i64]) : bool
-  (and (>= k 48) (<= k 57)))
-
-(define (doc-render-anchor-code? [k : i64]) : bool
-  (or
-    (doc-render-alpha-code? k)
-    (or (doc-render-digit-code? k) (or (= k 45) (= k 95)))))
+(define (doc-render-anchor-char? [c : char]) : bool
+  (or (doc-render-alpha? c) (or (doc-render-digit? c) (or (= c #-') (= c #_')))))
 
 (define (doc-render-anchor [name : String]) : String
   (let ([i : i64 0] [n : i64 (string-length name)] [out : String "tl-"])
     (begin
       (while (< i n)
-        (let ([k : i64 (doc-render-char-code-at name i)])
+        (let ([c : char (string-ref name i)])
           (begin
-            (if (doc-render-anchor-code? k)
+            (if (doc-render-anchor-char? c)
               (set! out (string-append out (substring name i 1)))
-              (set! out (string-append out (string-append "-" (int->string k)))))
+              (set!
+                out
+                (string-append
+                  out
+                  (string-append "-" (int->string (doc-render-code c))))))
             (set! i (+ i 1)))))
       out)))
 
 (define (doc-render-escape-one [text : String] [idx : i64]) : String
-  (let ([k : i64 (doc-render-char-code-at text idx)])
-    (if (= k 38)
+  (let ([c : char (string-ref text idx)])
+    (if (= c #&')
       "&amp;"
-      (if (= k 60)
+      (if (= c #<')
         "&lt;"
-        (if (= k 62)
+        (if (= c #>')
           "&gt;"
-          (if (= k 92)
+          (if (= c #\\')
             "\\\\"
-            (if (= k 96)
+            (if (= c #`')
               "\\`"
-              (if (= k 91)
+              (if (= c #[')
                 "\\["
-                (if (= k 93)
+                (if (= c #]')
                   "\\]"
-                  (if (= k 42)
+                  (if (= c #*')
                     "\\*"
-                    (if (= k 95)
+                    (if (= c #_')
                       "\\_"
-                      (if (= k 35)
+                      (if (= c ##')
                         "\\#"
-                        (if (= k 124)
+                        (if (= c #|')
                           "\\|"
                           (substring text idx 1))))))))))))))
 

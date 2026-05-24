@@ -133,36 +133,35 @@
           (set! i (+ i 1))))
       hits)))
 
-(define (fmt-code [c : char]) : i64
-  (cast c : i64))
-
 (define (fmt-is-digit [c : char]) : bool
-  (and (>= (fmt-code c) 48) (<= (fmt-code c) 57)))
+  (and (>= c #0') (<= c #9')))
 
 (define (fmt-is-alpha [c : char]) : bool
-  (let ([k : i64 (fmt-code c)])
-    (or (and (>= k 65) (<= k 90)) (and (>= k 97) (<= k 122)))))
+  (or (and (>= c #A') (<= c #Z')) (and (>= c #a') (<= c #z'))))
 
 (define (fmt-is-space [c : char]) : bool
-  (let ([k : i64 (fmt-code c)])
-    (or (= k 32) (or (= k 9) (or (= k 10) (= k 13))))))
+  (or (= c #\space') (or (= c #\tab') (or (= c #\newline') (= c #\return')))))
 
 (define (fmt-is-symbol-punct [c : char]) : bool
-  (match (fmt-code c)
-    [45 true]
-    [43 true]
-    [42 true]
-    [47 true]
-    [63 true]
-    [33 true]
-    [62 true]
-    [60 true]
-    [61 true]
-    [95 true]
-    [36 true]
-    [37 true]
-    [38 true]
-    [_ false]))
+  (or
+    (= c #-')
+    (or
+      (= c #+')
+      (or
+        (= c #*')
+        (or
+          (= c #/')
+          (or
+            (= c #?')
+            (or
+              (= c #!')
+              (or
+                (= c #>')
+                (or
+                  (= c #<')
+                  (or
+                    (= c #=')
+                    (or (= c #_') (or (= c #$') (or (= c #%') (= c #&'))))))))))))))
 
 (define (fmt-is-symbol-char [c : char]) : bool
   (or (fmt-is-alpha c) (or (fmt-is-digit c) (fmt-is-symbol-punct c))))
@@ -171,7 +170,7 @@
   (let ([c : char (string-ref src i)])
     (if (fmt-is-digit c)
       true
-      (if (= (fmt-code c) 45)
+      (if (= c #-')
         (if (< (+ i 1) n)
           (fmt-is-digit (string-ref src (+ i 1)))
           false)
@@ -180,17 +179,17 @@
 (define (fmt-scan-number-end [src : String] [start : i64] [n : i64]) : i64
   (let ([j : i64 start] [seen-dot : bool false] [keep : bool true])
     (begin
-      (if (and (< j n) (= (fmt-code (string-ref src j)) 45))
+      (if (and (< j n) (= (string-ref src j) #-'))
         (set! j (+ j 1))
         (set! j j))
       (while keep
         (if (< j n)
-          (let ([k : i64 (fmt-code (string-ref src j))])
-            (if (and (= k 46) (not seen-dot))
+          (let ([c : char (string-ref src j)])
+            (if (and (= c #.') (not seen-dot))
               (begin
                 (set! seen-dot true)
                 (set! j (+ j 1)))
-              (if (or (and (>= k 48) (<= k 57)) (= k 95))
+              (if (or (fmt-is-digit c) (= c #_'))
                 (set! j (+ j 1))
                 (set! keep false))))
           (set! keep false)))
@@ -212,7 +211,7 @@
     (begin
       (while keep
         (if (< j n)
-          (if (= (fmt-code (string-ref src j)) 10)
+          (if (= (string-ref src j) #\newline')
             (set! keep false)
             (set! j (+ j 1)))
           (set! keep false)))
@@ -223,16 +222,16 @@
     (begin
       (while keep
         (if (< j n)
-          (let ([k : i64 (fmt-code (string-ref src j))])
+          (let ([c : char (string-ref src j)])
             (if escaped
               (begin
                 (set! escaped false)
                 (set! j (+ j 1)))
-              (if (= k 92)
+              (if (= c #\\')
                 (begin
                   (set! escaped true)
                   (set! j (+ j 1)))
-                (if (= k 34)
+                (if (= c #"')
                   (begin
                     (set! j (+ j 1))
                     (set! keep false))
@@ -252,7 +251,7 @@
           (set! keep false)))
       (while keep
         (if (< j n)
-          (if (= (fmt-code (string-ref src j)) 39)
+          (if (= (string-ref src j) #'')
             (begin
               (set! j (+ j 1))
               (set! keep false))
@@ -278,11 +277,10 @@
     [count : i64 0])
     (begin
       (while (< i n)
-        (let ([c : char (string-ref src i)]
-          [k : i64 (fmt-code (string-ref src i))])
+        (let ([c : char (string-ref src i)])
           (if (fmt-is-space c)
             (set! i (+ i 1))
-            (if (= k 59)
+            (if (= c #;')
               (let ([end : i64 (fmt-scan-comment-end src i n)])
                 (begin
                   (fmt-store-token
@@ -291,49 +289,49 @@
                     (FmtComment (substring src i (- end i))))
                   (set! count (+ count 1))
                   (set! i end)))
-              (if (= k 40)
+              (if (= c #(')
                 (begin
                   (fmt-store-token tokens count (FmtLParen))
                   (set! count (+ count 1))
                   (set! i (+ i 1)))
-                (if (= k 41)
+                (if (= c #)')
                   (begin
                     (fmt-store-token tokens count (FmtRParen))
                     (set! count (+ count 1))
                     (set! i (+ i 1)))
-                  (if (= k 91)
+                  (if (= c #[')
                     (begin
                       (fmt-store-token tokens count (FmtLBracket))
                       (set! count (+ count 1))
                       (set! i (+ i 1)))
-                    (if (= k 93)
+                    (if (= c #]')
                       (begin
                         (fmt-store-token tokens count (FmtRBracket))
                         (set! count (+ count 1))
                         (set! i (+ i 1)))
-                      (if (= k 58)
+                      (if (= c #:')
                         (begin
                           (fmt-store-token tokens count (FmtColon))
                           (set! count (+ count 1))
                           (set! i (+ i 1)))
-                        (if (= k 39)
+                        (if (= c #'')
                           (begin
                             (fmt-store-token tokens count (FmtQuote))
                             (set! count (+ count 1))
                             (set! i (+ i 1)))
-                          (if (= k 96)
+                          (if (= c #`')
                             (begin
                               (fmt-store-token tokens count (FmtBacktick))
                               (set! count (+ count 1))
                               (set! i (+ i 1)))
-                            (if (= k 46)
+                            (if (= c #.')
                               (begin
                                 (fmt-store-token tokens count (FmtDot))
                                 (set! count (+ count 1))
                                 (set! i (+ i 1)))
-                              (if (= k 44)
+                              (if (= c #,')
                                 (if (< (+ i 1) n)
-                                  (if (= (fmt-code (string-ref src (+ i 1))) 64)
+                                  (if (= (string-ref src (+ i 1)) #@')
                                     (begin
                                       (fmt-store-token
                                         tokens
@@ -349,7 +347,7 @@
                                     (fmt-store-token tokens count (FmtComma))
                                     (set! count (+ count 1))
                                     (set! i (+ i 1))))
-                                (if (= k 34)
+                                (if (= c #"')
                                   (let ([end
                                       :
                                       i64
@@ -361,7 +359,7 @@
                                         (FmtString (substring src i (- end i))))
                                       (set! count (+ count 1))
                                       (set! i end)))
-                                  (if (= k 35)
+                                  (if (= c ##')
                                     (let ([end
                                         :
                                         i64

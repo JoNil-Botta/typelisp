@@ -29,11 +29,8 @@
   [e : String]) : String
   (string-append a (string-append b (string-append c (string-append d e)))))
 
-(define (lsp-frame-char-code-at [text : String] [idx : i64]) : i64
-  (cast (string-ref text idx) : i64))
-
-(define (lsp-frame-space-code? [code : i64]) : bool
-  (or (= code 32) (= code 9)))
+(define (lsp-frame-space? [c : char]) : bool
+  (or (= c #\space') (= c #\tab')))
 
 (define (lsp-frame-trim-right-space-cr [text : String]) : String
   (let ([i : i64 (string-length text)]
@@ -43,8 +40,8 @@
       (while (> i 0)
         (if done
           (set! i 0)
-          (let ([code : i64 (lsp-frame-char-code-at text (- i 1))])
-            (if (or (lsp-frame-space-code? code) (= code 13))
+          (let ([c : char (string-ref text (- i 1))])
+            (if (or (lsp-frame-space? c) (= c #\return'))
               (begin
                 (set! end (- i 1))
                 (set! i (- i 1)))
@@ -60,7 +57,7 @@
       (while (< i n)
         (if done
           (set! i n)
-          (if (lsp-frame-space-code? (lsp-frame-char-code-at text i))
+          (if (lsp-frame-space? (string-ref text i))
             (begin
               (set! start (+ i 1))
               (set! i (+ i 1)))
@@ -80,9 +77,7 @@
       (begin
         (while (< i prefix-len)
           (if ok
-            (if (=
-              (lsp-frame-char-code-at text i)
-              (lsp-frame-char-code-at prefix i))
+            (if (= (string-ref text i) (string-ref prefix i))
               (set! i (+ i 1))
               (begin
                 (set! ok false)
@@ -90,8 +85,8 @@
             (set! i prefix-len)))
         ok))))
 
-(define (lsp-frame-digit-code? [code : i64]) : bool
-  (and (>= code 48) (<= code 57)))
+(define (lsp-frame-digit? [c : char]) : bool
+  (and (>= c #0') (<= c #9')))
 
 (define (lsp-frame-decimal? [text : String]) : bool
   (let ([n : i64 (string-length text)] [i : i64 0] [ok : bool true])
@@ -100,7 +95,7 @@
       (begin
         (while (< i n)
           (if ok
-            (if (lsp-frame-digit-code? (lsp-frame-char-code-at text i))
+            (if (lsp-frame-digit? (string-ref text i))
               (set! i (+ i 1))
               (begin
                 (set! ok false)

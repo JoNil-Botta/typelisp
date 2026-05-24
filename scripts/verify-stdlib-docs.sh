@@ -54,6 +54,40 @@ check_source_docs() {
         echo "stdlib doc verification failed: $module has no item docs" >&2
         exit 1
     fi
+    if ! awk '
+        BEGIN {
+            pending_doc = 0
+            missing = 0
+        }
+        /^[[:space:]]*;;;;/ {
+            pending_doc = 0
+            next
+        }
+        /^[[:space:]]*;;;($|[^;])/ {
+            pending_doc = 1
+            next
+        }
+        /^[[:space:]]*$/ {
+            next
+        }
+        /^\((define|defenum|defstruct|extern)([[:space:]]|\()/ {
+            if (!pending_doc) {
+                printf "%s:%d: missing item docs before %s\n", FILENAME, NR, $0
+                missing = 1
+            }
+            pending_doc = 0
+            next
+        }
+        {
+            pending_doc = 0
+        }
+        END {
+            exit missing
+        }
+    ' "$module"; then
+        echo "stdlib doc verification failed: $module has undocumented top-level declarations" >&2
+        exit 1
+    fi
 }
 
 check_markdown() {

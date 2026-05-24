@@ -37,6 +37,7 @@
 (define (env-string-list-cons [value : String] [rest : EnvStringList]) : EnvStringList
   (EnvStringCons value rest))
 
+;;; Reverse `items` onto `acc`, allocating a fresh active-arena list spine.
 (define (env-string-list-reverse-onto
   [items : EnvStringList]
   [acc : EnvStringList]) : EnvStringList
@@ -92,6 +93,7 @@
     [(EnvSomeString value) (EnvSomeStringList (env-path-split value))]
     [(EnvNoString) (EnvNoStringList)]))
 
+;;; Append PATH-style `items` to `acc`, allocating joined string segments.
 (define (env-path-join-tail
   [acc : String]
   [items : EnvStringList]

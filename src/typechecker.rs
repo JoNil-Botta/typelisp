@@ -161,6 +161,25 @@ impl TypeChecker {
             "int->string".into(),
             Type::Func(vec![Type::I64], Box::new(Type::String)),
         );
+        // `(string->f64 s)` -> the f64 the decimal string `s` denotes. The
+        // floating-point companion of `string->int`: skips an optional leading
+        // sign, accumulates an integer mantissa across an optional `.`, and
+        // applies an optional `e`/`E` exponent (best-effort, like `string->int`;
+        // malformed bytes stop the parse and an empty string yields 0.0). It is
+        // the self-hosted lexer's numeric-literal primitive for floats (#721,
+        // unblocks #665).
+        globals.insert(
+            "string->f64".into(),
+            Type::Func(vec![Type::String], Box::new(Type::F64)),
+        );
+        // `(f64->bits x)` -> the IEEE-754 bit pattern of `x` as a u64 (mirrors
+        // Rust's `f64::to_bits`). A pure bit-reinterpret, not a numeric cast; the
+        // self-hosted backend uses it to serialize an f64 constant deterministically
+        // as `.quad <bits>` / `movabsq` (#721, unblocks #663).
+        globals.insert(
+            "f64->bits".into(),
+            Type::Func(vec![Type::F64], Box::new(Type::U64)),
+        );
         // `(read-file path)` -> the full file contents as a heap-owned String.
         // V1 is Linux/compiler-driver oriented and panic-on-error; recoverable
         // file errors are deferred until the Result/Option model is settled.

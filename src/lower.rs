@@ -3821,6 +3821,42 @@ impl FnLowerer {
             return Value::Var(dst);
         }
 
+        // `(string->f64 s)` parses the decimal string `s` to an f64. Like
+        // `string->int`, the operand is a pointer to inline fat `{ ptr, len }`
+        // storage; extract the data pointer (offset 0) and length (offset 8) and
+        // dispatch to the emit-on-demand runtime `tl_string_to_f64(ptr, len) ->
+        // f64`. A `Call` (not an inline loop) keeps the parse alive through DCE.
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "string->f64"
+            && args.len() == 1
+        {
+            let s = self.lower_expr_as(&args[0], &Type::String);
+            let (ptr, len) = self.load_string_fields(&s);
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: "tl_string_to_f64".to_string(),
+                args: vec![Value::Var(ptr), Value::Var(len)],
+                ty: Type::F64,
+            });
+            self.record_local(dst, Type::F64);
+            return Value::Var(dst);
+        }
+
+        // `(f64->bits x)` reinterprets the f64 `x` as its IEEE-754 u64 bit
+        // pattern. This is a bit-reinterpret, not a numeric conversion: it lowers
+        // to a `Cast` from f64 to u64, which the backend implements by moving the
+        // raw bits out of the XMM register (`movq %xmm0, %rax`). The optimizer's
+        // constant folding leaves float casts alone (`eval_cast` only folds
+        // integer casts), so the reinterpret is preserved end-to-end.
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "f64->bits"
+            && args.len() == 1
+        {
+            let x = self.lower_expr_as(&args[0], &Type::F64);
+            return self.cast_value(x, Type::U64);
+        }
+
         // `(arg-count)` observes the Linux argc value captured by `_start`.
         if let ast::Expr::Var(name) = func.unspan()
             && name == "arg-count"

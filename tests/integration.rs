@@ -340,6 +340,22 @@ fn type_lisp_programs_compile_link_and_run() {
             stdout: "foobar\n",
             deps: &[],
         },
+        // `(string->f64 s)` (#721): parse decimal/fraction/signed/scientific
+        // floats and compare against f64 literals; 42 iff all match.
+        Case {
+            name: "string_to_f64",
+            exit_code: 42,
+            stdout: "",
+            deps: &[],
+        },
+        // `(f64->bits x)` (#721): IEEE-754 bit-reinterpret; 42 iff the bit
+        // patterns of 1.0/2.0/0.5 match their known encodings.
+        Case {
+            name: "f64_to_bits",
+            exit_code: 42,
+            stdout: "",
+            deps: &[],
+        },
         // Multi-file program (#44): entry imports a helper module and calls a
         // function defined there; exercises the module-graph loader end to end.
         Case {
@@ -928,6 +944,18 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             name: "string_append",
             exit_code: 0,
             stdout: "foobar\n",
+            deps: &[],
+        },
+        Case {
+            name: "string_to_f64",
+            exit_code: 42,
+            stdout: "",
+            deps: &[],
+        },
+        Case {
+            name: "f64_to_bits",
+            exit_code: 42,
+            stdout: "",
             deps: &[],
         },
         Case {

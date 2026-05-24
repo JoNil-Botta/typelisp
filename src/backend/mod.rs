@@ -396,6 +396,11 @@ pub struct X86_64Backend {
     /// (libc-free, syscall-free) parse runtime into the program's `.s`. Set when
     /// `(string->int s)` is lowered.
     needs_string_to_int_runtime: bool,
+    /// Whether the program references the float-parse helper `tl_string_to_f64`
+    /// and the backend must therefore emit the self-contained (libc-free,
+    /// syscall-free) parse runtime into the program's `.s`. Set when
+    /// `(string->f64 s)` is lowered.
+    needs_string_to_f64_runtime: bool,
     /// Whether the program references the integer-to-string helper
     /// `tl_int_to_string` and the backend must therefore emit the
     /// self-contained (libc-free) decimal-formatting runtime into the
@@ -708,10 +713,15 @@ fn validate_function(
                 } => {
                     check_operand(src, global_types)
                         .map_err(|w| unsupported_value(&func.name, &w))?;
-                    // `f64 <-> f32` precision conversions are supported. Any
-                    // other cast touching a float (int <-> float) is not.
+                    // `f64 <-> f32` precision conversions are supported, as is a
+                    // float -> same-width integer bit-reinterpret (the
+                    // `f64->bits` / `f32->bits` builtins, #721). Any other cast
+                    // touching a float (numeric int <-> float) is not.
                     let float_to_float = from_ty.is_float() && to_ty.is_float();
-                    if (from_ty.is_float() || to_ty.is_float()) && !float_to_float {
+                    let float_to_bits =
+                        from_ty.is_float() && to_ty.is_integer() && from_ty.size() == to_ty.size();
+                    if (from_ty.is_float() || to_ty.is_float()) && !float_to_float && !float_to_bits
+                    {
                         return unsupported("floating-point cast");
                     }
                 }
@@ -1949,6 +1959,7 @@ impl X86_64Backend {
             needs_shift_runtime: false,
             needs_string_eq_runtime: false,
             needs_string_to_int_runtime: false,
+            needs_string_to_f64_runtime: false,
             needs_int_to_string_runtime: false,
             needs_substring_runtime: false,
             needs_string_concat_runtime: false,
@@ -2013,6 +2024,7 @@ impl X86_64Backend {
         self.needs_shift_runtime = Self::needs_shift_runtime(program);
         self.needs_string_eq_runtime = Self::needs_string_eq_runtime(program);
         self.needs_string_to_int_runtime = Self::needs_string_to_int_runtime(program);
+        self.needs_string_to_f64_runtime = Self::needs_string_to_f64_runtime(program);
         self.needs_int_to_string_runtime = Self::needs_int_to_string_runtime(program);
         self.needs_substring_runtime = Self::needs_substring_runtime(program);
         self.needs_string_concat_runtime = Self::needs_string_concat_runtime(program);
@@ -2146,6 +2158,7 @@ impl X86_64Backend {
                 || (self.needs_shift_runtime && symbol == "tl_shift_abort")
                 || (self.needs_string_eq_runtime && symbol == "tl_string_eq")
                 || (self.needs_string_to_int_runtime && symbol == "tl_string_to_int")
+                || (self.needs_string_to_f64_runtime && symbol == "tl_string_to_f64")
                 || (self.needs_int_to_string_runtime && symbol == "tl_int_to_string")
                 || (self.needs_substring_runtime && symbol == "tl_substring")
                 || (self.needs_string_concat_runtime && symbol == "tl_string_concat")
@@ -2200,6 +2213,9 @@ impl X86_64Backend {
         }
         if self.needs_string_to_int_runtime {
             self.generate_string_to_int_runtime_functions();
+        }
+        if self.needs_string_to_f64_runtime {
+            self.generate_string_to_f64_runtime_functions();
         }
         if self.needs_int_to_string_runtime {
             self.generate_int_to_string_runtime_functions();
@@ -2605,6 +2621,32 @@ impl X86_64Backend {
             .externs
             .iter()
             .any(|(name, _)| name == "tl_string_to_int");
+        referenced_in_calls || referenced_in_externs
+    }
+
+    /// Whether the program references the float-parse helper `tl_string_to_f64`
+    /// (through a direct `Call` or an `extern` declaration) and does not define
+    /// its own. When true the backend emits the self-contained (libc-free,
+    /// syscall-free) parse runtime into the program's `.s`.
+    fn needs_string_to_f64_runtime(program: &Program) -> bool {
+        let defines_own = program
+            .functions
+            .iter()
+            .any(|f| f.name == "tl_string_to_f64");
+        if defines_own {
+            return false;
+        }
+        let referenced_in_calls = program.functions.iter().any(|func| {
+            func.blocks.iter().any(|block| {
+                block.instructions.iter().any(|instr| {
+                    matches!(instr, Instruction::Call { func, .. } if func == "tl_string_to_f64")
+                })
+            })
+        });
+        let referenced_in_externs = program
+            .externs
+            .iter()
+            .any(|(name, _)| name == "tl_string_to_f64");
         referenced_in_calls || referenced_in_externs
     }
 
@@ -5086,6 +5128,184 @@ impl X86_64Backend {
         self.emit("");
     }
 
+    /// Emit the self-contained decimal-float-parse helper
+    /// `tl_string_to_f64(ptr, len) -> f64`.
+    ///
+    /// ABI (System V): `ptr` in `%rdi`, `len` in `%rsi`; the parsed `f64` leaves
+    /// in `%xmm0`. The routine is the floating-point companion of
+    /// `tl_string_to_int`: it skips an optional leading sign, accumulates an
+    /// integer mantissa (`acc = acc*10 + (byte - '0')`) across an optional `.`
+    /// (counting fractional digits), then applies an optional `e`/`E` exponent,
+    /// and finally computes `mantissa * 10^(exp - frac_digits)` by repeated
+    /// `mulsd`/`divsd` against the constant `10.0`. Like `tl_string_to_int` it is
+    /// a best-effort parse: an empty string yields `0.0`, a malformed byte stops
+    /// the scan, and mantissa overflow is not validated. The scale-by-repeated-
+    /// division step can differ from a correctly-rounded parse by up to 1 ULP for
+    /// fractions needing more than ~15 significant digits, but is deterministic.
+    /// It is pure (only reads the operand buffer; no `syscall`, no libc, no
+    /// writes, no `call`), so it is safe to emit unconditionally when referenced.
+    fn generate_string_to_f64_runtime_functions(&mut self) {
+        self.emit("    .globl tl_string_to_f64");
+        self.emit("tl_string_to_f64:");
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            // Windows x64: ptr=%rcx, len=%rdx. The shared body uses %rdi/%rsi as
+            // the cursor/remaining-length (callee-saved on Windows), so save them
+            // and move the arguments in; restore on the way out. The body makes no
+            // `call`, so no stack alignment / shadow space is required.
+            self.emit("    push %rdi");
+            self.emit("    push %rsi");
+            self.emit("    movq %rcx, %rdi");
+            self.emit("    movq %rdx, %rsi");
+            self.emit_string_to_f64_body();
+            self.emit("    pop %rsi");
+            self.emit("    pop %rdi");
+            self.emit("    ret");
+        } else {
+            // System V: ptr already in %rdi, len in %rsi (both caller-saved).
+            self.emit_string_to_f64_body();
+            self.emit("    ret");
+        }
+        self.emit("");
+    }
+
+    /// Emit the body of `tl_string_to_f64` shared by both ABIs. On entry the
+    /// cursor is in `%rdi` and the remaining length in `%rsi`; on exit the result
+    /// is in `%xmm0` and control falls through `.L_tl_string_to_f64_done` (the
+    /// caller supplies the matching `ret`/epilogue). Scratch: `%rax` mantissa,
+    /// `%rcx` current byte, `%rdx` exponent sign, `%r8` mantissa sign, `%r9`
+    /// fractional-digit count, `%r10` seen-dot flag, `%r11` exponent, `%xmm1` the
+    /// `10.0` scale constant — all caller-saved in both calling conventions.
+    fn emit_string_to_f64_body(&mut self) {
+        // mantissa=0, signs/flags/exponent=0, result=0.0 (covers empty/zero).
+        self.emit("    xorq %rax, %rax");
+        self.emit("    xorq %r8, %r8");
+        self.emit("    xorq %r9, %r9");
+        self.emit("    xorq %r10, %r10");
+        self.emit("    xorq %r11, %r11");
+        self.emit("    xorq %rdx, %rdx");
+        self.emit("    pxor %xmm0, %xmm0");
+        // Empty string -> 0.0.
+        self.emit("    testq %rsi, %rsi");
+        self.emit("    jz .L_tl_string_to_f64_done");
+        // Optional leading sign.
+        self.emit("    movzbl (%rdi), %ecx");
+        self.emit("    cmpb $45, %cl"); // '-'
+        self.emit("    jne .L_tl_string_to_f64_check_plus");
+        self.emit("    movq $1, %r8");
+        self.emit("    incq %rdi");
+        self.emit("    decq %rsi");
+        self.emit("    jmp .L_tl_string_to_f64_mant_loop");
+        self.emit(".L_tl_string_to_f64_check_plus:");
+        self.emit("    cmpb $43, %cl"); // '+'
+        self.emit("    jne .L_tl_string_to_f64_mant_loop");
+        self.emit("    incq %rdi");
+        self.emit("    decq %rsi");
+        // Mantissa loop: digits, an optional single '.', or an 'e'/'E' exponent.
+        self.emit(".L_tl_string_to_f64_mant_loop:");
+        self.emit("    testq %rsi, %rsi");
+        self.emit("    jz .L_tl_string_to_f64_build");
+        self.emit("    movzbl (%rdi), %ecx");
+        self.emit("    cmpb $46, %cl"); // '.'
+        self.emit("    jne .L_tl_string_to_f64_not_dot");
+        // A second '.' ends the parse.
+        self.emit("    testq %r10, %r10");
+        self.emit("    jnz .L_tl_string_to_f64_build");
+        self.emit("    movq $1, %r10");
+        self.emit("    incq %rdi");
+        self.emit("    decq %rsi");
+        self.emit("    jmp .L_tl_string_to_f64_mant_loop");
+        self.emit(".L_tl_string_to_f64_not_dot:");
+        self.emit("    cmpb $101, %cl"); // 'e'
+        self.emit("    je .L_tl_string_to_f64_exponent");
+        self.emit("    cmpb $69, %cl"); // 'E'
+        self.emit("    je .L_tl_string_to_f64_exponent");
+        // Not a digit -> stop the scan.
+        self.emit("    cmpb $48, %cl");
+        self.emit("    jb .L_tl_string_to_f64_build");
+        self.emit("    cmpb $57, %cl");
+        self.emit("    ja .L_tl_string_to_f64_build");
+        // mantissa = mantissa*10 + (byte - '0').
+        self.emit("    imulq $10, %rax, %rax");
+        self.emit("    subq $48, %rcx");
+        self.emit("    addq %rcx, %rax");
+        // Count a fractional digit once past the '.'.
+        self.emit("    testq %r10, %r10");
+        self.emit("    jz .L_tl_string_to_f64_mant_next");
+        self.emit("    incq %r9");
+        self.emit(".L_tl_string_to_f64_mant_next:");
+        self.emit("    incq %rdi");
+        self.emit("    decq %rsi");
+        self.emit("    jmp .L_tl_string_to_f64_mant_loop");
+        // Exponent: optional sign then decimal digits, accumulated in %r11.
+        self.emit(".L_tl_string_to_f64_exponent:");
+        self.emit("    incq %rdi");
+        self.emit("    decq %rsi");
+        self.emit("    testq %rsi, %rsi");
+        self.emit("    jz .L_tl_string_to_f64_build");
+        self.emit("    movzbl (%rdi), %ecx");
+        self.emit("    cmpb $45, %cl"); // '-'
+        self.emit("    jne .L_tl_string_to_f64_exp_check_plus");
+        self.emit("    movq $1, %rdx");
+        self.emit("    incq %rdi");
+        self.emit("    decq %rsi");
+        self.emit("    jmp .L_tl_string_to_f64_exp_loop");
+        self.emit(".L_tl_string_to_f64_exp_check_plus:");
+        self.emit("    cmpb $43, %cl"); // '+'
+        self.emit("    jne .L_tl_string_to_f64_exp_loop");
+        self.emit("    incq %rdi");
+        self.emit("    decq %rsi");
+        self.emit(".L_tl_string_to_f64_exp_loop:");
+        self.emit("    testq %rsi, %rsi");
+        self.emit("    jz .L_tl_string_to_f64_exp_apply");
+        self.emit("    movzbl (%rdi), %ecx");
+        self.emit("    cmpb $48, %cl");
+        self.emit("    jb .L_tl_string_to_f64_exp_apply");
+        self.emit("    cmpb $57, %cl");
+        self.emit("    ja .L_tl_string_to_f64_exp_apply");
+        self.emit("    imulq $10, %r11, %r11");
+        self.emit("    subq $48, %rcx");
+        self.emit("    addq %rcx, %r11");
+        self.emit("    incq %rdi");
+        self.emit("    decq %rsi");
+        self.emit("    jmp .L_tl_string_to_f64_exp_loop");
+        self.emit(".L_tl_string_to_f64_exp_apply:");
+        self.emit("    testq %rdx, %rdx");
+        self.emit("    jz .L_tl_string_to_f64_build");
+        self.emit("    negq %r11");
+        // Build: value = mantissa * 10^(exp - frac_digits).
+        self.emit(".L_tl_string_to_f64_build:");
+        self.emit("    subq %r9, %r11");
+        self.emit("    cvtsi2sdq %rax, %xmm0");
+        // Materialize 10.0 (0x4024000000000000) into %xmm1 without touching memory.
+        self.emit("    movabsq $0x4024000000000000, %rax");
+        self.emit("    movq %rax, %xmm1");
+        self.emit("    testq %r11, %r11");
+        self.emit("    jz .L_tl_string_to_f64_apply_sign");
+        self.emit("    jg .L_tl_string_to_f64_pow_pos");
+        // Negative net power: divide |net| times.
+        self.emit("    negq %r11");
+        self.emit(".L_tl_string_to_f64_pow_neg_loop:");
+        self.emit("    divsd %xmm1, %xmm0");
+        self.emit("    decq %r11");
+        self.emit("    jnz .L_tl_string_to_f64_pow_neg_loop");
+        self.emit("    jmp .L_tl_string_to_f64_apply_sign");
+        // Positive net power: multiply net times.
+        self.emit(".L_tl_string_to_f64_pow_pos:");
+        self.emit(".L_tl_string_to_f64_pow_pos_loop:");
+        self.emit("    mulsd %xmm1, %xmm0");
+        self.emit("    decq %r11");
+        self.emit("    jnz .L_tl_string_to_f64_pow_pos_loop");
+        // Apply the mantissa sign by flipping the IEEE-754 sign bit.
+        self.emit(".L_tl_string_to_f64_apply_sign:");
+        self.emit("    testq %r8, %r8");
+        self.emit("    jz .L_tl_string_to_f64_done");
+        self.emit("    movq %xmm0, %rax");
+        self.emit("    movabsq $0x8000000000000000, %rcx");
+        self.emit("    xorq %rcx, %rax");
+        self.emit("    movq %rax, %xmm0");
+        self.emit(".L_tl_string_to_f64_done:");
+    }
+
     /// Emit the self-contained integer-to-string helper
     /// `tl_int_to_string(n) -> ptr`.
     ///
@@ -5655,6 +5875,28 @@ impl X86_64Backend {
                         _ => {}
                     }
                     self.store_xmm_value("%xmm0", dst_offset, to_ty);
+                    return;
+                }
+                // Bit-reinterpret a float as its same-width integer (the
+                // `f64->bits` / `f32->bits` builtins): move the raw IEEE-754 bits
+                // out of the XMM register into a GPR with `movq`/`movd` — no
+                // numeric conversion. (The typechecker rejects ordinary
+                // integer<->float casts, so the only float->integer casts that
+                // reach the backend are these reinterprets.) Used by the
+                // self-hosted backend to serialize f64 constants (#721).
+                if is_scalar_float(from_ty) && !is_scalar_float(to_ty) {
+                    self.load_value(src, "%xmm0", from_ty);
+                    match from_ty {
+                        Type::F32 => self.emit("    movd %xmm0, %eax"),
+                        _ => self.emit("    movq %xmm0, %rax"),
+                    }
+                    match to_ty.size() {
+                        8 => self.emit(&format!("    movq %rax, {}(%rbp)", dst_offset)),
+                        4 => self.emit(&format!("    movl %eax, {}(%rbp)", dst_offset)),
+                        2 => self.emit(&format!("    movw %ax, {}(%rbp)", dst_offset)),
+                        1 => self.emit(&format!("    movb %al, {}(%rbp)", dst_offset)),
+                        _ => {}
+                    }
                     return;
                 }
                 self.load_value(src, "%rax", from_ty);
@@ -7241,6 +7483,10 @@ impl X86_64Backend {
             // referenced by its raw runtime symbol so it resolves to itself
             // rather than being mangled to `_tl_tl_string_to_int`.
             "tl_string_to_int".into()
+        } else if name == "tl_string_to_f64" && self.needs_string_to_f64_runtime {
+            // The backend-provided float-parse helper resolves to its raw runtime
+            // symbol rather than being mangled to `_tl_tl_string_to_f64`.
+            "tl_string_to_f64".into()
         } else if name == "tl_int_to_string" && self.needs_int_to_string_runtime {
             // The backend-provided integer-to-string helper resolves to its raw
             // runtime symbol rather than being mangled to `_tl_tl_int_to_string`.
@@ -12569,6 +12815,61 @@ mod tests {
         // A program that never parses strings must not emit the helper.
         let asm = compile_ok(r#"(define (main) : i64 (string-length "hi"))"#);
         assert!(!asm.contains("tl_string_to_int"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_string_to_f64_emits_runtime_and_calls_it() {
+        // `(string->f64 s)` calls the emit-on-demand `tl_string_to_f64` helper,
+        // which the backend defines inline (gated like `tl_string_to_int`, #721).
+        let asm = compile_ok(
+            r#"(define (parse [s : String]) : f64 (string->f64 s))
+               (define (main) : i64 (cast (f64->bits (parse "1.5")) : i64))"#,
+        );
+
+        // The runtime function is emitted and globally visible.
+        assert!(asm.contains("    .globl tl_string_to_f64"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_string_to_f64:"), "asm:\n{}", asm);
+
+        // The call site dispatches to the raw runtime symbol (not mangled).
+        assert!(asm.contains("    call tl_string_to_f64"), "asm:\n{}", asm);
+        assert!(!asm.contains("_tl_tl_string_to_f64"), "asm:\n{}", asm);
+
+        // The helper converts the integer mantissa to a double and scales by the
+        // `10.0` constant (0x4024000000000000), and is syscall/libc-free (it
+        // neither allocates nor writes).
+        assert!(asm.contains("    cvtsi2sdq %rax, %xmm0"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("    movabsq $0x4024000000000000, %rax"),
+            "asm:\n{}",
+            asm
+        );
+        let body = asm
+            .split("tl_string_to_f64:")
+            .nth(1)
+            .expect("tl_string_to_f64 body");
+        let body = body.split("\n_start:").next().unwrap_or(body);
+        assert!(
+            !body.contains("syscall"),
+            "tl_string_to_f64 must be syscall-free:\n{}",
+            body
+        );
+    }
+
+    #[test]
+    fn test_compile_no_string_to_f64_means_no_runtime() {
+        // A program that never parses floats must not emit the helper.
+        let asm = compile_ok(r#"(define (main) : i64 (string-length "hi"))"#);
+        assert!(!asm.contains("tl_string_to_f64"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_f64_to_bits_reinterprets_not_converts() {
+        // `(f64->bits x)` is a bit-reinterpret: the raw IEEE-754 bits move out of
+        // the XMM register (`movq %xmm0, %rax`), NOT a numeric float->int
+        // truncation (no `cvttsd2si`). (#721)
+        let asm = compile_ok(r#"(define (main) : i64 (cast (f64->bits 1.5) : i64))"#);
+        assert!(asm.contains("    movq %xmm0, %rax"), "asm:\n{}", asm);
+        assert!(!asm.contains("cvttsd2si"), "asm:\n{}", asm);
     }
 
     #[test]

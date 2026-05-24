@@ -107,6 +107,8 @@ fn native_cases() -> Vec<Case> {
         case("string_match", 42, ""),
         case("substring", 33, ""),
         case("string_append", 0, "foobar\n"),
+        case("string_to_f64", 42, ""),
+        case("f64_to_bits", 42, ""),
         case_with_deps("modules_main", 30, "", &["modules_helper.tl"]),
         case("enum_match", 42, ""),
         case("tuple_values", 42, ""),

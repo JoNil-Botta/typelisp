@@ -920,6 +920,31 @@
         true
         (string-eq name "string-concat")))))
 
+(define (lower-bootstrap-runtime-builtin? [name : String]) : bool
+  (if (string-eq name "string-eq")
+    true
+    (if (string-eq name "string=?")
+      true
+      (if (string-eq name "string->int")
+        true
+        (if (string-eq name "int->string")
+          true
+          (if (string-eq name "arg-count")
+            true
+            (if (string-eq name "arg")
+              true
+              (if (string-eq name "read-file")
+                true
+                (if (string-eq name "write-file")
+                  true
+                  (if (string-eq name "file-exists?")
+                    true
+                    (if (string-eq name "panic")
+                      true
+                      (if (string-eq name "error")
+                        true
+                        (string-eq name "print-error")))))))))))))
+
 (define (lower-stdio-runtime-name [name : String]) : String
   (if (string-eq name "read-stdin-line")
     ".L_tl_read_stdin_line"
@@ -1731,6 +1756,420 @@
     (lower-substring-call ctx state env type-env name args result-ty origin)
     (lower-string-concat-call ctx state env type-env name args result-ty origin)))
 
+(define (lower-runtime-call-values
+  [state : LowerState]
+  [name : String]
+  [values : CompilerIrValueList]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc allocated var-id)
+      (OkLowerExpr
+        (LowerExpr
+          (lower-state-emit
+            allocated
+            (IrInstrCall var-id name values result-ty))
+          (IrValueVar var-id)
+          result-ty))]))
+
+(define (lower-one-string-runtime-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [arg : AstExpr]
+  [runtime-name : String]
+  [result-ty : AstType]
+  [message : String]) : ResultLowerExpr
+  (match (lower-expr ctx state env type-env arg)
+    [(OkLowerExpr lowered)
+      (match lowered
+        [(LowerExpr arg-state arg-value arg-ty)
+          (match (tc-resolve-type ctx arg-ty)
+            [(AstTyString)
+              (match (lower-string-fields arg-state arg-value)
+                [(LowerStringFields fields-state ptr len)
+                  (lower-runtime-call-values
+                    fields-state
+                    runtime-name
+                    (IrValueCons ptr (IrValueCons len IrValueNil))
+                    result-ty)])]
+            [_ (ErrLowerExpr (lower-diagnostic-at-expr arg message))])])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+(define (lower-string-to-int-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons arg (AstExprNil))
+      (lower-one-string-runtime-call
+        ctx
+        state
+        env
+        type-env
+        arg
+        "tl_string_to_int"
+        result-ty
+        "lower: string->int requires String")]
+    [_
+      (lower-direct-call
+        ctx
+        state
+        env
+        type-env
+        "string->int"
+        args
+        result-ty
+        origin)]))
+
+(define (lower-int-to-string-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons arg (AstExprNil))
+      (match (lower-expr ctx state env type-env arg)
+        [(OkLowerExpr lowered)
+          (match lowered
+            [(LowerExpr arg-state arg-value arg-ty)
+              (match (lower-cast-value arg-state arg-value arg-ty (AstTyI64))
+                [(LowerExpr cast-state cast-value _)
+                  (lower-runtime-call-values
+                    cast-state
+                    "tl_int_to_string"
+                    (IrValueCons cast-value IrValueNil)
+                    result-ty)])])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [_
+      (lower-direct-call
+        ctx
+        state
+        env
+        type-env
+        "int->string"
+        args
+        result-ty
+        origin)]))
+
+(define (lower-arg-count-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprNil)
+      (lower-runtime-call-values state ".L_tl_arg_count" IrValueNil result-ty)]
+    [_
+      (lower-direct-call
+        ctx
+        state
+        env
+        type-env
+        "arg-count"
+        args
+        result-ty
+        origin)]))
+
+(define (lower-arg-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons arg (AstExprNil))
+      (match (lower-expr ctx state env type-env arg)
+        [(OkLowerExpr lowered)
+          (match lowered
+            [(LowerExpr arg-state arg-value arg-ty)
+              (match (lower-cast-value arg-state arg-value arg-ty (AstTyI64))
+                [(LowerExpr cast-state cast-value _)
+                  (lower-runtime-call-values
+                    cast-state
+                    ".L_tl_arg"
+                    (IrValueCons cast-value IrValueNil)
+                    result-ty)])])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [_ (lower-direct-call ctx state env type-env "arg" args result-ty origin)]))
+
+(define (lower-read-file-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons arg (AstExprNil))
+      (lower-one-string-runtime-call
+        ctx
+        state
+        env
+        type-env
+        arg
+        ".L_tl_read_file"
+        result-ty
+        "lower: read-file requires String")]
+    [_
+      (lower-direct-call
+        ctx
+        state
+        env
+        type-env
+        "read-file"
+        args
+        result-ty
+        origin)]))
+
+(define (lower-file-exists-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons arg (AstExprNil))
+      (lower-one-string-runtime-call
+        ctx
+        state
+        env
+        type-env
+        arg
+        ".L_tl_file_exists"
+        result-ty
+        "lower: file-exists? requires String")]
+    [_
+      (lower-direct-call
+        ctx
+        state
+        env
+        type-env
+        "file-exists?"
+        args
+        result-ty
+        origin)]))
+
+(define (lower-message-runtime-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [fallback-name : String]
+  [runtime-name : String]
+  [result-ty : AstType]
+  [message : String]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons arg (AstExprNil))
+      (lower-one-string-runtime-call
+        ctx
+        state
+        env
+        type-env
+        arg
+        runtime-name
+        result-ty
+        message)]
+    [_
+      (lower-direct-call
+        ctx
+        state
+        env
+        type-env
+        fallback-name
+        args
+        result-ty
+        origin)]))
+
+(define (lower-string-eq-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons left (AstExprCons right (AstExprNil)))
+      (match (lower-expr ctx state env type-env left)
+        [(OkLowerExpr lowered-left)
+          (match lowered-left
+            [(LowerExpr left-state left-value _)
+              (match (lower-expr ctx left-state env type-env right)
+                [(OkLowerExpr lowered-right)
+                  (match lowered-right
+                    [(LowerExpr right-state right-value _)
+                      (match (lower-string-fields right-state left-value)
+                        [(LowerStringFields left-fields-state left-ptr left-len)
+                          (match (lower-string-fields
+                            left-fields-state
+                            right-value)
+                            [(LowerStringFields
+                                done-fields-state
+                                right-ptr
+                                right-len)
+                              (lower-runtime-call-values
+                                done-fields-state
+                                "tl_string_eq"
+                                (IrValueCons
+                                  left-ptr
+                                  (IrValueCons
+                                    left-len
+                                    (IrValueCons
+                                      right-ptr
+                                      (IrValueCons right-len IrValueNil))))
+                                result-ty)])])])]
+                [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [_
+      (lower-direct-call
+        ctx
+        state
+        env
+        type-env
+        "string-eq"
+        args
+        result-ty
+        origin)]))
+
+(define (lower-write-file-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons path (AstExprCons contents (AstExprNil)))
+      (match (lower-expr ctx state env type-env path)
+        [(OkLowerExpr lowered-path)
+          (match lowered-path
+            [(LowerExpr path-state path-value _)
+              (match (lower-expr ctx path-state env type-env contents)
+                [(OkLowerExpr lowered-contents)
+                  (match lowered-contents
+                    [(LowerExpr contents-state contents-value _)
+                      (match (lower-string-fields contents-state path-value)
+                        [(LowerStringFields path-fields-state path-ptr path-len)
+                          (match (lower-string-fields
+                            path-fields-state
+                            contents-value)
+                            [(LowerStringFields
+                                done-fields-state
+                                contents-ptr
+                                contents-len)
+                              (lower-runtime-call-values
+                                done-fields-state
+                                ".L_tl_write_file"
+                                (IrValueCons
+                                  path-ptr
+                                  (IrValueCons
+                                    path-len
+                                    (IrValueCons
+                                      contents-ptr
+                                      (IrValueCons contents-len IrValueNil))))
+                                result-ty)])])])]
+                [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [_
+      (lower-direct-call
+        ctx
+        state
+        env
+        type-env
+        "write-file"
+        args
+        result-ty
+        origin)]))
+
+(define (lower-bootstrap-runtime-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name : String]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (if (or (string-eq name "string-eq") (string-eq name "string=?"))
+    (lower-string-eq-call ctx state env type-env args result-ty origin)
+    (if (string-eq name "string->int")
+      (lower-string-to-int-call ctx state env type-env args result-ty origin)
+      (if (string-eq name "int->string")
+        (lower-int-to-string-call ctx state env type-env args result-ty origin)
+        (if (string-eq name "arg-count")
+          (lower-arg-count-call ctx state env type-env args result-ty origin)
+          (if (string-eq name "arg")
+            (lower-arg-call ctx state env type-env args result-ty origin)
+            (if (string-eq name "read-file")
+              (lower-read-file-call
+                ctx
+                state
+                env
+                type-env
+                args
+                result-ty
+                origin)
+              (if (string-eq name "write-file")
+                (lower-write-file-call
+                  ctx
+                  state
+                  env
+                  type-env
+                  args
+                  result-ty
+                  origin)
+                (if (string-eq name "file-exists?")
+                  (lower-file-exists-call
+                    ctx
+                    state
+                    env
+                    type-env
+                    args
+                    result-ty
+                    origin)
+                  (if (or (string-eq name "panic") (string-eq name "error"))
+                    (lower-message-runtime-call
+                      ctx
+                      state
+                      env
+                      type-env
+                      args
+                      name
+                      ".L_tl_abort"
+                      result-ty
+                      "lower: panic requires String"
+                      origin)
+                    (lower-message-runtime-call
+                      ctx
+                      state
+                      env
+                      type-env
+                      args
+                      "print-error"
+                      "tl_print_err"
+                      result-ty
+                      "lower: print-error requires String"
+                      origin)))))))))))
+
 ;; Lower an unshadowed `(string-ref s i)` / `(char-at s i)` builtin call to the
 
 ;; bounds-checked String byte index. Since #677 the parser emits these names as
@@ -1752,6 +2191,66 @@
     [(AstExprCons str (AstExprCons index (AstExprNil)))
       (lower-string-ref ctx state env type-env str index)]
     [_ (lower-direct-call ctx state env type-env name args result-ty origin)]))
+
+(define (lower-call-non-builtin
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name : String]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (sym-i64-lookup env name)
+    [(SomeI64 _)
+      (lower-direct-call ctx state env type-env name args result-ty origin)]
+    [(NoneI64)
+      (match ctx
+        [(TcContext _ symbols registries)
+          (match (compiler-registries-lookup-variant registries name)
+            [(SomeI64 handle)
+              (lower-construct-enum-with-handle
+                ctx
+                state
+                env
+                type-env
+                name
+                handle
+                args
+                result-ty)]
+            [(NoneI64)
+              (match (compiler-symbols-lookup-type symbols name)
+                [(SomeI64 handle)
+                  (if (=
+                    (compiler-symbol-handle-kind handle)
+                    (compiler-symbol-kind-defstruct))
+                    (lower-construct-struct
+                      ctx
+                      state
+                      env
+                      type-env
+                      name
+                      args
+                      result-ty)
+                    (lower-direct-call
+                      ctx
+                      state
+                      env
+                      type-env
+                      name
+                      args
+                      result-ty
+                      origin))]
+                [(NoneI64)
+                  (lower-direct-call
+                    ctx
+                    state
+                    env
+                    type-env
+                    name
+                    args
+                    result-ty
+                    origin)])])])]))
 
 (define (lower-call
   [ctx : TcContext]
@@ -1811,66 +2310,27 @@
                 args
                 result-ty
                 origin)
-              (match (sym-i64-lookup env name)
-                [(SomeI64 _)
-                  (lower-direct-call
-                    ctx
-                    state
-                    env
-                    type-env
-                    name
-                    args
-                    result-ty
-                    origin)]
-                [(NoneI64)
-                  (match ctx
-                    [(TcContext _ symbols registries)
-                      (match (compiler-registries-lookup-variant
-                        registries
-                        name)
-                        [(SomeI64 handle)
-                          (lower-construct-enum-with-handle
-                            ctx
-                            state
-                            env
-                            type-env
-                            name
-                            handle
-                            args
-                            result-ty)]
-                        [(NoneI64)
-                          (match (compiler-symbols-lookup-type symbols name)
-                            [(SomeI64 handle)
-                              (if (=
-                                (compiler-symbol-handle-kind handle)
-                                (compiler-symbol-kind-defstruct))
-                                (lower-construct-struct
-                                  ctx
-                                  state
-                                  env
-                                  type-env
-                                  name
-                                  args
-                                  result-ty)
-                                (lower-direct-call
-                                  ctx
-                                  state
-                                  env
-                                  type-env
-                                  name
-                                  args
-                                  result-ty
-                                  origin))]
-                            [(NoneI64)
-                              (lower-direct-call
-                                ctx
-                                state
-                                env
-                                type-env
-                                name
-                                args
-                                result-ty
-                                origin)])])])])))))]
+              (if (and
+                (lower-builtin-call-available? ctx env name)
+                (lower-bootstrap-runtime-builtin? name))
+                (lower-bootstrap-runtime-call
+                  ctx
+                  state
+                  env
+                  type-env
+                  name
+                  args
+                  result-ty
+                  origin)
+                (lower-call-non-builtin
+                  ctx
+                  state
+                  env
+                  type-env
+                  name
+                  args
+                  result-ty
+                  origin))))))]
     [_
       (ErrLowerExpr
         (lower-diagnostic-at-expr func "lower: only direct calls are supported"))]))

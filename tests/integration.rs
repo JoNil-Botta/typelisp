@@ -4867,6 +4867,40 @@ fn user_defined_file_exists_predicate_name_assembles() {
     );
 }
 
+#[test]
+fn stdlib_env_fixture_reads_host_environment() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source = manifest_dir.join("stdlib").join("tests").join("env_api.tl");
+    let stdlib_root = manifest_dir.join("stdlib");
+    let path_sep = if cfg!(windows) { ";" } else { ":" };
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&source)
+        .arg("--stdlib-root")
+        .arg(&stdlib_root)
+        .env("TYPELISP_STDLIB_TEST_EMPTY", "")
+        .env("TYPELISP_STDLIB_TEST_VALUE", "env-value-854")
+        .env(
+            "TYPELISP_STDLIB_TEST_PATH",
+            format!("one{path_sep}two{path_sep}three"),
+        )
+        .env_remove("TYPELISP_STDLIB_TEST_MISSING_854")
+        .output()
+        .expect("run stdlib env fixture");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "stdlib env fixture exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(stdout, "", "stdlib env fixture wrote stdout");
+    assert_eq!(stderr, "", "stdlib env fixture wrote stderr");
+}
+
 fn run_stdin_fixture(
     work_name: &str,
     source_name: &str,

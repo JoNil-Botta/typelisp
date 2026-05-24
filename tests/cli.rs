@@ -1559,6 +1559,48 @@ fn run_forwards_child_output_and_status() {
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 #[test]
+fn run_stdlib_env_fixture_reads_host_environment() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source = manifest_dir.join("stdlib").join("tests").join("env_api.tl");
+    let stdlib_root = manifest_dir.join("stdlib");
+    let source_arg = source.to_str().expect("source path is utf-8");
+    let stdlib_arg = stdlib_root.to_str().expect("stdlib path is utf-8");
+    let path_sep = if cfg!(target_os = "windows") {
+        ";"
+    } else {
+        ":"
+    };
+    let mut args = vec!["run", source_arg, "--stdlib-root", stdlib_arg];
+    if cfg!(target_os = "windows") {
+        args.push("--target");
+        args.push("windows-x86_64");
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .args(args)
+        .env("TYPELISP_STDLIB_TEST_EMPTY", "")
+        .env("TYPELISP_STDLIB_TEST_VALUE", "env-value-854")
+        .env(
+            "TYPELISP_STDLIB_TEST_PATH",
+            format!("one{path_sep}two{path_sep}three"),
+        )
+        .env_remove("TYPELISP_STDLIB_TEST_MISSING_854")
+        .output()
+        .expect("run stdlib env fixture");
+
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "stdlib env fixture exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), "");
+    assert_eq!(stderr(&output), "");
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[test]
 fn run_forwards_stdin_to_child() {
     let dir = fixture_dir("run-forward-stdin");
     let source = dir.join("main.tl");

@@ -203,6 +203,21 @@ impl TypeChecker {
             "file-exists?".into(),
             Type::Func(vec![Type::String], Box::new(Type::Bool)),
         );
+        // Environment primitives wrapped by stdlib/env.tl. The raw value helper
+        // returns an empty string for missing variables; stdlib/env.tl pairs it
+        // with `env-var-exists?` so missing and empty variables remain distinct.
+        globals.insert(
+            "env-var-exists?".into(),
+            Type::Func(vec![Type::String], Box::new(Type::Bool)),
+        );
+        globals.insert(
+            "env-var-value".into(),
+            Type::Func(vec![Type::String], Box::new(Type::String)),
+        );
+        globals.insert(
+            "env-path-separator".into(),
+            Type::Func(vec![], Box::new(Type::String)),
+        );
         // Stdio helpers for bootstrap tools. Reads return heap-owned Strings and
         // update the sticky EOF observation consumed by `(stdin-eof?)`.
         globals.insert(
@@ -366,6 +381,8 @@ impl TypeChecker {
                     | "read-file"
                     | "write-file"
                     | "file-exists?"
+                    | "env-var-exists?"
+                    | "env-var-value"
                     | "panic"
                     | "error"
             )

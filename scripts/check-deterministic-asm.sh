@@ -107,6 +107,8 @@ tl_doc_extract selfhost/doc_extract.tl
 tl_doc_extract_smoke selfhost/doc_extract_smoke.tl
 tl_doc_render selfhost/doc_render.tl
 tl_doc_render_smoke selfhost/doc_render_smoke.tl
+tl_doc_html selfhost/doc_html.tl
+tl_doc_html_smoke selfhost/doc_html_smoke.tl
 tl_read selfhost/read.tl
 tl_reader selfhost/reader.tl
 tl_token selfhost/token.tl

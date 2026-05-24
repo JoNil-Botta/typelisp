@@ -60,10 +60,14 @@ fn doc_driver_tl_compiles_to_assembly() {
 
     for sym in [
         "_tl_doc_generate_file:",
+        "_tl_doc_generate_html_file:",
+        "_tl_doc_generate_html_module_graph:",
         "_tl_doc_test_file:",
         "_tl_doc_test_run_file:",
         "_tl_doc_test_run_report_render:",
         "_tl_doc_render_markdown:",
+        "_tl_doc_html_render_module_page:",
+        "_tl_doc_html_render_module_graph:",
         "_tl_doc_extract_source:",
         "_tl_format_lex:",
     ] {
@@ -78,6 +82,8 @@ fn doc_driver_tl_compiles_to_assembly() {
         "Doc tests passed: ",
         "doc tests failed: ",
         "doc: expected --test input path",
+        "doc: expected --html input and output paths",
+        "<!doctype html>",
         "doc: expected input and output paths",
     ] {
         assert!(

@@ -353,6 +353,15 @@ EOF
     assert_contains "$out" "Generated:"
     assert_contains "$WORKDIR/doc_source.md" "Module docs."
     assert_contains "$WORKDIR/doc_source.md" "answer"
+
+    run_cmd doc-generate-html "$COMPILER" run selfhost/doc.tl -- --html "$WORKDIR/doc_source.tl" "$WORKDIR/doc_source.html"
+    assert_success
+    assert_stdout_empty
+    assert_stderr_empty
+    assert_contains "$WORKDIR/doc_source.html" "<!doctype html>"
+    assert_contains "$WORKDIR/doc_source.html" "typelisp-docs.css"
+    assert_contains "$WORKDIR/doc_source.html" "id=\"tl-answer\""
+    assert_contains "$WORKDIR/doc_source.html" "<code class=\"language-typelisp\">(define answer : i64 42)</code>"
 else
     echo "[public-tools] skipping doc generation on $HOST_OS"
 fi

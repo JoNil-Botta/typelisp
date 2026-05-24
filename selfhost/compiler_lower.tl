@@ -393,6 +393,7 @@
     [(AstTyTuple _) 8]
     [(AstTyArray elem count) (* (lower-type-size ctx elem) count)]
     [(AstTyDynArray _) 8]
+    [(AstTyRegion _ inner) (lower-type-size ctx inner)]
     [(AstTyEnum _) 8]
     [(AstTyStruct _) 8]
     [(AstTyString) 8]
@@ -418,6 +419,7 @@
     [(AstTyTuple _) 8]
     [(AstTyArray elem _) (lower-type-align ctx elem)]
     [(AstTyDynArray _) 8]
+    [(AstTyRegion _ inner) (lower-type-align ctx inner)]
     [(AstTyEnum _) 8]
     [(AstTyStruct _) 8]
     [(AstTyString) 8]
@@ -1119,7 +1121,14 @@
   [expr : AstExpr]) : ResultLowerExpr
   (match (tc-expr ctx type-env expr)
     [(OkTcType expr-ty)
-      (lower-expr-with-type ctx state env type-env expr expr expr-ty)]
+      (lower-expr-with-type
+        ctx
+        state
+        env
+        type-env
+        expr
+        expr
+        (tc-type-without-regions expr-ty))]
     [(ErrTcType message) (ErrLowerExpr (lower-diagnostic-at-expr expr message))]))
 
 (define (lower-expr-with-type
@@ -1250,6 +1259,7 @@
       (lower-array-ref ctx state env type-env arr index)]
     [(AstExprArraySet arr index value)
       (lower-array-set ctx state env type-env arr index value)]
+    [(AstExprWithRegion _ body) (lower-with-region ctx state env type-env body)]
     ;; `(comptime expr)` folds to a literal via the scalar CTFE evaluator (#719).
     ;; Successful folds reuse the ordinary literal path; CTFE rejections (free
     ;; runtime vars, unsupported forms, f64 -> #735) surface as lower errors.
@@ -2360,7 +2370,7 @@
     [(AstExprCons arr (AstExprNil))
       (match (tc-expr ctx type-env arr)
         [(OkTcType arr-ty)
-          (match arr-ty
+          (match (tc-type-strip-region arr-ty)
             [(AstTyDynArray _)
               (lower-array-length-load ctx state env type-env arr)]
             [(AstTyString) (lower-array-length-load ctx state env type-env arr)]
@@ -2699,7 +2709,7 @@
   [index : AstExpr]) : ResultLowerExpr
   (match (tc-expr ctx type-env arr)
     [(OkTcType arr-ty)
-      (match arr-ty
+      (match (tc-type-strip-region arr-ty)
         [(AstTyDynArray elem-ty)
           (match (lower-expr ctx state env type-env arr)
             [(OkLowerExpr arr-lowered)
@@ -2716,18 +2726,18 @@
                                 arr-value
                                 idx-value
                                 idx-ty
-                                elem-ty)
+                                (tc-type-without-regions elem-ty))
                                 [(LowerExpr addr-state elem-ptr _)
                                   (match (lower-emit-load
                                     addr-state
                                     elem-ptr
-                                    elem-ty)
+                                    (tc-type-without-regions elem-ty))
                                     [(LowerExpr load-state load-value _)
                                       (OkLowerExpr
                                         (LowerExpr
                                           load-state
                                           load-value
-                                          elem-ty))])])])]
+                                          (tc-type-without-regions elem-ty)))])])])]
                         [(ErrLowerExpr message) (ErrLowerExpr message)])]
                     [(ErrTcType message)
                       (ErrLowerExpr (lower-diagnostic-at-expr index message))])])]
@@ -2756,7 +2766,7 @@
   [value : AstExpr]) : ResultLowerExpr
   (match (tc-expr ctx type-env arr)
     [(OkTcType arr-ty)
-      (match arr-ty
+      (match (tc-type-strip-region arr-ty)
         [(AstTyDynArray elem-ty)
           (match (lower-expr ctx state env type-env arr)
             [(OkLowerExpr arr-lowered)
@@ -2782,7 +2792,7 @@
                                         arr-value
                                         idx-value
                                         idx-ty
-                                        elem-ty)
+                                        (tc-type-without-regions elem-ty))
                                         [(LowerExpr addr-state elem-ptr _)
                                           (OkLowerExpr
                                             (LowerExpr
@@ -2791,7 +2801,8 @@
                                                 (IrInstrStorePtr
                                                   elem-ptr
                                                   value-ir
-                                                  elem-ty))
+                                                  (tc-type-without-regions
+                                                    elem-ty)))
                                               IrValueUnit
                                               (AstTyUnit)))])])]
                                 [(ErrLowerExpr message) (ErrLowerExpr message)])])]
@@ -2835,8 +2846,8 @@
   [maybe-ty : AstMaybeType]
   [init-ty : AstType]) : AstType
   (match maybe-ty
-    [(AstSomeType ty) (tc-resolve-type ctx ty)]
-    [(AstNoType) init-ty]))
+    [(AstSomeType ty) (tc-type-without-regions (tc-resolve-type ctx ty))]
+    [(AstNoType) (tc-type-without-regions init-ty)]))
 
 (define (lower-let-bindings
   [ctx : TcContext]
@@ -2887,6 +2898,39 @@
                 [(LowerExpr next-state _ _)
                   (lower-begin ctx next-state env type-env rest)])]
             [(ErrLowerExpr message) (ErrLowerExpr message)])])]))
+
+(define (lower-with-region
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [body : AstExprList]) : ResultLowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc mark-allocated mark-var)
+      (let ([marked-state
+          :
+          LowerState
+          (lower-state-emit
+            mark-allocated
+            (IrInstrCall mark-var "tl_region_mark" IrValueNil (AstTyU64)))])
+        (match (lower-begin ctx marked-state env type-env body)
+          [(OkLowerExpr lowered)
+            (match lowered
+              [(LowerExpr body-state value body-ty)
+                (match (lower-state-alloc-var body-state)
+                  [(LowerAlloc reset-allocated reset-var)
+                    (OkLowerExpr
+                      (LowerExpr
+                        (lower-state-emit
+                          reset-allocated
+                          (IrInstrCall
+                            reset-var
+                            "tl_region_reset"
+                            (IrValueCons (IrValueVar mark-var) IrValueNil)
+                            (AstTyUnit)))
+                        value
+                        body-ty))])])]
+          [(ErrLowerExpr message) (ErrLowerExpr message)]))]))
 
 (define (lower-if-merge
   [else-state : LowerState]
@@ -3685,7 +3729,10 @@
       (match param
         [(AstParam name ty)
           (IrParamCons
-            (IrParam name (tc-resolve-type ctx ty) idx)
+            (IrParam
+              name
+              (tc-type-without-regions (tc-resolve-type ctx ty))
+              idx)
             (lower-param-list ctx rest (+ idx 1)))])]))
 
 (define (lower-function
@@ -3714,7 +3761,7 @@
           IrBlockNil
           name
           function-spans)]
-      [ret-ty : AstType (tc-resolve-type ctx ret)])
+      [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))])
       (match (lower-expr ctx state env type-env body)
         [(OkLowerExpr lowered)
           (match lowered
@@ -3785,7 +3832,9 @@
                     ctx
                     top-env
                     rest
-                    (lower-global-list-append globals (IrGlobal name ty value))
+                    (lower-global-list-append
+                      globals
+                      (IrGlobal name (tc-type-without-regions ty) value))
                     functions
                     externs
                     spans)]
@@ -3800,7 +3849,7 @@
             functions
             (lower-extern-list-append
               externs
-              (IrExtern name (tc-resolve-type ctx ty)))
+              (IrExtern name (tc-type-without-regions (tc-resolve-type ctx ty))))
             spans)]
         [(AstDeclDefFn name params ret body)
           (match (lower-function ctx top-env name params ret body spans)
@@ -4475,6 +4524,22 @@
                       0))))))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-region-source) : String
+  "(define (main) : i64
+  (with-region r
+    (let ([s : String (int->string 41)])
+      (string-length s))))")
+
+(define (compiler-lower-region-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-region-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (> (lower-test-functions-call-count functions "tl_region_mark") 0)
+            (> (lower-test-functions-call-count functions "tl_region_reset") 0))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-self-test) : i64
   (if (and
     (and
@@ -4520,32 +4585,34 @@
                         (and
                           (compiler-lower-ok? (compiler-lower-aggregate-source))
                           (and
-                            (compiler-lower-error-ok?
-                              (compiler-typecheck-branch-mismatch-source)
-                              "typecheck: if branches must match")
+                            (compiler-lower-region-shape-ok?)
                             (and
                               (compiler-lower-error-ok?
-                                (compiler-lower-unsupported-source)
-                                "lower: unsupported expression")
+                                (compiler-typecheck-branch-mismatch-source)
+                                "typecheck: if branches must match")
                               (and
-                                (compiler-lower-comptime-fold-ok?
-                                  (compiler-lower-comptime-arith-source)
-                                  3)
+                                (compiler-lower-error-ok?
+                                  (compiler-lower-unsupported-source)
+                                  "lower: unsupported expression")
                                 (and
                                   (compiler-lower-comptime-fold-ok?
-                                    (compiler-lower-comptime-if-source)
-                                    42)
+                                    (compiler-lower-comptime-arith-source)
+                                    3)
                                   (and
                                     (compiler-lower-comptime-fold-ok?
-                                      (compiler-lower-comptime-let-source)
+                                      (compiler-lower-comptime-if-source)
                                       42)
                                     (and
-                                      (compiler-lower-error-ok?
-                                        (compiler-lower-comptime-runtime-var-source)
-                                        "compile-time evaluation cannot reference runtime variable 'x'")
-                                      (compiler-lower-error-ok?
-                                        (compiler-lower-comptime-f64-source)
-                                        "comptime: f64 compile-time evaluation not yet supported (#735)")))))))))))))))))))
+                                      (compiler-lower-comptime-fold-ok?
+                                        (compiler-lower-comptime-let-source)
+                                        42)
+                                      (and
+                                        (compiler-lower-error-ok?
+                                          (compiler-lower-comptime-runtime-var-source)
+                                          "compile-time evaluation cannot reference runtime variable 'x'")
+                                        (compiler-lower-error-ok?
+                                          (compiler-lower-comptime-f64-source)
+                                          "comptime: f64 compile-time evaluation not yet supported (#735)"))))))))))))))))))))
     42
     (begin
       (panic "lower: smoke score mismatch")

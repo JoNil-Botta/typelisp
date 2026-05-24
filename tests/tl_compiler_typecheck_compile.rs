@@ -63,6 +63,9 @@ fn compiler_typecheck_tl_compiles_to_assembly() {
 
     for sym in [
         "_tl_tc_type_eq:",
+        "_tl_tc_type_without_regions:",
+        "_tl_tc_tag_active_region:",
+        "_tl_tc_ensure_region_value_can_flow_into:",
         "_tl_tc_resolve_type:",
         "_tl_tc_bind_enum_variants:",
         "_tl_tc_expr:",
@@ -73,6 +76,7 @@ fn compiler_typecheck_tl_compiles_to_assembly() {
         "_tl_typecheck_compiler_program:",
         "_tl_typecheck_compiler_source:",
         "_tl_compiler_typecheck_self_test:",
+        "_tl_compiler_typecheck_region_tests_ok_question:",
         "_tl_build_compiler_symbols:",
         "_tl_parse_ast_source:",
     ] {
@@ -93,6 +97,9 @@ fn compiler_typecheck_tl_compiles_to_assembly() {
         "typecheck: cast requires integer/char source and target",
         "typecheck: foreach body must be unit",
         "typecheck: lambda return type mismatch",
+        "typecheck: region-tagged value cannot escape with-region 'r'",
+        "typecheck: region-tagged value cannot escape with-region 'inner'",
+        "typecheck: cannot pass region-tagged value to function parameter; region value would escape",
         "typecheck: match arms must agree",
         "typecheck: unknown variant ",
         "typecheck: unknown struct field ",
@@ -104,6 +111,8 @@ fn compiler_typecheck_tl_compiles_to_assembly() {
         "(flush-stdout)",
         "(defenum Maybe (None) (Some i64))",
         "(defstruct Point (x i64) (y i64))",
+        "(with-region r",
+        "(defstruct Box (s String))",
     ] {
         assert_message(&asm, message, "compiler_typecheck");
     }
@@ -128,6 +137,7 @@ fn compiler_typecheck_smoke_tl_compiles_to_assembly() {
         "_tl_compiler_typecheck_self_test:",
         "_tl_compiler_typecheck_aggregate_tests_ok_question:",
         "_tl_compiler_typecheck_nominal_tests_ok_question:",
+        "_tl_compiler_typecheck_region_tests_ok_question:",
         "_tl_typecheck_compiler_source:",
         "_tl_compiler_typecheck_error_ok_question:",
         // Located-diagnostic self-test (#681): a type error carries the

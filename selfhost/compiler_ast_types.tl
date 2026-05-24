@@ -77,6 +77,7 @@
   (AstTyTuple AstTypeList)
   (AstTyArray AstType i64)
   (AstTyDynArray AstType)
+  (AstTyRegion String AstType)
   (AstTyEnum String)
   (AstTyStruct String)
   (AstTyVar String))
@@ -161,6 +162,7 @@
   (AstExprMatch AstExpr AstMatchArmList)
   (AstExprForeach String AstType AstExpr AstExpr AstExpr)
   (AstExprStructGet AstExpr String)
+  (AstExprWithRegion String AstExprList)
   ;; Reserved compile-time evaluation form `(comptime expr)` (#718). Parsed and
   ;; type-checked (as the inner expression's type); evaluation lands in #719.
   (AstExprComptime AstExpr))
@@ -209,9 +211,10 @@
     [(AstTyTuple _) 17]
     [(AstTyArray _ _) 18]
     [(AstTyDynArray _) 19]
-    [(AstTyEnum _) 20]
-    [(AstTyStruct _) 21]
-    [(AstTyVar _) 22]))
+    [(AstTyRegion _ _) 20]
+    [(AstTyEnum _) 21]
+    [(AstTyStruct _) 22]
+    [(AstTyVar _) 23]))
 
 (define (ast-expr-tag [expr : AstExpr]) : i64
   (match expr
@@ -239,7 +242,8 @@
     [(AstExprMatch _ _) 22]
     [(AstExprForeach _ _ _ _ _) 23]
     [(AstExprStructGet _ _) 24]
-    [(AstExprComptime _) 25]))
+    [(AstExprWithRegion _ _) 25]
+    [(AstExprComptime _) 26]))
 
 (define (ast-expr-unspan [expr : AstExpr]) : AstExpr
   (match expr

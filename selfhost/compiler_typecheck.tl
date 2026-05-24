@@ -23,6 +23,14 @@
   (OkTcString String)
   (ErrTcString String))
 
+(defenum TcMaybeString
+  (TcNoString)
+  (TcSomeString String))
+
+(defenum TcStringList
+  (TcStringNil)
+  (TcStringCons String TcStringList))
+
 (defenum ResultTcEnv
   (OkTcEnv TcTypeEnv)
   (ErrTcEnv String))
@@ -74,6 +82,12 @@
 
 (define (tc-bind [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
   (TcTypeBind name ty env))
+
+(define (tc-default-boundary-name) : String
+  "__tl_default_boundary")
+
+(define (tc-region-marker-name) : String
+  "__tl_active_region")
 
 (define (tc-type-list1 [a : AstType]) : AstTypeList
   (AstTypeCons a AstTypeNil))
@@ -293,11 +307,14 @@
                                                                   (AstTyString)
                                                                   (AstTyNever)))])
                                                             (tc-bind
-                                                              e28
-                                                              "error"
-                                                              (tc-fn1
-                                                                (AstTyString)
-                                                                (AstTyNever)))))))))))))))))))))))))))))))))
+                                                              (tc-bind
+                                                                e28
+                                                                "error"
+                                                                (tc-fn1
+                                                                  (AstTyString)
+                                                                  (AstTyNever)))
+                                                              (tc-default-boundary-name)
+                                                              (AstTyUnit))))))))))))))))))))))))))))))))
 
 (define (tc-lookup [env : TcTypeEnv] [name : String]) : ResultTcType
   (match env
@@ -306,6 +323,229 @@
       (if (string-eq key name)
         (OkTcType ty)
         (tc-lookup rest name))]))
+
+(define (tc-active-region [env : TcTypeEnv]) : TcMaybeString
+  (match env
+    [(TcTypeNil) (TcNoString)]
+    [(TcTypeBind key ty rest)
+      (if (string-eq key (tc-region-marker-name))
+        (match ty
+          [(AstTyVar region) (TcSomeString region)]
+          [_ (tc-active-region rest)])
+        (tc-active-region rest))]))
+
+(define (tc-push-region [env : TcTypeEnv] [region : String]) : TcTypeEnv
+  (tc-bind env (tc-region-marker-name) (AstTyVar region)))
+
+(define (tc-string-list-contains [items : TcStringList] [name : String]) : bool
+  (match items
+    [(TcStringNil) false]
+    [(TcStringCons item rest)
+      (if (string-eq item name)
+        true
+        (tc-string-list-contains rest name))]))
+
+(define (tc-string-list-add [items : TcStringList] [name : String]) : TcStringList
+  (if (tc-string-list-contains items name)
+    items
+    (TcStringCons name items)))
+
+(define (tc-string-list-eq [a : TcStringList] [b : TcStringList]) : bool
+  (match a
+    [(TcStringNil)
+      (match b
+        [(TcStringNil) true]
+        [_ false])]
+    [(TcStringCons item rest)
+      (and (tc-string-list-contains b item) (tc-string-list-eq rest b))]))
+
+(define (tc-type-strip-region [ty : AstType]) : AstType
+  (match ty
+    [(AstTyRegion _ inner) (tc-type-strip-region inner)]
+    [_ ty]))
+
+(define (tc-type-list-without-regions [types : AstTypeList]) : AstTypeList
+  (match types
+    [(AstTypeNil) AstTypeNil]
+    [(AstTypeCons head tail)
+      (AstTypeCons
+        (tc-type-without-regions head)
+        (tc-type-list-without-regions tail))]))
+
+(define (tc-type-without-regions [ty : AstType]) : AstType
+  (match ty
+    [(AstTyFunc args ret)
+      (AstTyFunc
+        (tc-type-list-without-regions args)
+        (tc-type-without-regions ret))]
+    [(AstTyTuple elems) (AstTyTuple (tc-type-list-without-regions elems))]
+    [(AstTyArray elem len) (AstTyArray (tc-type-without-regions elem) len)]
+    [(AstTyDynArray elem) (AstTyDynArray (tc-type-without-regions elem))]
+    [(AstTyRegion _ inner) (tc-type-without-regions inner)]
+    [_ ty]))
+
+(define (tc-type-list-contains-region [types : AstTypeList] [region : String]) : bool
+  (match types
+    [(AstTypeNil) false]
+    [(AstTypeCons head tail)
+      (or
+        (tc-type-contains-region head region)
+        (tc-type-list-contains-region tail region))]))
+
+(define (tc-type-contains-region [ty : AstType] [region : String]) : bool
+  (match ty
+    [(AstTyFunc args ret)
+      (or
+        (tc-type-list-contains-region args region)
+        (tc-type-contains-region ret region))]
+    [(AstTyTuple elems) (tc-type-list-contains-region elems region)]
+    [(AstTyArray elem _) (tc-type-contains-region elem region)]
+    [(AstTyDynArray elem) (tc-type-contains-region elem region)]
+    [(AstTyRegion name inner)
+      (or (string-eq name region) (tc-type-contains-region inner region))]
+    [_ false]))
+
+(define (tc-type-list-contains-any-region [types : AstTypeList]) : bool
+  (match types
+    [(AstTypeNil) false]
+    [(AstTypeCons head tail)
+      (or
+        (tc-type-contains-any-region head)
+        (tc-type-list-contains-any-region tail))]))
+
+(define (tc-type-contains-any-region [ty : AstType]) : bool
+  (match ty
+    [(AstTyFunc args ret)
+      (or
+        (tc-type-list-contains-any-region args)
+        (tc-type-contains-any-region ret))]
+    [(AstTyTuple elems) (tc-type-list-contains-any-region elems)]
+    [(AstTyArray elem _) (tc-type-contains-any-region elem)]
+    [(AstTyDynArray elem) (tc-type-contains-any-region elem)]
+    [(AstTyRegion _ _) true]
+    [_ false]))
+
+(define (tc-type-list-collect-regions
+  [types : AstTypeList]
+  [out : TcStringList]) : TcStringList
+  (match types
+    [(AstTypeNil) out]
+    [(AstTypeCons head tail)
+      (tc-type-list-collect-regions
+        tail
+        (tc-type-collect-regions-into head out))]))
+
+(define (tc-type-collect-regions-into [ty : AstType] [out : TcStringList]) : TcStringList
+  (match ty
+    [(AstTyFunc args ret)
+      (tc-type-collect-regions-into ret (tc-type-list-collect-regions args out))]
+    [(AstTyTuple elems) (tc-type-list-collect-regions elems out)]
+    [(AstTyArray elem _) (tc-type-collect-regions-into elem out)]
+    [(AstTyDynArray elem) (tc-type-collect-regions-into elem out)]
+    [(AstTyRegion name inner)
+      (tc-type-collect-regions-into inner (tc-string-list-add out name))]
+    [_ out]))
+
+(define (tc-type-collect-regions [ty : AstType]) : TcStringList
+  (tc-type-collect-regions-into ty TcStringNil))
+
+(define (tc-type-outer-region [ty : AstType]) : TcMaybeString
+  (match ty
+    [(AstTyRegion region _) (TcSomeString region)]
+    [_ (TcNoString)]))
+
+(define (tc-region-taggable-type? [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyString) true]
+    [(AstTyDynArray _) true]
+    [(AstTyTuple _) true]
+    [(AstTyStruct _) true]
+    [(AstTyEnum _) true]
+    [_ false]))
+
+(define (tc-tag-region [region : String] [ty : AstType]) : AstType
+  (if (tc-region-taggable-type? ty)
+    (AstTyRegion region ty)
+    ty))
+
+(define (tc-tag-active-region [env : TcTypeEnv] [ty : AstType]) : AstType
+  (match (tc-active-region env)
+    [(TcSomeString region) (tc-tag-region region ty)]
+    [(TcNoString) ty]))
+
+(define (tc-project-from-region-container
+  [container-ty : AstType]
+  [projected-ty : AstType]) : AstType
+  (match (tc-type-outer-region container-ty)
+    [(TcSomeString region) (tc-tag-region region projected-ty)]
+    [(TcNoString) projected-ty]))
+
+(define (tc-region-outlives-or-matches
+  [env : TcTypeEnv]
+  [value-region : String]
+  [target-region : String]) : bool
+  (if (string-eq value-region target-region)
+    true
+    (match env
+      [(TcTypeNil) false]
+      [(TcTypeBind key ty rest)
+        (if (string-eq key (tc-region-marker-name))
+          (match ty
+            [(AstTyVar region)
+              (if (string-eq region value-region)
+                false
+                (if (string-eq region target-region)
+                  true
+                  (tc-region-outlives-or-matches
+                    rest
+                    value-region
+                    target-region)))]
+            [_ (tc-region-outlives-or-matches rest value-region target-region)])
+          (tc-region-outlives-or-matches rest value-region target-region))])))
+
+(define (tc-region-can-flow-into-any
+  [env : TcTypeEnv]
+  [value-region : String]
+  [target-regions : TcStringList]) : bool
+  (match target-regions
+    [(TcStringNil) false]
+    [(TcStringCons target rest)
+      (if (tc-region-outlives-or-matches env value-region target)
+        true
+        (tc-region-can-flow-into-any env value-region rest))]))
+
+(define (tc-region-list-can-flow-into
+  [env : TcTypeEnv]
+  [value-regions : TcStringList]
+  [target-regions : TcStringList]) : bool
+  (match value-regions
+    [(TcStringNil) true]
+    [(TcStringCons value rest)
+      (and
+        (tc-region-can-flow-into-any env value target-regions)
+        (tc-region-list-can-flow-into env rest target-regions))]))
+
+(define (tc-ensure-region-value-can-flow-into
+  [env : TcTypeEnv]
+  [target-ty : AstType]
+  [value-ty : AstType]
+  [context : String]) : ResultTcUnit
+  (let ([value-regions : TcStringList (tc-type-collect-regions value-ty)])
+    (match value-regions
+      [(TcStringNil) OkTcUnit]
+      [_
+        (let ([target-regions
+            :
+            TcStringList
+            (tc-type-collect-regions target-ty)])
+          (if (and
+            (tc-type-contains-any-region target-ty)
+            (tc-region-list-can-flow-into env value-regions target-regions))
+            OkTcUnit
+            (ErrTcUnit
+              (string-append
+                "typecheck: cannot store region-tagged value into "
+                (string-append context "; region value would escape")))))])))
 
 (define (tc-resolve-type-list [ctx : TcContext] [types : AstTypeList]) : AstTypeList
   (match types
@@ -320,6 +560,8 @@
     [(AstTyTuple elems) (AstTyTuple (tc-resolve-type-list ctx elems))]
     [(AstTyArray elem len) (AstTyArray (tc-resolve-type ctx elem) len)]
     [(AstTyDynArray elem) (AstTyDynArray (tc-resolve-type ctx elem))]
+    [(AstTyRegion region inner)
+      (AstTyRegion region (tc-resolve-type ctx inner))]
     [(AstTyVar name)
       (match ctx
         [(TcContext _ symbols _)
@@ -348,7 +590,7 @@
         [(AstTypeCons bh bt) (and (tc-type-eq ah bh) (tc-type-list-eq at bt))]
         [_ false])]))
 
-(define (tc-type-eq [a : AstType] [b : AstType]) : bool
+(define (tc-type-eq-core [a : AstType] [b : AstType]) : bool
   (match a
     [(AstTyI64)
       (match b
@@ -428,6 +670,10 @@
       (match b
         [(AstTyDynArray b-elem) (tc-type-eq a-elem b-elem)]
         [_ false])]
+    [(AstTyRegion _ inner)
+      (tc-type-eq-core
+        (tc-type-without-regions inner)
+        (tc-type-without-regions b))]
     [(AstTyEnum a-name)
       (match b
         [(AstTyEnum b-name) (string-eq a-name b-name)]
@@ -440,6 +686,9 @@
       (match b
         [(AstTyVar b-name) (string-eq a-name b-name)]
         [_ false])]))
+
+(define (tc-type-eq [a : AstType] [b : AstType]) : bool
+  (tc-type-eq-core (tc-type-without-regions a) (tc-type-without-regions b)))
 
 (define (tc-never-type? [ty : AstType]) : bool
   (match ty
@@ -457,11 +706,20 @@
     (if (tc-never-type? b)
       (OkTcType a)
       (if (tc-type-eq a b)
-        (OkTcType a)
+        (let ([a-regions : TcStringList (tc-type-collect-regions a)]
+          [b-regions : TcStringList (tc-type-collect-regions b)])
+          (if (tc-string-list-eq a-regions b-regions)
+            (OkTcType a)
+            (match a-regions
+              [(TcStringNil) (OkTcType b)]
+              [_
+                (match b-regions
+                  [(TcStringNil) (OkTcType a)]
+                  [_ (ErrTcType "typecheck: if branches must match")])])))
         (ErrTcType "typecheck: if branches must match")))))
 
 (define (tc-integer-type? [ty : AstType]) : bool
-  (match ty
+  (match (tc-type-strip-region ty)
     [(AstTyI64) true]
     [(AstTyI32) true]
     [(AstTyI16) true]
@@ -473,7 +731,7 @@
     [_ false]))
 
 (define (tc-float-type? [ty : AstType]) : bool
-  (match ty
+  (match (tc-type-strip-region ty)
     [(AstTyF64) true]
     [_ false]))
 
@@ -482,21 +740,21 @@
     true
     (if (tc-float-type? ty)
       true
-      (match ty
+      (match (tc-type-strip-region ty)
         [(AstTyChar) true]
         [_ false]))))
 
 (define (tc-castable-type? [ty : AstType]) : bool
   (if (tc-integer-type? ty)
     true
-    (match ty
+    (match (tc-type-strip-region ty)
       [(AstTyChar) true]
       [_ false])))
 
 (define (tc-dyn-array-elem-supported? [ty : AstType]) : bool
   (if (tc-integer-type? ty)
     true
-    (match ty
+    (match (tc-type-strip-region ty)
       [(AstTyBool) true]
       [(AstTyChar) true]
       [(AstTyF64) true]
@@ -605,6 +863,14 @@
       (match field
         [(AstFieldDef _ ty)
           (AstTypeCons (tc-resolve-type ctx ty) (tc-field-type-list ctx rest))])]))
+
+(define (tc-tag-type-list-region [region : String] [types : AstTypeList]) : AstTypeList
+  (match types
+    [(AstTypeNil) AstTypeNil]
+    [(AstTypeCons head tail)
+      (AstTypeCons
+        (tc-tag-region region head)
+        (tc-tag-type-list-region region tail))]))
 
 (define (tc-enum-variant-constructor-type
   [ctx : TcContext]
@@ -737,6 +1003,140 @@
         (OkTcType ty)
         (ErrTcType "typecheck: bit-not expects integer"))]))
 
+(define (tc-region-arg-builtin-name? [name : String]) : bool
+  (if (string-eq name "print-string")
+    true
+    (if (string-eq name "print-str")
+      true
+      (if (string-eq name "print-error")
+        true
+        (if (string-eq name "string-length")
+          true
+          (if (string-eq name "length")
+            true
+            (if (string-eq name "string-eq")
+              true
+              (if (string-eq name "string=?")
+                true
+                (if (string-eq name "string->int")
+                  true
+                  (if (string-eq name "substring")
+                    true
+                    (if (string-eq name "string-slice")
+                      true
+                      (if (string-eq name "string-append")
+                        true
+                        (if (string-eq name "string-concat")
+                          true
+                          (if (string-eq name "read-file")
+                            true
+                            (if (string-eq name "write-file")
+                              true
+                              (if (string-eq name "file-exists?")
+                                true
+                                (if (string-eq name "panic")
+                                  true
+                                  (string-eq name "error"))))))))))))))))))
+
+(define (tc-default-builtin-unshadowed-scan? [env : TcTypeEnv] [name : String]) : bool
+  (match env
+    [(TcTypeNil) false]
+    [(TcTypeBind key _ rest)
+      (if (string-eq key name)
+        false
+        (if (string-eq key (tc-default-boundary-name))
+          true
+          (tc-default-builtin-unshadowed-scan? rest name)))]))
+
+(define (tc-default-builtin-unshadowed? [env : TcTypeEnv] [name : String]) : bool
+  (if (tc-region-arg-builtin-name? name)
+    (tc-default-builtin-unshadowed-scan? env name)
+    false))
+
+(define (tc-constructor-name? [ctx : TcContext] [name : String]) : bool
+  (match ctx
+    [(TcContext _ symbols registries)
+      (match (compiler-symbols-lookup-type symbols name)
+        [(SomeI64 handle)
+          (if (=
+            (compiler-symbol-handle-kind handle)
+            (compiler-symbol-kind-defstruct))
+            true
+            (match (compiler-registries-lookup-variant registries name)
+              [(SomeI64 _) true]
+              [(NoneI64) false]))]
+        [(NoneI64)
+          (match (compiler-registries-lookup-variant registries name)
+            [(SomeI64 _) true]
+            [(NoneI64) false])])]))
+
+(define (tc-call-allows-region-args?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]) : bool
+  (if (tc-default-builtin-unshadowed? env name)
+    true
+    (match (tc-active-region env)
+      [(TcSomeString _) (tc-constructor-name? ctx name)]
+      [(TcNoString) false])))
+
+(define (tc-expr-var-name [expr : AstExpr]) : TcMaybeString
+  (match (ast-expr-unspan expr)
+    [(AstExprVar name) (TcSomeString name)]
+    [_ (TcNoString)]))
+
+(define (tc-check-call-args
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : AstExprList]
+  [params : AstTypeList]
+  [allow-region-args : bool]
+  [constructor-target : AstMaybeType]) : ResultTcUnit
+  (match args
+    [(AstExprNil)
+      (match params
+        [(AstTypeNil) OkTcUnit]
+        [_ (ErrTcUnit "typecheck: arity mismatch")])]
+    [(AstExprCons arg rest-args)
+      (match params
+        [(AstTypeCons want rest-params)
+          (match (tc-expr ctx env arg)
+            [(OkTcType got)
+              (match (tc-expect got want "typecheck: argument type mismatch")
+                [(OkTcUnit)
+                  (if (and
+                    (tc-type-contains-any-region got)
+                    (not allow-region-args))
+                    (ErrTcUnit
+                      "typecheck: cannot pass region-tagged value to function parameter; region value would escape")
+                    (match constructor-target
+                      [(AstSomeType target)
+                        (match (tc-ensure-region-value-can-flow-into
+                          env
+                          target
+                          got
+                          "constructor result")
+                          [(OkTcUnit)
+                            (tc-check-call-args
+                              ctx
+                              env
+                              rest-args
+                              rest-params
+                              allow-region-args
+                              constructor-target)]
+                          [(ErrTcUnit message) (ErrTcUnit message)])]
+                      [(AstNoType)
+                        (tc-check-call-args
+                          ctx
+                          env
+                          rest-args
+                          rest-params
+                          allow-region-args
+                          constructor-target)]))]
+                [(ErrTcUnit message) (ErrTcUnit message)])]
+            [(ErrTcType message) (ErrTcUnit message)])]
+        [(AstTypeNil) (ErrTcUnit "typecheck: arity mismatch")])]))
+
 (define (tc-check-args
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -767,12 +1167,46 @@
     [(OkTcType fn-ty)
       (match fn-ty
         [(AstTyFunc params ret)
-          (match (tc-check-args ctx env args params)
-            [(OkTcUnit) (OkTcType ret)]
-            [(ErrTcUnit message) (ErrTcType message)])]
+          (let ([call-name : TcMaybeString (tc-expr-var-name func)])
+            (let ([allow-region-args
+                :
+                bool
+                (match call-name
+                  [(TcSomeString name)
+                    (tc-call-allows-region-args? ctx env name)]
+                  [(TcNoString) false])]
+              [constructor-target
+                :
+                AstMaybeType
+                (match call-name
+                  [(TcSomeString name)
+                    (if (tc-constructor-name? ctx name)
+                      (AstSomeType (tc-tag-active-region env ret))
+                      (AstNoType))]
+                  [(TcNoString) (AstNoType)])])
+              (match (tc-check-call-args
+                ctx
+                env
+                args
+                params
+                allow-region-args
+                constructor-target)
+                [(OkTcUnit) (OkTcType (tc-tag-active-region env ret))]
+                [(ErrTcUnit message) (ErrTcType message)])))]
+        [(AstTyRegion _ inner)
+          (match inner
+            [(AstTyFunc params ret)
+              (match (tc-check-call-args ctx env args params false (AstNoType))
+                [(OkTcUnit) (OkTcType (tc-tag-active-region env ret))]
+                [(ErrTcUnit message) (ErrTcType message)])]
+            [(AstTyEnum _)
+              (match args
+                [(AstExprNil) (OkTcType (tc-tag-active-region env inner))]
+                [_ (ErrTcType "typecheck: arity mismatch")])]
+            [_ (ErrTcType "typecheck: call target is not a function")])]
         [(AstTyEnum _)
           (match args
-            [(AstExprNil) (OkTcType fn-ty)]
+            [(AstExprNil) (OkTcType (tc-tag-active-region env fn-ty))]
             [_ (ErrTcType "typecheck: arity mismatch")])]
         [_ (ErrTcType "typecheck: call target is not a function")])]
     [(ErrTcType message) (ErrTcType message)]))
@@ -837,7 +1271,7 @@
         [(AstExprNil)
           (match (tc-expr ctx env arg)
             [(OkTcType arg-ty)
-              (match arg-ty
+              (match (tc-type-strip-region arg-ty)
                 [(AstTyDynArray _) (OkTcType (AstTyI64))]
                 [_
                   (if (string-eq name "array-length")
@@ -889,7 +1323,12 @@
                     [(OkTcUnit)
                       (tc-let-bindings
                         ctx
-                        (tc-bind env name (tc-resolve-type ctx want))
+                        (tc-bind
+                          env
+                          name
+                          (if (tc-type-contains-any-region init-ty)
+                            init-ty
+                            (tc-resolve-type ctx want)))
                         rest)]
                     [(ErrTcUnit message) (ErrTcEnv message)])]
                 [(AstNoType)
@@ -909,6 +1348,202 @@
           (match (tc-expr ctx env expr)
             [(OkTcType _) (tc-begin-list ctx env rest)]
             [(ErrTcType message) (ErrTcType message)])])]))
+
+(define (tc-param-list-add-bound-names
+  [params : AstParamList]
+  [bound : TcStringList]) : TcStringList
+  (match params
+    [(AstParamNil) bound]
+    [(AstParamCons param rest)
+      (match param
+        [(AstParam name _)
+          (tc-param-list-add-bound-names rest (tc-string-list-add bound name))])]))
+
+(define (tc-param-bound-names [params : AstParamList]) : TcStringList
+  (tc-param-list-add-bound-names params TcStringNil))
+
+(define (tc-pattern-add-bound-names
+  [pattern : AstPattern]
+  [bound : TcStringList]) : TcStringList
+  (match pattern
+    [(AstPatVar name _) (tc-string-list-add bound name)]
+    [(AstPatTuple patterns) (tc-pattern-list-add-bound-names patterns bound)]
+    [(AstPatWildcard) bound]
+    [(AstPatBinding name) (tc-string-list-add bound name)]
+    [(AstPatVariant _ patterns)
+      (tc-pattern-list-add-bound-names patterns bound)]
+    [(AstPatLiteral _) bound]))
+
+(define (tc-pattern-list-add-bound-names
+  [patterns : AstPatternList]
+  [bound : TcStringList]) : TcStringList
+  (match patterns
+    [(AstPatternNil) bound]
+    [(AstPatternCons pattern rest)
+      (tc-pattern-list-add-bound-names
+        rest
+        (tc-pattern-add-bound-names pattern bound))]))
+
+(define (tc-let-binding-list-add-bound-names
+  [bindings : AstLetBindingList]
+  [bound : TcStringList]) : TcStringList
+  (match bindings
+    [(AstLetBindingNil) bound]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding name _ _)
+          (tc-let-binding-list-add-bound-names
+            rest
+            (tc-string-list-add bound name))])]))
+
+(define (tc-expr-list-uses-free-name?
+  [exprs : AstExprList]
+  [name : String]
+  [bound : TcStringList]) : bool
+  (match exprs
+    [(AstExprNil) false]
+    [(AstExprCons expr rest)
+      (or
+        (tc-expr-uses-free-name? expr name bound)
+        (tc-expr-list-uses-free-name? rest name bound))]))
+
+(define (tc-let-binding-list-uses-free-name?
+  [bindings : AstLetBindingList]
+  [name : String]
+  [bound : TcStringList]) : bool
+  (match bindings
+    [(AstLetBindingNil) false]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding bind-name _ init)
+          (or
+            (tc-expr-uses-free-name? init name bound)
+            (tc-let-binding-list-uses-free-name?
+              rest
+              name
+              (tc-string-list-add bound bind-name)))])]))
+
+(define (tc-match-arms-use-free-name?
+  [arms : AstMatchArmList]
+  [name : String]
+  [bound : TcStringList]) : bool
+  (match arms
+    [(AstMatchArmNil) false]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm pattern body)
+          (or
+            (tc-expr-uses-free-name?
+              body
+              name
+              (tc-pattern-add-bound-names pattern bound))
+            (tc-match-arms-use-free-name? rest name bound))])]))
+
+(define (tc-expr-uses-free-name?
+  [expr : AstExpr]
+  [name : String]
+  [bound : TcStringList]) : bool
+  (match expr
+    [(AstExprSpanned inner _) (tc-expr-uses-free-name? inner name bound)]
+    [(AstExprLiteral _) false]
+    [(AstExprVar var-name)
+      (and (string-eq var-name name) (not (tc-string-list-contains bound name)))]
+    [(AstExprBinary _ left right)
+      (or
+        (tc-expr-uses-free-name? left name bound)
+        (tc-expr-uses-free-name? right name bound))]
+    [(AstExprUnary _ inner) (tc-expr-uses-free-name? inner name bound)]
+    [(AstExprCall func args)
+      (or
+        (tc-expr-uses-free-name? func name bound)
+        (tc-expr-list-uses-free-name? args name bound))]
+    [(AstExprIf cond then-branch else-branch)
+      (or
+        (tc-expr-uses-free-name? cond name bound)
+        (or
+          (tc-expr-uses-free-name? then-branch name bound)
+          (tc-expr-uses-free-name? else-branch name bound)))]
+    [(AstExprLet bindings body)
+      (or
+        (tc-let-binding-list-uses-free-name? bindings name bound)
+        (tc-expr-uses-free-name?
+          body
+          name
+          (tc-let-binding-list-add-bound-names bindings bound)))]
+    [(AstExprLambda params _ body)
+      (tc-expr-uses-free-name?
+        body
+        name
+        (tc-param-list-add-bound-names params bound))]
+    [(AstExprTuple exprs) (tc-expr-list-uses-free-name? exprs name bound)]
+    [(AstExprTupleRef tuple _) (tc-expr-uses-free-name? tuple name bound)]
+    [(AstExprArray exprs) (tc-expr-list-uses-free-name? exprs name bound)]
+    [(AstExprMakeArray _ len) (tc-expr-uses-free-name? len name bound)]
+    [(AstExprArrayRef array index)
+      (or
+        (tc-expr-uses-free-name? array name bound)
+        (tc-expr-uses-free-name? index name bound))]
+    [(AstExprArraySet array index value)
+      (or
+        (tc-expr-uses-free-name? array name bound)
+        (or
+          (tc-expr-uses-free-name? index name bound)
+          (tc-expr-uses-free-name? value name bound)))]
+    [(AstExprStringRef str index)
+      (or
+        (tc-expr-uses-free-name? str name bound)
+        (tc-expr-uses-free-name? index name bound))]
+    [(AstExprWhile cond body)
+      (or
+        (tc-expr-uses-free-name? cond name bound)
+        (tc-expr-uses-free-name? body name bound))]
+    [(AstExprBegin exprs) (tc-expr-list-uses-free-name? exprs name bound)]
+    [(AstExprSet var-name value)
+      (or
+        (and
+          (string-eq var-name name)
+          (not (tc-string-list-contains bound name)))
+        (tc-expr-uses-free-name? value name bound))]
+    [(AstExprAnn inner _) (tc-expr-uses-free-name? inner name bound)]
+    [(AstExprCast inner _) (tc-expr-uses-free-name? inner name bound)]
+    [(AstExprMatch scrutinee arms)
+      (or
+        (tc-expr-uses-free-name? scrutinee name bound)
+        (tc-match-arms-use-free-name? arms name bound))]
+    [(AstExprForeach index _ start end body)
+      (or
+        (tc-expr-uses-free-name? start name bound)
+        (or
+          (tc-expr-uses-free-name? end name bound)
+          (tc-expr-uses-free-name? body name (tc-string-list-add bound index))))]
+    [(AstExprStructGet receiver _)
+      (tc-expr-uses-free-name? receiver name bound)]
+    [(AstExprWithRegion _ body) (tc-expr-list-uses-free-name? body name bound)]
+    [(AstExprComptime inner) (tc-expr-uses-free-name? inner name bound)]))
+
+(define (tc-check-lambda-region-captures-scan
+  [env : TcTypeEnv]
+  [bound : TcStringList]
+  [body : AstExpr]) : ResultTcUnit
+  (match env
+    [(TcTypeNil) OkTcUnit]
+    [(TcTypeBind key ty rest)
+      (if (or
+        (string-eq key (tc-region-marker-name))
+        (string-eq key (tc-default-boundary-name)))
+        (tc-check-lambda-region-captures-scan rest bound body)
+        (if (and
+          (tc-type-contains-any-region ty)
+          (tc-expr-uses-free-name? body key bound))
+          (ErrTcUnit
+            "typecheck: lambda cannot capture region-tagged value; region value would escape")
+          (tc-check-lambda-region-captures-scan rest bound body)))]))
+
+(define (tc-check-lambda-region-captures
+  [env : TcTypeEnv]
+  [params : AstParamList]
+  [body : AstExpr]) : ResultTcUnit
+  (tc-check-lambda-region-captures-scan env (tc-param-bound-names params) body))
 
 (define (tc-context-program [ctx : TcContext]) : AstProgram
   (match ctx
@@ -997,7 +1632,8 @@
   [env : TcTypeEnv]
   [enum-name : String]
   [variant-name : String]
-  [args : AstPatternList]) : ResultTcEnv
+  [args : AstPatternList]
+  [payload-region : TcMaybeString]) : ResultTcEnv
   (match (compiler-registries-lookup-variant
     (tc-context-registries ctx)
     variant-name)
@@ -1009,11 +1645,18 @@
               (tc-context-program ctx)
               handle)
               [(OkAstTypeList fields)
-                (tc-bind-sub-pattern-list
-                  ctx
-                  env
-                  args
-                  (tc-resolve-type-list ctx fields))]
+                (let ([resolved-fields
+                    :
+                    AstTypeList
+                    (tc-resolve-type-list ctx fields)])
+                  (tc-bind-sub-pattern-list
+                    ctx
+                    env
+                    args
+                    (match payload-region
+                      [(TcSomeString region)
+                        (tc-tag-type-list-region region resolved-fields)]
+                      [(TcNoString) resolved-fields])))]
               [(ErrAstTypeList message) (ErrTcEnv message)])
             (ErrTcEnv
               (string-append
@@ -1041,9 +1684,15 @@
           (OkTcEnv env)
           (ErrTcEnv "typecheck: literal pattern type mismatch"))]
       [(AstPatVariant name args)
-        (match ty
+        (match (tc-type-strip-region ty)
           [(AstTyEnum enum-name)
-            (tc-bind-variant-pattern ctx env enum-name name args)]
+            (tc-bind-variant-pattern
+              ctx
+              env
+              enum-name
+              name
+              args
+              (tc-type-outer-region ty))]
           [_ (ErrTcEnv "typecheck: nested variant pattern requires enum field")])]
       [_ (ErrTcEnv "typecheck: unsupported nested match pattern")])))
 
@@ -1052,14 +1701,26 @@
   [env : TcTypeEnv]
   [scrut-ty : AstType]
   [pattern : AstPattern]) : ResultTcEnv
-  (match scrut-ty
+  (match (tc-type-strip-region scrut-ty)
     [(AstTyEnum enum-name)
       (match pattern
         [(AstPatWildcard) (OkTcEnv env)]
         [(AstPatBinding variant-name)
-          (tc-bind-variant-pattern ctx env enum-name variant-name AstPatternNil)]
+          (tc-bind-variant-pattern
+            ctx
+            env
+            enum-name
+            variant-name
+            AstPatternNil
+            (tc-type-outer-region scrut-ty))]
         [(AstPatVariant variant-name args)
-          (tc-bind-variant-pattern ctx env enum-name variant-name args)]
+          (tc-bind-variant-pattern
+            ctx
+            env
+            enum-name
+            variant-name
+            args
+            (tc-type-outer-region scrut-ty))]
         [_ (ErrTcEnv "typecheck: unsupported enum match pattern")])]
     [_
       (match pattern
@@ -1153,7 +1814,7 @@
     [(AstPatBinding _) true]
     [(AstPatLiteral _) false]
     [(AstPatVariant name args)
-      (match (tc-resolve-type ctx field-ty)
+      (match (tc-type-strip-region (tc-resolve-type ctx field-ty))
         [(AstTyEnum enum-name)
           (match (tc-program-enum-variants (tc-context-program ctx) enum-name)
             [(OkAstVariantDefList variants)
@@ -1248,7 +1909,7 @@
   [ctx : TcContext]
   [scrut-ty : AstType]
   [arms : AstMatchArmList]) : bool
-  (match scrut-ty
+  (match (tc-type-strip-region scrut-ty)
     [(AstTyEnum enum-name)
       (match (tc-program-enum-variants (tc-context-program ctx) enum-name)
         [(OkAstVariantDefList variants)
@@ -1286,7 +1947,11 @@
             got
             (tc-resolve-type ctx ty)
             "typecheck: annotation type mismatch")
-            [(OkTcUnit) (OkTcType (tc-resolve-type ctx ty))]
+            [(OkTcUnit)
+              (OkTcType
+                (if (tc-type-contains-any-region got)
+                  got
+                  (tc-resolve-type ctx ty)))]
             [(ErrTcUnit message) (ErrTcType message)])]
         [(ErrTcType message) (ErrTcType message)])]
     [(AstExprLet bindings body)
@@ -1294,33 +1959,45 @@
         [(OkTcEnv next-env) (tc-expr ctx next-env body)]
         [(ErrTcEnv message) (ErrTcType message)])]
     [(AstExprLambda params maybe-ret body)
-      (let ([lambda-env : TcTypeEnv (tc-bind-params ctx env params)])
-        (match (tc-expr ctx lambda-env body)
-          [(OkTcType body-ty)
-            (match maybe-ret
-              [(AstSomeType ret)
-                (match (tc-expect
-                  body-ty
-                  (tc-resolve-type ctx ret)
-                  "typecheck: lambda return type mismatch")
-                  [(OkTcUnit)
-                    (OkTcType
-                      (AstTyFunc
-                        (tc-param-type-list ctx params)
-                        (tc-resolve-type ctx ret)))]
-                  [(ErrTcUnit message) (ErrTcType message)])]
-              [(AstNoType)
-                (OkTcType (AstTyFunc (tc-param-type-list ctx params) body-ty))])]
-          [(ErrTcType message) (ErrTcType message)]))]
+      (match (tc-check-lambda-region-captures env params body)
+        [(OkTcUnit)
+          (let ([lambda-env : TcTypeEnv (tc-bind-params ctx env params)])
+            (match (tc-expr ctx lambda-env body)
+              [(OkTcType body-ty)
+                (if (tc-type-contains-any-region body-ty)
+                  (ErrTcType
+                    "typecheck: lambda return value has region-tagged type; region value would escape")
+                  (match maybe-ret
+                    [(AstSomeType ret)
+                      (match (tc-expect
+                        body-ty
+                        (tc-resolve-type ctx ret)
+                        "typecheck: lambda return type mismatch")
+                        [(OkTcUnit)
+                          (OkTcType
+                            (AstTyFunc
+                              (tc-param-type-list ctx params)
+                              (tc-resolve-type ctx ret)))]
+                        [(ErrTcUnit message) (ErrTcType message)])]
+                    [(AstNoType)
+                      (OkTcType
+                        (AstTyFunc (tc-param-type-list ctx params) body-ty))]))]
+              [(ErrTcType message) (ErrTcType message)]))]
+        [(ErrTcUnit message) (ErrTcType message)])]
     [(AstExprTuple exprs)
       (match (tc-expr-list-types ctx env exprs)
-        [(OkTcTypeList tys) (OkTcType (AstTyTuple tys))]
+        [(OkTcTypeList tys)
+          (OkTcType (tc-tag-active-region env (AstTyTuple tys)))]
         [(ErrTcTypeList message) (ErrTcType message)])]
     [(AstExprTupleRef tuple index)
       (match (tc-expr ctx env tuple)
         [(OkTcType tuple-ty)
-          (match tuple-ty
-            [(AstTyTuple tys) (tc-type-list-ref tys index)]
+          (match (tc-type-strip-region tuple-ty)
+            [(AstTyTuple tys)
+              (match (tc-type-list-ref tys index)
+                [(OkTcType elem-ty)
+                  (OkTcType (tc-project-from-region-container tuple-ty elem-ty))]
+                [(ErrTcType message) (ErrTcType message)])]
             [_ (ErrTcType "typecheck: tuple-ref requires tuple type")])]
         [(ErrTcType message) (ErrTcType message)])]
     [(AstExprArray exprs)
@@ -1340,7 +2017,7 @@
           [(OkTcType len-ty)
             (if (tc-integer-type? len-ty)
               (if (tc-dyn-array-elem-supported? elem)
-                (OkTcType (AstTyDynArray elem))
+                (OkTcType (tc-tag-active-region env (AstTyDynArray elem)))
                 (ErrTcType
                   "typecheck: make-array element type is not supported"))
               (ErrTcType "typecheck: make-array length must be integer"))]
@@ -1351,9 +2028,13 @@
           (match (tc-expr ctx env index)
             [(OkTcType index-ty)
               (if (tc-integer-type? index-ty)
-                (match array-ty
-                  [(AstTyArray elem-ty _) (OkTcType elem-ty)]
-                  [(AstTyDynArray elem-ty) (OkTcType elem-ty)]
+                (match (tc-type-strip-region array-ty)
+                  [(AstTyArray elem-ty _)
+                    (OkTcType
+                      (tc-project-from-region-container array-ty elem-ty))]
+                  [(AstTyDynArray elem-ty)
+                    (OkTcType
+                      (tc-project-from-region-container array-ty elem-ty))]
                   [_ (ErrTcType "typecheck: array-ref requires array type")])
                 (ErrTcType "typecheck: array index must be integer"))]
             [(ErrTcType message) (ErrTcType message)])]
@@ -1364,7 +2045,7 @@
           (match (tc-expr ctx env index)
             [(OkTcType index-ty)
               (if (tc-integer-type? index-ty)
-                (match array-ty
+                (match (tc-type-strip-region array-ty)
                   [(AstTyArray elem-ty _)
                     (match (tc-expr ctx env value)
                       [(OkTcType value-ty)
@@ -1372,7 +2053,14 @@
                           value-ty
                           elem-ty
                           "typecheck: array-set! value type mismatch")
-                          [(OkTcUnit) (OkTcType (AstTyUnit))]
+                          [(OkTcUnit)
+                            (match (tc-ensure-region-value-can-flow-into
+                              env
+                              array-ty
+                              value-ty
+                              "array")
+                              [(OkTcUnit) (OkTcType (AstTyUnit))]
+                              [(ErrTcUnit message) (ErrTcType message)])]
                           [(ErrTcUnit message) (ErrTcType message)])]
                       [(ErrTcType message) (ErrTcType message)])]
                   [(AstTyDynArray elem-ty)
@@ -1382,7 +2070,14 @@
                           value-ty
                           elem-ty
                           "typecheck: array-set! value type mismatch")
-                          [(OkTcUnit) (OkTcType (AstTyUnit))]
+                          [(OkTcUnit)
+                            (match (tc-ensure-region-value-can-flow-into
+                              env
+                              array-ty
+                              value-ty
+                              "array")
+                              [(OkTcUnit) (OkTcType (AstTyUnit))]
+                              [(ErrTcUnit message) (ErrTcType message)])]
                           [(ErrTcUnit message) (ErrTcType message)])]
                       [(ErrTcType message) (ErrTcType message)])]
                   [_ (ErrTcType "typecheck: array-set! requires array type")])
@@ -1431,7 +2126,14 @@
                 value-ty
                 var-ty
                 "typecheck: assignment type mismatch")
-                [(OkTcUnit) (OkTcType (AstTyUnit))]
+                [(OkTcUnit)
+                  (match (tc-ensure-region-value-can-flow-into
+                    env
+                    var-ty
+                    value-ty
+                    "assignment")
+                    [(OkTcUnit) (OkTcType (AstTyUnit))]
+                    [(ErrTcUnit message) (ErrTcType message)])]
                 [(ErrTcUnit message) (ErrTcType message)])]
             [(ErrTcType message) (ErrTcType message)])]
         [(ErrTcType message) (ErrTcType message)])]
@@ -1512,11 +2214,26 @@
     [(AstExprStructGet receiver field)
       (match (tc-expr ctx env receiver)
         [(OkTcType receiver-ty)
-          (match receiver-ty
+          (match (tc-type-strip-region receiver-ty)
             [(AstTyStruct struct-name)
-              (tc-struct-field-type ctx struct-name field)]
+              (match (tc-struct-field-type ctx struct-name field)
+                [(OkTcType field-ty)
+                  (OkTcType
+                    (tc-project-from-region-container receiver-ty field-ty))]
+                [(ErrTcType message) (ErrTcType message)])]
             [_ (ErrTcType "typecheck: struct-get requires struct")])]
         [(ErrTcType message) (ErrTcType message)])]
+    [(AstExprWithRegion region body)
+      (let ([region-env : TcTypeEnv (tc-push-region env region)])
+        (match (tc-begin-list ctx region-env body)
+          [(OkTcType body-ty)
+            (if (tc-type-contains-region body-ty region)
+              (ErrTcType
+                (string-append
+                  "typecheck: region-tagged value cannot escape with-region '"
+                  (string-append region "'")))
+              (OkTcType body-ty))]
+          [(ErrTcType message) (ErrTcType message)]))]
     ;; `(comptime expr)` in expression position yields the inner expression's
     ;; type (#718); compile-time evaluation is reserved for #719.
     [(AstExprComptime inner) (tc-expr ctx env inner)]
@@ -1870,6 +2587,85 @@
             (compiler-typecheck-duplicate-variant-source)
             "symbols: duplicate enum variant Same"))))))
 
+(define (compiler-typecheck-region-builtin-source) : String
+  "(define (main) : i64
+  (with-region r
+    (let ([s : String (int->string 41)])
+      (string-length s))))")
+
+(define (compiler-typecheck-region-escape-source) : String
+  "(define (main) : String
+  (with-region r (int->string 41)))")
+
+(define (compiler-typecheck-region-user-call-source) : String
+  "(define (sink [s : String]) : i64 (string-length s))
+(define (main) : i64
+  (with-region r
+    (let ([s : String (int->string 41)])
+      (sink s))))")
+
+(define (compiler-typecheck-region-nested-escape-source) : String
+  "(define (main) : i64
+  (with-region outer
+    (let ([s : String (with-region inner (int->string 1))])
+      0)))")
+
+(define (compiler-typecheck-region-outer-in-inner-source) : String
+  "(define (main) : i64
+  (with-region outer
+    (let ([s : String (int->string 1)])
+      (with-region inner (string-length s)))))")
+
+(define (compiler-typecheck-region-array-source) : String
+  "(define (main [n : i64]) : i64
+  (with-region r
+    (let ([a : (Array i64) (make-array i64 n)])
+      (begin
+        (array-set! a 0 7)
+        (array-length a)))))")
+
+(define (compiler-typecheck-region-struct-escape-source) : String
+  "(defstruct Box (s String))
+(define (main) : String
+  (with-region r
+    (let ([b : Box (Box (int->string 1))])
+      (struct-get b s))))")
+
+(define (compiler-typecheck-region-match-source) : String
+  "(defenum Token (Text String) (End))
+(define (main) : i64
+  (with-region r
+    (match (Text (int->string 1))
+      [(Text s) (string-length s)]
+      [End 0])))")
+
+(define (compiler-typecheck-region-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-region-builtin-source))
+    (and
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-region-escape-source)
+        "typecheck: region-tagged value cannot escape with-region 'r'")
+      (and
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-region-user-call-source)
+          "typecheck: cannot pass region-tagged value to function parameter; region value would escape")
+        (and
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-region-nested-escape-source)
+            "typecheck: region-tagged value cannot escape with-region 'inner'")
+          (and
+            (compiler-typecheck-ok?
+              (compiler-typecheck-region-outer-in-inner-source))
+            (and
+              (compiler-typecheck-ok? (compiler-typecheck-region-array-source))
+              (and
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-region-struct-escape-source)
+                  "typecheck: region-tagged value cannot escape with-region 'r'")
+                (compiler-typecheck-ok?
+                  (compiler-typecheck-region-match-source))))))))))
+
 ;; A type error whose offending expression (`missing`) is on source line 2, so
 
 ;; the diagnostic must locate it there (not at the 1:1 fallback) — proving the
@@ -1924,7 +2720,9 @@
                 (compiler-typecheck-aggregate-tests-ok?)
                 (and
                   (compiler-typecheck-nominal-tests-ok?)
-                  (compiler-typecheck-located-ok?)))))))
+                  (and
+                    (compiler-typecheck-region-tests-ok?)
+                    (compiler-typecheck-located-ok?))))))))
         42
         (begin
           (panic "typecheck: smoke score mismatch")

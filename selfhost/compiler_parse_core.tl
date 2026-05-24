@@ -251,6 +251,9 @@
 (define (compiler-parse-tag-ty-array) : i64
   132)
 
+(define (compiler-parse-tag-ty-region) : i64
+  133)
+
 (define (compiler-parse-tag-expr-if) : i64
   200)
 
@@ -313,6 +316,9 @@
 
 (define (compiler-parse-tag-expr-comptime) : i64
   247)
+
+(define (compiler-parse-tag-expr-with-region) : i64
+  248)
 
 (define (compiler-parse-tag-lit-true) : i64
   300)
@@ -501,10 +507,17 @@
                                         e16
                                         "Tuple"
                                         (compiler-parse-tag-ty-tuple))])
-                                    (sym-i64-bind
-                                      e17
-                                      "Array"
-                                      (compiler-parse-tag-ty-array))))))))))))))))))))
+                                    (let ([e18
+                                        :
+                                        SymI64Env
+                                        (sym-i64-bind
+                                          e17
+                                          "Array"
+                                          (compiler-parse-tag-ty-array))])
+                                      (sym-i64-bind
+                                        e18
+                                        "in"
+                                        (compiler-parse-tag-ty-region)))))))))))))))))))))
 
 (define (compiler-parse-dispatch-exprs [e : SymI64Env]) : SymI64Env
   (let ([e1 : SymI64Env (sym-i64-bind e "if" (compiler-parse-tag-expr-if))])
@@ -600,10 +613,17 @@
                                           e19
                                           "struct-get"
                                           (compiler-parse-tag-expr-struct-get))])
-                                      (sym-i64-bind
-                                        e20
-                                        "comptime"
-                                        (compiler-parse-tag-expr-comptime)))))))))))))))))))))
+                                      (let ([e21
+                                          :
+                                          SymI64Env
+                                          (sym-i64-bind
+                                            e20
+                                            "comptime"
+                                            (compiler-parse-tag-expr-comptime))])
+                                        (sym-i64-bind
+                                          e21
+                                          "with-region"
+                                          (compiler-parse-tag-expr-with-region))))))))))))))))))))))
 
 (define (compiler-parse-dispatch-patterns [e : SymI64Env]) : SymI64Env
   (let ([e1 : SymI64Env (sym-i64-bind e "true" (compiler-parse-tag-lit-true))])
@@ -834,7 +854,17 @@
                 [(SCons _ (SCons _ (SNil)))
                   (ErrAstType "parse: array size must be integer")]
                 [_ (ErrAstType "parse: malformed array type")])
-              (ErrAstType "parse: unknown type constructor")))))]
+              (if (= tag (compiler-parse-tag-ty-region))
+                (match rest
+                  [(SCons (SSym region) (SCons inner (SNil)))
+                    (match (parse-ast-type dispatch inner)
+                      [(OkAstType inner-ty)
+                        (OkAstType (AstTyRegion region inner-ty))]
+                      [(ErrAstType message) (ErrAstType message)])]
+                  [(SCons _ (SCons _ (SNil)))
+                    (ErrAstType "parse: region name must be an identifier")]
+                  [_ (ErrAstType "parse: malformed region type")])
+                (ErrAstType "parse: unknown type constructor"))))))]
     [_ (ErrAstType "parse: expected type")]))
 
 (define (parse-ast-param [dispatch : SymI64Env] [s : Sexpr]) : ResultAstParam
@@ -1232,6 +1262,25 @@
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: comptime expects exactly one expression")]))
 
+(define (parse-ast-with-region [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSNil _)
+      (ErrAstExpr "parse: with-region requires a region name before its body")]
+    [(SpSCons (SpSSym region _) body _)
+      (match body
+        [(SpSNil _)
+          (ErrAstExpr
+            (string-append
+              "parse: with-region '"
+              (string-append region "' requires a non-empty body")))]
+        [_
+          (match (parse-ast-expr-list dispatch body)
+            [(OkAstExprList exprs) (OkAstExpr (AstExprWithRegion region exprs))]
+            [(ErrAstExprList message) (ErrAstExpr message)])])]
+    [(SpSCons _ _ _)
+      (ErrAstExpr "parse: with-region region name must be an identifier")]
+    [_ (ErrAstExpr "parse: malformed with-region")]))
+
 (define (parse-ast-match-arm [dispatch : SymI64Env] [s : SpannedSexpr]) : ResultAstMatchArm
   (match s
     [(SpSCons pattern (SpSCons body (SpSNil _) _) _)
@@ -1379,7 +1428,11 @@
                                       tag
                                       (compiler-parse-tag-expr-comptime))
                                       (parse-ast-comptime dispatch rest)
-                                      (parse-ast-call dispatch head rest))))))))))))))))))))
+                                      (if (=
+                                        tag
+                                        (compiler-parse-tag-expr-with-region))
+                                        (parse-ast-with-region dispatch rest)
+                                        (parse-ast-call dispatch head rest)))))))))))))))))))))
 
 (define (parse-ast-list-expr
   [dispatch : SymI64Env]
@@ -1790,6 +1843,21 @@
 (define (compiler-parse-cond-no-else-source) : String
   "(define (main) : i64 (cond))")
 
+(define (compiler-parse-region-source) : String
+  "(define (main) : (in r String)
+  (with-region r \"x\"))")
+
+(define (compiler-parse-with-region-empty-source) : String
+  "(define (main) : i64 (with-region r))")
+
+(define (compiler-parse-region-type-bad-source) : String
+  "(define (main) : (in 1 String) 0)")
+
+(define (compiler-parse-region-ok?) : bool
+  (match (parse-ast-source (compiler-parse-region-source))
+    [(OkAstProgram _) true]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-parse-error-tests-ok?) : bool
   (and
     (compiler-parse-error-ok?
@@ -1807,9 +1875,17 @@
           (compiler-parse-error-ok?
             (compiler-parse-malformed-set-source)
             "parse: malformed set!")
-          (compiler-parse-error-ok?
-            (compiler-parse-cond-no-else-source)
-            "parse: cond requires final else arm"))))))
+          (and
+            (compiler-parse-error-ok?
+              (compiler-parse-cond-no-else-source)
+              "parse: cond requires final else arm")
+            (and
+              (compiler-parse-error-ok?
+                (compiler-parse-with-region-empty-source)
+                "parse: with-region 'r' requires a non-empty body")
+              (compiler-parse-error-ok?
+                (compiler-parse-region-type-bad-source)
+                "parse: region name must be an identifier"))))))))
 
 (define (compiler-parse-smoke) : i64
   (match (parse-ast-source (compiler-parse-smoke-source))
@@ -1820,7 +1896,7 @@
           (compiler-parse-nested-expr-span-ok?)
           (and
             (compiler-parse-error-span-ok?)
-            (compiler-parse-float-literal-ok?))))
+            (and (compiler-parse-float-literal-ok?) (compiler-parse-region-ok?)))))
         (if (compiler-parse-error-tests-ok?)
           42
           (begin

@@ -1974,11 +1974,11 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
     );
     for snippet in [
         ".text\n.globl _start\n",
-        "_tl_shared:\n",
-        "_tl_helper:\n",
+        "_tl_shared_u2etl_colon_colonshared:\n",
+        "_tl_helper_u2etl_colon_colonhelper:\n",
         "main:\n",
-        "    call _tl_helper\n",
-        "_tl_shared(%rip)",
+        "    call _tl_helper_u2etl_colon_colonhelper\n",
+        "_tl_shared_u2etl_colon_colonshared(%rip)",
         "_start:\n    call main\n",
     ] {
         assert!(
@@ -2187,9 +2187,9 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
     let json_asm =
         fs::read_to_string(&json_asm_path).expect("read compiler_driver stdlib JSON assembly");
     for snippet in [
-        "_tl_json_parse:",
-        "_tl_json_stringify:",
-        "_tl_json_parse_object:",
+        "_tl_stdlib_slashjson_u2etl_colon_colonjson_parse:",
+        "_tl_stdlib_slashjson_u2etl_colon_colonjson_stringify:",
+        "_tl_stdlib_slashjson_u2etl_colon_colonjson_parse_object:",
     ] {
         assert!(
             json_asm.contains(snippet),

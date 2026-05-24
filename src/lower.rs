@@ -1355,16 +1355,19 @@ impl FnLowerer {
             // `String` and dynamic-array captures are pointer-sized handles to a
             // fat `{ ptr, len }` value that may live on the creator's frame.
             // Since the environment can outlive that frame, snapshot the fat
-            // value onto the heap so the stored handle cannot dangle. A scalar
-            // tuple is a pointer handle to inline POD storage, snapshotted with a
-            // shallow byte copy (#542). Scalars and function values are copied by
-            // value directly. (Fixed-array capture is rejected by the
-            // typechecker, so no `Array` arm is needed here.)
+            // value onto the heap so the stored handle cannot dangle. A
+            // scalar-field tuple/struct/enum is a pointer handle to inline POD
+            // storage, snapshotted with a shallow byte copy (#542 tuples, #540
+            // structs/enums). Scalars and function values are copied by value
+            // directly. (Fixed-array capture is rejected by the typechecker, so
+            // no `Array` arm is needed here.)
             let src = match self.resolve_type(&capture.ty) {
                 Type::String | Type::DynArray(_) => {
                     self.snapshot_fat_value_to_heap(&handle, capture.ty.clone())
                 }
-                ty @ Type::Tuple(_) => self.snapshot_storage_to_heap(&handle, ty),
+                ty @ (Type::Tuple(_) | Type::Struct(_) | Type::Enum(_)) => {
+                    self.snapshot_storage_to_heap(&handle, ty)
+                }
                 _ => handle,
             };
             let storage_ty = Self::backend_value_type(&capture.ty);
@@ -1438,20 +1441,27 @@ impl FnLowerer {
         dst
     }
 
-    /// Snapshot a scalar tuple value into fresh heap storage and return a handle
-    /// to the copy. A tuple is a pointer handle to inline POD storage of a
-    /// statically known size; copying those bytes onto the heap lets a captured
-    /// handle outlive its creator frame without dangling (#542). The typechecker
-    /// only admits scalar-element tuples here, so a shallow byte copy is a
-    /// complete, non-sharing snapshot.
+    /// Snapshot a scalar aggregate value (tuple, struct, or enum) into fresh heap
+    /// storage and return a handle to the copy. These values are pointer handles
+    /// to inline POD storage of a statically known size; copying those bytes onto
+    /// the heap lets a captured handle outlive its creator frame without dangling
+    /// (#542 tuples, #540 structs/enums). The typechecker only admits
+    /// scalar-field aggregates here, so a shallow byte copy is a complete,
+    /// non-sharing snapshot.
     fn snapshot_storage_to_heap(&mut self, handle: &Value, storage_ty: Type) -> Value {
-        // A tuple *value* is pointer-sized (`Type::size() == 8`), so the inline
-        // storage size must come from the field layout, not `size()`.
+        // An aggregate *value* is pointer-sized (`Type::size() == 8`), so the
+        // inline storage size must come from the field layout, not `size()`.
         let size = match &storage_ty {
             Type::Tuple(elems) => {
                 let resolved: Vec<Type> = elems.iter().map(|e| self.resolve_type(e)).collect();
                 Self::tuple_storage_size(&resolved)
             }
+            Type::Struct(name) => {
+                let fields = self.resolved_struct_fields(name);
+                let field_tys: Vec<Type> = fields.iter().map(|f| f.ty.clone()).collect();
+                ast::StructRegistry::struct_size_for_types(&field_tys)
+            }
+            Type::Enum(name) => self.enum_storage_size(name),
             other => other.size(),
         };
         let dst = self.reserve_aggregate_storage(size.max(1), storage_ty, true);

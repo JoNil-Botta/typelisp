@@ -883,9 +883,9 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
                 "token.tl",
             ],
         },
-        // refs #426: first selfhost scalar typechecker pass over compiler AST.
-        // The smoke parses representative source, checks top-level scalar
-        // declarations, and verifies recoverable negative diagnostics.
+        // refs #426/#444: selfhost typechecker pass over compiler AST.
+        // The smoke parses representative scalar and aggregate sources, checks
+        // top-level declarations, and verifies recoverable negative diagnostics.
         Case {
             name: "compiler_typecheck_smoke",
             exit_code: 42,

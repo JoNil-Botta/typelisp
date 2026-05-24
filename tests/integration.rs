@@ -1192,6 +1192,28 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
                 "token.tl",
             ],
         },
+        // refs #723: selfhost virtual-source loader/check path. The smoke
+        // typechecks an in-memory source with a relative import, verifies root
+        // diagnostics use the supplied virtual path, and checks seen-set
+        // duplicate suppression.
+        Case {
+            name: "compiler_check_smoke",
+            exit_code: 42,
+            stdout: "",
+            deps: &[
+                "compiler_check_core.tl",
+                "compiler_load.tl",
+                "compiler_typecheck.tl",
+                "compiler_symbols.tl",
+                "compiler_parse_core.tl",
+                "compiler_diagnostic.tl",
+                "compiler_ast_types.tl",
+                "sym_i64_env.tl",
+                "read.tl",
+                "lex.tl",
+                "token.tl",
+            ],
+        },
         // refs #446: selfhost compiler IR and first scalar lowerer. The smoke
         // parses, symbol-checks, typechecks, and lowers a small program with a
         // direct call, let/set!, while, and if into a deterministic IR summary.
@@ -1916,6 +1938,7 @@ fn selfhost_check_driver_reports_success_and_errors() {
         &selfhost_dir,
         &work_dir,
         &[
+            "compiler_check_core.tl",
             "compiler_load.tl",
             "compiler_typecheck.tl",
             "compiler_symbols.tl",
@@ -4388,6 +4411,7 @@ fn source_path_for_case(manifest_dir: &PathBuf, name: &str) -> PathBuf {
         "compiler_parse_smoke" => "compiler_parse_smoke.tl",
         "compiler_symbols_smoke" => "compiler_symbols_smoke.tl",
         "compiler_typecheck_smoke" => "compiler_typecheck_smoke.tl",
+        "compiler_check_smoke" => "compiler_check_smoke.tl",
         "compiler_lower_smoke" => "compiler_lower_smoke.tl",
         "compiler_liveness_smoke" => "compiler_liveness_smoke.tl",
         "compiler_regalloc_smoke" => "compiler_regalloc_smoke.tl",

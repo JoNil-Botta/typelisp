@@ -139,6 +139,59 @@ fn compiler_typecheck_smoke_tl_compiles_to_assembly() {
 }
 
 #[test]
+fn compiler_check_core_tl_compiles_to_assembly() {
+    let asm = compile_selfhost_source(
+        "compiler_check_core.tl",
+        "tl-compiler-check-core-compile-test",
+        "compiler_check_core.s",
+    );
+
+    assert_no_todo(&asm, "compiler_check_core");
+
+    for sym in [
+        "_tl_compiler_check_file:",
+        "_tl_compiler_check_source:",
+        "_tl_compiler_check_program:",
+        "_tl_compiler_check_self_test:",
+        "_tl_compiler_load_source:",
+    ] {
+        assert_symbol(&asm, sym, "compiler_check_core");
+    }
+
+    for message in [
+        "selfhost/virtual_entry.tl",
+        "docs/examples/bad_type.tl",
+        "typecheck: return type mismatch",
+        "compiler-check: virtual import smoke mismatch",
+        "compiler-check: virtual diagnostic smoke mismatch",
+        "compiler-check: seen root smoke mismatch",
+    ] {
+        assert_message(&asm, message, "compiler_check_core");
+    }
+}
+
+#[test]
+fn compiler_check_smoke_tl_compiles_to_assembly() {
+    let asm = compile_selfhost_source(
+        "compiler_check_smoke.tl",
+        "tl-compiler-check-smoke-compile-test",
+        "compiler_check_smoke.s",
+    );
+
+    assert_no_todo(&asm, "compiler_check_smoke");
+    assert_eq!(
+        asm.matches("\nmain:").count() + usize::from(asm.starts_with("main:")),
+        1,
+        "compiler_check_smoke assembly must have exactly one main:\n{asm}",
+    );
+    assert_symbol(
+        &asm,
+        "_tl_compiler_check_self_test:",
+        "compiler_check_smoke",
+    );
+}
+
+#[test]
 fn selfhost_check_tl_compiles_to_assembly() {
     let asm = compile_selfhost_source(
         "check.tl",
@@ -156,7 +209,10 @@ fn selfhost_check_tl_compiles_to_assembly() {
     for sym in [
         "_tl_selfhost_check_file:",
         "_tl_selfhost_check_extra_args_status:",
+        "_tl_compiler_check_file:",
+        "_tl_compiler_check_source:",
         "_tl_compiler_load_file:",
+        "_tl_compiler_load_source:",
         "_tl_typecheck_compiler_program:",
     ] {
         assert_symbol(&asm, sym, "selfhost_check");

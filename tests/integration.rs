@@ -54,6 +54,12 @@ fn type_lisp_programs_compile_link_and_run() {
             deps: &[],
         },
         Case {
+            name: "comptime_scalar",
+            exit_code: 3,
+            stdout: "",
+            deps: &[],
+        },
+        Case {
             name: "arithmetic",
             exit_code: 47,
             stdout: "",

@@ -1,4 +1,5 @@
 use crate::ast;
+use crate::ctfe::{CtfeEvaluator, CtfeValue};
 use crate::ir::*;
 use crate::types::{
     DYN_ARRAY_FAT_SIZE, DYN_ARRAY_LEN_OFFSET, DYN_ARRAY_PTR_OFFSET, STRING_FAT_SIZE,
@@ -984,9 +985,14 @@ impl FnLowerer {
             ast::Expr::While { cond, body } => self.lower_while(cond, body),
             ast::Expr::Begin(exprs) => self.lower_begin(exprs),
             ast::Expr::Call { func, args } => self.lower_call(func, args),
-            ast::Expr::Comptime { .. } => {
-                unreachable!("comptime should be rejected by the typechecker")
-            }
+            ast::Expr::Comptime { expr } => match CtfeEvaluator::new().eval(expr) {
+                Ok(CtfeValue::I64(n)) => Value::ConstI64(n),
+                Ok(CtfeValue::F64(n)) => Value::ConstF64(n),
+                Ok(CtfeValue::Bool(b)) => Value::ConstBool(b),
+                Ok(CtfeValue::Char(c)) => Value::ConstI8(c as i8),
+                Ok(CtfeValue::Unit) => Value::ConstUnit,
+                Err(_) => unreachable!("comptime should be evaluated by the typechecker"),
+            },
             ast::Expr::Match { scrutinee, arms } => self.lower_match(scrutinee, arms),
             ast::Expr::Set(name, expr) => self.lower_set(name, expr),
             ast::Expr::Ann { expr, ty } => {

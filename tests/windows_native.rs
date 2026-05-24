@@ -347,6 +347,7 @@ fn native_cases() -> Vec<Case> {
             "",
             &[
                 "compiler_lower.tl",
+                "compiler_ctfe.tl",
                 "compiler_typecheck.tl",
                 "compiler_ir_types.tl",
                 "compiler_symbols.tl",
@@ -378,6 +379,7 @@ fn native_cases() -> Vec<Case> {
                 "compiler_regalloc.tl",
                 "compiler_liveness.tl",
                 "compiler_lower.tl",
+                "compiler_ctfe.tl",
                 "compiler_typecheck.tl",
                 "compiler_ir_types.tl",
                 "compiler_symbols.tl",

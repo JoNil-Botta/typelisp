@@ -96,19 +96,52 @@ fn selfhost_backend_windows_runtime_helpers_emit_assemble_link_and_run() {
         "\ntl_substring:\n",
         ".globl tl_string_concat\n",
         "\ntl_string_concat:\n",
+        ".globl tl_string_eq\n",
+        "\ntl_string_eq:\n",
+        ".globl tl_string_to_int\n",
+        "\ntl_string_to_int:\n",
+        ".globl tl_int_to_string\n",
+        "\ntl_int_to_string:\n",
+        ".globl tl_print_err\n",
+        "\ntl_print_err:\n",
+        "\n.L_tl_arg_count:\n",
+        "\n.L_tl_arg:\n",
+        "\n.L_tl_read_file:\n",
+        "\n.L_tl_write_file:\n",
+        "\n.L_tl_file_exists:\n",
+        "\n.L_tl_abort:\n",
         "\n.L_tl_read_stdin_line:\n",
         "\n.L_tl_read_stdin_bytes:\n",
         "\n.L_tl_stdin_eof:\n",
         "\n.L_tl_flush_stdout:\n",
+        "\n.L_tl_argc:\n",
+        "\n.L_tl_argv:\n",
+        "    movq %rcx, .L_tl_argc(%rip)\n",
+        "    movq %rdx, .L_tl_argv(%rip)\n",
         "    .extern malloc\n",
         "    .extern _write\n",
         "    .extern exit\n",
         "    .extern _read\n",
         "    .extern fflush\n",
+        "    .extern _open\n",
+        "    .extern _lseeki64\n",
+        "    .extern _close\n",
+        "    .extern _access\n",
         "    call malloc\n",
         "    call _write\n",
         "    call _read\n",
         "    call fflush\n",
+        "    call _open\n",
+        "    call _lseeki64\n",
+        "    call _close\n",
+        "    call _access\n",
+        "    call .L_tl_abort\n",
+        "    movq $0x8000, %rdx\n",
+        "    movq $0x8301, %rdx\n",
+        "    movq $0x180, %r8\n",
+        "    movq %rcx, %rbx\n",
+        "    movq %r12, %rcx\n",
+        "    movq %rcx, %r10\n",
     ] {
         assert!(
             asm.contains(snippet),
@@ -125,6 +158,16 @@ fn selfhost_backend_windows_runtime_helpers_emit_assemble_link_and_run() {
         ".extern tl_oob_abort\n",
         ".extern tl_substring\n",
         ".extern tl_string_concat\n",
+        ".extern tl_string_eq\n",
+        ".extern tl_string_to_int\n",
+        ".extern tl_int_to_string\n",
+        ".extern tl_print_err\n",
+        ".extern .L_tl_arg_count\n",
+        ".extern .L_tl_arg\n",
+        ".extern .L_tl_read_file\n",
+        ".extern .L_tl_write_file\n",
+        ".extern .L_tl_file_exists\n",
+        ".extern .L_tl_abort\n",
         ".extern .L_tl_read_stdin_line\n",
         ".extern .L_tl_read_stdin_bytes\n",
         ".extern .L_tl_stdin_eof\n",
@@ -172,6 +215,77 @@ fn selfhost_backend_windows_runtime_helpers_emit_assemble_link_and_run() {
         "selfhost Windows runtime helper binary exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn selfhost_compile_driver_runs_as_windows_native_executable() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let driver_source = manifest_dir.join("selfhost").join("compile.tl");
+    let work_dir = manifest_dir
+        .join("target")
+        .join("windows-native-tests")
+        .join("selfhost_compile_driver");
+    fs::create_dir_all(&work_dir).expect("create selfhost compile driver test dir");
+
+    let driver_bin = work_dir.join("selfhost-compile.exe");
+    let build = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("build")
+        .arg(&driver_source)
+        .arg("-o")
+        .arg(&driver_bin)
+        .arg("--target")
+        .arg("windows-x86_64")
+        .output()
+        .expect("build selfhost compile driver for Windows");
+    assert!(
+        build.status.success(),
+        "selfhost compile driver Windows build failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let source = work_dir.join("main.tl");
+    let asm_path = work_dir.join("main.s");
+    fs::write(&source, "(define (main) : i64 42)\n").expect("write source");
+    let output = Command::new(&driver_bin)
+        .arg(&source)
+        .arg("-o")
+        .arg(&asm_path)
+        .output()
+        .expect("run selfhost compile driver for Windows");
+    assert!(
+        output.status.success(),
+        "selfhost compile driver failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "");
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "");
+    let asm = fs::read_to_string(&asm_path).expect("read emitted assembly");
+    assert!(asm.contains(".globl main\n"), "assembly:\n{asm}");
+    assert!(asm.contains("main:\n"), "assembly:\n{asm}");
+
+    let bad_source = work_dir.join("bad.tl");
+    let bad_asm = work_dir.join("bad.s");
+    fs::write(&bad_source, "(define (main) : i64 true)\n").expect("write bad source");
+    let _ = fs::remove_file(&bad_asm);
+    let bad = Command::new(&driver_bin)
+        .arg(&bad_source)
+        .arg("-o")
+        .arg(&bad_asm)
+        .output()
+        .expect("run selfhost compile driver on invalid source");
+    assert!(!bad.status.success());
+    assert_eq!(String::from_utf8_lossy(&bad.stdout), "");
+    let bad_stderr = String::from_utf8_lossy(&bad.stderr);
+    assert!(
+        bad_stderr.contains("typecheck: return type mismatch"),
+        "stderr:\n{bad_stderr}"
+    );
+    assert!(
+        !bad_asm.exists(),
+        "failing selfhost compile should not write assembly"
     );
 }
 

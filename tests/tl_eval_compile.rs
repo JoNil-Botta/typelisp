@@ -24,7 +24,7 @@
 //! recursive enums, the `VClosure` carrying the env it captured). Where the
 //! lexer turns a source String into a flat `(Array Token)` and the reader consumes
 //! that token stream into the recursive cons-cell `Sexpr` AST `(SInt | SSym | SStr
-//! | SChar | SNil | SCons)`, the evaluator INTERPRETS that tree WITH RESPECT TO two
+//! | SChar | SFloat | SNil | SCons)`, the evaluator INTERPRETS that tree WITH RESPECT TO two
 //! environments - a value `Env` and a function `FnEnv`: it resolves bare symbols
 //! via recursive `lookup`, folds a multi-binding `let` into sequential `EBind`
 //! frames, dispatches `if` without evaluating the untaken branch, folds

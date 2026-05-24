@@ -467,34 +467,34 @@ fn type_lisp_programs_compile_link_and_run() {
         },
         // Self-hosting (#27): the lexer for TypeLisp's OWN s-expression syntax
         // (NOT the arithmetic-calculator surface). `lexer.tl` tokenizes real
-        // TypeLisp source - balanced parens, integer literals, *symbols*
+        // TypeLisp source - balanced parens, integer/float literals, *symbols*
         // (operators / keywords / names are all one `TSym` kind), string literals,
         // character literals, and `;` line comments (skipped) - into a real
         // `(Array Token)`. `main` lexes a sample with `#x'`, `#\n'`, `#\space'`,
         // and `#\newline'`, verifies their decoded code sum, checks the
-        // recoverable `lex-result` error path, and returns 12 tokens + 1 string
-        // + 4 chars = 17.
+        // recoverable `lex-result` error path, and returns 13 tokens + 1 string
+        // + 4 chars + 1 float = 19.
         Case {
             name: "tl_lexer",
-            exit_code: 17,
+            exit_code: 19,
             stdout: "",
             deps: &["lex.tl", "token.tl"],
         },
         // Self-hosting (#27): the s-expression READER for TypeLisp's own syntax -
         // the canonical Lisp reader. `reader.tl` consumes the lexer's
         // `(Array Token)` into the recursive cons-cell `Sexpr` AST
-        // (SInt | SSym | SStr | SChar | SNil | SCons) with a token cursor and mutually
+        // (SInt | SSym | SStr | SChar | SFloat | SNil | SCons) with a token cursor and mutually
         // recursive `read-form` / `read-list`. It REUSES the lexer by importing
         // `lex` from the `main`-less `lex.tl` (which transitively imports the
         // `main`-less `token.tl`), so the whole program has one `main` - the
         // reader's. The reader consumes lexer `TStr` and `TChar` tokens into
         // distinct `SStr` and `SChar` atoms. `main` reads a nested sample, sums
-        // ints to 42, counts two strings, counts four chars, verifies decoded char
+        // ints to 42, counts two strings, counts four chars, one float, verifies decoded char
         // codes sum to 172, and checks three recoverable reader diagnostics,
-        // returning 42 + 2 + 4 + 10 + 3 = 61.
+        // returning 42 + 2 + 4 + 1 + 10 + 3 = 62.
         Case {
             name: "tl_reader",
-            exit_code: 61,
+            exit_code: 62,
             stdout: "",
             deps: &["lex.tl", "token.tl"],
         },
@@ -1030,15 +1030,15 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             deps: &["ast_types.tl", "read.tl", "lex.tl", "token.tl"],
         },
         // Self-hosting (#27): the TypeLisp-syntax (s-expression) lexer - now with
-        // string literals (`TStr`), char literals (`TChar`), and `;` line comments
+        // string literals (`TStr`), char literals (`TChar`), float literals (`TFloat`), and `;` line comments
         // - also exercised through the explicit compile -> as -> ld -> run
         // pipeline. The sample includes `#x'`, `#\n'`, `#\space'`, and
         // `#\newline'`; `main` verifies their decoded code sum, checks the
-        // recoverable `lex-result` error path, and returns 12 tokens + 1 string
-        // + 4 chars = 17.
+        // recoverable `lex-result` error path, and returns 13 tokens + 1 string
+        // + 4 chars + 1 float = 19.
         Case {
             name: "tl_lexer",
-            exit_code: 17,
+            exit_code: 19,
             stdout: "",
             deps: &["lex.tl", "token.tl"],
         },
@@ -1046,11 +1046,11 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         // explicit compile -> as -> ld -> run pipeline. Reads
         // a nested sample into the recursive cons-cell `Sexpr` AST and folds it:
         // integer atoms sum to 42, string atoms count to 2, char atoms count to 4,
-        // decoded char codes sum to 172, and recoverable reader diagnostics add 3,
-        // so the result is 61.
+        // float atoms count to 1, decoded char codes sum to 172, and recoverable
+        // reader diagnostics add 3, so the result is 62.
         Case {
             name: "tl_reader",
-            exit_code: 61,
+            exit_code: 62,
             stdout: "",
             deps: &["lex.tl", "token.tl"],
         },

@@ -129,8 +129,8 @@ fn native_cases() -> Vec<Case> {
             "",
             &["ast_types.tl", "read.tl", "lex.tl", "token.tl"],
         ),
-        case_with_deps("tl_lexer", 17, "", &["lex.tl", "token.tl"]),
-        case_with_deps("tl_reader", 61, "", &["lex.tl", "token.tl"]),
+        case_with_deps("tl_lexer", 19, "", &["lex.tl", "token.tl"]),
+        case_with_deps("tl_reader", 62, "", &["lex.tl", "token.tl"]),
         case_with_deps(
             "tl_eval",
             30,

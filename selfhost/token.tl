@@ -10,15 +10,15 @@
 
 ;; `token.tl`/`calc.tl`), but the surface TypeLisp source is actually written in
 
-;; - balanced parentheses, integer/char/string literals, and *symbols*. In an s-expression
+;; - balanced parentheses, integer/float/char/string literals, and *symbols*. In an s-expression
 
 ;; language an operator like `+`, a comparison like `<=`, a keyword like
 
 ;; `define`, and a name like `string->int` are ALL one token kind: a symbol. So
 
-;; the kinds collapse to parens / int / symbol / end-of-stream, and the lexer's
+;; the kinds collapse to parens / int / float / symbol / end-of-stream, and the lexer's
 
-;; job is to slice each symbol/int lexeme out of the source rather than to
+;; job is to slice each symbol/int/float lexeme out of the source rather than to
 
 ;; recognise a fixed operator alphabet.
 
@@ -54,13 +54,13 @@
 
 ;; The token kinds TypeLisp's s-expression surface needs: an opening paren, a
 
-;; closing paren, an integer literal, a symbol (any operator / keyword / name -
+;; closing paren, an integer or float literal, a symbol (any operator / keyword / name -
 
 ;; carries the sliced lexeme text), a string literal (`"..."`, carries the
 
 ;; sliced inner text), a character literal (`#x'` / `#\x'`, carries the char),
 
-;; and an end-of-stream sentinel. `TStr` and `TChar` are appended last so the
+;; and an end-of-stream sentinel. `TStr`, `TChar`, and `TFloat` are appended last so the
 
 ;; existing variants/tags keep their stable ordering for every importer.
 
@@ -71,7 +71,8 @@
   (TSym String)
   (TEnd)
   (TStr String)
-  (TChar char))
+  (TChar char)
+  (TFloat String))
 
 ;; Source locations are 1-based line/column pairs. The end position is
 
@@ -138,7 +139,8 @@
     [(TSym _) 4]
     [(TEnd) 5]
     [(TStr _) 6]
-    [(TChar _) 7]))
+    [(TChar _) 7]
+    [(TFloat _) 8]))
 
 ;; Integer payload of a TInt token (0 for any other kind): projects the literal
 
@@ -152,7 +154,8 @@
     [(TSym _) 0]
     [(TEnd) 0]
     [(TStr _) 0]
-    [(TChar _) 0]))
+    [(TChar _) 0]
+    [(TFloat _) 0]))
 
 ;; Symbol text of a TSym token (the empty string for any other kind): projects
 
@@ -166,7 +169,8 @@
     [(TSym s) s]
     [(TEnd) ""]
     [(TStr _) ""]
-    [(TChar _) ""]))
+    [(TChar _) ""]
+    [(TFloat _) ""]))
 
 ;; String text of a TStr token (the empty string for any other kind): projects
 
@@ -184,7 +188,25 @@
     [(TSym _) ""]
     [(TEnd) ""]
     [(TStr s) s]
-    [(TChar _) ""]))
+    [(TChar _) ""]
+    [(TFloat _) ""]))
+
+;; Float literal text of a TFloat token (the empty string for any other kind):
+
+;; the selfhost frontend carries source spelling until backend emission, so it
+
+;; does not need a string->f64 primitive.
+
+(define (token-float [t : Token]) : String
+  (match t
+    [(TLParen) ""]
+    [(TRParen) ""]
+    [(TInt _) ""]
+    [(TSym _) ""]
+    [(TEnd) ""]
+    [(TStr _) ""]
+    [(TChar _) ""]
+    [(TFloat s) s]))
 
 ;; Character payload of a TChar token (NUL for any other kind): projects the
 
@@ -200,7 +222,8 @@
     [(TSym _) #\nul']
     [(TEnd) #\nul']
     [(TStr _) #\nul']
-    [(TChar c) c]))
+    [(TChar c) c]
+    [(TFloat _) #\nul']))
 
 ;; A token paired with the 1-based source line and column where its lexeme
 
@@ -261,3 +284,6 @@
 
 (define (tag-char) : i64
   7)
+
+(define (tag-float) : i64
+  8)

@@ -407,7 +407,7 @@
         [_ false])]
     [(IrValueF64 fa)
       (match b
-        [(IrValueF64 fb) (= fa fb)]
+        [(IrValueF64 fb) (string-eq fa fb)]
         [_ false])]
     [(IrValueBool ba)
       (match b
@@ -1023,7 +1023,7 @@
 
 (define (opt-copy-f64-instrs) : CompilerIrInstrList
   (IrInstrCons
-    (IrInstrMov 1 (IrValueF64 1.5) (AstTyF64))
+    (IrInstrMov 1 (IrValueF64 "1.5") (AstTyF64))
     (IrInstrCons
       (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 1) (IrValueVar 1) (AstTyF64))
       (IrInstrNil))))

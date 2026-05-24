@@ -56,7 +56,9 @@
 
 ;; The shared token model: the `Token` enum and the `token-tag` / `token-int` /
 
-;; `token-sym` / `token-str` / `token-char` accessors and tag constants.
+;; `token-sym` / `token-str` / `token-char` / `token-float` accessors and tag
+
+;; constants.
 
 ;; Resolved relative to this file, so it finds the co-located `token.tl`. This
 
@@ -165,6 +167,26 @@
             (set! keep false))
           (set! keep false)))
       j)))
+
+;; A float token is an integer digit run followed by `.` and at least one
+
+;; fractional digit. The literal text is carried through later selfhost stages.
+
+(define (float-tail? [src : String] [int-end : i64] [n : i64]) : bool
+  (if (< (+ int-end 1) n)
+    (if (= (string-ref src int-end) #.')
+      (is-digit (string-ref src (+ int-end 1)))
+      false)
+    false))
+
+(define (scan-number-end [src : String] [start : i64] [n : i64]) : i64
+  (let ([int-end : i64 (scan-int-end src start n)])
+    (if (float-tail? src int-end n)
+      (scan-int-end src (+ int-end 1) n)
+      int-end)))
+
+(define (number-float? [src : String] [start : i64] [n : i64]) : bool
+  (float-tail? src (scan-int-end src start n) n))
 
 ;; Return the end index (exclusive) of the symbol run that starts at `start` in
 
@@ -446,7 +468,7 @@
               (if (= c ##')
                 (lex-check-char-end src i n)
                 (if (is-digit c)
-                  (OkLexI64 (scan-int-end src i n))
+                  (OkLexI64 (scan-number-end src i n))
                   (if (is-symbol-char c)
                     (OkLexI64 (scan-symbol-end src i n))
                     (ErrLexI64 "lexer: unexpected character")))))))))))
@@ -542,13 +564,18 @@
                             (set! count (+ count 1))
                             (set! i end))))
                       (if (is-digit c)
-                        (let ([end : i64 (scan-int-end src i n)])
+                        (let ([end : i64 (scan-number-end src i n)])
                           (begin
                             (array-set! starts count i)
-                            (array-set!
-                              toks
-                              count
-                              (TInt (string->int (substring src i (- end i)))))
+                            (if (number-float? src i n)
+                              (array-set!
+                                toks
+                                count
+                                (TFloat (substring src i (- end i))))
+                              (array-set!
+                                toks
+                                count
+                                (TInt (string->int (substring src i (- end i))))))
                             (set! count (+ count 1))
                             (set! i end)))
                         (if (is-symbol-char c)
@@ -694,6 +721,14 @@
         (string-eq (token-sym (array-ref toks 1)) "%"))]
     [(ErrTokens _) false]))
 
+(define (lex-float-token-ok?) : bool
+  (match (lex-result "(3.14)")
+    [(OkTokens toks)
+      (and
+        (= (token-tag (array-ref toks 1)) (tag-float))
+        (string-eq (token-float (array-ref toks 1)) "3.14"))]
+    [(ErrTokens _) false]))
+
 ;; Returns 42 when the spanned lexer records correct 1-based line/column
 
 ;; positions, including a token inside a nested list and the trailing EOF.
@@ -797,7 +832,9 @@
     [(OkSpannedTokens s)
       (if (and
         (lex-span-positions-ok? s)
-        (and (lex-string-escapes-ok?) (lex-percent-symbol-ok?)))
+        (and
+          (lex-string-escapes-ok?)
+          (and (lex-percent-symbol-ok?) (lex-float-token-ok?))))
         42
         1)]
     [(ErrSpannedTokens _) 2]))

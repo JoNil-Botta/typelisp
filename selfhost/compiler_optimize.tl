@@ -199,12 +199,22 @@
     [(IrInstrUnOp _ _ src _) (opt-collect-value-uses set src)]
     [(IrInstrCall _ _ args _) (opt-collect-value-list-uses set args)]
     [(IrInstrStore _ value _) (opt-collect-value-uses set value)]
+    ;; Pointer/memory ops carry operand uses too; missing any of these would let
+    ;; DCE wrongly drop a definition that feeds an address/load/store/cast.
+    [(IrInstrAddrOf _ src) (opt-used-add set src)]
+    [(IrInstrGep _ base offset _)
+     (opt-collect-value-uses (opt-collect-value-uses set base) offset)]
+    [(IrInstrLoad _ src _) (opt-collect-value-uses set src)]
+    [(IrInstrStorePtr ptr value _)
+     (opt-collect-value-uses (opt-collect-value-uses set ptr) value)]
+    [(IrInstrCast _ src _ _) (opt-collect-value-uses set src)]
     [(IrInstrBranch cond _ _) (opt-collect-value-uses set cond)]
     [(IrInstrReturn maybe)
      (match maybe
        [(IrSomeValue value) (opt-collect-value-uses set value)]
        [(IrNoValue) set])]
     [(IrInstrPhi _ inputs _) (opt-collect-phi-uses set inputs)]
+    ;; `IrInstrAlloc` has no operand uses; `IrInstrJump` has none either.
     [_ set]))
 
 (define (opt-collect-instrs-uses [set : OptUsedSet] [instrs : CompilerIrInstrList]) : OptUsedSet
@@ -364,3 +374,24 @@
                       2)
                   1)
               0))))))
+
+;; Builds `[Mov v0=4096 (an address), Load v1 = *v0, Return v1]`. `v0` feeds a
+;; `Load`, so DCE must treat it as used and keep it; without collecting the
+;; Load's operand uses, DCE would wrongly drop `v0`'s Mov and break the load.
+(define (opt-dce-mem-self-test-instrs) : CompilerIrInstrList
+  (IrInstrCons (IrInstrMov 0 (IrValueI64 4096) (AstTyI64))
+    (IrInstrCons (IrInstrLoad 1 (IrValueVar 0) (AstTyI64))
+      (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+        (IrInstrNil)))))
+
+;; Returns 42 when DCE keeps the `Mov` that feeds the `Load` (operand uses of
+;; pointer/memory ops are collected), leaving all three instructions intact.
+(define (compiler-optimize-dce-mem-self-test) : i64
+  (let ([instrs : CompilerIrInstrList (opt-dce-mem-self-test-instrs)])
+    (let ([used : OptUsedSet (opt-collect-instrs-uses (OptUsedNil) instrs)])
+      (let ([cleaned : CompilerIrInstrList (opt-dce-instrs used instrs)])
+        (if (opt-used-contains used 0)
+            (if (= (compiler-ir-instr-list-count cleaned) 3)
+                42
+                2)
+            1)))))

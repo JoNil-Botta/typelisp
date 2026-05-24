@@ -8,5 +8,7 @@
 
 (define (main) : i64
   (if (= (compiler-optimize-self-test) 42)
-      (compiler-optimize-dce-self-test)
+      (if (= (compiler-optimize-dce-self-test) 42)
+          (compiler-optimize-dce-mem-self-test)
+          1)
       1))

@@ -39,9 +39,17 @@
   (OkTokens (Array Token))
   (ErrTokens String))
 
+(defenum ResultSpannedTokens
+  (OkSpannedTokens (Array SpannedToken))
+  (ErrSpannedTokens SourceError))
+
 (defenum ResultLexI64
   (OkLexI64 i64)
   (ErrLexI64 String))
+
+(defenum ResultLexCheck
+  (OkLexCheck i64)
+  (ErrLexCheck SourceError))
 
 (defenum ResultLexChar
   (OkLexChar char)
@@ -331,10 +339,11 @@
                                     (OkLexI64 (scan-symbol-end src i n))
                                     (ErrLexI64 "lexer: unexpected character")))))))))))
 
-(define (lex-check [src : String]) : ResultLexI64
+(define (lex-check-spanned [src : String]) : ResultLexCheck
   (let ([i : i64 0]
         [n : i64 (string-length src)]
-        [message : String ""])
+        [message : String ""]
+        [err-pos : i64 0])
     (begin
       (while (and (< i n) (lex-ok? message))
         (match (lex-check-step src i n)
@@ -342,10 +351,16 @@
           [(ErrLexI64 err)
            (begin
              (set! message err)
+             (set! err-pos i)
              (set! i n))]))
       (if (lex-ok? message)
-          (OkLexI64 i)
-          (ErrLexI64 message)))))
+          (OkLexCheck i)
+          (ErrLexCheck (source-error-at src err-pos message))))))
+
+(define (lex-check [src : String]) : ResultLexI64
+  (match (lex-check-spanned src)
+    [(OkLexCheck end) (OkLexI64 end)]
+    [(ErrLexCheck err) (ErrLexI64 (source-error-message err))]))
 
 ;; Lex `src`, recording each emitted `Token` value into `toks` (which must be
 ;; large enough to hold every token plus the TEnd sentinel) and returning the
@@ -449,10 +464,6 @@
 ;; carries the position one past the last character. The plain `Token` path
 ;; above is untouched, so existing callers keep working.
 
-(defenum ResultSpannedTokens
-  (OkSpannedTokens (Array SpannedToken))
-  (ErrSpannedTokens String))
-
 ;; 1-based line of byte index `idx` in `src`: 1 + the number of newlines before
 ;; `idx`.
 (define (index-line [src : String] [idx : i64]) : i64
@@ -461,7 +472,7 @@
     (begin
       (while (< k idx)
         (begin
-          (if (= (string-ref src k) #\n') (set! line (+ line 1)) unit)
+          (if (= (string-ref src k) #\newline') (set! line (+ line 1)) unit)
           (set! k (+ k 1))))
       line)))
 
@@ -473,7 +484,7 @@
     (begin
       (while (< k idx)
         (begin
-          (if (= (string-ref src k) #\n') (set! col 1) (set! col (+ col 1)))
+          (if (= (string-ref src k) #\newline') (set! col 1) (set! col (+ col 1)))
           (set! k (+ k 1))))
       col)))
 
@@ -488,12 +499,17 @@
                           (index-col src at))))
         (set! k (+ k 1))))))
 
+(define (source-error-at [src : String] [idx : i64] [message : String]) : SourceError
+  (let ([line : i64 (index-line src idx)]
+        [col : i64 (index-col src idx)])
+    (SourceError message (SourceSpan line col line col))))
+
 ;; `lex-spanned-result : (-> String ResultSpannedTokens)` - lex into a token +
 ;; start-index pair of arrays, then materialize `count + 1` spanned tokens
 ;; (including the trailing TEnd).
 (define (lex-spanned-result [src : String]) : ResultSpannedTokens
-  (match (lex-check src)
-    [(OkLexI64 _)
+  (match (lex-check-spanned src)
+    [(OkLexCheck _)
      (let ([cap : i64 (+ (string-length src) 1)])
        (let ([toks : (Array Token) (make-array Token cap)]
              [starts : (Array i64) (make-array i64 cap)])
@@ -502,7 +518,15 @@
              (begin
                (fill-spanned src toks starts stoks (+ count 1))
                (OkSpannedTokens stoks))))))]
-    [(ErrLexI64 message) (ErrSpannedTokens message)]))
+    [(ErrLexCheck err) (ErrSpannedTokens err)]))
+
+(define (lex-spanned [src : String]) : (Array SpannedToken)
+  (match (lex-spanned-result src)
+    [(OkSpannedTokens toks) toks]
+    [(ErrSpannedTokens err)
+     (begin
+       (panic (source-error-message err))
+       (make-array SpannedToken 1))]))
 
 ;; Returns 42 when the spanned lexer records correct 1-based line/column
 ;; positions, including a token inside a nested list and the trailing EOF.

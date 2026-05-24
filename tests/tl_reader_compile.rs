@@ -103,15 +103,23 @@ fn tl_reader_tl_compiles_to_assembly() {
     for sym in [
         "_tl_read:",
         "_tl_read_result:",
+        "_tl_read_spanned:",
+        "_tl_read_spanned_result:",
         "_tl_read_form:",
         "_tl_read_form_result:",
+        "_tl_read_form_spanned_result:",
         "_tl_read_list:",
         "_tl_read_list_result:",
+        "_tl_read_list_spanned_result:",
+        "_tl_spanned_sexpr_span:",
+        "_tl_spanned_sexpr_form:",
         "_tl_sum_ints:",
         "_tl_count_strs:",
         "_tl_count_chars:",
         "_tl_sum_char_codes:",
         "_tl_reader_error_score:",
+        "_tl_reader_nested_list_spans_ok_question:",
+        "_tl_reader_spanned_error_ok_question:",
     ] {
         assert!(
             asm.contains(sym),
@@ -128,11 +136,18 @@ fn tl_reader_tl_compiles_to_assembly() {
     // `SStr` and `SChar` atoms from `TStr` and `TChar` tokens.
     for sym in [
         "_tl_lex:",
+        "_tl_lex_spanned:",
+        "_tl_lex_spanned_result:",
         "_tl_token_tag:",
         "_tl_token_int:",
         "_tl_token_sym:",
         "_tl_token_str:",
         "_tl_token_char:",
+        "_tl_spanned_token_token:",
+        "_tl_spanned_token_span:",
+        "_tl_source_error_message:",
+        "_tl_source_error_span:",
+        "_tl_merge_spans:",
     ] {
         assert!(
             asm.contains(sym),

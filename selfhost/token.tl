@@ -41,6 +41,49 @@
   (TStr String)
   (TChar char))
 
+;; Source locations are 1-based line/column pairs. The end position is
+;; exclusive, so a one-character token at line 1 column 1 spans 1:1 -> 1:2.
+(defstruct SourceSpan
+  (start-line i64)
+  (start-col i64)
+  (end-line i64)
+  (end-col i64))
+
+(defstruct SourceError
+  (message String)
+  (span SourceSpan))
+
+(define (span-start-line [span : SourceSpan]) : i64
+  (struct-get span start-line))
+
+(define (span-start-col [span : SourceSpan]) : i64
+  (struct-get span start-col))
+
+(define (span-end-line [span : SourceSpan]) : i64
+  (struct-get span end-line))
+
+(define (span-end-col [span : SourceSpan]) : i64
+  (struct-get span end-col))
+
+(define (span-eq? [span : SourceSpan] [start-line : i64] [start-col : i64] [end-line : i64] [end-col : i64]) : bool
+  (and (= (span-start-line span) start-line)
+       (and (= (span-start-col span) start-col)
+            (and (= (span-end-line span) end-line)
+                 (= (span-end-col span) end-col)))))
+
+(define (source-error-message [err : SourceError]) : String
+  (struct-get err message))
+
+(define (source-error-span [err : SourceError]) : SourceSpan
+  (struct-get err span))
+
+(define (merge-spans [start : SourceSpan] [end : SourceSpan]) : SourceSpan
+  (SourceSpan
+    (span-start-line start)
+    (span-start-col start)
+    (span-end-line end)
+    (span-end-col end)))
+
 ;; Numeric tag for a token kind: a parser's cursor classifies the token under it
 ;; by tag. Exercises `match` over every Token variant, including the
 ;; String-payload `TSym` and the i64-payload `TInt`.
@@ -124,6 +167,16 @@
 (define (spanned-token-col [s : SpannedToken]) : i64
   (match s
     [(SpannedToken _ _ col) col]))
+
+(define (spanned-token-token [s : SpannedToken]) : Token
+  (spanned-token-tok s))
+
+(define (spanned-token-span [s : SpannedToken]) : SourceSpan
+  (SourceSpan
+    (spanned-token-line s)
+    (spanned-token-col s)
+    (spanned-token-line s)
+    (spanned-token-col s)))
 
 ;; ---- Token-kind tag constants (kept in sync with `token-tag`). ----
 ;; A parser compares a token's tag against these to drive its descent.

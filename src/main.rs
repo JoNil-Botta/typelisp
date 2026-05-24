@@ -10,6 +10,7 @@ mod doctest;
 mod ir;
 mod lexer;
 mod lower;
+mod lsp;
 mod module;
 mod native;
 mod optimizer;
@@ -161,6 +162,7 @@ fn print_usage() {
     eprintln!("    typelisp debug tokenize <file.tl>    Show tokens");
     eprintln!("    typelisp debug parse <file.tl>       Show AST");
     eprintln!("    typelisp debug check <file.tl> [--stdlib-root <dir>...]");
+    eprintln!("    typelisp lsp                            Start stdio LSP diagnostics server");
     eprintln!("    typelisp repl                           Start minimal stdio REPL");
     eprintln!(
         "    typelisp compile <file.tl> [-o <file>] [--emit-ir] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...]"
@@ -588,6 +590,13 @@ fn run_cli() {
         }
         "doc" => {
             run_doc_command(&args);
+        }
+        "lsp" => {
+            let options = parse_stdlib_roots(&args, 2);
+            if let Err(err) = lsp::run_stdio(options) {
+                eprintln!("Error: LSP I/O failed: {}", err);
+                std::process::exit(1);
+            }
         }
         "repl" => {
             if args.len() > 2 {

@@ -882,6 +882,10 @@
       (lower-string-ref ctx state env type-env str index)]
     [(AstExprStructGet receiver field)
       (lower-struct-get ctx state env type-env receiver field expr-ty)]
+    [(AstExprArrayRef arr index)
+      (lower-array-ref ctx state env type-env arr index)]
+    [(AstExprArraySet arr index value)
+      (lower-array-set ctx state env type-env arr index value)]
     [_ (ErrLowerExpr "lower: unsupported expression")]))
 
 (define (lower-struct-get
@@ -1496,6 +1500,248 @@
                         (IrValueVar load-var)
                         (AstTyI64)))]))])])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+;; Small emit helpers: allocate a fresh var, emit one instruction, and return a
+
+;; `LowerExpr` carrying the updated state plus the result value. These flatten
+
+;; the otherwise deeply-nested alloc/emit chains in the array-access lowering.
+
+(define (lower-emit-cast
+  [state : LowerState]
+  [value : CompilerIrValue]
+  [from-ty : AstType]
+  [to-ty : AstType]) : LowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc s v)
+      (LowerExpr
+        (lower-state-emit s (IrInstrCast v value from-ty to-ty))
+        (IrValueVar v)
+        to-ty)]))
+
+(define (lower-emit-gep
+  [state : LowerState]
+  [base : CompilerIrValue]
+  [index : CompilerIrValue]
+  [gep-ty : AstType]) : LowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc s v)
+      (LowerExpr
+        (lower-state-emit s (IrInstrGep v base index gep-ty))
+        (IrValueVar v)
+        gep-ty)]))
+
+(define (lower-emit-load
+  [state : LowerState]
+  [addr : CompilerIrValue]
+  [ty : AstType]) : LowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc s v)
+      (LowerExpr (lower-state-emit s (IrInstrLoad v addr ty)) (IrValueVar v) ty)]))
+
+(define (lower-emit-binop
+  [state : LowerState]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [ty : AstType]) : LowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc s v)
+      (LowerExpr
+        (lower-state-emit s (IrInstrBinOp v op lhs rhs ty))
+        (IrValueVar v)
+        ty)]))
+
+;; CFG tail of `lower-array-element-addr`: branch on the in-bounds condition to
+
+;; an OK block, or a fail block that calls `tl_oob_abort` (a diverging call kept
+
+;; by the optimizer) then jumps to OK to keep the CFG well formed. In the OK
+
+;; block, load the buffer pointer (fat offset 0, a raw U64 address) and `Gep` it
+
+;; by the index, scaled by the element type, to the element address.
+
+(define (lower-array-element-addr-finish
+  [state : LowerState]
+  [arr-value : CompilerIrValue]
+  [idx-off : CompilerIrValue]
+  [cond-val : CompilerIrValue]
+  [ok-label : String]
+  [fail-label : String]
+  [elem-ty : AstType]) : LowerExpr
+  (let ([fail-start
+      :
+      LowerState
+      (lower-state-finish-block
+        (lower-state-emit state (IrInstrBranch cond-val ok-label fail-label))
+        fail-label)])
+    (match (lower-state-alloc-var fail-start)
+      [(LowerAlloc abort-state abort-var)
+        (let ([ok-start
+            :
+            LowerState
+            (lower-state-finish-block
+              (lower-state-emit
+                (lower-state-emit
+                  abort-state
+                  (IrInstrCall abort-var "tl_oob_abort" IrValueNil (AstTyUnit)))
+                (IrInstrJump ok-label))
+              ok-label)])
+          (match (lower-emit-gep ok-start arr-value (IrValueI64 0) (AstTyI64))
+            [(LowerExpr buf-gep-state buf-gep _)
+              (match (lower-emit-load buf-gep-state buf-gep (AstTyU64))
+                [(LowerExpr buf-state buf-val _)
+                  (lower-emit-gep buf-state buf-val idx-off elem-ty)])]))])))
+
+;; Compute the address of element `idx-value` in dynamic array `arr-value`,
+
+;; emitting an unsigned bounds check (negative indices wrap large and also
+
+;; fail). Returns the element pointer as an `elem-ty`-typed value.
+
+(define (lower-array-element-addr
+  [state : LowerState]
+  [arr-value : CompilerIrValue]
+  [idx-value : CompilerIrValue]
+  [idx-ty : AstType]
+  [elem-ty : AstType]) : LowerExpr
+  (match (lower-emit-cast state idx-value idx-ty (AstTyU64))
+    [(LowerExpr s1 idx-u _)
+      (match (lower-emit-cast s1 idx-value idx-ty (AstTyI64))
+        [(LowerExpr s2 idx-off _)
+          (match (lower-emit-gep s2 arr-value (IrValueI64 1) (AstTyI64))
+            [(LowerExpr s3 len-gep _)
+              (match (lower-emit-load s3 len-gep (AstTyI64))
+                [(LowerExpr s4 len-val _)
+                  (match (lower-emit-cast s4 len-val (AstTyI64) (AstTyU64))
+                    [(LowerExpr s5 len-u _)
+                      (match (lower-emit-binop
+                        s5
+                        (IrBinLt)
+                        idx-u
+                        len-u
+                        (AstTyBool))
+                        [(LowerExpr s6 cond-val _)
+                          (match (lower-state-fresh-label s6 "bounds_ok")
+                            [(LowerLabel s7 ok-label)
+                              (match (lower-state-fresh-label s7 "bounds_fail")
+                                [(LowerLabel s8 fail-label)
+                                  (lower-array-element-addr-finish
+                                    s8
+                                    arr-value
+                                    idx-off
+                                    cond-val
+                                    ok-label
+                                    fail-label
+                                    elem-ty)])])])])])])])]))
+
+;; `(array-ref arr index)` -> bounds-checked typed element load.
+
+(define (lower-array-ref
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [arr : AstExpr]
+  [index : AstExpr]) : ResultLowerExpr
+  (match (tc-expr ctx type-env arr)
+    [(OkTcType arr-ty)
+      (match arr-ty
+        [(AstTyDynArray elem-ty)
+          (match (lower-expr ctx state env type-env arr)
+            [(OkLowerExpr arr-lowered)
+              (match arr-lowered
+                [(LowerExpr arr-state arr-value _)
+                  (match (tc-expr ctx type-env index)
+                    [(OkTcType idx-ty)
+                      (match (lower-expr ctx arr-state env type-env index)
+                        [(OkLowerExpr idx-lowered)
+                          (match idx-lowered
+                            [(LowerExpr idx-state idx-value _)
+                              (match (lower-array-element-addr
+                                idx-state
+                                arr-value
+                                idx-value
+                                idx-ty
+                                elem-ty)
+                                [(LowerExpr addr-state elem-ptr _)
+                                  (match (lower-emit-load
+                                    addr-state
+                                    elem-ptr
+                                    elem-ty)
+                                    [(LowerExpr load-state load-value _)
+                                      (OkLowerExpr
+                                        (LowerExpr
+                                          load-state
+                                          load-value
+                                          elem-ty))])])])]
+                        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+                    [(ErrTcType message) (ErrLowerExpr message)])])]
+            [(ErrLowerExpr message) (ErrLowerExpr message)])]
+        [(AstTyArray _ _)
+          (ErrLowerExpr "lower: fixed-array array-ref not yet supported")]
+        [_ (ErrLowerExpr "lower: array-ref requires a dynamic array")])]
+    [(ErrTcType message) (ErrLowerExpr message)]))
+
+;; `(array-set! arr index value)` -> bounds-checked typed element store.
+
+(define (lower-array-set
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [arr : AstExpr]
+  [index : AstExpr]
+  [value : AstExpr]) : ResultLowerExpr
+  (match (tc-expr ctx type-env arr)
+    [(OkTcType arr-ty)
+      (match arr-ty
+        [(AstTyDynArray elem-ty)
+          (match (lower-expr ctx state env type-env arr)
+            [(OkLowerExpr arr-lowered)
+              (match arr-lowered
+                [(LowerExpr arr-state arr-value _)
+                  (match (tc-expr ctx type-env index)
+                    [(OkTcType idx-ty)
+                      (match (lower-expr ctx arr-state env type-env index)
+                        [(OkLowerExpr idx-lowered)
+                          (match idx-lowered
+                            [(LowerExpr idx-state idx-value _)
+                              (match (lower-expr
+                                ctx
+                                idx-state
+                                env
+                                type-env
+                                value)
+                                [(OkLowerExpr value-lowered)
+                                  (match value-lowered
+                                    [(LowerExpr value-state value-ir _)
+                                      (match (lower-array-element-addr
+                                        value-state
+                                        arr-value
+                                        idx-value
+                                        idx-ty
+                                        elem-ty)
+                                        [(LowerExpr addr-state elem-ptr _)
+                                          (OkLowerExpr
+                                            (LowerExpr
+                                              (lower-state-emit
+                                                addr-state
+                                                (IrInstrStorePtr
+                                                  elem-ptr
+                                                  value-ir
+                                                  elem-ty))
+                                              IrValueUnit
+                                              (AstTyUnit)))])])]
+                                [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+                        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+                    [(ErrTcType message) (ErrLowerExpr message)])])]
+            [(ErrLowerExpr message) (ErrLowerExpr message)])]
+        [(AstTyArray _ _)
+          (ErrLowerExpr "lower: fixed-array array-set! not yet supported")]
+        [_ (ErrLowerExpr "lower: array-set! requires a dynamic array")])]
+    [(ErrTcType message) (ErrLowerExpr message)]))
 
 (define (lower-args
   [ctx : TcContext]
@@ -2538,6 +2784,15 @@
 (define (dyn-len-alias [a : (Array i64)]) : i64 (length a))
 (define (main) : i64 0)")
 
+;; `array-ref`/`array-set!` lower to a bounds-checked typed element load/store
+
+;; (#528). Taking the array as a parameter avoids needing `make-array` here.
+
+(define (compiler-lower-array-access-source) : String
+  "(define (get [a : (Array i64)] [i : i64]) : i64 (array-ref a i))
+(define (put [a : (Array i64)] [i : i64] [v : i64]) : unit (array-set! a i v))
+(define (main) : i64 0)")
+
 ;; `string-length`/`length` on a String lower to the same fat `{ptr, len}`
 
 ;; length load as `array-length` (#527): both lay out the i64 length at offset 8.
@@ -2841,7 +3096,9 @@
             (compiler-lower-enum-match-shape-ok?
               (compiler-lower-enum-match-source))
             (and
-              (compiler-lower-ok? (compiler-lower-array-length-source))
+              (and
+                (compiler-lower-ok? (compiler-lower-array-length-source))
+                (compiler-lower-ok? (compiler-lower-array-access-source)))
               (and
                 (compiler-lower-ok? (compiler-lower-string-length-source))
                 (and

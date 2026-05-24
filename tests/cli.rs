@@ -185,23 +185,6 @@ fn write_main_source(dir: &std::path::Path) -> PathBuf {
     source
 }
 
-fn assert_backend_mode_rejected(output: &Output, mode: &str) {
-    assert!(
-        !output.status.success(),
-        "{mode} unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
-        stdout(output),
-        stderr(output)
-    );
-    assert_eq!(stdout(output), "", "{mode} wrote stdout");
-    assert!(
-        stderr(output).contains(&format!(
-            "backend mode {mode} is not implemented yet; scalar and avx2 are the supported backend modes"
-        )),
-        "{mode} stderr:\n{}",
-        stderr(output)
-    );
-}
-
 fn assert_doctest_temp_cleaned(source: &std::path::Path) {
     let temp_parent = source
         .parent()
@@ -662,15 +645,20 @@ fn target_flags_reject_unknown_target_across_commands() {
 }
 
 #[test]
-fn compile_rejects_unimplemented_backend_modes() {
-    for mode in ["avx512"] {
-        let dir = fixture_dir(&format!("backend-mode-{mode}"));
+fn compile_accepts_implemented_backend_modes() {
+    for mode in ["scalar", "avx2", "avx512"] {
+        let dir = fixture_dir(&format!("backend-mode-{mode}-ok"));
         let source = write_main_source(&dir);
         let source_arg = source.to_str().expect("source path is utf-8");
 
         let output = typelisp(&["compile", source_arg, "--backend-mode", mode]);
 
-        assert_backend_mode_rejected(&output, mode);
+        assert!(
+            output.status.success(),
+            "mode {mode} should succeed\nstdout:\n{}\nstderr:\n{}",
+            stdout(&output),
+            stderr(&output)
+        );
     }
 }
 
@@ -692,15 +680,25 @@ fn compile_rejects_unknown_backend_mode() {
     );
 }
 
+#[cfg(target_os = "linux")]
 #[test]
-fn run_accepts_backend_mode_flag_and_rejects_unimplemented_modes() {
-    let dir = fixture_dir("backend-mode-run");
+fn run_accepts_backend_mode_flag_with_avx512() {
+    let dir = fixture_dir("backend-mode-run-avx512");
     let source = write_main_source(&dir);
     let source_arg = source.to_str().expect("source path is utf-8");
 
     let output = typelisp(&["run", source_arg, "--backend-mode", "avx512", "--", "arg"]);
 
-    assert_backend_mode_rejected(&output, "avx512");
+    assert_eq!(
+        stderr(&output),
+        "",
+        "avx512 run should have no errors for scalar IR"
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "avx512 run should return program exit code 42"
+    );
 }
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -738,8 +736,8 @@ fn run_forwards_child_output_and_status() {
 }
 
 #[test]
-fn build_accepts_backend_mode_flag_and_rejects_unimplemented_modes() {
-    let dir = fixture_dir("backend-mode-build");
+fn build_accepts_backend_mode_flag_with_avx512() {
+    let dir = fixture_dir("backend-mode-build-avx512");
     let src_dir = dir.join("src");
     fs::create_dir_all(&src_dir).expect("create package src dir");
     fs::write(
@@ -763,7 +761,12 @@ fn build_accepts_backend_mode_flag_and_rejects_unimplemented_modes() {
         "avx512",
     ]);
 
-    assert_backend_mode_rejected(&output, "avx512");
+    assert!(
+        output.status.success(),
+        "avx512 build should succeed for scalar IR\nstdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
 }
 
 #[test]
@@ -836,15 +839,21 @@ fn check_reports_explicit_unsupported_float_cast_diagnostic() {
     assert!(stderr.contains("error[E0200]"), "stderr:\n{}", stderr);
 }
 
+#[cfg(target_os = "linux")]
 #[test]
-fn build_source_rejects_unimplemented_backend_mode() {
-    let dir = fixture_dir("backend-mode-source-build");
+fn build_source_accepts_avx512_backend_mode() {
+    let dir = fixture_dir("backend-mode-source-build-avx512");
     let source = write_main_source(&dir);
     let source_arg = source.to_str().expect("source path is utf-8");
 
     let output = typelisp(&["build", source_arg, "--backend-mode", "avx512"]);
 
-    assert_backend_mode_rejected(&output, "avx512");
+    assert!(
+        output.status.success(),
+        "avx512 build source should succeed for scalar IR\nstdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
 }
 
 #[test]

@@ -151,11 +151,7 @@ impl BackendTarget {
 
     fn validate_mode(self) -> Result<(), String> {
         match self.mode {
-            BackendMode::Scalar | BackendMode::Avx2 => Ok(()),
-            mode => Err(format!(
-                "backend mode {} is not implemented yet; scalar and avx2 are the supported backend modes",
-                mode
-            )),
+            BackendMode::Scalar | BackendMode::Avx2 | BackendMode::Avx512 => Ok(()),
         }
     }
 
@@ -837,16 +833,17 @@ fn validate_function(
                     lanes,
                     elem_ty,
                 } => {
-                    if mode != BackendMode::Avx2 {
+                    if mode != BackendMode::Avx2 && mode != BackendMode::Avx512 {
                         return unsupported("vector/mask IR requires a SIMD backend target");
                     }
-                    if let Err(what) = validate_avx2_vector_binop(
+                    if let Err(what) = validate_vector_binop(
                         *dst,
                         *op,
                         lhs,
                         rhs,
                         *lanes,
                         elem_ty,
+                        mode,
                         ValidationTypes {
                             var_types: &var_types,
                             global_types,
@@ -862,15 +859,16 @@ fn validate_function(
                     lanes,
                     elem_ty,
                 } => {
-                    if mode != BackendMode::Avx2 {
+                    if mode != BackendMode::Avx2 && mode != BackendMode::Avx512 {
                         return unsupported("vector/mask IR requires a SIMD backend target");
                     }
-                    if let Err(what) = validate_avx2_vector_load(
+                    if let Err(what) = validate_vector_load(
                         *dst,
                         base,
                         index,
                         *lanes,
                         elem_ty,
+                        mode,
                         &var_types,
                         global_types,
                     ) {
@@ -884,15 +882,16 @@ fn validate_function(
                     lanes,
                     elem_ty,
                 } => {
-                    if mode != BackendMode::Avx2 {
+                    if mode != BackendMode::Avx2 && mode != BackendMode::Avx512 {
                         return unsupported("vector/mask IR requires a SIMD backend target");
                     }
-                    if let Err(what) = validate_avx2_vector_store(
+                    if let Err(what) = validate_vector_store(
                         base,
                         index,
                         value,
                         *lanes,
                         elem_ty,
+                        mode,
                         &var_types,
                         global_types,
                     ) {
@@ -907,8 +906,8 @@ fn validate_function(
                 | Instruction::Select { .. }
                 | Instruction::PredicatedStore { .. }
                 | Instruction::TailMask { .. } => {
-                    if mode == BackendMode::Avx2 {
-                        return unsupported("unsupported AVX2 vector/mask IR");
+                    if mode == BackendMode::Avx2 || mode == BackendMode::Avx512 {
+                        return unsupported("unsupported vector/mask IR for this backend mode");
                     }
                     return unsupported("vector/mask IR requires a SIMD backend target");
                 }
@@ -924,18 +923,23 @@ struct ValidationTypes<'a> {
     global_types: &'a HashMap<String, Type>,
 }
 
-fn validate_avx2_vector_binop(
+#[allow(clippy::too_many_arguments)]
+fn validate_vector_binop(
     dst: VarId,
     op: IrBinOp,
     lhs: &Value,
     rhs: &Value,
     lanes: usize,
     elem_ty: &Type,
+    mode: BackendMode,
     types: ValidationTypes<'_>,
 ) -> Result<(), String> {
-    validate_avx2_vector_shape(elem_ty, lanes)?;
+    validate_vector_shape(elem_ty, lanes, mode)?;
     if op != IrBinOp::Add {
-        return Err(format!("AVX2 vector operator {:?} is not implemented", op));
+        return Err(format!(
+            "{:?} vector operator {:?} is not implemented",
+            mode, op
+        ));
     }
     validate_vector_var(
         dst,
@@ -963,16 +967,18 @@ fn validate_avx2_vector_binop(
     Ok(())
 }
 
-fn validate_avx2_vector_load(
+#[allow(clippy::too_many_arguments)]
+fn validate_vector_load(
     dst: VarId,
     base: &Value,
     index: &Value,
     lanes: usize,
     elem_ty: &Type,
+    mode: BackendMode,
     var_types: &HashMap<VarId, Type>,
     global_types: &HashMap<String, Type>,
 ) -> Result<(), String> {
-    validate_avx2_vector_shape(elem_ty, lanes)?;
+    validate_vector_shape(elem_ty, lanes, mode)?;
     validate_vector_var(dst, elem_ty, lanes, var_types, "vector load destination")?;
     validate_dyn_array_base(base, elem_ty, var_types, global_types, "vector load base")?;
     validate_integer_index(index, var_types, global_types, "vector load index")?;
@@ -981,16 +987,18 @@ fn validate_avx2_vector_load(
     Ok(())
 }
 
-fn validate_avx2_vector_store(
+#[allow(clippy::too_many_arguments)]
+fn validate_vector_store(
     base: &Value,
     index: &Value,
     value: &Value,
     lanes: usize,
     elem_ty: &Type,
+    mode: BackendMode,
     var_types: &HashMap<VarId, Type>,
     global_types: &HashMap<String, Type>,
 ) -> Result<(), String> {
-    validate_avx2_vector_shape(elem_ty, lanes)?;
+    validate_vector_shape(elem_ty, lanes, mode)?;
     validate_dyn_array_base(base, elem_ty, var_types, global_types, "vector store base")?;
     validate_integer_index(index, var_types, global_types, "vector store index")?;
     validate_vector_value(
@@ -1006,12 +1014,25 @@ fn validate_avx2_vector_store(
     Ok(())
 }
 
-fn validate_avx2_vector_shape(elem_ty: &Type, lanes: usize) -> Result<(), String> {
-    match (elem_ty, lanes) {
-        (Type::I64 | Type::U64 | Type::F64, 4) | (Type::I32 | Type::U32, 8) => Ok(()),
+fn validate_vector_shape(elem_ty: &Type, lanes: usize, mode: BackendMode) -> Result<(), String> {
+    match mode {
+        BackendMode::Avx2 => match (elem_ty, lanes) {
+            (Type::I64 | Type::U64 | Type::F64, 4) | (Type::I32 | Type::U32, 8) => Ok(()),
+            _ => Err(format!(
+                "unsupported AVX2 vector shape {} x {}",
+                lanes, elem_ty
+            )),
+        },
+        BackendMode::Avx512 => match (elem_ty, lanes) {
+            (Type::I64 | Type::U64 | Type::F64, 8) | (Type::I32 | Type::U32, 16) => Ok(()),
+            _ => Err(format!(
+                "unsupported AVX-512 vector shape {} x {}",
+                lanes, elem_ty
+            )),
+        },
         _ => Err(format!(
-            "unsupported AVX2 vector shape {} x {}",
-            lanes, elem_ty
+            "unsupported backend mode {:?} for vector shape {} x {}",
+            mode, lanes, elem_ty
         )),
     }
 }
@@ -1178,6 +1199,9 @@ fn is_backend_local_type_for_mode(ty: &Type, mode: BackendMode) -> bool {
     if mode == BackendMode::Avx2 && is_avx2_vector_local_type(ty) {
         return true;
     }
+    if mode == BackendMode::Avx512 && is_avx512_vector_local_type(ty) {
+        return true;
+    }
     *ty == Type::Unit || is_sized_backend_type(ty)
 }
 
@@ -1187,6 +1211,18 @@ fn is_avx2_vector_local_type(ty: &Type) -> bool {
             matches!(
                 (&**elem, *lanes),
                 (Type::I64 | Type::U64 | Type::F64, 4) | (Type::I32 | Type::U32, 8)
+            )
+        }
+        _ => false,
+    }
+}
+
+fn is_avx512_vector_local_type(ty: &Type) -> bool {
+    match ty {
+        Type::Vector(elem, lanes) => {
+            matches!(
+                (&**elem, *lanes),
+                (Type::I64 | Type::U64 | Type::F64, 8) | (Type::I32 | Type::U32, 16)
             )
         }
         _ => false,
@@ -5066,6 +5102,16 @@ impl X86_64Backend {
             } if self.target.mode == BackendMode::Avx2 => {
                 self.generate_avx2_vector_binop(*dst, *op, lhs, rhs, *lanes, elem_ty);
             }
+            Instruction::VectorBinOp {
+                dst,
+                op,
+                lhs,
+                rhs,
+                lanes,
+                elem_ty,
+            } if self.target.mode == BackendMode::Avx512 => {
+                self.generate_avx512_vector_binop(*dst, *op, lhs, rhs, *lanes, elem_ty);
+            }
             Instruction::VectorLoad {
                 dst,
                 base,
@@ -5075,6 +5121,15 @@ impl X86_64Backend {
             } if self.target.mode == BackendMode::Avx2 => {
                 self.generate_avx2_vector_load(*dst, base, index, *lanes, elem_ty);
             }
+            Instruction::VectorLoad {
+                dst,
+                base,
+                index,
+                lanes,
+                elem_ty,
+            } if self.target.mode == BackendMode::Avx512 => {
+                self.generate_avx512_vector_load(*dst, base, index, *lanes, elem_ty);
+            }
             Instruction::VectorStore {
                 base,
                 index,
@@ -5083,6 +5138,15 @@ impl X86_64Backend {
                 elem_ty,
             } if self.target.mode == BackendMode::Avx2 => {
                 self.generate_avx2_vector_store(base, index, value, *lanes, elem_ty);
+            }
+            Instruction::VectorStore {
+                base,
+                index,
+                value,
+                lanes,
+                elem_ty,
+            } if self.target.mode == BackendMode::Avx512 => {
+                self.generate_avx512_vector_store(base, index, value, *lanes, elem_ty);
             }
             Instruction::LaneId { .. }
             | Instruction::Splat { .. }
@@ -5116,7 +5180,8 @@ impl X86_64Backend {
                     self.emit("    xor %eax, %eax");
                 }
                 // Epilogue
-                if self.target.mode == BackendMode::Avx2 {
+                if self.target.mode == BackendMode::Avx2 || self.target.mode == BackendMode::Avx512
+                {
                     self.emit("    vzeroupper");
                 }
                 self.emit("    mov %rbp, %rsp");
@@ -5179,6 +5244,59 @@ impl X86_64Backend {
         self.emit(&format!("    {} %ymm0, {}", move_mnemonic, addr));
     }
 
+    fn generate_avx512_vector_binop(
+        &mut self,
+        dst: VarId,
+        op: IrBinOp,
+        lhs: &Value,
+        rhs: &Value,
+        _lanes: usize,
+        elem_ty: &Type,
+    ) {
+        let Some(mnemonic) = Self::avx512_vector_binop_mnemonic(op, elem_ty) else {
+            self.emit("    # unsupported AVX-512 vector binop rejected by backend validation");
+            return;
+        };
+        self.load_vector_value(lhs, "%zmm0", elem_ty);
+        self.load_vector_value(rhs, "%zmm1", elem_ty);
+        self.emit(&format!("    {} %zmm1, %zmm0, %zmm0", mnemonic));
+        let dst_offset = self.var_offsets[&dst];
+        self.store_vector_reg("%zmm0", dst_offset, elem_ty);
+    }
+
+    fn generate_avx512_vector_load(
+        &mut self,
+        dst: VarId,
+        base: &Value,
+        index: &Value,
+        _lanes: usize,
+        elem_ty: &Type,
+    ) {
+        self.load_dyn_array_data_ptr(base, "%rax");
+        self.load_vector_index(index, "%rcx");
+        let addr = Self::indexed_addr("%rax", "%rcx", elem_ty);
+        let move_mnemonic = Self::vector_move_mnemonic(elem_ty);
+        self.emit(&format!("    {} {}, %zmm0", move_mnemonic, addr));
+        let dst_offset = self.var_offsets[&dst];
+        self.store_vector_reg("%zmm0", dst_offset, elem_ty);
+    }
+
+    fn generate_avx512_vector_store(
+        &mut self,
+        base: &Value,
+        index: &Value,
+        value: &Value,
+        _lanes: usize,
+        elem_ty: &Type,
+    ) {
+        self.load_dyn_array_data_ptr(base, "%rax");
+        self.load_vector_index(index, "%rcx");
+        self.load_vector_value(value, "%zmm0", elem_ty);
+        let addr = Self::indexed_addr("%rax", "%rcx", elem_ty);
+        let move_mnemonic = Self::vector_move_mnemonic(elem_ty);
+        self.emit(&format!("    {} %zmm0, {}", move_mnemonic, addr));
+    }
+
     fn load_dyn_array_data_ptr(&mut self, base: &Value, reg: &str) {
         let base_ty = self.value_type(base).unwrap_or(Type::U64);
         self.load_value(base, reg, &base_ty);
@@ -5221,6 +5339,14 @@ impl X86_64Backend {
     }
 
     fn avx2_vector_binop_mnemonic(op: IrBinOp, elem_ty: &Type) -> Option<&'static str> {
+        Self::vector_binop_mnemonic(op, elem_ty)
+    }
+
+    fn avx512_vector_binop_mnemonic(op: IrBinOp, elem_ty: &Type) -> Option<&'static str> {
+        Self::vector_binop_mnemonic(op, elem_ty)
+    }
+
+    fn vector_binop_mnemonic(op: IrBinOp, elem_ty: &Type) -> Option<&'static str> {
         match (op, elem_ty) {
             (IrBinOp::Add, Type::I64 | Type::U64) => Some("vpaddq"),
             (IrBinOp::Add, Type::I32 | Type::U32) => Some("vpaddd"),
@@ -6368,24 +6494,214 @@ mod tests {
     }
 
     #[test]
-    fn test_avx512_backend_mode_with_spans_is_rejected_unspanned() {
+    fn test_avx512_backend_mode_with_spans_is_accepted() {
         let prog = parse("(define (main) : i64 42)").expect("parse failed");
         let mut lowered = lower_program_with_spans(&prog);
         Optimizer::optimize(&mut lowered.program);
-        let err = generate_assembly_with_spans_for_target(
+        let asm = generate_assembly_with_spans_for_target(
             &lowered.program,
             &lowered.source_spans,
             BackendTarget::default().with_mode(BackendMode::Avx512),
         )
-        .expect_err("avx512 mode should not be implemented yet");
+        .expect("avx512 mode should be accepted for scalar IR");
 
-        assert_eq!(err.span, None);
         assert!(
-            err.message.contains(
-                "backend mode avx512 is not implemented yet; scalar and avx2 are the supported backend modes"
-            ),
-            "error: {}",
-            err
+            asm.contains("vzeroupper"),
+            "AVX-512 epilogue should include vzeroupper"
+        );
+        assert!(
+            !asm.contains("%zmm"),
+            "scalar IR should not emit ZMM instructions: {}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_avx512_vector_binop_load_store_emits_zmm_instructions() {
+        // Hand-built IR with AVX-512 vector shapes to test backend
+        // instruction selection without an AVX-512 lowerer.
+        let func = Function {
+            name: "vec_kernel".into(),
+            params: vec![
+                (0, Type::DynArray(Box::new(Type::I64))),
+                (1, Type::DynArray(Box::new(Type::I64))),
+                (2, Type::DynArray(Box::new(Type::I64))),
+            ],
+            ret: Type::Unit,
+            locals: vec![
+                (3, Type::Vector(Box::new(Type::I64), 8)),
+                (4, Type::Vector(Box::new(Type::I64), 8)),
+                (5, Type::Vector(Box::new(Type::I64), 8)),
+            ],
+            blocks: vec![BasicBlock {
+                label: "entry".into(),
+                instructions: vec![
+                    Instruction::VectorLoad {
+                        dst: 3,
+                        base: Value::Var(0),
+                        index: Value::ConstI64(0),
+                        lanes: 8,
+                        elem_ty: Type::I64,
+                    },
+                    Instruction::VectorLoad {
+                        dst: 4,
+                        base: Value::Var(1),
+                        index: Value::ConstI64(0),
+                        lanes: 8,
+                        elem_ty: Type::I64,
+                    },
+                    Instruction::VectorBinOp {
+                        dst: 5,
+                        op: IrBinOp::Add,
+                        lhs: Value::Var(3),
+                        rhs: Value::Var(4),
+                        lanes: 8,
+                        elem_ty: Type::I64,
+                    },
+                    Instruction::VectorStore {
+                        base: Value::Var(2),
+                        index: Value::ConstI64(0),
+                        value: Value::Var(5),
+                        lanes: 8,
+                        elem_ty: Type::I64,
+                    },
+                    Instruction::Return(None),
+                ],
+            }],
+            entry: "entry".into(),
+        };
+
+        let program = Program {
+            functions: vec![func],
+            globals: vec![],
+            externs: vec![],
+        };
+
+        let asm = generate_assembly_for_target(
+            &program,
+            BackendTarget::default().with_mode(BackendMode::Avx512),
+        )
+        .expect("AVX-512 backend should accept hand-built vector IR");
+
+        assert!(asm.contains("%zmm0"), "expected %zmm0; asm:\n{}", asm);
+        assert!(asm.contains("%zmm1"), "expected %zmm1; asm:\n{}", asm);
+        assert!(asm.contains("vpaddq"), "expected vpaddq; asm:\n{}", asm);
+        assert!(asm.contains("vmovdqu"), "expected vmovdqu; asm:\n{}", asm);
+        assert!(
+            asm.contains("vzeroupper"),
+            "expected vzeroupper; asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_avx512_f64_and_i32_shapes_emit_correct_zmm_instructions() {
+        let func = Function {
+            name: "vec_kernel".into(),
+            params: vec![
+                (0, Type::DynArray(Box::new(Type::F64))),
+                (1, Type::DynArray(Box::new(Type::F64))),
+                (2, Type::DynArray(Box::new(Type::F64))),
+                (3, Type::DynArray(Box::new(Type::I32))),
+                (4, Type::DynArray(Box::new(Type::I32))),
+                (5, Type::DynArray(Box::new(Type::I32))),
+            ],
+            ret: Type::Unit,
+            locals: vec![
+                (6, Type::Vector(Box::new(Type::F64), 8)),
+                (7, Type::Vector(Box::new(Type::F64), 8)),
+                (8, Type::Vector(Box::new(Type::F64), 8)),
+                (9, Type::Vector(Box::new(Type::I32), 16)),
+                (10, Type::Vector(Box::new(Type::I32), 16)),
+                (11, Type::Vector(Box::new(Type::I32), 16)),
+            ],
+            blocks: vec![BasicBlock {
+                label: "entry".into(),
+                instructions: vec![
+                    Instruction::VectorLoad {
+                        dst: 6,
+                        base: Value::Var(0),
+                        index: Value::ConstI64(0),
+                        lanes: 8,
+                        elem_ty: Type::F64,
+                    },
+                    Instruction::VectorLoad {
+                        dst: 7,
+                        base: Value::Var(1),
+                        index: Value::ConstI64(0),
+                        lanes: 8,
+                        elem_ty: Type::F64,
+                    },
+                    Instruction::VectorBinOp {
+                        dst: 8,
+                        op: IrBinOp::Add,
+                        lhs: Value::Var(6),
+                        rhs: Value::Var(7),
+                        lanes: 8,
+                        elem_ty: Type::F64,
+                    },
+                    Instruction::VectorStore {
+                        base: Value::Var(2),
+                        index: Value::ConstI64(0),
+                        value: Value::Var(8),
+                        lanes: 8,
+                        elem_ty: Type::F64,
+                    },
+                    Instruction::VectorLoad {
+                        dst: 9,
+                        base: Value::Var(3),
+                        index: Value::ConstI64(0),
+                        lanes: 16,
+                        elem_ty: Type::I32,
+                    },
+                    Instruction::VectorLoad {
+                        dst: 10,
+                        base: Value::Var(4),
+                        index: Value::ConstI64(0),
+                        lanes: 16,
+                        elem_ty: Type::I32,
+                    },
+                    Instruction::VectorBinOp {
+                        dst: 11,
+                        op: IrBinOp::Add,
+                        lhs: Value::Var(9),
+                        rhs: Value::Var(10),
+                        lanes: 16,
+                        elem_ty: Type::I32,
+                    },
+                    Instruction::VectorStore {
+                        base: Value::Var(5),
+                        index: Value::ConstI64(0),
+                        value: Value::Var(11),
+                        lanes: 16,
+                        elem_ty: Type::I32,
+                    },
+                    Instruction::Return(None),
+                ],
+            }],
+            entry: "entry".into(),
+        };
+
+        let program = Program {
+            functions: vec![func],
+            globals: vec![],
+            externs: vec![],
+        };
+
+        let asm = generate_assembly_for_target(
+            &program,
+            BackendTarget::default().with_mode(BackendMode::Avx512),
+        )
+        .expect("AVX-512 backend should accept f64 and i32 vector IR");
+
+        assert!(asm.contains("vaddpd"), "expected vaddpd; asm:\n{}", asm);
+        assert!(asm.contains("vpaddd"), "expected vpaddd; asm:\n{}", asm);
+        assert!(asm.contains("vmovupd"), "expected vmovupd; asm:\n{}", asm);
+        assert!(asm.contains("vmovdqu"), "expected vmovdqu; asm:\n{}", asm);
+        assert!(
+            asm.contains("%zmm"),
+            "expected %zmm registers; asm:\n{}",
+            asm
         );
     }
 

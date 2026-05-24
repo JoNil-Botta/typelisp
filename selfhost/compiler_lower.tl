@@ -910,65 +910,73 @@
         (string-eq name "array-length")
         (or (string-eq name "length") (string-eq name "string-length")))
         (lower-array-length ctx state env type-env name args result-ty)
-        (if (and
-          (lower-stdio-builtin? name)
-          (not (lower-top-level-value-defined? ctx name)))
-          (lower-direct-call
-            ctx
-            state
-            env
-            type-env
-            (lower-stdio-runtime-name name)
-            args
-            result-ty)
-          (match (sym-i64-lookup env name)
-            [(SomeI64 _)
-              (lower-direct-call ctx state env type-env name args result-ty)]
-            [(NoneI64)
-              (match ctx
-                [(TcContext _ symbols registries)
-                  (match (compiler-registries-lookup-variant registries name)
-                    [(SomeI64 handle)
-                      (lower-construct-enum-with-handle
-                        ctx
-                        state
-                        env
-                        type-env
-                        name
-                        handle
-                        args
-                        result-ty)]
-                    [(NoneI64)
-                      (match (compiler-symbols-lookup-type symbols name)
+        (if (or (string-eq name "substring") (string-eq name "string-slice"))
+          (lower-substring ctx state env type-env args)
+          (if (or
+            (string-eq name "string-append")
+            (string-eq name "string-concat"))
+            (lower-string-concat ctx state env type-env args)
+            (if (and
+              (lower-stdio-builtin? name)
+              (not (lower-top-level-value-defined? ctx name)))
+              (lower-direct-call
+                ctx
+                state
+                env
+                type-env
+                (lower-stdio-runtime-name name)
+                args
+                result-ty)
+              (match (sym-i64-lookup env name)
+                [(SomeI64 _)
+                  (lower-direct-call ctx state env type-env name args result-ty)]
+                [(NoneI64)
+                  (match ctx
+                    [(TcContext _ symbols registries)
+                      (match (compiler-registries-lookup-variant
+                        registries
+                        name)
                         [(SomeI64 handle)
-                          (if (=
-                            (compiler-symbol-handle-kind handle)
-                            (compiler-symbol-kind-defstruct))
-                            (lower-construct-struct
-                              ctx
-                              state
-                              env
-                              type-env
-                              name
-                              args
-                              result-ty)
-                            (lower-direct-call
-                              ctx
-                              state
-                              env
-                              type-env
-                              name
-                              args
-                              result-ty))]
-                        [(NoneI64)
-                          (lower-direct-call
+                          (lower-construct-enum-with-handle
                             ctx
                             state
                             env
                             type-env
                             name
+                            handle
                             args
-                            result-ty)])])])])))]
+                            result-ty)]
+                        [(NoneI64)
+                          (match (compiler-symbols-lookup-type symbols name)
+                            [(SomeI64 handle)
+                              (if (=
+                                (compiler-symbol-handle-kind handle)
+                                (compiler-symbol-kind-defstruct))
+                                (lower-construct-struct
+                                  ctx
+                                  state
+                                  env
+                                  type-env
+                                  name
+                                  args
+                                  result-ty)
+                                (lower-direct-call
+                                  ctx
+                                  state
+                                  env
+                                  type-env
+                                  name
+                                  args
+                                  result-ty))]
+                            [(NoneI64)
+                              (lower-direct-call
+                                ctx
+                                state
+                                env
+                                type-env
+                                name
+                                args
+                                result-ty)])])])])))))]
     [_ (ErrLowerExpr "lower: only direct calls are supported")]))
 
 ;; A dynamic-array value is a pointer to inline fat storage `{data_ptr, length}`
@@ -1032,6 +1040,148 @@
                         (IrValueVar load-var)
                         (AstTyI64)))]))])])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+;; A String value points at inline fat storage `{data_ptr, length}` (data
+
+;; pointer at offset 0, i64 length at offset 8). The runtime helpers backing the
+
+;; String builtins (`tl_substring`, `tl_string_concat`) take the raw data
+
+;; pointer and length, not the fat value, so the lowerer decomposes each operand
+
+;; with these two loads (#527). `lower-fat-data-ptr` reads offset 0 directly;
+
+;; `lower-fat-len` mirrors `lower-array-length-load` (Gep index 1 then Load).
+
+(define (lower-fat-data-ptr [state : LowerState] [fat-value : CompilerIrValue]) : LowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc alloc var-id)
+      (LowerExpr
+        (lower-state-emit alloc (IrInstrLoad var-id fat-value (AstTyI64)))
+        (IrValueVar var-id)
+        (AstTyI64))]))
+
+(define (lower-fat-len [state : LowerState] [fat-value : CompilerIrValue]) : LowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc gep-alloc gep-var)
+      (let ([gep-state
+          :
+          LowerState
+          (lower-state-emit
+            gep-alloc
+            (IrInstrGep gep-var fat-value (IrValueI64 1) (AstTyI64)))])
+        (match (lower-state-alloc-var gep-state)
+          [(LowerAlloc load-alloc load-var)
+            (LowerExpr
+              (lower-state-emit
+                load-alloc
+                (IrInstrLoad load-var (IrValueVar gep-var) (AstTyI64)))
+              (IrValueVar load-var)
+              (AstTyI64))]))]))
+
+;; `(substring s start len)` / `string-slice` -> `tl_substring(data_ptr, start,
+
+;; len)`. Decompose `s` to its data pointer, then pass the scalar start/len.
+
+(define (lower-substring
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]) : ResultLowerExpr
+  (match args
+    [(AstExprCons s (AstExprCons start (AstExprCons len (AstExprNil))))
+      (match (lower-expr ctx state env type-env s)
+        [(OkLowerExpr lowered)
+          (match lowered
+            [(LowerExpr s-state s-value _)
+              (match (lower-fat-data-ptr s-state s-value)
+                [(LowerExpr ptr-state ptr-value _)
+                  (match (lower-expr ctx ptr-state env type-env start)
+                    [(OkLowerExpr start-lowered)
+                      (match start-lowered
+                        [(LowerExpr start-state start-value _)
+                          (match (lower-expr ctx start-state env type-env len)
+                            [(OkLowerExpr len-lowered)
+                              (match len-lowered
+                                [(LowerExpr len-state len-value _)
+                                  (match (lower-state-alloc-var len-state)
+                                    [(LowerAlloc alloc dst)
+                                      (OkLowerExpr
+                                        (LowerExpr
+                                          (lower-state-emit
+                                            alloc
+                                            (IrInstrCall
+                                              dst
+                                              "tl_substring"
+                                              (IrValueCons
+                                                ptr-value
+                                                (IrValueCons
+                                                  start-value
+                                                  (IrValueCons
+                                                    len-value
+                                                    IrValueNil)))
+                                              (AstTyString)))
+                                          (IrValueVar dst)
+                                          (AstTyString)))])])]
+                            [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+                    [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+            [_ (ErrLowerExpr "lower: substring expects a String")])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [_ (ErrLowerExpr "lower: substring expects (substring string start len)")]))
+
+;; `(string-append a b)` / `string-concat` -> `tl_string_concat(a_ptr, a_len,
+
+;; b_ptr, b_len)`. Decompose both operands into their data pointer and length.
+
+(define (lower-string-concat
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]) : ResultLowerExpr
+  (match args
+    [(AstExprCons a (AstExprCons b (AstExprNil)))
+      (match (lower-expr ctx state env type-env a)
+        [(OkLowerExpr a-lowered)
+          (match a-lowered
+            [(LowerExpr a-state a-value _)
+              (match (lower-expr ctx a-state env type-env b)
+                [(OkLowerExpr b-lowered)
+                  (match b-lowered
+                    [(LowerExpr b-state b-value _)
+                      (match (lower-fat-data-ptr b-state a-value)
+                        [(LowerExpr ap-state a-ptr _)
+                          (match (lower-fat-len ap-state a-value)
+                            [(LowerExpr al-state a-len _)
+                              (match (lower-fat-data-ptr al-state b-value)
+                                [(LowerExpr bp-state b-ptr _)
+                                  (match (lower-fat-len bp-state b-value)
+                                    [(LowerExpr bl-state b-len _)
+                                      (match (lower-state-alloc-var bl-state)
+                                        [(LowerAlloc alloc dst)
+                                          (OkLowerExpr
+                                            (LowerExpr
+                                              (lower-state-emit
+                                                alloc
+                                                (IrInstrCall
+                                                  dst
+                                                  "tl_string_concat"
+                                                  (IrValueCons
+                                                    a-ptr
+                                                    (IrValueCons
+                                                      a-len
+                                                      (IrValueCons
+                                                        b-ptr
+                                                        (IrValueCons
+                                                          b-len
+                                                          IrValueNil))))
+                                                  (AstTyString)))
+                                              (IrValueVar dst)
+                                              (AstTyString)))])])])])])])]
+                [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [_ (ErrLowerExpr "lower: string-append expects (string-append a b)")]))
 
 (define (lower-args
   [ctx : TcContext]
@@ -2083,6 +2233,19 @@
 (define (str-len-alias [s : String]) : i64 (length s))
 (define (main) : i64 0)")
 
+;; `substring`/`string-slice` and `string-append`/`string-concat` lower to the
+
+;; runtime-backed `tl_substring`/`tl_string_concat` calls (#527), decomposing
+
+;; each String operand into its data pointer and length.
+
+(define (compiler-lower-string-builtins-source) : String
+  "(define (sub [s : String]) : String (substring s 1 3))
+(define (sub-alias [s : String]) : String (string-slice s 0 2))
+(define (cat [a : String] [b : String]) : String (string-append a b))
+(define (cat-alias [a : String] [b : String]) : String (string-concat a b))
+(define (main) : i64 0)")
+
 (define (compiler-lower-stdio-source) : String
   "(define (main) : i64
   (begin
@@ -2281,7 +2444,9 @@
             (and
               (compiler-lower-ok? (compiler-lower-array-length-source))
               (and
-                (compiler-lower-ok? (compiler-lower-string-length-source))
+                (and
+                  (compiler-lower-ok? (compiler-lower-string-length-source))
+                  (compiler-lower-ok? (compiler-lower-string-builtins-source)))
                 (and
                   (compiler-lower-ok? (compiler-lower-stdio-source))
                   (and

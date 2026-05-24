@@ -2695,30 +2695,52 @@ tl_string_concat:
             (IrInstrCast 6 (IrValueVar 5) (AstTyI8) (AstTyI64))
             "    movsbq -48(%rbp), %rax\n"))))))
 
+;; A source exercising the String builtins, used to confirm the lowerer's
+
+;; runtime-backed calls (#527) reach the backend as `call tl_substring` /
+
+;; `call tl_string_concat`.
+
+(define (compiler-backend-string-builtins-call-source) : String
+  "(define (use [a : String] [b : String]) : String
+  (string-append (substring a 1 2) b))
+(define (main) : i64 0)")
+
+(define (compiler-backend-string-builtins-call-ok?) : bool
+  (match (compiler-backend-emit-source
+    (compiler-backend-string-builtins-call-source))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "call tl_substring")
+        (compiler-backend-string-contains? asm "call tl_string_concat"))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-self-test) : i64
   (if (and
-    (compiler-backend-source-ok? (compiler-backend-smoke-source))
+    (compiler-backend-string-builtins-call-ok?)
     (and
-      (compiler-backend-deterministic-ok? (compiler-backend-smoke-source))
+      (compiler-backend-source-ok? (compiler-backend-smoke-source))
       (and
-        (compiler-backend-string-ok?)
+        (compiler-backend-deterministic-ok? (compiler-backend-smoke-source))
         (and
-          (compiler-backend-memory-op-ok?)
+          (compiler-backend-string-ok?)
           (and
-            (compiler-backend-aggregate-ok?)
+            (compiler-backend-memory-op-ok?)
             (and
-              (compiler-backend-enum-match-ok?)
+              (compiler-backend-aggregate-ok?)
               (and
-                (compiler-backend-regalloc-ok?)
+                (compiler-backend-enum-match-ok?)
                 (and
-                  (compiler-backend-error-ok?
-                    (compiler-backend-too-many-call-source)
-                    "backend: too many call args")
+                  (compiler-backend-regalloc-ok?)
                   (and
-                    (compiler-backend-runtime-helper-asm-ok?)
+                    (compiler-backend-error-ok?
+                      (compiler-backend-too-many-call-source)
+                      "backend: too many call args")
                     (and
-                      (compiler-backend-user-helper-name-ok?)
-                      (compiler-backend-runtime-coexist-ok?)))))))))))
+                      (compiler-backend-runtime-helper-asm-ok?)
+                      (and
+                        (compiler-backend-user-helper-name-ok?)
+                        (compiler-backend-runtime-coexist-ok?))))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

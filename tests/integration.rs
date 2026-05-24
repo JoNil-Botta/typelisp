@@ -1388,6 +1388,126 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
     }
 }
 
+/// refs #750: RUN-LEVEL proof that the selfhost backend lowers ABI
+/// stack-passed call arguments with the correct offsets and alignment. The
+/// stack-args fixture emits a self-contained witness program (>6 integer args,
+/// >8 f64 args, and a mixed int/f64 call that spills both banks) whose `main`
+/// returns 96 only when every stack-passed argument arrives with its expected
+/// value and ordering. The emitted assembly is assembled with `as`, linked with
+/// `ld`, and executed — assembly-shape checks alone cannot catch a wrong stack
+/// offset, but a wrong value here flips the exit code.
+#[test]
+fn selfhost_backend_stack_args_emit_assemble_link_and_run() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let selfhost_dir = manifest_dir.join("selfhost");
+    let source_path = selfhost_dir.join("compiler_backend_stack_args_fixture.tl");
+    let work_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("compiler_backend_stack_args");
+    fs::create_dir_all(&work_dir).expect("create backend stack-args test work dir");
+
+    // The fixture imports compiler_backend.tl, which transitively pulls the
+    // whole lowering/regalloc/frontend slice; copy every dep alongside so the
+    // (import ...) chain resolves in the work dir (refs #738).
+    let fixture_work_path = work_dir.join("compiler_backend_stack_args_fixture.tl");
+    fs::copy(&source_path, &fixture_work_path).expect("copy stack-args fixture to work dir");
+    copy_case_deps(
+        &manifest_dir,
+        &selfhost_dir,
+        &work_dir,
+        &[
+            "compiler_backend.tl",
+            "compiler_regalloc.tl",
+            "compiler_liveness.tl",
+            "compiler_lower.tl",
+            "compiler_ctfe.tl",
+            "compiler_ir_types.tl",
+            "compiler_typecheck.tl",
+            "compiler_symbols.tl",
+            "compiler_parse_core.tl",
+            "compiler_diagnostic.tl",
+            "compiler_ast_types.tl",
+            "sym_i64_env.tl",
+            "text_buf.tl",
+            "read.tl",
+            "lex.tl",
+            "token.tl",
+        ],
+    );
+
+    let asm_path = work_dir.join("stack_args.s");
+    let obj_path = work_dir.join("stack_args.o");
+    let bin_path = work_dir.join("stack_args");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&fixture_work_path)
+        .arg("--")
+        .arg(&asm_path)
+        .arg("linux-x86_64")
+        .output()
+        .expect("run compiler_backend_stack_args_fixture");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stack-args fixture failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let asm = fs::read_to_string(&asm_path).expect("read stack-args fixture assembly");
+    // Representative stack stores / call-space sizing the selfhost backend must
+    // emit for the spilled args (the witness's three call sites).
+    for snippet in [
+        "    subq $16, %rsp\n",
+        "    movq %r11, 0(%rsp)\n",
+        "    movsd %xmm15, 0(%rsp)\n",
+        "    movsd %xmm15, 8(%rsp)\n",
+        "    addq $16, %rsp\n",
+        "    call _tl_add8\n",
+        "    call _tl_f10check\n",
+        "    call _tl_mixcheck\n",
+    ] {
+        assert!(
+            asm.contains(snippet),
+            "stack-args assembly missing {snippet:?}:\n{asm}"
+        );
+    }
+    assert!(
+        !asm.contains("backend: too many call args"),
+        "stack-args witness must not hit the too-many-call-args rejection:\n{asm}"
+    );
+
+    let status = Command::new("as")
+        .arg(&asm_path)
+        .arg("-o")
+        .arg(&obj_path)
+        .status()
+        .expect("assemble stack-args fixture output");
+    assert!(status.success(), "assembling stack-args output failed");
+
+    let status = Command::new("ld")
+        .arg(&obj_path)
+        .arg("-o")
+        .arg(&bin_path)
+        .status()
+        .expect("link stack-args fixture output");
+    assert!(status.success(), "linking stack-args output failed");
+
+    let output = Command::new(&bin_path)
+        .output()
+        .expect("run stack-args fixture binary");
+    assert_eq!(
+        output.status.code(),
+        Some(96),
+        "stack-args binary exited unexpectedly (a wrong value means a stack arg \
+         was passed at the wrong offset)\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[test]
 fn selfhost_backend_runtime_helpers_emit_assemble_link_and_run() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -1549,49 +1669,55 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
         "compiler_driver build did not write binary"
     );
 
-    let backend_error_input_path = work_dir.join("backend_error_input.tl");
-    let backend_error_asm_path = work_dir.join("backend_error_generated.s");
-    let _ = fs::remove_file(&backend_error_asm_path);
+    // #750: a SysV call with seven integer args (the seventh spills to the
+    // stack) is no longer rejected with "backend: too many call args". The
+    // selfhost driver now compiles it successfully and writes assembly that
+    // reserves call space, stages the spilled arg through %r11, and stores it at
+    // 0(%rsp). (Before #750 this same input produced a backend diagnostic.)
+    let stack_args_input_path = work_dir.join("stack_args_input.tl");
+    let stack_args_asm_path = work_dir.join("stack_args_generated.s");
+    let _ = fs::remove_file(&stack_args_asm_path);
     fs::write(
-        &backend_error_input_path,
+        &stack_args_input_path,
         "(extern f : (-> i64 i64 i64 i64 i64 i64 i64 i64))\n\
          (define (main) : i64 (f 1 2 3 4 5 6 7))\n",
     )
-    .expect("write compiler_driver backend diagnostic fixture");
+    .expect("write compiler_driver stack-args fixture");
 
-    let backend_error = Command::new(&driver_bin)
-        .arg(&backend_error_input_path)
-        .arg(&backend_error_asm_path)
+    let stack_args = Command::new(&driver_bin)
+        .arg(&stack_args_input_path)
+        .arg(&stack_args_asm_path)
         .output()
-        .expect("run compiler_driver backend diagnostic fixture");
+        .expect("run compiler_driver stack-args fixture");
     assert_eq!(
-        backend_error.status.code(),
-        Some(1),
-        "compiler_driver backend diagnostic fixture exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&backend_error.stdout),
-        String::from_utf8_lossy(&backend_error.stderr)
+        stack_args.status.code(),
+        Some(0),
+        "compiler_driver stack-args fixture exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&stack_args.stdout),
+        String::from_utf8_lossy(&stack_args.stderr)
     );
     assert_eq!(
-        String::from_utf8_lossy(&backend_error.stdout),
+        String::from_utf8_lossy(&stack_args.stderr),
         "",
-        "compiler_driver backend diagnostic fixture stdout"
+        "compiler_driver stack-args fixture stderr"
     );
-    // #605: the backend now stamps the too-many-call-args diagnostic with the
-    // offending function's real source span from the lowering provenance side
-    // table (`main`'s body `(f 1 2 3 4 5 6 7)` on line 2, column 22) instead of
-    // the previous `1:1` fallback.
-    assert_eq!(
-        String::from_utf8_lossy(&backend_error.stderr),
-        format!(
-            "{}:2:22: backend: too many call args",
-            backend_error_input_path.display()
-        ),
-        "compiler_driver backend diagnostic fixture stderr"
-    );
+    let stack_args_asm =
+        fs::read_to_string(&stack_args_asm_path).expect("read compiler_driver stack-args assembly");
     assert!(
-        !backend_error_asm_path.exists(),
-        "backend diagnostic fixture should not write assembly"
+        !stack_args_asm.contains("backend: too many call args"),
+        "stack-args fixture must no longer emit the too-many-call-args rejection:\n{stack_args_asm}"
     );
+    for snippet in [
+        "    subq $16, %rsp\n",
+        "    movq %r11, 0(%rsp)\n",
+        "    addq $16, %rsp\n",
+        "    call f\n",
+    ] {
+        assert!(
+            stack_args_asm.contains(snippet),
+            "stack-args fixture assembly missing {snippet:?}:\n{stack_args_asm}"
+        );
+    }
 
     let input_path = work_dir.join("input.tl");
     let helper_path = work_dir.join("helper.tl");

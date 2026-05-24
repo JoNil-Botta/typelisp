@@ -216,6 +216,14 @@
 (define (compiler-live-instr-uses [instr : CompilerIrInstr]) : CompilerLiveI64Set
   (match instr
     [(IrInstrMov _ src _) (compiler-live-value-vars src)]
+    [(IrInstrAlloc _ _) CompilerLiveI64Nil]
+    [(IrInstrAddrOf _ src) (CompilerLiveI64Cons src CompilerLiveI64Nil)]
+    [(IrInstrGep _ base offset _)
+     (compiler-live-set-union (compiler-live-value-vars base) (compiler-live-value-vars offset))]
+    [(IrInstrLoad _ src _) (compiler-live-value-vars src)]
+    [(IrInstrStorePtr dst src _)
+     (compiler-live-set-union (compiler-live-value-vars dst) (compiler-live-value-vars src))]
+    [(IrInstrCast _ src _ _) (compiler-live-value-vars src)]
     [(IrInstrBinOp _ _ lhs rhs _)
      (compiler-live-set-union (compiler-live-value-vars lhs) (compiler-live-value-vars rhs))]
     [(IrInstrUnOp _ _ src _) (compiler-live-value-vars src)]
@@ -229,6 +237,11 @@
 (define (compiler-live-instr-defs [instr : CompilerIrInstr]) : CompilerLiveI64Set
   (match instr
     [(IrInstrMov dst _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
+    [(IrInstrAlloc dst _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
+    [(IrInstrAddrOf dst _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
+    [(IrInstrGep dst _ _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
+    [(IrInstrLoad dst _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
+    [(IrInstrCast dst _ _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
     [(IrInstrBinOp dst _ _ _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
     [(IrInstrUnOp dst _ _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
     [(IrInstrCall dst _ _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
@@ -566,6 +579,25 @@
      (and (compiler-live-set-eq? uses (compiler-live-set7 10 11 12 13 14 15 16))
           (compiler-live-set-eq? defs (compiler-live-set5 0 1 2 3 4)))]))
 
+(define (compiler-live-memory-use-def-ok?) : bool
+  (match (compiler-live-block-use-def
+           (IrInstrCons
+             (IrInstrAlloc 0 (compiler-live-i64-ty))
+             (IrInstrCons
+               (IrInstrAddrOf 1 0)
+               (IrInstrCons
+                 (IrInstrGep 2 (IrValueVar 1) (IrValueVar 10) (compiler-live-i64-ty))
+                 (IrInstrCons
+                   (IrInstrLoad 3 (IrValueVar 2) (compiler-live-i64-ty))
+                   (IrInstrCons
+                     (IrInstrStorePtr (IrValueVar 2) (IrValueVar 11) (compiler-live-i64-ty))
+                     (IrInstrCons
+                       (IrInstrCast 4 (IrValueVar 3) (compiler-live-i64-ty) (AstTyI32))
+                       IrInstrNil)))))))
+    [(CompilerLiveUseDef uses defs)
+     (and (compiler-live-set-eq? uses (compiler-live-set2 10 11))
+          (compiler-live-set-eq? defs (compiler-live-set5 0 1 2 3 4)))]))
+
 (define (compiler-live-straight-ok?) : bool
   (let ([liveness : CompilerFunctionLiveness (compiler-live-analyze-function (compiler-live-straight-function))])
     (match (compiler-live-find-block (compiler-live-function-blocks liveness) "entry")
@@ -618,9 +650,10 @@
 
 (define (compiler-live-self-test) : i64
   (if (and (compiler-live-use-def-ok?)
-           (and (compiler-live-straight-ok?)
-                (and (compiler-live-branch-ok?)
-                     (compiler-live-phi-ok?))))
+           (and (compiler-live-memory-use-def-ok?)
+                (and (compiler-live-straight-ok?)
+                     (and (compiler-live-branch-ok?)
+                          (compiler-live-phi-ok?)))))
       42
       (begin
         (panic "liveness: smoke mismatch")

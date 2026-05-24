@@ -140,6 +140,7 @@ fn compiler_liveness_tl_compiles_to_assembly() {
         "_tl_compiler_live_block_successors:",
         "_tl_compiler_live_instr_uses:",
         "_tl_compiler_live_instr_defs:",
+        "_tl_compiler_live_memory_use_def_ok_question:",
         "_tl_compiler_live_after:",
         "_tl_compiler_live_self_test:",
     ] {

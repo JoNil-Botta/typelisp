@@ -58,6 +58,12 @@
 
 (defenum CompilerIrInstr
   (IrInstrMov i64 CompilerIrValue AstType)
+  (IrInstrAlloc i64 AstType)
+  (IrInstrAddrOf i64 i64)
+  (IrInstrGep i64 CompilerIrValue CompilerIrValue AstType)
+  (IrInstrLoad i64 CompilerIrValue AstType)
+  (IrInstrStorePtr CompilerIrValue CompilerIrValue AstType)
+  (IrInstrCast i64 CompilerIrValue AstType AstType)
   (IrInstrBinOp i64 CompilerIrBinOp CompilerIrValue CompilerIrValue AstType)
   (IrInstrUnOp i64 CompilerIrUnOp CompilerIrValue AstType)
   (IrInstrCall i64 String CompilerIrValueList AstType)

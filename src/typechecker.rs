@@ -1856,16 +1856,29 @@ impl TypeChecker {
                 // Casts are only defined between scalar number-like types
                 // (integers and `char`, which is an 8-bit code unit here).
                 let castable = |t: &Type| t.is_integer() || matches!(t, Type::Char);
+                // Explicit `f64 <-> f32` conversions are supported (changing
+                // precision). Other floating-point casts (int <-> float) remain
+                // unsupported for now.
+                let float_to_float = matches!(
+                    (&expr_ty, &ty),
+                    (Type::F32, Type::F64)
+                        | (Type::F64, Type::F32)
+                        | (Type::F32, Type::F32)
+                        | (Type::F64, Type::F64)
+                );
                 let float_cast =
                     matches!(expr_ty, Type::F32 | Type::F64) || matches!(ty, Type::F32 | Type::F64);
-                if float_cast {
+                if float_cast && !float_to_float {
                     return Err(TypeError::at(
                         format!(
-                            "floating-point casts are not supported yet; casts currently support integer/char conversions only, got {} -> {}",
+                            "floating-point casts are not supported yet; casts currently support integer/char and f64<->f32 conversions only, got {} -> {}",
                             expr_ty, ty
                         ),
                         span,
                     ));
+                }
+                if float_to_float {
+                    return Ok(ty);
                 }
                 if !castable(&expr_ty) || !castable(&ty) {
                     return Err(TypeError::at(
@@ -4143,8 +4156,33 @@ mod tests {
         let err = check("(define (main) : i64 (cast 3.5 : i64))").unwrap_err();
         assert_eq!(
             err.msg,
-            "floating-point casts are not supported yet; casts currently support integer/char conversions only, got f64 -> i64"
+            "floating-point casts are not supported yet; casts currently support integer/char and f64<->f32 conversions only, got f64 -> i64"
         );
+    }
+
+    #[test]
+    fn test_typecheck_f64_to_f32_cast_is_allowed() {
+        let src = "(define (main) : f32 (cast 3.5 : f32))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_f32_to_f64_cast_is_allowed() {
+        let src = "(define (round-trip [x : f32]) : f64 (cast x : f64))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_f32_arithmetic_and_comparison() {
+        let src = r#"
+            (define (compute [a : f32] [b : f32]) : bool
+              (let ([sum : f32 (+ a b)]
+                    [diff : f32 (- a b)]
+                    [prod : f32 (* a b)]
+                    [quot : f32 (/ a b)])
+                (< (+ sum (+ diff (+ prod quot))) b)))
+        "#;
+        assert!(check(src).is_ok());
     }
 
     #[test]

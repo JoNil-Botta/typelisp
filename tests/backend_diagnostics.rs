@@ -17,11 +17,14 @@ fn compile_source(work_name: &str, file_name: &str, source: &str) -> std::proces
 }
 
 #[test]
-fn f32_backend_rejection_renders_source_diagnostic() {
+fn fixed_array_return_backend_rejection_renders_source_diagnostic() {
+    // Scalar `f32` is now codegen'd, so this exercises the backend
+    // source-diagnostic pipeline against a return type that REMAINS
+    // unsupported (a by-value fixed array).
     let output = compile_source(
-        "backend-diagnostics-f32",
-        "f32_return.tl",
-        "(define (main) : f32\n  (panic \"unsupported f32 return\"))",
+        "backend-diagnostics-array",
+        "array_return.tl",
+        "(define (main) : (Array i64 3)\n  (array 1 2 3))",
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -35,18 +38,18 @@ fn f32_backend_rejection_renders_source_diagnostic() {
     assert_eq!(stdout, "", "failed compile should not write stdout");
     assert!(
         stderr.contains(
-            "error[E0300]: backend: function 'main' uses an unsupported construct (return type f32)"
+            "error[E0300]: backend: function 'main' uses an unsupported construct (return type (Array i64 3))"
         ),
         "stderr did not keep backend validation detail:\n{}",
         stderr
     );
     assert!(
-        stderr.contains("f32_return.tl:2:"),
+        stderr.contains("array_return.tl:2:"),
         "diagnostic should point at source line 2:\n{}",
         stderr
     );
     assert!(
-        stderr.contains(" 2 |   (panic \"unsupported f32 return\")"),
+        stderr.contains(" 2 |   (array 1 2 3)"),
         "diagnostic should include the offending source line:\n{}",
         stderr
     );

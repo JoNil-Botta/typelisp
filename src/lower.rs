@@ -9244,6 +9244,34 @@ mod tests {
         assert_eq!(cast, Some((Type::I64, Type::I8)));
     }
 
+    #[test]
+    fn test_lower_f64_to_f32_cast_records_both_types() {
+        // (cast x : f32) on an f64 parameter lowers to a Cast carrying f64->f32
+        // so the backend can emit cvtsd2ss.
+        let prog = parse("(define (f [x : f64]) : f32 (cast x : f32))").unwrap();
+        let ir = lower_program(&prog);
+        let cast = ir.functions[0].blocks.iter().find_map(|b| {
+            b.instructions.iter().find_map(|i| match i {
+                Instruction::Cast { from_ty, to_ty, .. } => Some((from_ty.clone(), to_ty.clone())),
+                _ => None,
+            })
+        });
+        assert_eq!(cast, Some((Type::F64, Type::F32)));
+    }
+
+    #[test]
+    fn test_lower_f32_to_f64_cast_records_both_types() {
+        let prog = parse("(define (f [x : f32]) : f64 (cast x : f64))").unwrap();
+        let ir = lower_program(&prog);
+        let cast = ir.functions[0].blocks.iter().find_map(|b| {
+            b.instructions.iter().find_map(|i| match i {
+                Instruction::Cast { from_ty, to_ty, .. } => Some((from_ty.clone(), to_ty.clone())),
+                _ => None,
+            })
+        });
+        assert_eq!(cast, Some((Type::F32, Type::F64)));
+    }
+
     // ------------------------------------------------------------------
     // Sum types + pattern matching — Issue #41
     // ------------------------------------------------------------------

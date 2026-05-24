@@ -66,6 +66,15 @@ fn type_lisp_programs_compile_link_and_run() {
             stdout: "",
             deps: &[],
         },
+        // refs #670: scalar f32 params/locals/arithmetic/comparison/return plus
+        // an f64 -> f32 -> f64 round-trip. Returns 42 only when single-precision
+        // codegen is correct.
+        Case {
+            name: "f32_scalar",
+            exit_code: 42,
+            stdout: "",
+            deps: &[],
+        },
         Case {
             name: "fixed_array",
             exit_code: 42,
@@ -702,6 +711,14 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         Case {
             name: "arithmetic",
             exit_code: 47,
+            stdout: "",
+            deps: &[],
+        },
+        // refs #670: scalar f32 slice through the explicit compile -> as -> ld
+        // -> run pipeline.
+        Case {
+            name: "f32_scalar",
+            exit_code: 42,
             stdout: "",
             deps: &[],
         },

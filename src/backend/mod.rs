@@ -571,7 +571,7 @@ fn validate_global(name: &str, ty: &Type, init: Option<&Value>) -> Result<(), St
     if !is_global_data_type(ty) {
         return Err(format!(
             "backend: global '{}' has unsupported type {}. \
-             The x86_64 backend currently supports scalar integer, bool, char, f64, \
+             The x86_64 backend currently supports scalar integer, bool, char, f64, f32, \
              unit, and pointer-sized String, enum, struct, and dynamic-array globals.",
             name, ty
         ));
@@ -666,7 +666,7 @@ fn validate_function(
                         .unwrap_or_else(|| ty.clone());
                     let rhs_ty = validate_value_type(rhs, &var_types, global_types)
                         .unwrap_or_else(|| ty.clone());
-                    if (lhs_ty == Type::F64 || rhs_ty == Type::F64 || *ty == Type::F64)
+                    if (lhs_ty.is_float() || rhs_ty.is_float() || ty.is_float())
                         && matches!(
                             *op,
                             IrBinOp::Mod
@@ -679,7 +679,7 @@ fn validate_function(
                                 | IrBinOp::Shr
                         )
                     {
-                        return unsupported("unsupported f64 binary operator");
+                        return unsupported("unsupported float binary operator");
                     }
                 }
                 Instruction::UnOp { op, src, ty, .. } => {
@@ -687,8 +687,8 @@ fn validate_function(
                         .map_err(|w| unsupported_value(&func.name, &w))?;
                     let src_ty = validate_value_type(src, &var_types, global_types)
                         .unwrap_or_else(|| ty.clone());
-                    if src_ty == Type::F64 && matches!(*op, IrUnOp::Not | IrUnOp::BitNot) {
-                        return unsupported("unsupported f64 unary operator");
+                    if src_ty.is_float() && matches!(*op, IrUnOp::Not | IrUnOp::BitNot) {
+                        return unsupported("unsupported float unary operator");
                     }
                 }
                 Instruction::Mov { src, ty, .. } => {
@@ -708,7 +708,10 @@ fn validate_function(
                 } => {
                     check_operand(src, global_types)
                         .map_err(|w| unsupported_value(&func.name, &w))?;
-                    if from_ty.is_float() || to_ty.is_float() {
+                    // `f64 <-> f32` precision conversions are supported. Any
+                    // other cast touching a float (int <-> float) is not.
+                    let float_to_float = from_ty.is_float() && to_ty.is_float();
+                    if (from_ty.is_float() || to_ty.is_float()) && !float_to_float {
                         return unsupported("floating-point cast");
                     }
                 }
@@ -1500,6 +1503,7 @@ fn is_backend_abi_value_type(ty: &Type) -> bool {
             | Type::Bool
             | Type::Char
             | Type::F64
+            | Type::F32
             | Type::String
             | Type::Unit
             | Type::Func(_, _)
@@ -1553,14 +1557,50 @@ fn is_avx512_mask_local_type(ty: &Type) -> bool {
     matches!(ty, Type::Mask(8) | Type::Mask(16))
 }
 
+/// Whether `ty` is a scalar floating-point type the backend codegens in XMM
+/// registers (`f32`/`f64`).
+fn is_scalar_float(ty: &Type) -> bool {
+    matches!(ty, Type::F32 | Type::F64)
+}
+
+/// Scalar XMM move mnemonic for a float type: `movss` for `f32` (4 bytes),
+/// `movsd` for `f64` (8 bytes).
+fn scalar_float_move(ty: &Type) -> &'static str {
+    match ty {
+        Type::F32 => "movss",
+        _ => "movsd",
+    }
+}
+
+/// Single-precision (`f32`) vs double-precision (`f64`) arithmetic mnemonic.
+fn scalar_float_arith(op: &IrBinOp, ty: &Type) -> &'static str {
+    let single = matches!(ty, Type::F32);
+    match (op, single) {
+        (IrBinOp::Add, false) => "addsd",
+        (IrBinOp::Add, true) => "addss",
+        (IrBinOp::Sub, false) => "subsd",
+        (IrBinOp::Sub, true) => "subss",
+        (IrBinOp::Mul, false) => "mulsd",
+        (IrBinOp::Mul, true) => "mulss",
+        (IrBinOp::Div, false) => "divsd",
+        (IrBinOp::Div, true) => "divss",
+        _ => "addsd",
+    }
+}
+
+/// Ordered/unordered scalar float compare mnemonic: `ucomiss` for `f32`,
+/// `ucomisd` for `f64`. Both share the same EFLAGS semantics, so the `setcc`
+/// selection is identical across widths.
+fn scalar_float_compare(ty: &Type) -> &'static str {
+    match ty {
+        Type::F32 => "ucomiss",
+        _ => "ucomisd",
+    }
+}
+
 fn is_sized_backend_type(ty: &Type) -> bool {
     match ty {
-        Type::F32
-        | Type::Vector(_, _)
-        | Type::Mask(_)
-        | Type::Var(_)
-        | Type::Unit
-        | Type::Never => false,
+        Type::Vector(_, _) | Type::Mask(_) | Type::Var(_) | Type::Unit | Type::Never => false,
         Type::Tuple(elems) => elems.iter().all(is_sized_backend_type) && ty.size() > 0,
         Type::Array(elem, len) => *len > 0 && is_sized_backend_type(elem),
         _ => true,
@@ -1581,6 +1621,7 @@ fn is_global_data_type(ty: &Type) -> bool {
             | Type::Bool
             | Type::Char
             | Type::F64
+            | Type::F32
             | Type::Unit
             | Type::String
             | Type::DynArray(_)
@@ -2199,6 +2240,12 @@ impl X86_64Backend {
                     Type::F64 => {
                         self.emit(&format!(
                             "    movsd {}, {}(%rip)",
+                            calling_convention.return_float_reg, symbol
+                        ));
+                    }
+                    Type::F32 => {
+                        self.emit(&format!(
+                            "    movss {}, {}(%rip)",
                             calling_convention.return_float_reg, symbol
                         ));
                     }
@@ -3346,7 +3393,7 @@ impl X86_64Backend {
             let offset = self.var_offsets[&(idx as VarId)];
             if let Some(shared_slots) = calling_convention.shared_arg_register_slots {
                 if arg_position < shared_slots {
-                    let reg = if *ty == Type::F64 {
+                    let reg = if is_scalar_float(ty) {
                         xmm_regs[arg_position]
                     } else {
                         param_regs[arg_position]
@@ -3360,7 +3407,7 @@ impl X86_64Backend {
                 continue;
             }
 
-            if *ty == Type::F64 {
+            if is_scalar_float(ty) {
                 if float_param < xmm_regs.len() {
                     self.store_incoming_register_param(xmm_regs[float_param], offset, ty);
                 } else {
@@ -5384,7 +5431,7 @@ impl X86_64Backend {
             let offset = self.var_offsets[var];
             if let Some(shared_slots) = calling_convention.shared_arg_register_slots {
                 if arg_position < shared_slots {
-                    let reg = if *ty == Type::F64 {
+                    let reg = if is_scalar_float(ty) {
                         xmm_regs[arg_position]
                     } else {
                         param_regs[arg_position]
@@ -5440,7 +5487,7 @@ impl X86_64Backend {
                     }
                     int_param += 1;
                 }
-                Type::F64 => {
+                Type::F64 | Type::F32 => {
                     if float_param < xmm_regs.len() {
                         self.store_incoming_register_param(xmm_regs[float_param], offset, ty);
                     } else {
@@ -5469,9 +5516,9 @@ impl X86_64Backend {
             Instruction::Alloc { .. } => {}
             Instruction::Mov { dst, src, ty } => {
                 let dst_offset = self.var_offsets[dst];
-                if *ty == Type::F64 {
+                if is_scalar_float(ty) {
                     self.load_value(src, "%xmm0", ty);
-                    self.store_xmm_value("%xmm0", dst_offset);
+                    self.store_xmm_value("%xmm0", dst_offset, ty);
                     return;
                 }
 
@@ -5521,6 +5568,21 @@ impl X86_64Backend {
                 to_ty,
             } => {
                 let dst_offset = self.var_offsets[dst];
+                // Floating-point precision conversions flow through XMM:
+                // `cvtsd2ss` rounds an f64 to binary32, `cvtss2sd` widens an
+                // f32 to f64 exactly. (Same-width float casts are folded away by
+                // the lowerer, so only the genuine width changes reach here.)
+                if is_scalar_float(from_ty) && is_scalar_float(to_ty) {
+                    self.load_value(src, "%xmm0", from_ty);
+                    match (from_ty, to_ty) {
+                        (Type::F64, Type::F32) => self.emit("    cvtsd2ss %xmm0, %xmm0"),
+                        (Type::F32, Type::F64) => self.emit("    cvtss2sd %xmm0, %xmm0"),
+                        // Same-width float cast: no conversion instruction.
+                        _ => {}
+                    }
+                    self.store_xmm_value("%xmm0", dst_offset, to_ty);
+                    return;
+                }
                 self.load_value(src, "%rax", from_ty);
                 match to_ty.size() {
                     8 => self.emit(&format!("    movq %rax, {}(%rbp)", dst_offset)),
@@ -5544,8 +5606,8 @@ impl X86_64Backend {
                     .get(dst)
                     .cloned()
                     .unwrap_or_else(|| ty.clone());
-                if operand_ty == Type::F64 {
-                    self.generate_float_binop(dst_offset, op, lhs, rhs, &result_ty);
+                if is_scalar_float(&operand_ty) {
+                    self.generate_float_binop(dst_offset, op, lhs, rhs, &operand_ty, &result_ty);
                     return;
                 }
 
@@ -5677,19 +5739,32 @@ impl X86_64Backend {
             }
             Instruction::UnOp { dst, op, src, ty } => {
                 let dst_offset = self.var_offsets[dst];
-                if *ty == Type::F64 {
+                if is_scalar_float(ty) {
                     self.load_value(src, "%xmm0", ty);
                     match op {
                         IrUnOp::Neg => {
+                            // Negate by subtracting from zero at the operand
+                            // width (`subss`/`subsd`), then move the result back
+                            // with the matching packed move (`movaps`/`movapd`).
+                            let single = matches!(ty, Type::F32);
                             self.emit("    pxor %xmm1, %xmm1");
-                            self.emit("    subsd %xmm0, %xmm1");
-                            self.emit("    movapd %xmm1, %xmm0");
+                            self.emit(if single {
+                                "    subss %xmm0, %xmm1"
+                            } else {
+                                "    subsd %xmm0, %xmm1"
+                            });
+                            self.emit(if single {
+                                "    movaps %xmm1, %xmm0"
+                            } else {
+                                "    movapd %xmm1, %xmm0"
+                            });
                         }
-                        // Logical/bitwise complement are not defined on f64 and
-                        // are rejected by validation/typechecking before codegen.
+                        // Logical/bitwise complement are not defined on floats
+                        // and are rejected by validation/typechecking before
+                        // codegen.
                         IrUnOp::Not | IrUnOp::BitNot => {}
                     }
-                    self.store_xmm_value("%xmm0", dst_offset);
+                    self.store_xmm_value("%xmm0", dst_offset, ty);
                     return;
                 }
 
@@ -5779,9 +5854,9 @@ impl X86_64Backend {
                     return;
                 }
                 let dst_offset = self.var_offsets[&dst_var];
-                if *ty == Type::F64 {
+                if is_scalar_float(ty) {
                     self.load_value(src, "%xmm0", ty);
-                    self.store_xmm_value("%xmm0", dst_offset);
+                    self.store_xmm_value("%xmm0", dst_offset, ty);
                     return;
                 }
 
@@ -5821,9 +5896,9 @@ impl X86_64Backend {
                     self.load_value_through_pointer(*src_var, dst_offset, ty);
                     return;
                 }
-                if *ty == Type::F64 {
+                if is_scalar_float(ty) {
                     self.load_value(src, "%xmm0", ty);
-                    self.store_xmm_value("%xmm0", dst_offset);
+                    self.store_xmm_value("%xmm0", dst_offset, ty);
                     return;
                 }
 
@@ -5981,7 +6056,7 @@ impl X86_64Backend {
                 if let Some(v) = val {
                     let ret_ty = self.return_ty.clone();
                     let calling_convention = self.target.calling_convention();
-                    if ret_ty == Type::F64 {
+                    if is_scalar_float(&ret_ty) {
                         self.load_value(v, calling_convention.return_float_reg, &ret_ty);
                     } else {
                         self.load_value(v, calling_convention.return_gpr, &ret_ty);
@@ -6277,9 +6352,10 @@ impl X86_64Backend {
             .target
             .calling_convention()
             .incoming_stack_arg_offset(stack_param);
-        if *ty == Type::F64 {
-            self.emit(&format!("    movsd {}(%rbp), %xmm15", caller_offset));
-            self.emit(&format!("    movsd %xmm15, {}(%rbp)", local_offset));
+        if is_scalar_float(ty) {
+            let mov = scalar_float_move(ty);
+            self.emit(&format!("    {} {}(%rbp), %xmm15", mov, caller_offset));
+            self.emit(&format!("    {} %xmm15, {}(%rbp)", mov, local_offset));
             return;
         }
 
@@ -6305,8 +6381,9 @@ impl X86_64Backend {
     }
 
     fn store_incoming_register_param(&mut self, reg: &str, local_offset: i32, ty: &Type) {
-        if *ty == Type::F64 {
-            self.emit(&format!("    movsd {}, {}(%rbp)", reg, local_offset));
+        if is_scalar_float(ty) {
+            let mov = scalar_float_move(ty);
+            self.emit(&format!("    {} {}, {}(%rbp)", mov, reg, local_offset));
             return;
         }
 
@@ -6346,7 +6423,7 @@ impl X86_64Backend {
             }
             if let Some(shared_slots) = calling_convention.shared_arg_register_slots {
                 if arg_position < shared_slots {
-                    if arg_ty == Type::F64 {
+                    if is_scalar_float(&arg_ty) {
                         self.load_value(arg, xmm_regs[arg_position], &arg_ty);
                     } else {
                         self.load_value(arg, param_regs[arg_position], &arg_ty);
@@ -6357,9 +6434,9 @@ impl X86_64Backend {
                 arg_position += 1;
                 continue;
             }
-            if arg_ty == Type::F64 {
+            if is_scalar_float(&arg_ty) {
                 if float_arg < xmm_regs.len() {
-                    self.load_value(arg, xmm_regs[float_arg], &Type::F64);
+                    self.load_value(arg, xmm_regs[float_arg], &arg_ty);
                 } else {
                     stack_args.push((arg.clone(), arg_ty));
                 }
@@ -6400,7 +6477,7 @@ impl X86_64Backend {
             }
             if let Some(shared_slots) = calling_convention.shared_arg_register_slots {
                 if arg_position < shared_slots {
-                    if arg_ty == Type::F64 {
+                    if is_scalar_float(&arg_ty) {
                         self.load_value(arg, xmm_regs[arg_position], &arg_ty);
                     } else {
                         self.load_value(arg, param_regs[arg_position], &arg_ty);
@@ -6411,9 +6488,9 @@ impl X86_64Backend {
                 arg_position += 1;
                 continue;
             }
-            if arg_ty == Type::F64 {
+            if is_scalar_float(&arg_ty) {
                 if float_arg < xmm_regs.len() {
-                    self.load_value(arg, xmm_regs[float_arg], &Type::F64);
+                    self.load_value(arg, xmm_regs[float_arg], &arg_ty);
                 } else {
                     stack_args.push((arg.clone(), arg_ty));
                 }
@@ -6452,9 +6529,10 @@ impl X86_64Backend {
             .target
             .calling_convention()
             .outgoing_stack_arg_offset(stack_arg);
-        if *ty == Type::F64 {
+        if is_scalar_float(ty) {
+            let mov = scalar_float_move(ty);
             self.load_value(arg, "%xmm15", ty);
-            self.emit(&format!("    movsd %xmm15, {}(%rsp)", offset));
+            self.emit(&format!("    {} %xmm15, {}(%rsp)", mov, offset));
             return;
         }
 
@@ -6472,8 +6550,8 @@ impl X86_64Backend {
         if let Some(dst_var) = dst {
             let dst_offset = self.var_offsets[dst_var];
             let calling_convention = self.target.calling_convention();
-            if *ty == Type::F64 {
-                self.store_xmm_value(calling_convention.return_float_reg, dst_offset);
+            if is_scalar_float(ty) {
+                self.store_xmm_value(calling_convention.return_float_reg, dst_offset, ty);
             } else {
                 self.store_gpr_value(calling_convention.return_gpr, dst_offset, ty);
             }
@@ -6489,10 +6567,11 @@ impl X86_64Backend {
                 continue;
             }
 
-            if *param_ty == Type::F64 {
+            if is_scalar_float(param_ty) {
+                let mov = scalar_float_move(param_ty);
                 self.load_value(arg, "%xmm15", param_ty);
                 self.emit("    sub $8, %rsp");
-                self.emit("    movsd %xmm15, (%rsp)");
+                self.emit(&format!("    {} %xmm15, (%rsp)", mov));
             } else {
                 self.load_value(arg, "%r11", param_ty);
                 self.emit("    push %r11");
@@ -6502,10 +6581,11 @@ impl X86_64Backend {
 
         for (param_var, param_ty) in staged.iter().rev() {
             let offset = self.var_offsets[param_var];
-            if *param_ty == Type::F64 {
-                self.emit("    movsd (%rsp), %xmm15");
+            if is_scalar_float(param_ty) {
+                let mov = scalar_float_move(param_ty);
+                self.emit(&format!("    {} (%rsp), %xmm15", mov));
                 self.emit("    add $8, %rsp");
-                self.store_xmm_value("%xmm15", offset);
+                self.store_xmm_value("%xmm15", offset, param_ty);
             } else {
                 self.emit("    pop %r11");
                 self.store_gpr_value("%r11", offset, param_ty);
@@ -6528,9 +6608,10 @@ impl X86_64Backend {
 
     fn load_value_through_pointer(&mut self, ptr_var: VarId, dst_offset: i32, ty: &Type) {
         self.load_pointer_value(ptr_var, "%r10");
-        if *ty == Type::F64 {
-            self.emit("    movsd (%r10), %xmm0");
-            self.store_xmm_value("%xmm0", dst_offset);
+        if is_scalar_float(ty) {
+            let mov = scalar_float_move(ty);
+            self.emit(&format!("    {} (%r10), %xmm0", mov));
+            self.store_xmm_value("%xmm0", dst_offset, ty);
             return;
         }
 
@@ -6550,9 +6631,10 @@ impl X86_64Backend {
 
     fn store_value_through_pointer(&mut self, ptr_var: VarId, src: &Value, ty: &Type) {
         self.load_pointer_value(ptr_var, "%r10");
-        if *ty == Type::F64 {
+        if is_scalar_float(ty) {
+            let mov = scalar_float_move(ty);
             self.load_value(src, "%xmm0", ty);
-            self.emit("    movsd %xmm0, (%r10)");
+            self.emit(&format!("    {} %xmm0, (%r10)", mov));
             return;
         }
 
@@ -6572,8 +6654,8 @@ impl X86_64Backend {
     }
 
     fn load_value(&mut self, val: &Value, reg: &str, ty: &Type) {
-        if *ty == Type::F64 {
-            self.load_float_value(val, reg);
+        if is_scalar_float(ty) {
+            self.load_float_value(val, reg, ty);
             return;
         }
 
@@ -6641,19 +6723,30 @@ impl X86_64Backend {
         }
     }
 
-    fn load_float_value(&mut self, val: &Value, reg: &str) {
+    fn load_float_value(&mut self, val: &Value, reg: &str, ty: &Type) {
+        let mov = scalar_float_move(ty);
         match val {
             Value::ConstF64(n) => {
-                self.emit(&format!("    movabsq ${:#x}, %rax", n.to_bits()));
-                self.emit(&format!("    movq %rax, {}", reg));
+                // Float literals are stored as `f64`; when materialized into an
+                // `f32` slot we round the bit pattern to binary32 first so the
+                // value matches IEEE-754 single precision.
+                if matches!(ty, Type::F32) {
+                    let bits = (*n as f32).to_bits();
+                    self.emit(&format!("    movl ${:#x}, %eax", bits));
+                    self.emit(&format!("    movd %eax, {}", reg));
+                } else {
+                    self.emit(&format!("    movabsq ${:#x}, %rax", n.to_bits()));
+                    self.emit(&format!("    movq %rax, {}", reg));
+                }
             }
             Value::Var(v) => {
                 let offset = self.var_offsets[v];
-                self.emit(&format!("    movsd {}(%rbp), {}", offset, reg));
+                self.emit(&format!("    {} {}(%rbp), {}", mov, offset, reg));
             }
             Value::Global(name) => {
                 self.emit(&format!(
-                    "    movsd {}(%rip), {}",
+                    "    {} {}(%rip), {}",
+                    mov,
                     Self::mangle_name(name),
                     reg
                 ));
@@ -6673,9 +6766,10 @@ impl X86_64Backend {
     }
 
     fn store_value_to_addr(&mut self, addr: &str, src: &Value, ty: &Type) {
-        if *ty == Type::F64 {
+        if is_scalar_float(ty) {
+            let mov = scalar_float_move(ty);
             self.load_value(src, "%xmm0", ty);
-            self.emit(&format!("    movsd %xmm0, {}", addr));
+            self.emit(&format!("    {} %xmm0, {}", mov, addr));
             return;
         }
 
@@ -6724,8 +6818,9 @@ impl X86_64Backend {
         }
     }
 
-    fn store_xmm_value(&mut self, reg: &str, offset: i32) {
-        self.emit(&format!("    movsd {}, {}(%rbp)", reg, offset));
+    fn store_xmm_value(&mut self, reg: &str, offset: i32, ty: &Type) {
+        let mov = scalar_float_move(ty);
+        self.emit(&format!("    {} {}, {}(%rbp)", mov, reg, offset));
     }
 
     fn emit_integer_divmod(&mut self, ty: &Type, signed: bool, want_remainder: bool) {
@@ -6787,18 +6882,20 @@ impl X86_64Backend {
         op: &IrBinOp,
         lhs: &Value,
         rhs: &Value,
+        operand_ty: &Type,
         result_ty: &Type,
     ) {
-        self.load_value(lhs, "%xmm0", &Type::F64);
-        self.load_value(rhs, "%xmm1", &Type::F64);
+        self.load_value(lhs, "%xmm0", operand_ty);
+        self.load_value(rhs, "%xmm1", operand_ty);
 
         match op {
-            IrBinOp::Add => self.emit("    addsd %xmm1, %xmm0"),
-            IrBinOp::Sub => self.emit("    subsd %xmm1, %xmm0"),
-            IrBinOp::Mul => self.emit("    mulsd %xmm1, %xmm0"),
-            IrBinOp::Div => self.emit("    divsd %xmm1, %xmm0"),
+            IrBinOp::Add | IrBinOp::Sub | IrBinOp::Mul | IrBinOp::Div => {
+                let mnemonic = scalar_float_arith(op, operand_ty);
+                self.emit(&format!("    {} %xmm1, %xmm0", mnemonic));
+            }
             IrBinOp::Eq | IrBinOp::Ne | IrBinOp::Lt | IrBinOp::Le | IrBinOp::Gt | IrBinOp::Ge => {
-                self.emit("    ucomisd %xmm1, %xmm0");
+                let cmp = scalar_float_compare(operand_ty);
+                self.emit(&format!("    {} %xmm1, %xmm0", cmp));
                 let setcc = match op {
                     IrBinOp::Eq => "sete",
                     IrBinOp::Ne => "setne",
@@ -6814,7 +6911,8 @@ impl X86_64Backend {
                 return;
             }
             // Integer-only operators (modulo, logical and bitwise/shift) are
-            // not defined on f64 and are rejected by validation before codegen.
+            // not defined on floats and are rejected by validation before
+            // codegen.
             IrBinOp::Mod
             | IrBinOp::And
             | IrBinOp::Or
@@ -6825,7 +6923,7 @@ impl X86_64Backend {
             | IrBinOp::Shr => {}
         }
 
-        self.store_xmm_value("%xmm0", dst_offset);
+        self.store_xmm_value("%xmm0", dst_offset, operand_ty);
     }
 
     fn binop_operand_ty(&self, op: &IrBinOp, lhs: &Value, rhs: &Value, result_ty: &Type) -> Type {
@@ -8289,13 +8387,80 @@ mod tests {
     }
 
     #[test]
-    fn test_reject_f32_parameter_type_before_codegen() {
-        let err = compile_err("(define (bad [x : f32]) : i64 0)");
-        assert!(
-            err.contains("parameter %0 has type f32"),
-            "unexpected error: {}",
-            err
+    fn test_compile_f32_parameter_and_return_use_xmm_movss() {
+        // f32 params/returns flow through XMM registers with single-precision
+        // moves, exactly like f64 but with `movss` instead of `movsd`.
+        let asm = compile_ok("(define (idf [x : f32]) : f32 x)");
+        assert!(asm.contains("    movss %xmm0,"), "asm:\n{}", asm);
+        assert!(!asm.contains("    movsd %xmm0,"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_f32_arithmetic_uses_single_precision_mnemonics() {
+        let asm = compile_ok(
+            r#"
+            (define (calc [a : f32] [b : f32]) : f32
+              (let ([s : f32 (+ a b)]
+                    [d : f32 (- a b)]
+                    [p : f32 (* a b)])
+                (/ (+ s (+ d p)) b)))
+            "#,
         );
+        assert!(asm.contains("addss %xmm1, %xmm0"), "asm:\n{}", asm);
+        assert!(asm.contains("subss %xmm1, %xmm0"), "asm:\n{}", asm);
+        assert!(asm.contains("mulss %xmm1, %xmm0"), "asm:\n{}", asm);
+        assert!(asm.contains("divss %xmm1, %xmm0"), "asm:\n{}", asm);
+        assert!(!asm.contains("addsd %xmm1, %xmm0"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_f32_comparison_uses_ucomiss() {
+        let asm = compile_ok("(define (ltf [a : f32] [b : f32]) : bool (< a b))");
+        assert!(asm.contains("ucomiss %xmm1, %xmm0"), "asm:\n{}", asm);
+        assert!(!asm.contains("ucomisd %xmm1, %xmm0"), "asm:\n{}", asm);
+        assert!(asm.contains("setb %al"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_f64_to_f32_cast_uses_cvtsd2ss() {
+        let asm = compile_ok("(define (narrow [x : f64]) : f32 (cast x : f32))");
+        assert!(asm.contains("cvtsd2ss %xmm0, %xmm0"), "asm:\n{}", asm);
+        assert!(asm.contains("    movss %xmm0,"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_f32_to_f64_cast_uses_cvtss2sd() {
+        let asm = compile_ok("(define (widen [x : f32]) : f64 (cast x : f64))");
+        assert!(asm.contains("cvtss2sd %xmm0, %xmm0"), "asm:\n{}", asm);
+        assert!(asm.contains("    movsd %xmm0,"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_f64_to_f32_roundtrip_uses_both_conversions() {
+        let asm = compile_ok("(define (roundtrip [x : f64]) : f64 (cast (cast x : f32) : f64))");
+        assert!(asm.contains("cvtsd2ss %xmm0, %xmm0"), "asm:\n{}", asm);
+        assert!(asm.contains("cvtss2sd %xmm0, %xmm0"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_f32_negation_uses_subss() {
+        let prog = ast::Program {
+            decls: vec![ast::Decl::DefFn {
+                name: "negf".into(),
+                params: vec![("x".into(), Type::F32)],
+                ret: Type::F32,
+                body: ast::Expr::Unary {
+                    op: ast::UnOp::Neg,
+                    expr: Box::new(ast::Expr::Var("x".into())),
+                },
+            }],
+        };
+        let mut ir = lower_program(&prog);
+        Optimizer::optimize(&mut ir);
+        let asm = generate_assembly(&ir).expect("backend should accept f32 negation");
+        assert!(asm.contains("pxor %xmm1, %xmm1"), "asm:\n{}", asm);
+        assert!(asm.contains("subss %xmm0, %xmm1"), "asm:\n{}", asm);
+        assert!(asm.contains("movaps %xmm1, %xmm0"), "asm:\n{}", asm);
     }
 
     #[test]
@@ -8342,28 +8507,14 @@ mod tests {
     }
 
     #[test]
-    fn test_reject_f32_local_type_before_codegen() {
-        let err = generate_assembly(&Program {
-            functions: vec![Function {
-                name: "main".into(),
-                params: vec![],
-                ret: Type::I64,
-                locals: vec![(0, Type::F32)],
-                blocks: vec![BasicBlock {
-                    label: "entry".into(),
-                    instructions: vec![Instruction::Return(Some(Value::ConstI64(0)))],
-                }],
-                entry: "entry".into(),
-            }],
-            globals: vec![],
-            externs: vec![],
-        })
-        .expect_err("backend should reject unsupported local slot types");
-        assert!(
-            err.contains("local %0 has type f32"),
-            "unexpected error: {}",
-            err
-        );
+    fn test_compile_f32_local_slot_uses_movss() {
+        // An f32 local is now a supported scalar backend slot; copying through
+        // it uses single-precision XMM moves.
+        let asm = compile_ok("(define (idlet [x : f32]) : f32 (let ([y : f32 x]) y))");
+        assert!(asm.contains("movss -4(%rbp), %xmm0"), "asm:\n{}", asm);
+        assert!(asm.contains("movss %xmm0, -8(%rbp)"), "asm:\n{}", asm);
+        assert!(!asm.contains("movsd"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
     }
 
     #[test]
@@ -8448,16 +8599,67 @@ mod tests {
             }],
             globals: vec![],
             externs: vec![(
-                "foreign_f32".into(),
-                Type::Func(vec![Type::F32], Box::new(Type::I64)),
+                "foreign_array".into(),
+                Type::Func(
+                    vec![Type::Array(Box::new(Type::I64), 3)],
+                    Box::new(Type::I64),
+                ),
             )],
         })
         .expect_err("backend should reject unsupported extern ABI types");
         assert!(
-            err.contains("extern 'foreign_f32' has unsupported argument type f32"),
+            err.contains("extern 'foreign_array' has unsupported argument type (Array i64 3)"),
             "unexpected error: {}",
             err
         );
+    }
+
+    #[test]
+    fn test_accept_f32_extern_signature() {
+        // f32 args/returns now use the XMM ABI, so an extern with f32 in its
+        // signature is accepted by backend validation.
+        generate_assembly(&Program {
+            functions: vec![Function {
+                name: "main".into(),
+                params: vec![],
+                ret: Type::I64,
+                locals: vec![],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![Instruction::Return(Some(Value::ConstI64(0)))],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![(
+                "foreign_f32".into(),
+                Type::Func(vec![Type::F32], Box::new(Type::F32)),
+            )],
+        })
+        .expect("backend should accept f32 extern ABI types");
+    }
+
+    #[test]
+    fn test_accept_f32_global_zero_init_emits_four_byte_slot() {
+        // A non-constant f32 global is zero-initialized as a 4-byte .comm slot
+        // and its startup initializer stores via movss.
+        let asm = generate_assembly(&Program {
+            functions: vec![Function {
+                name: "main".into(),
+                params: vec![],
+                ret: Type::I64,
+                locals: vec![],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![Instruction::Return(Some(Value::ConstI64(0)))],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![("g".into(), Type::F32, None)],
+            externs: vec![],
+        })
+        .expect("backend should accept f32 globals");
+        assert!(asm.contains(".comm _tl_g, 4,"), "asm:\n{}", asm);
     }
 
     #[test]

@@ -46,6 +46,10 @@ pub enum Type {
     /// `tl_alloc`'d element buffer pointer + an i64 element count), so — like an
     /// enum or string — it is pointer-sized everywhere it flows through the IR.
     DynArray(Box<Type>),
+    /// Compile-time-only region ownership tag. `(in r T)` means a heap handle
+    /// with type `T` is tied to region `r` and cannot escape that region scope.
+    /// The lowerer strips this wrapper before producing IR/backend types.
+    Region(String, Box<Type>),
     /// Nominal sum type (tagged union) declared with `(defenum Name ...)`.
     /// Carries only the enum's name; the variant layout lives in the
     /// typechecker/lowerer's `EnumRegistry`. As a *value* an enum is always a
@@ -105,6 +109,7 @@ impl fmt::Display for Type {
             }
             Type::Array(ty, n) => write!(f, "(Array {} {})", ty, n),
             Type::DynArray(ty) => write!(f, "(Array {})", ty),
+            Type::Region(region, ty) => write!(f, "(in {} {})", region, ty),
             Type::Enum(name) => write!(f, "{}", name),
             Type::Struct(name) => write!(f, "{}", name),
             Type::Vector(elem, lanes) => write!(f, "(Vector {} {})", elem, lanes),
@@ -131,6 +136,7 @@ impl Type {
             // A dynamic-array *value* is a pointer to its inline `{ ptr, len }`
             // storage.
             Type::DynArray(_) => 8,
+            Type::Region(_, ty) => ty.size(),
             // An enum *value* is a pointer to its inline tagged storage.
             Type::Enum(_) => 8,
             // A struct *value* is a pointer to its inline field storage.
@@ -156,6 +162,7 @@ impl Type {
             Type::Tuple(_) => 8,
             Type::Array(ty, _) => ty.align(),
             Type::DynArray(_) => 8,
+            Type::Region(_, ty) => ty.align(),
             Type::Enum(_) => 8,
             Type::Struct(_) => 8,
             Type::String => 8,
@@ -168,7 +175,7 @@ impl Type {
 
     pub fn is_numeric(&self) -> bool {
         matches!(
-            self,
+            self.strip_regions(),
             Type::I64
                 | Type::I32
                 | Type::I16
@@ -184,7 +191,7 @@ impl Type {
 
     pub fn is_integer(&self) -> bool {
         matches!(
-            self,
+            self.strip_regions(),
             Type::I64
                 | Type::I32
                 | Type::I16
@@ -226,6 +233,87 @@ impl Type {
     #[allow(dead_code)]
     pub fn is_mask(&self) -> bool {
         matches!(self, Type::Mask(_))
+    }
+
+    /// Remove any compile-time-only region wrappers from this type.
+    pub fn strip_regions(&self) -> &Type {
+        match self {
+            Type::Region(_, ty) => ty.strip_regions(),
+            other => other,
+        }
+    }
+
+    /// Clone this type while removing region wrappers at every depth.
+    pub fn without_regions(&self) -> Type {
+        match self {
+            Type::Region(_, ty) => ty.without_regions(),
+            Type::Func(args, ret) => Type::Func(
+                args.iter().map(Type::without_regions).collect(),
+                Box::new(ret.without_regions()),
+            ),
+            Type::Tuple(elems) => Type::Tuple(elems.iter().map(Type::without_regions).collect()),
+            Type::Array(elem, n) => Type::Array(Box::new(elem.without_regions()), *n),
+            Type::DynArray(elem) => Type::DynArray(Box::new(elem.without_regions())),
+            Type::Vector(elem, lanes) => Type::Vector(Box::new(elem.without_regions()), *lanes),
+            other => other.clone(),
+        }
+    }
+
+    /// Whether this type mentions any region tag at any depth.
+    pub fn contains_any_region(&self) -> bool {
+        match self {
+            Type::Region(_, _) => true,
+            Type::Func(args, ret) => {
+                args.iter().any(Type::contains_any_region) || ret.contains_any_region()
+            }
+            Type::Tuple(elems) => elems.iter().any(Type::contains_any_region),
+            Type::Array(elem, _) | Type::DynArray(elem) | Type::Vector(elem, _) => {
+                elem.contains_any_region()
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether this type mentions `region` at any depth.
+    pub fn contains_region(&self, region: &str) -> bool {
+        match self {
+            Type::Region(name, ty) => name == region || ty.contains_region(region),
+            Type::Func(args, ret) => {
+                args.iter().any(|arg| arg.contains_region(region)) || ret.contains_region(region)
+            }
+            Type::Tuple(elems) => elems.iter().any(|elem| elem.contains_region(region)),
+            Type::Array(elem, _) | Type::DynArray(elem) | Type::Vector(elem, _) => {
+                elem.contains_region(region)
+            }
+            _ => false,
+        }
+    }
+
+    /// Collect region tags mentioned by this type, preserving first-seen order.
+    pub fn collect_regions(&self, out: &mut Vec<String>) {
+        match self {
+            Type::Region(name, ty) => {
+                if !out.iter().any(|existing| existing == name) {
+                    out.push(name.clone());
+                }
+                ty.collect_regions(out);
+            }
+            Type::Func(args, ret) => {
+                for arg in args {
+                    arg.collect_regions(out);
+                }
+                ret.collect_regions(out);
+            }
+            Type::Tuple(elems) => {
+                for elem in elems {
+                    elem.collect_regions(out);
+                }
+            }
+            Type::Array(elem, _) | Type::DynArray(elem) | Type::Vector(elem, _) => {
+                elem.collect_regions(out);
+            }
+            _ => {}
+        }
     }
 }
 

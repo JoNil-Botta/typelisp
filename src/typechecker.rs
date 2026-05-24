@@ -76,6 +76,9 @@ pub struct TypeChecker {
     func_ret: Option<Type>,
     enums: EnumRegistry,
     structs: StructRegistry,
+    builtin_names: HashSet<String>,
+    shadowed_builtins: HashSet<String>,
+    active_regions: Vec<String>,
 }
 
 impl TypeChecker {
@@ -246,11 +249,15 @@ impl TypeChecker {
             "error".into(),
             Type::Func(vec![Type::String], Box::new(Type::Never)),
         );
+        let builtin_names = globals.keys().cloned().collect();
         TypeChecker {
             env: vec![globals],
             func_ret: None,
             enums: EnumRegistry::default(),
             structs: StructRegistry::default(),
+            builtin_names,
+            shadowed_builtins: HashSet::new(),
+            active_regions: Vec::new(),
         }
     }
 
@@ -265,6 +272,150 @@ impl TypeChecker {
         let resolved = self.resolve_type(ty);
         Self::reject_unresolved_type_vars(&resolved, span)?;
         Ok(resolved)
+    }
+
+    fn active_region(&self) -> Option<&str> {
+        self.active_regions.last().map(String::as_str)
+    }
+
+    fn is_unshadowed_builtin(&self, name: &str) -> bool {
+        self.builtin_names.contains(name)
+            && !self.shadowed_builtins.contains(name)
+            && !self
+                .env
+                .iter()
+                .skip(1)
+                .any(|scope| scope.contains_key(name))
+    }
+
+    fn is_region_arg_builtin(&self, name: &str) -> bool {
+        self.is_unshadowed_builtin(name)
+            && matches!(
+                name,
+                "print-string"
+                    | "print-str"
+                    | "print-error"
+                    | "string-length"
+                    | "length"
+                    | "string-eq"
+                    | "string=?"
+                    | "string->int"
+                    | "substring"
+                    | "string-slice"
+                    | "string-append"
+                    | "string-concat"
+                    | "read-file"
+                    | "write-file"
+                    | "file-exists?"
+                    | "panic"
+                    | "error"
+            )
+    }
+
+    fn is_constructor_name(&self, name: &str) -> bool {
+        self.structs.is_struct(name) || self.enums.lookup_variant(name).is_some()
+    }
+
+    fn call_allows_region_args(&self, name: &str) -> bool {
+        self.is_region_arg_builtin(name)
+            || (self.active_region().is_some() && self.is_constructor_name(name))
+    }
+
+    fn outer_region_name<'a>(&self, ty: &'a Type) -> Option<&'a str> {
+        match ty {
+            Type::Region(region, _) => Some(region.as_str()),
+            _ => None,
+        }
+    }
+
+    fn is_region_taggable_type(&self, ty: &Type) -> bool {
+        matches!(
+            ty.strip_regions(),
+            Type::String | Type::DynArray(_) | Type::Tuple(_) | Type::Struct(_) | Type::Enum(_)
+        )
+    }
+
+    fn tag_region(&self, region: &str, ty: Type) -> Type {
+        if self.is_region_taggable_type(&ty) {
+            Type::Region(region.to_string(), Box::new(ty))
+        } else {
+            ty
+        }
+    }
+
+    fn tag_active_region(&self, ty: Type) -> Type {
+        if let Some(region) = self.active_region()
+            && self.is_region_taggable_type(&ty)
+        {
+            return Type::Region(region.to_string(), Box::new(ty));
+        }
+        ty
+    }
+
+    fn project_from_region_container(&self, container_ty: &Type, projected_ty: Type) -> Type {
+        if let Some(region) = self.outer_region_name(container_ty) {
+            self.tag_region(region, projected_ty)
+        } else {
+            projected_ty
+        }
+    }
+
+    fn region_names(ty: &Type) -> Vec<String> {
+        let mut names = Vec::new();
+        ty.collect_regions(&mut names);
+        names
+    }
+
+    fn region_outlives_or_matches(&self, value_region: &str, target_region: &str) -> bool {
+        if value_region == target_region {
+            return true;
+        }
+        let Some(value_idx) = self
+            .active_regions
+            .iter()
+            .position(|region| region == value_region)
+        else {
+            return false;
+        };
+        let Some(target_idx) = self
+            .active_regions
+            .iter()
+            .position(|region| region == target_region)
+        else {
+            return false;
+        };
+        value_idx <= target_idx
+    }
+
+    fn ensure_region_value_can_flow_into(
+        &self,
+        target_ty: &Type,
+        value_ty: &Type,
+        span: Span,
+        context: &str,
+    ) -> Result<(), TypeError> {
+        let value_regions = Self::region_names(value_ty);
+        if value_regions.is_empty() {
+            return Ok(());
+        }
+        let target_regions = Self::region_names(target_ty);
+        let ok = !target_regions.is_empty()
+            && value_regions.iter().all(|value_region| {
+                target_regions.iter().any(|target_region| {
+                    self.region_outlives_or_matches(value_region, target_region)
+                })
+            });
+        if ok {
+            Ok(())
+        } else {
+            Err(TypeError::at(
+                format!(
+                    "cannot store region-tagged value of type {} into {}; region value would escape",
+                    value_ty, context
+                ),
+                span,
+            ))
+        }
     }
 
     fn reject_unresolved_type_vars(ty: &Type, span: Span) -> Result<(), TypeError> {
@@ -289,6 +440,7 @@ impl TypeChecker {
             Type::Array(elem, _) | Type::DynArray(elem) | Type::Vector(elem, _) => {
                 Self::reject_unresolved_type_vars(elem, span)
             }
+            Type::Region(_, elem) => Self::reject_unresolved_type_vars(elem, span),
             _ => Ok(()),
         }
     }
@@ -777,11 +929,13 @@ impl TypeChecker {
         // constructors can be resolved/registered in the first pass.
         self.enums = EnumRegistry::from_expanded_program(prog);
         self.structs = StructRegistry::from_expanded_program(prog);
+        self.active_regions.clear();
 
         // Check for duplicate top-level names across the whole program.
         // Value-level names share the backend symbol namespace; nominal types
         // share the type-resolution namespace. Keep them separate so an enum
         // type can intentionally have a same-named constructor variant.
+        self.shadowed_builtins.clear();
         let mut seen_values: HashMap<String, Span> = HashMap::new();
         let mut seen_types: HashMap<String, Span> = HashMap::new();
         for expanded in &prog.decls {
@@ -826,6 +980,9 @@ impl TypeChecker {
                 Decl::Import(_) => vec![],
             };
             for (name, span) in value_names {
+                if self.builtin_names.contains(&name) {
+                    self.shadowed_builtins.insert(name.clone());
+                }
                 if let Some(prev_span) = seen_values.get(&name) {
                     return Err(TypeError::at(
                         format!(
@@ -964,9 +1121,25 @@ impl TypeChecker {
                                 value.span(),
                             ));
                         }
+                        self.ensure_region_value_can_flow_into(
+                            &ty,
+                            &val_ty,
+                            value.span(),
+                            &format!("global definition '{}' of type {}", name, ty),
+                        )?;
                         ty
                     } else {
-                        self.check_expr(value)?
+                        let val_ty = self.check_expr(value)?;
+                        if val_ty.contains_any_region() {
+                            return Err(TypeError::at(
+                                format!(
+                                    "global definition '{}' has region-tagged type {}; region value would escape",
+                                    name, val_ty
+                                ),
+                                value.span(),
+                            ));
+                        }
+                        val_ty
                     };
                     if let Some(reason) =
                         unsupported_global_aggregate_reason(&inferred, &self.enums, &self.structs)
@@ -1203,7 +1376,7 @@ impl TypeChecker {
                     && args.len() == 1
                 {
                     let arg_ty = self.check_expr(&args[0])?;
-                    if let Type::DynArray(_) = arg_ty {
+                    if let Type::DynArray(_) = arg_ty.strip_regions() {
                         return Ok(Type::I64);
                     }
                     if name == "array-length" {
@@ -1227,6 +1400,15 @@ impl TypeChecker {
                                 span,
                             ));
                         }
+                        let call_name = match func.unspan() {
+                            Expr::Var(name) => Some(name.as_str()),
+                            _ => None,
+                        };
+                        let allows_region_args =
+                            call_name.is_some_and(|name| self.call_allows_region_args(name));
+                        let constructor_target_ty = call_name
+                            .filter(|name| self.is_constructor_name(name))
+                            .map(|_| self.tag_active_region((*ret_ty).clone()));
                         for (expected, arg) in param_tys.iter().zip(args.iter()) {
                             let arg_ty = self.check_expr(arg)?;
                             if !self.type_compatible(expected, &arg_ty) {
@@ -1238,8 +1420,25 @@ impl TypeChecker {
                                     arg.span(),
                                 ));
                             }
+                            if arg_ty.contains_any_region() && !allows_region_args {
+                                return Err(TypeError::at(
+                                    format!(
+                                        "cannot pass region-tagged value to function parameter of type {}; region value would escape",
+                                        expected
+                                    ),
+                                    arg.span(),
+                                ));
+                            }
+                            if let Some(target_ty) = &constructor_target_ty {
+                                self.ensure_region_value_can_flow_into(
+                                    target_ty,
+                                    &arg_ty,
+                                    arg.span(),
+                                    &format!("constructor result of type {}", target_ty),
+                                )?;
+                            }
                         }
-                        Ok(*ret_ty)
+                        Ok(self.tag_active_region(*ret_ty))
                     }
                     // `(Red)` — a zero-arg call form whose head is a nullary enum
                     // variant constructs that variant, equivalent to bare `Red`
@@ -1271,7 +1470,7 @@ impl TypeChecker {
                                 span,
                             ));
                         }
-                        Ok(Type::Enum(enum_name))
+                        Ok(self.tag_active_region(Type::Enum(enum_name)))
                     }
                     _ => Err(TypeError::at(
                         format!("expected function type, got {}", func_ty),
@@ -1327,7 +1526,11 @@ impl TypeChecker {
                                 value.span(),
                             ));
                         }
-                        expected.clone()
+                        if val_ty.contains_any_region() {
+                            val_ty
+                        } else {
+                            expected.clone()
+                        }
                     } else {
                         val_ty
                     };
@@ -1363,6 +1566,15 @@ impl TypeChecker {
                     let Some(ty) = self.lookup(captured) else {
                         continue;
                     };
+                    if ty.contains_any_region() {
+                        return Err(TypeError::at(
+                            format!(
+                                "lambda cannot capture region-tagged value '{}' of type {}; region value would escape",
+                                captured, ty
+                            ),
+                            *span,
+                        ));
+                    }
                     if let Some(reason) = self.unsupported_capture_type_reason(&ty) {
                         return Err(TypeError::at(
                             format!(
@@ -1390,6 +1602,16 @@ impl TypeChecker {
                 self.func_ret = old_ret;
                 self.pop_scope();
 
+                if body_ty.contains_any_region() {
+                    return Err(TypeError::at(
+                        format!(
+                            "lambda return value has region-tagged type {}; region value would escape",
+                            body_ty
+                        ),
+                        body.span(),
+                    ));
+                }
+
                 let ret_ty = ret.clone().unwrap_or(body_ty.clone());
                 if !self.type_compatible(&ret_ty, &body_ty) {
                     return Err(TypeError::at(
@@ -1410,15 +1632,25 @@ impl TypeChecker {
                 ))
             }
             Expr::Tuple(elems) => {
-                let mut types = Vec::new();
+                let mut typed_elems = Vec::new();
                 for e in elems {
-                    types.push(self.check_expr(e)?);
+                    typed_elems.push((self.check_expr(e)?, e.span()));
                 }
-                Ok(Type::Tuple(types))
+                let tuple_ty = Type::Tuple(typed_elems.iter().map(|(ty, _)| ty.clone()).collect());
+                let result_ty = self.tag_active_region(tuple_ty);
+                for (elem_ty, elem_span) in &typed_elems {
+                    self.ensure_region_value_can_flow_into(
+                        &result_ty,
+                        elem_ty,
+                        *elem_span,
+                        &format!("tuple result of type {}", result_ty),
+                    )?;
+                }
+                Ok(result_ty)
             }
             Expr::TupleRef { expr, index } => {
                 let ty = self.check_expr(expr)?;
-                match ty {
+                match ty.strip_regions() {
                     Type::Tuple(elems) => {
                         if *index >= elems.len() {
                             return Err(TypeError::at(
@@ -1430,7 +1662,7 @@ impl TypeChecker {
                                 span,
                             ));
                         }
-                        Ok(elems[*index].clone())
+                        Ok(self.project_from_region_container(&ty, elems[*index].clone()))
                     }
                     _ => Err(TypeError::at(
                         format!("tuple-ref requires tuple type, got {}", ty),
@@ -1442,17 +1674,18 @@ impl TypeChecker {
                 if elems.is_empty() {
                     return Err(TypeError::at("cannot infer type of empty array", span));
                 }
-                let first_ty = self.check_expr(&elems[0])?;
+                let mut elem_ty = self.check_expr(&elems[0])?;
                 for e in &elems[1..] {
                     let ty = self.check_expr(e)?;
-                    if !self.types_equal(&first_ty, &ty) {
+                    let Some(merged) = self.merge_branch_types(&elem_ty, &ty) else {
                         return Err(TypeError::at(
                             "array elements must have same type",
                             e.span(),
                         ));
-                    }
+                    };
+                    elem_ty = merged;
                 }
-                Ok(Type::Array(Box::new(first_ty), elems.len()))
+                Ok(Type::Array(Box::new(elem_ty), elems.len()))
             }
             Expr::MakeArray { elem_ty, len } => {
                 let elem_ty = self.resolve_type_checked(elem_ty, span)?;
@@ -1473,7 +1706,7 @@ impl TypeChecker {
                         span,
                     ));
                 }
-                Ok(Type::DynArray(Box::new(elem_ty)))
+                Ok(self.tag_active_region(Type::DynArray(Box::new(elem_ty))))
             }
             Expr::ArrayRef { expr, index } => {
                 let arr_ty = self.check_expr(expr)?;
@@ -1484,8 +1717,10 @@ impl TypeChecker {
                         index.span(),
                     ));
                 }
-                match arr_ty {
-                    Type::Array(elem_ty, _) | Type::DynArray(elem_ty) => Ok(*elem_ty),
+                match arr_ty.strip_regions() {
+                    Type::Array(elem_ty, _) | Type::DynArray(elem_ty) => {
+                        Ok(self.project_from_region_container(&arr_ty, (**elem_ty).clone()))
+                    }
                     _ => Err(TypeError::at(
                         format!("array-ref requires array type, got {}", arr_ty),
                         expr.span(),
@@ -1504,8 +1739,8 @@ impl TypeChecker {
                         index.span(),
                     ));
                 }
-                let elem_ty = match arr_ty {
-                    Type::Array(elem_ty, _) | Type::DynArray(elem_ty) => *elem_ty,
+                let elem_ty = match arr_ty.strip_regions() {
+                    Type::Array(elem_ty, _) | Type::DynArray(elem_ty) => (**elem_ty).clone(),
                     _ => {
                         return Err(TypeError::at(
                             format!("array-set! requires array type, got {}", arr_ty),
@@ -1523,12 +1758,18 @@ impl TypeChecker {
                         value.span(),
                     ));
                 }
+                self.ensure_region_value_can_flow_into(
+                    &arr_ty,
+                    &val_ty,
+                    value.span(),
+                    &format!("array of type {}", arr_ty),
+                )?;
                 Ok(Type::Unit)
             }
             Expr::StringRef { expr, index } => {
                 // `(string-ref s i)` / `(char-at s i)` : `(-> String i64 char)`.
                 let str_ty = self.check_expr(expr)?;
-                if str_ty != Type::String {
+                if !self.types_equal(&str_ty, &Type::String) {
                     return Err(TypeError::at(
                         format!("string-ref requires String, got {}", str_ty),
                         expr.span(),
@@ -1565,15 +1806,25 @@ impl TypeChecker {
                 }
                 Ok(last_ty)
             }
-            Expr::WithRegion { region: _, body } => {
-                // #548 adds only the surface form. The body type-checks as an
-                // expression sequence (the last expression is the result), the
-                // same as `begin`. Region-tagged handle typing and the escape
-                // rule that a region value may not leave this scope are added in
-                // #549; the region binder is not a value binding here.
-                let mut last_ty = Type::Unit;
-                for e in body {
-                    last_ty = self.check_expr(e)?;
+            Expr::WithRegion { region, body } => {
+                self.active_regions.push(region.clone());
+                let result = (|| {
+                    let mut last_ty = Type::Unit;
+                    for e in body {
+                        last_ty = self.check_expr(e)?;
+                    }
+                    Ok(last_ty)
+                })();
+                self.active_regions.pop();
+                let last_ty = result?;
+                if last_ty.contains_region(region) {
+                    return Err(TypeError::at(
+                        format!(
+                            "region-tagged value of type {} cannot escape with-region '{}'",
+                            last_ty, region
+                        ),
+                        span,
+                    ));
                 }
                 Ok(last_ty)
             }
@@ -1591,6 +1842,12 @@ impl TypeChecker {
                         expr.span(),
                     ));
                 }
+                self.ensure_region_value_can_flow_into(
+                    &var_ty,
+                    &val_ty,
+                    expr.span(),
+                    &format!("variable '{}' of type {}", name, var_ty),
+                )?;
                 Ok(Type::Unit)
             }
             Expr::Ann { expr, ty } => {
@@ -1602,21 +1859,27 @@ impl TypeChecker {
                         span,
                     ));
                 }
-                Ok(ty)
+                if expr_ty.contains_any_region() {
+                    Ok(expr_ty)
+                } else {
+                    Ok(ty)
+                }
             }
             Expr::Match { scrutinee, arms } => self.check_match(scrutinee, arms, span),
             Expr::StructGet { expr, field } => {
                 // `(struct-get s field)`: `s` must be a struct value declaring
                 // `field`; the result is the field's declared type.
                 let s_ty = self.check_expr(expr)?;
-                let Type::Struct(name) = &s_ty else {
+                let Type::Struct(name) = s_ty.strip_regions() else {
                     return Err(TypeError::at(
                         format!("struct-get requires a struct value, got {}", s_ty),
                         expr.span(),
                     ));
                 };
                 match self.structs.lookup_field(name, field) {
-                    Some((_idx, fty)) => Ok(self.resolve_type(fty)),
+                    Some((_idx, fty)) => {
+                        Ok(self.project_from_region_container(&s_ty, self.resolve_type(fty)))
+                    }
                     None => Err(TypeError::at(
                         format!("struct '{}' has no field '{}'", name, field),
                         span,
@@ -1904,8 +2167,9 @@ impl TypeChecker {
         if arms.is_empty() {
             return Err(TypeError::at("match must have at least one arm", span));
         }
-        match &scrut_ty {
-            Type::Enum(n) => self.check_match_enum(n.clone(), arms, span),
+        let scrut_region = self.outer_region_name(&scrut_ty).map(str::to_string);
+        match scrut_ty.strip_regions() {
+            Type::Enum(n) => self.check_match_enum(n.clone(), scrut_region.as_deref(), arms, span),
             // A scalar (non-enum) scrutinee is matched by literal patterns plus
             // a catch-all (`_`), except that bool is finite and can be covered
             // exactly by `true` and `false`.
@@ -2022,6 +2286,7 @@ impl TypeChecker {
     fn check_match_enum(
         &mut self,
         enum_name: String,
+        scrut_region: Option<&str>,
         arms: &[(Pattern, Expr)],
         span: Span,
     ) -> Result<Type, TypeError> {
@@ -2050,27 +2315,37 @@ impl TypeChecker {
                 // A bare top-level identifier is a nullary-variant arm
                 // (`[Red 0]`): resolve it as the variant `name` with no args.
                 Pattern::Binding(name) => {
-                    let (tag, irrefutable) =
-                        match self.check_variant_pattern(&enum_name, name, &[], body.span()) {
-                            Ok(t) => t,
-                            Err(e) => {
-                                self.pop_scope();
-                                return Err(e);
-                            }
-                        };
+                    let (tag, irrefutable) = match self.check_variant_pattern(
+                        &enum_name,
+                        name,
+                        &[],
+                        scrut_region,
+                        body.span(),
+                    ) {
+                        Ok(t) => t,
+                        Err(e) => {
+                            self.pop_scope();
+                            return Err(e);
+                        }
+                    };
                     if irrefutable {
                         covered[tag] = true;
                     }
                 }
                 Pattern::Variant { name, args } => {
-                    let (tag, irrefutable) =
-                        match self.check_variant_pattern(&enum_name, name, args, body.span()) {
-                            Ok(t) => t,
-                            Err(e) => {
-                                self.pop_scope();
-                                return Err(e);
-                            }
-                        };
+                    let (tag, irrefutable) = match self.check_variant_pattern(
+                        &enum_name,
+                        name,
+                        args,
+                        scrut_region,
+                        body.span(),
+                    ) {
+                        Ok(t) => t,
+                        Err(e) => {
+                            self.pop_scope();
+                            return Err(e);
+                        }
+                    };
                     if irrefutable {
                         covered[tag] = true;
                     }
@@ -2150,6 +2425,7 @@ impl TypeChecker {
         enum_name: &str,
         name: &str,
         args: &[Pattern],
+        payload_region: Option<&str>,
         span: Span,
     ) -> Result<(usize, bool), TypeError> {
         let (owner, tag, fields) = self
@@ -2182,7 +2458,17 @@ impl TypeChecker {
         // nominal payload (a struct/enum named in the `defenum`, parsed as
         // `Type::Var`) becomes its concrete `Type::Struct`/`Type::Enum`. The
         // lowerer resolves these types the same way.
-        let field_tys: Vec<Type> = fields.iter().map(|t| self.resolve_type(t)).collect();
+        let field_tys: Vec<Type> = fields
+            .iter()
+            .map(|t| {
+                let ty = self.resolve_type(t);
+                if let Some(region) = payload_region {
+                    self.tag_region(region, ty)
+                } else {
+                    ty
+                }
+            })
+            .collect();
         let mut irrefutable = true;
         for (arg, fty) in args.iter().zip(field_tys.iter()) {
             self.check_sub_pattern(arg, fty, span)?;
@@ -2202,7 +2488,7 @@ impl TypeChecker {
             Pattern::Binding(_) | Pattern::Wildcard => true,
             Pattern::Literal(_) => false,
             Pattern::Variant { name, args } => {
-                let Type::Enum(enum_name) = fty else {
+                let Type::Enum(enum_name) = fty.strip_regions() else {
                     return false;
                 };
                 let Some(variants) = self.enums.variants(enum_name) else {
@@ -2244,9 +2530,16 @@ impl TypeChecker {
                 Ok(())
             }
             Pattern::Wildcard => Ok(()),
-            Pattern::Variant { name, args } => match fty {
+            Pattern::Variant { name, args } => match fty.strip_regions() {
                 Type::Enum(sub_enum) => {
-                    self.check_variant_pattern(&sub_enum.clone(), name, args, span)?;
+                    let payload_region = self.outer_region_name(fty).map(str::to_string);
+                    self.check_variant_pattern(
+                        &sub_enum.clone(),
+                        name,
+                        args,
+                        payload_region.as_deref(),
+                        span,
+                    )?;
                     Ok(())
                 }
                 other => Err(TypeError::at(
@@ -2289,15 +2582,27 @@ impl TypeChecker {
     fn merge_branch_types(&self, a: &Type, b: &Type) -> Option<Type> {
         if matches!(a, Type::Never) {
             Some(b.clone())
-        } else if matches!(b, Type::Never) || self.types_equal(a, b) {
+        } else if matches!(b, Type::Never) {
             Some(a.clone())
+        } else if self.types_equal(a, b) {
+            let a_regions = Self::region_names(a);
+            let b_regions = Self::region_names(b);
+            if a_regions == b_regions {
+                Some(a.clone())
+            } else if a_regions.is_empty() {
+                Some(b.clone())
+            } else if b_regions.is_empty() {
+                Some(a.clone())
+            } else {
+                None
+            }
         } else {
             None
         }
     }
 
     fn types_equal(&self, a: &Type, b: &Type) -> bool {
-        match (a, b) {
+        match (a.strip_regions(), b.strip_regions()) {
             (Type::Var(_), _) | (_, Type::Var(_)) => true, // Type variables unify with anything
             (Type::Func(a_args, a_ret), Type::Func(b_args, b_ret)) => {
                 a_args.len() == b_args.len()
@@ -2312,7 +2617,7 @@ impl TypeChecker {
             }
             (Type::Array(a, an), Type::Array(b, bn)) => an == bn && self.types_equal(a, b),
             (Type::DynArray(a), Type::DynArray(b)) => self.types_equal(a, b),
-            _ => a == b,
+            _ => a.strip_regions() == b.strip_regions(),
         }
     }
 }
@@ -2345,6 +2650,7 @@ fn type_mentions_enum_indirectly(ty: &Type, name: &str) -> bool {
             Type::Tuple(elems) => elems.iter().any(|e| mentions(e, name)),
             Type::Array(elem, _) => mentions(elem, name),
             Type::DynArray(elem) => mentions(elem, name),
+            Type::Region(_, elem) => mentions(elem, name),
             _ => false,
         }
     }
@@ -2358,6 +2664,7 @@ fn type_mentions_enum_indirectly(ty: &Type, name: &str) -> bool {
         // unsupported inline-recursive shape.
         Type::Tuple(elems) => elems.iter().any(|e| mentions(e, name)),
         Type::Array(elem, _) => mentions(elem, name),
+        Type::Region(_, elem) => type_mentions_enum_indirectly(elem, name),
         _ => false,
     }
 }
@@ -2373,6 +2680,7 @@ fn type_mentions_struct(ty: &Type, name: &str) -> bool {
         Type::Tuple(elems) => elems.iter().any(|e| type_mentions_struct(e, name)),
         Type::Array(elem, _) => type_mentions_struct(elem, name),
         Type::DynArray(elem) => type_mentions_struct(elem, name),
+        Type::Region(_, elem) => type_mentions_struct(elem, name),
         _ => false,
     }
 }
@@ -2495,6 +2803,14 @@ fn unsupported_global_aggregate_reason_inner(
                 ))
             }
         }
+        Type::Region(_, elem) => unsupported_global_aggregate_reason_inner(
+            elem,
+            top_level,
+            enums,
+            structs,
+            seen_enums,
+            seen_structs,
+        ),
         _ => None,
     }
 }
@@ -2517,6 +2833,7 @@ fn unsupported_global_aggregate_reason_inner(
 /// unresolved type variables (`Type::Var`) — their inline/by-value element
 /// layout is a separate slice.
 fn is_dyn_array_elem_supported(ty: &Type) -> bool {
+    let ty = ty.strip_regions();
     ty.is_integer()
         || matches!(
             ty,
@@ -3642,6 +3959,182 @@ mod tests {
         let prog = parse(src).unwrap();
         let mut tc = TypeChecker::new();
         tc.check_program(&prog)
+    }
+
+    #[test]
+    fn test_region_type_display() {
+        assert_eq!(
+            Type::Region("r".into(), Box::new(Type::String)).to_string(),
+            "(in r String)"
+        );
+    }
+
+    #[test]
+    fn test_typecheck_with_region_builtin_handle_used_inside_scope() {
+        let src = r#"
+            (define (main) : i64
+              (with-region r
+                (let ([s : String (int->string 41)])
+                  (+ (string-length s) 1))))
+        "#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_with_region_result_cannot_escape() {
+        let err = check(
+            r#"
+            (define (main) : String
+              (with-region r (int->string 41)))
+        "#,
+        )
+        .unwrap_err();
+
+        assert!(
+            err.msg.contains("region-tagged value")
+                && err.msg.contains("cannot escape with-region"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_region_value_cannot_be_passed_to_user_function() {
+        let err = check(
+            r#"
+            (define (sink [s : String]) : i64 (string-length s))
+            (define (main) : i64
+              (with-region r
+                (let ([s : String (int->string 41)])
+                  (sink s))))
+        "#,
+        )
+        .unwrap_err();
+
+        assert!(
+            err.msg.contains("cannot pass region-tagged value"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_local_builtin_shadow_does_not_accept_region_arg() {
+        let err = check(
+            r#"
+            (define (sink [s : String]) : i64 0)
+            (define (main) : i64
+              (with-region r
+                (let ([s : String (int->string 41)]
+                      [string-length : (-> String i64) sink])
+                  (string-length s))))
+        "#,
+        )
+        .unwrap_err();
+
+        assert!(
+            err.msg.contains("cannot pass region-tagged value"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_nested_inner_region_cannot_escape_to_outer() {
+        let err = check(
+            r#"
+            (define (main) : i64
+              (with-region outer
+                (let ([s : String (with-region inner (int->string 1))])
+                  (string-length s))))
+        "#,
+        )
+        .unwrap_err();
+
+        assert!(
+            err.msg.contains("cannot escape with-region 'inner'"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_outer_region_value_can_be_used_inside_inner_region() {
+        let src = r#"
+            (define (main) : i64
+              (with-region outer
+                (let ([s : String (int->string 41)])
+                  (with-region inner (string-length s)))))
+        "#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_region_value_cannot_be_captured_by_lambda() {
+        let err = check(
+            r#"
+            (define (main) : i64
+              (with-region r
+                (let ([s : String (int->string 1)]
+                      [f : (-> i64) (lambda () : i64 (string-length s))])
+                  (f))))
+        "#,
+        )
+        .unwrap_err();
+
+        assert!(
+            err.msg
+                .contains("lambda cannot capture region-tagged value"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_region_dynamic_array_can_be_used_inside_scope() {
+        let src = r#"
+            (define (main) : i64
+              (with-region r
+                (let ([a : (Array i64) (make-array i64 2)])
+                  (begin
+                    (array-set! a 0 42)
+                    (array-ref a 0)))))
+        "#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_region_struct_projection_is_tagged() {
+        let err = check(
+            r#"
+            (defstruct Boxed (value String))
+            (define (main) : String
+              (with-region r
+                (let ([boxed : Boxed (Boxed (int->string 1))])
+                  (struct-get boxed value))))
+        "#,
+        )
+        .unwrap_err();
+
+        assert!(
+            err.msg.contains("cannot escape with-region 'r'"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_region_match_payload_is_tagged_inside_scope() {
+        let src = r#"
+            (defenum MaybeString (SomeString String) (NoString))
+            (define (main) : i64
+              (with-region r
+                (let ([value : MaybeString (SomeString (int->string 1))])
+                  (match value
+                    [(SomeString s) (string-length s)]
+                    [NoString 0]))))
+        "#;
+        assert!(check(src).is_ok());
     }
 
     #[test]

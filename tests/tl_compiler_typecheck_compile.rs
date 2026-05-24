@@ -130,6 +130,9 @@ fn compiler_typecheck_smoke_tl_compiles_to_assembly() {
         "_tl_compiler_typecheck_nominal_tests_ok_question:",
         "_tl_typecheck_compiler_source:",
         "_tl_compiler_typecheck_error_ok_question:",
+        // Located-diagnostic self-test (#681): a type error carries the
+        // offending declaration body's AST span.
+        "_tl_compiler_typecheck_located_ok_question:",
     ] {
         assert_symbol(&asm, sym, "compiler_typecheck_smoke");
     }

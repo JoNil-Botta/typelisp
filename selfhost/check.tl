@@ -26,9 +26,11 @@
     [(OkCompilerLoad decls _)
       (match (typecheck-compiler-program (AstProgram decls))
         [(OkCompilerTypecheck _) 0]
-        [(ErrCompilerTypecheck message)
+        [(ErrCompilerTypecheck diag)
           (begin
-            (print-error message)
+            (print-error
+              (compiler-diagnostic-render
+                (compiler-diagnostic-with-path diag input-path)))
             1)])]
     [(ErrCompilerLoad diag)
       (begin

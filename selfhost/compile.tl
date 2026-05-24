@@ -4,18 +4,22 @@
 
 ;; Wraps compiler_driver.tl's input/output API with the first selfhost compile
 
-;; CLI slice: `<file.tl> [-o <file>]`. Target/backend-mode/IR/stdlib-root flags
+;; CLI slice: `<file.tl> [-o <file>] [--target <target>]`. Backend-mode/IR/stdlib-root flags
 
 ;; remain Rust-driver-only for now and are rejected explicitly.
 
 (import "compiler_driver_core.tl")
 
 (defenum CompileCliConfig
-  (CompileCliConfig String String))
+  (CompileCliConfig String String bool CompilerBackendTarget))
 
 (defenum ResultCompileCliConfig
   (OkCompileCliConfig CompileCliConfig)
   (ErrCompileCliConfig String))
+
+(defenum ResultCompileCliTarget
+  (OkCompileCliTarget CompilerBackendTarget)
+  (ErrCompileCliTarget String))
 
 (define (compile-cli-cat3 [a : String] [b : String] [c : String]) : String
   (string-append a (string-append b c)))
@@ -46,6 +50,21 @@
         (string-append (substring input-path 0 last-dot) ".s")
         (string-append input-path ".s")))))
 
+(define (compile-cli-unknown-target [value : String]) : String
+  (compile-cli-cat3
+    "Error: unknown target '"
+    value
+    "'. Expected linux-x86_64 or windows-x86_64"))
+
+(define (compile-cli-target [value : String]) : ResultCompileCliTarget
+  (if (or (string-eq value "linux-x86_64") (string-eq value "linux_x86_64"))
+    (OkCompileCliTarget (BackendTargetLinux))
+    (if (or
+      (string-eq value "windows-x86_64")
+      (string-eq value "windows_x86_64"))
+      (OkCompileCliTarget (BackendTargetWindows))
+      (ErrCompileCliTarget (compile-cli-unknown-target value)))))
+
 (define (compile-cli-unsupported-flag [flag : String]) : String
   (compile-cli-cat3
     "compile: "
@@ -57,9 +76,12 @@
   [count : i64]
   [input-path : String]
   [output-path : String]
-  [has-output : bool]) : ResultCompileCliConfig
+  [has-output : bool]
+  [has-target : bool]
+  [target : CompilerBackendTarget]) : ResultCompileCliConfig
   (if (>= idx count)
-    (OkCompileCliConfig (CompileCliConfig input-path output-path))
+    (OkCompileCliConfig
+      (CompileCliConfig input-path output-path has-target target))
     (let ([current : String (arg idx)])
       (if (string-eq current "-o")
         (if (>= (+ idx 1) count)
@@ -71,7 +93,9 @@
               count
               input-path
               (arg (+ idx 1))
-              true)))
+              true
+              has-target
+              target)))
         (if (string-eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
             (ErrCompileCliConfig "compile: --stdlib-root requires a value")
@@ -79,7 +103,20 @@
           (if (string-eq current "--target")
             (if (>= (+ idx 1) count)
               (ErrCompileCliConfig "compile: --target requires a value")
-              (ErrCompileCliConfig (compile-cli-unsupported-flag current)))
+              (if has-target
+                (ErrCompileCliConfig
+                  "compile: --target was provided more than once")
+                (match (compile-cli-target (arg (+ idx 1)))
+                  [(OkCompileCliTarget parsed-target)
+                    (compile-cli-parse-options
+                      (+ idx 2)
+                      count
+                      input-path
+                      output-path
+                      has-output
+                      true
+                      parsed-target)]
+                  [(ErrCompileCliTarget message) (ErrCompileCliConfig message)])))
             (if (string-eq current "--backend-mode")
               (if (>= (+ idx 1) count)
                 (ErrCompileCliConfig "compile: --backend-mode requires a value")
@@ -103,14 +140,21 @@
           count
           input-path
           (compile-cli-default-output input-path)
-          false)))))
+          false
+          false
+          (BackendTargetLinux))))))
 
 (define (main) : i64
   (match (compile-cli-config (arg-count))
     [(OkCompileCliConfig config)
       (match config
-        [(CompileCliConfig input-path output-path)
-          (compiler-driver-compile-file input-path output-path)])]
+        [(CompileCliConfig input-path output-path has-target target)
+          (if has-target
+            (compiler-driver-compile-file-for-target
+              input-path
+              output-path
+              target)
+            (compiler-driver-compile-file input-path output-path))])]
     [(ErrCompileCliConfig message)
       (begin
         (print-error message)

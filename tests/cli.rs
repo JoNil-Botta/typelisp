@@ -1179,6 +1179,72 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
         "explicit assembly:\n{}",
         explicit_text
     );
+    assert!(
+        explicit_text.contains(".globl _start\n"),
+        "default assembly should stay on the Linux entry path:\n{}",
+        explicit_text
+    );
+
+    let explicit_linux_asm = dir.join("explicit-linux.s");
+    let explicit_linux_asm_arg = explicit_linux_asm
+        .to_str()
+        .expect("explicit linux asm path is utf-8");
+    let explicit_linux = Command::new(&driver_bin)
+        .args([
+            source_arg,
+            "--target",
+            "linux-x86_64",
+            "-o",
+            explicit_linux_asm_arg,
+        ])
+        .output()
+        .expect("run selfhost compile driver with explicit Linux target");
+    assert!(
+        explicit_linux.status.success(),
+        "selfhost compile explicit Linux target failed\nstdout:\n{}\nstderr:\n{}",
+        stdout(&explicit_linux),
+        stderr(&explicit_linux)
+    );
+    assert_eq!(stdout(&explicit_linux), "");
+    assert_eq!(stderr(&explicit_linux), "");
+    let explicit_linux_text =
+        fs::read_to_string(&explicit_linux_asm).expect("read explicit Linux asm");
+    assert_eq!(
+        explicit_linux_text, explicit_text,
+        "explicit Linux target should match default selfhost compile output"
+    );
+
+    let windows_asm = dir.join("windows.s");
+    let windows_asm_arg = windows_asm.to_str().expect("windows asm path is utf-8");
+    let windows = Command::new(&driver_bin)
+        .args([
+            source_arg,
+            "--target",
+            "windows-x86_64",
+            "-o",
+            windows_asm_arg,
+        ])
+        .output()
+        .expect("run selfhost compile driver with Windows target");
+    assert!(
+        windows.status.success(),
+        "selfhost compile Windows target failed\nstdout:\n{}\nstderr:\n{}",
+        stdout(&windows),
+        stderr(&windows)
+    );
+    assert_eq!(stdout(&windows), "");
+    assert_eq!(stderr(&windows), "");
+    let windows_text = fs::read_to_string(&windows_asm).expect("read Windows target asm");
+    assert!(
+        windows_text.contains(".globl main\n"),
+        "Windows target assembly missing main export:\n{}",
+        windows_text
+    );
+    assert!(
+        !windows_text.contains(".globl _start\n"),
+        "Windows target assembly should not emit Linux _start:\n{}",
+        windows_text
+    );
 
     let region_source = dir.join("region-ok.tl");
     let region_asm = dir.join("region-ok.s");
@@ -1232,6 +1298,34 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
     assert!(
         default_source.with_extension("s").is_file(),
         "default .s output was not written"
+    );
+
+    let bad_target_asm = dir.join("bad-target.s");
+    let bad_target_asm_arg = bad_target_asm
+        .to_str()
+        .expect("bad target asm path is utf-8");
+    let bad_target = Command::new(&driver_bin)
+        .args([
+            source_arg,
+            "--target",
+            "plan9-x86_64",
+            "-o",
+            bad_target_asm_arg,
+        ])
+        .output()
+        .expect("run selfhost compile driver with invalid target");
+    assert!(!bad_target.status.success());
+    assert_eq!(stdout(&bad_target), "");
+    assert!(
+        stderr(&bad_target).contains(
+            "Error: unknown target 'plan9-x86_64'. Expected linux-x86_64 or windows-x86_64"
+        ),
+        "stderr:\n{}",
+        stderr(&bad_target)
+    );
+    assert!(
+        !bad_target_asm.exists(),
+        "invalid target should not write assembly"
     );
 
     let unsupported = Command::new(&driver_bin)

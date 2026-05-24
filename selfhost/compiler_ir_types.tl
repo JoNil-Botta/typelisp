@@ -163,14 +163,18 @@
     CompilerSourceSpansEntryList))
 
 (defenum CompilerSourceSpans
-  (CompilerSourceSpans CompilerSourceSpansEntryList))
+  (CompilerSourceSpans
+    CompilerSourceSpansEntryList
+    CompilerSourceSpansEntryList))
 
 (defenum CompilerMaybeSourceSpan
   (CompilerNoSourceSpan)
   (CompilerSomeSourceSpan AstSourceSpan))
 
 (define (compiler-source-spans-empty) : CompilerSourceSpans
-  (CompilerSourceSpans (CompilerSourceSpansEntryNil)))
+  (CompilerSourceSpans
+    (CompilerSourceSpansEntryNil)
+    (CompilerSourceSpansEntryNil)))
 
 (define (compiler-source-spans-entry-list-append
   [entries : CompilerSourceSpansEntryList]
@@ -194,11 +198,12 @@
   [name : String]
   [span : AstSourceSpan]) : CompilerSourceSpans
   (match spans
-    [(CompilerSourceSpans entries)
+    [(CompilerSourceSpans entries instr-entries)
       (CompilerSourceSpans
         (compiler-source-spans-entry-list-append
           entries
-          (CompilerSourceSpansEntry name span)))]))
+          (CompilerSourceSpansEntry name span))
+        instr-entries)]))
 
 (define (compiler-source-spans-entry-list-lookup
   [entries : CompilerSourceSpansEntryList]
@@ -216,8 +221,144 @@
   [spans : CompilerSourceSpans]
   [name : String]) : CompilerMaybeSourceSpan
   (match spans
-    [(CompilerSourceSpans entries)
+    [(CompilerSourceSpans entries _)
       (compiler-source-spans-entry-list-lookup entries name)]))
+
+(define (compiler-source-spans-value-key [function : String] [var-id : i64]) : String
+  (string-append
+    (string-append "value:" function)
+    (string-append ":" (int->string var-id))))
+
+(define (compiler-source-spans-store-key [function : String] [name : String]) : String
+  (string-append (string-append "store:" function) (string-append ":" name)))
+
+(define (compiler-source-spans-insert-instr-entry
+  [spans : CompilerSourceSpans]
+  [key : String]
+  [span : AstSourceSpan]) : CompilerSourceSpans
+  (match spans
+    [(CompilerSourceSpans entries instr-entries)
+      (CompilerSourceSpans
+        entries
+        (compiler-source-spans-entry-list-append
+          instr-entries
+          (CompilerSourceSpansEntry key span)))]))
+
+(define (compiler-source-spans-insert-instr
+  [spans : CompilerSourceSpans]
+  [function : String]
+  [instr : CompilerIrInstr]
+  [span : AstSourceSpan]) : CompilerSourceSpans
+  (match instr
+    [(IrInstrMov dst _ _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrAlloc dst _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrAddrOf dst _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrGep dst _ _ _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrLoad dst _ _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrCast dst _ _ _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrBinOp dst _ _ _ _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrUnOp dst _ _ _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrCall dst _ _ _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrStore name _ _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-store-key function name)
+        span)]
+    [(IrInstrPhi dst _ _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [_ spans]))
+
+(define (compiler-source-spans-lookup-instr
+  [spans : CompilerSourceSpans]
+  [function : String]
+  [instr : CompilerIrInstr]) : CompilerMaybeSourceSpan
+  (match spans
+    [(CompilerSourceSpans _ instr-entries)
+      (match instr
+        [(IrInstrMov dst _ _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrAlloc dst _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrAddrOf dst _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrGep dst _ _ _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrLoad dst _ _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrCast dst _ _ _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrBinOp dst _ _ _ _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrUnOp dst _ _ _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrCall dst _ _ _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrStore name _ _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-store-key function name))]
+        [(IrInstrPhi dst _ _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [_ (CompilerNoSourceSpan)])]))
 
 ;; Number of recorded entries; supports provenance smoke assertions (#605).
 
@@ -230,8 +371,13 @@
 
 (define (compiler-source-spans-count [spans : CompilerSourceSpans]) : i64
   (match spans
-    [(CompilerSourceSpans entries)
+    [(CompilerSourceSpans entries _)
       (compiler-source-spans-entry-list-count entries)]))
+
+(define (compiler-source-spans-instr-count [spans : CompilerSourceSpans]) : i64
+  (match spans
+    [(CompilerSourceSpans _ instr-entries)
+      (compiler-source-spans-entry-list-count instr-entries)]))
 
 (defenum CompilerIrSummary
   (CompilerIrSummary i64 i64 i64 i64 i64 i64))

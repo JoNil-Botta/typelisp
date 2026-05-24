@@ -98,6 +98,24 @@
       (compiler-diagnostic-from-ast-span "" span message)]
     [(CompilerNoSourceSpan) (compiler-diagnostic-at-start "" message)]))
 
+(define (compiler-backend-instr-diagnostic
+  [spans : CompilerSourceSpans]
+  [function : String]
+  [instr : CompilerIrInstr]
+  [fallback : CompilerDiagnostic]
+  [message : String]) : CompilerDiagnostic
+  (match (compiler-source-spans-lookup-instr spans function instr)
+    [(CompilerSomeSourceSpan span)
+      (compiler-diagnostic-from-ast-span "" span message)]
+    [(CompilerNoSourceSpan) (compiler-diagnostic-with-message fallback message)]))
+
+(define (compiler-backend-apply-instr-diagnostic
+  [diag : CompilerDiagnostic]
+  [instr-diag : CompilerDiagnostic]) : CompilerDiagnostic
+  (compiler-diagnostic-with-message
+    instr-diag
+    (compiler-diagnostic-message diag)))
+
 (define (compiler-backend-round-up-16 [n : i64]) : i64
   (if (= n 0)
     0
@@ -1563,6 +1581,7 @@
 (define (compiler-backend-emit-instr
   [target : CompilerBackendTarget]
   [function : String]
+  [source-function : String]
   [blocks : CompilerIrBlockList]
   [current-label : String]
   [instr : CompilerIrInstr]
@@ -1573,142 +1592,199 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [spans : CompilerSourceSpans]
   [func-diag : CompilerDiagnostic]) : ResultCompilerBackend
-  (match instr
-    [(IrInstrMov dst src ty)
-      (match (compiler-backend-emit-load-typed-value-with-plan
-        assignments
-        src
-        ty)
-        [(OkCompilerBackend load)
-          (OkCompilerBackend
-            (string-append
-              load
-              (compiler-backend-emit-store-typed-var-with-plan
-                assignments
-                dst
-                (if (compiler-backend-f64-type? ty)
-                  "%xmm0"
-                  "%rax")
-                ty)))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-    [(IrInstrAlloc _ _) (OkCompilerBackend "")]
-    [(IrInstrAddrOf dst src)
-      (compiler-backend-emit-addr-of assignments dst src)]
-    [(IrInstrGep dst base offset elem-ty)
-      (compiler-backend-emit-gep assignments dst base offset elem-ty)]
-    [(IrInstrLoad dst src ty)
-      (compiler-backend-emit-load-instr assignments dst src ty)]
-    [(IrInstrStorePtr dst src ty)
-      (compiler-backend-emit-store-ptr assignments dst src ty)]
-    [(IrInstrCast dst src from-ty to-ty)
-      (compiler-backend-emit-cast assignments dst src from-ty to-ty)]
-    [(IrInstrBinOp dst op lhs rhs ty)
-      (compiler-backend-emit-binop types assignments dst op lhs rhs ty)]
-    [(IrInstrUnOp dst op src ty)
-      (compiler-backend-emit-unop assignments dst op src ty)]
-    [(IrInstrCall dst name args ty)
-      (let ([param-types
-          :
-          AstTypeList
-          (compiler-backend-call-param-types name functions externs)])
-        (let ([call-space
-            :
-            i64
-            (compiler-backend-call-arg-space target args param-types)])
-          (match (compiler-backend-emit-call-args
-            target
-            assignments
-            args
-            param-types
-            0
-            0
-            0
-            0
-            func-diag)
-            [(OkCompilerBackend args-asm)
-              (OkCompilerBackend
-                (string-append
-                  (compiler-backend-emit-call-space-sub call-space)
-                  (string-append
-                    args-asm
-                    (backend-cat5
-                      "    call "
-                      (compiler-backend-call-symbol name plan functions externs)
-                      "\n"
-                      (string-append
-                        (compiler-backend-emit-call-space-add call-space)
-                        (compiler-backend-emit-store-typed-var-with-plan
-                          assignments
-                          dst
-                          (if (compiler-backend-f64-type? ty)
-                            "%xmm0"
-                            "%rax")
-                          ty))
-                      ""))))]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])))]
-    [(IrInstrStore name value ty)
-      (match (compiler-backend-emit-load-typed-value-with-plan
-        assignments
-        value
-        ty)
-        [(OkCompilerBackend load)
-          (OkCompilerBackend
-            (string-append
-              load
-              (if (compiler-backend-f64-type? ty)
-                (backend-cat4
-                  "    movsd %xmm0, "
-                  (compiler-backend-user-symbol name)
-                  "(%rip)\n"
-                  "")
-                (backend-cat4
-                  "    movq %rax, "
-                  (compiler-backend-user-symbol name)
-                  "(%rip)\n"
-                  ""))))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-    [(IrInstrJump target)
-      (match (compiler-backend-emit-phi-edge-copies
-        assignments
-        blocks
-        target
-        current-label)
-        [(OkCompilerBackend copies)
-          (OkCompilerBackend
-            (string-append
-              copies
-              (backend-cat4
-                "    jmp "
-                (compiler-backend-asm-label function target)
-                "\n"
-                "")))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-    [(IrInstrBranch cond true-label false-label)
-      (match (compiler-backend-emit-load-value-with-plan
-        assignments
-        cond
-        "%rax")
-        [(OkCompilerBackend load)
-          (OkCompilerBackend
-            (string-append
-              load
+  (let ([instr-diag
+      :
+      CompilerDiagnostic
+      (compiler-backend-instr-diagnostic
+        spans
+        source-function
+        instr
+        func-diag
+        "")])
+    (match instr
+      [(IrInstrMov dst src ty)
+        (match (compiler-backend-emit-load-typed-value-with-plan
+          assignments
+          src
+          ty)
+          [(OkCompilerBackend load)
+            (OkCompilerBackend
               (string-append
-                "    cmpq $0, %rax\n"
-                (backend-cat5
-                  "    jne "
-                  (compiler-backend-asm-label function true-label)
-                  "\n    jmp "
-                  (compiler-backend-asm-label function false-label)
-                  "\n"))))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-    [(IrInstrReturn value)
-      (compiler-backend-emit-return value assignments vars ret-ty)]
-    [(IrInstrPhi _ _ _) (OkCompilerBackend "")]))
+                load
+                (compiler-backend-emit-store-typed-var-with-plan
+                  assignments
+                  dst
+                  (if (compiler-backend-f64-type? ty)
+                    "%xmm0"
+                    "%rax")
+                  ty)))]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackend
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(IrInstrAlloc _ _) (OkCompilerBackend "")]
+      [(IrInstrAddrOf dst src)
+        (match (compiler-backend-emit-addr-of assignments dst src)
+          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackend
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(IrInstrGep dst base offset elem-ty)
+        (match (compiler-backend-emit-gep assignments dst base offset elem-ty)
+          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackend
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(IrInstrLoad dst src ty)
+        (match (compiler-backend-emit-load-instr assignments dst src ty)
+          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackend
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(IrInstrStorePtr dst src ty)
+        (match (compiler-backend-emit-store-ptr assignments dst src ty)
+          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackend
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(IrInstrCast dst src from-ty to-ty)
+        (match (compiler-backend-emit-cast assignments dst src from-ty to-ty)
+          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackend
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(IrInstrBinOp dst op lhs rhs ty)
+        (match (compiler-backend-emit-binop types assignments dst op lhs rhs ty)
+          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackend
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(IrInstrUnOp dst op src ty)
+        (match (compiler-backend-emit-unop assignments dst op src ty)
+          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackend
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(IrInstrCall dst name args ty)
+        (let ([param-types
+            :
+            AstTypeList
+            (compiler-backend-call-param-types name functions externs)])
+          (let ([call-space
+              :
+              i64
+              (compiler-backend-call-arg-space target args param-types)])
+            (match (compiler-backend-emit-call-args
+              target
+              assignments
+              args
+              param-types
+              0
+              0
+              0
+              0
+              instr-diag)
+              [(OkCompilerBackend args-asm)
+                (OkCompilerBackend
+                  (string-append
+                    (compiler-backend-emit-call-space-sub call-space)
+                    (string-append
+                      args-asm
+                      (backend-cat5
+                        "    call "
+                        (compiler-backend-call-symbol
+                          name
+                          plan
+                          functions
+                          externs)
+                        "\n"
+                        (string-append
+                          (compiler-backend-emit-call-space-add call-space)
+                          (compiler-backend-emit-store-typed-var-with-plan
+                            assignments
+                            dst
+                            (if (compiler-backend-f64-type? ty)
+                              "%xmm0"
+                              "%rax")
+                            ty))
+                        ""))))]
+              [(ErrCompilerBackend message)
+                (ErrCompilerBackend
+                  (compiler-backend-apply-instr-diagnostic message instr-diag))])))]
+      [(IrInstrStore name value ty)
+        (match (compiler-backend-emit-load-typed-value-with-plan
+          assignments
+          value
+          ty)
+          [(OkCompilerBackend load)
+            (OkCompilerBackend
+              (string-append
+                load
+                (if (compiler-backend-f64-type? ty)
+                  (backend-cat4
+                    "    movsd %xmm0, "
+                    (compiler-backend-user-symbol name)
+                    "(%rip)\n"
+                    "")
+                  (backend-cat4
+                    "    movq %rax, "
+                    (compiler-backend-user-symbol name)
+                    "(%rip)\n"
+                    ""))))]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackend
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(IrInstrJump target)
+        (match (compiler-backend-emit-phi-edge-copies
+          assignments
+          blocks
+          target
+          current-label)
+          [(OkCompilerBackend copies)
+            (OkCompilerBackend
+              (string-append
+                copies
+                (backend-cat4
+                  "    jmp "
+                  (compiler-backend-asm-label function target)
+                  "\n"
+                  "")))]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackend
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(IrInstrBranch cond true-label false-label)
+        (match (compiler-backend-emit-load-value-with-plan
+          assignments
+          cond
+          "%rax")
+          [(OkCompilerBackend load)
+            (OkCompilerBackend
+              (string-append
+                load
+                (string-append
+                  "    cmpq $0, %rax\n"
+                  (backend-cat5
+                    "    jne "
+                    (compiler-backend-asm-label function true-label)
+                    "\n    jmp "
+                    (compiler-backend-asm-label function false-label)
+                    "\n"))))]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackend
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(IrInstrReturn value)
+        (match (compiler-backend-emit-return value assignments vars ret-ty)
+          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackend
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(IrInstrPhi _ _ _) (OkCompilerBackend "")])))
 
 (define (compiler-backend-emit-instrs
   [target : CompilerBackendTarget]
   [function : String]
+  [source-function : String]
   [blocks : CompilerIrBlockList]
   [current-label : String]
   [instrs : CompilerIrInstrList]
@@ -1719,6 +1795,7 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [spans : CompilerSourceSpans]
   [func-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (match instrs
     [(IrInstrNil) (OkCompilerBackend "")]
@@ -1726,6 +1803,7 @@
       (match (compiler-backend-emit-instr
         target
         function
+        source-function
         blocks
         current-label
         instr
@@ -1736,11 +1814,13 @@
         plan
         functions
         externs
+        spans
         func-diag)
         [(OkCompilerBackend head)
           (match (compiler-backend-emit-instrs
             target
             function
+            source-function
             blocks
             current-label
             rest
@@ -1751,6 +1831,7 @@
             plan
             functions
             externs
+            spans
             func-diag)
             [(OkCompilerBackend tail)
               (OkCompilerBackend (string-append head tail))]
@@ -1760,6 +1841,7 @@
 (define (compiler-backend-emit-block
   [target : CompilerBackendTarget]
   [function : String]
+  [source-function : String]
   [blocks : CompilerIrBlockList]
   [block : CompilerIrBlock]
   [assignments : CompilerRegAssignmentList]
@@ -1769,12 +1851,14 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [spans : CompilerSourceSpans]
   [func-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (match block
     [(IrBlock label instrs)
       (match (compiler-backend-emit-instrs
         target
         function
+        source-function
         blocks
         label
         instrs
@@ -1785,6 +1869,7 @@
         plan
         functions
         externs
+        spans
         func-diag)
         [(OkCompilerBackend body)
           (OkCompilerBackend
@@ -1798,6 +1883,7 @@
 (define (compiler-backend-emit-blocks
   [target : CompilerBackendTarget]
   [function : String]
+  [source-function : String]
   [all-blocks : CompilerIrBlockList]
   [blocks : CompilerIrBlockList]
   [assignments : CompilerRegAssignmentList]
@@ -1807,6 +1893,7 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [spans : CompilerSourceSpans]
   [func-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (match blocks
     [(IrBlockNil) (OkCompilerBackend "")]
@@ -1814,6 +1901,7 @@
       (match (compiler-backend-emit-block
         target
         function
+        source-function
         all-blocks
         block
         assignments
@@ -1823,11 +1911,13 @@
         plan
         functions
         externs
+        spans
         func-diag)
         [(OkCompilerBackend head)
           (match (compiler-backend-emit-blocks
             target
             function
+            source-function
             all-blocks
             rest
             assignments
@@ -1837,6 +1927,7 @@
             plan
             functions
             externs
+            spans
             func-diag)
             [(OkCompilerBackend tail)
               (OkCompilerBackend (string-append head tail))]
@@ -2002,6 +2093,7 @@
                     (match (compiler-backend-emit-blocks
                       target
                       symbol
+                      name
                       blocks
                       blocks
                       assignments
@@ -2011,6 +2103,7 @@
                       plan
                       functions
                       externs
+                      spans
                       func-diag)
                       [(OkCompilerBackend body)
                         (let ([frame
@@ -4490,12 +4583,75 @@ tl_string_concat:
       (string-eq (compiler-diagnostic-message message) want)]
     [(OkCompilerBackend _) false]))
 
+(define (compiler-backend-test-span [line : i64] [col : i64]) : AstSourceSpan
+  (AstSourceSpan line col line col))
+
+(define (compiler-backend-instr-diagnostic-case-ok?
+  [instr : CompilerIrInstr]
+  [want-message : String]
+  [want-line : i64]
+  [want-col : i64]) : bool
+  (let ([spans
+      :
+      CompilerSourceSpans
+      (compiler-source-spans-insert-instr
+        (compiler-source-spans-insert
+          (compiler-source-spans-empty)
+          "main"
+          (compiler-backend-test-span 10 2))
+        "main"
+        instr
+        (compiler-backend-test-span want-line want-col))]
+    [program
+      :
+      CompilerIrProgram
+      (IrProgram
+        IrGlobalNil
+        (IrFunctionCons
+          (IrFunction
+            "main"
+            IrParamNil
+            (AstTyI64)
+            4
+            (IrBlockCons
+              (IrBlock "entry" (IrInstrCons instr IrInstrNil))
+              IrBlockNil))
+          IrFunctionNil)
+        IrExternNil)])
+    (match (compiler-backend-emit-program-with-spans program spans)
+      [(ErrCompilerBackend diag)
+        (and
+          (string-eq (compiler-diagnostic-message diag) want-message)
+          (and
+            (= (compiler-diagnostic-line diag) want-line)
+            (= (compiler-diagnostic-col diag) want-col)))]
+      [(OkCompilerBackend _) false])))
+
+(define (compiler-backend-instr-diagnostics-ok?) : bool
+  (and
+    (compiler-backend-instr-diagnostic-case-ok?
+      (IrInstrMov 0 (IrValueF64 "1.0") (AstTyI64))
+      "backend: f64 values are not supported yet"
+      21
+      7)
+    (compiler-backend-instr-diagnostic-case-ok?
+      (IrInstrBinOp
+        1
+        (IrBinMod)
+        (IrValueF64 "1.0")
+        (IrValueF64 "2.0")
+        (AstTyF64))
+      "backend: unsupported f64 binary op"
+      34
+      9)))
+
 (define (compiler-backend-instr-contains?
   [instr : CompilerIrInstr]
   [needle : String]) : bool
   (match (compiler-backend-emit-instr
     (BackendTargetLinux)
     "_tl_test"
+    "test"
     IrBlockNil
     "entry"
     instr
@@ -4506,6 +4662,7 @@ tl_string_concat:
     (BackendRuntimePlan false false false false false false false false)
     IrFunctionNil
     IrExternNil
+    (compiler-source-spans-empty)
     (compiler-diagnostic-at-start "" ""))
     [(OkCompilerBackend asm) (compiler-backend-string-contains? asm needle)]
     [(ErrCompilerBackend _) false]))
@@ -4769,10 +4926,12 @@ tl_string_concat:
                         (and
                           (compiler-backend-stack-args-ok?)
                           (and
-                            (compiler-backend-runtime-helper-asm-ok?)
+                            (compiler-backend-instr-diagnostics-ok?)
                             (and
-                              (compiler-backend-user-helper-name-ok?)
-                              (compiler-backend-runtime-coexist-ok?)))))))))))))))
+                              (compiler-backend-runtime-helper-asm-ok?)
+                              (and
+                                (compiler-backend-user-helper-name-ok?)
+                                (compiler-backend-runtime-coexist-ok?))))))))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

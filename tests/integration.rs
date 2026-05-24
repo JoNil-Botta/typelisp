@@ -47,6 +47,7 @@ const TL_EMIT_PROGRAM_ASM: &str = concat!(
 
 const SELFHOST_DOC_DRIVER_DEPS: &[&str] = &[
     "doc_render.tl",
+    "doc_html.tl",
     "doc_extract.tl",
     "format_tokens.tl",
     "doc_test.tl",
@@ -1402,6 +1403,20 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             exit_code: 42,
             stdout: "",
             deps: &["doc_render.tl", "doc_extract.tl", "format_tokens.tl"],
+        },
+        // refs #870: selfhost HTML rendering over extracted docs. The smoke
+        // checks standalone and module-index pages, deterministic anchors,
+        // module/item navigation, code blocks, and HTML escaping.
+        Case {
+            name: "doc_html_smoke",
+            exit_code: 42,
+            stdout: "",
+            deps: &[
+                "doc_html.tl",
+                "doc_render.tl",
+                "doc_extract.tl",
+                "format_tokens.tl",
+            ],
         },
     ];
 
@@ -4634,6 +4649,167 @@ fn selfhost_doc_driver_writes_single_file_markdown() {
 }
 
 #[test]
+fn selfhost_doc_driver_writes_single_file_html() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let selfhost_dir = manifest_dir.join("selfhost");
+    let work_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("selfhost-doc-driver-html");
+    fs::create_dir_all(&work_dir).expect("create selfhost HTML doc driver test work dir");
+
+    let driver_path = work_dir.join("doc.tl");
+    fs::copy(selfhost_dir.join("doc.tl"), &driver_path).expect("copy doc.tl to work dir");
+    copy_case_deps(
+        &manifest_dir,
+        &selfhost_dir,
+        &work_dir,
+        SELFHOST_DOC_DRIVER_DEPS,
+    );
+
+    let input_path = work_dir.join("fixture.tl");
+    fs::write(
+        &input_path,
+        concat!(
+            ";;;; Module docs with <tag>, & amp, and \"quote\".\n",
+            "\n",
+            ";;; Public answer docs with <answer>.\n",
+            "(define answer : i64 42)\n",
+            "\n",
+            "(define undocumented : i64 7)\n",
+        ),
+    )
+    .expect("write doc driver HTML input fixture");
+    let output_path = work_dir.join("fixture.html");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&driver_path)
+        .arg("--")
+        .arg("--html")
+        .arg(&input_path)
+        .arg(&output_path)
+        .output()
+        .expect("run selfhost doc driver in HTML mode");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "doc driver HTML run exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(stdout, "", "doc driver HTML run wrote stdout");
+    assert_eq!(stderr, "", "doc driver HTML run wrote stderr");
+
+    let rendered = fs::read_to_string(&output_path).expect("read generated HTML");
+    for expected in [
+        "<!doctype html>",
+        "<link rel=\"stylesheet\" href=\"typelisp-docs.css\">",
+        "<main>",
+        "Module docs with &lt;tag&gt;, &amp; amp, and &quot;quote&quot;.",
+        "id=\"tl-answer\"",
+        "href=\"#tl-answer\"",
+        "<code class=\"language-typelisp\">(define answer : i64 42)</code>",
+        "Public answer docs with &lt;answer&gt;.",
+    ] {
+        assert!(
+            rendered.contains(expected),
+            "generated HTML missing {expected:?}:\n{rendered}"
+        );
+    }
+    assert!(
+        !rendered.contains("undocumented"),
+        "undocumented declarations should not be rendered yet:\n{}",
+        rendered
+    );
+}
+
+#[test]
+fn selfhost_doc_driver_writes_module_index_html() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let selfhost_dir = manifest_dir.join("selfhost");
+    let work_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("selfhost-doc-driver-html-index");
+    fs::create_dir_all(&work_dir).expect("create selfhost HTML doc index test work dir");
+
+    let driver_path = work_dir.join("doc.tl");
+    fs::copy(selfhost_dir.join("doc.tl"), &driver_path).expect("copy doc.tl to work dir");
+    copy_case_deps(
+        &manifest_dir,
+        &selfhost_dir,
+        &work_dir,
+        SELFHOST_DOC_DRIVER_DEPS,
+    );
+
+    let first_path = work_dir.join("first.tl");
+    fs::write(
+        &first_path,
+        concat!(
+            ";;;; First module docs.\n",
+            "\n",
+            ";;; Public answer docs.\n",
+            "(define answer : i64 42)\n",
+        ),
+    )
+    .expect("write first HTML module fixture");
+    let second_path = work_dir.join("second.tl");
+    fs::write(
+        &second_path,
+        concat!(
+            ";;;; Second module docs.\n",
+            "\n",
+            ";;; Public flag docs.\n",
+            "(define flag : bool true)\n",
+        ),
+    )
+    .expect("write second HTML module fixture");
+    let output_path = work_dir.join("index.html");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&driver_path)
+        .arg("--")
+        .arg("--html")
+        .arg(&first_path)
+        .arg(&second_path)
+        .arg(&output_path)
+        .output()
+        .expect("run selfhost doc driver in HTML module-index mode");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "doc driver HTML index run exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(stdout, "", "doc driver HTML index run wrote stdout");
+    assert_eq!(stderr, "", "doc driver HTML index run wrote stderr");
+
+    let rendered = fs::read_to_string(&output_path).expect("read generated HTML index");
+    for expected in [
+        "<nav class=\"tl-doc-module-nav\" aria-label=\"Modules\">",
+        "First module docs.",
+        "Second module docs.",
+        "id=\"tl-answer\"",
+        "id=\"tl-flag\"",
+        "<code class=\"language-typelisp\">(define flag : bool true)</code>",
+    ] {
+        assert!(
+            rendered.contains(expected),
+            "generated HTML index missing {expected:?}:\n{rendered}"
+        );
+    }
+}
+
+#[test]
 fn selfhost_doc_driver_runs_doctests() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let selfhost_dir = manifest_dir.join("selfhost");
@@ -5037,6 +5213,7 @@ fn source_path_for_case(manifest_dir: &PathBuf, name: &str) -> PathBuf {
         "doc_extract_smoke" => "doc_extract_smoke.tl",
         "doc_test_smoke" => "doc_test_smoke.tl",
         "doc_render_smoke" => "doc_render_smoke.tl",
+        "doc_html_smoke" => "doc_html_smoke.tl",
         "tl_read" => "read.tl",
         "tl_reader" => "reader.tl",
         "tl_token" => "token.tl",

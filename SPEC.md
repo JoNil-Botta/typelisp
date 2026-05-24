@@ -856,6 +856,8 @@ replacement.
   `tl_region_reset`.
 - `extern` declarations.
 - Multi-file modules via `import`.
+- Native x86_64 executable targets: `linux-x86_64` by default, and
+  `windows-x86_64` for Windows x64 ABI output with CRT-linked runtime helpers.
 - Builtin `print`, `print-bool`, `print-float`, `print-char`,
   `print-newline`, `print-string`/`print-str`, `print-error`,
   `string-append`/`string-concat`, `read-file`, `write-file`, `file-exists?`,
@@ -875,9 +877,9 @@ replacement.
 | `struct-set!` | Not implemented |
 | Garbage collection / general `free` | Not implemented; allocation is process-lifetime by default with unsafe explicit region reset for tool-owned phase boundaries |
 | SPMD / SIMD `foreach` | Scalar reference lowering only; vector IR and AVX backends not implemented |
-| Windows target | Not implemented |
+| Windows region helpers | `tl_region_mark`/`tl_region_reset` are Linux-only |
 | Complete source locations for all semantic errors | Partial |
-| REPL | Not implemented |
+| REPL evaluation | Minimal stdio command loop exists; form evaluation is not implemented |
 | Package manager | Not implemented |
 | LSP / IDE support | Not implemented |
 
@@ -987,6 +989,11 @@ Commands:
 Options:
   compile -o <file>       Write assembly to the given path
   compile --emit-ir       Write the lowered and optimized IR instead of assembly
+  compile --target <target>
+  run --target <target>
+  build --target <target>
+                          Select linux-x86_64 or windows-x86_64;
+                          linux-x86_64 is the default target
   compile --backend-mode <mode>
   run --backend-mode <mode>
   build --backend-mode <mode>
@@ -999,9 +1006,13 @@ Options:
 ```
 
 For source-file builds, the default executable path is the source path with the
-`.tl` extension removed. Source-file `build` does not run the executable. The
-package build form continues to write deterministic package assembly rather than
-native executables.
+`.tl` extension removed on Linux and with `.exe` on Windows. Source-file
+`build` does not run the executable. The package build form continues to write
+deterministic package assembly rather than native executables.
+
+Linux native build/run uses `as` and `ld`. Windows native build/run uses
+`clang --target=x86_64-pc-windows-msvc` and `lld-link`, links against the CRT,
+and emits a console `.exe`.
 
 `tokenize`, `parse`, and `check` are also accepted as top-level compatibility
 aliases for the corresponding `debug` commands.
@@ -1032,7 +1043,23 @@ aliases for the corresponding `debug` commands.
 - Callee-saved: `%rbx`, `%rbp`, `%r12-%r15`.
 - Stack aligned to 16 bytes before `call`.
 
-### 11.2 Data layout
+### 11.2 Calling convention (Windows x64)
+
+| Argument index | Integer register | Float register |
+|----------------|------------------|----------------|
+| 1st | `%rcx` | `%xmm0` |
+| 2nd | `%rdx` | `%xmm1` |
+| 3rd | `%r8` | `%xmm2` |
+| 4th | `%r9` | `%xmm3` |
+| 5th+ | Stack after 32-byte shadow space | Stack after 32-byte shadow space |
+
+- Integer and float arguments share the four register slots.
+- Return value: `%rax` (integer), `%xmm0` (float).
+- Callers reserve 32 bytes of shadow space before each call.
+- The CRT owns process startup; Windows output emits `main` and no Linux
+  `_start` wrapper.
+
+### 11.3 Data layout
 
 | Type | Size | Alignment |
 |------|------|-----------|

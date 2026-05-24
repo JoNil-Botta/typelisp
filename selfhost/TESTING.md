@@ -134,6 +134,16 @@ module and item documentation comments, generates Markdown through
 is separate from `cargo test` so it can later run against a stage compiler
 artifact and switch to the selfhost doctest path when #865 lands.
 
+### Repository doctest gate
+
+`scripts/verify-doc-tests.sh` discovers documented `.tl` files under
+`stdlib/`, `selfhost/`, `examples/`, and `tests/` by scanning for public
+`;;;;`/`;;;` doc comments or TypeLisp fenced examples, then runs
+`typelisp doc --test` for each file with `--stdlib-root`. This gate is
+intentionally separate from `cargo test` and does not use a hand-maintained file
+manifest, so adding documented TypeLisp source with fenced examples
+automatically adds doctest coverage.
+
 ### CI expectations
 
 Pull requests get Linux and Windows `cargo test` coverage from the main CI test
@@ -152,6 +162,7 @@ TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-selfhost-compile-manifest.
 TYPELISP_BIN=./target/debug/typelisp ./scripts/check-tl-format.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-public-tools.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-stdlib-docs.sh
+TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-doc-tests.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-selfhost.sh
 ```
 

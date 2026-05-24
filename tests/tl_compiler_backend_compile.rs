@@ -91,6 +91,7 @@ fn compiler_backend_tl_compiles_to_assembly() {
         "_tl_compiler_backend_enum_match_ok_question:",
         "_tl_compiler_backend_memory_op_ok_question:",
         "_tl_compiler_backend_regalloc_ok_question:",
+        "_tl_compiler_backend_unsigned_rel_ty_question:",
         "_tl_compiler_backend_emit_string_rodata:",
         "_tl_compiler_backend_emit_store_ptr:",
         "_tl_lower_compiler_source:",
@@ -127,6 +128,8 @@ fn compiler_backend_tl_compiles_to_assembly() {
         "    jne .Lmain_while_body.1\\n",
         "    jmp .Lmain_while_header.0\\n",
         "    setl %al\\n",
+        "    setb %al\\n",
+        "    setbe %al\\n",
         "    setg %al\\n",
     ] {
         assert_message(&asm, message, "compiler_backend");

@@ -1511,6 +1511,179 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
         "",
         "compiler_driver output program stderr"
     );
+
+    let string_input_path = work_dir.join("string_input.tl");
+    let string_asm_path = work_dir.join("string_generated.s");
+    let string_obj_path = work_dir.join("string_generated.o");
+    let string_bin_path = work_dir.join("string_generated");
+    fs::write(
+        &string_input_path,
+        r#"(define (main) : i64
+  (let ([joined : String (string-append "foo" "bar")]
+        [mid : String (substring "abcdef" 2 3)]
+        [extended : String (string-concat mid "!")])
+    (+ (string-length joined)
+      (+ (string-length extended)
+        (cast (char-at " x" 0) : i64)))))"#,
+    )
+    .expect("write compiler_driver string fixture");
+
+    let run = Command::new(&driver_bin)
+        .arg(&string_input_path)
+        .arg(&string_asm_path)
+        .output()
+        .expect("run compiler_driver string fixture");
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "compiler_driver string fixture exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "",
+        "compiler_driver string fixture stdout"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stderr),
+        "",
+        "compiler_driver string fixture stderr"
+    );
+
+    let string_asm =
+        fs::read_to_string(&string_asm_path).expect("read compiler_driver string assembly");
+    for snippet in [
+        "    call tl_substring\n",
+        "    call tl_string_concat\n",
+        "tl_oob_abort:\n",
+        "str_bounds_fail",
+        "substr_bounds_fail",
+        "    setb %al\n",
+        "    setbe %al\n",
+    ] {
+        assert!(
+            string_asm.contains(snippet),
+            "compiler_driver string assembly missing {:?}:\n{}",
+            snippet,
+            string_asm
+        );
+    }
+
+    let status = Command::new("as")
+        .arg(&string_asm_path)
+        .arg("-o")
+        .arg(&string_obj_path)
+        .status()
+        .expect("run assembler on compiler_driver string output");
+    assert!(
+        status.success(),
+        "assembling compiler_driver string output failed"
+    );
+
+    let status = Command::new("ld")
+        .arg(&string_obj_path)
+        .arg("-o")
+        .arg(&string_bin_path)
+        .arg("-dynamic-linker")
+        .arg("/lib64/ld-linux-x86-64.so.2")
+        .arg("-lc")
+        .status()
+        .expect("run linker on compiler_driver string output");
+    assert!(
+        status.success(),
+        "linking compiler_driver string output failed"
+    );
+
+    let output = Command::new(&string_bin_path)
+        .output()
+        .expect("run compiler_driver string output binary");
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "compiler_driver string output program exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "",
+        "compiler_driver string output stdout"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "",
+        "compiler_driver string output stderr"
+    );
+
+    let oob_input_path = work_dir.join("string_oob_input.tl");
+    let oob_asm_path = work_dir.join("string_oob_generated.s");
+    let oob_obj_path = work_dir.join("string_oob_generated.o");
+    let oob_bin_path = work_dir.join("string_oob_generated");
+    fs::write(
+        &oob_input_path,
+        r#"(define (main) : i64 (cast (string-ref "x" 1) : i64))"#,
+    )
+    .expect("write compiler_driver string oob fixture");
+
+    let run = Command::new(&driver_bin)
+        .arg(&oob_input_path)
+        .arg(&oob_asm_path)
+        .output()
+        .expect("run compiler_driver string oob fixture");
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "compiler_driver string oob fixture exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+
+    let status = Command::new("as")
+        .arg(&oob_asm_path)
+        .arg("-o")
+        .arg(&oob_obj_path)
+        .status()
+        .expect("run assembler on compiler_driver string oob output");
+    assert!(
+        status.success(),
+        "assembling compiler_driver string oob output failed"
+    );
+
+    let status = Command::new("ld")
+        .arg(&oob_obj_path)
+        .arg("-o")
+        .arg(&oob_bin_path)
+        .arg("-dynamic-linker")
+        .arg("/lib64/ld-linux-x86-64.so.2")
+        .arg("-lc")
+        .status()
+        .expect("run linker on compiler_driver string oob output");
+    assert!(
+        status.success(),
+        "linking compiler_driver string oob output failed"
+    );
+
+    let output = Command::new(&oob_bin_path)
+        .output()
+        .expect("run compiler_driver string oob output binary");
+    assert_eq!(
+        output.status.code(),
+        Some(134),
+        "compiler_driver string oob output program exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "",
+        "compiler_driver string oob output stdout"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "tl: array index out of bounds\n",
+        "compiler_driver string oob output stderr"
+    );
 }
 
 #[test]

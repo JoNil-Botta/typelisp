@@ -945,7 +945,7 @@
                   [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
           [(ErrBackendReg message)
-              (ErrCompilerBackend (compiler-diagnostic-at-start "" message))]))]))
+            (ErrCompilerBackend (compiler-diagnostic-at-start "" message))]))]))
 
 (define (compiler-backend-phi-input-value
   [inputs : CompilerIrPhiInputList]
@@ -979,7 +979,7 @@
               (compiler-backend-emit-store-var-with-plan assignments dst "%rax")))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
     [(ErrBackendValue message)
-              (ErrCompilerBackend (compiler-diagnostic-at-start "" message))]))
+      (ErrCompilerBackend (compiler-diagnostic-at-start "" message))]))
 
 (define (compiler-backend-emit-leading-phi-copies
   [assignments : CompilerRegAssignmentList]
@@ -1335,9 +1335,7 @@
                   [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
               [(ErrBackendReg _)
                 (ErrCompilerBackend
-                  (compiler-diagnostic-at-start
-                    ""
-                    "backend: too many params"))]))])]))
+                  (compiler-diagnostic-at-start "" "backend: too many params"))]))])]))
 
 (define (compiler-backend-emit-function
   [target : CompilerBackendTarget]

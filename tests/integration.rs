@@ -1134,6 +1134,16 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             stdout: "",
             deps: &["stdlib/test.tl"],
         },
+        // stdlib/io.tl: file-I/O helpers round-tripped through the explicit
+        // compile -> as -> ld -> run pipeline. Writes a fixture, reads it back
+        // (present + missing fallback), appends, and checks file-nonempty? for
+        // present and missing paths (#702).
+        Case {
+            name: "stdlib_io",
+            exit_code: 42,
+            stdout: "",
+            deps: &["stdlib/io.tl"],
+        },
         // refs #335: selfhost parser from Sexpr into the real compiler AST.
         // The smoke parses a representative multi-declaration source string
         // with imports, structs, enums, externs, typed definitions, let,
@@ -4486,6 +4496,9 @@ fn dep_source_path(manifest_dir: &Path, source_dir: &Path, dep: &str) -> PathBuf
     }
     if dep == "stdlib/test.tl" {
         return manifest_dir.join("stdlib").join("test.tl");
+    }
+    if dep == "stdlib/io.tl" {
+        return manifest_dir.join("stdlib").join("io.tl");
     }
     source_dir.join(dep)
 }

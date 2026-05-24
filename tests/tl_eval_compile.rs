@@ -503,10 +503,12 @@ fn tl_eval_tl_compiles_to_assembly() {
     // USER FUNCTIONS + RECURSION (#27): a call form whose head is neither a
     // special form nor a builtin is dispatched as a CALL into the function
     // environment. `eval-sexpr` therefore looks the function's PARAMETER LIST and
-    // body up in the `FnEnv` via `lookup-fn-params` / `lookup-fn-body`, each of
-    // which is itself recursive (it walks the `FnEnv` assoc-list head-first,
-    // comparing the bound function name and recursing on the tail). So a call to
-    // each lookup AND a recursive self-call within each must be present.
+    // body up in the `FnEnv` via `lookup-fn-params` / `lookup-fn-body`, so a
+    // dispatch call to each lookup must be present. Each lookup is itself
+    // tail-recursive (it walks the `FnEnv` assoc-list head-first, comparing the
+    // bound function name and recursing on the tail), so since #560 that
+    // self-call is tail-call-optimized into a jump back to the function's entry
+    // block rather than a second `call`.
     for fname in ["_tl_lookup_fn_params", "_tl_lookup_fn_body"] {
         assert!(
             asm.contains(&format!("call {fname}")),
@@ -515,8 +517,9 @@ fn tl_eval_tl_compiles_to_assembly() {
             asm,
         );
         assert!(
-            asm.matches(&format!("call {fname}")).count() >= 2,
-            "tl_eval assembly shows no recursive {fname} self-call (FnEnv assoc-list walk):\n{}",
+            asm.contains(&format!("jmp {fname}.entry")),
+            "tl_eval assembly shows no tail-recursive {fname} self-loop \
+             (FnEnv assoc-list walk, tail-call-optimized since #560):\n{}",
             asm,
         );
     }

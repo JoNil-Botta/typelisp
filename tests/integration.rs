@@ -1611,6 +1611,121 @@ fn selfhost_backend_runtime_helpers_emit_assemble_link_and_run() {
 }
 
 #[test]
+fn selfhost_compile_tl_emitted_binary_links_and_emits_stage2() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let work_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("selfhost_bootstrap_runtime_helpers");
+    fs::create_dir_all(&work_dir).expect("create selfhost bootstrap test work dir");
+
+    let stage1_asm = work_dir.join("stage1.s");
+    let stage1_obj = work_dir.join("stage1.o");
+    let stage1_bin = work_dir.join("stage1");
+    let stage2_asm = work_dir.join("stage2.s");
+    let stage2_obj = work_dir.join("stage2.o");
+    let stage2_bin = work_dir.join("stage2");
+
+    let stage0 = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .current_dir(&manifest_dir)
+        .arg("compile")
+        .arg("selfhost/compile.tl")
+        .arg("-o")
+        .arg(&stage1_asm)
+        .output()
+        .expect("compile selfhost/compile.tl to stage1.s");
+    assert!(
+        stage0.status.success(),
+        "stage0 compile failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&stage0.stdout),
+        String::from_utf8_lossy(&stage0.stderr)
+    );
+
+    let status = Command::new("as")
+        .arg(&stage1_asm)
+        .arg("-o")
+        .arg(&stage1_obj)
+        .status()
+        .expect("assemble stage1");
+    assert!(status.success(), "assembling stage1 failed");
+
+    let status = Command::new("ld")
+        .arg(&stage1_obj)
+        .arg("-o")
+        .arg(&stage1_bin)
+        .status()
+        .expect("link stage1");
+    assert!(status.success(), "linking stage1 failed");
+
+    let stage1 = Command::new(&stage1_bin)
+        .current_dir(&manifest_dir)
+        .arg("selfhost/compile.tl")
+        .arg("-o")
+        .arg(&stage2_asm)
+        .output()
+        .expect("run stage1 compiler");
+    assert_eq!(
+        stage1.status.code(),
+        Some(0),
+        "stage1 compile failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&stage1.stdout),
+        String::from_utf8_lossy(&stage1.stderr)
+    );
+    assert!(stage2_asm.exists(), "stage1 did not write stage2.s");
+
+    let stage2_text = fs::read_to_string(&stage2_asm).expect("read stage2 assembly");
+    for mangled in [
+        "call _tl_string_eq",
+        "call _tl_int__gtstring",
+        "call _tl_string__gtint",
+        "call _tl_panic",
+        "call _tl_file_exists_question",
+        "call _tl_read_file",
+        "call _tl_write_file",
+        "call _tl_print_error",
+        "call _tl_arg",
+        "call _tl_arg_count",
+    ] {
+        assert!(
+            !stage2_text.contains(mangled),
+            "stage2 assembly still calls mangled bootstrap helper {mangled}"
+        );
+    }
+
+    let status = Command::new("as")
+        .arg(&stage2_asm)
+        .arg("-o")
+        .arg(&stage2_obj)
+        .status()
+        .expect("assemble stage2");
+    assert!(status.success(), "assembling stage2 failed");
+
+    let status = Command::new("ld")
+        .arg(&stage2_obj)
+        .arg("-o")
+        .arg(&stage2_bin)
+        .status()
+        .expect("link stage2");
+    assert!(status.success(), "linking stage2 failed");
+
+    let stage2 = Command::new(&stage2_bin)
+        .output()
+        .expect("run stage2 without args");
+    assert_eq!(
+        stage2.status.code(),
+        Some(1),
+        "stage2 no-arg run exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&stage2.stdout),
+        String::from_utf8_lossy(&stage2.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&stage2.stderr).contains("compile: expected source path"),
+        "stage2 no-arg stderr differed:\n{}",
+        String::from_utf8_lossy(&stage2.stderr)
+    );
+}
+
+#[test]
 fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let selfhost_dir = manifest_dir.join("selfhost");

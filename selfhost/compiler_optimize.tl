@@ -524,13 +524,192 @@
         [(OptCseResult new-table new-instr)
           (IrInstrCons new-instr (opt-cse-instrs new-table rest))])]))
 
+;; --- block-local copy propagation (#545) ------------------------------------
+
+;;
+
+;; The lowerer and the CSE pass both materialize values through `IrInstrMov`
+
+;; into fresh vars (CSE rewrites a redundant expression to `Mov dst earlier`).
+
+;; Within a single basic block, track copies `dst -> source` and rewrite later
+
+;; operand uses of `IrValueVar dst` to `source`, so DCE can then drop the now
+
+;; unused copy. This needs no register allocation or CFG dataflow.
+
+;;
+
+;; Conservative for the first slice: only `IrValueVar` and unambiguous scalar
+
+;; literals are recorded as copy sources (`IrValueF64`, `IrValueString`, and
+
+;; globals are excluded until their backend paths are settled); `IrInstrPhi`
+
+;; inputs belong to predecessor edges and are never rewritten; and `IrInstrAddrOf`
+
+;; carries a raw var id (a storage slot), not a value operand, so it is left
+
+;; alone. On any instruction that defines var `v`, both the mapping for `v` and
+
+;; any mapping whose source is `IrValueVar v` are dropped, so a reused var id in
+
+;; the non-SSA IR never triggers a stale rewrite.
+
+(defenum OptCopyEnv
+  (OptCopyNil)
+  (OptCopyCons i64 CompilerIrValue OptCopyEnv))
+
+(define (opt-copy-lookup [env : OptCopyEnv] [var : i64]) : CompilerIrMaybeValue
+  (match env
+    [(OptCopyNil) (IrNoValue)]
+    [(OptCopyCons id value rest)
+      (if (= id var)
+        (IrSomeValue value)
+        (opt-copy-lookup rest var))]))
+
+;; Drop the mapping for `var` and any mapping whose replacement is `IrValueVar
+
+;; var`, so redefining either a copied destination or a copied source clears the
+
+;; stale copy fact.
+
+(define (opt-copy-invalidate-var [env : OptCopyEnv] [var : i64]) : OptCopyEnv
+  (match env
+    [(OptCopyNil) (OptCopyNil)]
+    [(OptCopyCons id value rest)
+      (let ([rest2 : OptCopyEnv (opt-copy-invalidate-var rest var)])
+        (if (or (= id var) (opt-value-is-var? value var))
+          rest2
+          (OptCopyCons id value rest2)))]))
+
+;; Only var copies and unambiguous scalar literals are safe to propagate in this
+
+;; slice; F64/String/global sources stay put until their backend paths exist.
+
+(define (opt-copy-safe-source? [value : CompilerIrValue]) : bool
+  (match value
+    [(IrValueVar _) true]
+    [(IrValueI64 _) true]
+    [(IrValueBool _) true]
+    [(IrValueChar _) true]
+    [(IrValueUnit) true]
+    [(IrValueF64 _) false]
+    [(IrValueString _) false]
+    [(IrValueGlobal _) false]))
+
+(define (opt-copy-resolve [env : OptCopyEnv] [value : CompilerIrValue]) : CompilerIrValue
+  (match value
+    [(IrValueVar id)
+      (match (opt-copy-lookup env id)
+        [(IrSomeValue v) v]
+        [(IrNoValue) value])]
+    [_ value]))
+
+(define (opt-copy-subst-value-list
+  [env : OptCopyEnv]
+  [values : CompilerIrValueList]) : CompilerIrValueList
+  (match values
+    [(IrValueNil) (IrValueNil)]
+    [(IrValueCons value rest)
+      (IrValueCons
+        (opt-copy-resolve env value)
+        (opt-copy-subst-value-list env rest))]))
+
+;; Rewrite the value-use operands of an instruction through the copy env. Phi
+
+;; inputs and the raw var id of `IrInstrAddrOf` are intentionally not rewritten.
+
+(define (opt-copy-subst-instr [env : OptCopyEnv] [instr : CompilerIrInstr]) : CompilerIrInstr
+  (match instr
+    [(IrInstrMov dst src ty) (IrInstrMov dst (opt-copy-resolve env src) ty)]
+    [(IrInstrGep dst base offset ty)
+      (IrInstrGep
+        dst
+        (opt-copy-resolve env base)
+        (opt-copy-resolve env offset)
+        ty)]
+    [(IrInstrLoad dst src ty) (IrInstrLoad dst (opt-copy-resolve env src) ty)]
+    [(IrInstrStorePtr ptr value ty)
+      (IrInstrStorePtr
+        (opt-copy-resolve env ptr)
+        (opt-copy-resolve env value)
+        ty)]
+    [(IrInstrCast dst src from-ty to-ty)
+      (IrInstrCast dst (opt-copy-resolve env src) from-ty to-ty)]
+    [(IrInstrBinOp dst op l r ty)
+      (IrInstrBinOp dst op (opt-copy-resolve env l) (opt-copy-resolve env r) ty)]
+    [(IrInstrUnOp dst op v ty) (IrInstrUnOp dst op (opt-copy-resolve env v) ty)]
+    [(IrInstrCall dst name args ty)
+      (IrInstrCall dst name (opt-copy-subst-value-list env args) ty)]
+    [(IrInstrStore name value ty)
+      (IrInstrStore name (opt-copy-resolve env value) ty)]
+    [(IrInstrBranch cond a b) (IrInstrBranch (opt-copy-resolve env cond) a b)]
+    [(IrInstrReturn maybe)
+      (match maybe
+        [(IrSomeValue value)
+          (IrInstrReturn (IrSomeValue (opt-copy-resolve env value)))]
+        [(IrNoValue) instr])]
+    ;; `IrInstrAddrOf` takes the address of a storage slot named by a raw var id,
+    ;; not a value, so its operand must not be copy-substituted (#545).
+    [(IrInstrAddrOf _ _) instr]
+    ;; `IrInstrAlloc`/`IrInstrJump` have no value operands; `IrInstrPhi` inputs
+    ;; belong to predecessor edges and are not block-local copies.
+    [(IrInstrAlloc _ _) instr]
+    [(IrInstrJump _) instr]
+    [(IrInstrPhi _ _ _) instr]))
+
+;; Update the copy env after an instruction. A `Mov dst src` (with `src` already
+
+;; substituted) records a copy when `src` is a safe, non-self source. Every other
+
+;; defining instruction invalidates its destination. Stores and terminators
+
+;; define no var, so the copy facts are unaffected (the env resets per block).
+
+(define (opt-copy-update-env [env : OptCopyEnv] [instr : CompilerIrInstr]) : OptCopyEnv
+  (match instr
+    [(IrInstrMov dst src ty)
+      (let ([e1 : OptCopyEnv (opt-copy-invalidate-var env dst)])
+        (if (and (opt-copy-safe-source? src) (not (opt-value-is-var? src dst)))
+          (OptCopyCons dst src e1)
+          e1))]
+    [(IrInstrAlloc dst _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrAddrOf dst _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrGep dst _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrLoad dst _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrCast dst _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrBinOp dst _ _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrUnOp dst _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrCall dst _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrPhi dst _ _) (opt-copy-invalidate-var env dst)]
+    [_ env]))
+
+(defenum OptCopyResult
+  (OptCopyResult OptCopyEnv CompilerIrInstr))
+
+(define (opt-copy-instr [env : OptCopyEnv] [instr : CompilerIrInstr]) : OptCopyResult
+  (let ([rewritten : CompilerIrInstr (opt-copy-subst-instr env instr)])
+    (OptCopyResult (opt-copy-update-env env rewritten) rewritten)))
+
+(define (opt-copy-instrs [env : OptCopyEnv] [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (match instrs
+    [(IrInstrNil) (IrInstrNil)]
+    [(IrInstrCons instr rest)
+      (match (opt-copy-instr env instr)
+        [(OptCopyResult new-env new-instr)
+          (IrInstrCons new-instr (opt-copy-instrs new-env rest))])]))
+
 (define (optimize-block [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(IrBlock label instrs)
-      ;; Fold scalar constants first, then eliminate repeated pure expressions.
+      ;; Fold scalar constants, eliminate repeated pure expressions, then
+      ;; propagate the resulting copies; function-level DCE drops the dead copies.
       (IrBlock
         label
-        (opt-cse-instrs (OptExprNil) (opt-fold-instrs (OptConstNil) instrs)))]))
+        (opt-copy-instrs
+          (OptCopyNil)
+          (opt-cse-instrs (OptExprNil) (opt-fold-instrs (OptConstNil) instrs))))]))
 
 (define (optimize-block-list [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
@@ -766,3 +945,136 @@
               3)
             2)
           1)))))
+
+;; Returns the lhs var id of the `BinOp` whose destination is `dst`, or -1 if it
+
+;; is absent or its lhs is not a var. Used to inspect copy-propagation rewrites.
+
+(define (opt-copy-binop-lhs-var [instrs : CompilerIrInstrList] [dst : i64]) : i64
+  (match instrs
+    [(IrInstrNil) (- 0 1)]
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrBinOp d _ l _ _)
+          (if (= d dst)
+            (match l
+              [(IrValueVar id) id]
+              [_ (- 0 1)])
+            (opt-copy-binop-lhs-var rest dst))]
+        [_ (opt-copy-binop-lhs-var rest dst)])]))
+
+;; `[Mov v1 = v0, BinOp v2 = v1 + 1]`: copy propagation rewrites the binop lhs
+
+;; from v1 to v0.
+
+(define (opt-copy-pos-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrMov 1 (IrValueVar 0) (AstTyI64))
+    (IrInstrCons
+      (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 1) (IrValueI64 1) (AstTyI64))
+      (IrInstrNil))))
+
+;; `[Mov v1 = v0, Load v0 = *v9, BinOp v2 = v1 + 1]`: redefining the copy source
+
+;; v0 invalidates the v1 -> v0 fact, so the binop lhs stays v1.
+
+(define (opt-copy-src-redef-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrMov 1 (IrValueVar 0) (AstTyI64))
+    (IrInstrCons
+      (IrInstrLoad 0 (IrValueVar 9) (AstTyI64))
+      (IrInstrCons
+        (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 1) (IrValueI64 1) (AstTyI64))
+        (IrInstrNil)))))
+
+;; `[Mov v1 = v0, Load v1 = *v9, BinOp v2 = v1 + 1]`: redefining the copy
+
+;; destination v1 invalidates the fact, so the binop lhs stays v1.
+
+(define (opt-copy-dst-redef-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrMov 1 (IrValueVar 0) (AstTyI64))
+    (IrInstrCons
+      (IrInstrLoad 1 (IrValueVar 9) (AstTyI64))
+      (IrInstrCons
+        (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 1) (IrValueI64 1) (AstTyI64))
+        (IrInstrNil)))))
+
+;; `[BinOp v2 = v0 + v1, BinOp v3 = v0 + v1, BinOp v4 = v3 + 1, Return v4]`: CSE
+
+;; rewrites the second expression to `Mov v3 = v2`; copy propagation then rewrites
+
+;; the v4 lhs from v3 to v2, leaving the `Mov v3` copy dead for DCE to drop (the
+
+;; `Return v4` keeps v4 live so only the copy is removed: 4 instrs -> 3).
+
+(define (opt-copy-cse-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
+    (IrInstrCons
+      (IrInstrBinOp 3 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
+      (IrInstrCons
+        (IrInstrBinOp 4 (IrBinAdd) (IrValueVar 3) (IrValueI64 1) (AstTyI64))
+        (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueVar 4))) (IrInstrNil))))))
+
+;; `[Mov v1 = 1.5f64, BinOp v2 = v1 + v1]`: an F64 source is not recorded as a
+
+;; copy in this slice, so the binop lhs stays v1 (no unsafe literal propagation).
+
+(define (opt-copy-f64-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrMov 1 (IrValueF64 1.5) (AstTyF64))
+    (IrInstrCons
+      (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 1) (IrValueVar 1) (AstTyF64))
+      (IrInstrNil))))
+
+;; Returns 42 when block-local copy propagation: rewrites a var copy into a later
+
+;; use (pos: lhs v1 -> v0); does not propagate after the source (src-redef) or
+
+;; destination (dst-redef) var is redefined; rewrites a CSE-introduced copy so
+
+;; DCE can drop it (cse: lhs v3 -> v2, then 3 instrs -> 2); and does not
+
+;; propagate an unsafe F64 source (f64: lhs stays v1).
+
+(define (compiler-optimize-copy-self-test) : i64
+  (let ([pos
+      :
+      CompilerIrInstrList
+      (opt-copy-instrs (OptCopyNil) (opt-copy-pos-instrs))])
+    (let ([src-redef
+        :
+        CompilerIrInstrList
+        (opt-copy-instrs (OptCopyNil) (opt-copy-src-redef-instrs))])
+      (let ([dst-redef
+          :
+          CompilerIrInstrList
+          (opt-copy-instrs (OptCopyNil) (opt-copy-dst-redef-instrs))])
+        (let ([cse
+            :
+            CompilerIrInstrList
+            (opt-copy-instrs
+              (OptCopyNil)
+              (opt-cse-instrs (OptExprNil) (opt-copy-cse-instrs)))])
+          (let ([cse-dce
+              :
+              CompilerIrInstrList
+              (opt-dce-instrs (opt-collect-instrs-uses (OptUsedNil) cse) cse)])
+            (let ([f64
+                :
+                CompilerIrInstrList
+                (opt-copy-instrs (OptCopyNil) (opt-copy-f64-instrs))])
+              (if (= (opt-copy-binop-lhs-var pos 2) 0)
+                (if (= (opt-copy-binop-lhs-var src-redef 2) 1)
+                  (if (= (opt-copy-binop-lhs-var dst-redef 2) 1)
+                    (if (= (opt-copy-binop-lhs-var cse 4) 2)
+                      (if (= (compiler-ir-instr-list-count cse-dce) 3)
+                        (if (= (opt-copy-binop-lhs-var f64 2) 1)
+                          42
+                          6)
+                        5)
+                      4)
+                    3)
+                  2)
+                1))))))))

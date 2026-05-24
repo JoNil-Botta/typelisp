@@ -16,6 +16,8 @@
 
 (import "compiler_ir_types.tl")
 
+(import "compiler_ctfe.tl")
+
 (defenum LowerState
   (LowerState i64 i64 String CompilerIrInstrList CompilerIrBlockList))
 
@@ -202,6 +204,15 @@
     [(AstLitChar c) (IrValueChar c)]
     [(AstLitString s) (IrValueString s)]
     [(AstLitUnit) IrValueUnit]))
+
+;; Convert a folded compile-time scalar (#719) into the equivalent IR literal.
+
+(define (ctfe-value-to-ir-value [value : CompilerCtfeValue]) : CompilerIrValue
+  (match value
+    [(CtfeI64 n) (IrValueI64 n)]
+    [(CtfeBool b) (IrValueBool b)]
+    [(CtfeChar c) (IrValueChar c)]
+    [(CtfeUnit) IrValueUnit]))
 
 (define (lower-binop [op : AstBinOp]) : CompilerIrBinOp
   (match op
@@ -1083,13 +1094,18 @@
       (lower-array-ref ctx state env type-env arr index)]
     [(AstExprArraySet arr index value)
       (lower-array-set ctx state env type-env arr index value)]
-    ;; `(comptime expr)` is parsed and type-checked (#718) but not yet evaluated;
-    ;; CTFE + folding to a literal lands in #719.
-    [(AstExprComptime _)
-      (ErrLowerExpr
-        (lower-diagnostic-at-expr
-          origin
-          "lower: comptime evaluation not yet implemented (#719)"))]
+    ;; `(comptime expr)` (#718) is evaluated at compile time over the scalar
+    ;; subset (#719) and folded to the equivalent IR literal. The comptime
+    ;; boundary starts with an empty environment, so the body can only reference
+    ;; its own comptime `let` bindings, never runtime locals.
+    [(AstExprComptime inner)
+      (match (compiler-ctfe-eval
+        inner
+        (ctfe-env-empty)
+        (compiler-ctfe-initial-fuel))
+        [(OkCtfe value _)
+          (lower-materialize state (ctfe-value-to-ir-value value) expr-ty)]
+        [(ErrCtfe diag) (ErrLowerExpr diag)])]
     [_
       (ErrLowerExpr
         (lower-diagnostic-at-expr origin "lower: unsupported expression"))]))
@@ -3218,7 +3234,7 @@
 
 ;; it until the evaluator (#719) lands (#718).
 
-(define (compiler-lower-comptime-reserved-source) : String
+(define (compiler-lower-comptime-fold-source) : String
   "(define (main) : i64 (comptime (+ 1 2)))")
 
 (define (compiler-lower-error-ok? [src : String] [want : String]) : bool
@@ -3450,6 +3466,45 @@
         0)]
     [_ 0]))
 
+;; Count runtime binary-operation instructions across all functions: used to
+
+;; prove a `(comptime ...)` expression folded to a literal (#719) rather than
+
+;; emitting a runtime operation.
+
+(define (lower-test-instr-binop-count [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrBinOp _ _ _ _ _) 1]
+    [_ 0]))
+
+(define (lower-test-instrs-binop-count [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (lower-test-instr-binop-count instr)
+        (lower-test-instrs-binop-count rest))]))
+
+(define (lower-test-blocks-binop-count [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instrs-binop-count instrs)
+            (lower-test-blocks-binop-count rest))])]))
+
+(define (lower-test-functions-binop-count [funcs : CompilerIrFunctionList]) : i64
+  (match funcs
+    [(IrFunctionNil) 0]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction _ _ _ _ blocks)
+          (+
+            (lower-test-blocks-binop-count blocks)
+            (lower-test-functions-binop-count rest))])]))
+
 (define (lower-test-instrs-phi-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
     [(IrInstrNil) 0]
@@ -3644,6 +3699,18 @@
                       0))))))])]
     [(ErrCompilerLower _) false]))
 
+;; `(comptime (+ 1 2))` must fold to a literal at compile time (#719): the
+
+;; program lowers without error and emits no runtime binary operation.
+
+(define (compiler-lower-comptime-fold-ok? [src : String]) : bool
+  (match (lower-compiler-source src)
+    [(OkCompilerLower program)
+      (match program
+        [(IrProgram _ functions _)
+          (= (lower-test-functions-binop-count functions) 0)])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-self-test) : i64
   (if (and
     (compiler-lower-ok-summary? (compiler-lower-smoke-source))
@@ -3694,9 +3761,8 @@
                               (compiler-lower-error-ok?
                                 (compiler-lower-unsupported-source)
                                 "lower: unsupported expression")
-                              (compiler-lower-error-ok?
-                                (compiler-lower-comptime-reserved-source)
-                                "lower: comptime evaluation not yet implemented (#719)")))))))))))))))
+                              (compiler-lower-comptime-fold-ok?
+                                (compiler-lower-comptime-fold-source))))))))))))))))
     42
     (begin
       (panic "lower: smoke score mismatch")

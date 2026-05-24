@@ -81,6 +81,29 @@ fn compiler_ir_types_tl_compiles_to_assembly() {
 }
 
 #[test]
+fn compiler_ctfe_tl_compiles_to_assembly() {
+    let asm = compile_selfhost_source(
+        "compiler_ctfe.tl",
+        "tl-compiler-ctfe-compile-test",
+        "compiler_ctfe.s",
+    );
+
+    assert_no_todo(&asm, "compiler_ctfe");
+
+    for sym in [
+        "_tl_compiler_ctfe_eval:",
+        "_tl_compiler_ctfe_self_test:",
+        "_tl_ctfe_apply_binary:",
+        "_tl_ctfe_apply_unary:",
+        "_tl_ctfe_eval_let_bindings:",
+        "_tl_ctfe_eval_begin:",
+        "_tl_ctfe_env_lookup:",
+    ] {
+        assert_symbol(&asm, sym, "compiler_ctfe");
+    }
+}
+
+#[test]
 fn compiler_lower_tl_compiles_to_assembly() {
     let asm = compile_selfhost_source(
         "compiler_lower.tl",

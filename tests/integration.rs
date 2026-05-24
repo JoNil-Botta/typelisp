@@ -1201,6 +1201,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             stdout: "",
             deps: &[
                 "compiler_lower.tl",
+                "compiler_ctfe.tl",
                 "compiler_ir_types.tl",
                 "compiler_typecheck.tl",
                 "compiler_symbols.tl",
@@ -1210,6 +1211,19 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
                 "sym_i64_env.tl",
                 "read.tl",
                 "lex.tl",
+                "token.tl",
+            ],
+        },
+        // refs #719: selfhost CTFE evaluator smoke. Folds `(comptime expr)` over
+        // the scalar subset (i64/bool/char/unit) and rejects unsupported forms.
+        Case {
+            name: "compiler_ctfe_smoke",
+            exit_code: 42,
+            stdout: "",
+            deps: &[
+                "compiler_ctfe.tl",
+                "compiler_diagnostic.tl",
+                "compiler_ast_types.tl",
                 "token.tl",
             ],
         },
@@ -1274,6 +1288,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
                 "compiler_regalloc.tl",
                 "compiler_liveness.tl",
                 "compiler_lower.tl",
+                "compiler_ctfe.tl",
                 "compiler_ir_types.tl",
                 "compiler_typecheck.tl",
                 "compiler_symbols.tl",
@@ -1439,6 +1454,7 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
             "compiler_liveness.tl",
             "compiler_optimize.tl",
             "compiler_lower.tl",
+            "compiler_ctfe.tl",
             "compiler_ir_types.tl",
             "compiler_typecheck.tl",
             "compiler_symbols.tl",
@@ -4389,6 +4405,7 @@ fn source_path_for_case(manifest_dir: &PathBuf, name: &str) -> PathBuf {
         "compiler_symbols_smoke" => "compiler_symbols_smoke.tl",
         "compiler_typecheck_smoke" => "compiler_typecheck_smoke.tl",
         "compiler_lower_smoke" => "compiler_lower_smoke.tl",
+        "compiler_ctfe_smoke" => "compiler_ctfe_smoke.tl",
         "compiler_liveness_smoke" => "compiler_liveness_smoke.tl",
         "compiler_regalloc_smoke" => "compiler_regalloc_smoke.tl",
         "compiler_optimize_smoke" => "compiler_optimize_smoke.tl",

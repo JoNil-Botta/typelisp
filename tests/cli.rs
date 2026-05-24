@@ -346,6 +346,40 @@ fn run_accepts_backend_mode_flag_and_rejects_unimplemented_modes() {
     assert_backend_mode_rejected(&output, "avx512");
 }
 
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[test]
+fn run_forwards_child_output_and_status() {
+    let dir = fixture_dir("run-forward-output");
+    let source = dir.join("main.tl");
+    fs::write(
+        &source,
+        r#"(define (main) : i64
+  (begin
+    (print-string "hello")
+    7))
+"#,
+    )
+    .expect("write source");
+    let source_arg = source.to_str().expect("source path is utf-8");
+    let mut args = vec!["run", source_arg];
+    if cfg!(target_os = "windows") {
+        args.push("--target");
+        args.push("windows-x86_64");
+    }
+
+    let output = typelisp(&args);
+
+    assert_eq!(
+        output.status.code(),
+        Some(7),
+        "run exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), "hello");
+    assert_eq!(stderr(&output), "");
+}
+
 #[test]
 fn build_accepts_backend_mode_flag_and_rejects_unimplemented_modes() {
     let dir = fixture_dir("backend-mode-build");

@@ -18,7 +18,7 @@
 
 (defenum ResultCompilerBackend
   (OkCompilerBackend String)
-  (ErrCompilerBackend String))
+  (ErrCompilerBackend CompilerDiagnostic))
 
 (defenum CompilerBackendRuntimePlan
   (BackendRuntimePlan bool bool bool bool bool bool bool bool))
@@ -506,7 +506,10 @@
     [(IrValueUnit)
       (OkCompilerBackend (backend-cat5 "    movq $" "0" ", " reg "\n"))]
     [(IrValueF64 _)
-      (ErrCompilerBackend "backend: f64 values are not supported yet")]
+      (ErrCompilerBackend
+        (compiler-diagnostic-at-start
+          ""
+          "backend: f64 values are not supported yet"))]
     [(IrValueString text)
       (OkCompilerBackend
         (backend-cat5
@@ -941,7 +944,8 @@
                     (OkCompilerBackend (string-append head tail))]
                   [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-          [(ErrBackendReg message) (ErrCompilerBackend message)]))]))
+          [(ErrBackendReg message)
+            (ErrCompilerBackend (compiler-diagnostic-at-start "" message))]))]))
 
 (define (compiler-backend-phi-input-value
   [inputs : CompilerIrPhiInputList]
@@ -974,7 +978,8 @@
               load
               (compiler-backend-emit-store-var-with-plan assignments dst "%rax")))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-    [(ErrBackendValue message) (ErrCompilerBackend message)]))
+    [(ErrBackendValue message)
+      (ErrCompilerBackend (compiler-diagnostic-at-start "" message))]))
 
 (define (compiler-backend-emit-leading-phi-copies
   [assignments : CompilerRegAssignmentList]
@@ -1009,7 +1014,9 @@
   (match blocks
     [(IrBlockNil)
       (ErrCompilerBackend
-        (string-append "backend: unknown block " target-label))]
+        (compiler-diagnostic-at-start
+          ""
+          (string-append "backend: unknown block " target-label)))]
     [(IrBlockCons block rest)
       (match block
         [(IrBlock block-label instrs)
@@ -1327,7 +1334,8 @@
                         tail))]
                   [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
               [(ErrBackendReg _)
-                (ErrCompilerBackend "backend: too many params")]))])]))
+                (ErrCompilerBackend
+                  (compiler-diagnostic-at-start "" "backend: too many params"))]))])]))
 
 (define (compiler-backend-emit-function
   [target : CompilerBackendTarget]
@@ -1612,7 +1620,11 @@
           "    .quad "
           (compiler-backend-string-fat-label text)
           "\n"))]
-    [_ (ErrCompilerBackend "backend: unsupported global initializer")]))
+    [_
+      (ErrCompilerBackend
+        (compiler-diagnostic-at-start
+          ""
+          "backend: unsupported global initializer"))]))
 
 (define (compiler-backend-emit-global [global : CompilerIrGlobal]) : ResultCompilerBackend
   (match global
@@ -2410,14 +2422,16 @@ tl_string_concat:
                   [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)])])
         (ErrCompilerBackend
-          "backend: Windows runtime helpers not yet implemented (#648)"))]
-    [(ErrBackendRuntimePlan message) (ErrCompilerBackend message)]))
+          (compiler-diagnostic-at-start
+            ""
+            "backend: Windows runtime helpers not yet implemented (#648)")))]
+    [(ErrBackendRuntimePlan message)
+      (ErrCompilerBackend (compiler-diagnostic-at-start "" message))]))
 
 (define (compiler-backend-emit-source [src : String]) : ResultCompilerBackend
   (match (lower-compiler-source src)
     [(OkCompilerLower program) (compiler-backend-emit-program program)]
-    [(ErrCompilerLower diag)
-      (ErrCompilerBackend (compiler-diagnostic-message diag))]))
+    [(ErrCompilerLower diag) (ErrCompilerBackend diag)]))
 
 (define (compiler-backend-emit-source-for-target
   [src : String]
@@ -2425,8 +2439,7 @@ tl_string_concat:
   (match (lower-compiler-source src)
     [(OkCompilerLower program)
       (compiler-backend-emit-program-for-target program target)]
-    [(ErrCompilerLower diag)
-      (ErrCompilerBackend (compiler-diagnostic-message diag))]))
+    [(ErrCompilerLower diag) (ErrCompilerBackend diag)]))
 
 (define (compiler-backend-char-code-at [text : String] [idx : i64]) : i64
   (compiler-backend-char-code (string-ref text idx)))
@@ -3048,7 +3061,7 @@ tl_string_concat:
                               "    addq $48, %rsp\n"))))))))))))]
     [(ErrCompilerBackend message)
       (string-eq
-        message
+        (compiler-diagnostic-message message)
         "backend: Windows runtime helpers not yet implemented (#648)")]))
 
 (define (compiler-backend-target-windows-callee-save-ok?) : bool
@@ -3068,7 +3081,7 @@ tl_string_concat:
     [(OkCompilerBackend _) false]
     [(ErrCompilerBackend message)
       (string-eq
-        message
+        (compiler-diagnostic-message message)
         "backend: Windows runtime helpers not yet implemented (#648)")]))
 
 (define (compiler-backend-deterministic-ok? [src : String]) : bool
@@ -3081,7 +3094,8 @@ tl_string_concat:
 
 (define (compiler-backend-error-ok? [src : String] [want : String]) : bool
   (match (compiler-backend-emit-source src)
-    [(ErrCompilerBackend message) (string-eq message want)]
+    [(ErrCompilerBackend message)
+      (string-eq (compiler-diagnostic-message message) want)]
     [(OkCompilerBackend _) false]))
 
 (define (compiler-backend-instr-contains?

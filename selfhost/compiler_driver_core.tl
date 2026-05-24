@@ -19,9 +19,9 @@
         [(OkCompilerLower program)
           (match (compiler-backend-emit-program (optimize-program program))
             [(OkCompilerBackend asm) (OkCompilerDriver asm)]
-            [(ErrCompilerBackend message)
+            [(ErrCompilerBackend diag)
               (ErrCompilerDriver
-                (compiler-diagnostic-at-start input-path message))])]
+                (compiler-diagnostic-with-path diag input-path))])]
         [(ErrCompilerLower diag) (ErrCompilerDriver diag)])]
     [(ErrCompilerLoad diag) (ErrCompilerDriver diag)]))
 

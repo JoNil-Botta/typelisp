@@ -193,9 +193,10 @@ struct field.
 Named top-level functions and `lambda` literals can be passed as pointer-sized
 closure descriptor values. Non-capturing lambdas use static descriptors.
 Capturing lambdas snapshot supported captures into heap environments: scalars,
-function values, `String`, and dynamic arrays (the latter two snapshot their fat
-value so the environment can outlive the creating frame). Struct/enum/tuple/
-fixed-array captures and mutation of captured names are still rejected.
+function values, `String`, dynamic arrays, and tuples of scalars (the aggregate
+captures snapshot their storage onto the heap so the environment can outlive the
+creating frame). Struct/enum/fixed-array captures, tuples with non-scalar
+elements, and mutation of captured names are still rejected.
 SPMD/SIMD `foreach` is documented in [SPEC.md section 5.15](SPEC.md). The
 compiler parses and type-checks the first source form and lowers it to scalar
 reference loops; `--backend-mode avx2` supports a first contiguous map/zip

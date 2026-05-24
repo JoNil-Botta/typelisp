@@ -39,14 +39,20 @@
   (ErrCompilerTypecheck CompilerDiagnostic))
 
 ;; The typechecker receives an already-loaded program and so does not know the
+
 ;; source path; it builds diagnostics with an empty path (the CLI driver stamps
+
 ;; the real path before rendering). Synthetic/internal errors fall back to 1:1.
+
 (define (tc-diag-at-start [message : String]) : CompilerDiagnostic
   (compiler-diagnostic-at-start "" message))
 
 ;; Locate an error at the nearest available declaration body span. A top-level
+
 ;; `define` body is wrapped in `AstExprSpanned`, so its span points the
+
 ;; diagnostic at the offending declaration's expression; otherwise fall back 1:1.
+
 (define (tc-decl-diag [decl : AstDecl] [message : String]) : CompilerDiagnostic
   (match decl
     [(AstDeclDefFn _ _ _ body)
@@ -1425,10 +1431,12 @@
                       top-env
                       decls
                       (CompilerTypecheckSummary 0 0 0))])]
-              [(ErrTcEnv message) (ErrCompilerTypecheck (tc-diag-at-start message))]))]
+              [(ErrTcEnv message)
+                (ErrCompilerTypecheck (tc-diag-at-start message))]))]
         [(ErrCompilerRegistries message)
           (ErrCompilerTypecheck (tc-diag-at-start message))])]
-    [(ErrCompilerSymbols message) (ErrCompilerTypecheck (tc-diag-at-start message))]))
+    [(ErrCompilerSymbols message)
+      (ErrCompilerTypecheck (tc-diag-at-start message))]))
 
 (define (typecheck-compiler-source [src : String]) : ResultCompilerTypecheck
   (match (parse-ast-source src)
@@ -1452,7 +1460,8 @@
 
 (define (compiler-typecheck-error-ok? [src : String] [want : String]) : bool
   (match (typecheck-compiler-source src)
-    [(ErrCompilerTypecheck diag) (string-eq (compiler-diagnostic-message diag) want)]
+    [(ErrCompilerTypecheck diag)
+      (string-eq (compiler-diagnostic-message diag) want)]
     [(OkCompilerTypecheck _) false]))
 
 (define (compiler-typecheck-ok-score? [src : String] [want : i64]) : bool
@@ -1605,8 +1614,11 @@
             "symbols: duplicate enum variant Same"))))))
 
 ;; A type error whose offending expression (`missing`) is on source line 2, so
+
 ;; the diagnostic must locate it there (not at the 1:1 fallback) — proving the
+
 ;; typechecker carries the nearest declaration-body `AstExprSpanned` span (#681).
+
 (define (compiler-typecheck-located-source) : String
   "(define (main) : i64
   missing)")

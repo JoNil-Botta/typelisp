@@ -51,9 +51,13 @@
             (string-append ": " (compiler-diagnostic-message diag))))))))
 
 ;; Re-stamp a diagnostic with a known source path, preserving its line/col and
+
 ;; message. Phases that do not know the file path (e.g. the typechecker, which
+
 ;; receives an already-loaded program) build diagnostics with an empty path; the
+
 ;; CLI driver fills the real path before rendering.
+
 (define (compiler-diagnostic-with-path
   [diag : CompilerDiagnostic]
   [path : String]) : CompilerDiagnostic

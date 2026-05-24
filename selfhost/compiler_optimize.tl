@@ -4,9 +4,10 @@
 ;; Runs between lowering (`lower-compiler-program`) and backend emission
 ;; (`compiler-backend-emit-program`). It performs conservative, scalar-only
 ;; constant folding: within each basic block it tracks IR vars defined by a
-;; `Mov` of a scalar literal, and rewrites any `IrInstrBinOp`/`IrInstrUnOp`
-;; whose operands resolve to those literals into an `IrInstrMov` of the computed
-;; literal.
+;; `Mov` of a scalar literal, rewrites any `IrInstrBinOp`/`IrInstrUnOp` whose
+;; operands resolve to those literals into an `IrInstrMov` of the computed
+;; literal, and clears tracked facts when any other IR instruction redefines a
+;; variable.
 ;;
 ;; Safety:
 ;; - Integer `+`, `-`, `*`, and `neg` wrap modulo 2^N per SPEC; this optimizer is
@@ -113,12 +114,20 @@
 (defenum OptInstrResult
   (OptInstrResult OptConstEnv CompilerIrInstr))
 
+(define (opt-invalidate-def [env : OptConstEnv] [dst : i64] [instr : CompilerIrInstr]) : OptInstrResult
+  (OptInstrResult (opt-const-unbind env dst) instr))
+
 (define (opt-fold-instr [env : OptConstEnv] [instr : CompilerIrInstr]) : OptInstrResult
   (match instr
     [(IrInstrMov dst value ty)
      (if (opt-const-value? value)
          (OptInstrResult (opt-const-bind env dst value) instr)
          (OptInstrResult (opt-const-unbind env dst) instr))]
+    [(IrInstrAlloc dst ty) (opt-invalidate-def env dst instr)]
+    [(IrInstrAddrOf dst src) (opt-invalidate-def env dst instr)]
+    [(IrInstrGep dst base offset ty) (opt-invalidate-def env dst instr)]
+    [(IrInstrLoad dst src ty) (opt-invalidate-def env dst instr)]
+    [(IrInstrCast dst src from-ty to-ty) (opt-invalidate-def env dst instr)]
     [(IrInstrBinOp dst op l r ty)
      (match (opt-fold-binop op (opt-resolve env l) (opt-resolve env r))
        [(IrSomeValue folded)
@@ -129,8 +138,8 @@
        [(IrSomeValue folded)
         (OptInstrResult (opt-const-bind env dst folded) (IrInstrMov dst folded ty))]
        [(IrNoValue) (OptInstrResult (opt-const-unbind env dst) instr)])]
-    [(IrInstrCall dst name args ty) (OptInstrResult (opt-const-unbind env dst) instr)]
-    [(IrInstrPhi dst inputs ty) (OptInstrResult (opt-const-unbind env dst) instr)]
+    [(IrInstrCall dst name args ty) (opt-invalidate-def env dst instr)]
+    [(IrInstrPhi dst inputs ty) (opt-invalidate-def env dst instr)]
     [_ (OptInstrResult env instr)]))
 
 (define (opt-fold-instrs [env : OptConstEnv] [instrs : CompilerIrInstrList]) : CompilerIrInstrList
@@ -199,16 +208,27 @@
       (IrInstrCons (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
         (IrInstrNil)))))
 
+(define (opt-stale-load-test-instrs) : CompilerIrInstrList
+  (IrInstrCons (IrInstrMov 0 (IrValueI64 41) (AstTyI64))
+    (IrInstrCons (IrInstrLoad 0 (IrValueVar 9) (AstTyI64))
+      (IrInstrCons (IrInstrBinOp 1 (IrBinAdd) (IrValueVar 0) (IrValueI64 1) (AstTyI64))
+        (IrInstrNil)))))
+
 ;; Returns 42 when folding turns the one arithmetic instruction into a `Mov`
-;; literal whose value (20 + 22) is correct: before has 1 arithmetic instr,
-;; after has 0, and the sum of all Mov i64 values is 20 + 22 + 42 = 84.
+;; literal whose value (20 + 22) is correct, and a later `Load` redefining a
+;; formerly-constant var invalidates the stale fact before another arithmetic
+;; instruction reads that var.
 (define (compiler-optimize-self-test) : i64
   (let ([instrs : CompilerIrInstrList (opt-self-test-instrs)])
     (let ([optimized : CompilerIrInstrList (opt-fold-instrs (OptConstNil) instrs)])
       (if (= (opt-count-arith-instrs instrs) 1)
           (if (= (opt-count-arith-instrs optimized) 0)
               (if (= (opt-sum-mov-i64 optimized) 84)
-                  42
+                  (let ([stale-instrs : CompilerIrInstrList (opt-stale-load-test-instrs)])
+                    (let ([stale-optimized : CompilerIrInstrList (opt-fold-instrs (OptConstNil) stale-instrs)])
+                      (if (= (opt-count-arith-instrs stale-optimized) 1)
+                          42
+                          4)))
                   3)
               2)
           1))))

@@ -519,6 +519,241 @@
             [(NoneI64) (AstTyVar name)])])]
     [_ ty]))
 
+(define (tc-source-type-policy-message [name : String]) : String
+  (string-append
+    "typecheck: unknown type "
+    (string-append
+      name
+      "; TypeLisp has no source-level type parameters; use comptime-generated concrete declarations instead (#893/#913/#483)")))
+
+(define (tc-source-type-list-policy-ok [ctx : TcContext] [types : AstTypeList]) : ResultTcUnit
+  (match types
+    [(AstTypeNil) OkTcUnit]
+    [(AstTypeCons head tail)
+      (match (tc-source-type-policy-ok ctx head)
+        [(OkTcUnit) (tc-source-type-list-policy-ok ctx tail)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]))
+
+(define (tc-source-type-policy-ok [ctx : TcContext] [ty : AstType]) : ResultTcUnit
+  (match (tc-resolve-type ctx ty)
+    [(AstTyFunc args ret)
+      (match (tc-source-type-list-policy-ok ctx args)
+        [(OkTcUnit) (tc-source-type-policy-ok ctx ret)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstTyTuple elems) (tc-source-type-list-policy-ok ctx elems)]
+    [(AstTyArray elem _) (tc-source-type-policy-ok ctx elem)]
+    [(AstTyDynArray elem) (tc-source-type-policy-ok ctx elem)]
+    [(AstTyRegion _ inner) (tc-source-type-policy-ok ctx inner)]
+    [(AstTyVar name) (ErrTcUnit (tc-source-type-policy-message name))]
+    [_ OkTcUnit]))
+
+(define (tc-source-maybe-type-policy-ok
+  [ctx : TcContext]
+  [maybe-ty : AstMaybeType]) : ResultTcUnit
+  (match maybe-ty
+    [(AstNoType) OkTcUnit]
+    [(AstSomeType ty) (tc-source-type-policy-ok ctx ty)]))
+
+(define (tc-source-param-list-policy-ok
+  [ctx : TcContext]
+  [params : AstParamList]) : ResultTcUnit
+  (match params
+    [(AstParamNil) OkTcUnit]
+    [(AstParamCons param rest)
+      (match param
+        [(AstParam _ ty)
+          (match (tc-source-type-policy-ok ctx ty)
+            [(OkTcUnit) (tc-source-param-list-policy-ok ctx rest)]
+            [(ErrTcUnit message) (ErrTcUnit message)])])]))
+
+(define (tc-source-field-list-policy-ok
+  [ctx : TcContext]
+  [fields : AstFieldDefList]) : ResultTcUnit
+  (match fields
+    [(AstFieldDefNil) OkTcUnit]
+    [(AstFieldDefCons field rest)
+      (match field
+        [(AstFieldDef _ ty)
+          (match (tc-source-type-policy-ok ctx ty)
+            [(OkTcUnit) (tc-source-field-list-policy-ok ctx rest)]
+            [(ErrTcUnit message) (ErrTcUnit message)])])]))
+
+(define (tc-source-variant-list-policy-ok
+  [ctx : TcContext]
+  [variants : AstVariantDefList]) : ResultTcUnit
+  (match variants
+    [(AstVariantDefNil) OkTcUnit]
+    [(AstVariantDefCons variant rest)
+      (match variant
+        [(AstVariantDef _ fields)
+          (match (tc-source-type-list-policy-ok ctx fields)
+            [(OkTcUnit) (tc-source-variant-list-policy-ok ctx rest)]
+            [(ErrTcUnit message) (ErrTcUnit message)])])]))
+
+(define (tc-source-pattern-list-policy-ok
+  [ctx : TcContext]
+  [patterns : AstPatternList]) : ResultTcUnit
+  (match patterns
+    [(AstPatternNil) OkTcUnit]
+    [(AstPatternCons pattern rest)
+      (match (tc-source-pattern-policy-ok ctx pattern)
+        [(OkTcUnit) (tc-source-pattern-list-policy-ok ctx rest)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]))
+
+(define (tc-source-pattern-policy-ok [ctx : TcContext] [pattern : AstPattern]) : ResultTcUnit
+  (match pattern
+    [(AstPatVar _ maybe-ty) (tc-source-maybe-type-policy-ok ctx maybe-ty)]
+    [(AstPatTuple patterns) (tc-source-pattern-list-policy-ok ctx patterns)]
+    [(AstPatVariant _ patterns) (tc-source-pattern-list-policy-ok ctx patterns)]
+    [_ OkTcUnit]))
+
+(define (tc-source-match-arm-list-policy-ok
+  [ctx : TcContext]
+  [arms : AstMatchArmList]) : ResultTcUnit
+  (match arms
+    [(AstMatchArmNil) OkTcUnit]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm pattern body)
+          (match (tc-source-pattern-policy-ok ctx pattern)
+            [(OkTcUnit)
+              (match (tc-source-expr-policy-ok ctx body)
+                [(OkTcUnit) (tc-source-match-arm-list-policy-ok ctx rest)]
+                [(ErrTcUnit message) (ErrTcUnit message)])]
+            [(ErrTcUnit message) (ErrTcUnit message)])])]))
+
+(define (tc-source-let-binding-list-policy-ok
+  [ctx : TcContext]
+  [bindings : AstLetBindingList]) : ResultTcUnit
+  (match bindings
+    [(AstLetBindingNil) OkTcUnit]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding _ maybe-ty init)
+          (match (tc-source-maybe-type-policy-ok ctx maybe-ty)
+            [(OkTcUnit)
+              (match (tc-source-expr-policy-ok ctx init)
+                [(OkTcUnit) (tc-source-let-binding-list-policy-ok ctx rest)]
+                [(ErrTcUnit message) (ErrTcUnit message)])]
+            [(ErrTcUnit message) (ErrTcUnit message)])])]))
+
+(define (tc-source-expr-list-policy-ok [ctx : TcContext] [exprs : AstExprList]) : ResultTcUnit
+  (match exprs
+    [(AstExprNil) OkTcUnit]
+    [(AstExprCons expr rest)
+      (match (tc-source-expr-policy-ok ctx expr)
+        [(OkTcUnit) (tc-source-expr-list-policy-ok ctx rest)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]))
+
+(define (tc-source-expr-pair-policy-ok
+  [ctx : TcContext]
+  [left : AstExpr]
+  [right : AstExpr]) : ResultTcUnit
+  (match (tc-source-expr-policy-ok ctx left)
+    [(OkTcUnit) (tc-source-expr-policy-ok ctx right)]
+    [(ErrTcUnit message) (ErrTcUnit message)]))
+
+(define (tc-source-expr-triple-policy-ok
+  [ctx : TcContext]
+  [first : AstExpr]
+  [second : AstExpr]
+  [third : AstExpr]) : ResultTcUnit
+  (match (tc-source-expr-pair-policy-ok ctx first second)
+    [(OkTcUnit) (tc-source-expr-policy-ok ctx third)]
+    [(ErrTcUnit message) (ErrTcUnit message)]))
+
+(define (tc-source-expr-policy-ok [ctx : TcContext] [expr : AstExpr]) : ResultTcUnit
+  (match expr
+    [(AstExprSpanned inner _) (tc-source-expr-policy-ok ctx inner)]
+    [(AstExprBinary _ left right)
+      (tc-source-expr-pair-policy-ok ctx left right)]
+    [(AstExprUnary _ inner) (tc-source-expr-policy-ok ctx inner)]
+    [(AstExprCall func args)
+      (match (tc-source-expr-policy-ok ctx func)
+        [(OkTcUnit) (tc-source-expr-list-policy-ok ctx args)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprIf cond then-branch else-branch)
+      (tc-source-expr-triple-policy-ok ctx cond then-branch else-branch)]
+    [(AstExprLet bindings body)
+      (match (tc-source-let-binding-list-policy-ok ctx bindings)
+        [(OkTcUnit) (tc-source-expr-policy-ok ctx body)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprLambda params maybe-ret body)
+      (match (tc-source-param-list-policy-ok ctx params)
+        [(OkTcUnit)
+          (match (tc-source-maybe-type-policy-ok ctx maybe-ret)
+            [(OkTcUnit) (tc-source-expr-policy-ok ctx body)]
+            [(ErrTcUnit message) (ErrTcUnit message)])]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprTuple exprs) (tc-source-expr-list-policy-ok ctx exprs)]
+    [(AstExprTupleRef tuple _) (tc-source-expr-policy-ok ctx tuple)]
+    [(AstExprArray exprs) (tc-source-expr-list-policy-ok ctx exprs)]
+    [(AstExprMakeArray elem-ty len)
+      (match (tc-source-type-policy-ok ctx elem-ty)
+        [(OkTcUnit) (tc-source-expr-policy-ok ctx len)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprArrayRef array index)
+      (tc-source-expr-pair-policy-ok ctx array index)]
+    [(AstExprArraySet array index value)
+      (tc-source-expr-triple-policy-ok ctx array index value)]
+    [(AstExprStringRef str index) (tc-source-expr-pair-policy-ok ctx str index)]
+    [(AstExprWhile cond body) (tc-source-expr-pair-policy-ok ctx cond body)]
+    [(AstExprBegin exprs) (tc-source-expr-list-policy-ok ctx exprs)]
+    [(AstExprSet _ value) (tc-source-expr-policy-ok ctx value)]
+    [(AstExprAnn inner ty)
+      (match (tc-source-expr-policy-ok ctx inner)
+        [(OkTcUnit) (tc-source-type-policy-ok ctx ty)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprCast inner ty)
+      (match (tc-source-expr-policy-ok ctx inner)
+        [(OkTcUnit) (tc-source-type-policy-ok ctx ty)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprMatch scrutinee arms)
+      (match (tc-source-expr-policy-ok ctx scrutinee)
+        [(OkTcUnit) (tc-source-match-arm-list-policy-ok ctx arms)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprForeach _ index-ty start end body)
+      (match (tc-source-type-policy-ok ctx index-ty)
+        [(OkTcUnit) (tc-source-expr-triple-policy-ok ctx start end body)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprStructGet receiver _) (tc-source-expr-policy-ok ctx receiver)]
+    [(AstExprWithRegion _ body) (tc-source-expr-list-policy-ok ctx body)]
+    [(AstExprComptime inner) (tc-source-expr-policy-ok ctx inner)]
+    [_ OkTcUnit]))
+
+(define (tc-source-decl-policy-ok [ctx : TcContext] [decl : AstDecl]) : ResultTcUnit
+  (match decl
+    [(AstDeclDef _ maybe-ty expr)
+      (match (tc-source-maybe-type-policy-ok ctx maybe-ty)
+        [(OkTcUnit) (tc-source-expr-policy-ok ctx expr)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstDeclDefFn _ params ret body)
+      (match (tc-source-param-list-policy-ok ctx params)
+        [(OkTcUnit)
+          (match (tc-source-type-policy-ok ctx ret)
+            [(OkTcUnit) (tc-source-expr-policy-ok ctx body)]
+            [(ErrTcUnit message) (ErrTcUnit message)])]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstDeclExtern _ ty) (tc-source-type-policy-ok ctx ty)]
+    [(AstDeclDefEnum _ variants)
+      (tc-source-variant-list-policy-ok ctx variants)]
+    [(AstDeclDefStruct _ fields) (tc-source-field-list-policy-ok ctx fields)]
+    [(AstDeclImport _) OkTcUnit]))
+
+(define (tc-source-decl-list-policy-ok [ctx : TcContext] [decls : AstDeclList]) : ResultTcUnit
+  (match decls
+    [(AstDeclNil) OkTcUnit]
+    [(AstDeclCons decl rest)
+      (match (tc-source-decl-policy-ok ctx decl)
+        [(OkTcUnit) (tc-source-decl-list-policy-ok ctx rest)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]))
+
+(define (tc-program-source-types-policy-ok
+  [ctx : TcContext]
+  [program : AstProgram]) : ResultTcUnit
+  (match program
+    [(AstProgram decls) (tc-source-decl-list-policy-ok ctx decls)]))
+
 (define (tc-type-list-eq [a : AstTypeList] [b : AstTypeList]) : bool
   (match a
     [(AstTypeNil)
@@ -2276,17 +2511,21 @@
       (match (build-compiler-registries program)
         [(OkCompilerRegistries registries)
           (let ([ctx : TcContext (TcContext program symbols registries)])
-            (match (tc-build-top-env ctx program)
-              [(OkTcEnv top-env)
-                (match program
-                  [(AstProgram decls)
-                    (tc-check-decls-with-paths
-                      ctx
-                      top-env
-                      decls
-                      paths
-                      (CompilerTypecheckSummary 0 0 0))])]
-              [(ErrTcEnv message)
+            (match (tc-program-source-types-policy-ok ctx program)
+              [(OkTcUnit)
+                (match (tc-build-top-env ctx program)
+                  [(OkTcEnv top-env)
+                    (match program
+                      [(AstProgram decls)
+                        (tc-check-decls-with-paths
+                          ctx
+                          top-env
+                          decls
+                          paths
+                          (CompilerTypecheckSummary 0 0 0))])]
+                  [(ErrTcEnv message)
+                    (ErrCompilerTypecheck (tc-diag-at-start message))])]
+              [(ErrTcUnit message)
                 (ErrCompilerTypecheck (tc-diag-at-start message))]))]
         [(ErrCompilerRegistries message)
           (ErrCompilerTypecheck (tc-diag-at-start message))])]
@@ -2303,17 +2542,23 @@
         (match (build-compiler-registries program)
           [(OkCompilerRegistries registries)
             (let ([ctx : TcContext (TcContext program symbols registries)])
-              (match (tc-build-top-env ctx program)
-                [(OkTcEnv top-env)
-                  (match (tc-check-decls
-                    ctx
-                    top-env
-                    decls
-                    (CompilerTypecheckSummary 0 0 0))
-                    [(OkCompilerTypecheck _) (tc-expr ctx top-env expr)]
-                    [(ErrCompilerTypecheck diag)
-                      (ErrTcType (compiler-diagnostic-message diag))])]
-                [(ErrTcEnv message) (ErrTcType message)]))]
+              (match (tc-program-source-types-policy-ok ctx program)
+                [(OkTcUnit)
+                  (match (tc-source-expr-policy-ok ctx expr)
+                    [(OkTcUnit)
+                      (match (tc-build-top-env ctx program)
+                        [(OkTcEnv top-env)
+                          (match (tc-check-decls
+                            ctx
+                            top-env
+                            decls
+                            (CompilerTypecheckSummary 0 0 0))
+                            [(OkCompilerTypecheck _) (tc-expr ctx top-env expr)]
+                            [(ErrCompilerTypecheck diag)
+                              (ErrTcType (compiler-diagnostic-message diag))])]
+                        [(ErrTcEnv message) (ErrTcType message)])]
+                    [(ErrTcUnit message) (ErrTcType message)])]
+                [(ErrTcUnit message) (ErrTcType message)]))]
           [(ErrCompilerRegistries message) (ErrTcType message)])]
       [(ErrCompilerSymbols message) (ErrTcType message)])))
 
@@ -2364,6 +2609,9 @@
 (define (compiler-typecheck-branch-mismatch-source) : String
   "(define (main [flag : bool]) : i64
   (if flag 1 false))")
+
+(define (compiler-typecheck-type-parameter-source) : String
+  "(define (id [x : T]) : T x)")
 
 (define (compiler-typecheck-aggregate-source) : String
   "(define (id-lambda [n : i64]) : i64
@@ -2426,6 +2674,11 @@
 (define (compiler-typecheck-lambda-ret-source) : String
   "(define (main) : (-> i64 i64)
   (lambda ([x : i64]) : i64 true))")
+
+(define (compiler-typecheck-abstraction-policy-tests-ok?) : bool
+  (compiler-typecheck-error-ok?
+    (compiler-typecheck-type-parameter-source)
+    (tc-source-type-policy-message "T")))
 
 (define (compiler-typecheck-aggregate-tests-ok?) : bool
   (and
@@ -2663,8 +2916,10 @@
                 (and
                   (compiler-typecheck-nominal-tests-ok?)
                   (and
-                    (compiler-typecheck-region-tests-ok?)
-                    (compiler-typecheck-located-ok?))))))))
+                    (compiler-typecheck-abstraction-policy-tests-ok?)
+                    (and
+                      (compiler-typecheck-region-tests-ok?)
+                      (compiler-typecheck-located-ok?)))))))))
         42
         (begin
           (panic "typecheck: smoke score mismatch")

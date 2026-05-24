@@ -94,6 +94,16 @@ Name              ; a defenum / defstruct nominal type
 
 `f32` is in the type system but rejected by backend validation today.
 
+### Abstraction policy
+
+TypeLisp does not plan source-level generics, traits, interfaces, or `impl`
+blocks. Library abstraction should come from Zig-style comptime generation:
+compile-time code inspects type values and emits concrete structs, enums,
+functions, and implementation bundles. Until that path lands, write explicit
+monomorphic declarations such as `MaybeI64` or domain-specific `Result*` enums.
+
+The comptime implementation path is tracked by #893, #913, and #483.
+
 ### Top-level forms
 
 `define` (variable / function), `defenum`, `defstruct`, `extern`, `import`.

@@ -50,6 +50,135 @@ fn typelisp_with_path(args: &[&str], path: &std::path::Path) -> Output {
         .expect("run typelisp CLI")
 }
 
+fn lsp_frame(payload: &str) -> String {
+    format!("Content-Length: {}\r\n\r\n{}", payload.len(), payload)
+}
+
+fn lsp_messages(output: &Output) -> Vec<String> {
+    let mut messages = Vec::new();
+    let bytes = &output.stdout;
+    let mut offset = 0;
+    while offset < bytes.len() {
+        let header_end = find_bytes(&bytes[offset..], b"\r\n\r\n")
+            .map(|idx| offset + idx)
+            .expect("LSP output frame has header terminator");
+        let header = std::str::from_utf8(&bytes[offset..header_end]).expect("header is utf-8");
+        let len = header
+            .lines()
+            .find_map(|line| line.strip_prefix("Content-Length:"))
+            .expect("LSP output has Content-Length")
+            .trim()
+            .parse::<usize>()
+            .expect("Content-Length is numeric");
+        let body_start = header_end + 4;
+        let body_end = body_start + len;
+        assert!(
+            body_end <= bytes.len(),
+            "LSP frame body exceeds output length"
+        );
+        messages.push(String::from_utf8(bytes[body_start..body_end].to_vec()).expect("body utf-8"));
+        offset = body_end;
+    }
+    messages
+}
+
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+fn json_string(value: &str) -> String {
+    let mut out = String::from("\"");
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            ch if ch.is_control() => out.push_str(&format!("\\u{:04x}", ch as u32)),
+            ch => out.push(ch),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn file_uri(path: &std::path::Path) -> String {
+    let path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().expect("current dir").join(path)
+    };
+    let text = path.to_string_lossy().replace('\\', "/");
+    if cfg!(windows) {
+        format!("file:///{}", percent_encode_path(&text))
+    } else if text.starts_with('/') {
+        format!("file://{}", percent_encode_path(&text))
+    } else {
+        format!("file:///{}", percent_encode_path(&text))
+    }
+}
+
+fn percent_encode_path(value: &str) -> String {
+    let mut out = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' | b':' => {
+                out.push(byte as char)
+            }
+            _ => out.push_str(&format!("%{:02X}", byte)),
+        }
+    }
+    out
+}
+
+fn lsp_initialize(id: i64) -> String {
+    format!(
+        r#"{{"jsonrpc":"2.0","id":{},"method":"initialize","params":{{"capabilities":{{}}}}}}"#,
+        id
+    )
+}
+
+fn lsp_shutdown(id: i64) -> String {
+    format!(
+        r#"{{"jsonrpc":"2.0","id":{},"method":"shutdown","params":null}}"#,
+        id
+    )
+}
+
+fn lsp_did_open(uri: &str, text: &str) -> String {
+    format!(
+        r#"{{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{{"textDocument":{{"uri":{},"languageId":"typelisp","version":1,"text":{}}}}}}}"#,
+        json_string(uri),
+        json_string(text)
+    )
+}
+
+fn lsp_did_change(uri: &str, text: &str) -> String {
+    format!(
+        r#"{{"jsonrpc":"2.0","method":"textDocument/didChange","params":{{"textDocument":{{"uri":{},"version":2}},"contentChanges":[{{"text":{}}}]}}}}"#,
+        json_string(uri),
+        json_string(text)
+    )
+}
+
+fn lsp_did_close(uri: &str) -> String {
+    format!(
+        r#"{{"jsonrpc":"2.0","method":"textDocument/didClose","params":{{"textDocument":{{"uri":{}}}}}}}"#,
+        json_string(uri)
+    )
+}
+
+fn run_lsp(messages: &[String]) -> Output {
+    let input = messages
+        .iter()
+        .map(|message| lsp_frame(message))
+        .collect::<String>();
+    typelisp_with_stdin(&["lsp"], &input)
+}
+
 fn write_main_source(dir: &std::path::Path) -> PathBuf {
     let source = dir.join("main.tl");
     fs::write(&source, "(define (main) : i64 42)\n").expect("write source");
@@ -91,6 +220,134 @@ fn repl_is_listed_in_usage() {
 
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     assert!(stderr(&output).contains("typelisp repl"));
+}
+
+#[test]
+fn lsp_is_listed_in_usage() {
+    let output = typelisp(&["--help"]);
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert!(stderr(&output).contains("typelisp lsp"));
+}
+
+#[test]
+fn lsp_initialize_shutdown_exit_over_stdio() {
+    let output = run_lsp(&[
+        lsp_initialize(1),
+        r#"{"jsonrpc":"2.0","method":"initialized","params":{}}"#.to_string(),
+        lsp_shutdown(2),
+        r#"{"jsonrpc":"2.0","method":"exit"}"#.to_string(),
+    ]);
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    let messages = lsp_messages(&output);
+    assert_eq!(messages.len(), 2, "messages: {messages:#?}");
+    assert!(messages[0].contains(r#""id":1"#), "{}", messages[0]);
+    assert!(
+        messages[0].contains(r#""textDocumentSync":{"openClose":true,"change":1}"#),
+        "{}",
+        messages[0]
+    );
+    assert!(
+        messages[1].contains(r#""id":2,"result":null"#),
+        "{}",
+        messages[1]
+    );
+}
+
+#[test]
+fn lsp_publishes_parse_and_type_diagnostics() {
+    let dir = fixture_dir("lsp-diagnostics");
+    let parse_uri = file_uri(&dir.join("parse_error.tl"));
+    let type_uri = file_uri(&dir.join("type_error.tl"));
+    let output = run_lsp(&[
+        lsp_initialize(1),
+        lsp_did_open(&parse_uri, "(define (main) : i64\n"),
+        lsp_did_open(&type_uri, "(define (main) : i64 true)\n"),
+        lsp_shutdown(2),
+        r#"{"jsonrpc":"2.0","method":"exit"}"#.to_string(),
+    ]);
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    let messages = lsp_messages(&output);
+    let parse_diag = messages
+        .iter()
+        .find(|message| message.contains(&parse_uri) && message.contains(r#""code":"E0100""#))
+        .expect("missing parse diagnostic");
+    assert!(
+        parse_diag.contains("unexpected token"),
+        "parse diagnostic: {parse_diag}"
+    );
+    let type_diag = messages
+        .iter()
+        .find(|message| message.contains(&type_uri) && message.contains(r#""code":"E0200""#))
+        .expect("missing type diagnostic");
+    assert!(
+        type_diag.contains(r#""range":{"start":{"line":0,"character":"#)
+            || type_diag.contains(r#""range":{"start":{"line":0,"character":0}"#),
+        "type diagnostic range should be zero-based: {type_diag}"
+    );
+    assert!(
+        type_diag.contains("expected i64"),
+        "type diagnostic: {type_diag}"
+    );
+}
+
+#[test]
+fn lsp_clears_diagnostics_after_clean_change_and_close() {
+    let dir = fixture_dir("lsp-clear");
+    let uri = file_uri(&dir.join("main.tl"));
+    let output = run_lsp(&[
+        lsp_initialize(1),
+        lsp_did_open(&uri, "(define (main) : i64 true)\n"),
+        lsp_did_change(&uri, "(define (main) : i64 0)\n"),
+        lsp_did_close(&uri),
+        lsp_shutdown(2),
+        r#"{"jsonrpc":"2.0","method":"exit"}"#.to_string(),
+    ]);
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    let messages = lsp_messages(&output);
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains(&uri) && message.contains(r#""code":"E0200""#)),
+        "messages: {messages:#?}"
+    );
+    let clears = messages
+        .iter()
+        .filter(|message| message.contains(&uri) && message.contains(r#""diagnostics":[]"#))
+        .count();
+    assert_eq!(clears, 2, "messages: {messages:#?}");
+}
+
+#[test]
+fn lsp_checks_imports_relative_to_open_document() {
+    let dir = fixture_dir("lsp-imports");
+    fs::write(dir.join("lib.tl"), "(define imported : i64 41)\n").expect("write imported module");
+    let uri = file_uri(&dir.join("main.tl"));
+    let output = run_lsp(&[
+        lsp_initialize(1),
+        lsp_did_open(
+            &uri,
+            "(import \"lib.tl\")\n(define (main) : i64 imported)\n",
+        ),
+        lsp_shutdown(2),
+        r#"{"jsonrpc":"2.0","method":"exit"}"#.to_string(),
+    ]);
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    let messages = lsp_messages(&output);
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains(&uri) && message.contains(r#""diagnostics":[]"#)),
+        "messages: {messages:#?}"
+    );
 }
 
 #[test]

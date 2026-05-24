@@ -186,6 +186,12 @@
       (if (case-i64 9)
         unit
         (set! ok false))
+      (if (case-i64 16)
+        unit
+        (set! ok false))
+      (if (case-i64 17)
+        unit
+        (set! ok false))
       (if (case-i32 0)
         unit
         (set! ok false))
@@ -198,6 +204,12 @@
       (if (case-i32 9)
         unit
         (set! ok false))
+      (if (case-i32 16)
+        unit
+        (set! ok false))
+      (if (case-i32 17)
+        unit
+        (set! ok false))
       (if (case-f64 0)
         unit
         (set! ok false))
@@ -208,6 +220,12 @@
         unit
         (set! ok false))
       (if (case-f64 9)
+        unit
+        (set! ok false))
+      (if (case-f64 16)
+        unit
+        (set! ok false))
+      (if (case-f64 17)
         unit
         (set! ok false))
       (if (case-end-bound-evaluated-once)

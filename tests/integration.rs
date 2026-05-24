@@ -1688,6 +1688,106 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
         "compiler_driver string output stderr"
     );
 
+    let array_input_path = work_dir.join("array_input.tl");
+    let array_asm_path = work_dir.join("array_generated.s");
+    let array_obj_path = work_dir.join("array_generated.o");
+    let array_bin_path = work_dir.join("array_generated");
+    fs::write(
+        &array_input_path,
+        r#"(define (main) : i64
+  (let ([a : (Array i64) (make-array i64 2)])
+    (begin
+      (array-set! a 0 40)
+      (array-set! a 1 2)
+      (+ (array-ref a 0) (array-ref a 1)))))"#,
+    )
+    .expect("write compiler_driver dynamic array fixture");
+
+    let run = Command::new(&driver_bin)
+        .arg(&array_input_path)
+        .arg(&array_asm_path)
+        .output()
+        .expect("run compiler_driver dynamic array fixture");
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "compiler_driver dynamic array fixture exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "",
+        "compiler_driver dynamic array fixture stdout"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stderr),
+        "",
+        "compiler_driver dynamic array fixture stderr"
+    );
+
+    let array_asm =
+        fs::read_to_string(&array_asm_path).expect("read compiler_driver dynamic array assembly");
+    for snippet in [
+        "    call tl_alloc\n",
+        "tl_oob_abort:\n",
+        "make_array_len_ok",
+        "bounds_ok",
+    ] {
+        assert!(
+            array_asm.contains(snippet),
+            "compiler_driver dynamic array assembly missing {:?}:\n{}",
+            snippet,
+            array_asm
+        );
+    }
+
+    let status = Command::new("as")
+        .arg(&array_asm_path)
+        .arg("-o")
+        .arg(&array_obj_path)
+        .status()
+        .expect("run assembler on compiler_driver dynamic array output");
+    assert!(
+        status.success(),
+        "assembling compiler_driver dynamic array output failed"
+    );
+
+    let status = Command::new("ld")
+        .arg(&array_obj_path)
+        .arg("-o")
+        .arg(&array_bin_path)
+        .arg("-dynamic-linker")
+        .arg("/lib64/ld-linux-x86-64.so.2")
+        .arg("-lc")
+        .status()
+        .expect("run linker on compiler_driver dynamic array output");
+    assert!(
+        status.success(),
+        "linking compiler_driver dynamic array output failed"
+    );
+
+    let output = Command::new(&array_bin_path)
+        .output()
+        .expect("run compiler_driver dynamic array output binary");
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "compiler_driver dynamic array output program exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "",
+        "compiler_driver dynamic array output stdout"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "",
+        "compiler_driver dynamic array output stderr"
+    );
+
     let oob_input_path = work_dir.join("string_oob_input.tl");
     let oob_asm_path = work_dir.join("string_oob_generated.s");
     let oob_obj_path = work_dir.join("string_oob_generated.o");

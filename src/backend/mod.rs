@@ -6922,7 +6922,13 @@ impl X86_64Backend {
 
     fn store_integer_immediate(&mut self, value: i128, offset: i32, ty: &Type) {
         match ty.size() {
-            8 => self.emit(&format!("    movq ${}, {}(%rbp)", value, offset)),
+            8 if (i32::MIN as i128..=i32::MAX as i128).contains(&value) => {
+                self.emit(&format!("    movq ${}, {}(%rbp)", value, offset));
+            }
+            8 => {
+                self.emit(&format!("    movabsq ${}, %rax", value));
+                self.emit(&format!("    movq %rax, {}(%rbp)", offset));
+            }
             4 => self.emit(&format!("    movl ${}, {}(%rbp)", value, offset)),
             2 => self.emit(&format!("    movw ${}, {}(%rbp)", value, offset)),
             1 => self.emit(&format!("    movb ${}, {}(%rbp)", value, offset)),
@@ -6932,7 +6938,13 @@ impl X86_64Backend {
 
     fn store_integer_immediate_to_addr(&mut self, value: i128, addr: &str, ty: &Type) {
         match ty.size() {
-            8 => self.emit(&format!("    movq ${}, {}", value, addr)),
+            8 if (i32::MIN as i128..=i32::MAX as i128).contains(&value) => {
+                self.emit(&format!("    movq ${}, {}", value, addr));
+            }
+            8 => {
+                self.emit(&format!("    movabsq ${}, %rax", value));
+                self.emit(&format!("    movq %rax, {}", addr));
+            }
             4 => self.emit(&format!("    movl ${}, {}", value, addr)),
             2 => self.emit(&format!("    movw ${}, {}", value, addr)),
             1 => self.emit(&format!("    movb ${}, {}", value, addr)),
@@ -11015,6 +11027,48 @@ mod tests {
         assert!(
             !asm.contains("movq $7, -1(%rbp)"),
             "i8 immediate mov must not use 64-bit store; asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_compile_large_i64_immediate_mov_materializes_through_register() {
+        let program = Program {
+            functions: vec![Function {
+                name: "f".into(),
+                params: vec![],
+                ret: Type::I64,
+                locals: vec![(0, Type::I64)],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![
+                        Instruction::Mov {
+                            dst: 0,
+                            src: Value::ConstI64(i64::MAX),
+                            ty: Type::I64,
+                        },
+                        Instruction::Return(Some(Value::Var(0))),
+                    ],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![],
+        };
+        let asm = generate_assembly(&program).expect("large immediate mov should compile");
+        assert!(
+            asm.contains("movabsq $9223372036854775807, %rax"),
+            "large i64 immediate must be materialized through a register; asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("movq %rax, -8(%rbp)"),
+            "large i64 immediate register value must be stored to the stack; asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("movq $9223372036854775807, -8(%rbp)"),
+            "large i64 immediate must not be encoded directly to memory; asm:\n{}",
             asm
         );
     }

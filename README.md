@@ -151,6 +151,12 @@ The self-hosted Markdown generator can render one source file through
 `typelisp run selfhost/doc.tl -- input.tl output.md`; import-graph traversal and
 Rust CLI plumbing are separate follow-up work.
 
+The self-hosted source formatter can reformat one file through
+`typelisp run selfhost/format.tl -- input.tl output.tl`; it renders at the
+default 80-column width, preserves comments and delimiter shape, and is
+idempotent on its own output. A `typelisp format` CLI subcommand and a
+repository-wide formatting check are separate follow-up work.
+
 ```lisp
 ;;;; ```typelisp
 ;;;; (define (main) : i64 42)

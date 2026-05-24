@@ -106,6 +106,17 @@ fn type_lisp_programs_compile_link_and_run() {
             ],
         },
         Case {
+            name: "format_driver_integration",
+            exit_code: 42,
+            stdout: "",
+            deps: &[
+                "format_rules.tl",
+                "format_cst.tl",
+                "format_tokens.tl",
+                "format_doc.tl",
+            ],
+        },
+        Case {
             name: "factorial",
             exit_code: 120,
             stdout: "",
@@ -618,6 +629,17 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         },
         Case {
             name: "format_rules_integration",
+            exit_code: 42,
+            stdout: "",
+            deps: &[
+                "format_rules.tl",
+                "format_cst.tl",
+                "format_tokens.tl",
+                "format_doc.tl",
+            ],
+        },
+        Case {
+            name: "format_driver_integration",
             exit_code: 42,
             stdout: "",
             deps: &[

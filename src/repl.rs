@@ -1,3 +1,5 @@
+use crate::lexer::{Lexer, LexerError, Token};
+use crate::parser::parse_repl_item;
 use std::io::{self, BufRead, IsTerminal, Write};
 
 const BANNER: &str = "TypeLisp REPL. Type .help for commands.\n";
@@ -12,6 +14,83 @@ TypeLisp REPL commands:
 pub enum ExitReason {
     Eof,
     ExitCommand,
+}
+
+#[derive(Debug, Clone)]
+enum ReplInputStatus {
+    Empty,
+    Incomplete,
+    Complete,
+    Error(LexerError),
+}
+
+fn lexer_error_can_continue(err: &LexerError) -> bool {
+    matches!(
+        err.msg.as_str(),
+        "unterminated string literal" | "unterminated string escape"
+    )
+}
+
+fn input_status(input: &str) -> ReplInputStatus {
+    let mut lexer = Lexer::new(input);
+    let mut delimiters = Vec::new();
+    let mut saw_token = false;
+
+    loop {
+        let token = match lexer.next_token() {
+            Ok(token) => token,
+            Err(err) if lexer_error_can_continue(&err) => return ReplInputStatus::Incomplete,
+            Err(err) => return ReplInputStatus::Error(err),
+        };
+
+        match token {
+            Token::Eof => break,
+            Token::LParen => {
+                saw_token = true;
+                delimiters.push(Token::LParen);
+            }
+            Token::LBracket => {
+                saw_token = true;
+                delimiters.push(Token::LBracket);
+            }
+            Token::RParen => {
+                saw_token = true;
+                if delimiters.pop() != Some(Token::LParen) {
+                    return ReplInputStatus::Complete;
+                }
+            }
+            Token::RBracket => {
+                saw_token = true;
+                if delimiters.pop() != Some(Token::LBracket) {
+                    return ReplInputStatus::Complete;
+                }
+            }
+            _ => saw_token = true,
+        }
+    }
+
+    if !saw_token {
+        ReplInputStatus::Empty
+    } else if delimiters.is_empty() {
+        ReplInputStatus::Complete
+    } else {
+        ReplInputStatus::Incomplete
+    }
+}
+
+fn handle_complete_input<E: Write>(input: &str, stderr: &mut E) -> io::Result<()> {
+    match parse_repl_item(input) {
+        Ok(_) => {
+            writeln!(
+                stderr,
+                "REPL evaluation is not implemented yet. Type .help for commands."
+            )?;
+        }
+        Err(err) => {
+            writeln!(stderr, "REPL parse error: {err}")?;
+        }
+    }
+    Ok(())
 }
 
 pub fn run_stdio() -> io::Result<ExitReason> {
@@ -39,6 +118,7 @@ where
     }
 
     let mut line = String::new();
+    let mut pending = String::new();
     loop {
         if interactive {
             stdout.write_all(PROMPT.as_bytes())?;
@@ -48,26 +128,46 @@ where
         line.clear();
         let bytes = reader.read_line(&mut line)?;
         if bytes == 0 {
+            if !pending.trim().is_empty()
+                && matches!(input_status(&pending), ReplInputStatus::Incomplete)
+            {
+                writeln!(stderr, "Error: incomplete REPL input at EOF")?;
+            }
             return Ok(ExitReason::Eof);
         }
 
-        let input = line.trim();
-        if input.is_empty() {
-            continue;
+        if pending.is_empty() {
+            let input = line.trim();
+            if input.is_empty() {
+                continue;
+            }
+
+            match input {
+                ".exit" => return Ok(ExitReason::ExitCommand),
+                ".help" => {
+                    stdout.write_all(HELP.as_bytes())?;
+                    continue;
+                }
+                command if command.starts_with('.') => {
+                    writeln!(stderr, "Unknown REPL command: {command}")?;
+                    writeln!(stderr, "Type .help for commands.")?;
+                    continue;
+                }
+                _ => {}
+            }
         }
 
-        match input {
-            ".exit" => return Ok(ExitReason::ExitCommand),
-            ".help" => stdout.write_all(HELP.as_bytes())?,
-            command if command.starts_with('.') => {
-                writeln!(stderr, "Unknown REPL command: {command}")?;
-                writeln!(stderr, "Type .help for commands.")?;
+        pending.push_str(&line);
+        match input_status(&pending) {
+            ReplInputStatus::Empty => pending.clear(),
+            ReplInputStatus::Incomplete => {}
+            ReplInputStatus::Complete => {
+                handle_complete_input(&pending, &mut stderr)?;
+                pending.clear();
             }
-            _ => {
-                writeln!(
-                    stderr,
-                    "REPL evaluation is not implemented yet. Type .help for commands."
-                )?;
+            ReplInputStatus::Error(err) => {
+                writeln!(stderr, "REPL input error: {err}")?;
+                pending.clear();
             }
         }
     }

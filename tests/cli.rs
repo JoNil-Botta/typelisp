@@ -480,6 +480,117 @@ fn repl_unknown_dot_command_reports_and_continues() {
 }
 
 #[test]
+fn repl_accumulates_multiline_declaration_input() {
+    let output = typelisp_with_stdin(&["repl"], "(define answer : i64\n  42)\n.exit\n");
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stdout(&output), "");
+    let stderr = stderr(&output);
+    assert_eq!(
+        stderr
+            .matches("REPL evaluation is not implemented yet")
+            .count(),
+        1,
+        "stderr:\n{}",
+        stderr
+    );
+}
+
+#[test]
+fn repl_accumulates_multiline_expression_input() {
+    let output = typelisp_with_stdin(&["repl"], "(+ 1\n  2)\n.exit\n");
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stdout(&output), "");
+    let stderr = stderr(&output);
+    assert_eq!(
+        stderr
+            .matches("REPL evaluation is not implemented yet")
+            .count(),
+        1,
+        "stderr:\n{}",
+        stderr
+    );
+}
+
+#[test]
+fn repl_delimiters_ignore_strings_chars_and_comments() {
+    let input = r#"(begin
+  (print-string "not closing )")
+  #\)'
+  ; comment with ( and )
+  1)
+.exit
+"#;
+    let output = typelisp_with_stdin(&["repl"], input);
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stdout(&output), "");
+    let stderr = stderr(&output);
+    assert_eq!(
+        stderr
+            .matches("REPL evaluation is not implemented yet")
+            .count(),
+        1,
+        "stderr:\n{}",
+        stderr
+    );
+    assert!(
+        !stderr.contains("incomplete REPL input"),
+        "stderr:\n{}",
+        stderr
+    );
+}
+
+#[test]
+fn repl_eof_during_incomplete_input_reports_diagnostic() {
+    let output = typelisp_with_stdin(&["repl"], "(+ 1\n");
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stdout(&output), "");
+    let stderr = stderr(&output);
+    assert!(
+        stderr.contains("Error: incomplete REPL input at EOF"),
+        "stderr:\n{}",
+        stderr
+    );
+    assert!(
+        !stderr.contains("REPL evaluation is not implemented yet"),
+        "stderr:\n{}",
+        stderr
+    );
+}
+
+#[test]
+fn repl_reports_errors_and_recovers_for_next_input() {
+    let input = r#"#\spcae'
+(+ 1)
+.help
+.exit
+"#;
+    let output = typelisp_with_stdin(&["repl"], input);
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert!(stdout(&output).contains("TypeLisp REPL commands:"));
+    let stderr = stderr(&output);
+    assert!(
+        stderr.contains("REPL input error: lexer error"),
+        "stderr:\n{}",
+        stderr
+    );
+    assert!(
+        stderr.contains("unknown named character literal"),
+        "stderr:\n{}",
+        stderr
+    );
+    assert!(
+        stderr.contains("REPL parse error: parse error"),
+        "stderr:\n{}",
+        stderr
+    );
+}
+
+#[test]
 fn debug_tokenize_matches_top_level_alias() {
     let dir = fixture_dir("debug-tokenize");
     let source = dir.join("main.tl");

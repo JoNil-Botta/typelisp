@@ -1312,11 +1312,11 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
     assert_eq!(asm_again, asm, "compiler_driver output changed across runs");
     for snippet in [
         ".text\n.globl _start\n",
-        "shared:\n",
-        "helper:\n",
+        "_tl_shared:\n",
+        "_tl_helper:\n",
         "main:\n",
-        "    call helper\n",
-        "shared(%rip)",
+        "    call _tl_helper\n",
+        "_tl_shared(%rip)",
         "_start:\n    call main\n",
     ] {
         assert!(

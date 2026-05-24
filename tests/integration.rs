@@ -214,6 +214,12 @@ fn type_lisp_programs_compile_link_and_run() {
             deps: &[],
         },
         Case {
+            name: "string_match",
+            exit_code: 42,
+            stdout: "",
+            deps: &[],
+        },
+        Case {
             name: "substring",
             exit_code: 33,
             stdout: "",
@@ -617,6 +623,12 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             name: "string_eq",
             exit_code: 0,
             stdout: "true\nfalse\nfalse\ntrue\n",
+            deps: &[],
+        },
+        Case {
+            name: "string_match",
+            exit_code: 42,
+            stdout: "",
             deps: &[],
         },
         Case {

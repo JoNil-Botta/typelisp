@@ -486,6 +486,7 @@ See §3.6.
 
 - Enum scrutinees support variant patterns such as `Red` and `(Some value)`.
 - Scalar scrutinees support literal patterns plus `_`.
+- String literal patterns compare string contents, not pointer identity.
 - Bindings in enum patterns introduce variables for payload fields.
 - A bare identifier at the top level of an enum `match` arm is resolved as a
   nullary variant name. It is not a fresh catch-all binding; use `_` for that.

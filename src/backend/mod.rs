@@ -7189,6 +7189,23 @@ mod tests {
     }
 
     #[test]
+    fn test_compile_string_match_emits_runtime_and_calls_it() {
+        let asm = compile_ok(
+            r#"
+            (define (classify [s : String]) : i64
+              (match s ["if" 10] [_ 0]))
+            (define (main) : i64 (classify "if"))
+            "#,
+        );
+
+        assert!(asm.contains("    .globl tl_string_eq"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_string_eq:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call tl_string_eq"), "asm:\n{}", asm);
+        assert!(!asm.contains("_tl_tl_string_eq"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
     fn test_compile_no_string_eq_means_no_runtime() {
         // A program that never compares strings must not emit the helper.
         let asm = compile_ok(r#"(define (main) : i64 (string-length "hi"))"#);

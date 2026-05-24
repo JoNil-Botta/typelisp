@@ -203,6 +203,12 @@ fn type_lisp_programs_compile_link_and_run() {
             deps: &[],
         },
         Case {
+            name: "with_region_builtin_alloc",
+            exit_code: 2,
+            stdout: "",
+            deps: &[],
+        },
+        Case {
             name: "lambda_capture_struct_enum",
             exit_code: 42,
             stdout: "",

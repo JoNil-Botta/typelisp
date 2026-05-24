@@ -98,7 +98,9 @@ impl ProgramLowerer {
     /// Resolve a parsed type so any `Type::Var` naming a declared enum or struct
     /// becomes the nominal `Type::Enum`/`Type::Struct`. Chains both registries.
     fn resolve_type(&self, ty: &Type) -> Type {
-        self.structs.resolve_type(&self.enums.resolve_type(ty))
+        self.structs
+            .resolve_type(&self.enums.resolve_type(ty))
+            .without_regions()
     }
 
     fn fn_context(&self) -> FnLowererContext<'_> {
@@ -682,7 +684,9 @@ impl FnLowerer {
     /// Resolve a parsed type so any `Type::Var` naming a declared enum or struct
     /// becomes the nominal `Type::Enum`/`Type::Struct`. Chains both registries.
     fn resolve_type(&self, ty: &Type) -> Type {
-        self.structs.resolve_type(&self.enums.resolve_type(ty))
+        self.structs
+            .resolve_type(&self.enums.resolve_type(ty))
+            .without_regions()
     }
 
     fn fn_context(&self) -> FnLowererContext<'_> {
@@ -957,6 +961,7 @@ impl FnLowerer {
             Type::Unit
             | Type::Never
             | Type::Array(_, _)
+            | Type::Region(_, _)
             | Type::Vector(_, _)
             | Type::Mask(_)
             | Type::Var(_) => Value::ConstUnit,

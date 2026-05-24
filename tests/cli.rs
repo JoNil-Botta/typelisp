@@ -1276,6 +1276,32 @@ fn check_rejects_unsupported_type_kind_before_backend() {
 }
 
 #[test]
+fn check_rejects_region_allocating_builtin_escape() {
+    let dir = fixture_dir("region-builtin-escape");
+    let source = dir.join("main.tl");
+    fs::write(
+        &source,
+        r#"(define (main) : String
+  (with-region r (int->string 41)))
+"#,
+    )
+    .expect("write source");
+    let source_arg = source.to_str().expect("source path is utf-8");
+
+    let output = typelisp(&["check", source_arg]);
+
+    assert!(!output.status.success());
+    assert_eq!(stdout(&output), "");
+    let stderr = stderr(&output);
+    assert!(
+        stderr.contains("region-tagged value") && stderr.contains("cannot escape with-region"),
+        "stderr:\n{}",
+        stderr
+    );
+    assert!(stderr.contains("error[E0200]"), "stderr:\n{}", stderr);
+}
+
+#[test]
 fn check_reports_explicit_unsupported_float_cast_diagnostic() {
     let dir = fixture_dir("unsupported-float-cast");
     let source = dir.join("main.tl");

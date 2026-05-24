@@ -464,6 +464,9 @@ impl EnumRegistry {
             Type::Tuple(elems) => Type::Tuple(elems.iter().map(|e| self.resolve_type(e)).collect()),
             Type::Array(elem, n) => Type::Array(Box::new(self.resolve_type(elem)), *n),
             Type::DynArray(elem) => Type::DynArray(Box::new(self.resolve_type(elem))),
+            Type::Region(region, elem) => {
+                Type::Region(region.clone(), Box::new(self.resolve_type(elem)))
+            }
             other => other.clone(),
         }
     }
@@ -545,6 +548,9 @@ impl StructRegistry {
             Type::Tuple(elems) => Type::Tuple(elems.iter().map(|e| self.resolve_type(e)).collect()),
             Type::Array(elem, n) => Type::Array(Box::new(self.resolve_type(elem)), *n),
             Type::DynArray(elem) => Type::DynArray(Box::new(self.resolve_type(elem))),
+            Type::Region(region, elem) => {
+                Type::Region(region.clone(), Box::new(self.resolve_type(elem)))
+            }
             other => other.clone(),
         }
     }

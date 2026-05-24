@@ -230,6 +230,10 @@ fn compiler_optimize_tl_compiles_to_assembly() {
         "_tl_opt_cse_instrs:",
         "_tl_opt_expr_invalidate_var:",
         "_tl_compiler_optimize_cse_self_test:",
+        // Copy propagation pass (#545).
+        "_tl_opt_copy_instrs:",
+        "_tl_opt_copy_invalidate_var:",
+        "_tl_compiler_optimize_copy_self_test:",
     ] {
         assert_symbol(&asm, sym, "compiler_optimize");
     }

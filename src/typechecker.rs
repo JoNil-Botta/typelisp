@@ -31,6 +31,26 @@ impl fmt::Display for TypeError {
     }
 }
 
+/// Whether `op` supports a reduction result of type `ty` in the first slice.
+/// On rejection, returns the human-readable description of the accepted result
+/// types for a focused diagnostic. See SPEC.md §5.16.
+fn reduce_op_result_support(op: ReduceOp, ty: &Type) -> Result<(), &'static str> {
+    let ok = match op {
+        ReduceOp::Sum => matches!(ty, Type::I32 | Type::I64 | Type::F64),
+        ReduceOp::Min | ReduceOp::Max => matches!(ty, Type::I32 | Type::I64),
+        ReduceOp::All | ReduceOp::Any => matches!(ty, Type::Bool),
+    };
+    if ok {
+        Ok(())
+    } else {
+        Err(match op {
+            ReduceOp::Sum => "i32, i64, or f64",
+            ReduceOp::Min | ReduceOp::Max => "i32 or i64",
+            ReduceOp::All | ReduceOp::Any => "bool",
+        })
+    }
+}
+
 pub struct TypeChecker {
     env: Vec<HashMap<String, Type>>,
     func_ret: Option<Type>,
@@ -512,6 +532,35 @@ impl TypeChecker {
                 let mut scoped = local_bindings.clone();
                 scoped.insert(index.clone());
                 Self::collect_lambda_captures(body, outer_locals, &scoped, captures, captured_sets);
+            }
+            Expr::SpmdReduce {
+                index,
+                start,
+                end,
+                init,
+                value,
+                ..
+            } => {
+                // `start`, `end`, and `init` are uniform expressions evaluated
+                // outside the varying index scope; only `value` sees the index.
+                for uniform in [start, end, init] {
+                    Self::collect_lambda_captures(
+                        uniform,
+                        outer_locals,
+                        local_bindings,
+                        captures,
+                        captured_sets,
+                    );
+                }
+                let mut scoped = local_bindings.clone();
+                scoped.insert(index.clone());
+                Self::collect_lambda_captures(
+                    value,
+                    outer_locals,
+                    &scoped,
+                    captures,
+                    captured_sets,
+                );
             }
             Expr::Spanned { expr, .. } => {
                 Self::collect_lambda_captures(
@@ -1488,7 +1537,193 @@ impl TypeChecker {
                 }
                 Ok(Type::Unit)
             }
+            Expr::SpmdReduce {
+                op,
+                index,
+                index_ty,
+                start,
+                end,
+                init,
+                value,
+            } => {
+                let index_ty = self.resolve_type_checked(index_ty, span)?;
+                if !index_ty.is_integer() {
+                    return Err(TypeError::at(
+                        format!(
+                            "spmd-reduce index type must be an integer type, got {}",
+                            index_ty
+                        ),
+                        span,
+                    ));
+                }
+                // `start`, `end`, and `init` are uniform expressions evaluated
+                // once before any logical iteration. They are checked with the
+                // varying index out of scope, so referring to the index here is
+                // an unbound-variable error. Uniform/varying inference itself is
+                // tracked alongside foreach in #344.
+                let start_ty = self.check_expr(start)?;
+                if !start_ty.is_integer() {
+                    return Err(TypeError::at(
+                        format!(
+                            "spmd-reduce start expression must be an integer type, got {}",
+                            start_ty
+                        ),
+                        start.span(),
+                    ));
+                }
+                let end_ty = self.check_expr(end)?;
+                if !end_ty.is_integer() {
+                    return Err(TypeError::at(
+                        format!(
+                            "spmd-reduce end expression must be an integer type, got {}",
+                            end_ty
+                        ),
+                        end.span(),
+                    ));
+                }
+                // `init` is the accumulator seed, the empty-range result, and
+                // fixes the reduction's result type. It must be a type the chosen
+                // operator supports in the first slice.
+                let init_ty = self.check_expr(init)?;
+                if let Err(expected) = reduce_op_result_support(*op, &init_ty) {
+                    return Err(TypeError::at(
+                        format!(
+                            "spmd-reduce {} does not support result type {}; \
+                             supported types are {}",
+                            op.name(),
+                            init_ty,
+                            expected
+                        ),
+                        init.span(),
+                    ));
+                }
+                // The per-lane `value` expression must be pure and free of
+                // unsupported cross-lane / varying-control-flow forms before we
+                // type-check it (SPEC.md §5.16).
+                Self::check_spmd_reduce_value(value)?;
+                self.push_scope();
+                self.bind(index.clone(), index_ty);
+                let value_ty = self.check_expr(value);
+                self.pop_scope();
+                let value_ty = value_ty?;
+                if !self.type_compatible(&init_ty, &value_ty) {
+                    return Err(TypeError::at(
+                        format!(
+                            "spmd-reduce init and value must have the same type; \
+                             init is {}, value is {}",
+                            init_ty, value_ty
+                        ),
+                        value.span(),
+                    ));
+                }
+                Ok(init_ty)
+            }
             Expr::Spanned { expr, .. } => self.check_expr(expr),
+        }
+    }
+
+    /// Validate the `value` expression of a `spmd-reduce`. The first reduction
+    /// slice (SPEC.md §5.16) intentionally accepts a narrow, clearly-pure surface
+    /// and rejects everything else with a focused diagnostic rather than guessing
+    /// at varying/uniform semantics that are not yet implemented:
+    ///
+    /// - the varying index, uniform variables, and literals,
+    /// - arithmetic/comparison/boolean operators over those,
+    /// - `ann`/`cast` wrappers,
+    /// - dynamic-array reads whose index is not itself another array read
+    ///   (direct, non-gather indexing only), and
+    /// - local `let` bindings whose initializers obey the same rules.
+    ///
+    /// Writes (`set!`, `array-set!`), function calls (side effects and
+    /// varying-argument calls), nested `foreach`/`spmd-reduce`, varying control
+    /// flow (`if`/`while`/`match`), sequencing, and aggregate constructors are
+    /// rejected.
+    fn check_spmd_reduce_value(expr: &Expr) -> Result<(), TypeError> {
+        Self::check_spmd_reduce_value_at(expr, false)
+    }
+
+    fn check_spmd_reduce_value_at(expr: &Expr, in_index: bool) -> Result<(), TypeError> {
+        let span = expr.span();
+        match expr.unspan() {
+            Expr::Literal(_) | Expr::Var(_) => Ok(()),
+            Expr::Binary { lhs, rhs, .. } => {
+                Self::check_spmd_reduce_value_at(lhs, in_index)?;
+                Self::check_spmd_reduce_value_at(rhs, in_index)
+            }
+            Expr::Unary { expr, .. } | Expr::Ann { expr, .. } | Expr::Cast { expr, .. } => {
+                Self::check_spmd_reduce_value_at(expr, in_index)
+            }
+            Expr::Let { bindings, body } => {
+                for (_, _, init) in bindings {
+                    Self::check_spmd_reduce_value_at(init, in_index)?;
+                }
+                Self::check_spmd_reduce_value_at(body, in_index)
+            }
+            Expr::ArrayRef { expr, index } => {
+                if in_index {
+                    return Err(TypeError::at(
+                        "indirect array indexing is not allowed inside a spmd-reduce \
+                         value expression; gather/scatter is deferred in the first \
+                         slice (SPEC.md §5.16)"
+                            .to_string(),
+                        span,
+                    ));
+                }
+                Self::check_spmd_reduce_value_at(expr, in_index)?;
+                // The index sub-expression is checked in index context so a
+                // nested read (a gather) is rejected.
+                Self::check_spmd_reduce_value_at(index, true)
+            }
+            Expr::Spanned { expr, .. } => Self::check_spmd_reduce_value_at(expr, in_index),
+            Expr::Set(..) => Err(TypeError::at(
+                "`set!` is not allowed inside a spmd-reduce value expression; \
+                 reductions must use the explicit accumulator, not outer mutation \
+                 (SPEC.md §5.16)"
+                    .to_string(),
+                span,
+            )),
+            Expr::ArraySet { .. } => Err(TypeError::at(
+                "`array-set!` is not allowed inside a spmd-reduce value expression; \
+                 the value expression must be free of writes and other side effects \
+                 (SPEC.md §5.16)"
+                    .to_string(),
+                span,
+            )),
+            Expr::Call { .. } => Err(TypeError::at(
+                "function calls are not allowed inside a spmd-reduce value \
+                 expression; side-effecting builtins and user calls with varying \
+                 arguments are deferred in the first slice (SPEC.md §5.16)"
+                    .to_string(),
+                span,
+            )),
+            Expr::Foreach { .. } => Err(TypeError::at(
+                "a nested foreach is not allowed inside a spmd-reduce value \
+                 expression (SPEC.md §5.16)"
+                    .to_string(),
+                span,
+            )),
+            Expr::SpmdReduce { .. } => Err(TypeError::at(
+                "a nested spmd-reduce is not allowed inside a spmd-reduce value \
+                 expression (SPEC.md §5.16)"
+                    .to_string(),
+                span,
+            )),
+            Expr::If { .. } | Expr::While { .. } | Expr::Match { .. } => Err(TypeError::at(
+                "varying control flow is not allowed inside a spmd-reduce value \
+                 expression; the first slice has no varying if/while/match \
+                 (SPEC.md §5.16)"
+                    .to_string(),
+                span,
+            )),
+            _ => Err(TypeError::at(
+                "this expression is not allowed inside a spmd-reduce value \
+                 expression; the first slice allows only the varying index, \
+                 uniform variables, literals, arithmetic/comparison/boolean \
+                 operators, dynamic-array reads, and local let bindings \
+                 (SPEC.md §5.16)"
+                    .to_string(),
+                span,
+            )),
         }
     }
 
@@ -4617,5 +4852,277 @@ mod tests {
                      (foreach ([i : i64 0 n]) \
                        (array-set! xs i (+ (array-ref xs i) 1))))";
         assert!(check(src).is_ok());
+    }
+
+    // ------------------------------------------------------------------
+    // SPMD reduction — Issue #498
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_typecheck_spmd_reduce_sum_i64_well_typed() {
+        // SPEC.md §5.16 positive example.
+        let src = "(define (f [xs : (Array i64)] [n : i64]) : i64 \
+                     (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))";
+        assert!(check(src).is_ok(), "{:?}", check(src));
+    }
+
+    #[test]
+    fn test_typecheck_spmd_reduce_any_bool_well_typed() {
+        // SPEC.md §5.16 positive example.
+        let src = "(define (f [xs : (Array i64)] [n : i64]) : bool \
+                     (spmd-reduce any ([i : i64 0 n]) false (= (array-ref xs i) 0)))";
+        assert!(check(src).is_ok(), "{:?}", check(src));
+    }
+
+    #[test]
+    fn test_typecheck_spmd_reduce_max_seeded_well_typed() {
+        // SPEC.md §5.16 positive example.
+        let src = "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 \
+                     (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))";
+        assert!(check(src).is_ok(), "{:?}", check(src));
+    }
+
+    #[test]
+    fn test_typecheck_spmd_reduce_sum_f64_well_typed() {
+        let src = "(define (f [xs : (Array f64)] [n : i64]) : f64 \
+                     (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref xs i)))";
+        assert!(check(src).is_ok(), "{:?}", check(src));
+    }
+
+    #[test]
+    fn test_typecheck_spmd_reduce_sum_i32_well_typed() {
+        // i32 is in the `sum` matrix; the seed param fixes the i32 result type.
+        let src = "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 \
+                     (spmd-reduce sum ([i : i64 0 n]) seed (array-ref xs i)))";
+        assert!(check(src).is_ok(), "{:?}", check(src));
+    }
+
+    #[test]
+    fn test_typecheck_spmd_reduce_all_bool_well_typed() {
+        let src = "(define (f [xs : (Array i64)] [n : i64]) : bool \
+                     (spmd-reduce all ([i : i64 0 n]) true (> (array-ref xs i) 0)))";
+        assert!(check(src).is_ok(), "{:?}", check(src));
+    }
+
+    #[test]
+    fn test_typecheck_spmd_reduce_min_i32_well_typed() {
+        let src = "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 \
+                     (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))";
+        assert!(check(src).is_ok(), "{:?}", check(src));
+    }
+
+    #[test]
+    fn test_typecheck_spmd_reduce_value_can_use_let_bindings() {
+        let src = "(define (f [xs : (Array i64)] [n : i64]) : i64 \
+                     (spmd-reduce sum ([i : i64 0 n]) 0 \
+                       (let ([v : i64 (array-ref xs i)]) (* v v))))";
+        assert!(check(src).is_ok(), "{:?}", check(src));
+    }
+
+    #[test]
+    fn test_typecheck_spmd_reduce_result_type_is_init_type() {
+        // The reduction's result type is the seed/value type, so using a sum-i64
+        // reduction where a bool is expected is a return-type mismatch.
+        let src = "(define (f [xs : (Array i64)] [n : i64]) : bool \
+                     (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))";
+        let err = check(src).unwrap_err();
+        assert!(err.msg.contains("return type mismatch"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_spmd_reduce_index_type_must_be_integer() {
+        let src = "(define (f [n : i64]) : i64 (spmd-reduce sum ([i : bool 0 n]) 0 0))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg
+                .contains("spmd-reduce index type must be an integer"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_spmd_reduce_start_must_be_integer() {
+        let src = "(define (f [n : i64]) : i64 (spmd-reduce sum ([i : i64 true n]) 0 0))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg
+                .contains("spmd-reduce start expression must be an integer"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_spmd_reduce_end_must_be_integer() {
+        let src = "(define (f [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 true]) 0 0))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg
+                .contains("spmd-reduce end expression must be an integer"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_spmd_reduce_rejects_unsupported_result_type() {
+        // SPEC.md §5.16 negative example: `min` does not support f64. The
+        // diagnostic points at the seed expression that fixes the result type.
+        let src = "(define (f [xs : (Array f64)] [n : i64] [seed : f64]) : f64 \
+                     (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg
+                .contains("spmd-reduce min does not support result type f64"),
+            "got: {}",
+            err.msg
+        );
+        assert!(
+            err.msg.contains("supported types are i32 or i64"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_spmd_reduce_all_requires_bool() {
+        let src = "(define (f [xs : (Array i64)] [n : i64]) : i64 \
+                     (spmd-reduce all ([i : i64 0 n]) 0 (array-ref xs i)))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg
+                .contains("spmd-reduce all does not support result type i64"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_spmd_reduce_init_value_type_mismatch() {
+        // Seed is i64 but the value expression is a bool.
+        let src = "(define (f [xs : (Array i64)] [n : i64]) : i64 \
+                     (spmd-reduce sum ([i : i64 0 n]) 0 (= (array-ref xs i) 0)))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg
+                .contains("spmd-reduce init and value must have the same type"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_spmd_reduce_rejects_set_in_value() {
+        // `set!` in the value expression is rejected, and the diagnostic points
+        // at the `set!` form.
+        // A real newline (not a `\` line continuation) so the span's line/column
+        // are meaningful to assert.
+        let src = "(define (f [xs : (Array i64)] [n : i64]) : i64\n  \
+(let ([acc : i64 0]) (spmd-reduce sum ([i : i64 0 n]) 0 (set! acc (array-ref xs i)))))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg
+                .contains("`set!` is not allowed inside a spmd-reduce"),
+            "got: {}",
+            err.msg
+        );
+        // The span covers the offending `(set! ...)` form on the second line.
+        assert_eq!(err.span.start_line, 2);
+        let col = src.lines().nth(1).unwrap().find("(set!").unwrap() + 1;
+        assert_eq!(err.span.start_col, col);
+    }
+
+    #[test]
+    fn test_typecheck_spmd_reduce_rejects_array_set_in_value() {
+        let src = "(define (f [xs : (Array i64)] [n : i64]) : i64 \
+                     (spmd-reduce sum ([i : i64 0 n]) 0 \
+                       (array-set! xs i 0)))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg
+                .contains("`array-set!` is not allowed inside a spmd-reduce"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_spmd_reduce_rejects_function_call_in_value() {
+        // SPEC.md §5.16: user calls (with varying args) and side-effecting calls
+        // are rejected in the first slice.
+        let src = "(define (g [x : i64]) : i64 (+ x 1)) \
+                   (define (f [xs : (Array i64)] [n : i64]) : i64 \
+                     (spmd-reduce sum ([i : i64 0 n]) 0 (g (array-ref xs i))))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg
+                .contains("function calls are not allowed inside a spmd-reduce"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_spmd_reduce_rejects_nested_foreach_in_value() {
+        let src = "(define (f [xs : (Array i64)] [n : i64]) : i64 \
+                     (spmd-reduce sum ([i : i64 0 n]) 0 \
+                       (foreach ([j : i64 0 n]) unit)))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg
+                .contains("a nested foreach is not allowed inside a spmd-reduce"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_spmd_reduce_rejects_nested_spmd_reduce_in_value() {
+        let src = "(define (f [xs : (Array i64)] [n : i64]) : i64 \
+                     (spmd-reduce sum ([i : i64 0 n]) 0 \
+                       (spmd-reduce sum ([j : i64 0 n]) 0 (array-ref xs j))))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg
+                .contains("a nested spmd-reduce is not allowed inside a spmd-reduce"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_spmd_reduce_rejects_varying_if_in_value() {
+        let src = "(define (f [xs : (Array i64)] [n : i64]) : i64 \
+                     (spmd-reduce sum ([i : i64 0 n]) 0 \
+                       (if (> i 0) (array-ref xs i) 0)))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg.contains("varying control flow is not allowed"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_spmd_reduce_rejects_gather_in_value() {
+        // Indirect indexing `(array-ref xs (array-ref idx i))` is a gather.
+        let src = "(define (f [xs : (Array i64)] [idx : (Array i64)] [n : i64]) : i64 \
+                     (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs (array-ref idx i))))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg.contains("indirect array indexing is not allowed"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_spmd_reduce_index_not_in_scope_in_bounds() {
+        // The varying index is in scope only inside `value`, never in the
+        // uniform bounds, so using it in `end` is an unbound-variable error.
+        let src = "(define (f [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 i]) 0 0))";
+        let err = check(src).unwrap_err();
+        assert!(err.msg.contains("unbound variable: i"), "got: {}", err.msg);
     }
 }

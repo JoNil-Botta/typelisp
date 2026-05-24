@@ -63,6 +63,7 @@ fn describe_expr(expr: &Expr) -> &'static str {
         Expr::Cast { .. } => "cast",
         Expr::Match { .. } => "match",
         Expr::Foreach { .. } => "foreach",
+        Expr::SpmdReduce { .. } => "spmd-reduce",
         Expr::StructGet { .. } => "struct-get",
     }
 }

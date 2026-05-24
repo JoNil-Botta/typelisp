@@ -761,6 +761,47 @@ impl<'a> Parser<'a> {
                     end_span,
                 )
             }
+            Token::Ident(s) if s == "spmd-reduce" => {
+                // (spmd-reduce op ([i : i64 start end]) init value)
+                self.advance()?;
+                // `op` is a fixed operator symbol, not an expression. Reject
+                // anything outside the first supported set with a focused
+                // diagnostic pointing at the operator token (SPEC.md §5.16).
+                let op_span = self.span();
+                let op_name = self.expect_ident()?;
+                let op = ReduceOp::from_symbol(&op_name).ok_or_else(|| ParseError {
+                    msg: format!(
+                        "unsupported spmd-reduce operator `{}`; expected one of \
+                         sum, min, max, all, any",
+                        op_name
+                    ),
+                    span: op_span,
+                })?;
+                self.expect(Token::LParen)?;
+                self.expect(Token::LBracket)?;
+                let index = self.expect_ident()?;
+                self.expect(Token::Colon)?;
+                let index_ty = self.parse_type()?;
+                let start_expr = Box::new(self.parse_expr()?);
+                let end_expr = Box::new(self.parse_expr()?);
+                self.expect(Token::RBracket)?;
+                self.expect(Token::RParen)?;
+                let init = Box::new(self.parse_expr()?);
+                let value = Box::new(self.parse_expr()?);
+                let end_span = self.expect_rparen_span()?;
+                (
+                    Expr::SpmdReduce {
+                        op,
+                        index,
+                        index_ty,
+                        start: start_expr,
+                        end: end_expr,
+                        init,
+                        value,
+                    },
+                    end_span,
+                )
+            }
             _ => {
                 // Unary operator, binary operator, or function call. Unary is
                 // tried first: `not`/`neg`/`bit-not` are distinct identifiers
@@ -1702,5 +1743,103 @@ mod tests {
     fn test_parse_foreach_malformed_missing_body_is_error() {
         // Missing body after range spec.
         assert!(parse("(define (f) : unit (foreach ([i : i64 0 1])))").is_err());
+    }
+
+    // ------------------------------------------------------------------
+    // SPMD reduction — Issue #498
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_spmd_reduce_basic() {
+        let prog = parse(
+            "(define (f [xs : (Array i64)] [n : i64]) : i64 \
+               (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))",
+        )
+        .unwrap();
+        let body = match &prog.decls[0] {
+            Decl::DefFn { body, .. } => body.unspan(),
+            other => panic!("expected DefFn, got {:?}", other),
+        };
+        match body {
+            Expr::SpmdReduce {
+                op,
+                index,
+                index_ty,
+                start,
+                end,
+                init,
+                value,
+            } => {
+                assert_eq!(*op, ReduceOp::Sum);
+                assert_eq!(index, "i");
+                assert_eq!(*index_ty, Type::I64);
+                assert_eq!(start.unspan(), &Expr::Literal(Literal::Int(0)));
+                assert_eq!(end.unspan(), &Expr::Var("n".into()));
+                assert_eq!(init.unspan(), &Expr::Literal(Literal::Int(0)));
+                assert!(
+                    matches!(value.unspan(), Expr::ArrayRef { .. }),
+                    "got {:?}",
+                    value
+                );
+            }
+            other => panic!("expected SpmdReduce, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_spmd_reduce_all_operators() {
+        for (sym, expected) in [
+            ("sum", ReduceOp::Sum),
+            ("min", ReduceOp::Min),
+            ("max", ReduceOp::Max),
+            ("all", ReduceOp::All),
+            ("any", ReduceOp::Any),
+        ] {
+            let src = format!(
+                "(define (f [n : i64]) : i64 \
+                   (spmd-reduce {} ([i : i64 0 n]) 0 i))",
+                sym
+            );
+            let prog = parse(&src).unwrap();
+            let body = match &prog.decls[0] {
+                Decl::DefFn { body, .. } => body.unspan(),
+                other => panic!("expected DefFn, got {:?}", other),
+            };
+            match body {
+                Expr::SpmdReduce { op, .. } => assert_eq!(*op, expected, "operator {}", sym),
+                other => panic!("expected SpmdReduce for {}, got {:?}", sym, other),
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_spmd_reduce_unknown_operator_is_error() {
+        // `shuffle` is not a reduction operator: rejected at parse time with the
+        // diagnostic pointing at the operator token (SPEC.md §5.16).
+        let src = "(define (f [n : i64]) : i64 (spmd-reduce shuffle ([i : i64 0 n]) 0 i))";
+        let err = parse(src).unwrap_err();
+        assert!(
+            err.msg
+                .contains("unsupported spmd-reduce operator `shuffle`"),
+            "got: {}",
+            err.msg
+        );
+        let col = src.find("shuffle").unwrap() + 1;
+        assert_eq!(err.span.start_line, 1);
+        assert_eq!(err.span.start_col, col);
+    }
+
+    #[test]
+    fn test_parse_spmd_reduce_missing_value_is_error() {
+        // Only the seed is present; the per-lane value expression is missing.
+        let src = "(define (f [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0))";
+        assert!(parse(src).is_err());
+    }
+
+    #[test]
+    fn test_parse_spmd_reduce_malformed_clause_is_error() {
+        // Missing the inner `([ ... ])` range clause shape.
+        let src = "(define (f [n : i64]) : i64 (spmd-reduce sum i 0 n 0 i))";
+        assert!(parse(src).is_err());
     }
 }

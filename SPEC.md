@@ -606,17 +606,17 @@ SPMD reductions:
 
 The first reduction surface is an explicit expression form:
 
-```lisp test=ignore name=spmd-reduce-sum-i64 reason="future SPMD reduction example"
+```lisp test=check name=spmd-reduce-sum-i64
 (define (sum-i64 [xs : (Array i64)] [n : i64]) : i64
   (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))
 ```
 
-```lisp test=ignore name=spmd-reduce-any-bool reason="future SPMD reduction example"
+```lisp test=check name=spmd-reduce-any-bool
 (define (contains-zero [xs : (Array i64)] [n : i64]) : bool
   (spmd-reduce any ([i : i64 0 n]) false (= (array-ref xs i) 0)))
 ```
 
-```lisp test=ignore name=spmd-reduce-max-seeded reason="future SPMD reduction example"
+```lisp test=check name=spmd-reduce-max-seeded
 (define (max-i64-seeded [xs : (Array i64)] [n : i64] [seed : i64]) : i64
   (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))
 ```
@@ -710,12 +710,12 @@ Negative examples for later parser/typechecker tests:
       sum)))
 ```
 
-```lisp test=ignore name=spmd-reject-f64-min reason="future SPMD negative example"
+```lisp test=ignore name=spmd-reject-f64-min reason="rejected by the type checker; the spec example harness only asserts positive check/compile/run"
 (define (min-f64 [xs : (Array f64)] [n : i64] [seed : f64]) : f64
   (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))
 ```
 
-```lisp test=ignore name=spmd-reject-shuffle reason="future SPMD negative example"
+```lisp test=ignore name=spmd-reject-shuffle reason="rejected by the parser; the spec example harness only asserts positive check/compile/run"
 (define (bad-cross-lane [xs : (Array i64)] [n : i64]) : i64
   (spmd-reduce shuffle ([i : i64 0 n]) 0 (array-ref xs i)))
 ```

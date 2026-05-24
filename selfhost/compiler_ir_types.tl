@@ -1,9 +1,8 @@
 ;; compiler_ir_types.tl - Self-hosted compiler IR model (#446).
 ;;
-;; This is the first selfhost IR shape for the real compiler pipeline. The
-;; lowerer initially summarizes programs instead of emitting assembly, but the
-;; data model is intentionally close to the Rust IR: functions contain blocks,
-;; blocks contain typed instructions, and instructions use explicit vars/values.
+;; This is the first selfhost IR shape for the real compiler pipeline. The data
+;; model is intentionally close to the Rust IR: functions contain blocks, blocks
+;; contain typed instructions, and instructions use explicit vars/values.
 
 (import "compiler_ast_types.tl")
 
@@ -50,6 +49,13 @@
   (IrValueNil)
   (IrValueCons CompilerIrValue CompilerIrValueList))
 
+(defenum CompilerIrPhiInput
+  (IrPhiInput CompilerIrValue String))
+
+(defenum CompilerIrPhiInputList
+  (IrPhiInputNil)
+  (IrPhiInputCons CompilerIrPhiInput CompilerIrPhiInputList))
+
 (defenum CompilerIrInstr
   (IrInstrMov i64 CompilerIrValue AstType)
   (IrInstrBinOp i64 CompilerIrBinOp CompilerIrValue CompilerIrValue AstType)
@@ -58,7 +64,8 @@
   (IrInstrStore String CompilerIrValue AstType)
   (IrInstrJump String)
   (IrInstrBranch CompilerIrValue String String)
-  (IrInstrReturn CompilerIrMaybeValue))
+  (IrInstrReturn CompilerIrMaybeValue)
+  (IrInstrPhi i64 CompilerIrPhiInputList AstType))
 
 (defenum CompilerIrInstrList
   (IrInstrNil)
@@ -79,7 +86,7 @@
   (IrParamCons CompilerIrParam CompilerIrParamList))
 
 (defenum CompilerIrFunction
-  (IrFunction String CompilerIrParamList AstType CompilerIrBlockList))
+  (IrFunction String CompilerIrParamList AstType i64 CompilerIrBlockList))
 
 (defenum CompilerIrFunctionList
   (IrFunctionNil)
@@ -138,3 +145,74 @@
               (+ (* blocks 1000)
                  (+ (* instructions 10000)
                     (* vars 100000))))))]))
+
+(define (compiler-ir-global-list-count [globals : CompilerIrGlobalList]) : i64
+  (match globals
+    [(IrGlobalNil) 0]
+    [(IrGlobalCons _ rest) (+ 1 (compiler-ir-global-list-count rest))]))
+
+(define (compiler-ir-extern-list-count [externs : CompilerIrExternList]) : i64
+  (match externs
+    [(IrExternNil) 0]
+    [(IrExternCons _ rest) (+ 1 (compiler-ir-extern-list-count rest))]))
+
+(define (compiler-ir-instr-list-count [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons _ rest) (+ 1 (compiler-ir-instr-list-count rest))]))
+
+(define (compiler-ir-block-list-count [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons _ rest) (+ 1 (compiler-ir-block-list-count rest))]))
+
+(define (compiler-ir-block-list-instruction-count [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+     (match block
+       [(IrBlock _ instrs)
+        (+ (compiler-ir-instr-list-count instrs)
+           (compiler-ir-block-list-instruction-count rest))])]))
+
+(define (compiler-ir-function-list-count [functions : CompilerIrFunctionList]) : i64
+  (match functions
+    [(IrFunctionNil) 0]
+    [(IrFunctionCons _ rest) (+ 1 (compiler-ir-function-list-count rest))]))
+
+(define (compiler-ir-function-list-block-count [functions : CompilerIrFunctionList]) : i64
+  (match functions
+    [(IrFunctionNil) 0]
+    [(IrFunctionCons func rest)
+     (match func
+       [(IrFunction _ _ _ _ blocks)
+        (+ (compiler-ir-block-list-count blocks)
+           (compiler-ir-function-list-block-count rest))])]))
+
+(define (compiler-ir-function-list-instruction-count [functions : CompilerIrFunctionList]) : i64
+  (match functions
+    [(IrFunctionNil) 0]
+    [(IrFunctionCons func rest)
+     (match func
+       [(IrFunction _ _ _ _ blocks)
+        (+ (compiler-ir-block-list-instruction-count blocks)
+           (compiler-ir-function-list-instruction-count rest))])]))
+
+(define (compiler-ir-function-list-var-count [functions : CompilerIrFunctionList]) : i64
+  (match functions
+    [(IrFunctionNil) 0]
+    [(IrFunctionCons func rest)
+     (match func
+       [(IrFunction _ _ _ vars _)
+        (+ vars (compiler-ir-function-list-var-count rest))])]))
+
+(define (compiler-ir-program-summary [program : CompilerIrProgram]) : CompilerIrSummary
+  (match program
+    [(IrProgram globals functions externs)
+     (CompilerIrSummary
+       (compiler-ir-global-list-count globals)
+       (compiler-ir-function-list-count functions)
+       (compiler-ir-extern-list-count externs)
+       (compiler-ir-function-list-block-count functions)
+       (compiler-ir-function-list-instruction-count functions)
+       (compiler-ir-function-list-var-count functions))]))

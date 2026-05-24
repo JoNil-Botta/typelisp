@@ -71,6 +71,10 @@ fn compiler_ir_types_tl_compiles_to_assembly() {
         "_tl_compiler_ir_summary_instructions:",
         "_tl_compiler_ir_summary_vars:",
         "_tl_compiler_ir_summary_score:",
+        "_tl_compiler_ir_program_summary:",
+        "_tl_compiler_ir_function_list_block_count:",
+        "_tl_compiler_ir_function_list_instruction_count:",
+        "_tl_compiler_ir_function_list_var_count:",
     ] {
         assert_symbol(&asm, sym, "compiler_ir_types");
     }
@@ -95,7 +99,13 @@ fn compiler_lower_tl_compiles_to_assembly() {
         "_tl_lower_args:",
         "_tl_lower_let_bindings:",
         "_tl_lower_begin:",
+        "_tl_lower_if:",
+        "_tl_lower_if_merge:",
+        "_tl_lower_while:",
+        "_tl_lower_state_finish_block:",
+        "_tl_lower_compiler_program_checked:",
         "_tl_compiler_lower_self_test:",
+        "_tl_compiler_ir_program_summary:",
         "_tl_typecheck_compiler_program:",
         "_tl_parse_ast_source:",
     ] {

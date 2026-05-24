@@ -1,0 +1,4 @@
+return type (Array i64 3)
+array_return.tl:2:
+ 2 |   (array 1 2 3)
+^

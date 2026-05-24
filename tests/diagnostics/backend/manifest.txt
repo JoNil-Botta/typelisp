@@ -1,0 +1,3 @@
+# name|command|expected-status
+array_return|compile|failure
+tuple_return|compile|failure

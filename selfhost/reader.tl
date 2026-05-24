@@ -59,6 +59,10 @@
   (SStr String)
   (SChar char))
 
+(defenum ResultSexpr
+  (OkSexpr Sexpr)
+  (ErrSexpr String))
+
 ;; --------------------------------------------------------------------------
 ;; The reader cursor: a single mutable index into the `(Array Token)`.
 ;; --------------------------------------------------------------------------
@@ -100,22 +104,22 @@
 ;;   TLParen -> read-list           consume '(' then read a list to its ')'
 ;;   TRParen -> error                a stray ')' with no opening '(' is malformed
 ;;   TEnd    -> error                end of stream where a form was expected
-;; A grammar violation aborts via the `panic` builtin (#45), exactly how a real
-;; reader reports malformed input.
-(define (read-form [toks : (Array Token)] [cur : (Array i64)]) : Sexpr
+;; A grammar violation returns a recoverable `ErrSexpr String`; the compatibility
+;; wrappers below still panic for callers that have not moved to `read-result`.
+(define (read-form-result [toks : (Array Token)] [cur : (Array i64)]) : ResultSexpr
   (let ([t : i64 (peek-tag toks cur)])
     (if (= t (tag-int))
         ;; An integer atom: project the literal out of the TInt and consume it.
         (let ([v : i64 (token-int (peek-tok toks cur))])
           (begin
             (advance cur)
-            (SInt v)))
+            (OkSexpr (SInt v))))
         (if (= t (tag-sym))
             ;; A symbol atom: project the lexeme out of the TSym and consume it.
             (let ([s : String (token-sym (peek-tok toks cur))])
               (begin
                 (advance cur)
-                (SSym s)))
+                (OkSexpr (SSym s))))
             (if (= t (tag-str))
                 ;; A string-literal atom: project the inner text out of the TStr
                 ;; (via the imported `token-str` accessor, #128) and consume it.
@@ -123,28 +127,23 @@
                 (let ([s : String (token-str (peek-tok toks cur))])
                   (begin
                     (advance cur)
-                    (SStr s)))
+                    (OkSexpr (SStr s))))
                 (if (= t (tag-char))
                     ;; A character-literal atom: project the char out of the
                     ;; TChar token (via imported `token-char`) and consume it.
                     (let ([c : char (token-char (peek-tok toks cur))])
                       (begin
                         (advance cur)
-                        (SChar c)))
+                        (OkSexpr (SChar c))))
                     (if (= t (tag-lparen))
                         ;; A list: consume '(' and read forms until the matching ')'.
                         (begin
                           (advance cur)
-                          (read-list toks cur))
+                          (read-list-result toks cur))
                         (if (= t (tag-rparen))
-                            (begin
-                              (panic "reader: unexpected ')'")
-                              ;; Dead code: `panic` never returns, but the `if` needs a Sexpr.
-                              SNil)
+                            (ErrSexpr "reader: unexpected ')'")
                             ;; tag-end (or anything else): premature end of stream.
-                            (begin
-                              (panic "reader: unexpected end of input")
-                              SNil)))))))))
+                            (ErrSexpr "reader: unexpected end of input")))))))))
 
 ;; read-list: the cursor is positioned just AFTER an opening '('. Read forms
 ;; until the matching ')', returning the proper list `(SCons f1 (SCons f2 ...
@@ -152,35 +151,61 @@
 ;; with NO reversal: read the head form, then recurse to read the rest of the
 ;; list, and cons the two. The base case is the ')' that closes this list -
 ;; consume it and return `SNil`. Hitting `TEnd` before a ')' is an unterminated
-;; list and aborts via `panic`. Nesting is handled for free: a head form that is
-;; itself a '(' re-enters `read-form` -> `read-list`, which reads the inner list
-;; to ITS ')' and advances the shared cursor past it before this level reads its
-;; next sibling.
-(define (read-list [toks : (Array Token)] [cur : (Array i64)]) : Sexpr
+;; list and returns `ErrSexpr`. Nesting is handled for free: a head form that is
+;; itself a '(' re-enters `read-form-result` -> `read-list-result`, which reads
+;; the inner list to ITS ')' and advances the shared cursor past it before this
+;; level reads its next sibling.
+(define (read-list-result [toks : (Array Token)] [cur : (Array i64)]) : ResultSexpr
   (let ([t : i64 (peek-tag toks cur)])
     (if (= t (tag-rparen))
         ;; End of this list: consume the ')' and terminate the spine with SNil.
         (begin
           (advance cur)
-          SNil)
+          (OkSexpr SNil))
         (if (= t (tag-end))
-            (begin
-              (panic "reader: unterminated list (missing ')')")
-              SNil)
+            (ErrSexpr "reader: unterminated list (missing ')')")
             ;; A list element: read the head form (which advances the cursor past
             ;; it, however deeply nested), then recurse for the tail and cons.
-            (let ([head : Sexpr (read-form toks cur)])
-              (SCons head (read-list toks cur)))))))
+            (match (read-form-result toks cur)
+              [(OkSexpr head)
+               (match (read-list-result toks cur)
+                 [(OkSexpr tail) (OkSexpr (SCons head tail))]
+                 [(ErrSexpr message) (ErrSexpr message)])]
+              [(ErrSexpr message) (ErrSexpr message)])))))
+
+(define (read-form [toks : (Array Token)] [cur : (Array i64)]) : Sexpr
+  (match (read-form-result toks cur)
+    [(OkSexpr form) form]
+    [(ErrSexpr message)
+     (begin
+       (panic message)
+       SNil)]))
+
+(define (read-list [toks : (Array Token)] [cur : (Array i64)]) : Sexpr
+  (match (read-list-result toks cur)
+    [(OkSexpr list) list]
+    [(ErrSexpr message)
+     (begin
+       (panic message)
+       SNil)]))
 
 ;; read: the public entry point. Read a single top-level form from the front of
 ;; `toks` (a cursor starting at index 0) and return its `Sexpr` tree. (Trailing
 ;; tokens after the first form are ignored here, as a top-level `read` returns
 ;; one datum at a time.)
-(define (read [toks : (Array Token)]) : Sexpr
+(define (read-result [toks : (Array Token)]) : ResultSexpr
   (let ([cur : (Array i64) (make-array i64 1)])
     (begin
       (array-set! cur 0 0)
-      (read-form toks cur))))
+      (read-form-result toks cur))))
+
+(define (read [toks : (Array Token)]) : Sexpr
+  (match (read-result toks)
+    [(OkSexpr form) form]
+    [(ErrSexpr message)
+     (begin
+       (panic message)
+       SNil)]))
 
 ;; --------------------------------------------------------------------------
 ;; An observable fold over the tree: sum every integer atom in the Sexpr.
@@ -236,19 +261,37 @@
     [(SNil) 0]
     [(SCons h t) (+ (sum-char-codes h) (sum-char-codes t))]))
 
+(define (reader-error-case-ok? [src : String] [message : String]) : bool
+  (match (read-result (lex src))
+    [(OkSexpr _) false]
+    [(ErrSexpr got) (string-eq got message)]))
+
+(define (reader-error-score) : i64
+  (+ (if (reader-error-case-ok? ")" "reader: unexpected ')'")
+         1
+         0)
+     (+ (if (reader-error-case-ok? "" "reader: unexpected end of input")
+            1
+            0)
+        (if (reader-error-case-ok? "(" "reader: unterminated list (missing ')')")
+            1
+            0))))
+
 ;; main: lex a real nested s-expression that mixes integer, string, and
 ;; character atoms, READ it into the `Sexpr` cons tree, and fold that tree. The
 ;; source `(greet "hi" #x' 7 (msg "yo" #\space' #\newline' 35 #\n'))` lexes to
 ;;   (  greet  "hi"  #x'  7  (  msg  "yo"  #\space'  #\newline'  35  #\n'  )  )  End
 ;; and reads into a recursive tree containing two string atoms, four character
 ;; atoms, and integer atoms summing to 42. The decoded character code sum is 172,
-;; so `main` returns 42 + 2 + 4 + 10 = 58 when the reader preserves char values.
+;; so the successful read contributes 42 + 2 + 4 + 10 = 58 when the reader
+;; preserves char values. The recoverable error probes add 3 more.
 (define (main) : i64
   (let ([tree : Sexpr
           (read (lex "(greet \"hi\" #x' 7 (msg \"yo\" #\\space' #\\newline' 35 #\\n'))"))])
     (+ (sum-ints tree)
        (+ (count-strs tree)
           (+ (count-chars tree)
-             (if (= (sum-char-codes tree) 172)
-                 10
-                 0))))))
+             (+ (if (= (sum-char-codes tree) 172)
+                    10
+                    0)
+                (reader-error-score)))))))

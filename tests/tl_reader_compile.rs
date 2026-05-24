@@ -96,18 +96,22 @@ fn tl_reader_tl_compiles_to_assembly() {
     );
 
     // The reader's own functions were emitted (TypeLisp prefixes user symbols
-    // with `_tl_`): the public `read` entry, the mutually recursive `read-form`
-    // / `read-list`, the `sum-ints` fold over the built tree, `count-strs`, and
-    // `count-chars` - folds that observe `SStr` (#27/#128) and `SChar` (#333)
-    // atoms produced from the lexer's `TStr` / `TChar` tokens.
+    // with `_tl_`): the public `read` / `read-result` entries, the mutually
+    // recursive result-form/result-list helpers, the compatibility wrappers,
+    // and the folds that observe `SStr` (#27/#128) and `SChar` (#333) atoms
+    // produced from the lexer's `TStr` / `TChar` tokens.
     for sym in [
         "_tl_read:",
+        "_tl_read_result:",
         "_tl_read_form:",
+        "_tl_read_form_result:",
         "_tl_read_list:",
+        "_tl_read_list_result:",
         "_tl_sum_ints:",
         "_tl_count_strs:",
         "_tl_count_chars:",
         "_tl_sum_char_codes:",
+        "_tl_reader_error_score:",
     ] {
         assert!(
             asm.contains(sym),
@@ -188,16 +192,17 @@ fn tl_reader_tl_compiles_to_assembly() {
         asm,
     );
 
-    // read-form and read-list are mutually recursive: read-form descends into a
-    // list via read-list, and read-list reads each element via read-form and
-    // recurses for the tail. Both call edges must be present.
+    // read-form-result and read-list-result are mutually recursive:
+    // read-form-result descends into a list via read-list-result, and
+    // read-list-result reads each element via read-form-result and recurses for
+    // the tail. Both call edges must be present.
     assert!(
-        asm.contains("call _tl_read_list"),
+        asm.contains("call _tl_read_list_result"),
         "tl_reader assembly shows no read-form -> read-list descent:\n{}",
         asm,
     );
     assert!(
-        asm.contains("call _tl_read_form"),
+        asm.contains("call _tl_read_form_result"),
         "tl_reader assembly shows no read-list -> read-form element read:\n{}",
         asm,
     );
@@ -210,9 +215,26 @@ fn tl_reader_tl_compiles_to_assembly() {
         asm,
     );
 
-    // Malformed input (a stray ')', a premature end, or an unterminated list)
-    // aborts via `(panic ...)`, lowered to the private abort runtime - exactly
-    // how a real reader reports a syntax error.
+    // Malformed input now has a recoverable result path for a stray ')', a
+    // premature end, and an unterminated list. The old compatibility wrappers
+    // still abort via `(panic ...)`, lowered to the private abort runtime.
+    for message in [
+        "reader: unexpected ')'",
+        "reader: unexpected end of input",
+        "reader: unterminated list (missing ')')",
+    ] {
+        assert!(
+            asm.contains(message),
+            "tl_reader assembly is missing recoverable reader diagnostic {:?}:\n{}",
+            message,
+            asm,
+        );
+    }
+    assert!(
+        asm.contains("call _tl_read_result"),
+        "tl_reader assembly shows no recoverable read-result call:\n{}",
+        asm,
+    );
     assert!(
         asm.contains("call .L_tl_abort"),
         "tl_reader assembly is missing the reader-error abort path (.L_tl_abort):\n{}",

@@ -1388,6 +1388,126 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
     }
 }
 
+/// refs #750: RUN-LEVEL proof that the selfhost backend lowers ABI
+/// stack-passed call arguments with the correct offsets and alignment. The
+/// stack-args fixture emits a self-contained witness program (>6 integer args,
+/// >8 f64 args, and a mixed int/f64 call that spills both banks) whose `main`
+/// returns 96 only when every stack-passed argument arrives with its expected
+/// value and ordering. The emitted assembly is assembled with `as`, linked with
+/// `ld`, and executed — assembly-shape checks alone cannot catch a wrong stack
+/// offset, but a wrong value here flips the exit code.
+#[test]
+fn selfhost_backend_stack_args_emit_assemble_link_and_run() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let selfhost_dir = manifest_dir.join("selfhost");
+    let source_path = selfhost_dir.join("compiler_backend_stack_args_fixture.tl");
+    let work_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("compiler_backend_stack_args");
+    fs::create_dir_all(&work_dir).expect("create backend stack-args test work dir");
+
+    // The fixture imports compiler_backend.tl, which transitively pulls the
+    // whole lowering/regalloc/frontend slice; copy every dep alongside so the
+    // (import ...) chain resolves in the work dir (refs #738).
+    let fixture_work_path = work_dir.join("compiler_backend_stack_args_fixture.tl");
+    fs::copy(&source_path, &fixture_work_path).expect("copy stack-args fixture to work dir");
+    copy_case_deps(
+        &manifest_dir,
+        &selfhost_dir,
+        &work_dir,
+        &[
+            "compiler_backend.tl",
+            "compiler_regalloc.tl",
+            "compiler_liveness.tl",
+            "compiler_lower.tl",
+            "compiler_ctfe.tl",
+            "compiler_ir_types.tl",
+            "compiler_typecheck.tl",
+            "compiler_symbols.tl",
+            "compiler_parse_core.tl",
+            "compiler_diagnostic.tl",
+            "compiler_ast_types.tl",
+            "sym_i64_env.tl",
+            "text_buf.tl",
+            "read.tl",
+            "lex.tl",
+            "token.tl",
+        ],
+    );
+
+    let asm_path = work_dir.join("stack_args.s");
+    let obj_path = work_dir.join("stack_args.o");
+    let bin_path = work_dir.join("stack_args");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&fixture_work_path)
+        .arg("--")
+        .arg(&asm_path)
+        .arg("linux-x86_64")
+        .output()
+        .expect("run compiler_backend_stack_args_fixture");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stack-args fixture failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let asm = fs::read_to_string(&asm_path).expect("read stack-args fixture assembly");
+    // Representative stack stores / call-space sizing the selfhost backend must
+    // emit for the spilled args (the witness's three call sites).
+    for snippet in [
+        "    subq $16, %rsp\n",
+        "    movq %r11, 0(%rsp)\n",
+        "    movsd %xmm15, 0(%rsp)\n",
+        "    movsd %xmm15, 8(%rsp)\n",
+        "    addq $16, %rsp\n",
+        "    call _tl_add8\n",
+        "    call _tl_f10check\n",
+        "    call _tl_mixcheck\n",
+    ] {
+        assert!(
+            asm.contains(snippet),
+            "stack-args assembly missing {snippet:?}:\n{asm}"
+        );
+    }
+    assert!(
+        !asm.contains("backend: too many call args"),
+        "stack-args witness must not hit the too-many-call-args rejection:\n{asm}"
+    );
+
+    let status = Command::new("as")
+        .arg(&asm_path)
+        .arg("-o")
+        .arg(&obj_path)
+        .status()
+        .expect("assemble stack-args fixture output");
+    assert!(status.success(), "assembling stack-args output failed");
+
+    let status = Command::new("ld")
+        .arg(&obj_path)
+        .arg("-o")
+        .arg(&bin_path)
+        .status()
+        .expect("link stack-args fixture output");
+    assert!(status.success(), "linking stack-args output failed");
+
+    let output = Command::new(&bin_path)
+        .output()
+        .expect("run stack-args fixture binary");
+    assert_eq!(
+        output.status.code(),
+        Some(96),
+        "stack-args binary exited unexpectedly (a wrong value means a stack arg \
+         was passed at the wrong offset)\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[test]
 fn selfhost_backend_runtime_helpers_emit_assemble_link_and_run() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

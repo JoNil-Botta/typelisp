@@ -139,6 +139,9 @@ fn compiler_driver_tl_compiles_to_assembly() {
 
     for sym in [
         "_tl_compiler_driver_compile_file:",
+        "_tl_compiler_driver_emit_file:",
+        "_tl_compiler_driver_load_file:",
+        "_tl_compiler_driver_resolve_import:",
         "_tl_compiler_backend_emit_source:",
         "_tl_lower_compiler_source:",
         "_tl_parse_ast_source:",
@@ -148,6 +151,7 @@ fn compiler_driver_tl_compiles_to_assembly() {
 
     for message in [
         "compiler-driver: expected input and output paths",
+        "compiler-driver: cannot read import ",
         "lower: unsupported expression",
     ] {
         assert_message(&asm, message, "compiler_driver");

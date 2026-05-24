@@ -2,6 +2,8 @@
 
 (import "compiler_load.tl")
 
+(import "compiler_diagnostic.tl")
+
 (import "compiler_typecheck.tl")
 
 (define (selfhost-check-extra-args-status [i : i64]) : i64
@@ -28,9 +30,9 @@
           (begin
             (print-error message)
             1)])]
-    [(ErrCompilerLoad message)
+    [(ErrCompilerLoad diag)
       (begin
-        (print-error message)
+        (print-error (compiler-diagnostic-render diag))
         1)]))
 
 (define (main) : i64

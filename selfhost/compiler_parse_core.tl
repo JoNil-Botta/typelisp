@@ -12,6 +12,8 @@
 
 (import "compiler_ast_types.tl")
 
+(import "compiler_diagnostic.tl")
+
 (import "read.tl")
 
 (import "sym_i64_env.tl")
@@ -95,6 +97,14 @@
 (defenum ResultAstProgram
   (OkAstProgram AstProgram)
   (ErrAstProgram String))
+
+(defenum ResultAstDeclListDiagnostic
+  (OkAstDeclListDiagnostic AstDeclList)
+  (ErrAstDeclListDiagnostic CompilerDiagnostic))
+
+(defenum ResultAstProgramDiagnostic
+  (OkAstProgramDiagnostic AstProgram)
+  (ErrAstProgramDiagnostic CompilerDiagnostic))
 
 (define (sexpr-colon? [s : Sexpr]) : bool
   (match s
@@ -1532,9 +1542,12 @@
           [(ErrAstDecl message) (ErrAstDeclList message)])]
       [(ErrSpannedSexpr err) (ErrAstDeclList (source-error-message err))])))
 
+(define (parse-ast-program-dispatch) : SymI64Env
+  (compiler-parse-dispatch-env))
+
 (define (parse-ast-program [toks : (Array SpannedToken)]) : ResultAstProgram
   (let ([cur : (Array i64) (make-array i64 1)])
-    (let ([dispatch : SymI64Env (compiler-parse-dispatch-env)])
+    (let ([dispatch : SymI64Env (parse-ast-program-dispatch)])
       (begin
         (array-set! cur 0 0)
         (match (parse-ast-program-forms dispatch toks cur)
@@ -1545,6 +1558,49 @@
   (match (lex-spanned-result src)
     [(OkSpannedTokens toks) (parse-ast-program toks)]
     [(ErrSpannedTokens err) (ErrAstProgram (source-error-message err))]))
+
+(define (parse-ast-program-forms-diagnostic
+  [path : String]
+  [dispatch : SymI64Env]
+  [toks : (Array SpannedToken)]
+  [cur : (Array i64)]) : ResultAstDeclListDiagnostic
+  (if (= (peek-spanned-tag toks cur) (tag-end))
+    (OkAstDeclListDiagnostic AstDeclNil)
+    (match (read-form-spanned-result toks cur)
+      [(OkSpannedSexpr spanned-form)
+        (match (parse-ast-decl dispatch spanned-form)
+          [(OkAstDecl decl)
+            (match (parse-ast-program-forms-diagnostic path dispatch toks cur)
+              [(OkAstDeclListDiagnostic rest)
+                (OkAstDeclListDiagnostic (AstDeclCons decl rest))]
+              [(ErrAstDeclListDiagnostic diag) (ErrAstDeclListDiagnostic diag)])]
+          [(ErrAstDecl message)
+            (ErrAstDeclListDiagnostic
+              (compiler-diagnostic-from-span
+                path
+                (spanned-sexpr-span spanned-form)
+                message))])]
+      [(ErrSpannedSexpr err)
+        (ErrAstDeclListDiagnostic
+          (compiler-diagnostic-from-source-error path err))])))
+
+(define (parse-ast-program-diagnostic
+  [path : String]
+  [toks : (Array SpannedToken)]) : ResultAstProgramDiagnostic
+  (let ([cur : (Array i64) (make-array i64 1)])
+    (let ([dispatch : SymI64Env (parse-ast-program-dispatch)])
+      (begin
+        (array-set! cur 0 0)
+        (match (parse-ast-program-forms-diagnostic path dispatch toks cur)
+          [(OkAstDeclListDiagnostic decls)
+            (OkAstProgramDiagnostic (AstProgram decls))]
+          [(ErrAstDeclListDiagnostic diag) (ErrAstProgramDiagnostic diag)])))))
+
+(define (parse-ast-source-diagnostic [path : String] [src : String]) : ResultAstProgramDiagnostic
+  (match (lex-spanned-result src)
+    [(OkSpannedTokens toks) (parse-ast-program-diagnostic path toks)]
+    [(ErrSpannedTokens err)
+      (ErrAstProgramDiagnostic (compiler-diagnostic-from-source-error path err))]))
 
 (define (ast-decl-list-count [decls : AstDeclList]) : i64
   (match decls

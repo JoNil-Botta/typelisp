@@ -750,7 +750,7 @@ impl FnLowerer {
             }
             ast::Expr::Set(_, expr) => self.expr_diverges(expr),
             ast::Expr::MakeArray { len, .. } => self.expr_diverges(len),
-            ast::Expr::ArrayRef { expr, index } | ast::Expr::StringRef { expr, index } => {
+            ast::Expr::ArrayRef { expr, index } => {
                 self.expr_diverges(expr) || self.expr_diverges(index)
             }
             ast::Expr::ArraySet { expr, index, value } => {
@@ -833,7 +833,21 @@ impl FnLowerer {
                 ast::UnOp::Not => Type::Bool,
                 _ => self.infer_expr_type_with_locals(expr, local_types),
             },
-            ast::Expr::Call { func, .. } => {
+            ast::Expr::Call { func, args } => {
+                // An *unshadowed* `(string-ref s i)` / `(char-at s i)` builtin
+                // call yields a `char`. The head `Var` itself resolves to no
+                // type, so the generic `Func` inference below would wrongly fall
+                // back to `Unit`; recover the builtin's `char` result when the
+                // name names neither a local nor a user-defined function (#677).
+                if let ast::Expr::Var(name) = func.unspan()
+                    && (name == "string-ref" || name == "char-at")
+                    && args.len() == 2
+                    && !local_types.contains_key(name)
+                    && !self.vars.contains_key(name)
+                    && !self.function_types.contains_key(name)
+                {
+                    return Type::Char;
+                }
                 match self.infer_expr_type_with_locals(func, local_types) {
                     Type::Func(_, ret) => *ret,
                     Type::Enum(name) => Type::Enum(name),
@@ -908,7 +922,6 @@ impl FnLowerer {
                     _ => Type::Unit,
                 }
             }
-            ast::Expr::StringRef { .. } => Type::Char,
             ast::Expr::StructGet { expr, field } => {
                 match self.infer_expr_type_with_locals(expr, local_types) {
                     Type::Struct(name) => self
@@ -1185,7 +1198,6 @@ impl FnLowerer {
             ast::Expr::Array(elems) => self.lower_array_literal(elems),
             ast::Expr::ArrayRef { expr, index } => self.lower_array_ref(expr, index),
             ast::Expr::ArraySet { expr, index, value } => self.lower_array_set(expr, index, value),
-            ast::Expr::StringRef { expr, index } => self.lower_string_ref(expr, index),
             ast::Expr::StructGet { expr, field } => self.lower_struct_get(expr, field),
             ast::Expr::Tuple(elems) => self.lower_tuple(elems),
             ast::Expr::TupleRef { expr, index } => self.lower_tuple_ref(expr, *index),
@@ -1381,7 +1393,7 @@ impl FnLowerer {
             ast::Expr::MakeArray { len, .. } => {
                 Self::collect_captured_names(len, candidates, local_bindings, captures);
             }
-            ast::Expr::ArrayRef { expr, index } | ast::Expr::StringRef { expr, index } => {
+            ast::Expr::ArrayRef { expr, index } => {
                 Self::collect_captured_names(expr, candidates, local_bindings, captures);
                 Self::collect_captured_names(index, candidates, local_bindings, captures);
             }
@@ -3662,6 +3674,22 @@ impl FnLowerer {
             && !self.function_types.contains_key(name)
         {
             return self.lower_string_concat(&args[0], &args[1]);
+        }
+
+        // `(string-ref s i)` / `(char-at s i)` over the *unshadowed* builtin is
+        // the bounds-checked String byte-index, yielding the byte at index `i` as
+        // a `char`. The parser emits this as an ordinary `Call`; reuse the
+        // existing `lower_string_ref` byte-load lowering (identical to the former
+        // `Expr::StringRef` path) when the name names neither a local binding nor
+        // a user-defined function. A shadowing user definition falls through to
+        // the ordinary direct-call path below (#677).
+        if let ast::Expr::Var(name) = func.unspan()
+            && (name == "string-ref" || name == "char-at")
+            && args.len() == 2
+            && !self.has_local_value(name)
+            && !self.function_types.contains_key(name)
+        {
+            return self.lower_string_ref(&args[0], &args[1]);
         }
 
         // `(panic msg)` / `(error msg)` writes `msg` to fd 2 then terminates the

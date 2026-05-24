@@ -568,38 +568,24 @@
                                     e14
                                     "array-set!"
                                     (compiler-parse-tag-expr-array-set))])
-                                (let ([e16
+                                (let ([e18
                                     :
                                     SymI64Env
                                     (sym-i64-bind
                                       e15
-                                      "string-ref"
-                                      (compiler-parse-tag-expr-string-ref))])
-                                  (let ([e17
+                                      "match"
+                                      (compiler-parse-tag-expr-match))])
+                                  (let ([e19
                                       :
                                       SymI64Env
                                       (sym-i64-bind
-                                        e16
-                                        "char-at"
-                                        (compiler-parse-tag-expr-char-at))])
-                                    (let ([e18
-                                        :
-                                        SymI64Env
-                                        (sym-i64-bind
-                                          e17
-                                          "match"
-                                          (compiler-parse-tag-expr-match))])
-                                      (let ([e19
-                                          :
-                                          SymI64Env
-                                          (sym-i64-bind
-                                            e18
-                                            "foreach"
-                                            (compiler-parse-tag-expr-foreach))])
-                                        (sym-i64-bind
-                                          e19
-                                          "struct-get"
-                                          (compiler-parse-tag-expr-struct-get))))))))))))))))))))))
+                                        e18
+                                        "foreach"
+                                        (compiler-parse-tag-expr-foreach))])
+                                    (sym-i64-bind
+                                      e19
+                                      "struct-get"
+                                      (compiler-parse-tag-expr-struct-get))))))))))))))))))))
 
 (define (compiler-parse-dispatch-patterns [e : SymI64Env]) : SymI64Env
   (let ([e1 : SymI64Env (sym-i64-bind e "true" (compiler-parse-tag-lit-true))])
@@ -1350,21 +1336,15 @@
                             (parse-ast-array-ref-like dispatch false rest)
                             (if (= tag (compiler-parse-tag-expr-array-set))
                               (parse-ast-array-set dispatch rest)
-                              (if (= tag (compiler-parse-tag-expr-string-ref))
-                                (parse-ast-array-ref-like dispatch true rest)
-                                (if (= tag (compiler-parse-tag-expr-char-at))
-                                  (parse-ast-array-ref-like dispatch true rest)
-                                  (if (= tag (compiler-parse-tag-expr-match))
-                                    (parse-ast-match dispatch rest)
-                                    (if (=
-                                      tag
-                                      (compiler-parse-tag-expr-foreach))
-                                      (parse-ast-foreach dispatch rest)
-                                      (if (=
-                                        tag
-                                        (compiler-parse-tag-expr-struct-get))
-                                        (parse-ast-struct-get dispatch rest)
-                                        (parse-ast-call dispatch head rest)))))))))))))))))))))
+                              (if (= tag (compiler-parse-tag-expr-match))
+                                (parse-ast-match dispatch rest)
+                                (if (= tag (compiler-parse-tag-expr-foreach))
+                                  (parse-ast-foreach dispatch rest)
+                                  (if (=
+                                    tag
+                                    (compiler-parse-tag-expr-struct-get))
+                                    (parse-ast-struct-get dispatch rest)
+                                    (parse-ast-call dispatch head rest)))))))))))))))))))
 
 (define (parse-ast-list-expr
   [dispatch : SymI64Env]

@@ -1354,6 +1354,27 @@
     (lower-substring-call ctx state env type-env name args result-ty)
     (lower-string-concat-call ctx state env type-env name args result-ty)))
 
+;; Lower an unshadowed `(string-ref s i)` / `(char-at s i)` builtin call to the
+
+;; bounds-checked String byte index. Since #677 the parser emits these names as
+
+;; ordinary calls, so `lower-call` routes the unshadowed builtin here to lower it
+
+;; like the `AstExprStringRef` node.
+
+(define (lower-string-ref-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name : String]
+  [args : AstExprList]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match args
+    [(AstExprCons str (AstExprCons index (AstExprNil)))
+      (lower-string-ref ctx state env type-env str index)]
+    [_ (lower-direct-call ctx state env type-env name args result-ty)]))
+
 (define (lower-call
   [ctx : TcContext]
   [state : LowerState]
@@ -1367,59 +1388,82 @@
       ;; `array-length`/`length` on a dynamic array, and `string-length`/`length`
       ;; on a String, load the fat value's length field directly instead of
       ;; calling a runtime symbol (#528, #527). Other `length` argument types
-      ;; keep the ordinary direct-call path.
+      ;; keep the ordinary direct-call path. `string-ref`/`char-at` likewise
+      ;; recover their String byte-index builtin here unless shadowed (#677).
       (if (and
         (lower-builtin-call-available? ctx env name)
-        (or
-          (string-eq name "array-length")
-          (or (string-eq name "length") (string-eq name "string-length"))))
-        (lower-array-length ctx state env type-env name args result-ty)
+        (or (string-eq name "string-ref") (string-eq name "char-at")))
+        (lower-string-ref-call ctx state env type-env name args result-ty)
         (if (and
           (lower-builtin-call-available? ctx env name)
-          (lower-string-runtime-builtin? name))
-          (lower-string-runtime-call ctx state env type-env name args result-ty)
+          (or
+            (string-eq name "array-length")
+            (or (string-eq name "length") (string-eq name "string-length"))))
+          (lower-array-length ctx state env type-env name args result-ty)
           (if (and
             (lower-builtin-call-available? ctx env name)
-            (lower-stdio-builtin? name))
-            (lower-direct-call
+            (lower-string-runtime-builtin? name))
+            (lower-string-runtime-call
               ctx
               state
               env
               type-env
-              (lower-stdio-runtime-name name)
+              name
               args
               result-ty)
-            (match (sym-i64-lookup env name)
-              [(SomeI64 _)
-                (lower-direct-call ctx state env type-env name args result-ty)]
-              [(NoneI64)
-                (match ctx
-                  [(TcContext _ symbols registries)
-                    (match (compiler-registries-lookup-variant registries name)
-                      [(SomeI64 handle)
-                        (lower-construct-enum-with-handle
-                          ctx
-                          state
-                          env
-                          type-env
-                          name
-                          handle
-                          args
-                          result-ty)]
-                      [(NoneI64)
-                        (match (compiler-symbols-lookup-type symbols name)
-                          [(SomeI64 handle)
-                            (if (=
-                              (compiler-symbol-handle-kind handle)
-                              (compiler-symbol-kind-defstruct))
-                              (lower-construct-struct
-                                ctx
-                                state
-                                env
-                                type-env
-                                name
-                                args
-                                result-ty)
+            (if (and
+              (lower-builtin-call-available? ctx env name)
+              (lower-stdio-builtin? name))
+              (lower-direct-call
+                ctx
+                state
+                env
+                type-env
+                (lower-stdio-runtime-name name)
+                args
+                result-ty)
+              (match (sym-i64-lookup env name)
+                [(SomeI64 _)
+                  (lower-direct-call ctx state env type-env name args result-ty)]
+                [(NoneI64)
+                  (match ctx
+                    [(TcContext _ symbols registries)
+                      (match (compiler-registries-lookup-variant
+                        registries
+                        name)
+                        [(SomeI64 handle)
+                          (lower-construct-enum-with-handle
+                            ctx
+                            state
+                            env
+                            type-env
+                            name
+                            handle
+                            args
+                            result-ty)]
+                        [(NoneI64)
+                          (match (compiler-symbols-lookup-type symbols name)
+                            [(SomeI64 handle)
+                              (if (=
+                                (compiler-symbol-handle-kind handle)
+                                (compiler-symbol-kind-defstruct))
+                                (lower-construct-struct
+                                  ctx
+                                  state
+                                  env
+                                  type-env
+                                  name
+                                  args
+                                  result-ty)
+                                (lower-direct-call
+                                  ctx
+                                  state
+                                  env
+                                  type-env
+                                  name
+                                  args
+                                  result-ty))]
+                            [(NoneI64)
                               (lower-direct-call
                                 ctx
                                 state
@@ -1427,16 +1471,7 @@
                                 type-env
                                 name
                                 args
-                                result-ty))]
-                          [(NoneI64)
-                            (lower-direct-call
-                              ctx
-                              state
-                              env
-                              type-env
-                              name
-                              args
-                              result-ty)])])])]))))]
+                                result-ty)])])])])))))]
     [_ (ErrLowerExpr "lower: only direct calls are supported")]))
 
 ;; A dynamic-array value is a pointer to inline fat storage `{data_ptr, length}`

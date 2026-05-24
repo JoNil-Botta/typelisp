@@ -732,6 +732,54 @@
         [_ (ErrTcType "typecheck: call target is not a function")])]
     [(ErrTcType message) (ErrTcType message)]))
 
+;; Whether `name` resolves to any binding in `env` (a builtin, a top-level
+
+;; user definition, or a local). Used to decide whether an unbound builtin
+
+;; name like `string-ref`/`char-at` should be treated as the String-index
+
+;; builtin (unbound) or as an ordinary direct call to a shadowing user
+
+;; definition (bound). Mirrors the host compiler's shadowing check (#677).
+
+(define (tc-name-bound? [env : TcTypeEnv] [name : String]) : bool
+  (match (tc-lookup env name)
+    [(OkTcType _) true]
+    [(ErrTcType _) false]))
+
+;; Typecheck the *unshadowed* `(string-ref s i)` / `(char-at s i)` builtin: a
+
+;; String plus any integer index, yielding `char`. The parser emits this as an
+
+;; ordinary `Call`; when `string-ref`/`char-at` is not bound to a user function
+
+;; or local, recover the builtin String-index behavior (and its exact
+
+;; diagnostics) here rather than via the generic call path (#677).
+
+(define (tc-string-ref-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : AstExprList]) : ResultTcType
+  (match args
+    [(AstExprCons str (AstExprCons index (AstExprNil)))
+      (match (tc-expr ctx env str)
+        [(OkTcType str-ty)
+          (match (tc-expect
+            str-ty
+            (AstTyString)
+            "typecheck: string-ref requires String")
+            [(OkTcUnit)
+              (match (tc-expr ctx env index)
+                [(OkTcType index-ty)
+                  (if (tc-integer-type? index-ty)
+                    (OkTcType (AstTyChar))
+                    (ErrTcType "typecheck: string index must be integer"))]
+                [(ErrTcType message) (ErrTcType message)])]
+            [(ErrTcUnit message) (ErrTcType message)])]
+        [(ErrTcType message) (ErrTcType message)])]
+    [_ (ErrTcType "typecheck: arity mismatch")]))
+
 (define (tc-array-length-call
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -769,7 +817,11 @@
     [(AstExprVar name)
       (if (or (string-eq name "array-length") (string-eq name "length"))
         (tc-array-length-call ctx env name func args)
-        (tc-call-expr ctx env func args))]
+        (if (and
+          (or (string-eq name "string-ref") (string-eq name "char-at"))
+          (not (tc-name-bound? env name)))
+          (tc-string-ref-call ctx env args)
+          (tc-call-expr ctx env func args)))]
     [_ (tc-call-expr ctx env func args)]))
 
 (define (tc-let-bindings

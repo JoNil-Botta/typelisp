@@ -1625,6 +1625,24 @@ tl_string_concat:
   "(define greeting : String \"hi\")
 (define (main) : String \"hi\")")
 
+(define (compiler-backend-aggregate-source) : String
+  "(defstruct Point (x i64) (y i64))
+(defenum Shape (Nothing) (Circle i64) (Pair Point))
+(define (make-point [x : i64] [y : i64]) : Point
+  (Point x y))
+(define (get-y [p : Point]) : i64
+  (struct-get p y))
+(define (make-none) : Shape
+  Nothing)
+(define (make-none-call) : Shape
+  (Nothing))
+(define (make-circle [r : i64]) : Shape
+  (Circle r))
+(define (make-pair [x : i64]) : Shape
+  (Pair (Point x (+ x 1))))
+(define (main) : i64
+  (get-y (make-point 20 22)))")
+
 (define (compiler-backend-asm-ok? [asm : String]) : bool
   (and (compiler-backend-string-contains? asm ".data\n")
        (and (compiler-backend-string-contains? asm ".text\n")
@@ -1654,7 +1672,20 @@ tl_string_concat:
                     (and (compiler-backend-string-contains? asm "    .quad .L_tl_str_data_6869\n")
                          (and (compiler-backend-string-contains? asm "    .quad 2\n")
                               (and (compiler-backend-string-contains? asm "_tl_greeting:\n    .quad .L_tl_str_6869\n")
-                                   (compiler-backend-string-contains? asm "    leaq .L_tl_str_6869(%rip), %rax\n")))))))]
+                                    (compiler-backend-string-contains? asm "    leaq .L_tl_str_6869(%rip), %rax\n")))))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-aggregate-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-aggregate-source))
+    [(OkCompilerBackend asm)
+     (and (compiler-backend-string-contains? asm "    movq $16, %rdi\n    call tl_alloc\n")
+          (and (compiler-backend-string-contains? asm "    movq $0, %rax\n    movq %rax, (%r10)\n")
+               (and (compiler-backend-string-contains? asm "    movq $1, %rax\n    movq %rax, (%r10)\n")
+                    (and (compiler-backend-string-contains? asm "    movq $8, %rbx\n    addq %rbx, %rax\n")
+                         (and (not (compiler-backend-string-contains? asm "    call _tl_Point\n"))
+                              (and (not (compiler-backend-string-contains? asm "    call _tl_Nothing\n"))
+                                   (and (not (compiler-backend-string-contains? asm "    call _tl_Circle\n"))
+                                        (not (compiler-backend-string-contains? asm "    call _tl_Pair\n")))))))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-deterministic-ok? [src : String]) : bool
@@ -1704,11 +1735,12 @@ tl_string_concat:
            (and (compiler-backend-deterministic-ok? (compiler-backend-smoke-source))
                 (and (compiler-backend-string-ok?)
                      (and (compiler-backend-memory-op-ok?)
-                          (and (compiler-backend-error-ok? (compiler-backend-too-many-call-source)
-                                                           "backend: too many call args")
-                               (and (compiler-backend-runtime-helper-asm-ok?)
-                                    (and (compiler-backend-user-helper-name-ok?)
-                                         (compiler-backend-runtime-coexist-ok?))))))))
+                          (and (compiler-backend-aggregate-ok?)
+                               (and (compiler-backend-error-ok? (compiler-backend-too-many-call-source)
+                                                                "backend: too many call args")
+                                    (and (compiler-backend-runtime-helper-asm-ok?)
+                                         (and (compiler-backend-user-helper-name-ok?)
+                                              (compiler-backend-runtime-coexist-ok?)))))))))
       42
       (begin
         (panic "backend: smoke output mismatch")

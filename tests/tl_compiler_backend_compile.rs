@@ -234,3 +234,37 @@ fn compiler_optimize_smoke_tl_compiles_to_assembly() {
         "compiler_optimize_smoke",
     );
 }
+
+#[test]
+fn compile_tl_compiles_to_assembly() {
+    let asm = compile_selfhost_source("compile.tl", "tl-compile-cli-compile-test", "compile_cli.s");
+
+    assert_no_todo(&asm, "compile");
+    assert_eq!(
+        asm.matches("\nmain:").count() + usize::from(asm.starts_with("main:")),
+        1,
+        "compile assembly must have exactly one main:\n{asm}",
+    );
+
+    for sym in [
+        "_tl_compile_cli_config:",
+        "_tl_compile_cli_parse_options:",
+        "_tl_compile_cli_default_output:",
+        "_tl_compiler_driver_compile_file:",
+        "_tl_compiler_driver_load_file:",
+    ] {
+        assert_symbol(&asm, sym, "compile");
+    }
+
+    for message in [
+        "compile: expected source path",
+        "compile: -o requires a value",
+        "compile: -o was provided more than once",
+        "--emit-ir",
+        " is not supported by the selfhost compile driver yet; use Rust typelisp compile",
+        "compile: unknown flag ",
+        "compile: unexpected argument ",
+    ] {
+        assert_message(&asm, message, "compile");
+    }
+}

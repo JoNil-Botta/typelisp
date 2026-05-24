@@ -1978,3 +1978,87 @@ fn host_action_run_source_plan_forwards_output_and_status() {
     assert_eq!(stdout(&output), "from-plan");
     assert_eq!(stderr(&output), "");
 }
+
+// --- selfhost REPL command driver: piped stdin (#591) ---
+
+// Compiles and runs `selfhost/repl.tl` with the given piped stdin. The driver
+// is a normal `main`-bearing program, so it goes through `typelisp run` (with
+// the host target on Windows, matching the other run-based CLI tests). The
+// source is copied into a unique per-test fixture dir so the generated
+// executable does not collide between tests running in parallel ("Text file
+// busy" otherwise).
+fn run_selfhost_repl(name: &str, stdin: &str) -> Output {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source = manifest_dir.join("selfhost").join("repl.tl");
+    let dir = fixture_dir(name);
+    let work_source = dir.join("repl.tl");
+    fs::copy(&source, &work_source).expect("copy repl.tl to work dir");
+    let source_arg = work_source
+        .to_str()
+        .expect("repl path is utf-8")
+        .to_string();
+    let mut args = vec!["run", source_arg.as_str()];
+    if cfg!(target_os = "windows") {
+        args.push("--target");
+        args.push("windows-x86_64");
+    }
+    typelisp_with_stdin(&args, stdin)
+}
+
+#[test]
+fn selfhost_repl_help_and_exit_from_piped_stdin() {
+    let output = run_selfhost_repl("repl-help", ".help\n.exit\n");
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stderr(&output), "", "stderr:\n{}", stderr(&output));
+    let out = stdout(&output);
+    assert!(out.contains("TypeLisp REPL commands:"), "stdout:\n{}", out);
+    assert!(out.contains(".help"), "stdout:\n{}", out);
+    assert!(out.contains(".exit"), "stdout:\n{}", out);
+}
+
+#[test]
+fn selfhost_repl_eof_exits_cleanly() {
+    // No `.exit`, immediate EOF: the loop ends without error output.
+    let output = run_selfhost_repl("repl-eof", "");
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stderr(&output), "", "stderr:\n{}", stderr(&output));
+}
+
+#[test]
+fn selfhost_repl_blank_lines_are_skipped() {
+    let output = run_selfhost_repl("repl-blank", "\n\n.exit\n");
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stderr(&output), "", "stderr:\n{}", stderr(&output));
+}
+
+#[test]
+fn selfhost_repl_unknown_dot_command_reports_and_continues() {
+    let output = run_selfhost_repl("repl-unknown", ".wat\n.exit\n");
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("Unknown REPL command: .wat"),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    assert!(
+        stderr(&output).contains("Type .help for commands."),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn selfhost_repl_non_command_input_reports_unimplemented() {
+    let output = run_selfhost_repl("repl-noncommand", "(+ 1 2)\n.exit\n");
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("REPL evaluation is not implemented yet"),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+}

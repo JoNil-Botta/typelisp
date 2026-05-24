@@ -8,6 +8,9 @@ use crate::types::{DYN_ARRAY_PTR_OFFSET, Type};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 
+#[allow(dead_code)]
+pub(crate) mod liveness;
+
 const ABORT_RUNTIME_SYMBOL: &str = ".L_tl_abort";
 const ARG_COUNT_RUNTIME_SYMBOL: &str = ".L_tl_arg_count";
 const ARG_RUNTIME_SYMBOL: &str = ".L_tl_arg";
@@ -6067,6 +6070,7 @@ mod tests {
     };
     use crate::optimizer::Optimizer;
     use crate::parser::parse;
+    use std::collections::BTreeSet;
 
     /// Compile source through the full pipeline (parse -> lower -> optimize ->
     /// codegen), returning generated assembly text.
@@ -6091,6 +6095,27 @@ mod tests {
             BackendMode::Avx2 => LowerMode::Avx2,
             BackendMode::Avx512 => LowerMode::Avx512,
         }
+    }
+
+    fn var_set(vars: &[VarId]) -> BTreeSet<VarId> {
+        vars.iter().copied().collect()
+    }
+
+    fn assert_var_set(actual: &BTreeSet<VarId>, expected: &[VarId]) {
+        let expected = var_set(expected);
+        assert_eq!(actual, &expected);
+    }
+
+    fn assert_live_after(
+        analysis: &liveness::FunctionLiveness,
+        label: &str,
+        instruction_index: usize,
+        expected: &[VarId],
+    ) {
+        let actual = analysis
+            .live_after(label, instruction_index)
+            .unwrap_or_else(|| panic!("missing live-after set for {label}[{instruction_index}]"));
+        assert_var_set(actual, expected);
     }
 
     fn assert_windows_runtime_has_no_linux_syscalls(asm: &str) {
@@ -8067,6 +8092,215 @@ mod tests {
                 Instruction::Jump("merge".into()),
             ]
         );
+    }
+
+    #[test]
+    fn test_liveness_tracks_straight_line_defs_and_live_after() {
+        let func = Function {
+            name: "straight_line".into(),
+            params: vec![],
+            ret: Type::I64,
+            locals: vec![(0, Type::I64), (1, Type::I64)],
+            blocks: vec![BasicBlock {
+                label: "entry".into(),
+                instructions: vec![
+                    Instruction::Mov {
+                        dst: 0,
+                        src: Value::ConstI64(40),
+                        ty: Type::I64,
+                    },
+                    Instruction::BinOp {
+                        dst: 1,
+                        op: BinOp::Add,
+                        lhs: Value::Var(0),
+                        rhs: Value::ConstI64(2),
+                        ty: Type::I64,
+                    },
+                    Instruction::Return(Some(Value::Var(1))),
+                ],
+            }],
+            entry: "entry".into(),
+        };
+
+        let analysis = liveness::analyze(&func);
+        let entry = analysis.block("entry").expect("entry block");
+        assert_var_set(&entry.uses, &[]);
+        assert_var_set(&entry.defs, &[0, 1]);
+        assert_var_set(&entry.live_in, &[]);
+        assert_var_set(&entry.live_out, &[]);
+        assert_live_after(&analysis, "entry", 0, &[0]);
+        assert_live_after(&analysis, "entry", 1, &[1]);
+        assert_live_after(&analysis, "entry", 2, &[]);
+    }
+
+    #[test]
+    fn test_liveness_tracks_branch_merge_after_phi_elimination() {
+        let func = Function {
+            name: "branch_merge".into(),
+            params: vec![(0, Type::Bool)],
+            ret: Type::I64,
+            locals: vec![(1, Type::I64), (2, Type::I64), (3, Type::I64)],
+            blocks: vec![
+                BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![Instruction::Branch {
+                        cond: Value::Var(0),
+                        true_label: "then".into(),
+                        false_label: "else".into(),
+                    }],
+                },
+                BasicBlock {
+                    label: "then".into(),
+                    instructions: vec![
+                        Instruction::Mov {
+                            dst: 1,
+                            src: Value::ConstI64(10),
+                            ty: Type::I64,
+                        },
+                        Instruction::Jump("merge".into()),
+                    ],
+                },
+                BasicBlock {
+                    label: "else".into(),
+                    instructions: vec![
+                        Instruction::Mov {
+                            dst: 2,
+                            src: Value::ConstI64(20),
+                            ty: Type::I64,
+                        },
+                        Instruction::Jump("merge".into()),
+                    ],
+                },
+                BasicBlock {
+                    label: "merge".into(),
+                    instructions: vec![
+                        Instruction::Phi {
+                            dst: 3,
+                            incoming: vec![
+                                (Value::Var(1), "then".into()),
+                                (Value::Var(2), "else".into()),
+                            ],
+                            ty: Type::I64,
+                        },
+                        Instruction::Return(Some(Value::Var(3))),
+                    ],
+                },
+            ],
+            entry: "entry".into(),
+        };
+
+        let lowered = eliminate_phis(&func);
+        assert!(
+            lowered
+                .blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .all(|instr| !matches!(instr, Instruction::Phi { .. }))
+        );
+
+        let analysis = liveness::analyze(&lowered);
+        let entry = analysis.block("entry").expect("entry block");
+        assert_var_set(&entry.uses, &[0]);
+        assert_var_set(&entry.live_in, &[0]);
+        assert_var_set(&entry.live_out, &[]);
+
+        let then_block = analysis.block("then").expect("then block");
+        assert_var_set(&then_block.uses, &[]);
+        assert_var_set(&then_block.defs, &[1, 3]);
+        assert_var_set(&then_block.live_in, &[]);
+        assert_var_set(&then_block.live_out, &[3]);
+        assert_live_after(&analysis, "then", 0, &[1]);
+        assert_live_after(&analysis, "then", 1, &[3]);
+        assert_live_after(&analysis, "then", 2, &[3]);
+
+        let else_block = analysis.block("else").expect("else block");
+        assert_var_set(&else_block.defs, &[2, 3]);
+        assert_var_set(&else_block.live_out, &[3]);
+        assert_live_after(&analysis, "else", 0, &[2]);
+        assert_live_after(&analysis, "else", 1, &[3]);
+
+        let merge = analysis.block("merge").expect("merge block");
+        assert_var_set(&merge.uses, &[3]);
+        assert_var_set(&merge.live_in, &[3]);
+        assert_var_set(&merge.live_out, &[]);
+        assert_live_after(&analysis, "merge", 0, &[]);
+    }
+
+    #[test]
+    fn test_liveness_tracks_call_arguments_results_and_returns() {
+        let func = Function {
+            name: "call_liveness".into(),
+            params: vec![],
+            ret: Type::I64,
+            locals: vec![(0, Type::I64), (1, Type::I64), (2, Type::I64)],
+            blocks: vec![BasicBlock {
+                label: "entry".into(),
+                instructions: vec![
+                    Instruction::Mov {
+                        dst: 0,
+                        src: Value::ConstI64(7),
+                        ty: Type::I64,
+                    },
+                    Instruction::Call {
+                        dst: Some(1),
+                        func: "callee".into(),
+                        args: vec![Value::Var(0)],
+                        ty: Type::I64,
+                    },
+                    Instruction::BinOp {
+                        dst: 2,
+                        op: BinOp::Add,
+                        lhs: Value::Var(0),
+                        rhs: Value::Var(1),
+                        ty: Type::I64,
+                    },
+                    Instruction::Return(Some(Value::Var(2))),
+                ],
+            }],
+            entry: "entry".into(),
+        };
+
+        let analysis = liveness::analyze(&func);
+        let entry = analysis.block("entry").expect("entry block");
+        assert_var_set(&entry.uses, &[]);
+        assert_var_set(&entry.defs, &[0, 1, 2]);
+        assert_live_after(&analysis, "entry", 0, &[0]);
+        assert_live_after(&analysis, "entry", 1, &[0, 1]);
+        assert_live_after(&analysis, "entry", 2, &[2]);
+        assert_live_after(&analysis, "entry", 3, &[]);
+    }
+
+    #[test]
+    fn test_liveness_marks_address_taken_vars() {
+        let func = Function {
+            name: "address_taken".into(),
+            params: vec![],
+            ret: Type::I64,
+            locals: vec![(0, Type::I64), (1, Type::I64)],
+            blocks: vec![BasicBlock {
+                label: "entry".into(),
+                instructions: vec![
+                    Instruction::Alloc {
+                        var: 0,
+                        ty: Type::I64,
+                    },
+                    Instruction::AddrOf { dst: 1, src: 0 },
+                    Instruction::Return(Some(Value::Var(1))),
+                ],
+            }],
+            entry: "entry".into(),
+        };
+
+        let analysis = liveness::analyze(&func);
+        let entry = analysis.block("entry").expect("entry block");
+        assert_var_set(&entry.uses, &[]);
+        assert_var_set(&entry.defs, &[0, 1]);
+        assert_var_set(&entry.live_in, &[]);
+        assert_var_set(&entry.live_out, &[]);
+        assert_var_set(&analysis.address_taken_vars, &[0]);
+        assert_live_after(&analysis, "entry", 0, &[0]);
+        assert_live_after(&analysis, "entry", 1, &[1]);
+        assert_live_after(&analysis, "entry", 2, &[]);
     }
 
     #[test]

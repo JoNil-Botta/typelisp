@@ -643,7 +643,15 @@
     value
     ty))
 
-(define (compiler-backend-binop-asm [op : CompilerIrBinOp]) : String
+(define (compiler-backend-unsigned-rel-ty? [ty : AstType]) : bool
+  (match ty
+    [(AstTyU64) true]
+    [(AstTyU32) true]
+    [(AstTyU16) true]
+    [(AstTyU8) true]
+    [_ false]))
+
+(define (compiler-backend-binop-asm [op : CompilerIrBinOp] [ty : AstType]) : String
   (match op
     [(IrBinAdd) "    addq %rbx, %rax\n"]
     [(IrBinSub) "    subq %rbx, %rax\n"]
@@ -652,10 +660,22 @@
     [(IrBinMod) "    cqto\n    idivq %rbx\n    movq %rdx, %rax\n"]
     [(IrBinEq) "    cmpq %rbx, %rax\n    sete %al\n    movzbq %al, %rax\n"]
     [(IrBinNe) "    cmpq %rbx, %rax\n    setne %al\n    movzbq %al, %rax\n"]
-    [(IrBinLt) "    cmpq %rbx, %rax\n    setl %al\n    movzbq %al, %rax\n"]
-    [(IrBinLe) "    cmpq %rbx, %rax\n    setle %al\n    movzbq %al, %rax\n"]
-    [(IrBinGt) "    cmpq %rbx, %rax\n    setg %al\n    movzbq %al, %rax\n"]
-    [(IrBinGe) "    cmpq %rbx, %rax\n    setge %al\n    movzbq %al, %rax\n"]
+    [(IrBinLt)
+      (if (compiler-backend-unsigned-rel-ty? ty)
+        "    cmpq %rbx, %rax\n    setb %al\n    movzbq %al, %rax\n"
+        "    cmpq %rbx, %rax\n    setl %al\n    movzbq %al, %rax\n")]
+    [(IrBinLe)
+      (if (compiler-backend-unsigned-rel-ty? ty)
+        "    cmpq %rbx, %rax\n    setbe %al\n    movzbq %al, %rax\n"
+        "    cmpq %rbx, %rax\n    setle %al\n    movzbq %al, %rax\n")]
+    [(IrBinGt)
+      (if (compiler-backend-unsigned-rel-ty? ty)
+        "    cmpq %rbx, %rax\n    seta %al\n    movzbq %al, %rax\n"
+        "    cmpq %rbx, %rax\n    setg %al\n    movzbq %al, %rax\n")]
+    [(IrBinGe)
+      (if (compiler-backend-unsigned-rel-ty? ty)
+        "    cmpq %rbx, %rax\n    setae %al\n    movzbq %al, %rax\n"
+        "    cmpq %rbx, %rax\n    setge %al\n    movzbq %al, %rax\n")]
     [(IrBinAnd) "    andq %rbx, %rax\n"]
     [(IrBinOr) "    orq %rbx, %rax\n"]
     [(IrBinBitAnd) "    andq %rbx, %rax\n"]
@@ -675,7 +695,8 @@
   [dst : i64]
   [op : CompilerIrBinOp]
   [lhs : CompilerIrValue]
-  [rhs : CompilerIrValue]) : ResultCompilerBackend
+  [rhs : CompilerIrValue]
+  [ty : AstType]) : ResultCompilerBackend
   (match (compiler-backend-emit-load-value-with-plan assignments lhs "%rax")
     [(OkCompilerBackend lhs-asm)
       (match (compiler-backend-emit-load-value-with-plan assignments rhs "%rbx")
@@ -686,7 +707,7 @@
               (string-append
                 rhs-asm
                 (string-append
-                  (compiler-backend-binop-asm op)
+                  (compiler-backend-binop-asm op ty)
                   (compiler-backend-emit-store-var-with-plan
                     assignments
                     dst
@@ -966,8 +987,8 @@
       (compiler-backend-emit-store-ptr assignments dst src ty)]
     [(IrInstrCast dst src from-ty to-ty)
       (compiler-backend-emit-cast assignments dst src from-ty to-ty)]
-    [(IrInstrBinOp dst op lhs rhs _)
-      (compiler-backend-emit-binop assignments dst op lhs rhs)]
+    [(IrInstrBinOp dst op lhs rhs ty)
+      (compiler-backend-emit-binop assignments dst op lhs rhs ty)]
     [(IrInstrUnOp dst op src _)
       (compiler-backend-emit-unop assignments dst op src)]
     [(IrInstrCall dst name args _)

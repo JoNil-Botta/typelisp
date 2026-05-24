@@ -34,13 +34,27 @@
       (write-file output-path (doc-render-module-graph-markdown modules))
       0)))
 
-(define (doc-test-file [input-path : String]) : i64
-  (let ([report : DocTestRunReport (doc-test-run-file input-path)])
+(define (doc-test-file
+  [input-path : String]
+  [stdlib-roots : CompilerLoadRootList]) : i64
+  (let ([report
+      :
+      DocTestRunReport
+      (doc-test-run-file-with-roots input-path stdlib-roots)])
     (begin
       (if (doc-test-run-report-ok? report)
         (print-string (string-append (doc-test-run-report-render report) "\n"))
         (print-error (doc-test-run-report-render report)))
       (doc-test-run-report-status report))))
+
+(define (doc-stdlib-roots [idx : i64]) : CompilerLoadRootList
+  (if (>= idx (arg-count))
+    CompilerLoadRootNil
+    (if (string-eq (arg idx) "--stdlib-root")
+      (if (< (+ idx 1) (arg-count))
+        (CompilerLoadRootCons (arg (+ idx 1)) (doc-stdlib-roots (+ idx 2)))
+        CompilerLoadRootNil)
+      (doc-stdlib-roots (+ idx 1)))))
 
 (define (doc-invalid-args) : i64
   (begin
@@ -56,8 +70,8 @@
   (if (< (arg-count) 2)
     (doc-invalid-args)
     (if (or (string-eq (arg 1) "--test") (string-eq (arg 1) "test"))
-      (if (= (arg-count) 3)
-        (doc-test-file (arg 2))
+      (if (>= (arg-count) 3)
+        (doc-test-file (arg 2) (doc-stdlib-roots 3))
         (doc-invalid-test-args))
       (if (= (arg-count) 3)
         (doc-generate-file (arg 1) (arg 2))

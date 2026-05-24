@@ -2014,6 +2014,42 @@ fn doc_test_passes_when_docs_have_no_examples() {
 }
 
 #[test]
+fn doc_test_uses_stdlib_root_for_imports() {
+    let dir = fixture_dir("doc-test-stdlib-root");
+    let stdlib_root = dir.join("repo-stdlib");
+    fs::create_dir_all(&stdlib_root).expect("create stdlib root");
+    fs::write(
+        stdlib_root.join("docfixture.tl"),
+        "(define stdlib-answer : i64 42)\n",
+    )
+    .expect("write stdlib fixture");
+
+    let source = dir.join("docs.tl");
+    fs::write(
+        &source,
+        r#";;;; Stdlib import example.
+;;;; ```typelisp
+;;;; (import "stdlib/docfixture.tl")
+;;;; (define (main) : i64 stdlib-answer)
+;;;; ```
+"#,
+    )
+    .expect("write doctest source");
+
+    let output = typelisp(&[
+        "doc",
+        "--test",
+        source.to_str().unwrap(),
+        "--stdlib-root",
+        stdlib_root.to_str().unwrap(),
+    ]);
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stdout(&output), "Doc tests passed: 1 example(s)\n");
+    assert_doctest_temp_cleaned(&source);
+}
+
+#[test]
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 fn fmt_formats_source_files_in_place() {
     let dir = fixture_dir("fmt-in-place");

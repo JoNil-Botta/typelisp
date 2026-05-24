@@ -575,9 +575,11 @@
         head
         (doc-test-run-failure-list-append rest failure))]))
 
-;; Render a failure as `path:line: example N: message`. Fence-level extraction
+;; Render a failure as `path:line: message`. Fence-level extraction
 
-;; errors (index `-1`) omit the example number.
+;; errors use index `-1`; example failures include the example number in their
+
+;; message so the public CLI text matches the stage0 Rust runner.
 
 (define (doc-test-run-failure-render [failure : DocTestRunFailure]) : String
   (match failure
@@ -588,13 +590,38 @@
           (string-append
             path
             (string-append ":" (string-append (int->string line) ": ")))])
-        (if (< index 0)
-          (string-append location message)
-          (string-append
-            location
-            (string-append
-              "example "
-              (string-append (int->string index) (string-append ": " message))))))]))
+        (string-append location message))]))
+
+(define (doc-test-unexpected-pass-message [index : i64]) : String
+  (string-append
+    "doctest example "
+    (string-append (int->string index) " was expected to fail but passed")))
+
+(define (doc-test-diagnostic-code [diag : CompilerDiagnostic]) : String
+  (let ([message : String (compiler-diagnostic-message diag)])
+    (if (or
+      (doc-test-string-prefix? message "parse:")
+      (doc-test-string-prefix? message "reader:"))
+      "E0100"
+      "E0200")))
+
+(define (doc-test-public-diagnostic-render [diag : CompilerDiagnostic]) : String
+  (string-append
+    "error["
+    (string-append
+      (doc-test-diagnostic-code diag)
+      (string-append "]: " (compiler-diagnostic-render diag)))))
+
+(define (doc-test-unexpected-error-message
+  [index : i64]
+  [diag : CompilerDiagnostic]) : String
+  (string-append
+    "doctest example "
+    (string-append
+      (int->string index)
+      (string-append
+        " was expected to pass\n"
+        (doc-test-public-diagnostic-render diag)))))
 
 ;; Check one extracted example through the virtual-source typechecker, comparing
 
@@ -603,6 +630,12 @@
 ;; relative to `path` (the doc'd source file).
 
 (define (doc-test-check-example [path : String] [example : DocTestExample]) : DocTestMaybeFailure
+  (doc-test-check-example-with-roots path example CompilerLoadRootNil))
+
+(define (doc-test-check-example-with-roots
+  [path : String]
+  [example : DocTestExample]
+  [stdlib-roots : CompilerLoadRootList]) : DocTestMaybeFailure
   (let ([index : i64 (doc-test-example-index example)]
     [source-line : i64 (doc-test-example-source-line example)]
     [expect-error
@@ -610,7 +643,7 @@
       bool
       (doc-test-expectation-error? (doc-test-example-expectation example))]
     [code : String (doc-test-example-code example)])
-    (match (compiler-check-source path code)
+    (match (compiler-check-source-with-roots path code stdlib-roots)
       [(OkCompilerCheck _)
         (if expect-error
           (DocTestSomeFailure
@@ -618,7 +651,7 @@
               path
               source-line
               index
-              "expected a compile error, but the example checked successfully"))
+              (doc-test-unexpected-pass-message index)))
           (DocTestNoFailure))]
       [(ErrCompilerCheck diag)
         (if expect-error
@@ -628,22 +661,31 @@
               path
               source-line
               index
-              (compiler-diagnostic-render diag))))])))
+              (doc-test-unexpected-error-message index diag))))])))
 
 (define (doc-test-run-examples
   [path : String]
   [examples : DocTestExampleList]
   [failures : DocTestRunFailureList]) : DocTestRunFailureList
+  (doc-test-run-examples-with-roots path examples failures CompilerLoadRootNil))
+
+(define (doc-test-run-examples-with-roots
+  [path : String]
+  [examples : DocTestExampleList]
+  [failures : DocTestRunFailureList]
+  [stdlib-roots : CompilerLoadRootList]) : DocTestRunFailureList
   (match examples
     [(DocTestExampleNil) failures]
     [(DocTestExampleCons example rest)
-      (match (doc-test-check-example path example)
-        [(DocTestNoFailure) (doc-test-run-examples path rest failures)]
+      (match (doc-test-check-example-with-roots path example stdlib-roots)
+        [(DocTestNoFailure)
+          (doc-test-run-examples-with-roots path rest failures stdlib-roots)]
         [(DocTestSomeFailure failure)
-          (doc-test-run-examples
+          (doc-test-run-examples-with-roots
             path
             rest
-            (doc-test-run-failure-list-append failures failure))])]))
+            (doc-test-run-failure-list-append failures failure)
+            stdlib-roots)])]))
 
 ;; A malformed/empty/unterminated fence is a runner failure too; it has no
 
@@ -674,17 +716,29 @@
 ;; with no examples and no errors reports success with a zero count.
 
 (define (doc-test-run-source [path : String] [source : String]) : DocTestRunReport
+  (doc-test-run-source-with-roots path source CompilerLoadRootNil))
+
+(define (doc-test-run-source-with-roots
+  [path : String]
+  [source : String]
+  [stdlib-roots : CompilerLoadRootList]) : DocTestRunReport
   (match (doc-test-extract-source source)
     [(DocTestExtraction examples errors)
       (DocTestRunReport
         (doc-test-example-list-count examples)
-        (doc-test-run-examples
+        (doc-test-run-examples-with-roots
           path
           examples
-          (doc-test-errors-to-failures path errors DocTestRunFailureNil)))]))
+          (doc-test-errors-to-failures path errors DocTestRunFailureNil)
+          stdlib-roots))]))
 
 (define (doc-test-run-file [path : String]) : DocTestRunReport
   (doc-test-run-source path (read-file path)))
+
+(define (doc-test-run-file-with-roots
+  [path : String]
+  [stdlib-roots : CompilerLoadRootList]) : DocTestRunReport
+  (doc-test-run-source-with-roots path (read-file path) stdlib-roots))
 
 ;; Exit status for a report: 0 when every example passed (or there were none),
 
@@ -932,7 +986,7 @@
       [(DocTestRunFailureCons failure (DocTestRunFailureNil))
         (doc-test-string-contains?
           (doc-test-run-failure-message failure)
-          "expected a compile error")]
+          "was expected to fail")]
       [_ false])))
 
 ;; Malformed fences (the shared malformed source's three extraction errors)
@@ -968,9 +1022,14 @@
       :
       String
       (doc-test-run-failure-render
-        (DocTestRunFailure "docs/bad.tl" 4 2 "typecheck: return type mismatch"))])
+        (DocTestRunFailure
+          "docs/bad.tl"
+          4
+          2
+          "doctest example 2 was expected to pass
+typecheck: return type mismatch"))])
     (if (doc-test-string-contains? rendered "docs/bad.tl:4:")
-      (if (doc-test-string-contains? rendered "example 2:")
+      (if (doc-test-string-contains? rendered "doctest example 2")
         (doc-test-string-contains? rendered "return type mismatch")
         false)
       false)))

@@ -7,7 +7,6 @@ mod ast;
 mod backend;
 mod ctfe;
 mod diagnostic;
-mod doctest;
 mod host_action;
 mod ir;
 mod lexer;
@@ -550,14 +549,36 @@ fn run_doc_command(args: &[String]) {
         "--test" | "test" => {
             let file = command_file_arg(args, 3, print_doc_usage);
             let options = parse_stdlib_roots(args, 4);
-            match doctest::run_doc_tests(&file, &options) {
-                Ok(report) => {
-                    println!("Doc tests passed: {} example(s)", report.total);
-                }
-                Err(report) => {
-                    eprint!("{}", report);
-                    std::process::exit(1);
-                }
+            let driver = find_selfhost_file("selfhost/doc.tl").unwrap_or_else(|| {
+                eprintln!(
+                    "Error: could not find selfhost/doc.tl in the repo or near the executable"
+                );
+                std::process::exit(1);
+            });
+
+            let mut runtime_args = vec!["--test".to_string(), file.display().to_string()];
+            for root in &options.stdlib_roots {
+                runtime_args.push("--stdlib-root".to_string());
+                runtime_args.push(root.display().to_string());
+            }
+            let output = native_or_exit(native::run_source_file_in_temp_dir(
+                &driver,
+                &options,
+                runtime_args.as_slice(),
+                native::host_target(),
+            ));
+            write_stream_or_exit(
+                io::stdout(),
+                &normalize_crlf_bytes(&output.stdout),
+                "stdout",
+            );
+            write_stream_or_exit(
+                io::stderr(),
+                &normalize_crlf_bytes(&output.stderr),
+                "stderr",
+            );
+            if !output.status.success() {
+                std::process::exit(output.status.code().unwrap_or(1));
             }
         }
         "help" | "--help" | "-h" => print_doc_usage(),
@@ -816,6 +837,21 @@ fn write_stream_or_exit(mut stream: impl Write, bytes: &[u8], name: &str) {
         eprintln!("Error: failed to flush child {}: {}", name, err);
         std::process::exit(1);
     }
+}
+
+fn normalize_crlf_bytes(bytes: &[u8]) -> Vec<u8> {
+    let mut normalized = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\r' && i + 1 < bytes.len() && bytes[i + 1] == b'\n' {
+            normalized.push(b'\n');
+            i += 2;
+        } else {
+            normalized.push(bytes[i]);
+            i += 1;
+        }
+    }
+    normalized
 }
 
 #[cfg(target_os = "windows")]

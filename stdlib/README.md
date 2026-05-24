@@ -103,11 +103,14 @@ lookup behavior.
    dependencies.
 3. Include a short header comment with its purpose, required primitives, and
    import path.
-4. Add the new `.tl` file to `scripts/verify-stdlib.sh`'s manifest.
-5. Add meaningful verification coverage in `scripts/verify-stdlib.sh` before
-   landing the module.
-6. Link user-facing docs or tests to the new module when appropriate.
+4. Add the new top-level `.tl` file to `scripts/verify-stdlib.sh`'s module
+   manifest.
+5. Add focused fixtures under `stdlib/tests/` and list them in
+   `scripts/verify-stdlib.sh`'s test manifest with expected exit/stdout/stderr.
+6. Document the intended public API coverage in `stdlib/tests/README.md`.
+7. Link user-facing docs or tests to the new module when appropriate.
 
-The verifier intentionally fails when a new `stdlib/*.tl` file is not listed in
-its manifest. That makes every new canonical module an explicit verification
+The verifier intentionally fails when a new top-level `stdlib/*.tl` module or a
+new `stdlib/tests/*.tl` fixture is not listed in its corresponding manifest.
+That makes every new canonical module and stdlib test an explicit verification
 decision.

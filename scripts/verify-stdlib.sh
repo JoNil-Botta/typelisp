@@ -2,7 +2,7 @@
 set -eu
 
 # verify-stdlib.sh - verify canonical stdlib modules through --stdlib-root.
-# refs #285
+# refs #285, #863
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -33,7 +33,7 @@ if [ ! -x "$COMPILER" ]; then
     exit 1
 fi
 
-# Build a witness .tl to a runnable binary and run it (host-aware), capturing the
+# Build a fixture .tl to a runnable binary and run it (host-aware), capturing the
 # program exit code in `got` and writing program stdout/stderr to <stem>.stdout /
 # <stem>.stderr. Linux uses GNU as/ld; Windows builds a native windows-x86_64
 # executable via clang/lld-link. Callers pass the same <stem> they use for their
@@ -61,7 +61,7 @@ stdlib_build_run() {
 
 # Every canonical stdlib module must be listed here. Keep this manifest in sync
 # with stdlib/README.md so new modules land with an explicit verification
-# decision.
+# decision. Fixture files under stdlib/tests/ are covered by stdlib_test_manifest.
 stdlib_manifest() {
     cat <<'EOF'
 io.tl
@@ -69,6 +69,24 @@ json.tl
 process.tl
 string.tl
 test.tl
+EOF
+}
+
+# Pipe-separated fixture manifest:
+#   fixture-path|expected-exit|expected-stdout|expected-stderr
+#
+# Use "-" for an expected empty stream, "literal:<text>" for an exact inline
+# stream without a trailing newline, or a repository-relative path for exact
+# expected output bytes.
+stdlib_test_manifest() {
+    cat <<'EOF'
+stdlib/tests/string_edges.tl|42|-|-
+stdlib/tests/json_helpers.tl|42|-|-
+stdlib/tests/json_parse_stringify.tl|42|-|-
+stdlib/tests/io_edges.tl|42|-|-
+stdlib/tests/process_api.tl|42|-|-
+stdlib/tests/test_assert_success.tl|42|-|-
+stdlib/tests/test_assert_failure.tl|134|-|literal:stdlib test failure message
 EOF
 }
 
@@ -80,7 +98,9 @@ EXPECTED="$WORKDIR/expected-stdlib-files.txt"
 ACTUAL="$WORKDIR/actual-stdlib-files.txt"
 
 stdlib_manifest | sort > "$EXPECTED"
-find stdlib -type f -name '*.tl' | sed 's#^stdlib/##' | sort > "$ACTUAL"
+find stdlib -type f -name '*.tl' ! -path 'stdlib/tests/*' |
+    sed 's#^stdlib/##' |
+    sort > "$ACTUAL"
 
 if ! cmp -s "$EXPECTED" "$ACTUAL"; then
     echo "stdlib verification manifest is out of date" >&2
@@ -94,350 +114,137 @@ if ! cmp -s "$EXPECTED" "$ACTUAL"; then
     exit 1
 fi
 
-WITNESS="$WORKDIR/stdlib_string_witness.tl"
-ASM="$WORKDIR/stdlib_string_witness.s"
-OBJ="$WORKDIR/stdlib_string_witness.o"
-BIN="$WORKDIR/stdlib_string_witness"
-STDOUT="$WORKDIR/stdlib_string_witness.stdout"
-STDERR="$WORKDIR/stdlib_string_witness.stderr"
+TEST_MANIFEST="$WORKDIR/stdlib-test-manifest.psv"
+TEST_EXPECTED="$WORKDIR/expected-stdlib-tests.txt"
+TEST_ACTUAL="$WORKDIR/actual-stdlib-tests.txt"
 
-cat > "$WITNESS" <<'EOF'
-(import "stdlib/string.tl")
+stdlib_test_manifest > "$TEST_MANIFEST"
+sed '/^#/d;/^$/d;s/|.*$//' "$TEST_MANIFEST" | sort > "$TEST_EXPECTED"
+find stdlib/tests -type f -name '*.tl' | sort > "$TEST_ACTUAL"
 
-(define (main) : i64
-  (if (string-eq (string-trim "  hello  ") "hello")
-      (if (string-contains "hello" "ell")
-          (if (string-contains "hello" "zzz")
-              3
-              (if (string-eq (string-replace "hello" "ell" "ipp") "hippo")
-                  (if (string-eq (string-replace "abc" "c" "x") "abx")
-                      42
-                      5)
-                  4))
-          2)
-      1))
-EOF
+if ! cmp -s "$TEST_EXPECTED" "$TEST_ACTUAL"; then
+    echo "stdlib test manifest is out of date" >&2
+    echo "expected fixtures:" >&2
+    sed 's/^/  /' "$TEST_EXPECTED" >&2
+    echo "actual fixtures:" >&2
+    sed 's/^/  /' "$TEST_ACTUAL" >&2
+    if command -v diff >/dev/null 2>&1; then
+        diff -u "$TEST_EXPECTED" "$TEST_ACTUAL" >&2 || true
+    fi
+    exit 1
+fi
 
-echo "[stdlib] building+running string witness (--stdlib-root)"
-stdlib_build_run "$WITNESS" "$BIN"
-
-if [ "$got" -ne 42 ]; then
-    echo "FAIL: stdlib witness expected exit 42, got $got" >&2
-    if [ -s "$STDOUT" ]; then
+show_streams() {
+    _stdout=$1
+    _stderr=$2
+    if [ -s "$_stdout" ]; then
         echo "stdout:" >&2
-        sed 's/^/  /' "$STDOUT" >&2
+        sed 's/^/  /' "$_stdout" >&2
     fi
-    if [ -s "$STDERR" ]; then
+    if [ -s "$_stderr" ]; then
         echo "stderr:" >&2
-        sed 's/^/  /' "$STDERR" >&2
+        sed 's/^/  /' "$_stderr" >&2
     fi
-    exit 1
-fi
+}
 
-if [ -s "$STDOUT" ]; then
-    echo "FAIL: stdlib witness wrote unexpected stdout" >&2
-    sed 's/^/  /' "$STDOUT" >&2
-    exit 1
-fi
+compare_stream() {
+    _case=$1
+    _kind=$2
+    _spec=$3
+    _actual=$4
+    _stdout=$5
+    _stderr=$6
 
-if [ -s "$STDERR" ]; then
-    echo "FAIL: stdlib witness wrote unexpected stderr" >&2
-    sed 's/^/  /' "$STDERR" >&2
-    exit 1
-fi
-
-JSON_WITNESS="$WORKDIR/stdlib_json_witness.tl"
-JSON_BIN="$WORKDIR/stdlib_json_witness"
-JSON_STDOUT="$WORKDIR/stdlib_json_witness.stdout"
-JSON_STDERR="$WORKDIR/stdlib_json_witness.stderr"
-
-cat > "$JSON_WITNESS" <<'EOF'
-(import "stdlib/json.tl")
-
-(define (json-witness-name [doc : Json]) : bool
-  (match (json-object-get doc "name")
-    [(JsonFound value)
-      (match value
-        [(JsonString text) (string-eq text "tl")]
-        [_ false])]
-    [(JsonMissing) false]))
-
-(define (json-witness-items [doc : Json]) : bool
-  (match (json-object-get doc "items")
-    [(JsonFound value)
-      (match value
-        [(JsonArray items) (= (json-list-count items) 5)]
-        [_ false])]
-    [(JsonMissing) false]))
-
-(define (json-witness-escaped [doc : Json]) : bool
-  (match (json-object-get doc "escaped")
-    [(JsonFound value)
-      (match value
-        [(JsonString text) (string-eq text "a\nb")]
-        [_ false])]
-    [(JsonMissing) false]))
-
-(define (json-witness-stringify [doc : Json]) : bool
-  (string-eq
-    (json-stringify doc)
-    "{\"name\":\"tl\",\"items\":[1,-2.5e3,true,false,null],\"escaped\":\"a\\nb\"}"))
-
-(define (json-witness-string-escapes) : bool
-  (string-eq (json-stringify (JsonString "a\n\"\\")) "\"a\\n\\\"\\\\\""))
-
-(define (json-witness-invalid) : bool
-  (match (json-parse "{\"bad\":[1,]}")
-    [(OkJson _) false]
-    [(ErrJson _) true]))
-
-(define (main) : i64
-  (match (json-parse
-    " { \"name\" : \"tl\", \"items\" : [1, -2.5e3, true, false, null], \"escaped\" : \"a\\nb\" } ")
-    [(OkJson doc)
-      (if (json-witness-name doc)
-        (if (json-witness-items doc)
-          (if (json-witness-escaped doc)
-            (if (json-witness-stringify doc)
-              (if (json-witness-string-escapes)
-                (if (json-witness-invalid) 42 6)
-                5)
-              4)
-            3)
-          2)
-        1)]
-    [(ErrJson _) 7]))
-EOF
-
-echo "[stdlib] building+running JSON witness (--stdlib-root)"
-stdlib_build_run "$JSON_WITNESS" "$JSON_BIN"
-
-if [ "$got" -ne 42 ]; then
-    echo "FAIL: stdlib JSON witness expected exit 42, got $got" >&2
-    if [ -s "$JSON_STDOUT" ]; then
-        echo "stdout:" >&2
-        sed 's/^/  /' "$JSON_STDOUT" >&2
+    if [ "$_spec" = "-" ]; then
+        if [ -s "$_actual" ]; then
+            echo "FAIL: $_case wrote unexpected $_kind" >&2
+            show_streams "$_stdout" "$_stderr"
+            exit 1
+        fi
+        return
     fi
-    if [ -s "$JSON_STDERR" ]; then
-        echo "stderr:" >&2
-        sed 's/^/  /' "$JSON_STDERR" >&2
+
+    case "$_spec" in
+        literal:*)
+            _expected_literal=${_spec#literal:}
+            if ! printf '%s' "$_expected_literal" | cmp -s - "$_actual"; then
+                echo "FAIL: $_case $_kind differed from inline literal expectation" >&2
+                show_streams "$_stdout" "$_stderr"
+                exit 1
+            fi
+            return
+            ;;
+    esac
+
+    _expected="$ROOT/$_spec"
+    if [ ! -f "$_expected" ]; then
+        echo "FAIL: $_case expected $_kind fixture is missing: $_spec" >&2
+        exit 1
     fi
-    exit 1
-fi
 
-if [ -s "$JSON_STDOUT" ]; then
-    echo "FAIL: stdlib JSON witness wrote unexpected stdout" >&2
-    sed 's/^/  /' "$JSON_STDOUT" >&2
-    exit 1
-fi
-
-if [ -s "$JSON_STDERR" ]; then
-    echo "FAIL: stdlib JSON witness wrote unexpected stderr" >&2
-    sed 's/^/  /' "$JSON_STDERR" >&2
-    exit 1
-fi
-
-TEST_WITNESS="$WORKDIR/stdlib_test_witness.tl"
-TEST_ASM="$WORKDIR/stdlib_test_witness.s"
-TEST_OBJ="$WORKDIR/stdlib_test_witness.o"
-TEST_BIN="$WORKDIR/stdlib_test_witness"
-TEST_STDOUT="$WORKDIR/stdlib_test_witness.stdout"
-TEST_STDERR="$WORKDIR/stdlib_test_witness.stderr"
-
-cat > "$TEST_WITNESS" <<'EOF'
-(import "stdlib/test.tl")
-
-(define (main) : i64
-  (begin
-    (assert-true true "true should pass")
-    (assert-false false "false should pass")
-    (assert-bool-eq true true "bool equality should pass")
-    (assert-i64-eq 42 42 "i64 equality should pass")
-    (assert-i32-eq (cast 7 : i32) (cast 7 : i32) "i32 equality should pass")
-    (assert-f64-eq 1.5 1.5 "f64 equality should pass")
-    (assert-char-eq #A' #A' "char equality should pass")
-    (assert-string-eq "hello" "hello" "string equality should pass")
-    42))
-EOF
-
-echo "[stdlib] building+running assertion witness (--stdlib-root)"
-stdlib_build_run "$TEST_WITNESS" "$TEST_BIN"
-
-if [ "$got" -ne 42 ]; then
-    echo "FAIL: stdlib assertion witness expected exit 42, got $got" >&2
-    if [ -s "$TEST_STDOUT" ]; then
-        echo "stdout:" >&2
-        sed 's/^/  /' "$TEST_STDOUT" >&2
+    if ! cmp -s "$_expected" "$_actual"; then
+        echo "FAIL: $_case $_kind differed from $_spec" >&2
+        if command -v diff >/dev/null 2>&1; then
+            diff -u "$_expected" "$_actual" >&2 || true
+        else
+            show_streams "$_stdout" "$_stderr"
+        fi
+        exit 1
     fi
-    if [ -s "$TEST_STDERR" ]; then
-        echo "stderr:" >&2
-        sed 's/^/  /' "$TEST_STDERR" >&2
+}
+
+TEST_COPY_ROOT="$WORKDIR/fixtures"
+RUN_ROOT="$WORKDIR/run"
+mkdir -p "$TEST_COPY_ROOT" "$RUN_ROOT"
+
+passed=0
+while IFS='|' read -r fixture want stdout_spec stderr_spec; do
+    case "$fixture" in
+        '' | \#*) continue ;;
+    esac
+
+    if [ -z "$want" ] || [ -z "$stdout_spec" ] || [ -z "$stderr_spec" ]; then
+        echo "FAIL: malformed stdlib test manifest row: $fixture" >&2
+        exit 1
     fi
-    exit 1
-fi
 
-if [ -s "$TEST_STDOUT" ]; then
-    echo "FAIL: stdlib assertion witness wrote unexpected stdout" >&2
-    sed 's/^/  /' "$TEST_STDOUT" >&2
-    exit 1
-fi
+    case "$fixture" in
+        stdlib/tests/*.tl) ;;
+        *)
+            echo "FAIL: stdlib test fixture must live under stdlib/tests/: $fixture" >&2
+            exit 1
+            ;;
+    esac
 
-if [ -s "$TEST_STDERR" ]; then
-    echo "FAIL: stdlib assertion witness wrote unexpected stderr" >&2
-    sed 's/^/  /' "$TEST_STDERR" >&2
-    exit 1
-fi
-
-PROCESS_WITNESS="$WORKDIR/stdlib_process_witness.tl"
-PROCESS_BIN="$WORKDIR/stdlib_process_witness"
-PROCESS_STDOUT="$WORKDIR/stdlib_process_witness.stdout"
-PROCESS_STDERR="$WORKDIR/stdlib_process_witness.stderr"
-
-cat > "$PROCESS_WITNESS" <<'EOF'
-(import "stdlib/process.tl")
-
-(define (process-witness-command-shape [command : ProcessCommand]) : bool
-  (if (string-eq (process-command-executable command) "echo")
-    (match (process-command-cwd command)
-      [(ProcessSomeString cwd)
-        (if (string-eq cwd "target")
-          (match (process-command-stdin command)
-            [(ProcessSomeString input)
-              (if (string-eq input "stdin")
-                (match (process-command-env command)
-                  [(ProcessEnvCons name value _)
-                    (if (string-eq name "TL_TEST")
-                      (string-eq value "1")
-                      false)]
-                  [_ false])
-                false)]
-            [_ false])
-          false)]
-      [_ false])
-    false))
-
-(define (process-witness-invalid-command) : bool
-  (match (process-output (process-command "" (process-args-empty)))
-    [(ErrProcessOutput error)
-      (match error
-        [(ProcessInvalidCommand message)
-          (string-eq message "process: executable path is empty")]
-        [_ false])]
-    [_ false]))
-
-(define (process-witness-unsupported [command : ProcessCommand]) : bool
-  (match (process-run command)
-    [(ErrProcessOutput error)
-      (if (process-error-unsupported? error)
-        (string-eq
-          (process-error-message error)
-          "process: runtime execution is not implemented")
-        false)]
-    [_ false]))
-
-(define (main) : i64
-  (let ([command
-      :
-      ProcessCommand
-      (process-command-with-env
-        (process-command-with-stdin
-          (process-command-with-cwd
-            (process-command
-              "echo"
-              (process-args-cons "hello" (process-args-empty)))
-            "target")
-          "stdin")
-        "TL_TEST"
-        "1")])
-    (if (process-witness-command-shape command)
-      (if (process-witness-invalid-command)
-        (if (process-witness-unsupported command) 42 3)
-        2)
-      1)))
-EOF
-
-echo "[stdlib] building+running process API witness (--stdlib-root)"
-stdlib_build_run "$PROCESS_WITNESS" "$PROCESS_BIN"
-
-if [ "$got" -ne 42 ]; then
-    echo "FAIL: stdlib process witness expected exit 42, got $got" >&2
-    if [ -s "$PROCESS_STDOUT" ]; then
-        echo "stdout:" >&2
-        sed 's/^/  /' "$PROCESS_STDOUT" >&2
+    if [ ! -f "$fixture" ]; then
+        echo "FAIL: stdlib test fixture is missing: $fixture" >&2
+        exit 1
     fi
-    if [ -s "$PROCESS_STDERR" ]; then
-        echo "stderr:" >&2
-        sed 's/^/  /' "$PROCESS_STDERR" >&2
+
+    case_id=$(printf '%s' "$fixture" | sed 's#/#_#g;s#\.tl$##')
+    copied="$TEST_COPY_ROOT/$fixture"
+    mkdir -p "$(dirname "$copied")"
+    cp "$fixture" "$copied"
+
+    stem="$RUN_ROOT/$case_id"
+    stdout="$stem.stdout"
+    stderr="$stem.stderr"
+
+    echo "[stdlib] building+running $fixture (--stdlib-root)"
+    stdlib_build_run "$copied" "$stem"
+
+    if [ "$got" -ne "$want" ]; then
+        echo "FAIL: $fixture expected exit $want, got $got" >&2
+        show_streams "$stdout" "$stderr"
+        exit 1
     fi
-    exit 1
-fi
 
-if [ -s "$PROCESS_STDOUT" ]; then
-    echo "FAIL: stdlib process witness wrote unexpected stdout" >&2
-    sed 's/^/  /' "$PROCESS_STDOUT" >&2
-    exit 1
-fi
+    compare_stream "$fixture" stdout "$stdout_spec" "$stdout" "$stdout" "$stderr"
+    compare_stream "$fixture" stderr "$stderr_spec" "$stderr" "$stdout" "$stderr"
 
-if [ -s "$PROCESS_STDERR" ]; then
-    echo "FAIL: stdlib process witness wrote unexpected stderr" >&2
-    sed 's/^/  /' "$PROCESS_STDERR" >&2
-    exit 1
-fi
+    passed=$((passed + 1))
+done < "$TEST_MANIFEST"
 
-IO_WITNESS="$WORKDIR/stdlib_io_witness.tl"
-IO_ASM="$WORKDIR/stdlib_io_witness.s"
-IO_OBJ="$WORKDIR/stdlib_io_witness.o"
-IO_BIN="$WORKDIR/stdlib_io_witness"
-IO_STDOUT="$WORKDIR/stdlib_io_witness.stdout"
-IO_STDERR="$WORKDIR/stdlib_io_witness.stderr"
+module_count=$(wc -l < "$EXPECTED" | tr -d ' ')
 
-cat > "$IO_WITNESS" <<'EOF'
-(import "stdlib/io.tl")
-
-(define (main) : i64
-  (begin
-    (write-file "target/stdlib-verify/stdlib_io_witness.txt" "alpha")
-    (if (string-eq (read-file-or "target/stdlib-verify/stdlib_io_witness.txt" "MISS") "alpha")
-      (if (string-eq (read-file-or "target/stdlib-verify/stdlib_io_missing.txt" "MISS") "MISS")
-        (begin
-          (append-file "target/stdlib-verify/stdlib_io_witness.txt" "-beta")
-          (if (string-eq (read-file "target/stdlib-verify/stdlib_io_witness.txt") "alpha-beta")
-            (if (file-nonempty? "target/stdlib-verify/stdlib_io_witness.txt")
-              (if (file-nonempty? "target/stdlib-verify/stdlib_io_missing.txt")
-                10
-                42)
-              20)
-            30))
-        40)
-      50)))
-EOF
-
-echo "[stdlib] building+running file I/O witness (--stdlib-root)"
-stdlib_build_run "$IO_WITNESS" "$IO_BIN"
-
-if [ "$got" -ne 42 ]; then
-    echo "FAIL: stdlib file I/O witness expected exit 42, got $got" >&2
-    if [ -s "$IO_STDOUT" ]; then
-        echo "stdout:" >&2
-        sed 's/^/  /' "$IO_STDOUT" >&2
-    fi
-    if [ -s "$IO_STDERR" ]; then
-        echo "stderr:" >&2
-        sed 's/^/  /' "$IO_STDERR" >&2
-    fi
-    exit 1
-fi
-
-if [ -s "$IO_STDOUT" ]; then
-    echo "FAIL: stdlib file I/O witness wrote unexpected stdout" >&2
-    sed 's/^/  /' "$IO_STDOUT" >&2
-    exit 1
-fi
-
-if [ -s "$IO_STDERR" ]; then
-    echo "FAIL: stdlib file I/O witness wrote unexpected stderr" >&2
-    sed 's/^/  /' "$IO_STDERR" >&2
-    exit 1
-fi
-
-echo "stdlib verification passed for $(wc -l < "$EXPECTED" | tr -d ' ') module(s)"
+echo "stdlib verification passed for $module_count module(s), $passed fixture(s)"

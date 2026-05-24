@@ -14,6 +14,8 @@ installed-root discovery, namespace isolation, or an implicit prelude.
 
 - `io.tl`: file I/O helpers built on compiler/runtime primitives. Import it
   with `(import "stdlib/io.tl")`.
+- `json.tl`: JSON value parser and serializer for tool protocols and data
+  exchange. Import it with `(import "stdlib/json.tl")`.
 - `string.tl`: string utility functions built on compiler/runtime primitives.
   Import it with `(import "stdlib/string.tl")`.
 - `test.tl`: minimal assertion helpers for TypeLisp fixtures. Import it with
@@ -57,6 +59,7 @@ Stdlib modules are imported explicitly:
 
 ```lisp
 (import "stdlib/io.tl")
+(import "stdlib/json.tl")
 (import "stdlib/string.tl")
 (import "stdlib/test.tl")
 ```

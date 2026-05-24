@@ -65,6 +65,7 @@ stdlib_build_run() {
 stdlib_manifest() {
     cat <<'EOF'
 io.tl
+json.tl
 string.tl
 test.tl
 EOF
@@ -141,6 +142,97 @@ fi
 if [ -s "$STDERR" ]; then
     echo "FAIL: stdlib witness wrote unexpected stderr" >&2
     sed 's/^/  /' "$STDERR" >&2
+    exit 1
+fi
+
+JSON_WITNESS="$WORKDIR/stdlib_json_witness.tl"
+JSON_BIN="$WORKDIR/stdlib_json_witness"
+JSON_STDOUT="$WORKDIR/stdlib_json_witness.stdout"
+JSON_STDERR="$WORKDIR/stdlib_json_witness.stderr"
+
+cat > "$JSON_WITNESS" <<'EOF'
+(import "stdlib/json.tl")
+
+(define (json-witness-name [doc : Json]) : bool
+  (match (json-object-get doc "name")
+    [(JsonFound value)
+      (match value
+        [(JsonString text) (string-eq text "tl")]
+        [_ false])]
+    [(JsonMissing) false]))
+
+(define (json-witness-items [doc : Json]) : bool
+  (match (json-object-get doc "items")
+    [(JsonFound value)
+      (match value
+        [(JsonArray items) (= (json-list-count items) 5)]
+        [_ false])]
+    [(JsonMissing) false]))
+
+(define (json-witness-escaped [doc : Json]) : bool
+  (match (json-object-get doc "escaped")
+    [(JsonFound value)
+      (match value
+        [(JsonString text) (string-eq text "a\nb")]
+        [_ false])]
+    [(JsonMissing) false]))
+
+(define (json-witness-stringify [doc : Json]) : bool
+  (string-eq
+    (json-stringify doc)
+    "{\"name\":\"tl\",\"items\":[1,-2.5e3,true,false,null],\"escaped\":\"a\\nb\"}"))
+
+(define (json-witness-string-escapes) : bool
+  (string-eq (json-stringify (JsonString "a\n\"\\")) "\"a\\n\\\"\\\\\""))
+
+(define (json-witness-invalid) : bool
+  (match (json-parse "{\"bad\":[1,]}")
+    [(OkJson _) false]
+    [(ErrJson _) true]))
+
+(define (main) : i64
+  (match (json-parse
+    " { \"name\" : \"tl\", \"items\" : [1, -2.5e3, true, false, null], \"escaped\" : \"a\\nb\" } ")
+    [(OkJson doc)
+      (if (json-witness-name doc)
+        (if (json-witness-items doc)
+          (if (json-witness-escaped doc)
+            (if (json-witness-stringify doc)
+              (if (json-witness-string-escapes)
+                (if (json-witness-invalid) 42 6)
+                5)
+              4)
+            3)
+          2)
+        1)]
+    [(ErrJson _) 7]))
+EOF
+
+echo "[stdlib] building+running JSON witness (--stdlib-root)"
+stdlib_build_run "$JSON_WITNESS" "$JSON_BIN"
+
+if [ "$got" -ne 42 ]; then
+    echo "FAIL: stdlib JSON witness expected exit 42, got $got" >&2
+    if [ -s "$JSON_STDOUT" ]; then
+        echo "stdout:" >&2
+        sed 's/^/  /' "$JSON_STDOUT" >&2
+    fi
+    if [ -s "$JSON_STDERR" ]; then
+        echo "stderr:" >&2
+        sed 's/^/  /' "$JSON_STDERR" >&2
+    fi
+    exit 1
+fi
+
+if [ -s "$JSON_STDOUT" ]; then
+    echo "FAIL: stdlib JSON witness wrote unexpected stdout" >&2
+    sed 's/^/  /' "$JSON_STDOUT" >&2
+    exit 1
+fi
+
+if [ -s "$JSON_STDERR" ]; then
+    echo "FAIL: stdlib JSON witness wrote unexpected stderr" >&2
+    sed 's/^/  /' "$JSON_STDERR" >&2
     exit 1
 fi
 

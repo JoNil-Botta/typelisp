@@ -502,6 +502,16 @@ impl LspServer {
                         .entry(uri)
                         .or_default()
                         .push(lsp_diagnostic(&diag));
+                } else {
+                    for warning in checker.warnings() {
+                        let diag = warning.to_diagnostic();
+                        let uri = diagnostic_uri(&diag, &loaded.sources)
+                            .unwrap_or_else(|| root_uri.to_string());
+                        diagnostics
+                            .entry(uri)
+                            .or_default()
+                            .push(lsp_diagnostic(&diag));
+                    }
                 }
             }
             Err(err) => {

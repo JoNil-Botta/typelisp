@@ -76,6 +76,12 @@ fn typecheck_or_exit(prog: &Program, sources: &[SourceFile]) {
         );
         std::process::exit(1);
     }
+    for warning in tc.warnings() {
+        eprint!(
+            "{}",
+            format_diagnostic_from_sources(&warning.to_diagnostic(), sources)
+        );
+    }
 }
 
 fn lower_mode_for_backend(mode: BackendMode) -> LowerMode {

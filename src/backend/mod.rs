@@ -6087,7 +6087,7 @@ impl X86_64Backend {
         self.load_dyn_array_data_ptr(base, "%rax");
         self.load_vector_index(index, "%rcx");
         let addr = Self::indexed_addr("%rax", "%rcx", elem_ty);
-        let move_mnemonic = Self::vector_move_mnemonic(elem_ty);
+        let move_mnemonic = Self::vector_move_mnemonic_for_reg("%zmm0", elem_ty);
         self.emit(&format!("    {} {}, %zmm0", move_mnemonic, addr));
         let dst_offset = self.var_offsets[&dst];
         self.store_vector_reg("%zmm0", dst_offset, elem_ty);
@@ -6105,7 +6105,7 @@ impl X86_64Backend {
         self.load_vector_index(index, "%rcx");
         self.load_vector_value(value, "%zmm0", elem_ty);
         let addr = Self::indexed_addr("%rax", "%rcx", elem_ty);
-        let move_mnemonic = Self::vector_move_mnemonic(elem_ty);
+        let move_mnemonic = Self::vector_move_mnemonic_for_reg("%zmm0", elem_ty);
         self.emit(&format!("    {} %zmm0, {}", move_mnemonic, addr));
     }
 
@@ -6220,12 +6220,12 @@ impl X86_64Backend {
             return;
         };
         let offset = self.var_offsets[var];
-        let move_mnemonic = Self::vector_move_mnemonic(elem_ty);
+        let move_mnemonic = Self::vector_move_mnemonic_for_reg(reg, elem_ty);
         self.emit(&format!("    {} {}(%rbp), {}", move_mnemonic, offset, reg));
     }
 
     fn store_vector_reg(&mut self, reg: &str, offset: i32, elem_ty: &Type) {
-        let move_mnemonic = Self::vector_move_mnemonic(elem_ty);
+        let move_mnemonic = Self::vector_move_mnemonic_for_reg(reg, elem_ty);
         self.emit(&format!("    {} {}, {}(%rbp)", move_mnemonic, reg, offset));
     }
 
@@ -6238,6 +6238,20 @@ impl X86_64Backend {
             "vmovupd"
         } else {
             "vmovdqu"
+        }
+    }
+
+    /// Unmasked vector move mnemonic for a specific register width. AVX2 `%ymm`
+    /// (256-bit) moves use the VEX `vmovdqu`/`vmovupd` forms. AVX-512 `%zmm`
+    /// (512-bit) moves must use the size-tagged EVEX forms
+    /// (`vmovdqu64`/`vmovdqu32`/`vmovupd`): plain `vmovdqu` has no 512-bit
+    /// encoding, so stricter assemblers (LLVM/clang) reject `vmovdqu %zmm`.
+    /// `vmovupd` already has a 512-bit encoding, so float moves are unchanged.
+    fn vector_move_mnemonic_for_reg(reg: &str, elem_ty: &Type) -> &'static str {
+        if reg.contains("zmm") {
+            Self::masked_vector_move_mnemonic(elem_ty)
+        } else {
+            Self::vector_move_mnemonic(elem_ty)
         }
     }
 
@@ -7435,6 +7449,85 @@ mod tests {
             asm.contains("foreach_tail_header"),
             "expected scalar cleanup tail; asm:\n{}",
             asm
+        );
+    }
+
+    #[test]
+    fn test_avx512_foreach_maps_emit_zmm_kmask_instruction_families() {
+        // Source-level `foreach` lowered with `BackendMode::Avx512` must produce
+        // AVX-512 evidence from the real lowerer path (#508), not only from
+        // hand-built IR (#507). This proves the end-to-end source -> AVX-512
+        // assembly path for i64, i32, and f64 kernel shapes.
+        let asm = compile_ok_for_target(
+            r#"
+            (define (fill-i64 [a : (Array i64)]
+                              [b : (Array i64)]
+                              [out : (Array i64)]
+                              [n : i64]) : unit
+              (foreach ([i : i64 0 n])
+                (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+
+            (define (fill-i32 [a : (Array i32)]
+                              [b : (Array i32)]
+                              [out : (Array i32)]
+                              [n : i64]) : unit
+              (foreach ([i : i64 0 n])
+                (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+
+            (define (fill-f64 [a : (Array f64)]
+                              [b : (Array f64)]
+                              [out : (Array f64)]
+                              [n : i64]) : unit
+              (foreach ([i : i64 0 n])
+                (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+
+            (define (main) : i64 42)
+            "#,
+            BackendTarget::default().with_mode(BackendMode::Avx512),
+        );
+
+        // 512-bit registers and the i64/i32/f64 add instruction families.
+        for expected in ["%zmm", "vpaddq", "vpaddd", "vaddpd"] {
+            assert!(asm.contains(expected), "missing {expected}; asm:\n{asm}");
+        }
+        // Unmasked ZMM moves must use the size-tagged EVEX encodings; plain
+        // `vmovdqu` has no 512-bit form and is rejected by LLVM/clang.
+        for expected in ["vmovdqu64", "vmovdqu32", "vmovupd"] {
+            assert!(asm.contains(expected), "missing {expected}; asm:\n{asm}");
+        }
+        // k-mask predicated tail: a real `%k1` predicate (never the implicit
+        // no-mask `%k0`), with zero-masked loads and merge-masked stores for all
+        // three element widths.
+        assert!(
+            asm.contains("kmovw %eax, %k1"),
+            "expected kmovw into k1; asm:\n{asm}"
+        );
+        assert!(
+            !asm.contains("%k0"),
+            "k0 must not be used as an active mask; asm:\n{asm}"
+        );
+        for expected in [
+            "vmovdqu64 (%rax,%rcx,8), %zmm0{%k1}{z}",
+            "vmovdqu64 %zmm0, (%rax,%rcx,8){%k1}",
+            "vmovdqu32 (%rax,%rcx,4), %zmm0{%k1}{z}",
+            "vmovdqu32 %zmm0, (%rax,%rcx,4){%k1}",
+            "vmovupd (%rax,%rcx,8), %zmm0{%k1}{z}",
+            "vmovupd %zmm0, (%rax,%rcx,8){%k1}",
+        ] {
+            assert!(
+                asm.contains(expected),
+                "missing masked move {expected}; asm:\n{asm}"
+            );
+        }
+        // The AVX-512 lowerer uses a k-mask predicated tail, not the AVX2-style
+        // scalar cleanup loop.
+        assert!(
+            asm.contains("foreach_avx512_tail"),
+            "expected AVX-512 k-mask tail labels; asm:\n{asm}"
+        );
+        assert!(
+            !asm.contains("foreach_tail_header"),
+            "AVX-512 path must not fall back to the scalar cleanup tail; asm:\n{asm}"
         );
     }
 

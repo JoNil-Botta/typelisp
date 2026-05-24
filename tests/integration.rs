@@ -628,6 +628,57 @@ fn spmd_foreach_avx2_runs_when_host_supports_avx2() {
 }
 
 #[test]
+fn spmd_foreach_avx512_runs_when_host_supports_avx512() {
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+    {
+        eprintln!("skipping AVX-512 SPMD execution test on non-x86 host");
+    }
+
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        // The emitted kernels use `vmovdqu64`/`vmovdqu32`/`vmovupd`,
+        // `kmovw`, and EVEX k-mask predication, all covered by AVX-512F.
+        if !std::is_x86_feature_detected!("avx512f") {
+            eprintln!("skipping AVX-512 SPMD execution test because host CPU lacks AVX-512F");
+            return;
+        }
+
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let source_path = manifest_dir
+            .join("tests")
+            .join("integration")
+            .join("spmd_foreach.tl");
+        let work_dir = manifest_dir
+            .join("target")
+            .join("integration-tests")
+            .join("spmd_foreach_avx512");
+        fs::create_dir_all(&work_dir).expect("create AVX-512 SPMD test work dir");
+        let work_path = work_dir.join("spmd_foreach.tl");
+        fs::copy(&source_path, &work_path).expect("copy spmd_foreach.tl to work dir");
+
+        let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+            .arg("run")
+            .arg(&work_path)
+            .arg("--backend-mode")
+            .arg("avx512")
+            .output()
+            .expect("run typelisp AVX-512 SPMD fixture");
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "AVX-512 SPMD fixture exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr
+        );
+        assert_eq!(stdout, "", "AVX-512 SPMD fixture wrote stdout");
+        assert_eq!(stderr, "", "AVX-512 SPMD fixture wrote stderr");
+    }
+}
+
+#[test]
 fn type_lisp_programs_compile_link_and_run_explicit_build() {
     let cases = [
         Case {

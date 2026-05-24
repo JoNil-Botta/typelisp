@@ -226,6 +226,10 @@ fn compiler_optimize_tl_compiles_to_assembly() {
         "_tl_opt_collect_instrs_uses:",
         "_tl_opt_dce_instrs:",
         "_tl_compiler_optimize_dce_self_test:",
+        // Common subexpression elimination pass (#546).
+        "_tl_opt_cse_instrs:",
+        "_tl_opt_expr_invalidate_var:",
+        "_tl_compiler_optimize_cse_self_test:",
     ] {
         assert_symbol(&asm, sym, "compiler_optimize");
     }

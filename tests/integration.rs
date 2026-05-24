@@ -3880,6 +3880,195 @@ fn tl_alloc_huge_request_traps_abort_134() {
 }
 
 #[test]
+fn region_mark_before_allocation_returns_zero() {
+    let output = run_inline_source(
+        "region_mark_before_alloc",
+        "region_mark_before_alloc.tl",
+        r#"
+(extern tl_region_mark : (-> u64))
+
+(define (main) : i64
+  (if (= (tl_region_mark) (cast 0 : u64)) 42 1))
+"#,
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "region mark before allocation should return zero\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert_eq!(stdout, "", "region mark should not write stdout");
+    assert_eq!(stderr, "", "region mark should not write stderr");
+}
+
+#[test]
+fn region_reset_zero_clears_all_arenas() {
+    let output = run_inline_source(
+        "region_reset_zero",
+        "region_reset_zero.tl",
+        r#"
+(extern tl_region_mark : (-> u64))
+(extern tl_region_reset : (-> u64 unit))
+
+(define (main) : i64
+  (begin
+    (string-append "left" "right")
+    (tl_region_reset (cast 0 : u64))
+    (if (= (tl_region_mark) (cast 0 : u64)) 44 1)))
+"#,
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(44),
+        "region reset zero should clear all arenas\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert_eq!(stdout, "", "region reset zero should not write stdout");
+    assert_eq!(stderr, "", "region reset zero should not write stderr");
+}
+
+#[test]
+fn region_reset_preserves_pre_mark_allocations() {
+    let output = run_inline_source(
+        "region_reset_preserves_pre_mark",
+        "region_reset_preserves_pre_mark.tl",
+        r#"
+(extern tl_region_mark : (-> u64))
+(extern tl_region_reset : (-> u64 unit))
+
+(defenum Box (Boxed i64))
+(defstruct Pair (x i64) (y i64))
+
+(define (make-box [n : i64]) : Box
+  (Boxed n))
+
+(define (make-pair [x : i64] [y : i64]) : Pair
+  (Pair x y))
+
+(define (box-value [b : Box]) : i64
+  (match b
+    [(Boxed n) n]))
+
+(define (cycle [n : i64]) : unit
+  (let ([m : u64 (tl_region_mark)])
+    (begin
+      (string-append "tmp" (int->string n))
+      (tl_region_reset m))))
+
+(define (main) : i64
+  (let ([s : String (string-append "a" "b")]
+        [arr : (Array i64) (make-array i64 2)]
+        [box : Box (make-box 7)]
+        [pair : Pair (make-pair 5 6)]
+        [m : u64 (tl_region_mark)])
+    (begin
+      (array-set! arr 0 20)
+      (array-set! arr 1 22)
+      (string-append "temporary" (int->string 99))
+      (tl_region_reset m)
+      (cycle 1)
+      (cycle 2)
+      (+ (string-length s)
+         (+ (array-ref arr 0)
+            (+ (array-ref arr 1)
+               (+ (box-value box)
+                  (+ (struct-get pair x)
+                     (struct-get pair y)))))))))
+"#,
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(62),
+        "region reset should preserve values allocated before the mark\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert_eq!(
+        stdout, "",
+        "region reset preserve test should not write stdout"
+    );
+    assert_eq!(
+        stderr, "",
+        "region reset preserve test should not write stderr"
+    );
+}
+
+#[test]
+fn region_reset_discards_post_mark_arenas() {
+    let output = run_inline_source(
+        "region_reset_discards_post_mark_arenas",
+        "region_reset_discards_post_mark_arenas.tl",
+        r#"
+(extern tl_alloc : (-> u64 u64))
+(extern tl_region_mark : (-> u64))
+(extern tl_region_reset : (-> u64 unit))
+
+(define (main) : i64
+  (let ([before : String (string-append "a" "b")]
+        [m : u64 (tl_region_mark)])
+    (begin
+      (tl_alloc (cast 67108864 : u64))
+      (tl_region_reset m)
+      (string-length (string-append before "c")))))
+"#,
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "region reset should discard arenas allocated after the mark\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert_eq!(stdout, "", "post-mark arena test should not write stdout");
+    assert_eq!(stderr, "", "post-mark arena test should not write stderr");
+}
+
+#[test]
+fn region_reset_invalid_mark_traps_abort_134() {
+    let output = run_inline_source(
+        "region_reset_invalid_mark",
+        "region_reset_invalid_mark.tl",
+        r#"
+(extern tl_region_reset : (-> u64 unit))
+
+(define (main) : i64
+  (begin
+    (tl_region_reset (cast 1234 : u64))
+    0))
+"#,
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(134),
+        "invalid region mark should abort 134\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert_eq!(stdout, "", "invalid region mark should not write stdout");
+    assert_eq!(
+        stderr, "tl: invalid region mark\n",
+        "invalid region mark stderr differed"
+    );
+}
+
+#[test]
 fn division_by_zero_traps_with_diagnostic() {
     let output = run_inline_source(
         "div_zero_trap",

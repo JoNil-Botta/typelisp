@@ -14,6 +14,8 @@ pub const ARG_RUNTIME_SYMBOL: &str = ".L_tl_arg";
 pub const READ_FILE_RUNTIME_SYMBOL: &str = ".L_tl_read_file";
 pub const WRITE_FILE_RUNTIME_SYMBOL: &str = ".L_tl_write_file";
 pub const FILE_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists";
+pub const REGION_MARK_RUNTIME_SYMBOL: &str = "tl_region_mark";
+pub const REGION_RESET_RUNTIME_SYMBOL: &str = "tl_region_reset";
 
 /// Conservative effect class for an IR instruction. The optimizer uses this
 /// to decide what may be dropped or reused without doing alias analysis.
@@ -282,10 +284,12 @@ pub enum Instruction {
 /// effectful so ordinary user, extern, and future helper calls default safe.
 pub fn classify_direct_call_effect(func: &str) -> IrEffect {
     match func {
-        "tl_string_eq" | "tl_string_to_int" => IrEffect::MemoryRead,
-        "tl_alloc" | "tl_int_to_string" | "tl_substring" | "tl_string_concat" => {
-            IrEffect::MemoryWrite
-        }
+        "tl_string_eq" | "tl_string_to_int" | REGION_MARK_RUNTIME_SYMBOL => IrEffect::MemoryRead,
+        "tl_alloc"
+        | "tl_int_to_string"
+        | "tl_substring"
+        | "tl_string_concat"
+        | REGION_RESET_RUNTIME_SYMBOL => IrEffect::MemoryWrite,
         ABORT_RUNTIME_SYMBOL | "tl_oob_abort" | "tl_div_abort" | "tl_shift_abort" => {
             IrEffect::ControlFlow
         }
@@ -1040,7 +1044,11 @@ mod tests {
 
     #[test]
     fn direct_runtime_helper_effects_are_conservative() {
-        for func in ["tl_string_eq", "tl_string_to_int"] {
+        for func in [
+            "tl_string_eq",
+            "tl_string_to_int",
+            REGION_MARK_RUNTIME_SYMBOL,
+        ] {
             assert_eq!(classify_direct_call_effect(func), IrEffect::MemoryRead);
             assert_eq!(call(func).effect(), IrEffect::MemoryRead);
         }
@@ -1050,6 +1058,7 @@ mod tests {
             "tl_int_to_string",
             "tl_substring",
             "tl_string_concat",
+            REGION_RESET_RUNTIME_SYMBOL,
         ] {
             assert_eq!(classify_direct_call_effect(func), IrEffect::MemoryWrite);
             assert_eq!(call(func).effect(), IrEffect::MemoryWrite);

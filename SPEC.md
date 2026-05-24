@@ -694,6 +694,8 @@ They are not implemented by a separate C runtime.
 | `tl_print_newline` | Print newline |
 | `tl_print_str` | Print string bytes |
 | `tl_alloc` | Allocate bump-allocator memory |
+| `tl_region_mark` | Return the current allocator region mark, or `0` before allocation |
+| `tl_region_reset` | Restore a region mark; mark `0` clears all current arenas |
 | `tl_string_eq` | String comparison |
 | `tl_string_concat` | String concatenation |
 | `tl_substring` | String slicing |
@@ -738,9 +740,10 @@ separate design track.
   structs, strings, dynamic-array fat values) are heap-allocated.
 - Non-escaping aggregate fat/inline storage is usually kept in the current stack frame.
 - Allocation goes through `tl_alloc`, a backend-emitted bump allocator.
-- There is **no garbage collector** or `free`. Memory is leaked on every dynamic allocation.
-- Heap allocations are process-lifetime allocations: once allocated, they remain
-  live until the compiled program exits.
+- There is **no garbage collector** or general `free`.
+- Heap allocations are process-lifetime allocations by default: once allocated,
+  they remain live until the compiled program exits unless an explicit
+  tool-owned region reset discards them.
 
 ### 7.3 V1 reclamation direction
 
@@ -765,12 +768,27 @@ need object metadata, root discovery or stack maps, runtime scanning policy, and
 coverage across every aggregate allocation shape. That may be revisited later,
 but it is larger than the immediate need for long-running tools.
 
-The first planned reclamation mechanism is explicit region reset at tool-owned
-phase boundaries (#418, #419). A region reset mark invalidates every heap handle
-allocated after that mark, so it is only valid when the caller can prove those
-values are dead, such as after a compiler, formatter, package-tooling, or REPL
-iteration has discarded all phase-local results. It is not a safe arbitrary
-source-level `free` replacement.
+The first reclamation mechanism is explicit region reset at tool-owned phase
+boundaries (#418, #419). Programs opt in by declaring backend-provided externs:
+
+```lisp test=check name=region-extern-helpers
+(extern tl_region_mark : (-> u64))
+(extern tl_region_reset : (-> u64 unit))
+```
+
+`tl_region_mark` returns the current arena bump pointer, or `0` if no arena has
+been allocated. `tl_region_reset` restores a nonzero mark by discarding newer
+arenas and moving the marked arena's bump pointer back to the mark. Passing mark
+`0` discards all current arenas and returns allocation to lazy initialization.
+An invalid nonzero mark traps with exit status 134.
+The region helpers are currently emitted only for the Linux x86_64 System V
+target; unsupported targets reject programs that reference them.
+
+A region reset mark invalidates every heap handle allocated after that mark, so
+it is only valid when the caller can prove those values are dead, such as after a
+compiler, formatter, package-tooling, or REPL iteration has discarded all
+phase-local results. It is not a safe arbitrary source-level `free`
+replacement.
 
 ### 7.4 Globals
 
@@ -831,6 +849,8 @@ source-level `free` replacement.
   `print-string`/`print-str`, `print-error`.
 - Bootstrap I/O helpers: `arg-count`, `arg`, `read-file`, `write-file`,
   `file-exists?`.
+- Low-level extern-only allocator region helpers: `tl_region_mark`,
+  `tl_region_reset`.
 - `extern` declarations.
 - Multi-file modules via `import`.
 - Builtin `print`, `print-bool`, `print-float`, `print-char`,
@@ -850,7 +870,7 @@ source-level `free` replacement.
 | Closures (capturing lambdas) | Not implemented |
 | Tail call optimization | Not implemented |
 | `struct-set!` | Not implemented |
-| Garbage collection / general `free` | Not implemented; v1 direction is process-lifetime allocation plus future explicit region reset (#320, #418, #419) |
+| Garbage collection / general `free` | Not implemented; allocation is process-lifetime by default with unsafe explicit region reset for tool-owned phase boundaries |
 | SPMD / SIMD `foreach` | Scalar reference lowering only; vector IR and AVX backends not implemented |
 | Windows target | Not implemented |
 | Complete source locations for all semantic errors | Partial |

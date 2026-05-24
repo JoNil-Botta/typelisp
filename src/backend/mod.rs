@@ -14,6 +14,8 @@ const ARG_RUNTIME_SYMBOL: &str = ".L_tl_arg";
 const READ_FILE_RUNTIME_SYMBOL: &str = ".L_tl_read_file";
 const WRITE_FILE_RUNTIME_SYMBOL: &str = ".L_tl_write_file";
 const FILE_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists";
+const REGION_MARK_RUNTIME_SYMBOL: &str = "tl_region_mark";
+const REGION_RESET_RUNTIME_SYMBOL: &str = "tl_region_reset";
 
 const SYSV_INTEGER_ARG_REGS: [&str; 6] = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
 const SYSV_FLOAT_ARG_REGS: [&str; 8] = [
@@ -351,6 +353,11 @@ pub struct X86_64Backend {
     /// backend must therefore emit the self-contained allocator runtime
     /// (tracked mmap arenas + bump pointers) into the program's `.s`.
     needs_alloc_runtime: bool,
+    /// Whether the program references the low-level region mark/reset helpers.
+    /// These are extern-only runtime hooks layered over the tracked arena
+    /// records. Mark reads `tl_current_arena`; reset may unmap newer arenas.
+    needs_region_mark_runtime: bool,
+    needs_region_reset_runtime: bool,
     /// Whether the backend must emit the raw `tl_alloc` runtime body. This is
     /// true when IR calls resolve to the allocator runtime, or when another
     /// backend runtime helper calls raw `tl_alloc` internally.
@@ -1201,6 +1208,8 @@ impl X86_64Backend {
             extern_names: HashSet::new(),
             runtime_print_names: HashSet::new(),
             needs_alloc_runtime: false,
+            needs_region_mark_runtime: false,
+            needs_region_reset_runtime: false,
             emits_alloc_runtime: false,
             needs_oob_runtime: false,
             needs_div_runtime: false,
@@ -1258,6 +1267,8 @@ impl X86_64Backend {
         self.generate_globals(&program.globals);
         self.runtime_print_names = Self::runtime_print_names(program);
         self.needs_alloc_runtime = Self::needs_alloc_runtime(program);
+        self.needs_region_mark_runtime = Self::needs_region_mark_runtime(program);
+        self.needs_region_reset_runtime = Self::needs_region_reset_runtime(program);
         self.needs_oob_runtime = Self::needs_oob_runtime(program);
         self.needs_div_runtime = Self::needs_div_runtime(program);
         self.needs_shift_runtime = Self::needs_shift_runtime(program);
@@ -1292,9 +1303,12 @@ impl X86_64Backend {
             || self.needs_file_exists_runtime;
         let needs_print_runtime = !self.runtime_print_names.is_empty();
         let needs_argv_data = self.needs_arg_count_runtime || self.needs_arg_runtime;
+        let needs_region_runtime =
+            self.needs_region_mark_runtime || self.needs_region_reset_runtime;
         let runtime_policy = self.target.runtime_policy();
         let needs_linux_syscall_runtime = needs_print_runtime
             || self.emits_alloc_runtime
+            || self.needs_region_reset_runtime
             || self.needs_oob_runtime
             || self.needs_div_runtime
             || self.needs_shift_runtime
@@ -1314,9 +1328,14 @@ impl X86_64Backend {
         if needs_print_runtime {
             self.generate_print_runtime_data();
         }
-        if self.emits_alloc_runtime {
+        if self.emits_alloc_runtime || needs_region_runtime {
             self.generate_alloc_runtime_data();
+        }
+        if self.emits_alloc_runtime {
             self.generate_alloc_failure_data();
+        }
+        if self.needs_region_reset_runtime {
+            self.generate_region_reset_failure_data();
         }
         if needs_argv_data {
             self.generate_argv_runtime_data();
@@ -1359,6 +1378,8 @@ impl X86_64Backend {
             // `.extern` — they are defined in this same translation unit.
             let defined_inline = Self::is_defined_print_runtime_symbol(&symbol)
                 || (self.emits_alloc_runtime && symbol == "tl_alloc")
+                || (self.needs_region_mark_runtime && symbol == REGION_MARK_RUNTIME_SYMBOL)
+                || (self.needs_region_reset_runtime && symbol == REGION_RESET_RUNTIME_SYMBOL)
                 || (self.needs_oob_runtime && symbol == "tl_oob_abort")
                 || (self.needs_div_runtime && symbol == "tl_div_abort")
                 || (self.needs_shift_runtime && symbol == "tl_shift_abort")
@@ -1392,6 +1413,12 @@ impl X86_64Backend {
         }
         if self.emits_alloc_runtime {
             self.generate_alloc_runtime_functions();
+        }
+        if self.needs_region_mark_runtime {
+            self.generate_region_mark_runtime_function();
+        }
+        if self.needs_region_reset_runtime {
+            self.generate_region_reset_runtime_function();
         }
         if self.needs_oob_runtime {
             self.generate_oob_runtime_functions();
@@ -1643,6 +1670,31 @@ impl X86_64Backend {
             })
         });
         let referenced_in_externs = program.externs.iter().any(|(name, _)| name == "tl_alloc");
+        referenced_in_calls || referenced_in_externs
+    }
+
+    fn needs_region_mark_runtime(program: &Program) -> bool {
+        Self::needs_named_runtime(program, REGION_MARK_RUNTIME_SYMBOL)
+    }
+
+    fn needs_region_reset_runtime(program: &Program) -> bool {
+        Self::needs_named_runtime(program, REGION_RESET_RUNTIME_SYMBOL)
+    }
+
+    fn needs_named_runtime(program: &Program, symbol: &str) -> bool {
+        let defines_own = program.functions.iter().any(|f| f.name == symbol);
+        if defines_own {
+            return false;
+        }
+        let referenced_in_calls = program.functions.iter().any(|func| {
+            func.blocks.iter().any(|block| {
+                block
+                    .instructions
+                    .iter()
+                    .any(|instr| matches!(instr, Instruction::Call { func, .. } if func == symbol))
+            })
+        });
+        let referenced_in_externs = program.externs.iter().any(|(name, _)| name == symbol);
         referenced_in_calls || referenced_in_externs
     }
 
@@ -2254,6 +2306,14 @@ impl X86_64Backend {
         self.emit("");
     }
 
+    fn generate_region_reset_failure_data(&mut self) {
+        self.emit("    .section .rodata");
+        self.emit(".L_tl_region_reset_msg:");
+        self.emit("    .ascii \"tl: invalid region mark\\n\"");
+        self.emit("    .set .L_tl_region_reset_msg_len, . - .L_tl_region_reset_msg");
+        self.emit("");
+    }
+
     /// Walk the whole program and assign each distinct string-literal value a
     /// stable `.rodata` label, so identical literals share one set of bytes and
     /// every `Value::ConstStr` can be materialized as `leaq label(%rip)`.
@@ -2694,6 +2754,101 @@ impl X86_64Backend {
         self.emit("    movq $2, %rdi");
         self.emit("    leaq .L_tl_alloc_msg(%rip), %rsi");
         self.emit("    movq $.L_tl_alloc_msg_len, %rdx");
+        self.emit("    syscall");
+        self.emit("    movq $60, %rax");
+        self.emit("    movq $134, %rdi");
+        self.emit("    syscall");
+        self.emit("");
+    }
+
+    fn generate_region_mark_runtime_function(&mut self) {
+        self.emit(&format!("    .globl {}", REGION_MARK_RUNTIME_SYMBOL));
+        self.emit(&format!("{}:", REGION_MARK_RUNTIME_SYMBOL));
+        self.emit("    movq tl_current_arena(%rip), %rax");
+        self.emit("    testq %rax, %rax");
+        self.emit("    jz .L_tl_region_mark_zero");
+        self.emit("    movq 16(%rax), %rax");
+        self.emit("    ret");
+        self.emit(".L_tl_region_mark_zero:");
+        self.emit("    xorq %rax, %rax");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_region_reset_runtime_function(&mut self) {
+        self.emit(&format!("    .globl {}", REGION_RESET_RUNTIME_SYMBOL));
+        self.emit(&format!("{}:", REGION_RESET_RUNTIME_SYMBOL));
+        self.emit("    push %rbx");
+        self.emit("    movq %rdi, %rbx");
+        self.emit("    testq %rbx, %rbx");
+        self.emit("    jz .L_tl_region_reset_all");
+
+        // Find the arena whose payload range contains the mark.
+        self.emit("    movq tl_current_arena(%rip), %r8");
+        self.emit("    testq %r8, %r8");
+        self.emit("    jz .L_tl_region_reset_invalid");
+        self.emit(".L_tl_region_reset_find:");
+        self.emit("    movq 8(%r8), %r9");
+        self.emit("    cmpq %r9, %rbx");
+        self.emit("    jb .L_tl_region_reset_next");
+        self.emit("    movq 24(%r8), %r9");
+        self.emit("    cmpq %r9, %rbx");
+        self.emit("    jbe .L_tl_region_reset_found");
+        self.emit(".L_tl_region_reset_next:");
+        self.emit("    movq 0(%r8), %r8");
+        self.emit("    testq %r8, %r8");
+        self.emit("    jnz .L_tl_region_reset_find");
+        self.emit("    jmp .L_tl_region_reset_invalid");
+
+        // Drop arenas newer than the marked arena, then restore that arena's bump.
+        self.emit(".L_tl_region_reset_found:");
+        self.emit("    movq tl_current_arena(%rip), %r9");
+        self.emit(".L_tl_region_reset_drop_newer:");
+        self.emit("    cmpq %r8, %r9");
+        self.emit("    je .L_tl_region_reset_restore");
+        self.emit("    movq 0(%r9), %r10");
+        self.emit("    movq 24(%r9), %rsi");
+        self.emit("    subq %r9, %rsi");
+        self.emit("    movq %r9, %rdi");
+        self.emit("    push %r8");
+        self.emit("    push %r10");
+        self.emit("    movq $11, %rax");
+        self.emit("    syscall");
+        self.emit("    pop %r10");
+        self.emit("    pop %r8");
+        self.emit("    movq %r10, %r9");
+        self.emit("    jmp .L_tl_region_reset_drop_newer");
+        self.emit(".L_tl_region_reset_restore:");
+        self.emit("    movq %rbx, 16(%r8)");
+        self.emit("    movq %r8, tl_current_arena(%rip)");
+        self.emit("    pop %rbx");
+        self.emit("    ret");
+
+        // A zero mark means discard every current arena and return to lazy-init.
+        self.emit(".L_tl_region_reset_all:");
+        self.emit("    movq tl_current_arena(%rip), %r8");
+        self.emit("    movq $0, tl_current_arena(%rip)");
+        self.emit(".L_tl_region_reset_all_loop:");
+        self.emit("    testq %r8, %r8");
+        self.emit("    jz .L_tl_region_reset_done");
+        self.emit("    movq 0(%r8), %r9");
+        self.emit("    movq 24(%r8), %rsi");
+        self.emit("    subq %r8, %rsi");
+        self.emit("    movq %r8, %rdi");
+        self.emit("    push %r9");
+        self.emit("    movq $11, %rax");
+        self.emit("    syscall");
+        self.emit("    pop %r8");
+        self.emit("    jmp .L_tl_region_reset_all_loop");
+        self.emit(".L_tl_region_reset_done:");
+        self.emit("    pop %rbx");
+        self.emit("    ret");
+
+        self.emit(".L_tl_region_reset_invalid:");
+        self.emit("    movq $1, %rax");
+        self.emit("    movq $2, %rdi");
+        self.emit("    leaq .L_tl_region_reset_msg(%rip), %rsi");
+        self.emit("    movq $.L_tl_region_reset_msg_len, %rdx");
         self.emit("    syscall");
         self.emit("    movq $60, %rax");
         self.emit("    movq $134, %rdi");
@@ -5326,6 +5481,10 @@ impl X86_64Backend {
             // program defines its own `tl_alloc`, `needs_alloc_runtime` is
             // false and the call is mangled like any other user function.
             "tl_alloc".into()
+        } else if name == REGION_MARK_RUNTIME_SYMBOL && self.needs_region_mark_runtime {
+            REGION_MARK_RUNTIME_SYMBOL.into()
+        } else if name == REGION_RESET_RUNTIME_SYMBOL && self.needs_region_reset_runtime {
+            REGION_RESET_RUNTIME_SYMBOL.into()
         } else if name == "tl_oob_abort" && self.needs_oob_runtime {
             // The backend-provided abort runtime resolves to its raw symbol.
             "tl_oob_abort".into()
@@ -5432,6 +5591,7 @@ pub fn generate_assembly_for_target(
 ) -> Result<String, String> {
     target.validate_mode()?;
     validate_program(program)?;
+    validate_target_runtime_support(program, target)?;
     let mut backend = X86_64Backend::with_target(target);
     Ok(backend.generate(program))
 }
@@ -5454,8 +5614,27 @@ pub fn generate_assembly_with_spans_for_target(
     target.validate_mode().map_err(BackendError::unspanned)?;
     validate_program_source_spans(program, source_spans)?;
     validate_program(program).map_err(BackendError::unspanned)?;
+    validate_target_runtime_support(program, target).map_err(BackendError::unspanned)?;
     let mut backend = X86_64Backend::with_target(target);
     Ok(backend.generate(program))
+}
+
+fn validate_target_runtime_support(program: &Program, target: BackendTarget) -> Result<(), String> {
+    let needs_region_runtime = X86_64Backend::needs_region_mark_runtime(program)
+        || X86_64Backend::needs_region_reset_runtime(program);
+    let supports_region_runtime = matches!(
+        (target.arch, target.os, target.abi),
+        (BackendArch::X86_64, BackendOs::Linux, BackendAbi::SystemV)
+    );
+
+    if needs_region_runtime && !supports_region_runtime {
+        return Err(
+            "backend: tl_region_mark/tl_region_reset runtime helpers are only supported for linux-x86_64-system-v targets"
+                .into(),
+        );
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -8205,8 +8384,179 @@ mod tests {
         // its `.bss` arena state — keeping minimal programs minimal.
         let asm = compile_ok("(define (main) : i64 (+ 1 2))");
         assert!(!asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        assert!(!asm.contains("tl_region_mark:"), "asm:\n{}", asm);
+        assert!(!asm.contains("tl_region_reset:"), "asm:\n{}", asm);
         assert!(!asm.contains("tl_current_arena:"), "asm:\n{}", asm);
         assert!(!asm.contains("    .section .bss"), "asm:\n{}", asm);
+    }
+
+    fn program_calling_region_helpers() -> Program {
+        Program {
+            functions: vec![Function {
+                name: "main".into(),
+                params: vec![],
+                ret: Type::I64,
+                locals: vec![(0, Type::U64)],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![
+                        Instruction::Call {
+                            dst: Some(0),
+                            func: super::REGION_MARK_RUNTIME_SYMBOL.into(),
+                            args: vec![],
+                            ty: Type::U64,
+                        },
+                        Instruction::Call {
+                            dst: None,
+                            func: super::REGION_RESET_RUNTIME_SYMBOL.into(),
+                            args: vec![Value::Var(0)],
+                            ty: Type::Unit,
+                        },
+                        Instruction::Return(Some(Value::ConstI64(0))),
+                    ],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![],
+        }
+    }
+
+    #[test]
+    fn test_region_runtime_referenced_via_call() {
+        let asm = generate_assembly(&program_calling_region_helpers())
+            .expect("program calling region helpers should compile");
+
+        assert!(asm.contains("    call tl_region_mark"), "asm:\n{}", asm);
+        assert!(asm.contains("    call tl_region_reset"), "asm:\n{}", asm);
+        assert!(!asm.contains("_tl_tl_region_mark"), "asm:\n{}", asm);
+        assert!(!asm.contains("_tl_tl_region_reset"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_region_mark:"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_region_reset:"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_current_arena:"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq 16(%rax), %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $11, %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("tl: invalid region mark"), "asm:\n{}", asm);
+        assert!(!asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        assert!(!asm.contains("    .extern tl_region_mark"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("    .extern tl_region_reset"),
+            "asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_region_runtime_referenced_via_extern() {
+        let program = Program {
+            functions: vec![Function {
+                name: "main".into(),
+                params: vec![],
+                ret: Type::I64,
+                locals: vec![],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![Instruction::Return(Some(Value::ConstI64(0)))],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![
+                (
+                    super::REGION_MARK_RUNTIME_SYMBOL.into(),
+                    Type::Func(vec![], Box::new(Type::U64)),
+                ),
+                (
+                    super::REGION_RESET_RUNTIME_SYMBOL.into(),
+                    Type::Func(vec![Type::U64], Box::new(Type::Unit)),
+                ),
+            ],
+        };
+
+        let asm = generate_assembly(&program).expect("extern region helpers should compile");
+        assert!(asm.contains("tl_region_mark:"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_region_reset:"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_current_arena:"), "asm:\n{}", asm);
+        assert!(!asm.contains("    .extern tl_region_mark"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("    .extern tl_region_reset"),
+            "asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_region_runtime_surface_extern_calls_compile() {
+        let asm = compile_ok(
+            r#"
+            (extern tl_region_mark : (-> u64))
+            (extern tl_region_reset : (-> u64 unit))
+
+            (define (main) : i64
+              (let ([m : u64 (tl_region_mark)])
+                (begin
+                  (string-append "a" "b")
+                  (tl_region_reset m)
+                  0)))
+            "#,
+        );
+
+        assert!(asm.contains("    call tl_region_mark"), "asm:\n{}", asm);
+        assert!(asm.contains("    call tl_region_reset"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_region_mark:"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_region_reset:"), "asm:\n{}", asm);
+        assert!(!asm.contains("    .extern tl_region_mark"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("    .extern tl_region_reset"),
+            "asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_region_mark_runtime_before_allocation_omits_alloc_body() {
+        let program = Program {
+            functions: vec![Function {
+                name: "main".into(),
+                params: vec![],
+                ret: Type::I64,
+                locals: vec![],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![Instruction::Return(Some(Value::ConstI64(0)))],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![(
+                super::REGION_MARK_RUNTIME_SYMBOL.into(),
+                Type::Func(vec![], Box::new(Type::U64)),
+            )],
+        };
+
+        let asm = generate_assembly(&program).expect("extern region mark should compile");
+        assert!(asm.contains("tl_region_mark:"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_current_arena:"), "asm:\n{}", asm);
+        assert!(asm.contains("    xorq %rax, %rax"), "asm:\n{}", asm);
+        assert!(!asm.contains("tl_region_reset:"), "asm:\n{}", asm);
+        assert!(!asm.contains("tl: invalid region mark"), "asm:\n{}", asm);
+        assert!(!asm.contains("tl_alloc:"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_windows_target_rejects_region_runtime_helpers() {
+        let err = generate_assembly_for_target(
+            &program_calling_region_helpers(),
+            BackendTarget::windows_x86_64(),
+        )
+        .expect_err("windows target should reject region helpers");
+
+        assert!(
+            err.contains("tl_region_mark/tl_region_reset"),
+            "error: {}",
+            err
+        );
+        assert!(err.contains("linux-x86_64-system-v"), "error: {}", err);
     }
 
     #[test]

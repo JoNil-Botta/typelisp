@@ -19,6 +19,10 @@ const ARG_RUNTIME_SYMBOL: &str = ".L_tl_arg";
 const READ_FILE_RUNTIME_SYMBOL: &str = ".L_tl_read_file";
 const WRITE_FILE_RUNTIME_SYMBOL: &str = ".L_tl_write_file";
 const FILE_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists";
+const READ_STDIN_LINE_RUNTIME_SYMBOL: &str = ".L_tl_read_stdin_line";
+const READ_STDIN_BYTES_RUNTIME_SYMBOL: &str = ".L_tl_read_stdin_bytes";
+const STDIN_EOF_RUNTIME_SYMBOL: &str = ".L_tl_stdin_eof";
+const FLUSH_STDOUT_RUNTIME_SYMBOL: &str = ".L_tl_flush_stdout";
 const REGION_MARK_RUNTIME_SYMBOL: &str = "tl_region_mark";
 const REGION_RESET_RUNTIME_SYMBOL: &str = "tl_region_reset";
 
@@ -436,6 +440,13 @@ pub struct X86_64Backend {
     /// `(file-exists? path)`. The helper uses Linux syscalls, `tl_alloc`, and the
     /// panic/abort runtime for unexpected errors.
     needs_file_exists_runtime: bool,
+    /// Whether the program references stdin helpers. The read helpers allocate
+    /// heap Strings and update a backend-owned EOF flag; `stdin-eof?` reads that
+    /// flag; `flush-stdout` is a target-specific stdout flush/no-op helper.
+    needs_read_stdin_line_runtime: bool,
+    needs_read_stdin_bytes_runtime: bool,
+    needs_stdin_eof_runtime: bool,
+    needs_flush_stdout_runtime: bool,
     return_ty: Type,
     /// VarIds that are function parameters of the function currently being
     /// generated. Their `Alloc` instructions are no-ops because the parameter
@@ -1827,6 +1838,10 @@ impl X86_64Backend {
             needs_read_file_runtime: false,
             needs_write_file_runtime: false,
             needs_file_exists_runtime: false,
+            needs_read_stdin_line_runtime: false,
+            needs_read_stdin_bytes_runtime: false,
+            needs_stdin_eof_runtime: false,
+            needs_flush_stdout_runtime: false,
             return_ty: Type::Unit,
             param_vars: HashSet::new(),
             current_fn: String::new(),
@@ -1886,11 +1901,20 @@ impl X86_64Backend {
         self.needs_read_file_runtime = Self::needs_read_file_runtime(program);
         self.needs_write_file_runtime = Self::needs_write_file_runtime(program);
         self.needs_file_exists_runtime = Self::needs_file_exists_runtime(program);
+        self.needs_read_stdin_line_runtime = Self::needs_read_stdin_line_runtime(program);
+        self.needs_read_stdin_bytes_runtime = Self::needs_read_stdin_bytes_runtime(program);
+        self.needs_stdin_eof_runtime = Self::needs_stdin_eof_runtime(program);
+        self.needs_flush_stdout_runtime = Self::needs_flush_stdout_runtime(program);
+        let windows_flush_can_abort = self.needs_flush_stdout_runtime
+            && self.target.runtime_policy().emits_windows_runtime_helpers;
         self.needs_abort_runtime = Self::needs_abort_runtime(program)
             || self.needs_arg_runtime
             || self.needs_read_file_runtime
             || self.needs_write_file_runtime
-            || self.needs_file_exists_runtime;
+            || self.needs_file_exists_runtime
+            || self.needs_read_stdin_line_runtime
+            || self.needs_read_stdin_bytes_runtime
+            || windows_flush_can_abort;
         // Several backend runtimes allocate their buffers and fat values via a
         // raw `tl_alloc` call, so their presence forces the raw allocator
         // runtime to be emitted even when IR calls to a user-defined TypeLisp
@@ -1902,9 +1926,14 @@ impl X86_64Backend {
             || self.needs_arg_runtime
             || self.needs_read_file_runtime
             || self.needs_write_file_runtime
-            || self.needs_file_exists_runtime;
+            || self.needs_file_exists_runtime
+            || self.needs_read_stdin_line_runtime
+            || self.needs_read_stdin_bytes_runtime;
         let needs_print_runtime = !self.runtime_print_names.is_empty();
         let needs_argv_data = self.needs_arg_count_runtime || self.needs_arg_runtime;
+        let needs_stdin_data = self.needs_read_stdin_line_runtime
+            || self.needs_read_stdin_bytes_runtime
+            || self.needs_stdin_eof_runtime;
         let needs_region_runtime =
             self.needs_region_mark_runtime || self.needs_region_reset_runtime;
         let runtime_policy = self.target.runtime_policy();
@@ -1920,6 +1949,8 @@ impl X86_64Backend {
             || self.needs_read_file_runtime
             || self.needs_write_file_runtime
             || self.needs_file_exists_runtime
+            || self.needs_read_stdin_line_runtime
+            || self.needs_read_stdin_bytes_runtime
             || needs_argv_data;
         debug_assert!(
             runtime_policy.emits_linux_syscall_helpers
@@ -1942,6 +1973,9 @@ impl X86_64Backend {
         if needs_argv_data {
             self.generate_argv_runtime_data();
         }
+        if needs_stdin_data {
+            self.generate_stdin_runtime_data();
+        }
         self.intern_strings(program);
         self.generate_string_rodata();
         if self.needs_oob_runtime {
@@ -1961,6 +1995,9 @@ impl X86_64Backend {
         }
         if self.needs_file_exists_runtime {
             self.generate_file_exists_runtime_data();
+        }
+        if self.needs_flush_stdout_runtime {
+            self.generate_flush_stdout_runtime_data();
         }
         self.generate_closure_descriptor_data();
 
@@ -1997,7 +2034,12 @@ impl X86_64Backend {
                 || (self.needs_arg_runtime && symbol == ARG_RUNTIME_SYMBOL)
                 || (self.needs_read_file_runtime && symbol == READ_FILE_RUNTIME_SYMBOL)
                 || (self.needs_write_file_runtime && symbol == WRITE_FILE_RUNTIME_SYMBOL)
-                || (self.needs_file_exists_runtime && symbol == FILE_EXISTS_RUNTIME_SYMBOL);
+                || (self.needs_file_exists_runtime && symbol == FILE_EXISTS_RUNTIME_SYMBOL)
+                || (self.needs_read_stdin_line_runtime && symbol == READ_STDIN_LINE_RUNTIME_SYMBOL)
+                || (self.needs_read_stdin_bytes_runtime
+                    && symbol == READ_STDIN_BYTES_RUNTIME_SYMBOL)
+                || (self.needs_stdin_eof_runtime && symbol == STDIN_EOF_RUNTIME_SYMBOL)
+                || (self.needs_flush_stdout_runtime && symbol == FLUSH_STDOUT_RUNTIME_SYMBOL);
             if !defined_inline {
                 self.emit(&format!("    .extern {}", symbol));
             }
@@ -2069,6 +2111,18 @@ impl X86_64Backend {
         }
         if self.needs_file_exists_runtime {
             self.generate_file_exists_runtime_functions();
+        }
+        if self.needs_read_stdin_line_runtime {
+            self.generate_read_stdin_line_runtime_functions();
+        }
+        if self.needs_read_stdin_bytes_runtime {
+            self.generate_read_stdin_bytes_runtime_functions();
+        }
+        if self.needs_stdin_eof_runtime {
+            self.generate_stdin_eof_runtime_functions();
+        }
+        if self.needs_flush_stdout_runtime {
+            self.generate_flush_stdout_runtime_functions();
         }
 
         self.generate_closure_entry_adapters();
@@ -2221,6 +2275,12 @@ impl X86_64Backend {
         }
         if self.needs_file_exists_runtime {
             externs.insert("_access");
+        }
+        if self.needs_read_stdin_line_runtime || self.needs_read_stdin_bytes_runtime {
+            externs.insert("_read");
+        }
+        if self.needs_flush_stdout_runtime {
+            externs.insert("fflush");
         }
 
         for symbol in externs {
@@ -2616,6 +2676,58 @@ impl X86_64Backend {
                     matches!(
                         instr,
                         Instruction::Call { func, .. } if func == FILE_EXISTS_RUNTIME_SYMBOL
+                    )
+                })
+            })
+        })
+    }
+
+    fn needs_read_stdin_line_runtime(program: &Program) -> bool {
+        program.functions.iter().any(|func| {
+            func.blocks.iter().any(|block| {
+                block.instructions.iter().any(|instr| {
+                    matches!(
+                        instr,
+                        Instruction::Call { func, .. } if func == READ_STDIN_LINE_RUNTIME_SYMBOL
+                    )
+                })
+            })
+        })
+    }
+
+    fn needs_read_stdin_bytes_runtime(program: &Program) -> bool {
+        program.functions.iter().any(|func| {
+            func.blocks.iter().any(|block| {
+                block.instructions.iter().any(|instr| {
+                    matches!(
+                        instr,
+                        Instruction::Call { func, .. } if func == READ_STDIN_BYTES_RUNTIME_SYMBOL
+                    )
+                })
+            })
+        })
+    }
+
+    fn needs_stdin_eof_runtime(program: &Program) -> bool {
+        program.functions.iter().any(|func| {
+            func.blocks.iter().any(|block| {
+                block.instructions.iter().any(|instr| {
+                    matches!(
+                        instr,
+                        Instruction::Call { func, .. } if func == STDIN_EOF_RUNTIME_SYMBOL
+                    )
+                })
+            })
+        })
+    }
+
+    fn needs_flush_stdout_runtime(program: &Program) -> bool {
+        program.functions.iter().any(|func| {
+            func.blocks.iter().any(|block| {
+                block.instructions.iter().any(|instr| {
+                    matches!(
+                        instr,
+                        Instruction::Call { func, .. } if func == FLUSH_STDOUT_RUNTIME_SYMBOL
                     )
                 })
             })
@@ -3537,6 +3649,32 @@ impl X86_64Backend {
         self.emit("");
     }
 
+    fn generate_stdin_runtime_data(&mut self) {
+        self.emit("    .data");
+        self.emit("    .balign 8");
+        self.emit(".L_tl_stdin_eof_flag:");
+        self.emit("    .quad 0");
+        if self.needs_read_stdin_line_runtime || self.needs_read_stdin_bytes_runtime {
+            self.emit("    .section .rodata");
+            self.emit(".L_tl_stdin_error_msg:");
+            self.emit("    .ascii \"tl: stdin failed\\n\"");
+            self.emit("    .set .L_tl_stdin_error_msg_len, . - .L_tl_stdin_error_msg");
+        }
+        self.emit("");
+    }
+
+    fn generate_flush_stdout_runtime_data(&mut self) {
+        if !self.target.runtime_policy().emits_windows_runtime_helpers {
+            return;
+        }
+
+        self.emit("    .section .rodata");
+        self.emit(".L_tl_flush_stdout_error_msg:");
+        self.emit("    .ascii \"tl: flush-stdout failed\\n\"");
+        self.emit("    .set .L_tl_flush_stdout_error_msg_len, . - .L_tl_flush_stdout_error_msg");
+        self.emit("");
+    }
+
     /// The abort message written to fd 2 (stderr) on illegal integer division
     /// or remainder (divide-by-zero or signed overflow).
     fn generate_div_runtime_data(&mut self) {
@@ -4348,6 +4486,312 @@ impl X86_64Backend {
         self.emit(".L_tl_file_exists_error:");
         self.emit("    leaq .L_tl_file_exists_error_msg(%rip), %rcx");
         self.emit("    movq $.L_tl_file_exists_error_msg_len, %rdx");
+        self.emit_call(ABORT_RUNTIME_SYMBOL);
+        self.emit("");
+    }
+
+    fn generate_read_stdin_line_runtime_functions(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.generate_windows_read_stdin_line_runtime_functions();
+            return;
+        }
+
+        self.emit(&format!("{}:", READ_STDIN_LINE_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    sub $16, %rsp");
+        self.emit("    movq $64, %r13");
+        self.emit("    movq %r13, %rdi");
+        self.emit("    call tl_alloc");
+        self.emit("    movq %rax, %rbx");
+        self.emit("    xorq %r12, %r12");
+        self.emit(".L_tl_read_stdin_line_loop:");
+        self.emit("    xorq %rax, %rax");
+        self.emit("    xorq %rdi, %rdi");
+        self.emit("    leaq -40(%rbp), %rsi");
+        self.emit("    movq $1, %rdx");
+        self.emit("    syscall");
+        self.emit("    testq %rax, %rax");
+        self.emit("    js .L_tl_read_stdin_line_error");
+        self.emit("    jz .L_tl_read_stdin_line_eof");
+        self.emit("    cmpb $10, -40(%rbp)");
+        self.emit("    je .L_tl_read_stdin_line_done");
+        self.emit("    cmpq %r13, %r12");
+        self.emit("    jb .L_tl_read_stdin_line_store");
+        self.emit("    movq %r13, %rdi");
+        self.emit("    addq %r13, %rdi");
+        self.emit("    js .L_tl_read_stdin_line_error");
+        self.emit("    movq %rdi, %r14");
+        self.emit("    call tl_alloc");
+        self.emit("    xorq %rcx, %rcx");
+        self.emit(".L_tl_read_stdin_line_copy_loop:");
+        self.emit("    cmpq %r12, %rcx");
+        self.emit("    jge .L_tl_read_stdin_line_copy_done");
+        self.emit("    movzbl (%rbx,%rcx), %edx");
+        self.emit("    movb %dl, (%rax,%rcx)");
+        self.emit("    incq %rcx");
+        self.emit("    jmp .L_tl_read_stdin_line_copy_loop");
+        self.emit(".L_tl_read_stdin_line_copy_done:");
+        self.emit("    movq %rax, %rbx");
+        self.emit("    movq %r14, %r13");
+        self.emit(".L_tl_read_stdin_line_store:");
+        self.emit("    movzbl -40(%rbp), %eax");
+        self.emit("    movb %al, (%rbx,%r12)");
+        self.emit("    incq %r12");
+        self.emit("    jmp .L_tl_read_stdin_line_loop");
+        self.emit(".L_tl_read_stdin_line_eof:");
+        self.emit("    movq $1, .L_tl_stdin_eof_flag(%rip)");
+        self.emit("    jmp .L_tl_read_stdin_line_return");
+        self.emit(".L_tl_read_stdin_line_done:");
+        self.emit("    movq $0, .L_tl_stdin_eof_flag(%rip)");
+        self.emit(".L_tl_read_stdin_line_return:");
+        self.emit("    movq $16, %rdi");
+        self.emit("    call tl_alloc");
+        self.emit("    movq %rbx, 0(%rax)");
+        self.emit("    movq %r12, 8(%rax)");
+        self.emit("    add $16, %rsp");
+        self.emit("    pop %r14");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit(".L_tl_read_stdin_line_error:");
+        self.emit("    leaq .L_tl_stdin_error_msg(%rip), %rdi");
+        self.emit("    movq $.L_tl_stdin_error_msg_len, %rsi");
+        self.emit(&format!("    call {}", ABORT_RUNTIME_SYMBOL));
+        self.emit("");
+    }
+
+    fn generate_read_stdin_bytes_runtime_functions(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.generate_windows_read_stdin_bytes_runtime_functions();
+            return;
+        }
+
+        self.emit(&format!("{}:", READ_STDIN_BYTES_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq %rdi, %r12");
+        self.emit("    cmpq $0, %r12");
+        self.emit("    jl .L_tl_read_stdin_bytes_error");
+        self.emit("    movq %r12, %rdi");
+        self.emit("    cmpq $0, %rdi");
+        self.emit("    jg .L_tl_read_stdin_bytes_alloc_ready");
+        self.emit("    movq $1, %rdi");
+        self.emit(".L_tl_read_stdin_bytes_alloc_ready:");
+        self.emit("    call tl_alloc");
+        self.emit("    movq %rax, %rbx");
+        self.emit("    xorq %r13, %r13");
+        self.emit("    testq %r12, %r12");
+        self.emit("    jz .L_tl_read_stdin_bytes_return");
+        self.emit(".L_tl_read_stdin_bytes_loop:");
+        self.emit("    cmpq %r12, %r13");
+        self.emit("    jge .L_tl_read_stdin_bytes_full");
+        self.emit("    movq %r12, %rdx");
+        self.emit("    subq %r13, %rdx");
+        self.emit("    xorq %rax, %rax");
+        self.emit("    xorq %rdi, %rdi");
+        self.emit("    leaq (%rbx,%r13), %rsi");
+        self.emit("    syscall");
+        self.emit("    testq %rax, %rax");
+        self.emit("    js .L_tl_read_stdin_bytes_error");
+        self.emit("    jz .L_tl_read_stdin_bytes_eof");
+        self.emit("    addq %rax, %r13");
+        self.emit("    jmp .L_tl_read_stdin_bytes_loop");
+        self.emit(".L_tl_read_stdin_bytes_full:");
+        self.emit("    movq $0, .L_tl_stdin_eof_flag(%rip)");
+        self.emit("    jmp .L_tl_read_stdin_bytes_return");
+        self.emit(".L_tl_read_stdin_bytes_eof:");
+        self.emit("    movq $1, .L_tl_stdin_eof_flag(%rip)");
+        self.emit(".L_tl_read_stdin_bytes_return:");
+        self.emit("    movq $16, %rdi");
+        self.emit("    call tl_alloc");
+        self.emit("    movq %rbx, 0(%rax)");
+        self.emit("    movq %r13, 8(%rax)");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit(".L_tl_read_stdin_bytes_error:");
+        self.emit("    leaq .L_tl_stdin_error_msg(%rip), %rdi");
+        self.emit("    movq $.L_tl_stdin_error_msg_len, %rsi");
+        self.emit(&format!("    call {}", ABORT_RUNTIME_SYMBOL));
+        self.emit("");
+    }
+
+    fn generate_stdin_eof_runtime_functions(&mut self) {
+        self.emit(&format!("{}:", STDIN_EOF_RUNTIME_SYMBOL));
+        self.emit("    movq .L_tl_stdin_eof_flag(%rip), %rax");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_flush_stdout_runtime_functions(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.generate_windows_flush_stdout_runtime_functions();
+            return;
+        }
+
+        self.emit(&format!("{}:", FLUSH_STDOUT_RUNTIME_SYMBOL));
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_windows_read_stdin_line_runtime_functions(&mut self) {
+        self.emit(&format!("{}:", READ_STDIN_LINE_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    sub $16, %rsp");
+        self.emit("    movq $64, %r13");
+        self.emit("    movq %r13, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rax, %rbx");
+        self.emit("    xorq %r12, %r12");
+        self.emit(".L_tl_read_stdin_line_loop:");
+        self.emit("    xorq %rcx, %rcx");
+        self.emit("    leaq -40(%rbp), %rdx");
+        self.emit("    movq $1, %r8");
+        self.emit_call("_read");
+        self.emit("    movslq %eax, %rax");
+        self.emit("    testq %rax, %rax");
+        self.emit("    js .L_tl_read_stdin_line_error");
+        self.emit("    jz .L_tl_read_stdin_line_eof");
+        self.emit("    cmpb $10, -40(%rbp)");
+        self.emit("    je .L_tl_read_stdin_line_done");
+        self.emit("    cmpq %r13, %r12");
+        self.emit("    jb .L_tl_read_stdin_line_store");
+        self.emit("    movq %r13, %rcx");
+        self.emit("    addq %r13, %rcx");
+        self.emit("    js .L_tl_read_stdin_line_error");
+        self.emit("    movq %rcx, %r14");
+        self.emit_call("tl_alloc");
+        self.emit("    xorq %r10, %r10");
+        self.emit(".L_tl_read_stdin_line_copy_loop:");
+        self.emit("    cmpq %r12, %r10");
+        self.emit("    jge .L_tl_read_stdin_line_copy_done");
+        self.emit("    movzbl (%rbx,%r10), %edx");
+        self.emit("    movb %dl, (%rax,%r10)");
+        self.emit("    incq %r10");
+        self.emit("    jmp .L_tl_read_stdin_line_copy_loop");
+        self.emit(".L_tl_read_stdin_line_copy_done:");
+        self.emit("    movq %rax, %rbx");
+        self.emit("    movq %r14, %r13");
+        self.emit(".L_tl_read_stdin_line_store:");
+        self.emit("    movzbl -40(%rbp), %eax");
+        self.emit("    movb %al, (%rbx,%r12)");
+        self.emit("    incq %r12");
+        self.emit("    jmp .L_tl_read_stdin_line_loop");
+        self.emit(".L_tl_read_stdin_line_eof:");
+        self.emit("    movq $1, .L_tl_stdin_eof_flag(%rip)");
+        self.emit("    jmp .L_tl_read_stdin_line_return");
+        self.emit(".L_tl_read_stdin_line_done:");
+        self.emit("    movq $0, .L_tl_stdin_eof_flag(%rip)");
+        self.emit(".L_tl_read_stdin_line_return:");
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rbx, 0(%rax)");
+        self.emit("    movq %r12, 8(%rax)");
+        self.emit("    add $16, %rsp");
+        self.emit("    pop %r14");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit(".L_tl_read_stdin_line_error:");
+        self.emit("    leaq .L_tl_stdin_error_msg(%rip), %rcx");
+        self.emit("    movq $.L_tl_stdin_error_msg_len, %rdx");
+        self.emit_call(ABORT_RUNTIME_SYMBOL);
+        self.emit("");
+    }
+
+    fn generate_windows_read_stdin_bytes_runtime_functions(&mut self) {
+        self.emit(&format!("{}:", READ_STDIN_BYTES_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq %rcx, %r12");
+        self.emit("    cmpq $0, %r12");
+        self.emit("    jl .L_tl_read_stdin_bytes_error");
+        self.emit("    movq %r12, %rcx");
+        self.emit("    cmpq $0, %rcx");
+        self.emit("    jg .L_tl_read_stdin_bytes_alloc_ready");
+        self.emit("    movq $1, %rcx");
+        self.emit(".L_tl_read_stdin_bytes_alloc_ready:");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rax, %rbx");
+        self.emit("    xorq %r13, %r13");
+        self.emit("    testq %r12, %r12");
+        self.emit("    jz .L_tl_read_stdin_bytes_return");
+        self.emit(".L_tl_read_stdin_bytes_loop:");
+        self.emit("    cmpq %r12, %r13");
+        self.emit("    jge .L_tl_read_stdin_bytes_full");
+        self.emit("    xorq %rcx, %rcx");
+        self.emit("    leaq (%rbx,%r13), %rdx");
+        self.emit("    movq %r12, %r8");
+        self.emit("    subq %r13, %r8");
+        self.emit_call("_read");
+        self.emit("    movslq %eax, %rax");
+        self.emit("    testq %rax, %rax");
+        self.emit("    js .L_tl_read_stdin_bytes_error");
+        self.emit("    jz .L_tl_read_stdin_bytes_eof");
+        self.emit("    addq %rax, %r13");
+        self.emit("    jmp .L_tl_read_stdin_bytes_loop");
+        self.emit(".L_tl_read_stdin_bytes_full:");
+        self.emit("    movq $0, .L_tl_stdin_eof_flag(%rip)");
+        self.emit("    jmp .L_tl_read_stdin_bytes_return");
+        self.emit(".L_tl_read_stdin_bytes_eof:");
+        self.emit("    movq $1, .L_tl_stdin_eof_flag(%rip)");
+        self.emit(".L_tl_read_stdin_bytes_return:");
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rbx, 0(%rax)");
+        self.emit("    movq %r13, 8(%rax)");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit(".L_tl_read_stdin_bytes_error:");
+        self.emit("    leaq .L_tl_stdin_error_msg(%rip), %rcx");
+        self.emit("    movq $.L_tl_stdin_error_msg_len, %rdx");
+        self.emit_call(ABORT_RUNTIME_SYMBOL);
+        self.emit("");
+    }
+
+    fn generate_windows_flush_stdout_runtime_functions(&mut self) {
+        self.emit(&format!("{}:", FLUSH_STDOUT_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    xorq %rcx, %rcx");
+        self.emit_call("fflush");
+        self.emit("    testl %eax, %eax");
+        self.emit("    jne .L_tl_flush_stdout_error");
+        self.emit("    mov %rbp, %rsp");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit(".L_tl_flush_stdout_error:");
+        self.emit("    leaq .L_tl_flush_stdout_error_msg(%rip), %rcx");
+        self.emit("    movq $.L_tl_flush_stdout_error_msg_len, %rdx");
         self.emit_call(ABORT_RUNTIME_SYMBOL);
         self.emit("");
     }
@@ -6569,6 +7013,14 @@ impl X86_64Backend {
             WRITE_FILE_RUNTIME_SYMBOL.into()
         } else if name == FILE_EXISTS_RUNTIME_SYMBOL && self.needs_file_exists_runtime {
             FILE_EXISTS_RUNTIME_SYMBOL.into()
+        } else if name == READ_STDIN_LINE_RUNTIME_SYMBOL && self.needs_read_stdin_line_runtime {
+            READ_STDIN_LINE_RUNTIME_SYMBOL.into()
+        } else if name == READ_STDIN_BYTES_RUNTIME_SYMBOL && self.needs_read_stdin_bytes_runtime {
+            READ_STDIN_BYTES_RUNTIME_SYMBOL.into()
+        } else if name == STDIN_EOF_RUNTIME_SYMBOL && self.needs_stdin_eof_runtime {
+            STDIN_EOF_RUNTIME_SYMBOL.into()
+        } else if name == FLUSH_STDOUT_RUNTIME_SYMBOL && self.needs_flush_stdout_runtime {
+            FLUSH_STDOUT_RUNTIME_SYMBOL.into()
         } else if self.extern_names.contains(name) {
             Self::extern_symbol(name)
         } else {
@@ -7707,6 +8159,34 @@ mod tests {
         assert!(asm.contains("    movq $0x180, %r8"), "asm:\n{}", asm);
         assert!(!asm.contains("    movq $257, %rax"), "asm:\n{}", asm);
         assert!(!asm.contains("    movq $-100, %rdi"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_windows_target_stdin_helpers_use_crt_calls() {
+        let asm = compile_ok_for_target(
+            r#"
+            (define (main) : i64
+              (begin
+                (read-stdin-line)
+                (read-stdin-bytes 3)
+                (flush-stdout)
+                (if (stdin-eof?) 1 0)))
+            "#,
+            BackendTarget::windows_x86_64(),
+        );
+
+        assert_windows_runtime_has_no_linux_syscalls(&asm);
+        assert!(asm.contains("    .extern _read"), "asm:\n{}", asm);
+        assert!(asm.contains("    .extern fflush"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_read_stdin_line:"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_read_stdin_bytes:"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_stdin_eof:"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_flush_stdout:"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_stdin_eof_flag:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call _read"), "asm:\n{}", asm);
+        assert!(asm.contains("    call fflush"), "asm:\n{}", asm);
+        assert!(asm.contains("    call .L_tl_abort"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $16, %rcx"), "asm:\n{}", asm);
     }
 
     #[test]
@@ -11245,6 +11725,97 @@ mod tests {
         );
         assert!(!asm.contains("_tl_file_exists?"), "asm:\n{}", asm);
         assert!(!asm.contains(".L_tl_file_exists:"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_stdin_helpers_emit_runtime_alloc_and_eof_state() {
+        let asm = compile_ok(
+            r#"
+            (define (main) : i64
+              (begin
+                (read-stdin-line)
+                (read-stdin-bytes 3)
+                (flush-stdout)
+                (if (stdin-eof?) 1 0)))
+            "#,
+        );
+
+        assert!(asm.contains(".L_tl_read_stdin_line:"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_read_stdin_bytes:"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_stdin_eof:"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_flush_stdout:"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_stdin_eof_flag:"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        assert!(asm.contains("tl: stdin failed"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("    call .L_tl_read_stdin_line"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("    call .L_tl_read_stdin_bytes"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(asm.contains("    call .L_tl_stdin_eof"), "asm:\n{}", asm);
+        assert!(asm.contains("    call .L_tl_flush_stdout"), "asm:\n{}", asm);
+        assert!(asm.contains("    xorq %rax, %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("    syscall"), "asm:\n{}", asm);
+        assert!(!asm.contains("_tl_.L_tl_read_stdin"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("    .extern .L_tl_read_stdin"),
+            "asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_compile_no_stdin_helpers_means_no_stdin_runtime() {
+        let asm = compile_ok(r#"(define (main) : i64 (string-length "hi"))"#);
+        assert!(!asm.contains(".L_tl_read_stdin"), "asm:\n{}", asm);
+        assert!(!asm.contains(".L_tl_stdin_eof"), "asm:\n{}", asm);
+        assert!(!asm.contains(".L_tl_flush_stdout"), "asm:\n{}", asm);
+        assert!(!asm.contains("tl: stdin failed"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_user_defined_stdin_helpers_shadow_builtins() {
+        let asm = compile_ok(
+            r#"
+            (define (read-stdin-line [n : i64]) : i64 n)
+            (define (read-stdin-bytes) : i64 2)
+            (define (stdin-eof? [n : i64]) : i64 n)
+            (define (flush-stdout [n : i64]) : i64 n)
+            (define (main) : i64
+              (+ (read-stdin-line 1)
+                 (+ (read-stdin-bytes)
+                    (+ (stdin-eof? 3) (flush-stdout 4)))))
+            "#,
+        );
+        assert!(asm.contains("_tl_read_stdin_line:"), "asm:\n{}", asm);
+        assert!(asm.contains("_tl_read_stdin_bytes:"), "asm:\n{}", asm);
+        assert!(asm.contains("_tl_stdin_eof_question:"), "asm:\n{}", asm);
+        assert!(asm.contains("_tl_flush_stdout:"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("    call _tl_read_stdin_line"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("    call _tl_read_stdin_bytes"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("    call _tl_stdin_eof_question"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(asm.contains("    call _tl_flush_stdout"), "asm:\n{}", asm);
+        assert!(!asm.contains(".L_tl_read_stdin_line:"), "asm:\n{}", asm);
+        assert!(!asm.contains(".L_tl_read_stdin_bytes:"), "asm:\n{}", asm);
+        assert!(!asm.contains(".L_tl_stdin_eof:"), "asm:\n{}", asm);
+        assert!(!asm.contains(".L_tl_flush_stdout:"), "asm:\n{}", asm);
     }
 
     #[test]

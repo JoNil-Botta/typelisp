@@ -13,6 +13,10 @@ const ARG_RUNTIME_SYMBOL: &str = ".L_tl_arg";
 const READ_FILE_RUNTIME_SYMBOL: &str = ".L_tl_read_file";
 const WRITE_FILE_RUNTIME_SYMBOL: &str = ".L_tl_write_file";
 const FILE_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists";
+const READ_STDIN_LINE_RUNTIME_SYMBOL: &str = ".L_tl_read_stdin_line";
+const READ_STDIN_BYTES_RUNTIME_SYMBOL: &str = ".L_tl_read_stdin_bytes";
+const STDIN_EOF_RUNTIME_SYMBOL: &str = ".L_tl_stdin_eof";
+const FLUSH_STDOUT_RUNTIME_SYMBOL: &str = ".L_tl_flush_stdout";
 
 /// Lowers a typed AST program into IR.
 #[allow(dead_code)]
@@ -2656,6 +2660,77 @@ impl FnLowerer {
             });
             self.record_local(dst, Type::Bool);
             return Value::Var(dst);
+        }
+
+        // `(read-stdin-line)` returns one stdin line without the trailing LF as
+        // a heap-owned String. `(stdin-eof?)` reports whether the most recent
+        // stdin read hit EOF before satisfying its requested line/byte count.
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "read-stdin-line"
+            && args.is_empty()
+            && !self.has_local_value(name)
+            && !self.function_types.contains_key(name)
+        {
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: READ_STDIN_LINE_RUNTIME_SYMBOL.to_string(),
+                args: vec![],
+                ty: Type::String,
+            });
+            self.record_local(dst, Type::String);
+            return Value::Var(dst);
+        }
+
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "read-stdin-bytes"
+            && args.len() == 1
+            && !self.has_local_value(name)
+            && !self.function_types.contains_key(name)
+        {
+            let count_raw = self.lower_expr_as(&args[0], &Type::I64);
+            let count = self.cast_value(count_raw, Type::I64);
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: READ_STDIN_BYTES_RUNTIME_SYMBOL.to_string(),
+                args: vec![count],
+                ty: Type::String,
+            });
+            self.record_local(dst, Type::String);
+            return Value::Var(dst);
+        }
+
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "stdin-eof?"
+            && args.is_empty()
+            && !self.has_local_value(name)
+            && !self.function_types.contains_key(name)
+        {
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: STDIN_EOF_RUNTIME_SYMBOL.to_string(),
+                args: vec![],
+                ty: Type::Bool,
+            });
+            self.record_local(dst, Type::Bool);
+            return Value::Var(dst);
+        }
+
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "flush-stdout"
+            && args.is_empty()
+            && !self.has_local_value(name)
+            && !self.function_types.contains_key(name)
+        {
+            self.builder.emit(Instruction::Call {
+                dst: None,
+                func: FLUSH_STDOUT_RUNTIME_SYMBOL.to_string(),
+                args: vec![],
+                ty: Type::Unit,
+            });
+            return Value::ConstUnit;
         }
 
         // `(substring s start len)` / `(string-slice s start len)` extracts the
@@ -5721,6 +5796,135 @@ mod tests {
             ),
             "user-defined file-exists? must not lower to the builtin runtime"
         );
+    }
+
+    #[test]
+    fn test_lower_stdin_builtins_call_private_runtimes() {
+        let prog = parse(
+            r#"
+            (define (main) : i64
+              (begin
+                (read-stdin-line)
+                (read-stdin-bytes 3)
+                (flush-stdout)
+                (if (stdin-eof?) 1 0)))
+            "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let instrs: Vec<&Instruction> = ir.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .collect();
+
+        assert!(
+            instrs.iter().any(|i| matches!(
+                i,
+                Instruction::Call {
+                    func,
+                    args,
+                    ty: Type::String,
+                    dst: Some(_),
+                    ..
+                } if func == READ_STDIN_LINE_RUNTIME_SYMBOL && args.is_empty()
+            )),
+            "expected read-stdin-line runtime call"
+        );
+        assert!(
+            instrs.iter().any(|i| matches!(
+                i,
+                Instruction::Call {
+                    func,
+                    args,
+                    ty: Type::String,
+                    dst: Some(_),
+                    ..
+                } if func == READ_STDIN_BYTES_RUNTIME_SYMBOL && args.len() == 1
+            )),
+            "expected read-stdin-bytes runtime call"
+        );
+        assert!(
+            instrs.iter().any(|i| matches!(
+                i,
+                Instruction::Call {
+                    func,
+                    args,
+                    ty: Type::Unit,
+                    dst: None,
+                    ..
+                } if func == FLUSH_STDOUT_RUNTIME_SYMBOL && args.is_empty()
+            )),
+            "expected flush-stdout runtime call without a destination"
+        );
+        assert!(
+            instrs.iter().any(|i| matches!(
+                i,
+                Instruction::Call {
+                    func,
+                    args,
+                    ty: Type::Bool,
+                    dst: Some(_),
+                    ..
+                } if func == STDIN_EOF_RUNTIME_SYMBOL && args.is_empty()
+            )),
+            "expected stdin-eof? runtime call"
+        );
+    }
+
+    #[test]
+    fn test_lower_user_defined_stdin_builtins_shadow_runtime_helpers() {
+        let prog = parse(
+            r#"
+            (define (read-stdin-line [n : i64]) : i64 n)
+            (define (read-stdin-bytes) : i64 2)
+            (define (stdin-eof? [n : i64]) : i64 n)
+            (define (flush-stdout [n : i64]) : i64 n)
+            (define (main) : i64
+              (+ (read-stdin-line 1)
+                 (+ (read-stdin-bytes)
+                    (+ (stdin-eof? 3) (flush-stdout 4)))))
+            "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let main = ir
+            .functions
+            .iter()
+            .position(|func| func.name == "main")
+            .unwrap();
+        let instrs: Vec<&Instruction> = ir.functions[main]
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .collect();
+
+        for user_name in [
+            "read-stdin-line",
+            "read-stdin-bytes",
+            "stdin-eof?",
+            "flush-stdout",
+        ] {
+            assert!(
+                instrs
+                    .iter()
+                    .any(|i| matches!(i, Instruction::Call { func, .. } if func == user_name)),
+                "expected ordinary call to user-defined {user_name}"
+            );
+        }
+        for runtime_name in [
+            READ_STDIN_LINE_RUNTIME_SYMBOL,
+            READ_STDIN_BYTES_RUNTIME_SYMBOL,
+            STDIN_EOF_RUNTIME_SYMBOL,
+            FLUSH_STDOUT_RUNTIME_SYMBOL,
+        ] {
+            assert!(
+                !instrs
+                    .iter()
+                    .any(|i| matches!(i, Instruction::Call { func, .. } if func == runtime_name)),
+                "user-defined stdio builtin must not lower to {runtime_name}"
+            );
+        }
     }
 
     #[test]

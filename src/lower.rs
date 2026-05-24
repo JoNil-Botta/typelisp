@@ -783,7 +783,10 @@ impl FnLowerer {
                 // ranges, so it does not force divergence of the reduction.
                 self.expr_diverges(start) || self.expr_diverges(end) || self.expr_diverges(init)
             }
-            ast::Expr::Literal(_) | ast::Expr::Var(_) | ast::Expr::Lambda { .. } => false,
+            ast::Expr::Literal(_)
+            | ast::Expr::Var(_)
+            | ast::Expr::TypeLiteral { .. }
+            | ast::Expr::Lambda { .. } => false,
         }
     }
 
@@ -898,7 +901,7 @@ impl FnLowerer {
                 .map(|expr| self.infer_expr_type_with_locals(expr, local_types))
                 .unwrap_or(Type::Unit),
             ast::Expr::Ann { ty, .. } | ast::Expr::Cast { ty, .. } => self.resolve_type(ty),
-            ast::Expr::Comptime { .. } => Type::Unit,
+            ast::Expr::Comptime { .. } | ast::Expr::TypeLiteral { .. } => Type::Unit,
             ast::Expr::Lambda { params, ret, body } => {
                 let mut lambda_locals = HashMap::new();
                 for (name, ty) in params {
@@ -1253,8 +1256,14 @@ impl FnLowerer {
                 Ok(CtfeValue::Bool(b)) => Value::ConstBool(b),
                 Ok(CtfeValue::Char(c)) => Value::ConstI8(c as i8),
                 Ok(CtfeValue::Unit) => Value::ConstUnit,
+                Ok(CtfeValue::Type(_)) => {
+                    unreachable!("type-valued comptime should be rejected by the typechecker")
+                }
                 Err(_) => unreachable!("comptime should be evaluated by the typechecker"),
             },
+            ast::Expr::TypeLiteral { .. } => {
+                unreachable!("type literals should be rejected outside comptime by the typechecker")
+            }
             ast::Expr::Match { scrutinee, arms } => self.lower_match(scrutinee, arms),
             ast::Expr::Set(name, expr) => self.lower_set(name, expr),
             ast::Expr::Ann { expr, ty } => {
@@ -1400,7 +1409,7 @@ impl FnLowerer {
         captures: &mut Vec<String>,
     ) {
         match expr.unspan() {
-            ast::Expr::Literal(_) => {}
+            ast::Expr::Literal(_) | ast::Expr::TypeLiteral { .. } => {}
             ast::Expr::Var(name) => {
                 if candidates.contains_key(name) && !local_bindings.contains(name) {
                     captures.push(name.clone());

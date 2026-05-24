@@ -222,7 +222,21 @@ narrower or unsigned integer is required. Floating-point literals are always
 
 There are no explicit type aliases. Identifiers naming enums or structs are resolved to their nominal types during type checking.
 
-### 3.6 Type conversions (casts)
+### 3.6 Compile-time type values
+
+`(type T)` is an expression-position type literal. It can be evaluated only
+inside `(comptime ...)`, where it produces a compile-time-only type value for
+the resolved type `T`.
+
+- Type literals support the same type grammar as annotations, including
+  primitive, tuple, fixed/dynamic array, function, enum, and struct types.
+- Type values can be compared for equality during CTFE.
+- Type values cannot flow to runtime expression positions. A direct result such
+  as `(comptime (type i64))` is rejected with a compile-time-only diagnostic.
+- Type-valued comptime parameters and consuming type values back in type
+  positions are not implemented yet.
+
+### 3.7 Type conversions (casts)
 
 ```lisp test=ignore name=cast-placeholder reason=placeholder
 (cast expr : target_type)
@@ -239,7 +253,7 @@ There are no explicit type aliases. Identifiers naming enums or structs are reso
   currently accepts only integer/char source and target types.
 - No implicit conversions.
 
-### 3.7 Region-tagged types (v1)
+### 3.8 Region-tagged types (v1)
 
 A value allocated inside a `(with-region r ...)` scope carries a **region tag**
 in its type, written `(in r T)` where `r` is the region name and `T` is the
@@ -518,7 +532,7 @@ as the head of the final `cond` arm.
 
 ### 5.12 `(cast expr : type)` — type conversion
 
-See §3.6. Casts currently cover integer/char widening, narrowing, and
+See §3.7. Casts currently cover integer/char widening, narrowing, and
 truncation only; floating-point conversions are deferred.
 
 ### 5.13 `(match scrutinee [pattern expr] ...)` — pattern matching
@@ -794,7 +808,7 @@ nesting `with-region` forms.
 ```
 
 **Static escape checking:** Values allocated inside a region are typed as
-`(in r T)` (see §3.7). The typechecker rejects any attempt to let a
+`(in r T)` (see §3.8). The typechecker rejects any attempt to let a
 region-tagged value escape its scope:
 
 - As the result of the `with-region` form (`(with-region r (make-array i64 5))`).

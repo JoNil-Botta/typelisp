@@ -125,7 +125,7 @@ impl Specializer {
                 ),
                 expr.span(),
             )),
-            Expr::Var(_) | Expr::Literal(_) => Ok(expr.clone()),
+            Expr::Var(_) | Expr::Literal(_) | Expr::TypeLiteral { .. } => Ok(expr.clone()),
             Expr::Binary { op, lhs, rhs } => Ok(Expr::Binary {
                 op: *op,
                 lhs: Box::new(self.rewrite_expr(lhs)?),
@@ -349,14 +349,20 @@ impl Specializer {
                         span,
                     ),
                 })?;
-                if value.ty() != *param_ty {
+                let Some(value_ty) = value.runtime_ty() else {
+                    return Err(SpecializeError::at(
+                        format!(
+                            "comptime argument '{}' for function '{}' is a type value; type-valued comptime parameters are not implemented yet",
+                            param_name, name
+                        ),
+                        arg.span(),
+                    ));
+                };
+                if value_ty != *param_ty {
                     return Err(SpecializeError::at(
                         format!(
                             "comptime argument '{}' for function '{}' has type {}, expected {}",
-                            param_name,
-                            name,
-                            value.ty(),
-                            param_ty
+                            param_name, name, value_ty, param_ty
                         ),
                         arg.span(),
                     ));
@@ -529,8 +535,14 @@ fn safe_symbol_fragment(text: &str) -> String {
     if out.is_empty() { "fn".into() } else { out }
 }
 
-fn literal_expr(value: &CtfeValue, span: Span) -> Expr {
-    Expr::spanned(Expr::Literal(value.to_literal()), span)
+fn literal_expr(value: &CtfeValue, span: Span) -> Result<Expr, SpecializeError> {
+    let Some(lit) = value.to_literal() else {
+        return Err(SpecializeError::at(
+            "type-valued comptime parameters are not implemented yet",
+            span,
+        ));
+    };
+    Ok(Expr::spanned(Expr::Literal(lit), span))
 }
 
 fn substitute_comptime_params(
@@ -545,12 +557,12 @@ fn substitute_comptime_params(
         )),
         Expr::Var(name) if !shadowed.contains(name) => {
             if let Some(value) = values.get(name) {
-                Ok(literal_expr(value, expr.span()))
+                literal_expr(value, expr.span())
             } else {
                 Ok(expr.clone())
             }
         }
-        Expr::Var(_) | Expr::Literal(_) => Ok(expr.clone()),
+        Expr::Var(_) | Expr::Literal(_) | Expr::TypeLiteral { .. } => Ok(expr.clone()),
         Expr::Binary { op, lhs, rhs } => Ok(Expr::Binary {
             op: *op,
             lhs: Box::new(substitute_comptime_params(lhs, values, shadowed)?),
@@ -816,6 +828,18 @@ mod tests {
         assert_eq!(CtfeValue::Bool(false).key_fragment(), "bool:0");
         assert_eq!(CtfeValue::Char('A').key_fragment(), "char:41");
         assert_eq!(CtfeValue::Unit.key_fragment(), "unit");
+        assert_eq!(
+            CtfeValue::Type(Type::Array(Box::new(Type::I64), 4)).key_fragment(),
+            "type:array:4:i64"
+        );
+        assert_eq!(
+            CtfeValue::Type(Type::Func(
+                vec![Type::I64, Type::Bool],
+                Box::new(Type::Unit)
+            ))
+            .key_fragment(),
+            "type:func:2:i64:bool:unit"
+        );
     }
 
     #[test]

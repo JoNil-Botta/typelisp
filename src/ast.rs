@@ -185,6 +185,8 @@ pub enum Expr {
     Call { func: Box<Expr>, args: Vec<Expr> },
     /// Reserved compile-time evaluation syntax: (comptime expr)
     Comptime { expr: Box<Expr> },
+    /// Compile-time-only type literal: (type T)
+    TypeLiteral { ty: Type },
     /// If expression: (if cond then else)
     If {
         cond: Box<Expr>,

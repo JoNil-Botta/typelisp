@@ -1546,7 +1546,7 @@ fn check_rejects_unsupported_type_kind_before_backend() {
         stderr
     );
     assert!(
-        stderr.contains("comptime type values are not implemented yet"),
+        stderr.contains("type-valued annotations and parameters are not implemented yet"),
         "stderr:\n{}",
         stderr
     );

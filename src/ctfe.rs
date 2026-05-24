@@ -1,21 +1,24 @@
 //! Compile-Time Function Evaluation (CTFE) evaluator for expression-position
 //! `(comptime expr)`.
 //!
-//! The first slice supports only scalar runtime-representable values:
-//! i64, f64, bool, char, unit.  Strings, arrays, tuples, structs, enums,
+//! The first slices support scalar runtime-representable values plus
+//! compile-time-only type values. Strings, arrays, tuples, structs, enums,
 //! lambdas, calls, and all side-effecting forms are rejected.
 
 use crate::ast::{BinOp, Expr, Literal, UnOp};
 use crate::span::Span;
 use crate::types::Type;
 use std::collections::HashMap;
+use std::fmt;
 
 #[derive(Debug, Clone)]
 pub enum CtfeError {
     Message { msg: String, span: Span },
 }
 
-/// A compile-time value in the first scalar slice.
+type CtfeTypeResolver<'a> = dyn Fn(&Type, Span) -> Result<Type, CtfeError> + 'a;
+
+/// A compile-time value.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CtfeValue {
     I64(i64),
@@ -23,16 +26,28 @@ pub enum CtfeValue {
     Bool(bool),
     Char(char),
     Unit,
+    Type(Type),
 }
 
 impl CtfeValue {
-    pub fn ty(&self) -> Type {
+    pub fn runtime_ty(&self) -> Option<Type> {
         match self {
-            CtfeValue::I64(_) => Type::I64,
-            CtfeValue::F64(_) => Type::F64,
-            CtfeValue::Bool(_) => Type::Bool,
-            CtfeValue::Char(_) => Type::Char,
-            CtfeValue::Unit => Type::Unit,
+            CtfeValue::I64(_) => Some(Type::I64),
+            CtfeValue::F64(_) => Some(Type::F64),
+            CtfeValue::Bool(_) => Some(Type::Bool),
+            CtfeValue::Char(_) => Some(Type::Char),
+            CtfeValue::Unit => Some(Type::Unit),
+            CtfeValue::Type(_) => None,
+        }
+    }
+
+    pub fn type_description(&self) -> String {
+        match self {
+            CtfeValue::Type(ty) => format!("type value {}", ty),
+            _ => self
+                .runtime_ty()
+                .expect("scalar CTFE values have runtime types")
+                .to_string(),
         }
     }
 
@@ -49,17 +64,75 @@ impl CtfeValue {
             }
             CtfeValue::Char(c) => format!("char:{:x}", *c as u32),
             CtfeValue::Unit => "unit".into(),
+            CtfeValue::Type(ty) => format!("type:{}", type_key_fragment(ty)),
         }
     }
 
-    pub fn to_literal(&self) -> Literal {
+    pub fn to_literal(&self) -> Option<Literal> {
         match self {
-            CtfeValue::I64(n) => Literal::Int(*n),
-            CtfeValue::F64(n) => Literal::Float(*n),
-            CtfeValue::Bool(b) => Literal::Bool(*b),
-            CtfeValue::Char(c) => Literal::Char(*c),
-            CtfeValue::Unit => Literal::Unit,
+            CtfeValue::I64(n) => Some(Literal::Int(*n)),
+            CtfeValue::F64(n) => Some(Literal::Float(*n)),
+            CtfeValue::Bool(b) => Some(Literal::Bool(*b)),
+            CtfeValue::Char(c) => Some(Literal::Char(*c)),
+            CtfeValue::Unit => Some(Literal::Unit),
+            CtfeValue::Type(_) => None,
         }
+    }
+}
+
+impl fmt::Display for CtfeValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CtfeValue::I64(n) => write!(f, "{}", n),
+            CtfeValue::F64(n) => write!(f, "{}", n),
+            CtfeValue::Bool(b) => write!(f, "{}", b),
+            CtfeValue::Char(c) => write!(f, "#\\{}'", c),
+            CtfeValue::Unit => write!(f, "unit"),
+            CtfeValue::Type(ty) => write!(f, "(type {})", ty),
+        }
+    }
+}
+
+fn type_key_fragment(ty: &Type) -> String {
+    match ty {
+        Type::I64 => "i64".into(),
+        Type::I32 => "i32".into(),
+        Type::I16 => "i16".into(),
+        Type::I8 => "i8".into(),
+        Type::U64 => "u64".into(),
+        Type::U32 => "u32".into(),
+        Type::U16 => "u16".into(),
+        Type::U8 => "u8".into(),
+        Type::F64 => "f64".into(),
+        Type::F32 => "f32".into(),
+        Type::Bool => "bool".into(),
+        Type::Char => "char".into(),
+        Type::String => "String".into(),
+        Type::Unit => "unit".into(),
+        Type::Never => "never".into(),
+        Type::Func(args, ret) => {
+            let mut parts = Vec::with_capacity(args.len() + 2);
+            parts.push("func".into());
+            parts.push(args.len().to_string());
+            parts.extend(args.iter().map(type_key_fragment));
+            parts.push(type_key_fragment(ret));
+            parts.join(":")
+        }
+        Type::Tuple(elems) => {
+            let mut parts = Vec::with_capacity(elems.len() + 2);
+            parts.push("tuple".into());
+            parts.push(elems.len().to_string());
+            parts.extend(elems.iter().map(type_key_fragment));
+            parts.join(":")
+        }
+        Type::Array(elem, n) => format!("array:{}:{}", n, type_key_fragment(elem)),
+        Type::DynArray(elem) => format!("dynarray:{}", type_key_fragment(elem)),
+        Type::Region(region, elem) => format!("region:{}:{}", region, type_key_fragment(elem)),
+        Type::Enum(name) => format!("enum:{}", name),
+        Type::Struct(name) => format!("struct:{}", name),
+        Type::Vector(elem, lanes) => format!("vector:{}:{}", lanes, type_key_fragment(elem)),
+        Type::Mask(lanes) => format!("mask:{}", lanes),
+        Type::Var(name) => format!("var:{}", name),
     }
 }
 
@@ -72,6 +145,7 @@ fn describe_expr(expr: &Expr) -> &'static str {
         Expr::Unary { .. } => "unary operation",
         Expr::Call { .. } => "function call",
         Expr::Comptime { .. } => "comptime",
+        Expr::TypeLiteral { .. } => "type literal",
         Expr::If { .. } => "if",
         Expr::Let { .. } => "let",
         Expr::Lambda { .. } => "lambda",
@@ -95,22 +169,32 @@ fn describe_expr(expr: &Expr) -> &'static str {
 }
 
 /// Evaluates a single `(comptime expr)` body.
-pub struct CtfeEvaluator {
+pub struct CtfeEvaluator<'a> {
     scopes: Vec<HashMap<String, CtfeValue>>,
     fuel: u64,
+    type_resolver: Option<&'a CtfeTypeResolver<'a>>,
 }
 
-impl Default for CtfeEvaluator {
+impl Default for CtfeEvaluator<'_> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl CtfeEvaluator {
+impl<'a> CtfeEvaluator<'a> {
     pub fn new() -> Self {
         Self {
             scopes: vec![HashMap::new()],
             fuel: 10_000,
+            type_resolver: None,
+        }
+    }
+
+    pub fn with_type_resolver(type_resolver: &'a CtfeTypeResolver<'a>) -> Self {
+        Self {
+            scopes: vec![HashMap::new()],
+            fuel: 10_000,
+            type_resolver: Some(type_resolver),
         }
     }
 
@@ -171,6 +255,7 @@ impl CtfeEvaluator {
             Expr::Begin(exprs) => self.eval_begin(exprs, span),
             Expr::Ann { expr, .. } => self.eval_expr(expr),
             Expr::Comptime { expr } => self.eval_expr(expr),
+            Expr::TypeLiteral { ty } => self.eval_type_literal(ty, span),
             Expr::Spanned { expr, .. } => self.eval_expr(expr),
             other => Err(CtfeError::Message {
                 msg: format!(
@@ -194,6 +279,15 @@ impl CtfeEvaluator {
                 span,
             }),
         }
+    }
+
+    fn eval_type_literal(&self, ty: &Type, span: Span) -> Result<CtfeValue, CtfeError> {
+        let ty = if let Some(resolve_type) = self.type_resolver {
+            resolve_type(ty, span)?
+        } else {
+            ty.clone()
+        };
+        Ok(CtfeValue::Type(ty))
     }
 
     fn eval_var(&self, name: &str, span: Span) -> Result<CtfeValue, CtfeError> {
@@ -223,8 +317,8 @@ impl CtfeEvaluator {
                     "'{}' in comptime: {} (got {} and {})",
                     op_name(op),
                     hint,
-                    lv.ty(),
-                    rv.ty()
+                    lv.type_description(),
+                    rv.type_description()
                 ),
                 span,
             })
@@ -281,6 +375,7 @@ impl CtfeEvaluator {
                 (CtfeValue::Bool(a), CtfeValue::Bool(b)) => CtfeValue::Bool(a == b),
                 (CtfeValue::Char(a), CtfeValue::Char(b)) => CtfeValue::Bool(a == b),
                 (CtfeValue::Unit, CtfeValue::Unit) => CtfeValue::Bool(true),
+                (CtfeValue::Type(a), CtfeValue::Type(b)) => CtfeValue::Bool(a == b),
                 _ => return bad_types("requires matching types"),
             },
             BinOp::Ne => match (&lv, &rv) {
@@ -289,6 +384,7 @@ impl CtfeEvaluator {
                 (CtfeValue::Bool(a), CtfeValue::Bool(b)) => CtfeValue::Bool(a != b),
                 (CtfeValue::Char(a), CtfeValue::Char(b)) => CtfeValue::Bool(a != b),
                 (CtfeValue::Unit, CtfeValue::Unit) => CtfeValue::Bool(false),
+                (CtfeValue::Type(a), CtfeValue::Type(b)) => CtfeValue::Bool(a != b),
                 _ => return bad_types("requires matching types"),
             },
             BinOp::Lt => match (&lv, &rv) {
@@ -361,7 +457,7 @@ impl CtfeEvaluator {
                 other => Err(CtfeError::Message {
                     msg: format!(
                         "negation in comptime requires a numeric type, got {}",
-                        other.ty()
+                        other.type_description()
                     ),
                     span,
                 }),
@@ -369,14 +465,20 @@ impl CtfeEvaluator {
             UnOp::Not => match v {
                 CtfeValue::Bool(b) => Ok(CtfeValue::Bool(!b)),
                 other => Err(CtfeError::Message {
-                    msg: format!("'not' in comptime requires bool, got {}", other.ty()),
+                    msg: format!(
+                        "'not' in comptime requires bool, got {}",
+                        other.type_description()
+                    ),
                     span,
                 }),
             },
             UnOp::BitNot => match v {
                 CtfeValue::I64(n) => Ok(CtfeValue::I64(!n)),
                 other => Err(CtfeError::Message {
-                    msg: format!("bitwise not in comptime requires i64, got {}", other.ty()),
+                    msg: format!(
+                        "bitwise not in comptime requires i64, got {}",
+                        other.type_description()
+                    ),
                     span,
                 }),
             },
@@ -395,7 +497,10 @@ impl CtfeEvaluator {
             CtfeValue::Bool(true) => self.eval_expr(then_branch),
             CtfeValue::Bool(false) => self.eval_expr(else_branch),
             other => Err(CtfeError::Message {
-                msg: format!("comptime 'if' condition must be bool, got {}", other.ty()),
+                msg: format!(
+                    "comptime 'if' condition must be bool, got {}",
+                    other.type_description()
+                ),
                 span: cond.span(),
             }),
         }
@@ -446,5 +551,51 @@ fn op_name(op: BinOp) -> &'static str {
         BinOp::BitXor => "bitxor",
         BinOp::Shl => "shl",
         BinOp::Shr => "shr",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn type_literal_evaluates_to_type_value() {
+        let expr = Expr::TypeLiteral {
+            ty: Type::Array(Box::new(Type::I64), 4),
+        };
+
+        let value = CtfeEvaluator::new().eval(&expr).unwrap();
+
+        assert_eq!(value, CtfeValue::Type(Type::Array(Box::new(Type::I64), 4)));
+    }
+
+    #[test]
+    fn type_literal_uses_resolver_before_returning_value() {
+        let expr = Expr::TypeLiteral {
+            ty: Type::Var("Point".into()),
+        };
+        let resolve = |ty: &Type, _span: Span| match ty {
+            Type::Var(name) if name == "Point" => Ok(Type::Struct(name.clone())),
+            other => Ok(other.clone()),
+        };
+
+        let value = CtfeEvaluator::with_type_resolver(&resolve)
+            .eval(&expr)
+            .unwrap();
+
+        assert_eq!(value, CtfeValue::Type(Type::Struct("Point".into())));
+    }
+
+    #[test]
+    fn type_values_compare_in_ctfe() {
+        let expr = Expr::Binary {
+            op: BinOp::Eq,
+            lhs: Box::new(Expr::TypeLiteral { ty: Type::I64 }),
+            rhs: Box::new(Expr::TypeLiteral { ty: Type::I64 }),
+        };
+
+        let value = CtfeEvaluator::new().eval(&expr).unwrap();
+
+        assert_eq!(value, CtfeValue::Bool(true));
     }
 }

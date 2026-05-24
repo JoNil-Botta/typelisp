@@ -291,6 +291,28 @@ impl TypeChecker {
         Ok(resolved)
     }
 
+    fn eval_comptime_expr(&self, expr: &Expr) -> Result<CtfeValue, TypeError> {
+        let enums = self.enums.clone();
+        let structs = self.structs.clone();
+        let resolve_type = move |ty: &Type, span: Span| {
+            let resolved = structs.resolve_type(&enums.resolve_type(ty));
+            TypeChecker::reject_unresolved_type_vars(&resolved, span).map_err(|err| {
+                CtfeError::Message {
+                    msg: err.msg,
+                    span: err.span,
+                }
+            })?;
+            Ok(resolved)
+        };
+        CtfeEvaluator::with_type_resolver(&resolve_type)
+            .eval(expr)
+            .map_err(|err| match err {
+                CtfeError::Message { msg, span } => {
+                    TypeError::at(format!("comptime error: {}", msg), span)
+                }
+            })
+    }
+
     fn active_region(&self) -> Option<&str> {
         self.active_regions.last().map(String::as_str)
     }
@@ -438,7 +460,7 @@ impl TypeChecker {
     fn reject_unresolved_type_vars(ty: &Type, span: Span) -> Result<(), TypeError> {
         match ty {
             Type::Var(name) if name == "type" => Err(TypeError::at(
-                "unsupported type kind 'type'; comptime type values are not implemented yet",
+                "unsupported type kind 'type'; type-valued annotations and parameters are not implemented yet",
                 span,
             )),
             Type::Var(name) => Err(TypeError::at(format!("unknown type name '{}'", name), span)),
@@ -505,7 +527,7 @@ impl TypeChecker {
         captured_sets: &mut Vec<(String, Span)>,
     ) {
         match expr.unspan() {
-            Expr::Literal(_) => {}
+            Expr::Literal(_) | Expr::TypeLiteral { .. } => {}
             Expr::Var(name) => {
                 if outer_locals.contains(name) && !local_bindings.contains(name) {
                     Self::push_capture(captures, name, expr.span());
@@ -1421,17 +1443,24 @@ impl TypeChecker {
             Expr::Var(name) => self
                 .lookup(name)
                 .ok_or_else(|| TypeError::at(format!("unbound variable: {}", name), span)),
-            Expr::Comptime { expr } => match CtfeEvaluator::new().eval(expr) {
-                Ok(CtfeValue::I64(_)) => Ok(Type::I64),
-                Ok(CtfeValue::F64(_)) => Ok(Type::F64),
-                Ok(CtfeValue::Bool(_)) => Ok(Type::Bool),
-                Ok(CtfeValue::Char(_)) => Ok(Type::Char),
-                Ok(CtfeValue::Unit) => Ok(Type::Unit),
-                Err(CtfeError::Message {
-                    msg,
-                    span: ctfe_span,
-                }) => Err(TypeError::at(format!("comptime error: {}", msg), ctfe_span)),
+            Expr::Comptime { expr } => match self.eval_comptime_expr(expr)? {
+                CtfeValue::I64(_) => Ok(Type::I64),
+                CtfeValue::F64(_) => Ok(Type::F64),
+                CtfeValue::Bool(_) => Ok(Type::Bool),
+                CtfeValue::Char(_) => Ok(Type::Char),
+                CtfeValue::Unit => Ok(Type::Unit),
+                CtfeValue::Type(ty) => Err(TypeError::at(
+                    format!(
+                        "type values are compile-time only; cannot use (type {}) as a runtime expression",
+                        ty
+                    ),
+                    expr.span(),
+                )),
             },
+            Expr::TypeLiteral { .. } => Err(TypeError::at(
+                "type literals are compile-time only; use them inside (comptime ...)",
+                span,
+            )),
             Expr::Binary { op, lhs, rhs } => {
                 let lhs_ty = self.check_expr(lhs)?;
                 let rhs_ty = self.check_expr_with_expected_or_actual(rhs, &lhs_ty)?;
@@ -2265,7 +2294,7 @@ impl TypeChecker {
     fn check_spmd_reduce_value_at(expr: &Expr, in_index: bool) -> Result<(), TypeError> {
         let span = expr.span();
         match expr.unspan() {
-            Expr::Literal(_) | Expr::Var(_) => Ok(()),
+            Expr::Literal(_) | Expr::Var(_) | Expr::TypeLiteral { .. } => Ok(()),
             Expr::Binary { lhs, rhs, .. } => {
                 Self::check_spmd_reduce_value_at(lhs, in_index)?;
                 Self::check_spmd_reduce_value_at(rhs, in_index)
@@ -3155,7 +3184,7 @@ mod tests {
         );
         assert!(
             err.msg
-                .contains("comptime type values are not implemented yet"),
+                .contains("type-valued annotations and parameters are not implemented yet"),
             "got: {}",
             err.msg
         );
@@ -4189,6 +4218,79 @@ mod tests {
         let mut tc = TypeChecker::new();
         tc.check_program(&prog)
             .expect("comptime let/if/begin should typecheck");
+    }
+
+    #[test]
+    fn test_typecheck_comptime_type_literal_runtime_use_rejected() {
+        let src = "(define (main) : i64 (comptime (type i64)))";
+        let prog = parse(src).unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(
+            err.msg.contains("type values are compile-time only"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_bare_type_literal_runtime_use_rejected() {
+        let src = "(define (main) : i64 (type i64))";
+        let prog = parse(src).unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(
+            err.msg.contains("type literals are compile-time only"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_comptime_type_literal_equality() {
+        let src = "(define (main) : bool (comptime (= (type i64) (type i64))))";
+        let prog = parse(src).unwrap();
+        let mut tc = TypeChecker::new();
+        tc.check_program(&prog)
+            .expect("matching primitive type literals should compare at comptime");
+    }
+
+    #[test]
+    fn test_typecheck_comptime_compound_type_literal_equality() {
+        let src = "(define (main) : bool (comptime (= (type (Array i64 4)) (type (Array i64 4)))))";
+        let prog = parse(src).unwrap();
+        let mut tc = TypeChecker::new();
+        tc.check_program(&prog)
+            .expect("matching compound type literals should compare at comptime");
+    }
+
+    #[test]
+    fn test_typecheck_comptime_nominal_type_literal_equality() {
+        let src = "
+            (defstruct Point (x i64) (y i64))
+            (defenum MaybePoint (None) (Some Point))
+            (define (main) : bool
+              (comptime
+                (and (= (type Point) (type Point))
+                     (= (type MaybePoint) (type MaybePoint)))))
+        ";
+        let prog = parse(src).unwrap();
+        let mut tc = TypeChecker::new();
+        tc.check_program(&prog)
+            .expect("nominal type literals should resolve before CTFE equality");
+    }
+
+    #[test]
+    fn test_typecheck_comptime_type_literal_unknown_nominal_rejected() {
+        let src = "(define (main) : bool (comptime (= (type Missing) (type Missing))))";
+        let prog = parse(src).unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(
+            err.msg.contains("unknown type name 'Missing'"),
+            "got: {}",
+            err.msg
+        );
     }
 
     #[test]

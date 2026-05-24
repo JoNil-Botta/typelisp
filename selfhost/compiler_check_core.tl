@@ -81,11 +81,27 @@
         [_ false])]
     [(ErrCompilerLoad _) false]))
 
+(define (compiler-check-stdlib-json-import-source) : String
+  "(import \"stdlib/json.tl\")
+(define (main) : i64
+  (match (JsonStr \"ok\") [(JsonStr s) (string-length s)] [_ 0]))")
+
+(define (compiler-check-stdlib-json-import-ok?) : bool
+  (match (compiler-check-source
+    "selfhost/json_stdlib_entry.tl"
+    (compiler-check-stdlib-json-import-source))
+    [(OkCompilerCheck summary) (> (compiler-typecheck-summary-score summary) 0)]
+    [(ErrCompilerCheck _) false]))
+
 (define (compiler-check-self-test) : i64
   (if (compiler-check-virtual-import-ok?)
     (if (compiler-check-virtual-error-ok?)
       (if (compiler-check-seen-root-ok?)
-        42
+        (if (compiler-check-stdlib-json-import-ok?)
+          42
+          (begin
+            (panic "compiler-check: stdlib json import smoke mismatch")
+            0))
         (begin
           (panic "compiler-check: seen root smoke mismatch")
           0))

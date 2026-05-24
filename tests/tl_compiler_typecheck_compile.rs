@@ -163,6 +163,7 @@ fn compiler_check_core_tl_compiles_to_assembly() {
         "_tl_compiler_check_source:",
         "_tl_compiler_check_program:",
         "_tl_compiler_check_self_test:",
+        "_tl_compiler_check_stdlib_json_import_ok_question:",
         "_tl_compiler_load_source:",
     ] {
         assert_symbol(&asm, sym, "compiler_check_core");
@@ -175,6 +176,8 @@ fn compiler_check_core_tl_compiles_to_assembly() {
         "compiler-check: virtual import smoke mismatch",
         "compiler-check: virtual diagnostic smoke mismatch",
         "compiler-check: seen root smoke mismatch",
+        "compiler-check: stdlib json import smoke mismatch",
+        "(import \\\"stdlib/json.tl\\\")",
     ] {
         assert_message(&asm, message, "compiler_check_core");
     }

@@ -1168,6 +1168,25 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             stdout: "",
             deps: &["stdlib/io.tl"],
         },
+        // stdlib/json.tl: canonical JSON parser/stringifier for selfhost tools.
+        // The smoke parses whitespace-heavy JSON, checks object/array helpers,
+        // stringifies to canonical compact JSON, reparses it, and verifies a
+        // recoverable parse error for a malformed array (#800).
+        Case {
+            name: "stdlib_json",
+            exit_code: 42,
+            stdout: "",
+            deps: &["stdlib/json.tl"],
+        },
+        // refs #800: selfhost-facing stdlib JSON smoke. The source lives under
+        // selfhost/ and imports the canonical stdlib module instead of a private
+        // selfhost JSON copy.
+        Case {
+            name: "json_smoke",
+            exit_code: 42,
+            stdout: "",
+            deps: &["stdlib/json.tl"],
+        },
         // refs #335: selfhost parser from Sexpr into the real compiler AST.
         // The smoke parses a representative multi-declaration source string
         // with imports, structs, enums, externs, typed definitions, let,
@@ -4906,6 +4925,7 @@ fn source_path_for_case(manifest_dir: &PathBuf, name: &str) -> PathBuf {
         "compiler_optimize_smoke" => "compiler_optimize_smoke.tl",
         "lex_span_smoke" => "lex_span_smoke.tl",
         "compiler_backend_smoke" => "compiler_backend_smoke.tl",
+        "json_smoke" => "json_smoke.tl",
         "doc_extract_smoke" => "doc_extract_smoke.tl",
         "doc_test_smoke" => "doc_test_smoke.tl",
         "doc_render_smoke" => "doc_render_smoke.tl",
@@ -4947,6 +4967,9 @@ fn dep_source_path(manifest_dir: &Path, source_dir: &Path, dep: &str) -> PathBuf
     }
     if dep == "stdlib/io.tl" {
         return manifest_dir.join("stdlib").join("io.tl");
+    }
+    if dep == "stdlib/json.tl" {
+        return manifest_dir.join("stdlib").join("json.tl");
     }
     source_dir.join(dep)
 }

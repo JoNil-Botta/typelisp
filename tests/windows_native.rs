@@ -280,6 +280,8 @@ fn native_cases() -> Vec<Case> {
         ),
         case_with_deps("stdlib_test", 42, "", &["stdlib/test.tl"]),
         case_with_deps("stdlib_io", 42, "", &["stdlib/io.tl"]),
+        case_with_deps("stdlib_json", 42, "", &["stdlib/json.tl"]),
+        case_with_deps("json_smoke", 42, "", &["stdlib/json.tl"]),
         case_with_deps(
             "compiler_parse_smoke",
             42,
@@ -572,6 +574,7 @@ fn source_path_for_case(manifest_dir: &Path, name: &str) -> PathBuf {
         "compiler_optimize_smoke" => "compiler_optimize_smoke.tl",
         "compiler_regalloc_smoke" => "compiler_regalloc_smoke.tl",
         "compiler_backend_smoke" => "compiler_backend_smoke.tl",
+        "json_smoke" => "json_smoke.tl",
         "lex_span_smoke" => "lex_span_smoke.tl",
         "doc_extract_smoke" => "doc_extract_smoke.tl",
         "doc_test_smoke" => "doc_test_smoke.tl",
@@ -593,6 +596,7 @@ fn dep_source_path(manifest_dir: &Path, source_dir: &Path, dep: &str) -> PathBuf
         "stdlib/string.tl" => manifest_dir.join("stdlib").join("string.tl"),
         "stdlib/test.tl" => manifest_dir.join("stdlib").join("test.tl"),
         "stdlib/io.tl" => manifest_dir.join("stdlib").join("io.tl"),
+        "stdlib/json.tl" => manifest_dir.join("stdlib").join("json.tl"),
         _ => source_dir.join(dep),
     }
 }

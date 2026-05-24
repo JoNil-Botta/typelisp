@@ -65,6 +65,7 @@ stdlib_build_run() {
 stdlib_manifest() {
     cat <<'EOF'
 io.tl
+json.tl
 string.tl
 test.tl
 EOF
@@ -248,6 +249,62 @@ fi
 if [ -s "$IO_STDERR" ]; then
     echo "FAIL: stdlib file I/O witness wrote unexpected stderr" >&2
     sed 's/^/  /' "$IO_STDERR" >&2
+    exit 1
+fi
+
+JSON_WITNESS="$WORKDIR/stdlib_json_witness.tl"
+JSON_BIN="$WORKDIR/stdlib_json_witness"
+JSON_STDOUT="$WORKDIR/stdlib_json_witness.stdout"
+JSON_STDERR="$WORKDIR/stdlib_json_witness.stderr"
+
+cat > "$JSON_WITNESS" <<'EOF'
+(import "stdlib/json.tl")
+
+(define (json-witness-source) : String
+  "{ \"name\" : \"tl\\njson\", \"nums\" : [1,-2,3.5e2], \"ok\" : true, \"none\" : null }")
+
+(define (json-witness-canonical) : String
+  "{\"name\":\"tl\\njson\",\"nums\":[1,-2,3.5e2],\"ok\":true,\"none\":null}")
+
+(define (main) : i64
+  (match (json-parse (json-witness-source))
+    [(JsonParseOk value _)
+      (if (string-eq (json-stringify value) (json-witness-canonical))
+        (match (json-parse (json-stringify value))
+          [(JsonParseOk again _)
+            (if (string-eq (json-stringify again) (json-witness-canonical))
+              42
+              1)]
+          [_ 2])
+        3)]
+    [_ 4]))
+EOF
+
+echo "[stdlib] building+running JSON witness (--stdlib-root)"
+stdlib_build_run "$JSON_WITNESS" "$JSON_BIN"
+
+if [ "$got" -ne 42 ]; then
+    echo "FAIL: stdlib JSON witness expected exit 42, got $got" >&2
+    if [ -s "$JSON_STDOUT" ]; then
+        echo "stdout:" >&2
+        sed 's/^/  /' "$JSON_STDOUT" >&2
+    fi
+    if [ -s "$JSON_STDERR" ]; then
+        echo "stderr:" >&2
+        sed 's/^/  /' "$JSON_STDERR" >&2
+    fi
+    exit 1
+fi
+
+if [ -s "$JSON_STDOUT" ]; then
+    echo "FAIL: stdlib JSON witness wrote unexpected stdout" >&2
+    sed 's/^/  /' "$JSON_STDOUT" >&2
+    exit 1
+fi
+
+if [ -s "$JSON_STDERR" ]; then
+    echo "FAIL: stdlib JSON witness wrote unexpected stderr" >&2
+    sed 's/^/  /' "$JSON_STDERR" >&2
     exit 1
 fi
 

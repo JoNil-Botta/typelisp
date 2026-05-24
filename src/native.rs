@@ -359,6 +359,36 @@ pub fn run_source_file(
     })
 }
 
+pub fn run_source_file_in_temp_dir(
+    file: &Path,
+    options: &LoadOptions,
+    runtime_args: &[String],
+    target: BackendTarget,
+) -> Result<NativeRunOutput, NativeError> {
+    let temp = NativeTempDir::new("typelisp-native-run")?;
+    let stem = file.file_stem().unwrap_or(std::ffi::OsStr::new("out"));
+    let asm_path = temp.path.join(format!("{}.s", stem.to_string_lossy()));
+    let obj_path = temp.path.join(format!(
+        "{}.{}",
+        stem.to_string_lossy(),
+        target.object_extension()
+    ));
+    let bin_path = match target.executable_extension() {
+        Some(ext) => temp
+            .path
+            .join(format!("{}.{}", stem.to_string_lossy(), ext)),
+        None => temp.path.join(stem),
+    };
+    compile_source_to_executable(file, options, target, &asm_path, &obj_path, &bin_path)?;
+    let output = run_executable(&bin_path, runtime_args, target)?;
+    Ok(NativeRunOutput {
+        status: output.status,
+        stdout: output.stdout,
+        stderr: output.stderr,
+        artifact_dir: None,
+    })
+}
+
 #[allow(dead_code)]
 pub fn run_scratch_source(
     source: &str,

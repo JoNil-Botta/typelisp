@@ -177,6 +177,7 @@ fn print_usage() {
     eprintln!(
         "    typelisp build [--manifest-path <typelisp.pkg>] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...]"
     );
+    eprintln!("    typelisp doc <file.tl> [-o <out.md>] [--stdlib-root <dir>...]");
     eprintln!("    typelisp doc --test <file.tl> [--stdlib-root <dir>...]");
     eprintln!();
     eprintln!("Compatibility aliases:");
@@ -211,7 +212,35 @@ fn print_debug_usage() {
 
 fn print_doc_usage() {
     eprintln!("Usage:");
+    eprintln!("    typelisp doc <file.tl> [-o <out.md>] [--stdlib-root <dir>...]");
     eprintln!("    typelisp doc --test <file.tl> [--stdlib-root <dir>...]");
+}
+
+fn find_selfhost_file(relative: &str) -> Option<PathBuf> {
+    // Search upward from the current executable to find the repo root,
+    // which should contain the selfhost/ directory.
+    if let Ok(exe) = env::current_exe() {
+        let mut dir = exe.parent()?;
+        for _ in 0..5 {
+            let candidate = dir.join(relative);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+            dir = dir.parent()?;
+        }
+    }
+    // Fallback: search upward from the current working directory.
+    if let Ok(cwd) = env::current_dir() {
+        let mut dir = cwd.as_path();
+        loop {
+            let candidate = dir.join(relative);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+            dir = dir.parent()?;
+        }
+    }
+    None
 }
 
 fn missing_option_value(option: &str) -> ! {
@@ -305,11 +334,12 @@ fn run_debug_command(args: &[String]) {
 
 fn run_doc_command(args: &[String]) {
     if args.len() < 3 {
-        eprintln!("Error: missing doc subcommand");
+        eprintln!("Error: missing doc subcommand or file argument");
         print_doc_usage();
         std::process::exit(1);
     }
 
+    // --test is a subcommand; everything else is treated as a file path.
     match args[2].as_str() {
         "--test" | "test" => {
             let file = command_file_arg(args, 3, print_doc_usage);
@@ -325,10 +355,57 @@ fn run_doc_command(args: &[String]) {
             }
         }
         "help" | "--help" | "-h" => print_doc_usage(),
-        subcommand => {
-            eprintln!("Unknown doc command: {}", subcommand);
-            print_doc_usage();
-            std::process::exit(1);
+        _ => {
+            let file = PathBuf::from(&args[2]);
+            let mut output = None;
+            let mut stdlib_roots = Vec::new();
+
+            let mut i = 3;
+            while i < args.len() {
+                if args[i] == "-o" && i + 1 < args.len() {
+                    output = Some(PathBuf::from(&args[i + 1]));
+                    i += 2;
+                } else if args[i] == "-o" {
+                    missing_option_value("-o");
+                } else if args[i] == "--stdlib-root" {
+                    if i + 1 >= args.len() {
+                        missing_option_value("--stdlib-root");
+                    }
+                    stdlib_roots.push(PathBuf::from(&args[i + 1]));
+                    i += 2;
+                } else {
+                    eprintln!("Warning: unknown flag: {}", args[i]);
+                    i += 1;
+                }
+            }
+
+            let output_path = output.unwrap_or_else(|| file.with_extension("md"));
+            let driver = find_selfhost_file("selfhost/doc.tl").unwrap_or_else(|| {
+                eprintln!(
+                    "Error: could not find selfhost/doc.tl in the repo or near the executable"
+                );
+                std::process::exit(1);
+            });
+
+            let options = load_options_with_env_stdlib_root(stdlib_roots);
+            let runtime_args = [
+                file.display().to_string(),
+                output_path.display().to_string(),
+            ];
+            let output = native_or_exit(native::run_source_file_in_temp_dir(
+                &driver,
+                &options,
+                &runtime_args,
+                BackendTarget::default(),
+            ));
+            write_stream_or_exit(io::stdout(), &output.stdout, "stdout");
+            write_stream_or_exit(io::stderr(), &output.stderr, "stderr");
+            if let Some(code) = output.status.code()
+                && code != 0
+            {
+                std::process::exit(code);
+            }
+            println!("Generated: {}", output_path.display());
         }
     }
 }

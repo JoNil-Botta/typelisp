@@ -47,6 +47,16 @@
 (define (tc-diag-at-start [message : String]) : CompilerDiagnostic
   (compiler-diagnostic-at-start "" message))
 
+(define (tc-expr-diag [expr : AstExpr] [message : String]) : CompilerDiagnostic
+  (match expr
+    [(AstExprSpanned _ span)
+      (CompilerDiagnostic
+        ""
+        (struct-get span start-line)
+        (struct-get span start-col)
+        message)]
+    [_ (tc-diag-at-start message)]))
+
 ;; Locate an error at the nearest available declaration body span. A top-level
 
 ;; `define` body is wrapped in `AstExprSpanned`, so its span points the
@@ -55,15 +65,8 @@
 
 (define (tc-decl-diag [decl : AstDecl] [message : String]) : CompilerDiagnostic
   (match decl
-    [(AstDeclDefFn _ _ _ body)
-      (match body
-        [(AstExprSpanned _ span)
-          (CompilerDiagnostic
-            ""
-            (struct-get span start-line)
-            (struct-get span start-col)
-            message)]
-        [_ (tc-diag-at-start message)])]
+    [(AstDeclDef _ _ expr) (tc-expr-diag expr message)]
+    [(AstDeclDefFn _ _ _ body) (tc-expr-diag body message)]
     [_ (tc-diag-at-start message)]))
 
 (define (tc-empty-env) : TcTypeEnv
@@ -1619,12 +1622,16 @@
 
 ;; typechecker carries the nearest declaration-body `AstExprSpanned` span (#681).
 
-(define (compiler-typecheck-located-source) : String
+(define (compiler-typecheck-located-fn-source) : String
   "(define (main) : i64
   missing)")
 
-(define (compiler-typecheck-located-ok?) : bool
-  (match (typecheck-compiler-source (compiler-typecheck-located-source))
+(define (compiler-typecheck-located-value-source) : String
+  "(define bad : i64
+  missing)")
+
+(define (compiler-typecheck-located-source-ok? [src : String]) : bool
+  (match (typecheck-compiler-source src)
     [(ErrCompilerTypecheck diag)
       (if (= (compiler-diagnostic-line diag) 2)
         (if (> (compiler-diagnostic-col diag) 0)
@@ -1634,6 +1641,13 @@
           false)
         false)]
     [(OkCompilerTypecheck _) false]))
+
+(define (compiler-typecheck-located-ok?) : bool
+  (and
+    (compiler-typecheck-located-source-ok?
+      (compiler-typecheck-located-fn-source))
+    (compiler-typecheck-located-source-ok?
+      (compiler-typecheck-located-value-source))))
 
 (define (compiler-typecheck-self-test) : i64
   (match (typecheck-compiler-source (compiler-typecheck-smoke-source))

@@ -116,21 +116,20 @@
 (define (code [c : char]) : i64
   (cast c : i64))
 
-;; `c` is a decimal digit char (ASCII '0'..'9' == 48..57).
+;; `c` is a decimal digit char.
 
 (define (is-digit [c : char]) : bool
-  (and (>= (code c) 48) (<= (code c) 57)))
+  (and (>= c #0') (<= c #9')))
 
-;; `c` is ASCII whitespace: space (32), tab (9), or newline (10).
+;; `c` is ASCII whitespace: space, tab, or newline.
 
 (define (is-space [c : char]) : bool
-  (let ([k : i64 (code c)])
-    (or (= k 32) (or (= k 9) (= k 10)))))
+  (or (= c #\space') (or (= c #\tab') (= c #\newline'))))
 
 ;; Decimal value of a digit char, e.g. the digit char `7` -> 7.
 
 (define (digit-value [c : char]) : i64
-  (- (code c) 48))
+  (- (code c) (code #0')))
 
 ;; Return the end index (exclusive) of the digit run that starts at `start`.
 
@@ -160,28 +159,21 @@
 ;; yields unit and never returns.
 
 (define (single-token [c : char]) : Token
-  (let ([k : i64 (code c)])
-    (if (= k 43)
-      ; '+'
-      TPlus
-      (if (= k 45)
-        ; '-'
-        TMinus
-        (if (= k 42)
-          ; '*'
-          TStar
-          (if (= k 47)
-            ; '/'
-            TSlash
-            (if (= k 40)
-              ; '('
-              TLParen
-              (if (= k 41)
-                ; ')'
-                TRParen
-                (begin
-                  (panic "lexer: unexpected character")
-                  TEnd)))))))))
+  (if (= c #+')
+    TPlus
+    (if (= c #-')
+      TMinus
+      (if (= c #*')
+        TStar
+        (if (= c #/')
+          TSlash
+          (if (= c #(')
+            TLParen
+            (if (= c #)')
+              TRParen
+              (begin
+                (panic "lexer: unexpected character")
+                TEnd))))))))
 
 ;; Lex `src`, recording each emitted `Token` value into `toks` (which must be
 

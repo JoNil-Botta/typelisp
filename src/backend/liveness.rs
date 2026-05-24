@@ -160,7 +160,7 @@ pub(crate) fn instruction_uses(instr: &Instruction) -> BTreeSet<VarId> {
         Instruction::AddrOf { src, .. } => {
             uses.insert(*src);
         }
-        Instruction::Call { args, .. } => {
+        Instruction::Call { args, .. } | Instruction::TailCall { args, .. } => {
             collect_value_slice_vars(args, &mut uses);
         }
         Instruction::CallIndirect { func, args, .. } => {
@@ -270,6 +270,7 @@ pub(crate) fn instruction_defs(instr: &Instruction) -> BTreeSet<VarId> {
         | Instruction::VectorStore { .. }
         | Instruction::PredicatedStore { .. }
         | Instruction::Branch { .. }
+        | Instruction::TailCall { .. }
         | Instruction::Jump(_)
         | Instruction::Return(_) => {}
     }

@@ -559,6 +559,8 @@
         "WithRegion { region: \""
         region
         (front-cat3 "\", body: [" (front-expr-list-render body) "] }"))]
+    [(AstExprTypeLiteral ty)
+      (front-cat3 "TypeLiteral { ty: " (front-type-render ty) " }")]
     [(AstExprComptime inner)
       (front-cat3 "Comptime { expr: " (front-expr-render inner) " }")]))
 

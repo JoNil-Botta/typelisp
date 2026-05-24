@@ -54,6 +54,8 @@ const SELFHOST_DOC_DRIVER_DEPS: &[&str] = &[
     "compiler_check_core.tl",
     "compiler_load.tl",
     "compiler_typecheck.tl",
+    "compiler_specialize.tl",
+    "compiler_ctfe.tl",
     "compiler_symbols.tl",
     "compiler_parse_core.tl",
     "compiler_ast_types.tl",
@@ -1233,7 +1235,25 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             stdout: "",
             deps: &[
                 "compiler_typecheck.tl",
+                "compiler_specialize.tl",
+                "compiler_ctfe.tl",
                 "compiler_symbols.tl",
+                "compiler_parse_core.tl",
+                "compiler_diagnostic.tl",
+                "compiler_ast_types.tl",
+                "sym_i64_env.tl",
+                "read.tl",
+                "lex.tl",
+                "token.tl",
+            ],
+        },
+        Case {
+            name: "compiler_specialize_smoke",
+            exit_code: 42,
+            stdout: "",
+            deps: &[
+                "compiler_specialize.tl",
+                "compiler_ctfe.tl",
                 "compiler_parse_core.tl",
                 "compiler_diagnostic.tl",
                 "compiler_ast_types.tl",
@@ -1255,6 +1275,8 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
                 "compiler_check_core.tl",
                 "compiler_load.tl",
                 "compiler_typecheck.tl",
+                "compiler_specialize.tl",
+                "compiler_ctfe.tl",
                 "compiler_symbols.tl",
                 "compiler_parse_core.tl",
                 "compiler_diagnostic.tl",
@@ -1275,6 +1297,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             deps: &[
                 "compiler_lower.tl",
                 "compiler_ctfe.tl",
+                "compiler_specialize.tl",
                 "compiler_ir_types.tl",
                 "compiler_typecheck.tl",
                 "compiler_symbols.tl",
@@ -1349,6 +1372,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
                 "compiler_liveness.tl",
                 "compiler_lower.tl",
                 "compiler_ctfe.tl",
+                "compiler_specialize.tl",
                 "compiler_ir_types.tl",
                 "compiler_typecheck.tl",
                 "compiler_symbols.tl",
@@ -1384,6 +1408,8 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
                 "compiler_check_core.tl",
                 "compiler_load.tl",
                 "compiler_typecheck.tl",
+                "compiler_specialize.tl",
+                "compiler_ctfe.tl",
                 "compiler_symbols.tl",
                 "compiler_parse_core.tl",
                 "compiler_ast_types.tl",
@@ -1459,6 +1485,7 @@ fn selfhost_backend_stack_args_emit_assemble_link_and_run() {
             "compiler_liveness.tl",
             "compiler_lower.tl",
             "compiler_ctfe.tl",
+            "compiler_specialize.tl",
             "compiler_ir_types.tl",
             "compiler_typecheck.tl",
             "compiler_symbols.tl",
@@ -1653,6 +1680,10 @@ fn selfhost_backend_runtime_helpers_emit_assemble_link_and_run() {
 }
 
 #[test]
+#[cfg_attr(
+    debug_assertions,
+    ignore = "debug stage0 bootstrap exceeds the ubuntu cargo-test budget; release fixpoint coverage runs through scripts/check-bootstrap-fixpoint.sh"
+)]
 fn selfhost_compile_tl_emitted_binary_links_and_emits_stage2() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let work_dir = manifest_dir
@@ -1802,6 +1833,7 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
             "compiler_optimize.tl",
             "compiler_lower.tl",
             "compiler_ctfe.tl",
+            "compiler_specialize.tl",
             "compiler_ir_types.tl",
             "compiler_typecheck.tl",
             "compiler_symbols.tl",
@@ -2404,6 +2436,8 @@ fn selfhost_check_driver_reports_success_and_errors() {
             "compiler_check_core.tl",
             "compiler_load.tl",
             "compiler_typecheck.tl",
+            "compiler_specialize.tl",
+            "compiler_ctfe.tl",
             "compiler_symbols.tl",
             "compiler_parse_core.tl",
             "compiler_diagnostic.tl",
@@ -5237,6 +5271,7 @@ fn source_path_for_case(manifest_dir: &PathBuf, name: &str) -> PathBuf {
         "compiler_parse_smoke" => "compiler_parse_smoke.tl",
         "compiler_symbols_smoke" => "compiler_symbols_smoke.tl",
         "compiler_typecheck_smoke" => "compiler_typecheck_smoke.tl",
+        "compiler_specialize_smoke" => "compiler_specialize_smoke.tl",
         "compiler_check_smoke" => "compiler_check_smoke.tl",
         "compiler_lower_smoke" => "compiler_lower_smoke.tl",
         "compiler_liveness_smoke" => "compiler_liveness_smoke.tl",

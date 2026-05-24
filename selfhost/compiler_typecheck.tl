@@ -3,6 +3,10 @@
 
 (import "compiler_diagnostic.tl")
 
+(import "compiler_ctfe.tl")
+
+(import "compiler_specialize.tl")
+
 (defenum TcTypeEnv
   (TcTypeNil)
   (TcTypeBind String AstType TcTypeEnv))
@@ -102,6 +106,57 @@
 
 (define (tc-fn3 [a : AstType] [b : AstType] [c : AstType] [ret : AstType]) : AstType
   (AstTyFunc (tc-type-list3 a b c) ret))
+
+(define (tc-cat3 [a : String] [b : String] [c : String]) : String
+  (string-append a (string-append b c)))
+
+(define (tc-type-list-render [types : AstTypeList]) : String
+  (match types
+    [(AstTypeNil) ""]
+    [(AstTypeCons head rest)
+      (string-append
+        (tc-type-render head)
+        (match rest
+          [(AstTypeNil) ""]
+          [_ (string-append " " (tc-type-list-render rest))]))]))
+
+(define (tc-type-render [ty : AstType]) : String
+  (match ty
+    [(AstTyI64) "i64"]
+    [(AstTyI32) "i32"]
+    [(AstTyI16) "i16"]
+    [(AstTyI8) "i8"]
+    [(AstTyU64) "u64"]
+    [(AstTyU32) "u32"]
+    [(AstTyU16) "u16"]
+    [(AstTyU8) "u8"]
+    [(AstTyF64) "f64"]
+    [(AstTyF32) "f32"]
+    [(AstTyBool) "bool"]
+    [(AstTyChar) "char"]
+    [(AstTyString) "String"]
+    [(AstTyUnit) "unit"]
+    [(AstTyNever) "never"]
+    [(AstTyFunc args ret)
+      (tc-cat3
+        "(-> "
+        (tc-type-list-render args)
+        (string-append " " (string-append (tc-type-render ret) ")")))]
+    [(AstTyTuple elems) (tc-cat3 "(Tuple " (tc-type-list-render elems) ")")]
+    [(AstTyArray elem count)
+      (tc-cat3
+        "(Array "
+        (tc-type-render elem)
+        (tc-cat3 " " (int->string count) ")"))]
+    [(AstTyDynArray elem) (tc-cat3 "(Array " (tc-type-render elem) ")")]
+    [(AstTyRegion region inner)
+      (tc-cat3
+        "(Region "
+        region
+        (string-append " " (string-append (tc-type-render inner) ")")))]
+    [(AstTyEnum name) name]
+    [(AstTyStruct name) name]
+    [(AstTyVar name) name]))
 
 (define (tc-default-env) : TcTypeEnv
   (let ([e0 : TcTypeEnv (tc-empty-env)])
@@ -251,19 +306,19 @@
                                                                       (tc-fn1
                                                                         (AstTyString)
                                                                         (AstTyNever)))
-                                                                    (tc-default-boundary-name)
-                                                                    (AstTyUnit))
-                                                                  "env-var-exists?"
+                                                                    "env-var-exists?"
+                                                                    (tc-fn1
+                                                                      (AstTyString)
+                                                                      (AstTyBool)))
+                                                                  "env-var-value"
                                                                   (tc-fn1
                                                                     (AstTyString)
-                                                                    (AstTyBool)))
-                                                                "env-var-value"
-                                                                (tc-fn1
-                                                                  (AstTyString)
+                                                                    (AstTyString)))
+                                                                "env-path-separator"
+                                                                (tc-fn0
                                                                   (AstTyString)))
-                                                              "env-path-separator"
-                                                              (tc-fn0
-                                                                (AstTyString)))))))))))))))))))))))))))))))))
+                                                              (tc-default-boundary-name)
+                                                              (AstTyUnit))))))))))))))))))))))))))))))))
 
 (define (tc-lookup [env : TcTypeEnv] [name : String]) : ResultTcType
   (match env
@@ -568,7 +623,7 @@
     [(AstParamNil) OkTcUnit]
     [(AstParamCons param rest)
       (match param
-        [(AstParam _ ty)
+        [(AstParam _ ty _)
           (match (tc-source-type-policy-ok ctx ty)
             [(OkTcUnit) (tc-source-param-list-policy-ok ctx rest)]
             [(ErrTcUnit message) (ErrTcUnit message)])])]))
@@ -961,7 +1016,7 @@
     [(AstParamNil) AstTypeNil]
     [(AstParamCons param rest)
       (match param
-        [(AstParam _ ty)
+        [(AstParam _ ty _)
           (AstTypeCons (tc-resolve-type ctx ty) (tc-param-type-list ctx rest))])]))
 
 (define (tc-type-list-ref [types : AstTypeList] [index : i64]) : ResultTcType
@@ -1020,7 +1075,7 @@
     [(AstParamNil) env]
     [(AstParamCons param rest)
       (match param
-        [(AstParam name ty)
+        [(AstParam name ty _)
           (tc-bind-params ctx (tc-bind env name (tc-resolve-type ctx ty)) rest)])]))
 
 (define (tc-top-decl-type [ctx : TcContext] [decl : AstDecl]) : ResultTcType
@@ -1219,7 +1274,11 @@
                                 true
                                 (if (string-eq name "panic")
                                   true
-                                  (string-eq name "error"))))))))))))))))))
+                                  (if (string-eq name "error")
+                                    true
+                                    (if (string-eq name "env-var-exists?")
+                                      true
+                                      (string-eq name "env-var-value"))))))))))))))))))))
 
 (define (tc-default-builtin-unshadowed-scan? [env : TcTypeEnv] [name : String]) : bool
   (match env
@@ -1526,7 +1585,7 @@
     [(AstParamNil) bound]
     [(AstParamCons param rest)
       (match param
-        [(AstParam name _)
+        [(AstParam name _ _)
           (tc-param-list-add-bound-names rest (tc-string-list-add bound name))])]))
 
 (define (tc-param-bound-names [params : AstParamList]) : TcStringList
@@ -1689,6 +1748,7 @@
     [(AstExprStructGet receiver _)
       (tc-expr-uses-free-name? receiver name bound)]
     [(AstExprWithRegion _ body) (tc-expr-list-uses-free-name? body name bound)]
+    [(AstExprTypeLiteral _) false]
     [(AstExprComptime inner) (tc-expr-uses-free-name? inner name bound)]))
 
 (define (tc-check-lambda-region-captures-scan
@@ -2108,6 +2168,13 @@
     [(AstExprSpanned inner _) (tc-expr ctx env inner)]
     [(AstExprLiteral lit) (OkTcType (tc-literal-type lit))]
     [(AstExprVar name) (tc-lookup env name)]
+    [(AstExprTypeLiteral ty)
+      (ErrTcType
+        (string-append
+          "type value "
+          (string-append
+            (tc-type-render (tc-resolve-type ctx ty))
+            " is compile-time only")))]
     [(AstExprAnn inner ty)
       (match (tc-expr ctx env inner)
         [(OkTcType got)
@@ -2400,9 +2467,22 @@
                   (string-append region "'")))
               (OkTcType body-ty))]
           [(ErrTcType message) (ErrTcType message)]))]
-    ;; `(comptime expr)` in expression position yields the inner expression's
-    ;; type (#718); compile-time evaluation is reserved for #719.
-    [(AstExprComptime inner) (tc-expr ctx env inner)]
+    [(AstExprComptime inner)
+      (match (compiler-ctfe-eval inner (ctfe-env-empty) (ctfe-fuel-limit))
+        [(OkCtfe value _)
+          (match value
+            [(CtfeI64 _) (OkTcType (AstTyI64))]
+            [(CtfeBool _) (OkTcType (AstTyBool))]
+            [(CtfeChar _) (OkTcType (AstTyChar))]
+            [(CtfeUnit) (OkTcType (AstTyUnit))]
+            [(CtfeType ty)
+              (ErrTcType
+                (string-append
+                  "type value "
+                  (string-append
+                    (tc-type-render (tc-resolve-type ctx ty))
+                    " is compile-time only")))])]
+        [(ErrCtfe diag) (ErrTcType (compiler-diagnostic-message diag))])]
     [_ (ErrTcType "typecheck: unsupported expression")]))
 
 (define (tc-summary-add-decl
@@ -2500,7 +2580,7 @@
                 (ErrCompilerTypecheck
                   (compiler-diagnostic-with-path diag decl-path))))]))]))
 
-(define (typecheck-compiler-program-with-paths
+(define (typecheck-compiler-specialized-program-with-paths
   [program : AstProgram]
   [paths : AstDeclPathList]) : ResultCompilerTypecheck
   (match (build-compiler-symbols program)
@@ -2528,6 +2608,20 @@
           (ErrCompilerTypecheck (tc-diag-at-start message))])]
     [(ErrCompilerSymbols message)
       (ErrCompilerTypecheck (tc-diag-at-start message))]))
+
+(define (typecheck-compiler-program-with-paths
+  [program : AstProgram]
+  [paths : AstDeclPathList]) : ResultCompilerTypecheck
+  (let ([specialized-paths : AstDeclPathList
+    (if (compiler-specialize-needed? program)
+      AstDeclPathNil
+      paths)])
+    (match (compiler-specialize-program program)
+      [(OkSpecProgram specialized)
+        (typecheck-compiler-specialized-program-with-paths
+          specialized
+          specialized-paths)]
+      [(ErrSpecProgram diag) (ErrCompilerTypecheck diag)])))
 
 (define (typecheck-compiler-program [program : AstProgram]) : ResultCompilerTypecheck
   (typecheck-compiler-program-with-paths program AstDeclPathNil))

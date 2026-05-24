@@ -342,6 +342,34 @@ fn selfhost_compile_driver_runs_as_windows_native_executable() {
         "invalid target should not write assembly"
     );
 
+    let comptime_type_source = work_dir.join("comptime-type.tl");
+    let comptime_type_asm = work_dir.join("comptime-type.s");
+    fs::write(
+        &comptime_type_source,
+        "(define (alloc [comptime T : type] [n : i64]) : (Array i64) (make-array T n))
+(define (main) : (Array i64) (alloc (type i64) 4))
+",
+    )
+    .expect("write comptime type source");
+    let comptime_type = Command::new(&driver_bin)
+        .arg(&comptime_type_source)
+        .arg("-o")
+        .arg(&comptime_type_asm)
+        .output()
+        .expect("run selfhost compile driver on comptime type source");
+    assert!(
+        comptime_type.status.success(),
+        "selfhost compile driver rejected comptime type source\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&comptime_type.stdout),
+        String::from_utf8_lossy(&comptime_type.stderr)
+    );
+    let comptime_type_text =
+        fs::read_to_string(&comptime_type_asm).expect("read comptime type assembly");
+    assert!(
+        comptime_type_text.contains("__tl_specialized_alloc_type_i64_none"),
+        "assembly:\n{comptime_type_text}"
+    );
+
     let bad_source = work_dir.join("bad.tl");
     let bad_asm = work_dir.join("bad.s");
     fs::write(&bad_source, "(define (main) : i64 true)\n").expect("write bad source");
@@ -658,7 +686,25 @@ fn native_cases() -> Vec<Case> {
             "",
             &[
                 "compiler_typecheck.tl",
+                "compiler_specialize.tl",
+                "compiler_ctfe.tl",
                 "compiler_symbols.tl",
+                "compiler_parse_core.tl",
+                "compiler_ast_types.tl",
+                "compiler_diagnostic.tl",
+                "sym_i64_env.tl",
+                "read.tl",
+                "lex.tl",
+                "token.tl",
+            ],
+        ),
+        case_with_deps(
+            "compiler_specialize_smoke",
+            42,
+            "",
+            &[
+                "compiler_specialize.tl",
+                "compiler_ctfe.tl",
                 "compiler_parse_core.tl",
                 "compiler_ast_types.tl",
                 "compiler_diagnostic.tl",
@@ -676,6 +722,8 @@ fn native_cases() -> Vec<Case> {
                 "compiler_check_core.tl",
                 "compiler_load.tl",
                 "compiler_typecheck.tl",
+                "compiler_specialize.tl",
+                "compiler_ctfe.tl",
                 "compiler_symbols.tl",
                 "compiler_parse_core.tl",
                 "compiler_ast_types.tl",
@@ -693,6 +741,7 @@ fn native_cases() -> Vec<Case> {
             &[
                 "compiler_lower.tl",
                 "compiler_ctfe.tl",
+                "compiler_specialize.tl",
                 "compiler_typecheck.tl",
                 "compiler_ir_types.tl",
                 "compiler_symbols.tl",
@@ -725,6 +774,7 @@ fn native_cases() -> Vec<Case> {
                 "compiler_liveness.tl",
                 "compiler_lower.tl",
                 "compiler_ctfe.tl",
+                "compiler_specialize.tl",
                 "compiler_typecheck.tl",
                 "compiler_ir_types.tl",
                 "compiler_symbols.tl",
@@ -753,6 +803,8 @@ fn native_cases() -> Vec<Case> {
                 "compiler_check_core.tl",
                 "compiler_load.tl",
                 "compiler_typecheck.tl",
+                "compiler_specialize.tl",
+                "compiler_ctfe.tl",
                 "compiler_symbols.tl",
                 "compiler_parse_core.tl",
                 "compiler_ast_types.tl",
@@ -920,6 +972,7 @@ fn source_path_for_case(manifest_dir: &Path, name: &str) -> PathBuf {
         "compiler_parse_smoke" => "compiler_parse_smoke.tl",
         "compiler_symbols_smoke" => "compiler_symbols_smoke.tl",
         "compiler_typecheck_smoke" => "compiler_typecheck_smoke.tl",
+        "compiler_specialize_smoke" => "compiler_specialize_smoke.tl",
         "compiler_check_smoke" => "compiler_check_smoke.tl",
         "compiler_lower_smoke" => "compiler_lower_smoke.tl",
         "compiler_liveness_smoke" => "compiler_liveness_smoke.tl",

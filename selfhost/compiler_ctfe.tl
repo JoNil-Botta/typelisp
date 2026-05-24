@@ -2,7 +2,7 @@
 ;; expression-position `(comptime expr)` (#719, scalar subset).
 ;;
 ;; Ports the scalar slice of the Rust reference `src/ctfe.rs`. Supported
-;; compile-time value types are i64, bool, char, and unit. f64 compile-time
+;; compile-time value types are i64, bool, char, unit, and type values. f64 compile-time
 ;; evaluation is intentionally out of scope here (the selfhost compiler stores
 ;; floats as opaque text with no arithmetic primitives) and is rejected with a
 ;; diagnostic citing #735.
@@ -19,7 +19,8 @@
   (CtfeI64 i64)
   (CtfeBool bool)
   (CtfeChar char)
-  (CtfeUnit))
+  (CtfeUnit)
+  (CtfeType AstType))
 
 ;; Immutable name -> value environment. Newest binding sits at the front so
 ;; lookup finds the most recent shadowing binding first.
@@ -96,6 +97,7 @@
     [(AstExprForeach _ _ _ _ _) "foreach"]
     [(AstExprStructGet _ _) "struct-get"]
     [(AstExprWithRegion _ _) "with-region"]
+    [(AstExprTypeLiteral _) "type literal"]
     [(AstExprComptime _) "comptime"]))
 
 (define (ctfe-value-type-name [value : CompilerCtfeValue]) : String
@@ -103,7 +105,8 @@
     [(CtfeI64 _) "i64"]
     [(CtfeBool _) "bool"]
     [(CtfeChar _) "char"]
-    [(CtfeUnit) "unit"]))
+    [(CtfeUnit) "unit"]
+    [(CtfeType _) "type"]))
 
 ;; Promote a char to its i64 code point so the i64 comparison primitives drive
 ;; char ordering/equality, matching Rust's code-point comparison.
@@ -260,6 +263,22 @@
           (ErrCtfe
             (ctfe-diagnostic-at-expr
               expr
+              "binary operation in comptime requires matching operand types"))])]
+    [(CtfeType a)
+      (match rv
+        [(CtfeType b)
+          (match op
+            [(AstBinEq) (OkCtfe (CtfeBool (ctfe-type-eq a b)) fuel)]
+            [(AstBinNe) (OkCtfe (CtfeBool (not (ctfe-type-eq a b))) fuel)]
+            [_
+              (ErrCtfe
+                (ctfe-diagnostic-at-expr
+                  expr
+                  "this operation is not supported on type in compile-time evaluation"))])]
+        [_
+          (ErrCtfe
+            (ctfe-diagnostic-at-expr
+              expr
               "binary operation in comptime requires matching operand types"))])]))
 
 ;; --- unary operators --------------------------------------------------------
@@ -307,6 +326,7 @@
     [(AstExprSpanned inner _) (compiler-ctfe-eval inner env fuel)]
     [(AstExprComptime inner) (compiler-ctfe-eval inner env fuel)]
     [(AstExprAnn inner _) (compiler-ctfe-eval inner env fuel)]
+    [(AstExprTypeLiteral ty) (OkCtfe (CtfeType ty) fuel)]
     [(AstExprLiteral lit) (ctfe-eval-literal lit expr fuel)]
     [(AstExprVar name) (ctfe-eval-var name expr env fuel)]
     [(AstExprBinary op left right)
@@ -428,4 +448,115 @@
     [(CtfeI64 n) (AstLitInt n)]
     [(CtfeBool b) (AstLitBool b)]
     [(CtfeChar c) (AstLitChar c)]
-    [(CtfeUnit) (AstLitUnit)]))
+    [(CtfeUnit) (AstLitUnit)]
+    [(CtfeType _) (AstLitUnit)]))
+
+(define (ctfe-type-list-eq [a : AstTypeList] [b : AstTypeList]) : bool
+  (match a
+    [(AstTypeNil)
+      (match b
+        [(AstTypeNil) true]
+        [_ false])]
+    [(AstTypeCons ah at)
+      (match b
+        [(AstTypeCons bh bt)
+          (and (ctfe-type-eq ah bh) (ctfe-type-list-eq at bt))]
+        [_ false])]))
+
+(define (ctfe-type-eq [a : AstType] [b : AstType]) : bool
+  (match a
+    [(AstTyI64)
+      (match b
+        [(AstTyI64) true]
+        [_ false])]
+    [(AstTyI32)
+      (match b
+        [(AstTyI32) true]
+        [_ false])]
+    [(AstTyI16)
+      (match b
+        [(AstTyI16) true]
+        [_ false])]
+    [(AstTyI8)
+      (match b
+        [(AstTyI8) true]
+        [_ false])]
+    [(AstTyU64)
+      (match b
+        [(AstTyU64) true]
+        [_ false])]
+    [(AstTyU32)
+      (match b
+        [(AstTyU32) true]
+        [_ false])]
+    [(AstTyU16)
+      (match b
+        [(AstTyU16) true]
+        [_ false])]
+    [(AstTyU8)
+      (match b
+        [(AstTyU8) true]
+        [_ false])]
+    [(AstTyF64)
+      (match b
+        [(AstTyF64) true]
+        [_ false])]
+    [(AstTyF32)
+      (match b
+        [(AstTyF32) true]
+        [_ false])]
+    [(AstTyBool)
+      (match b
+        [(AstTyBool) true]
+        [_ false])]
+    [(AstTyChar)
+      (match b
+        [(AstTyChar) true]
+        [_ false])]
+    [(AstTyString)
+      (match b
+        [(AstTyString) true]
+        [_ false])]
+    [(AstTyUnit)
+      (match b
+        [(AstTyUnit) true]
+        [_ false])]
+    [(AstTyNever)
+      (match b
+        [(AstTyNever) true]
+        [_ false])]
+    [(AstTyFunc a-args a-ret)
+      (match b
+        [(AstTyFunc b-args b-ret)
+          (and (ctfe-type-list-eq a-args b-args) (ctfe-type-eq a-ret b-ret))]
+        [_ false])]
+    [(AstTyTuple a-elems)
+      (match b
+        [(AstTyTuple b-elems) (ctfe-type-list-eq a-elems b-elems)]
+        [_ false])]
+    [(AstTyArray a-elem a-count)
+      (match b
+        [(AstTyArray b-elem b-count)
+          (and (= a-count b-count) (ctfe-type-eq a-elem b-elem))]
+        [_ false])]
+    [(AstTyDynArray a-elem)
+      (match b
+        [(AstTyDynArray b-elem) (ctfe-type-eq a-elem b-elem)]
+        [_ false])]
+    [(AstTyRegion a-region a-inner)
+      (match b
+        [(AstTyRegion b-region b-inner)
+          (and (string-eq a-region b-region) (ctfe-type-eq a-inner b-inner))]
+        [_ false])]
+    [(AstTyEnum a-name)
+      (match b
+        [(AstTyEnum b-name) (string-eq a-name b-name)]
+        [_ false])]
+    [(AstTyStruct a-name)
+      (match b
+        [(AstTyStruct b-name) (string-eq a-name b-name)]
+        [_ false])]
+    [(AstTyVar a-name)
+      (match b
+        [(AstTyVar b-name) (string-eq a-name b-name)]
+        [_ false])]))

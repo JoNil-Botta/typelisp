@@ -266,6 +266,18 @@ contains|_tl_compiler_regalloc_self_test:
 contains|_tl_compiler_reg_plan_function:
 end
 
+case|selfhost_compiler_specialize|selfhost/compiler_specialize.tl|assembly|skip|direct
+contains|_tl_compiler_specialize_program:
+contains|_tl_compiler_specialize_self_test:
+contains|__tl_specialized_alloc_type_i64_none
+contains|specialize: expected type value
+end
+
+case|selfhost_compiler_specialize_smoke|selfhost/compiler_specialize_smoke.tl|assembly|exactly-one|direct
+contains|_tl_compiler_specialize_self_test:
+contains|_tl_compiler_specialize_program:
+end
+
 case|selfhost_compiler_symbols|selfhost/compiler_symbols.tl|assembly|skip|direct
 contains|_tl_compiler_symbols_add_decl:
 contains|_tl_compiler_symbols_self_test:

@@ -989,12 +989,70 @@ impl FnLowerer {
         }
     }
 
+    fn expr_is_float_literal(expr: &ast::Expr) -> bool {
+        match expr.unspan() {
+            ast::Expr::Literal(ast::Literal::Float(_)) => true,
+            ast::Expr::Spanned { expr, .. } => Self::expr_is_float_literal(expr),
+            _ => false,
+        }
+    }
+
     fn lower_expr_as(&mut self, expr: &ast::Expr, expected: &Type) -> Value {
+        let expected = self.resolve_type(expected);
+        match expr.unspan() {
+            ast::Expr::Spanned { expr, .. } => return self.lower_expr_as(expr, &expected),
+            ast::Expr::Array(elems) => {
+                if let Type::Array(elem_ty, len) = &expected
+                    && *len == elems.len()
+                {
+                    return self.lower_array_literal_as(elems, elem_ty);
+                }
+            }
+            ast::Expr::Tuple(elems) => {
+                if let Type::Tuple(elem_tys) = &expected
+                    && elem_tys.len() == elems.len()
+                {
+                    return self.lower_tuple_as(elems, elem_tys);
+                }
+            }
+            ast::Expr::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => return self.lower_if_as(cond, then_branch, else_branch, &expected),
+            ast::Expr::Begin(exprs) => {
+                if let Some((last, prefix)) = exprs.split_last() {
+                    for expr in prefix {
+                        self.lower_expr(expr);
+                    }
+                    return self.lower_expr_as(last, &expected);
+                }
+                return Value::ConstUnit;
+            }
+            ast::Expr::Let { bindings, body } => {
+                self.lower_let_bindings(bindings);
+                return self.lower_expr_as(body, &expected);
+            }
+            _ => {}
+        }
+
         let value = self.lower_expr(expr);
         if self.expr_diverges(expr) {
-            self.dummy_value_for_type(expected)
+            self.dummy_value_for_type(&expected)
         } else {
-            value
+            let actual = self.value_type(&value);
+            if matches!(
+                (expected.strip_regions(), actual.strip_regions()),
+                (Type::F64, Type::F32)
+            ) || (matches!(
+                (expected.strip_regions(), actual.strip_regions()),
+                (Type::F32, Type::F64)
+            ) && Self::expr_is_float_literal(expr))
+            {
+                self.cast_value(value, expected)
+            } else {
+                value
+            }
         }
     }
 
@@ -1982,7 +2040,8 @@ impl FnLowerer {
 
     fn lower_binary(&mut self, op: ast::BinOp, lhs: &ast::Expr, rhs: &ast::Expr) -> Value {
         let lhs_val = self.lower_expr(lhs);
-        let rhs_val = self.lower_expr(rhs);
+        let lhs_expected = self.value_type(&lhs_val);
+        let rhs_val = self.lower_expr_as(rhs, &lhs_expected);
 
         // The IR op decides what the `ty` field means:
         //   - comparisons (eq/ne/lt/..) produce a `bool`, but the *operand*
@@ -2410,15 +2469,86 @@ impl FnLowerer {
         // Assume branches match (type-checked); prefer a concrete type from
         // either arm so the phi's width is right.
         let then_ty = self.value_type(&then_val);
-        let result_ty = if then_diverges && !else_diverges {
-            self.value_type(&else_val)
-        } else if else_diverges && !then_diverges {
-            then_ty.clone()
-        } else if then_ty == Type::Unit {
-            self.value_type(&else_val)
+        let else_ty = self.value_type(&else_val);
+        let prefer_else_ty = if then_diverges != else_diverges {
+            then_diverges
+        } else {
+            then_ty == Type::Unit
+                || matches!(
+                    (then_ty.strip_regions(), else_ty.strip_regions()),
+                    (Type::F32, Type::F64)
+                )
+        };
+        let result_ty = if prefer_else_ty {
+            else_ty.clone()
         } else {
             then_ty.clone()
         };
+        let then_val = if then_diverges {
+            self.dummy_value_for_type(&result_ty)
+        } else if matches!(
+            (result_ty.strip_regions(), then_ty.strip_regions()),
+            (Type::F64, Type::F32)
+        ) {
+            self.cast_value(then_val, result_ty.clone())
+        } else {
+            then_val
+        };
+        let else_val = if else_diverges {
+            self.dummy_value_for_type(&result_ty)
+        } else if matches!(
+            (result_ty.strip_regions(), else_ty.strip_regions()),
+            (Type::F64, Type::F32)
+        ) {
+            self.cast_value(else_val, result_ty.clone())
+        } else {
+            else_val
+        };
+        let phi_dst = self.builder.fresh_var();
+        let phi_ty = Self::backend_value_type(&result_ty);
+        self.builder.emit(Instruction::Phi {
+            dst: phi_dst,
+            incoming: vec![
+                (then_val, then_label.clone()),
+                (else_val, else_label.clone()),
+            ],
+            ty: phi_ty,
+        });
+        self.record_value_local(phi_dst, result_ty);
+        Value::Var(phi_dst)
+    }
+
+    fn lower_if_as(
+        &mut self,
+        cond: &ast::Expr,
+        then_branch: &ast::Expr,
+        else_branch: &ast::Expr,
+        expected: &Type,
+    ) -> Value {
+        let cond_val = self.lower_expr_as(cond, &Type::Bool);
+        let then_diverges = self.expr_diverges(then_branch);
+        let else_diverges = self.expr_diverges(else_branch);
+
+        let then_label = self.builder.fresh_label("then");
+        let else_label = self.builder.fresh_label("else");
+        let merge_label = self.builder.fresh_label("merge");
+
+        self.builder.emit(Instruction::Branch {
+            cond: cond_val,
+            true_label: then_label.clone(),
+            false_label: else_label.clone(),
+        });
+
+        self.builder.finish_block(&then_label);
+        let then_val = self.lower_expr_as(then_branch, expected);
+        self.builder.emit(Instruction::Jump(merge_label.clone()));
+
+        self.builder.finish_block(&else_label);
+        let else_val = self.lower_expr_as(else_branch, expected);
+        self.builder.emit(Instruction::Jump(merge_label.clone()));
+
+        self.builder.finish_block(&merge_label);
+        let result_ty = self.resolve_type(expected);
         let then_val = if then_diverges {
             self.dummy_value_for_type(&result_ty)
         } else {
@@ -2441,6 +2571,19 @@ impl FnLowerer {
         });
         self.record_value_local(phi_dst, result_ty);
         Value::Var(phi_dst)
+    }
+
+    fn merge_lowered_result_type(&self, current: &Type, candidate: &Type) -> Type {
+        let prefer_candidate = *current == Type::Unit
+            || matches!(
+                (current.strip_regions(), candidate.strip_regions()),
+                (Type::F32, Type::F64)
+            );
+        if prefer_candidate {
+            candidate.clone()
+        } else {
+            current.clone()
+        }
     }
 
     fn lower_let(
@@ -3999,8 +4142,16 @@ impl FnLowerer {
             return Value::Var(dst);
         }
 
-        // Evaluate arguments left-to-right
-        let arg_vals: Vec<Value> = args.iter().map(|a| self.lower_expr(a)).collect();
+        // Evaluate arguments left-to-right, using the callee value's parameter
+        // types when this is an indirect/closure call.
+        let arg_vals: Vec<Value> = match self.infer_expr_type(func) {
+            Type::Func(param_tys, _) if param_tys.len() == args.len() => args
+                .iter()
+                .zip(param_tys.iter())
+                .map(|(arg, ty)| self.lower_expr_as(arg, ty))
+                .collect(),
+            _ => args.iter().map(|a| self.lower_expr(a)).collect(),
+        };
 
         let (func_name, ret_ty) = match func.unspan() {
             // A local binding shadows any top-level function of the same name.
@@ -4231,6 +4382,31 @@ impl FnLowerer {
         base_val
     }
 
+    fn lower_tuple_as(&mut self, elems: &[ast::Expr], elem_tys: &[Type]) -> Value {
+        let elem_tys: Vec<Type> = elem_tys.iter().map(|ty| self.resolve_type(ty)).collect();
+        let elem_vals: Vec<Value> = elems
+            .iter()
+            .zip(elem_tys.iter())
+            .map(|(elem, ty)| self.lower_expr_as(elem, ty))
+            .collect();
+        let tuple_ty = Type::Tuple(elem_tys.clone());
+        let size = Self::tuple_storage_size(&elem_tys);
+
+        let promote = self.should_heap_promote_aggregate(AggKind::Tuple);
+        let base_val = self.reserve_aggregate_storage(size.max(1), tuple_ty, promote);
+
+        let offsets = Self::tuple_field_offsets(&elem_tys);
+        for ((elem, off), ty) in elem_vals.iter().zip(offsets.iter()).zip(elem_tys.iter()) {
+            if ty.size() == 0 {
+                continue;
+            }
+            let field_ptr = self.gep_byte(&base_val, *off);
+            self.store_inline_value(field_ptr, elem.clone(), ty);
+        }
+
+        base_val
+    }
+
     /// Lower `(tuple-ref t i)`: compute the indexed field offset and load it.
     fn lower_tuple_ref(&mut self, tuple: &ast::Expr, index: usize) -> Value {
         let tuple_val = self.lower_expr(tuple);
@@ -4346,6 +4522,39 @@ impl FnLowerer {
             } else {
                 self.lower_expr_as(elem, &elem_ty)
             };
+            if elem_size != 0 {
+                let elem_ptr = self.builder.fresh_var();
+                self.builder.emit(Instruction::Gep {
+                    dst: elem_ptr,
+                    base: base_val.clone(),
+                    offset: Value::ConstI64(idx as i64),
+                    elem_ty: elem_ty.clone(),
+                });
+                self.record_local(elem_ptr, Type::U64);
+                self.store_inline_value(elem_ptr, elem_val, &elem_ty);
+            }
+        }
+
+        base_val
+    }
+
+    fn lower_array_literal_as(&mut self, elems: &[ast::Expr], elem_ty: &Type) -> Value {
+        if elems.is_empty() {
+            return Value::ConstUnit;
+        }
+
+        let elem_ty = self.resolve_type(elem_ty);
+        let len = elems.len();
+        let elem_size = elem_ty.size();
+        let storage_size = elem_size * len;
+
+        let base_val = self.reserve_aggregate_storage(storage_size.max(1), Type::U64, false);
+        if let Value::Var(base) = &base_val {
+            self.fixed_array_types.insert(*base, (elem_ty.clone(), len));
+        }
+
+        for (idx, elem) in elems.iter().enumerate() {
+            let elem_val = self.lower_expr_as(elem, &elem_ty);
             if elem_size != 0 {
                 let elem_ptr = self.builder.fresh_var();
                 self.builder.emit(Instruction::Gep {
@@ -5372,7 +5581,8 @@ impl FnLowerer {
                     let val = self.lower_expr(body);
                     let arm_block = self.current_block_label();
                     if !body_diverges && self.value_type(&val) != Type::Unit {
-                        result_ty = self.value_type(&val);
+                        result_ty =
+                            self.merge_lowered_result_type(&result_ty, &self.value_type(&val));
                     }
                     incoming.push((val, arm_block, body_diverges));
                     self.builder.emit(Instruction::Jump(merge_label.clone()));
@@ -5416,7 +5626,8 @@ impl FnLowerer {
                     let val = self.lower_expr(body);
                     let arm_end = self.current_block_label();
                     if !body_diverges && self.value_type(&val) != Type::Unit {
-                        result_ty = self.value_type(&val);
+                        result_ty =
+                            self.merge_lowered_result_type(&result_ty, &self.value_type(&val));
                     }
                     incoming.push((val, arm_end, body_diverges));
                     self.builder.emit(Instruction::Jump(merge_label.clone()));
@@ -5453,7 +5664,8 @@ impl FnLowerer {
                     let val = self.lower_expr(body);
                     let arm_end = self.current_block_label();
                     if !body_diverges && self.value_type(&val) != Type::Unit {
-                        result_ty = self.value_type(&val);
+                        result_ty =
+                            self.merge_lowered_result_type(&result_ty, &self.value_type(&val));
                     }
                     incoming.push((val, arm_end, body_diverges));
                     self.builder.emit(Instruction::Jump(merge_label.clone()));
@@ -5477,6 +5689,14 @@ impl FnLowerer {
             .map(|(value, label, diverges)| {
                 if diverges {
                     (self.dummy_value_for_type(&result_ty), label)
+                } else if matches!(
+                    (
+                        result_ty.strip_regions(),
+                        self.value_type(&value).strip_regions()
+                    ),
+                    (Type::F64, Type::F32)
+                ) {
+                    (self.cast_value(value, result_ty.clone()), label)
                 } else {
                     (value, label)
                 }
@@ -9610,6 +9830,69 @@ mod tests {
             })
         });
         assert_eq!(cast, Some((Type::F32, Type::F64)));
+    }
+
+    #[test]
+    fn test_lower_contextual_f32_literal_emits_precision_cast() {
+        let prog = parse("(define (f) : f32 1.0)").unwrap();
+        let ir = lower_program(&prog);
+        let cast = ir.functions[0].blocks.iter().find_map(|b| {
+            b.instructions.iter().find_map(|i| match i {
+                Instruction::Cast { from_ty, to_ty, .. } => Some((from_ty.clone(), to_ty.clone())),
+                _ => None,
+            })
+        });
+        assert_eq!(cast, Some((Type::F64, Type::F32)));
+    }
+
+    #[test]
+    fn test_lower_implicit_f32_to_f64_widening_emits_precision_cast() {
+        let prog = parse("(define (f [x : f32]) : f64 x)").unwrap();
+        let ir = lower_program(&prog);
+        let cast = ir.functions[0].blocks.iter().find_map(|b| {
+            b.instructions.iter().find_map(|i| match i {
+                Instruction::Cast { from_ty, to_ty, .. } => Some((from_ty.clone(), to_ty.clone())),
+                _ => None,
+            })
+        });
+        assert_eq!(cast, Some((Type::F32, Type::F64)));
+    }
+
+    #[test]
+    fn test_lower_contextual_f32_call_literal_arg_emits_precision_cast() {
+        let prog = parse(
+            "(define (id [x : f32]) : f32 x)
+             (define (main) : f32 (id 1.0))",
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let main = ir.functions.iter().position(|f| f.name == "main").unwrap();
+        let cast = ir.functions[main].blocks.iter().find_map(|b| {
+            b.instructions.iter().find_map(|i| match i {
+                Instruction::Cast { from_ty, to_ty, .. } => Some((from_ty.clone(), to_ty.clone())),
+                _ => None,
+            })
+        });
+        assert_eq!(cast, Some((Type::F64, Type::F32)));
+    }
+
+    #[test]
+    fn test_lower_contextual_f32_array_literal_stores_f32_elements() {
+        let prog = parse(
+            "(define (main) : f32
+               (let ([a : (Array f32 2) (array 1.0 2.0)])
+                 (array-ref a 0)))",
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let main = ir.functions.iter().position(|f| f.name == "main").unwrap();
+        let f32_stores = ir.functions[main]
+            .blocks
+            .iter()
+            .flat_map(|b| &b.instructions)
+            .filter(|i| matches!(i, Instruction::Store { ty: Type::F32, .. }))
+            .count();
+        assert!(f32_stores >= 2, "expected f32 stores in {:#?}", ir);
     }
 
     // ------------------------------------------------------------------

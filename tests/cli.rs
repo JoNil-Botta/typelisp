@@ -1454,6 +1454,26 @@ fn check_reports_explicit_unsupported_float_cast_diagnostic() {
     assert!(stderr.contains("error[E0200]"), "stderr:\n{}", stderr);
 }
 
+#[test]
+fn check_warns_for_inexact_contextual_f32_literal() {
+    let dir = fixture_dir("inexact-f32-literal-warning");
+    let source = dir.join("main.tl");
+    fs::write(&source, "(define (main) : f32 0.1)\n").expect("write source");
+    let source_arg = source.to_str().expect("source path is utf-8");
+
+    let output = typelisp(&["check", source_arg]);
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stdout(&output), "Type checking passed!\n");
+    let stderr = stderr(&output);
+    assert!(stderr.contains("warning[W0200]"), "stderr:\n{}", stderr);
+    assert!(
+        stderr.contains("not exactly representable as f32"),
+        "stderr:\n{}",
+        stderr
+    );
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn build_source_accepts_avx512_backend_mode() {

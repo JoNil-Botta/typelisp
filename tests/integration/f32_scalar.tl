@@ -2,9 +2,9 @@
 
 ;; f32 locals, the f32 `+ - * /` arithmetic operators, an f32 comparison, an
 
-;; f32 return value, and an `f64 -> f32 -> f64` precision round-trip. Float
+;; f32 return value, contextual f32 float literals, and an `f64 -> f32 -> f64`
 
-;; literals stay f64, so f32 values are produced with explicit `(cast x : f32)`.
+;; precision round-trip. Non-literal f64 -> f32 still uses an explicit cast.
 
 ;; `main` returns 42 only when every f32 result lands where IEEE-754 binary32
 
@@ -34,12 +34,10 @@
 ;; back to f64 is exact for values that fit in binary32 (like 2.5).
 
 (define (roundtrip [x : f64]) : f64
-  (cast (cast x : f32) : f64))
+  (cast x : f32))
 
 (define (main) : i64
-  (let ([two : f32 (cast 2.0 : f32)]
-    [three : f32 (cast 3.0 : f32)]
-    [half : f32 (cast 0.5 : f32)])
+  (let ([two : f32 2.0] [three : f32 3.0] [half : f32 0.5])
     ;; f32 locals and arithmetic: (2 + 3) = 5, (3 - 2) = 1, (2 * 3) = 6,
     ;; (3 / 2) = 1.5.
     (let ([sum : f32 (addf two three)]

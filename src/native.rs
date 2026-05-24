@@ -152,6 +152,12 @@ fn optimized_ir(loaded: &LoadedProgram, mode: BackendMode) -> Result<LoweredProg
             &loaded.sources,
         )));
     }
+    for warning in tc.warnings() {
+        eprint!(
+            "{}",
+            format_diagnostic_from_sources(&warning.to_diagnostic(), &loaded.sources)
+        );
+    }
 
     let mut lowered =
         lower_program_with_spans_for_mode(&loaded.program, lower_mode_for_backend(mode));

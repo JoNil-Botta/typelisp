@@ -1,6 +1,6 @@
 use crate::ast::*;
 use crate::ctfe::{CtfeError, CtfeEvaluator, CtfeValue};
-use crate::diagnostic::Diagnostic;
+use crate::diagnostic::{Diagnostic, Level};
 use crate::span::Span;
 use crate::types::Type;
 use std::collections::{HashMap, HashSet};
@@ -28,6 +28,25 @@ impl TypeError {
 impl fmt::Display for TypeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "type error: {}", self.msg)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TypeWarning {
+    pub msg: String,
+    pub span: Span,
+}
+
+impl TypeWarning {
+    fn at(msg: impl Into<String>, span: Span) -> Self {
+        TypeWarning {
+            msg: msg.into(),
+            span,
+        }
+    }
+
+    pub fn to_diagnostic(&self) -> Diagnostic {
+        Diagnostic::new(Level::Warning, self.msg.clone(), self.span).with_code("W0200")
     }
 }
 
@@ -59,6 +78,7 @@ pub struct TypeChecker {
     builtin_names: HashSet<String>,
     shadowed_builtins: HashSet<String>,
     active_regions: Vec<String>,
+    warnings: Vec<TypeWarning>,
 }
 
 impl TypeChecker {
@@ -253,6 +273,7 @@ impl TypeChecker {
             builtin_names,
             shadowed_builtins: HashSet::new(),
             active_regions: Vec::new(),
+            warnings: Vec::new(),
         }
     }
 
@@ -903,12 +924,17 @@ impl TypeChecker {
         self.check_expanded_program(&expanded)
     }
 
+    pub fn warnings(&self) -> &[TypeWarning] {
+        &self.warnings
+    }
+
     pub fn check_expanded_program(&mut self, prog: &ExpandedProgram) -> Result<(), TypeError> {
         // Build the enum and struct registries up front so declared types and
         // constructors can be resolved/registered in the first pass.
         self.enums = EnumRegistry::from_expanded_program(prog);
         self.structs = StructRegistry::from_expanded_program(prog);
         self.active_regions.clear();
+        self.warnings.clear();
 
         // Check for duplicate top-level names across the whole program.
         // Value-level names share the backend symbol namespace; nominal types
@@ -1090,7 +1116,7 @@ impl TypeChecker {
                 Decl::Def { name, ty, value } => {
                     let inferred = if let Some(ty) = ty {
                         let ty = self.resolve_type_checked(ty, value.span())?;
-                        let val_ty = self.check_expr(value)?;
+                        let val_ty = self.check_expr_with_expected_or_actual(value, &ty)?;
                         if !self.type_compatible(&ty, &val_ty) {
                             return Err(TypeError::at(
                                 format!(
@@ -1190,7 +1216,7 @@ impl TypeChecker {
                 let ret = self.resolve_type_checked(ret, body.span())?;
                 let old_ret = self.func_ret.clone();
                 self.func_ret = Some(ret.clone());
-                let body_ty = self.check_expr(body)?;
+                let body_ty = self.check_expr_with_expected_or_actual(body, &ret)?;
                 self.func_ret = old_ret;
                 self.pop_scope();
 
@@ -1228,6 +1254,154 @@ impl TypeChecker {
         checker.check_expr(expr)
     }
 
+    fn float_literal_value(expr: &Expr) -> Option<f64> {
+        match expr.unspan() {
+            Expr::Literal(Literal::Float(value)) => Some(*value),
+            Expr::Spanned { expr, .. } => Self::float_literal_value(expr),
+            _ => None,
+        }
+    }
+
+    fn warn_if_inexact_f32_literal(&mut self, value: f64, span: Span) {
+        let rounded = value as f32 as f64;
+        if rounded.to_bits() != value.to_bits() {
+            self.warnings.push(TypeWarning::at(
+                format!(
+                    "float literal {} is not exactly representable as f32; it will be rounded to {}",
+                    value, rounded
+                ),
+                span,
+            ));
+        }
+    }
+
+    fn contextual_result_type(&self, expected: &Type, actual: &Type) -> Type {
+        if actual.contains_any_region() {
+            actual.clone()
+        } else {
+            expected.clone()
+        }
+    }
+
+    fn check_expr_with_expected_or_actual(
+        &mut self,
+        expr: &Expr,
+        expected: &Type,
+    ) -> Result<Type, TypeError> {
+        if let Some(ty) = self.try_check_expr_with_expected(expr, expected)? {
+            return Ok(ty);
+        }
+
+        let actual = self.check_expr(expr)?;
+        if self.type_compatible(expected, &actual) {
+            return Ok(self.contextual_result_type(expected, &actual));
+        }
+        if matches!(
+            (expected.strip_regions(), actual.strip_regions()),
+            (Type::F32, Type::F64)
+        ) && let Some(value) = Self::float_literal_value(expr)
+        {
+            self.warn_if_inexact_f32_literal(value, expr.span());
+            return Ok(expected.clone());
+        }
+        Ok(actual)
+    }
+
+    fn try_check_expr_with_expected(
+        &mut self,
+        expr: &Expr,
+        expected: &Type,
+    ) -> Result<Option<Type>, TypeError> {
+        match (expected.strip_regions(), expr.unspan()) {
+            (_, Expr::Spanned { expr, .. }) => self.try_check_expr_with_expected(expr, expected),
+            (Type::F32, Expr::Literal(Literal::Float(value))) => {
+                self.warn_if_inexact_f32_literal(*value, expr.span());
+                Ok(Some(expected.clone()))
+            }
+            (Type::Array(elem_ty, expected_len), Expr::Array(elems))
+                if *expected_len == elems.len() =>
+            {
+                let elem_ty = self.resolve_type(elem_ty);
+                for elem in elems {
+                    let elem_actual = self.check_expr_with_expected_or_actual(elem, &elem_ty)?;
+                    if !self.type_compatible(&elem_ty, &elem_actual) {
+                        return Err(TypeError::at(
+                            format!(
+                                "array element type mismatch: expected {}, got {}",
+                                elem_ty, elem_actual
+                            ),
+                            elem.span(),
+                        ));
+                    }
+                }
+                Ok(Some(Type::Array(Box::new(elem_ty), elems.len())))
+            }
+            (Type::Tuple(expected_elems), Expr::Tuple(elems))
+                if expected_elems.len() == elems.len() =>
+            {
+                let mut result_elems = Vec::new();
+                for (elem, expected_elem) in elems.iter().zip(expected_elems.iter()) {
+                    let expected_elem = self.resolve_type(expected_elem);
+                    let elem_actual =
+                        self.check_expr_with_expected_or_actual(elem, &expected_elem)?;
+                    if !self.type_compatible(&expected_elem, &elem_actual) {
+                        return Err(TypeError::at(
+                            format!(
+                                "tuple element type mismatch: expected {}, got {}",
+                                expected_elem, elem_actual
+                            ),
+                            elem.span(),
+                        ));
+                    }
+                    result_elems.push(self.contextual_result_type(&expected_elem, &elem_actual));
+                }
+                Ok(Some(Type::Tuple(result_elems)))
+            }
+            (
+                _,
+                Expr::If {
+                    cond,
+                    then_branch,
+                    else_branch,
+                },
+            ) => {
+                let cond_ty = self.check_expr(cond)?;
+                if cond_ty == Type::Never {
+                    self.check_expr_with_expected_or_actual(then_branch, expected)?;
+                    self.check_expr_with_expected_or_actual(else_branch, expected)?;
+                    return Ok(Some(Type::Never));
+                }
+                if !self.type_compatible(&Type::Bool, &cond_ty) {
+                    return Err(TypeError::at(
+                        format!("if condition must be bool, got {}", cond_ty),
+                        cond.span(),
+                    ));
+                }
+                let then_ty = self.check_expr_with_expected_or_actual(then_branch, expected)?;
+                let else_ty = self.check_expr_with_expected_or_actual(else_branch, expected)?;
+                if self.type_compatible(expected, &then_ty)
+                    && self.type_compatible(expected, &else_ty)
+                {
+                    Ok(Some(expected.clone()))
+                } else {
+                    Ok(None)
+                }
+            }
+            (_, Expr::Begin(exprs)) => {
+                let Some((last, prefix)) = exprs.split_last() else {
+                    return Ok(Some(Type::Unit));
+                };
+                for expr in prefix {
+                    self.check_expr(expr)?;
+                }
+                Ok(Some(
+                    self.check_expr_with_expected_or_actual(last, expected)?,
+                ))
+            }
+            _ => Ok(None),
+        }
+    }
+
     fn check_expr(&mut self, expr: &Expr) -> Result<Type, TypeError> {
         let span = expr.span();
         match expr.unspan() {
@@ -1255,7 +1429,7 @@ impl TypeChecker {
             },
             Expr::Binary { op, lhs, rhs } => {
                 let lhs_ty = self.check_expr(lhs)?;
-                let rhs_ty = self.check_expr(rhs)?;
+                let rhs_ty = self.check_expr_with_expected_or_actual(rhs, &lhs_ty)?;
 
                 match op {
                     BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
@@ -1418,7 +1592,7 @@ impl TypeChecker {
                             .filter(|name| self.is_constructor_name(name))
                             .map(|_| self.tag_active_region((*ret_ty).clone()));
                         for (expected, arg) in param_tys.iter().zip(args.iter()) {
-                            let arg_ty = self.check_expr(arg)?;
+                            let arg_ty = self.check_expr_with_expected_or_actual(arg, expected)?;
                             if !self.type_compatible(expected, &arg_ty) {
                                 return Err(TypeError::at(
                                     format!(
@@ -1519,11 +1693,15 @@ impl TypeChecker {
             Expr::Let { bindings, body } => {
                 self.push_scope();
                 for (name, ty, value) in bindings {
-                    let val_ty = self.check_expr(value)?;
                     let ty = ty
                         .as_ref()
                         .map(|t| self.resolve_type_checked(t, value.span()))
                         .transpose()?;
+                    let val_ty = if let Some(expected) = &ty {
+                        self.check_expr_with_expected_or_actual(value, expected)?
+                    } else {
+                        self.check_expr(value)?
+                    };
                     let binding_ty = if let Some(expected) = &ty {
                         if !self.type_compatible(expected, &val_ty) {
                             return Err(TypeError::at(
@@ -1606,7 +1784,11 @@ impl TypeChecker {
                     .map(|ty| self.resolve_type_checked(ty, body.span()))
                     .transpose()?;
                 self.func_ret = ret.clone();
-                let body_ty = self.check_expr(body)?;
+                let body_ty = if let Some(expected) = &ret {
+                    self.check_expr_with_expected_or_actual(body, expected)?
+                } else {
+                    self.check_expr(body)?
+                };
                 self.func_ret = old_ret;
                 self.pop_scope();
 
@@ -1684,7 +1866,7 @@ impl TypeChecker {
                 }
                 let mut elem_ty = self.check_expr(&elems[0])?;
                 for e in &elems[1..] {
-                    let ty = self.check_expr(e)?;
+                    let ty = self.check_expr_with_expected_or_actual(e, &elem_ty)?;
                     let Some(merged) = self.merge_branch_types(&elem_ty, &ty) else {
                         return Err(TypeError::at(
                             "array elements must have same type",
@@ -1756,7 +1938,7 @@ impl TypeChecker {
                         ));
                     }
                 };
-                let val_ty = self.check_expr(value)?;
+                let val_ty = self.check_expr_with_expected_or_actual(value, &elem_ty)?;
                 if !self.type_compatible(&elem_ty, &val_ty) {
                     return Err(TypeError::at(
                         format!(
@@ -1819,10 +2001,10 @@ impl TypeChecker {
                 Ok(last_ty)
             }
             Expr::Set(name, expr) => {
-                let val_ty = self.check_expr(expr)?;
                 let var_ty = self.lookup(name).ok_or_else(|| {
                     TypeError::at(format!("unbound variable in set!: {}", name), span)
                 })?;
+                let val_ty = self.check_expr_with_expected_or_actual(expr, &var_ty)?;
                 if !self.type_compatible(&var_ty, &val_ty) {
                     return Err(TypeError::at(
                         format!(
@@ -1842,7 +2024,7 @@ impl TypeChecker {
             }
             Expr::Ann { expr, ty } => {
                 let ty = self.resolve_type_checked(ty, span)?;
-                let expr_ty = self.check_expr(expr)?;
+                let expr_ty = self.check_expr_with_expected_or_actual(expr, &ty)?;
                 if !self.type_compatible(&ty, &expr_ty) {
                     return Err(TypeError::at(
                         format!("type annotation mismatch: expected {}, got {}", ty, expr_ty),
@@ -2036,7 +2218,7 @@ impl TypeChecker {
                 Self::check_spmd_reduce_value(value)?;
                 self.push_scope();
                 self.bind(index.clone(), index_ty);
-                let value_ty = self.check_expr(value);
+                let value_ty = self.check_expr_with_expected_or_actual(value, &init_ty);
                 self.pop_scope();
                 let value_ty = value_ty?;
                 if !self.type_compatible(&init_ty, &value_ty) {
@@ -2579,7 +2761,12 @@ impl TypeChecker {
     }
 
     fn type_compatible(&self, expected: &Type, actual: &Type) -> bool {
-        matches!(actual, Type::Never) || self.types_equal(expected, actual)
+        matches!(actual, Type::Never)
+            || self.types_equal(expected, actual)
+            || matches!(
+                (expected.strip_regions(), actual.strip_regions()),
+                (Type::F64, Type::F32)
+            )
     }
 
     fn merge_branch_types(&self, a: &Type, b: &Type) -> Option<Type> {
@@ -2599,6 +2786,10 @@ impl TypeChecker {
             } else {
                 None
             }
+        } else if self.type_compatible(a, b) {
+            Some(a.clone())
+        } else if self.type_compatible(b, a) {
+            Some(b.clone())
         } else {
             None
         }
@@ -4001,6 +4192,13 @@ mod tests {
         tc.check_program(&prog)
     }
 
+    fn check_with_warnings(src: &str) -> Result<Vec<TypeWarning>, TypeError> {
+        let prog = parse(src).unwrap();
+        let mut tc = TypeChecker::new();
+        tc.check_program(&prog)?;
+        Ok(tc.warnings().to_vec())
+    }
+
     #[test]
     fn test_region_type_display() {
         assert_eq!(
@@ -4196,6 +4394,58 @@ mod tests {
     fn test_typecheck_f32_to_f64_cast_is_allowed() {
         let src = "(define (round-trip [x : f32]) : f64 (cast x : f64))";
         assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_contextual_f32_float_literals() {
+        let src = r#"
+            (define gx : f32 1.0)
+            (define (id [x : f32]) : f32 x)
+            (define (ret) : f32 1.0)
+            (define (annotated) : f32 (ann 1.0 : f32))
+            (define (call) : f32 (id 2.0))
+            (define (array-first) : f32
+              (let ([a : (Array f32 2) (array 1.0 2.0)])
+                (array-ref a 0)))
+        "#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_implicit_f32_to_f64_widening() {
+        let src = r#"
+            (define (ret [x : f32]) : f64 x)
+            (define (arg [x : f64]) : f64 x)
+            (define (call [x : f32]) : f64 (arg x))
+            (define (branch [x : f32] [flag : bool]) : f64
+              (if flag x 2.0))
+        "#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_nonliteral_f64_to_f32_still_requires_cast() {
+        let err = check("(define (main [x : f64]) : f32 x)").unwrap_err();
+        assert!(err.msg.contains("return type mismatch"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_inexact_f32_literal_warns() {
+        let warnings =
+            check_with_warnings("(define (main) : f32 0.1)").expect("program typechecks");
+        assert_eq!(warnings.len(), 1, "warnings: {:?}", warnings);
+        assert!(
+            warnings[0].msg.contains("not exactly representable as f32"),
+            "warning: {}",
+            warnings[0].msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_exact_f32_literal_does_not_warn() {
+        let warnings =
+            check_with_warnings("(define (main) : f32 0.5)").expect("program typechecks");
+        assert!(warnings.is_empty(), "warnings: {:?}", warnings);
     }
 
     #[test]

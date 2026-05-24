@@ -1713,6 +1713,7 @@ fn global_initializer_matches_type(value: &Value, ty: &Type) -> bool {
         (value, ty),
         (Value::ConstBool(_), Type::Bool)
             | (Value::ConstF64(_), Type::F64)
+            | (Value::ConstF64(_), Type::F32)
             | (Value::ConstUnit, Type::Unit)
     ) || (integer_initializer && (ty.is_integer() || matches!(ty, Type::Char)))
 }
@@ -5390,6 +5391,9 @@ impl X86_64Backend {
             Some(Value::ConstI32(n)) => self.emit_integer_global(ty, *n as i128),
             Some(Value::ConstI8(n)) => self.emit_integer_global(ty, *n as i128),
             Some(Value::ConstBool(b)) => self.emit_integer_global(ty, if *b { 1 } else { 0 }),
+            Some(Value::ConstF64(n)) if *ty == Type::F32 => {
+                self.emit(&format!("    .long {:#x}", (*n as f32).to_bits()))
+            }
             Some(Value::ConstF64(n)) => self.emit(&format!("    .quad {:#x}", n.to_bits())),
             Some(Value::ConstUnit) => {}
             // Validation rejects non-literal global initializers.
@@ -9009,6 +9013,7 @@ mod tests {
             (define small : i32 (cast 7 : i32))
             (define mid : u16 (cast 513 : u16))
             (define byte : u8 (cast 255 : u8))
+            (define smallf : f32 1.5)
             (define (main) : i32 small)
             "#,
         );
@@ -9018,6 +9023,8 @@ mod tests {
         assert!(asm.contains("    .word 513"), "asm:\n{}", asm);
         assert!(asm.contains("_tl_byte:"), "asm:\n{}", asm);
         assert!(asm.contains("    .byte -1"), "asm:\n{}", asm);
+        assert!(asm.contains("_tl_smallf:"), "asm:\n{}", asm);
+        assert!(asm.contains("    .long 0x3fc00000"), "asm:\n{}", asm);
         assert!(
             asm.contains("    movslq _tl_small(%rip), %rax"),
             "asm:\n{}",

@@ -1,17 +1,10 @@
 ;; refs #670: first executable scalar f32 slice. Exercises f32 parameters,
-
 ;; f32 locals, the f32 `+ - * /` arithmetic operators, an f32 comparison, an
-
 ;; f32 return value, contextual f32 float literals, and an `f64 -> f32 -> f64`
-
 ;; precision round-trip. Non-literal f64 -> f32 still uses an explicit cast.
-
 ;; `main` returns 42 only when every f32 result lands where IEEE-754 binary32
-
 ;; arithmetic says it should.
-
 ;; f32 parameters + arithmetic + an f32 return.
-
 (define (addf [a : f32] [b : f32]) : f32
   (+ a b))
 
@@ -25,14 +18,11 @@
   (/ a b))
 
 ;; f32 comparison through a function boundary.
-
 (define (ltf [a : f32] [b : f32]) : bool
   (< a b))
 
 ;; Round-trip an f64 through f32 and back. Narrowing to binary32 then widening
-
 ;; back to f64 is exact for values that fit in binary32 (like 2.5).
-
 (define (roundtrip [x : f64]) : f64
   (cast x : f32))
 

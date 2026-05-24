@@ -214,7 +214,7 @@ fn tl_format_core_tl_compiles_to_assembly() {
     }
 
     for literal in [
-        ".string \"(foo [bar 1] baz)\\n\\n; leading\\n\\n(qux)\"",
+        ".string \"(foo [bar 1] baz)\\n\\n; leading\\n(qux)\"",
         ".string \"(alpha\\n  beta\\n  gamma)\"",
         ".string \"(a\\n  ; note\\n  b)\"",
         ".string \"name\"",
@@ -291,7 +291,7 @@ fn tl_format_rules_tl_compiles_to_assembly() {
         ".string \"while\"",
         ".string \"match\"",
         "(import \\\"std.tl\\\")\\n\\n(extern print-string : (-> String unit))\\n\\n(defenum Maybe",
-        ".string \"(begin\\n  ; keep\\n  (print-string \\\"x\\\"))\"",
+        ".string \";; module header\\n;; keeps adjacent lines\\n(import \\\"std.tl\\\")",
     ] {
         assert!(
             asm.contains(literal),

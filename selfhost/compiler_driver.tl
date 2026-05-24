@@ -1,5 +1,4 @@
 ;; compiler_driver.tl - File-to-file selfhost compiler driver (#448).
-
 (import "compiler_driver_core.tl")
 
 (define (main) : i64

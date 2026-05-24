@@ -1,5 +1,4 @@
 ;; frontend_tools.tl - Selfhost tokenize/parse CLI driver (#796).
-
 (import "lex.tl")
 
 (import "compiler_parse_core.tl")

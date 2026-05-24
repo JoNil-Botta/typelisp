@@ -1,31 +1,17 @@
 ;; doc_extract.tl - Self-hosted TypeLisp doc comment extractor (#387).
-
 ;;
-
 ;; Public docs use Rust-style semicolon levels:
-
 ;;   ;;;; module/file doc line, collected separately
-
 ;;   ;;;  outer item doc line, attached to the next supported top-level item
-
 ;;   ;;   ordinary comment, ignored
-
 ;;   ;    ordinary comment, ignored
-
 ;;
-
 ;; Item doc lines stay pending across blank physical lines because the
-
 ;; self-hosted formatter may separate doc comment lines. Ordinary comments,
-
 ;; module docs, unsupported top-level forms, or other source text clear pending
-
 ;; item docs. Pending item docs at EOF are ignored. Declaration identities are read
-
 ;; from the captured top-level form with the formatter token lexer so original
-
 ;; source text remains available as the item signature.
-
 (import "format_tokens.tl")
 
 (defenum DocItemKind

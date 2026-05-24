@@ -1,5 +1,4 @@
 ;; stdlib_json.tl - Integration witness for canonical stdlib JSON support.
-
 (import "stdlib/json.tl")
 
 (define (json-test-name [doc : Json]) : bool

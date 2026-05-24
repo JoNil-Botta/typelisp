@@ -1,13 +1,8 @@
 ;; tests/integration/stdlib_test.tl - Integration test for stdlib/test.tl
-
 ;; Test harnesses stage stdlib/test.tl under this import name.
-
 ;;
-
 ;; Expected stdout: empty
-
 ;; Exit code: 42
-
 (import "stdlib/test.tl")
 
 (define (main) : i64

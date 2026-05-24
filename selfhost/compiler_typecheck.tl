@@ -1,5 +1,4 @@
 ;; compiler_typecheck.tl - First scalar typechecker pass over compiler AstProgram (#426).
-
 (import "compiler_symbols.tl")
 
 (import "compiler_diagnostic.tl")
@@ -47,11 +46,8 @@
   (ErrCompilerTypecheck CompilerDiagnostic))
 
 ;; The typechecker receives an already-loaded program and so does not know the
-
 ;; source path; it builds diagnostics with an empty path (the CLI driver stamps
-
 ;; the real path before rendering). Synthetic/internal errors fall back to 1:1.
-
 (define (tc-diag-at-start [message : String]) : CompilerDiagnostic
   (compiler-diagnostic-at-start "" message))
 
@@ -66,11 +62,8 @@
     [_ (tc-diag-at-start message)]))
 
 ;; Locate an error at the nearest available declaration body span. A top-level
-
 ;; `define` body is wrapped in `AstExprSpanned`, so its span points the
-
 ;; diagnostic at the offending declaration's expression; otherwise fall back 1:1.
-
 (define (tc-decl-diag [decl : AstDecl] [message : String]) : CompilerDiagnostic
   (match decl
     [(AstDeclDef _ _ expr) (tc-expr-diag expr message)]
@@ -1399,30 +1392,20 @@
     [(ErrTcType message) (ErrTcType message)]))
 
 ;; Whether `name` resolves to any binding in `env` (a builtin, a top-level
-
 ;; user definition, or a local). Used to decide whether an unbound builtin
-
 ;; name like `string-ref`/`char-at` should be treated as the String-index
-
 ;; builtin (unbound) or as an ordinary direct call to a shadowing user
-
 ;; definition (bound). Mirrors the host compiler's shadowing check (#677).
-
 (define (tc-name-bound? [env : TcTypeEnv] [name : String]) : bool
   (match (tc-lookup env name)
     [(OkTcType _) true]
     [(ErrTcType _) false]))
 
 ;; Typecheck the *unshadowed* `(string-ref s i)` / `(char-at s i)` builtin: a
-
 ;; String plus any integer index, yielding `char`. The parser emits this as an
-
 ;; ordinary `Call`; when `string-ref`/`char-at` is not bound to a user function
-
 ;; or local, recover the builtin String-index behavior (and its exact
-
 ;; diagnostics) here rather than via the generic call path (#677).
-
 (define (tc-string-ref-call
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -2884,11 +2867,8 @@
                   (compiler-typecheck-region-match-source))))))))))
 
 ;; A type error whose offending expression (`missing`) is on source line 2, so
-
 ;; the diagnostic must locate it there (not at the 1:1 fallback) — proving the
-
 ;; typechecker carries the nearest declaration-body `AstExprSpanned` span (#681).
-
 (define (compiler-typecheck-located-fn-source) : String
   "(define (main) : i64
   missing)")

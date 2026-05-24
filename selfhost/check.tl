@@ -1,5 +1,4 @@
 ;; check.tl - Short-lived selfhost typecheck CLI driver.
-
 (import "compiler_check_core.tl")
 
 (define (selfhost-check-extra-args-status [i : i64]) : i64

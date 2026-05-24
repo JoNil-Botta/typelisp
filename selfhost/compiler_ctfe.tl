@@ -1,33 +1,20 @@
 ;; compiler_ctfe.tl - Selfhost compile-time function evaluation (CTFE) for
-
 ;; expression-position `(comptime expr)` (#719, scalar subset).
-
 ;;
-
 ;; Ports the scalar slice of the Rust reference `src/ctfe.rs`. Supported
-
 ;; compile-time value types are i64, bool, char, and unit. f64 compile-time
-
 ;; evaluation is intentionally out of scope here (the selfhost compiler stores
-
 ;; floats as opaque text with no arithmetic primitives) and is rejected with a
-
 ;; diagnostic citing #735.
-
 ;;
-
 ;; Evaluation is purely functional: the environment is an immutable cons list
-
 ;; threaded through recursion, and the step budget ("fuel") is threaded through
-
 ;; results so the evaluator stays deterministic without a mutable counter.
-
 (import "compiler_ast_types.tl")
 
 (import "compiler_diagnostic.tl")
 
 ;; A compile-time scalar value.
-
 (defenum CompilerCtfeValue
   (CtfeI64 i64)
   (CtfeBool bool)
@@ -35,9 +22,7 @@
   (CtfeUnit))
 
 ;; Immutable name -> value environment. Newest binding sits at the front so
-
 ;; lookup finds the most recent shadowing binding first.
-
 (defenum CtfeEnv
   (CtfeEnvNil)
   (CtfeEnvCons String CompilerCtfeValue CtfeEnv))
@@ -52,7 +37,6 @@
   (CtfeEnvCons name value env))
 
 ;; Lookup result for an environment probe.
-
 (defenum CtfeMaybeValue
   (CtfeNoValue)
   (CtfeSomeValue CompilerCtfeValue))
@@ -66,13 +50,9 @@
         (ctfe-env-lookup rest name))]))
 
 ;; Result of evaluating a sub-expression: either a value (carrying the remaining
-
 ;; fuel) or a diagnostic. Fuel is threaded so each evaluation step decrements a
-
 ;; shared budget across all sub-evaluations, matching the spirit of the Rust
-
 ;; evaluator's per-step 10_000 fuel cap.
-
 (defenum ResultCtfe
   (OkCtfe CompilerCtfeValue i64)
   (ErrCtfe CompilerDiagnostic))
@@ -81,7 +61,6 @@
   10000)
 
 ;; Build a diagnostic anchored at the (possibly spanned) expression.
-
 (define (ctfe-diagnostic-at-expr [expr : AstExpr] [message : String]) : CompilerDiagnostic
   (match expr
     [(AstExprSpanned _ span)
@@ -89,9 +68,7 @@
     [_ (compiler-diagnostic-at-start "" message)]))
 
 ;; Human-readable tag for the unsupported-form diagnostic, mirroring
-
 ;; `describe_expr` in src/ctfe.rs.
-
 (define (ctfe-describe-expr [expr : AstExpr]) : String
   (match expr
     [(AstExprSpanned _ _) "expression"]
@@ -129,14 +106,11 @@
     [(CtfeUnit) "unit"]))
 
 ;; Promote a char to its i64 code point so the i64 comparison primitives drive
-
 ;; char ordering/equality, matching Rust's code-point comparison.
-
 (define (ctfe-char-code [c : char]) : i64
   (cast c : i64))
 
 ;; --- literals ---------------------------------------------------------------
-
 (define (ctfe-eval-literal [lit : AstLiteral] [expr : AstExpr] [fuel : i64]) : ResultCtfe
   (match lit
     [(AstLitInt n) (OkCtfe (CtfeI64 n) fuel)]
@@ -155,9 +129,7 @@
           "strings are not supported in compile-time evaluation"))]))
 
 ;; --- binary operators -------------------------------------------------------
-
 ;; i64 arithmetic/bitwise/shift and i64 comparisons.
-
 (define (ctfe-eval-bin-i64
   [op : AstBinOp]
   [a : i64]
@@ -197,7 +169,6 @@
         (ctfe-diagnostic-at-expr expr "'or' in comptime requires bool operands"))]))
 
 ;; bool comparisons and boolean connectives.
-
 (define (ctfe-eval-bin-bool
   [op : AstBinOp]
   [a : bool]
@@ -217,7 +188,6 @@
           "this operation is not supported on bool in compile-time evaluation"))]))
 
 ;; char comparisons via code-point ordering.
-
 (define (ctfe-eval-bin-char
   [op : AstBinOp]
   [a : char]
@@ -241,7 +211,6 @@
             "this operation is not supported on char in compile-time evaluation"))])))
 
 ;; unit comparisons (only `==`/`!=`).
-
 (define (ctfe-eval-bin-unit [op : AstBinOp] [expr : AstExpr] [fuel : i64]) : ResultCtfe
   (match op
     [(AstBinEq) (OkCtfe (CtfeBool true) fuel)]
@@ -253,7 +222,6 @@
           "this operation is not supported on unit in compile-time evaluation"))]))
 
 ;; Dispatch a binary op over two already-evaluated operands.
-
 (define (ctfe-apply-binop
   [op : AstBinOp]
   [lv : CompilerCtfeValue]
@@ -295,7 +263,6 @@
               "binary operation in comptime requires matching operand types"))])]))
 
 ;; --- unary operators --------------------------------------------------------
-
 (define (ctfe-apply-unop
   [op : AstUnOp]
   [v : CompilerCtfeValue]
@@ -326,13 +293,9 @@
               "bitwise not in comptime requires i64"))])]))
 
 ;; --- core evaluator ---------------------------------------------------------
-
 ;; Evaluate `expr` under `env` with the given remaining `fuel`. Each call
-
 ;; charges one unit of fuel up front (mirroring `use_fuel`); when fuel is
-
 ;; exhausted the evaluation fails deterministically.
-
 (define (compiler-ctfe-eval [expr : AstExpr] [env : CtfeEnv] [fuel : i64]) : ResultCtfe
   (if (<= fuel 0)
     (ErrCtfe
@@ -423,11 +386,8 @@
     [(ErrCtfe diag) (ErrCtfe diag)]))
 
 ;; Evaluate `let` bindings sequentially, threading both fuel and the extended
-
 ;; environment. The original `env` is preserved for siblings because each
-
 ;; binding extends a fresh copy threaded forward.
-
 (define (ctfe-eval-let
   [bindings : AstLetBindingList]
   [body : AstExpr]
@@ -448,9 +408,7 @@
             [(ErrCtfe diag) (ErrCtfe diag)])])]))
 
 ;; Evaluate a `begin` to the value of its last expression; an empty body is
-
 ;; unit.
-
 (define (ctfe-eval-begin [exprs : AstExprList] [env : CtfeEnv] [fuel : i64]) : ResultCtfe
   (match exprs
     [(AstExprNil) (OkCtfe (CtfeUnit) fuel)]
@@ -463,11 +421,8 @@
         [(ErrCtfe diag) (ErrCtfe diag)])]))
 
 ;; --- folding ----------------------------------------------------------------
-
 ;; Convert a folded compile-time value into the AST literal that lowering then
-
 ;; materializes through the ordinary literal path.
-
 (define (ctfe-value-to-literal [value : CompilerCtfeValue]) : AstLiteral
   (match value
     [(CtfeI64 n) (AstLitInt n)]

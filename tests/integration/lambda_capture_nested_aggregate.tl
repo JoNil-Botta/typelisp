@@ -1,9 +1,6 @@
 ; Capturing nested aggregate fields in closure environments (#584).
-
 ; Returned closures read through copied nested handles after the creator frame
-
 ; has returned. `main` yields 42 only if every case holds.
-
 (defstruct Label
   (id i64)
   (name String))

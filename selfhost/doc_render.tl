@@ -1,13 +1,8 @@
 ;; doc_render.tl - Deterministic Markdown renderer for extracted docs (#388).
-
 ;;
-
 ;; The #387 extractor exposes module docs and documented top-level items. It
-
 ;; does not expose undocumented declarations as separate records yet, so this
-
 ;; renderer emits exactly the declarations present in the extracted model.
-
 (import "doc_extract.tl")
 
 (defenum DocModule

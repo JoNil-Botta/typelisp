@@ -1,41 +1,22 @@
 ;; repl.tl - Selfhost REPL session driver (#591/#798).
-
 ;;
-
 ;; A `main`-bearing TypeLisp program that owns the REPL line loop and the
-
 ;; dot-command behavior of the Rust REPL skeleton's in-process slices. It reads
-
 ;; lines with `read-stdin-line` until `.exit` or end of input, printing a flushed
-
 ;; `tl> ` prompt before each read so the prompt is visible in an interactive
-
 ;; session, and dispatches the dot commands:
-
 ;;
-
 ;;   - `.exit`            ends the session.
-
 ;;   - `.help`            prints the command help to stdout.
-
 ;;   - `.type <expr>`     prints the inferred type without running code.
-
 ;;   - blank line         is skipped.
-
 ;;   - any other `.cmd`   reports an unknown command (to stderr).
-
 ;;   - declarations       are checked and persisted for later inputs.
-
 ;;   - any other input    reports that evaluation is not implemented (to stderr).
-
 ;;
-
 ;; Multiline input is accumulated until its delimiters are complete. Parse and
-
 ;; type errors report diagnostics, discard only the failing input, and return to
-
 ;; the prompt with previously accepted declarations intact.
-
 (import "compiler_typecheck.tl")
 
 (defenum ReplTypeCommand
@@ -52,14 +33,12 @@
   "TypeLisp REPL commands:\n  .help         Show this help\n  .type <expr>  Print the inferred type without running code\n  .exit         Exit the REPL\n")
 
 ;; Print the prompt and flush stdout so it is visible before the blocking read.
-
 (define (repl-prompt) : unit
   (begin
     (print-string "tl> ")
     (flush-stdout)))
 
 ;; `line` begins with `.` (a dot command). Empty lines are handled safely.
-
 (define (repl-dot-command? [line : String]) : bool
   (if (> (string-length line) 0)
     (= (string-ref line 0) #.')
@@ -210,13 +189,9 @@
         session-source)]))
 
 ;; Completeness tracking mirrors the Rust REPL's delimiter check closely enough
-
 ;; for the selfhost slice: strings, comments, and char literals do not count
-
 ;; delimiters; unmatched closing delimiters are considered complete so parsing can
-
 ;; report the real error and the session can recover.
-
 (define (repl-skip-comment [text : String] [idx : i64] [len : i64]) : i64
   (if (>= idx len)
     idx
@@ -372,9 +347,7 @@
       (ReplLineResult session-source next-pending))))
 
 ;; Handle one non-`.exit` command line. When a multiline input is pending, all
-
 ;; following lines are treated as source until the form is complete.
-
 (define (repl-handle-line
   [session-source : String]
   [pending : String]
@@ -401,7 +374,6 @@
     (repl-handle-source-line session-source pending line)))
 
 ;; The REPL loop: prompt, then read and dispatch until `.exit` or end of input.
-
 (define (repl-loop [session-source : String] [pending : String]) : unit
   (begin
     (repl-prompt)

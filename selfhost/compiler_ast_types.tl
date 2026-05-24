@@ -1,23 +1,13 @@
 ;; compiler_ast_types.tl - Self-hosted model of the real TypeLisp AST (#334).
-
 ;;
-
 ;; This module is intentionally separate from ast_types.tl, which remains the
-
 ;; smaller compile_smoke AST. The types below mirror Rust's src/ast.rs and
-
 ;; src/types.rs closely enough for the future Sexpr -> real-AST parser to target
-
 ;; them without committing to typechecking, lowering, or code generation yet.
-
 ;;
-
 ;; Deferred on purpose: parser result/error wrappers, typechecker registries,
-
 ;; inferred types, and lowered IR metadata. Source spans are represented as data
-
 ;; but later parser work decides when they are populated.
-
 (defstruct AstSourceSpan
   (start-line i64)
   (start-col i64)

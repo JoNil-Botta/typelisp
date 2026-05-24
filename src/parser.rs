@@ -1073,6 +1073,7 @@ impl<'a> Parser<'a> {
     }
 }
 
+#[allow(dead_code)]
 pub fn parse(input: &str) -> Result<Program, ParseError> {
     let mut parser = Parser::new(input)?;
     parser.parse()

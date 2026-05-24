@@ -1187,14 +1187,26 @@ for builtin `panic`/`error`:
       0)))
 ```
 
-Recoverable failures are represented with ordinary monomorphic enums. There
-are no built-in generic `Option<T>` / `Result<T,E>` types, no `?` operator,
-and no early-return sugar yet. Code that can recover should define an explicit
-domain enum and handle every variant with `match`.
+Recoverable failures are represented with ordinary concrete enums. There are
+no built-in generic `Option<T>` / `Result<T,E>` types, no traits, no vtables,
+and no runtime type-erased generic dispatch. The current implementation still
+uses hand-written monomorphic enums, but the language direction is to generate
+the same kind of concrete declarations at comptime.
 
-- Use `Maybe*` names for absence-only APIs, such as lookup hit/miss.
-- Use `Result*` names for APIs that distinguish success from an error value.
+- Use `Maybe*` / `Option*`-style concrete enum families for absence-only APIs,
+  such as lookup hit/miss.
+- Use `Result*` concrete enum families for APIs that distinguish success from
+  an error value.
 - Matches must be exhaustive; omitted variants are rejected by the type checker.
+- Generated families are nominal declarations, not parameterized runtime types.
+
+The generated family key must be deterministic. It is composed from the module
+identity, generator identity, family kind (`option` or `result`), generated item
+name, and the concrete payload/error type identities. Repeating the same request
+must either reuse the same declarations or report a precise duplicate-generation
+diagnostic. Human-readable declaration names may include the payload/error type
+names, but compiler identity is based on the stable key rather than on ad hoc
+string concatenation alone.
 
 ```lisp test=compile name=monomorphic-maybe-result
 (defenum MaybeI64
@@ -1230,8 +1242,60 @@ domain enum and handle every variant with `match`.
      (result-score (read-small "no"))))
 ```
 
-Issue #45 tracks the remaining design work around generics, `?`-style
-propagation, and richer diagnostic payloads.
+Once the generated-family support exists, the example above should be written
+as generated concrete declarations with the same effective shape as the
+hand-written enums. A generated `Option` family has exactly one empty absence
+variant and one success variant carrying the payload. A generated `Result`
+family has exactly one success variant carrying the success payload and one
+error variant carrying the error payload.
+
+The planned propagation form is a Lisp-shaped expression:
+
+```lisp test=ignore name=result-propagation-future reason="propagation form tracked by #903"
+(defenum ResultI64String
+  (OkI64String i64)
+  (ErrI64String String))
+
+(define (read-small [text : String]) : ResultI64String
+  (if (string-eq text "7")
+    (OkI64String 7)
+    (ErrI64String (string-append "bad: " text))))
+
+(define (read-two [left : String] [right : String]) : ResultI64String
+  (let ([a : i64 (try (read-small left))])
+    (let ([b : i64 (try (read-small right))])
+      (OkI64String (+ a b)))))
+```
+
+In a compatible result-returning function, `(try expr)` evaluates `expr`. If it
+is the success variant, the expression yields the success payload. If it is the
+error variant, the enclosing function returns its own error variant with that
+payload. In the first implementation, the operand error payload type must match
+the enclosing result error payload type exactly; implicit conversions are not
+performed.
+
+Propagation is rejected in these cases:
+
+- The enclosing function does not return a concrete generated Result family.
+- The operand expression is not a concrete generated Result family.
+- The operand and enclosing Result families have incompatible error payloads.
+- The success payload is used where it does not type-check.
+
+```lisp test=ignore name=result-propagation-rejections-future reason="propagation form tracked by #903"
+(define (bad-non-result [text : String]) : i64
+  (try (read-small text)))
+
+(defenum ResultI64Code
+  (OkI64Code i64)
+  (ErrI64Code i64))
+
+(define (bad-incompatible-error [text : String]) : ResultI64Code
+  (let ([value : i64 (try (read-small text))])
+    (OkI64Code value)))
+```
+
+`panic` and `error` remain terminal operations for unrecoverable failures. They
+do not construct a `Result`, and `(try ...)` does not catch them.
 
 ---
 

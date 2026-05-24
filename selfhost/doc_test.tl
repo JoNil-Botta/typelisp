@@ -8,9 +8,11 @@
 
 ;; scanned as standalone doc blocks, item docs (`;;;`) attach only to the next
 
-;; supported top-level declaration, ordinary comments are ignored, and unattached
+;; supported top-level declaration, blank physical lines are tolerated between
 
-;; item docs are dropped.
+;; doc comment lines, ordinary comments are ignored, and unattached item docs are
+
+;; dropped.
 
 ;;
 
@@ -440,7 +442,7 @@
                 (match state
                   [(DocTestScanState examples errors next-index)
                     (doc-test-scan-doc-block
-                      rest
+                      (doc-test-skip-ignored-fence rest)
                       (DocTestScanState
                         examples
                         (doc-test-error-list-append errors err)
@@ -482,26 +484,30 @@
                         (DocTestLine line-number body)
                         module-lines)))]
                 [(DocTestNoString)
-                  (begin
-                    (set!
-                      state
-                      (doc-test-scan-reversed-block module-lines state))
-                    (set! module-lines DocTestLineNil)
-                    (match (doc-test-doc-comment-body line ";;;")
-                      [(DocTestSomeString body)
-                        (set!
-                          pending-lines
-                          (DocTestLineCons
-                            (DocTestLine line-number body)
-                            pending-lines))]
-                      [(DocTestNoString)
-                        (if (doc-test-supported-item-declaration? line)
-                          (begin
-                            (set!
-                              state
-                              (doc-test-scan-reversed-block pending-lines state))
-                            (set! pending-lines DocTestLineNil))
-                          (set! pending-lines DocTestLineNil))]))])
+                  (if (doc-test-string-blank? line)
+                    (set! pending-lines pending-lines)
+                    (begin
+                      (set!
+                        state
+                        (doc-test-scan-reversed-block module-lines state))
+                      (set! module-lines DocTestLineNil)
+                      (match (doc-test-doc-comment-body line ";;;")
+                        [(DocTestSomeString body)
+                          (set!
+                            pending-lines
+                            (DocTestLineCons
+                              (DocTestLine line-number body)
+                              pending-lines))]
+                        [(DocTestNoString)
+                          (if (doc-test-supported-item-declaration? line)
+                            (begin
+                              (set!
+                                state
+                                (doc-test-scan-reversed-block
+                                  pending-lines
+                                  state))
+                              (set! pending-lines DocTestLineNil))
+                            (set! pending-lines DocTestLineNil))])))])
               (set! pos (doc-test-next-line-start src line-end n))
               (set! line-number (+ line-number 1))))))
       (set! state (doc-test-scan-reversed-block module-lines state))
@@ -634,7 +640,12 @@
 
 ;; the outcome against its expectation. Imports inside the example resolve
 
-;; relative to `path` (the doc'd source file).
+;; relative to a sibling of `path` (the doc'd source file), so examples may
+
+;; import the doc'd file without colliding with the virtual source root.
+
+(define (doc-test-example-virtual-path [path : String] [index : i64]) : String
+  (string-append path (string-append ".doctest." (int->string index))))
 
 (define (doc-test-check-example [path : String] [example : DocTestExample]) : DocTestMaybeFailure
   (doc-test-check-example-with-roots path example CompilerLoadRootNil))
@@ -649,7 +660,10 @@
     [expect-error : bool
       (doc-test-expectation-error? (doc-test-example-expectation example))]
     [code : String (doc-test-example-code example)])
-    (match (compiler-check-source-with-roots path code stdlib-roots)
+    (match (compiler-check-source-with-roots
+      (doc-test-example-virtual-path path index)
+      code
+      stdlib-roots)
       [(OkCompilerCheck _)
         (if expect-error
           (DocTestSomeFailure
@@ -795,12 +809,16 @@
 (define (doc-test-smoke-source) : String
   ";;;; Module docs
 ;;;; ```typelisp
+
 ;;;; (define (main) : i64 0)
+
 ;;;; ```
 
 ;;; Item docs
 ;;; ```tl expect-error
+
 ;;; (define (bad) : i64 true)
+
 ;;; ```
 (define good : i64 1)
 
@@ -850,7 +868,7 @@
   (match examples
     [(DocTestExampleCons first (DocTestExampleCons second DocTestExampleNil))
       (if (doc-test-example-ok? first 1 2 false "(define (main)")
-        (doc-test-example-ok? second 2 7 true "(define (bad)")
+        (doc-test-example-ok? second 2 9 true "(define (bad)")
         false)]
     [_ false]))
 

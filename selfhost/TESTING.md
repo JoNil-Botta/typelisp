@@ -126,6 +126,14 @@ Each new corpus file must be listed in the script manifest. See
 [`selfhost/tests/README.md`](tests/README.md) for the corpus layout and local
 runner commands.
 
+### Stdlib documentation gate
+
+`scripts/verify-stdlib-docs.sh` discovers every `stdlib/*.tl` module, requires
+module and item documentation comments, generates Markdown through
+`typelisp doc`, and runs `typelisp doc --test` with `--stdlib-root`. The script
+is separate from `cargo test` so it can later run against a stage compiler
+artifact and switch to the selfhost doctest path when #865 lands.
+
 ### CI expectations
 
 Pull requests get Linux and Windows `cargo test` coverage from the main CI test
@@ -143,6 +151,7 @@ cargo test --test tl_compiler_backend_compile
 TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-selfhost-compile-manifest.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/check-tl-format.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-public-tools.sh
+TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-stdlib-docs.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-selfhost.sh
 ```
 

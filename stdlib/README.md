@@ -108,9 +108,16 @@ lookup behavior.
 5. Add focused fixtures under `stdlib/tests/` and list them in
    `scripts/verify-stdlib.sh`'s test manifest with expected exit/stdout/stderr.
 6. Document the intended public API coverage in `stdlib/tests/README.md`.
-7. Link user-facing docs or tests to the new module when appropriate.
+7. Add `;;;;` module docs, attached `;;;` item docs, and at least one checked
+   doctest example that runs with `--stdlib-root`.
+8. Run `scripts/verify-stdlib-docs.sh` to generate Markdown and run doctests
+   for every stdlib module.
+9. Link user-facing docs or tests to the new module when appropriate.
 
 The verifier intentionally fails when a new top-level `stdlib/*.tl` module or a
 new `stdlib/tests/*.tl` fixture is not listed in its corresponding manifest.
 That makes every new canonical module and stdlib test an explicit verification
 decision.
+
+The documentation verifier discovers every `stdlib/*.tl` file directly and
+fails when module docs, item docs, generated Markdown, or doctests regress.

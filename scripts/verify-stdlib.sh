@@ -65,6 +65,7 @@ stdlib_build_run() {
 stdlib_manifest() {
     cat <<'EOF'
 io.tl
+env.tl
 json.tl
 process.tl
 string.tl
@@ -84,6 +85,7 @@ stdlib/tests/string_edges.tl|42|-|-
 stdlib/tests/json_helpers.tl|42|-|-
 stdlib/tests/json_parse_stringify.tl|42|-|-
 stdlib/tests/io_edges.tl|42|-|-
+stdlib/tests/env_edges.tl|42|-|-
 stdlib/tests/process_api.tl|42|-|-
 stdlib/tests/test_assert_success.tl|42|-|-
 stdlib/tests/test_assert_failure.tl|134|-|literal:stdlib test failure message
@@ -196,6 +198,20 @@ compare_stream() {
 TEST_COPY_ROOT="$WORKDIR/fixtures"
 RUN_ROOT="$WORKDIR/run"
 mkdir -p "$TEST_COPY_ROOT" "$RUN_ROOT"
+
+if [ "$HOST_OS" = windows ]; then
+    TYPELISP_STDLIB_ENV_SEPARATOR=";"
+    TYPELISP_STDLIB_ENV_PATH_LIST="alpha;beta;;gamma;"
+else
+    TYPELISP_STDLIB_ENV_SEPARATOR=":"
+    TYPELISP_STDLIB_ENV_PATH_LIST="alpha:beta::gamma:"
+fi
+TYPELISP_STDLIB_ENV_PRESENT="present-value"
+TYPELISP_STDLIB_ENV_EMPTY=
+export TYPELISP_STDLIB_ENV_SEPARATOR
+export TYPELISP_STDLIB_ENV_PATH_LIST
+export TYPELISP_STDLIB_ENV_PRESENT
+export TYPELISP_STDLIB_ENV_EMPTY
 
 passed=0
 while IFS='|' read -r fixture want stdout_spec stderr_spec; do

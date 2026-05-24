@@ -14,6 +14,9 @@ pub const ARG_RUNTIME_SYMBOL: &str = ".L_tl_arg";
 pub const READ_FILE_RUNTIME_SYMBOL: &str = ".L_tl_read_file";
 pub const WRITE_FILE_RUNTIME_SYMBOL: &str = ".L_tl_write_file";
 pub const FILE_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists";
+pub const ENV_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_env_exists";
+pub const ENV_VALUE_RUNTIME_SYMBOL: &str = ".L_tl_env_value";
+pub const ENV_PATH_SEPARATOR_RUNTIME_SYMBOL: &str = ".L_tl_env_path_separator";
 pub const READ_STDIN_LINE_RUNTIME_SYMBOL: &str = ".L_tl_read_stdin_line";
 pub const READ_STDIN_BYTES_RUNTIME_SYMBOL: &str = ".L_tl_read_stdin_bytes";
 pub const STDIN_EOF_RUNTIME_SYMBOL: &str = ".L_tl_stdin_eof";
@@ -346,11 +349,16 @@ pub enum Instruction {
 /// effectful so ordinary user, extern, and future helper calls default safe.
 pub fn classify_direct_call_effect(func: &str) -> IrEffect {
     match func {
-        "tl_string_eq" | "tl_string_to_int" | REGION_MARK_RUNTIME_SYMBOL => IrEffect::MemoryRead,
+        "tl_string_eq"
+        | "tl_string_to_int"
+        | REGION_MARK_RUNTIME_SYMBOL
+        | ENV_EXISTS_RUNTIME_SYMBOL => IrEffect::MemoryRead,
         "tl_alloc"
         | "tl_int_to_string"
         | "tl_substring"
         | "tl_string_concat"
+        | ENV_VALUE_RUNTIME_SYMBOL
+        | ENV_PATH_SEPARATOR_RUNTIME_SYMBOL
         | REGION_RESET_RUNTIME_SYMBOL => IrEffect::MemoryWrite,
         ABORT_RUNTIME_SYMBOL | "tl_oob_abort" | "tl_div_abort" | "tl_shift_abort" => {
             IrEffect::ControlFlow

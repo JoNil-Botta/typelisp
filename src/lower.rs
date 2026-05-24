@@ -14,6 +14,9 @@ const ARG_RUNTIME_SYMBOL: &str = ".L_tl_arg";
 const READ_FILE_RUNTIME_SYMBOL: &str = ".L_tl_read_file";
 const WRITE_FILE_RUNTIME_SYMBOL: &str = ".L_tl_write_file";
 const FILE_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists";
+const ENV_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_env_exists";
+const ENV_VALUE_RUNTIME_SYMBOL: &str = ".L_tl_env_value";
+const ENV_PATH_SEPARATOR_RUNTIME_SYMBOL: &str = ".L_tl_env_path_separator";
 const READ_STDIN_LINE_RUNTIME_SYMBOL: &str = ".L_tl_read_stdin_line";
 const READ_STDIN_BYTES_RUNTIME_SYMBOL: &str = ".L_tl_read_stdin_bytes";
 const STDIN_EOF_RUNTIME_SYMBOL: &str = ".L_tl_stdin_eof";
@@ -3968,6 +3971,68 @@ impl FnLowerer {
             return Value::Var(dst);
         }
 
+        // `(env-var-exists? name)` returns true when the process environment
+        // contains `name`, including present variables with empty values.
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "env-var-exists?"
+            && args.len() == 1
+            && !self.has_local_value(name)
+            && !self.function_types.contains_key(name)
+        {
+            let key = self.lower_expr_as(&args[0], &Type::String);
+            let (ptr, len) = self.load_string_fields(&key);
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: ENV_EXISTS_RUNTIME_SYMBOL.to_string(),
+                args: vec![Value::Var(ptr), Value::Var(len)],
+                ty: Type::Bool,
+            });
+            self.record_local(dst, Type::Bool);
+            return Value::Var(dst);
+        }
+
+        // `(env-var-value name)` returns the variable value as a heap-owned
+        // String. Missing variables return the empty string; stdlib/env.tl
+        // pairs this with `env-var-exists?` for a recoverable option surface.
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "env-var-value"
+            && args.len() == 1
+            && !self.has_local_value(name)
+            && !self.function_types.contains_key(name)
+        {
+            let key = self.lower_expr_as(&args[0], &Type::String);
+            let (ptr, len) = self.load_string_fields(&key);
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: ENV_VALUE_RUNTIME_SYMBOL.to_string(),
+                args: vec![Value::Var(ptr), Value::Var(len)],
+                ty: Type::String,
+            });
+            self.record_local(dst, Type::String);
+            return Value::Var(dst);
+        }
+
+        // `(env-path-separator-raw)` returns ":" on Unix-like targets and ";"
+        // on Windows targets as a heap-owned String.
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "env-path-separator-raw"
+            && args.is_empty()
+            && !self.has_local_value(name)
+            && !self.function_types.contains_key(name)
+        {
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: ENV_PATH_SEPARATOR_RUNTIME_SYMBOL.to_string(),
+                args: vec![],
+                ty: Type::String,
+            });
+            self.record_local(dst, Type::String);
+            return Value::Var(dst);
+        }
+
         // `(read-stdin-line)` returns one stdin line without the trailing LF as
         // a heap-owned String. `(stdin-eof?)` reports whether the most recent
         // stdin read hit EOF before satisfying its requested line/byte count.
@@ -7764,6 +7829,98 @@ mod tests {
                 |i| matches!(i, Instruction::Call { func, .. } if func == FILE_EXISTS_RUNTIME_SYMBOL)
             ),
             "user-defined file-exists? must not lower to the builtin runtime"
+        );
+    }
+
+    #[test]
+    fn test_lower_env_builtins_extract_fields_and_call_runtime() {
+        let prog = parse(
+            r#"
+            (define (main) : i64
+              (if (env-var-exists? "PATH")
+                (+ (string-length (env-var-value "PATH"))
+                   (string-length (env-path-separator-raw)))
+                0))
+            "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let instrs: Vec<&Instruction> = ir.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .collect();
+
+        let exists_call = instrs.iter().find_map(|i| match i {
+            Instruction::Call { func, args, ty, .. } if func == ENV_EXISTS_RUNTIME_SYMBOL => {
+                Some((args, ty))
+            }
+            _ => None,
+        });
+        let (exists_args, exists_ty) = exists_call.expect("expected a Call to env exists runtime");
+        assert_eq!(exists_args.len(), 2, "env exists takes name ptr/len");
+        assert_eq!(*exists_ty, Type::Bool, "env exists yields bool");
+
+        let value_call = instrs.iter().find_map(|i| match i {
+            Instruction::Call { func, args, ty, .. } if func == ENV_VALUE_RUNTIME_SYMBOL => {
+                Some((args, ty))
+            }
+            _ => None,
+        });
+        let (value_args, value_ty) = value_call.expect("expected a Call to env value runtime");
+        assert_eq!(value_args.len(), 2, "env value takes name ptr/len");
+        assert_eq!(*value_ty, Type::String, "env value yields String");
+
+        let separator_call = instrs.iter().find_map(|i| match i {
+            Instruction::Call { func, args, ty, .. }
+                if func == ENV_PATH_SEPARATOR_RUNTIME_SYMBOL =>
+            {
+                Some((args, ty))
+            }
+            _ => None,
+        });
+        let (separator_args, separator_ty) =
+            separator_call.expect("expected a Call to env path separator runtime");
+        assert!(
+            separator_args.is_empty(),
+            "env path separator takes no args"
+        );
+        assert_eq!(
+            *separator_ty,
+            Type::String,
+            "env path separator yields String"
+        );
+    }
+
+    #[test]
+    fn test_lower_user_defined_env_value_shadows_builtin() {
+        let prog = parse(
+            r#"
+            (define (env-var-value [n : i64]) : i64 n)
+            (define (main) : i64 (env-var-value 7))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let main = ir
+            .functions
+            .iter()
+            .position(|func| func.name == "main")
+            .unwrap();
+
+        assert!(
+            ir.functions[main]
+                .blocks
+                .iter()
+                .flat_map(|b| b.instructions.iter())
+                .any(|i| matches!(i, Instruction::Call { func, .. } if func == "env-var-value")),
+            "expected ordinary call to user-defined env-var-value"
+        );
+        assert!(
+            !ir.functions[main].blocks.iter().flat_map(|b| b.instructions.iter()).any(
+                |i| matches!(i, Instruction::Call { func, .. } if func == ENV_VALUE_RUNTIME_SYMBOL)
+            ),
+            "user-defined env-var-value must not lower to the builtin runtime"
         );
     }
 

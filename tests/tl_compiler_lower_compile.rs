@@ -102,6 +102,11 @@ fn compiler_lower_tl_compiles_to_assembly() {
         "_tl_lower_if:",
         "_tl_lower_if_merge:",
         "_tl_lower_while:",
+        // Scalar match lowering (#568): decision-tree dispatch + merge phi.
+        "_tl_lower_match:",
+        "_tl_lower_match_chain:",
+        "_tl_lower_match_test_arm:",
+        "_tl_lower_match_finish:",
         "_tl_lower_state_finish_block:",
         "_tl_lower_compiler_program_checked:",
         "_tl_compiler_lower_self_test:",

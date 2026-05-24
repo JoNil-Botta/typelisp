@@ -123,15 +123,34 @@
               (OkCompilerLoad (AstDeclCons decl rest-decls) rest-seen)]
             [(ErrCompilerLoad diag) (ErrCompilerLoad diag)])])]))
 
+(define (compiler-load-program
+  [path : String]
+  [program : AstProgram]
+  [seen : SymI64Env]) : ResultCompilerLoad
+  (if (sym-i64-contains seen path)
+    (OkCompilerLoad AstDeclNil seen)
+    (match program
+      [(AstProgram decls)
+        (compiler-load-decls decls path (sym-i64-bind seen path 1))])))
+
+(define (compiler-load-source
+  [path : String]
+  [source : String]
+  [seen : SymI64Env]) : ResultCompilerLoad
+  (if (sym-i64-contains seen path)
+    (OkCompilerLoad AstDeclNil seen)
+    (match (parse-ast-source-diagnostic path source)
+      [(OkAstProgramDiagnostic program)
+        (compiler-load-program path program seen)]
+      [(ErrAstProgramDiagnostic diag) (ErrCompilerLoad diag)])))
+
 (define (compiler-load-file [path : String] [seen : SymI64Env]) : ResultCompilerLoad
   (if (sym-i64-contains seen path)
     (OkCompilerLoad AstDeclNil seen)
     (if (file-exists? path)
       (match (parse-ast-source-diagnostic path (read-file path))
         [(OkAstProgramDiagnostic program)
-          (match program
-            [(AstProgram decls)
-              (compiler-load-decls decls path (sym-i64-bind seen path 1))])]
+          (compiler-load-program path program seen)]
         [(ErrAstProgramDiagnostic diag) (ErrCompilerLoad diag)])
       (ErrCompilerLoad
         (compiler-diagnostic-at-start

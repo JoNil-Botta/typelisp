@@ -1,10 +1,6 @@
 ;; check.tl - Short-lived selfhost typecheck CLI driver.
 
-(import "compiler_load.tl")
-
-(import "compiler_diagnostic.tl")
-
-(import "compiler_typecheck.tl")
+(import "compiler_check_core.tl")
 
 (define (selfhost-check-extra-args-status [i : i64]) : i64
   (let ([n : i64 (arg-count)] [status : i64 0])
@@ -22,17 +18,9 @@
       status)))
 
 (define (selfhost-check-file [input-path : String]) : i64
-  (match (compiler-load-file input-path (sym-i64-empty))
-    [(OkCompilerLoad decls _)
-      (match (typecheck-compiler-program (AstProgram decls))
-        [(OkCompilerTypecheck _) 0]
-        [(ErrCompilerTypecheck diag)
-          (begin
-            (print-error
-              (compiler-diagnostic-render
-                (compiler-diagnostic-with-path diag input-path)))
-            1)])]
-    [(ErrCompilerLoad diag)
+  (match (compiler-check-file input-path)
+    [(OkCompilerCheck _) 0]
+    [(ErrCompilerCheck diag)
       (begin
         (print-error (compiler-diagnostic-render diag))
         1)]))

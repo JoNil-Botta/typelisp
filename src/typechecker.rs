@@ -579,9 +579,45 @@ impl TypeChecker {
         // `String` and dynamic-array values are pointer-sized handles to fat
         // `{ ptr, len }` storage whose underlying buffer is already heap- or
         // rodata-stable, so the lowerer can snapshot the fat value onto the heap
-        // and the capture cannot dangle (#435). Struct/enum/tuple/fixed-array
-        // capture needs storage copying (and nested-handle handling) and stays
-        // rejected for now.
+        // and the capture cannot dangle (#435).
+        //
+        // A tuple value is a pointer handle to inline POD storage of a
+        // statically known size; when every element is a scalar, the lowerer can
+        // shallow-copy that storage onto the heap and the capture cannot dangle
+        // (#542). Nested aggregate elements would need a deep copy (shared inner
+        // handles could dangle) and stay rejected.
+        //
+        // Fixed `(Array T N)` capture stays rejected for now: unlike a tuple, a
+        // fixed-array value is inline storage the backend does not treat as a
+        // pointer-sized handle, so the storage-snapshot path is not wired yet
+        // (representation gap tracked in #435). Struct/enum capture likewise
+        // needs storage copying and stays rejected (#540).
+        match self.resolve_type(ty) {
+            Type::I64
+            | Type::I32
+            | Type::I16
+            | Type::I8
+            | Type::U64
+            | Type::U32
+            | Type::U16
+            | Type::U8
+            | Type::Bool
+            | Type::Char
+            | Type::F64
+            | Type::Func(_, _)
+            | Type::String
+            | Type::DynArray(_) => true,
+            Type::Tuple(elems) => elems.iter().all(|elem| self.capture_shallow_scalar(elem)),
+            _ => false,
+        }
+    }
+
+    /// A type whose inline storage holds no pointers/handles, so it can be
+    /// snapshotted into a (longer-lived) closure environment with a shallow byte
+    /// copy. This gates scalar-tuple capture: a shallow copy is a correct,
+    /// non-dangling snapshot only when no element is itself a handle to other
+    /// storage (#542).
+    fn capture_shallow_scalar(&self, ty: &Type) -> bool {
         matches!(
             self.resolve_type(ty),
             Type::I64
@@ -595,9 +631,6 @@ impl TypeChecker {
                 | Type::Bool
                 | Type::Char
                 | Type::F64
-                | Type::Func(_, _)
-                | Type::String
-                | Type::DynArray(_)
         )
     }
 
@@ -1222,7 +1255,7 @@ impl TypeChecker {
                     if !self.capture_type_supported(&ty) {
                         return Err(TypeError::at(
                             format!(
-                                "capturing value '{}' of type {} is not yet supported; capture scalar, function, String, or dynamic-array values only (struct/enum/tuple/fixed-array capture is tracked in #435)",
+                                "capturing value '{}' of type {} is not yet supported; capture scalar, function, String, dynamic-array, or scalar-tuple values only (fixed-array, struct/enum, and aggregate-element tuple capture is tracked in #435)",
                                 captured, ty
                             ),
                             *span,
@@ -3063,8 +3096,9 @@ mod tests {
 
     #[test]
     fn test_typecheck_struct_capture_still_rejected() {
-        // Struct/enum/tuple/fixed-array capture needs storage copying and
-        // nested-handle handling, deferred from the first #435 slice.
+        // Struct/enum capture needs storage copying and nested-handle handling,
+        // still deferred (#540). (Scalar tuple/fixed-array capture is supported
+        // by #542; see the tests below.)
         let prog = parse(
             r#"
             (defstruct Pair (x i64) (y i64))
@@ -3091,7 +3125,10 @@ mod tests {
     }
 
     #[test]
-    fn test_typecheck_tuple_capture_still_rejected() {
+    fn test_typecheck_scalar_tuple_capture_ok() {
+        // A tuple of scalars is a pointer handle to inline POD storage; the
+        // lowerer shallow-copies that storage onto the heap, so the capture
+        // cannot dangle (#542).
         let prog = parse(
             r#"
             (define (main) : i64
@@ -3102,8 +3139,59 @@ mod tests {
         )
         .unwrap();
         let mut tc = TypeChecker::new();
+        assert!(
+            tc.check_program(&prog).is_ok(),
+            "{:?}",
+            tc.check_program(&prog)
+        );
+    }
+
+    #[test]
+    fn test_typecheck_fixed_array_capture_still_rejected() {
+        // A fixed array is inline storage that the backend does not treat as a
+        // pointer-sized handle, so the storage-snapshot path is not wired and
+        // capture stays rejected (#542 ships scalar tuples; the fixed-array
+        // representation gap is tracked in #435).
+        let prog = parse(
+            r#"
+            (define (main) : i64
+              (let ([a : (Array i64 3) (array 1 2 3)]
+                    [f : (-> i64) (lambda () : i64 (array-ref a 0))])
+                (f)))
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
         let err = tc.check_program(&prog).unwrap_err();
         assert!(err.msg.contains("is not yet supported"), "err: {}", err);
+        assert!(
+            err.msg.contains("#435"),
+            "err should reference #435: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_typecheck_aggregate_element_tuple_capture_rejected() {
+        // A tuple with a non-scalar element (here `String`) would need a deep
+        // copy of the inner handle, so it stays rejected (#542/#435).
+        let prog = parse(
+            r#"
+            (define (main) : i64
+              (let ([t : (Tuple String i64) (tuple "x" 1)]
+                    [f : (-> i64) (lambda () : i64 (tuple-ref t 1))])
+                (f)))
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(err.msg.contains("is not yet supported"), "err: {}", err);
+        assert!(
+            err.msg.contains("#435"),
+            "err should reference #435: {}",
+            err
+        );
     }
 
     #[test]

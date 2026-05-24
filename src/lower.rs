@@ -1339,12 +1339,16 @@ impl FnLowerer {
             // `String` and dynamic-array captures are pointer-sized handles to a
             // fat `{ ptr, len }` value that may live on the creator's frame.
             // Since the environment can outlive that frame, snapshot the fat
-            // value onto the heap so the stored handle cannot dangle. Scalars and
-            // function values are copied by value directly.
+            // value onto the heap so the stored handle cannot dangle. A scalar
+            // tuple is a pointer handle to inline POD storage, snapshotted with a
+            // shallow byte copy (#542). Scalars and function values are copied by
+            // value directly. (Fixed-array capture is rejected by the
+            // typechecker, so no `Array` arm is needed here.)
             let src = match self.resolve_type(&capture.ty) {
                 Type::String | Type::DynArray(_) => {
                     self.snapshot_fat_value_to_heap(&handle, capture.ty.clone())
                 }
+                ty @ Type::Tuple(_) => self.snapshot_storage_to_heap(&handle, ty),
                 _ => handle,
             };
             let storage_ty = Self::backend_value_type(&capture.ty);
@@ -1416,6 +1420,59 @@ impl FnLowerer {
         });
 
         dst
+    }
+
+    /// Snapshot a scalar tuple value into fresh heap storage and return a handle
+    /// to the copy. A tuple is a pointer handle to inline POD storage of a
+    /// statically known size; copying those bytes onto the heap lets a captured
+    /// handle outlive its creator frame without dangling (#542). The typechecker
+    /// only admits scalar-element tuples here, so a shallow byte copy is a
+    /// complete, non-sharing snapshot.
+    fn snapshot_storage_to_heap(&mut self, handle: &Value, storage_ty: Type) -> Value {
+        // A tuple *value* is pointer-sized (`Type::size() == 8`), so the inline
+        // storage size must come from the field layout, not `size()`.
+        let size = match &storage_ty {
+            Type::Tuple(elems) => {
+                let resolved: Vec<Type> = elems.iter().map(|e| self.resolve_type(e)).collect();
+                Self::tuple_storage_size(&resolved)
+            }
+            other => other.size(),
+        };
+        let dst = self.reserve_aggregate_storage(size.max(1), storage_ty, true);
+        self.copy_storage_bytes(handle, &dst, size);
+        dst
+    }
+
+    /// Copy `size` bytes from `src` to `dst` (both pointer handles) using the
+    /// widest scalar chunk that fits at each offset (8/4/2/1 bytes), emitting
+    /// only existing `Load`/`Store` IR. Used to snapshot POD aggregate storage
+    /// into a closure environment.
+    fn copy_storage_bytes(&mut self, src: &Value, dst: &Value, size: usize) {
+        let mut offset = 0usize;
+        for (chunk, ty) in [
+            (8usize, Type::U64),
+            (4, Type::U32),
+            (2, Type::U16),
+            (1, Type::U8),
+        ] {
+            while offset + chunk <= size {
+                let src_ptr = self.gep_byte(src, offset);
+                let word = self.builder.fresh_var();
+                self.builder.emit(Instruction::Load {
+                    dst: word,
+                    src: Value::Var(src_ptr),
+                    ty: ty.clone(),
+                });
+                self.record_local(word, ty.clone());
+                let dst_ptr = self.gep_byte(dst, offset);
+                self.builder.emit(Instruction::Store {
+                    dst: Value::Var(dst_ptr),
+                    src: Value::Var(word),
+                    ty: ty.clone(),
+                });
+                offset += chunk;
+            }
+        }
     }
 
     fn fresh_lambda_name(&mut self) -> String {
@@ -6573,6 +6630,43 @@ mod tests {
             alloc_sizes,
             vec![Value::ConstI64(8), Value::ConstI64(16), Value::ConstI64(16)],
             "expected env(8) + fat-value snapshot(16) + descriptor(16) heap allocations"
+        );
+    }
+
+    #[test]
+    fn test_lower_capturing_lambda_snapshots_tuple_storage_to_heap() {
+        // Capturing a scalar tuple shallow-copies its 16-byte inline storage onto
+        // the heap before storing the handle in the (longer-lived) environment
+        // (#542). The lambda returns a scalar element, so the by-value tuple
+        // return ABI gap is not exercised. tl_alloc sizes: env(8: one pointer
+        // slot), storage snapshot(16: two i64 words), descriptor(16).
+        let prog = parse(
+            r#"
+            (define (get_fn) : (-> i64)
+              (let ([t : (Tuple i64 i64) (tuple 1 2)])
+                (lambda () : i64 (tuple-ref t 0))))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let get_fn = ir
+            .functions
+            .iter()
+            .find(|f| f.name == "get_fn")
+            .expect("get_fn lowered");
+        let alloc_sizes: Vec<Value> = get_fn
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .filter_map(|i| match i {
+                Instruction::Call { func, args, .. } if func == "tl_alloc" => args.first().cloned(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            alloc_sizes,
+            vec![Value::ConstI64(8), Value::ConstI64(16), Value::ConstI64(16)],
+            "expected env(8) + tuple-storage snapshot(16) + descriptor(16) heap allocations"
         );
     }
 

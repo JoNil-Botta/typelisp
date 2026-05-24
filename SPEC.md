@@ -180,7 +180,7 @@ narrower or unsigned integer is required. Floating-point literals are always
   top-level functions and materialized as raw function pointer values.
 - Capturing `lambda` literals build heap-allocated closure environments and
   evaluate to closure descriptor values. Supported captures are scalars,
-  function values, `String`, and dynamic arrays (see §5.14).
+  function values, `String`, dynamic arrays, and tuples of scalars (see §5.14).
 
 ### 3.4 User-defined types
 
@@ -508,18 +508,23 @@ truncation only; floating-point conversions are deferred.
   and evaluate to static closure descriptor values.
 - Capturing lambdas snapshot supported captures into heap-allocated closure
   environments. Supported captured values are integer widths, `bool`, `char`,
-  `f64`, function values, `String`, and dynamic arrays. `String` and
-  dynamic-array captures snapshot their fat `{ ptr, len }` value onto the heap
-  so the environment can outlive the frame that created the handle without
-  dangling; the underlying buffer (`.rodata` for string literals, `tl_alloc`
-  for dynamic arrays) is shared, matching aggregate-handle reference semantics.
+  `f64`, function values, `String`, dynamic arrays, and tuples whose elements
+  are all scalars. `String` and dynamic-array captures snapshot their fat
+  `{ ptr, len }` value onto the heap so the environment can outlive the frame
+  that created the handle without dangling; the underlying buffer (`.rodata`
+  for string literals, `tl_alloc` for dynamic arrays) is shared, matching
+  aggregate-handle reference semantics. A scalar tuple capture shallow-copies
+  its inline storage onto the heap (a complete, non-sharing snapshot because
+  scalar elements hold no inner handles).
 - Lambda literals can return scalar values and pointer-backed aggregate
   values supported by named function returns, including `String`, enums,
   structs, and dynamic arrays. Tuple and fixed-array by-value returns remain
   unsupported by the backend.
-- Enum, struct, tuple, and fixed-array captures, and `set!` to captured names,
-  are rejected in this slice. Aggregate-storage copying and nested-handle
-  capture remain follow-up work under #435.
+- Enum, struct, and fixed-array captures, tuples with non-scalar elements, and
+  `set!` to captured names, are rejected in this slice. A fixed-array value is
+  inline storage the backend does not treat as a pointer-sized handle, so its
+  capture snapshot is not wired yet; enum/struct/aggregate-element copying and
+  nested-handle capture remain follow-up work under #435.
 
 ```lisp test=ignore name=lambda-lift-immediate reason="integration tests cover executable lambda lifting"
 ((lambda ([x : i64]) : i64 (+ x 1)) 41)
@@ -977,7 +982,7 @@ replacement.
 | Tuple by-value ABI | Function parameters/returns rejected by backend validation |
 | Fixed-array by-value return | Rejected by backend validation |
 | Tuple/Struct/Enum/String globals | Rejected by backend validation |
-| Struct/enum/tuple/fixed-array captures in lambdas | Not implemented (String and dynamic-array captures work; tracked in #435) |
+| Struct/enum/fixed-array captures in lambdas | Not implemented (scalar, String, dynamic-array, and scalar-tuple captures work; tracked in #435) |
 | Mutable captures (`set!` to captured names) in lambdas | Not implemented |
 | Tail call optimization | Not implemented |
 | `struct-set!` | Not implemented |

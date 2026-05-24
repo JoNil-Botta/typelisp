@@ -64,6 +64,20 @@ count=$(wc -l < "$CHECK_FILES" | tr -d ' ')
 echo "Checking TypeLisp formatting for $count file(s)."
 
 if ! xargs "$COMPILER" fmt --check < "$CHECK_FILES"; then
+    echo "Batch TypeLisp format check failed; probing files one by one." >&2
+    while IFS= read -r file; do
+        echo "TypeLisp format probe: $file" >&2
+        if "$COMPILER" fmt --check "$file"; then
+            :
+        else
+            status=$?
+            echo "TypeLisp format probe failed for $file with exit code $status" >&2
+            echo "TypeLisp format check failed. Run: $COMPILER fmt $file" >&2
+            exit 1
+        fi
+    done < "$CHECK_FILES"
+    echo "Per-file TypeLisp format probe passed after the batch check failed." >&2
+    echo "The failure may depend on multi-file formatter driver state or argument handling." >&2
     echo "TypeLisp format check failed. Run: $COMPILER fmt \$(cat $CHECK_FILES)" >&2
     exit 1
 fi

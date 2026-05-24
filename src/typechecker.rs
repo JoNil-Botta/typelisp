@@ -4316,6 +4316,82 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_typecheck_type_valued_comptime_param_consumes_array_elem_type() {
+        // The specialized `make-array` element type becomes f64, so the function
+        // returns `(Array f64)` and typechecks against that declared return.
+        let src = "
+            (define (alloc [comptime T : type] [n : i64]) : (Array f64)
+              (make-array T n))
+            (define (main) : (Array f64) (alloc (type f64) 4))
+        ";
+        let prog = parse(src).unwrap();
+        let mut tc = TypeChecker::new();
+        tc.check_program(&prog)
+            .expect("type-valued comptime parameter should specialize and typecheck");
+    }
+
+    #[test]
+    fn test_typecheck_type_valued_comptime_param_affects_return_shape() {
+        // Substituting i64 makes the body produce `(Array i64)`, which mismatches
+        // the declared `(Array f64)` — confirming the type value really drives the
+        // element-type position of the specialized body.
+        let src = "
+            (define (alloc [comptime T : type] [n : i64]) : (Array f64)
+              (make-array T n))
+            (define (main) : (Array f64) (alloc (type i64) 4))
+        ";
+        let prog = parse(src).unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(err.msg.contains("return type mismatch"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_type_valued_comptime_param_rejects_runtime_observation() {
+        let src = "
+            (define (bad [comptime T : type] [n : i64]) : i64 T)
+            (define (main) : i64 (bad (type i64) 4))
+        ";
+        let prog = parse(src).unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(
+            err.msg.contains("cannot be used as a runtime value"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_type_valued_comptime_param_rejects_scalar_arg() {
+        let src = "
+            (define (alloc [comptime T : type] [n : i64]) : (Array i64)
+              (make-array T n))
+            (define (main) : (Array i64) (alloc 4 4))
+        ";
+        let prog = parse(src).unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(err.msg.contains("must be a type value"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_type_valued_comptime_param_resolves_nominal_type() {
+        // A nominal type argument resolves through the struct registry before the
+        // element type is bound into the specialized `make-array`.
+        let src = "
+            (defstruct Pt (x i64) (y i64))
+            (define (alloc [comptime T : type] [n : i64]) : (Array Pt)
+              (make-array T n))
+            (define (main) : (Array Pt) (alloc (type Pt) 4))
+        ";
+        let prog = parse(src).unwrap();
+        let mut tc = TypeChecker::new();
+        tc.check_program(&prog)
+            .expect("nominal type argument should resolve and typecheck");
+    }
+
     fn check(src: &str) -> Result<(), TypeError> {
         let prog = parse(src).unwrap();
         let mut tc = TypeChecker::new();

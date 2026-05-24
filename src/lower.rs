@@ -6061,6 +6061,56 @@ mod tests {
     }
 
     #[test]
+    fn test_lower_type_valued_comptime_param_lowers_specialization() {
+        // A type-valued comptime parameter is consumed in the `make-array`
+        // element type and removed from the runtime signature: the unspecialized
+        // template is not lowered, and the generated function takes only the
+        // runtime length argument. Lowering would panic on an unsubstituted
+        // `Type::Var("T")` (no size/align), so reaching IR proves the type value
+        // really replaced the element-type position.
+        let prog = parse(
+            r#"
+            (define (alloc [comptime T : type] [n : i64]) : (Array i64)
+              (make-array T n))
+            (define (main) : (Array i64) (alloc (type i64) 4))
+            "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        assert!(
+            ir.functions.iter().all(|f| f.name != "alloc"),
+            "unspecialized template must not be lowered: {:#?}",
+            ir.functions
+        );
+        let generated: Vec<_> = ir
+            .functions
+            .iter()
+            .filter(|f| f.name.starts_with("__tl_specialized_alloc_"))
+            .collect();
+        assert_eq!(generated.len(), 1, "{:#?}", ir.functions);
+        assert_eq!(
+            generated[0].params.len(),
+            1,
+            "type comptime parameter should be omitted from runtime signature"
+        );
+        let generated_name = generated[0].name.clone();
+        let main = ir
+            .functions
+            .iter()
+            .find(|f| f.name == "main")
+            .expect("main lowered");
+        let calls = main
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .filter(
+                |instr| matches!(instr, Instruction::Call { func, .. } if *func == generated_name),
+            )
+            .count();
+        assert_eq!(calls, 1, "{main:#?}");
+    }
+
+    #[test]
     fn test_lower_function_pointer_param_call_is_indirect() {
         let prog = parse(
             r#"

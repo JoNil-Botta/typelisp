@@ -1185,6 +1185,30 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_type_valued_comptime_param() {
+        // `[comptime T : type]` parses with the `type` kind recorded as the
+        // parameter annotation `Type::Var("type")` (a compile-time type kind,
+        // not a runtime value type), and the index marked comptime.
+        let prog =
+            parse("(define (alloc [comptime T : type] [n : i64]) : (Array i64) (make-array T n))")
+                .unwrap();
+        match &prog.decls[0] {
+            Decl::DefFn {
+                name,
+                params,
+                comptime_params,
+                ..
+            } => {
+                assert_eq!(name, "alloc");
+                assert_eq!(params[0], ("T".into(), Type::Var("type".into())));
+                assert_eq!(params[1], ("n".into(), Type::I64));
+                assert_eq!(comptime_params, &vec![0]);
+            }
+            other => panic!("expected DefFn, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn test_parse_comptime_lambda_param_rejected() {
         let err = parse("(define (main) : i64 ((lambda ([comptime n : i64]) n) 1))").unwrap_err();
         assert!(

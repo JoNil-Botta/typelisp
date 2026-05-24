@@ -2100,6 +2100,43 @@ fn selfhost_check_driver_reports_success_and_errors() {
         String::from_utf8_lossy(&type_error.stderr)
     );
 
+    let imported_type_error_path = work_dir.join("bad_import.tl");
+    fs::write(
+        &imported_type_error_path,
+        "(define imported-bad : i64 true)\n",
+    )
+    .expect("write selfhost check imported type error fixture");
+    let imported_type_error_root = work_dir.join("imported_type_error_root.tl");
+    fs::write(
+        &imported_type_error_root,
+        "(import \"bad_import.tl\")\n(define (main) : i64 0)\n",
+    )
+    .expect("write selfhost check imported type error root fixture");
+    let imported_type_error = Command::new(&driver_bin)
+        .arg(&imported_type_error_root)
+        .output()
+        .expect("run selfhost check imported type error fixture");
+    assert_eq!(imported_type_error.status.code(), Some(1));
+    assert_eq!(String::from_utf8_lossy(&imported_type_error.stdout), "");
+    let imported_type_error_stderr = String::from_utf8_lossy(&imported_type_error.stderr);
+    let imported_type_error_path_text = imported_type_error_path.to_string_lossy();
+    let imported_type_error_root_text = imported_type_error_root.to_string_lossy();
+    assert!(
+        imported_type_error_stderr.contains(&format!("{}:1:", imported_type_error_path_text)),
+        "imported type error did not report imported path/line:\n{}",
+        imported_type_error_stderr
+    );
+    assert!(
+        !imported_type_error_stderr.contains(imported_type_error_root_text.as_ref()),
+        "imported type error incorrectly reported root path:\n{}",
+        imported_type_error_stderr
+    );
+    assert!(
+        imported_type_error_stderr.contains("typecheck: value definition type mismatch"),
+        "imported type error stderr:\n{}",
+        imported_type_error_stderr
+    );
+
     let parse_error_path = work_dir.join("parse_error.tl");
     fs::write(&parse_error_path, "(define (main) : i64\n")
         .expect("write selfhost check parse error fixture");

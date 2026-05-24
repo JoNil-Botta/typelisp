@@ -598,11 +598,18 @@ impl TypeChecker {
         // (#542). Nested aggregate elements would need a deep copy (shared inner
         // handles could dangle) and stay rejected.
         //
+        // A struct or enum value is likewise a pointer handle to inline storage;
+        // when every field (struct) or every variant payload field (enum) is a
+        // scalar, the storage holds no inner handles, so the same shallow
+        // storage snapshot is a complete, non-sharing copy (#540). A struct/enum
+        // carrying any aggregate field (String, dynamic array, tuple, struct,
+        // enum, function) would need a deep copy of the nested handle and stays
+        // rejected.
+        //
         // Fixed `(Array T N)` capture stays rejected for now: unlike a tuple, a
         // fixed-array value is inline storage the backend does not treat as a
         // pointer-sized handle, so the storage-snapshot path is not wired yet
-        // (representation gap tracked in #435). Struct/enum capture likewise
-        // needs storage copying and stays rejected (#540).
+        // (representation gap tracked in #435).
         match self.resolve_type(ty) {
             Type::I64
             | Type::I32
@@ -619,6 +626,23 @@ impl TypeChecker {
             | Type::String
             | Type::DynArray(_) => true,
             Type::Tuple(elems) => elems.iter().all(|elem| self.capture_shallow_scalar(elem)),
+            Type::Struct(name) => match self.structs.fields(&name) {
+                Some(fields) => {
+                    let tys: Vec<Type> = fields.iter().map(|f| f.ty.clone()).collect();
+                    tys.iter().all(|t| self.capture_shallow_scalar(t))
+                }
+                None => false,
+            },
+            Type::Enum(name) => match self.enums.variants(&name) {
+                Some(variants) => {
+                    let payloads: Vec<Type> = variants
+                        .iter()
+                        .flat_map(|v| v.fields.iter().cloned())
+                        .collect();
+                    payloads.iter().all(|t| self.capture_shallow_scalar(t))
+                }
+                None => false,
+            },
             _ => false,
         }
     }
@@ -1266,7 +1290,7 @@ impl TypeChecker {
                     if !self.capture_type_supported(&ty) {
                         return Err(TypeError::at(
                             format!(
-                                "capturing value '{}' of type {} is not yet supported; capture scalar, function, String, dynamic-array, or scalar-tuple values only (fixed-array, struct/enum, and aggregate-element tuple capture is tracked in #435)",
+                                "capturing value '{}' of type {} is not yet supported; capture scalar, function, String, dynamic-array, or scalar-field tuple/struct/enum values only (fixed-array and aggregate-field capture is tracked in #435)",
                                 captured, ty
                             ),
                             *span,
@@ -3118,10 +3142,10 @@ mod tests {
     }
 
     #[test]
-    fn test_typecheck_struct_capture_still_rejected() {
-        // Struct/enum capture needs storage copying and nested-handle handling,
-        // still deferred (#540). (Scalar tuple/fixed-array capture is supported
-        // by #542; see the tests below.)
+    fn test_typecheck_scalar_struct_capture_ok() {
+        // A struct of scalars is a pointer handle to inline POD storage; the
+        // lowerer shallow-copies that storage onto the heap, so the capture
+        // cannot dangle (#540).
         let prog = parse(
             r#"
             (defstruct Pair (x i64) (y i64))
@@ -3133,10 +3157,53 @@ mod tests {
         )
         .unwrap();
         let mut tc = TypeChecker::new();
+        assert!(
+            tc.check_program(&prog).is_ok(),
+            "{:?}",
+            tc.check_program(&prog)
+        );
+    }
+
+    #[test]
+    fn test_typecheck_scalar_enum_capture_ok() {
+        // An enum whose every variant payload is scalar is shallow-copyable (#540).
+        let prog = parse(
+            r#"
+            (defenum Box (BoxI i64) (BoxB bool) (Empty))
+            (define (main) : i64
+              (let ([b : Box (BoxI 7)]
+                    [f : (-> i64) (lambda () : i64 (match b [(BoxI n) n] [(BoxB _) 0] [(Empty) 0]))])
+                (f)))
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        assert!(
+            tc.check_program(&prog).is_ok(),
+            "{:?}",
+            tc.check_program(&prog)
+        );
+    }
+
+    #[test]
+    fn test_typecheck_aggregate_field_struct_capture_rejected() {
+        // A struct carrying a non-scalar field (here `String`) would need a deep
+        // copy of the inner handle, so it stays rejected (#540/#435).
+        let prog = parse(
+            r#"
+            (defstruct Named (id i64) (name String))
+            (define (main) : i64
+              (let ([n : Named (Named 1 "hi")]
+                    [f : (-> i64) (lambda () : i64 (struct-get n id))])
+                (f)))
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
         let err = tc.check_program(&prog).unwrap_err();
         assert!(
             err.msg
-                .contains("capturing value 'p' of type Pair is not yet supported"),
+                .contains("capturing value 'n' of type Named is not yet supported"),
             "err: {}",
             err
         );

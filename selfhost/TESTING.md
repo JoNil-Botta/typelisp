@@ -4,6 +4,8 @@ This guide describes the testing convention for compiler-facing TypeLisp code
 under `selfhost/`. The self-hosted compiler is still built in layers, so tests
 are also layered: keep each case at the lowest layer that proves the behavior,
 then add runnable or end-to-end coverage only when that extra boundary matters.
+The Rust harness replacement map lives in
+[`RUST_TEST_COVERAGE.md`](RUST_TEST_COVERAGE.md).
 
 The broader work is tracked by the parity umbrella
 [#641](https://github.com/JoNil-Botta/typelisp/issues/641), the selfhost CI
@@ -45,17 +47,44 @@ Use a smoke driver when the module is main-less or when CI needs to compile and
 run the module through the TypeLisp executable boundary. If a new smoke driver
 imports additional selfhost files, keep the Rust staging lists in sync.
 
-### Rust compile tests
+### Temporary Rust compile tests
 
-The `tests/tl_*_compile.rs` files are cross-platform proof that stage0 Rust
-TypeLisp can compile selfhost sources to assembly. These tests usually assert
-that generated assembly has no TODO marker, has exactly one `main` where
-expected, and contains important symbols for the module or smoke driver.
+The `tests/tl_*_compile.rs` files are temporary cross-platform proof that
+stage0 Rust TypeLisp can compile selfhost sources to assembly. These tests
+usually assert that generated assembly has no TODO marker, has exactly one
+`main` where expected, and contains important symbols for the module or smoke
+driver. They remain useful while Cargo is still the required CI path, but every
+Rust test file must have an explicit no-Rust replacement entry in
+[`RUST_TEST_COVERAGE.md`](RUST_TEST_COVERAGE.md).
 
 Add or update one of these tests when adding a new compiler module, smoke
-driver, or required import. If the source should compile or run on Windows, also
-update the selfhost source mapping and dependency staging in
-`tests/windows_native.rs`.
+driver, or required import only as a temporary bridge. The same PR must update
+the replacement map with the planned selfhost/script coverage or link a
+follow-up issue. If the source should compile or run on Windows, also update the
+selfhost source mapping and dependency staging in `tests/windows_native.rs` and
+the no-Rust platform runner plan.
+
+### No-Rust replacement policy
+
+New behavior should first get TypeLisp-owned coverage: a module-local self-test,
+a smoke driver, a corpus fixture, or a shell/script runner that uses an existing
+TypeLisp compiler artifact. Add Rust tests only when they are explicitly
+temporary stage0 reference coverage, and record the deletion path in the
+coverage map.
+
+For new selfhost tests:
+
+- Put structural compiler checks next to the owning module as small helpers or a
+  `*-self-test` function.
+- Add a `*_smoke.tl` driver when the module should be executable through the
+  compiler boundary.
+- Add standalone source programs to `selfhost/tests/` when the external compiler
+  driver should accept or reject them, then update `scripts/verify-selfhost.sh`.
+- Add public command, package, docs, LSP, REPL, formatter, or platform cases to
+  the relevant verification script or to the follow-up harness that owns that
+  layer.
+- If a temporary Rust test is still needed, update
+  `RUST_TEST_COVERAGE.md` in the same PR with the replacement path.
 
 ### Linux integration tests
 
@@ -104,17 +133,19 @@ Linux environment.
 
 ## Checklist for new coverage
 
-- Pick the smallest useful layer: module-local assertion, smoke driver, Rust
-  compile test, Linux integration test, or external corpus case.
+- Pick the smallest useful layer: module-local assertion, smoke driver, external
+  corpus case, script runner, or temporary Rust bridge test with a recorded
+  no-Rust replacement.
 - Add or extend a module-local `*-self-test` for compiler internals that can be
   checked structurally.
 - Add or update a `*_smoke.tl` wrapper when the self-test should be executable.
-- Update the matching `tests/tl_*_compile.rs` test so the source compiles in
-  normal `cargo test`.
+- If a temporary Rust compile test is still required, update the matching
+  `tests/tl_*_compile.rs` test and the replacement map in the same PR.
 - Keep dependency staging in sync for `tests/integration.rs` and
   `tests/windows_native.rs` whenever imports change.
 - Use `selfhost/tests/` plus `scripts/verify-selfhost.sh` for source programs
   that should be accepted or rejected by `compile_smoke.tl`.
+- Update `RUST_TEST_COVERAGE.md` whenever adding or changing Rust tests.
 - Prefer naming conventions and representative examples in docs and comments;
   avoid maintaining long file lists that will go stale.
 - Run the focused tests for the layer touched, plus `cargo fmt`.

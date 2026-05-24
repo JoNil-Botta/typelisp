@@ -18,3 +18,4 @@ Fixes #(issue number)
 - [ ] `cargo clippy` is clean
 - [ ] Added tests for new functionality
 - [ ] Updated documentation if needed
+- [ ] New or changed Rust tests are listed in `selfhost/RUST_TEST_COVERAGE.md` with a no-Rust replacement path or follow-up issue

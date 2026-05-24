@@ -372,6 +372,11 @@
         (front-type-render elem)
         (front-cat3 ", " (int->string count) ")"))]
     [(AstTyDynArray elem) (front-cat3 "DynArray(" (front-type-render elem) ")")]
+    [(AstTyRegion region inner)
+      (front-cat3
+        "Region(\""
+        region
+        (front-cat3 "\", " (front-type-render inner) ")"))]
     [(AstTyEnum name) (front-cat3 "Enum(\"" name "\")")]
     [(AstTyStruct name) (front-cat3 "Struct(\"" name "\")")]
     [(AstTyVar name) (front-cat3 "Var(\"" name "\")")]))
@@ -535,6 +540,11 @@
         "StructGet { expr: "
         (front-expr-render inner)
         (front-cat3 ", field: \"" field "\" }"))]
+    [(AstExprWithRegion region body)
+      (front-cat3
+        "WithRegion { region: \""
+        region
+        (front-cat3 "\", body: [" (front-expr-list-render body) "] }"))]
     [(AstExprComptime inner)
       (front-cat3 "Comptime { expr: " (front-expr-render inner) " }")]))
 

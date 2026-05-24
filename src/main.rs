@@ -35,22 +35,9 @@ use module::{
 };
 use optimizer::Optimizer;
 use package::{PackageError, discover_manifest, load_manifest};
-use parser::parse;
 use typechecker::TypeChecker;
 
 const TYPELISP_STDLIB_ROOT_ENV: &str = "TYPELISP_STDLIB_ROOT";
-
-/// Parse `source`, or print a located diagnostic (file:line:col with a source
-/// snippet and caret) and exit. `file` is used for the diagnostic header.
-fn parse_or_exit(source: &str, file: &str) -> Program {
-    match parse(source) {
-        Ok(prog) => prog,
-        Err(e) => {
-            eprint!("{}", format_diagnostic(&e.to_diagnostic(), source, file));
-            std::process::exit(1);
-        }
-    }
-}
 
 fn format_diagnostic_from_sources(diag: &diagnostic::Diagnostic, sources: &[SourceFile]) -> String {
     let source = sources
@@ -312,20 +299,34 @@ fn command_file_arg(args: &[String], file_index: usize, usage: fn()) -> PathBuf 
 }
 
 fn run_tokenize_command(args: &[String], file_index: usize, usage: fn()) {
-    let file = command_file_arg(args, file_index, usage);
-    let source = fs::read_to_string(&file).expect("Failed to read file");
-    let mut lexer = lexer::Lexer::new(&source);
-    let tokens = lexer.tokenize().expect("Lexing failed");
-    for tok in tokens {
-        println!("{}", tok);
-    }
+    run_selfhost_frontend_command(args, file_index, usage, "tokenize");
 }
 
 fn run_parse_command(args: &[String], file_index: usize, usage: fn()) {
+    run_selfhost_frontend_command(args, file_index, usage, "parse");
+}
+
+fn run_selfhost_frontend_command(args: &[String], file_index: usize, usage: fn(), mode: &str) {
     let file = command_file_arg(args, file_index, usage);
-    let source = fs::read_to_string(&file).expect("Failed to read file");
-    let prog = parse_or_exit(&source, &file.display().to_string());
-    println!("{:#?}", prog);
+    let driver = find_selfhost_file("selfhost/frontend_tools.tl").unwrap_or_else(|| {
+        eprintln!(
+            "Error: could not find selfhost/frontend_tools.tl in the repo or near the executable"
+        );
+        std::process::exit(1);
+    });
+
+    let runtime_args = vec![mode.to_string(), file.display().to_string()];
+    let output = native_or_exit(native::run_source_file_in_temp_dir(
+        &driver,
+        &LoadOptions::default(),
+        &runtime_args,
+        native::host_target(),
+    ));
+    write_stream_or_exit(io::stdout(), &output.stdout, "stdout");
+    write_stream_or_exit(io::stderr(), &output.stderr, "stderr");
+    if !output.status.success() {
+        std::process::exit(output.status.code().unwrap_or(1));
+    }
 }
 
 fn run_check_command(args: &[String], file_index: usize, usage: fn()) {

@@ -890,6 +890,54 @@ fn debug_tokenize_matches_top_level_alias() {
 }
 
 #[test]
+fn tokenize_preserves_public_frontend_token_spellings() {
+    let dir = fixture_dir("selfhost-tokenize");
+    let source = dir.join("main.tl");
+    fs::write(&source, "(define (main [x : i64]) : i64 (+ x 1))\n").expect("write source");
+    let source_arg = source.to_str().expect("source path is utf-8");
+
+    let output = typelisp(&["tokenize", source_arg]);
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    assert_eq!(
+        stdout(&output).replace("\r\n", "\n"),
+        "(\ndefine\n(\nmain\n[\nx\n:\ni64\n]\n)\n:\ni64\n(\n+\nx\n1\n)\n)\n"
+    );
+}
+
+#[test]
+fn parse_prints_selfhost_program_summary() {
+    let dir = fixture_dir("selfhost-parse");
+    let source = write_main_source(&dir);
+    let source_arg = source.to_str().expect("source path is utf-8");
+
+    let output = typelisp(&["parse", source_arg]);
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    let out = stdout(&output);
+    assert!(out.contains("Program {"), "stdout:\n{}", out);
+    assert!(out.contains("DefFn { name: \"main\""), "stdout:\n{}", out);
+    assert!(out.contains("Literal(Int(42))"), "stdout:\n{}", out);
+}
+
+#[test]
+fn debug_parse_matches_top_level_alias() {
+    let dir = fixture_dir("debug-parse");
+    let source = write_main_source(&dir);
+    let source_arg = source.to_str().expect("source path is utf-8");
+
+    let alias = typelisp(&["parse", source_arg]);
+    let debug = typelisp(&["debug", "parse", source_arg]);
+
+    assert!(alias.status.success(), "alias stderr:\n{}", stderr(&alias));
+    assert!(debug.status.success(), "debug stderr:\n{}", stderr(&debug));
+    assert_eq!(debug.stdout, alias.stdout);
+    assert_eq!(debug.stderr, alias.stderr);
+}
+
+#[test]
 fn debug_check_matches_top_level_alias_with_stdlib_root() {
     let dir = fixture_dir("debug-check");
     let app_dir = dir.join("app");

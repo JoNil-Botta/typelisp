@@ -104,6 +104,10 @@ fn compiler_lower_tl_compiles_to_assembly() {
         "_tl_lower_string_ref:",
         "_tl_lower_substring:",
         "_tl_lower_string_concat:",
+        // Dynamic-array element access (#528).
+        "_tl_lower_array_ref:",
+        "_tl_lower_array_set:",
+        "_tl_lower_array_element_addr:",
         "_tl_lower_string_fields:",
         "_tl_lower_oob_abort:",
         "_tl_lower_load_at_offset:",

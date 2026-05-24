@@ -27,7 +27,7 @@
   (or (= code 47) (= code 92)))
 
 (define (compile-cli-flag? [value : String]) : bool
-  (and (> (string-length value) 0) (= (compile-cli-char-code-at value 0) 45)))
+  (and (> (string-length value) 0) (= (string-ref value 0) #-')))
 
 (define (compile-cli-default-output [input-path : String]) : String
   (let ([n : i64 (string-length input-path)]

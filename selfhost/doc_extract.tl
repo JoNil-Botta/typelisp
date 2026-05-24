@@ -126,10 +126,10 @@
 
 (define (doc-next-line-start [src : String] [line-end : i64] [n : i64]) : i64
   (if (< line-end n)
-    (let ([k : i64 (doc-char-code-at src line-end)])
-      (if (= k 13)
+    (let ([k : char (string-ref src line-end)])
+      (if (= k #\return')
         (if (< (+ line-end 1) n)
-          (if (= (doc-char-code-at src (+ line-end 1)) 10)
+          (if (= (string-ref src (+ line-end 1)) #\newline')
             (+ line-end 2)
             (+ line-end 1))
           (+ line-end 1))
@@ -199,7 +199,7 @@
   (let ([body-start : i64 (+ line-start prefix-len)])
     (begin
       (if (< body-start line-end)
-        (if (= (doc-char-code-at src body-start) 32)
+        (if (= (string-ref src body-start) #\space')
           (set! body-start (+ body-start 1))
           (set! body-start body-start))
         (set! body-start body-start))
@@ -232,7 +232,7 @@
     (begin
       (while keep
         (if (< i n)
-          (if (= (doc-char-code-at src i) 39)
+          (if (= (string-ref src i) #'')
             (begin
               (set! i (+ i 1))
               (set! keep false))

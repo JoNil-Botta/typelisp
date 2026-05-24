@@ -11,18 +11,18 @@
 (define (compiler-load-char-code-at [text : String] [idx : i64]) : i64
   (cast (string-ref text idx) : i64))
 
-(define (compiler-load-path-separator-code? [code : i64]) : bool
-  (or (= code 47) (= code 92)))
+(define (compiler-load-path-separator? [c : char]) : bool
+  (or (= c #/') (= c #\\')))
 
 (define (compiler-load-absolute-path? [path : String]) : bool
   (let ([n : i64 (string-length path)])
     (if (= n 0)
       false
-      (let ([first : i64 (compiler-load-char-code-at path 0)])
-        (if (compiler-load-path-separator-code? first)
+      (let ([first : char (string-ref path 0)])
+        (if (compiler-load-path-separator? first)
           true
           (if (> n 1)
-            (= (compiler-load-char-code-at path 1) 58)
+            (= (string-ref path 1) #:')
             false))))))
 
 (define (compiler-load-dirname [path : String]) : String
@@ -30,8 +30,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (compiler-load-path-separator-code?
-            (compiler-load-char-code-at path i))
+          (if (compiler-load-path-separator? (string-ref path i))
             (set! last i)
             (set! last last))
           (set! i (+ i 1))))

@@ -528,7 +528,7 @@ fn run_fmt_command(args: &[String]) {
         &driver,
         &options,
         &runtime_args,
-        BackendTarget::default(),
+        BackendTarget::host(),
     ));
     write_stream_or_exit(io::stdout(), &output.stdout, "stdout");
     write_stream_or_exit(io::stderr(), &output.stderr, "stderr");

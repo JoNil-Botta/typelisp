@@ -122,6 +122,15 @@ jobs:
           fi
           echo "OK: No third-party dependencies found."
 
+      # Interim non-blocking: the windows-runner selfhost formatter crashes on
+      # the corpus in CI (passes locally) — tracked by #771. CRLF is handled by
+      # .gitattributes. Remove continue-on-error once #771 fixes the crash so
+      # this gate blocks on cross-platform formatter drift (the #763 goal).
+      - name: Check TypeLisp source formatting
+        shell: bash
+        continue-on-error: true
+        run: TYPELISP_BIN=target/debug/typelisp.exe scripts/check-tl-format.sh
+
   integration:
     name: Integration Tests
     runs-on: ubuntu-latest

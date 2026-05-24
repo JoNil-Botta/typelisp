@@ -1559,6 +1559,9 @@ fn selfhost_backend_runtime_helpers_emit_assemble_link_and_run() {
         "tl: stdin failed",
         ".L_tl_substring_copy_loop:\n",
         ".L_tl_string_concat_copy_b:\n",
+        "tl_current_arena:\n",
+        ".L_tl_alloc_new_arena:\n",
+        "    movq %rax, tl_current_arena(%rip)\n",
         "    call tl_alloc\n",
     ] {
         assert!(
@@ -1676,6 +1679,16 @@ fn selfhost_compile_tl_emitted_binary_links_and_emits_stage2() {
     assert!(stage2_asm.exists(), "stage1 did not write stage2.s");
 
     let stage2_text = fs::read_to_string(&stage2_asm).expect("read stage2 assembly");
+    for arena_snippet in [
+        "tl_current_arena:\n",
+        ".L_tl_alloc_new_arena:\n",
+        "    movq %rax, tl_current_arena(%rip)\n",
+    ] {
+        assert!(
+            stage2_text.contains(arena_snippet),
+            "stage2 assembly missing selfhost arena allocator marker {arena_snippet:?}"
+        );
+    }
     for mangled in [
         "call _tl_string_eq",
         "call _tl_int__gtstring",

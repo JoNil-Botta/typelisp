@@ -489,7 +489,7 @@
 
 ;; (the enclosing arm's next-arm test) so matching continues. Nested variant
 
-;; subpatterns are still deferred. `fail-label` is unused when every subpattern
+;; subpatterns recurse on the field's tag. `fail-label` is unused when every subpattern
 
 ;; is irrefutable.
 
@@ -587,17 +587,101 @@
                     (ErrLowerEnv
                       (lower-diagnostic
                         "lower: unsupported enum payload literal pattern type")))]
+                [(AstPatVariant nested-name nested-args)
+                  ;; Refutable nested variant payload (#651): load the payload
+                  ;; field (an enum pointer), test its tag against the nested
+                  ;; variant, and on mismatch branch to the enclosing arm's
+                  ;; next-arm test (`fail-label`); on match recurse into the
+                  ;; nested variant's own payload fields (tag at offset 0,
+                  ;; payloads from offset 8), then continue the outer payloads.
+                  (match ctx
+                    [(TcContext program _ registries)
+                      (match (compiler-registries-lookup-variant
+                        registries
+                        nested-name)
+                        [(NoneI64)
+                          (ErrLowerEnv
+                            (lower-diagnostic
+                              (string-append
+                                "lower: unknown nested variant "
+                                nested-name)))]
+                        [(SomeI64 handle)
+                          (match (compiler-registries-variant-fields
+                            program
+                            handle)
+                            [(ErrAstTypeList message)
+                              (ErrLowerEnv (lower-diagnostic message))]
+                            [(OkAstTypeList nested-fields)
+                              (match (lower-load-at-offset
+                                state
+                                base
+                                offset
+                                resolved)
+                                [(LowerExpr field-state field-value _)
+                                  (match (lower-load-at-offset
+                                    field-state
+                                    field-value
+                                    0
+                                    (AstTyI64))
+                                    [(LowerExpr tag-state tag-value _)
+                                      (match (lower-state-alloc-var tag-state)
+                                        [(LowerAlloc eq-alloc eq-var)
+                                          (match (lower-state-fresh-label
+                                            (lower-state-emit
+                                              eq-alloc
+                                              (IrInstrBinOp
+                                                eq-var
+                                                IrBinEq
+                                                tag-value
+                                                (IrValueI64
+                                                  (compiler-registry-handle-child-index
+                                                    handle))
+                                                (AstTyI64)))
+                                            "payload_ok")
+                                            [(LowerLabel ok-state ok-label)
+                                              (match (lower-bind-variant-payloads
+                                                ctx
+                                                (lower-state-finish-block
+                                                  (lower-state-emit
+                                                    ok-state
+                                                    (IrInstrBranch
+                                                      (IrValueVar eq-var)
+                                                      ok-label
+                                                      fail-label))
+                                                  ok-label)
+                                                env
+                                                type-env
+                                                field-value
+                                                nested-args
+                                                nested-fields
+                                                8
+                                                fail-label)
+                                                [(OkLowerEnv
+                                                    nested-state
+                                                    nested-env
+                                                    nested-type-env)
+                                                  (lower-bind-variant-payloads
+                                                    ctx
+                                                    nested-state
+                                                    nested-env
+                                                    nested-type-env
+                                                    base
+                                                    rest-patterns
+                                                    rest-types
+                                                    next-cursor
+                                                    fail-label)]
+                                                [(ErrLowerEnv message)
+                                                  (ErrLowerEnv message)])])])])])])])])]
                 [_
                   (ErrLowerEnv
-                    (lower-diagnostic
-                      "lower: unsupported enum payload pattern (nested variant subpatterns not yet supported)"))])))]
+                    (lower-diagnostic "lower: unsupported enum payload pattern"))])))]
         [(AstTypeNil)
           (ErrLowerEnv
             (lower-diagnostic "lower: enum payload pattern arity mismatch"))])]))
 
 ;; A payload subpattern is refutable when it can fail to match at run time. Only
 
-;; literal and (deferred) nested-variant subpatterns are refutable here; binding,
+;; literal and nested-variant subpatterns are refutable here; binding,
 
 ;; var, wildcard, and tuple subpatterns always match structurally.
 
@@ -3119,6 +3203,22 @@
     [None 5]))
 (define (main) : i64 0)")
 
+;; A refutable nested-variant payload subpattern (#651): `(Wrap (A n))` tests
+
+;; the inner enum's tag and, on mismatch, falls through to `(Wrap inner)` (the
+
+;; irrefutable Wrap arm keeps the match exhaustive).
+
+(define (compiler-lower-enum-nested-payload-source) : String
+  "(defenum Inner (A i64) (B i64))
+(defenum Outer (Wrap Inner) (Empty))
+(define (classify [o : Outer]) : i64
+  (match o
+    [(Wrap (A n)) n]
+    [(Wrap inner) 50]
+    [Empty 0]))
+(define (main) : i64 0)")
+
 (define (compiler-lower-enum-string-literal-payload-source) : String
   "(defenum Token (TIdent String) (TEnd))
 (define (classify [t : Token]) : i64
@@ -3367,7 +3467,10 @@
           (and
             (and
               (compiler-lower-ok? (compiler-lower-enum-match-source))
-              (compiler-lower-ok? (compiler-lower-enum-literal-payload-source)))
+              (and
+                (compiler-lower-ok?
+                  (compiler-lower-enum-literal-payload-source))
+                (compiler-lower-ok? (compiler-lower-enum-nested-payload-source))))
             (compiler-lower-error-ok?
               (compiler-lower-enum-string-literal-payload-source)
               "lower: unsupported enum payload literal pattern type"))

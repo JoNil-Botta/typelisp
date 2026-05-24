@@ -20,6 +20,9 @@ pub enum Type {
     Bool,
     /// Character
     Char,
+    /// Compile-time-only region tag for heap-backed handles created within a
+    /// `(with-region name ...)` scope. Lowering strips this wrapper before IR.
+    Region(String, Box<Type>),
     /// Immutable string. As a *value* a string is a pointer to its inline fat
     /// `{ ptr, len }` representation (16 bytes: data pointer + i64 length), so —
     /// like an enum — it is pointer-sized everywhere it flows through the IR.
@@ -86,6 +89,7 @@ impl fmt::Display for Type {
             Type::F32 => write!(f, "f32"),
             Type::Bool => write!(f, "bool"),
             Type::Char => write!(f, "char"),
+            Type::Region(region, inner) => write!(f, "(in {} {})", region, inner),
             Type::String => write!(f, "String"),
             Type::Unit => write!(f, "unit"),
             Type::Never => write!(f, "never"),
@@ -123,6 +127,7 @@ impl Type {
             Type::I32 | Type::U32 | Type::F32 => 4,
             Type::I16 | Type::U16 => 2,
             Type::I8 | Type::U8 | Type::Bool | Type::Char => 1,
+            Type::Region(_, inner) => inner.size(),
             Type::Unit => 0,
             Type::Func(_, _) => 8, // closure descriptor pointer
             // A tuple *value* is a pointer to its inline element storage.
@@ -152,6 +157,7 @@ impl Type {
             Type::I32 | Type::U32 | Type::F32 => 4,
             Type::I16 | Type::U16 => 2,
             Type::I8 | Type::U8 | Type::Bool | Type::Char | Type::Unit => 1,
+            Type::Region(_, inner) => inner.align(),
             Type::Func(_, _) => 8,
             Type::Tuple(_) => 8,
             Type::Array(ty, _) => ty.align(),
@@ -167,6 +173,9 @@ impl Type {
     }
 
     pub fn is_numeric(&self) -> bool {
+        if let Type::Region(_, inner) = self {
+            return inner.is_numeric();
+        }
         matches!(
             self,
             Type::I64
@@ -183,6 +192,9 @@ impl Type {
     }
 
     pub fn is_integer(&self) -> bool {
+        if let Type::Region(_, inner) = self {
+            return inner.is_integer();
+        }
         matches!(
             self,
             Type::I64
@@ -198,6 +210,9 @@ impl Type {
 
     #[allow(dead_code)]
     pub fn is_signed(&self) -> bool {
+        if let Type::Region(_, inner) = self {
+            return inner.is_signed();
+        }
         matches!(self, Type::I64 | Type::I32 | Type::I16 | Type::I8)
     }
 
@@ -205,6 +220,7 @@ impl Type {
     /// Bit width for integer types. Panics on non-integer.
     pub fn bit_width(&self) -> u8 {
         match self {
+            Type::Region(_, inner) => inner.bit_width(),
             Type::I64 | Type::U64 => 64,
             Type::I32 | Type::U32 => 32,
             Type::I16 | Type::U16 => 16,
@@ -215,17 +231,41 @@ impl Type {
 
     #[allow(dead_code)]
     pub fn is_float(&self) -> bool {
+        if let Type::Region(_, inner) = self {
+            return inner.is_float();
+        }
         matches!(self, Type::F64 | Type::F32)
     }
 
     #[allow(dead_code)]
     pub fn is_vector(&self) -> bool {
+        if let Type::Region(_, inner) = self {
+            return inner.is_vector();
+        }
         matches!(self, Type::Vector(_, _))
     }
 
     #[allow(dead_code)]
     pub fn is_mask(&self) -> bool {
+        if let Type::Region(_, inner) = self {
+            return inner.is_mask();
+        }
         matches!(self, Type::Mask(_))
+    }
+
+    pub fn strip_regions(&self) -> Type {
+        match self {
+            Type::Region(_, inner) => inner.strip_regions(),
+            Type::Func(args, ret) => Type::Func(
+                args.iter().map(Type::strip_regions).collect(),
+                Box::new(ret.strip_regions()),
+            ),
+            Type::Tuple(elems) => Type::Tuple(elems.iter().map(Type::strip_regions).collect()),
+            Type::Array(elem, n) => Type::Array(Box::new(elem.strip_regions()), *n),
+            Type::DynArray(elem) => Type::DynArray(Box::new(elem.strip_regions())),
+            Type::Vector(elem, lanes) => Type::Vector(Box::new(elem.strip_regions()), *lanes),
+            other => other.clone(),
+        }
     }
 }
 

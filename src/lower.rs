@@ -98,7 +98,9 @@ impl ProgramLowerer {
     /// Resolve a parsed type so any `Type::Var` naming a declared enum or struct
     /// becomes the nominal `Type::Enum`/`Type::Struct`. Chains both registries.
     fn resolve_type(&self, ty: &Type) -> Type {
-        self.structs.resolve_type(&self.enums.resolve_type(ty))
+        self.structs
+            .resolve_type(&self.enums.resolve_type(ty))
+            .strip_regions()
     }
 
     fn fn_context(&self) -> FnLowererContext<'_> {
@@ -524,6 +526,14 @@ fn type_kind_escapes_via_return_inner(
     seen_structs: &mut HashSet<String>,
 ) -> bool {
     match ty {
+        Type::Region(_, inner) => type_kind_escapes_via_return_inner(
+            inner,
+            kind,
+            enums,
+            structs,
+            seen_enums,
+            seen_structs,
+        ),
         Type::Enum(name) => {
             if kind == AggKind::Enum {
                 return true;
@@ -606,6 +616,9 @@ fn type_kind_escapes_via_return_inner(
 }
 
 fn dyn_array_elem_is_aggregate_pointer(ty: &Type) -> bool {
+    if let Type::Region(_, inner) = ty {
+        return dyn_array_elem_is_aggregate_pointer(inner);
+    }
     matches!(
         ty,
         Type::Enum(_) | Type::Struct(_) | Type::String | Type::DynArray(_)
@@ -682,7 +695,9 @@ impl FnLowerer {
     /// Resolve a parsed type so any `Type::Var` naming a declared enum or struct
     /// becomes the nominal `Type::Enum`/`Type::Struct`. Chains both registries.
     fn resolve_type(&self, ty: &Type) -> Type {
-        self.structs.resolve_type(&self.enums.resolve_type(ty))
+        self.structs
+            .resolve_type(&self.enums.resolve_type(ty))
+            .strip_regions()
     }
 
     fn fn_context(&self) -> FnLowererContext<'_> {
@@ -954,6 +969,7 @@ impl FnLowerer {
             Type::I8 | Type::U8 | Type::Char => Value::ConstI8(0),
             Type::Bool => Value::ConstBool(false),
             Type::F64 | Type::F32 => Value::ConstF64(0.0),
+            Type::Region(_, inner) => self.dummy_value_for_type(&inner),
             Type::Unit
             | Type::Never
             | Type::Array(_, _)

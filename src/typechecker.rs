@@ -1405,6 +1405,17 @@ impl TypeChecker {
                 // Casts are only defined between scalar number-like types
                 // (integers and `char`, which is an 8-bit code unit here).
                 let castable = |t: &Type| t.is_integer() || matches!(t, Type::Char);
+                let float_cast =
+                    matches!(expr_ty, Type::F32 | Type::F64) || matches!(ty, Type::F32 | Type::F64);
+                if float_cast {
+                    return Err(TypeError::at(
+                        format!(
+                            "floating-point casts are not supported yet; casts currently support integer/char conversions only, got {} -> {}",
+                            expr_ty, ty
+                        ),
+                        span,
+                    ));
+                }
                 if !castable(&expr_ty) || !castable(&ty) {
                     return Err(TypeError::at(
                         format!(
@@ -2927,6 +2938,24 @@ mod tests {
         let prog = parse(src).unwrap();
         let mut tc = TypeChecker::new();
         tc.check_program(&prog)
+    }
+
+    #[test]
+    fn test_typecheck_float_cast_diagnostic_is_explicit() {
+        let err = check("(define (main) : i64 (cast 3.5 : i64))").unwrap_err();
+        assert_eq!(
+            err.msg,
+            "floating-point casts are not supported yet; casts currently support integer/char conversions only, got f64 -> i64"
+        );
+    }
+
+    #[test]
+    fn test_typecheck_non_float_cast_diagnostic_stays_generic() {
+        let err = check("(define (main) : i64 (cast true : i64))").unwrap_err();
+        assert_eq!(
+            err.msg,
+            "cast requires integer/char source and target, got bool -> i64"
+        );
     }
 
     const SHAPE: &str = "(defenum Shape (Circle i64) (Square i64) (Nothing))";

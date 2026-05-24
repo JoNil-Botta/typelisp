@@ -68,16 +68,27 @@
   (and (backend-and4 a b c d) (backend-and4 e f g h)))
 
 ;; Best-available diagnostic for a backend error originating inside `function`
+
 ;;
+
 ;; (#605). When the lowering provenance side table has a source span for the
+
 ;;
+
 ;; function, the diagnostic is stamped with that real line/column via
+
 ;;
+
 ;; `compiler-diagnostic-from-ast-span`; otherwise it falls back to the previous
+
 ;;
+
 ;; `path:1:1` location. `function` is the raw IR function name (the key used by
+
 ;;
+
 ;; the spans table), not the mangled assembly symbol.
+
 (define (compiler-backend-function-diagnostic
   [spans : CompilerSourceSpans]
   [function : String]
@@ -1819,65 +1830,66 @@
           :
           CompilerDiagnostic
           (compiler-backend-function-diagnostic spans name "")])
-      (let ([reg-plan : CompilerRegPlan (compiler-reg-plan-function func)])
-        (let ([raw-assignments
-            :
-            CompilerRegAssignmentList
-            (compiler-reg-plan-assignments reg-plan)])
-          (let ([assignments
+        (let ([reg-plan : CompilerRegPlan (compiler-reg-plan-function func)])
+          (let ([raw-assignments
               :
               CompilerRegAssignmentList
-              (compiler-backend-drop-param-assignments raw-assignments params)]
-            [types
-              :
-              CompilerRegVarTypeList
-              (compiler-reg-function-var-types func)])
-            (match (compiler-backend-emit-param-spills
-              target
-              assignments
-              params
-              0
-              0
-              0)
-              [(OkCompilerBackend spills)
-                (let ([symbol : String (compiler-backend-user-symbol name)])
-                  (match (compiler-backend-emit-blocks
-                    target
-                    symbol
-                    blocks
-                    blocks
-                    assignments
-                    vars
-                    types
-                    ret-ty
-                    plan
-                    functions
-                    externs
-                    func-diag)
-                    [(OkCompilerBackend body)
-                      (let ([frame
-                          :
-                          i64
-                          (compiler-backend-frame-size
-                            (compiler-backend-frame-slots vars assignments))])
-                        (OkCompilerBackend
-                          (backend-cat5
-                            ".globl "
-                            symbol
-                            "\n"
+              (compiler-reg-plan-assignments reg-plan)])
+            (let ([assignments
+                :
+                CompilerRegAssignmentList
+                (compiler-backend-drop-param-assignments raw-assignments params)]
+              [types
+                :
+                CompilerRegVarTypeList
+                (compiler-reg-function-var-types func)])
+              (match (compiler-backend-emit-param-spills
+                target
+                assignments
+                params
+                0
+                0
+                0)
+                [(OkCompilerBackend spills)
+                  (let ([symbol : String (compiler-backend-user-symbol name)])
+                    (match (compiler-backend-emit-blocks
+                      target
+                      symbol
+                      blocks
+                      blocks
+                      assignments
+                      vars
+                      types
+                      ret-ty
+                      plan
+                      functions
+                      externs
+                      func-diag)
+                      [(OkCompilerBackend body)
+                        (let ([frame
+                            :
+                            i64
+                            (compiler-backend-frame-size
+                              (compiler-backend-frame-slots vars assignments))])
+                          (OkCompilerBackend
                             (backend-cat5
+                              ".globl "
                               symbol
-                              ":\n    pushq %rbp\n    movq %rsp, %rbp\n"
-                              (compiler-backend-emit-stack-sub frame)
-                              (string-append
-                                (compiler-backend-emit-save-callee-regs
-                                  assignments
-                                  vars)
-                                (string-append spills body))
-                              "\n")
-                            "")))]
-                    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))]))
+                              "\n"
+                              (backend-cat5
+                                symbol
+                                ":\n    pushq %rbp\n    movq %rsp, %rbp\n"
+                                (compiler-backend-emit-stack-sub frame)
+                                (string-append
+                                  (compiler-backend-emit-save-callee-regs
+                                    assignments
+                                    vars)
+                                  (string-append spills body))
+                                "\n")
+                              "")))]
+                      [(ErrCompilerBackend message)
+                        (ErrCompilerBackend message)]))]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))]))
 
 (define (compiler-backend-emit-functions
   [target : CompilerBackendTarget]
@@ -3400,14 +3412,23 @@ tl_string_concat:
 ;; entry/calls and target-specific runtime helpers.
 
 ;; Backend entry points come in two flavors (#605): the original
+
 ;;
+
 ;; program-only variants (kept for existing call sites and smoke tests) supply
+
 ;;
+
 ;; an empty provenance table, so backend diagnostics fall back to `path:1:1`;
+
 ;;
+
 ;; the `-with-spans` variants thread the lowering provenance side table so
+
 ;;
+
 ;; backend errors report the offending function's real source location.
+
 (define (compiler-backend-emit-program-for-target
   [program : CompilerIrProgram]
   [target : CompilerBackendTarget]) : ResultCompilerBackend

@@ -55,8 +55,11 @@
   (ErrLowerFunction CompilerDiagnostic))
 
 ;; `lower-decls` also threads the `CompilerSourceSpans` provenance side table
+
 ;;
+
 ;; (#605) so each lowered function's source span is recorded alongside the IR.
+
 (defenum ResultLowerDecls
   (OkLowerDecls
     CompilerIrGlobalList
@@ -66,14 +69,23 @@
   (ErrLowerDecls CompilerDiagnostic))
 
 ;; A successful lowering returns the IR `CompilerIrProgram` plus a
+
 ;;
+
 ;; `CompilerSourceSpans` side table (#605) mapping each lowered function's name
+
 ;;
+
 ;; to the `AstSourceSpan` of its source body, so backend diagnostics can report a
+
 ;;
+
 ;; real source location. The provenance table is kept outside the IR so the
+
 ;;
+
 ;; optimizer and liveness data model stay unchanged.
+
 (defenum ResultCompilerLower
   (OkCompilerLower CompilerIrProgram CompilerSourceSpans)
   (ErrCompilerLower CompilerDiagnostic))
@@ -98,12 +110,19 @@
     [_ (lower-diagnostic message)]))
 
 ;; Best-available source span for an expression: the outermost `AstExprSpanned`
+
 ;;
+
 ;; wrapper the parser attached (#605). Used to populate the lowering provenance
+
 ;;
+
 ;; side table from a function's body. Returns `CompilerNoSourceSpan` for an
+
 ;;
+
 ;; unspanned expression (synthesized IR has no source location).
+
 (define (lower-ast-expr-span [expr : AstExpr]) : CompilerMaybeSourceSpan
   (match expr
     [(AstExprSpanned _ span) (CompilerSomeSourceSpan span)]
@@ -3120,10 +3139,15 @@
       (ErrLowerValue (lower-diagnostic "lower: unsupported global initializer"))]))
 
 ;; Record `name -> body span` into the provenance table (#605). A function whose
+
 ;;
+
 ;; body carries no source span leaves the table unchanged, so the backend simply
+
 ;;
+
 ;; falls back to its default location for that function.
+
 (define (lower-record-function-span
   [spans : CompilerSourceSpans]
   [name : String]
@@ -3142,8 +3166,7 @@
   [externs : CompilerIrExternList]
   [spans : CompilerSourceSpans]) : ResultLowerDecls
   (match decls
-    [(AstDeclNil)
-      (OkLowerDecls globals functions externs spans)]
+    [(AstDeclNil) (OkLowerDecls globals functions externs spans)]
     [(AstDeclCons decl rest)
       (match decl
         [(AstDeclDef name _ expr)
@@ -3160,8 +3183,7 @@
                     externs
                     spans)]
                 [(ErrLowerValue message) (ErrLowerDecls message)])]
-            [(ErrTcType message)
-              (ErrLowerDecls (lower-diagnostic message))])]
+            [(ErrTcType message) (ErrLowerDecls (lower-diagnostic message))])]
         [(AstDeclExtern name ty)
           (lower-decls
             ctx
@@ -3478,12 +3500,19 @@
     [(ErrCompilerLower _) false]))
 
 ;; Provenance side-table smoke (#605): the smoke source defines two functions
+
 ;;
+
 ;; (`inc` on line 3 and `main` on line 4 with its body on line 5). After lowering
+
 ;;
+
 ;; the spans table must hold exactly those two entries, keyed by function name,
+
 ;;
+
 ;; recording each function body's source start line.
+
 (define (compiler-lower-span-start-line-ok?
   [spans : CompilerSourceSpans]
   [name : String]

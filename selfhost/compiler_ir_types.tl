@@ -120,22 +120,39 @@
   (IrProgram CompilerIrGlobalList CompilerIrFunctionList CompilerIrExternList))
 
 ;; Source provenance side table for the lowered IR (#605). Kept OUTSIDE
+
 ;;
+
 ;; `CompilerIrProgram` so the optimizer and liveness data model stay unchanged,
+
 ;;
+
 ;; mirroring the Rust pipeline's `SourceSpans`. It maps an IR function's name
+
 ;;
+
 ;; (including generated global-init functions) to the `AstSourceSpan` of the
+
 ;;
+
 ;; source construct that produced it, so backend diagnostics can report a real
+
 ;;
+
 ;; line/column instead of falling back to `path:1:1`.
+
 ;;
+
 ;; The table is a deterministic association list keyed by function name; the
+
 ;;
+
 ;; first binding for a name wins on lookup (entries are appended in lowering
+
 ;;
+
 ;; order).
+
 (defenum CompilerSourceSpansEntry
   (CompilerSourceSpansEntry String AstSourceSpan))
 
@@ -167,8 +184,11 @@
         (compiler-source-spans-entry-list-append rest entry))]))
 
 ;; Record `name -> span`. Lowering appends in order; the first binding for a
+
 ;;
+
 ;; name wins on lookup, so re-recording a name is a no-op for diagnostics.
+
 (define (compiler-source-spans-insert
   [spans : CompilerSourceSpans]
   [name : String]
@@ -200,6 +220,7 @@
       (compiler-source-spans-entry-list-lookup entries name)]))
 
 ;; Number of recorded entries; supports provenance smoke assertions (#605).
+
 (define (compiler-source-spans-entry-list-count
   [entries : CompilerSourceSpansEntryList]) : i64
   (match entries

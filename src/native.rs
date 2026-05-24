@@ -16,6 +16,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const WINDOWS_EXECUTABLE_STACK_SIZE: usize = 16 * 1024 * 1024;
+
 #[derive(Debug, Clone)]
 pub struct NativeError {
     message: String,
@@ -272,7 +274,8 @@ fn assemble_and_link(
                 .arg("/NOLOGO")
                 .arg(obj_path)
                 .arg(format!("/OUT:{}", bin_path.display()))
-                .arg("/SUBSYSTEM:CONSOLE");
+                .arg("/SUBSYSTEM:CONSOLE")
+                .arg(format!("/STACK:{WINDOWS_EXECUTABLE_STACK_SIZE}"));
         }
     }
     for lib in toolchain.libraries {

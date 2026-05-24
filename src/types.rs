@@ -31,7 +31,9 @@ pub enum Type {
     /// This is not user-denotable syntax; the typechecker uses it for builtin
     /// `panic` / `error` and coerces it at expected-type sites.
     Never,
-    /// Function type: (-> arg1 arg2 ... ret)
+    /// Function type: (-> arg1 arg2 ... ret). Function values are pointer-sized
+    /// closure descriptor pointers; direct named calls keep the normal function
+    /// ABI.
     Func(Vec<Type>, Box<Type>),
     /// Tuple type: (Tuple t1 t2 ...). As a *value* a tuple is a pointer to
     /// inline element storage. The storage itself lays out fields sequentially
@@ -122,7 +124,7 @@ impl Type {
             Type::I16 | Type::U16 => 2,
             Type::I8 | Type::U8 | Type::Bool | Type::Char => 1,
             Type::Unit => 0,
-            Type::Func(_, _) => 8, // function pointer
+            Type::Func(_, _) => 8, // closure descriptor pointer
             // A tuple *value* is a pointer to its inline element storage.
             Type::Tuple(_) => 8,
             Type::Array(ty, n) => ty.size() * n,

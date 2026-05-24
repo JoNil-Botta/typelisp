@@ -60,8 +60,8 @@ pub enum Value {
     /// those bytes (the `ptr` field of a fat string). The value is pointer-sized
     /// (a data pointer), used only to populate fat-string storage at lowering.
     ConstStr(String),
-    /// Address of a named function or extern. This is pointer-sized and is
-    /// materialized by the backend as a code address.
+    /// Pointer-sized closure descriptor for a named function or extern.
+    /// The backend materializes a descriptor address, not a raw code pointer.
     Function(String),
     Var(VarId),
     Global(String),
@@ -151,7 +151,7 @@ pub enum Instruction {
         args: Vec<Value>,
         ty: Type,
     },
-    /// Indirect call through function pointer
+    /// Indirect call through a closure descriptor pointer.
     CallIndirect {
         dst: Option<VarId>,
         func: Value,

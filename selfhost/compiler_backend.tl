@@ -2,6 +2,8 @@
 
 (import "compiler_lower.tl")
 
+(import "compiler_diagnostic.tl")
+
 (import "compiler_regalloc.tl")
 
 (import "text_buf.tl")
@@ -2229,7 +2231,8 @@ tl_string_concat:
 (define (compiler-backend-emit-source [src : String]) : ResultCompilerBackend
   (match (lower-compiler-source src)
     [(OkCompilerLower program) (compiler-backend-emit-program program)]
-    [(ErrCompilerLower message) (ErrCompilerBackend message)]))
+    [(ErrCompilerLower diag)
+      (ErrCompilerBackend (compiler-diagnostic-message diag))]))
 
 (define (compiler-backend-emit-source-for-target
   [src : String]
@@ -2237,7 +2240,8 @@ tl_string_concat:
   (match (lower-compiler-source src)
     [(OkCompilerLower program)
       (compiler-backend-emit-program-for-target program target)]
-    [(ErrCompilerLower message) (ErrCompilerBackend message)]))
+    [(ErrCompilerLower diag)
+      (ErrCompilerBackend (compiler-diagnostic-message diag))]))
 
 (define (compiler-backend-char-code-at [text : String] [idx : i64]) : i64
   (compiler-backend-char-code (string-ref text idx)))

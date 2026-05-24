@@ -40,6 +40,9 @@ jobs:
       - name: Verify public tools without Rust harness
         run: TYPELISP_BIN=target/debug/typelisp scripts/verify-public-tools.sh
 
+      - name: Verify selfhost compile manifest without Rust harness
+        run: TYPELISP_BIN=target/debug/typelisp scripts/verify-selfhost-compile-manifest.sh
+
       - name: Run tests
         run: cargo test --verbose
 
@@ -91,6 +94,10 @@ jobs:
       - name: Verify public tools without Rust harness
         shell: bash
         run: TYPELISP_BIN=target/debug/typelisp.exe scripts/verify-public-tools.sh
+
+      - name: Verify selfhost compile manifest without Rust harness
+        shell: bash
+        run: TYPELISP_BIN=target/debug/typelisp.exe scripts/verify-selfhost-compile-manifest.sh
 
       - name: Run tests
         run: cargo test --verbose

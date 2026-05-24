@@ -1,8 +1,12 @@
-use crate::ast::Decl;
+use crate::ast::{Decl, Expr};
 use crate::diagnostic::format_diagnostic;
 use crate::lexer::{Lexer, LexerError, Token};
+use crate::module::LoadOptions;
+use crate::native;
 use crate::parser::{ReplItem, parse_repl_item};
 use crate::typechecker::TypeChecker;
+use crate::types::Type;
+use std::collections::BTreeMap;
 use std::io::{self, BufRead, IsTerminal, Write};
 
 const BANNER: &str = "TypeLisp REPL. Type .help for commands.\n";
@@ -13,7 +17,9 @@ TypeLisp REPL commands:
   .type <expr>  Print the inferred type without running code
   .exit         Exit the REPL
 
-Top-level declarations are remembered for later .type commands.
+Top-level declarations are remembered for the rest of the session. A bare
+expression is type-checked against the session and run by compiling a scratch
+program; its value is printed for i64, bool, f64, char, String, and unit.
 ";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,24 +90,36 @@ fn input_status(input: &str) -> ReplInputStatus {
     }
 }
 
-fn handle_complete_input<E: Write>(
+fn handle_complete_input<W: Write, E: Write>(
     input: &str,
     session_decls: &mut Vec<Decl>,
+    session_sources: &mut Vec<String>,
+    stdout: &mut W,
     stderr: &mut E,
 ) -> io::Result<()> {
     match parse_repl_item(input) {
         Ok(ReplItem::Decl(decl)) => match TypeChecker::check_repl_decl(session_decls, &decl) {
-            Ok(()) => session_decls.push(decl),
+            // Only mutate the session once the declaration type-checks: keep the
+            // AST (for type-checking later items) and its source (for codegen of
+            // scratch programs) in lock step.
+            Ok(()) => {
+                session_decls.push(decl);
+                session_sources.push(input.trim().to_string());
+            }
             Err(err) => write!(
                 stderr,
                 "{}",
                 format_diagnostic(&err.to_diagnostic(), input, "<repl>")
             )?,
         },
-        Ok(ReplItem::Expr(_)) => {
-            writeln!(
+        Ok(ReplItem::Expr(expr)) => {
+            evaluate_expr(
+                input.trim(),
+                &expr,
+                session_decls,
+                session_sources,
+                stdout,
                 stderr,
-                "REPL evaluation is not implemented yet. Type .help for commands."
             )?;
         }
         Err(err) => {
@@ -109,6 +127,84 @@ fn handle_complete_input<E: Write>(
         }
     }
     Ok(())
+}
+
+/// Type-check a bare expression against the session, then run it by compiling a
+/// scratch program (the accepted declarations plus a generated `main` that
+/// prints the result). The expression itself is never persisted.
+fn evaluate_expr<W: Write, E: Write>(
+    expr_source: &str,
+    expr: &Expr,
+    session_decls: &[Decl],
+    session_sources: &[String],
+    stdout: &mut W,
+    stderr: &mut E,
+) -> io::Result<()> {
+    let ty = match TypeChecker::check_repl_expr(session_decls, expr) {
+        Ok(ty) => ty,
+        Err(err) => {
+            return write!(
+                stderr,
+                "{}",
+                format_diagnostic(&err.to_diagnostic(), expr_source, "<repl>")
+            );
+        }
+    };
+
+    let eval_body = match eval_body_for(&ty, expr_source) {
+        Some(form) => form,
+        None => {
+            return writeln!(stderr, "REPL: cannot display a value of type {ty}");
+        }
+    };
+
+    let program = build_scratch_program(session_sources, &eval_body);
+    let options = LoadOptions {
+        stdlib_roots: Vec::new(),
+        package_roots: BTreeMap::new(),
+    };
+    match native::run_scratch_source(&program, &options, &[], native::host_target()) {
+        Ok(output) => {
+            stdout.write_all(&output.stdout)?;
+            stdout.flush()?;
+            stderr.write_all(&output.stderr)?;
+        }
+        Err(err) => writeln!(stderr, "REPL evaluation failed: {}", err.user_message())?,
+    }
+    Ok(())
+}
+
+/// The body that displays `expr_source`'s value, or `None` when the result type
+/// has no REPL display form. Value forms yield exactly one trailing newline:
+/// `print`/`print-bool`/`print-float` already emit one, while `print-char` and
+/// `print-string` do not, so those add `print-newline`. A `unit` expression has
+/// no value, so it is run for its effects exactly as written, with no injected
+/// output.
+fn eval_body_for(ty: &Type, expr_source: &str) -> Option<String> {
+    let body = match ty {
+        Type::I64 => format!("(print {expr_source})"),
+        Type::Bool => format!("(print-bool {expr_source})"),
+        Type::F64 => format!("(print-float {expr_source})"),
+        Type::Char => format!("(begin (print-char {expr_source}) (print-newline))"),
+        Type::String => format!("(begin (print-string {expr_source}) (print-newline))"),
+        Type::Unit => expr_source.to_string(),
+        _ => return None,
+    };
+    Some(body)
+}
+
+/// Assemble a runnable program from the session's accepted declaration sources
+/// and a generated `main` that evaluates `eval_body` and returns 0.
+fn build_scratch_program(session_sources: &[String], eval_body: &str) -> String {
+    let mut program = String::new();
+    for decl in session_sources {
+        program.push_str(decl);
+        program.push('\n');
+    }
+    program.push_str("(define (main) : i64\n  (begin\n    ");
+    program.push_str(eval_body);
+    program.push_str("\n    0))\n");
+    program
 }
 
 pub fn run_stdio() -> io::Result<ExitReason> {
@@ -136,6 +232,7 @@ where
     }
 
     let mut session_decls = Vec::new();
+    let mut session_sources: Vec<String> = Vec::new();
     let mut line = String::new();
     let mut pending = String::new();
     loop {
@@ -186,7 +283,13 @@ where
             ReplInputStatus::Empty => pending.clear(),
             ReplInputStatus::Incomplete => {}
             ReplInputStatus::Complete => {
-                handle_complete_input(&pending, &mut session_decls, &mut stderr)?;
+                handle_complete_input(
+                    &pending,
+                    &mut session_decls,
+                    &mut session_sources,
+                    &mut stdout,
+                    &mut stderr,
+                )?;
                 pending.clear();
             }
             ReplInputStatus::Error(err) => {

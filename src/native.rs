@@ -290,6 +290,19 @@ pub fn default_executable_path(file: &Path, target: BackendTarget) -> PathBuf {
     }
 }
 
+/// The backend target matching the host OS. Compile-backed execution that must
+/// produce a binary the current machine can run (e.g. the REPL) uses this.
+pub fn host_target() -> BackendTarget {
+    #[cfg(target_os = "windows")]
+    {
+        BackendTarget::windows_x86_64()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        BackendTarget::linux_x86_64_system_v()
+    }
+}
+
 fn default_artifact_paths(
     file: &Path,
     output: Option<PathBuf>,
@@ -438,17 +451,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn host_target() -> BackendTarget {
-        #[cfg(target_os = "windows")]
-        {
-            BackendTarget::windows_x86_64()
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            BackendTarget::linux_x86_64_system_v()
-        }
-    }
 
     #[test]
     fn default_source_executable_path_uses_target_extension() {

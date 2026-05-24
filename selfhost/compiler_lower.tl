@@ -1033,12 +1033,19 @@
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 ;; Dynamic-array element access (#528). A dyn array is the same fat
+
 ;; `{ptr@0, len@8}` value a String uses, so this mirrors `lower-string-ref-load`
+
 ;; exactly: load the fat fields (reusing `lower-string-fields`), do an UNSIGNED
+
 ;; `idx < len` bounds check (so negative indices fail), trap to `tl_oob_abort` on
+
 ;; the out-of-bounds path, and on the in-bounds path `Gep` the element address
+
 ;; (scaled by `elem-ty`). The element is then `Load`ed (array-ref) or
+
 ;; `StorePtr`d (array-set!) by the callers below.
+
 (define (lower-array-element-addr
   [state : LowerState]
   [arr-value : CompilerIrValue]
@@ -1063,7 +1070,9 @@
                           index-u
                           len-u
                           (AstTyU64)))])
-                    (match (lower-state-fresh-label bounds-state "arr_bounds_ok")
+                    (match (lower-state-fresh-label
+                      bounds-state
+                      "arr_bounds_ok")
                       [(LowerLabel ok-label-state ok-label)
                         (match (lower-state-fresh-label
                           ok-label-state
@@ -1170,9 +1179,7 @@
                             index-value
                             elem-ty)])])]
                 [(ErrLowerExpr message) (ErrLowerExpr message)])]
-            [_
-              (ErrLowerExpr
-                "lower: array-ref requires a dynamic array")])])]
+            [_ (ErrLowerExpr "lower: array-ref requires a dynamic array")])])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 (define (lower-array-set
@@ -1216,9 +1223,7 @@
                                     elem-ty)])]
                             [(ErrLowerExpr message) (ErrLowerExpr message)])])])]
                 [(ErrLowerExpr message) (ErrLowerExpr message)])]
-            [_
-              (ErrLowerExpr
-                "lower: array-set! requires a dynamic array")])])]
+            [_ (ErrLowerExpr "lower: array-set! requires a dynamic array")])])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 (define (lower-substring-call-runtime
@@ -2750,9 +2755,13 @@
         (cast (char-at \" x\" 0) : i64)))))")
 
 ;; `array-ref`/`array-set!` on a dynamic array lower to a bounds-checked element
+
 ;; load/store over the fat value's buffer pointer (#528). Uses dyn-array
+
 ;; parameters so no `make-array` construction is needed (that primitive is a
+
 ;; separate slice).
+
 (define (compiler-lower-array-ref-set-source) : String
   "(define (get [a : (Array i64)] [i : i64]) : i64 (array-ref a i))
 (define (put [a : (Array i64)] [i : i64] [v : i64]) : unit (array-set! a i v))

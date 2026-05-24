@@ -2270,11 +2270,15 @@ impl FnLowerer {
             outer_vars,
         };
 
-        if self.mode == LowerMode::Avx2
+        if (self.mode == LowerMode::Avx2 || self.mode == LowerMode::Avx512)
             && state.index_ty == Type::I64
             && let Some(plan) = self.simple_vector_map(index, body)
         {
-            return self.lower_avx2_vector_foreach(index, body, state, plan);
+            return match self.mode {
+                LowerMode::Avx2 => self.lower_avx2_vector_foreach(index, body, state, plan),
+                LowerMode::Avx512 => self.lower_avx512_vector_foreach(state, plan),
+                LowerMode::Scalar => unreachable!("scalar mode rejected above"),
+            };
         }
 
         self.lower_scalar_foreach(index, body, state)
@@ -2424,7 +2428,7 @@ impl FnLowerer {
         });
 
         self.builder.finish_block(&vector_body_label);
-        self.lower_avx2_vector_map_body(index_var, next_vector_index, &plan);
+        self.lower_vector_map_body(index_var, next_vector_index, &plan);
         self.builder.emit(Instruction::Jump(vector_header_label));
 
         self.builder.finish_block(&scalar_header_label);
@@ -2456,7 +2460,138 @@ impl FnLowerer {
         Value::ConstUnit
     }
 
-    fn lower_avx2_vector_map_body(
+    fn lower_avx512_vector_foreach(
+        &mut self,
+        state: ForeachLoopState,
+        plan: SimpleVectorMap,
+    ) -> Value {
+        let ForeachLoopState {
+            index_ty,
+            storage_ty,
+            start_val,
+            end_val,
+            outer_vars,
+        } = state;
+        let index_var = self.builder.fresh_var();
+        self.builder.emit(Instruction::Alloc {
+            var: index_var,
+            ty: storage_ty.clone(),
+        });
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(index_var),
+            src: start_val,
+            ty: storage_ty.clone(),
+        });
+        self.record_value_local(index_var, index_ty.clone());
+
+        let out_len = self.load_fat_len(&Value::Var(plan.dst_array), DYN_ARRAY_LEN_OFFSET);
+        let lhs_len = self.load_fat_len(&Value::Var(plan.lhs_array), DYN_ARRAY_LEN_OFFSET);
+        let rhs_len = self.load_fat_len(&Value::Var(plan.rhs_array), DYN_ARRAY_LEN_OFFSET);
+
+        let vector_header_label = self.builder.fresh_label("foreach_avx512_header");
+        let vector_body_label = self.builder.fresh_label("foreach_avx512_body");
+        let tail_header_label = self.builder.fresh_label("foreach_avx512_tail");
+        let tail_nonnegative_label = self.builder.fresh_label("foreach_avx512_tail_nonnegative");
+        let tail_body_label = self.builder.fresh_label("foreach_avx512_tail_body");
+        let abort_label = self.builder.fresh_label("foreach_avx512_oob");
+        let exit_label = self.builder.fresh_label("foreach_exit");
+
+        self.builder
+            .emit(Instruction::Jump(vector_header_label.clone()));
+
+        self.builder.finish_block(&vector_header_label);
+        let next_vector_index = self.emit_binop_value(
+            BinOp::Add,
+            Value::Var(index_var),
+            Self::int_compare_const(plan.lanes as i64, &index_ty),
+            index_ty.clone(),
+        );
+        let mut vector_ok = self.emit_binop_value(
+            BinOp::Ge,
+            Value::Var(index_var),
+            Value::ConstI64(0),
+            Type::Bool,
+        );
+        let no_index_overflow = self.emit_binop_value(
+            BinOp::Le,
+            Value::Var(index_var),
+            Value::ConstI64(i64::MAX - plan.lanes as i64),
+            Type::Bool,
+        );
+        vector_ok = self.emit_binop_value(BinOp::And, vector_ok, no_index_overflow, Type::Bool);
+        for bound in [
+            end_val.clone(),
+            out_len.clone(),
+            lhs_len.clone(),
+            rhs_len.clone(),
+        ] {
+            let within =
+                self.emit_binop_value(BinOp::Le, next_vector_index.clone(), bound, Type::Bool);
+            vector_ok = self.emit_binop_value(BinOp::And, vector_ok, within, Type::Bool);
+        }
+        self.builder.emit(Instruction::Branch {
+            cond: vector_ok,
+            true_label: vector_body_label.clone(),
+            false_label: tail_header_label.clone(),
+        });
+
+        self.builder.finish_block(&vector_body_label);
+        self.lower_vector_map_body(index_var, next_vector_index, &plan);
+        self.builder.emit(Instruction::Jump(vector_header_label));
+
+        self.builder.finish_block(&tail_header_label);
+        let tail_has_work = self.emit_binop_value(
+            BinOp::Lt,
+            Value::Var(index_var),
+            end_val.clone(),
+            Type::Bool,
+        );
+        self.builder.emit(Instruction::Branch {
+            cond: tail_has_work,
+            true_label: tail_nonnegative_label.clone(),
+            false_label: exit_label.clone(),
+        });
+
+        self.builder.finish_block(&tail_nonnegative_label);
+        let nonnegative = self.emit_binop_value(
+            BinOp::Ge,
+            Value::Var(index_var),
+            Value::ConstI64(0),
+            Type::Bool,
+        );
+        self.builder.emit(Instruction::Branch {
+            cond: nonnegative,
+            true_label: tail_body_label.clone(),
+            false_label: abort_label.clone(),
+        });
+
+        self.builder.finish_block(&tail_body_label);
+        let end_out_min = self.emit_min_i64_value(end_val.clone(), out_len);
+        let lhs_rhs_min = self.emit_min_i64_value(lhs_len, rhs_len);
+        let tail_len = self.emit_min_i64_value(end_out_min, lhs_rhs_min);
+        self.lower_avx512_predicated_vector_map_body(index_var, tail_len.clone(), &plan);
+        let tail_complete = self.emit_binop_value(BinOp::Ge, tail_len, end_val, Type::Bool);
+        self.builder.emit(Instruction::Branch {
+            cond: tail_complete,
+            true_label: exit_label.clone(),
+            false_label: abort_label.clone(),
+        });
+
+        self.builder.finish_block(&abort_label);
+        self.builder.emit(Instruction::Call {
+            dst: None,
+            func: "tl_oob_abort".into(),
+            args: vec![],
+            ty: Type::Unit,
+        });
+        self.builder.emit(Instruction::Jump(exit_label.clone()));
+
+        self.vars = outer_vars;
+        self.builder.finish_block(&exit_label);
+        Value::ConstUnit
+    }
+
+    fn lower_vector_map_body(
         &mut self,
         index_var: VarId,
         next_vector_index: Value,
@@ -2508,6 +2643,67 @@ impl FnLowerer {
         });
     }
 
+    fn lower_avx512_predicated_vector_map_body(
+        &mut self,
+        index_var: VarId,
+        tail_len: Value,
+        plan: &SimpleVectorMap,
+    ) {
+        let vector_ty = Type::Vector(Box::new(plan.elem_ty.clone()), plan.lanes);
+        let mask_ty = Type::Mask(plan.lanes);
+
+        let mask = self.builder.fresh_var();
+        self.builder.emit(Instruction::TailMask {
+            dst: mask,
+            index: Value::Var(index_var),
+            len: tail_len,
+            lanes: plan.lanes,
+        });
+        self.record_local(mask, mask_ty);
+
+        let lhs_vec = self.builder.fresh_var();
+        self.builder.emit(Instruction::PredicatedLoad {
+            dst: lhs_vec,
+            base: Value::Var(plan.lhs_array),
+            index: Value::Var(index_var),
+            mask: Value::Var(mask),
+            lanes: plan.lanes,
+            elem_ty: plan.elem_ty.clone(),
+        });
+        self.record_local(lhs_vec, vector_ty.clone());
+
+        let rhs_vec = self.builder.fresh_var();
+        self.builder.emit(Instruction::PredicatedLoad {
+            dst: rhs_vec,
+            base: Value::Var(plan.rhs_array),
+            index: Value::Var(index_var),
+            mask: Value::Var(mask),
+            lanes: plan.lanes,
+            elem_ty: plan.elem_ty.clone(),
+        });
+        self.record_local(rhs_vec, vector_ty.clone());
+
+        let result_vec = self.builder.fresh_var();
+        self.builder.emit(Instruction::VectorBinOp {
+            dst: result_vec,
+            op: plan.op,
+            lhs: Value::Var(lhs_vec),
+            rhs: Value::Var(rhs_vec),
+            lanes: plan.lanes,
+            elem_ty: plan.elem_ty.clone(),
+        });
+        self.record_local(result_vec, vector_ty);
+
+        self.builder.emit(Instruction::PredicatedStore {
+            base: Value::Var(plan.dst_array),
+            index: Value::Var(index_var),
+            value: Value::Var(result_vec),
+            mask: Value::Var(mask),
+            lanes: plan.lanes,
+            elem_ty: plan.elem_ty.clone(),
+        });
+    }
+
     fn emit_binop_value(&mut self, op: BinOp, lhs: Value, rhs: Value, ty: Type) -> Value {
         let dst = self.builder.fresh_var();
         self.builder.emit(Instruction::BinOp {
@@ -2518,6 +2714,35 @@ impl FnLowerer {
             ty: ty.clone(),
         });
         self.record_local(dst, ty);
+        Value::Var(dst)
+    }
+
+    fn emit_min_i64_value(&mut self, lhs: Value, rhs: Value) -> Value {
+        let cond = self.emit_binop_value(BinOp::Le, lhs.clone(), rhs.clone(), Type::Bool);
+        let left_label = self.builder.fresh_label("min_left");
+        let right_label = self.builder.fresh_label("min_right");
+        let merge_label = self.builder.fresh_label("min_merge");
+
+        self.builder.emit(Instruction::Branch {
+            cond,
+            true_label: left_label.clone(),
+            false_label: right_label.clone(),
+        });
+
+        self.builder.finish_block(&left_label);
+        self.builder.emit(Instruction::Jump(merge_label.clone()));
+
+        self.builder.finish_block(&right_label);
+        self.builder.emit(Instruction::Jump(merge_label.clone()));
+
+        self.builder.finish_block(&merge_label);
+        let dst = self.builder.fresh_var();
+        self.builder.emit(Instruction::Phi {
+            dst,
+            incoming: vec![(lhs, left_label), (rhs, right_label)],
+            ty: Type::I64,
+        });
+        self.record_local(dst, Type::I64);
         Value::Var(dst)
     }
 
@@ -2547,7 +2772,11 @@ impl FnLowerer {
         if lhs_elem != rhs_elem || lhs_elem != dst_elem {
             return None;
         }
-        let lanes = Self::avx2_lanes_for_elem(&lhs_elem)?;
+        let lanes = match self.mode {
+            LowerMode::Avx2 => Self::avx2_lanes_for_elem(&lhs_elem)?,
+            LowerMode::Avx512 => Self::avx512_lanes_for_elem(&lhs_elem)?,
+            LowerMode::Scalar => return None,
+        };
 
         Some(SimpleVectorMap {
             dst_array,
@@ -2592,6 +2821,14 @@ impl FnLowerer {
         match elem_ty {
             Type::I64 | Type::U64 | Type::F64 => Some(4),
             Type::I32 | Type::U32 => Some(8),
+            _ => None,
+        }
+    }
+
+    fn avx512_lanes_for_elem(elem_ty: &Type) -> Option<usize> {
+        match elem_ty {
+            Type::I64 | Type::U64 | Type::F64 => Some(8),
+            Type::I32 | Type::U32 => Some(16),
             _ => None,
         }
     }
@@ -4951,6 +5188,135 @@ mod tests {
             Instruction::VectorStore {
                 lanes: 4,
                 elem_ty: Type::I64,
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn test_lower_avx512_foreach_map_emits_zmm_loop_and_predicated_tail() {
+        let prog = parse(
+            r#"
+            (define (fill [a : (Array i64)]
+                          [b : (Array i64)]
+                          [out : (Array i64)]
+                          [n : i64]) : unit
+              (foreach ([i : i64 0 n])
+                (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+        "#,
+        )
+        .unwrap();
+        let lowered = lower_program_with_spans_for_mode(&prog, LowerMode::Avx512);
+        let ir = lowered.program;
+        let instrs = all_instrs(&ir);
+
+        assert!(
+            ir.functions[0]
+                .blocks
+                .iter()
+                .any(|b| b.label.starts_with("foreach_avx512_header."))
+        );
+        assert!(
+            ir.functions[0]
+                .blocks
+                .iter()
+                .any(|b| b.label.starts_with("foreach_avx512_tail."))
+        );
+        assert!(
+            !ir.functions[0]
+                .blocks
+                .iter()
+                .any(|b| b.label.starts_with("foreach_tail_header."))
+        );
+        assert!(
+            !ir.functions[0]
+                .blocks
+                .iter()
+                .any(|b| b.label.starts_with("foreach_tail_body."))
+        );
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::VectorLoad {
+                lanes: 8,
+                elem_ty: Type::I64,
+                ..
+            }
+        )));
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::VectorBinOp {
+                op: BinOp::Add,
+                lanes: 8,
+                elem_ty: Type::I64,
+                ..
+            }
+        )));
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::VectorStore {
+                lanes: 8,
+                elem_ty: Type::I64,
+                ..
+            }
+        )));
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::TailMask { lanes: 8, .. }))
+        );
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::PredicatedLoad {
+                lanes: 8,
+                elem_ty: Type::I64,
+                ..
+            }
+        )));
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::PredicatedStore {
+                lanes: 8,
+                elem_ty: Type::I64,
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn test_lower_avx512_foreach_map_uses_i32_sixteen_lane_shape() {
+        let prog = parse(
+            r#"
+            (define (fill [a : (Array i32)]
+                          [b : (Array i32)]
+                          [out : (Array i32)]
+                          [n : i64]) : unit
+              (foreach ([i : i64 0 n])
+                (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+        "#,
+        )
+        .unwrap();
+        let lowered = lower_program_with_spans_for_mode(&prog, LowerMode::Avx512);
+        let ir = lowered.program;
+        let instrs = all_instrs(&ir);
+
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::VectorLoad {
+                lanes: 16,
+                elem_ty: Type::I32,
+                ..
+            }
+        )));
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::TailMask { lanes: 16, .. }))
+        );
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::PredicatedStore {
+                lanes: 16,
+                elem_ty: Type::I32,
                 ..
             }
         )));

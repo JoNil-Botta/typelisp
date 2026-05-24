@@ -7,11 +7,16 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
+# Linux verifies through the GNU `as`/`ld` pipeline; Windows (Git Bash / MSYS /
+# Cygwin on the CI runner) verifies through the native `windows-x86_64` toolchain
+# (`typelisp build` -> `clang`/`lld-link`), mirroring tests/windows_native.rs.
+HOST_OS=linux
 case "$(uname -s)" in
-    Linux*) ;;
+    Linux*) HOST_OS=linux ;;
+    MINGW* | MSYS* | CYGWIN*) HOST_OS=windows ;;
     *)
-        echo "stdlib verification is Linux-only (requires as + ld)" >&2
-        exit 0
+        echo "stdlib verification is unsupported on this host" >&2
+        exit 1
         ;;
 esac
 
@@ -20,12 +25,39 @@ if [ -n "${TYPELISP_BIN:-}" ]; then
 else
     cargo build --release --quiet
     COMPILER="$ROOT/target/release/typelisp"
+    [ "$HOST_OS" = windows ] && COMPILER="$COMPILER.exe"
 fi
 
 if [ ! -x "$COMPILER" ]; then
     echo "typelisp compiler is not executable: $COMPILER" >&2
     exit 1
 fi
+
+# Build a witness .tl to a runnable binary and run it (host-aware), capturing the
+# program exit code in `got` and writing program stdout/stderr to <stem>.stdout /
+# <stem>.stderr. Linux uses GNU as/ld; Windows builds a native windows-x86_64
+# executable via clang/lld-link. Callers pass the same <stem> they use for their
+# .stdout/.stderr assertion paths.
+stdlib_build_run() {
+    _src=$1
+    _stem=$2
+    if [ "$HOST_OS" = windows ]; then
+        "$COMPILER" build "$_src" --stdlib-root "$ROOT/stdlib" -o "$_stem.exe" \
+            --target windows-x86_64
+        set +e
+        "$_stem.exe" > "$_stem.stdout" 2> "$_stem.stderr"
+        got=$?
+        set -e
+    else
+        "$COMPILER" compile "$_src" --stdlib-root "$ROOT/stdlib" -o "$_stem.s"
+        as "$_stem.s" -o "$_stem.o"
+        ld "$_stem.o" -o "$_stem"
+        set +e
+        "$_stem" > "$_stem.stdout" 2> "$_stem.stderr"
+        got=$?
+        set -e
+    fi
+}
 
 # Every canonical stdlib module must be listed here. Keep this manifest in sync
 # with stdlib/README.md so new modules land with an explicit verification
@@ -84,17 +116,8 @@ cat > "$WITNESS" <<'EOF'
       1))
 EOF
 
-echo "[stdlib] compiling witness with --stdlib-root"
-"$COMPILER" compile "$WITNESS" --stdlib-root "$ROOT/stdlib" -o "$ASM"
-
-as "$ASM" -o "$OBJ"
-ld "$OBJ" -o "$BIN"
-
-echo "[stdlib] running witness -> expect exit 42"
-set +e
-"$BIN" > "$STDOUT" 2> "$STDERR"
-got=$?
-set -e
+echo "[stdlib] building+running string witness (--stdlib-root)"
+stdlib_build_run "$WITNESS" "$BIN"
 
 if [ "$got" -ne 42 ]; then
     echo "FAIL: stdlib witness expected exit 42, got $got" >&2
@@ -144,17 +167,8 @@ cat > "$TEST_WITNESS" <<'EOF'
     42))
 EOF
 
-echo "[stdlib] compiling assertion witness with --stdlib-root"
-"$COMPILER" compile "$TEST_WITNESS" --stdlib-root "$ROOT/stdlib" -o "$TEST_ASM"
-
-as "$TEST_ASM" -o "$TEST_OBJ"
-ld "$TEST_OBJ" -o "$TEST_BIN"
-
-echo "[stdlib] running assertion witness -> expect exit 42"
-set +e
-"$TEST_BIN" > "$TEST_STDOUT" 2> "$TEST_STDERR"
-got=$?
-set -e
+echo "[stdlib] building+running assertion witness (--stdlib-root)"
+stdlib_build_run "$TEST_WITNESS" "$TEST_BIN"
 
 if [ "$got" -ne 42 ]; then
     echo "FAIL: stdlib assertion witness expected exit 42, got $got" >&2
@@ -209,17 +223,8 @@ cat > "$IO_WITNESS" <<'EOF'
       50)))
 EOF
 
-echo "[stdlib] compiling file I/O witness with --stdlib-root"
-"$COMPILER" compile "$IO_WITNESS" --stdlib-root "$ROOT/stdlib" -o "$IO_ASM"
-
-as "$IO_ASM" -o "$IO_OBJ"
-ld "$IO_OBJ" -o "$IO_BIN"
-
-echo "[stdlib] running file I/O witness -> expect exit 42"
-set +e
-"$IO_BIN" > "$IO_STDOUT" 2> "$IO_STDERR"
-got=$?
-set -e
+echo "[stdlib] building+running file I/O witness (--stdlib-root)"
+stdlib_build_run "$IO_WITNESS" "$IO_BIN"
 
 if [ "$got" -ne 42 ]; then
     echo "FAIL: stdlib file I/O witness expected exit 42, got $got" >&2

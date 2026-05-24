@@ -468,14 +468,17 @@ fn run_doc_command(args: &[String]) {
             });
 
             let options = load_options_with_env_stdlib_root(stdlib_roots);
-            let runtime_args = [
-                file.display().to_string(),
-                output_path.display().to_string(),
-            ];
+            let loaded = load_or_exit(&file, &options);
+            let mut runtime_args = loaded
+                .sources
+                .iter()
+                .map(|source| source.path.display().to_string())
+                .collect::<Vec<_>>();
+            runtime_args.push(output_path.display().to_string());
             let output = native_or_exit(native::run_source_file_in_temp_dir(
                 &driver,
                 &options,
-                &runtime_args,
+                runtime_args.as_slice(),
                 BackendTarget::default(),
             ));
             write_stream_or_exit(io::stdout(), &output.stdout, "stdout");

@@ -156,3 +156,74 @@ fn tl_format_cst_tl_compiles_to_assembly() {
         );
     }
 }
+
+#[test]
+fn tl_format_core_tl_compiles_to_assembly() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source_path = manifest_dir.join("selfhost").join("format_core.tl");
+
+    let work_dir = manifest_dir
+        .join("target")
+        .join("tl-format-core-compile-test");
+    fs::create_dir_all(&work_dir).expect("create format_core compile test work dir");
+    let asm_path = work_dir.join("format_core.s");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("compile")
+        .arg(&source_path)
+        .arg("-o")
+        .arg(&asm_path)
+        .output()
+        .expect("run typelisp compile");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "format_core.tl compile step failed\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+
+    let asm = fs::read_to_string(&asm_path).expect("read generated format_core assembly");
+
+    assert!(
+        !asm.contains("# TODO"),
+        "format_core assembly still contains a # TODO marker:\n{}",
+        asm,
+    );
+
+    for sym in [
+        "_tl_format_core_node_comment_question:",
+        "_tl_format_core_delimited_doc:",
+        "_tl_format_core_cst_doc:",
+        "_tl_format_core_source_doc:",
+        "_tl_format_core_render_source_width:",
+        "_tl_format_core_self_test:",
+        "_tl_parse_format_source:",
+        "_tl_render_doc_width:",
+        "tl_string_eq:",
+        "tl_alloc:",
+    ] {
+        assert!(
+            asm.contains(sym),
+            "format_core assembly is missing expected symbol {}:\n{}",
+            sym,
+            asm,
+        );
+    }
+
+    for literal in [
+        ".string \"(foo [bar 1] baz)\\n\\n; leading\\n\\n(qux)\"",
+        ".string \"(alpha\\n  beta\\n  gamma)\"",
+        ".string \"(a\\n  ; note\\n  b)\"",
+        ".string \"name\"",
+    ] {
+        assert!(
+            asm.contains(literal),
+            "format_core assembly is missing expected literal {:?}:\n{}",
+            literal,
+            asm,
+        );
+    }
+}

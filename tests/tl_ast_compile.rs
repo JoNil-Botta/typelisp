@@ -199,6 +199,7 @@ fn tl_compiler_ast_types_tl_compiles_to_assembly() {
     for sym in [
         "_tl_ast_type_tag:",
         "_tl_ast_expr_tag:",
+        "_tl_ast_expr_unspan:",
         "_tl_ast_decl_tag:",
         "_tl_compiler_ast_smoke:",
     ] {

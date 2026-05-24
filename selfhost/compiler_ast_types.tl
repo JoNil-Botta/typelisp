@@ -233,6 +233,11 @@
     [(AstExprForeach _ _ _ _ _) 23]
     [(AstExprStructGet _ _) 24]))
 
+(define (ast-expr-unspan [expr : AstExpr]) : AstExpr
+  (match expr
+    [(AstExprSpanned inner _) (ast-expr-unspan inner)]
+    [_ expr]))
+
 (define (ast-decl-tag [decl : AstDecl]) : i64
   (match decl
     [(AstDeclDef _ _ _) 1]

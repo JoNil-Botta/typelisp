@@ -900,7 +900,7 @@
   [func : AstExpr]
   [args : AstExprList]
   [result-ty : AstType]) : ResultLowerExpr
-  (match func
+  (match (ast-expr-unspan func)
     [(AstExprVar name)
       ;; `array-length`/`length` on a dynamic array, and `string-length`/`length`
       ;; on a String, load the fat value's length field directly instead of

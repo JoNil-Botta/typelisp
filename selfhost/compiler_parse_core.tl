@@ -101,6 +101,18 @@
     [(SSym text) (string-eq text ":")]
     [_ false]))
 
+(define (ast-source-span-from-source-span [span : SourceSpan]) : AstSourceSpan
+  (AstSourceSpan
+    (span-start-line span)
+    (span-start-col span)
+    (span-end-line span)
+    (span-end-col span)))
+
+(define (ast-expr-wrap-span [expr : AstExpr] [s : SpannedSexpr]) : AstExpr
+  (AstExprSpanned
+    expr
+    (ast-source-span-from-source-span (spanned-sexpr-span s))))
+
 (define (compiler-parse-tag-unknown) : i64
   0)
 
@@ -911,10 +923,12 @@
         [(ErrAstPatternList message) (ErrAstPattern message)])]
     [_ (ErrAstPattern "parse: expected pattern")]))
 
-(define (parse-ast-expr-list [dispatch : SymI64Env] [s : Sexpr]) : ResultAstExprList
+(define (parse-ast-expr-list
+  [dispatch : SymI64Env]
+  [s : SpannedSexpr]) : ResultAstExprList
   (match s
-    [(SNil) (OkAstExprList AstExprNil)]
-    [(SCons head tail)
+    [(SpSNil _) (OkAstExprList AstExprNil)]
+    [(SpSCons head tail _)
       (match (parse-ast-expr dispatch head)
         [(OkAstExpr parsed-head)
           (match (parse-ast-expr-list dispatch tail)
@@ -924,9 +938,12 @@
         [(ErrAstExpr message) (ErrAstExprList message)])]
     [_ (ErrAstExprList "parse: malformed expression list")]))
 
-(define (parse-ast-binary [dispatch : SymI64Env] [op : AstBinOp] [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-binary
+  [dispatch : SymI64Env]
+  [op : AstBinOp]
+  [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
-    [(SCons left (SCons right (SNil)))
+    [(SpSCons left (SpSCons right (SpSNil _) _) _)
       (match (parse-ast-expr dispatch left)
         [(OkAstExpr parsed-left)
           (match (parse-ast-expr dispatch right)
@@ -936,17 +953,23 @@
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed binary expression")]))
 
-(define (parse-ast-unary [dispatch : SymI64Env] [op : AstUnOp] [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-unary
+  [dispatch : SymI64Env]
+  [op : AstUnOp]
+  [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
-    [(SCons expr (SNil))
+    [(SpSCons expr (SpSNil _) _)
       (match (parse-ast-expr dispatch expr)
         [(OkAstExpr parsed-expr) (OkAstExpr (AstExprUnary op parsed-expr))]
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed unary expression")]))
 
-(define (parse-ast-if [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-if [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
-    [(SCons cond (SCons then-branch (SCons else-branch (SNil))))
+    [(SpSCons
+        cond
+        (SpSCons then-branch (SpSCons else-branch (SpSNil _) _) _)
+        _)
       (match (parse-ast-expr dispatch cond)
         [(OkAstExpr parsed-cond)
           (match (parse-ast-expr dispatch then-branch)
@@ -961,9 +984,9 @@
 
 (define (parse-ast-cond-test-arm
   [dispatch : SymI64Env]
-  [cond : Sexpr]
-  [body : Sexpr]
-  [rest : Sexpr]) : ResultAstExpr
+  [cond : SpannedSexpr]
+  [body : SpannedSexpr]
+  [rest : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-expr dispatch cond)
     [(OkAstExpr parsed-cond)
       (match (parse-ast-expr dispatch body)
@@ -977,22 +1000,22 @@
 
 (define (parse-ast-cond-arms
   [dispatch : SymI64Env]
-  [arms : Sexpr]
+  [arms : SpannedSexpr]
   [has-test : bool]) : ResultAstExpr
   (match arms
-    [(SNil) (ErrAstExpr "parse: cond requires final else arm")]
-    [(SCons arm rest)
+    [(SpSNil _) (ErrAstExpr "parse: cond requires final else arm")]
+    [(SpSCons arm rest _)
       (match arm
-        [(SCons head (SCons body (SNil)))
+        [(SpSCons head (SpSCons body (SpSNil _) _) _)
           (match head
-            [(SSym name)
+            [(SpSSym name _)
               (if (string-eq name "else")
                 (if has-test
                   (match rest
-                    [(SNil) (parse-ast-expr dispatch body)]
+                    [(SpSNil _) (parse-ast-expr dispatch body)]
                     [_ (ErrAstExpr "parse: cond else arm must be final")])
                   (match rest
-                    [(SNil)
+                    [(SpSNil _)
                       (ErrAstExpr "parse: cond requires at least one test arm")]
                     [_ (ErrAstExpr "parse: cond else arm must be final")]))
                 (parse-ast-cond-test-arm dispatch head body rest))]
@@ -1000,12 +1023,12 @@
         [_ (ErrAstExpr "parse: malformed cond arm")])]
     [_ (ErrAstExpr "parse: malformed cond")]))
 
-(define (parse-ast-cond [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-cond [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (parse-ast-cond-arms dispatch rest false))
 
-(define (parse-ast-while [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-while [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
-    [(SCons cond (SCons body (SNil)))
+    [(SpSCons cond (SpSCons body (SpSNil _) _) _)
       (match (parse-ast-expr dispatch cond)
         [(OkAstExpr parsed-cond)
           (match (parse-ast-expr dispatch body)
@@ -1015,9 +1038,9 @@
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed while")]))
 
-(define (parse-ast-set [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-set [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
-    [(SCons (SSym name) (SCons value (SNil)))
+    [(SpSCons (SpSSym name _) (SpSCons value (SpSNil _) _) _)
       (match (parse-ast-expr dispatch value)
         [(OkAstExpr parsed-value) (OkAstExpr (AstExprSet name parsed-value))]
         [(ErrAstExpr message) (ErrAstExpr message)])]
@@ -1026,13 +1049,13 @@
 (define (parse-ast-ann-like
   [dispatch : SymI64Env]
   [is-cast : bool]
-  [rest : Sexpr]) : ResultAstExpr
+  [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
-    [(SCons expr (SCons colon (SCons ty (SNil))))
-      (if (sexpr-colon? colon)
+    [(SpSCons expr (SpSCons colon (SpSCons ty (SpSNil _) _) _) _)
+      (if (sexpr-colon? (spanned-sexpr-form colon))
         (match (parse-ast-expr dispatch expr)
           [(OkAstExpr parsed-expr)
-            (match (parse-ast-type dispatch ty)
+            (match (parse-ast-type dispatch (spanned-sexpr-form ty))
               [(OkAstType parsed-ty)
                 (if is-cast
                   (OkAstExpr (AstExprCast parsed-expr parsed-ty))
@@ -1042,11 +1065,16 @@
         (ErrAstExpr "parse: expected ':' in annotation"))]
     [_ (ErrAstExpr "parse: malformed annotation")]))
 
-(define (parse-ast-let-binding [dispatch : SymI64Env] [s : Sexpr]) : ResultAstLetBinding
+(define (parse-ast-let-binding
+  [dispatch : SymI64Env]
+  [s : SpannedSexpr]) : ResultAstLetBinding
   (match s
-    [(SCons (SSym name) (SCons colon (SCons ty (SCons value (SNil)))))
-      (if (sexpr-colon? colon)
-        (match (parse-ast-type dispatch ty)
+    [(SpSCons
+        (SpSSym name _)
+        (SpSCons colon (SpSCons ty (SpSCons value (SpSNil _) _) _) _)
+        _)
+      (if (sexpr-colon? (spanned-sexpr-form colon))
+        (match (parse-ast-type dispatch (spanned-sexpr-form ty))
           [(OkAstType parsed-ty)
             (match (parse-ast-expr dispatch value)
               [(OkAstExpr parsed-value)
@@ -1055,17 +1083,19 @@
               [(ErrAstExpr message) (ErrAstLetBinding message)])]
           [(ErrAstType message) (ErrAstLetBinding message)])
         (ErrAstLetBinding "parse: expected ':' in let binding"))]
-    [(SCons (SSym name) (SCons value (SNil)))
+    [(SpSCons (SpSSym name _) (SpSCons value (SpSNil _) _) _)
       (match (parse-ast-expr dispatch value)
         [(OkAstExpr parsed-value)
           (OkAstLetBinding (AstLetBinding name AstNoType parsed-value))]
         [(ErrAstExpr message) (ErrAstLetBinding message)])]
     [_ (ErrAstLetBinding "parse: malformed let binding")]))
 
-(define (parse-ast-let-binding-list [dispatch : SymI64Env] [s : Sexpr]) : ResultAstLetBindingList
+(define (parse-ast-let-binding-list
+  [dispatch : SymI64Env]
+  [s : SpannedSexpr]) : ResultAstLetBindingList
   (match s
-    [(SNil) (OkAstLetBindingList AstLetBindingNil)]
-    [(SCons head tail)
+    [(SpSNil _) (OkAstLetBindingList AstLetBindingNil)]
+    [(SpSCons head tail _)
       (match (parse-ast-let-binding dispatch head)
         [(OkAstLetBinding parsed-head)
           (match (parse-ast-let-binding-list dispatch tail)
@@ -1075,9 +1105,9 @@
         [(ErrAstLetBinding message) (ErrAstLetBindingList message)])]
     [_ (ErrAstLetBindingList "parse: malformed let binding list")]))
 
-(define (parse-ast-let [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-let [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
-    [(SCons bindings (SCons body (SNil)))
+    [(SpSCons bindings (SpSCons body (SpSNil _) _) _)
       (match (parse-ast-let-binding-list dispatch bindings)
         [(OkAstLetBindingList parsed-bindings)
           (match (parse-ast-expr dispatch body)
@@ -1087,13 +1117,13 @@
         [(ErrAstLetBindingList message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed let")]))
 
-(define (parse-ast-lambda [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-lambda [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
-    [(SCons params (SCons colon (SCons ret (SCons body (SNil)))))
-      (if (sexpr-colon? colon)
-        (match (parse-ast-param-list dispatch params)
+    [(SpSCons params (SpSCons colon (SpSCons ret (SpSCons body (SpSNil _) _) _) _) _)
+      (if (sexpr-colon? (spanned-sexpr-form colon))
+        (match (parse-ast-param-list dispatch (spanned-sexpr-form params))
           [(OkAstParamList parsed-params)
-            (match (parse-ast-type dispatch ret)
+            (match (parse-ast-type dispatch (spanned-sexpr-form ret))
               [(OkAstType parsed-ret)
                 (match (parse-ast-expr dispatch body)
                   [(OkAstExpr parsed-body)
@@ -1106,8 +1136,8 @@
               [(ErrAstType message) (ErrAstExpr message)])]
           [(ErrAstParamList message) (ErrAstExpr message)])
         (ErrAstExpr "parse: expected ':' in lambda"))]
-    [(SCons params (SCons body (SNil)))
-      (match (parse-ast-param-list dispatch params)
+    [(SpSCons params (SpSCons body (SpSNil _) _) _)
+      (match (parse-ast-param-list dispatch (spanned-sexpr-form params))
         [(OkAstParamList parsed-params)
           (match (parse-ast-expr dispatch body)
             [(OkAstExpr parsed-body)
@@ -1116,21 +1146,23 @@
         [(ErrAstParamList message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed lambda")]))
 
-(define (parse-ast-tuple-ref [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-tuple-ref [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
-    [(SCons expr (SCons (SInt index) (SNil)))
+    [(SpSCons expr (SpSCons (SpSInt index _) (SpSNil _) _) _)
       (match (parse-ast-expr dispatch expr)
         [(OkAstExpr parsed-expr)
           (OkAstExpr (AstExprTupleRef parsed-expr index))]
         [(ErrAstExpr message) (ErrAstExpr message)])]
-    [(SCons _ (SCons _ (SNil)))
+    [(SpSCons _ (SpSCons _ (SpSNil _) _) _)
       (ErrAstExpr "parse: tuple-ref index must be integer")]
     [_ (ErrAstExpr "parse: malformed tuple-ref")]))
 
-(define (parse-ast-make-array [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-make-array
+  [dispatch : SymI64Env]
+  [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
-    [(SCons elem-ty (SCons len (SNil)))
-      (match (parse-ast-type dispatch elem-ty)
+    [(SpSCons elem-ty (SpSCons len (SpSNil _) _) _)
+      (match (parse-ast-type dispatch (spanned-sexpr-form elem-ty))
         [(OkAstType parsed-ty)
           (match (parse-ast-expr dispatch len)
             [(OkAstExpr parsed-len)
@@ -1142,9 +1174,9 @@
 (define (parse-ast-array-ref-like
   [dispatch : SymI64Env]
   [is-string : bool]
-  [rest : Sexpr]) : ResultAstExpr
+  [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
-    [(SCons expr (SCons index (SNil)))
+    [(SpSCons expr (SpSCons index (SpSNil _) _) _)
       (match (parse-ast-expr dispatch expr)
         [(OkAstExpr parsed-expr)
           (match (parse-ast-expr dispatch index)
@@ -1156,9 +1188,9 @@
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed ref expression")]))
 
-(define (parse-ast-array-set [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-array-set [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
-    [(SCons expr (SCons index (SCons value (SNil))))
+    [(SpSCons expr (SpSCons index (SpSCons value (SpSNil _) _) _) _)
       (match (parse-ast-expr dispatch expr)
         [(OkAstExpr parsed-expr)
           (match (parse-ast-expr dispatch index)
@@ -1172,19 +1204,23 @@
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed array-set!")]))
 
-(define (parse-ast-struct-get [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-struct-get
+  [dispatch : SymI64Env]
+  [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
-    [(SCons expr (SCons (SSym field) (SNil)))
+    [(SpSCons expr (SpSCons (SpSSym field _) (SpSNil _) _) _)
       (match (parse-ast-expr dispatch expr)
         [(OkAstExpr parsed-expr)
           (OkAstExpr (AstExprStructGet parsed-expr field))]
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed struct-get")]))
 
-(define (parse-ast-match-arm [dispatch : SymI64Env] [s : Sexpr]) : ResultAstMatchArm
+(define (parse-ast-match-arm
+  [dispatch : SymI64Env]
+  [s : SpannedSexpr]) : ResultAstMatchArm
   (match s
-    [(SCons pattern (SCons body (SNil)))
-      (match (parse-ast-pattern dispatch pattern)
+    [(SpSCons pattern (SpSCons body (SpSNil _) _) _)
+      (match (parse-ast-pattern dispatch (spanned-sexpr-form pattern))
         [(OkAstPattern parsed-pattern)
           (match (parse-ast-expr dispatch body)
             [(OkAstExpr parsed-body)
@@ -1193,10 +1229,12 @@
         [(ErrAstPattern message) (ErrAstMatchArm message)])]
     [_ (ErrAstMatchArm "parse: malformed match arm")]))
 
-(define (parse-ast-match-arm-list [dispatch : SymI64Env] [s : Sexpr]) : ResultAstMatchArmList
+(define (parse-ast-match-arm-list
+  [dispatch : SymI64Env]
+  [s : SpannedSexpr]) : ResultAstMatchArmList
   (match s
-    [(SNil) (OkAstMatchArmList AstMatchArmNil)]
-    [(SCons head tail)
+    [(SpSNil _) (OkAstMatchArmList AstMatchArmNil)]
+    [(SpSCons head tail _)
       (match (parse-ast-match-arm dispatch head)
         [(OkAstMatchArm parsed-head)
           (match (parse-ast-match-arm-list dispatch tail)
@@ -1206,9 +1244,9 @@
         [(ErrAstMatchArm message) (ErrAstMatchArmList message)])]
     [_ (ErrAstMatchArmList "parse: malformed match arm list")]))
 
-(define (parse-ast-match [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-match [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
-    [(SCons scrutinee arms)
+    [(SpSCons scrutinee arms _)
       (match (parse-ast-expr dispatch scrutinee)
         [(OkAstExpr parsed-scrutinee)
           (match (parse-ast-match-arm-list dispatch arms)
@@ -1218,17 +1256,23 @@
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed match")]))
 
-(define (parse-ast-foreach [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-foreach [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
-    [(SCons
-        (SCons
-          (SCons
-            (SSym index)
-            (SCons colon (SCons index-ty (SCons start (SCons end (SNil))))))
-          (SNil))
-        (SCons body (SNil)))
-      (if (sexpr-colon? colon)
-        (match (parse-ast-type dispatch index-ty)
+    [(SpSCons
+        (SpSCons
+          (SpSCons
+            (SpSSym index _)
+            (SpSCons
+              colon
+              (SpSCons index-ty (SpSCons start (SpSCons end (SpSNil _) _) _) _)
+              _)
+            _)
+          (SpSNil _)
+          _)
+        (SpSCons body (SpSNil _) _)
+        _)
+      (if (sexpr-colon? (spanned-sexpr-form colon))
+        (match (parse-ast-type dispatch (spanned-sexpr-form index-ty))
           [(OkAstType parsed-index-ty)
             (match (parse-ast-expr dispatch start)
               [(OkAstExpr parsed-start)
@@ -1250,7 +1294,10 @@
         (ErrAstExpr "parse: expected ':' in foreach"))]
     [_ (ErrAstExpr "parse: malformed foreach")]))
 
-(define (parse-ast-call [dispatch : SymI64Env] [head : Sexpr] [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-call
+  [dispatch : SymI64Env]
+  [head : SpannedSexpr]
+  [rest : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-expr dispatch head)
     [(OkAstExpr parsed-head)
       (match (parse-ast-expr-list dispatch rest)
@@ -1259,17 +1306,17 @@
         [(ErrAstExprList message) (ErrAstExpr message)])]
     [(ErrAstExpr message) (ErrAstExpr message)]))
 
-(define (parse-ast-begin [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-begin [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-expr-list dispatch rest)
     [(OkAstExprList exprs) (OkAstExpr (AstExprBegin exprs))]
     [(ErrAstExprList message) (ErrAstExpr message)]))
 
-(define (parse-ast-tuple [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-tuple [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-expr-list dispatch rest)
     [(OkAstExprList exprs) (OkAstExpr (AstExprTuple exprs))]
     [(ErrAstExprList message) (ErrAstExpr message)]))
 
-(define (parse-ast-array [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstExpr
+(define (parse-ast-array [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-expr-list dispatch rest)
     [(OkAstExprList exprs) (OkAstExpr (AstExprArray exprs))]
     [(ErrAstExprList message) (ErrAstExpr message)]))
@@ -1277,8 +1324,8 @@
 (define (parse-ast-list-expr-tag
   [dispatch : SymI64Env]
   [tag : i64]
-  [head : Sexpr]
-  [rest : Sexpr]) : ResultAstExpr
+  [head : SpannedSexpr]
+  [rest : SpannedSexpr]) : ResultAstExpr
   (if (= tag (compiler-parse-tag-expr-if))
     (parse-ast-if dispatch rest)
     (if (= tag (compiler-parse-tag-expr-let))
@@ -1325,10 +1372,10 @@
 
 (define (parse-ast-list-expr
   [dispatch : SymI64Env]
-  [head : Sexpr]
-  [rest : Sexpr]) : ResultAstExpr
+  [head : SpannedSexpr]
+  [rest : SpannedSexpr]) : ResultAstExpr
   (match head
-    [(SSym op)
+    [(SpSSym op _)
       (let ([tag : i64 (compiler-parse-dispatch-tag dispatch op)])
         (if (= tag (compiler-parse-tag-expr-cond))
           (parse-ast-cond dispatch rest)
@@ -1339,31 +1386,40 @@
               (parse-ast-list-expr-tag dispatch tag head rest)))))]
     [_ (parse-ast-call dispatch head rest)]))
 
-(define (parse-ast-expr [dispatch : SymI64Env] [s : Sexpr]) : ResultAstExpr
+(define (parse-ast-expr [dispatch : SymI64Env] [s : SpannedSexpr]) : ResultAstExpr
   (match s
-    [(SInt n) (OkAstExpr (AstExprLiteral (AstLitInt n)))]
-    [(SStr text) (OkAstExpr (AstExprLiteral (AstLitString text)))]
-    [(SChar c) (OkAstExpr (AstExprLiteral (AstLitChar c)))]
-    [(SSym name)
+    [(SpSInt n _)
+      (OkAstExpr (ast-expr-wrap-span (AstExprLiteral (AstLitInt n)) s))]
+    [(SpSStr text _)
+      (OkAstExpr (ast-expr-wrap-span (AstExprLiteral (AstLitString text)) s))]
+    [(SpSChar c _)
+      (OkAstExpr (ast-expr-wrap-span (AstExprLiteral (AstLitChar c)) s))]
+    [(SpSSym name _)
       (let ([tag : i64 (compiler-parse-dispatch-tag dispatch name)])
         (if (= tag (compiler-parse-tag-lit-true))
-          (OkAstExpr (AstExprLiteral (AstLitBool true)))
+          (OkAstExpr
+            (ast-expr-wrap-span (AstExprLiteral (AstLitBool true)) s))
           (if (= tag (compiler-parse-tag-lit-false))
-            (OkAstExpr (AstExprLiteral (AstLitBool false)))
+            (OkAstExpr
+              (ast-expr-wrap-span (AstExprLiteral (AstLitBool false)) s))
             (if (= tag (compiler-parse-tag-unit))
-              (OkAstExpr (AstExprLiteral AstLitUnit))
-              (OkAstExpr (AstExprVar name))))))]
-    [(SCons head rest) (parse-ast-list-expr dispatch head rest)]
+              (OkAstExpr
+                (ast-expr-wrap-span (AstExprLiteral AstLitUnit) s))
+              (OkAstExpr (ast-expr-wrap-span (AstExprVar name) s))))))]
+    [(SpSCons head rest _)
+      (match (parse-ast-list-expr dispatch head rest)
+        [(OkAstExpr parsed) (OkAstExpr (ast-expr-wrap-span parsed s))]
+        [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed expression")]))
 
 (define (parse-ast-define-value
   [dispatch : SymI64Env]
   [name : String]
-  [rest : Sexpr]) : ResultAstDecl
+  [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
-    [(SCons colon (SCons ty (SCons value (SNil))))
-      (if (sexpr-colon? colon)
-        (match (parse-ast-type dispatch ty)
+    [(SpSCons colon (SpSCons ty (SpSCons value (SpSNil _) _) _) _)
+      (if (sexpr-colon? (spanned-sexpr-form colon))
+        (match (parse-ast-type dispatch (spanned-sexpr-form ty))
           [(OkAstType parsed-ty)
             (match (parse-ast-expr dispatch value)
               [(OkAstExpr parsed-value)
@@ -1372,7 +1428,7 @@
               [(ErrAstExpr message) (ErrAstDecl message)])]
           [(ErrAstType message) (ErrAstDecl message)])
         (ErrAstDecl "parse: expected ':' in definition"))]
-    [(SCons value (SNil))
+    [(SpSCons value (SpSNil _) _)
       (match (parse-ast-expr dispatch value)
         [(OkAstExpr parsed-value)
           (OkAstDecl (AstDeclDef name AstNoType parsed-value))]
@@ -1382,14 +1438,14 @@
 (define (parse-ast-define-fn
   [dispatch : SymI64Env]
   [name : String]
-  [params : Sexpr]
-  [rest : Sexpr]) : ResultAstDecl
+  [params : SpannedSexpr]
+  [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
-    [(SCons colon (SCons ret (SCons body (SNil))))
-      (if (sexpr-colon? colon)
-        (match (parse-ast-param-list dispatch params)
+    [(SpSCons colon (SpSCons ret (SpSCons body (SpSNil _) _) _) _)
+      (if (sexpr-colon? (spanned-sexpr-form colon))
+        (match (parse-ast-param-list dispatch (spanned-sexpr-form params))
           [(OkAstParamList parsed-params)
-            (match (parse-ast-type dispatch ret)
+            (match (parse-ast-type dispatch (spanned-sexpr-form ret))
               [(OkAstType parsed-ret)
                 (match (parse-ast-expr dispatch body)
                   [(OkAstExpr parsed-body)
@@ -1399,8 +1455,8 @@
               [(ErrAstType message) (ErrAstDecl message)])]
           [(ErrAstParamList message) (ErrAstDecl message)])
         (ErrAstDecl "parse: expected ':' in function definition"))]
-    [(SCons body (SNil))
-      (match (parse-ast-param-list dispatch params)
+    [(SpSCons body (SpSNil _) _)
+      (match (parse-ast-param-list dispatch (spanned-sexpr-form params))
         [(OkAstParamList parsed-params)
           (match (parse-ast-expr dispatch body)
             [(OkAstExpr parsed-body)
@@ -1410,56 +1466,57 @@
         [(ErrAstParamList message) (ErrAstDecl message)])]
     [_ (ErrAstDecl "parse: malformed function definition")]))
 
-(define (parse-ast-define [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstDecl
+(define (parse-ast-define [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
-    [(SCons (SSym name) after-name)
+    [(SpSCons (SpSSym name _) after-name _)
       (parse-ast-define-value dispatch name after-name)]
-    [(SCons (SCons (SSym name) params) after-header)
+    [(SpSCons (SpSCons (SpSSym name _) params _) after-header _)
       (parse-ast-define-fn dispatch name params after-header)]
     [_ (ErrAstDecl "parse: malformed define")]))
 
-(define (parse-ast-extern [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstDecl
+(define (parse-ast-extern [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
-    [(SCons (SSym name) (SCons colon (SCons ty (SNil))))
-      (if (sexpr-colon? colon)
-        (match (parse-ast-type dispatch ty)
+    [(SpSCons (SpSSym name _) (SpSCons colon (SpSCons ty (SpSNil _) _) _) _)
+      (if (sexpr-colon? (spanned-sexpr-form colon))
+        (match (parse-ast-type dispatch (spanned-sexpr-form ty))
           [(OkAstType parsed-ty) (OkAstDecl (AstDeclExtern name parsed-ty))]
           [(ErrAstType message) (ErrAstDecl message)])
         (ErrAstDecl "parse: expected ':' in extern"))]
     [_ (ErrAstDecl "parse: malformed extern")]))
 
-(define (parse-ast-defenum [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstDecl
+(define (parse-ast-defenum [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
-    [(SCons (SSym name) variants)
-      (match variants
+    [(SpSCons (SpSSym name _) variants _)
+      (match (spanned-sexpr-form variants)
         [(SNil) (ErrAstDecl "parse: defenum needs at least one variant")]
         [_
-          (match (parse-ast-variant-def-list dispatch variants)
+          (match
+            (parse-ast-variant-def-list dispatch (spanned-sexpr-form variants))
             [(OkAstVariantDefList parsed-variants)
               (OkAstDecl (AstDeclDefEnum name parsed-variants))]
             [(ErrAstVariantDefList message) (ErrAstDecl message)])])]
     [_ (ErrAstDecl "parse: malformed defenum")]))
 
-(define (parse-ast-defstruct [dispatch : SymI64Env] [rest : Sexpr]) : ResultAstDecl
+(define (parse-ast-defstruct [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
-    [(SCons (SSym name) fields)
-      (match fields
+    [(SpSCons (SpSSym name _) fields _)
+      (match (spanned-sexpr-form fields)
         [(SNil) (ErrAstDecl "parse: defstruct needs at least one field")]
         [_
-          (match (parse-ast-field-def-list dispatch fields)
+          (match (parse-ast-field-def-list dispatch (spanned-sexpr-form fields))
             [(OkAstFieldDefList parsed-fields)
               (OkAstDecl (AstDeclDefStruct name parsed-fields))]
             [(ErrAstFieldDefList message) (ErrAstDecl message)])])]
     [_ (ErrAstDecl "parse: malformed defstruct")]))
 
-(define (parse-ast-import [rest : Sexpr]) : ResultAstDecl
+(define (parse-ast-import [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
-    [(SCons (SStr path) (SNil)) (OkAstDecl (AstDeclImport path))]
+    [(SpSCons (SpSStr path _) (SpSNil _) _) (OkAstDecl (AstDeclImport path))]
     [_ (ErrAstDecl "parse: malformed import")]))
 
-(define (parse-ast-decl [dispatch : SymI64Env] [s : Sexpr]) : ResultAstDecl
+(define (parse-ast-decl [dispatch : SymI64Env] [s : SpannedSexpr]) : ResultAstDecl
   (match s
-    [(SCons (SSym head) rest)
+    [(SpSCons (SpSSym head _) rest _)
       (let ([tag : i64 (compiler-parse-dispatch-tag dispatch head)])
         (if (= tag (compiler-parse-tag-decl-define))
           (parse-ast-define dispatch rest)
@@ -1476,21 +1533,21 @@
 
 (define (parse-ast-program-forms
   [dispatch : SymI64Env]
-  [toks : (Array Token)]
+  [toks : (Array SpannedToken)]
   [cur : (Array i64)]) : ResultAstDeclList
-  (if (= (peek-tag toks cur) (tag-end))
+  (if (= (peek-spanned-tag toks cur) (tag-end))
     (OkAstDeclList AstDeclNil)
-    (match (read-form-result toks cur)
-      [(OkSexpr form)
+    (match (read-form-spanned-result toks cur)
+      [(OkSpannedSexpr form)
         (match (parse-ast-decl dispatch form)
           [(OkAstDecl decl)
             (match (parse-ast-program-forms dispatch toks cur)
               [(OkAstDeclList rest) (OkAstDeclList (AstDeclCons decl rest))]
               [(ErrAstDeclList message) (ErrAstDeclList message)])]
           [(ErrAstDecl message) (ErrAstDeclList message)])]
-      [(ErrSexpr message) (ErrAstDeclList message)])))
+      [(ErrSpannedSexpr err) (ErrAstDeclList (source-error-message err))])))
 
-(define (parse-ast-program [toks : (Array Token)]) : ResultAstProgram
+(define (parse-ast-program [toks : (Array SpannedToken)]) : ResultAstProgram
   (let ([cur : (Array i64) (make-array i64 1)])
     (let ([dispatch : SymI64Env (compiler-parse-dispatch-env)])
       (begin
@@ -1500,9 +1557,9 @@
           [(ErrAstDeclList message) (ErrAstProgram message)])))))
 
 (define (parse-ast-source [src : String]) : ResultAstProgram
-  (match (lex-result src)
-    [(OkTokens toks) (parse-ast-program toks)]
-    [(ErrTokens message) (ErrAstProgram message)]))
+  (match (lex-spanned-result src)
+    [(OkSpannedTokens toks) (parse-ast-program toks)]
+    [(ErrSpannedTokens err) (ErrAstProgram (source-error-message err))]))
 
 (define (ast-decl-list-count [decls : AstDeclList]) : i64
   (match decls
@@ -1520,6 +1577,15 @@
     [(AstDeclCons (AstDeclImport path) _) (string-eq path "stdlib/test.tl")]
     [_ false]))
 
+(define (ast-source-span-start-line [span : AstSourceSpan]) : i64
+  (struct-get span start-line))
+
+(define (ast-source-span-start-col [span : AstSourceSpan]) : i64
+  (struct-get span start-col))
+
+(define (ast-expr-inner-tag [expr : AstExpr]) : i64
+  (ast-expr-tag (ast-expr-unspan expr)))
+
 (define (ast-main-body-tag [decls : AstDeclList]) : i64
   (match decls
     [(AstDeclNil) 0]
@@ -1527,9 +1593,50 @@
       (match decl
         [(AstDeclDefFn name _ _ body)
           (if (string-eq name "main")
-            (ast-expr-tag body)
+            (ast-expr-inner-tag body)
             (ast-main-body-tag rest))]
         [_ (ast-main-body-tag rest)])]))
+
+(define (compiler-parse-nested-expr-span-ok?) : bool
+  (match (parse-ast-source "(define (main) : i64 (+ 1 (* 2 3)))")
+    [(OkAstProgram (AstProgram decls))
+      (match decls
+        [(AstDeclCons (AstDeclDefFn _ _ _ body) _)
+          (match body
+            [(AstExprSpanned (AstExprBinary _ _ right) body-span)
+              (match right
+                [(AstExprSpanned (AstExprBinary _ _ _) right-span)
+                  (and
+                    (= (ast-source-span-start-line body-span) 1)
+                    (and
+                      (= (ast-source-span-start-line right-span) 1)
+                      (>
+                        (ast-source-span-start-col right-span)
+                        (ast-source-span-start-col body-span))))]
+                [_ false])]
+            [_ false])]
+        [_ false])]
+    [_ false]))
+
+(define (compiler-parse-error-span-ok?) : bool
+  (let ([src : String "(define)"])
+    (and
+      (match (parse-ast-source src)
+        [(ErrAstProgram message) (string-eq message "parse: malformed define")]
+        [_ false])
+      (match (lex-spanned-result src)
+        [(OkSpannedTokens toks)
+          (let ([cur : (Array i64) (make-array i64 1)])
+            (begin
+              (array-set! cur 0 0)
+              (match (read-form-spanned-result toks cur)
+                [(OkSpannedSexpr form)
+                  (let ([span : SourceSpan (spanned-sexpr-span form)])
+                    (and
+                      (= (span-start-line span) 1)
+                      (= (span-start-col span) 1)))]
+                [(ErrSpannedSexpr _) false])))]
+        [(ErrSpannedTokens _) false]))))
 
 (define (compiler-parse-smoke-source) : String
   "(import \"stdlib/test.tl\")
@@ -1562,7 +1669,11 @@
 (define (compiler-parse-smoke) : i64
   (match (parse-ast-source (compiler-parse-smoke-source))
     [(OkAstProgram program)
-      (if (= (compiler-parse-smoke-score program) 36)
+      (if (and
+        (= (compiler-parse-smoke-score program) 36)
+        (and
+          (compiler-parse-nested-expr-span-ok?)
+          (compiler-parse-error-span-ok?)))
         42
         (begin
           (panic "parse: compiler AST smoke score mismatch")

@@ -51,6 +51,26 @@ fn reduce_op_result_support(op: ReduceOp, ty: &Type) -> Result<(), &'static str>
     }
 }
 
+/// Scalar value types whose inline bytes are fully self-contained (no inner
+/// pointer/handle), so a shallow storage copy captures them completely. Used to
+/// admit fixed-array closure captures only for scalar element types (#571).
+fn is_scalar_capture_type(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::I64
+            | Type::I32
+            | Type::I16
+            | Type::I8
+            | Type::U64
+            | Type::U32
+            | Type::U16
+            | Type::U8
+            | Type::Bool
+            | Type::Char
+            | Type::F64
+    )
+}
+
 pub struct TypeChecker {
     env: Vec<HashMap<String, Type>>,
     func_ret: Option<Type>,
@@ -604,6 +624,17 @@ impl TypeChecker {
     }
 
     fn unsupported_capture_type_reason(&self, ty: &Type) -> Option<String> {
+        // A directly-captured fixed `(Array T N)` of scalars is admissible: the
+        // lowerer snapshots its inline storage onto the heap and reconstructs the
+        // array view on capture-load, so `array-ref` on the captured value geps a
+        // pointer-sized handle (#571). This is only sound at top level — a fixed
+        // array reached through a struct/tuple field is not pointer-sized at its
+        // use site, so nested array fields stay rejected by `_inner` below.
+        if let Type::Array(elem, _) = self.resolve_type(ty)
+            && is_scalar_capture_type(&self.resolve_type(&elem))
+        {
+            return None;
+        }
         let mut seen_enums = HashSet::new();
         let mut seen_structs = HashSet::new();
         self.unsupported_capture_type_reason_inner(ty, &mut seen_enums, &mut seen_structs)
@@ -702,8 +733,12 @@ impl TypeChecker {
                 seen_enums.remove(&name);
                 found
             }
+            // A fixed array reached through an aggregate field is not pointer-
+            // sized at its `array-ref` use site, so nested array fields stay
+            // rejected here. A directly-captured scalar array is admitted by the
+            // top-level fast path in `unsupported_capture_type_reason` (#571).
             Type::Array(_, _) => Some(
-                "uses fixed-size array storage, which is not yet supported in closure captures (#571)"
+                "uses fixed-size array storage nested in an aggregate, which is not yet supported in closure captures (#571)"
                     .into(),
             ),
             other => Some(format!("has unsupported type {}", other)),
@@ -3273,16 +3308,37 @@ mod tests {
     }
 
     #[test]
-    fn test_typecheck_fixed_array_capture_still_rejected() {
-        // A fixed array is inline storage that the backend does not treat as a
-        // pointer-sized handle, so the storage-snapshot path is not wired and
-        // capture stays rejected (#542 ships scalar tuples; the fixed-array
-        // representation gap is tracked in #571).
+    fn test_typecheck_scalar_fixed_array_capture_ok() {
+        // A directly-captured fixed array of scalars is a pointer to inline POD
+        // storage; the lowerer shallow-copies that storage onto the heap and
+        // reconstructs the array view on capture-load, so the capture cannot
+        // dangle (#571).
         let prog = parse(
             r#"
             (define (main) : i64
               (let ([a : (Array i64 3) (array 1 2 3)]
                     [f : (-> i64) (lambda () : i64 (array-ref a 0))])
+                (f)))
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        assert!(
+            tc.check_program(&prog).is_ok(),
+            "{:?}",
+            tc.check_program(&prog)
+        );
+    }
+
+    #[test]
+    fn test_typecheck_aggregate_element_fixed_array_capture_rejected() {
+        // A fixed array of aggregates would need its inline elements deep-copied,
+        // which is not yet wired, so it stays rejected (#571).
+        let prog = parse(
+            r#"
+            (define (main) : i64
+              (let ([a : (Array String 2) (array "x" "y")]
+                    [f : (-> i64) (lambda () : i64 (string-length (array-ref a 0)))])
                 (f)))
             "#,
         )

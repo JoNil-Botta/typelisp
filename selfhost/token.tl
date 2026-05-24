@@ -105,6 +105,26 @@
     [(TStr _) #\nul']
     [(TChar c) c]))
 
+;; A token paired with the 1-based source line and column where its lexeme
+;; begins (#599). The reader/parser recover positions from these so later
+;; diagnostics can point at the originating source location. `TEnd` carries the
+;; position one past the last character. This is additive: the plain `Token`
+;; stream and its accessors are unchanged, so existing callers keep working.
+(defenum SpannedToken
+  (SpannedToken Token i64 i64))
+
+(define (spanned-token-tok [s : SpannedToken]) : Token
+  (match s
+    [(SpannedToken t _ _) t]))
+
+(define (spanned-token-line [s : SpannedToken]) : i64
+  (match s
+    [(SpannedToken _ line _) line]))
+
+(define (spanned-token-col [s : SpannedToken]) : i64
+  (match s
+    [(SpannedToken _ _ col) col]))
+
 ;; ---- Token-kind tag constants (kept in sync with `token-tag`). ----
 ;; A parser compares a token's tag against these to drive its descent.
 (define (tag-lparen) : i64 1)

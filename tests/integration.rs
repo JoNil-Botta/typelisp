@@ -3979,7 +3979,7 @@ fn region_reset_preserves_pre_mark_allocations() {
             (+ (array-ref arr 1)
                (+ (box-value box)
                   (+ (struct-get pair x)
-                     (struct-get pair y))))))))))
+                     (struct-get pair y)))))))))
 "#,
     );
 

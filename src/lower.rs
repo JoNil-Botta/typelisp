@@ -1514,9 +1514,9 @@ impl FnLowerer {
             let handle = self.lower_var(&capture.name);
             // Captured handles may point at storage owned by the creator's
             // frame. Snapshot the captured value into heap storage, recursively
-            // rewriting nested aggregate fields so they cannot dangle after the
-            // creator returns (#584). Scalars and function values are copied by
-            // value directly. Fixed-array capture is rejected by the typechecker.
+            // rewriting nested aggregate fields/elements so they cannot dangle
+            // after the creator returns (#584/#631). Scalars and function
+            // values are copied by value directly.
             let src = self.snapshot_capture_value_to_heap(&handle, capture.ty.clone());
             let storage_ty = Self::backend_value_type(&capture.ty);
             self.builder.emit(Instruction::Store {
@@ -1704,6 +1704,10 @@ impl FnLowerer {
             Type::Enum(name) => {
                 self.deep_copy_enum_payload_fields(dst, name, seen_enums, seen_structs)
             }
+            Type::Array(elem, len) => {
+                let elem_ty = self.resolve_type(elem);
+                self.deep_copy_array_elements_at(dst, 0, &elem_ty, *len, seen_enums, seen_structs);
+            }
             _ => {}
         }
     }
@@ -1719,7 +1723,14 @@ impl FnLowerer {
     {
         for (field_ty, off) in fields {
             let field_ty = self.resolve_type(field_ty);
-            if !self.capture_field_needs_heap_snapshot(&field_ty) || field_ty.size() == 0 {
+            if field_ty.size() == 0 {
+                continue;
+            }
+            if let Type::Array(elem, len) = &field_ty {
+                self.deep_copy_array_elements_at(dst, *off, elem, *len, seen_enums, seen_structs);
+                continue;
+            }
+            if !self.capture_field_needs_heap_snapshot(&field_ty) {
                 continue;
             }
             let loaded = Value::Var(self.load_field(dst, *off, &field_ty));
@@ -1734,6 +1745,51 @@ impl FnLowerer {
                 dst: Value::Var(field_ptr),
                 src: snapshot,
                 ty: field_ty,
+            });
+        }
+    }
+
+    fn deep_copy_array_elements_at(
+        &mut self,
+        base: &Value,
+        base_offset: usize,
+        elem_ty: &Type,
+        len: usize,
+        seen_enums: &mut HashSet<String>,
+        seen_structs: &mut HashSet<String>,
+    ) {
+        let elem_ty = self.resolve_type(elem_ty);
+        let elem_size = elem_ty.size();
+        if elem_size == 0 || len == 0 || !self.capture_field_needs_heap_snapshot(&elem_ty) {
+            return;
+        }
+
+        for idx in 0..len {
+            let off = base_offset + idx * elem_size;
+            if let Type::Array(inner_elem, inner_len) = &elem_ty {
+                self.deep_copy_array_elements_at(
+                    base,
+                    off,
+                    inner_elem,
+                    *inner_len,
+                    seen_enums,
+                    seen_structs,
+                );
+                continue;
+            }
+
+            let loaded = Value::Var(self.load_field(base, off, &elem_ty));
+            let snapshot = self.snapshot_capture_value_to_heap_inner(
+                &loaded,
+                elem_ty.clone(),
+                seen_enums,
+                seen_structs,
+            );
+            let elem_ptr = self.gep_byte(base, off);
+            self.builder.emit(Instruction::Store {
+                dst: Value::Var(elem_ptr),
+                src: snapshot,
+                ty: elem_ty.clone(),
             });
         }
     }
@@ -1807,10 +1863,13 @@ impl FnLowerer {
     }
 
     fn capture_field_needs_heap_snapshot(&self, ty: &Type) -> bool {
-        matches!(
-            self.resolve_type(ty),
-            Type::String | Type::DynArray(_) | Type::Tuple(_) | Type::Struct(_) | Type::Enum(_)
-        )
+        match self.resolve_type(ty) {
+            Type::String | Type::DynArray(_) | Type::Tuple(_) | Type::Struct(_) | Type::Enum(_) => {
+                true
+            }
+            Type::Array(elem, len) => len > 0 && self.capture_field_needs_heap_snapshot(&elem),
+            _ => false,
+        }
     }
 
     /// Copy `size` bytes from `src` to `dst` (both pointer handles) using the
@@ -1843,6 +1902,19 @@ impl FnLowerer {
                 offset += chunk;
             }
         }
+    }
+
+    fn store_inline_value(&mut self, dst_ptr: VarId, src: Value, ty: &Type) {
+        let ty = self.resolve_type(ty);
+        if matches!(ty, Type::Array(_, _)) {
+            self.copy_storage_bytes(&src, &Value::Var(dst_ptr), ty.size());
+            return;
+        }
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(dst_ptr),
+            src,
+            ty,
+        });
     }
 
     fn fresh_lambda_name(&mut self) -> String {
@@ -2234,12 +2306,16 @@ impl FnLowerer {
         }
     }
 
+    fn remember_fixed_array_value(&mut self, var: VarId, source_ty: &Type) {
+        if let Type::Array(elem, len) = self.resolve_type(source_ty) {
+            self.fixed_array_types.insert(var, (*elem, len));
+        }
+    }
+
     fn record_value_local(&mut self, var: VarId, source_ty: Type) {
         let storage_ty = Self::backend_value_type(&source_ty);
         self.record_local(var, storage_ty);
-        if let Type::Array(elem, len) = source_ty {
-            self.fixed_array_types.insert(var, (*elem, len));
-        }
+        self.remember_fixed_array_value(var, &source_ty);
     }
 
     fn resolved_struct_fields(&self, struct_name: &str) -> Vec<ast::FieldDef> {
@@ -3836,11 +3912,7 @@ impl FnLowerer {
         let offsets = self.enums.field_offsets(&field_tys);
         for ((arg, off), fty) in args.iter().zip(offsets.iter()).zip(field_tys.iter()) {
             let field_ptr = self.gep_byte(&base_val, *off);
-            self.builder.emit(Instruction::Store {
-                dst: Value::Var(field_ptr),
-                src: arg.clone(),
-                ty: fty.clone(),
-            });
+            self.store_inline_value(field_ptr, arg.clone(), fty);
         }
 
         base_val
@@ -3889,11 +3961,7 @@ impl FnLowerer {
         let offsets = self.structs.field_offsets(&fields);
         for ((arg, off), fty) in args.iter().zip(offsets.iter()).zip(field_tys.iter()) {
             let field_ptr = self.gep_byte(&base_val, *off);
-            self.builder.emit(Instruction::Store {
-                dst: Value::Var(field_ptr),
-                src: arg.clone(),
-                ty: fty.clone(),
-            });
+            self.store_inline_value(field_ptr, arg.clone(), fty);
         }
 
         base_val
@@ -3920,11 +3988,7 @@ impl FnLowerer {
                 continue;
             }
             let field_ptr = self.gep_byte(&base_val, *off);
-            self.builder.emit(Instruction::Store {
-                dst: Value::Var(field_ptr),
-                src: elem.clone(),
-                ty: ty.clone(),
-            });
+            self.store_inline_value(field_ptr, elem.clone(), ty);
         }
 
         base_val
@@ -3948,15 +4012,7 @@ impl FnLowerer {
             return self.dummy_value_for_type(&elem_ty);
         }
         let offsets = Self::tuple_field_offsets(&elem_tys);
-        let field_ptr = self.gep_byte(&tuple_val, offsets[index]);
-        let result = self.builder.fresh_var();
-        self.builder.emit(Instruction::Load {
-            dst: result,
-            src: Value::Var(field_ptr),
-            ty: elem_ty.clone(),
-        });
-        self.record_local(result, elem_ty);
-        Value::Var(result)
+        self.project_field_value(&tuple_val, offsets[index], &elem_ty)
     }
 
     fn tuple_field_offsets(elems: &[Type]) -> Vec<usize> {
@@ -3987,15 +4043,7 @@ impl FnLowerer {
         let fty = fields[idx].ty.clone();
         let off = offsets[idx];
 
-        let field_ptr = self.gep_byte(&s_val, off);
-        let result = self.builder.fresh_var();
-        self.builder.emit(Instruction::Load {
-            dst: result,
-            src: Value::Var(field_ptr),
-            ty: fty.clone(),
-        });
-        self.record_local(result, fty);
-        Value::Var(result)
+        self.project_field_value(&s_val, off, &fty)
     }
 
     /// Construct an immutable string literal value: reserve 16 bytes of inline
@@ -4070,11 +4118,7 @@ impl FnLowerer {
                     elem_ty: elem_ty.clone(),
                 });
                 self.record_local(elem_ptr, Type::U64);
-                self.builder.emit(Instruction::Store {
-                    dst: Value::Var(elem_ptr),
-                    src: elem_val,
-                    ty: elem_ty.clone(),
-                });
+                self.store_inline_value(elem_ptr, elem_val, &elem_ty);
             }
         }
 
@@ -4349,6 +4393,11 @@ impl FnLowerer {
         });
         self.record_local(elem_ptr, Type::U64);
 
+        if matches!(elem_ty, Type::Array(_, _)) {
+            self.remember_fixed_array_value(elem_ptr, &elem_ty);
+            return Value::Var(elem_ptr);
+        }
+
         let result = self.builder.fresh_var();
         self.builder.emit(Instruction::Load {
             dst: result,
@@ -4532,11 +4581,7 @@ impl FnLowerer {
         });
         self.record_local(elem_ptr, Type::U64);
 
-        self.builder.emit(Instruction::Store {
-            dst: Value::Var(elem_ptr),
-            src: store_val,
-            ty: elem_ty,
-        });
+        self.store_inline_value(elem_ptr, store_val, &elem_ty);
 
         Value::ConstUnit
     }
@@ -5201,12 +5246,13 @@ impl FnLowerer {
             })
             .collect();
         let phi_dst = self.builder.fresh_var();
+        let phi_ty = Self::backend_value_type(&result_ty);
         self.builder.emit(Instruction::Phi {
             dst: phi_dst,
             incoming,
-            ty: result_ty.clone(),
+            ty: phi_ty,
         });
-        self.record_local(phi_dst, result_ty);
+        self.record_value_local(phi_dst, result_ty);
         Value::Var(phi_dst)
     }
 
@@ -5245,20 +5291,21 @@ impl FnLowerer {
             match arg {
                 ast::Pattern::Wildcard => {}
                 ast::Pattern::Binding(binding) => {
-                    let loaded = self.load_field(base, *off, fty);
+                    let value = self.project_field_value(base, *off, fty);
+                    let storage_ty = Self::backend_value_type(fty);
                     // Give the binding a real stack slot so nested control flow
                     // can read it.
                     let slot = self.builder.fresh_var();
                     self.builder.emit(Instruction::Alloc {
                         var: slot,
-                        ty: fty.clone(),
+                        ty: storage_ty.clone(),
                     });
                     self.builder.emit(Instruction::Store {
                         dst: Value::Var(slot),
-                        src: Value::Var(loaded),
-                        ty: fty.clone(),
+                        src: value,
+                        ty: storage_ty,
                     });
-                    self.record_local(slot, fty.clone());
+                    self.record_value_local(slot, fty.clone());
                     self.vars.insert(binding.clone(), slot);
                 }
                 ast::Pattern::Variant {
@@ -5318,10 +5365,34 @@ impl FnLowerer {
         }
     }
 
+    /// Project a field out of aggregate inline storage. Most field values are
+    /// loaded from the field address. Fixed arrays are different: their field
+    /// representation is inline storage, while the value flowing through the IR
+    /// is a pointer to that storage, so projection returns the field address
+    /// itself and records its fixed-array view.
+    fn project_field_value(&mut self, base: &Value, off: usize, fty: &Type) -> Value {
+        let fty = self.resolve_type(fty);
+        let field_ptr = self.gep_byte(base, off);
+        if matches!(fty, Type::Array(_, _)) {
+            self.remember_fixed_array_value(field_ptr, &fty);
+            return Value::Var(field_ptr);
+        }
+
+        let loaded = self.builder.fresh_var();
+        self.builder.emit(Instruction::Load {
+            dst: loaded,
+            src: Value::Var(field_ptr),
+            ty: fty.clone(),
+        });
+        self.record_local(loaded, fty);
+        Value::Var(loaded)
+    }
+
     /// Load the payload field at byte offset `off` of the variant value `base`,
-    /// at its (already-resolved) field type. Returns the fresh var holding the
-    /// loaded value.
+    /// at its (already-resolved, non-array) field type. Returns the fresh var
+    /// holding the loaded value.
     fn load_field(&mut self, base: &Value, off: usize, fty: &Type) -> VarId {
+        debug_assert!(!matches!(self.resolve_type(fty), Type::Array(_, _)));
         let field_ptr = self.gep_byte(base, off);
         let loaded = self.builder.fresh_var();
         self.builder.emit(Instruction::Load {
@@ -8180,6 +8251,102 @@ mod tests {
                 Value::ConstI64(16)
             ],
             "expected env(8) + struct snapshot(16) + nested String snapshot(16) + descriptor(16)"
+        );
+    }
+
+    #[test]
+    fn test_lower_capturing_lambda_deep_copies_fixed_array_string_elements() {
+        // Capturing `(Array String 2)` snapshots the array storage, then
+        // rewrites each copied element handle to a heap snapshot of its fat
+        // string value (#631). tl_alloc sizes: env(8), array snapshot(16), two
+        // String snapshots(16 each), descriptor(16).
+        let prog = parse(
+            r#"
+            (define (get_fn) : (-> i64)
+              (let ([a : (Array String 2) (array "hi" "abcd")])
+                (lambda () : i64 (+ (string-length (array-ref a 0))
+                                    (string-length (array-ref a 1))))))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let get_fn = ir
+            .functions
+            .iter()
+            .find(|f| f.name == "get_fn")
+            .expect("get_fn lowered");
+        let alloc_sizes: Vec<Value> = get_fn
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .filter_map(|i| match i {
+                Instruction::Call { func, args, .. } if func == "tl_alloc" => args.first().cloned(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            alloc_sizes,
+            vec![
+                Value::ConstI64(8),
+                Value::ConstI64(16),
+                Value::ConstI64(16),
+                Value::ConstI64(16),
+                Value::ConstI64(16)
+            ],
+            "expected env + array snapshot + two String snapshots + descriptor"
+        );
+    }
+
+    #[test]
+    fn test_lower_capturing_lambda_projects_fixed_array_struct_field() {
+        // A fixed-array field is inline storage inside the struct. Capture
+        // copies that storage with the struct; `struct-get` must then project a
+        // pointer to the field storage instead of loading the array by value.
+        let prog = parse(
+            r#"
+            (defstruct Chunk (items (Array i64 3)))
+            (define (get_fn) : (-> i64)
+              (let ([c : Chunk (Chunk (array 40 1 1))])
+                (lambda () : i64
+                  (+ (array-ref (struct-get c items) 0)
+                     (+ (array-ref (struct-get c items) 1)
+                        (array-ref (struct-get c items) 2))))))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let get_fn = ir
+            .functions
+            .iter()
+            .find(|f| f.name == "get_fn")
+            .expect("get_fn lowered");
+        let alloc_sizes: Vec<Value> = get_fn
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .filter_map(|i| match i {
+                Instruction::Call { func, args, .. } if func == "tl_alloc" => args.first().cloned(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            alloc_sizes,
+            vec![Value::ConstI64(8), Value::ConstI64(24), Value::ConstI64(16)],
+            "expected env(8) + struct snapshot with inline array(24) + descriptor(16)"
+        );
+        assert!(
+            !get_fn.blocks.iter().any(|b| {
+                b.instructions.iter().any(|i| {
+                    matches!(
+                        i,
+                        Instruction::Load {
+                            ty: Type::Array(_, _),
+                            ..
+                        }
+                    )
+                })
+            }),
+            "fixed-array fields must be projected by address, not loaded by value"
         );
     }
 

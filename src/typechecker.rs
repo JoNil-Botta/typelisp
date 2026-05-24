@@ -51,26 +51,6 @@ fn reduce_op_result_support(op: ReduceOp, ty: &Type) -> Result<(), &'static str>
     }
 }
 
-/// Scalar value types whose inline bytes are fully self-contained (no inner
-/// pointer/handle), so a shallow storage copy captures them completely. Used to
-/// admit fixed-array closure captures only for scalar element types (#571).
-fn is_scalar_capture_type(ty: &Type) -> bool {
-    matches!(
-        ty,
-        Type::I64
-            | Type::I32
-            | Type::I16
-            | Type::I8
-            | Type::U64
-            | Type::U32
-            | Type::U16
-            | Type::U8
-            | Type::Bool
-            | Type::Char
-            | Type::F64
-    )
-}
-
 pub struct TypeChecker {
     env: Vec<HashMap<String, Type>>,
     func_ret: Option<Type>,
@@ -776,17 +756,6 @@ impl TypeChecker {
     }
 
     fn unsupported_capture_type_reason(&self, ty: &Type) -> Option<String> {
-        // A directly-captured fixed `(Array T N)` of scalars is admissible: the
-        // lowerer snapshots its inline storage onto the heap and reconstructs the
-        // array view on capture-load, so `array-ref` on the captured value geps a
-        // pointer-sized handle (#571). This is only sound at top level — a fixed
-        // array reached through a struct/tuple field is not pointer-sized at its
-        // use site, so nested array fields stay rejected by `_inner` below.
-        if let Type::Array(elem, _) = self.resolve_type(ty)
-            && is_scalar_capture_type(&self.resolve_type(&elem))
-        {
-            return None;
-        }
         let mut seen_enums = HashSet::new();
         let mut seen_structs = HashSet::new();
         self.unsupported_capture_type_reason_inner(ty, &mut seen_enums, &mut seen_structs)
@@ -802,8 +771,8 @@ impl TypeChecker {
         // `String` and dynamic-array values snapshot their fat handle storage
         // onto the heap (#435). Tuples/structs/enums snapshot their inline
         // storage and then recursively snapshot any nested aggregate handles
-        // (#584). Fixed arrays stay out of scope until #571 wires their value
-        // representation into closure environments.
+        // (#584). Fixed arrays snapshot their inline element storage and
+        // recursively rewrite aggregate element handles in place (#631).
         match self.resolve_type(ty) {
             Type::I64
             | Type::I32
@@ -885,14 +854,9 @@ impl TypeChecker {
                 seen_enums.remove(&name);
                 found
             }
-            // A fixed array reached through an aggregate field is not pointer-
-            // sized at its `array-ref` use site, so nested array fields stay
-            // rejected here. A directly-captured scalar array is admitted by the
-            // top-level fast path in `unsupported_capture_type_reason` (#571).
-            Type::Array(_, _) => Some(
-                "uses fixed-size array storage nested in an aggregate, which is not yet supported in closure captures (#571)"
-                    .into(),
-            ),
+            Type::Array(elem, _) => self
+                .unsupported_capture_type_reason_inner(&elem, seen_enums, seen_structs)
+                .map(|reason| format!("fixed-size array element {}", reason)),
             other => Some(format!("has unsupported type {}", other)),
         }
     }
@@ -1579,8 +1543,8 @@ impl TypeChecker {
                         return Err(TypeError::at(
                             format!(
                                 "capturing value '{}' of type {} is not yet supported: {}; \
-                                 capture scalar, function, String, dynamic-array, or recursively \
-                                 supported tuple/struct/enum values",
+                                 capture scalar, function, String, dynamic-array, fixed-array, or \
+                                 recursively supported tuple/struct/enum values",
                                 captured, ty, reason
                             ),
                             *span,
@@ -3648,9 +3612,10 @@ mod tests {
     }
 
     #[test]
-    fn test_typecheck_aggregate_element_fixed_array_capture_rejected() {
-        // A fixed array of aggregates would need its inline elements deep-copied,
-        // which is not yet wired, so it stays rejected (#571).
+    fn test_typecheck_aggregate_element_fixed_array_capture_ok() {
+        // A fixed array of aggregate pointer elements is capture-supported: the
+        // array storage is copied and each aggregate element handle is
+        // recursively re-snapshotted (#631).
         let prog = parse(
             r#"
             (define (main) : i64
@@ -3661,12 +3626,32 @@ mod tests {
         )
         .unwrap();
         let mut tc = TypeChecker::new();
-        let err = tc.check_program(&prog).unwrap_err();
-        assert!(err.msg.contains("is not yet supported"), "err: {}", err);
         assert!(
-            err.msg.contains("#571"),
-            "err should reference #571: {}",
-            err
+            tc.check_program(&prog).is_ok(),
+            "{:?}",
+            tc.check_program(&prog)
+        );
+    }
+
+    #[test]
+    fn test_typecheck_nested_fixed_array_capture_ok() {
+        // Nested fixed arrays are captured as inline storage: the outer array
+        // copy owns the inner fixed-array storage, and `array-ref` projects a
+        // pointer to that inner storage (#631).
+        let prog = parse(
+            r#"
+            (define (main) : i64
+              (let ([a : (Array (Array String 2) 1) (array (array "x" "yz"))]
+                    [f : (-> i64) (lambda () : i64 (string-length (array-ref (array-ref a 0) 1)))])
+                (f)))
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        assert!(
+            tc.check_program(&prog).is_ok(),
+            "{:?}",
+            tc.check_program(&prog)
         );
     }
 
@@ -3714,9 +3699,10 @@ mod tests {
     }
 
     #[test]
-    fn test_typecheck_fixed_array_field_capture_still_rejected() {
-        // Fixed-array fields still need the separate representation work in
-        // #571 before they can be captured through aggregate deep-copy.
+    fn test_typecheck_fixed_array_field_capture_ok() {
+        // Fixed-array fields are capture-supported by copying their inline
+        // storage with the containing aggregate and projecting field access as
+        // a pointer to that storage (#631).
         let prog = parse(
             r#"
             (defstruct Chunk (items (Array i64 3)))
@@ -3728,16 +3714,31 @@ mod tests {
         )
         .unwrap();
         let mut tc = TypeChecker::new();
+        assert!(
+            tc.check_program(&prog).is_ok(),
+            "{:?}",
+            tc.check_program(&prog)
+        );
+    }
+
+    #[test]
+    fn test_typecheck_unsupported_fixed_array_element_capture_rejected() {
+        // Unsupported element types remain rejected even when nested inside
+        // fixed arrays, with the diagnostic pointing at the array element.
+        let prog = parse(
+            r#"
+            (define (make [x : f32]) : (-> f32)
+              (let ([a : (Array f32 1) (array x)])
+                (lambda () : f32 (array-ref a 0))))
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
         let err = tc.check_program(&prog).unwrap_err();
         assert!(
             err.msg
-                .contains("field 'items' uses fixed-size array storage"),
+                .contains("fixed-size array element has unsupported type f32"),
             "err: {}",
-            err
-        );
-        assert!(
-            err.msg.contains("#571"),
-            "err should reference #571: {}",
             err
         );
     }

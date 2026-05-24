@@ -1,4 +1,5 @@
 use crate::ast::*;
+use crate::ctfe::{CtfeError, CtfeEvaluator, CtfeValue};
 use crate::diagnostic::Diagnostic;
 use crate::span::Span;
 use crate::types::Type;
@@ -887,10 +888,17 @@ impl TypeChecker {
             Expr::Var(name) => self
                 .lookup(name)
                 .ok_or_else(|| TypeError::at(format!("unbound variable: {}", name), span)),
-            Expr::Comptime { .. } => Err(TypeError::at(
-                "comptime is reserved for future compile-time evaluation and is not supported yet",
-                span,
-            )),
+            Expr::Comptime { expr } => match CtfeEvaluator::new().eval(expr) {
+                Ok(CtfeValue::I64(_)) => Ok(Type::I64),
+                Ok(CtfeValue::F64(_)) => Ok(Type::F64),
+                Ok(CtfeValue::Bool(_)) => Ok(Type::Bool),
+                Ok(CtfeValue::Char(_)) => Ok(Type::Char),
+                Ok(CtfeValue::Unit) => Ok(Type::Unit),
+                Err(CtfeError::Message {
+                    msg,
+                    span: ctfe_span,
+                }) => Err(TypeError::at(format!("comptime error: {}", msg), ctfe_span)),
+            },
             Expr::Binary { op, lhs, rhs } => {
                 let lhs_ty = self.check_expr(lhs)?;
                 let rhs_ty = self.check_expr(rhs)?;
@@ -2906,32 +2914,75 @@ mod tests {
     // ------------------------------------------------------------------
 
     #[test]
-    fn test_typecheck_comptime_reserved_diagnostic() {
+    fn test_typecheck_comptime_success() {
+        let src = "(define (main) : i64 (comptime (+ 1 2)))";
+        let prog = parse(src).unwrap();
+        let mut tc = TypeChecker::new();
+        tc.check_program(&prog)
+            .expect("comptime (+ 1 2) should typecheck to i64");
+    }
+
+    #[test]
+    fn test_typecheck_comptime_runtime_var_rejected() {
         use crate::diagnostic::format_diagnostic;
 
-        let src = "(define (main) : i64 (comptime (+ 1 2)))";
+        let src = "(define (main [x : i64]) : i64 (comptime x))";
         let prog = parse(src).unwrap();
         let mut tc = TypeChecker::new();
         let err = tc.check_program(&prog).unwrap_err();
 
-        assert!(err.msg.contains("comptime"), "got: {}", err.msg);
-        assert!(err.msg.contains("reserved"), "got: {}", err.msg);
-        assert!(err.msg.contains("not supported"), "got: {}", err.msg);
+        assert!(
+            err.msg.contains("runtime variable"),
+            "expected runtime variable error, got: {}",
+            err.msg
+        );
 
         let rendered = format_diagnostic(&err.to_diagnostic(), src, "test.tl");
         assert!(rendered.contains("error[E0200]"), "got:\n{}", rendered);
-        assert!(rendered.contains("--> test.tl:1:22"), "got:\n{}", rendered);
+    }
+
+    #[test]
+    fn test_typecheck_comptime_unsupported_form_rejected() {
+        let src = "(define (main) : i64 (comptime (while true 1)))";
+        let prog = parse(src).unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
         assert!(
-            rendered.contains(" 1 | (define (main) : i64 (comptime (+ 1 2)))"),
-            "got:\n{}",
-            rendered
+            err.msg.contains("not supported"),
+            "expected unsupported-form error, got: {}",
+            err.msg
         );
+    }
+
+    #[test]
+    fn test_typecheck_comptime_div_by_zero() {
+        let src = "(define (main) : i64 (comptime (/ 1 0)))";
+        let prog = parse(src).unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
         assert!(
-            rendered.contains("^^^^^^^^^^^^^^^^^^"),
-            "got:\n{}",
-            rendered
+            err.msg.contains("division by zero"),
+            "expected div-by-zero error, got: {}",
+            err.msg
         );
-        assert!(!err.msg.contains("unbound variable"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_comptime_bool_result() {
+        let src = "(define (main) : bool (comptime (and true false)))";
+        let prog = parse(src).unwrap();
+        let mut tc = TypeChecker::new();
+        tc.check_program(&prog)
+            .expect("comptime bool should typecheck");
+    }
+
+    #[test]
+    fn test_typecheck_comptime_let_if_begin() {
+        let src = "(define (main) : i64 (comptime (let ([x 10]) (if true (+ x 1) 0))))";
+        let prog = parse(src).unwrap();
+        let mut tc = TypeChecker::new();
+        tc.check_program(&prog)
+            .expect("comptime let/if/begin should typecheck");
     }
 
     fn check(src: &str) -> Result<(), TypeError> {

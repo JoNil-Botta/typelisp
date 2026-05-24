@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 mod ast;
 mod backend;
+mod ctfe;
 mod diagnostic;
 mod doctest;
 mod ir;

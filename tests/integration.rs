@@ -112,6 +112,12 @@ fn type_lisp_programs_compile_link_and_run() {
             deps: &[],
         },
         Case {
+            name: "tail_self_loop",
+            exit_code: 42,
+            stdout: "",
+            deps: &[],
+        },
+        Case {
             name: "fibonacci",
             exit_code: 13,
             stdout: "",
@@ -636,6 +642,12 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         Case {
             name: "factorial",
             exit_code: 120,
+            stdout: "",
+            deps: &[],
+        },
+        Case {
+            name: "tail_self_loop",
+            exit_code: 42,
             stdout: "",
             deps: &[],
         },

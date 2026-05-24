@@ -178,6 +178,10 @@ pub enum Instruction {
         args: Vec<Value>,
         ty: Type,
     },
+    /// Tail call to the current function. This is a terminator: arguments are
+    /// evaluated before the instruction, parameter slots are replaced, and
+    /// control jumps back to the function entry block.
+    TailSelfCall { func: String, args: Vec<Value> },
     /// Conditional branch: if cond goto true_label else false_label
     Branch {
         cond: Value,
@@ -374,9 +378,10 @@ impl Instruction {
             | Instruction::Alloc { .. } => IrEffect::MemoryWrite,
             Instruction::Call { func, .. } => classify_direct_call_effect(func),
             Instruction::CallIndirect { .. } => IrEffect::Unknown,
-            Instruction::Branch { .. } | Instruction::Jump(_) | Instruction::Return(_) => {
-                IrEffect::ControlFlow
-            }
+            Instruction::TailSelfCall { .. }
+            | Instruction::Branch { .. }
+            | Instruction::Jump(_)
+            | Instruction::Return(_) => IrEffect::ControlFlow,
         }
     }
 }
@@ -639,6 +644,16 @@ impl fmt::Display for Instruction {
                     write!(f, "  call_indirect {}", func)?;
                 }
                 write!(f, "(")?;
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", arg)?;
+                }
+                write!(f, ")")
+            }
+            Instruction::TailSelfCall { func, args } => {
+                write!(f, "  tail_self_call {}(", func)?;
                 for (i, arg) in args.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
@@ -1126,6 +1141,14 @@ mod tests {
             }
             .effect(),
             IrEffect::Unknown
+        );
+        assert_eq!(
+            Instruction::TailSelfCall {
+                func: "f".into(),
+                args: vec![Value::ConstI64(0)],
+            }
+            .effect(),
+            IrEffect::ControlFlow
         );
         assert_eq!(
             Instruction::Branch {

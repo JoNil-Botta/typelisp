@@ -662,6 +662,11 @@ impl Optimizer {
                     Self::add_value_uses(arg, used);
                 }
             }
+            Instruction::TailSelfCall { args, .. } => {
+                for arg in args {
+                    Self::add_value_uses(arg, used);
+                }
+            }
             Instruction::CallIndirect { func, args, .. } => {
                 Self::add_value_uses(func, used);
                 for arg in args {
@@ -935,6 +940,11 @@ impl Optimizer {
                     substitute(arg);
                 }
             }
+            Instruction::TailSelfCall { args, .. } => {
+                for arg in args {
+                    substitute(arg);
+                }
+            }
             Instruction::CallIndirect { func, args, .. } => {
                 substitute(func);
                 for arg in args {
@@ -1027,6 +1037,7 @@ impl Optimizer {
             Instruction::Store { .. }
             | Instruction::VectorStore { .. }
             | Instruction::PredicatedStore { .. }
+            | Instruction::TailSelfCall { .. }
             | Instruction::Branch { .. }
             | Instruction::Jump(_)
             | Instruction::Return(_) => None,
@@ -1419,6 +1430,42 @@ mod tests {
                 lhs: Value::Var(0),
                 ..
             }
+        ));
+    }
+
+    #[test]
+    fn test_tail_self_call_marks_arguments_used_and_accepts_copy_propagation() {
+        let mut func = Function {
+            name: "f".into(),
+            params: vec![(0, Type::I64)],
+            ret: Type::I64,
+            locals: vec![(1, Type::I64)],
+            blocks: vec![BasicBlock {
+                label: "entry".into(),
+                instructions: vec![
+                    Instruction::Mov {
+                        dst: 1,
+                        src: Value::Var(0),
+                        ty: Type::I64,
+                    },
+                    Instruction::TailSelfCall {
+                        func: "f".into(),
+                        args: vec![Value::Var(1)],
+                    },
+                ],
+            }],
+            entry: "entry".into(),
+        };
+
+        assert!(!Optimizer::dead_code_elimination(&mut func));
+        assert_eq!(func.blocks[0].instructions.len(), 2);
+        assert!(Optimizer::copy_propagation(&mut func));
+        assert!(matches!(
+            func.blocks[0].instructions[1],
+            Instruction::TailSelfCall {
+                args: ref tail_args,
+                ..
+            } if tail_args == &vec![Value::Var(0)]
         ));
     }
 

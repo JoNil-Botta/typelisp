@@ -163,6 +163,9 @@ fn instruction_uses(instr: &Instruction) -> BTreeSet<VarId> {
         Instruction::Call { args, .. } => {
             collect_value_slice_vars(args, &mut uses);
         }
+        Instruction::TailSelfCall { args, .. } => {
+            collect_value_slice_vars(args, &mut uses);
+        }
         Instruction::CallIndirect { func, args, .. } => {
             collect_value_vars(func, &mut uses);
             collect_value_slice_vars(args, &mut uses);
@@ -261,6 +264,7 @@ fn instruction_defs(instr: &Instruction) -> BTreeSet<VarId> {
         Instruction::Store { .. }
         | Instruction::VectorStore { .. }
         | Instruction::PredicatedStore { .. }
+        | Instruction::TailSelfCall { .. }
         | Instruction::Branch { .. }
         | Instruction::Jump(_)
         | Instruction::Return(_) => {}

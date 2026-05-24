@@ -58,6 +58,14 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
+fn has_self_tail_jump(asm: &str, symbol: &str) -> bool {
+    asm.contains(&format!("jmp {symbol}.entry"))
+}
+
+fn has_recursive_self_edge(asm: &str, symbol: &str) -> bool {
+    asm.matches(&format!("call {symbol}")).count() >= 2 || has_self_tail_jump(asm, symbol)
+}
+
 #[test]
 fn tl_eval_tl_compiles_to_assembly() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -215,15 +223,15 @@ fn tl_eval_tl_compiles_to_assembly() {
     // The binding LIST is folded into the env by `eval-let-bindings`, which walks
     // the list head-first - evaluating each initializer in the env built so far and
     // recursing on the binding tail. So a call to `eval-let-bindings` AND a
-    // recursive self-call within it must both be present (the multi-binding fold).
+    // recursive self-edge within it must both be present (the multi-binding fold).
     assert!(
         asm.contains("call _tl_eval_let_bindings"),
         "tl_eval assembly shows no eval-let-bindings call (no multi-binding let fold):\n{}",
         asm,
     );
     assert!(
-        asm.matches("call _tl_eval_let_bindings").count() >= 2,
-        "tl_eval assembly shows no recursive eval-let-bindings self-call \
+        has_recursive_self_edge(&asm, "_tl_eval_let_bindings"),
+        "tl_eval assembly shows no recursive eval-let-bindings self-edge \
          (binding-list fold):\n{}",
         asm,
     );
@@ -488,15 +496,15 @@ fn tl_eval_tl_compiles_to_assembly() {
     // binds a name into the environment. `eval-sexpr` therefore calls `lookup`,
     // and `lookup` is itself recursive - it walks the `Env` assoc-list chain
     // head-first, comparing each bound name to the query and recursing on the
-    // tail. So a `lookup` call AND a `lookup` self-call must both be present.
+    // tail. So a `lookup` call AND a `lookup` self-edge must both be present.
     assert!(
         asm.contains("call _tl_lookup"),
         "tl_eval assembly shows no variable-lookup call (no environment threading):\n{}",
         asm,
     );
     assert!(
-        asm.matches("call _tl_lookup").count() >= 2,
-        "tl_eval assembly shows no recursive lookup self-call (assoc-list walk):\n{}",
+        has_recursive_self_edge(&asm, "_tl_lookup"),
+        "tl_eval assembly shows no recursive lookup self-edge (assoc-list walk):\n{}",
         asm,
     );
 
@@ -506,7 +514,7 @@ fn tl_eval_tl_compiles_to_assembly() {
     // body up in the `FnEnv` via `lookup-fn-params` / `lookup-fn-body`, each of
     // which is itself recursive (it walks the `FnEnv` assoc-list head-first,
     // comparing the bound function name and recursing on the tail). So a call to
-    // each lookup AND a recursive self-call within each must be present.
+    // each lookup AND a recursive self-edge within each must be present.
     for fname in ["_tl_lookup_fn_params", "_tl_lookup_fn_body"] {
         assert!(
             asm.contains(&format!("call {fname}")),
@@ -515,8 +523,8 @@ fn tl_eval_tl_compiles_to_assembly() {
             asm,
         );
         assert!(
-            asm.matches(&format!("call {fname}")).count() >= 2,
-            "tl_eval assembly shows no recursive {fname} self-call (FnEnv assoc-list walk):\n{}",
+            has_recursive_self_edge(&asm, fname),
+            "tl_eval assembly shows no recursive {fname} self-edge (FnEnv assoc-list walk):\n{}",
             asm,
         );
     }
@@ -547,10 +555,10 @@ fn tl_eval_tl_compiles_to_assembly() {
     // lower-level per-form cursor API, so `run-forms` reuses `read-form` and is
     // itself recursive - it reads one form, folds a `(define ...)` into the
     // `FnEnv`, and recurses for the rest until the trailing expression. A
-    // `run-forms` self-call must therefore be present.
+    // `run-forms` self-edge must therefore be present.
     assert!(
-        asm.matches("call _tl_run_forms").count() >= 1,
-        "tl_eval assembly shows no recursive run-forms self-call (multi-form program reader):\n{}",
+        has_recursive_self_edge(&asm, "_tl_run_forms"),
+        "tl_eval assembly shows no recursive run-forms self-edge (multi-form program reader):\n{}",
         asm,
     );
 
@@ -808,16 +816,15 @@ fn tl_eval_tl_compiles_to_assembly() {
     // evaluates each form head-first (for its side effects) and recurses on the
     // tail, returning the LAST form's value. So `eval-seq` is emitted as its own
     // function (asserted in the symbol list above), the dispatch arm calls it, AND
-    // it calls ITSELF (the recursive spine walk) - so at least two
-    // `call _tl_eval_seq` sites must be present.
+    // it recurses through a self-edge (now a tail jump when optimized).
     assert!(
         asm.contains("call _tl_eval_seq"),
         "tl_eval assembly shows no eval-seq call (begin sequencing not lowered):\n{}",
         asm,
     );
     assert!(
-        asm.matches("call _tl_eval_seq").count() >= 2,
-        "tl_eval assembly shows no recursive eval-seq self-call (begin spine walk):\n{}",
+        has_recursive_self_edge(&asm, "_tl_eval_seq"),
+        "tl_eval assembly shows no recursive eval-seq self-edge (begin spine walk):\n{}",
         asm,
     );
 

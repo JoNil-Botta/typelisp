@@ -444,6 +444,11 @@ pub struct X86_64Backend {
     /// target — the IR carries bare block labels (e.g. `then.0`) which must be
     /// qualified with the function symbol to resolve.
     current_fn: String,
+    /// Entry label and parameter slots for the function currently being
+    /// generated. Tail self calls rewrite these slots and jump to the entry
+    /// block after the prologue's parameter-spill sequence.
+    current_entry_label: Label,
+    current_params: Vec<(VarId, Type)>,
     /// String-literal bytes interned into `.rodata`, mapped to their emitted
     /// label. A `Value::ConstStr` materializes as the address of its label.
     /// Built in a pre-pass over the program so the bytes are emitted once and
@@ -688,6 +693,30 @@ fn validate_function(
                     for arg in args {
                         check_operand(arg, global_types)
                             .map_err(|w| unsupported_value(&func.name, &w))?;
+                    }
+                }
+                Instruction::TailSelfCall { func: target, args } => {
+                    if target != &func.name {
+                        return unsupported(&format!(
+                            "tail self call targets '{}' from '{}'",
+                            target, func.name
+                        ));
+                    }
+                    if args.len() != func.params.len() {
+                        return unsupported(&format!(
+                            "tail self call passes {} args to {} params",
+                            args.len(),
+                            func.params.len()
+                        ));
+                    }
+                    for (arg, (_, ty)) in args.iter().zip(func.params.iter()) {
+                        if *ty == Type::Unit {
+                            validate_unit_value(arg, &var_types, global_types)
+                                .map_err(|w| unsupported_value(&func.name, &w))?;
+                        } else {
+                            check_operand(arg, global_types)
+                                .map_err(|w| unsupported_value(&func.name, &w))?;
+                        }
                     }
                 }
                 Instruction::Return(Some(v)) => {
@@ -1529,6 +1558,8 @@ impl X86_64Backend {
             return_ty: Type::Unit,
             param_vars: HashSet::new(),
             current_fn: String::new(),
+            current_entry_label: String::new(),
+            current_params: Vec::new(),
             interned_strings: HashMap::new(),
         }
     }
@@ -2648,7 +2679,9 @@ impl X86_64Backend {
                     intern(s);
                 }
             }
-            Instruction::Call { args, .. } | Instruction::CallIndirect { args, .. } => {
+            Instruction::Call { args, .. }
+            | Instruction::TailSelfCall { args, .. }
+            | Instruction::CallIndirect { args, .. } => {
                 for a in args {
                     if let Value::ConstStr(s) = a {
                         intern(s);
@@ -2727,6 +2760,11 @@ impl X86_64Backend {
                 Self::collect_function_value(src, names);
             }
             Instruction::Call { args, .. } => {
+                for arg in args {
+                    Self::collect_function_value(arg, names);
+                }
+            }
+            Instruction::TailSelfCall { args, .. } => {
                 for arg in args {
                     Self::collect_function_value(arg, names);
                 }
@@ -4547,6 +4585,8 @@ impl X86_64Backend {
         self.address_vars.clear();
         self.return_ty = func.ret.clone();
         self.param_vars = func.params.iter().map(|(v, _)| *v).collect();
+        self.current_entry_label = func.entry.clone();
+        self.current_params = func.params.clone();
 
         // Allocate space for parameters (so their Alloc no-ops have a slot) and
         // locals.
@@ -4967,6 +5007,9 @@ impl X86_64Backend {
                 self.emit("    call *%rax");
                 self.release_call_args(stack_arg_space);
                 self.store_call_result(dst, ty);
+            }
+            Instruction::TailSelfCall { func, args } => {
+                self.generate_tail_self_call(func, args);
             }
             Instruction::Branch {
                 cond,
@@ -5418,6 +5461,46 @@ impl X86_64Backend {
             )),
             _ => {}
         }
+    }
+
+    fn generate_tail_self_call(&mut self, func: &str, args: &[Value]) {
+        if self.call_symbol(func) != self.current_fn || args.len() != self.current_params.len() {
+            self.emit("    # invalid tail self call rejected by backend validation");
+            return;
+        }
+
+        let params = self.current_params.clone();
+        for (arg, (_, ty)) in args.iter().zip(params.iter()) {
+            if *ty == Type::Unit {
+                continue;
+            }
+            if *ty == Type::F64 {
+                self.load_value(arg, "%xmm15", ty);
+                self.emit("    sub $8, %rsp");
+                self.emit("    movsd %xmm15, (%rsp)");
+            } else {
+                self.load_value(arg, "%r11", ty);
+                self.emit("    push %r11");
+            }
+        }
+
+        for (var, ty) in params.iter().rev() {
+            if *ty == Type::Unit {
+                continue;
+            }
+            let offset = self.var_offsets[var];
+            if *ty == Type::F64 {
+                self.emit("    movsd (%rsp), %xmm15");
+                self.emit("    add $8, %rsp");
+                self.emit(&format!("    movsd %xmm15, {}(%rbp)", offset));
+            } else {
+                self.emit("    pop %r11");
+                self.store_gpr_value("%r11", offset, ty);
+            }
+        }
+
+        let entry = self.current_entry_label.clone();
+        self.emit(&format!("    jmp {}", self.block_label(&entry)));
     }
 
     fn load_call_args(&mut self, args: &[Value]) -> i32 {
@@ -8627,6 +8710,40 @@ mod tests {
     }
 
     #[test]
+    fn test_liveness_tracks_tail_self_call_arguments() {
+        let func = Function {
+            name: "tail_liveness".into(),
+            params: vec![(0, Type::I64)],
+            ret: Type::I64,
+            locals: vec![(1, Type::I64)],
+            blocks: vec![BasicBlock {
+                label: "entry".into(),
+                instructions: vec![
+                    Instruction::Mov {
+                        dst: 1,
+                        src: Value::Var(0),
+                        ty: Type::I64,
+                    },
+                    Instruction::TailSelfCall {
+                        func: "tail_liveness".into(),
+                        args: vec![Value::Var(1)],
+                    },
+                ],
+            }],
+            entry: "entry".into(),
+        };
+
+        let analysis = liveness::analyze(&func);
+        let entry = analysis.block("entry").expect("entry block");
+        assert_var_set(&entry.uses, &[0]);
+        assert_var_set(&entry.defs, &[1]);
+        assert_var_set(&entry.live_in, &[0]);
+        assert_var_set(&entry.live_out, &[]);
+        assert_live_after(&analysis, "entry", 0, &[1]);
+        assert_live_after(&analysis, "entry", 1, &[]);
+    }
+
+    #[test]
     fn test_liveness_marks_address_taken_vars() {
         let func = Function {
             name: "address_taken".into(),
@@ -8687,6 +8804,57 @@ mod tests {
             "asm:\n{}",
             asm
         );
+    }
+
+    #[test]
+    fn test_compile_tail_self_call_jumps_to_entry() {
+        let asm = compile_ok(
+            r#"
+            (define (loop [n : i64] [acc : i64]) : i64
+              (if (= n 0)
+                acc
+                (loop (- n 1) (+ acc 1))))
+            (define (main) : i64
+              (loop 5 0))
+        "#,
+        );
+        assert!(asm.contains("_tl_loop:"), "asm:\n{}", asm);
+        assert_eq!(
+            asm.matches("call _tl_loop").count(),
+            1,
+            "only main should call loop; the recursive edge should be a jump:\n{}",
+            asm
+        );
+        assert!(asm.contains("jmp _tl_loop.entry"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_tail_self_call_parallel_copies_params() {
+        let asm = compile_ok(
+            r#"
+            (define (swapdown [a : i64] [b : i64] [n : i64]) : i64
+              (if (= n 0)
+                a
+                (swapdown b a (- n 1))))
+            (define (main) : i64
+              (swapdown 1 2 3))
+        "#,
+        );
+        assert!(asm.contains("_tl_swapdown:"), "asm:\n{}", asm);
+        assert_eq!(
+            asm.matches("call _tl_swapdown").count(),
+            1,
+            "only main should call swapdown; the recursive edge should be a jump:\n{}",
+            asm
+        );
+        assert!(asm.contains("jmp _tl_swapdown.entry"), "asm:\n{}", asm);
+        assert!(
+            asm.matches("    push %r11").count() >= 3,
+            "tail-call args should be saved before parameter slots are overwritten:\n{}",
+            asm
+        );
+        assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
     }
 
     // ---- Locals: `let` / `set!` (Alloc/Store/Load) (issue #36) ---------

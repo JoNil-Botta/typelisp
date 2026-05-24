@@ -1756,3 +1756,127 @@ fn stdout(output: &Output) -> String {
 fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
+
+// --- debug host-action: private selfhost build/run boundary (#621) ---
+
+fn host_netstring(value: &str) -> String {
+    format!("{}:{}", value.len(), value)
+}
+
+#[test]
+fn host_action_rejects_invalid_plan() {
+    let output = typelisp_with_stdin(&["debug", "host-action"], "not a plan\n");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "expected failure exit\nstdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert!(
+        stderr(&output).contains("invalid host-action plan"),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[test]
+fn host_action_build_source_plan_builds_executable_with_spaced_paths() {
+    let dir = fixture_dir("host-action-build");
+    // A subdirectory whose name contains a space exercises the no-shell-splitting
+    // requirement for both the source and the output path.
+    let spaced = dir.join("with space");
+    fs::create_dir_all(&spaced).expect("create spaced dir");
+    let source = spaced.join("main.tl");
+    fs::write(&source, "(define (main) : i64 11)\n").expect("write source");
+    let output_path = if cfg!(target_os = "windows") {
+        spaced.join("the program.exe")
+    } else {
+        spaced.join("the program")
+    };
+    let target = if cfg!(target_os = "windows") {
+        "windows-x86_64"
+    } else {
+        "linux-x86_64"
+    };
+
+    let plan = format!(
+        "typelisp-host-plan v1\n\
+         action build-source\n\
+         source {}\n\
+         output {}\n\
+         target {}\n\
+         backend-mode scalar\n\
+         end\n",
+        host_netstring(source.to_str().expect("source path is utf-8")),
+        host_netstring(output_path.to_str().expect("output path is utf-8")),
+        target,
+    );
+
+    let output = typelisp_with_stdin(&["debug", "host-action"], &plan);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "host-action build failed\nstdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert!(
+        stdout(&output).contains(&format!("Generated: {}", output_path.display())),
+        "stdout:\n{}",
+        stdout(&output)
+    );
+    assert!(
+        output_path.exists(),
+        "built executable missing: {}",
+        output_path.display()
+    );
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[test]
+fn host_action_run_source_plan_forwards_output_and_status() {
+    let dir = fixture_dir("host-action-run");
+    let source = dir.join("main.tl");
+    fs::write(
+        &source,
+        r#"(define (main) : i64
+  (begin
+    (print-string "from-plan")
+    13))
+"#,
+    )
+    .expect("write source");
+    let target = if cfg!(target_os = "windows") {
+        "windows-x86_64"
+    } else {
+        "linux-x86_64"
+    };
+
+    // The runtime arg contains spaces; the program ignores it, but it must pass
+    // through the plan and into the child without being split or rejected.
+    let plan = format!(
+        "typelisp-host-plan v1\n\
+         action run-source\n\
+         source {}\n\
+         target {}\n\
+         backend-mode scalar\n\
+         runtime-arg {}\n\
+         end\n",
+        host_netstring(source.to_str().expect("source path is utf-8")),
+        target,
+        host_netstring("arg with spaces"),
+    );
+
+    let output = typelisp_with_stdin(&["debug", "host-action"], &plan);
+    assert_eq!(
+        output.status.code(),
+        Some(13),
+        "host-action run exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), "from-plan");
+    assert_eq!(stderr(&output), "");
+}

@@ -1,6 +1,6 @@
 use std::env;
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 mod ast;
@@ -8,6 +8,7 @@ mod backend;
 mod ctfe;
 mod diagnostic;
 mod doctest;
+mod host_action;
 mod ir;
 mod lexer;
 mod lower;
@@ -216,6 +217,9 @@ fn print_debug_usage() {
     eprintln!("    typelisp debug tokenize <file.tl>    Show tokens");
     eprintln!("    typelisp debug parse <file.tl>       Show AST");
     eprintln!("    typelisp debug check <file.tl> [--stdlib-root <dir>...]");
+    eprintln!(
+        "    typelisp debug host-action           Execute a selfhost build/run plan read from stdin (internal)"
+    );
 }
 
 fn print_doc_usage() {
@@ -336,11 +340,42 @@ fn run_debug_command(args: &[String]) {
         "tokenize" => run_tokenize_command(args, 3, print_debug_usage),
         "parse" => run_parse_command(args, 3, print_debug_usage),
         "check" => run_check_command(args, 3, print_debug_usage),
+        "host-action" => run_host_action_command(),
         "help" | "--help" | "-h" => print_debug_usage(),
         subcommand => {
             eprintln!("Unknown debug command: {}", subcommand);
             print_debug_usage();
             std::process::exit(1);
+        }
+    }
+}
+
+/// Private host-action boundary: reads a selfhost build/run plan from stdin and
+/// executes it through the Rust native build/run logic. This is an internal
+/// compiler boundary (see `src/host_action.rs`), not a public TypeLisp feature.
+fn run_host_action_command() {
+    let mut plan_text = String::new();
+    if let Err(err) = io::stdin().read_to_string(&mut plan_text) {
+        eprintln!("Error: failed to read host-action plan from stdin: {}", err);
+        std::process::exit(1);
+    }
+
+    let plan = match host_action::parse_plan(&plan_text) {
+        Ok(plan) => plan,
+        Err(err) => {
+            eprintln!("Error: invalid host-action plan: {}", err);
+            std::process::exit(1);
+        }
+    };
+
+    match native_or_exit(host_action::execute_plan(&plan)) {
+        host_action::HostActionOutcome::Built { output_path } => {
+            println!("Generated: {}", output_path.display());
+        }
+        host_action::HostActionOutcome::Ran(output) => {
+            write_stream_or_exit(io::stdout(), &output.stdout, "stdout");
+            write_stream_or_exit(io::stderr(), &output.stderr, "stderr");
+            std::process::exit(output.status.code().unwrap_or(1));
         }
     }
 }

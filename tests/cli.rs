@@ -1239,6 +1239,154 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
 
 #[cfg(target_os = "linux")]
 #[test]
+fn selfhost_build_run_planners_emit_host_action_plans() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let dir = fixture_dir("selfhost-build-run-planners");
+
+    let build_driver = manifest_dir.join("selfhost").join("build.tl");
+    let build_bin = dir.join("selfhost-build-planner");
+    let build_driver_arg = build_driver.to_str().expect("build driver path is utf-8");
+    let build_bin_arg = build_bin
+        .to_str()
+        .expect("build planner output path is utf-8");
+    let build = typelisp(&["build", build_driver_arg, "-o", build_bin_arg]);
+    assert!(
+        build.status.success(),
+        "selfhost build planner build failed\nstdout:\n{}\nstderr:\n{}",
+        stdout(&build),
+        stderr(&build)
+    );
+
+    let run_driver = manifest_dir.join("selfhost").join("run.tl");
+    let run_bin = dir.join("selfhost-run-planner");
+    let run_driver_arg = run_driver.to_str().expect("run driver path is utf-8");
+    let run_bin_arg = run_bin.to_str().expect("run planner output path is utf-8");
+    let build_run = typelisp(&["build", run_driver_arg, "-o", run_bin_arg]);
+    assert!(
+        build_run.status.success(),
+        "selfhost run planner build failed\nstdout:\n{}\nstderr:\n{}",
+        stdout(&build_run),
+        stderr(&build_run)
+    );
+
+    let spaced = dir.join("with space");
+    fs::create_dir_all(&spaced).expect("create spaced planner fixture dir");
+    let source = spaced.join("main file.tl");
+    let output_path = spaced.join("the program");
+    let stdlib_one = spaced.join("stdlib one");
+    let source_arg = source.to_str().expect("source path is utf-8");
+    let output_arg = output_path.to_str().expect("output path is utf-8");
+    let stdlib_one_arg = stdlib_one.to_str().expect("stdlib path is utf-8");
+    let stdlib_two_arg = "stdlib:two";
+
+    let build_plan = Command::new(&build_bin)
+        .arg(source_arg)
+        .arg("-o")
+        .arg(output_arg)
+        .arg("--target")
+        .arg("windows-x86_64")
+        .arg("--backend-mode")
+        .arg("avx2")
+        .arg("--stdlib-root")
+        .arg(stdlib_one_arg)
+        .arg("--stdlib-root")
+        .arg(stdlib_two_arg)
+        .output()
+        .expect("run selfhost build planner");
+    assert!(
+        build_plan.status.success(),
+        "selfhost build planner failed\nstdout:\n{}\nstderr:\n{}",
+        stdout(&build_plan),
+        stderr(&build_plan)
+    );
+    assert_eq!(stderr(&build_plan), "");
+    assert_eq!(
+        stdout(&build_plan),
+        format!(
+            "typelisp-host-plan v1\n\
+             action build-source\n\
+             source {}\n\
+             output {}\n\
+             target windows-x86_64\n\
+             backend-mode avx2\n\
+             stdlib-root {}\n\
+             stdlib-root {}\n\
+             end\n",
+            host_netstring(source_arg),
+            host_netstring(output_arg),
+            host_netstring(stdlib_one_arg),
+            host_netstring(stdlib_two_arg),
+        )
+    );
+
+    let run_plan = Command::new(&run_bin)
+        .arg(source_arg)
+        .arg("--target")
+        .arg("linux-x86_64")
+        .arg("--backend-mode")
+        .arg("avx512")
+        .arg("--stdlib-root")
+        .arg(stdlib_one_arg)
+        .arg("--")
+        .arg("arg with spaces")
+        .arg("colon:arg")
+        .output()
+        .expect("run selfhost run planner");
+    assert!(
+        run_plan.status.success(),
+        "selfhost run planner failed\nstdout:\n{}\nstderr:\n{}",
+        stdout(&run_plan),
+        stderr(&run_plan)
+    );
+    assert_eq!(stderr(&run_plan), "");
+    assert_eq!(
+        stdout(&run_plan),
+        format!(
+            "typelisp-host-plan v1\n\
+             action run-source\n\
+             source {}\n\
+             target linux-x86_64\n\
+             backend-mode avx512\n\
+             stdlib-root {}\n\
+             runtime-arg {}\n\
+             runtime-arg {}\n\
+             end\n",
+            host_netstring(source_arg),
+            host_netstring(stdlib_one_arg),
+            host_netstring("arg with spaces"),
+            host_netstring("colon:arg"),
+        )
+    );
+
+    let package_build = Command::new(&build_bin)
+        .arg("--manifest-path")
+        .arg("typelisp.pkg")
+        .output()
+        .expect("run selfhost build planner package rejection");
+    assert!(!package_build.status.success());
+    assert_eq!(stdout(&package_build), "");
+    assert!(
+        stderr(&package_build).contains("--manifest-path is handled by Rust typelisp build"),
+        "stderr:\n{}",
+        stderr(&package_build)
+    );
+
+    let missing_target = Command::new(&run_bin)
+        .arg(source_arg)
+        .arg("--target")
+        .output()
+        .expect("run selfhost run planner target failure");
+    assert!(!missing_target.status.success());
+    assert_eq!(stdout(&missing_target), "");
+    assert!(
+        stderr(&missing_target).contains("run: --target requires a value"),
+        "stderr:\n{}",
+        stderr(&missing_target)
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn run_accepts_backend_mode_flag_with_avx512() {
     let dir = fixture_dir("backend-mode-run-avx512");
     let source = write_main_source(&dir);

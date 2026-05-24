@@ -320,3 +320,52 @@ fn compile_tl_compiles_to_assembly() {
         assert_message(&asm, message, "compile");
     }
 }
+
+#[test]
+fn build_and_run_planners_compile_to_assembly() {
+    let build_asm = compile_selfhost_source(
+        "build.tl",
+        "tl-build-planner-compile-test",
+        "build_planner.s",
+    );
+    assert_no_todo(&build_asm, "build planner");
+    for sym in [
+        "_tl_build_plan_config:",
+        "_tl_build_plan_parse_options:",
+        "_tl_build_plan_render:",
+        "_tl_host_plan_netline:",
+        "_tl_host_plan_target_valid_question:",
+    ] {
+        assert_symbol(&build_asm, sym, "build planner");
+    }
+    for message in [
+        "typelisp-host-plan v1\\n",
+        "action",
+        "build-source",
+        "build: expected source path",
+        "build: --manifest-path is handled by Rust typelisp build",
+    ] {
+        assert_message(&build_asm, message, "build planner");
+    }
+
+    let run_asm = compile_selfhost_source("run.tl", "tl-run-planner-compile-test", "run_planner.s");
+    assert_no_todo(&run_asm, "run planner");
+    for sym in [
+        "_tl_run_plan_config:",
+        "_tl_run_plan_parse_options:",
+        "_tl_run_plan_runtime_args:",
+        "_tl_run_plan_render:",
+        "_tl_host_plan_netline:",
+    ] {
+        assert_symbol(&run_asm, sym, "run planner");
+    }
+    for message in [
+        "typelisp-host-plan v1\\n",
+        "action",
+        "run-source",
+        "run: expected source path",
+        "run: --target requires a value",
+    ] {
+        assert_message(&run_asm, message, "run planner");
+    }
+}

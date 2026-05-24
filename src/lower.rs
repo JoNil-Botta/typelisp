@@ -648,7 +648,8 @@ impl FnLowerer {
         match expr.unspan() {
             ast::Expr::Spanned { expr, .. }
             | ast::Expr::Ann { expr, .. }
-            | ast::Expr::Cast { expr, .. } => self.expr_diverges(expr),
+            | ast::Expr::Cast { expr, .. }
+            | ast::Expr::Comptime { expr } => self.expr_diverges(expr),
             ast::Expr::Binary { lhs, rhs, .. } => {
                 self.expr_diverges(lhs) || self.expr_diverges(rhs)
             }
@@ -791,6 +792,7 @@ impl FnLowerer {
                 .map(|expr| self.infer_expr_type_with_locals(expr, local_types))
                 .unwrap_or(Type::Unit),
             ast::Expr::Ann { ty, .. } | ast::Expr::Cast { ty, .. } => self.resolve_type(ty),
+            ast::Expr::Comptime { .. } => Type::Unit,
             ast::Expr::Lambda { params, ret, body } => {
                 let mut lambda_locals = HashMap::new();
                 for (name, ty) in params {
@@ -946,6 +948,9 @@ impl FnLowerer {
             ast::Expr::While { cond, body } => self.lower_while(cond, body),
             ast::Expr::Begin(exprs) => self.lower_begin(exprs),
             ast::Expr::Call { func, args } => self.lower_call(func, args),
+            ast::Expr::Comptime { .. } => {
+                unreachable!("comptime should be rejected by the typechecker")
+            }
             ast::Expr::Match { scrutinee, arms } => self.lower_match(scrutinee, arms),
             ast::Expr::Set(name, expr) => self.lower_set(name, expr),
             ast::Expr::Ann { expr, ty } => {
@@ -1096,6 +1101,7 @@ impl FnLowerer {
             ast::Expr::Unary { expr, .. }
             | ast::Expr::Ann { expr, .. }
             | ast::Expr::Cast { expr, .. }
+            | ast::Expr::Comptime { expr }
             | ast::Expr::TupleRef { expr, .. }
             | ast::Expr::StructGet { expr, .. } => {
                 Self::collect_captured_names(expr, candidates, local_bindings, captures);

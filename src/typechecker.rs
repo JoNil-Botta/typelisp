@@ -270,6 +270,7 @@ impl TypeChecker {
             Expr::Unary { expr, .. }
             | Expr::Ann { expr, .. }
             | Expr::Cast { expr, .. }
+            | Expr::Comptime { expr }
             | Expr::TupleRef { expr, .. }
             | Expr::StructGet { expr, .. } => {
                 Self::collect_lambda_captures(
@@ -829,6 +830,10 @@ impl TypeChecker {
             Expr::Var(name) => self
                 .lookup(name)
                 .ok_or_else(|| TypeError::at(format!("unbound variable: {}", name), span)),
+            Expr::Comptime { .. } => Err(TypeError::at(
+                "comptime is reserved for future compile-time evaluation and is not supported yet",
+                span,
+            )),
             Expr::Binary { op, lhs, rhs } => {
                 let lhs_ty = self.check_expr(lhs)?;
                 let rhs_ty = self.check_expr(rhs)?;
@@ -2688,6 +2693,35 @@ mod tests {
     // ------------------------------------------------------------------
     // Sum types + pattern matching — Issue #41
     // ------------------------------------------------------------------
+
+    #[test]
+    fn test_typecheck_comptime_reserved_diagnostic() {
+        use crate::diagnostic::format_diagnostic;
+
+        let src = "(define (main) : i64 (comptime (+ 1 2)))";
+        let prog = parse(src).unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+
+        assert!(err.msg.contains("comptime"), "got: {}", err.msg);
+        assert!(err.msg.contains("reserved"), "got: {}", err.msg);
+        assert!(err.msg.contains("not supported"), "got: {}", err.msg);
+
+        let rendered = format_diagnostic(&err.to_diagnostic(), src, "test.tl");
+        assert!(rendered.contains("error[E0200]"), "got:\n{}", rendered);
+        assert!(rendered.contains("--> test.tl:1:22"), "got:\n{}", rendered);
+        assert!(
+            rendered.contains(" 1 | (define (main) : i64 (comptime (+ 1 2)))"),
+            "got:\n{}",
+            rendered
+        );
+        assert!(
+            rendered.contains("^^^^^^^^^^^^^^^^^^"),
+            "got:\n{}",
+            rendered
+        );
+        assert!(!err.msg.contains("unbound variable"), "got: {}", err.msg);
+    }
 
     fn check(src: &str) -> Result<(), TypeError> {
         let prog = parse(src).unwrap();

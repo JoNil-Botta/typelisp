@@ -144,6 +144,8 @@ pub enum Expr {
     Unary { op: UnOp, expr: Box<Expr> },
     /// Function application: (f arg1 arg2 ...)
     Call { func: Box<Expr>, args: Vec<Expr> },
+    /// Reserved compile-time evaluation syntax: (comptime expr)
+    Comptime { expr: Box<Expr> },
     /// If expression: (if cond then else)
     If {
         cond: Box<Expr>,

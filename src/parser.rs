@@ -629,6 +629,24 @@ impl<'a> Parser<'a> {
                 let end = self.expect_rparen_span()?;
                 (Expr::Cast { expr, ty }, end)
             }
+            Token::Ident(s) if s == "comptime" => {
+                self.advance()?;
+                if self.current == Token::RParen {
+                    return Err(ParseError {
+                        msg: "comptime expects exactly one expression".into(),
+                        span: self.span(),
+                    });
+                }
+                let expr = Box::new(self.parse_expr()?);
+                if self.current != Token::RParen {
+                    return Err(ParseError {
+                        msg: "comptime expects exactly one expression".into(),
+                        span: self.span(),
+                    });
+                }
+                let end = self.expect_rparen_span()?;
+                (Expr::Comptime { expr }, end)
+            }
             Token::Ident(s) if s == "tuple" => {
                 self.advance()?;
                 let mut elems = Vec::new();
@@ -1128,6 +1146,42 @@ mod tests {
         .unwrap_err();
         assert!(
             err.msg.contains("cond else arm must be final"),
+            "got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_parse_comptime_reserved_form() {
+        let prog = parse("(define (main) : i64 (comptime (+ 1 2)))").unwrap();
+        let body = match &prog.decls[0] {
+            Decl::DefFn { body, .. } => body.unspan(),
+            other => panic!("expected DefFn, got {:?}", other),
+        };
+        match body {
+            Expr::Comptime { expr } => {
+                assert!(matches!(expr.unspan(), Expr::Binary { op: BinOp::Add, .. }));
+            }
+            other => panic!("expected Comptime, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_comptime_rejects_extra_expression() {
+        let err = parse("(define (main) : i64 (comptime 1 2))").unwrap_err();
+        assert!(
+            err.msg.contains("comptime expects exactly one expression"),
+            "got: {}",
+            err
+        );
+        assert_eq!(err.span.start_col, 34, "error: {}", err);
+    }
+
+    #[test]
+    fn test_parse_comptime_rejects_missing_expression() {
+        let err = parse("(define (main) : i64 (comptime))").unwrap_err();
+        assert!(
+            err.msg.contains("comptime expects exactly one expression"),
             "got: {}",
             err
         );

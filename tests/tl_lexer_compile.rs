@@ -126,6 +126,8 @@ fn tl_lexer_tl_compiles_to_assembly() {
         "_tl_scan_int_end:",
         "_tl_scan_symbol_end:",
         "_tl_scan_str_end:",
+        "_tl_string_escape_piece:",
+        "_tl_unescape_string_literal:",
         "_tl_scan_comment_end:",
         "_tl_starts_named_char:",
         "_tl_scan_char_name_end:",
@@ -148,6 +150,8 @@ fn tl_lexer_tl_compiles_to_assembly() {
         "_tl_lexer_spanned_error_ok_question:",
         "_tl_lex_percent_symbol_ok_question:",
         "_tl_lex_span_self_test:",
+        "_tl_lex_string_escapes_ok_question:",
+        "_tl_lex_span_positions_ok_question:",
         "_tl_index_line:",
         "_tl_index_col:",
         "_tl_fill_spanned:",
@@ -176,6 +180,7 @@ fn tl_lexer_tl_compiles_to_assembly() {
 
     for message in [
         "lexer: unterminated string literal",
+        "lexer: unterminated string escape",
         "lexer: expected ' after character",
         "lexer: unterminated character literal",
         "lexer: unknown named character literal",

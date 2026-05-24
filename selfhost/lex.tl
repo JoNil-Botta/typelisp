@@ -112,7 +112,7 @@
 
 ;; characters that may appear in a symbol/operator name:
 
-;;   `-` `+` `*` `/` `?` `!` `>` `<` `=` `:` `_`
+;;   `-` `+` `*` `/` `%` `?` `!` `>` `<` `=` `:` `_`
 
 ;; This is what makes `+`, `<=`, `string->int`, and `array-set!` all lex as one
 
@@ -185,22 +185,31 @@
 
 ;; starts at `start` (i.e. just AFTER the opening quote). `n` is the source
 
-;; length. Scans forward until a `"` is found and returns its index. Running off
+;; length. Scans forward until an unescaped `"` is found and returns its index.
 
-;; the end returns a recoverable lexer error. NO escape handling: a `\"` is NOT
+;; Running off the end returns a recoverable lexer error. A backslash escapes the
 
-;; treated as an escaped quote here - escape sequences are deferred (see the
+;; following byte, so `\"` stays inside the string and a trailing backslash is an
 
-;; module header note). Same bounds-check discipline as the other scanners.
+;; unterminated string escape. Same bounds-check discipline as the other
+
+;; scanners.
 
 (define (scan-str-end-result [src : String] [start : i64] [n : i64]) : ResultLexI64
   (let ([j : i64 start] [keep : bool true] [message : String ""])
     (begin
       (while keep
         (if (< j n)
-          (if (= (string-ref src j) #"')
-            (set! keep false)
-            (set! j (+ j 1)))
+          (let ([c : char (string-ref src j)])
+            (if (= c #"')
+              (set! keep false)
+              (if (= c #\\')
+                (if (< (+ j 1) n)
+                  (set! j (+ j 2))
+                  (begin
+                    (set! message "lexer: unterminated string escape")
+                    (set! keep false)))
+                (set! j (+ j 1)))))
           (begin
             (set! message "lexer: unterminated string literal")
             (set! keep false))))
@@ -215,6 +224,38 @@
       (begin
         (panic message)
         n)]))
+
+(define (string-escape-piece [src : String] [idx : i64]) : String
+  (let ([c : char (string-ref src idx)])
+    (if (= c #n')
+      "\n"
+      (if (= c #t')
+        "\t"
+        (if (= c #r')
+          "\r"
+          (if (= c #\\')
+            "\\"
+            (if (= c #"')
+              "\""
+              (substring src idx 1))))))))
+
+(define (unescape-string-literal [src : String] [start : i64] [end : i64]) : String
+  (let ([i : i64 start] [out : String ""])
+    (begin
+      (while (< i end)
+        (let ([c : char (string-ref src i)])
+          (if (= c #\\')
+            (if (< (+ i 1) end)
+              (begin
+                (set! out (string-append out (string-escape-piece src (+ i 1))))
+                (set! i (+ i 2)))
+              (begin
+                (set! out (string-append out "\\"))
+                (set! i (+ i 1))))
+            (begin
+              (set! out (string-append out (substring src i 1)))
+              (set! i (+ i 1))))))
+      out)))
 
 ;; Return the index of the end-of-line that ends a `;` line comment whose body
 
@@ -485,7 +526,7 @@
                         (array-set!
                           toks
                           count
-                          (TStr (substring src start (- end start))))
+                          (TStr (unescape-string-literal src start end)))
                         (set! count (+ count 1))
                         (set! i (+ end 1)))))
                   (if (= c #;')
@@ -663,32 +704,100 @@
 
 ;;   5:')' 2:7   6:')' 2:8   7:TEnd 2:9
 
+(define (lex-quote-text) : String
+  "\"")
+
+(define (lex-backslash-text) : String
+  "\\")
+
+(define (lex-string-source [inner : String]) : String
+  (string-append (lex-quote-text) (string-append inner (lex-quote-text))))
+
+(define (lex-string-token-ok? [src : String] [expected : String]) : bool
+  (let ([toks : (Array Token) (lex src)])
+    (and
+      (= (token-tag (array-ref toks 0)) (tag-str))
+      (and
+        (string-eq (token-str (array-ref toks 0)) expected)
+        (= (token-tag (array-ref toks 1)) (tag-end))))))
+
+(define (lex-escaped-quote-source-inner) : String
+  (string-append
+    "say "
+    (string-append
+      (lex-backslash-text)
+      (string-append
+        (lex-quote-text)
+        (string-append
+          "hi"
+          (string-append (lex-backslash-text) (lex-quote-text)))))))
+
+(define (lex-backslash-quote-source-inner) : String
+  (string-append
+    (lex-backslash-text)
+    (string-append
+      (lex-backslash-text)
+      (string-append (lex-backslash-text) (lex-quote-text)))))
+
+(define (lex-string-escapes-ok?) : bool
+  (let ([slash : String (lex-backslash-text)] [quote : String (lex-quote-text)])
+    (and
+      (lex-string-token-ok? (lex-string-source "hello\\nworld") "hello\nworld")
+      (and
+        (lex-string-token-ok?
+          (lex-string-source (lex-escaped-quote-source-inner))
+          (string-append
+            "say "
+            (string-append quote (string-append "hi" quote))))
+        (and
+          (lex-string-token-ok?
+            (lex-string-source (string-append slash slash))
+            slash)
+          (lex-string-token-ok?
+            (lex-string-source (lex-backslash-quote-source-inner))
+            (string-append slash quote)))))))
+
+(define (lex-span-positions-ok? [s : (Array SpannedToken)]) : bool
+  (let ([ok : bool true])
+    (begin
+      (if (= (spanned-token-line (array-ref s 0)) 1)
+        unit
+        (set! ok false))
+      (if (= (spanned-token-col (array-ref s 0)) 1)
+        unit
+        (set! ok false))
+      (if (= (spanned-token-col (array-ref s 1)) 2)
+        unit
+        (set! ok false))
+      (if (= (spanned-token-line (array-ref s 2)) 2)
+        unit
+        (set! ok false))
+      (if (= (spanned-token-col (array-ref s 2)) 3)
+        unit
+        (set! ok false))
+      (if (= (spanned-token-col (array-ref s 3)) 4)
+        unit
+        (set! ok false))
+      (if (= (spanned-token-col (array-ref s 4)) 6)
+        unit
+        (set! ok false))
+      (if (= (spanned-token-line (array-ref s 7)) 2)
+        unit
+        (set! ok false))
+      (if (= (spanned-token-col (array-ref s 7)) 9)
+        unit
+        (set! ok false))
+      (if (= (token-tag (spanned-token-tok (array-ref s 7))) (tag-end))
+        unit
+        (set! ok false))
+      ok)))
+
 (define (lex-span-self-test) : i64
   (match (lex-spanned-result "(a\n  (b c))")
     [(OkSpannedTokens s)
       (if (and
-        (= (spanned-token-line (array-ref s 0)) 1)
-        (and
-          (= (spanned-token-col (array-ref s 0)) 1)
-          (and
-            (= (spanned-token-col (array-ref s 1)) 2)
-            (and
-              (= (spanned-token-line (array-ref s 2)) 2)
-              (and
-                (= (spanned-token-col (array-ref s 2)) 3)
-                (and
-                  (= (spanned-token-col (array-ref s 3)) 4)
-                  (and
-                    (= (spanned-token-col (array-ref s 4)) 6)
-                    (and
-                      (= (spanned-token-line (array-ref s 7)) 2)
-                      (and
-                        (= (spanned-token-col (array-ref s 7)) 9)
-                        (=
-                          (token-tag (spanned-token-tok (array-ref s 7)))
-                          (tag-end)))))))))))
-        (if (lex-percent-symbol-ok?)
-          42
-          1)
+        (lex-span-positions-ok? s)
+        (and (lex-string-escapes-ok?) (lex-percent-symbol-ok?)))
+        42
         1)]
     [(ErrSpannedTokens _) 2]))

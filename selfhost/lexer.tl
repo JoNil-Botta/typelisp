@@ -52,7 +52,9 @@
 
 ;; comments are now lexed too: a `"` opens a string whose inner text is sliced
 
-;; into a `(TStr ...)` (closing quote skipped), a `#` opens a character literal
+;; into a `(TStr ...)` with standard escapes decoded, a `#` opens a character
+
+;; literal
 
 ;; recorded as `(TChar ...)`, and a `;` skips the rest of the line, emitting no
 
@@ -61,10 +63,6 @@
 ;;
 
 ;; Deferred - current scope boundaries, recorded as self-hosting signal:
-
-;;   - String-literal ESCAPES (`\"`, `\n`, ...): the inner text is sliced raw,
-
-;;     so `\"` does NOT continue the string and `\n` is two literal chars.
 
 ;;   - Keyword classification: keywords are lexed as plain `TSym` tokens here; a
 

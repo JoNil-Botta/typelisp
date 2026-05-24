@@ -802,6 +802,47 @@ impl<'a> Parser<'a> {
                     end_span,
                 )
             }
+            Token::Ident(s) if s == "with-region" => {
+                // (with-region <region-ident> <body-expr>...) — #548. The binder
+                // names a region whose lifetime is the body; the body is a
+                // non-empty expression sequence. Region typing/escape checking and
+                // lowering are separate slices (#549 and later).
+                self.advance()?;
+                let region = match &self.current {
+                    Token::Ident(name) => {
+                        let name = name.clone();
+                        self.advance()?;
+                        name
+                    }
+                    Token::RParen => {
+                        return Err(ParseError {
+                            msg: "with-region requires a region name before its body".into(),
+                            span: self.span(),
+                        });
+                    }
+                    other => {
+                        return Err(ParseError {
+                            msg: format!(
+                                "with-region region name must be an identifier, got {:?}",
+                                other
+                            ),
+                            span: self.span(),
+                        });
+                    }
+                };
+                let mut body = Vec::new();
+                while self.current != Token::RParen {
+                    body.push(self.parse_expr()?);
+                }
+                if body.is_empty() {
+                    return Err(ParseError {
+                        msg: format!("with-region '{}' requires a non-empty body", region),
+                        span: self.span(),
+                    });
+                }
+                let end = self.expect_rparen_span()?;
+                (Expr::WithRegion { region, body }, end)
+            }
             _ => {
                 // Unary operator, binary operator, or function call. Unary is
                 // tried first: `not`/`neg`/`bit-not` are distinct identifiers
@@ -1841,5 +1882,117 @@ mod tests {
         // Missing the inner `([ ... ])` range clause shape.
         let src = "(define (f [n : i64]) : i64 (spmd-reduce sum i 0 n 0 i))";
         assert!(parse(src).is_err());
+    }
+
+    // ------------------------------------------------------------------
+    // with-region scoped form — Issue #548
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_with_region_basic() {
+        let prog = parse(
+            "(define (f) : i64 \
+               (with-region r (+ 1 2)))",
+        )
+        .unwrap();
+        let body = match &prog.decls[0] {
+            Decl::DefFn { body, .. } => body.unspan(),
+            other => panic!("expected DefFn, got {:?}", other),
+        };
+        match body {
+            Expr::WithRegion { region, body } => {
+                assert_eq!(region, "r");
+                assert_eq!(body.len(), 1);
+                assert!(
+                    matches!(body[0].unspan(), Expr::Binary { .. }),
+                    "got {:?}",
+                    body[0]
+                );
+            }
+            other => panic!("expected WithRegion, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_with_region_multi_expr_body() {
+        let prog = parse(
+            "(define (f) : i64 \
+               (with-region r (print 1) (print 2) 42))",
+        )
+        .unwrap();
+        let body = match &prog.decls[0] {
+            Decl::DefFn { body, .. } => body.unspan(),
+            other => panic!("expected DefFn, got {:?}", other),
+        };
+        match body {
+            Expr::WithRegion { region, body } => {
+                assert_eq!(region, "r");
+                assert_eq!(body.len(), 3);
+                // The last body expression is the result.
+                assert_eq!(body[2].unspan(), &Expr::Literal(Literal::Int(42)));
+            }
+            other => panic!("expected WithRegion, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_with_region_nested() {
+        let prog = parse(
+            "(define (f) : i64 \
+               (with-region outer (with-region inner 7)))",
+        )
+        .unwrap();
+        let body = match &prog.decls[0] {
+            Decl::DefFn { body, .. } => body.unspan(),
+            other => panic!("expected DefFn, got {:?}", other),
+        };
+        match body {
+            Expr::WithRegion { region, body } => {
+                assert_eq!(region, "outer");
+                assert_eq!(body.len(), 1);
+                match body[0].unspan() {
+                    Expr::WithRegion {
+                        region: inner,
+                        body: inner_body,
+                    } => {
+                        assert_eq!(inner, "inner");
+                        assert_eq!(inner_body.len(), 1);
+                    }
+                    other => panic!("expected nested WithRegion, got {:?}", other),
+                }
+            }
+            other => panic!("expected WithRegion, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_with_region_missing_binder_is_error() {
+        let err = parse("(define (f) : i64 (with-region))").unwrap_err();
+        assert!(
+            err.msg.contains("with-region requires a region name"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_parse_with_region_non_identifier_binder_is_error() {
+        let err = parse("(define (f) : i64 (with-region 5 (+ 1 2)))").unwrap_err();
+        assert!(
+            err.msg
+                .contains("with-region region name must be an identifier"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_parse_with_region_empty_body_is_error() {
+        let err = parse("(define (f) : i64 (with-region r))").unwrap_err();
+        assert!(
+            err.msg.contains("requires a non-empty body"),
+            "got: {}",
+            err.msg
+        );
     }
 }

@@ -386,6 +386,86 @@ fn run_host_action_command() {
     }
 }
 
+fn add_env_stdlib_root_to_plan(plan: &mut host_action::HostActionPlan) {
+    let env_root = match env::var_os(TYPELISP_STDLIB_ROOT_ENV) {
+        Some(root) if !root.as_os_str().is_empty() => PathBuf::from(root),
+        _ => return,
+    };
+
+    match plan {
+        host_action::HostActionPlan::BuildSource { stdlib_roots, .. }
+        | host_action::HostActionPlan::RunSource { stdlib_roots, .. } => {
+            stdlib_roots.push(env_root);
+        }
+    }
+}
+
+fn execute_selfhost_host_action_driver(
+    driver_relative: &str,
+    args: &[String],
+    command_name: &str,
+) -> host_action::HostActionOutcome {
+    let driver = find_selfhost_file(driver_relative).unwrap_or_else(|| {
+        eprintln!(
+            "Error: could not find {} in the repo or near the executable",
+            driver_relative
+        );
+        std::process::exit(1);
+    });
+
+    let output = native_or_exit(native::run_source_file_in_temp_dir(
+        &driver,
+        &LoadOptions::default(),
+        args,
+        native::host_target(),
+    ));
+
+    if !output.status.success() {
+        write_stream_or_exit(io::stdout(), &output.stdout, "stdout");
+        write_stream_or_exit(io::stderr(), &output.stderr, "stderr");
+        std::process::exit(output.status.code().unwrap_or(1));
+    }
+
+    write_stream_or_exit(io::stderr(), &output.stderr, "stderr");
+
+    let plan_text = match String::from_utf8(output.stdout) {
+        Ok(plan_text) => plan_text,
+        Err(err) => {
+            eprintln!(
+                "Error: selfhost {} planner emitted non-UTF-8 host-action plan: {}",
+                command_name, err
+            );
+            std::process::exit(1);
+        }
+    };
+    let mut plan = match host_action::parse_plan(&plan_text) {
+        Ok(plan) => plan,
+        Err(err) => {
+            eprintln!(
+                "Error: invalid selfhost {} host-action plan: {}",
+                command_name, err
+            );
+            std::process::exit(1);
+        }
+    };
+    add_env_stdlib_root_to_plan(&mut plan);
+
+    native_or_exit(host_action::execute_plan(&plan))
+}
+
+fn finish_host_action_outcome(outcome: host_action::HostActionOutcome) {
+    match outcome {
+        host_action::HostActionOutcome::Built { output_path } => {
+            println!("Generated: {}", output_path.display());
+        }
+        host_action::HostActionOutcome::Ran(output) => {
+            write_stream_or_exit(io::stdout(), &output.stdout, "stdout");
+            write_stream_or_exit(io::stderr(), &output.stderr, "stderr");
+            std::process::exit(output.status.code().unwrap_or(1));
+        }
+    }
+}
+
 fn run_fmt_command(args: &[String]) {
     if args.len() < 3 {
         eprintln!("Error: missing file argument");
@@ -568,44 +648,6 @@ fn parse_stdlib_roots(args: &[String], mut i: usize) -> LoadOptions {
     load_options_with_env_stdlib_root(stdlib_roots)
 }
 
-fn parse_run_options(args: &[String], mut i: usize) -> (LoadOptions, Vec<String>, BackendTarget) {
-    let mut stdlib_roots = Vec::new();
-    let mut runtime_args = Vec::new();
-    let mut target = BackendTarget::default();
-    while i < args.len() {
-        if args[i] == "--" {
-            runtime_args.extend(args[i + 1..].iter().cloned());
-            break;
-        } else if args[i] == "--backend-mode" {
-            if i + 1 >= args.len() {
-                missing_option_value("--backend-mode");
-            }
-            target = target.with_mode(parse_backend_mode(&args[i + 1]));
-            i += 2;
-        } else if args[i] == "--target" {
-            if i + 1 >= args.len() {
-                missing_option_value("--target");
-            }
-            target = parse_backend_target(&args[i + 1]).with_mode(target.mode);
-            i += 2;
-        } else if args[i] == "--stdlib-root" {
-            if i + 1 >= args.len() {
-                missing_option_value("--stdlib-root");
-            }
-            stdlib_roots.push(PathBuf::from(&args[i + 1]));
-            i += 2;
-        } else {
-            runtime_args.extend(args[i..].iter().cloned());
-            break;
-        }
-    }
-    (
-        load_options_with_env_stdlib_root(stdlib_roots),
-        runtime_args,
-        target,
-    )
-}
-
 enum BuildRequest {
     Source {
         file: PathBuf,
@@ -702,6 +744,29 @@ fn parse_build_options(args: &[String], mut i: usize) -> BuildRequest {
             target,
         }
     }
+}
+
+fn build_args_have_manifest_path(args: &[String], start: usize) -> bool {
+    args[start..].iter().any(|arg| arg == "--manifest-path")
+}
+
+fn build_args_have_source_file(args: &[String], mut i: usize) -> bool {
+    while i < args.len() {
+        match args[i].as_str() {
+            "-o" | "--target" | "--backend-mode" | "--stdlib-root" => {
+                i += 2;
+            }
+            flag if flag.starts_with('-') => {
+                i += 1;
+            }
+            _ => return true,
+        }
+    }
+    false
+}
+
+fn build_should_use_selfhost_source_path(args: &[String]) -> bool {
+    !build_args_have_manifest_path(args, 2) && build_args_have_source_file(args, 2)
 }
 
 fn package_or_exit<T>(result: Result<T, PackageError>) -> T {
@@ -880,61 +945,62 @@ fn run_cli() {
                 println!("Generated: {}", output_path.display());
             }
         }
-        "build" => match parse_build_options(&args, 2) {
-            BuildRequest::Source {
-                file,
-                output,
-                options,
-                target,
-            } => {
-                let output_path = build_source_executable_or_exit(&file, &options, output, target);
-                println!("Generated: {}", output_path.display());
-            }
-            BuildRequest::Package {
-                manifest_path,
-                mut options,
-                target,
-            } => {
-                let manifest_path = match manifest_path {
-                    Some(path) => path,
-                    None => {
-                        let cwd = env::current_dir().unwrap_or_else(|err| {
-                            eprintln!("Error: cannot read current directory: {}", err);
-                            std::process::exit(1);
-                        });
-                        package_or_exit(discover_manifest(&cwd))
+        "build" => {
+            if build_should_use_selfhost_source_path(&args) {
+                let outcome =
+                    execute_selfhost_host_action_driver("selfhost/build.tl", &args[2..], "build");
+                finish_host_action_outcome(outcome);
+            } else {
+                match parse_build_options(&args, 2) {
+                    BuildRequest::Source {
+                        file,
+                        output,
+                        options,
+                        target,
+                    } => {
+                        let output_path =
+                            build_source_executable_or_exit(&file, &options, output, target);
+                        println!("Generated: {}", output_path.display());
                     }
-                };
-                let manifest = package_or_exit(load_manifest(&manifest_path));
-                options.package_roots = manifest.dependencies.clone();
-                let loaded = load_or_exit(&manifest.entry_path(), &options);
-                let lowered = optimized_ir_or_exit(&loaded, target);
-                let asm = assembly_or_exit(&lowered, &loaded.sources, target);
-                let output_path = manifest.output_asm_path();
-                if let Some(parent) = output_path.parent() {
-                    fs::create_dir_all(parent).expect("Failed to create package output directory");
+                    BuildRequest::Package {
+                        manifest_path,
+                        mut options,
+                        target,
+                    } => {
+                        let manifest_path = match manifest_path {
+                            Some(path) => path,
+                            None => {
+                                let cwd = env::current_dir().unwrap_or_else(|err| {
+                                    eprintln!("Error: cannot read current directory: {}", err);
+                                    std::process::exit(1);
+                                });
+                                package_or_exit(discover_manifest(&cwd))
+                            }
+                        };
+                        let manifest = package_or_exit(load_manifest(&manifest_path));
+                        options.package_roots = manifest.dependencies.clone();
+                        let loaded = load_or_exit(&manifest.entry_path(), &options);
+                        let lowered = optimized_ir_or_exit(&loaded, target);
+                        let asm = assembly_or_exit(&lowered, &loaded.sources, target);
+                        let output_path = manifest.output_asm_path();
+                        if let Some(parent) = output_path.parent() {
+                            fs::create_dir_all(parent)
+                                .expect("Failed to create package output directory");
+                        }
+                        fs::write(&output_path, asm).expect("Failed to write package assembly");
+                        println!("Generated: {}", output_path.display());
+                    }
                 }
-                fs::write(&output_path, asm).expect("Failed to write package assembly");
-                println!("Generated: {}", output_path.display());
             }
-        },
+        }
         "run" => {
             if args.len() < 3 {
                 eprintln!("Error: missing file argument");
                 print_usage();
                 std::process::exit(1);
             }
-            let file = PathBuf::from(&args[2]);
-            let (options, runtime_args, target) = parse_run_options(&args, 3);
-            let output = native_or_exit(native::run_source_file(
-                &file,
-                &options,
-                &runtime_args,
-                target,
-            ));
-            write_stream_or_exit(io::stdout(), &output.stdout, "stdout");
-            write_stream_or_exit(io::stderr(), &output.stderr, "stderr");
-            std::process::exit(output.status.code().unwrap_or(1));
+            let outcome = execute_selfhost_host_action_driver("selfhost/run.tl", &args[2..], "run");
+            finish_host_action_outcome(outcome);
         }
         "help" | "--help" | "-h" => {
             print_usage();

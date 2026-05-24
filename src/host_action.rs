@@ -112,7 +112,7 @@ impl<'a> Cursor<'a> {
     fn read_word(&mut self) -> &'a [u8] {
         let start = self.pos;
         while let Some(b) = self.peek() {
-            if b == b' ' || b == b'\n' {
+            if b == b' ' || b == b'\r' || b == b'\n' {
                 break;
             }
             self.pos += 1;
@@ -129,7 +129,12 @@ impl<'a> Cursor<'a> {
             }
             self.pos += 1;
         }
-        let value = String::from_utf8_lossy(&self.bytes[start..self.pos]).into_owned();
+        let end = if self.pos > start && self.bytes[self.pos - 1] == b'\r' {
+            self.pos - 1
+        } else {
+            self.pos
+        };
+        let value = String::from_utf8_lossy(&self.bytes[start..end]).into_owned();
         if self.peek() == Some(b'\n') {
             self.pos += 1;
         }
@@ -192,6 +197,9 @@ impl<'a> Cursor<'a> {
         })?;
         let value = value.to_string();
         self.pos = end;
+        if self.peek() == Some(b'\r') {
+            self.pos += 1;
+        }
         if self.peek() != Some(b'\n') {
             return Err(PlanError::new(format!(
                 "host-action directive '{keyword}' netstring must be terminated by a newline"
@@ -241,6 +249,9 @@ pub fn parse_plan(text: &str) -> Result<HostActionPlan, PlanError> {
         match keyword.as_str() {
             "end" => {
                 // `end` takes no value; consume an optional trailing newline.
+                if cursor.peek() == Some(b'\r') {
+                    cursor.pos += 1;
+                }
                 if cursor.peek() == Some(b'\n') {
                     cursor.pos += 1;
                 }
@@ -291,7 +302,7 @@ pub fn parse_plan(text: &str) -> Result<HostActionPlan, PlanError> {
 
     // Reject trailing content so a truncated/garbled tail is not silently ignored.
     while let Some(b) = cursor.peek() {
-        if b != b'\n' && b != b' ' {
+        if b != b'\n' && b != b'\r' && b != b' ' {
             return Err(PlanError::new(
                 "unexpected trailing data after 'end' directive",
             ));
@@ -412,6 +423,31 @@ mod tests {
             netstring("build/out")
         );
         let parsed = parse_plan(&plan).expect("plan parses");
+        assert_eq!(
+            parsed,
+            HostActionPlan::BuildSource {
+                source: PathBuf::from("src/main.tl"),
+                output: Some(PathBuf::from("build/out")),
+                target: BackendTarget::linux_x86_64_system_v(),
+                stdlib_roots: Vec::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn parses_crlf_plan_output() {
+        let plan = format!(
+            "typelisp-host-plan v1\r\n\
+             action build-source\r\n\
+             source {}\r\n\
+             output {}\r\n\
+             target linux-x86_64\r\n\
+             backend-mode scalar\r\n\
+             end\r\n",
+            netstring("src/main.tl"),
+            netstring("build/out")
+        );
+        let parsed = parse_plan(&plan).expect("CRLF plan parses");
         assert_eq!(
             parsed,
             HostActionPlan::BuildSource {

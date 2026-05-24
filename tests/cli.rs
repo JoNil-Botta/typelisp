@@ -1022,10 +1022,19 @@ fn target_flags_reject_unknown_target_across_commands() {
     let source = write_main_source(&dir);
     let source_arg = source.to_str().expect("source path is utf-8");
 
-    for args in [
-        vec!["compile", source_arg, "--target", "plan9-x86_64"],
-        vec!["build", source_arg, "--target", "plan9-x86_64"],
-        vec!["run", source_arg, "--target", "plan9-x86_64"],
+    for (args, expected) in [
+        (
+            vec!["compile", source_arg, "--target", "plan9-x86_64"],
+            "Error: unknown target 'plan9-x86_64'. Expected linux-x86_64 or windows-x86_64",
+        ),
+        (
+            vec!["build", source_arg, "--target", "plan9-x86_64"],
+            "build: unknown target plan9-x86_64",
+        ),
+        (
+            vec!["run", source_arg, "--target", "plan9-x86_64"],
+            "run: unknown target plan9-x86_64",
+        ),
     ] {
         let output = typelisp(&args);
 
@@ -1037,9 +1046,7 @@ fn target_flags_reject_unknown_target_across_commands() {
         );
         assert_eq!(stdout(&output), "", "{args:?} wrote stdout");
         assert!(
-            stderr(&output).contains(
-                "Error: unknown target 'plan9-x86_64'. Expected linux-x86_64 or windows-x86_64"
-            ),
+            stderr(&output).contains(expected),
             "{args:?} stderr:\n{}",
             stderr(&output)
         );
@@ -1651,8 +1658,13 @@ fn build_source_reports_missing_assembler_with_target_and_tool() {
 
     assert!(!output.status.success());
     assert_eq!(stdout(&output), "");
+    let expected = if cfg!(target_os = "windows") {
+        "Error: failed to run assembler 'clang' for target windows-x86_64:"
+    } else {
+        "Error: failed to run assembler 'as' for target linux-x86_64:"
+    };
     assert!(
-        stderr(&output).contains("Error: failed to run assembler 'as' for target linux-x86_64:"),
+        stderr(&output).contains(expected),
         "stderr:\n{}",
         stderr(&output)
     );
@@ -1668,7 +1680,7 @@ fn build_source_missing_output_value_is_error() {
     let output = typelisp(&["build", source_arg, "-o"]);
 
     assert!(!output.status.success());
-    assert!(stderr(&output).contains("Error: -o requires a value"));
+    assert!(stderr(&output).contains("build: -o requires a value"));
 }
 
 #[test]

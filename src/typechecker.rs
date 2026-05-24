@@ -5569,6 +5569,27 @@ mod tests {
     }
 
     #[test]
+    fn test_typecheck_string_ref_and_char_at_can_be_shadowed() {
+        let src = r#"
+            (define (string-ref [a : i64] [b : i64]) : i64 (+ a b))
+            (define (char-at [a : i64] [b : i64]) : i64 (* a b))
+            (define (f) : i64 (+ (string-ref 10 7) (char-at 3 4)))
+        "#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_local_string_ref_and_char_at_shadow_builtins() {
+        let src = r#"
+            (define (f
+              [string-ref : (-> i64 i64 i64)]
+              [char-at : (-> i64 i64 i64)]) : i64
+              (+ (string-ref 10 7) (char-at 3 4)))
+        "#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
     fn test_typecheck_string_ref_requires_string() {
         // The collection argument must be a String, not an array or scalar.
         let src = "(define (f [a : (Array i64)] [i : i64]) : unit (print-char (string-ref a i)))";

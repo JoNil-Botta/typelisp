@@ -3037,7 +3037,12 @@
 (define (compiler-lower-string-shadow-source) : String
   "(define (string-length [s : String]) : i64 40)
 (define (string-append [a : i64] [b : i64]) : i64 (+ a b))
-(define (main) : i64 (+ (string-length \"abc\") (string-append 1 1)))")
+(define (string-ref [a : i64] [b : i64]) : i64 (+ a b))
+(define (char-at [a : i64] [b : i64]) : i64 (* a b))
+(define (main) : i64
+  (+ (string-length \"abc\")
+    (+ (string-append 1 1)
+      (+ (string-ref 10 7) (char-at 3 4)))))")
 
 (define (compiler-lower-stdio-source) : String
   "(define (main) : i64
@@ -3316,9 +3321,19 @@
             (> (lower-test-functions-call-count functions "string-length") 0)
             (and
               (> (lower-test-functions-call-count functions "string-append") 0)
-              (=
-                (lower-test-functions-call-count functions "tl_string_concat")
-                0)))])]
+              (and
+                (> (lower-test-functions-call-count functions "string-ref") 0)
+                (and
+                  (> (lower-test-functions-call-count functions "char-at") 0)
+                  (and
+                    (=
+                      (lower-test-functions-call-count
+                        functions
+                        "tl_string_concat")
+                      0)
+                    (=
+                      (lower-test-functions-call-count functions "tl_oob_abort")
+                      0))))))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-self-test) : i64

@@ -7750,6 +7750,44 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_lower_user_defined_string_ref_and_char_at_shadow_builtins() {
+        // User functions named `string-ref`/`char-at` must lower as ordinary
+        // direct calls, not as bounds-checked String byte loads.
+        let prog = parse(
+            "(define (string-ref [a : i64] [b : i64]) : i64 (+ a b))
+             (define (char-at [a : i64] [b : i64]) : i64 (* a b))
+             (define (f) : i64 (+ (string-ref 10 7) (char-at 3 4)))",
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().find(|f| f.name == "f").unwrap();
+        let instrs: Vec<&Instruction> = f
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .collect();
+
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Call { func, .. } if func == "string-ref")),
+            "expected ordinary call to user-defined string-ref"
+        );
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Call { func, .. } if func == "char-at")),
+            "expected ordinary call to user-defined char-at"
+        );
+        assert!(
+            !instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Call { func, .. } if func == "tl_oob_abort")),
+            "user-defined string-ref/char-at must not lower to builtin bounds check"
+        );
+    }
+
     // ---- Expressions ---------------------------------------------------
 
     #[test]

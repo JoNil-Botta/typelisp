@@ -840,6 +840,10 @@ accumulate in the process-lifetime arena instead of being reclaimed.
 | `read-file` | `String → String` | Read whole file contents; panics on error |
 | `write-file` | `String String → unit` | Write whole file contents; panics on error |
 | `file-exists?` | `String → bool` | Return true when a filesystem path exists; panics on unexpected syscall/path errors |
+| `read-stdin-line` | `→ String` | Read one stdin line without trailing newline; blank line returns `""` and does not set EOF |
+| `read-stdin-bytes` | `i64 → String` | Read up to `n` stdin bytes; negative counts panic, short reads occur only at EOF |
+| `stdin-eof?` | `→ bool` | Report whether the most recent stdin read hit EOF before a full line/requested byte count |
+| `flush-stdout` | `→ unit` | Flush stdout where the target has buffered stdout; panics on flush error |
 | `length` | `(Array t) → i64` | Get dynamic array length |
 | `length` | `String → i64` | Get string byte length |
 | `array-length` | `(Array t) → i64` | Get dynamic array length |
@@ -1076,7 +1080,8 @@ replacement.
   `substring`/`string-slice`, `string->int`, `int->string`,
   `print-string`/`print-str`, `print-error`.
 - Bootstrap I/O helpers: `arg-count`, `arg`, `read-file`, `write-file`,
-  `file-exists?`.
+  `file-exists?`, `read-stdin-line`, `read-stdin-bytes`, `stdin-eof?`,
+  `flush-stdout`.
 - Low-level extern-only allocator region helpers: `tl_region_mark`,
   `tl_region_reset`.
 - `extern` declarations.
@@ -1086,6 +1091,7 @@ replacement.
 - Builtin `print`, `print-bool`, `print-float`, `print-char`,
   `print-newline`, `print-string`/`print-str`, `print-error`,
   `string-append`/`string-concat`, `read-file`, `write-file`, `file-exists?`,
+  `read-stdin-line`, `read-stdin-bytes`, `stdin-eof?`, `flush-stdout`,
   `panic`/`error`.
 
 ### 8.2 What does NOT work (yet)

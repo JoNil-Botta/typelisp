@@ -14,6 +14,10 @@ pub const ARG_RUNTIME_SYMBOL: &str = ".L_tl_arg";
 pub const READ_FILE_RUNTIME_SYMBOL: &str = ".L_tl_read_file";
 pub const WRITE_FILE_RUNTIME_SYMBOL: &str = ".L_tl_write_file";
 pub const FILE_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists";
+pub const READ_STDIN_LINE_RUNTIME_SYMBOL: &str = ".L_tl_read_stdin_line";
+pub const READ_STDIN_BYTES_RUNTIME_SYMBOL: &str = ".L_tl_read_stdin_bytes";
+pub const STDIN_EOF_RUNTIME_SYMBOL: &str = ".L_tl_stdin_eof";
+pub const FLUSH_STDOUT_RUNTIME_SYMBOL: &str = ".L_tl_flush_stdout";
 pub const REGION_MARK_RUNTIME_SYMBOL: &str = "tl_region_mark";
 pub const REGION_RESET_RUNTIME_SYMBOL: &str = "tl_region_reset";
 
@@ -362,7 +366,11 @@ pub fn classify_direct_call_effect(func: &str) -> IrEffect {
         | ARG_RUNTIME_SYMBOL
         | READ_FILE_RUNTIME_SYMBOL
         | WRITE_FILE_RUNTIME_SYMBOL
-        | FILE_EXISTS_RUNTIME_SYMBOL => IrEffect::Unknown,
+        | FILE_EXISTS_RUNTIME_SYMBOL
+        | READ_STDIN_LINE_RUNTIME_SYMBOL
+        | READ_STDIN_BYTES_RUNTIME_SYMBOL => IrEffect::Unknown,
+        STDIN_EOF_RUNTIME_SYMBOL => IrEffect::MemoryRead,
+        FLUSH_STDOUT_RUNTIME_SYMBOL => IrEffect::MemoryWrite,
         _ => IrEffect::Unknown,
     }
 }
@@ -1220,6 +1228,7 @@ mod tests {
             "tl_string_eq",
             "tl_string_to_int",
             REGION_MARK_RUNTIME_SYMBOL,
+            STDIN_EOF_RUNTIME_SYMBOL,
         ] {
             assert_eq!(classify_direct_call_effect(func), IrEffect::MemoryRead);
             assert_eq!(call(func).effect(), IrEffect::MemoryRead);
@@ -1231,6 +1240,7 @@ mod tests {
             "tl_substring",
             "tl_string_concat",
             REGION_RESET_RUNTIME_SYMBOL,
+            FLUSH_STDOUT_RUNTIME_SYMBOL,
         ] {
             assert_eq!(classify_direct_call_effect(func), IrEffect::MemoryWrite);
             assert_eq!(call(func).effect(), IrEffect::MemoryWrite);
@@ -1259,6 +1269,8 @@ mod tests {
             READ_FILE_RUNTIME_SYMBOL,
             WRITE_FILE_RUNTIME_SYMBOL,
             FILE_EXISTS_RUNTIME_SYMBOL,
+            READ_STDIN_LINE_RUNTIME_SYMBOL,
+            READ_STDIN_BYTES_RUNTIME_SYMBOL,
             "user_or_extern_call",
         ] {
             assert_eq!(classify_direct_call_effect(func), IrEffect::Unknown);

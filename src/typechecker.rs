@@ -159,6 +159,24 @@ impl TypeChecker {
             "file-exists?".into(),
             Type::Func(vec![Type::String], Box::new(Type::Bool)),
         );
+        // Stdio helpers for bootstrap tools. Reads return heap-owned Strings and
+        // update the sticky EOF observation consumed by `(stdin-eof?)`.
+        globals.insert(
+            "read-stdin-line".into(),
+            Type::Func(vec![], Box::new(Type::String)),
+        );
+        globals.insert(
+            "read-stdin-bytes".into(),
+            Type::Func(vec![Type::I64], Box::new(Type::String)),
+        );
+        globals.insert(
+            "stdin-eof?".into(),
+            Type::Func(vec![], Box::new(Type::Bool)),
+        );
+        globals.insert(
+            "flush-stdout".into(),
+            Type::Func(vec![], Box::new(Type::Unit)),
+        );
         // `(substring s start len)` / `(string-slice s start len)` ->
         // `(-> String i64 i64 String)` — a fresh String holding the `len` bytes
         // of `s` beginning at byte offset `start` (a half-open `[start,
@@ -4397,6 +4415,43 @@ mod tests {
         let src = r#"
             (define (file-exists? [n : i64]) : i64 n)
             (define (main) : i64 (file-exists? 7))
+        "#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_stdin_builtins_have_expected_types() {
+        assert!(check("(define (f) : String (read-stdin-line))").is_ok());
+        assert!(check("(define (f) : String (read-stdin-bytes 4))").is_ok());
+        assert!(check("(define (f) : bool (stdin-eof?))").is_ok());
+        assert!(check("(define (f) : unit (flush-stdout))").is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_read_stdin_bytes_requires_i64_count() {
+        let err = check(r#"(define (f) : String (read-stdin-bytes "4"))"#).unwrap_err();
+        assert!(err.msg.contains("argument type"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_stdin_builtin_arities_checked() {
+        assert!(check("(define (f) : String (read-stdin-line 1))").is_err());
+        assert!(check("(define (f) : String (read-stdin-bytes))").is_err());
+        assert!(check("(define (f) : bool (stdin-eof? 1))").is_err());
+        assert!(check("(define (f) : unit (flush-stdout 1))").is_err());
+    }
+
+    #[test]
+    fn test_typecheck_stdin_builtins_can_be_shadowed() {
+        let src = r#"
+            (define (read-stdin-line [n : i64]) : i64 n)
+            (define (read-stdin-bytes) : i64 2)
+            (define (stdin-eof? [n : i64]) : i64 n)
+            (define (flush-stdout [n : i64]) : i64 n)
+            (define (main) : i64
+              (+ (read-stdin-line 1)
+                 (+ (read-stdin-bytes)
+                    (+ (stdin-eof? 3) (flush-stdout 4)))))
         "#;
         assert!(check(src).is_ok());
     }

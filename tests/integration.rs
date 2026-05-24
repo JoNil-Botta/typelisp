@@ -1,8 +1,9 @@
 #![cfg(target_os = "linux")]
 
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 struct Case {
     name: &'static str,
@@ -3552,6 +3553,147 @@ fn user_defined_file_exists_predicate_name_assembles() {
         "file-exists shadow fixture exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
         stdout,
         stderr,
+    );
+}
+
+fn run_stdin_fixture(
+    work_name: &str,
+    source_name: &str,
+    source: &str,
+    stdin: &str,
+) -> (Option<i32>, String, String) {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let work_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join(work_name);
+    fs::create_dir_all(&work_dir).expect("create stdin fixture work dir");
+    let work_path = work_dir.join(source_name);
+    fs::write(&work_path, source).expect("write stdin TypeLisp fixture");
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&work_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn typelisp stdin fixture");
+    let mut stdin_pipe = child.stdin.take().expect("stdin is piped");
+    stdin_pipe
+        .write_all(stdin.as_bytes())
+        .expect("write fixture stdin");
+    drop(stdin_pipe);
+    let output = child.wait_with_output().expect("wait for stdin fixture");
+
+    (
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn stdin_line_builtin_distinguishes_blank_line_from_eof() {
+    let source = r#"
+(define (print-eof) : unit
+  (if (stdin-eof?) (print-string "1") (print-string "0")))
+
+(define (main) : unit
+  (let ([a : String (read-stdin-line)])
+    (begin
+      (print-string a)
+      (print-string "|")
+      (print-eof)
+      (print-string "|")
+      (let ([b : String (read-stdin-line)])
+        (begin
+          (print-string b)
+          (print-string "|")
+          (print-eof)
+          (print-string "|")
+          (let ([c : String (read-stdin-line)])
+            (begin
+              (print-string c)
+              (print-string "|")
+              (print-eof)
+              (flush-stdout))))))))
+"#;
+    let (code, stdout, stderr) =
+        run_stdin_fixture("stdin-line", "stdin_line.tl", source, "alpha\n\nomega");
+
+    assert_eq!(
+        code,
+        Some(0),
+        "stdin line fixture exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert_eq!(stdout, "alpha|0||0|omega|1");
+    assert_eq!(stderr, "");
+}
+
+#[test]
+fn stdin_bytes_builtin_reads_exact_or_short_at_eof_and_preserves_zero_read_eof() {
+    let source = r#"
+(define (print-eof) : unit
+  (if (stdin-eof?) (print-string "1") (print-string "0")))
+
+(define (main) : unit
+  (let ([a : String (read-stdin-bytes 2)])
+    (begin
+      (print-string a)
+      (print-string "|")
+      (print-eof)
+      (print-string "|")
+      (let ([b : String (read-stdin-bytes 10)])
+        (begin
+          (print-string b)
+          (print-string "|")
+          (print-eof)
+          (print-string "|")
+          (let ([z : String (read-stdin-bytes 0)])
+            (begin
+              (print-string z)
+              (print-string "|")
+              (print-eof))))))))
+"#;
+    let (code, stdout, stderr) =
+        run_stdin_fixture("stdin-bytes", "stdin_bytes.tl", source, "abcdef");
+
+    assert_eq!(
+        code,
+        Some(0),
+        "stdin bytes fixture exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert_eq!(stdout, "ab|0|cdef|1||1");
+    assert_eq!(stderr, "");
+}
+
+#[test]
+fn stdin_bytes_negative_count_aborts() {
+    let source = "(define (main) : i64 (string-length (read-stdin-bytes -1)))";
+    let (code, stdout, stderr) = run_stdin_fixture(
+        "stdin-bytes-negative",
+        "stdin_bytes_negative.tl",
+        source,
+        "",
+    );
+
+    assert_eq!(
+        code,
+        Some(134),
+        "negative stdin bytes fixture exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert_eq!(stdout, "");
+    assert!(
+        stderr.contains("tl: stdin failed"),
+        "negative stdin bytes stderr differed:\n{}",
+        stderr
     );
 }
 

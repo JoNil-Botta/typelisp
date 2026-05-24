@@ -180,6 +180,9 @@
 (define (fmt-scan-number-end [src : String] [start : i64] [n : i64]) : i64
   (let ([j : i64 start] [seen-dot : bool false] [keep : bool true])
     (begin
+      (if (and (< j n) (= (fmt-code (string-ref src j)) 45))
+        (set! j (+ j 1))
+        (set! j j))
       (while keep
         (if (< j n)
           (let ([k : i64 (fmt-code (string-ref src j))])

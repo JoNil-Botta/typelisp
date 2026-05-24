@@ -25,6 +25,7 @@ const DECLS_EXPECTED: &str = "(import \"std.tl\")\n\n(extern print-string : (-> 
 const FLOW_EXPECTED: &str = "(define (main [x : i64]) : i64\n  (begin\n    (let ([y : i64 1])\n      (if (< x y)\n        (while (< x 10)\n          (set! x (+ x 1)))\n        x))\n    (match (Some x)\n      [(Some v) v]\n      [None 0])))";
 const COMMENTS_EXPECTED: &str = "(begin\n  ; keep\n  (print-string \"x\"))";
 const CHAR_LITERAL_EXPECTED: &str = "(define (is-quote [c : char]) : bool\n  (= c #''))";
+const NEGATIVE_INT_EXPECTED: &str = "(define (main) : i64\n  -128)";
 
 #[test]
 fn fmt_produces_golden_output_and_is_idempotent() {
@@ -46,6 +47,7 @@ fn fmt_produces_golden_output_and_is_idempotent() {
             ("flow", FLOW_EXPECTED),
             ("comments", COMMENTS_EXPECTED),
             ("char_literal", CHAR_LITERAL_EXPECTED),
+            ("negative_int", NEGATIVE_INT_EXPECTED),
         ];
 
         for (name, expected) in cases {

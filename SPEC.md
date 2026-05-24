@@ -178,7 +178,9 @@ narrower or unsigned integer is required. Floating-point literals are always
   value, e.g. `(apply1 inc 41)` where `apply1` takes a `(-> i64 i64)`.
 - Non-capturing `lambda` literals are lifted to deterministic synthetic
   top-level functions and materialized as raw function pointer values.
-- Closures (captured environment) are not supported.
+- Capturing `lambda` literals build heap-allocated closure environments and
+  evaluate to closure descriptor values. Supported captures are scalars,
+  function values, `String`, and dynamic arrays (see §5.14).
 
 ### 3.4 User-defined types
 
@@ -504,15 +506,20 @@ truncation only; floating-point conversions are deferred.
   types.
 - Non-capturing lambdas lower to deterministic synthetic top-level functions
   and evaluate to static closure descriptor values.
-- Capturing lambdas snapshot supported scalar/function captures into
-  heap-allocated closure environments. Supported captured values are integer
-  widths, `bool`, `char`, `f64`, and function values.
+- Capturing lambdas snapshot supported captures into heap-allocated closure
+  environments. Supported captured values are integer widths, `bool`, `char`,
+  `f64`, function values, `String`, and dynamic arrays. `String` and
+  dynamic-array captures snapshot their fat `{ ptr, len }` value onto the heap
+  so the environment can outlive the frame that created the handle without
+  dangling; the underlying buffer (`.rodata` for string literals, `tl_alloc`
+  for dynamic arrays) is shared, matching aggregate-handle reference semantics.
 - Lambda literals can return scalar values and pointer-backed aggregate
   values supported by named function returns, including `String`, enums,
   structs, and dynamic arrays. Tuple and fixed-array by-value returns remain
   unsupported by the backend.
-- Aggregate captures (`String`, enum, struct, tuple, fixed-array, dynamic
-  array) and `set!` to captured names are rejected in this slice.
+- Enum, struct, tuple, and fixed-array captures, and `set!` to captured names,
+  are rejected in this slice. Aggregate-storage copying and nested-handle
+  capture remain follow-up work under #435.
 
 ```lisp test=ignore name=lambda-lift-immediate reason="integration tests cover executable lambda lifting"
 ((lambda ([x : i64]) : i64 (+ x 1)) 41)
@@ -936,6 +943,8 @@ replacement.
 - Control flow: `if`, `while`, `begin`.
 - Direct and indirect function calls.
 - Non-capturing lambda literals as raw function pointer values.
+- Capturing lambda literals with heap closure environments; captures may be
+  scalars, function values, `String`, and dynamic arrays.
 - Local and global variables, `let`, `set!`.
 - `cast` with sign/zero extension and truncation.
 - Enums with pattern matching.
@@ -968,7 +977,8 @@ replacement.
 | Tuple by-value ABI | Function parameters/returns rejected by backend validation |
 | Fixed-array by-value return | Rejected by backend validation |
 | Tuple/Struct/Enum/String globals | Rejected by backend validation |
-| Aggregate or mutable captures in lambdas | Not implemented |
+| Struct/enum/tuple/fixed-array captures in lambdas | Not implemented (String and dynamic-array captures work; tracked in #435) |
+| Mutable captures (`set!` to captured names) in lambdas | Not implemented |
 | Tail call optimization | Not implemented |
 | `struct-set!` | Not implemented |
 | Garbage collection / general `free` | Not implemented; allocation is process-lifetime by default with unsafe explicit region reset for tool-owned phase boundaries |

@@ -1335,7 +1335,18 @@ impl FnLowerer {
         let env = self.reserve_aggregate_storage(env_size, Type::U64, true);
         for capture in captures {
             let ptr = self.gep_byte(&env, capture.offset);
-            let src = self.lower_var(&capture.name);
+            let handle = self.lower_var(&capture.name);
+            // `String` and dynamic-array captures are pointer-sized handles to a
+            // fat `{ ptr, len }` value that may live on the creator's frame.
+            // Since the environment can outlive that frame, snapshot the fat
+            // value onto the heap so the stored handle cannot dangle. Scalars and
+            // function values are copied by value directly.
+            let src = match self.resolve_type(&capture.ty) {
+                Type::String | Type::DynArray(_) => {
+                    self.snapshot_fat_value_to_heap(&handle, capture.ty.clone())
+                }
+                _ => handle,
+            };
             let storage_ty = Self::backend_value_type(&capture.ty);
             self.builder.emit(Instruction::Store {
                 dst: Value::Var(ptr),
@@ -1358,6 +1369,53 @@ impl FnLowerer {
             ty: Type::U64,
         });
         desc
+    }
+
+    /// Snapshot a 16-byte fat aggregate value (`String` or dynamic array) into
+    /// fresh heap storage and return a handle to the copy. `String` and
+    /// dynamic-array values are pointer-sized handles to inline `{ ptr, len }`
+    /// storage; that storage may be frame-owned, but the underlying data buffer
+    /// (`.rodata` for string literals, `tl_alloc` for dynamic arrays) is already
+    /// heap/rodata-stable. Copying just the two fat-value words onto the heap is
+    /// therefore enough to make a captured handle outlive its creator frame
+    /// without dangling (#435). The element buffer is shared, matching TypeLisp's
+    /// existing reference semantics for aggregate handles.
+    fn snapshot_fat_value_to_heap(&mut self, handle: &Value, storage_ty: Type) -> Value {
+        // `String` and dynamic arrays share the same fat layout/size, so the
+        // word offsets below apply to both.
+        let dst = self.reserve_aggregate_storage(STRING_FAT_SIZE, storage_ty, true);
+
+        let src_ptr_field = self.gep_byte(handle, STRING_PTR_OFFSET);
+        let ptr_word = self.builder.fresh_var();
+        self.builder.emit(Instruction::Load {
+            dst: ptr_word,
+            src: Value::Var(src_ptr_field),
+            ty: Type::U64,
+        });
+        self.record_local(ptr_word, Type::U64);
+        let dst_ptr_field = self.gep_byte(&dst, STRING_PTR_OFFSET);
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(dst_ptr_field),
+            src: Value::Var(ptr_word),
+            ty: Type::U64,
+        });
+
+        let src_len_field = self.gep_byte(handle, STRING_LEN_OFFSET);
+        let len_word = self.builder.fresh_var();
+        self.builder.emit(Instruction::Load {
+            dst: len_word,
+            src: Value::Var(src_len_field),
+            ty: Type::I64,
+        });
+        self.record_local(len_word, Type::I64);
+        let dst_len_field = self.gep_byte(&dst, STRING_LEN_OFFSET);
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(dst_len_field),
+            src: Value::Var(len_word),
+            ty: Type::I64,
+        });
+
+        dst
     }
 
     fn fresh_lambda_name(&mut self) -> String {
@@ -6479,6 +6537,43 @@ mod tests {
                 .iter()
                 .any(|i| matches!(i, Instruction::Load { ty: Type::I64, .. }))
         }));
+    }
+
+    #[test]
+    fn test_lower_capturing_lambda_snapshots_string_to_heap() {
+        // A captured String handle may point at frame-owned fat storage, so the
+        // lowerer must snapshot the 16-byte fat value onto the heap before
+        // storing the handle into the (longer-lived) environment (#435). The
+        // tl_alloc sizes are: env (8: one pointer slot), snapshot (16: fat value),
+        // descriptor (16).
+        let prog = parse(
+            r#"
+            (define (get_fn) : (-> String)
+              (let ([s : String "hi"])
+                (lambda () : String s)))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let get_fn = ir
+            .functions
+            .iter()
+            .find(|f| f.name == "get_fn")
+            .expect("get_fn lowered");
+        let alloc_sizes: Vec<Value> = get_fn
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .filter_map(|i| match i {
+                Instruction::Call { func, args, .. } if func == "tl_alloc" => args.first().cloned(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            alloc_sizes,
+            vec![Value::ConstI64(8), Value::ConstI64(16), Value::ConstI64(16)],
+            "expected env(8) + fat-value snapshot(16) + descriptor(16) heap allocations"
+        );
     }
 
     #[test]

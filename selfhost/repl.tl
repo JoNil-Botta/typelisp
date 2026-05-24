@@ -138,6 +138,12 @@
           (string-append " " (string-append (int->string count) ")"))))]
     [(AstTyDynArray elem)
       (string-append "(Array " (string-append (repl-type-render elem) ")"))]
+    [(AstTyRegion region inner)
+      (string-append
+        "(in "
+        (string-append
+          region
+          (string-append " " (string-append (repl-type-render inner) ")"))))]
     [(AstTyEnum name) name]
     [(AstTyStruct name) name]
     [(AstTyVar name) (string-append "'" (string-append name "'"))]))

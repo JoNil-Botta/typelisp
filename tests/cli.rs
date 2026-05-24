@@ -1180,6 +1180,38 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
         explicit_text
     );
 
+    let region_source = dir.join("region-ok.tl");
+    let region_asm = dir.join("region-ok.s");
+    fs::write(
+        &region_source,
+        "(define (main) : i64\n  (with-region r\n    (let ([s : String (int->string 41)])\n      (string-length s))))\n",
+    )
+    .expect("write region source");
+    let region_source_arg = region_source.to_str().expect("region source path is utf-8");
+    let region_asm_arg = region_asm.to_str().expect("region asm path is utf-8");
+    let region_ok = Command::new(&driver_bin)
+        .args([region_source_arg, "-o", region_asm_arg])
+        .output()
+        .expect("run selfhost compile driver on region source");
+    assert!(
+        region_ok.status.success(),
+        "selfhost compile region source failed\nstdout:\n{}\nstderr:\n{}",
+        stdout(&region_ok),
+        stderr(&region_ok)
+    );
+    let region_asm_text = fs::read_to_string(&region_asm).expect("read region asm");
+    for needle in [
+        "    call tl_region_mark\n",
+        "    call tl_region_reset\n",
+        "tl_region_mark:\n",
+        "tl_region_reset:\n",
+    ] {
+        assert!(
+            region_asm_text.contains(needle),
+            "region assembly missing {needle:?}:\n{region_asm_text}",
+        );
+    }
+
     let default_source = dir.join("default.tl");
     fs::write(&default_source, "(define (main) : i64 7)\n").expect("write default source");
     let default_source_arg = default_source
@@ -1234,6 +1266,36 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
     assert!(
         !bad_asm.exists(),
         "failing selfhost compile should not write assembly"
+    );
+
+    let bad_region_source = dir.join("region-bad.tl");
+    let bad_region_asm = dir.join("region-bad.s");
+    fs::write(
+        &bad_region_source,
+        "(define (main) : String\n  (with-region r (int->string 41)))\n",
+    )
+    .expect("write bad region source");
+    let bad_region_source_arg = bad_region_source
+        .to_str()
+        .expect("bad region source path is utf-8");
+    let bad_region_asm_arg = bad_region_asm
+        .to_str()
+        .expect("bad region asm path is utf-8");
+    let bad_region = Command::new(&driver_bin)
+        .args([bad_region_source_arg, "-o", bad_region_asm_arg])
+        .output()
+        .expect("run selfhost compile driver on bad region source");
+    assert!(!bad_region.status.success());
+    assert_eq!(stdout(&bad_region), "");
+    assert!(
+        stderr(&bad_region).contains("region-tagged value")
+            && stderr(&bad_region).contains("cannot escape with-region"),
+        "stderr:\n{}",
+        stderr(&bad_region)
+    );
+    assert!(
+        !bad_region_asm.exists(),
+        "bad region selfhost compile should not write assembly"
     );
 
     let lower_source = dir.join("lower.tl");

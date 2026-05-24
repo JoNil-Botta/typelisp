@@ -39,6 +39,8 @@
     bool
     bool
     bool
+    bool
+    bool
     bool))
 
 ;; Backend code-generation target (#646). Linux/System V and Windows x64 are
@@ -482,6 +484,7 @@
     [(AstTyTuple _) 8]
     [(AstTyArray elem count) (* (compiler-backend-type-size elem) count)]
     [(AstTyDynArray _) 8]
+    [(AstTyRegion _ inner) (compiler-backend-type-size inner)]
     [(AstTyEnum _) 8]
     [(AstTyStruct _) 8]
     [(AstTyString) 8]
@@ -2649,48 +2652,56 @@
         read-line
         read-bytes
         stdin-eof
-        flush-stdout)
+        flush-stdout
+        region-mark
+        region-reset)
       (if (string-eq name "tl_alloc")
         alloc
-        (if (string-eq name "tl_oob_abort")
-          oob
-          (if (string-eq name "tl_substring")
-            substring
-            (if (string-eq name "tl_string_concat")
-              concat
-              (if (string-eq name "tl_string_eq")
-                provides-string-eq
-                (if (string-eq name "tl_string_to_int")
-                  provides-string-to-int
-                  (if (string-eq name "tl_int_to_string")
-                    provides-int-to-string
-                    (if (string-eq name ".L_tl_abort")
-                      provides-abort
-                      (if (string-eq name "tl_print_err")
-                        provides-print-err
-                        (if (string-eq name ".L_tl_arg_count")
-                          provides-arg-count
-                          (if (string-eq name ".L_tl_arg")
-                            provides-arg
-                            (if (string-eq name ".L_tl_read_file")
-                              provides-read-file
-                              (if (string-eq name ".L_tl_write_file")
-                                provides-write-file
-                                (if (string-eq name ".L_tl_file_exists")
-                                  provides-file-exists
-                                  (if (string-eq name ".L_tl_read_stdin_line")
-                                    read-line
-                                    (if (string-eq
-                                      name
-                                      ".L_tl_read_stdin_bytes")
-                                      read-bytes
-                                      (if (string-eq name ".L_tl_stdin_eof")
-                                        stdin-eof
+        (if (string-eq name "tl_region_mark")
+          region-mark
+          (if (string-eq name "tl_region_reset")
+            region-reset
+            (if (string-eq name "tl_oob_abort")
+              oob
+              (if (string-eq name "tl_substring")
+                substring
+                (if (string-eq name "tl_string_concat")
+                  concat
+                  (if (string-eq name "tl_string_eq")
+                    provides-string-eq
+                    (if (string-eq name "tl_string_to_int")
+                      provides-string-to-int
+                      (if (string-eq name "tl_int_to_string")
+                        provides-int-to-string
+                        (if (string-eq name ".L_tl_abort")
+                          provides-abort
+                          (if (string-eq name "tl_print_err")
+                            provides-print-err
+                            (if (string-eq name ".L_tl_arg_count")
+                              provides-arg-count
+                              (if (string-eq name ".L_tl_arg")
+                                provides-arg
+                                (if (string-eq name ".L_tl_read_file")
+                                  provides-read-file
+                                  (if (string-eq name ".L_tl_write_file")
+                                    provides-write-file
+                                    (if (string-eq name ".L_tl_file_exists")
+                                      provides-file-exists
+                                      (if (string-eq
+                                        name
+                                        ".L_tl_read_stdin_line")
+                                        read-line
                                         (if (string-eq
                                           name
-                                          ".L_tl_flush_stdout")
-                                          flush-stdout
-                                          false))))))))))))))))))]))
+                                          ".L_tl_read_stdin_bytes")
+                                          read-bytes
+                                          (if (string-eq name ".L_tl_stdin_eof")
+                                            stdin-eof
+                                            (if (string-eq
+                                              name
+                                              ".L_tl_flush_stdout")
+                                              flush-stdout
+                                              false))))))))))))))))))))]))
 
 (define (compiler-backend-runtime-plan-for
   [functions : CompilerIrFunctionList]
@@ -2727,6 +2738,14 @@
       :
       bool
       (compiler-backend-function-list-defines? functions "tl_print_err")]
+    [defines-region-mark
+      :
+      bool
+      (compiler-backend-function-list-defines? functions "tl_region_mark")]
+    [defines-region-reset
+      :
+      bool
+      (compiler-backend-function-list-defines? functions "tl_region_reset")]
     [extern-alloc
       :
       bool
@@ -2801,6 +2820,14 @@
       :
       bool
       (compiler-backend-extern-list-references? externs ".L_tl_flush_stdout")]
+    [extern-region-mark
+      :
+      bool
+      (compiler-backend-extern-list-references? externs "tl_region_mark")]
+    [extern-region-reset
+      :
+      bool
+      (compiler-backend-extern-list-references? externs "tl_region_reset")]
     [calls-alloc
       :
       bool
@@ -2872,7 +2899,15 @@
     [calls-flush-stdout
       :
       bool
-      (compiler-backend-function-list-calls? functions ".L_tl_flush_stdout")])
+      (compiler-backend-function-list-calls? functions ".L_tl_flush_stdout")]
+    [calls-region-mark
+      :
+      bool
+      (compiler-backend-function-list-calls? functions "tl_region_mark")]
+    [calls-region-reset
+      :
+      bool
+      (compiler-backend-function-list-calls? functions "tl_region_reset")])
     (let ([needs-oob : bool (and (not defines-oob) (or extern-oob calls-oob))]
       [needs-substring
         :
@@ -2912,6 +2947,18 @@
       [needs-read-bytes : bool (or extern-read-bytes calls-read-bytes)]
       [needs-stdin-eof : bool (or extern-stdin-eof calls-stdin-eof)]
       [needs-flush-stdout : bool (or extern-flush-stdout calls-flush-stdout)]
+      [needs-region-mark
+        :
+        bool
+        (and
+          (not defines-region-mark)
+          (or extern-region-mark calls-region-mark))]
+      [needs-region-reset
+        :
+        bool
+        (and
+          (not defines-region-reset)
+          (or extern-region-reset calls-region-reset))]
       [direct-alloc
         :
         bool
@@ -2963,7 +3010,9 @@
             needs-read-line
             needs-read-bytes
             needs-stdin-eof
-            needs-flush-stdout))))))
+            needs-flush-stdout
+            needs-region-mark
+            needs-region-reset))))))
 
 (define (compiler-backend-runtime-plan [program : CompilerIrProgram]) : ResultBackendRuntimePlan
   (match program
@@ -3003,6 +3052,25 @@ tl_current_arena:
     .set .L_tl_alloc_msg_len, . - .L_tl_alloc_msg
 
 "))
+
+(define (compiler-backend-runtime-arena-data-for-target
+  [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    ""
+    "    .section .bss
+    .balign 8
+tl_current_arena:
+    .zero 8
+
+"))
+
+(define (compiler-backend-runtime-region-reset-data) : String
+  "    .section .rodata
+.L_tl_region_reset_msg:
+    .byte 116,108,58,32,105,110,118,97,108,105,100,32,114,101,103,105,111,110,32,109,97,114,107,10
+    .set .L_tl_region_reset_msg_len, . - .L_tl_region_reset_msg
+
+")
 
 (define (compiler-backend-runtime-oob-data) : String
   "    .section .rodata
@@ -3122,31 +3190,39 @@ tl_current_arena:
         read-line
         read-bytes
         stdin-eof
-        flush-stdout)
+        flush-stdout
+        region-mark
+        region-reset)
       (string-append
         (if alloc
           (compiler-backend-runtime-alloc-data-for-target target)
-          "")
+          (if (or region-mark region-reset)
+            (compiler-backend-runtime-arena-data-for-target target)
+            ""))
         (string-append
           (if oob
             (compiler-backend-runtime-oob-data)
             "")
           (string-append
-            (compiler-backend-runtime-argv-data arg-count arg)
+            (if region-reset
+              (compiler-backend-runtime-region-reset-data)
+              "")
             (string-append
-              (compiler-backend-runtime-read-file-data read-file)
+              (compiler-backend-runtime-argv-data arg-count arg)
               (string-append
-                (compiler-backend-runtime-write-file-data write-file)
+                (compiler-backend-runtime-read-file-data read-file)
                 (string-append
-                  (compiler-backend-runtime-file-exists-data file-exists)
+                  (compiler-backend-runtime-write-file-data write-file)
                   (string-append
-                    (compiler-backend-runtime-stdio-data
-                      read-line
-                      read-bytes
-                      stdin-eof)
-                    (compiler-backend-runtime-flush-stdout-data
-                      target
-                      flush-stdout))))))))]))
+                    (compiler-backend-runtime-file-exists-data file-exists)
+                    (string-append
+                      (compiler-backend-runtime-stdio-data
+                        read-line
+                        read-bytes
+                        stdin-eof)
+                      (compiler-backend-runtime-flush-stdout-data
+                        target
+                        flush-stdout)))))))))]))
 
 (define (compiler-backend-runtime-alloc-functions) : String
   "    .globl tl_alloc
@@ -3208,6 +3284,94 @@ tl_alloc:
     movq $2, %rdi
     leaq .L_tl_alloc_msg(%rip), %rsi
     movq $.L_tl_alloc_msg_len, %rdx
+    syscall
+    movq $60, %rax
+    movq $134, %rdi
+    syscall
+
+")
+
+(define (compiler-backend-runtime-region-mark-functions) : String
+  "    .globl tl_region_mark
+tl_region_mark:
+    movq tl_current_arena(%rip), %rax
+    testq %rax, %rax
+    jz .L_tl_region_mark_zero
+    movq 16(%rax), %rax
+    ret
+.L_tl_region_mark_zero:
+    xorq %rax, %rax
+    ret
+
+")
+
+(define (compiler-backend-runtime-region-reset-functions) : String
+  "    .globl tl_region_reset
+tl_region_reset:
+    push %rbx
+    movq %rdi, %rbx
+    testq %rbx, %rbx
+    jz .L_tl_region_reset_all
+    movq tl_current_arena(%rip), %r8
+    testq %r8, %r8
+    jz .L_tl_region_reset_invalid
+.L_tl_region_reset_find:
+    movq 8(%r8), %r9
+    cmpq %r9, %rbx
+    jb .L_tl_region_reset_next
+    movq 24(%r8), %r9
+    cmpq %r9, %rbx
+    jbe .L_tl_region_reset_found
+.L_tl_region_reset_next:
+    movq 0(%r8), %r8
+    testq %r8, %r8
+    jnz .L_tl_region_reset_find
+    jmp .L_tl_region_reset_invalid
+.L_tl_region_reset_found:
+    movq tl_current_arena(%rip), %r9
+.L_tl_region_reset_drop_newer:
+    cmpq %r8, %r9
+    je .L_tl_region_reset_restore
+    movq 0(%r9), %r10
+    movq 24(%r9), %rsi
+    subq %r9, %rsi
+    movq %r9, %rdi
+    push %r8
+    push %r10
+    movq $11, %rax
+    syscall
+    pop %r10
+    pop %r8
+    movq %r10, %r9
+    jmp .L_tl_region_reset_drop_newer
+.L_tl_region_reset_restore:
+    movq %rbx, 16(%r8)
+    movq %r8, tl_current_arena(%rip)
+    pop %rbx
+    ret
+.L_tl_region_reset_all:
+    movq tl_current_arena(%rip), %r8
+    movq $0, tl_current_arena(%rip)
+.L_tl_region_reset_all_loop:
+    testq %r8, %r8
+    jz .L_tl_region_reset_done
+    movq 0(%r8), %r9
+    movq 24(%r8), %rsi
+    subq %r8, %rsi
+    movq %r8, %rdi
+    push %r9
+    movq $11, %rax
+    syscall
+    pop %r8
+    jmp .L_tl_region_reset_all_loop
+.L_tl_region_reset_done:
+    pop %rbx
+    ret
+.L_tl_region_reset_invalid:
+    movq $1, %rax
+    movq $2, %rdi
+    leaq .L_tl_region_reset_msg(%rip), %rsi
+    movq $.L_tl_region_reset_msg_len, %rdx
     syscall
     movq $60, %rax
     movq $134, %rdi
@@ -4273,7 +4437,9 @@ tl_string_concat:
         read-line
         read-bytes
         stdin-eof
-        flush-stdout)
+        flush-stdout
+        region-mark
+        region-reset)
       (let ([alloc-asm
           :
           String
@@ -4405,42 +4571,60 @@ tl_string_concat:
             (if (compiler-backend-target-windows? target)
               (compiler-backend-runtime-windows-flush-stdout-functions)
               (compiler-backend-runtime-flush-stdout-functions))
-            "")])
+            "")]
+        [region-mark-asm
+          :
+          String
+          (compiler-backend-runtime-linux-only
+            target
+            region-mark
+            (compiler-backend-runtime-region-mark-functions))]
+        [region-reset-asm
+          :
+          String
+          (compiler-backend-runtime-linux-only
+            target
+            region-reset
+            (compiler-backend-runtime-region-reset-functions))])
         (string-append
           alloc-asm
           (string-append
-            oob-asm
+            region-mark-asm
             (string-append
-              substring-asm
+              region-reset-asm
               (string-append
-                concat-asm
+                oob-asm
                 (string-append
-                  string-eq-asm
+                  substring-asm
                   (string-append
-                    string-to-int-asm
+                    concat-asm
                     (string-append
-                      int-to-string-asm
+                      string-eq-asm
                       (string-append
-                        abort-asm
+                        string-to-int-asm
                         (string-append
-                          print-err-asm
+                          int-to-string-asm
                           (string-append
-                            arg-count-asm
+                            abort-asm
                             (string-append
-                              arg-asm
+                              print-err-asm
                               (string-append
-                                read-file-asm
+                                arg-count-asm
                                 (string-append
-                                  write-file-asm
+                                  arg-asm
                                   (string-append
-                                    file-exists-asm
+                                    read-file-asm
                                     (string-append
-                                      read-line-asm
+                                      write-file-asm
                                       (string-append
-                                        read-bytes-asm
+                                        file-exists-asm
                                         (string-append
-                                          stdin-eof-asm
-                                          flush-stdout-asm))))))))))))))))))]))
+                                          read-line-asm
+                                          (string-append
+                                            read-bytes-asm
+                                            (string-append
+                                              stdin-eof-asm
+                                              flush-stdout-asm))))))))))))))))))))]))
 
 ;; Argument register for call arg `idx` under the target's calling convention.
 
@@ -4519,7 +4703,7 @@ tl_string_concat:
   (match target
     [(BackendTargetLinux)
       (match plan
-        [(BackendRuntimePlan _ _ _ _ _ _ _ _ _ arg-count arg _ _ _ _ _ _ _)
+        [(BackendRuntimePlan _ _ _ _ _ _ _ _ _ arg-count arg _ _ _ _ _ _ _ _ _)
           (compiler-backend-entry (or arg-count arg))])]
     [(BackendTargetWindows) ""]))
 
@@ -4549,7 +4733,9 @@ tl_string_concat:
         read-line
         read-bytes
         stdin-eof
-        flush-stdout)
+        flush-stdout
+        region-mark
+        region-reset)
       (not
         (or
           (backend-or8
@@ -4571,7 +4757,7 @@ tl_string_concat:
               file-exists
               read-line
               read-bytes)
-            (or stdin-eof flush-stdout))))]))
+            (or stdin-eof (or flush-stdout (or region-mark region-reset))))))]))
 
 (define (compiler-backend-target-runtime-ok?
   [target : CompilerBackendTarget]
@@ -4596,7 +4782,9 @@ tl_string_concat:
           _
           _
           _
-          _)
+          _
+          region-mark
+          region-reset)
         (not
           (or
             string-eq
@@ -4610,7 +4798,13 @@ tl_string_concat:
                     print-err
                     (or
                       arg-count
-                      (or arg (or read-file (or write-file file-exists))))))))))])
+                      (or
+                        arg
+                        (or
+                          read-file
+                          (or
+                            write-file
+                            (or file-exists (or region-mark region-reset))))))))))))])
     true))
 
 (define (compiler-backend-runtime-externs-for-target
@@ -5685,6 +5879,8 @@ tl_string_concat:
       false
       false
       false
+      false
+      false
       false)
     IrFunctionNil
     IrExternNil
@@ -5746,6 +5942,38 @@ tl_string_concat:
           (and
             (compiler-backend-string-contains? asm "call tl_oob_abort")
             (compiler-backend-string-contains? asm "make_array_len_ok"))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-region-source) : String
+  "(define (main) : i64
+  (with-region r
+    (let ([s : String (int->string 41)])
+      (string-length s))))")
+
+(define (compiler-backend-region-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-region-source))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    call tl_region_mark\n")
+        (and
+          (compiler-backend-string-contains? asm "    call tl_region_reset\n")
+          (and
+            (compiler-backend-string-contains? asm "tl_region_mark:\n")
+            (and
+              (compiler-backend-string-contains? asm "tl_region_reset:\n")
+              (and
+                (compiler-backend-string-contains?
+                  asm
+                  ".L_tl_region_reset_msg:")
+                (and
+                  (not
+                    (compiler-backend-string-contains?
+                      asm
+                      ".extern tl_region_mark\n"))
+                  (not
+                    (compiler-backend-string-contains?
+                      asm
+                      ".extern tl_region_reset\n"))))))))]
     [(ErrCompilerBackend _) false]))
 
 ;; A refutable literal payload match (#651) lowers to a payload comparison that
@@ -5958,8 +6186,10 @@ tl_string_concat:
                               (and
                                 (compiler-backend-alloc-runtime-arena-ok?)
                                 (and
-                                  (compiler-backend-user-helper-name-ok?)
-                                  (compiler-backend-runtime-coexist-ok?)))))))))))))))))
+                                  (compiler-backend-region-ok?)
+                                  (and
+                                    (compiler-backend-user-helper-name-ok?)
+                                    (compiler-backend-runtime-coexist-ok?))))))))))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

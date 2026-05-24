@@ -118,6 +118,7 @@
     [(AstExprMatch _ _) "match"]
     [(AstExprForeach _ _ _ _ _) "foreach"]
     [(AstExprStructGet _ _) "struct-get"]
+    [(AstExprWithRegion _ _) "with-region"]
     [(AstExprComptime _) "comptime"]))
 
 (define (ctfe-value-type-name [value : CompilerCtfeValue]) : String

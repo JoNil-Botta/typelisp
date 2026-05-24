@@ -128,6 +128,9 @@ pub struct FieldDef {
 }
 
 /// Top-level declarations
+// `ComptimeDecl` intentionally mirrors the `comptime-decl` surface keyword even
+// though it ends with the enum name; renaming it would obscure the mapping.
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Decl {
     /// (define name [: type] expr)
@@ -161,6 +164,14 @@ pub enum Decl {
     /// from the concatenated `Program` before typecheck/lower/codegen, so the
     /// downstream stages never act on them.
     Import(String),
+    /// `(comptime-decl (defstruct ...))` / `(comptime-decl (defenum ...))` — a
+    /// declaration-position comptime template. In this first slice the payload
+    /// is restricted to a single literal `defstruct`/`defenum`; declaration
+    /// expansion (`ExpandedProgram::from_program`) splices the inner template
+    /// into the expanded stream with `DeclOrigin::Generated`, and the lowerer
+    /// flattens it to the bare inner declaration. The wrapper itself carries no
+    /// runtime value.
+    ComptimeDecl { template: Box<Decl>, span: Span },
 }
 
 /// Expressions
@@ -298,11 +309,7 @@ pub struct GeneratedDeclOrigin {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeclOrigin {
-    Parsed {
-        ordinal: usize,
-        span: Span,
-    },
-    #[allow(dead_code)] // Constructed by future comptime declaration expansion.
+    Parsed { ordinal: usize, span: Span },
     Generated(GeneratedDeclOrigin),
 }
 
@@ -327,19 +334,46 @@ pub struct ExpandedProgram {
 }
 
 impl ExpandedProgram {
+    /// Expand a parsed program into the flattened declaration stream consumed by
+    /// the typechecker and the enum/struct registries.
+    ///
+    /// Ordinary declarations are carried through as `DeclOrigin::Parsed`. A
+    /// `(comptime-decl <template>)` wrapper is replaced by its inner
+    /// `defstruct`/`defenum`, tagged `DeclOrigin::Generated` with the
+    /// generator's span and a stable per-generator expansion key. The wrapper
+    /// itself is not emitted, so later passes only ever see ordinary
+    /// declarations with provenance attached.
     pub fn from_program(program: &Program) -> Self {
-        let decls = program
-            .decls
-            .iter()
-            .enumerate()
-            .map(|(ordinal, decl)| ExpandedDecl {
-                decl: decl.clone(),
-                origin: DeclOrigin::Parsed {
-                    ordinal,
-                    span: decl.diagnostic_span(),
-                },
-            })
-            .collect();
+        let mut decls = Vec::new();
+        for (ordinal, decl) in program.decls.iter().enumerate() {
+            match decl {
+                Decl::ComptimeDecl { template, span } => {
+                    let expansion_key = format!(
+                        "comptime-decl#{ordinal}:{}:{}",
+                        template.kind_label(),
+                        template.declared_type_name().as_deref().unwrap_or("?"),
+                    );
+                    decls.push(ExpandedDecl {
+                        decl: (**template).clone(),
+                        origin: DeclOrigin::Generated(GeneratedDeclOrigin {
+                            generator_span: *span,
+                            generated_name: template.declared_type_name(),
+                            expansion_key,
+                            // Generated struct/enum templates carry no span of
+                            // their own; diagnostics fall back to the generator.
+                            item_span: None,
+                        }),
+                    });
+                }
+                _ => decls.push(ExpandedDecl {
+                    decl: decl.clone(),
+                    origin: DeclOrigin::Parsed {
+                        ordinal,
+                        span: decl.diagnostic_span(),
+                    },
+                }),
+            }
+        }
         ExpandedProgram { decls }
     }
 }
@@ -349,10 +383,34 @@ impl Decl {
         match self {
             Decl::Def { value, .. } => value.span(),
             Decl::DefFn { body, .. } => body.span(),
+            Decl::ComptimeDecl { span, .. } => *span,
             Decl::Extern { .. }
             | Decl::DefEnum { .. }
             | Decl::DefStruct { .. }
             | Decl::Import(_) => Span::default(),
+        }
+    }
+
+    /// The nominal type name a `defstruct`/`defenum` declares, if any. Used by
+    /// declaration expansion to build generated-item provenance.
+    pub fn declared_type_name(&self) -> Option<Symbol> {
+        match self {
+            Decl::DefStruct { name, .. } | Decl::DefEnum { name, .. } => Some(name.clone()),
+            _ => None,
+        }
+    }
+
+    /// A short kind label (`"struct"`/`"enum"`/…) for diagnostics and expansion
+    /// keys.
+    pub fn kind_label(&self) -> &'static str {
+        match self {
+            Decl::Def { .. } => "global",
+            Decl::DefFn { .. } => "function",
+            Decl::Extern { .. } => "extern",
+            Decl::DefEnum { .. } => "enum",
+            Decl::DefStruct { .. } => "struct",
+            Decl::Import(_) => "import",
+            Decl::ComptimeDecl { .. } => "comptime-decl",
         }
     }
 }

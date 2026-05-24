@@ -108,7 +108,11 @@ impl Specializer {
                 Decl::Extern { .. }
                 | Decl::DefEnum { .. }
                 | Decl::DefStruct { .. }
-                | Decl::Import(_) => decls.push(decl.clone()),
+                | Decl::Import(_)
+                // Declaration-position comptime templates are expanded by
+                // `ExpandedProgram::from_program` (typecheck) and flattened by
+                // the lowerer; specialization carries them through unchanged.
+                | Decl::ComptimeDecl { .. } => decls.push(decl.clone()),
             }
         }
         decls.extend(self.generated.clone());

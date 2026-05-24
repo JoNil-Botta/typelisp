@@ -1,10 +1,10 @@
-;; repl.tl - First selfhost REPL command driver (#591).
+;; repl.tl - Selfhost REPL session driver (#591/#798).
 
 ;;
 
 ;; A `main`-bearing TypeLisp program that owns the REPL line loop and the
 
-;; dot-command behavior of the Rust REPL skeleton's first slice (#458). It reads
+;; dot-command behavior of the Rust REPL skeleton's in-process slices. It reads
 
 ;; lines with `read-stdin-line` until `.exit` or end of input, printing a flushed
 
@@ -24,37 +24,26 @@
 
 ;;   - any other `.cmd`   reports an unknown command (to stderr).
 
+;;   - declarations       are checked and persisted for later inputs.
+
 ;;   - any other input    reports that evaluation is not implemented (to stderr).
 
 ;;
 
-;; Single-line declaration persistence is implemented so `.type` can see earlier
+;; Multiline input is accumulated until its delimiters are complete. Parse and
 
-;; accepted declarations. Expression evaluation and multiline input
+;; type errors report diagnostics, discard only the failing input, and return to
 
-;; are intentionally out of scope for this slice; they remain in the Rust REPL
-
-;; (#461/#462) until ported separately. The Rust `typelisp repl` stays
-
-;; authoritative until an explicit CLI handoff chooses to run this driver.
-
-;;
-
-;; `read-stdin-line` returns a line with its trailing newline stripped, and
-
-;; `stdin-eof?` reports a sticky end-of-input flag set once a read passes the
-
-;; end of stdin. The loop checks `stdin-eof?` before each read; a trailing
-
-;; newline yields one final empty read, which is handled as a (skipped) blank
-
-;; line.
+;; the prompt with previously accepted declarations intact.
 
 (import "compiler_typecheck.tl")
 
 (defenum ReplTypeCommand
   (ReplNoTypeCommand)
   (ReplTypeCommandExpr String))
+
+(defenum ReplLineResult
+  (ReplLineResult String String))
 
 (define (repl-banner) : String
   "TypeLisp REPL. Type .help for commands.\n")
@@ -69,12 +58,12 @@
     (print-string "tl> ")
     (flush-stdout)))
 
-;; `line` begins with `.` (a dot command). Only called on a non-empty line, so
-
-;; the `string-ref` is in bounds even though `and` is not short-circuiting here.
+;; `line` begins with `.` (a dot command). Empty lines are handled safely.
 
 (define (repl-dot-command? [line : String]) : bool
-  (and (> (string-length line) 0) (= (string-ref line 0) #.')))
+  (if (> (string-length line) 0)
+    (= (string-ref line 0) #.')
+    false))
 
 (define (repl-space? [c : char]) : bool
   (or (= c #\space') (or (= c #\tab') (or (= c #\newline') (= c #\return')))))
@@ -156,6 +145,11 @@
 (define (repl-print-error-line [message : String]) : unit
   (print-error (string-append message "\n")))
 
+(define (repl-report-diagnostic [diag : CompilerDiagnostic]) : unit
+  (begin
+    (print-error (compiler-diagnostic-render diag))
+    (print-error "\n")))
+
 (define (repl-handle-type-command
   [session-source : String]
   [expr-source : String]) : unit
@@ -180,20 +174,23 @@
       [(ErrAstReplItem message)
         (repl-print-error-line (string-append "Error: " message))])))
 
-(define (repl-session-append [session-source : String] [line : String]) : String
-  (string-append session-source (string-append line "\n")))
+(define (repl-session-candidate [session-source : String] [input : String]) : String
+  (string-append session-source (string-append input "\n")))
 
-(define (repl-handle-input [session-source : String] [line : String]) : String
-  (match (parse-ast-repl-source line)
+(define (repl-handle-input [session-source : String] [input : String]) : String
+  (match (parse-ast-repl-source input)
     [(OkAstReplItem item)
       (match item
         [(AstReplDecl _)
-          (let ([candidate : String (repl-session-append session-source line)])
+          (let ([candidate
+              :
+              String
+              (repl-session-candidate session-source input)])
             (match (typecheck-compiler-source candidate)
               [(OkCompilerTypecheck _) candidate]
               [(ErrCompilerTypecheck diag)
                 (begin
-                  (print-error (compiler-diagnostic-render diag))
+                  (repl-report-diagnostic diag)
                   session-source)]))]
         [(AstReplExpr _)
           (begin
@@ -205,47 +202,215 @@
         (repl-print-error-line (string-append "REPL parse error: " message))
         session-source)]))
 
-;; Handle one non-`.exit` input line, matching the Rust skeleton: blank lines are
+;; Completeness tracking mirrors the Rust REPL's delimiter check closely enough
 
-;; skipped, `.help` prints help to stdout, any other dot command is unknown, and
+;; for the selfhost slice: strings, comments, and char literals do not count
 
-;; any other input reports that evaluation is unimplemented (both to stderr).
+;; delimiters; unmatched closing delimiters are considered complete so parsing can
 
-(define (repl-handle-line [session-source : String] [line : String]) : String
-  (if (string-eq line "")
-    session-source
-    (match (repl-type-command line)
-      [(ReplTypeCommandExpr expr-source)
-        (begin
-          (repl-handle-type-command session-source expr-source)
-          session-source)]
-      [(ReplNoTypeCommand)
-        (if (string-eq line ".help")
+;; report the real error and the session can recover.
+
+(define (repl-skip-comment [text : String] [idx : i64] [len : i64]) : i64
+  (if (>= idx len)
+    idx
+    (if (= (string-ref text idx) #\newline')
+      (+ idx 1)
+      (repl-skip-comment text (+ idx 1) len))))
+
+(define (repl-skip-char-literal [text : String] [idx : i64] [len : i64]) : i64
+  (if (>= idx len)
+    idx
+    (if (= (string-ref text idx) #'')
+      (+ idx 1)
+      (repl-skip-char-literal text (+ idx 1) len))))
+
+(define (repl-input-complete-loop
+  [text : String]
+  [idx : i64]
+  [len : i64]
+  [parens : i64]
+  [brackets : i64]
+  [in-string : bool]
+  [escaped : bool]) : bool
+  (if (>= idx len)
+    (and (not in-string) (and (= parens 0) (= brackets 0)))
+    (let ([c : char (string-ref text idx)])
+      (if in-string
+        (if escaped
+          (repl-input-complete-loop
+            text
+            (+ idx 1)
+            len
+            parens
+            brackets
+            true
+            false)
+          (if (= c #\\')
+            (repl-input-complete-loop
+              text
+              (+ idx 1)
+              len
+              parens
+              brackets
+              true
+              true)
+            (if (= c #"')
+              (repl-input-complete-loop
+                text
+                (+ idx 1)
+                len
+                parens
+                brackets
+                false
+                false)
+              (repl-input-complete-loop
+                text
+                (+ idx 1)
+                len
+                parens
+                brackets
+                true
+                false))))
+        (if (= c #;')
+          (repl-input-complete-loop
+            text
+            (repl-skip-comment text (+ idx 1) len)
+            len
+            parens
+            brackets
+            false
+            false)
+          (if (= c #"')
+            (repl-input-complete-loop
+              text
+              (+ idx 1)
+              len
+              parens
+              brackets
+              true
+              false)
+            (if (= c ##')
+              (repl-input-complete-loop
+                text
+                (repl-skip-char-literal text (+ idx 1) len)
+                len
+                parens
+                brackets
+                false
+                false)
+              (if (= c #(')
+                (repl-input-complete-loop
+                  text
+                  (+ idx 1)
+                  len
+                  (+ parens 1)
+                  brackets
+                  false
+                  false)
+                (if (= c #[')
+                  (repl-input-complete-loop
+                    text
+                    (+ idx 1)
+                    len
+                    parens
+                    (+ brackets 1)
+                    false
+                    false)
+                  (if (= c #)')
+                    (if (= parens 0)
+                      true
+                      (repl-input-complete-loop
+                        text
+                        (+ idx 1)
+                        len
+                        (- parens 1)
+                        brackets
+                        false
+                        false))
+                    (if (= c #]')
+                      (if (= brackets 0)
+                        true
+                        (repl-input-complete-loop
+                          text
+                          (+ idx 1)
+                          len
+                          parens
+                          (- brackets 1)
+                          false
+                          false))
+                      (repl-input-complete-loop
+                        text
+                        (+ idx 1)
+                        len
+                        parens
+                        brackets
+                        false
+                        false))))))))))))
+
+(define (repl-input-complete? [input : String]) : bool
+  (repl-input-complete-loop input 0 (string-length input) 0 0 false false))
+
+(define (repl-append-pending [pending : String] [line : String]) : String
+  (if (string-eq pending "")
+    line
+    (string-append pending (string-append "\n" line))))
+
+(define (repl-handle-source-line
+  [session-source : String]
+  [pending : String]
+  [line : String]) : ReplLineResult
+  (let ([next-pending : String (repl-append-pending pending line)])
+    (if (repl-input-complete? next-pending)
+      (ReplLineResult (repl-handle-input session-source next-pending) "")
+      (ReplLineResult session-source next-pending))))
+
+;; Handle one non-`.exit` command line. When a multiline input is pending, all
+
+;; following lines are treated as source until the form is complete.
+
+(define (repl-handle-line
+  [session-source : String]
+  [pending : String]
+  [line : String]) : ReplLineResult
+  (if (string-eq pending "")
+    (if (string-eq line "")
+      (ReplLineResult session-source "")
+      (match (repl-type-command line)
+        [(ReplTypeCommandExpr expr-source)
           (begin
-            (print-string (repl-help-text))
-            session-source)
-          (if (repl-dot-command? line)
+            (repl-handle-type-command session-source expr-source)
+            (ReplLineResult session-source ""))]
+        [(ReplNoTypeCommand)
+          (if (string-eq line ".help")
             (begin
-              (print-error (string-append "Unknown REPL command: " line))
-              (print-error "\nType .help for commands.\n")
-              session-source)
-            (repl-handle-input session-source line)))])))
+              (print-string (repl-help-text))
+              (ReplLineResult session-source ""))
+            (if (repl-dot-command? line)
+              (begin
+                (print-error (string-append "Unknown REPL command: " line))
+                (print-error "\nType .help for commands.\n")
+                (ReplLineResult session-source ""))
+              (repl-handle-source-line session-source pending line)))]))
+    (repl-handle-source-line session-source pending line)))
 
 ;; The REPL loop: prompt, then read and dispatch until `.exit` or end of input.
 
-(define (repl-loop [session-source : String]) : unit
+(define (repl-loop [session-source : String] [pending : String]) : unit
   (begin
     (repl-prompt)
     (if (stdin-eof?)
-      unit
+      (if (string-eq pending "")
+        unit
+        (print-error "Error: incomplete REPL input at EOF\n"))
       (let ([line : String (read-stdin-line)])
-        (if (string-eq line ".exit")
+        (if (and (string-eq pending "") (string-eq line ".exit"))
           unit
-          (begin
-            (repl-loop (repl-handle-line session-source line))))))))
+          (match (repl-handle-line session-source pending line)
+            [(ReplLineResult next-session next-pending)
+              (repl-loop next-session next-pending)]))))))
 
 (define (main) : i64
   (begin
     (print-string (repl-banner))
-    (repl-loop "")
+    (repl-loop "" "")
     0))

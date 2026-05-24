@@ -2407,3 +2407,61 @@ fn selfhost_repl_type_checks_without_running_code() {
     assert!(out.contains("i64"), "stdout:\n{}", out);
     assert!(!out.contains("ran"), "stdout:\n{}", out);
 }
+
+#[test]
+fn selfhost_repl_multiline_declaration_persists_for_later_declarations() {
+    let input = "\
+(define (inc [x : i64]) : i64
+  (+ x 1))
+(define answer : i64 (inc 41))
+.type (+ answer 1)
+.exit
+";
+    let output = run_selfhost_repl("repl-session-decls", input);
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stderr(&output), "", "stderr:\n{}", stderr(&output));
+    assert!(
+        stdout(&output).contains("i64"),
+        "stdout:\n{}",
+        stdout(&output)
+    );
+}
+
+#[test]
+fn selfhost_repl_parse_and_type_errors_recover_without_mutating_session() {
+    let input = "\
+(define answer : i64 41)
+(define broken : i64 0))
+(define bad : i64 true)
+(define after : i64 (+ answer 1))
+.exit
+";
+    let output = run_selfhost_repl("repl-error-recover", input);
+    let err = stderr(&output);
+
+    assert!(output.status.success(), "stderr:\n{}", err);
+    assert!(err.contains("typecheck:"), "stderr:\n{}", err);
+    assert!(
+        err.contains("parse") || err.contains("unexpected"),
+        "stderr:\n{}",
+        err
+    );
+    assert!(
+        !err.contains("unknown value: answer"),
+        "session declaration was lost after an error:\n{}",
+        err
+    );
+}
+
+#[test]
+fn selfhost_repl_eof_during_incomplete_input_reports_diagnostic() {
+    let output = run_selfhost_repl("repl-incomplete-eof", "(define (f [x : i64]) : i64\n");
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("incomplete REPL input at EOF"),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+}

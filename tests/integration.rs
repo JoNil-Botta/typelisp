@@ -1473,6 +1473,46 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
         "compiler_driver build did not write binary"
     );
 
+    let backend_error_input_path = work_dir.join("backend_error_input.tl");
+    let backend_error_asm_path = work_dir.join("backend_error_generated.s");
+    let _ = fs::remove_file(&backend_error_asm_path);
+    fs::write(
+        &backend_error_input_path,
+        "(extern f : (-> i64 i64 i64 i64 i64 i64 i64 i64))\n\
+         (define (main) : i64 (f 1 2 3 4 5 6 7))\n",
+    )
+    .expect("write compiler_driver backend diagnostic fixture");
+
+    let backend_error = Command::new(&driver_bin)
+        .arg(&backend_error_input_path)
+        .arg(&backend_error_asm_path)
+        .output()
+        .expect("run compiler_driver backend diagnostic fixture");
+    assert_eq!(
+        backend_error.status.code(),
+        Some(1),
+        "compiler_driver backend diagnostic fixture exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&backend_error.stdout),
+        String::from_utf8_lossy(&backend_error.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&backend_error.stdout),
+        "",
+        "compiler_driver backend diagnostic fixture stdout"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&backend_error.stderr),
+        format!(
+            "{}:1:1: backend: too many call args",
+            backend_error_input_path.display()
+        ),
+        "compiler_driver backend diagnostic fixture stderr"
+    );
+    assert!(
+        !backend_error_asm_path.exists(),
+        "backend diagnostic fixture should not write assembly"
+    );
+
     let input_path = work_dir.join("input.tl");
     let helper_path = work_dir.join("helper.tl");
     let shared_path = work_dir.join("shared.tl");

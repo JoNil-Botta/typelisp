@@ -1,6 +1,7 @@
 ;; compiler_driver.tl - File-to-file selfhost compiler driver (#448).
 
 (import "compiler_backend.tl")
+(import "compiler_optimize.tl")
 
 (defenum ResultCompilerLoad
   (OkCompilerLoad AstDeclList SymI64Env)
@@ -116,7 +117,7 @@
   (match (compiler-driver-load-file input-path (sym-i64-empty))
     [(OkCompilerLoad decls _)
      (match (lower-compiler-program (AstProgram decls))
-       [(OkCompilerLower program) (compiler-backend-emit-program program)]
+       [(OkCompilerLower program) (compiler-backend-emit-program (optimize-program program))]
        [(ErrCompilerLower message) (ErrCompilerBackend message)])]
     [(ErrCompilerLoad message) (ErrCompilerBackend message)]))
 

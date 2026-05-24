@@ -28,7 +28,7 @@ Status meanings:
 
 | Rust test file | Behavior protected | Replacement path | Status |
 | --- | --- | --- | --- |
-| `tests/backend_diagnostics.rs` | Backend rejection diagnostics preserve source locations for unsupported aggregate returns. | Covered by `scripts/verify-public-tools.sh` backend diagnostic cases. | Covered |
+| `tests/backend_diagnostics.rs` | Backend rejection diagnostics preserve source locations for unsupported aggregate returns. | Covered by the manifest-backed `tests/diagnostics/backend/` corpus run by `scripts/verify-public-tools.sh`. | Covered |
 | `tests/calc_compile.rs` | `tests/integration/calc.tl` compiles to assembly and keeps the tokenizer, parser, evaluator, and imported token model wired together. | Source fixture already exists; no-Rust compile manifest owned by #846. | Partial |
 | `tests/cli.rs` | Public CLI usage/errors and behavior for compile/check/build/run/fmt/doc/doc-test/debug/package-adjacent flows, LSP, REPL, and selfhost REPL. | `scripts/verify-public-tools.sh` now covers representative public CLI, docs, LSP, REPL, formatter, package, SPEC, and diagnostic cases; `doc --test` now routes through `selfhost/doc.tl`; remaining embedded edge cases still need migration. | Partial |
 | `tests/fmt_golden.rs` | Formatter golden output and idempotence through the public `typelisp fmt` command. | Covered by `tests/format_golden/*.tl`, matching `*.expected` files, and the manifest/idempotence checks in `scripts/verify-public-tools.sh`. | Covered |

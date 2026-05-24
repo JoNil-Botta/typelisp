@@ -198,29 +198,54 @@ assert_stdout_empty
 assert_contains "$err" "unknown target"
 
 echo "[public-tools] backend diagnostics"
-cat > "$WORKDIR/array_return.tl" <<'EOF'
-(define (main) : (Array i64 3)
-  (array 1 2 3))
-EOF
-run_cmd backend-array "$COMPILER" compile "$WORKDIR/array_return.tl"
-assert_failure
-assert_stdout_empty
-assert_contains "$err" "return type (Array i64 3)"
-assert_contains "$err" "array_return.tl:2:"
-assert_contains "$err" " 2 |   (array 1 2 3)"
-assert_contains "$err" "^"
+BACKEND_DIAG_DIR="$ROOT/tests/diagnostics/backend"
+BACKEND_DIAG_WORK="$WORKDIR/backend-diagnostics"
+BACKEND_DIAG_MANIFEST="$BACKEND_DIAG_DIR/manifest.txt"
+mkdir -p "$BACKEND_DIAG_WORK"
 
-cat > "$WORKDIR/tuple_return.tl" <<'EOF'
-(define (make-pair [a : i64] [b : bool]) : (Tuple i64 bool)
-  (tuple a b))
-EOF
-run_cmd backend-tuple "$COMPILER" compile "$WORKDIR/tuple_return.tl"
-assert_failure
-assert_stdout_empty
-assert_contains "$err" "return type (Tuple i64 bool)"
-assert_contains "$err" "tuple_return.tl:2:"
-assert_contains "$err" " 2 |   (tuple a b)"
-assert_contains "$err" "^"
+while IFS='|' read -r diag_name diag_command diag_expect || [ -n "$diag_name" ]; do
+    diag_name=$(printf '%s' "$diag_name" | tr -d '\r')
+    diag_command=$(printf '%s' "$diag_command" | tr -d '\r')
+    diag_expect=$(printf '%s' "$diag_expect" | tr -d '\r')
+    case "$diag_name" in
+        "" | \#*) continue ;;
+    esac
+    case "$diag_name" in
+        *[!A-Za-z0-9_]*)
+            fail "backend diagnostic manifest has invalid case name: $diag_name"
+            ;;
+    esac
+    source="$BACKEND_DIAG_DIR/$diag_name.tl"
+    contains="$BACKEND_DIAG_DIR/$diag_name.stderr.contains"
+    work_source="$BACKEND_DIAG_WORK/$diag_name.tl"
+
+    [ -f "$source" ] || fail "backend diagnostic source missing: $source"
+    [ -f "$contains" ] || fail "backend diagnostic expectations missing: $contains"
+    cp "$source" "$work_source"
+
+    case "$diag_command" in
+        compile)
+            run_cmd "backend-$diag_name" "$COMPILER" compile "$work_source"
+            ;;
+        *)
+            fail "unknown backend diagnostic command for $diag_name: $diag_command"
+            ;;
+    esac
+
+    case "$diag_expect" in
+        failure) assert_failure ;;
+        *)
+            fail "unknown backend diagnostic expectation for $diag_name: $diag_expect"
+            ;;
+    esac
+    assert_stdout_empty
+
+    while IFS= read -r expected || [ -n "$expected" ]; do
+        expected=$(printf '%s' "$expected" | tr -d '\r')
+        [ -n "$expected" ] || continue
+        assert_contains "$err" "$expected"
+    done < "$contains"
+done < "$BACKEND_DIAG_MANIFEST"
 
 echo "[public-tools] formatter golden corpus"
 format_manifest() {

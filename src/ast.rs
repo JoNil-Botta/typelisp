@@ -226,6 +226,75 @@ pub struct Program {
     pub decls: Vec<Decl>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GeneratedDeclOrigin {
+    pub generator_span: Span,
+    pub generated_name: Option<Symbol>,
+    pub expansion_key: String,
+    pub item_span: Option<Span>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeclOrigin {
+    Parsed {
+        ordinal: usize,
+        span: Span,
+    },
+    #[allow(dead_code)] // Constructed by future comptime declaration expansion.
+    Generated(GeneratedDeclOrigin),
+}
+
+impl DeclOrigin {
+    pub fn diagnostic_span(&self) -> Span {
+        match self {
+            DeclOrigin::Parsed { span, .. } => *span,
+            DeclOrigin::Generated(origin) => origin.item_span.unwrap_or(origin.generator_span),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExpandedDecl {
+    pub decl: Decl,
+    pub origin: DeclOrigin,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExpandedProgram {
+    pub decls: Vec<ExpandedDecl>,
+}
+
+impl ExpandedProgram {
+    pub fn from_program(program: &Program) -> Self {
+        let decls = program
+            .decls
+            .iter()
+            .enumerate()
+            .map(|(ordinal, decl)| ExpandedDecl {
+                decl: decl.clone(),
+                origin: DeclOrigin::Parsed {
+                    ordinal,
+                    span: decl.diagnostic_span(),
+                },
+            })
+            .collect();
+        ExpandedProgram { decls }
+    }
+}
+
+impl Decl {
+    pub fn diagnostic_span(&self) -> Span {
+        match self {
+            Decl::Def { value, .. } => value.span(),
+            Decl::DefFn { body, .. } => body.span(),
+            Decl::Extern { .. }
+            | Decl::DefEnum { .. }
+            | Decl::DefStruct { .. }
+            | Decl::Import(_) => Span::default(),
+        }
+    }
+}
+
 impl Expr {
     pub fn spanned(expr: Expr, span: Span) -> Self {
         Expr::Spanned {
@@ -267,7 +336,7 @@ impl Expr {
 /// The size in bytes of an enum's tag, stored at offset 0 of every value.
 pub const ENUM_TAG_SIZE: usize = 8;
 
-/// A registry of all `defenum` declarations in a program, used by both the
+/// A registry of all `defenum` declarations in an expanded program, used by both the
 /// typechecker (for constructor/variant typing) and the lowerer (for memory
 /// layout). Built once from the program's `Decl::DefEnum`s.
 #[derive(Debug, Clone, Default)]
@@ -282,9 +351,13 @@ pub struct EnumRegistry {
 impl EnumRegistry {
     /// Build the registry from a program's `defenum` declarations.
     pub fn from_program(prog: &Program) -> Self {
+        Self::from_expanded_program(&ExpandedProgram::from_program(prog))
+    }
+
+    pub fn from_expanded_program(prog: &ExpandedProgram) -> Self {
         let mut reg = EnumRegistry::default();
-        for decl in &prog.decls {
-            if let Decl::DefEnum { name, variants } = decl {
+        for expanded in &prog.decls {
+            if let Decl::DefEnum { name, variants } = &expanded.decl {
                 for (tag, v) in variants.iter().enumerate() {
                     reg.variants.insert(v.name.clone(), (name.clone(), tag));
                 }
@@ -350,7 +423,7 @@ impl EnumRegistry {
     }
 }
 
-/// A registry of all `defstruct` declarations in a program, used by both the
+/// A registry of all `defstruct` declarations in an expanded program, used by both the
 /// typechecker (for constructor/field-access typing) and the lowerer (for
 /// memory layout). Built once from the program's `Decl::DefStruct`s. A struct
 /// is like an enum with a single, untagged "variant": named fields laid out
@@ -364,9 +437,13 @@ pub struct StructRegistry {
 impl StructRegistry {
     /// Build the registry from a program's `defstruct` declarations.
     pub fn from_program(prog: &Program) -> Self {
+        Self::from_expanded_program(&ExpandedProgram::from_program(prog))
+    }
+
+    pub fn from_expanded_program(prog: &ExpandedProgram) -> Self {
         let mut reg = StructRegistry::default();
-        for decl in &prog.decls {
-            if let Decl::DefStruct { name, fields } = decl {
+        for expanded in &prog.decls {
+            if let Decl::DefStruct { name, fields } = &expanded.decl {
                 reg.structs.insert(name.clone(), fields.clone());
             }
         }

@@ -261,6 +261,9 @@ TypeLisp*:
 - `read.tl` — an s-expression reader producing a recursive `Sexpr` cons-cell tree (an importable module).
 - `eval.tl` — a tree-walking evaluator over that tree, with integers, strings, cons pairs, and interpreted first-class closures.
 
+Compiler self-test and smoke-driver conventions are documented in
+[`selfhost/TESTING.md`](selfhost/TESTING.md).
+
 Smaller runnable examples, including `calc.tl`, remain in [`examples/`](examples).
 
 ## Architecture

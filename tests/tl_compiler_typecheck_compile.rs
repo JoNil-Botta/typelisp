@@ -82,8 +82,15 @@ fn compiler_typecheck_tl_compiles_to_assembly() {
         "typecheck: if branches must match",
         "typecheck: assignment type mismatch",
         "typecheck: return type mismatch",
+        "typecheck: tuple index out of bounds",
+        "typecheck: array elements must have same type",
+        "typecheck: string index must be integer",
+        "typecheck: cast requires integer/char source and target",
+        "typecheck: foreach body must be unit",
+        "typecheck: lambda return type mismatch",
         "typecheck: smoke score mismatch",
         "(extern print-i64 : (-> i64 unit))",
+        "[fixed : (Array i64 3) (array 1 2 3)]",
     ] {
         assert_message(&asm, message, "compiler_typecheck");
     }

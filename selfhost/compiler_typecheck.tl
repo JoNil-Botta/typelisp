@@ -10,6 +10,10 @@
   (OkTcType AstType)
   (ErrTcType String))
 
+(defenum ResultTcTypeList
+  (OkTcTypeList AstTypeList)
+  (ErrTcTypeList String))
+
 (defenum ResultTcEnv
   (OkTcEnv TcTypeEnv)
   (ErrTcEnv String))
@@ -30,6 +34,55 @@
 
 (define (tc-bind [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
   (TcTypeBind name ty env))
+
+(define (tc-type-list1 [a : AstType]) : AstTypeList
+  (AstTypeCons a AstTypeNil))
+
+(define (tc-type-list2 [a : AstType] [b : AstType]) : AstTypeList
+  (AstTypeCons a (AstTypeCons b AstTypeNil)))
+
+(define (tc-type-list3 [a : AstType] [b : AstType] [c : AstType]) : AstTypeList
+  (AstTypeCons a (AstTypeCons b (AstTypeCons c AstTypeNil))))
+
+(define (tc-fn0 [ret : AstType]) : AstType
+  (AstTyFunc AstTypeNil ret))
+
+(define (tc-fn1 [a : AstType] [ret : AstType]) : AstType
+  (AstTyFunc (tc-type-list1 a) ret))
+
+(define (tc-fn2 [a : AstType] [b : AstType] [ret : AstType]) : AstType
+  (AstTyFunc (tc-type-list2 a b) ret))
+
+(define (tc-fn3 [a : AstType] [b : AstType] [c : AstType] [ret : AstType]) : AstType
+  (AstTyFunc (tc-type-list3 a b c) ret))
+
+(define (tc-default-env) : TcTypeEnv
+  (let ([e0 : TcTypeEnv (tc-empty-env)])
+    (let ([e1 : TcTypeEnv (tc-bind e0 "print" (tc-fn1 (AstTyI64) (AstTyUnit)))])
+      (let ([e2 : TcTypeEnv (tc-bind e1 "print-bool" (tc-fn1 (AstTyBool) (AstTyUnit)))])
+        (let ([e3 : TcTypeEnv (tc-bind e2 "print-float" (tc-fn1 (AstTyF64) (AstTyUnit)))])
+          (let ([e4 : TcTypeEnv (tc-bind e3 "print-char" (tc-fn1 (AstTyChar) (AstTyUnit)))])
+            (let ([e5 : TcTypeEnv (tc-bind e4 "print-newline" (tc-fn0 (AstTyUnit)))])
+              (let ([e6 : TcTypeEnv (tc-bind e5 "print-string" (tc-fn1 (AstTyString) (AstTyUnit)))])
+                (let ([e7 : TcTypeEnv (tc-bind e6 "print-str" (tc-fn1 (AstTyString) (AstTyUnit)))])
+                  (let ([e8 : TcTypeEnv (tc-bind e7 "print-error" (tc-fn1 (AstTyString) (AstTyUnit)))])
+                    (let ([e9 : TcTypeEnv (tc-bind e8 "arg-count" (tc-fn0 (AstTyI64)))])
+                      (let ([e10 : TcTypeEnv (tc-bind e9 "arg" (tc-fn1 (AstTyI64) (AstTyString)))])
+                        (let ([e11 : TcTypeEnv (tc-bind e10 "string-length" (tc-fn1 (AstTyString) (AstTyI64)))])
+                          (let ([e12 : TcTypeEnv (tc-bind e11 "length" (tc-fn1 (AstTyString) (AstTyI64)))])
+                            (let ([e13 : TcTypeEnv (tc-bind e12 "string-eq" (tc-fn2 (AstTyString) (AstTyString) (AstTyBool)))])
+                              (let ([e14 : TcTypeEnv (tc-bind e13 "string=?" (tc-fn2 (AstTyString) (AstTyString) (AstTyBool)))])
+                                (let ([e15 : TcTypeEnv (tc-bind e14 "string->int" (tc-fn1 (AstTyString) (AstTyI64)))])
+                                  (let ([e16 : TcTypeEnv (tc-bind e15 "int->string" (tc-fn1 (AstTyI64) (AstTyString)))])
+                                    (let ([e17 : TcTypeEnv (tc-bind e16 "read-file" (tc-fn1 (AstTyString) (AstTyString)))])
+                                      (let ([e18 : TcTypeEnv (tc-bind e17 "write-file" (tc-fn2 (AstTyString) (AstTyString) (AstTyUnit)))])
+                                        (let ([e19 : TcTypeEnv (tc-bind e18 "file-exists?" (tc-fn1 (AstTyString) (AstTyBool)))])
+                                          (let ([e20 : TcTypeEnv (tc-bind e19 "substring" (tc-fn3 (AstTyString) (AstTyI64) (AstTyI64) (AstTyString)))])
+                                            (let ([e21 : TcTypeEnv (tc-bind e20 "string-slice" (tc-fn3 (AstTyString) (AstTyI64) (AstTyI64) (AstTyString)))])
+                                              (let ([e22 : TcTypeEnv (tc-bind e21 "string-append" (tc-fn2 (AstTyString) (AstTyString) (AstTyString)))])
+                                                (let ([e23 : TcTypeEnv (tc-bind e22 "string-concat" (tc-fn2 (AstTyString) (AstTyString) (AstTyString)))])
+                                                  (let ([e24 : TcTypeEnv (tc-bind e23 "panic" (tc-fn1 (AstTyString) (AstTyNever)))])
+                                                    (tc-bind e24 "error" (tc-fn1 (AstTyString) (AstTyNever)))))))))))))))))))))))))))))
 
 (define (tc-lookup [env : TcTypeEnv] [name : String]) : ResultTcType
   (match env
@@ -111,6 +164,26 @@
     [(AstTyU8) true]
     [_ false]))
 
+(define (tc-castable-type? [ty : AstType]) : bool
+  (if (tc-integer-type? ty)
+      true
+      (match ty
+        [(AstTyChar) true]
+        [_ false])))
+
+(define (tc-dyn-array-elem-supported? [ty : AstType]) : bool
+  (if (tc-integer-type? ty)
+      true
+      (match ty
+        [(AstTyBool) true]
+        [(AstTyChar) true]
+        [(AstTyF64) true]
+        [(AstTyString) true]
+        [(AstTyEnum _) true]
+        [(AstTyStruct _) true]
+        [(AstTyDynArray _) true]
+        [_ false])))
+
 (define (tc-literal-type [lit : AstLiteral]) : AstType
   (match lit
     [(AstLitInt _) (AstTyI64)]
@@ -126,6 +199,43 @@
     [(AstParamCons param rest)
      (match param
        [(AstParam _ ty) (AstTypeCons ty (tc-param-type-list rest))])]))
+
+(define (tc-type-list-ref [types : AstTypeList] [index : i64]) : ResultTcType
+  (if (< index 0)
+      (ErrTcType "typecheck: tuple index out of bounds")
+      (match types
+        [(AstTypeNil) (ErrTcType "typecheck: tuple index out of bounds")]
+        [(AstTypeCons ty rest)
+         (if (= index 0)
+             (OkTcType ty)
+             (tc-type-list-ref rest (- index 1)))])))
+
+(define (tc-expr-list-len [exprs : AstExprList]) : i64
+  (match exprs
+    [(AstExprNil) 0]
+    [(AstExprCons _ rest) (+ 1 (tc-expr-list-len rest))]))
+
+(define (tc-expr-list-types [env : TcTypeEnv] [exprs : AstExprList]) : ResultTcTypeList
+  (match exprs
+    [(AstExprNil) (OkTcTypeList AstTypeNil)]
+    [(AstExprCons expr rest)
+     (match (tc-expr env expr)
+       [(OkTcType ty)
+        (match (tc-expr-list-types env rest)
+          [(OkTcTypeList rest-types) (OkTcTypeList (AstTypeCons ty rest-types))]
+          [(ErrTcTypeList message) (ErrTcTypeList message)])]
+       [(ErrTcType message) (ErrTcTypeList message)])]))
+
+(define (tc-check-array-rest [env : TcTypeEnv] [exprs : AstExprList] [elem-ty : AstType]) : ResultTcUnit
+  (match exprs
+    [(AstExprNil) OkTcUnit]
+    [(AstExprCons expr rest)
+     (match (tc-expr env expr)
+       [(OkTcType ty)
+        (match (tc-expect ty elem-ty "typecheck: array elements must have same type")
+          [(OkTcUnit) (tc-check-array-rest env rest elem-ty)]
+          [(ErrTcUnit message) (ErrTcUnit message)])]
+       [(ErrTcType message) (ErrTcUnit message)])]))
 
 (define (tc-bind-params [env : TcTypeEnv] [params : AstParamList]) : TcTypeEnv
   (match params
@@ -169,7 +279,7 @@
 
 (define (tc-build-top-env [program : AstProgram]) : ResultTcEnv
   (match program
-    [(AstProgram decls) (tc-build-top-env-list decls (tc-empty-env))]))
+    [(AstProgram decls) (tc-build-top-env-list decls (tc-default-env))]))
 
 (define (tc-expect [actual : AstType] [expected : AstType] [message : String]) : ResultTcUnit
   (if (tc-type-eq actual expected)
@@ -242,6 +352,45 @@
           [(ErrTcType message) (ErrTcUnit message)])]
        [(AstTypeNil) (ErrTcUnit "typecheck: arity mismatch")])]))
 
+(define (tc-call-expr [env : TcTypeEnv] [func : AstExpr] [args : AstExprList]) : ResultTcType
+  (match (tc-expr env func)
+    [(OkTcType fn-ty)
+     (match fn-ty
+       [(AstTyFunc params ret)
+        (match (tc-check-args env args params)
+          [(OkTcUnit) (OkTcType ret)]
+          [(ErrTcUnit message) (ErrTcType message)])]
+       [_ (ErrTcType "typecheck: call target is not a function")])]
+    [(ErrTcType message) (ErrTcType message)]))
+
+(define (tc-array-length-call [env : TcTypeEnv] [name : String] [func : AstExpr] [args : AstExprList]) : ResultTcType
+  (match args
+    [(AstExprCons arg rest)
+     (match rest
+       [(AstExprNil)
+        (match (tc-expr env arg)
+          [(OkTcType arg-ty)
+           (match arg-ty
+             [(AstTyDynArray _) (OkTcType (AstTyI64))]
+             [_ (if (string-eq name "array-length")
+                    (ErrTcType "typecheck: array-length requires dynamic array")
+                    (tc-call-expr env func args))])]
+          [(ErrTcType message) (ErrTcType message)])]
+       [_ (if (string-eq name "array-length")
+              (ErrTcType "typecheck: arity mismatch")
+              (tc-call-expr env func args))])]
+    [_ (if (string-eq name "array-length")
+           (ErrTcType "typecheck: arity mismatch")
+           (tc-call-expr env func args))]))
+
+(define (tc-call-or-array-length [env : TcTypeEnv] [func : AstExpr] [args : AstExprList]) : ResultTcType
+  (match func
+    [(AstExprVar name)
+     (if (or (string-eq name "array-length") (string-eq name "length"))
+         (tc-array-length-call env name func args)
+         (tc-call-expr env func args))]
+    [_ (tc-call-expr env func args)]))
+
 (define (tc-let-bindings [env : TcTypeEnv] [bindings : AstLetBindingList]) : ResultTcEnv
   (match bindings
     [(AstLetBindingNil) (OkTcEnv env)]
@@ -284,6 +433,98 @@
      (match (tc-let-bindings env bindings)
        [(OkTcEnv next-env) (tc-expr next-env body)]
        [(ErrTcEnv message) (ErrTcType message)])]
+    [(AstExprLambda params maybe-ret body)
+     (let ([lambda-env : TcTypeEnv (tc-bind-params env params)])
+       (match (tc-expr lambda-env body)
+         [(OkTcType body-ty)
+          (match maybe-ret
+            [(AstSomeType ret)
+             (match (tc-expect body-ty ret "typecheck: lambda return type mismatch")
+               [(OkTcUnit) (OkTcType (AstTyFunc (tc-param-type-list params) ret))]
+               [(ErrTcUnit message) (ErrTcType message)])]
+            [(AstNoType) (OkTcType (AstTyFunc (tc-param-type-list params) body-ty))])]
+         [(ErrTcType message) (ErrTcType message)]))]
+    [(AstExprTuple exprs)
+     (match (tc-expr-list-types env exprs)
+       [(OkTcTypeList tys) (OkTcType (AstTyTuple tys))]
+       [(ErrTcTypeList message) (ErrTcType message)])]
+    [(AstExprTupleRef tuple index)
+     (match (tc-expr env tuple)
+       [(OkTcType tuple-ty)
+        (match tuple-ty
+          [(AstTyTuple tys) (tc-type-list-ref tys index)]
+          [_ (ErrTcType "typecheck: tuple-ref requires tuple type")])]
+       [(ErrTcType message) (ErrTcType message)])]
+    [(AstExprArray exprs)
+     (match exprs
+       [(AstExprNil) (ErrTcType "typecheck: cannot infer type of empty array")]
+       [(AstExprCons first rest)
+        (match (tc-expr env first)
+          [(OkTcType first-ty)
+           (match (tc-check-array-rest env rest first-ty)
+             [(OkTcUnit) (OkTcType (AstTyArray first-ty (tc-expr-list-len exprs)))]
+             [(ErrTcUnit message) (ErrTcType message)])]
+          [(ErrTcType message) (ErrTcType message)])])]
+    [(AstExprMakeArray elem-ty len)
+     (match (tc-expr env len)
+       [(OkTcType len-ty)
+        (if (tc-integer-type? len-ty)
+            (if (tc-dyn-array-elem-supported? elem-ty)
+                (OkTcType (AstTyDynArray elem-ty))
+                (ErrTcType "typecheck: make-array element type is not supported"))
+            (ErrTcType "typecheck: make-array length must be integer"))]
+       [(ErrTcType message) (ErrTcType message)])]
+    [(AstExprArrayRef array index)
+     (match (tc-expr env array)
+       [(OkTcType array-ty)
+        (match (tc-expr env index)
+          [(OkTcType index-ty)
+           (if (tc-integer-type? index-ty)
+               (match array-ty
+                 [(AstTyArray elem-ty _) (OkTcType elem-ty)]
+                 [(AstTyDynArray elem-ty) (OkTcType elem-ty)]
+                 [_ (ErrTcType "typecheck: array-ref requires array type")])
+               (ErrTcType "typecheck: array index must be integer"))]
+          [(ErrTcType message) (ErrTcType message)])]
+       [(ErrTcType message) (ErrTcType message)])]
+    [(AstExprArraySet array index value)
+     (match (tc-expr env array)
+       [(OkTcType array-ty)
+        (match (tc-expr env index)
+          [(OkTcType index-ty)
+           (if (tc-integer-type? index-ty)
+               (match array-ty
+                 [(AstTyArray elem-ty _)
+                  (match (tc-expr env value)
+                    [(OkTcType value-ty)
+                     (match (tc-expect value-ty elem-ty "typecheck: array-set! value type mismatch")
+                       [(OkTcUnit) (OkTcType (AstTyUnit))]
+                       [(ErrTcUnit message) (ErrTcType message)])]
+                    [(ErrTcType message) (ErrTcType message)])]
+                 [(AstTyDynArray elem-ty)
+                  (match (tc-expr env value)
+                    [(OkTcType value-ty)
+                     (match (tc-expect value-ty elem-ty "typecheck: array-set! value type mismatch")
+                       [(OkTcUnit) (OkTcType (AstTyUnit))]
+                       [(ErrTcUnit message) (ErrTcType message)])]
+                    [(ErrTcType message) (ErrTcType message)])]
+                 [_ (ErrTcType "typecheck: array-set! requires array type")])
+               (ErrTcType "typecheck: array index must be integer"))]
+          [(ErrTcType message) (ErrTcType message)])]
+       [(ErrTcType message) (ErrTcType message)])]
+    [(AstExprStringRef str index)
+     (match (tc-expr env str)
+       [(OkTcType str-ty)
+        (match (tc-expect str-ty (AstTyString) "typecheck: string-ref requires String")
+          [(OkTcUnit)
+           (match (tc-expr env index)
+             [(OkTcType index-ty)
+              (if (tc-integer-type? index-ty)
+                  (OkTcType (AstTyChar))
+                  (ErrTcType "typecheck: string index must be integer"))]
+             [(ErrTcType message) (ErrTcType message)])]
+          [(ErrTcUnit message) (ErrTcType message)])]
+       [(ErrTcType message) (ErrTcType message)])]
     [(AstExprBegin exprs) (tc-begin-list env exprs)]
     [(AstExprIf cond then-branch else-branch)
      (match (tc-expr env cond)
@@ -311,6 +552,13 @@
              [(ErrTcUnit message) (ErrTcType message)])]
           [(ErrTcType message) (ErrTcType message)])]
        [(ErrTcType message) (ErrTcType message)])]
+    [(AstExprCast inner ty)
+     (match (tc-expr env inner)
+       [(OkTcType inner-ty)
+        (if (and (tc-castable-type? inner-ty) (tc-castable-type? ty))
+            (OkTcType ty)
+            (ErrTcType "typecheck: cast requires integer/char source and target"))]
+       [(ErrTcType message) (ErrTcType message)])]
     [(AstExprUnary op inner)
      (match (tc-expr env inner)
        [(OkTcType ty) (tc-unop-type op ty)]
@@ -322,19 +570,7 @@
           [(OkTcType right-ty) (tc-binop-type op left-ty right-ty)]
           [(ErrTcType message) (ErrTcType message)])]
        [(ErrTcType message) (ErrTcType message)])]
-    [(AstExprCall func args)
-     (match func
-       [(AstExprVar name)
-        (match (tc-lookup env name)
-          [(OkTcType fn-ty)
-           (match fn-ty
-             [(AstTyFunc params ret)
-              (match (tc-check-args env args params)
-                [(OkTcUnit) (OkTcType ret)]
-                [(ErrTcUnit message) (ErrTcType message)])]
-             [_ (ErrTcType "typecheck: call target is not a function")])]
-          [(ErrTcType message) (ErrTcType message)])]
-       [_ (ErrTcType "typecheck: direct call target must be a name")])]
+    [(AstExprCall func args) (tc-call-or-array-length env func args)]
     [(AstExprWhile cond body)
      (match (tc-expr env cond)
        [(OkTcType cond-ty)
@@ -348,6 +584,26 @@
              [(ErrTcType message) (ErrTcType message)])]
           [(ErrTcUnit message) (ErrTcType message)])]
        [(ErrTcType message) (ErrTcType message)])]
+    [(AstExprForeach index index-ty start end body)
+     (if (tc-integer-type? index-ty)
+         (match (tc-expr env start)
+           [(OkTcType start-ty)
+            (if (tc-integer-type? start-ty)
+                (match (tc-expr env end)
+                  [(OkTcType end-ty)
+                   (if (tc-integer-type? end-ty)
+                       (let ([body-env : TcTypeEnv (tc-bind env index index-ty)])
+                         (match (tc-expr body-env body)
+                           [(OkTcType body-ty)
+                            (match (tc-expect body-ty (AstTyUnit) "typecheck: foreach body must be unit")
+                              [(OkTcUnit) (OkTcType (AstTyUnit))]
+                              [(ErrTcUnit message) (ErrTcType message)])]
+                           [(ErrTcType message) (ErrTcType message)]))
+                       (ErrTcType "typecheck: foreach end expression must be integer"))]
+                  [(ErrTcType message) (ErrTcType message)])
+                (ErrTcType "typecheck: foreach start expression must be integer"))]
+           [(ErrTcType message) (ErrTcType message)])
+         (ErrTcType "typecheck: foreach index type must be integer"))]
     [_ (ErrTcType "typecheck: unsupported expression")]))
 
 (define (tc-summary-add-decl [summary : CompilerTypecheckSummary] [decl : AstDecl]) : CompilerTypecheckSummary
@@ -433,6 +689,11 @@
     [(ErrCompilerTypecheck message) (string-eq message want)]
     [(OkCompilerTypecheck _) false]))
 
+(define (compiler-typecheck-ok-score? [src : String] [want : i64]) : bool
+  (match (typecheck-compiler-source src)
+    [(OkCompilerTypecheck summary) (= (compiler-typecheck-summary-score summary) want)]
+    [(ErrCompilerTypecheck _) false]))
+
 (define (compiler-typecheck-unbound-source) : String
   "(define (main) : i64 missing)")
 
@@ -444,6 +705,68 @@
   "(define (main [flag : bool]) : i64
   (if flag 1 false))")
 
+(define (compiler-typecheck-aggregate-source) : String
+  "(define (id-lambda [n : i64]) : i64
+  (let ([f : (-> i64 i64) (lambda ([x : i64]) : i64 (+ x 1))])
+    (f n)))
+(define (main [n : i64] [s : String]) : i64
+  (let ([fixed : (Array i64 3) (array 1 2 3)]
+        [t : (Tuple i64 bool) (tuple 7 true)]
+        [a : (Array i64) (make-array i64 n)])
+    (begin
+      (array-set! a 0 (cast (string-ref s 0) : i64))
+      (foreach ([i : i64 0 n])
+        (array-set! a i (+ (array-ref a i) 1)))
+      (+ (array-length a)
+         (+ (tuple-ref t 0) (+ (array-ref fixed 1) (id-lambda 3)))))))")
+
+(define (compiler-typecheck-builtin-source) : String
+  "(define (main [s : String]) : String
+  (string-append (substring s 0 (length s))
+                 (int->string (string->int \"7\"))))")
+
+(define (compiler-typecheck-tuple-oob-source) : String
+  "(define (main) : i64 (tuple-ref (tuple 1 true) 2))")
+
+(define (compiler-typecheck-array-mismatch-source) : String
+  "(define bad : (Array i64 2) (array 1 true))")
+
+(define (compiler-typecheck-string-index-source) : String
+  "(define (main) : char (string-ref \"hi\" true))")
+
+(define (compiler-typecheck-cast-bad-source) : String
+  "(define (main) : i64 (cast true : i64))")
+
+(define (compiler-typecheck-foreach-body-source) : String
+  "(define (main [n : i64]) : unit
+  (foreach ([i : i64 0 n]) i))")
+
+(define (compiler-typecheck-lambda-ret-source) : String
+  "(define (main) : (-> i64 i64)
+  (lambda ([x : i64]) : i64 true))")
+
+(define (compiler-typecheck-aggregate-tests-ok?) : bool
+  (and (compiler-typecheck-ok-score? (compiler-typecheck-aggregate-source) 20)
+       (and (compiler-typecheck-ok-score? (compiler-typecheck-builtin-source) 10)
+            (and (compiler-typecheck-error-ok?
+                   (compiler-typecheck-tuple-oob-source)
+                   "typecheck: tuple index out of bounds")
+                 (and (compiler-typecheck-error-ok?
+                        (compiler-typecheck-array-mismatch-source)
+                        "typecheck: array elements must have same type")
+                      (and (compiler-typecheck-error-ok?
+                             (compiler-typecheck-string-index-source)
+                             "typecheck: string index must be integer")
+                           (and (compiler-typecheck-error-ok?
+                                  (compiler-typecheck-cast-bad-source)
+                                  "typecheck: cast requires integer/char source and target")
+                                (and (compiler-typecheck-error-ok?
+                                       (compiler-typecheck-foreach-body-source)
+                                       "typecheck: foreach body must be unit")
+                                     (compiler-typecheck-error-ok?
+                                       (compiler-typecheck-lambda-ret-source)
+                                       "typecheck: lambda return type mismatch")))))))))
+
 (define (compiler-typecheck-self-test) : i64
   (match (typecheck-compiler-source (compiler-typecheck-smoke-source))
     [(OkCompilerTypecheck summary)
@@ -454,9 +777,10 @@
                    (and (compiler-typecheck-error-ok?
                           (compiler-typecheck-bad-call-source)
                           "typecheck: argument type mismatch")
-                        (compiler-typecheck-error-ok?
-                          (compiler-typecheck-branch-mismatch-source)
-                          "typecheck: if branches must match"))))
+                        (and (compiler-typecheck-error-ok?
+                               (compiler-typecheck-branch-mismatch-source)
+                               "typecheck: if branches must match")
+                             (compiler-typecheck-aggregate-tests-ok?)))))
          42
          (begin
            (panic "typecheck: smoke score mismatch")

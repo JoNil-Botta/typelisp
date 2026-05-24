@@ -69,8 +69,11 @@ fn doc_test_tl_compiles_to_assembly() {
         "_tl_doc_test_smoke:",
         // Runner (#724).
         "_tl_doc_test_run_source:",
+        "_tl_doc_test_run_source_with_roots:",
         "_tl_doc_test_check_example:",
+        "_tl_doc_test_check_example_with_roots:",
         "_tl_doc_test_run_examples:",
+        "_tl_doc_test_run_examples_with_roots:",
         "_tl_doc_test_errors_to_failures:",
         "_tl_doc_test_run_failure_render:",
         "_tl_doc_test_run_smoke:",
@@ -89,7 +92,8 @@ fn doc_test_tl_compiles_to_assembly() {
         "doc-test: ordinary comment example mismatch",
         "doc-test: malformed metadata mismatch",
         // Runner (#724) diagnostics/messages.
-        "expected a compile error, but the example checked successfully",
+        "was expected to fail",
+        "E0200",
         "doc-test-run: unexpected-error mismatch",
     ] {
         assert_literal(&asm, literal, "doc_test");

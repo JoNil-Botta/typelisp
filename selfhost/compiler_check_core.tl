@@ -34,8 +34,32 @@
       (compiler-check-program-with-paths path decls paths)]
     [(ErrCompilerLoadWithPaths diag) (ErrCompilerCheck diag)]))
 
+(define (compiler-check-file-with-roots
+  [path : String]
+  [stdlib-roots : CompilerLoadRootList]) : ResultCompilerCheck
+  (match (compiler-load-file-with-paths-and-roots
+    path
+    (sym-i64-empty)
+    stdlib-roots)
+    [(OkCompilerLoadWithPaths decls paths _)
+      (compiler-check-program-with-paths path decls paths)]
+    [(ErrCompilerLoadWithPaths diag) (ErrCompilerCheck diag)]))
+
 (define (compiler-check-source [path : String] [source : String]) : ResultCompilerCheck
   (match (compiler-load-source-with-paths path source (sym-i64-empty))
+    [(OkCompilerLoadWithPaths decls paths _)
+      (compiler-check-program-with-paths path decls paths)]
+    [(ErrCompilerLoadWithPaths diag) (ErrCompilerCheck diag)]))
+
+(define (compiler-check-source-with-roots
+  [path : String]
+  [source : String]
+  [stdlib-roots : CompilerLoadRootList]) : ResultCompilerCheck
+  (match (compiler-load-source-with-paths-and-roots
+    path
+    source
+    (sym-i64-empty)
+    stdlib-roots)
     [(OkCompilerLoadWithPaths decls paths _)
       (compiler-check-program-with-paths path decls paths)]
     [(ErrCompilerLoadWithPaths diag) (ErrCompilerCheck diag)]))

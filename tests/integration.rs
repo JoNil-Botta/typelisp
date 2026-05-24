@@ -385,10 +385,11 @@ fn type_lisp_programs_compile_link_and_run() {
         // reader's. The reader consumes lexer `TStr` and `TChar` tokens into
         // distinct `SStr` and `SChar` atoms. `main` reads a nested sample, sums
         // ints to 42, counts two strings, counts four chars, verifies decoded char
-        // codes sum to 172, and returns 42 + 2 + 4 + 10 = 58.
+        // codes sum to 172, and checks three recoverable reader diagnostics,
+        // returning 42 + 2 + 4 + 10 + 3 = 61.
         Case {
             name: "tl_reader",
-            exit_code: 58,
+            exit_code: 61,
             stdout: "",
             deps: &["lex.tl", "token.tl"],
         },
@@ -760,10 +761,11 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         // explicit compile -> as -> ld -> run pipeline. Reads
         // a nested sample into the recursive cons-cell `Sexpr` AST and folds it:
         // integer atoms sum to 42, string atoms count to 2, char atoms count to 4,
-        // and decoded char codes sum to 172, so the result is 58.
+        // decoded char codes sum to 172, and recoverable reader diagnostics add 3,
+        // so the result is 61.
         Case {
             name: "tl_reader",
-            exit_code: 58,
+            exit_code: 61,
             stdout: "",
             deps: &["lex.tl", "token.tl"],
         },

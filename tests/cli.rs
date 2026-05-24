@@ -843,6 +843,38 @@ fn run_forwards_child_output_and_status() {
     assert_eq!(stderr(&output), "");
 }
 
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[test]
+fn run_forwards_stdin_to_child() {
+    let dir = fixture_dir("run-forward-stdin");
+    let source = dir.join("main.tl");
+    fs::write(
+        &source,
+        r#"(define (main) : unit
+  (print-string (read-stdin-line)))
+"#,
+    )
+    .expect("write source");
+    let source_arg = source.to_str().expect("source path is utf-8");
+    let mut args = vec!["run", source_arg];
+    if cfg!(target_os = "windows") {
+        args.push("--target");
+        args.push("windows-x86_64");
+    }
+
+    let output = typelisp_with_stdin(&args, "hello from stdin\n");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "run exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), "hello from stdin");
+    assert_eq!(stderr(&output), "");
+}
+
 #[test]
 fn build_accepts_backend_mode_flag_with_avx512() {
     let dir = fixture_dir("backend-mode-build-avx512");

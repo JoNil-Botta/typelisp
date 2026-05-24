@@ -13,7 +13,7 @@ use std::env;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus};
+use std::process::{Command, ExitStatus, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone)]
@@ -333,6 +333,7 @@ fn run_executable(
 ) -> Result<std::process::Output, NativeError> {
     let mut command = Command::new(bin_path);
     command.args(runtime_args);
+    command.stdin(Stdio::inherit());
     command.output().map_err(|err| {
         NativeError::new(format!(
             "Error: failed to run executable '{}' for target {}: {}",

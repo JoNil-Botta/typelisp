@@ -32,6 +32,7 @@ fi
 # decision.
 stdlib_manifest() {
     cat <<'EOF'
+io.tl
 string.tl
 test.tl
 EOF
@@ -177,6 +178,71 @@ fi
 if [ -s "$TEST_STDERR" ]; then
     echo "FAIL: stdlib assertion witness wrote unexpected stderr" >&2
     sed 's/^/  /' "$TEST_STDERR" >&2
+    exit 1
+fi
+
+IO_WITNESS="$WORKDIR/stdlib_io_witness.tl"
+IO_ASM="$WORKDIR/stdlib_io_witness.s"
+IO_OBJ="$WORKDIR/stdlib_io_witness.o"
+IO_BIN="$WORKDIR/stdlib_io_witness"
+IO_STDOUT="$WORKDIR/stdlib_io_witness.stdout"
+IO_STDERR="$WORKDIR/stdlib_io_witness.stderr"
+
+cat > "$IO_WITNESS" <<'EOF'
+(import "stdlib/io.tl")
+
+(define (main) : i64
+  (begin
+    (write-file "target/stdlib-verify/stdlib_io_witness.txt" "alpha")
+    (if (string-eq (read-file-or "target/stdlib-verify/stdlib_io_witness.txt" "MISS") "alpha")
+      (if (string-eq (read-file-or "target/stdlib-verify/stdlib_io_missing.txt" "MISS") "MISS")
+        (begin
+          (append-file "target/stdlib-verify/stdlib_io_witness.txt" "-beta")
+          (if (string-eq (read-file "target/stdlib-verify/stdlib_io_witness.txt") "alpha-beta")
+            (if (file-nonempty? "target/stdlib-verify/stdlib_io_witness.txt")
+              (if (file-nonempty? "target/stdlib-verify/stdlib_io_missing.txt")
+                10
+                42)
+              20)
+            30))
+        40)
+      50)))
+EOF
+
+echo "[stdlib] compiling file I/O witness with --stdlib-root"
+"$COMPILER" compile "$IO_WITNESS" --stdlib-root "$ROOT/stdlib" -o "$IO_ASM"
+
+as "$IO_ASM" -o "$IO_OBJ"
+ld "$IO_OBJ" -o "$IO_BIN"
+
+echo "[stdlib] running file I/O witness -> expect exit 42"
+set +e
+"$IO_BIN" > "$IO_STDOUT" 2> "$IO_STDERR"
+got=$?
+set -e
+
+if [ "$got" -ne 42 ]; then
+    echo "FAIL: stdlib file I/O witness expected exit 42, got $got" >&2
+    if [ -s "$IO_STDOUT" ]; then
+        echo "stdout:" >&2
+        sed 's/^/  /' "$IO_STDOUT" >&2
+    fi
+    if [ -s "$IO_STDERR" ]; then
+        echo "stderr:" >&2
+        sed 's/^/  /' "$IO_STDERR" >&2
+    fi
+    exit 1
+fi
+
+if [ -s "$IO_STDOUT" ]; then
+    echo "FAIL: stdlib file I/O witness wrote unexpected stdout" >&2
+    sed 's/^/  /' "$IO_STDOUT" >&2
+    exit 1
+fi
+
+if [ -s "$IO_STDERR" ]; then
+    echo "FAIL: stdlib file I/O witness wrote unexpected stderr" >&2
+    sed 's/^/  /' "$IO_STDERR" >&2
     exit 1
 fi
 

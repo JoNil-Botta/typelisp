@@ -37,6 +37,9 @@ jobs:
           command -v as
           command -v ld
 
+      - name: Verify public tools without Rust harness
+        run: TYPELISP_BIN=target/debug/typelisp scripts/verify-public-tools.sh
+
       - name: Run tests
         run: cargo test --verbose
 
@@ -84,6 +87,10 @@ jobs:
 
       - name: Build
         run: cargo build --verbose
+
+      - name: Verify public tools without Rust harness
+        shell: bash
+        run: TYPELISP_BIN=target/debug/typelisp.exe scripts/verify-public-tools.sh
 
       - name: Run tests
         run: cargo test --verbose

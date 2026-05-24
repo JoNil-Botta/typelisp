@@ -119,7 +119,7 @@
     LspLengthIgnore))
 
 (define (lsp-frame-read-message) : LspFrameRead
-  (let ([content-length : i64 -1]
+  (let ([content-length : i64 (- 0 1)]
     [saw-header : bool false]
     [done : bool false]
     [clean-eof : bool false]

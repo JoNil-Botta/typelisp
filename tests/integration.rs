@@ -1957,7 +1957,9 @@ fn selfhost_check_driver_reports_success_and_errors() {
         &[
             "compiler_check_core.tl",
             "compiler_load.tl",
+            "compiler_optimize.tl",
             "compiler_typecheck.tl",
+            "compiler_ir_types.tl",
             "compiler_symbols.tl",
             "compiler_parse_core.tl",
             "compiler_diagnostic.tl",
@@ -2013,6 +2015,26 @@ fn selfhost_check_driver_reports_success_and_errors() {
         "",
         "selfhost check success wrote stderr"
     );
+
+    let import_compare_path = work_dir.join("lex_opt_imports.tl");
+    fs::write(
+        &import_compare_path,
+        "(import \"lex.tl\")\n(import \"compiler_optimize.tl\")\n\n(define (main) : i64 0)\n",
+    )
+    .expect("write selfhost check import comparison fixture");
+    let import_compare = Command::new(&driver_bin)
+        .arg(&import_compare_path)
+        .output()
+        .expect("run selfhost check import comparison fixture");
+    assert_eq!(
+        import_compare.status.code(),
+        Some(0),
+        "selfhost check import comparison fixture failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&import_compare.stdout),
+        String::from_utf8_lossy(&import_compare.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&import_compare.stdout), "");
+    assert_eq!(String::from_utf8_lossy(&import_compare.stderr), "");
 
     let type_error_path = work_dir.join("type_error.tl");
     fs::write(&type_error_path, "(define (main) : i64 true)\n")

@@ -51,8 +51,12 @@
 (define (compiler-symbol-kind-struct-field) : i64
   7)
 
+;; Registry handles pack owner-index * child-stride into the symbol index slot.
+
+;; Import-expanded compiler programs can have well over 1000 declarations.
+
 (define (compiler-symbol-handle-stride) : i64
-  1000000)
+  1000000000)
 
 (define (compiler-registry-child-stride) : i64
   1000)

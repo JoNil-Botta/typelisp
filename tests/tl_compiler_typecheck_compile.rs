@@ -63,6 +63,7 @@ fn compiler_typecheck_tl_compiles_to_assembly() {
 
     for sym in [
         "_tl_tc_type_eq:",
+        "_tl_tc_comparable_type_question:",
         "_tl_tc_resolve_type:",
         "_tl_tc_bind_enum_variants:",
         "_tl_tc_expr:",
@@ -73,6 +74,8 @@ fn compiler_typecheck_tl_compiles_to_assembly() {
         "_tl_typecheck_compiler_program:",
         "_tl_typecheck_compiler_source:",
         "_tl_compiler_typecheck_self_test:",
+        "_tl_compiler_typecheck_char_compare_ok_question:",
+        "_tl_compiler_typecheck_nested_wrapper_match_ok_question:",
         "_tl_build_compiler_symbols:",
         "_tl_parse_ast_source:",
     ] {
@@ -104,6 +107,10 @@ fn compiler_typecheck_tl_compiles_to_assembly() {
         "(flush-stdout)",
         "(defenum Maybe (None) (Some i64))",
         "(defstruct Point (x i64) (y i64))",
+        "(define (is-digit [c : char]) : bool",
+        "(and (>= c #0') (<= c #9'))",
+        "(defenum Box (Box i64))",
+        "[(Ok (Box n)) n]",
     ] {
         assert_message(&asm, message, "compiler_typecheck");
     }
@@ -133,6 +140,8 @@ fn compiler_typecheck_smoke_tl_compiles_to_assembly() {
         // Located-diagnostic self-test (#681): a type error carries the
         // offending declaration body's AST span.
         "_tl_compiler_typecheck_located_ok_question:",
+        "_tl_compiler_typecheck_char_compare_ok_question:",
+        "_tl_compiler_typecheck_nested_wrapper_match_ok_question:",
     ] {
         assert_symbol(&asm, sym, "compiler_typecheck_smoke");
     }

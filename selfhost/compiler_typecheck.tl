@@ -441,6 +441,29 @@
         [(AstTyVar b-name) (string-eq a-name b-name)]
         [_ false])]))
 
+(define (tc-type-compatible? [expected : AstType] [actual : AstType]) : bool
+  (if (tc-type-eq actual (AstTyNever))
+    true
+    (if (tc-type-eq expected actual)
+      true
+      (match expected
+        [(AstTyF64)
+          (match actual
+            [(AstTyF32) true]
+            [_ false])]
+        [_ false]))))
+
+(define (tc-merge-branch-types [left : AstType] [right : AstType]) : ResultTcType
+  (if (tc-type-eq left (AstTyNever))
+    (OkTcType right)
+    (if (tc-type-eq right (AstTyNever))
+      (OkTcType left)
+      (if (tc-type-compatible? left right)
+        (OkTcType left)
+        (if (tc-type-compatible? right left)
+          (OkTcType right)
+          (ErrTcType "typecheck: branch types must match"))))))
+
 (define (tc-integer-type? [ty : AstType]) : bool
   (match ty
     [(AstTyI64) true]
@@ -457,6 +480,15 @@
   (match ty
     [(AstTyF64) true]
     [_ false]))
+
+(define (tc-comparable-type? [ty : AstType]) : bool
+  (if (tc-integer-type? ty)
+    true
+    (if (tc-float-type? ty)
+      true
+      (match ty
+        [(AstTyChar) true]
+        [_ false]))))
 
 (define (tc-castable-type? [ty : AstType]) : bool
   (if (tc-integer-type? ty)
@@ -647,7 +679,7 @@
     [(AstProgram decls) (tc-build-top-env-list ctx decls (tc-default-env))]))
 
 (define (tc-expect [actual : AstType] [expected : AstType] [message : String]) : ResultTcUnit
-  (if (tc-type-eq actual expected)
+  (if (tc-type-compatible? expected actual)
     OkTcUnit
     (ErrTcUnit message)))
 
@@ -690,11 +722,9 @@
     (tc-integer-binop-type left right)))
 
 (define (tc-compare-binop-type [left : AstType] [right : AstType]) : ResultTcType
-  (if (and (tc-float-type? left) (tc-type-eq left right))
+  (if (and (tc-comparable-type? left) (tc-type-eq left right))
     (OkTcType (AstTyBool))
-    (if (and (tc-integer-type? left) (tc-type-eq left right))
-      (OkTcType (AstTyBool))
-      (ErrTcType "typecheck: comparison expects matching integer operands"))))
+    (ErrTcType "typecheck: comparison expects matching integer operands")))
 
 (define (tc-unop-type [op : AstUnOp] [ty : AstType]) : ResultTcType
   (match op
@@ -1089,39 +1119,93 @@
         [(AstPatBinding _) (tc-pattern-list-irrefutable? rest)]
         [_ false])]))
 
-(define (tc-pattern-covers-variant?
+(define (tc-pattern-irrefutable-for-type?
+  [ctx : TcContext]
   [pattern : AstPattern]
-  [variant-name : String]) : bool
+  [ty : AstType]) : bool
+  (match pattern
+    [(AstPatWildcard) true]
+    [(AstPatBinding _) true]
+    [(AstPatVariant variant-name args)
+      (match ty
+        [(AstTyEnum enum-name)
+          (match (tc-program-enum-variants (tc-context-program ctx) enum-name)
+            [(OkAstVariantDefList variants)
+              (match variants
+                [(AstVariantDefCons only-variant AstVariantDefNil)
+                  (match only-variant
+                    [(AstVariantDef only-name fields)
+                      (and
+                        (string-eq variant-name only-name)
+                        (tc-pattern-list-irrefutable-for-types? ctx args fields))])]
+                [_ false])]
+            [(ErrAstVariantDefList _) false])]
+        [_ false])]
+    [_ false]))
+
+(define (tc-pattern-list-irrefutable-for-types?
+  [ctx : TcContext]
+  [patterns : AstPatternList]
+  [types : AstTypeList]) : bool
+  (match patterns
+    [(AstPatternNil)
+      (match types
+        [(AstTypeNil) true]
+        [_ false])]
+    [(AstPatternCons pattern rest-patterns)
+      (match types
+        [(AstTypeCons ty rest-types)
+          (and
+            (tc-pattern-irrefutable-for-type?
+              ctx
+              pattern
+              (tc-resolve-type ctx ty))
+            (tc-pattern-list-irrefutable-for-types?
+              ctx
+              rest-patterns
+              rest-types))]
+        [(AstTypeNil) false])]))
+
+(define (tc-pattern-covers-variant?
+  [ctx : TcContext]
+  [pattern : AstPattern]
+  [variant-name : String]
+  [fields : AstTypeList]) : bool
   (match pattern
     [(AstPatWildcard) true]
     [(AstPatBinding name) (string-eq name variant-name)]
     [(AstPatVariant name args)
-      (and (string-eq name variant-name) (tc-pattern-list-irrefutable? args))]
+      (and
+        (string-eq name variant-name)
+        (tc-pattern-list-irrefutable-for-types? ctx args fields))]
     [_ false]))
 
 (define (tc-match-arms-cover-variant?
+  [ctx : TcContext]
   [arms : AstMatchArmList]
-  [variant-name : String]) : bool
+  [variant-name : String]
+  [fields : AstTypeList]) : bool
   (match arms
     [(AstMatchArmNil) false]
     [(AstMatchArmCons arm rest)
       (match arm
         [(AstMatchArm pattern _)
-          (if (tc-pattern-covers-variant? pattern variant-name)
+          (if (tc-pattern-covers-variant? ctx pattern variant-name fields)
             true
-            (tc-match-arms-cover-variant? rest variant-name))])]))
+            (tc-match-arms-cover-variant? ctx rest variant-name fields))])]))
 
 (define (tc-enum-variants-covered?
+  [ctx : TcContext]
   [variants : AstVariantDefList]
   [arms : AstMatchArmList]) : bool
   (match variants
     [(AstVariantDefNil) true]
     [(AstVariantDefCons variant rest)
       (match variant
-        [(AstVariantDef name _)
+        [(AstVariantDef name fields)
           (and
-            (tc-match-arms-cover-variant? arms name)
-            (tc-enum-variants-covered? rest arms))])]))
+            (tc-match-arms-cover-variant? ctx arms name fields)
+            (tc-enum-variants-covered? ctx rest arms))])]))
 
 (define (tc-match-arms-have-catchall? [arms : AstMatchArmList]) : bool
   (match arms
@@ -1155,7 +1239,7 @@
     [(AstTyEnum enum-name)
       (match (tc-program-enum-variants (tc-context-program ctx) enum-name)
         [(OkAstVariantDefList variants)
-          (tc-enum-variants-covered? variants arms)]
+          (tc-enum-variants-covered? ctx variants arms)]
         [(ErrAstVariantDefList _) false])]
     [(AstTyBool)
       (or
@@ -1321,9 +1405,10 @@
                 [(OkTcType then-ty)
                   (match (tc-expr ctx env else-branch)
                     [(OkTcType else-ty)
-                      (if (tc-type-eq then-ty else-ty)
-                        (OkTcType then-ty)
-                        (ErrTcType "typecheck: if branches must match"))]
+                      (match (tc-merge-branch-types then-ty else-ty)
+                        [(OkTcType merged) (OkTcType merged)]
+                        [(ErrTcType _)
+                          (ErrTcType "typecheck: if branches must match")])]
                     [(ErrTcType message) (ErrTcType message)])]
                 [(ErrTcType message) (ErrTcType message)])]
             [(ErrTcUnit message) (ErrTcType message)])]
@@ -1729,6 +1814,29 @@
     (compiler-typecheck-located-source-ok?
       (compiler-typecheck-located-value-source))))
 
+(define (compiler-typecheck-char-compare-source) : String
+  "(define (is-digit [c : char]) : bool
+  (and (>= c #0') (<= c #9')))
+(define (require-digit [c : char]) : unit
+  (if (is-digit c) unit (panic \"bad digit\")))
+(define (main) : i64
+  (if (is-digit #7') 42 0))")
+
+(define (compiler-typecheck-char-compare-ok?) : bool
+  (compiler-typecheck-ok? (compiler-typecheck-char-compare-source)))
+
+(define (compiler-typecheck-nested-wrapper-match-source) : String
+  "(defenum Box (Box i64))
+(defenum Result (Ok Box) (Err String))
+(define (score [r : Result]) : i64
+  (match r
+    [(Ok (Box n)) n]
+    [(Err _) 0]))
+(define (main) : i64 (score (Ok (Box 42))))")
+
+(define (compiler-typecheck-nested-wrapper-match-ok?) : bool
+  (compiler-typecheck-ok? (compiler-typecheck-nested-wrapper-match-source)))
+
 (define (compiler-typecheck-self-test) : i64
   (match (typecheck-compiler-source (compiler-typecheck-smoke-source))
     [(OkCompilerTypecheck summary)
@@ -1750,7 +1858,11 @@
                 (compiler-typecheck-aggregate-tests-ok?)
                 (and
                   (compiler-typecheck-nominal-tests-ok?)
-                  (compiler-typecheck-located-ok?)))))))
+                  (and
+                    (compiler-typecheck-located-ok?)
+                    (and
+                      (compiler-typecheck-char-compare-ok?)
+                      (compiler-typecheck-nested-wrapper-match-ok?)))))))))
         42
         (begin
           (panic "typecheck: smoke score mismatch")

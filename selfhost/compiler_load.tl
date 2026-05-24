@@ -28,7 +28,7 @@
             false))))))
 
 (define (compiler-load-dirname [path : String]) : String
-  (let ([n : i64 (string-length path)] [i : i64 0] [last : i64 -1])
+  (let ([n : i64 (string-length path)] [i : i64 0] [last : i64 (- 0 1)])
     (begin
       (while (< i n)
         (begin

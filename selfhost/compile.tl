@@ -29,8 +29,8 @@
 (define (compile-cli-default-output [input-path : String]) : String
   (let ([n : i64 (string-length input-path)]
     [i : i64 0]
-    [last-dot : i64 -1]
-    [last-sep : i64 -1])
+    [last-dot : i64 (- 0 1)]
+    [last-sep : i64 (- 0 1)])
     (begin
       (while (< i n)
         (let ([c : char (string-ref input-path i)])

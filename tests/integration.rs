@@ -1535,10 +1535,14 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
         "",
         "compiler_driver backend diagnostic fixture stdout"
     );
+    // #605: the backend now stamps the too-many-call-args diagnostic with the
+    // offending function's real source span from the lowering provenance side
+    // table (`main`'s body `(f 1 2 3 4 5 6 7)` on line 2, column 22) instead of
+    // the previous `1:1` fallback.
     assert_eq!(
         String::from_utf8_lossy(&backend_error.stderr),
         format!(
-            "{}:1:1: backend: too many call args",
+            "{}:2:22: backend: too many call args",
             backend_error_input_path.display()
         ),
         "compiler_driver backend diagnostic fixture stderr"

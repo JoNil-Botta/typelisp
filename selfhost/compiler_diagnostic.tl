@@ -58,6 +58,21 @@
     (compiler-diagnostic-col diag)
     (compiler-diagnostic-message diag)))
 
+;; Reuse a diagnostic's location (path/line/col) with a new message. Used by the
+
+;;
+
+;; backend to stamp an error message onto a function's source span (#605).
+
+(define (compiler-diagnostic-with-message
+  [diag : CompilerDiagnostic]
+  [message : String]) : CompilerDiagnostic
+  (CompilerDiagnostic
+    (compiler-diagnostic-path diag)
+    (compiler-diagnostic-line diag)
+    (compiler-diagnostic-col diag)
+    message))
+
 (define (compiler-diagnostic-render [diag : CompilerDiagnostic]) : String
   (string-append
     (compiler-diagnostic-path diag)

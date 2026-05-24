@@ -114,6 +114,10 @@ jobs:
           fi
           echo "OK: No third-party dependencies found."
 
+      - name: Check TypeLisp source formatting
+        shell: bash
+        run: TYPELISP_BIN=target/debug/typelisp.exe scripts/check-tl-format.sh
+
   integration:
     name: Integration Tests
     runs-on: ubuntu-latest

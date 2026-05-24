@@ -121,6 +121,21 @@ impl BackendTarget {
         Self::WINDOWS_X86_64
     }
 
+    /// The backend target matching the host OS. `typelisp fmt` runs the
+    /// self-hosted formatter (`selfhost/format.tl`) as native code on the host,
+    /// so it must compile for the host: Windows hosts use the windows-x86_64
+    /// backend (clang/lld-link), every other host uses linux-x86_64 System V.
+    pub const fn host() -> Self {
+        #[cfg(target_os = "windows")]
+        {
+            Self::WINDOWS_X86_64
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            Self::LINUX_X86_64_SYSTEM_V
+        }
+    }
+
     pub const fn with_mode(self, mode: BackendMode) -> Self {
         Self { mode, ..self }
     }

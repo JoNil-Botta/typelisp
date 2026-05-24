@@ -209,6 +209,10 @@ fn compiler_optimize_tl_compiles_to_assembly() {
         "_tl_opt_fold_binop:",
         "_tl_opt_const_lookup:",
         "_tl_compiler_optimize_self_test:",
+        // Dead-code elimination pass (#544).
+        "_tl_opt_collect_instrs_uses:",
+        "_tl_opt_dce_instrs:",
+        "_tl_compiler_optimize_dce_self_test:",
     ] {
         assert_symbol(&asm, sym, "compiler_optimize");
     }

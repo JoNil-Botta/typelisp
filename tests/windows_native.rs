@@ -379,6 +379,7 @@ fn native_cases() -> Vec<Case> {
             "",
             &["doc_extract.tl", "format_tokens.tl"],
         ),
+        case_with_deps("doc_test_smoke", 42, "", &["doc_test.tl"]),
         case_with_deps(
             "doc_render_smoke",
             42,
@@ -532,6 +533,7 @@ fn source_path_for_case(manifest_dir: &Path, name: &str) -> PathBuf {
         "compiler_backend_smoke" => "compiler_backend_smoke.tl",
         "lex_span_smoke" => "lex_span_smoke.tl",
         "doc_extract_smoke" => "doc_extract_smoke.tl",
+        "doc_test_smoke" => "doc_test_smoke.tl",
         "doc_render_smoke" => "doc_render_smoke.tl",
         _ => panic!("no TypeLisp source path configured for Windows native case {name}"),
     };

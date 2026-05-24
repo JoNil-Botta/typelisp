@@ -1296,6 +1296,16 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             stdout: "",
             deps: &["doc_extract.tl", "format_tokens.tl"],
         },
+        // refs #722: selfhost doctest extraction over public doc comments.
+        // The smoke checks module and attached item TypeLisp fences, line
+        // metadata, expect-error options, ignored ordinary comments, and
+        // malformed fence diagnostics.
+        Case {
+            name: "doc_test_smoke",
+            exit_code: 42,
+            stdout: "",
+            deps: &["doc_test.tl"],
+        },
         // refs #388: selfhost Markdown rendering over extracted docs. The
         // smoke checks module docs, globals, functions, externs, enums,
         // variants, structs, fields, Markdown escaping, anchors, and the
@@ -4395,6 +4405,7 @@ fn source_path_for_case(manifest_dir: &PathBuf, name: &str) -> PathBuf {
         "lex_span_smoke" => "lex_span_smoke.tl",
         "compiler_backend_smoke" => "compiler_backend_smoke.tl",
         "doc_extract_smoke" => "doc_extract_smoke.tl",
+        "doc_test_smoke" => "doc_test_smoke.tl",
         "doc_render_smoke" => "doc_render_smoke.tl",
         "tl_read" => "read.tl",
         "tl_reader" => "reader.tl",

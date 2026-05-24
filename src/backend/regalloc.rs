@@ -229,13 +229,15 @@ fn call_live_vars(func: &Function, liveness: &FunctionLiveness) -> BTreeSet<VarI
 
     for block in &func.blocks {
         for (instruction_index, instr) in block.instructions.iter().enumerate() {
-            if matches!(
-                instr,
-                Instruction::Call { .. } | Instruction::CallIndirect { .. }
-            ) {
-                if let Some(live_after) = liveness.live_after(&block.label, instruction_index) {
+            match instr {
+                Instruction::Call { .. } | Instruction::CallIndirect { .. } => {
+                    let Some(live_after) = liveness.live_after(&block.label, instruction_index)
+                    else {
+                        continue;
+                    };
                     vars.extend(live_after.iter().copied());
                 }
+                _ => {}
             }
         }
     }
@@ -287,7 +289,7 @@ fn first_free_register(
 fn spill_at_interval(
     var: VarId,
     interval: LiveInterval,
-    active: &mut Vec<ActiveInterval>,
+    active: &mut [ActiveInterval],
     assignments: &mut BTreeMap<VarId, Location>,
     stack_slots: &BTreeMap<VarId, StackSlot>,
 ) {

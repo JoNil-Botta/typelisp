@@ -839,29 +839,109 @@
           (compiler-backend-emit-store-var-with-plan assignments dst "%rax")))]
     [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
 
+(define (compiler-backend-ir-value-list-count [args : CompilerIrValueList]) : i64
+  (match args
+    [(IrValueNil) 0]
+    [(IrValueCons _ rest) (+ 1 (compiler-backend-ir-value-list-count rest))]))
+
+(define (compiler-backend-call-register-count [target : CompilerBackendTarget]) : i64
+  (match target
+    [(BackendTargetLinux) 6]
+    [(BackendTargetWindows) 4]))
+
+(define (compiler-backend-call-arg-space
+  [target : CompilerBackendTarget]
+  [arg-count : i64]) : i64
+  (match target
+    [(BackendTargetLinux) 0]
+    [(BackendTargetWindows)
+      (let ([reg-count : i64 (compiler-backend-call-register-count target)])
+        (let ([stack-count
+            :
+            i64
+            (if (> arg-count reg-count)
+              (- arg-count reg-count)
+              0)])
+          (compiler-backend-round-up-16
+            (+
+              (compiler-backend-outgoing-shadow-space target)
+              (* stack-count 8)))))]))
+
+(define (compiler-backend-emit-call-space-sub [space : i64]) : String
+  (if (= space 0)
+    ""
+    (backend-cat4 "    subq $" (int->string space) ", %rsp\n" "")))
+
+(define (compiler-backend-emit-call-space-add [space : i64]) : String
+  (if (= space 0)
+    ""
+    (backend-cat4 "    addq $" (int->string space) ", %rsp\n" "")))
+
+(define (compiler-backend-stack-call-arg?
+  [target : CompilerBackendTarget]
+  [idx : i64]) : bool
+  (match target
+    [(BackendTargetLinux) false]
+    [(BackendTargetWindows)
+      (>= idx (compiler-backend-call-register-count target))]))
+
+(define (compiler-backend-outgoing-stack-arg-offset
+  [target : CompilerBackendTarget]
+  [idx : i64]) : i64
+  (match target
+    [(BackendTargetLinux) 0]
+    [(BackendTargetWindows)
+      (+
+        (compiler-backend-outgoing-shadow-space target)
+        (* (- idx (compiler-backend-call-register-count target)) 8))]))
+
 (define (compiler-backend-emit-call-args
+  [target : CompilerBackendTarget]
   [assignments : CompilerRegAssignmentList]
   [args : CompilerIrValueList]
   [idx : i64]) : ResultCompilerBackend
   (match args
     [(IrValueNil) (OkCompilerBackend "")]
     [(IrValueCons value rest)
-      (match (compiler-backend-arg-reg idx)
-        [(OkBackendReg reg)
-          (match (compiler-backend-emit-load-value-with-plan
-            assignments
-            value
-            reg)
-            [(OkCompilerBackend head)
-              (match (compiler-backend-emit-call-args
-                assignments
-                rest
-                (+ idx 1))
-                [(OkCompilerBackend tail)
-                  (OkCompilerBackend (string-append head tail))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-        [(ErrBackendReg message) (ErrCompilerBackend message)])]))
+      (if (compiler-backend-stack-call-arg? target idx)
+        (match (compiler-backend-emit-load-value-with-plan
+          assignments
+          value
+          "%rax")
+          [(OkCompilerBackend head)
+            (match (compiler-backend-emit-call-args
+              target
+              assignments
+              rest
+              (+ idx 1))
+              [(OkCompilerBackend tail)
+                (OkCompilerBackend
+                  (backend-cat5
+                    head
+                    "    movq %rax, "
+                    (int->string
+                      (compiler-backend-outgoing-stack-arg-offset target idx))
+                    "(%rsp)\n"
+                    tail))]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+        (match (compiler-backend-target-arg-reg target idx)
+          [(OkBackendReg reg)
+            (match (compiler-backend-emit-load-value-with-plan
+              assignments
+              value
+              reg)
+              [(OkCompilerBackend head)
+                (match (compiler-backend-emit-call-args
+                  target
+                  assignments
+                  rest
+                  (+ idx 1))
+                  [(OkCompilerBackend tail)
+                    (OkCompilerBackend (string-append head tail))]
+                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+          [(ErrBackendReg message) (ErrCompilerBackend message)]))]))
 
 (define (compiler-backend-phi-input-value
   [inputs : CompilerIrPhiInputList]
@@ -968,6 +1048,7 @@
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
 
 (define (compiler-backend-emit-instr
+  [target : CompilerBackendTarget]
   [function : String]
   [blocks : CompilerIrBlockList]
   [current-label : String]
@@ -1002,21 +1083,31 @@
     [(IrInstrUnOp dst op src _)
       (compiler-backend-emit-unop assignments dst op src)]
     [(IrInstrCall dst name args _)
-      (match (compiler-backend-emit-call-args assignments args 0)
-        [(OkCompilerBackend args-asm)
-          (OkCompilerBackend
-            (string-append
-              args-asm
-              (backend-cat5
-                "    call "
-                (compiler-backend-call-symbol name plan functions externs)
-                "\n"
-                (compiler-backend-emit-store-var-with-plan
-                  assignments
-                  dst
-                  "%rax")
-                "")))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+      (let ([call-space
+          :
+          i64
+          (compiler-backend-call-arg-space
+            target
+            (compiler-backend-ir-value-list-count args))])
+        (match (compiler-backend-emit-call-args target assignments args 0)
+          [(OkCompilerBackend args-asm)
+            (OkCompilerBackend
+              (string-append
+                (compiler-backend-emit-call-space-sub call-space)
+                (string-append
+                  args-asm
+                  (backend-cat5
+                    "    call "
+                    (compiler-backend-call-symbol name plan functions externs)
+                    "\n"
+                    (string-append
+                      (compiler-backend-emit-call-space-add call-space)
+                      (compiler-backend-emit-store-var-with-plan
+                        assignments
+                        dst
+                        "%rax"))
+                    ""))))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
     [(IrInstrStore name value _)
       (match (compiler-backend-emit-load-value-with-plan
         assignments
@@ -1071,6 +1162,7 @@
     [(IrInstrPhi _ _ _) (OkCompilerBackend "")]))
 
 (define (compiler-backend-emit-instrs
+  [target : CompilerBackendTarget]
   [function : String]
   [blocks : CompilerIrBlockList]
   [current-label : String]
@@ -1084,6 +1176,7 @@
     [(IrInstrNil) (OkCompilerBackend "")]
     [(IrInstrCons instr rest)
       (match (compiler-backend-emit-instr
+        target
         function
         blocks
         current-label
@@ -1095,6 +1188,7 @@
         externs)
         [(OkCompilerBackend head)
           (match (compiler-backend-emit-instrs
+            target
             function
             blocks
             current-label
@@ -1110,6 +1204,7 @@
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
 
 (define (compiler-backend-emit-block
+  [target : CompilerBackendTarget]
   [function : String]
   [blocks : CompilerIrBlockList]
   [block : CompilerIrBlock]
@@ -1121,6 +1216,7 @@
   (match block
     [(IrBlock label instrs)
       (match (compiler-backend-emit-instrs
+        target
         function
         blocks
         label
@@ -1140,6 +1236,7 @@
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
 
 (define (compiler-backend-emit-blocks
+  [target : CompilerBackendTarget]
   [function : String]
   [all-blocks : CompilerIrBlockList]
   [blocks : CompilerIrBlockList]
@@ -1152,6 +1249,7 @@
     [(IrBlockNil) (OkCompilerBackend "")]
     [(IrBlockCons block rest)
       (match (compiler-backend-emit-block
+        target
         function
         all-blocks
         block
@@ -1162,6 +1260,7 @@
         externs)
         [(OkCompilerBackend head)
           (match (compiler-backend-emit-blocks
+            target
             function
             all-blocks
             rest
@@ -1176,32 +1275,62 @@
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
 
 (define (compiler-backend-emit-param-spills
+  [target : CompilerBackendTarget]
   [assignments : CompilerRegAssignmentList]
   [params : CompilerIrParamList]
   [idx : i64]) : ResultCompilerBackend
   (match params
     [(IrParamNil) (OkCompilerBackend "")]
     [(IrParamCons param rest)
-      (match (compiler-backend-arg-reg idx)
-        [(OkBackendReg reg)
-          (match param
-            [(IrParam _ _ var-id)
-              (match (compiler-backend-emit-param-spills
-                assignments
-                rest
-                (+ idx 1))
-                [(OkCompilerBackend tail)
-                  (OkCompilerBackend
+      (match param
+        [(IrParam _ _ var-id)
+          (if (compiler-backend-stack-call-arg? target idx)
+            (match (compiler-backend-emit-param-spills
+              target
+              assignments
+              rest
+              (+ idx 1))
+              [(OkCompilerBackend tail)
+                (OkCompilerBackend
+                  (string-append
+                    (backend-cat4
+                      "    movq "
+                      (int->string
+                        (+
+                          16
+                          (compiler-backend-outgoing-stack-arg-offset
+                            target
+                            idx)))
+                      "(%rbp), %rax\n"
+                      "")
                     (string-append
                       (compiler-backend-emit-store-var-with-plan
                         assignments
                         var-id
-                        reg)
-                      tail))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
-        [(ErrBackendReg _) (ErrCompilerBackend "backend: too many params")])]))
+                        "%rax")
+                      tail)))]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+            (match (compiler-backend-target-arg-reg target idx)
+              [(OkBackendReg reg)
+                (match (compiler-backend-emit-param-spills
+                  target
+                  assignments
+                  rest
+                  (+ idx 1))
+                  [(OkCompilerBackend tail)
+                    (OkCompilerBackend
+                      (string-append
+                        (compiler-backend-emit-store-var-with-plan
+                          assignments
+                          var-id
+                          reg)
+                        tail))]
+                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+              [(ErrBackendReg _)
+                (ErrCompilerBackend "backend: too many params")]))])]))
 
 (define (compiler-backend-emit-function
+  [target : CompilerBackendTarget]
   [func : CompilerIrFunction]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
@@ -1217,10 +1346,15 @@
               :
               CompilerRegAssignmentList
               (compiler-backend-drop-param-assignments raw-assignments params)])
-            (match (compiler-backend-emit-param-spills assignments params 0)
+            (match (compiler-backend-emit-param-spills
+              target
+              assignments
+              params
+              0)
               [(OkCompilerBackend spills)
                 (let ([symbol : String (compiler-backend-user-symbol name)])
                   (match (compiler-backend-emit-blocks
+                    target
                     symbol
                     blocks
                     blocks
@@ -1255,6 +1389,7 @@
               [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))]))
 
 (define (compiler-backend-emit-functions
+  [target : CompilerBackendTarget]
   [functions : CompilerIrFunctionList]
   [all-functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
@@ -1262,9 +1397,15 @@
   (match functions
     [(IrFunctionNil) (OkCompilerBackend "")]
     [(IrFunctionCons func rest)
-      (match (compiler-backend-emit-function func all-functions externs plan)
+      (match (compiler-backend-emit-function
+        target
+        func
+        all-functions
+        externs
+        plan)
         [(OkCompilerBackend head)
           (match (compiler-backend-emit-functions
+            target
             rest
             all-functions
             externs
@@ -2166,43 +2307,85 @@ tl_string_concat:
 (define (compiler-backend-entry) : String
   "_start:\n    call main\n    movq %rax, %rdi\n    movq $60, %rax\n    syscall\n")
 
-;; Emit a full program for `target`. Linux/System V is fully supported; the
+(define (compiler-backend-entry-for-target [target : CompilerBackendTarget]) : String
+  (match target
+    [(BackendTargetLinux) (compiler-backend-entry)]
+    [(BackendTargetWindows) ""]))
 
-;; Windows path is a clear stub until its ABI/runtime/entry land in #647-#649.
+(define (compiler-backend-target-windows? [target : CompilerBackendTarget]) : bool
+  (match target
+    [(BackendTargetLinux) false]
+    [(BackendTargetWindows) true]))
+
+(define (compiler-backend-runtime-plan-empty?
+  [plan : CompilerBackendRuntimePlan]) : bool
+  (match plan
+    [(BackendRuntimePlan
+        alloc
+        oob
+        substring
+        concat
+        read-line
+        read-bytes
+        stdin-eof
+        flush-stdout)
+      (not
+        (or
+          alloc
+          (or
+            oob
+            (or
+              substring
+              (or
+                concat
+                (or read-line (or read-bytes (or stdin-eof flush-stdout))))))))]))
+
+(define (compiler-backend-target-runtime-ok?
+  [target : CompilerBackendTarget]
+  [plan : CompilerBackendRuntimePlan]) : bool
+  (if (compiler-backend-target-windows? target)
+    (compiler-backend-runtime-plan-empty? plan)
+    true))
+
+;; Emit a full program for `target`. Windows x64 has ABI-correct user function
+
+;; entry/calls here; runtime helper bodies remain #648.
 
 (define (compiler-backend-emit-program-for-target
   [program : CompilerIrProgram]
   [target : CompilerBackendTarget]) : ResultCompilerBackend
-  (match target
-    [(BackendTargetLinux) (compiler-backend-emit-program-linux program)]
-    [(BackendTargetWindows)
-      (ErrCompilerBackend
-        "backend: Windows x86_64 target not yet implemented (#647)")]))
+  (compiler-backend-emit-program-target program target))
 
 (define (compiler-backend-emit-program [program : CompilerIrProgram]) : ResultCompilerBackend
   (compiler-backend-emit-program-for-target program (BackendTargetLinux)))
 
 (define (compiler-backend-emit-program-linux [program : CompilerIrProgram]) : ResultCompilerBackend
+  (compiler-backend-emit-program-target program (BackendTargetLinux)))
+
+(define (compiler-backend-emit-program-target
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]) : ResultCompilerBackend
   (match (compiler-backend-runtime-plan program)
     [(OkBackendRuntimePlan plan)
-      (match program
-        [(IrProgram globals functions externs)
-          (match (compiler-backend-emit-globals globals)
-            [(OkCompilerBackend globals-asm)
-              (match (compiler-backend-emit-functions
-                functions
-                functions
-                externs
-                plan)
-                [(OkCompilerBackend functions-asm)
-                  (let ([strings
-                      :
-                      BackendStringList
-                      (compiler-backend-collect-program-strings program)]
-                    [buf
-                      :
-                      TextBuf
-                      (text-buf-append
+      (if (compiler-backend-target-runtime-ok? target plan)
+        (match program
+          [(IrProgram globals functions externs)
+            (match (compiler-backend-emit-globals globals)
+              [(OkCompilerBackend globals-asm)
+                (match (compiler-backend-emit-functions
+                  target
+                  functions
+                  functions
+                  externs
+                  plan)
+                  [(OkCompilerBackend functions-asm)
+                    (let ([strings
+                        :
+                        BackendStringList
+                        (compiler-backend-collect-program-strings program)]
+                      [buf
+                        :
+                        TextBuf
                         (text-buf-append
                           (text-buf-append
                             (text-buf-append
@@ -2211,21 +2394,23 @@ tl_string_concat:
                                   (text-buf-append
                                     (text-buf-append
                                       (text-buf-append
-                                        (text-buf-empty)
-                                        ".data\n")
-                                      globals-asm)
-                                    (compiler-backend-emit-string-rodata
-                                      strings))
-                                  (compiler-backend-runtime-data plan))
-                                (compiler-backend-emit-externs externs plan))
-                              (compiler-backend-target-entry-text
-                                (BackendTargetLinux)))
-                            functions-asm)
-                          (compiler-backend-runtime-functions plan))
-                        (compiler-backend-entry))])
-                    (OkCompilerBackend (text-buf-render buf)))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
+                                        (text-buf-append
+                                          (text-buf-empty)
+                                          ".data\n")
+                                        globals-asm)
+                                      (compiler-backend-emit-string-rodata
+                                        strings))
+                                    (compiler-backend-runtime-data plan))
+                                  (compiler-backend-emit-externs externs plan))
+                                (compiler-backend-target-entry-text target))
+                              functions-asm)
+                            (compiler-backend-runtime-functions plan))
+                          (compiler-backend-entry-for-target target))])
+                      (OkCompilerBackend (text-buf-render buf)))]
+                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])])
+        (ErrCompilerBackend
+          "backend: Windows runtime helpers not yet implemented (#648)"))]
     [(ErrBackendRuntimePlan message) (ErrCompilerBackend message)]))
 
 (define (compiler-backend-emit-source [src : String]) : ResultCompilerBackend
@@ -2754,11 +2939,13 @@ tl_string_concat:
     [(OkBackendReg _) false]
     [(ErrBackendReg _) true]))
 
-;; The target model (#646): per-target arg registers / shadow space / entry
+;; The target model (#646/#647): per-target arg registers / shadow space /
 
-;; symbol; the Linux path is byte-identical to the default emitter and the
+;; entry symbol; the Linux path is byte-identical to the default emitter and the
 
-;; Windows path is a clean stub until #647.
+;; Windows path emits ABI-shaped user-function assembly while runtime helpers
+
+;; remain deferred to #648.
 
 (define (compiler-backend-target-model-ok? [src : String]) : bool
   (and
@@ -2792,7 +2979,11 @@ tl_string_concat:
                     ".globl main")
                   (and
                     (compiler-backend-target-linux-matches-default? src)
-                    (compiler-backend-target-windows-stubbed? src)))))))))))
+                    (and
+                      (compiler-backend-target-windows-abi-ok?)
+                      (and
+                        (compiler-backend-target-windows-callee-save-ok?)
+                        (compiler-backend-target-windows-runtime-deferred-ok?)))))))))))))
 
 (define (compiler-backend-target-linux-matches-default? [src : String]) : bool
   (match (compiler-backend-emit-source-for-target src (BackendTargetLinux))
@@ -2802,13 +2993,83 @@ tl_string_concat:
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
-(define (compiler-backend-target-windows-stubbed? [src : String]) : bool
-  (match (compiler-backend-emit-source-for-target src (BackendTargetWindows))
+(define (compiler-backend-target-windows-abi-source) : String
+  "(extern ext : (-> i64 i64 i64 i64 i64 i64))
+(define (call5 [a : i64] [b : i64] [c : i64] [d : i64] [e : i64]) : i64
+  (ext a b c d e))
+(define (main) : i64
+  (call5 1 2 3 4 5))")
+
+(define (compiler-backend-target-windows-abi-ok?) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-target-windows-abi-source)
+    (BackendTargetWindows))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm ".globl main\n")
+        (and
+          (not (compiler-backend-string-contains? asm "_start:\n"))
+          (and
+            (not (compiler-backend-string-contains? asm "syscall\n"))
+            (and
+              (compiler-backend-string-contains?
+                asm
+                "    movq %rcx, -8(%rbp)\n")
+              (and
+                (compiler-backend-string-contains?
+                  asm
+                  "    movq %rdx, -16(%rbp)\n")
+                (and
+                  (compiler-backend-string-contains?
+                    asm
+                    "    movq %r8, -24(%rbp)\n")
+                  (and
+                    (compiler-backend-string-contains?
+                      asm
+                      "    movq %r9, -32(%rbp)\n")
+                    (and
+                      (compiler-backend-string-contains?
+                        asm
+                        "    movq 48(%rbp), %rax\n")
+                      (and
+                        (compiler-backend-string-contains?
+                          asm
+                          "    subq $48, %rsp\n")
+                        (and
+                          (compiler-backend-string-contains?
+                            asm
+                            "    movq %rax, 32(%rsp)\n")
+                          (and
+                            (compiler-backend-string-contains?
+                              asm
+                              "    call ext\n")
+                            (compiler-backend-string-contains?
+                              asm
+                              "    addq $48, %rsp\n"))))))))))))]
+    [(ErrCompilerBackend message)
+      (string-eq
+        message
+        "backend: Windows runtime helpers not yet implemented (#648)")]))
+
+(define (compiler-backend-target-windows-callee-save-ok?) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-regalloc-source)
+    (BackendTargetWindows))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    movq %r12, -")
+        (compiler-backend-string-contains? asm ", %r12\n"))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-target-windows-runtime-deferred-ok?) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-aggregate-source)
+    (BackendTargetWindows))
     [(OkCompilerBackend _) false]
     [(ErrCompilerBackend message)
       (string-eq
         message
-        "backend: Windows x86_64 target not yet implemented (#647)")]))
+        "backend: Windows runtime helpers not yet implemented (#648)")]))
 
 (define (compiler-backend-deterministic-ok? [src : String]) : bool
   (match (compiler-backend-emit-source src)
@@ -2827,6 +3088,7 @@ tl_string_concat:
   [instr : CompilerIrInstr]
   [needle : String]) : bool
   (match (compiler-backend-emit-instr
+    (BackendTargetLinux)
     "_tl_test"
     IrBlockNil
     "entry"

@@ -2,7 +2,7 @@ use crate::diagnostic::{Diagnostic, Level};
 use crate::module::{LoadError, LoadOptions, ModuleSource, SourceFile, load_program_with_options};
 use crate::span::Span;
 use crate::typechecker::TypeChecker;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -314,6 +314,7 @@ struct OpenDocument {
 
 struct LspServer {
     documents: HashMap<String, OpenDocument>,
+    published_diagnostics: HashMap<String, BTreeSet<String>>,
     options: LoadOptions,
     shutdown_requested: bool,
 }
@@ -322,6 +323,7 @@ impl LspServer {
     fn new(options: LoadOptions) -> Self {
         LspServer {
             documents: HashMap::new(),
+            published_diagnostics: HashMap::new(),
             options,
             shutdown_requested: false,
         }
@@ -442,18 +444,31 @@ impl LspServer {
             return Ok(());
         };
         self.documents.remove(uri);
-        publish_diagnostics(writer, uri, Vec::new())
+        let mut stale_uris = self.published_diagnostics.remove(uri).unwrap_or_default();
+        stale_uris.insert(uri.to_string());
+        for stale_uri in stale_uris {
+            publish_diagnostics(writer, &stale_uri, Vec::new())?;
+        }
+        Ok(())
     }
 
-    fn publish_analysis(&self, uri: &str, writer: &mut impl Write) -> io::Result<()> {
+    fn publish_analysis(&mut self, uri: &str, writer: &mut impl Write) -> io::Result<()> {
         let Some(open) = self.documents.get(uri) else {
             return Ok(());
         };
         let mut diagnostics = self.analyze_document(uri, open);
         diagnostics.entry(uri.to_string()).or_default();
+        let current_uris = diagnostics.keys().cloned().collect::<BTreeSet<_>>();
+        if let Some(previous_uris) = self.published_diagnostics.get(uri) {
+            for stale_uri in previous_uris.difference(&current_uris) {
+                publish_diagnostics(writer, stale_uri, Vec::new())?;
+            }
+        }
         for (diag_uri, items) in diagnostics {
             publish_diagnostics(writer, &diag_uri, items)?;
         }
+        self.published_diagnostics
+            .insert(uri.to_string(), current_uris);
         Ok(())
     }
 
@@ -781,13 +796,32 @@ fn file_uri_to_path(uri: &str) -> Option<PathBuf> {
 
 fn path_to_file_uri(path: &Path) -> String {
     let path = absolute_path(path);
-    let text = path.to_string_lossy().replace('\\', "/");
+    let text = uri_path_text(&path);
     if cfg!(windows) {
-        format!("file:///{}", percent_encode_path(&text))
+        if let Some(rest) = text.strip_prefix("//") {
+            format!("file://{}", percent_encode_path(rest))
+        } else {
+            format!("file:///{}", percent_encode_path(&text))
+        }
     } else if text.starts_with('/') {
         format!("file://{}", percent_encode_path(&text))
     } else {
         format!("file:///{}", percent_encode_path(&text))
+    }
+}
+
+fn uri_path_text(path: &Path) -> String {
+    let text = path.to_string_lossy().replace('\\', "/");
+    if cfg!(windows) {
+        if let Some(rest) = text.strip_prefix("//?/UNC/") {
+            format!("//{}", rest)
+        } else if let Some(rest) = text.strip_prefix("//?/") {
+            rest.to_string()
+        } else {
+            text
+        }
+    } else {
+        text
     }
 }
 

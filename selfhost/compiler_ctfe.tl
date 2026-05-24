@@ -100,7 +100,8 @@
     [(AstExprStructGet _ _) "struct-get"]
     [(AstExprWithRegion _ _) "with-region"]
     [(AstExprTypeLiteral _) "type literal"]
-    [(AstExprComptime _) "comptime"]))
+    [(AstExprComptime _) "comptime"]
+    [(AstExprTry _) "try"]))
 
 (define (ctfe-value-type-name [value : CompilerCtfeValue]) : String
   (match value

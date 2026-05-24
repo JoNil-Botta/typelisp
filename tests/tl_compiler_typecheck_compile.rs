@@ -72,11 +72,14 @@ fn compiler_typecheck_tl_compiles_to_assembly() {
         "_tl_tc_struct_field_type:",
         "_tl_tc_bind_variant_pattern:",
         "_tl_tc_match_expr:",
+        "_tl_tc_result_info:",
+        "_tl_tc_try_expr:",
         "_tl_tc_check_decl:",
         "_tl_typecheck_compiler_program:",
         "_tl_typecheck_compiler_source:",
         "_tl_compiler_typecheck_self_test:",
         "_tl_compiler_typecheck_region_tests_ok_question:",
+        "_tl_compiler_typecheck_result_try_tests_ok_question:",
         "_tl_build_compiler_symbols:",
         "_tl_parse_ast_source:",
     ] {
@@ -104,6 +107,9 @@ fn compiler_typecheck_tl_compiles_to_assembly() {
         "typecheck: unknown variant ",
         "typecheck: unknown struct field ",
         "typecheck: non-exhaustive match",
+        "typecheck: try operand must be Result-like enum",
+        "typecheck: try requires enclosing Result-like function",
+        "typecheck: try error type mismatch",
         "typecheck: smoke score mismatch",
         "(extern print-i64 : (-> i64 unit))",
         "[fixed : (Array i64 3) (array 1 2 3)]",
@@ -113,6 +119,7 @@ fn compiler_typecheck_tl_compiles_to_assembly() {
         "(defstruct Point (x i64) (y i64))",
         "(with-region r",
         "(defstruct Box (s String))",
+        "(try (read flag))",
     ] {
         assert_message(&asm, message, "compiler_typecheck");
     }

@@ -20,7 +20,7 @@ mod typechecker;
 mod types;
 
 use ast::Program;
-use backend::{BackendTarget, generate_assembly_with_spans};
+use backend::{BackendMode, BackendTarget, generate_assembly_with_spans_for_target};
 use diagnostic::format_diagnostic;
 use lower::{LoweredProgram, lower_program_with_spans};
 use module::{
@@ -80,8 +80,12 @@ fn optimized_ir_or_exit(loaded: &LoadedProgram) -> LoweredProgram {
     lowered
 }
 
-fn assembly_or_exit(lowered: &LoweredProgram, sources: &[SourceFile]) -> String {
-    match generate_assembly_with_spans(&lowered.program, &lowered.source_spans) {
+fn assembly_or_exit(
+    lowered: &LoweredProgram,
+    sources: &[SourceFile],
+    target: BackendTarget,
+) -> String {
+    match generate_assembly_with_spans_for_target(&lowered.program, &lowered.source_spans, target) {
         Ok(asm) => asm,
         Err(e) => {
             if let Some(diag) = e.to_diagnostic() {
@@ -146,9 +150,15 @@ fn print_usage() {
     eprintln!("    typelisp debug tokenize <file.tl>    Show tokens");
     eprintln!("    typelisp debug parse <file.tl>       Show AST");
     eprintln!("    typelisp debug check <file.tl> [--stdlib-root <dir>...]");
-    eprintln!("    typelisp compile <file.tl> [-o <file>] [--emit-ir] [--stdlib-root <dir>...]");
-    eprintln!("    typelisp run <file.tl> [--stdlib-root <dir>...] [-- args...]");
-    eprintln!("    typelisp build [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]");
+    eprintln!(
+        "    typelisp compile <file.tl> [-o <file>] [--emit-ir] [--backend-mode <mode>] [--stdlib-root <dir>...]"
+    );
+    eprintln!(
+        "    typelisp run <file.tl> [--backend-mode <mode>] [--stdlib-root <dir>...] [-- args...]"
+    );
+    eprintln!(
+        "    typelisp build [--manifest-path <typelisp.pkg>] [--backend-mode <mode>] [--stdlib-root <dir>...]"
+    );
     eprintln!("    typelisp doc --test <file.tl> [--stdlib-root <dir>...]");
     eprintln!();
     eprintln!("Compatibility aliases:");
@@ -157,6 +167,9 @@ fn print_usage() {
     eprintln!("    typelisp check <file.tl> [--stdlib-root <dir>...]");
     eprintln!();
     eprintln!("    --emit-ir                      Emit intermediate representation");
+    eprintln!(
+        "    --backend-mode <mode>          scalar, avx2, or avx512; only scalar is implemented"
+    );
     eprintln!("    --manifest-path <file>         Package manifest for build");
     eprintln!("    --stdlib-root <dir>            Search root for stdlib/... imports");
     eprintln!("    TYPELISP_STDLIB_ROOT           Optional fallback root for stdlib/... imports");
@@ -190,6 +203,19 @@ fn missing_file_argument(usage: fn()) -> ! {
     eprintln!("Error: missing file argument");
     usage();
     std::process::exit(1);
+}
+
+fn parse_backend_mode(value: &str) -> BackendMode {
+    match BackendMode::parse(value) {
+        Some(mode) => mode,
+        None => {
+            eprintln!(
+                "Error: unknown backend mode '{}'. Expected scalar, avx2, or avx512",
+                value
+            );
+            std::process::exit(1);
+        }
+    }
 }
 
 fn command_file_arg(args: &[String], file_index: usize, usage: fn()) -> PathBuf {
@@ -305,13 +331,20 @@ fn parse_stdlib_roots(args: &[String], mut i: usize) -> LoadOptions {
     load_options_with_env_stdlib_root(stdlib_roots)
 }
 
-fn parse_run_options(args: &[String], mut i: usize) -> (LoadOptions, Vec<String>) {
+fn parse_run_options(args: &[String], mut i: usize) -> (LoadOptions, Vec<String>, BackendTarget) {
     let mut stdlib_roots = Vec::new();
     let mut runtime_args = Vec::new();
+    let mut target = BackendTarget::default();
     while i < args.len() {
         if args[i] == "--" {
             runtime_args.extend(args[i + 1..].iter().cloned());
             break;
+        } else if args[i] == "--backend-mode" {
+            if i + 1 >= args.len() {
+                missing_option_value("--backend-mode");
+            }
+            target = target.with_mode(parse_backend_mode(&args[i + 1]));
+            i += 2;
         } else if args[i] == "--stdlib-root" {
             if i + 1 >= args.len() {
                 missing_option_value("--stdlib-root");
@@ -326,12 +359,17 @@ fn parse_run_options(args: &[String], mut i: usize) -> (LoadOptions, Vec<String>
     (
         load_options_with_env_stdlib_root(stdlib_roots),
         runtime_args,
+        target,
     )
 }
 
-fn parse_build_options(args: &[String], mut i: usize) -> (Option<PathBuf>, LoadOptions) {
+fn parse_build_options(
+    args: &[String],
+    mut i: usize,
+) -> (Option<PathBuf>, LoadOptions, BackendTarget) {
     let mut manifest_path = None;
     let mut stdlib_roots = Vec::new();
+    let mut target = BackendTarget::default();
 
     while i < args.len() {
         if args[i] == "--manifest-path" {
@@ -350,6 +388,12 @@ fn parse_build_options(args: &[String], mut i: usize) -> (Option<PathBuf>, LoadO
             }
             stdlib_roots.push(PathBuf::from(&args[i + 1]));
             i += 2;
+        } else if args[i] == "--backend-mode" {
+            if i + 1 >= args.len() {
+                missing_option_value("--backend-mode");
+            }
+            target = target.with_mode(parse_backend_mode(&args[i + 1]));
+            i += 2;
         } else {
             eprintln!("Error: unknown build flag: {}", args[i]);
             std::process::exit(1);
@@ -359,6 +403,7 @@ fn parse_build_options(args: &[String], mut i: usize) -> (Option<PathBuf>, LoadO
     (
         manifest_path,
         load_options_with_env_stdlib_root(stdlib_roots),
+        target,
     )
 }
 
@@ -427,6 +472,7 @@ fn run_cli() {
             let mut output = None;
             let mut emit_ir = false;
             let mut stdlib_roots = Vec::new();
+            let mut target = BackendTarget::default();
 
             // Parse compile flags.
             let mut i = 3;
@@ -445,6 +491,12 @@ fn run_cli() {
                     }
                     stdlib_roots.push(PathBuf::from(&args[i + 1]));
                     i += 2;
+                } else if args[i] == "--backend-mode" {
+                    if i + 1 >= args.len() {
+                        missing_option_value("--backend-mode");
+                    }
+                    target = target.with_mode(parse_backend_mode(&args[i + 1]));
+                    i += 2;
                 } else {
                     eprintln!("Warning: unknown flag: {}", args[i]);
                     i += 1;
@@ -461,14 +513,14 @@ fn run_cli() {
                 fs::write(&output_path, ir_text).expect("Failed to write output");
                 println!("Generated: {}", output_path.display());
             } else {
-                let asm = assembly_or_exit(&lowered, &loaded.sources);
+                let asm = assembly_or_exit(&lowered, &loaded.sources, target);
                 let output_path = output.unwrap_or_else(|| file.with_extension("s"));
                 fs::write(&output_path, asm).expect("Failed to write output");
                 println!("Generated: {}", output_path.display());
             }
         }
         "build" => {
-            let (manifest_path, mut options) = parse_build_options(&args, 2);
+            let (manifest_path, mut options, target) = parse_build_options(&args, 2);
             let manifest_path = match manifest_path {
                 Some(path) => path,
                 None => {
@@ -483,7 +535,7 @@ fn run_cli() {
             options.package_roots = manifest.dependencies.clone();
             let loaded = load_or_exit(&manifest.entry_path(), &options);
             let lowered = optimized_ir_or_exit(&loaded);
-            let asm = assembly_or_exit(&lowered, &loaded.sources);
+            let asm = assembly_or_exit(&lowered, &loaded.sources, target);
             let output_path = manifest.output_asm_path();
             if let Some(parent) = output_path.parent() {
                 fs::create_dir_all(parent).expect("Failed to create package output directory");
@@ -498,11 +550,10 @@ fn run_cli() {
                 std::process::exit(1);
             }
             let file = PathBuf::from(&args[2]);
-            let (options, runtime_args) = parse_run_options(&args, 3);
+            let (options, runtime_args, target) = parse_run_options(&args, 3);
             let loaded = load_or_exit(&file, &options);
             let lowered = optimized_ir_or_exit(&loaded);
-            let asm = assembly_or_exit(&lowered, &loaded.sources);
-            let target = BackendTarget::default();
+            let asm = assembly_or_exit(&lowered, &loaded.sources, target);
             let toolchain = target.toolchain();
             let asm_path = file.with_extension("s");
             fs::write(&asm_path, asm).expect("Failed to write assembly");

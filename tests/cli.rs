@@ -22,6 +22,29 @@ fn typelisp(args: &[&str]) -> Output {
         .expect("run typelisp CLI")
 }
 
+fn write_main_source(dir: &std::path::Path) -> PathBuf {
+    let source = dir.join("main.tl");
+    fs::write(&source, "(define (main) : i64 42)\n").expect("write source");
+    source
+}
+
+fn assert_backend_mode_rejected(output: &Output, mode: &str) {
+    assert!(
+        !output.status.success(),
+        "{mode} unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        stdout(output),
+        stderr(output)
+    );
+    assert_eq!(stdout(output), "", "{mode} wrote stdout");
+    assert!(
+        stderr(output).contains(&format!(
+            "backend mode {mode} is not implemented yet; scalar is the only supported backend mode"
+        )),
+        "{mode} stderr:\n{}",
+        stderr(output)
+    );
+}
+
 fn assert_doctest_temp_cleaned(source: &std::path::Path) {
     let temp_parent = source
         .parent()
@@ -76,6 +99,101 @@ fn debug_check_matches_top_level_alias_with_stdlib_root() {
     assert_eq!(debug.stdout, alias.stdout);
     assert_eq!(debug.stderr, alias.stderr);
     assert_eq!(stdout(&debug), "Type checking passed!\n");
+}
+
+#[test]
+fn compile_accepts_explicit_scalar_backend_mode() {
+    let dir = fixture_dir("backend-mode-scalar");
+    let source = write_main_source(&dir);
+    let output_path = dir.join("main.s");
+    let source_arg = source.to_str().expect("source path is utf-8");
+    let output_arg = output_path.to_str().expect("output path is utf-8");
+
+    let output = typelisp(&[
+        "compile",
+        source_arg,
+        "--backend-mode",
+        "scalar",
+        "-o",
+        output_arg,
+    ]);
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    assert!(output_path.exists(), "compile did not write assembly");
+    let asm = fs::read_to_string(&output_path).expect("read assembly");
+    assert!(asm.contains("main:"), "assembly:\n{}", asm);
+}
+
+#[test]
+fn compile_rejects_unimplemented_backend_modes() {
+    for mode in ["avx2", "avx512"] {
+        let dir = fixture_dir(&format!("backend-mode-{mode}"));
+        let source = write_main_source(&dir);
+        let source_arg = source.to_str().expect("source path is utf-8");
+
+        let output = typelisp(&["compile", source_arg, "--backend-mode", mode]);
+
+        assert_backend_mode_rejected(&output, mode);
+    }
+}
+
+#[test]
+fn compile_rejects_unknown_backend_mode() {
+    let dir = fixture_dir("backend-mode-unknown");
+    let source = write_main_source(&dir);
+    let source_arg = source.to_str().expect("source path is utf-8");
+
+    let output = typelisp(&["compile", source_arg, "--backend-mode", "neon"]);
+
+    assert!(!output.status.success());
+    assert_eq!(stdout(&output), "");
+    assert!(
+        stderr(&output)
+            .contains("Error: unknown backend mode 'neon'. Expected scalar, avx2, or avx512"),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn run_accepts_backend_mode_flag_and_rejects_unimplemented_modes() {
+    let dir = fixture_dir("backend-mode-run");
+    let source = write_main_source(&dir);
+    let source_arg = source.to_str().expect("source path is utf-8");
+
+    let output = typelisp(&["run", source_arg, "--backend-mode", "avx2", "--", "arg"]);
+
+    assert_backend_mode_rejected(&output, "avx2");
+}
+
+#[test]
+fn build_accepts_backend_mode_flag_and_rejects_unimplemented_modes() {
+    let dir = fixture_dir("backend-mode-build");
+    let src_dir = dir.join("src");
+    fs::create_dir_all(&src_dir).expect("create package src dir");
+    fs::write(
+        dir.join("typelisp.pkg"),
+        r#"(package
+  (name "backend_mode_build")
+  (version "0.1.0")
+  (entry "src/main.tl"))
+"#,
+    )
+    .expect("write package manifest");
+    fs::write(src_dir.join("main.tl"), "(define (main) : i64 42)\n").expect("write package source");
+    let manifest = dir.join("typelisp.pkg");
+    let manifest_arg = manifest.to_str().expect("manifest path is utf-8");
+
+    let output = typelisp(&[
+        "build",
+        "--manifest-path",
+        manifest_arg,
+        "--backend-mode",
+        "avx512",
+    ]);
+
+    assert_backend_mode_rejected(&output, "avx512");
 }
 
 #[test]

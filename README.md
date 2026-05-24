@@ -251,13 +251,17 @@ Source (.tl)
 typelisp debug tokenize file.tl    # Print token stream
 typelisp debug parse    file.tl    # Print AST
 typelisp debug check    file.tl    # Type check
-typelisp compile        file.tl    # Generate assembly (.s); -o <path>, --emit-ir
-typelisp run            file.tl    # Compile, assemble, link, and run (needs as/ld)
-typelisp build                    # Build nearest typelisp.pkg to package assembly
+typelisp compile        file.tl    # Generate assembly (.s); -o <path>, --emit-ir, --backend-mode <mode>
+typelisp run            file.tl    # Compile, assemble, link, and run (needs as/ld); --backend-mode <mode>
+typelisp build                    # Build nearest typelisp.pkg to package assembly; --backend-mode <mode>
 ```
 
 The older top-level `tokenize`, `parse`, and `check` commands remain as
 compatibility aliases.
+
+`compile`, `run`, and `build` accept `--backend-mode scalar|avx2|avx512`.
+`scalar` is the default and only implemented mode today; `avx2` and `avx512`
+parse but are rejected until SIMD code generation lands.
 
 ## Status
 

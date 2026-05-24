@@ -951,6 +951,11 @@ Commands:
 Options:
   compile -o <file>       Write assembly to the given path
   compile --emit-ir       Write the lowered and optimized IR instead of assembly
+  compile --backend-mode <mode>
+  run --backend-mode <mode>
+  build --backend-mode <mode>
+                          Select scalar, avx2, or avx512 backend mode;
+                          scalar is the only implemented mode
   build --manifest-path <file>
                           Use an explicit package manifest path
 ```

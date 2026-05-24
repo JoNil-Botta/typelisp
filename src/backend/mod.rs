@@ -43,14 +43,47 @@ pub enum BackendAbi {
     WindowsX64,
 }
 
-/// Concrete backend target. Today only Linux x86_64 System V is emitted, but
-/// codegen policy is kept explicit so later targets do not have to rediscover
-/// Linux assumptions embedded in instruction selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackendMode {
+    Scalar,
+    Avx2,
+    Avx512,
+}
+
+impl BackendMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            BackendMode::Scalar => "scalar",
+            BackendMode::Avx2 => "avx2",
+            BackendMode::Avx512 => "avx512",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "scalar" => Some(BackendMode::Scalar),
+            "avx2" => Some(BackendMode::Avx2),
+            "avx512" => Some(BackendMode::Avx512),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for BackendMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Concrete backend target. Today only Linux x86_64 System V scalar codegen is
+/// emitted, but codegen policy is kept explicit so later targets and SIMD modes
+/// do not have to rediscover assumptions embedded in instruction selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BackendTarget {
     pub arch: BackendArch,
     pub os: BackendOs,
     pub abi: BackendAbi,
+    pub mode: BackendMode,
 }
 
 impl BackendTarget {
@@ -58,12 +91,14 @@ impl BackendTarget {
         arch: BackendArch::X86_64,
         os: BackendOs::Linux,
         abi: BackendAbi::SystemV,
+        mode: BackendMode::Scalar,
     };
     #[allow(dead_code)]
     pub const WINDOWS_X86_64: Self = Self {
         arch: BackendArch::X86_64,
         os: BackendOs::Windows,
         abi: BackendAbi::WindowsX64,
+        mode: BackendMode::Scalar,
     };
 
     pub const fn linux_x86_64_system_v() -> Self {
@@ -73,6 +108,20 @@ impl BackendTarget {
     #[allow(dead_code)]
     pub const fn windows_x86_64() -> Self {
         Self::WINDOWS_X86_64
+    }
+
+    pub const fn with_mode(self, mode: BackendMode) -> Self {
+        Self { mode, ..self }
+    }
+
+    fn validate_mode(self) -> Result<(), String> {
+        match self.mode {
+            BackendMode::Scalar => Ok(()),
+            mode => Err(format!(
+                "backend mode {} is not implemented yet; scalar is the only supported backend mode",
+                mode
+            )),
+        }
     }
 
     fn calling_convention(self) -> CallingConvention {
@@ -4380,6 +4429,7 @@ pub fn generate_assembly_for_target(
     program: &Program,
     target: BackendTarget,
 ) -> Result<String, String> {
+    target.validate_mode()?;
     validate_program(program)?;
     let mut backend = X86_64Backend::with_target(target);
     Ok(backend.generate(program))
@@ -4387,6 +4437,7 @@ pub fn generate_assembly_for_target(
 
 /// Generate x86_64 assembly, rendering backend validation failures as
 /// source-located diagnostics when the lowerer supplied provenance.
+#[allow(dead_code)]
 pub fn generate_assembly_with_spans(
     program: &Program,
     source_spans: &SourceSpans,
@@ -4399,6 +4450,7 @@ pub fn generate_assembly_with_spans_for_target(
     source_spans: &SourceSpans,
     target: BackendTarget,
 ) -> Result<String, BackendError> {
+    target.validate_mode().map_err(BackendError::unspanned)?;
     validate_program_source_spans(program, source_spans)?;
     validate_program(program).map_err(BackendError::unspanned)?;
     let mut backend = X86_64Backend::with_target(target);
@@ -4410,7 +4462,7 @@ mod tests {
     use super::*;
     use crate::ast;
     use crate::ir::*;
-    use crate::lower::lower_program;
+    use crate::lower::{lower_program, lower_program_with_spans};
     use crate::optimizer::Optimizer;
     use crate::parser::parse;
 
@@ -4445,6 +4497,7 @@ mod tests {
         assert_eq!(target.arch, BackendArch::X86_64);
         assert_eq!(target.os, BackendOs::Linux);
         assert_eq!(target.abi, BackendAbi::SystemV);
+        assert_eq!(target.mode, BackendMode::Scalar);
 
         let calling_convention = target.calling_convention();
         let expected_integer_regs: &[&str] = &["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
@@ -4481,11 +4534,23 @@ mod tests {
     }
 
     #[test]
+    fn test_backend_mode_names_parse_and_display() {
+        assert_eq!(BackendMode::parse("scalar"), Some(BackendMode::Scalar));
+        assert_eq!(BackendMode::parse("avx2"), Some(BackendMode::Avx2));
+        assert_eq!(BackendMode::parse("avx512"), Some(BackendMode::Avx512));
+        assert_eq!(BackendMode::parse("sse2"), None);
+        assert_eq!(BackendMode::Scalar.to_string(), "scalar");
+        assert_eq!(BackendMode::Avx2.to_string(), "avx2");
+        assert_eq!(BackendMode::Avx512.to_string(), "avx512");
+    }
+
+    #[test]
     fn test_windows_x64_target_policy() {
         let target = BackendTarget::windows_x86_64();
         assert_eq!(target.arch, BackendArch::X86_64);
         assert_eq!(target.os, BackendOs::Windows);
         assert_eq!(target.abi, BackendAbi::WindowsX64);
+        assert_eq!(target.mode, BackendMode::Scalar);
 
         let calling_convention = target.calling_convention();
         assert_eq!(
@@ -4560,6 +4625,60 @@ mod tests {
             default_asm.contains("    call _tl_pick9"),
             "asm:\n{}",
             default_asm
+        );
+    }
+
+    #[test]
+    fn test_explicit_scalar_mode_matches_default_output() {
+        let source = "(define (main) : i64 (+ 40 2))";
+
+        let default_asm = compile_ok(source);
+        let scalar_asm = compile_ok_for_target(
+            source,
+            BackendTarget::default().with_mode(BackendMode::Scalar),
+        );
+        assert_eq!(default_asm, scalar_asm);
+    }
+
+    #[test]
+    fn test_avx2_backend_mode_is_rejected_before_codegen() {
+        let prog = parse("(define (main) : i64 42)").expect("parse failed");
+        let mut ir = lower_program(&prog);
+        Optimizer::optimize(&mut ir);
+        let err = generate_assembly_for_target(
+            &ir,
+            BackendTarget::default().with_mode(BackendMode::Avx2),
+        )
+        .expect_err("avx2 mode should not be implemented yet");
+
+        assert!(
+            err.contains(
+                "backend mode avx2 is not implemented yet; scalar is the only supported backend mode"
+            ),
+            "error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_avx512_backend_mode_with_spans_is_rejected_unspanned() {
+        let prog = parse("(define (main) : i64 42)").expect("parse failed");
+        let mut lowered = lower_program_with_spans(&prog);
+        Optimizer::optimize(&mut lowered.program);
+        let err = generate_assembly_with_spans_for_target(
+            &lowered.program,
+            &lowered.source_spans,
+            BackendTarget::default().with_mode(BackendMode::Avx512),
+        )
+        .expect_err("avx512 mode should not be implemented yet");
+
+        assert_eq!(err.span, None);
+        assert!(
+            err.message.contains(
+                "backend mode avx512 is not implemented yet; scalar is the only supported backend mode"
+            ),
+            "error: {}",
+            err
         );
     }
 

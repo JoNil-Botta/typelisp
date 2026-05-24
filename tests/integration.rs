@@ -1221,6 +1221,7 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
         &work_dir,
         &[
             "compiler_backend.tl",
+            "compiler_optimize.tl",
             "compiler_lower.tl",
             "compiler_ir_types.tl",
             "compiler_typecheck.tl",

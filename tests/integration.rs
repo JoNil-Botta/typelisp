@@ -1246,6 +1246,7 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
             "compiler_ir_types.tl",
             "compiler_typecheck.tl",
             "compiler_symbols.tl",
+            "compiler_load.tl",
             "compiler_parse_core.tl",
             "compiler_ast_types.tl",
             "sym_i64_env.tl",
@@ -1379,6 +1380,146 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
         String::from_utf8_lossy(&output.stderr),
         "",
         "compiler_driver output program stderr"
+    );
+}
+
+#[test]
+fn selfhost_check_driver_reports_success_and_errors() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let selfhost_dir = manifest_dir.join("selfhost");
+    let source_path = selfhost_dir.join("check.tl");
+    let work_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("selfhost_check_driver");
+    fs::create_dir_all(&work_dir).expect("create selfhost check driver test work dir");
+
+    let work_path = work_dir.join("check.tl");
+    fs::copy(&source_path, &work_path).expect("copy check.tl to work dir");
+    copy_case_deps(
+        &manifest_dir,
+        &selfhost_dir,
+        &work_dir,
+        &[
+            "compiler_load.tl",
+            "compiler_typecheck.tl",
+            "compiler_symbols.tl",
+            "compiler_parse_core.tl",
+            "compiler_ast_types.tl",
+            "sym_i64_env.tl",
+            "read.tl",
+            "lex.tl",
+            "token.tl",
+        ],
+    );
+
+    let driver_bin = work_dir.join("selfhost-check");
+    let build = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("build")
+        .arg(&work_path)
+        .arg("-o")
+        .arg(&driver_bin)
+        .output()
+        .expect("build check.tl");
+    assert!(
+        build.status.success(),
+        "check.tl build failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    fs::write(work_dir.join("lib.tl"), "(define imported : i64 42)\n")
+        .expect("write selfhost check import");
+    let ok_path = work_dir.join("ok.tl");
+    fs::write(
+        &ok_path,
+        "(import \"lib.tl\")\n(define (main) : i64 imported)\n",
+    )
+    .expect("write selfhost check success fixture");
+    let ok = Command::new(&driver_bin)
+        .arg(&ok_path)
+        .output()
+        .expect("run selfhost check success fixture");
+    assert_eq!(
+        ok.status.code(),
+        Some(0),
+        "selfhost check success exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&ok.stdout),
+        String::from_utf8_lossy(&ok.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&ok.stdout),
+        "",
+        "selfhost check success wrote stdout"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&ok.stderr),
+        "",
+        "selfhost check success wrote stderr"
+    );
+
+    let type_error_path = work_dir.join("type_error.tl");
+    fs::write(&type_error_path, "(define (main) : i64 true)\n")
+        .expect("write selfhost check type error fixture");
+    let type_error = Command::new(&driver_bin)
+        .arg(&type_error_path)
+        .output()
+        .expect("run selfhost check type error fixture");
+    assert_eq!(type_error.status.code(), Some(1));
+    assert_eq!(String::from_utf8_lossy(&type_error.stdout), "");
+    assert!(
+        String::from_utf8_lossy(&type_error.stderr).contains("typecheck: return type mismatch"),
+        "type error stderr:\n{}",
+        String::from_utf8_lossy(&type_error.stderr)
+    );
+
+    let parse_error_path = work_dir.join("parse_error.tl");
+    fs::write(&parse_error_path, "(define (main) : i64\n")
+        .expect("write selfhost check parse error fixture");
+    let parse_error = Command::new(&driver_bin)
+        .arg(&parse_error_path)
+        .output()
+        .expect("run selfhost check parse error fixture");
+    assert_eq!(parse_error.status.code(), Some(1));
+    assert_eq!(String::from_utf8_lossy(&parse_error.stdout), "");
+    let parse_stderr = String::from_utf8_lossy(&parse_error.stderr);
+    assert!(
+        parse_stderr.contains("reader:") || parse_stderr.contains("parse:"),
+        "parse error stderr:\n{}",
+        parse_stderr
+    );
+
+    let load_error_path = work_dir.join("load_error.tl");
+    fs::write(
+        &load_error_path,
+        "(import \"missing.tl\")\n(define (main) : i64 0)\n",
+    )
+    .expect("write selfhost check load error fixture");
+    let load_error = Command::new(&driver_bin)
+        .arg(&load_error_path)
+        .output()
+        .expect("run selfhost check load error fixture");
+    assert_eq!(load_error.status.code(), Some(1));
+    assert_eq!(String::from_utf8_lossy(&load_error.stdout), "");
+    assert!(
+        String::from_utf8_lossy(&load_error.stderr).contains("compiler-load: cannot read import"),
+        "load error stderr:\n{}",
+        String::from_utf8_lossy(&load_error.stderr)
+    );
+
+    let stdlib_reject = Command::new(&driver_bin)
+        .arg(&ok_path)
+        .arg("--stdlib-root")
+        .arg(&work_dir)
+        .output()
+        .expect("run selfhost check stdlib-root rejection");
+    assert_eq!(stdlib_reject.status.code(), Some(1));
+    assert_eq!(String::from_utf8_lossy(&stdlib_reject.stdout), "");
+    assert!(
+        String::from_utf8_lossy(&stdlib_reject.stderr)
+            .contains("selfhost-check: --stdlib-root is not supported yet"),
+        "stdlib-root stderr:\n{}",
+        String::from_utf8_lossy(&stdlib_reject.stderr)
     );
 }
 

@@ -89,7 +89,7 @@
 
 ;; `c` is ASCII whitespace.
 (define (is-space [c : char]) : bool
-  (or (= c #\space') (or (= c #\tab') (= c #\newline'))))
+  (or (= c #\space') (or (= c #\tab') (or (= c #\newline') (= (cast c : i64) 13)))))
 
 ;; Return the end index (exclusive) of the digit run that starts at `start` in
 ;; `src`. `n` is the source length. The bounds check is kept outside the

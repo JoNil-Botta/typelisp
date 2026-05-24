@@ -735,7 +735,7 @@
   [env : TcTypeEnv]
   [func : AstExpr]
   [args : AstExprList]) : ResultTcType
-  (match func
+  (match (ast-expr-unspan func)
     [(AstExprVar name)
       (if (or (string-eq name "array-length") (string-eq name "length"))
         (tc-array-length-call ctx env name func args)

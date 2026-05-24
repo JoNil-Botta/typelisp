@@ -57,9 +57,9 @@ fn assert_message(asm: &str, message: &str, name: &str) {
 fn assert_dispatch_env_call_shape(asm: &str, name: &str) {
     assert_eq!(
         asm.matches("call _tl_compiler_parse_dispatch_env").count(),
-        1,
+        3,
         "{name} should build the compiler parser dispatch env only in \
-         parse-ast-program, not recursive parse helpers:\n{asm}",
+         entry/smoke helpers, not recursive parse helpers:\n{asm}",
     );
 }
 
@@ -80,13 +80,19 @@ fn compiler_parse_core_tl_compiles_to_assembly() {
         "_tl_parse_ast_expr:",
         "_tl_parse_ast_decl:",
         "_tl_parse_ast_program:",
+        "_tl_parse_ast_program_spanned:",
         "_tl_parse_ast_source:",
         "_tl_parse_ast_match:",
         "_tl_parse_ast_foreach:",
         "_tl_parse_ast_cond:",
+        "_tl_spanned_ast_expr:",
+        "_tl_source_span_to_ast_source_span:",
+        "_tl_compiler_parse_nested_span_ok_question:",
         "_tl_compiler_parse_smoke:",
         "_tl_read_form:",
+        "_tl_read_form_spanned_result:",
         "_tl_lex:",
+        "_tl_lex_spanned_result:",
         "_tl_sym_i64_lookup:",
         "_tl_ast_decl_tag:",
         "_tl_ast_expr_tag:",
@@ -101,6 +107,8 @@ fn compiler_parse_core_tl_compiles_to_assembly() {
         "parse: malformed foreach",
         "parse: cond requires final else arm",
         "parse: cond else arm must be final",
+        "parse: compiler AST nested span mismatch",
+        "parse: compiler AST declaration span mismatch",
         "parse: compiler AST smoke score mismatch",
     ] {
         assert_message(&asm, message, "compiler_parse_core");

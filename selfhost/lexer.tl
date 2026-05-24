@@ -34,58 +34,52 @@
 ;;     so `\"` does NOT continue the string and `\n` is two literal chars.
 ;;   - Keyword classification: keywords are lexed as plain `TSym` tokens here; a
 ;;     later pass (or the parser) distinguishes `define`/`let`/... from names.
-;;   - Digit char literals: `#\0` lexes as NUL, so digit/whitespace/symbol
-;;     classification compares the char's `i64` code point against ASCII
-;;     constants rather than against char literals.
 
 ;; The shared token model: the `Token` enum and the token accessors/tag
 ;; constants. Resolved relative to this file, so it finds the co-located
 ;; `token.tl` (the `main`-less module pattern from #44/#116).
 (import "token.tl")
 
-;; ASCII code point of a char, e.g. the digit char `7` -> 55.
+;; Numeric code point of a char, used only when a code value is intentionally
+;; observed (for example in the lexer demo's character-code checksum).
 (define (code [c : char]) : i64
   (cast c : i64))
 
-;; `c` is a decimal digit char (ASCII '0'..'9' == 48..57).
+;; `c` is a decimal digit char.
 (define (is-digit [c : char]) : bool
-  (and (>= (code c) 48) (<= (code c) 57)))
+  (and (>= c #0') (<= c #9')))
 
-;; `c` is an ASCII letter (A-Z == 65..90, a-z == 97..122).
+;; `c` is an ASCII letter.
 (define (is-alpha [c : char]) : bool
-  (let ([k : i64 (code c)])
-    (or (and (>= k 65) (<= k 90))
-        (and (>= k 97) (<= k 122)))))
+  (or (and (>= c #A') (<= c #Z'))
+      (and (>= c #a') (<= c #z'))))
 
 ;; `c` is one of TypeLisp's symbol punctuation chars - the non-alphanumeric
 ;; characters that may appear in a symbol/operator name:
-;;   `-` 45  `+` 43  `*` 42  `/` 47  `?` 63  `!` 33  `>` 62  `<` 60  `=` 61
-;;   `:` 58  `_` 95
+;;   `-` `+` `*` `/` `?` `!` `>` `<` `=` `:` `_`
 ;; This is what makes `+`, `<=`, `string->int`, and `array-set!` all lex as one
 ;; `TSym` rather than as separate operator tokens.
 (define (is-symbol-punct [c : char]) : bool
-  (let ([k : i64 (code c)])
-    (or (= k 45)
-        (or (= k 43)
-            (or (= k 42)
-                (or (= k 47)
-                    (or (= k 63)
-                        (or (= k 33)
-                            (or (= k 62)
-                                (or (= k 60)
-                                    (or (= k 61)
-                                        (or (= k 58)
-                                            (= k 95)))))))))))))
+  (or (= c #-')
+      (or (= c #+')
+          (or (= c #*')
+              (or (= c #/')
+                  (or (= c #?')
+                      (or (= c #!')
+                          (or (= c #>')
+                              (or (= c #<')
+                                  (or (= c #=')
+                                      (or (= c #:')
+                                          (= c #_'))))))))))))
 
 ;; `c` may appear in a symbol: a letter, a digit, or a symbol-punctuation char.
 ;; A symbol run is the maximal span of these starting at a non-digit symbol char.
 (define (is-symbol-char [c : char]) : bool
   (or (is-alpha c) (or (is-digit c) (is-symbol-punct c))))
 
-;; `c` is ASCII whitespace: space (32), tab (9), or newline (10).
+;; `c` is ASCII whitespace.
 (define (is-space [c : char]) : bool
-  (let ([k : i64 (code c)])
-    (or (= k 32) (or (= k 9) (= k 10)))))
+  (or (= c #\space') (or (= c #\tab') (= c #\newline'))))
 
 ;; Return the end index (exclusive) of the digit run that starts at `start` in
 ;; `src`. `n` is the source length. The bounds check is kept outside the
@@ -118,7 +112,7 @@
 
 ;; Return the index of the closing `"` of a string literal whose inner text
 ;; starts at `start` (just AFTER the opening quote). Scans forward to the next
-;; `"` (ASCII 34); running off the end is an unterminated literal and aborts via
+;; `"`; running off the end is an unterminated literal and aborts via
 ;; `panic`. NO escape handling (deferred). Same bounds-check discipline.
 (define (scan-str-end [src : String] [start : i64] [n : i64]) : i64
   (let ([j : i64 start]
@@ -126,7 +120,7 @@
     (begin
       (while keep
         (if (< j n)
-            (if (= (code (string-ref src j)) 34)
+            (if (= (string-ref src j) #"')
                 (set! keep false)
                 (set! j (+ j 1)))
             (begin
@@ -135,7 +129,7 @@
       j)))
 
 ;; Return the end-of-line index that ends a `;` line comment whose body starts
-;; at `start`: the next newline (ASCII 10) or the end of the source (the newline
+;; at `start`: the next newline or the end of the source (the newline
 ;; is left for the whitespace skip). Same bounds-check discipline.
 (define (scan-comment-end [src : String] [start : i64] [n : i64]) : i64
   (let ([j : i64 start]
@@ -143,7 +137,7 @@
     (begin
       (while keep
         (if (< j n)
-            (if (= (code (string-ref src j)) 10)
+            (if (= (string-ref src j) #\newline')
                 (set! keep false)
                 (set! j (+ j 1)))
             (set! keep false)))
@@ -176,7 +170,7 @@
 ;; lexer errors.
 (define (require-char-close [src : String] [idx : i64] [n : i64]) : unit
   (if (< idx n)
-      (if (= (code (string-ref src idx)) 39)
+      (if (= (string-ref src idx) #'')
           unit
           (panic "lexer: expected ' after character"))
       (panic "lexer: unterminated character literal")))
@@ -200,21 +194,20 @@
 ;; Map single-character escapes after `#\`; unknown escapes read as the literal
 ;; character, matching stage0 (`#\a'` is `a`).
 (define (escaped-char [c : char]) : char
-  (let ([k : i64 (code c)])
-    (if (= k 110)
-        #\newline'
-        (if (= k 116)
-            #\tab'
-            (if (= k 114)
-                #\return'
-                (if (= k 48)
-                    #\nul'
-                    c))))))
+  (if (= c #n')
+      #\newline'
+      (if (= c #t')
+          #\tab'
+          (if (= c #r')
+              #\return'
+              (if (= c #0')
+                  #\nul'
+                  c)))))
 
 ;; Character payload for a literal beginning at `i`, where `src[i]` is `#`.
 (define (char-literal-value [src : String] [i : i64] [n : i64]) : char
   (if (< (+ i 1) n)
-      (if (= (code (string-ref src (+ i 1))) 92)
+      (if (= (string-ref src (+ i 1)) #\\')
           (let ([start : i64 (+ i 2)])
             (if (< start n)
                 (if (starts-named-char src start n)
@@ -238,7 +231,7 @@
 ;; Index just after the closing `'` for a char literal beginning at `i`.
 (define (char-literal-end [src : String] [i : i64] [n : i64]) : i64
   (if (< (+ i 1) n)
-      (if (= (code (string-ref src (+ i 1))) 92)
+      (if (= (string-ref src (+ i 1)) #\\')
           (let ([start : i64 (+ i 2)])
             (if (< start n)
                 (if (starts-named-char src start n)
@@ -279,17 +272,17 @@
         (let ([c : char (string-ref src i)])
           (if (is-space c)
               (set! i (+ i 1))
-              (if (or (= (code c) 40) (= (code c) 91))        ; '(' or '['
+              (if (or (= c #(') (= c #['))
                   (begin
                     (array-set! toks count TLParen)
                     (set! count (+ count 1))
                     (set! i (+ i 1)))
-                  (if (or (= (code c) 41) (= (code c) 93))    ; ')' or ']'
+                  (if (or (= c #)') (= c #]'))
                       (begin
                         (array-set! toks count TRParen)
                         (set! count (+ count 1))
                         (set! i (+ i 1)))
-                      (if (= (code c) 34)  ; '"' - a string literal
+                      (if (= c #"')  ; '"' - a string literal
                           (let ([start : i64 (+ i 1)])
                             (let ([end : i64 (scan-str-end src start n)])
                               (begin
@@ -297,9 +290,9 @@
                                   (TStr (substring src start (- end start))))
                                 (set! count (+ count 1))
                                 (set! i (+ end 1)))))
-                          (if (= (code c) 59)  ; ';' - a line comment
+                          (if (= c #;')  ; ';' - a line comment
                               (set! i (scan-comment-end src (+ i 1) n))
-                              (if (= (code c) 35)  ; '#' - a char literal
+                              (if (= c ##')  ; '#' - a char literal
                                   (let ([value : char (char-literal-value src i n)])
                                     (let ([end : i64 (char-literal-end src i n)])
                                       (begin

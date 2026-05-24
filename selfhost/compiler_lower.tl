@@ -4087,6 +4087,18 @@
 (define (main) : i64
   (get-y (make-point 20 22)))")
 
+(define (compiler-lower-comptime-decl-source) : String
+  "(comptime-decl (defstruct Point (x i64) (y i64)))
+(comptime-decl (defenum Shape (Nothing) (Circle i64) (Pair Point)))
+(define (make-point [x : i64] [y : i64]) : Point
+  (Point x y))
+(define (get-y [p : Point]) : i64
+  (struct-get p y))
+(define (make-pair [x : i64]) : Shape
+  (Pair (Point x (+ x 1))))
+(define (main) : i64
+  (get-y (make-point 20 22)))")
+
 (define (compiler-lower-enum-match-source) : String
   "(defenum Maybe (None) (Some i64) (Pair i64 i64))
 (define (score [m : Maybe]) : i64
@@ -4585,34 +4597,37 @@
                         (and
                           (compiler-lower-ok? (compiler-lower-aggregate-source))
                           (and
-                            (compiler-lower-region-shape-ok?)
+                            (compiler-lower-ok?
+                              (compiler-lower-comptime-decl-source))
                             (and
-                              (compiler-lower-error-ok?
-                                (compiler-typecheck-branch-mismatch-source)
-                                "typecheck: if branches must match")
+                              (compiler-lower-region-shape-ok?)
                               (and
                                 (compiler-lower-error-ok?
-                                  (compiler-lower-unsupported-source)
-                                  "lower: unsupported expression")
+                                  (compiler-typecheck-branch-mismatch-source)
+                                  "typecheck: if branches must match")
                                 (and
-                                  (compiler-lower-comptime-fold-ok?
-                                    (compiler-lower-comptime-arith-source)
-                                    3)
+                                  (compiler-lower-error-ok?
+                                    (compiler-lower-unsupported-source)
+                                    "lower: unsupported expression")
                                   (and
                                     (compiler-lower-comptime-fold-ok?
-                                      (compiler-lower-comptime-if-source)
-                                      42)
+                                      (compiler-lower-comptime-arith-source)
+                                      3)
                                     (and
                                       (compiler-lower-comptime-fold-ok?
-                                        (compiler-lower-comptime-let-source)
+                                        (compiler-lower-comptime-if-source)
                                         42)
                                       (and
-                                        (compiler-lower-error-ok?
-                                          (compiler-lower-comptime-runtime-var-source)
-                                          "compile-time evaluation cannot reference runtime variable 'x'")
-                                        (compiler-lower-error-ok?
-                                          (compiler-lower-comptime-f64-source)
-                                          "comptime: f64 compile-time evaluation not yet supported (#735)"))))))))))))))))))))
+                                        (compiler-lower-comptime-fold-ok?
+                                          (compiler-lower-comptime-let-source)
+                                          42)
+                                        (and
+                                          (compiler-lower-error-ok?
+                                            (compiler-lower-comptime-runtime-var-source)
+                                            "compile-time evaluation cannot reference runtime variable 'x'")
+                                          (compiler-lower-error-ok?
+                                            (compiler-lower-comptime-f64-source)
+                                            "comptime: f64 compile-time evaluation not yet supported (#735)")))))))))))))))))))))
     42
     (begin
       (panic "lower: smoke score mismatch")

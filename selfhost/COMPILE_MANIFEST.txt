@@ -1,0 +1,608 @@
+# Selfhost compile manifest.
+#
+# Record format:
+#   entry|name|source|assembly|one-main|has-main|any-main|no-main
+#   stage|name|source|destination-relative-to-entry-workdir
+#   contains|name|fixed assembly text
+#   not|name|fixed assembly text
+#   min-count|name|fixed assembly text|required-count
+#   exact-count|name|fixed assembly text|required-count
+#   decision|selfhost/file.tl|reason
+#
+# Every entry always compiles to assembly and asserts that the output does not
+# contain "# TODO". The inventory check requires every root selfhost/*.tl file to
+# appear as an entry, stage source, or decision.
+
+entry|calc|tests/integration/calc.tl|assembly|one-main
+contains|calc|_tl_lex:
+contains|calc|_tl_parse:
+contains|calc|_tl_eval:
+contains|calc|_tl_token_int:
+contains|calc|call _tl_lex
+contains|calc|call _tl_parse
+contains|calc|call _tl_eval
+contains|calc|call tl_alloc
+contains|calc|call tl_oob_abort
+contains|calc|call .L_tl_abort
+
+entry|legacy_lexer|tests/integration/lexer.tl|assembly|has-main
+contains|legacy_lexer|_tl_lex:
+contains|legacy_lexer|_tl_token_tag:
+contains|legacy_lexer|_tl_single_token:
+contains|legacy_lexer|_tl_ident_token:
+contains|legacy_lexer|call tl_alloc
+contains|legacy_lexer|call tl_oob_abort
+contains|legacy_lexer|call .L_tl_abort
+contains|legacy_lexer|tl_substring
+
+entry|legacy_parser|tests/integration/parser.tl|assembly|has-main
+contains|legacy_parser|_tl_parse_expr:
+contains|legacy_parser|_tl_parse_term:
+contains|legacy_parser|_tl_parse_factor:
+contains|legacy_parser|_tl_eval:
+contains|legacy_parser|call _tl_parse_expr
+contains|legacy_parser|call _tl_parse_term
+contains|legacy_parser|call _tl_parse_factor
+contains|legacy_parser|call _tl_eval
+contains|legacy_parser|call tl_alloc
+contains|legacy_parser|call tl_oob_abort
+contains|legacy_parser|call .L_tl_abort
+
+entry|maybe_result|tests/integration/maybe_result.tl|assembly|has-main
+contains|maybe_result|_tl_find_answer:
+contains|maybe_result|_tl_read_small:
+contains|maybe_result|_tl_maybe_score:
+contains|maybe_result|_tl_result_score:
+contains|maybe_result|call tl_alloc
+contains|maybe_result|tl_string_eq:
+contains|maybe_result|call tl_string_eq
+contains|maybe_result|tl_string_concat:
+contains|maybe_result|call tl_string_concat
+
+entry|nested_eval|tests/integration/nested_eval.tl|assembly|has-main
+contains|nested_eval|_tl_eval_sexpr:
+contains|nested_eval|_tl_sexpr_head:
+contains|nested_eval|_tl_sexpr_tail:
+contains|nested_eval|match_nested
+contains|nested_eval|call _tl_eval_sexpr
+contains|nested_eval|call .L_tl_abort
+contains|nested_eval|call tl_string_eq
+
+entry|nullary_variant_call|tests/integration/nullary_variant_call.tl|assembly|any-main
+contains|nullary_variant_call|_tl_code:
+contains|nullary_variant_call|_tl_bias:
+contains|nullary_variant_call|call _tl_bias
+not|nullary_variant_call|call _tl_Red
+not|nullary_variant_call|call _tl_Green
+
+entry|sym_i64_env_driver|tests/integration/sym_i64_env.tl|assembly|has-main
+stage|sym_i64_env_driver|selfhost/sym_i64_env.tl|sym_i64_env_core.tl
+contains|sym_i64_env_driver|_tl_sym_i64_empty:
+contains|sym_i64_env_driver|_tl_sym_i64_bind:
+contains|sym_i64_env_driver|_tl_sym_i64_lookup:
+contains|sym_i64_env_driver|_tl_sym_i64_contains:
+contains|sym_i64_env_driver|call tl_alloc
+contains|sym_i64_env_driver|tl_string_eq:
+contains|sym_i64_env_driver|call tl_string_eq
+contains|sym_i64_env_driver|tl_substring:
+contains|sym_i64_env_driver|call tl_substring
+contains|sym_i64_env_driver|tl_string_concat:
+contains|sym_i64_env_driver|call tl_string_concat
+contains|sym_i64_env_driver|call .L_tl_abort
+min-count|sym_i64_env_driver|call _tl_sym_i64_lookup|2
+
+entry|ast|selfhost/ast.tl|assembly|one-main
+contains|ast|_tl_parse_expr:
+contains|ast|_tl_parse_binary:
+contains|ast|_tl_parse_let:
+contains|ast|_tl_parse_if:
+contains|ast|_tl_parse_while:
+contains|ast|_tl_parse_print:
+contains|ast|_tl_parse_set:
+contains|ast|_tl_parse_begin:
+contains|ast|_tl_parse_item:
+contains|ast|_tl_expr_score:
+contains|ast|_tl_item_score:
+contains|ast|_tl_read:
+contains|ast|_tl_lex:
+contains|ast|call _tl_parse_expr
+contains|ast|call _tl_read
+contains|ast|call _tl_lex
+contains|ast|ast: malformed expression
+contains|ast|ast: malformed let
+contains|ast|ast: expected define
+contains|ast|.string "(let ((x (* 2 3))) (+ x 1))"
+
+entry|compiler_ast_types|selfhost/compiler_ast_types.tl|assembly|one-main
+contains|compiler_ast_types|_tl_ast_type_tag:
+contains|compiler_ast_types|_tl_ast_expr_tag:
+contains|compiler_ast_types|_tl_ast_expr_unspan:
+contains|compiler_ast_types|_tl_ast_decl_tag:
+contains|compiler_ast_types|_tl_compiler_ast_smoke:
+contains|compiler_ast_types|.string "x"
+contains|compiler_ast_types|.string "main"
+
+entry|compiler_backend|selfhost/compiler_backend.tl|assembly|any-main
+contains|compiler_backend|_tl_compiler_backend_emit_source:
+contains|compiler_backend|_tl_compiler_backend_emit_program:
+contains|compiler_backend|_tl_compiler_backend_emit_function:
+contains|compiler_backend|_tl_compiler_backend_emit_instr:
+contains|compiler_backend|_tl_compiler_backend_emit_call_args:
+contains|compiler_backend|_tl_compiler_backend_target_arg_reg:
+contains|compiler_backend|_tl_compiler_backend_runtime_functions:
+contains|compiler_backend|_tl_compiler_backend_runtime_windows_alloc_functions:
+contains|compiler_backend|_tl_compiler_backend_self_test:
+contains|compiler_backend|_tl_lower_compiler_source:
+contains|compiler_backend|_tl_text_buf_append:
+contains|compiler_backend|backend: too many call args
+contains|compiler_backend|backend: unsupported global initializer
+contains|compiler_backend|.globl _start\n
+contains|compiler_backend|    call tl_alloc\n
+contains|compiler_backend|    call tl_region_mark\n
+contains|compiler_backend|.extern malloc\n
+contains|compiler_backend|tl: stdin failed
+contains|compiler_backend|backend: f64 values are not supported yet
+not|compiler_backend|backend: Windows runtime helpers not yet implemented (#648)
+
+entry|compiler_backend_smoke|selfhost/compiler_backend_smoke.tl|assembly|one-main
+contains|compiler_backend_smoke|_tl_compiler_backend_self_test:
+contains|compiler_backend_smoke|_tl_compiler_backend_emit_source:
+contains|compiler_backend_smoke|_tl_compiler_backend_asm_ok_question:
+contains|compiler_backend_smoke|_tl_lower_compiler_source:
+
+entry|compiler_backend_runtime_fixture|selfhost/compiler_backend_runtime_fixture.tl|assembly|any-main
+contains|compiler_backend_runtime_fixture|_tl_compiler_backend_runtime_fixture_emit:
+contains|compiler_backend_runtime_fixture|_tl_compiler_backend_runtime_helper_program:
+contains|compiler_backend_runtime_fixture|_tl_compiler_backend_runtime_helper_asm_ok_question:
+contains|compiler_backend_runtime_fixture|_tl_compiler_backend_emit_program:
+
+entry|compiler_driver|selfhost/compiler_driver.tl|assembly|one-main
+contains|compiler_driver|_tl_compiler_driver_compile_file:
+contains|compiler_driver|_tl_compiler_driver_emit_file:
+contains|compiler_driver|_tl_compiler_diagnostic_render:
+contains|compiler_driver|_tl_compiler_load_file:
+contains|compiler_driver|_tl_compiler_backend_emit_source:
+contains|compiler_driver|_tl_lower_compiler_source:
+contains|compiler_driver|_tl_parse_ast_source:
+contains|compiler_driver|_tl_optimize_program:
+contains|compiler_driver|compiler-driver: expected input and output paths
+contains|compiler_driver|compiler-load: cannot read import
+contains|compiler_driver|lower: unsupported expression
+
+entry|compiler_optimize|selfhost/compiler_optimize.tl|assembly|any-main
+contains|compiler_optimize|_tl_optimize_program:
+contains|compiler_optimize|_tl_optimize_function:
+contains|compiler_optimize|_tl_opt_fold_instrs:
+contains|compiler_optimize|_tl_compiler_optimize_self_test:
+contains|compiler_optimize|_tl_opt_dce_instrs:
+contains|compiler_optimize|_tl_opt_cse_instrs:
+contains|compiler_optimize|_tl_opt_copy_instrs:
+
+entry|compiler_optimize_smoke|selfhost/compiler_optimize_smoke.tl|assembly|one-main
+contains|compiler_optimize_smoke|_tl_compiler_optimize_self_test:
+
+entry|compile_cli|selfhost/compile.tl|assembly|one-main
+contains|compile_cli|_tl_compile_cli_config:
+contains|compile_cli|_tl_compile_cli_parse_options:
+contains|compile_cli|_tl_compile_cli_default_output:
+contains|compile_cli|_tl_compiler_driver_compile_file:
+contains|compile_cli|_tl_compiler_load_file:
+contains|compile_cli|compile: expected source path
+contains|compile_cli|compile: -o requires a value
+contains|compile_cli|--emit-ir
+contains|compile_cli| is not supported by the selfhost compile driver yet; use Rust typelisp compile
+
+entry|build_planner|selfhost/build.tl|assembly|any-main
+contains|build_planner|_tl_build_plan_config:
+contains|build_planner|_tl_build_plan_parse_options:
+contains|build_planner|_tl_build_plan_render:
+contains|build_planner|_tl_host_plan_netline:
+contains|build_planner|typelisp-host-plan v1\n
+contains|build_planner|build-source
+contains|build_planner|build: expected source path
+
+entry|run_planner|selfhost/run.tl|assembly|any-main
+contains|run_planner|_tl_run_plan_config:
+contains|run_planner|_tl_run_plan_parse_options:
+contains|run_planner|_tl_run_plan_runtime_args:
+contains|run_planner|_tl_run_plan_render:
+contains|run_planner|_tl_host_plan_netline:
+contains|run_planner|typelisp-host-plan v1\n
+contains|run_planner|run-source
+contains|run_planner|run: expected source path
+
+entry|compiler_ir_types|selfhost/compiler_ir_types.tl|assembly|any-main
+contains|compiler_ir_types|_tl_compiler_ir_summary_globals:
+contains|compiler_ir_types|_tl_compiler_ir_summary_functions:
+contains|compiler_ir_types|_tl_compiler_ir_program_summary:
+contains|compiler_ir_types|_tl_compiler_ir_function_list_instruction_count:
+
+entry|compiler_lower|selfhost/compiler_lower.tl|assembly|any-main
+contains|compiler_lower|_tl_lower_compiler_source:
+contains|compiler_lower|_tl_lower_compiler_program:
+contains|compiler_lower|_tl_lower_function:
+contains|compiler_lower|_tl_lower_expr:
+contains|compiler_lower|_tl_lower_with_region:
+contains|compiler_lower|_tl_compiler_lower_self_test:
+contains|compiler_lower|_tl_typecheck_compiler_program:
+contains|compiler_lower|_tl_parse_ast_source:
+contains|compiler_lower|lower: unsupported expression
+contains|compiler_lower|lower: only direct calls are supported
+contains|compiler_lower|tl_region_mark
+contains|compiler_lower|tl_region_reset
+contains|compiler_lower|(with-region r
+
+entry|compiler_lower_smoke|selfhost/compiler_lower_smoke.tl|assembly|one-main
+contains|compiler_lower_smoke|_tl_compiler_lower_self_test:
+contains|compiler_lower_smoke|_tl_compiler_lower_ok_summary_question:
+contains|compiler_lower_smoke|_tl_lower_compiler_source:
+contains|compiler_lower_smoke|_tl_compiler_ir_summary_score:
+
+entry|compiler_liveness|selfhost/compiler_liveness.tl|assembly|any-main
+contains|compiler_liveness|_tl_compiler_live_analyze_function:
+contains|compiler_liveness|_tl_compiler_live_block_use_def:
+contains|compiler_liveness|_tl_compiler_live_instr_uses:
+contains|compiler_liveness|_tl_compiler_live_after:
+contains|compiler_liveness|_tl_compiler_live_self_test:
+contains|compiler_liveness|liveness: smoke mismatch
+
+entry|compiler_liveness_smoke|selfhost/compiler_liveness_smoke.tl|assembly|one-main
+contains|compiler_liveness_smoke|_tl_compiler_live_self_test:
+contains|compiler_liveness_smoke|_tl_compiler_live_analyze_function:
+contains|compiler_liveness_smoke|_tl_compiler_live_straight_ok_question:
+
+entry|compiler_regalloc|selfhost/compiler_regalloc.tl|assembly|any-main
+contains|compiler_regalloc|_tl_compiler_reg_plan_function:
+contains|compiler_regalloc|_tl_compiler_reg_live_intervals:
+contains|compiler_regalloc|_tl_compiler_reg_assign_candidates:
+contains|compiler_regalloc|_tl_compiler_regalloc_self_test:
+contains|compiler_regalloc|regalloc: smoke mismatch
+contains|compiler_regalloc|%r12
+contains|compiler_regalloc|%r15
+
+entry|compiler_regalloc_smoke|selfhost/compiler_regalloc_smoke.tl|assembly|one-main
+contains|compiler_regalloc_smoke|_tl_compiler_regalloc_self_test:
+contains|compiler_regalloc_smoke|_tl_compiler_reg_plan_function:
+contains|compiler_regalloc_smoke|_tl_compiler_reg_reuse_ok_question:
+
+entry|compiler_parse_core|selfhost/compiler_parse_core.tl|assembly|any-main
+contains|compiler_parse_core|_tl_compiler_parse_dispatch_env:
+contains|compiler_parse_core|_tl_parse_ast_type:
+contains|compiler_parse_core|_tl_parse_ast_expr:
+contains|compiler_parse_core|_tl_parse_ast_program:
+contains|compiler_parse_core|_tl_parse_ast_source:
+contains|compiler_parse_core|_tl_compiler_parse_smoke:
+contains|compiler_parse_core|_tl_read_form:
+contains|compiler_parse_core|_tl_lex:
+contains|compiler_parse_core|parse: malformed define
+contains|compiler_parse_core|parse: cond requires final else arm
+contains|compiler_parse_core|(import \"stdlib/test.tl\")
+exact-count|compiler_parse_core|call _tl_compiler_parse_dispatch_env|1
+
+entry|compiler_parse_smoke|selfhost/compiler_parse_smoke.tl|assembly|one-main
+contains|compiler_parse_smoke|_tl_compiler_parse_smoke:
+contains|compiler_parse_smoke|_tl_compiler_parse_smoke_score:
+contains|compiler_parse_smoke|_tl_parse_ast_source:
+
+entry|compiler_symbols|selfhost/compiler_symbols.tl|assembly|any-main
+contains|compiler_symbols|_tl_compiler_symbol_make_handle:
+contains|compiler_symbols|_tl_compiler_registry_make_handle:
+contains|compiler_symbols|_tl_build_compiler_registries:
+contains|compiler_symbols|_tl_build_compiler_symbols:
+contains|compiler_symbols|_tl_compiler_symbols_self_test:
+contains|compiler_symbols|_tl_parse_ast_source:
+contains|compiler_symbols|symbols: duplicate value declaration
+contains|compiler_symbols|symbols: duplicate type declaration
+
+entry|compiler_symbols_smoke|selfhost/compiler_symbols_smoke.tl|assembly|one-main
+contains|compiler_symbols_smoke|_tl_compiler_symbols_self_test:
+contains|compiler_symbols_smoke|_tl_build_compiler_symbols_from_source:
+contains|compiler_symbols_smoke|_tl_build_compiler_registries_from_source:
+
+entry|compiler_typecheck|selfhost/compiler_typecheck.tl|assembly|any-main
+contains|compiler_typecheck|_tl_tc_type_eq:
+contains|compiler_typecheck|_tl_tc_resolve_type:
+contains|compiler_typecheck|_tl_tc_expr:
+contains|compiler_typecheck|_tl_typecheck_compiler_program:
+contains|compiler_typecheck|_tl_typecheck_compiler_source:
+contains|compiler_typecheck|_tl_compiler_typecheck_self_test:
+contains|compiler_typecheck|typecheck: unbound name
+contains|compiler_typecheck|typecheck: region-tagged value cannot escape with-region 'r'
+contains|compiler_typecheck|(defstruct Box (s String))
+
+entry|compiler_typecheck_smoke|selfhost/compiler_typecheck_smoke.tl|assembly|one-main
+contains|compiler_typecheck_smoke|_tl_compiler_typecheck_self_test:
+contains|compiler_typecheck_smoke|_tl_compiler_typecheck_region_tests_ok_question:
+contains|compiler_typecheck_smoke|_tl_typecheck_compiler_source:
+
+entry|compiler_check_core|selfhost/compiler_check_core.tl|assembly|any-main
+contains|compiler_check_core|_tl_compiler_check_file:
+contains|compiler_check_core|_tl_compiler_check_source:
+contains|compiler_check_core|_tl_compiler_check_program:
+contains|compiler_check_core|_tl_compiler_check_self_test:
+contains|compiler_check_core|_tl_compiler_load_source:
+contains|compiler_check_core|selfhost/virtual_entry.tl
+contains|compiler_check_core|typecheck: return type mismatch
+
+entry|compiler_check_smoke|selfhost/compiler_check_smoke.tl|assembly|one-main
+contains|compiler_check_smoke|_tl_compiler_check_self_test:
+
+entry|selfhost_check|selfhost/check.tl|assembly|one-main
+contains|selfhost_check|_tl_selfhost_check_file:
+contains|selfhost_check|_tl_selfhost_check_extra_args_status:
+contains|selfhost_check|_tl_compiler_check_file:
+contains|selfhost_check|_tl_compiler_load_file:
+contains|selfhost_check|selfhost-check: expected input path
+contains|selfhost_check|selfhost-check: --stdlib-root is not supported yet
+
+entry|doc_driver|selfhost/doc.tl|assembly|one-main
+contains|doc_driver|_tl_doc_generate_file:
+contains|doc_driver|_tl_doc_test_file:
+contains|doc_driver|_tl_doc_render_markdown:
+contains|doc_driver|_tl_doc_extract_source:
+contains|doc_driver|_tl_format_lex:
+contains|doc_driver|.L_tl_read_file:
+contains|doc_driver|.L_tl_write_file:
+contains|doc_driver|Doc tests passed:
+contains|doc_driver|doc: expected input and output paths
+
+entry|doc_extract|selfhost/doc_extract.tl|assembly|any-main
+contains|doc_extract|_tl_doc_extract_source:
+contains|doc_extract|_tl_doc_extract_file:
+contains|doc_extract|_tl_doc_decl_info:
+contains|doc_extract|_tl_doc_extract_smoke:
+contains|doc_extract|_tl_format_lex:
+contains|doc_extract|doc-extract: module doc smoke mismatch
+contains|doc_extract|;;;; Module title
+contains|doc_extract|(define answer : i64 42)
+
+entry|doc_extract_smoke|selfhost/doc_extract_smoke.tl|assembly|one-main
+contains|doc_extract_smoke|_tl_doc_extract_smoke:
+contains|doc_extract_smoke|_tl_doc_extract_source:
+contains|doc_extract_smoke|_tl_format_lex:
+
+entry|doc_render|selfhost/doc_render.tl|assembly|any-main
+contains|doc_render|_tl_doc_render_markdown:
+contains|doc_render|_tl_doc_render_escape_markdown:
+contains|doc_render|_tl_doc_render_anchor:
+contains|doc_render|_tl_doc_render_smoke:
+contains|doc_render|# TypeLisp Documentation
+contains|doc_render|Kind: defenum
+contains|doc_render|doc-render: markdown smoke mismatch
+
+entry|doc_render_smoke|selfhost/doc_render_smoke.tl|assembly|one-main
+contains|doc_render_smoke|_tl_doc_render_smoke:
+contains|doc_render_smoke|_tl_doc_render_markdown:
+contains|doc_render_smoke|_tl_doc_extract_source:
+
+entry|doc_test|selfhost/doc_test.tl|assembly|any-main
+contains|doc_test|_tl_doc_test_extract_source:
+contains|doc_test|_tl_doc_test_parse_fence_info:
+contains|doc_test|_tl_doc_test_smoke:
+contains|doc_test|_tl_doc_test_run_source:
+contains|doc_test|_tl_doc_test_smoke_all:
+contains|doc_test|;;;; ```typelisp
+contains|doc_test|unsupported TypeLisp doctest option
+contains|doc_test|expected a compile error, but the example checked successfully
+
+entry|doc_test_smoke|selfhost/doc_test_smoke.tl|assembly|one-main
+contains|doc_test_smoke|_tl_doc_test_smoke_all:
+contains|doc_test_smoke|_tl_doc_test_smoke:
+contains|doc_test_smoke|_tl_doc_test_run_smoke:
+
+entry|emit|selfhost/emit.tl|assembly|one-main
+contains|emit|_tl_emit_int:
+contains|emit|_tl_emit_expr:
+contains|emit|_tl_emit_program:
+contains|emit|_tl_sym_i64_bind:
+contains|emit|_tl_collect_strings:
+contains|emit|tl_string_concat:
+contains|emit|tl_print_str:
+contains|emit|call _tl_emit_expr_in
+contains|emit|call _tl_emit_program_with_defs
+contains|emit|    .section .rodata\n
+contains|emit|emit: missing string literal
+contains|emit|emit: too many call args
+
+entry|eval|selfhost/eval.tl|assembly|one-main
+contains|eval|_tl_eval_sexpr:
+contains|eval|_tl_lookup:
+contains|eval|_tl_bind_args:
+contains|eval|_tl_apply_value:
+contains|eval|_tl_print_value:
+contains|eval|_tl_eval_list:
+contains|eval|_tl_read_form:
+contains|eval|_tl_lex:
+contains|eval|call _tl_eval_let_bindings
+contains|eval|call _tl_apply_value
+contains|eval|call _tl_print_list_tail
+contains|eval|tl_string_concat:
+contains|eval|tl_substring:
+contains|eval|tl_int_to_string:
+contains|eval|.string "lambda"
+contains|eval|.string "list"
+contains|eval|eval: unbound variable
+contains|eval|call .L_tl_abort
+min-count|eval|call _tl_eval_seq|2
+min-count|eval|call _tl_print_value|2
+min-count|eval|call _tl_eval_list|2
+not|eval|_tl_sexpr_sym:
+not|eval|_tl_seq:
+not|eval|.string "#<pair>"
+
+entry|format_doc|selfhost/format_doc.tl|assembly|any-main
+contains|format_doc|_tl_doc_empty:
+contains|format_doc|_tl_doc_text:
+contains|format_doc|_tl_doc_append:
+contains|format_doc|_tl_render_doc:
+contains|format_doc|_tl_format_doc_self_test:
+contains|format_doc|tl_string_concat:
+contains|format_doc|.string "alpha beta"
+
+entry|format_cst|selfhost/format_cst.tl|assembly|any-main
+contains|format_cst|_tl_format_lex:
+contains|format_cst|_tl_format_token_tag:
+contains|format_cst|_tl_fmt_parse_seq:
+contains|format_cst|_tl_parse_format_source:
+contains|format_cst|_tl_format_cst_self_test:
+contains|format_cst|format lexer: unexpected character
+contains|format_cst|format cst: unclosed delimiter
+contains|format_cst|; header comment
+
+entry|format_core|selfhost/format_core.tl|assembly|any-main
+contains|format_core|_tl_format_core_delimited_doc:
+contains|format_core|_tl_format_core_cst_doc:
+contains|format_core|_tl_format_core_render_source_width:
+contains|format_core|_tl_format_core_self_test:
+contains|format_core|_tl_parse_format_source:
+contains|format_core|_tl_render_doc_width:
+contains|format_core|.string "name"
+
+entry|format_rules|selfhost/format_rules.tl|assembly|any-main
+contains|format_rules|_tl_format_rules_define_doc:
+contains|format_rules|_tl_format_rules_special_list_doc:
+contains|format_rules|_tl_format_rules_render_source_width:
+contains|format_rules|_tl_format_rules_self_test:
+contains|format_rules|.string "define"
+contains|format_rules|.string "match"
+
+entry|format_driver|selfhost/format.tl|assembly|any-main
+contains|format_driver|_tl_fmt_format_file:
+contains|format_driver|_tl_fmt_files:
+contains|format_driver|_tl_format_rules_render_source_width:
+contains|format_driver|.L_tl_write_file:
+contains|format_driver|.L_tl_read_file:
+contains|format_driver|.string "fmt: would reformat "
+
+entry|frontend_tools|selfhost/frontend_tools.tl|assembly|one-main
+contains|frontend_tools|_tl_front_tokenize_file:
+contains|frontend_tools|_tl_front_parse_file:
+contains|frontend_tools|_tl_front_scan_token:
+contains|frontend_tools|_tl_front_program_render:
+contains|frontend_tools|_tl_parse_ast_source_diagnostic:
+contains|frontend_tools|_tl_lex_spanned_result:
+
+entry|lexer|selfhost/lexer.tl|assembly|one-main
+contains|lexer|_tl_lex_result:
+contains|lexer|_tl_lex_spanned_result:
+contains|lexer|_tl_lex:
+contains|lexer|_tl_scan_number_end:
+contains|lexer|_tl_lexer_recoverable_error_ok_question:
+contains|lexer|_tl_token_tag:
+contains|lexer|_tl_token_float:
+contains|lexer|call tl_alloc
+contains|lexer|call tl_substring
+contains|lexer|call tl_string_to_int
+contains|lexer|call tl_oob_abort
+contains|lexer|call .L_tl_abort
+contains|lexer|lexer: unterminated string literal
+contains|lexer|(% n 16)
+contains|lexer|3.14
+
+entry|lsp_frame|selfhost/lsp_frame.tl|assembly|one-main
+contains|lsp_frame|_tl_lsp_frame_read_message:
+contains|lsp_frame|_tl_lsp_frame_write_body:
+contains|lsp_frame|_tl_lsp_frame_parse_content_length:
+contains|lsp_frame|_tl_lsp_frame_run:
+contains|lsp_frame|Content-Length:
+contains|lsp_frame|lsp: missing Content-Length
+contains|lsp_frame|.L_tl_read_stdin_line:
+contains|lsp_frame|.L_tl_flush_stdout:
+
+entry|parse|selfhost/parse.tl|assembly|one-main
+contains|parse|_tl_parse_dispatch_env:
+contains|parse|_tl_parse:
+contains|parse|_tl_parse_with_dispatch:
+contains|parse|_tl_parse_if:
+contains|parse|_tl_lex:
+contains|parse|_tl_read:
+contains|parse|_tl_emit_program:
+contains|parse|tl_string_concat:
+contains|parse|call _tl_lex
+contains|parse|call _tl_read
+contains|parse|call _tl_parse
+contains|parse|call _tl_emit_program
+contains|parse|.string "(let ((x 5)) (if (<= x 5) 1 0))"
+contains|parse|parse: malformed begin
+contains|parse|emit: empty begin
+exact-count|parse|call _tl_parse_dispatch_env|4
+
+entry|parse_core|selfhost/parse_core.tl|assembly|any-main
+contains|parse_core|_tl_parse_dispatch_env:
+contains|parse_core|_tl_parse:
+contains|parse_core|_tl_parse_with_dispatch:
+contains|parse_core|_tl_parse_program:
+contains|parse_core|_tl_parse_program_forms:
+contains|parse_core|_tl_emit_program_with_defs:
+contains|parse_core|_tl_read_form:
+contains|parse_core|_tl_lex:
+contains|parse_core|parse: malformed begin
+contains|parse_core|parse: malformed set!
+contains|parse_core|emit: empty begin
+exact-count|parse_core|call _tl_parse_dispatch_env|4
+
+entry|compile_smoke|selfhost/compile_smoke.tl|assembly|one-main
+contains|compile_smoke|call _tl_parse_program
+contains|compile_smoke|call _tl_read_form
+contains|compile_smoke|call _tl_lex
+contains|compile_smoke|call _tl_emit_program_with_defs
+contains|compile_smoke|call .L_tl_arg_count
+contains|compile_smoke|call .L_tl_read_file
+contains|compile_smoke|call .L_tl_write_file
+contains|compile_smoke|compile-smoke: expected input and output paths
+contains|compile_smoke|parse: malformed while
+contains|compile_smoke|emit: empty begin
+exact-count|compile_smoke|call _tl_parse_dispatch_env|4
+
+entry|reader|selfhost/reader.tl|assembly|one-main
+contains|reader|_tl_read:
+contains|reader|_tl_read_result:
+contains|reader|_tl_read_form:
+contains|reader|_tl_read_list_result:
+contains|reader|_tl_lex:
+contains|reader|_tl_token_tag:
+contains|reader|_tl_token_str:
+contains|reader|call _tl_lex
+contains|reader|call _tl_read
+contains|reader|call _tl_sum_ints
+contains|reader|call _tl_read_result
+contains|reader|call .L_tl_abort
+contains|reader|reader: unexpected ')'
+contains|reader|reader: unterminated list (missing ')')
+
+entry|repl|selfhost/repl.tl|assembly|one-main
+contains|repl|_tl_repl_banner:
+contains|repl|_tl_repl_help_text:
+contains|repl|_tl_repl_type_command:
+contains|repl|_tl_repl_handle_line:
+contains|repl|_tl_repl_loop:
+contains|repl|.L_tl_read_stdin_line
+contains|repl|.L_tl_stdin_eof
+contains|repl|.L_tl_flush_stdout
+
+entry|text_buf|selfhost/text_buf.tl|assembly|any-main
+contains|text_buf|_tl_text_buf_empty:
+contains|text_buf|_tl_text_buf_append:
+contains|text_buf|_tl_text_chunk_list_concat:
+contains|text_buf|_tl_text_buf_append_buffer:
+contains|text_buf|_tl_text_buf_render:
+
+entry|text_buf_driver|tests/integration/text_buf.tl|assembly|any-main
+stage|text_buf_driver|selfhost/text_buf.tl|text_buf_core.tl
+contains|text_buf_driver|call _tl_text_buf_render
+contains|text_buf_driver|call _tl_text_buf_append_buffer
+contains|text_buf_driver|tl_string_concat:
+
+decision|selfhost/ast_types.tl|legacy AST type aliases are compiled via ast.tl imports.
+decision|selfhost/compiler_backend_stack_args_fixture.tl|fixture is exercised by backend self-tests and runtime/platform runners.
+decision|selfhost/compiler_ctfe.tl|currently imported by typecheck/check paths; add a direct entry when standalone CTFE self-tests land.
+decision|selfhost/compiler_diagnostic.tl|diagnostic renderer is compiled through compiler_driver and check entries.
+decision|selfhost/compiler_driver_core.tl|driver helpers are compiled through compiler_driver, compile, build, and run entries.
+decision|selfhost/compiler_load.tl|import loader is compiled through compiler_driver, check, compile, and doc-test entries.
+decision|selfhost/emit_core.tl|emitter core is compiled through emit, parse, parse_core, and compile_smoke entries.
+decision|selfhost/format_tokens.tl|formatter token model is compiled through format_cst/core/rules/driver entries.
+decision|selfhost/host_plan.tl|host-plan helpers are compiled through build and run planner entries.
+decision|selfhost/lex.tl|main-less lexer core is compiled through lexer, reader, eval, parse, and compile_smoke entries.
+decision|selfhost/lex_span_smoke.tl|span smoke behavior is compiled through lexer self-tests.
+decision|selfhost/read.tl|main-less reader core is compiled through reader, eval, parse, and compile_smoke entries.
+decision|selfhost/token.tl|token model is compiled through lexer, reader, eval, parse, and compile_smoke entries.

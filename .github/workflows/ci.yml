@@ -183,6 +183,9 @@ jobs:
       - name: Verify stdlib modules
         run: TYPELISP_BIN=./target/release/typelisp ./scripts/verify-stdlib.sh
 
+      - name: Verify selfhost compile manifest
+        run: TYPELISP_BIN=./target/release/typelisp ./scripts/verify-selfhost-compile-manifest.sh
+
       - name: Check TypeLisp source formatting
         run: TYPELISP_BIN=./target/release/typelisp ./scripts/check-tl-format.sh
 

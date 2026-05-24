@@ -57,6 +57,16 @@ driver. They remain useful while Cargo is still the required CI path, but every
 Rust test file must have an explicit no-Rust replacement entry in
 [`RUST_TEST_COVERAGE.md`](RUST_TEST_COVERAGE.md).
 
+The no-Rust replacement for this compile-only layer is
+[`COMPILE_MANIFEST.txt`](COMPILE_MANIFEST.txt), executed by
+[`scripts/verify-selfhost-compile-manifest.sh`](../scripts/verify-selfhost-compile-manifest.sh).
+Each manifest entry names a source file, the expected assembly output mode, the
+`main` policy, and fixed string assertions for expected symbols, literals, or
+absent legacy markers. The runner always rejects generated `# TODO` markers.
+Root `selfhost/*.tl` files that are imported or covered indirectly must still
+appear as `decision` records, so adding a new selfhost module requires an
+explicit coverage decision.
+
 Add or update one of these tests when adding a new compiler module, smoke
 driver, or required import only as a temporary bridge. The same PR must update
 the replacement map with the planned selfhost/script coverage or link a
@@ -124,6 +134,7 @@ cargo test --test tl_compiler_parse_compile
 cargo test --test tl_compiler_lower_compile
 cargo test --test tl_compiler_backend_compile
 TYPELISP_BIN=./target/debug/typelisp ./scripts/check-tl-format.sh
+TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-selfhost-compile-manifest.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-selfhost.sh
 ```
 

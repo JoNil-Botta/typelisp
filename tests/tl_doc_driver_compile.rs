@@ -60,6 +60,9 @@ fn doc_driver_tl_compiles_to_assembly() {
 
     for sym in [
         "_tl_doc_generate_file:",
+        "_tl_doc_test_file:",
+        "_tl_doc_test_run_file:",
+        "_tl_doc_test_run_report_render:",
         "_tl_doc_render_markdown:",
         "_tl_doc_extract_source:",
         "_tl_format_lex:",
@@ -72,6 +75,9 @@ fn doc_driver_tl_compiles_to_assembly() {
         ".L_tl_arg:",
         ".L_tl_read_file:",
         ".L_tl_write_file:",
+        "Doc tests passed: ",
+        "doc tests failed: ",
+        "doc: expected --test input path",
         "doc: expected input and output paths",
     ] {
         assert!(

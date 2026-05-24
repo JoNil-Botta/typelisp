@@ -45,6 +45,24 @@ const TL_EMIT_PROGRAM_ASM: &str = concat!(
     "    syscall\n",
 );
 
+const SELFHOST_DOC_DRIVER_DEPS: &[&str] = &[
+    "doc_render.tl",
+    "doc_extract.tl",
+    "format_tokens.tl",
+    "doc_test.tl",
+    "compiler_check_core.tl",
+    "compiler_load.tl",
+    "compiler_typecheck.tl",
+    "compiler_symbols.tl",
+    "compiler_parse_core.tl",
+    "compiler_ast_types.tl",
+    "compiler_diagnostic.tl",
+    "sym_i64_env.tl",
+    "read.tl",
+    "lex.tl",
+    "token.tl",
+];
+
 #[test]
 fn type_lisp_programs_compile_link_and_run() {
     let cases = [
@@ -4066,7 +4084,7 @@ fn selfhost_doc_driver_writes_single_file_markdown() {
         &manifest_dir,
         &selfhost_dir,
         &work_dir,
-        &["doc_render.tl", "doc_extract.tl", "format_tokens.tl"],
+        SELFHOST_DOC_DRIVER_DEPS,
     );
 
     let input_path = work_dir.join("fixture.tl");
@@ -4175,6 +4193,107 @@ fn selfhost_doc_driver_writes_single_file_markdown() {
         invalid_stderr.contains("doc: expected input and output paths"),
         "doc driver invalid-args stderr differed:\n{}",
         invalid_stderr
+    );
+}
+
+#[test]
+fn selfhost_doc_driver_runs_doctests() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let selfhost_dir = manifest_dir.join("selfhost");
+    let work_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("selfhost-doc-driver-test-mode");
+    fs::create_dir_all(&work_dir).expect("create selfhost doc driver test work dir");
+
+    let driver_path = work_dir.join("doc.tl");
+    fs::copy(selfhost_dir.join("doc.tl"), &driver_path).expect("copy doc.tl to work dir");
+    copy_case_deps(
+        &manifest_dir,
+        &selfhost_dir,
+        &work_dir,
+        SELFHOST_DOC_DRIVER_DEPS,
+    );
+
+    let passing_path = work_dir.join("passing_docs.tl");
+    fs::write(
+        &passing_path,
+        concat!(
+            ";;;; Passing module docs.\n",
+            ";;;; ```typelisp\n",
+            ";;;; (define (main) : i64 42)\n",
+            ";;;; ```\n",
+            "\n",
+            ";;; Expected compile error.\n",
+            ";;; ```tl expect-error\n",
+            ";;; (define (bad) : i64 true)\n",
+            ";;; ```\n",
+            "(define documented : i64 1)\n",
+        ),
+    )
+    .expect("write passing doctest fixture");
+
+    let pass = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&driver_path)
+        .arg("--")
+        .arg("--test")
+        .arg(&passing_path)
+        .output()
+        .expect("run selfhost doc driver doctests");
+
+    let pass_stdout = String::from_utf8_lossy(&pass.stdout);
+    let pass_stderr = String::from_utf8_lossy(&pass.stderr);
+    assert_eq!(
+        pass.status.code(),
+        Some(0),
+        "doc driver doctest pass run exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        pass_stdout,
+        pass_stderr,
+    );
+    assert_eq!(pass_stdout, "Doc tests passed: 2 example(s)\n");
+    assert_eq!(pass_stderr, "");
+
+    let failing_path = work_dir.join("failing_docs.tl");
+    fs::write(
+        &failing_path,
+        concat!(
+            ";;;; Failing module docs.\n",
+            ";;;; ```typelisp\n",
+            ";;;; (define (bad) : i64 true)\n",
+            ";;;; ```\n",
+        ),
+    )
+    .expect("write failing doctest fixture");
+
+    let fail = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&driver_path)
+        .arg("--")
+        .arg("--test")
+        .arg(&failing_path)
+        .output()
+        .expect("run failing selfhost doc driver doctests");
+
+    let fail_stdout = String::from_utf8_lossy(&fail.stdout);
+    let fail_stderr = String::from_utf8_lossy(&fail.stderr);
+    assert_eq!(
+        fail.status.code(),
+        Some(1),
+        "doc driver doctest fail run exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        fail_stdout,
+        fail_stderr,
+    );
+    assert_eq!(fail_stdout, "");
+    assert!(
+        fail_stderr.contains("doc tests failed: 1 failure(s) across 1 example(s)"),
+        "doc driver doctest failure summary differed:\n{}",
+        fail_stderr
+    );
+    assert!(
+        fail_stderr.contains("return type mismatch"),
+        "doc driver doctest failure did not include diagnostic:\n{}",
+        fail_stderr
     );
 }
 

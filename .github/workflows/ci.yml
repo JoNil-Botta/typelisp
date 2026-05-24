@@ -177,6 +177,9 @@ jobs:
           fi
           echo "Correctly detected type error"
 
+      - name: Verify integration corpus
+        run: TYPELISP_BIN=./target/release/typelisp ./scripts/verify-integration.sh
+
       - name: Compile and verify all examples
         run: TYPELISP_BIN=./target/release/typelisp ./scripts/verify-examples.sh
 

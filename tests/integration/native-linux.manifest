@@ -1,0 +1,67 @@
+# name|exit|stdout-printf-escapes|args|deps
+# deps are space-separated paths rooted at tests/integration unless prefixed
+# with stdlib/.
+aggregate_globals|42|||
+argv|7|alpha\n|alpha beta|
+arithmetic|47|||
+calc|14|||token.tl
+comptime_scalar|3|||
+cond|42|||
+control_flow|15|||
+enum_match|42|||
+enum_string_payload|5|||
+f32_scalar|42|||
+factorial|120|||
+fibonacci|13|||
+fixed_array|42|||
+format_core_integration|42|||format_core.tl format_cst.tl format_tokens.tl format_doc.tl
+format_cst_integration|42|||format_cst.tl format_tokens.tl
+format_doc_integration|42|||format_doc.tl
+format_rules_integration|42|||format_rules.tl format_cst.tl format_tokens.tl format_doc.tl
+function_pointer_values|42|||
+functions|32|||
+global_initializer|120|||
+hello|42|||
+lambda_aggregate_returns|42|||
+lambda_capture_aggregate|42|||
+lambda_capture_fixed_array|42|||
+lambda_capture_fixed_array_aggregate|42|||
+lambda_capture_nested_aggregate|42|||
+lambda_capture_scalar|42|||
+lambda_capture_struct_enum|42|||
+lambda_capture_tuple|42|||
+lambda_lift|42|||
+lexer|12|||
+many_args|36|||
+maybe_result|65|||
+modules_main|30|||modules_helper.tl
+narrow_div_mod|30|||
+nested_eval|7|||
+nullary_variant_call|42|||
+overflow_casts|0|||
+parser|14|||
+print|0|42\nfalse\n||
+print_char|0|A\n||
+print_string|0|hello\nworld\n||
+register_scalar_homes|42|||
+spmd_foreach|42|||
+spmd_reduce_scalar|42|||
+stdlib_io|42|||stdlib/io.tl
+stdlib_json|42|||stdlib/json.tl
+stdlib_string|42|hello\174\nhello\174\nhello\174\nfound\n\174empty-left\n\174empty-right\n\174all-space\ncontains\nmissing\nhippo\nabx\n||stdlib/string.tl
+stdlib_test|42|||stdlib/test.tl
+string_append|0|foobar\n||
+string_eq|0|true\nfalse\nfalse\ntrue\n||
+string_length|5|||
+string_match|42|||
+substring|33|||
+sym_i64_env|0|PASS: empty-miss\nPASS: single-hit-contains\nPASS: single-hit-value\nPASS: single-miss\nPASS: shadow-newest\nPASS: outer-preserved-a\nPASS: outer-no-b\nPASS: inner-sees-a\nPASS: inner-sees-b\nPASS: substring-key-hit\nPASS: append-key-hit\nPASS: chain-x\nPASS: chain-y\nPASS: chain-z\nAll sym-i64-env tests passed.\n||sym_i64_env_core.tl
+tail_self_loop|42|||
+text_buf|0|left-right\n||text_buf_core.tl
+tl_alloc|0|||
+tree|3|||
+tuple_values|42|||
+unit_functions|7|||
+unit_main|0|||
+with_region_builtin_alloc|2|||
+with_region_loop|42|||

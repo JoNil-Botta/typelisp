@@ -1030,6 +1030,32 @@
                 [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
             [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
         [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprSpmdReduce op index index-ty start end init value)
+      (match (spec-rewrite-expr start templates state)
+        [(OkSpecExpr rewritten-start start-state)
+          (match (spec-rewrite-expr end templates start-state)
+            [(OkSpecExpr rewritten-end end-state)
+              (match (spec-rewrite-expr init templates end-state)
+                [(OkSpecExpr rewritten-init init-state)
+                  (match (spec-rewrite-expr
+                    value
+                    (spec-template-list-remove-name templates index)
+                    init-state)
+                    [(OkSpecExpr rewritten-value value-state)
+                      (OkSpecExpr
+                        (AstExprSpmdReduce
+                          op
+                          index
+                          index-ty
+                          rewritten-start
+                          rewritten-end
+                          rewritten-init
+                          rewritten-value)
+                        value-state)]
+                    [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+                [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+            [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
     [(AstExprStructGet receiver field)
       (match (spec-rewrite-expr receiver templates state)
         [(OkSpecExpr rewritten state2)
@@ -1219,6 +1245,30 @@
                 [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
             [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
         [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprSpmdReduce op index index-ty start end init value)
+      (match (spec-substitute-values-expr start subs)
+        [(OkSpecSubExpr rewritten-start)
+          (match (spec-substitute-values-expr end subs)
+            [(OkSpecSubExpr rewritten-end)
+              (match (spec-substitute-values-expr init subs)
+                [(OkSpecSubExpr rewritten-init)
+                  (match (spec-substitute-values-expr
+                    value
+                    (spec-value-subst-remove-name subs index))
+                    [(OkSpecSubExpr rewritten-value)
+                      (OkSpecSubExpr
+                        (AstExprSpmdReduce
+                          op
+                          index
+                          index-ty
+                          rewritten-start
+                          rewritten-end
+                          rewritten-init
+                          rewritten-value))]
+                    [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+                [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
     [(AstExprStructGet receiver field)
       (match (spec-substitute-values-expr receiver subs)
         [(OkSpecSubExpr rewritten)
@@ -1354,6 +1404,30 @@
                       rewritten-start
                       rewritten-end
                       rewritten-body))]
+                [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprSpmdReduce op index index-ty start end init value)
+      (match (spec-substitute-types-expr start subs)
+        [(OkSpecSubExpr rewritten-start)
+          (match (spec-substitute-types-expr end subs)
+            [(OkSpecSubExpr rewritten-end)
+              (match (spec-substitute-types-expr init subs)
+                [(OkSpecSubExpr rewritten-init)
+                  (match (spec-substitute-types-expr
+                    value
+                    (spec-type-subst-remove-name subs index))
+                    [(OkSpecSubExpr rewritten-value)
+                      (OkSpecSubExpr
+                        (AstExprSpmdReduce
+                          op
+                          index
+                          (spec-substitute-type index-ty subs)
+                          rewritten-start
+                          rewritten-end
+                          rewritten-init
+                          rewritten-value))]
+                    [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
                 [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
             [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
         [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]

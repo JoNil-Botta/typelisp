@@ -47,6 +47,13 @@
   (AstUnNot)
   (AstUnBitNot))
 
+(defenum AstReduceOp
+  (AstReduceSum)
+  (AstReduceMin)
+  (AstReduceMax)
+  (AstReduceAll)
+  (AstReduceAny))
+
 (defenum AstType
   (AstTyI64)
   (AstTyI32)
@@ -151,6 +158,7 @@
   (AstExprCast AstExpr AstType)
   (AstExprMatch AstExpr AstMatchArmList)
   (AstExprForeach String AstType AstExpr AstExpr AstExpr)
+  (AstExprSpmdReduce AstReduceOp String AstType AstExpr AstExpr AstExpr AstExpr)
   (AstExprStructGet AstExpr String)
   (AstExprWithRegion String AstExprList)
   ;; Compile-time-only type value literal: `(type T)`.
@@ -170,7 +178,8 @@
   (AstDeclDefEnum String AstVariantDefList)
   (AstDeclDefStruct String AstFieldDefList)
   (AstDeclImport String)
-  (AstDeclTest String AstExpr AstSourceSpan))
+  (AstDeclTest String AstExpr AstSourceSpan)
+  (AstDeclComptimeDecl AstDecl))
 
 (defenum AstDeclList
   (AstDeclNil)
@@ -237,7 +246,8 @@
     [(AstExprStructGet _ _) 24]
     [(AstExprWithRegion _ _) 25]
     [(AstExprTypeLiteral _) 26]
-    [(AstExprComptime _) 27]))
+    [(AstExprComptime _) 27]
+    [(AstExprSpmdReduce _ _ _ _ _ _ _) 28]))
 
 (define (ast-expr-unspan [expr : AstExpr]) : AstExpr
   (match expr
@@ -252,7 +262,8 @@
     [(AstDeclDefEnum _ _) 4]
     [(AstDeclDefStruct _ _) 5]
     [(AstDeclImport _) 6]
-    [(AstDeclTest _ _ _) 7]))
+    [(AstDeclTest _ _ _) 7]
+    [(AstDeclComptimeDecl _) 8]))
 
 (define (compiler-ast-smoke) : i64
   (let (

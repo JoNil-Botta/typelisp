@@ -101,6 +101,12 @@ fn compiler_lower_tl_compiles_to_assembly() {
         "_tl_lower_construct_enum_with_handle:",
         "_tl_lower_construct_struct:",
         "_tl_lower_struct_get:",
+        "_tl_lower_load_at_offset:",
+        "_tl_lower_bind_variant_payloads:",
+        "_tl_lower_match_enum:",
+        "_tl_lower_match_enum_arms:",
+        "_tl_lower_match_variant_final:",
+        "_tl_lower_match_variant_arm:",
         "_tl_lower_args:",
         "_tl_lower_args_as:",
         "_tl_lower_let_bindings:",
@@ -113,6 +119,8 @@ fn compiler_lower_tl_compiles_to_assembly() {
         "_tl_compiler_lower_self_test:",
         // Scalar-match phi-shape self-test assertion (#602).
         "_tl_compiler_lower_match_phi_shape_ok_question:",
+        // Enum-match payload-load and phi-shape self-test assertion (#517).
+        "_tl_compiler_lower_enum_match_shape_ok_question:",
         "_tl_compiler_ir_program_summary:",
         "_tl_typecheck_compiler_program:",
         "_tl_parse_ast_source:",
@@ -133,6 +141,9 @@ fn compiler_lower_tl_compiles_to_assembly() {
         ".L_tl_flush_stdout",
         "(defstruct Point (x i64) (y i64))",
         "(struct-get p y)",
+        "(defenum Maybe (None) (Some i64) (Pair i64 i64))",
+        "[(Pair left _) left]",
+        "lower: unsupported enum payload pattern",
     ] {
         assert_message(&asm, message, "compiler_lower");
     }

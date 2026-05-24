@@ -2103,6 +2103,15 @@ tl_string_concat:
 (define (main) : i64
   (get-y (make-point 20 22)))")
 
+(define (compiler-backend-enum-match-source) : String
+  "(defenum Maybe (None) (Some i64))
+(define (score [m : Maybe]) : i64
+  (match m
+    [None 0]
+    [(Some v) v]))
+(define (main) : i64
+  (score (Some 42)))")
+
 (define (compiler-backend-asm-ok? [asm : String]) : bool
   (and
     (compiler-backend-string-contains? asm ".data\n")
@@ -2203,6 +2212,24 @@ tl_string_concat:
                         "    call _tl_Pair\n")))))))))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-enum-match-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-enum-match-source))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "_tl_score:\n")
+        (and
+          (compiler-backend-string-contains? asm ".L_tl_score_match_arm.")
+          (and
+            (compiler-backend-string-contains? asm "    sete %al\n")
+            (and
+              (compiler-backend-string-contains? asm "    movq (%r10), %rax\n")
+              (and
+                (not
+                  (compiler-backend-string-contains? asm "    call _tl_None\n"))
+                (not
+                  (compiler-backend-string-contains? asm "    call _tl_Some\n")))))))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-deterministic-ok? [src : String]) : bool
   (match (compiler-backend-emit-source src)
     [(OkCompilerBackend first)
@@ -2263,14 +2290,16 @@ tl_string_concat:
           (and
             (compiler-backend-aggregate-ok?)
             (and
-              (compiler-backend-error-ok?
-                (compiler-backend-too-many-call-source)
-                "backend: too many call args")
+              (compiler-backend-enum-match-ok?)
               (and
-                (compiler-backend-runtime-helper-asm-ok?)
+                (compiler-backend-error-ok?
+                  (compiler-backend-too-many-call-source)
+                  "backend: too many call args")
                 (and
-                  (compiler-backend-user-helper-name-ok?)
-                  (compiler-backend-runtime-coexist-ok?)))))))))
+                  (compiler-backend-runtime-helper-asm-ok?)
+                  (and
+                    (compiler-backend-user-helper-name-ok?)
+                    (compiler-backend-runtime-coexist-ok?))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

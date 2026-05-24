@@ -3,6 +3,7 @@ use crate::diagnostic::Diagnostic;
 use crate::lexer::{Lexer, Token};
 use crate::span::Span;
 use crate::types::Type;
+use std::collections::HashSet;
 use std::fmt;
 
 #[derive(Debug, Clone)]
@@ -204,13 +205,28 @@ impl<'a> Parser<'a> {
             self.advance()?;
             let name = self.expect_ident()?;
             let mut params = Vec::new();
+            let mut comptime_params = Vec::new();
+            let mut seen_params = HashSet::new();
 
             while self.current != Token::RParen {
                 self.expect(Token::LBracket)?;
+                let comptime = matches!(&self.current, Token::Ident(s) if s == "comptime");
+                if comptime {
+                    self.advance()?;
+                }
                 let param_name = self.expect_ident()?;
+                if !seen_params.insert(param_name.clone()) {
+                    return Err(ParseError {
+                        msg: format!("duplicate parameter name '{}'", param_name),
+                        span: self.span(),
+                    });
+                }
                 self.expect(Token::Colon)?;
                 let param_ty = self.parse_type()?;
                 self.expect(Token::RBracket)?;
+                if comptime {
+                    comptime_params.push(params.len());
+                }
                 params.push((param_name, param_ty));
             }
             self.advance()?; // consume RParen
@@ -228,6 +244,7 @@ impl<'a> Parser<'a> {
             Ok(Decl::DefFn {
                 name,
                 params,
+                comptime_params,
                 ret,
                 body,
             })
@@ -572,6 +589,12 @@ impl<'a> Parser<'a> {
                 let mut params = Vec::new();
                 while self.current != Token::RParen {
                     self.expect(Token::LBracket)?;
+                    if matches!(&self.current, Token::Ident(s) if s == "comptime") {
+                        return Err(ParseError {
+                            msg: "comptime parameters are only supported on top-level function definitions".into(),
+                            span: self.span(),
+                        });
+                    }
                     let name = self.expect_ident()?;
                     self.expect(Token::Colon)?;
                     let ty = self.parse_type()?;
@@ -1122,6 +1145,41 @@ mod tests {
             }
             _ => panic!("expected DefFn"),
         }
+    }
+
+    #[test]
+    fn test_parse_comptime_function_param() {
+        let prog = parse("(define (scale [comptime n : i64] [x : i64]) : i64 (* n x))").unwrap();
+        match &prog.decls[0] {
+            Decl::DefFn {
+                name,
+                params,
+                comptime_params,
+                ..
+            } => {
+                assert_eq!(name, "scale");
+                assert_eq!(params[0], ("n".into(), Type::I64));
+                assert_eq!(params[1], ("x".into(), Type::I64));
+                assert_eq!(comptime_params, &vec![0]);
+            }
+            other => panic!("expected DefFn, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_comptime_lambda_param_rejected() {
+        let err = parse("(define (main) : i64 ((lambda ([comptime n : i64]) n) 1))").unwrap_err();
+        assert!(
+            err.msg.contains("only supported on top-level function"),
+            "got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_parse_duplicate_function_param_rejected() {
+        let err = parse("(define (bad [x : i64] [x : i64]) : i64 x)").unwrap_err();
+        assert!(err.msg.contains("duplicate parameter name"), "got: {}", err);
     }
 
     #[test]

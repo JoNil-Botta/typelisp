@@ -1,6 +1,7 @@
 use crate::ast;
 use crate::ctfe::{CtfeEvaluator, CtfeValue};
 use crate::ir::*;
+use crate::specialize::specialize_program;
 use crate::types::{
     DYN_ARRAY_FAT_SIZE, DYN_ARRAY_LEN_OFFSET, DYN_ARRAY_PTR_OFFSET, STRING_FAT_SIZE,
     STRING_LEN_OFFSET, STRING_PTR_OFFSET, Type,
@@ -62,8 +63,10 @@ pub fn lower_program_with_spans_for_target(
     mode: LowerMode,
     region_reset_supported: bool,
 ) -> LoweredProgram {
+    let specialized =
+        specialize_program(prog).expect("comptime specialization should pass after typechecking");
     let mut lowerer = ProgramLowerer::new(mode, region_reset_supported);
-    lowerer.lower(prog)
+    lowerer.lower(&specialized)
 }
 
 struct ProgramLowerer {
@@ -303,6 +306,7 @@ impl ProgramLowerer {
                     params,
                     ret,
                     body,
+                    ..
                 } => {
                     let params: Vec<(String, Type)> = params
                         .iter()
@@ -6003,6 +6007,51 @@ mod tests {
     }
 
     #[test]
+    fn test_lower_comptime_params_generate_runtime_specializations() {
+        let prog = parse(
+            r#"
+            (define (scale [comptime n : i64] [x : i64]) : i64
+              (* n x))
+            (define (main) : i64
+              (+ (scale 2 10) (scale 2 20)))
+            "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        assert!(
+            ir.functions.iter().all(|f| f.name != "scale"),
+            "unspecialized template must not be lowered: {:#?}",
+            ir.functions
+        );
+        let generated: Vec<_> = ir
+            .functions
+            .iter()
+            .filter(|f| f.name.starts_with("__tl_specialized_scale_"))
+            .collect();
+        assert_eq!(generated.len(), 1, "{:#?}", ir.functions);
+        assert_eq!(
+            generated[0].params.len(),
+            1,
+            "comptime parameter should be omitted from runtime signature"
+        );
+        let generated_name = generated[0].name.as_str();
+        let main = ir
+            .functions
+            .iter()
+            .find(|f| f.name == "main")
+            .expect("main lowered");
+        let call_count = main
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .filter(
+                |instr| matches!(instr, Instruction::Call { func, .. } if func == generated_name),
+            )
+            .count();
+        assert_eq!(call_count, 2, "{main:#?}");
+    }
+
+    #[test]
     fn test_lower_function_pointer_param_call_is_indirect() {
         let prog = parse(
             r#"
@@ -6830,6 +6879,7 @@ mod tests {
             decls: vec![ast::Decl::DefFn {
                 name: "get_a".into(),
                 params: vec![("x".into(), Type::Char)],
+                comptime_params: vec![],
                 ret: Type::Char,
                 body: ast::Expr::Literal(ast::Literal::Char('a')),
             }],
@@ -8017,6 +8067,7 @@ mod tests {
             decls: vec![ast::Decl::DefFn {
                 name: "negate".into(),
                 params: vec![("x".into(), Type::I64)],
+                comptime_params: vec![],
                 ret: Type::I64,
                 body: ast::Expr::Unary {
                     op: ast::UnOp::Neg,
@@ -8041,6 +8092,7 @@ mod tests {
             decls: vec![ast::Decl::DefFn {
                 name: "invert".into(),
                 params: vec![("b".into(), Type::Bool)],
+                comptime_params: vec![],
                 ret: Type::Bool,
                 body: ast::Expr::Unary {
                     op: ast::UnOp::Not,
@@ -8224,6 +8276,7 @@ mod tests {
             decls: vec![ast::Decl::DefFn {
                 name: "use_global".into(),
                 params: vec![],
+                comptime_params: vec![],
                 ret: Type::I64,
                 body: ast::Expr::Var("unknown_global".into()),
             }],
@@ -9681,6 +9734,7 @@ mod tests {
             decls: vec![ast::Decl::DefFn {
                 name: "f".into(),
                 params: vec![("x".into(), Type::I32)],
+                comptime_params: vec![],
                 ret: Type::I32,
                 body: ast::Expr::Unary {
                     op: ast::UnOp::BitNot,

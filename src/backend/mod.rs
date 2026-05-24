@@ -8621,6 +8621,7 @@ mod tests {
             decls: vec![ast::Decl::DefFn {
                 name: "negf".into(),
                 params: vec![("x".into(), Type::F32)],
+                comptime_params: vec![],
                 ret: Type::F32,
                 body: ast::Expr::Unary {
                     op: ast::UnOp::Neg,
@@ -9442,6 +9443,24 @@ mod tests {
     }
 
     #[test]
+    fn test_compile_comptime_function_params_emit_specialized_symbols() {
+        let asm = compile_ok(
+            r#"
+            (define (scale [comptime n : i64] [x : i64]) : i64
+              (* n x))
+            (define (main) : i64
+              (+ (scale 2 10) (scale 3 20)))
+            "#,
+        );
+        assert!(!asm.contains("_tl_scale:"), "asm:\n{}", asm);
+        assert!(
+            asm.matches("_tl___tl_specialized_scale_").count() >= 2,
+            "asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
     fn test_compile_subtraction() {
         let asm = compile_ok("(define (sub [a : i64] [b : i64]) : i64 (- a b))");
         assert!(asm.contains("subq %rcx, %rax"), "asm:\n{}", asm);
@@ -9937,6 +9956,7 @@ mod tests {
             decls: vec![ast::Decl::DefFn {
                 name: "negf".into(),
                 params: vec![("x".into(), Type::F64)],
+                comptime_params: vec![],
                 ret: Type::F64,
                 body: ast::Expr::Unary {
                     op: ast::UnOp::Neg,

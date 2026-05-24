@@ -21,6 +21,7 @@ mod parser;
 mod repl;
 mod runtime;
 mod span;
+mod specialize;
 mod typechecker;
 mod types;
 

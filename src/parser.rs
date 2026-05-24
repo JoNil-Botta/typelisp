@@ -170,13 +170,18 @@ impl<'a> Parser<'a> {
                 self.advance()?;
                 self.parse_defstruct()
             }
+            Token::Ident(s) if s == "comptime-decl" => {
+                let span = self.span();
+                self.advance()?;
+                self.parse_comptime_decl(span)
+            }
             Token::Import => {
                 self.advance()?;
                 self.parse_import()
             }
             _ => Err(ParseError {
                 msg: format!(
-                    "expected define, extern, defenum, defstruct or import, got {:?}",
+                    "expected define, extern, defenum, defstruct, comptime-decl or import, got {:?}",
                     self.current
                 ),
                 span: self.span(),
@@ -290,6 +295,40 @@ impl<'a> Parser<'a> {
         };
         self.expect(Token::RParen)?;
         Ok(Decl::Import(path))
+    }
+
+    /// Parse `(comptime-decl (defstruct ...))` / `(comptime-decl (defenum ...))`.
+    /// The leading `(` and `comptime-decl` ident have already been consumed;
+    /// `generator_span` is the span of the `comptime-decl` keyword. This first
+    /// slice accepts exactly one literal `defstruct` or `defenum` template;
+    /// computed names, generated functions, and arbitrary CTFE payloads are
+    /// rejected here.
+    fn parse_comptime_decl(&mut self, generator_span: Span) -> Result<Decl, ParseError> {
+        self.expect(Token::LParen)?;
+        let template = match &self.current {
+            Token::Ident(s) if s == "defenum" => {
+                self.advance()?;
+                self.parse_defenum()?
+            }
+            Token::Ident(s) if s == "defstruct" => {
+                self.advance()?;
+                self.parse_defstruct()?
+            }
+            other => {
+                return Err(ParseError {
+                    msg: format!(
+                        "comptime-decl accepts only a defstruct or defenum template, got {:?}",
+                        other
+                    ),
+                    span: self.span(),
+                });
+            }
+        };
+        self.expect(Token::RParen)?; // close the (comptime-decl ...) wrapper
+        Ok(Decl::ComptimeDecl {
+            template: Box::new(template),
+            span: generator_span,
+        })
     }
 
     /// Parse `(defenum Name (Variant Ty...) (Variant2 ...) ...)`. The leading
@@ -651,6 +690,12 @@ impl<'a> Parser<'a> {
                 let ty = self.parse_type()?;
                 let end = self.expect_rparen_span()?;
                 (Expr::Cast { expr, ty }, end)
+            }
+            Token::Ident(s) if s == "comptime-decl" => {
+                return Err(ParseError {
+                    msg: "comptime-decl is only valid as a top-level declaration, not in expression position".into(),
+                    span: self.span(),
+                });
             }
             Token::Ident(s) if s == "comptime" => {
                 self.advance()?;
@@ -1729,6 +1774,53 @@ mod tests {
     #[test]
     fn test_parse_defstruct_empty_is_error() {
         assert!(parse("(defstruct Empty)").is_err());
+    }
+
+    #[test]
+    fn test_parse_comptime_decl_struct() {
+        let prog = parse("(comptime-decl (defstruct Point (x i64) (y i64)))").unwrap();
+        match &prog.decls[0] {
+            Decl::ComptimeDecl { template, .. } => match template.as_ref() {
+                Decl::DefStruct { name, fields } => {
+                    assert_eq!(name, "Point");
+                    assert_eq!(fields.len(), 2);
+                }
+                other => panic!("expected DefStruct template, got {:?}", other),
+            },
+            other => panic!("expected ComptimeDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_comptime_decl_enum() {
+        let prog = parse("(comptime-decl (defenum Maybe (Just i64) (Nothing)))").unwrap();
+        match &prog.decls[0] {
+            Decl::ComptimeDecl { template, .. } => match template.as_ref() {
+                Decl::DefEnum { name, variants } => {
+                    assert_eq!(name, "Maybe");
+                    assert_eq!(variants.len(), 2);
+                }
+                other => panic!("expected DefEnum template, got {:?}", other),
+            },
+            other => panic!("expected ComptimeDecl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_comptime_decl_rejects_non_type_payload() {
+        // Only defstruct/defenum templates are allowed in this slice.
+        assert!(parse("(comptime-decl (define x : i64 1))").is_err());
+        assert!(parse("(comptime-decl (define (f) : i64 1))").is_err());
+    }
+
+    #[test]
+    fn test_parse_comptime_decl_rejected_in_expression_position() {
+        let err = parse("(define (main) : i64 (comptime-decl (defstruct P (x i64))))").unwrap_err();
+        assert!(
+            err.msg.contains("only valid as a top-level declaration"),
+            "err: {}",
+            err.msg
+        );
     }
 
     #[test]

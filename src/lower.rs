@@ -58,6 +58,21 @@ pub fn lower_program_with_spans_for_mode(prog: &ast::Program, mode: LowerMode) -
 /// `(with-region ...)` only lowers to mark/reset when they are available;
 /// otherwise it falls back to running the body in the process-lifetime arena
 /// with no reset (SPEC §7.6).
+/// Replace each `(comptime-decl <template>)` wrapper with its bare inner
+/// `defstruct`/`defenum`, leaving all other declarations untouched. The lowerer
+/// works on the flattened stream so generated declarations are indistinguishable
+/// from parsed ones for codegen purposes.
+fn flatten_comptime_decls(prog: &ast::Program) -> ast::Program {
+    let mut decls = Vec::with_capacity(prog.decls.len());
+    for decl in &prog.decls {
+        match decl {
+            ast::Decl::ComptimeDecl { template, .. } => decls.push((**template).clone()),
+            other => decls.push(other.clone()),
+        }
+    }
+    ast::Program { decls }
+}
+
 pub fn lower_program_with_spans_for_target(
     prog: &ast::Program,
     mode: LowerMode,
@@ -232,6 +247,12 @@ impl ProgramLowerer {
     }
 
     fn lower(&mut self, prog: &ast::Program) -> LoweredProgram {
+        // Flatten declaration-position comptime templates to their bare inner
+        // `defstruct`/`defenum` so the passes below bind generated struct
+        // constructors and enum variants exactly like parsed declarations. The
+        // registries expand these via `ExpandedProgram::from_program` too.
+        let flattened = flatten_comptime_decls(prog);
+        let prog = &flattened;
         self.enums = ast::EnumRegistry::from_program(prog);
         self.structs = ast::StructRegistry::from_program(prog);
 
@@ -273,6 +294,8 @@ impl ProgramLowerer {
                 ast::Decl::DefEnum { .. } => {}
                 // Imports are stripped by the loader before lowering; defensive.
                 ast::Decl::Import(_) => {}
+                // Flattened away above; arm kept for exhaustiveness.
+                ast::Decl::ComptimeDecl { .. } => {}
             }
         }
 
@@ -329,6 +352,8 @@ impl ProgramLowerer {
                 ast::Decl::DefStruct { .. } => {}
                 // Imports are stripped by the loader before lowering; defensive.
                 ast::Decl::Import(_) => {}
+                // Flattened away above; arm kept for exhaustiveness.
+                ast::Decl::ComptimeDecl { .. } => {}
             }
         }
 
@@ -11039,6 +11064,36 @@ mod tests {
                 v
             );
         }
+    }
+
+    #[test]
+    fn test_lower_comptime_decl_struct_lowers_like_parsed() {
+        // A struct synthesized via `(comptime-decl (defstruct ...))` lowers
+        // exactly like a parsed struct: construction stores the fields and
+        // struct-get loads one. Exercises the lowerer's comptime-decl flattening.
+        let src = "(comptime-decl (defstruct Point (x i64) (y i64)))\n\
+                   (define (main) : i64 (struct-get (Point 3 4) y))";
+        let prog = parse(src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().position(|f| f.name == "main").unwrap();
+        assert!(
+            ir.functions[f]
+                .blocks
+                .iter()
+                .any(|b| b.instructions.iter().any(|i| matches!(
+                    i,
+                    Instruction::Store {
+                        src: Value::ConstI64(4),
+                        ty: Type::I64,
+                        ..
+                    }
+                ))),
+            "expected the generated struct's field store"
+        );
+        assert!(
+            count(&ir, f, |i| matches!(i, Instruction::Load { .. })) >= 1,
+            "expected a struct-get load from the generated struct"
+        );
     }
 
     #[test]

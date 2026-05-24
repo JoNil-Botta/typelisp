@@ -631,7 +631,7 @@ mod tests {
                 | Decl::Extern { name, .. }
                 | Decl::DefEnum { name, .. }
                 | Decl::DefStruct { name, .. } => Some(name.clone()),
-                Decl::Import(_) => None,
+                Decl::Import(_) | Decl::ComptimeDecl { .. } => None,
             })
             .collect()
     }

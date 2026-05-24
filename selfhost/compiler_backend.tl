@@ -22,6 +22,10 @@
   (OkBackendRuntimePlan CompilerBackendRuntimePlan)
   (ErrBackendRuntimePlan String))
 
+(defenum BackendStringList
+  (BackendStringNil)
+  (BackendStringCons String BackendStringList))
+
 (define (backend-cat3 [a : String] [b : String] [c : String]) : String
   (string-append a (string-append b c)))
 
@@ -74,6 +78,149 @@
 (define (compiler-backend-char-code [c : char]) : i64
   (cast c : i64))
 
+(define (compiler-backend-type-size [ty : AstType]) : i64
+  (match ty
+    [(AstTyI64) 8]
+    [(AstTyU64) 8]
+    [(AstTyF64) 8]
+    [(AstTyI32) 4]
+    [(AstTyU32) 4]
+    [(AstTyF32) 4]
+    [(AstTyI16) 2]
+    [(AstTyU16) 2]
+    [(AstTyI8) 1]
+    [(AstTyU8) 1]
+    [(AstTyBool) 1]
+    [(AstTyChar) 1]
+    [(AstTyUnit) 0]
+    [(AstTyNever) 0]
+    [(AstTyFunc _ _) 8]
+    [(AstTyTuple _) 8]
+    [(AstTyArray elem count) (* (compiler-backend-type-size elem) count)]
+    [(AstTyDynArray _) 8]
+    [(AstTyEnum _) 8]
+    [(AstTyStruct _) 8]
+    [(AstTyString) 8]
+    [(AstTyVar _) 8]))
+
+(define (compiler-backend-type-signed? [ty : AstType]) : bool
+  (match ty
+    [(AstTyI64) true]
+    [(AstTyI32) true]
+    [(AstTyI16) true]
+    [(AstTyI8) true]
+    [_ false]))
+
+(define (compiler-backend-hex-digit [n : i64]) : String
+  (if (= n 0)
+      "0"
+      (if (= n 1)
+          "1"
+          (if (= n 2)
+              "2"
+              (if (= n 3)
+                  "3"
+                  (if (= n 4)
+                      "4"
+                      (if (= n 5)
+                          "5"
+                          (if (= n 6)
+                              "6"
+                              (if (= n 7)
+                                  "7"
+                                  (if (= n 8)
+                                      "8"
+                                      (if (= n 9)
+                                          "9"
+                                          (if (= n 10)
+                                              "a"
+                                              (if (= n 11)
+                                                  "b"
+                                                  (if (= n 12)
+                                                      "c"
+                                                      (if (= n 13)
+                                                          "d"
+                                                          (if (= n 14)
+                                                              "e"
+                                                              "f"))))))))))))))))
+
+(define (compiler-backend-hex-byte [n : i64]) : String
+  (string-append (compiler-backend-hex-digit (/ n 16))
+                 (compiler-backend-hex-digit (% n 16))))
+
+(define (compiler-backend-octal-digit [n : i64]) : String
+  (if (= n 0)
+      "0"
+      (if (= n 1)
+          "1"
+          (if (= n 2)
+              "2"
+              (if (= n 3)
+                  "3"
+                  (if (= n 4)
+                      "4"
+                      (if (= n 5)
+                          "5"
+                          (if (= n 6)
+                              "6"
+                              "7"))))))))
+
+(define (compiler-backend-octal-escape [n : i64]) : String
+  (string-append "\\"
+    (string-append (compiler-backend-octal-digit (/ n 64))
+      (string-append (compiler-backend-octal-digit (% (/ n 8) 8))
+        (compiler-backend-octal-digit (% n 8))))))
+
+(define (compiler-backend-escape-string-byte [text : String] [idx : i64] [k : i64]) : String
+  (if (= k 34)
+      "\\\""
+      (if (= k 92)
+          "\\\\"
+          (if (= k 10)
+              "\\n"
+              (if (= k 9)
+                  "\\t"
+                  (if (= k 13)
+                      "\\r"
+                      (if (and (>= k 32) (<= k 126))
+                          (substring text idx 1)
+                          (compiler-backend-octal-escape k))))))))
+
+(define (compiler-backend-escape-string [text : String]) : String
+  (let ([i : i64 0]
+        [n : i64 (string-length text)]
+        [out : String ""])
+    (begin
+      (while (< i n)
+        (let ([k : i64 (compiler-backend-char-code-at text i)])
+          (begin
+            (set! out (string-append out (compiler-backend-escape-string-byte text i k)))
+            (set! i (+ i 1)))))
+      out)))
+
+(define (compiler-backend-quoted-gas-string [text : String]) : String
+  (string-append "\"" (string-append (compiler-backend-escape-string text) "\"")))
+
+(define (compiler-backend-string-label-suffix [text : String]) : String
+  (let ([i : i64 0]
+        [n : i64 (string-length text)]
+        [out : String ""])
+    (begin
+      (while (< i n)
+        (begin
+          (set! out
+                (string-append out
+                               (compiler-backend-hex-byte
+                                 (compiler-backend-char-code-at text i))))
+          (set! i (+ i 1))))
+      (if (= n 0) "empty" out))))
+
+(define (compiler-backend-string-data-label [text : String]) : String
+  (string-append ".L_tl_str_data_" (compiler-backend-string-label-suffix text)))
+
+(define (compiler-backend-string-fat-label [text : String]) : String
+  (string-append ".L_tl_str_" (compiler-backend-string-label-suffix text)))
+
 (define (compiler-backend-emit-load-value [value : CompilerIrValue] [reg : String]) : ResultCompilerBackend
   (match value
     [(IrValueVar id) (OkCompilerBackend (backend-cat5 "    movq " (compiler-backend-slot id) ", " reg "\n"))]
@@ -86,7 +233,47 @@
     [(IrValueChar c) (OkCompilerBackend (backend-cat5 "    movq $" (int->string (compiler-backend-char-code c)) ", " reg "\n"))]
     [(IrValueUnit) (OkCompilerBackend (backend-cat5 "    movq $" "0" ", " reg "\n"))]
     [(IrValueF64 _) (ErrCompilerBackend "backend: f64 values are not supported yet")]
-    [(IrValueString _) (ErrCompilerBackend "backend: String values are not supported yet")]))
+    [(IrValueString text)
+     (OkCompilerBackend
+       (backend-cat5 "    leaq " (compiler-backend-string-fat-label text) "(%rip), " reg "\n"))]))
+
+(define (compiler-backend-emit-load-memory [addr : String] [ty : AstType]) : String
+  (let ([size : i64 (compiler-backend-type-size ty)])
+    (if (= size 8)
+        (backend-cat3 "    movq " addr ", %rax\n")
+        (if (= size 4)
+            (if (compiler-backend-type-signed? ty)
+                (backend-cat3 "    movslq " addr ", %rax\n")
+                (backend-cat3 "    movl " addr ", %eax\n"))
+            (if (= size 2)
+                (if (compiler-backend-type-signed? ty)
+                    (backend-cat3 "    movswq " addr ", %rax\n")
+                    (backend-cat3 "    movzwq " addr ", %rax\n"))
+                (if (= size 1)
+                    (if (compiler-backend-type-signed? ty)
+                        (backend-cat3 "    movsbq " addr ", %rax\n")
+                        (backend-cat3 "    movzbq " addr ", %rax\n"))
+                    ""))))))
+
+(define (compiler-backend-emit-store-rax-to-memory [addr : String] [ty : AstType]) : String
+  (let ([size : i64 (compiler-backend-type-size ty)])
+    (if (= size 8)
+        (backend-cat3 "    movq %rax, " addr "\n")
+        (if (= size 4)
+            (backend-cat3 "    movl %eax, " addr "\n")
+            (if (= size 2)
+                (backend-cat3 "    movw %ax, " addr "\n")
+                (if (= size 1)
+                    (backend-cat3 "    movb %al, " addr "\n")
+                    ""))))))
+
+(define (compiler-backend-emit-load-typed-value [value : CompilerIrValue] [ty : AstType]) : ResultCompilerBackend
+  (match value
+    [(IrValueVar id)
+     (OkCompilerBackend (compiler-backend-emit-load-memory (compiler-backend-slot id) ty))]
+    [(IrValueGlobal name)
+     (OkCompilerBackend (compiler-backend-emit-load-memory (backend-cat3 name "(%rip)" "") ty))]
+    [_ (compiler-backend-emit-load-value value "%rax")]))
 
 (define (compiler-backend-binop-asm [op : CompilerIrBinOp]) : String
   (match op
@@ -135,6 +322,60 @@
        (string-append src-asm
          (string-append (compiler-backend-unop-asm op)
            (compiler-backend-emit-store-var dst "%rax"))))]
+    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+
+(define (compiler-backend-emit-addr-of [dst : i64] [src : i64]) : ResultCompilerBackend
+  (OkCompilerBackend
+    (string-append
+      (backend-cat5 "    leaq " (compiler-backend-slot src) ", " "%rax" "\n")
+      (compiler-backend-emit-store-var dst "%rax"))))
+
+(define (compiler-backend-emit-gep [dst : i64] [base : CompilerIrValue] [offset : CompilerIrValue] [elem-ty : AstType]) : ResultCompilerBackend
+  (match (compiler-backend-emit-load-value base "%rax")
+    [(OkCompilerBackend base-asm)
+     (match (compiler-backend-emit-load-value offset "%rbx")
+       [(OkCompilerBackend offset-asm)
+        (let ([scale : i64 (compiler-backend-type-size elem-ty)])
+          (OkCompilerBackend
+            (string-append base-asm
+              (string-append offset-asm
+                (string-append
+                  (if (= scale 1)
+                      ""
+                      (backend-cat5 "    imulq $" (int->string scale) ", " "%rbx" "\n"))
+                  (string-append
+                    "    addq %rbx, %rax\n"
+                    (compiler-backend-emit-store-var dst "%rax")))))))]
+       [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+
+(define (compiler-backend-emit-load-instr [dst : i64] [src : CompilerIrValue] [ty : AstType]) : ResultCompilerBackend
+  (match (compiler-backend-emit-load-value src "%r10")
+    [(OkCompilerBackend ptr-asm)
+     (OkCompilerBackend
+       (string-append ptr-asm
+         (string-append (compiler-backend-emit-load-memory "(%r10)" ty)
+                        (compiler-backend-emit-store-var dst "%rax"))))]
+    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+
+(define (compiler-backend-emit-store-ptr [dst : CompilerIrValue] [src : CompilerIrValue] [ty : AstType]) : ResultCompilerBackend
+  (match (compiler-backend-emit-load-value dst "%r10")
+    [(OkCompilerBackend ptr-asm)
+     (match (compiler-backend-emit-load-typed-value src ty)
+       [(OkCompilerBackend src-asm)
+        (OkCompilerBackend
+          (string-append ptr-asm
+            (string-append src-asm
+                           (compiler-backend-emit-store-rax-to-memory "(%r10)" ty))))]
+       [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+
+(define (compiler-backend-emit-cast [dst : i64] [src : CompilerIrValue] [from-ty : AstType] [to-ty : AstType]) : ResultCompilerBackend
+  (match (compiler-backend-emit-load-typed-value src from-ty)
+    [(OkCompilerBackend load)
+     (OkCompilerBackend
+       (string-append load
+         (compiler-backend-emit-store-var dst "%rax")))]
     [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
 
 (define (compiler-backend-emit-call-args [args : CompilerIrValueList] [idx : i64]) : ResultCompilerBackend
@@ -210,6 +451,12 @@
        [(OkCompilerBackend load)
         (OkCompilerBackend (string-append load (compiler-backend-emit-store-var dst "%rax")))]
        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+    [(IrInstrAlloc _ _) (OkCompilerBackend "")]
+    [(IrInstrAddrOf dst src) (compiler-backend-emit-addr-of dst src)]
+    [(IrInstrGep dst base offset elem-ty) (compiler-backend-emit-gep dst base offset elem-ty)]
+    [(IrInstrLoad dst src ty) (compiler-backend-emit-load-instr dst src ty)]
+    [(IrInstrStorePtr dst src ty) (compiler-backend-emit-store-ptr dst src ty)]
+    [(IrInstrCast dst src from-ty to-ty) (compiler-backend-emit-cast dst src from-ty to-ty)]
     [(IrInstrBinOp dst op lhs rhs _) (compiler-backend-emit-binop dst op lhs rhs)]
     [(IrInstrUnOp dst op src _) (compiler-backend-emit-unop dst op src)]
     [(IrInstrCall dst name args _)
@@ -327,6 +574,147 @@
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
 
+(define (compiler-backend-string-list-contains? [strings : BackendStringList] [text : String]) : bool
+  (match strings
+    [(BackendStringNil) false]
+    [(BackendStringCons head rest)
+     (if (string-eq head text)
+         true
+         (compiler-backend-string-list-contains? rest text))]))
+
+(define (compiler-backend-string-list-append [strings : BackendStringList] [text : String]) : BackendStringList
+  (match strings
+    [(BackendStringNil) (BackendStringCons text BackendStringNil)]
+    [(BackendStringCons head rest)
+     (BackendStringCons head (compiler-backend-string-list-append rest text))]))
+
+(define (compiler-backend-string-list-add [strings : BackendStringList] [text : String]) : BackendStringList
+  (if (compiler-backend-string-list-contains? strings text)
+      strings
+      (compiler-backend-string-list-append strings text)))
+
+(define (compiler-backend-collect-value-string [strings : BackendStringList] [value : CompilerIrValue]) : BackendStringList
+  (match value
+    [(IrValueString text) (compiler-backend-string-list-add strings text)]
+    [_ strings]))
+
+(define (compiler-backend-collect-value-list-strings [strings : BackendStringList] [values : CompilerIrValueList]) : BackendStringList
+  (match values
+    [(IrValueNil) strings]
+    [(IrValueCons value rest)
+     (compiler-backend-collect-value-list-strings
+       (compiler-backend-collect-value-string strings value)
+       rest)]))
+
+(define (compiler-backend-collect-phi-strings [strings : BackendStringList] [inputs : CompilerIrPhiInputList]) : BackendStringList
+  (match inputs
+    [(IrPhiInputNil) strings]
+    [(IrPhiInputCons input rest)
+     (match input
+       [(IrPhiInput value _)
+        (compiler-backend-collect-phi-strings
+          (compiler-backend-collect-value-string strings value)
+          rest)])]))
+
+(define (compiler-backend-collect-instr-strings [strings : BackendStringList] [instr : CompilerIrInstr]) : BackendStringList
+  (match instr
+    [(IrInstrMov _ src _) (compiler-backend-collect-value-string strings src)]
+    [(IrInstrBinOp _ _ lhs rhs _)
+     (compiler-backend-collect-value-string
+       (compiler-backend-collect-value-string strings lhs)
+       rhs)]
+    [(IrInstrUnOp _ _ src _) (compiler-backend-collect-value-string strings src)]
+    [(IrInstrCall _ _ args _) (compiler-backend-collect-value-list-strings strings args)]
+    [(IrInstrStore _ value _) (compiler-backend-collect-value-string strings value)]
+    [(IrInstrBranch cond _ _) (compiler-backend-collect-value-string strings cond)]
+    [(IrInstrReturn maybe)
+     (match maybe
+       [(IrNoValue) strings]
+       [(IrSomeValue value) (compiler-backend-collect-value-string strings value)])]
+    [(IrInstrPhi _ inputs _) (compiler-backend-collect-phi-strings strings inputs)]
+    [(IrInstrGep _ base offset _)
+     (compiler-backend-collect-value-string
+       (compiler-backend-collect-value-string strings base)
+       offset)]
+    [(IrInstrLoad _ src _) (compiler-backend-collect-value-string strings src)]
+    [(IrInstrStorePtr dst src _)
+     (compiler-backend-collect-value-string
+       (compiler-backend-collect-value-string strings dst)
+       src)]
+    [(IrInstrCast _ src _ _) (compiler-backend-collect-value-string strings src)]
+    [_ strings]))
+
+(define (compiler-backend-collect-instr-list-strings [strings : BackendStringList] [instrs : CompilerIrInstrList]) : BackendStringList
+  (match instrs
+    [(IrInstrNil) strings]
+    [(IrInstrCons instr rest)
+     (compiler-backend-collect-instr-list-strings
+       (compiler-backend-collect-instr-strings strings instr)
+       rest)]))
+
+(define (compiler-backend-collect-block-strings [strings : BackendStringList] [blocks : CompilerIrBlockList]) : BackendStringList
+  (match blocks
+    [(IrBlockNil) strings]
+    [(IrBlockCons block rest)
+     (match block
+       [(IrBlock _ instrs)
+        (compiler-backend-collect-block-strings
+          (compiler-backend-collect-instr-list-strings strings instrs)
+          rest)])]))
+
+(define (compiler-backend-collect-function-strings [strings : BackendStringList] [functions : CompilerIrFunctionList]) : BackendStringList
+  (match functions
+    [(IrFunctionNil) strings]
+    [(IrFunctionCons func rest)
+     (match func
+       [(IrFunction _ _ _ _ blocks)
+        (compiler-backend-collect-function-strings
+          (compiler-backend-collect-block-strings strings blocks)
+          rest)])]))
+
+(define (compiler-backend-collect-global-strings [strings : BackendStringList] [globals : CompilerIrGlobalList]) : BackendStringList
+  (match globals
+    [(IrGlobalNil) strings]
+    [(IrGlobalCons global rest)
+     (match global
+       [(IrGlobal _ _ value)
+        (compiler-backend-collect-global-strings
+          (compiler-backend-collect-value-string strings value)
+          rest)])]))
+
+(define (compiler-backend-collect-program-strings [program : CompilerIrProgram]) : BackendStringList
+  (match program
+    [(IrProgram globals functions _)
+     (compiler-backend-collect-function-strings
+       (compiler-backend-collect-global-strings BackendStringNil globals)
+       functions)]))
+
+(define (compiler-backend-emit-string-entry [text : String]) : String
+  (backend-cat5
+    (compiler-backend-string-data-label text)
+    ":\n    .string "
+    (compiler-backend-quoted-gas-string text)
+    "\n    .balign 8\n"
+    (backend-cat5
+      (compiler-backend-string-fat-label text)
+      ":\n    .quad "
+      (compiler-backend-string-data-label text)
+      "\n    .quad "
+      (backend-cat3 (int->string (string-length text)) "\n" ""))))
+
+(define (compiler-backend-emit-string-entries [strings : BackendStringList]) : String
+  (match strings
+    [(BackendStringNil) ""]
+    [(BackendStringCons text rest)
+     (string-append (compiler-backend-emit-string-entry text)
+                    (compiler-backend-emit-string-entries rest))]))
+
+(define (compiler-backend-emit-string-rodata [strings : BackendStringList]) : String
+  (match strings
+    [(BackendStringNil) ""]
+    [_ (string-append "    .section .rodata\n"
+                      (string-append (compiler-backend-emit-string-entries strings) "\n"))]))
+
 (define (compiler-backend-global-value-asm [value : CompilerIrValue]) : ResultCompilerBackend
   (match value
     [(IrValueI64 n) (OkCompilerBackend (backend-cat3 "    .quad " (int->string n) "\n"))]
@@ -337,6 +725,7 @@
     [(IrValueChar c) (OkCompilerBackend (backend-cat3 "    .quad " (int->string (compiler-backend-char-code c)) "\n"))]
     [(IrValueUnit) (OkCompilerBackend "    .quad 0\n")]
     [(IrValueGlobal name) (OkCompilerBackend (backend-cat3 "    .quad " name "\n"))]
+    [(IrValueString text) (OkCompilerBackend (backend-cat3 "    .quad " (compiler-backend-string-fat-label text) "\n"))]
     [_ (ErrCompilerBackend "backend: unsupported global initializer")]))
 
 (define (compiler-backend-emit-global [global : CompilerIrGlobal]) : ResultCompilerBackend
@@ -657,24 +1046,27 @@ tl_string_concat:
           [(OkCompilerBackend globals-asm)
            (match (compiler-backend-emit-functions functions)
              [(OkCompilerBackend functions-asm)
-              (let ([buf : TextBuf
-                     (text-buf-append
-                       (text-buf-append
-                         (text-buf-append
-                           (text-buf-append
-                             (text-buf-append
-                               (text-buf-append
-                                 (text-buf-append
-                                   (text-buf-append (text-buf-empty) ".data\n")
-                                   globals-asm)
-                                 (compiler-backend-runtime-data plan))
-                               (compiler-backend-emit-externs externs plan))
-                             ".text\n.globl _start\n")
+               (let ([strings : BackendStringList (compiler-backend-collect-program-strings program)]
+                     [buf : TextBuf
+                      (text-buf-append
+                        (text-buf-append
+                          (text-buf-append
+                            (text-buf-append
+                              (text-buf-append
+                                (text-buf-append
+                                  (text-buf-append
+                                    (text-buf-append
+                                      (text-buf-append (text-buf-empty) ".data\n")
+                                      globals-asm)
+                                    (compiler-backend-emit-string-rodata strings))
+                                  (compiler-backend-runtime-data plan))
+                                (compiler-backend-emit-externs externs plan))
+                              ".text\n.globl _start\n")
                            functions-asm)
                          (compiler-backend-runtime-functions plan))
                        (compiler-backend-entry))])
                 (OkCompilerBackend (text-buf-render buf)))]
-             [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
     [(ErrBackendRuntimePlan message) (ErrCompilerBackend message)]))
 
@@ -891,6 +1283,10 @@ tl_string_concat:
   "(extern f : (-> i64 i64 i64 i64 i64 i64 i64 i64))
 (define (main) : i64 (f 1 2 3 4 5 6 7))")
 
+(define (compiler-backend-string-source) : String
+  "(define greeting : String \"hi\")
+(define (main) : String \"hi\")")
+
 (define (compiler-backend-asm-ok? [asm : String]) : bool
   (and (compiler-backend-string-contains? asm ".data\n")
        (and (compiler-backend-string-contains? asm ".text\n")
@@ -911,6 +1307,18 @@ tl_string_concat:
     [(OkCompilerBackend asm) (compiler-backend-asm-ok? asm)]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-string-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-string-source))
+    [(OkCompilerBackend asm)
+     (and (compiler-backend-string-contains? asm ".L_tl_str_data_6869:")
+          (and (compiler-backend-string-contains? asm ".L_tl_str_6869:")
+               (and (compiler-backend-string-contains? asm "    .string \"hi\"\n")
+                    (and (compiler-backend-string-contains? asm "    .quad .L_tl_str_data_6869\n")
+                         (and (compiler-backend-string-contains? asm "    .quad 2\n")
+                              (and (compiler-backend-string-contains? asm "greeting:\n    .quad .L_tl_str_6869\n")
+                                   (compiler-backend-string-contains? asm "    leaq .L_tl_str_6869(%rip), %rax\n")))))))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-deterministic-ok? [src : String]) : bool
   (match (compiler-backend-emit-source src)
     [(OkCompilerBackend first)
@@ -924,14 +1332,38 @@ tl_string_concat:
     [(ErrCompilerBackend message) (string-eq message want)]
     [(OkCompilerBackend _) false]))
 
+(define (compiler-backend-instr-contains? [instr : CompilerIrInstr] [needle : String]) : bool
+  (match (compiler-backend-emit-instr "test" IrBlockNil "entry" instr)
+    [(OkCompilerBackend asm) (compiler-backend-string-contains? asm needle)]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-memory-op-ok?) : bool
+  (and (compiler-backend-instr-contains?
+         (IrInstrAddrOf 2 1)
+         "    leaq -16(%rbp), %rax\n")
+       (and (compiler-backend-instr-contains?
+              (IrInstrGep 3 (IrValueVar 1) (IrValueI64 2) (AstTyI32))
+              "    imulq $4, %rbx\n")
+            (and (compiler-backend-instr-contains?
+                   (IrInstrLoad 4 (IrValueVar 1) (AstTyU8))
+                   "    movzbq (%r10), %rax\n")
+                 (and (compiler-backend-instr-contains?
+                        (IrInstrStorePtr (IrValueVar 1) (IrValueI64 7) (AstTyI32))
+                        "    movl %eax, (%r10)\n")
+                      (compiler-backend-instr-contains?
+                        (IrInstrCast 6 (IrValueVar 5) (AstTyI8) (AstTyI64))
+                        "    movsbq -48(%rbp), %rax\n"))))))
+
 (define (compiler-backend-self-test) : i64
   (if (and (compiler-backend-source-ok? (compiler-backend-smoke-source))
            (and (compiler-backend-deterministic-ok? (compiler-backend-smoke-source))
-                (and (compiler-backend-error-ok? (compiler-backend-too-many-call-source)
-                                                 "backend: too many call args")
-                     (and (compiler-backend-runtime-helper-asm-ok?)
-                          (and (compiler-backend-user-helper-name-ok?)
-                               (compiler-backend-runtime-conflict-ok?))))))
+                (and (compiler-backend-string-ok?)
+                     (and (compiler-backend-memory-op-ok?)
+                          (and (compiler-backend-error-ok? (compiler-backend-too-many-call-source)
+                                                           "backend: too many call args")
+                               (and (compiler-backend-runtime-helper-asm-ok?)
+                                    (and (compiler-backend-user-helper-name-ok?)
+                                         (compiler-backend-runtime-conflict-ok?))))))))
       42
       (begin
         (panic "backend: smoke output mismatch")

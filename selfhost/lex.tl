@@ -180,13 +180,26 @@
     false))
 
 (define (scan-number-end [src : String] [start : i64] [n : i64]) : i64
-  (let ([int-end : i64 (scan-int-end src start n)])
-    (if (float-tail? src int-end n)
-      (scan-int-end src (+ int-end 1) n)
-      int-end)))
+  (let ([digits-start : i64 (number-digits-start src start)])
+    (let ([int-end : i64 (scan-int-end src digits-start n)])
+      (if (float-tail? src int-end n)
+        (scan-int-end src (+ int-end 1) n)
+        int-end))))
+
+(define (number-digits-start [src : String] [start : i64]) : i64
+  (if (= (string-ref src start) #-')
+    (+ start 1)
+    start))
 
 (define (number-float? [src : String] [start : i64] [n : i64]) : bool
-  (float-tail? src (scan-int-end src start n) n))
+  (float-tail? src (scan-int-end src (number-digits-start src start) n) n))
+
+(define (negative-number-start? [src : String] [start : i64] [n : i64]) : bool
+  (if (= (string-ref src start) #-')
+    (if (< (+ start 1) n)
+      (is-digit (string-ref src (+ start 1)))
+      false)
+    false))
 
 ;; Return the end index (exclusive) of the symbol run that starts at `start` in
 
@@ -467,7 +480,7 @@
               (OkLexI64 (scan-comment-end src (+ i 1) n))
               (if (= c ##')
                 (lex-check-char-end src i n)
-                (if (is-digit c)
+                (if (or (is-digit c) (negative-number-start? src i n))
                   (OkLexI64 (scan-number-end src i n))
                   (if (is-symbol-char c)
                     (OkLexI64 (scan-symbol-end src i n))
@@ -563,7 +576,7 @@
                             (array-set! toks count (TChar value))
                             (set! count (+ count 1))
                             (set! i end))))
-                      (if (is-digit c)
+                      (if (or (is-digit c) (negative-number-start? src i n))
                         (let ([end : i64 (scan-number-end src i n)])
                           (begin
                             (array-set! starts count i)
@@ -729,6 +742,18 @@
         (string-eq (token-float (array-ref toks 1)) "3.14"))]
     [(ErrTokens _) false]))
 
+(define (lex-negative-int-token-ok?) : bool
+  (match (lex-result "(-1 - x)")
+    [(OkTokens toks)
+      (and
+        (= (token-tag (array-ref toks 1)) (tag-int))
+        (and
+          (= (token-int (array-ref toks 1)) -1)
+          (and
+            (= (token-tag (array-ref toks 2)) (tag-sym))
+            (string-eq (token-sym (array-ref toks 2)) "-"))))]
+    [(ErrTokens _) false]))
+
 ;; Returns 42 when the spanned lexer records correct 1-based line/column
 
 ;; positions, including a token inside a nested list and the trailing EOF.
@@ -834,7 +859,9 @@
         (lex-span-positions-ok? s)
         (and
           (lex-string-escapes-ok?)
-          (and (lex-percent-symbol-ok?) (lex-float-token-ok?))))
+          (and
+            (lex-percent-symbol-ok?)
+            (and (lex-float-token-ok?) (lex-negative-int-token-ok?)))))
         42
         1)]
     [(ErrSpannedTokens _) 2]))

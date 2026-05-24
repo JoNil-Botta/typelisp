@@ -1975,6 +1975,8 @@ fn selfhost_check_driver_reports_success_and_errors() {
             "compiler_parse_core.tl",
             "compiler_diagnostic.tl",
             "compiler_ast_types.tl",
+            "compiler_ir_types.tl",
+            "compiler_optimize.tl",
             "sym_i64_env.tl",
             "read.tl",
             "lex.tl",
@@ -2025,6 +2027,34 @@ fn selfhost_check_driver_reports_success_and_errors() {
         String::from_utf8_lossy(&ok.stderr),
         "",
         "selfhost check success wrote stderr"
+    );
+
+    let import_path = work_dir.join("lex_optimize_imports.tl");
+    fs::write(
+        &import_path,
+        "(import \"lex.tl\")\n(import \"compiler_optimize.tl\")\n(define (main) : i64 0)\n",
+    )
+    .expect("write selfhost check lex/optimizer import fixture");
+    let imports = Command::new(&driver_bin)
+        .arg(&import_path)
+        .output()
+        .expect("run selfhost check lex/optimizer import fixture");
+    assert_eq!(
+        imports.status.code(),
+        Some(0),
+        "selfhost check lex/optimizer imports exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&imports.stdout),
+        String::from_utf8_lossy(&imports.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&imports.stdout),
+        "",
+        "selfhost check lex/optimizer imports wrote stdout"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&imports.stderr),
+        "",
+        "selfhost check lex/optimizer imports wrote stderr"
     );
 
     let type_error_path = work_dir.join("type_error.tl");

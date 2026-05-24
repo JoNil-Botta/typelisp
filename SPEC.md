@@ -98,6 +98,10 @@ example must fail during loading, parsing, or type checking. Other fence
 languages are ignored; unknown TypeLisp fence options, empty TypeLisp examples,
 and unterminated TypeLisp fences are malformed doctests.
 
+The self-hosted Markdown generator driver is `selfhost/doc.tl`. In this slice it
+renders one input file to one output path via `typelisp run selfhost/doc.tl --
+input.tl output.md`; package/module graph traversal is not part of this driver.
+
 ### 2.3 String escapes
 
 | Escape | Meaning |

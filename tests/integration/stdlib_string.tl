@@ -1,35 +1,19 @@
 ;; tests/integration/stdlib_string.tl - Integration test for stdlib/string.tl
-
 ;; Test harnesses stage stdlib/string.tl under this import name.
-
 ;;
-
 ;; Expected stdout:
-
 ;;   hello|
-
 ;;   hello|
-
 ;;   hello|
-
 ;;   found
-
 ;;   |empty-left
-
 ;;   |empty-right
-
 ;;   |all-space
-
 ;;   contains
-
 ;;   missing
-
 ;;   hippo
-
 ;;   abx
-
 ;; Exit code: 42
-
 (import "stdlib/string.tl")
 
 (define (main) : i64

@@ -1,53 +1,29 @@
 ;; compiler_optimize.tl - Selfhost optimizer: pass framework + scalar constant
-
 ;; folding (#543, first slice of #519).
-
 ;;
-
 ;; Runs between lowering (`lower-compiler-program`) and backend emission
-
 ;; (`compiler-backend-emit-program`). It performs conservative, scalar-only
-
 ;; constant folding: within each basic block it tracks IR vars defined by a
-
 ;; `Mov` of a scalar literal, rewrites any `IrInstrBinOp`/`IrInstrUnOp` whose
-
 ;; operands resolve to those literals into an `IrInstrMov` of the computed
-
 ;; literal, and clears tracked facts when any other IR instruction redefines a
-
 ;; variable.
-
 ;;
-
 ;; Safety:
-
 ;; - Integer `+`, `-`, `*`, and `neg` wrap modulo 2^N per SPEC; this optimizer is
-
 ;;   itself TypeLisp using the same wrapping i64 arithmetic, so folding them is
-
 ;;   exact.
-
 ;; - Division, modulo, and shifts are intentionally NOT folded, preserving the
-
 ;;   runtime divide/modulo-by-zero traps and shift edge cases until the rules are
-
 ;;   made explicit.
-
 ;; - Tracking is block-local (reset per block), so no value is folded across a
-
 ;;   control-flow edge.
-
 ;;
-
 ;; Out of scope (tracked separately): dead-code elimination, copy propagation,
-
 ;; common-subexpression elimination, and aggregate/String/array IR.
-
 (import "compiler_ir_types.tl")
 
 ;; --- block-local constant environment: IR var id -> known scalar literal -----
-
 (defenum OptConstEnv
   (OptConstNil)
   (OptConstCons i64 CompilerIrValue OptConstEnv))
@@ -75,7 +51,6 @@
         (opt-const-lookup rest var))]))
 
 ;; A scalar literal we are willing to track and fold (i64 / bool only for v1).
-
 (define (opt-const-value? [value : CompilerIrValue]) : bool
   (match value
     [(IrValueI64 _) true]
@@ -91,11 +66,8 @@
     [_ value]))
 
 ;; --- folding rules -----------------------------------------------------------
-
 ;; Fold an integer binop with two i64 literals. Div/Mod/shifts/bitwise are left
-
 ;; unfolded (returns IrNoValue) to preserve runtime semantics for this slice.
-
 (define (opt-fold-i64 [op : CompilerIrBinOp] [a : i64] [b : i64]) : CompilerIrMaybeValue
   (match op
     [(IrBinAdd) (IrSomeValue (IrValueI64 (+ a b)))]
@@ -143,7 +115,6 @@
     [(IrUnBitNot) (IrNoValue)]))
 
 ;; --- instruction / block / function / program traversal ----------------------
-
 (defenum OptInstrResult
   (OptInstrResult OptConstEnv CompilerIrInstr))
 
@@ -191,23 +162,14 @@
           (IrInstrCons new-instr (opt-fold-instrs new-env rest))])]))
 
 ;; --- dead-code elimination (#544) --------------------------------------------
-
 ;;
-
 ;; Conservative DCE matching the Rust optimizer's first slice: collect every IR
-
 ;; var id referenced as an operand anywhere in the function, then drop pure
-
 ;; temporary-producing instructions (`Mov`/`BinOp`/`UnOp`/`Phi`) whose result is
-
 ;; never used. Calls, stores, jumps, branches, and returns are kept regardless
-
 ;; (they have side effects or drive control flow). The used set is gathered over
-
 ;; the *whole function* before any removal, so a var used in another block is
-
 ;; never dropped — no CFG analysis or unreachable-block removal is needed here.
-
 (defenum OptUsedSet
   (OptUsedNil)
   (OptUsedCons i64 OptUsedSet))
@@ -293,9 +255,7 @@
           (opt-collect-blocks-uses (opt-collect-instrs-uses set instrs) rest)])]))
 
 ;; A pure temporary-producing instruction is dead when its result var is unused.
-
 ;; Calls (side-effecting) and control-flow instructions are never dead here.
-
 (define (opt-instr-dead? [set : OptUsedSet] [instr : CompilerIrInstr]) : bool
   (match instr
     [(IrInstrMov dst _ _) (not (opt-used-contains set dst))]
@@ -323,33 +283,19 @@
       (IrBlockCons (opt-dce-block set block) (opt-dce-block-list set rest))]))
 
 ;; --- block-local common subexpression elimination (#546) --------------------
-
 ;;
-
 ;; Within a single basic block, track an available-expression table mapping a
-
 ;; pure scalar `BinOp`/`UnOp` expression (operator + operand values) to the var
-
 ;; that first computed it. A later identical expression is rewritten to an
-
 ;; `IrInstrMov` from that earlier var. Scope is intentionally block-local and
-
 ;; only covers pure scalar arithmetic; memory ops are not CSE'd.
-
 ;;
-
 ;; Invalidation keeps this correct even though the IR is not strictly SSA: when
-
 ;; an instruction (re)defines a var, every table entry whose key references that
-
 ;; var as an operand — or whose result is that var — is dropped. Calls, stores
-
 ;; (`Store`/`StorePtr`), and all control-flow boundaries clear the whole table
-
 ;; (conservative, matching the spec). Commutative operands are NOT canonicalized
-
 ;; in this slice.
-
 (defenum OptExprKey
   (OptBinKey CompilerIrBinOp CompilerIrValue CompilerIrValue)
   (OptUnKey CompilerIrUnOp CompilerIrValue))
@@ -462,9 +408,7 @@
     [(OptUnKey _ v) (opt-value-is-var? v var)]))
 
 ;; Drop every entry whose key references `var` (a stale operand) or whose result
-
 ;; is `var` (a stale definition).
-
 (define (opt-expr-invalidate-var [table : OptExprTable] [var : i64]) : OptExprTable
   (match table
     [(OptExprNil) (OptExprNil)]
@@ -525,37 +469,21 @@
           (IrInstrCons new-instr (opt-cse-instrs new-table rest))])]))
 
 ;; --- block-local copy propagation (#545) ------------------------------------
-
 ;;
-
 ;; The lowerer and the CSE pass both materialize values through `IrInstrMov`
-
 ;; into fresh vars (CSE rewrites a redundant expression to `Mov dst earlier`).
-
 ;; Within a single basic block, track copies `dst -> source` and rewrite later
-
 ;; operand uses of `IrValueVar dst` to `source`, so DCE can then drop the now
-
 ;; unused copy. This needs no register allocation or CFG dataflow.
-
 ;;
-
 ;; Conservative for the first slice: only `IrValueVar` and unambiguous scalar
-
 ;; literals are recorded as copy sources (`IrValueF64`, `IrValueString`, and
-
 ;; globals are excluded until their backend paths are settled); `IrInstrPhi`
-
 ;; inputs belong to predecessor edges and are never rewritten; and `IrInstrAddrOf`
-
 ;; carries a raw var id (a storage slot), not a value operand, so it is left
-
 ;; alone. On any instruction that defines var `v`, both the mapping for `v` and
-
 ;; any mapping whose source is `IrValueVar v` are dropped, so a reused var id in
-
 ;; the non-SSA IR never triggers a stale rewrite.
-
 (defenum OptCopyEnv
   (OptCopyNil)
   (OptCopyCons i64 CompilerIrValue OptCopyEnv))
@@ -569,11 +497,8 @@
         (opt-copy-lookup rest var))]))
 
 ;; Drop the mapping for `var` and any mapping whose replacement is `IrValueVar
-
 ;; var`, so redefining either a copied destination or a copied source clears the
-
 ;; stale copy fact.
-
 (define (opt-copy-invalidate-var [env : OptCopyEnv] [var : i64]) : OptCopyEnv
   (match env
     [(OptCopyNil) (OptCopyNil)]
@@ -584,9 +509,7 @@
           (OptCopyCons id value rest2)))]))
 
 ;; Only var copies and unambiguous scalar literals are safe to propagate in this
-
 ;; slice; F64/String/global sources stay put until their backend paths exist.
-
 (define (opt-copy-safe-source? [value : CompilerIrValue]) : bool
   (match value
     [(IrValueVar _) true]
@@ -617,9 +540,7 @@
         (opt-copy-subst-value-list env rest))]))
 
 ;; Rewrite the value-use operands of an instruction through the copy env. Phi
-
 ;; inputs and the raw var id of `IrInstrAddrOf` are intentionally not rewritten.
-
 (define (opt-copy-subst-instr [env : OptCopyEnv] [instr : CompilerIrInstr]) : CompilerIrInstr
   (match instr
     [(IrInstrMov dst src ty) (IrInstrMov dst (opt-copy-resolve env src) ty)]
@@ -660,13 +581,9 @@
     [(IrInstrPhi _ _ _) instr]))
 
 ;; Update the copy env after an instruction. A `Mov dst src` (with `src` already
-
 ;; substituted) records a copy when `src` is a safe, non-self source. Every other
-
 ;; defining instruction invalidates its destination. Stores and terminators
-
 ;; define no var, so the copy facts are unaffected (the env resets per block).
-
 (define (opt-copy-update-env [env : OptCopyEnv] [instr : CompilerIrInstr]) : OptCopyEnv
   (match instr
     [(IrInstrMov dst src ty)
@@ -738,7 +655,6 @@
       (IrProgram globals (optimize-function-list functions) externs)]))
 
 ;; --- self-test ---------------------------------------------------------------
-
 (define (opt-count-arith-instrs [instrs : CompilerIrInstrList]) : i64
   (match instrs
     [(IrInstrNil) 0]
@@ -763,7 +679,6 @@
     [_ 0]))
 
 ;; Builds `[Mov v0=20, Mov v1=22, BinOp v2 = v0 + v1]` (one arithmetic instr).
-
 (define (opt-self-test-instrs) : CompilerIrInstrList
   (IrInstrCons
     (IrInstrMov 0 (IrValueI64 20) (AstTyI64))
@@ -783,13 +698,9 @@
         (IrInstrNil)))))
 
 ;; Returns 42 when folding turns the one arithmetic instruction into a `Mov`
-
 ;; literal whose value (20 + 22) is correct, and a later `Load` redefining a
-
 ;; formerly-constant var invalidates the stale fact before another arithmetic
-
 ;; instruction reads that var.
-
 (define (compiler-optimize-self-test) : i64
   (let ([instrs : CompilerIrInstrList (opt-self-test-instrs)])
     (let ([optimized : CompilerIrInstrList
@@ -809,11 +720,8 @@
         1))))
 
 ;; Builds `[Mov v0=99 (unused), Call v1 = noop(), Return v1]`. `v0` is a dead
-
 ;; pure temporary; `v1` is produced by a side-effecting call and used by the
-
 ;; return, so DCE must drop only `v0`'s Mov (3 instrs -> 2).
-
 (define (opt-dce-self-test-instrs) : CompilerIrInstrList
   (IrInstrCons
     (IrInstrMov 0 (IrValueI64 99) (AstTyI64))
@@ -822,9 +730,7 @@
       (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueVar 1))) (IrInstrNil)))))
 
 ;; Returns 42 when DCE keeps the used call result `v1` and the side-effecting
-
 ;; instructions, drops the unused `v0`, and is idempotent on a second pass.
-
 (define (compiler-optimize-dce-self-test) : i64
   (let ([instrs : CompilerIrInstrList (opt-dce-self-test-instrs)])
     (let ([used : OptUsedSet (opt-collect-instrs-uses (OptUsedNil) instrs)])
@@ -846,11 +752,8 @@
             0))))))
 
 ;; Builds `[Mov v0=4096 (an address), Load v1 = *v0, Return v1]`. `v0` feeds a
-
 ;; `Load`, so DCE must treat it as used and keep it; without collecting the
-
 ;; Load's operand uses, DCE would wrongly drop `v0`'s Mov and break the load.
-
 (define (opt-dce-mem-self-test-instrs) : CompilerIrInstrList
   (IrInstrCons
     (IrInstrMov 0 (IrValueI64 4096) (AstTyI64))
@@ -859,9 +762,7 @@
       (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueVar 1))) (IrInstrNil)))))
 
 ;; Returns 42 when DCE keeps the `Mov` that feeds the `Load` (operand uses of
-
 ;; pointer/memory ops are collected), leaving all three instructions intact.
-
 (define (compiler-optimize-dce-mem-self-test) : i64
   (let ([instrs : CompilerIrInstrList (opt-dce-mem-self-test-instrs)])
     (let ([used : OptUsedSet (opt-collect-instrs-uses (OptUsedNil) instrs)])
@@ -873,9 +774,7 @@
           1)))))
 
 ;; `[BinOp v2 = v0 + v1, BinOp v3 = v0 + v1]` with non-constant operands: CSE
-
 ;; rewrites the second into `Mov v3 = v2` (two arithmetic instrs -> one).
-
 (define (opt-cse-self-test-instrs) : CompilerIrInstrList
   (IrInstrCons
     (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
@@ -884,9 +783,7 @@
       (IrInstrNil))))
 
 ;; A store between the two identical expressions clears the table, so the second
-
 ;; expression is preserved (no cross-store CSE).
-
 (define (opt-cse-store-clears-instrs) : CompilerIrInstrList
   (IrInstrCons
     (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
@@ -897,11 +794,8 @@
         (IrInstrNil)))))
 
 ;; Redefining an operand (`v0`) between the two expressions invalidates the
-
 ;; available entry, so the second expression is preserved (correctness on
-
 ;; non-SSA IR).
-
 (define (opt-cse-operand-redef-instrs) : CompilerIrInstrList
   (IrInstrCons
     (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
@@ -912,11 +806,8 @@
         (IrInstrNil)))))
 
 ;; Returns 42 when CSE eliminates the repeated pure expression (2 arithmetic
-
 ;; instrs -> 1) yet preserves the second expression both across an intervening
-
 ;; store and across an operand redefinition (still 2 arithmetic instrs each).
-
 (define (compiler-optimize-cse-self-test) : i64
   (let ([cse : CompilerIrInstrList
     (opt-cse-instrs (OptExprNil) (opt-cse-self-test-instrs))])
@@ -933,9 +824,7 @@
           1)))))
 
 ;; Returns the lhs var id of the `BinOp` whose destination is `dst`, or -1 if it
-
 ;; is absent or its lhs is not a var. Used to inspect copy-propagation rewrites.
-
 (define (opt-copy-binop-lhs-var [instrs : CompilerIrInstrList] [dst : i64]) : i64
   (match instrs
     [(IrInstrNil) (- 0 1)]
@@ -950,9 +839,7 @@
         [_ (opt-copy-binop-lhs-var rest dst)])]))
 
 ;; `[Mov v1 = v0, BinOp v2 = v1 + 1]`: copy propagation rewrites the binop lhs
-
 ;; from v1 to v0.
-
 (define (opt-copy-pos-instrs) : CompilerIrInstrList
   (IrInstrCons
     (IrInstrMov 1 (IrValueVar 0) (AstTyI64))
@@ -961,9 +848,7 @@
       (IrInstrNil))))
 
 ;; `[Mov v1 = v0, Load v0 = *v9, BinOp v2 = v1 + 1]`: redefining the copy source
-
 ;; v0 invalidates the v1 -> v0 fact, so the binop lhs stays v1.
-
 (define (opt-copy-src-redef-instrs) : CompilerIrInstrList
   (IrInstrCons
     (IrInstrMov 1 (IrValueVar 0) (AstTyI64))
@@ -974,9 +859,7 @@
         (IrInstrNil)))))
 
 ;; `[Mov v1 = v0, Load v1 = *v9, BinOp v2 = v1 + 1]`: redefining the copy
-
 ;; destination v1 invalidates the fact, so the binop lhs stays v1.
-
 (define (opt-copy-dst-redef-instrs) : CompilerIrInstrList
   (IrInstrCons
     (IrInstrMov 1 (IrValueVar 0) (AstTyI64))
@@ -987,13 +870,9 @@
         (IrInstrNil)))))
 
 ;; `[BinOp v2 = v0 + v1, BinOp v3 = v0 + v1, BinOp v4 = v3 + 1, Return v4]`: CSE
-
 ;; rewrites the second expression to `Mov v3 = v2`; copy propagation then rewrites
-
 ;; the v4 lhs from v3 to v2, leaving the `Mov v3` copy dead for DCE to drop (the
-
 ;; `Return v4` keeps v4 live so only the copy is removed: 4 instrs -> 3).
-
 (define (opt-copy-cse-instrs) : CompilerIrInstrList
   (IrInstrCons
     (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
@@ -1004,9 +883,7 @@
         (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueVar 4))) (IrInstrNil))))))
 
 ;; `[Mov v1 = 1.5f64, BinOp v2 = v1 + v1]`: an F64 source is not recorded as a
-
 ;; copy in this slice, so the binop lhs stays v1 (no unsafe literal propagation).
-
 (define (opt-copy-f64-instrs) : CompilerIrInstrList
   (IrInstrCons
     (IrInstrMov 1 (IrValueF64 "1.5") (AstTyF64))
@@ -1015,15 +892,10 @@
       (IrInstrNil))))
 
 ;; Returns 42 when block-local copy propagation: rewrites a var copy into a later
-
 ;; use (pos: lhs v1 -> v0); does not propagate after the source (src-redef) or
-
 ;; destination (dst-redef) var is redefined; rewrites a CSE-introduced copy so
-
 ;; DCE can drop it (cse: lhs v3 -> v2, then 3 instrs -> 2); and does not
-
 ;; propagate an unsafe F64 source (f64: lhs stays v1).
-
 (define (compiler-optimize-copy-self-test) : i64
   (let ([pos : CompilerIrInstrList
     (opt-copy-instrs (OptCopyNil) (opt-copy-pos-instrs))])

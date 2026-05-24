@@ -1,13 +1,8 @@
 ; Scalar reference lowering for `spmd-reduce` (#499). Each reduction is checked
-
 ; against a hand-written foreach/set! loop (the scalar oracle) and against
-
 ; known constants, across reduction kinds, result types, and range lengths
-
 ; (0, < a likely lane width, and a non-divisible tail). `main` returns 42 only
-
 ; when every case agrees.
-
 (define (manual-sum [xs : (Array i64)] [n : i64]) : i64
   (let ([acc : i64 0])
     (begin
@@ -34,12 +29,10 @@
   (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))
 
 ; f64 sum over an array of 1.0..n.
-
 (define (reduce-sum-f64 [fs : (Array f64)] [n : i64]) : f64
   (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref fs i)))
 
 ; i32 sum.
-
 (define (reduce-sum-i32 [gs : (Array i32)] [n : i64]) : i32
   (spmd-reduce sum ([i : i64 0 n]) (cast 0 : i32) (array-ref gs i)))
 
@@ -50,7 +43,6 @@
   (spmd-reduce min ([i : i64 0 n]) seed (array-ref gs i)))
 
 ; bool: are all elements positive? is any element zero?
-
 (define (reduce-all-pos [xs : (Array i64)] [n : i64]) : bool
   (spmd-reduce all ([i : i64 0 n]) true (> (array-ref xs i) 0)))
 
@@ -61,7 +53,6 @@
   (foreach ([i : i64 0 n]) (array-set! xs i (+ i 1))))
 
 ; Float casts are not supported yet, so seed the f64 array with literals.
-
 (define (fill-f64 [fs : (Array f64)]) : unit
   (begin
     (array-set! fs 0 1.0)

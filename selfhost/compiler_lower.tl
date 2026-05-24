@@ -1,15 +1,9 @@
 ;; compiler_lower.tl - First selfhost compiler AST-to-IR lowering slice (#446).
-
 ;;
-
 ;; The lowerer accepts the checked scalar subset and builds a deterministic
-
 ;; CompilerIrProgram. It also covers scalar match and heap-backed struct/enum
-
 ;; construction/projection; closure, array, and enum-match lowering remain
-
 ;; explicit future work.
-
 (import "compiler_typecheck.tl")
 
 (import "compiler_diagnostic.tl")
@@ -62,11 +56,8 @@
   (ErrLowerFunction CompilerDiagnostic))
 
 ;; `lower-decls` also threads the `CompilerSourceSpans` provenance side table
-
 ;;
-
 ;; (#605) so each lowered function's source span is recorded alongside the IR.
-
 (defenum ResultLowerDecls
   (OkLowerDecls
     CompilerIrGlobalList
@@ -76,23 +67,14 @@
   (ErrLowerDecls CompilerDiagnostic))
 
 ;; A successful lowering returns the IR `CompilerIrProgram` plus a
-
 ;;
-
 ;; `CompilerSourceSpans` side table (#605) mapping each lowered function's name
-
 ;;
-
 ;; to the `AstSourceSpan` of its source body, so backend diagnostics can report a
-
 ;;
-
 ;; real source location. The provenance table is kept outside the IR so the
-
 ;;
-
 ;; optimizer and liveness data model stay unchanged.
-
 (defenum ResultCompilerLower
   (OkCompilerLower CompilerIrProgram CompilerSourceSpans)
   (ErrCompilerLower CompilerDiagnostic))
@@ -117,19 +99,12 @@
     [_ (lower-diagnostic message)]))
 
 ;; Best-available source span for an expression: the outermost `AstExprSpanned`
-
 ;;
-
 ;; wrapper the parser attached (#605). Used to populate the lowering provenance
-
 ;;
-
 ;; side table from a function's body. Returns `CompilerNoSourceSpan` for an
-
 ;;
-
 ;; unspanned expression (synthesized IR has no source location).
-
 (define (lower-ast-expr-span [expr : AstExpr]) : CompilerMaybeSourceSpan
   (match expr
     [(AstExprSpanned _ span) (CompilerSomeSourceSpan span)]
@@ -618,17 +593,11 @@
     [_ false]))
 
 ;; Bind a matched variant's payload fields. Irrefutable subpatterns (wildcard,
-
 ;; binding) just load/bind; a refutable literal subpattern (#651) loads the
-
 ;; field, compares it to the literal, and on mismatch branches to `fail-label`
-
 ;; (the enclosing arm's next-arm test) so matching continues. Nested variant
-
 ;; subpatterns recurse on the field's tag. `fail-label` is unused when every subpattern
-
 ;; is irrefutable.
-
 (define (lower-bind-variant-payloads
   [ctx : TcContext]
   [state : LowerState]
@@ -815,11 +784,8 @@
             (lower-diagnostic "lower: enum payload pattern arity mismatch"))])]))
 
 ;; A payload subpattern is refutable when it can fail to match at run time. Only
-
 ;; literal and nested-variant subpatterns are refutable here; binding,
-
 ;; var, wildcard, and tuple subpatterns always match structurally.
-
 (define (lower-pattern-refutable? [pattern : AstPattern]) : bool
   (match pattern
     [(AstPatLiteral _) true]
@@ -2138,13 +2104,9 @@
                       origin)))))))))))
 
 ;; Lower an unshadowed `(string-ref s i)` / `(char-at s i)` builtin call to the
-
 ;; bounds-checked String byte index. Since #677 the parser emits these names as
-
 ;; ordinary calls, so `lower-call` routes the unshadowed builtin here to lower it
-
 ;; like the `AstExprStringRef` node.
-
 (define (lower-string-ref-call
   [ctx : TcContext]
   [state : LowerState]
@@ -2303,17 +2265,11 @@
         (lower-diagnostic-at-expr func "lower: only direct calls are supported"))]))
 
 ;; A dynamic-array value is a pointer to inline fat storage `{data_ptr, length}`
-
 ;; with the i64 length at byte offset 8. `Gep` scales the index by the element
-
 ;; size, so index 1 with element type i64 addresses that length field, which a
-
 ;; typed `Load` then reads. Dynamic-array and String arguments are both
-
 ;; intercepted; other `length` arguments fall back to the direct-call path so
-
 ;; their runtime helper is unchanged.
-
 (define (lower-array-length
   [ctx : TcContext]
   [state : LowerState]
@@ -2373,11 +2329,8 @@
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 ;; Small emit helpers: allocate a fresh var, emit one instruction, and return a
-
 ;; `LowerExpr` carrying the updated state plus the result value. These flatten
-
 ;; the otherwise deeply-nested alloc/emit chains in the array-access lowering.
-
 (define (lower-emit-cast
   [state : LowerState]
   [value : CompilerIrValue]
@@ -2424,15 +2377,10 @@
         ty)]))
 
 ;; CFG tail of `lower-array-element-addr`: branch on the in-bounds condition to
-
 ;; an OK block, or a fail block that calls `tl_oob_abort` (a diverging call kept
-
 ;; by the optimizer) then jumps to OK to keep the CFG well formed. In the OK
-
 ;; block, load the buffer pointer (fat offset 0, a raw U64 address) and `Gep` it
-
 ;; by the index, scaled by the element type, to the element address.
-
 (define (lower-array-element-addr-finish
   [state : LowerState]
   [arr-value : CompilerIrValue]
@@ -2462,11 +2410,8 @@
                   (lower-emit-gep buf-state buf-val idx-off elem-ty)])]))])))
 
 ;; Compute the address of element `idx-value` in dynamic array `arr-value`,
-
 ;; emitting an unsigned bounds check (negative indices wrap large and also
-
 ;; fail). Returns the element pointer as an `elem-ty`-typed value.
-
 (define (lower-array-element-addr
   [state : LowerState]
   [arr-value : CompilerIrValue]
@@ -2504,9 +2449,7 @@
                                     elem-ty)])])])])])])])]))
 
 ;; `(make-array T len)` -> checked length, `tl_alloc` element buffer, and a
-
 ;; heap-backed dynamic-array fat value `{ ptr, len }`.
-
 (define (lower-make-array-store-fat
   [state : LowerState]
   [arr-ty : AstType]
@@ -2645,7 +2588,6 @@
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 ;; `(array-ref arr index)` -> bounds-checked typed element load.
-
 (define (lower-array-ref
   [ctx : TcContext]
   [state : LowerState]
@@ -2701,7 +2643,6 @@
     [(ErrTcType message) (ErrLowerExpr (lower-diagnostic-at-expr arr message))]))
 
 ;; `(array-set! arr index value)` -> bounds-checked typed element store.
-
 (define (lower-array-set
   [ctx : TcContext]
   [state : LowerState]
@@ -3036,21 +2977,13 @@
                   [(ErrLowerExpr message) (ErrLowerExpr message)]))])])]))
 
 ;; Scalar `match` lowering (#568). The scrutinee is lowered once into a fresh
-
 ;; local, then literal arms become a chain of `IrBinEq` tests + `IrInstrBranch`
-
 ;; (mirroring `lower-if`). The typechecker guarantees exhaustiveness and arm-type
-
 ;; agreement, so the final arm reached must match: it is lowered as an
-
 ;; irrefutable catch-all (no test, jump straight to the merge block). A
-
 ;; value-typed match merges arm results with an `IrInstrPhi`; a `unit`-typed
-
 ;; match emits no value phi. Enum matches reuse the same merge path, but load the
-
 ;; heap tag once and dispatch variant arms by tag (#517).
-
 (define (lower-match
   [ctx : TcContext]
   [state : LowerState]
@@ -3696,15 +3629,10 @@
       (ErrLowerValue (lower-diagnostic "lower: unsupported global initializer"))]))
 
 ;; Record `name -> body span` into the provenance table (#605). A function whose
-
 ;;
-
 ;; body carries no source span leaves the table unchanged, so the backend simply
-
 ;;
-
 ;; falls back to its default location for that function.
-
 (define (lower-record-function-span
   [spans : CompilerSourceSpans]
   [name : String]
@@ -3848,11 +3776,8 @@
   (tuple 1 true))")
 
 ;; `(comptime expr)` folds to a literal via the scalar CTFE evaluator (#719).
-
 ;; These fixtures exercise arithmetic, `if`, and `let` folds, plus the
-
 ;; runtime-variable and deferred-f64 (#735) rejection paths.
-
 (define (compiler-lower-comptime-arith-source) : String
   "(define (main) : i64 (comptime (+ 1 2)))")
 
@@ -3875,9 +3800,7 @@
     [(OkCompilerLower _ _) false]))
 
 ;; Scalar match lowering smoke (#568): an i64 literal match with a binding
-
 ;; catch-all (value-returning), an exhaustive bool match, and a unit-typed match.
-
 (define (compiler-lower-match-source) : String
   "(extern print-i64 : (-> i64 unit))
 (define (classify [n : i64]) : i64
@@ -3903,31 +3826,23 @@
     (+ (sign 7) (+ (classify 1) (flag-score true)))))")
 
 ;; Dynamic-array length lowering smoke (#528): `array-length` and `length` on a
-
 ;; dynamic array lower to a fat-value length load rather than a runtime call.
-
 (define (compiler-lower-array-length-source) : String
   "(define (dyn-len [a : (Array i64)]) : i64 (array-length a))
 (define (dyn-len-alias [a : (Array i64)]) : i64 (length a))
 (define (main) : i64 0)")
 
 ;; `array-ref`/`array-set!` lower to a bounds-checked typed element load/store
-
 ;; (#528). Taking the array as a parameter avoids needing `make-array` here.
-
 (define (compiler-lower-array-access-source) : String
   "(define (get [a : (Array i64)] [i : i64]) : i64 (array-ref a i))
 (define (put [a : (Array i64)] [i : i64] [v : i64]) : unit (array-set! a i v))
 (define (main) : i64 0)")
 
 ;; `make-array` lowers to checked byte-count math, a `tl_alloc` element buffer,
-
 ;; and a dynamic-array fat value. The fixture also immediately uses
-
 ;; `array-set!`, `array-ref`, and `array-length` so the generated IR exercises
-
 ;; the full dynamic-array primitive set.
-
 (define (compiler-lower-make-array-source) : String
   "(define (main [n : i64]) : i64
   (let ([a : (Array i64) (make-array i64 n)])
@@ -3937,9 +3852,7 @@
       (+ (array-length a) (+ (array-ref a 0) (array-ref a 1))))))")
 
 ;; `string-length`/`length` on a String lower to the same fat `{ptr, len}`
-
 ;; length load as `array-length` (#527): both lay out the i64 length at offset 8.
-
 (define (compiler-lower-string-length-source) : String
   "(define (str-len [s : String]) : i64 (string-length s))
 (define (str-len-alias [s : String]) : i64 (length s))
@@ -4026,11 +3939,8 @@
   (+ (score (Some 4)) (+ (zero-call None) (or-zero (Pair 3 4)))))")
 
 ;; A refutable literal payload subpattern (#651): `(Some 0)` tests the payload
-
 ;; and, on mismatch, falls through to the `(Some n)` binding arm. The trailing
-
 ;; `(Some n)` keeps the match exhaustive.
-
 (define (compiler-lower-enum-literal-payload-source) : String
   "(defenum Maybe (None) (Some i64))
 (define (classify [m : Maybe]) : i64
@@ -4041,11 +3951,8 @@
 (define (main) : i64 0)")
 
 ;; A refutable nested-variant payload subpattern (#651): `(Wrap (A n))` tests
-
 ;; the inner enum's tag and, on mismatch, falls through to `(Wrap inner)` (the
-
 ;; irrefutable Wrap arm keeps the match exhaustive).
-
 (define (compiler-lower-enum-nested-payload-source) : String
   "(defenum Inner (A i64) (B i64))
 (defenum Outer (Wrap Inner) (Empty))
@@ -4071,23 +3978,14 @@
     [(ErrCompilerLower _) false]))
 
 ;; Provenance side-table smoke (#605): the smoke source defines two functions
-
 ;;
-
 ;; (`inc` on line 3 and `main` on line 4 with its body on line 5). After lowering
-
 ;;
-
 ;; the function spans table must hold exactly those two entries, keyed by name,
-
 ;;
-
 ;; recording each function body's source start line. The instruction/value span
-
 ;;
-
 ;; side table should also receive entries from expression-backed emits (#744).
-
 (define (compiler-lower-span-start-line-ok?
   [spans : CompilerSourceSpans]
   [name : String]
@@ -4126,9 +4024,7 @@
     [(ErrCompilerLower _) false]))
 
 ;; Count `IrInstrPhi` nodes, to assert the merge-phi shape of lowered scalar
-
 ;; matches (#602): value-returning matches emit a merge phi, unit matches none.
-
 (define (lower-test-instr-phi-count [instr : CompilerIrInstr]) : i64
   (match instr
     [(IrInstrPhi _ _ _) 1]
@@ -4204,9 +4100,7 @@
             (lower-test-blocks-call-count rest name))])]))
 
 ;; Phi count of the function named `name`, or -1 when no such function exists
-
 ;; (so a missing function fails both the `> 0` and `= 0` assertions below).
-
 (define (lower-test-function-phi-count
   [funcs : CompilerIrFunctionList]
   [name : String]) : i64
@@ -4244,11 +4138,8 @@
             (lower-test-functions-call-count rest name))])]))
 
 ;; CTFE fold verification (#719): a folded `(comptime ...)` lowers to a literal,
-
 ;; so the function body must contain a `Mov` of the expected i64 literal and no
-
 ;; `BinOp`/`UnOp` instructions (the arithmetic was evaluated at compile time).
-
 (define (lower-test-instr-i64-mov-count [instr : CompilerIrInstr] [want : i64]) : i64
   (match instr
     [(IrInstrMov _ value _)
@@ -4342,9 +4233,7 @@
     [(ErrCompilerLower _) false]))
 
 ;; The value-returning scalar matches (`classify`/`flag-score`/`sign`) each emit
-
 ;; a merge phi; the unit-typed match (`announce`) emits no value phi.
-
 (define (compiler-lower-match-phi-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(OkCompilerLower program _)

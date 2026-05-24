@@ -1,24 +1,16 @@
 ;; refs #41, GAP (D): the zero-arg call form `(Ctor)` constructs a NULLARY enum
-
 ;; variant, equivalent to bare `Ctor` and consistent with payload construction
-
 ;; `(RGB v)`. This program exercises all three construction forms at runtime and
-
 ;; proves the disambiguation rule: a genuine zero-arg `define`d function `(bias)`
-
 ;; still CALLS the function (it is bound as a function type, not an enum type),
-
 ;; while `(Red)` / `(Green)` construct their nullary variants.
-
 (defenum Color
   (Red)
   (Green)
   (RGB i64))
 
 ;; Classify a Color to an i64. The arms match nullary variants `(Red)`/`(Green)`
-
 ;; and the payload variant `(RGB v)`.
-
 (define (code [c : Color]) : i64
   (match c
     [(Red) 1]
@@ -26,11 +18,8 @@
     [(RGB v) v]))
 
 ;; A real zero-arg function — NOT an enum variant. `(bias)` must dispatch to this
-
 ;; function (returns 30), proving the nullary-variant call form does not shadow
-
 ;; ordinary zero-arg function calls.
-
 (define (bias) : i64
   30)
 

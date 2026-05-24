@@ -1,15 +1,9 @@
 ;; stdlib_io.tl - integration smoke for stdlib/io.tl helpers (#702).
-
 ;; Exercises read-file-or (present + missing fallback), append-file
-
 ;; (read-modify-write), and file-nonempty? (present + missing) end-to-end,
-
 ;; returning 42 only when every helper behaves as expected. Scratch files live
-
 ;; under the gitignored target/ directory (the program runs with the repo root
-
 ;; as its working directory).
-
 (import "stdlib/io.tl")
 
 (define (main) : i64

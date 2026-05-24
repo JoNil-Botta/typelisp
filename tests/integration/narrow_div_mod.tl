@@ -1,7 +1,5 @@
 ; Exercises narrow integer division and modulo instruction selection.
-
 ; 100 / 5 = 20, 42 / 6 = 7, 17 % 5 = 2, 22 % 7 = 1, total 30.
-
 (define (div32 [a : i32] [b : i32]) : i32
   (/ a b))
 

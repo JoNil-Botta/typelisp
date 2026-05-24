@@ -1,17 +1,10 @@
 ;; compiler_regalloc.tl - Planning-only scalar register allocation (#554).
-
 ;;
-
 ;; This pass mirrors the Rust backend's planning shape without changing
-
 ;; assembly emission. It computes inspectable live intervals, ineligible vars,
-
 ;; and register/spill homes for scalar IR values. The first selfhost pool is a
-
 ;; conservative System V integer subset: %rsp/%rbp are never allocatable, and
-
 ;; the current emitter's hard scratch registers remain reserved.
-
 (import "compiler_liveness.tl")
 
 (defenum CompilerRegStringList

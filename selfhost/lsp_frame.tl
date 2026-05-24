@@ -1,13 +1,8 @@
 ;; lsp_frame.tl - First selfhost LSP stdio framing slice (#592).
-
 ;;
-
 ;; This driver owns only JSON-RPC/LSP Content-Length framing over stdin/stdout.
-
 ;; It intentionally does not parse JSON-RPC, track documents, or publish
-
 ;; diagnostics yet.
-
 (defenum LspFrameRead
   (LspFrameOk String)
   (LspFrameEof)

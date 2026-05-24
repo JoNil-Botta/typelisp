@@ -1,5 +1,4 @@
 ; sym_i64_env.tl - Integration driver for the main-less selfhost sym_i64_env module.
-
 (import "sym_i64_env_core.tl")
 
 (define (check-equal [got : i64] [want : i64] [msg : String]) : unit

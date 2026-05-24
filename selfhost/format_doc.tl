@@ -1,13 +1,8 @@
 ;; format_doc.tl - Small document algebra for the self-hosted formatter (#213).
-
 ;;
-
 ;; The formatter front end and rule traversal are separate issues. This module
-
 ;; owns the reusable layout engine: callers build `Doc` values, then render them
-
 ;; with deterministic width-aware grouping and indentation.
-
 (defenum Doc
   (DEmpty)
   (DText String)

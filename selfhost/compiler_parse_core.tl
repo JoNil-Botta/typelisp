@@ -1,15 +1,9 @@
 ;; compiler_parse_core.tl - Sexpr -> real compiler AST parser (#335).
-
 ;;
-
 ;; This module targets `compiler_ast_types.tl`, not the smaller
-
 ;; compile_smoke AST. It stays parser-only: later #27 work can reuse the
-
 ;; parsed `AstProgram` for typechecking/lowering once those selfhost passes
-
 ;; exist.
-
 (import "compiler_ast_types.tl")
 
 (import "compiler_diagnostic.tl")
@@ -1172,9 +1166,7 @@
     [_ (ErrAstExpr "parse: malformed struct-get")]))
 
 ;; `(comptime expr)` (#718) wraps exactly one inner expression for compile-time
-
 ;; evaluation; evaluation itself is reserved for #719.
-
 (define (parse-ast-comptime [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
     [(SpSCons expr (SpSNil _) _)
@@ -1761,20 +1753,15 @@
               0))))]))
 
 ;; True only when `src` fails to parse with exactly the wanted diagnostic. The
-
 ;; counterpart to the success-path smoke: it pins the parser's rejection
-
 ;; messages so a regression that drops or relabels an error is caught (#655).
-
 (define (compiler-parse-error-ok? [src : String] [want : String]) : bool
   (match (parse-ast-source src)
     [(ErrAstProgram message) (string-eq message want)]
     [(OkAstProgram _) false]))
 
 ;; Minimal complete programs that lex cleanly but reach a specific parser
-
 ;; rejection, one per representative special form.
-
 (define (compiler-parse-malformed-binary-source) : String
   "(define (main) : i64 (+ 1))")
 

@@ -1,15 +1,9 @@
 ;; compiler_liveness.tl - Self-hosted CompilerIrFunction liveness analysis (#553).
-
 ;;
-
 ;; This module keeps the first selfhost liveness pass list-backed and
-
 ;; deterministic. It mirrors the current Rust backend liveness shape closely
-
 ;; enough for a later register-allocation planner to query block live-in,
-
 ;; live-out, and instruction live-after sets.
-
 (import "compiler_ir_types.tl")
 
 (defenum CompilerLiveI64Set

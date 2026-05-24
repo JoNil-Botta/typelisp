@@ -1,33 +1,18 @@
 ;;;; Minimal TypeLisp test assertion helpers.
-
 ;;;;
-
 ;;;; Provides assertion helpers for TypeLisp fixtures using only compiler/runtime
-
 ;;;; primitives: `panic`, `string-eq`, and `cast`.
-
 ;;;;
-
 ;;;; Usage: `(import "stdlib/test.tl")`
-
 ;;;;
-
 ;;;; ```typelisp
-
 ;;;; (import "stdlib/test.tl")
-
 ;;;; (define (main) : i64
-
 ;;;;   (begin
-
 ;;;;     (assert-true true "expected true")
-
 ;;;;     42))
-
 ;;;; ```
-
 ;;; Assert that `condition` is true, panicking with `message` when it is false.
-
 (define (assert-true [condition : bool] [message : String]) : unit
   (if condition
     unit

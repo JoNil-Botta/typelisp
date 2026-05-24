@@ -1037,6 +1037,18 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
                 "token.tl",
             ],
         },
+        // refs #553: selfhost CompilerIr liveness analysis over straight-line,
+        // branching, and phi-input control-flow shapes.
+        Case {
+            name: "compiler_liveness_smoke",
+            exit_code: 42,
+            stdout: "",
+            deps: &[
+                "compiler_liveness.tl",
+                "compiler_ir_types.tl",
+                "compiler_ast_types.tl",
+            ],
+        },
         // refs #447: first selfhost backend emitter over the real compiler IR.
         // The smoke parses, typechecks, lowers, emits deterministic Linux x86_64
         // assembly text, and verifies representative labels/instructions.
@@ -3438,6 +3450,7 @@ fn source_path_for_case(manifest_dir: &PathBuf, name: &str) -> PathBuf {
         "compiler_symbols_smoke" => "compiler_symbols_smoke.tl",
         "compiler_typecheck_smoke" => "compiler_typecheck_smoke.tl",
         "compiler_lower_smoke" => "compiler_lower_smoke.tl",
+        "compiler_liveness_smoke" => "compiler_liveness_smoke.tl",
         "compiler_backend_smoke" => "compiler_backend_smoke.tl",
         "doc_extract_smoke" => "doc_extract_smoke.tl",
         "doc_render_smoke" => "doc_render_smoke.tl",

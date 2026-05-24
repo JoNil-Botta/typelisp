@@ -20,6 +20,12 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Check selfhost contribution guardrail
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
+          SELFHOST_GUARDRAIL_BASE="origin/${{ github.base_ref }}" scripts/check-selfhost-guardrail.sh
+
       - name: Cache cargo dependencies
         uses: actions/cache@v4
         with:

@@ -96,6 +96,8 @@ fn compiler_lower_tl_compiles_to_assembly() {
         "_tl_lower_function:",
         "_tl_lower_expr:",
         "_tl_lower_call:",
+        "_tl_lower_stdio_builtin_question:",
+        "_tl_lower_stdio_runtime_name:",
         "_tl_lower_args:",
         "_tl_lower_let_bindings:",
         "_tl_lower_begin:",
@@ -119,6 +121,10 @@ fn compiler_lower_tl_compiles_to_assembly() {
         "lower: smoke score mismatch",
         "(while (< x 45)",
         "(extern print-i64 : (-> i64 unit))",
+        ".L_tl_read_stdin_line",
+        ".L_tl_read_stdin_bytes",
+        ".L_tl_stdin_eof",
+        ".L_tl_flush_stdout",
     ] {
         assert_message(&asm, message, "compiler_lower");
     }

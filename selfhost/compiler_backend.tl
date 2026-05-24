@@ -16,7 +16,7 @@
   (ErrCompilerBackend String))
 
 (defenum CompilerBackendRuntimePlan
-  (BackendRuntimePlan bool bool bool bool))
+  (BackendRuntimePlan bool bool bool bool bool bool bool bool))
 
 (defenum ResultBackendRuntimePlan
   (OkBackendRuntimePlan CompilerBackendRuntimePlan)
@@ -37,6 +37,9 @@
 
 (define (backend-and4 [a : bool] [b : bool] [c : bool] [d : bool]) : bool
   (and a (and b (and c d))))
+
+(define (backend-and8 [a : bool] [b : bool] [c : bool] [d : bool] [e : bool] [f : bool] [g : bool] [h : bool]) : bool
+  (and (backend-and4 a b c d) (backend-and4 e f g h)))
 
 (define (compiler-backend-round-up-16 [n : i64]) : i64
   (if (= n 0)
@@ -872,7 +875,7 @@
 
 (define (compiler-backend-plan-provides? [plan : CompilerBackendRuntimePlan] [name : String]) : bool
   (match plan
-    [(BackendRuntimePlan alloc oob substring concat)
+    [(BackendRuntimePlan alloc oob substring concat read-line read-bytes stdin-eof flush-stdout)
      (if (string-eq name "tl_alloc")
          alloc
          (if (string-eq name "tl_oob_abort")
@@ -881,7 +884,15 @@
                  substring
                  (if (string-eq name "tl_string_concat")
                      concat
-                     false))))]))
+                     (if (string-eq name ".L_tl_read_stdin_line")
+                         read-line
+                         (if (string-eq name ".L_tl_read_stdin_bytes")
+                             read-bytes
+                             (if (string-eq name ".L_tl_stdin_eof")
+                                 stdin-eof
+                                 (if (string-eq name ".L_tl_flush_stdout")
+                                     flush-stdout
+                                     false))))))))]))
 
 (define (compiler-backend-runtime-plan-for [functions : CompilerIrFunctionList] [externs : CompilerIrExternList]) : ResultBackendRuntimePlan
   (let ([defines-alloc : bool (compiler-backend-function-list-defines? functions "tl_alloc")]
@@ -892,17 +903,37 @@
         [extern-oob : bool (compiler-backend-extern-list-references? externs "tl_oob_abort")]
         [extern-substring : bool (compiler-backend-extern-list-references? externs "tl_substring")]
         [extern-concat : bool (compiler-backend-extern-list-references? externs "tl_string_concat")]
+        [extern-read-line : bool (compiler-backend-extern-list-references? externs ".L_tl_read_stdin_line")]
+        [extern-read-bytes : bool (compiler-backend-extern-list-references? externs ".L_tl_read_stdin_bytes")]
+        [extern-stdin-eof : bool (compiler-backend-extern-list-references? externs ".L_tl_stdin_eof")]
+        [extern-flush-stdout : bool (compiler-backend-extern-list-references? externs ".L_tl_flush_stdout")]
         [calls-alloc : bool (compiler-backend-function-list-calls? functions "tl_alloc")]
         [calls-oob : bool (compiler-backend-function-list-calls? functions "tl_oob_abort")]
         [calls-substring : bool (compiler-backend-function-list-calls? functions "tl_substring")]
-        [calls-concat : bool (compiler-backend-function-list-calls? functions "tl_string_concat")])
+        [calls-concat : bool (compiler-backend-function-list-calls? functions "tl_string_concat")]
+        [calls-read-line : bool (compiler-backend-function-list-calls? functions ".L_tl_read_stdin_line")]
+        [calls-read-bytes : bool (compiler-backend-function-list-calls? functions ".L_tl_read_stdin_bytes")]
+        [calls-stdin-eof : bool (compiler-backend-function-list-calls? functions ".L_tl_stdin_eof")]
+        [calls-flush-stdout : bool (compiler-backend-function-list-calls? functions ".L_tl_flush_stdout")])
     (let ([needs-oob : bool (and (not defines-oob) (or extern-oob calls-oob))]
           [needs-substring : bool (and (not defines-substring) (or extern-substring calls-substring))]
           [needs-concat : bool (and (not defines-concat) (or extern-concat calls-concat))]
+          [needs-read-line : bool (or extern-read-line calls-read-line)]
+          [needs-read-bytes : bool (or extern-read-bytes calls-read-bytes)]
+          [needs-stdin-eof : bool (or extern-stdin-eof calls-stdin-eof)]
+          [needs-flush-stdout : bool (or extern-flush-stdout calls-flush-stdout)]
           [direct-alloc : bool (and (not defines-alloc) (or extern-alloc calls-alloc))])
-      (let ([needs-alloc : bool (or direct-alloc (or needs-substring needs-concat))])
+      (let ([needs-alloc : bool (or direct-alloc (or needs-substring (or needs-concat (or needs-read-line needs-read-bytes))))])
         (OkBackendRuntimePlan
-          (BackendRuntimePlan needs-alloc needs-oob needs-substring needs-concat))))))
+          (BackendRuntimePlan
+            needs-alloc
+            needs-oob
+            needs-substring
+            needs-concat
+            needs-read-line
+            needs-read-bytes
+            needs-stdin-eof
+            needs-flush-stdout))))))
 
 (define (compiler-backend-runtime-plan [program : CompilerIrProgram]) : ResultBackendRuntimePlan
   (match program
@@ -938,12 +969,33 @@
 
 ")
 
+(define (compiler-backend-runtime-stdio-data [read-line : bool] [read-bytes : bool] [stdin-eof : bool]) : String
+  (if (or read-line (or read-bytes stdin-eof))
+      (string-append
+        "    .data
+    .balign 8
+.L_tl_stdin_eof_flag:
+    .quad 0
+
+"
+        (if (or read-line read-bytes)
+            "    .section .rodata
+.L_tl_stdin_error_msg:
+    .ascii \"tl: stdin failed\\n\"
+    .set .L_tl_stdin_error_msg_len, . - .L_tl_stdin_error_msg
+
+"
+            ""))
+      ""))
+
 (define (compiler-backend-runtime-data [plan : CompilerBackendRuntimePlan]) : String
   (match plan
-    [(BackendRuntimePlan alloc oob _ _)
-     (string-append
-       (if alloc (compiler-backend-runtime-alloc-data) "")
-       (if oob (compiler-backend-runtime-oob-data) ""))]))
+    [(BackendRuntimePlan alloc oob _ _ read-line read-bytes stdin-eof _)
+      (string-append
+        (if alloc (compiler-backend-runtime-alloc-data) "")
+        (string-append
+          (if oob (compiler-backend-runtime-oob-data) "")
+          (compiler-backend-runtime-stdio-data read-line read-bytes stdin-eof)))]))
 
 (define (compiler-backend-runtime-alloc-functions) : String
   "    .globl tl_alloc
@@ -1085,16 +1137,174 @@ tl_string_concat:
 
 ")
 
+(define (compiler-backend-runtime-stdin-abort) : String
+  "    movq $1, %rax
+    movq $2, %rdi
+    leaq .L_tl_stdin_error_msg(%rip), %rsi
+    movq $.L_tl_stdin_error_msg_len, %rdx
+    syscall
+    movq $60, %rax
+    movq $134, %rdi
+    syscall
+")
+
+(define (compiler-backend-runtime-read-stdin-line-functions) : String
+  (string-append
+    ".L_tl_read_stdin_line:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    sub $16, %rsp
+    movq $64, %r13
+    movq %r13, %rdi
+    call tl_alloc
+    movq %rax, %rbx
+    xorq %r12, %r12
+.L_tl_read_stdin_line_loop:
+    xorq %rax, %rax
+    xorq %rdi, %rdi
+    leaq -40(%rbp), %rsi
+    movq $1, %rdx
+    syscall
+    testq %rax, %rax
+    js .L_tl_read_stdin_line_error
+    jz .L_tl_read_stdin_line_eof
+    cmpb $10, -40(%rbp)
+    je .L_tl_read_stdin_line_done
+    cmpq %r13, %r12
+    jb .L_tl_read_stdin_line_store
+    movq %r13, %rdi
+    addq %r13, %rdi
+    js .L_tl_read_stdin_line_error
+    movq %rdi, %r14
+    call tl_alloc
+    xorq %rcx, %rcx
+.L_tl_read_stdin_line_copy_loop:
+    cmpq %r12, %rcx
+    jge .L_tl_read_stdin_line_copy_done
+    movzbl (%rbx,%rcx), %edx
+    movb %dl, (%rax,%rcx)
+    incq %rcx
+    jmp .L_tl_read_stdin_line_copy_loop
+.L_tl_read_stdin_line_copy_done:
+    movq %rax, %rbx
+    movq %r14, %r13
+.L_tl_read_stdin_line_store:
+    movzbl -40(%rbp), %eax
+    movb %al, (%rbx,%r12)
+    incq %r12
+    jmp .L_tl_read_stdin_line_loop
+.L_tl_read_stdin_line_eof:
+    movq $1, .L_tl_stdin_eof_flag(%rip)
+    jmp .L_tl_read_stdin_line_return
+.L_tl_read_stdin_line_done:
+    movq $0, .L_tl_stdin_eof_flag(%rip)
+.L_tl_read_stdin_line_return:
+    movq $16, %rdi
+    call tl_alloc
+    movq %rbx, 0(%rax)
+    movq %r12, 8(%rax)
+    add $16, %rsp
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+.L_tl_read_stdin_line_error:
+"
+    (string-append (compiler-backend-runtime-stdin-abort) "\n")))
+
+(define (compiler-backend-runtime-read-stdin-bytes-functions) : String
+  (string-append
+    ".L_tl_read_stdin_bytes:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    sub $8, %rsp
+    movq %rdi, %r12
+    cmpq $0, %r12
+    jl .L_tl_read_stdin_bytes_error
+    movq %r12, %rdi
+    cmpq $0, %rdi
+    jg .L_tl_read_stdin_bytes_alloc_ready
+    movq $1, %rdi
+.L_tl_read_stdin_bytes_alloc_ready:
+    call tl_alloc
+    movq %rax, %rbx
+    xorq %r13, %r13
+    testq %r12, %r12
+    jz .L_tl_read_stdin_bytes_return
+.L_tl_read_stdin_bytes_loop:
+    cmpq %r12, %r13
+    jge .L_tl_read_stdin_bytes_full
+    movq %r12, %rdx
+    subq %r13, %rdx
+    xorq %rax, %rax
+    xorq %rdi, %rdi
+    leaq (%rbx,%r13), %rsi
+    syscall
+    testq %rax, %rax
+    js .L_tl_read_stdin_bytes_error
+    jz .L_tl_read_stdin_bytes_eof
+    addq %rax, %r13
+    jmp .L_tl_read_stdin_bytes_loop
+.L_tl_read_stdin_bytes_full:
+    movq $0, .L_tl_stdin_eof_flag(%rip)
+    jmp .L_tl_read_stdin_bytes_return
+.L_tl_read_stdin_bytes_eof:
+    movq $1, .L_tl_stdin_eof_flag(%rip)
+.L_tl_read_stdin_bytes_return:
+    movq $16, %rdi
+    call tl_alloc
+    movq %rbx, 0(%rax)
+    movq %r13, 8(%rax)
+    add $8, %rsp
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+.L_tl_read_stdin_bytes_error:
+"
+    (string-append (compiler-backend-runtime-stdin-abort) "\n")))
+
+(define (compiler-backend-runtime-stdin-eof-functions) : String
+  ".L_tl_stdin_eof:
+    movq .L_tl_stdin_eof_flag(%rip), %rax
+    ret
+
+")
+
+(define (compiler-backend-runtime-flush-stdout-functions) : String
+  ".L_tl_flush_stdout:
+    ret
+
+")
+
 (define (compiler-backend-runtime-functions [plan : CompilerBackendRuntimePlan]) : String
   (match plan
-    [(BackendRuntimePlan alloc oob substring concat)
+    [(BackendRuntimePlan alloc oob substring concat read-line read-bytes stdin-eof flush-stdout)
      (string-append
        (if alloc (compiler-backend-runtime-alloc-functions) "")
        (string-append
          (if oob (compiler-backend-runtime-oob-functions) "")
          (string-append
            (if substring (compiler-backend-runtime-substring-functions) "")
-           (if concat (compiler-backend-runtime-concat-functions) ""))))]))
+           (string-append
+             (if concat (compiler-backend-runtime-concat-functions) "")
+             (string-append
+               (if read-line (compiler-backend-runtime-read-stdin-line-functions) "")
+               (string-append
+                 (if read-bytes (compiler-backend-runtime-read-stdin-bytes-functions) "")
+                 (string-append
+                   (if stdin-eof (compiler-backend-runtime-stdin-eof-functions) "")
+                   (if flush-stdout (compiler-backend-runtime-flush-stdout-functions) ""))))))))]))
 
 (define (compiler-backend-entry) : String
   "_start:\n    call main\n    movq %rax, %rdi\n    movq $60, %rax\n    syscall\n")
@@ -1197,7 +1407,7 @@ tl_string_concat:
         "main"
         IrParamNil
         (AstTyI64)
-        3
+        7
         (IrBlockCons
           (IrBlock
             "entry"
@@ -1230,8 +1440,32 @@ tl_string_concat:
                           (IrValueCons (IrValueI64 0) IrValueNil))))
                     (AstTyI64))
                   (IrInstrCons
-                    (IrInstrReturn (IrSomeValue (IrValueI64 42)))
-                    IrInstrNil)))))
+                    (IrInstrCall
+                      3
+                      ".L_tl_read_stdin_line"
+                      IrValueNil
+                      (AstTyString))
+                    (IrInstrCons
+                      (IrInstrCall
+                        4
+                        ".L_tl_read_stdin_bytes"
+                        (IrValueCons (IrValueI64 0) IrValueNil)
+                        (AstTyString))
+                      (IrInstrCons
+                        (IrInstrCall
+                          5
+                          ".L_tl_stdin_eof"
+                          IrValueNil
+                          (AstTyBool))
+                        (IrInstrCons
+                          (IrInstrCall
+                            6
+                            ".L_tl_flush_stdout"
+                            IrValueNil
+                            (AstTyUnit))
+                          (IrInstrCons
+                            (IrInstrReturn (IrSomeValue (IrValueI64 42)))
+                            IrInstrNil)))))))))
           IrBlockNil))
       IrFunctionNil)
     (compiler-backend-runtime-helper-externs)))
@@ -1245,22 +1479,34 @@ tl_string_concat:
               (compiler-backend-string-contains? asm "tl_alloc:\n")
               (compiler-backend-string-contains? asm ".globl tl_oob_abort\n")
               (compiler-backend-string-contains? asm "tl_oob_abort:\n"))]
-           [string-labels : bool
-            (backend-and4
-              (compiler-backend-string-contains? asm ".globl tl_substring\n")
-              (compiler-backend-string-contains? asm "tl_substring:\n")
-              (compiler-backend-string-contains? asm ".globl tl_string_concat\n")
-              (compiler-backend-string-contains? asm "tl_string_concat:\n"))]
-           [no-externs : bool
-            (backend-and4
-              (not (compiler-backend-string-contains? asm ".extern tl_alloc\n"))
-              (not (compiler-backend-string-contains? asm ".extern tl_oob_abort\n"))
-              (not (compiler-backend-string-contains? asm ".extern tl_substring\n"))
-              (not (compiler-backend-string-contains? asm ".extern tl_string_concat\n")))])
-       (and base-labels
-            (and string-labels
-                 (and no-externs
-                      (compiler-backend-string-contains? asm "    call tl_alloc\n")))))]
+            [string-labels : bool
+             (backend-and4
+               (compiler-backend-string-contains? asm ".globl tl_substring\n")
+               (compiler-backend-string-contains? asm "tl_substring:\n")
+               (compiler-backend-string-contains? asm ".globl tl_string_concat\n")
+               (compiler-backend-string-contains? asm "tl_string_concat:\n"))]
+            [stdio-labels : bool
+             (backend-and4
+               (compiler-backend-string-contains? asm ".L_tl_read_stdin_line:\n")
+               (compiler-backend-string-contains? asm ".L_tl_read_stdin_bytes:\n")
+               (compiler-backend-string-contains? asm ".L_tl_stdin_eof:\n")
+               (compiler-backend-string-contains? asm ".L_tl_flush_stdout:\n"))]
+            [no-externs : bool
+             (backend-and8
+               (not (compiler-backend-string-contains? asm ".extern tl_alloc\n"))
+               (not (compiler-backend-string-contains? asm ".extern tl_oob_abort\n"))
+               (not (compiler-backend-string-contains? asm ".extern tl_substring\n"))
+               (not (compiler-backend-string-contains? asm ".extern tl_string_concat\n"))
+               (not (compiler-backend-string-contains? asm ".extern .L_tl_read_stdin_line\n"))
+               (not (compiler-backend-string-contains? asm ".extern .L_tl_read_stdin_bytes\n"))
+               (not (compiler-backend-string-contains? asm ".extern .L_tl_stdin_eof\n"))
+               (not (compiler-backend-string-contains? asm ".extern .L_tl_flush_stdout\n")))])
+        (and base-labels
+             (and string-labels
+                  (and stdio-labels
+                       (and no-externs
+                            (and (compiler-backend-string-contains? asm "    call tl_alloc\n")
+                                 (compiler-backend-string-contains? asm ".L_tl_stdin_eof_flag:\n")))))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-user-helper-name-program) : CompilerIrProgram
@@ -1430,7 +1676,7 @@ tl_string_concat:
            IrBlockNil
            "entry"
            instr
-           (BackendRuntimePlan false false false false)
+           (BackendRuntimePlan false false false false false false false false)
            IrFunctionNil
            IrExternNil)
     [(OkCompilerBackend asm) (compiler-backend-string-contains? asm needle)]

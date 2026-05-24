@@ -231,84 +231,228 @@ impl TypeChecker {
             .collect()
     }
 
-    fn find_captured_name(
+    fn push_capture(captures: &mut Vec<(String, Span)>, name: &str, span: Span) {
+        if !captures.iter().any(|(existing, _)| existing == name) {
+            captures.push((name.to_string(), span));
+        }
+    }
+
+    fn collect_lambda_captures(
         expr: &Expr,
         outer_locals: &HashSet<String>,
         local_bindings: &HashSet<String>,
-    ) -> Option<String> {
+        captures: &mut Vec<(String, Span)>,
+        captured_sets: &mut Vec<(String, Span)>,
+    ) {
         match expr.unspan() {
-            Expr::Literal(_) => None,
-            Expr::Var(name) => (outer_locals.contains(name) && !local_bindings.contains(name))
-                .then(|| name.clone()),
+            Expr::Literal(_) => {}
+            Expr::Var(name) => {
+                if outer_locals.contains(name) && !local_bindings.contains(name) {
+                    Self::push_capture(captures, name, expr.span());
+                }
+            }
             Expr::Binary { lhs, rhs, .. } => {
-                Self::find_captured_name(lhs, outer_locals, local_bindings)
-                    .or_else(|| Self::find_captured_name(rhs, outer_locals, local_bindings))
+                Self::collect_lambda_captures(
+                    lhs,
+                    outer_locals,
+                    local_bindings,
+                    captures,
+                    captured_sets,
+                );
+                Self::collect_lambda_captures(
+                    rhs,
+                    outer_locals,
+                    local_bindings,
+                    captures,
+                    captured_sets,
+                );
             }
             Expr::Unary { expr, .. }
             | Expr::Ann { expr, .. }
             | Expr::Cast { expr, .. }
             | Expr::TupleRef { expr, .. }
             | Expr::StructGet { expr, .. } => {
-                Self::find_captured_name(expr, outer_locals, local_bindings)
+                Self::collect_lambda_captures(
+                    expr,
+                    outer_locals,
+                    local_bindings,
+                    captures,
+                    captured_sets,
+                );
             }
             Expr::Call { func, args } => {
-                Self::find_captured_name(func, outer_locals, local_bindings).or_else(|| {
-                    args.iter()
-                        .find_map(|arg| Self::find_captured_name(arg, outer_locals, local_bindings))
-                })
+                Self::collect_lambda_captures(
+                    func,
+                    outer_locals,
+                    local_bindings,
+                    captures,
+                    captured_sets,
+                );
+                for arg in args {
+                    Self::collect_lambda_captures(
+                        arg,
+                        outer_locals,
+                        local_bindings,
+                        captures,
+                        captured_sets,
+                    );
+                }
             }
             Expr::If {
                 cond,
                 then_branch,
                 else_branch,
-            } => Self::find_captured_name(cond, outer_locals, local_bindings)
-                .or_else(|| Self::find_captured_name(then_branch, outer_locals, local_bindings))
-                .or_else(|| Self::find_captured_name(else_branch, outer_locals, local_bindings)),
+            } => {
+                Self::collect_lambda_captures(
+                    cond,
+                    outer_locals,
+                    local_bindings,
+                    captures,
+                    captured_sets,
+                );
+                Self::collect_lambda_captures(
+                    then_branch,
+                    outer_locals,
+                    local_bindings,
+                    captures,
+                    captured_sets,
+                );
+                Self::collect_lambda_captures(
+                    else_branch,
+                    outer_locals,
+                    local_bindings,
+                    captures,
+                    captured_sets,
+                );
+            }
             Expr::Let { bindings, body } => {
                 let mut scoped = local_bindings.clone();
                 for (name, _, value) in bindings {
-                    if let Some(captured) = Self::find_captured_name(value, outer_locals, &scoped) {
-                        return Some(captured);
-                    }
+                    Self::collect_lambda_captures(
+                        value,
+                        outer_locals,
+                        &scoped,
+                        captures,
+                        captured_sets,
+                    );
                     scoped.insert(name.clone());
                 }
-                Self::find_captured_name(body, outer_locals, &scoped)
+                Self::collect_lambda_captures(body, outer_locals, &scoped, captures, captured_sets);
             }
-            Expr::Lambda { .. } => None,
-            Expr::Tuple(elems) | Expr::Array(elems) | Expr::Begin(elems) => elems
-                .iter()
-                .find_map(|elem| Self::find_captured_name(elem, outer_locals, local_bindings)),
+            Expr::Lambda { params, body, .. } => {
+                let mut scoped = local_bindings.clone();
+                for (param, _) in params {
+                    scoped.insert(param.clone());
+                }
+                Self::collect_lambda_captures(body, outer_locals, &scoped, captures, captured_sets);
+            }
+            Expr::Tuple(elems) | Expr::Array(elems) | Expr::Begin(elems) => {
+                for elem in elems {
+                    Self::collect_lambda_captures(
+                        elem,
+                        outer_locals,
+                        local_bindings,
+                        captures,
+                        captured_sets,
+                    );
+                }
+            }
             Expr::MakeArray { len, .. } => {
-                Self::find_captured_name(len, outer_locals, local_bindings)
+                Self::collect_lambda_captures(
+                    len,
+                    outer_locals,
+                    local_bindings,
+                    captures,
+                    captured_sets,
+                );
             }
             Expr::ArrayRef { expr, index } | Expr::StringRef { expr, index } => {
-                Self::find_captured_name(expr, outer_locals, local_bindings)
-                    .or_else(|| Self::find_captured_name(index, outer_locals, local_bindings))
+                Self::collect_lambda_captures(
+                    expr,
+                    outer_locals,
+                    local_bindings,
+                    captures,
+                    captured_sets,
+                );
+                Self::collect_lambda_captures(
+                    index,
+                    outer_locals,
+                    local_bindings,
+                    captures,
+                    captured_sets,
+                );
             }
             Expr::ArraySet { expr, index, value } => {
-                Self::find_captured_name(expr, outer_locals, local_bindings)
-                    .or_else(|| Self::find_captured_name(index, outer_locals, local_bindings))
-                    .or_else(|| Self::find_captured_name(value, outer_locals, local_bindings))
+                Self::collect_lambda_captures(
+                    expr,
+                    outer_locals,
+                    local_bindings,
+                    captures,
+                    captured_sets,
+                );
+                Self::collect_lambda_captures(
+                    index,
+                    outer_locals,
+                    local_bindings,
+                    captures,
+                    captured_sets,
+                );
+                Self::collect_lambda_captures(
+                    value,
+                    outer_locals,
+                    local_bindings,
+                    captures,
+                    captured_sets,
+                );
             }
             Expr::While { cond, body } => {
-                Self::find_captured_name(cond, outer_locals, local_bindings)
-                    .or_else(|| Self::find_captured_name(body, outer_locals, local_bindings))
+                Self::collect_lambda_captures(
+                    cond,
+                    outer_locals,
+                    local_bindings,
+                    captures,
+                    captured_sets,
+                );
+                Self::collect_lambda_captures(
+                    body,
+                    outer_locals,
+                    local_bindings,
+                    captures,
+                    captured_sets,
+                );
             }
             Expr::Set(name, expr) => {
                 if outer_locals.contains(name) && !local_bindings.contains(name) {
-                    Some(name.clone())
-                } else {
-                    Self::find_captured_name(expr, outer_locals, local_bindings)
+                    Self::push_capture(captures, name, expr.span());
+                    captured_sets.push((name.clone(), expr.span()));
                 }
+                Self::collect_lambda_captures(
+                    expr,
+                    outer_locals,
+                    local_bindings,
+                    captures,
+                    captured_sets,
+                );
             }
             Expr::Match { scrutinee, arms } => {
-                Self::find_captured_name(scrutinee, outer_locals, local_bindings).or_else(|| {
-                    arms.iter().find_map(|(pat, body)| {
-                        let mut scoped = local_bindings.clone();
-                        Self::collect_pattern_bindings(pat, true, &mut scoped);
-                        Self::find_captured_name(body, outer_locals, &scoped)
-                    })
-                })
+                Self::collect_lambda_captures(
+                    scrutinee,
+                    outer_locals,
+                    local_bindings,
+                    captures,
+                    captured_sets,
+                );
+                for (pat, body) in arms {
+                    let mut scoped = local_bindings.clone();
+                    Self::collect_pattern_bindings(pat, true, &mut scoped);
+                    Self::collect_lambda_captures(
+                        body,
+                        outer_locals,
+                        &scoped,
+                        captures,
+                        captured_sets,
+                    );
+                }
             }
             Expr::Foreach {
                 index,
@@ -316,17 +460,53 @@ impl TypeChecker {
                 end,
                 body,
                 ..
-            } => Self::find_captured_name(start, outer_locals, local_bindings)
-                .or_else(|| Self::find_captured_name(end, outer_locals, local_bindings))
-                .or_else(|| {
-                    let mut scoped = local_bindings.clone();
-                    scoped.insert(index.clone());
-                    Self::find_captured_name(body, outer_locals, &scoped)
-                }),
+            } => {
+                Self::collect_lambda_captures(
+                    start,
+                    outer_locals,
+                    local_bindings,
+                    captures,
+                    captured_sets,
+                );
+                Self::collect_lambda_captures(
+                    end,
+                    outer_locals,
+                    local_bindings,
+                    captures,
+                    captured_sets,
+                );
+                let mut scoped = local_bindings.clone();
+                scoped.insert(index.clone());
+                Self::collect_lambda_captures(body, outer_locals, &scoped, captures, captured_sets);
+            }
             Expr::Spanned { expr, .. } => {
-                Self::find_captured_name(expr, outer_locals, local_bindings)
+                Self::collect_lambda_captures(
+                    expr,
+                    outer_locals,
+                    local_bindings,
+                    captures,
+                    captured_sets,
+                );
             }
         }
+    }
+
+    fn capture_type_supported(&self, ty: &Type) -> bool {
+        matches!(
+            self.resolve_type(ty),
+            Type::I64
+                | Type::I32
+                | Type::I16
+                | Type::I8
+                | Type::U64
+                | Type::U32
+                | Type::U16
+                | Type::U8
+                | Type::Bool
+                | Type::Char
+                | Type::F64
+                | Type::Func(_, _)
+        )
     }
 
     fn collect_pattern_bindings(pat: &Pattern, top_level: bool, bindings: &mut HashSet<String>) {
@@ -886,16 +1066,37 @@ impl TypeChecker {
                 let outer_locals = self.outer_local_names();
                 let lambda_bindings: HashSet<String> =
                     params.iter().map(|(param, _)| param.clone()).collect();
-                if let Some(captured) =
-                    Self::find_captured_name(body, &outer_locals, &lambda_bindings)
-                {
+                let mut captures = Vec::new();
+                let mut captured_sets = Vec::new();
+                Self::collect_lambda_captures(
+                    body,
+                    &outer_locals,
+                    &lambda_bindings,
+                    &mut captures,
+                    &mut captured_sets,
+                );
+                if let Some((captured, span)) = captured_sets.first() {
                     return Err(TypeError::at(
                         format!(
-                            "capturing lambdas are not yet supported: lambda captures '{}'",
+                            "set! to captured variable '{}' is not supported; captured lambdas use immutable snapshots",
                             captured
                         ),
-                        body.span(),
+                        *span,
                     ));
+                }
+                for (captured, span) in &captures {
+                    let Some(ty) = self.lookup(captured) else {
+                        continue;
+                    };
+                    if !self.capture_type_supported(&ty) {
+                        return Err(TypeError::at(
+                            format!(
+                                "capturing value '{}' of type {} is not yet supported; capture scalar or function values only (see #435)",
+                                captured, ty
+                            ),
+                            *span,
+                        ));
+                    }
                 }
 
                 self.push_scope();
@@ -2316,7 +2517,7 @@ mod tests {
     }
 
     #[test]
-    fn test_typecheck_capturing_lambda_rejected() {
+    fn test_typecheck_scalar_capturing_lambda_ok() {
         let prog = parse(
             r#"
             (define (main) : i64
@@ -2326,13 +2527,49 @@ mod tests {
         )
         .unwrap();
         let mut tc = TypeChecker::new();
+        assert!(tc.check_program(&prog).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_set_to_captured_lambda_name_rejected() {
+        let prog = parse(
+            r#"
+            (define (main) : i64
+              (let ([n : i64 10])
+                (begin
+                  ((lambda () : unit (set! n 11)))
+                  n)))
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
         let err = tc.check_program(&prog).unwrap_err();
         assert!(
-            err.msg.contains("capturing lambdas are not yet supported"),
+            err.msg.contains("set! to captured variable 'n'"),
             "err: {}",
             err
         );
-        assert!(err.msg.contains("n"), "err: {}", err);
+    }
+
+    #[test]
+    fn test_typecheck_aggregate_capture_rejected() {
+        let prog = parse(
+            r#"
+            (define (main) : i64
+              (let ([s : String "hello"]
+                    [f : (-> String) (lambda () : String s)])
+                (string-length (f))))
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(
+            err.msg
+                .contains("capturing value 's' of type String is not yet supported"),
+            "err: {}",
+            err
+        );
     }
 
     #[test]

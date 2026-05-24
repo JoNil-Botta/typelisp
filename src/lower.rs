@@ -65,6 +65,15 @@ impl ProgramLowerer {
         self.structs.resolve_type(&self.enums.resolve_type(ty))
     }
 
+    fn fn_context(&self) -> FnLowererContext<'_> {
+        FnLowererContext {
+            function_types: &self.function_types,
+            global_types: &self.global_types,
+            enums: &self.enums,
+            structs: &self.structs,
+        }
+    }
+
     /// Infer the type of a global initializer expression for use when no
     /// explicit type annotation is present. Falls back to `Unit` for
     /// unsupported or complex expressions.
@@ -238,15 +247,8 @@ impl ProgramLowerer {
                         // the result. The backend calls it from _start and
                         // stores %rax into the global before calling main.
                         let init_fn_name = format!("__global_init_{}", name);
-                        let fn_lowerer = FnLowerer::new(
-                            &init_fn_name,
-                            &[],
-                            &val_ty,
-                            &self.function_types,
-                            &self.global_types,
-                            &self.enums,
-                            &self.structs,
-                        );
+                        let fn_lowerer =
+                            FnLowerer::new(&init_fn_name, &[], &val_ty, self.fn_context());
                         let (lowered_fn, _result) = fn_lowerer.lower_expr_to_fn(value, &val_ty);
                         self.source_spans
                             .functions
@@ -303,15 +305,7 @@ impl ProgramLowerer {
         ret: &Type,
         body: &ast::Expr,
     ) -> LoweredFunction {
-        let fn_lowerer = FnLowerer::new(
-            name,
-            params,
-            ret,
-            &self.function_types,
-            &self.global_types,
-            &self.enums,
-            &self.structs,
-        );
+        let fn_lowerer = FnLowerer::new(name, params, ret, self.fn_context());
         fn_lowerer.lower_body(body, ret)
     }
 }
@@ -383,6 +377,28 @@ struct FnLowerer {
     /// this function.
     synthetic_functions: Vec<Function>,
     lambda_counter: usize,
+    captures: HashMap<String, CaptureInfo>,
+    capture_env_var: Option<VarId>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct CaptureInfo {
+    name: String,
+    ty: Type,
+    offset: usize,
+}
+
+#[derive(Clone, Copy)]
+struct FnLowererContext<'a> {
+    function_types: &'a HashMap<String, Type>,
+    global_types: &'a HashMap<String, Type>,
+    enums: &'a ast::EnumRegistry,
+    structs: &'a ast::StructRegistry,
+}
+
+struct CaptureEnv {
+    captures: HashMap<String, CaptureInfo>,
+    param_index: usize,
 }
 
 struct LoweredFunction {
@@ -541,10 +557,17 @@ impl FnLowerer {
         name: &str,
         params: &[(String, Type)],
         ret: &Type,
-        function_types: &HashMap<String, Type>,
-        global_types: &HashMap<String, Type>,
-        enums: &ast::EnumRegistry,
-        structs: &ast::StructRegistry,
+        context: FnLowererContext<'_>,
+    ) -> Self {
+        Self::new_with_capture_env(name, params, ret, context, None)
+    }
+
+    fn new_with_capture_env(
+        name: &str,
+        params: &[(String, Type)],
+        ret: &Type,
+        context: FnLowererContext<'_>,
+        capture_env: Option<CaptureEnv>,
     ) -> Self {
         let mut builder = IrBuilder::new("entry");
         let mut vars = HashMap::new();
@@ -566,6 +589,12 @@ impl FnLowerer {
                 fixed_array_types.insert(var, ((**elem).clone(), *len));
             }
         }
+        let (captures, capture_env_var) = capture_env.map_or((HashMap::new(), None), |env| {
+            (
+                env.captures,
+                ir_params.get(env.param_index).map(|(var, _)| *var),
+            )
+        });
 
         FnLowerer {
             name: name.to_string(),
@@ -573,16 +602,18 @@ impl FnLowerer {
             vars,
             var_types,
             fixed_array_types,
-            global_types: global_types.clone(),
-            function_types: function_types.clone(),
-            enums: enums.clone(),
-            structs: structs.clone(),
+            global_types: context.global_types.clone(),
+            function_types: context.function_types.clone(),
+            enums: context.enums.clone(),
+            structs: context.structs.clone(),
             params: ir_params,
             locals: Vec::new(),
             ret: ret.clone(),
             force_heap_aggregate_storage: false,
             synthetic_functions: Vec::new(),
             lambda_counter: 0,
+            captures,
+            capture_env_var,
         }
     }
 
@@ -592,11 +623,24 @@ impl FnLowerer {
         self.structs.resolve_type(&self.enums.resolve_type(ty))
     }
 
+    fn fn_context(&self) -> FnLowererContext<'_> {
+        FnLowererContext {
+            function_types: &self.function_types,
+            global_types: &self.global_types,
+            enums: &self.enums,
+            structs: &self.structs,
+        }
+    }
+
+    fn has_local_value(&self, name: &str) -> bool {
+        self.vars.contains_key(name) || self.captures.contains_key(name)
+    }
+
     fn is_builtin_diverging_call(&self, func: &ast::Expr, args: &[ast::Expr]) -> bool {
         matches!(func.unspan(), ast::Expr::Var(name)
             if (name == "panic" || name == "error")
                 && args.len() == 1
-                && !self.vars.contains_key(name)
+                && !self.has_local_value(name)
                 && !self.function_types.contains_key(name))
     }
 
@@ -965,19 +1009,274 @@ impl FnLowerer {
             ),
         );
 
-        let lambda_lowerer = FnLowerer::new(
-            &name,
-            &params,
-            &ret_ty,
-            &self.function_types,
-            &self.global_types,
-            &self.enums,
-            &self.structs,
-        );
+        let captures = self.collect_lambda_captures(&params, body);
+        let lambda_lowerer = if captures.is_empty() {
+            FnLowerer::new(&name, &params, &ret_ty, self.fn_context())
+        } else {
+            let mut lowered_params = Vec::with_capacity(params.len() + 1);
+            lowered_params.push(("__tl_env".to_string(), Type::U64));
+            lowered_params.extend(params.iter().cloned());
+            let capture_map = captures
+                .iter()
+                .cloned()
+                .map(|capture| (capture.name.clone(), capture))
+                .collect();
+            FnLowerer::new_with_capture_env(
+                &name,
+                &lowered_params,
+                &ret_ty,
+                self.fn_context(),
+                Some(CaptureEnv {
+                    captures: capture_map,
+                    param_index: 0,
+                }),
+            )
+        };
         let lowered = lambda_lowerer.lower_body(body, &ret_ty);
         self.synthetic_functions.extend(lowered.synthetic_functions);
         self.synthetic_functions.push(lowered.function);
-        Value::Function(name)
+        if captures.is_empty() {
+            Value::Function(name)
+        } else {
+            let func_ty = Type::Func(
+                params.iter().map(|(_, ty)| ty.clone()).collect(),
+                Box::new(ret_ty),
+            );
+            self.lower_capturing_lambda_descriptor(&name, &func_ty, &captures)
+        }
+    }
+
+    fn collect_lambda_captures(
+        &self,
+        params: &[(String, Type)],
+        body: &ast::Expr,
+    ) -> Vec<CaptureInfo> {
+        let candidates = self.capture_candidates();
+        let mut local_bindings: HashSet<String> =
+            params.iter().map(|(param, _)| param.clone()).collect();
+        let mut names = Vec::new();
+        Self::collect_captured_names(body, &candidates, &mut local_bindings, &mut names);
+        names.sort();
+        names.dedup();
+        let captures: Vec<(String, Type)> = names
+            .into_iter()
+            .filter_map(|name| candidates.get(&name).cloned().map(|ty| (name, ty)))
+            .collect();
+        Self::layout_captures(captures)
+    }
+
+    fn capture_candidates(&self) -> HashMap<String, Type> {
+        let mut candidates = HashMap::new();
+        for (name, var) in &self.vars {
+            candidates.insert(name.clone(), self.value_type(&Value::Var(*var)));
+        }
+        for (name, capture) in &self.captures {
+            candidates.insert(name.clone(), capture.ty.clone());
+        }
+        candidates
+    }
+
+    fn collect_captured_names(
+        expr: &ast::Expr,
+        candidates: &HashMap<String, Type>,
+        local_bindings: &mut HashSet<String>,
+        captures: &mut Vec<String>,
+    ) {
+        match expr.unspan() {
+            ast::Expr::Literal(_) => {}
+            ast::Expr::Var(name) => {
+                if candidates.contains_key(name) && !local_bindings.contains(name) {
+                    captures.push(name.clone());
+                }
+            }
+            ast::Expr::Binary { lhs, rhs, .. } => {
+                Self::collect_captured_names(lhs, candidates, local_bindings, captures);
+                Self::collect_captured_names(rhs, candidates, local_bindings, captures);
+            }
+            ast::Expr::Unary { expr, .. }
+            | ast::Expr::Ann { expr, .. }
+            | ast::Expr::Cast { expr, .. }
+            | ast::Expr::TupleRef { expr, .. }
+            | ast::Expr::StructGet { expr, .. } => {
+                Self::collect_captured_names(expr, candidates, local_bindings, captures);
+            }
+            ast::Expr::Call { func, args } => {
+                Self::collect_captured_names(func, candidates, local_bindings, captures);
+                for arg in args {
+                    Self::collect_captured_names(arg, candidates, local_bindings, captures);
+                }
+            }
+            ast::Expr::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                Self::collect_captured_names(cond, candidates, local_bindings, captures);
+                Self::collect_captured_names(then_branch, candidates, local_bindings, captures);
+                Self::collect_captured_names(else_branch, candidates, local_bindings, captures);
+            }
+            ast::Expr::Let { bindings, body } => {
+                let original = local_bindings.clone();
+                for (name, _, value) in bindings {
+                    Self::collect_captured_names(value, candidates, local_bindings, captures);
+                    local_bindings.insert(name.clone());
+                }
+                Self::collect_captured_names(body, candidates, local_bindings, captures);
+                *local_bindings = original;
+            }
+            ast::Expr::Lambda { params, body, .. } => {
+                let original = local_bindings.clone();
+                for (param, _) in params {
+                    local_bindings.insert(param.clone());
+                }
+                Self::collect_captured_names(body, candidates, local_bindings, captures);
+                *local_bindings = original;
+            }
+            ast::Expr::Tuple(elems) | ast::Expr::Array(elems) | ast::Expr::Begin(elems) => {
+                for elem in elems {
+                    Self::collect_captured_names(elem, candidates, local_bindings, captures);
+                }
+            }
+            ast::Expr::MakeArray { len, .. } => {
+                Self::collect_captured_names(len, candidates, local_bindings, captures);
+            }
+            ast::Expr::ArrayRef { expr, index } | ast::Expr::StringRef { expr, index } => {
+                Self::collect_captured_names(expr, candidates, local_bindings, captures);
+                Self::collect_captured_names(index, candidates, local_bindings, captures);
+            }
+            ast::Expr::ArraySet { expr, index, value } => {
+                Self::collect_captured_names(expr, candidates, local_bindings, captures);
+                Self::collect_captured_names(index, candidates, local_bindings, captures);
+                Self::collect_captured_names(value, candidates, local_bindings, captures);
+            }
+            ast::Expr::While { cond, body } => {
+                Self::collect_captured_names(cond, candidates, local_bindings, captures);
+                Self::collect_captured_names(body, candidates, local_bindings, captures);
+            }
+            ast::Expr::Set(name, value) => {
+                if candidates.contains_key(name) && !local_bindings.contains(name) {
+                    captures.push(name.clone());
+                }
+                Self::collect_captured_names(value, candidates, local_bindings, captures);
+            }
+            ast::Expr::Match { scrutinee, arms } => {
+                Self::collect_captured_names(scrutinee, candidates, local_bindings, captures);
+                for (pat, body) in arms {
+                    let original = local_bindings.clone();
+                    Self::collect_pattern_bindings(pat, true, local_bindings);
+                    Self::collect_captured_names(body, candidates, local_bindings, captures);
+                    *local_bindings = original;
+                }
+            }
+            ast::Expr::Foreach {
+                index,
+                start,
+                end,
+                body,
+                ..
+            } => {
+                Self::collect_captured_names(start, candidates, local_bindings, captures);
+                Self::collect_captured_names(end, candidates, local_bindings, captures);
+                let original = local_bindings.clone();
+                local_bindings.insert(index.clone());
+                Self::collect_captured_names(body, candidates, local_bindings, captures);
+                *local_bindings = original;
+            }
+            ast::Expr::Spanned { expr, .. } => {
+                Self::collect_captured_names(expr, candidates, local_bindings, captures);
+            }
+        }
+    }
+
+    fn collect_pattern_bindings(
+        pat: &ast::Pattern,
+        top_level: bool,
+        bindings: &mut HashSet<String>,
+    ) {
+        match pat {
+            ast::Pattern::Var(name, _) => {
+                bindings.insert(name.clone());
+            }
+            ast::Pattern::Tuple(items) => {
+                for item in items {
+                    Self::collect_pattern_bindings(item, false, bindings);
+                }
+            }
+            ast::Pattern::Binding(name) if !top_level => {
+                bindings.insert(name.clone());
+            }
+            ast::Pattern::Variant { args, .. } => {
+                for arg in args {
+                    Self::collect_pattern_bindings(arg, false, bindings);
+                }
+            }
+            ast::Pattern::Wildcard | ast::Pattern::Literal(_) | ast::Pattern::Binding(_) => {}
+        }
+    }
+
+    fn layout_captures(captures: Vec<(String, Type)>) -> Vec<CaptureInfo> {
+        let mut offset = 0usize;
+        captures
+            .into_iter()
+            .map(|(name, ty)| {
+                let storage_ty = Self::backend_value_type(&ty);
+                let align = storage_ty.align().max(1);
+                offset = Self::align_to(offset, align);
+                let capture = CaptureInfo { name, ty, offset };
+                offset += storage_ty.size();
+                capture
+            })
+            .collect()
+    }
+
+    fn align_to(value: usize, align: usize) -> usize {
+        (value + align - 1) & !(align - 1)
+    }
+
+    fn capture_env_size(captures: &[CaptureInfo]) -> usize {
+        captures
+            .iter()
+            .map(|capture| {
+                let storage_ty = Self::backend_value_type(&capture.ty);
+                capture.offset + storage_ty.size()
+            })
+            .max()
+            .unwrap_or(0)
+    }
+
+    fn lower_capturing_lambda_descriptor(
+        &mut self,
+        name: &str,
+        func_ty: &Type,
+        captures: &[CaptureInfo],
+    ) -> Value {
+        let env_size = Self::capture_env_size(captures);
+        let env = self.reserve_aggregate_storage(env_size, Type::U64, true);
+        for capture in captures {
+            let ptr = self.gep_byte(&env, capture.offset);
+            let src = self.lower_var(&capture.name);
+            let storage_ty = Self::backend_value_type(&capture.ty);
+            self.builder.emit(Instruction::Store {
+                dst: Value::Var(ptr),
+                src,
+                ty: storage_ty,
+            });
+        }
+
+        let desc = self.reserve_aggregate_storage(16, func_ty.clone(), true);
+        let entry_ptr = self.gep_byte(&desc, 0);
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(entry_ptr),
+            src: Value::FunctionEntry(name.to_string()),
+            ty: Type::U64,
+        });
+        let env_ptr = self.gep_byte(&desc, 8);
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(env_ptr),
+            src: env.clone(),
+            ty: Type::U64,
+        });
+        desc
     }
 
     fn fresh_lambda_name(&mut self) -> String {
@@ -993,6 +1292,8 @@ impl FnLowerer {
     fn lower_var(&mut self, name: &str) -> Value {
         if let Some(&var) = self.vars.get(name) {
             Value::Var(var)
+        } else if let Some(capture) = self.captures.get(name).cloned() {
+            self.lower_capture_load(&capture)
         } else if self.global_types.contains_key(name) {
             Value::Global(name.to_string())
         } else if self.function_types.contains_key(name) {
@@ -1002,6 +1303,23 @@ impl FnLowerer {
             // validation so diagnostics can point at the unresolved symbol.
             Value::Global(name.to_string())
         }
+    }
+
+    fn lower_capture_load(&mut self, capture: &CaptureInfo) -> Value {
+        let env_var = self
+            .capture_env_var
+            .expect("capturing lambda lowerer must have an environment parameter");
+        let env = Value::Var(env_var);
+        let ptr = self.gep_byte(&env, capture.offset);
+        let dst = self.builder.fresh_var();
+        let storage_ty = Self::backend_value_type(&capture.ty);
+        self.builder.emit(Instruction::Load {
+            dst,
+            src: Value::Var(ptr),
+            ty: storage_ty,
+        });
+        self.record_value_local(dst, capture.ty.clone());
+        Value::Var(dst)
     }
 
     fn lower_binary(&mut self, op: ast::BinOp, lhs: &ast::Expr, rhs: &ast::Expr) -> Value {
@@ -1739,7 +2057,7 @@ impl FnLowerer {
         if let ast::Expr::Var(name) = func.unspan()
             && name == "arg-count"
             && args.is_empty()
-            && !self.vars.contains_key(name)
+            && !self.has_local_value(name)
             && !self.function_types.contains_key(name)
         {
             let dst = self.builder.fresh_var();
@@ -1758,7 +2076,7 @@ impl FnLowerer {
         if let ast::Expr::Var(name) = func.unspan()
             && name == "arg"
             && args.len() == 1
-            && !self.vars.contains_key(name)
+            && !self.has_local_value(name)
             && !self.function_types.contains_key(name)
         {
             let idx_raw = self.lower_expr_as(&args[0], &Type::I64);
@@ -1780,7 +2098,7 @@ impl FnLowerer {
         if let ast::Expr::Var(name) = func.unspan()
             && name == "read-file"
             && args.len() == 1
-            && !self.vars.contains_key(name)
+            && !self.has_local_value(name)
             && !self.function_types.contains_key(name)
         {
             let path = self.lower_expr_as(&args[0], &Type::String);
@@ -1802,7 +2120,7 @@ impl FnLowerer {
         if let ast::Expr::Var(name) = func.unspan()
             && name == "write-file"
             && args.len() == 2
-            && !self.vars.contains_key(name)
+            && !self.has_local_value(name)
             && !self.function_types.contains_key(name)
         {
             let path = self.lower_expr_as(&args[0], &Type::String);
@@ -1828,7 +2146,7 @@ impl FnLowerer {
         if let ast::Expr::Var(name) = func.unspan()
             && name == "file-exists?"
             && args.len() == 1
-            && !self.vars.contains_key(name)
+            && !self.has_local_value(name)
             && !self.function_types.contains_key(name)
         {
             let path = self.lower_expr_as(&args[0], &Type::String);
@@ -1851,7 +2169,7 @@ impl FnLowerer {
         if let ast::Expr::Var(name) = func.unspan()
             && (name == "substring" || name == "string-slice")
             && args.len() == 3
-            && !self.vars.contains_key(name)
+            && !self.has_local_value(name)
             && !self.function_types.contains_key(name)
         {
             return self.lower_substring(&args[0], &args[1], &args[2]);
@@ -1865,7 +2183,7 @@ impl FnLowerer {
         if let ast::Expr::Var(name) = func.unspan()
             && (name == "string-append" || name == "string-concat")
             && args.len() == 2
-            && !self.vars.contains_key(name)
+            && !self.has_local_value(name)
             && !self.function_types.contains_key(name)
         {
             return self.lower_string_concat(&args[0], &args[1]);
@@ -1883,7 +2201,7 @@ impl FnLowerer {
         if let ast::Expr::Var(name) = func.unspan()
             && (name == "panic" || name == "error")
             && args.len() == 1
-            && !self.vars.contains_key(name)
+            && !self.has_local_value(name)
             && !self.function_types.contains_key(name)
         {
             let s = self.lower_expr_as(&args[0], &Type::String);
@@ -1907,7 +2225,7 @@ impl FnLowerer {
         if let ast::Expr::Var(name) = func.unspan()
             && (name == "print-string" || name == "print-str")
             && args.len() == 1
-            && !self.vars.contains_key(name)
+            && !self.has_local_value(name)
             && !self.function_types.contains_key(name)
         {
             let s = self.lower_expr_as(&args[0], &Type::String);
@@ -1924,7 +2242,7 @@ impl FnLowerer {
         if let ast::Expr::Var(name) = func.unspan()
             && name == "print-error"
             && args.len() == 1
-            && !self.vars.contains_key(name)
+            && !self.has_local_value(name)
             && !self.function_types.contains_key(name)
         {
             let s = self.lower_expr_as(&args[0], &Type::String);
@@ -1939,7 +2257,7 @@ impl FnLowerer {
         }
 
         if let ast::Expr::Var(name) = func.unspan()
-            && !self.vars.contains_key(name)
+            && !self.has_local_value(name)
             && let Some(Type::Func(param_tys, ret_ty)) = self.function_types.get(name).cloned()
         {
             let arg_vals: Vec<Value> = args
@@ -1975,7 +2293,7 @@ impl FnLowerer {
         let (func_name, ret_ty) = match func.unspan() {
             // A local binding shadows any top-level function of the same name.
             // If it has function type, call through the value in that slot.
-            ast::Expr::Var(name) if self.vars.contains_key(name) => {
+            ast::Expr::Var(name) if self.has_local_value(name) => {
                 let func_val = self.lower_expr(func);
                 return self.lower_indirect_call(func_val, arg_vals);
             }
@@ -3548,6 +3866,7 @@ impl FnLowerer {
             // A `ConstStr` operand is the raw data pointer of a string literal.
             Value::ConstStr(_) => Type::U64,
             Value::Function(name) => self.function_types.get(name).cloned().unwrap_or(Type::I64),
+            Value::FunctionEntry(_) => Type::U64,
             Value::Var(v) => self
                 .fixed_array_types
                 .get(v)
@@ -5697,6 +6016,92 @@ mod tests {
                 )
             })
         }));
+    }
+
+    #[test]
+    fn test_lower_capturing_lambda_allocates_env_and_descriptor() {
+        let prog = parse(
+            r#"
+            (define (get_fn) : (-> i64 i64)
+              (let ([n : i64 10])
+                (lambda ([x : i64]) : i64 (+ x n))))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let get_fn = ir
+            .functions
+            .iter()
+            .find(|f| f.name == "get_fn")
+            .expect("get_fn lowered");
+        let alloc_sizes: Vec<Value> = get_fn
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .filter_map(|i| match i {
+                Instruction::Call { func, args, .. } if func == "tl_alloc" => args.first().cloned(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(alloc_sizes, vec![Value::ConstI64(8), Value::ConstI64(16)]);
+        assert!(get_fn.blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                matches!(
+                    i,
+                    Instruction::Store {
+                        src: Value::FunctionEntry(name),
+                        ty: Type::U64,
+                        ..
+                    } if name == "__tl_lambda_get_fn_0"
+                )
+            })
+        }));
+
+        let lambda = ir
+            .functions
+            .iter()
+            .find(|f| f.name == "__tl_lambda_get_fn_0")
+            .expect("synthetic lambda lowered");
+        assert_eq!(lambda.params, vec![(0, Type::U64), (1, Type::I64)]);
+        assert!(lambda.blocks.iter().any(|b| {
+            b.instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::Load { ty: Type::I64, .. }))
+        }));
+    }
+
+    #[test]
+    fn test_lower_capturing_lambda_call_uses_heap_descriptor() {
+        let prog = parse(
+            r#"
+            (define (main) : i64
+              (let ([n : i64 10])
+                ((lambda ([x : i64]) : i64 (+ x n)) 32)))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let main = ir
+            .functions
+            .iter()
+            .find(|f| f.name == "main")
+            .expect("main lowered");
+        let indirect = main.blocks.iter().find_map(|b| {
+            b.instructions.iter().find_map(|i| match i {
+                Instruction::CallIndirect { func, args, ty, .. } => {
+                    Some((func.clone(), args.clone(), ty.clone()))
+                }
+                _ => None,
+            })
+        });
+        assert!(
+            matches!(
+                indirect,
+                Some((Value::Var(_), ref args, Type::I64)) if *args == vec![Value::ConstI64(32)]
+            ),
+            "expected indirect call through heap descriptor, got {:?}",
+            indirect
+        );
     }
 
     #[test]

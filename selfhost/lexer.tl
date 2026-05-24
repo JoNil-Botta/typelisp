@@ -131,6 +131,22 @@
     [(ErrTokens message) (string-eq message "lexer: unterminated string literal")]
     [(OkTokens _) false]))
 
+(define (lexer-token-spans-ok?) : bool
+  (let ([toks : (Array SpannedToken) (lex-spanned "a\n (b)")])
+    (let ([a : SourceSpan (spanned-token-span (array-ref toks 0))]
+          [open : SourceSpan (spanned-token-span (array-ref toks 1))]
+          [eof : SourceSpan (spanned-token-span (array-ref toks 4))])
+      (and (span-eq? a 1 1 1 2)
+           (and (span-eq? open 2 2 2 3)
+                (span-eq? eof 2 5 2 5))))))
+
+(define (lexer-spanned-error-ok?) : bool
+  (match (lex-spanned-result "ok\n@")
+    [(ErrSpannedTokens err)
+     (and (string-eq (source-error-message err) "lexer: unexpected character")
+          (span-eq? (source-error-span err) 2 1 2 1))]
+    [(OkSpannedTokens _) false]))
+
 ;; Lex a real TypeLisp s-expression sample exercising string-literal,
 ;; char-literal, and line-comment scanners, and return an observable count. The
 ;; source is
@@ -147,6 +163,8 @@
           (lex "(foo \"hi\" #x' #\\n' #\\space' #\\newline' 42) ; c\n(bar)")])
     (+ (count-tokens toks)
        (+ (count-strs toks)
-          (if (and (= (sum-char-codes toks) 172) (lexer-recoverable-error-ok?))
+          (if (and (= (sum-char-codes toks) 172)
+                   (and (lexer-recoverable-error-ok?)
+                        (and (lexer-token-spans-ok?) (lexer-spanned-error-ok?))))
               (count-chars toks)
               0)))))

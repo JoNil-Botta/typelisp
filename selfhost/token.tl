@@ -41,6 +41,93 @@
   (TStr String)
   (TChar char))
 
+;; Source locations are 1-based line/column pairs. The end position is
+;; exclusive, so a one-character token at line 1 column 1 spans 1:1 -> 1:2.
+(defstruct SourceSpan
+  (start-line i64)
+  (start-col i64)
+  (end-line i64)
+  (end-col i64))
+
+(defstruct SourceError
+  (message String)
+  (span SourceSpan))
+
+(defstruct SpannedToken
+  (token Token)
+  (span SourceSpan))
+
+(define (span-start-line [span : SourceSpan]) : i64
+  (struct-get span start-line))
+
+(define (span-start-col [span : SourceSpan]) : i64
+  (struct-get span start-col))
+
+(define (span-end-line [span : SourceSpan]) : i64
+  (struct-get span end-line))
+
+(define (span-end-col [span : SourceSpan]) : i64
+  (struct-get span end-col))
+
+(define (span-eq? [span : SourceSpan] [start-line : i64] [start-col : i64] [end-line : i64] [end-col : i64]) : bool
+  (and (= (span-start-line span) start-line)
+       (and (= (span-start-col span) start-col)
+            (and (= (span-end-line span) end-line)
+                 (= (span-end-col span) end-col)))))
+
+(define (source-error-message [err : SourceError]) : String
+  (struct-get err message))
+
+(define (source-error-span [err : SourceError]) : SourceSpan
+  (struct-get err span))
+
+(define (spanned-token-token [tok : SpannedToken]) : Token
+  (struct-get tok token))
+
+(define (spanned-token-span [tok : SpannedToken]) : SourceSpan
+  (struct-get tok span))
+
+(define (source-line-at [src : String] [idx : i64]) : i64
+  (let ([i : i64 0]
+        [line : i64 1])
+    (begin
+      (while (< i idx)
+        (begin
+          (if (= (string-ref src i) #\newline')
+              (set! line (+ line 1))
+              (set! line line))
+          (set! i (+ i 1))))
+      line)))
+
+(define (source-col-at [src : String] [idx : i64]) : i64
+  (let ([i : i64 0]
+        [col : i64 1])
+    (begin
+      (while (< i idx)
+        (begin
+          (if (= (string-ref src i) #\newline')
+              (set! col 1)
+              (set! col (+ col 1)))
+          (set! i (+ i 1))))
+      col)))
+
+(define (source-span [src : String] [start : i64] [end : i64]) : SourceSpan
+  (SourceSpan
+    (source-line-at src start)
+    (source-col-at src start)
+    (source-line-at src end)
+    (source-col-at src end)))
+
+(define (source-point-span [src : String] [idx : i64]) : SourceSpan
+  (source-span src idx idx))
+
+(define (merge-spans [start : SourceSpan] [end : SourceSpan]) : SourceSpan
+  (SourceSpan
+    (span-start-line start)
+    (span-start-col start)
+    (span-end-line end)
+    (span-end-col end)))
+
 ;; Numeric tag for a token kind: a parser's cursor classifies the token under it
 ;; by tag. Exercises `match` over every Token variant, including the
 ;; String-payload `TSym` and the i64-payload `TInt`.

@@ -1919,6 +1919,18 @@ mod tests {
     }
 
     #[test]
+    fn test_typecheck_cond_reuses_if_condition_rules() {
+        let prog = parse("(define (f) : i64 (cond [1 2] [else 3]))").unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(
+            err.msg.contains("if condition must be bool"),
+            "got: {}",
+            err
+        );
+    }
+
+    #[test]
     fn test_typecheck_function() {
         let prog = parse(
             r#"

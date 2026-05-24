@@ -83,6 +83,7 @@ fn compiler_parse_core_tl_compiles_to_assembly() {
         "_tl_parse_ast_source:",
         "_tl_parse_ast_match:",
         "_tl_parse_ast_foreach:",
+        "_tl_parse_ast_cond:",
         "_tl_compiler_parse_smoke:",
         "_tl_read_form:",
         "_tl_lex:",
@@ -98,6 +99,8 @@ fn compiler_parse_core_tl_compiles_to_assembly() {
         "parse: malformed let",
         "parse: expected pattern",
         "parse: malformed foreach",
+        "parse: cond requires final else arm",
+        "parse: cond else arm must be final",
         "parse: compiler AST smoke score mismatch",
     ] {
         assert_message(&asm, message, "compiler_parse_core");
@@ -106,6 +109,7 @@ fn compiler_parse_core_tl_compiles_to_assembly() {
     for datum in [
         "(import \\\"stdlib/test.tl\\\")",
         "(define (main [argc : i64] [name : String]) : i64",
+        "(cond",
         "(match (Some x) [(Some v) v] [_ 0])",
     ] {
         assert!(

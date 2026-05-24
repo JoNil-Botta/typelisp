@@ -412,6 +412,60 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_cond_expr(&mut self) -> Result<(Expr, Span), ParseError> {
+        let mut arms = Vec::new();
+        let mut fallback = None;
+
+        while self.current != Token::RParen {
+            self.expect(Token::LBracket)?;
+            if matches!(&self.current, Token::Ident(s) if s == "else") {
+                self.advance()?;
+                let body = self.parse_expr()?;
+                self.expect(Token::RBracket)?;
+                if self.current != Token::RParen {
+                    return Err(ParseError {
+                        msg: "cond else arm must be final".into(),
+                        span: self.span(),
+                    });
+                }
+                fallback = Some(body);
+            } else {
+                let cond = self.parse_expr()?;
+                let body = self.parse_expr()?;
+                self.expect(Token::RBracket)?;
+                arms.push((cond, body));
+            }
+        }
+
+        let end = self.expect_rparen_span()?;
+        if arms.is_empty() {
+            return Err(ParseError {
+                msg: "cond requires at least one test arm".into(),
+                span: end,
+            });
+        }
+        let Some(mut expr) = fallback else {
+            return Err(ParseError {
+                msg: "cond requires final else arm".into(),
+                span: end,
+            });
+        };
+
+        for (cond, then_branch) in arms.into_iter().rev() {
+            let span = cond.span().merge(&expr.span());
+            expr = Expr::spanned(
+                Expr::If {
+                    cond: Box::new(cond),
+                    then_branch: Box::new(then_branch),
+                    else_branch: Box::new(expr),
+                },
+                span,
+            );
+        }
+
+        Ok((expr, end))
+    }
+
     fn parse_list_expr(&mut self) -> Result<Expr, ParseError> {
         let start = self.span();
         self.expect(Token::LParen)?;
@@ -431,6 +485,10 @@ impl<'a> Parser<'a> {
                     },
                     end,
                 )
+            }
+            Token::Ident(s) if s == "cond" => {
+                self.advance()?;
+                self.parse_cond_expr()?
             }
             Token::Let => {
                 self.advance()?;
@@ -868,6 +926,84 @@ mod tests {
             }
             other => panic!("expected binary body, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_parse_cond_desugars_to_nested_if() {
+        let prog = parse(
+            "(define (f [x : i64]) : i64 \
+               (cond [(= x 0) 1] [(= x 1) 2] [else 3]))",
+        )
+        .unwrap();
+        let body = match &prog.decls[0] {
+            Decl::DefFn { body, .. } => body.unspan(),
+            other => panic!("expected DefFn, got {:?}", other),
+        };
+
+        match body {
+            Expr::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                assert!(matches!(cond.unspan(), Expr::Binary { .. }));
+                assert_eq!(then_branch.unspan(), &Expr::Literal(Literal::Int(1)));
+                match else_branch.unspan() {
+                    Expr::If {
+                        cond,
+                        then_branch,
+                        else_branch,
+                    } => {
+                        assert!(matches!(cond.unspan(), Expr::Binary { .. }));
+                        assert_eq!(then_branch.unspan(), &Expr::Literal(Literal::Int(2)));
+                        assert_eq!(else_branch.unspan(), &Expr::Literal(Literal::Int(3)));
+                    }
+                    other => panic!("expected nested If, got {:?}", other),
+                }
+            }
+            other => panic!("expected If, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_cond_requires_test_arm() {
+        let err = parse("(define (f) : i64 (cond [else 3]))").unwrap_err();
+        assert!(
+            err.msg.contains("cond requires at least one test arm"),
+            "got: {}",
+            err
+        );
+
+        let err = parse("(define (f) : i64 (cond))").unwrap_err();
+        assert!(
+            err.msg.contains("cond requires at least one test arm"),
+            "got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_parse_cond_requires_final_else() {
+        let err = parse("(define (f [x : i64]) : i64 (cond [(= x 0) 1]))").unwrap_err();
+        assert!(
+            err.msg.contains("cond requires final else arm"),
+            "got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_parse_cond_rejects_non_final_else() {
+        let err = parse(
+            "(define (f [x : i64]) : i64 \
+               (cond [else 3] [(= x 0) 1]))",
+        )
+        .unwrap_err();
+        assert!(
+            err.msg.contains("cond else arm must be final"),
+            "got: {}",
+            err
+        );
     }
 
     #[test]

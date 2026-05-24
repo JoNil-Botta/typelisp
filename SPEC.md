@@ -431,6 +431,19 @@ All operators are prefix functions (or special forms):
 - Both branches must have the same type.
 - Returns the value of the taken branch.
 
+`(cond [test expr] ... [else fallback])` is a Lisp-native else-if surface
+form. It parses to nested `if` expressions, so each test must type-check as
+`bool` and all branch result types must merge using the normal `if` rules.
+The final arm is required and must be `[else fallback]`; `else` is only special
+as the head of the final `cond` arm.
+
+```lisp test=ignore name=cond-expression reason=fragment
+(cond
+  [(= x 0) 10]
+  [(= x 1) 20]
+  [else 30])
+```
+
 ### 5.7 `(let ([name [: type] init] ...) body)` — local bindings
 
 - Declares one or more local variables.
@@ -1091,6 +1104,7 @@ variant       ::= "(" ident type* ")"
 expr          ::= literal
                 | ident
                 | "(" "if" expr expr expr ")"
+                | "(" "cond" cond-arm+ ")"
                 | "(" "let" "(" binding* ")" expr ")"
                 | "(" "while" expr expr ")"
                 | "(" "begin" expr+ ")"
@@ -1102,6 +1116,8 @@ expr          ::= literal
                 | "(" expr expr* ")"          ; function call
 
 binding       ::= "[" ident [":" type] expr "]"
+cond-arm      ::= "[" expr expr "]"
+                | "[" "else" expr "]"         ; required final arm
 match-arm     ::= "[" pattern expr "]"
 pattern       ::= "_"
                 | literal

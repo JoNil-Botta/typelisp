@@ -149,6 +149,12 @@ fn type_lisp_programs_compile_link_and_run() {
             deps: &[],
         },
         Case {
+            name: "spmd_reduce_scalar",
+            exit_code: 42,
+            stdout: "",
+            deps: &[],
+        },
+        Case {
             name: "functions",
             exit_code: 32,
             stdout: "",

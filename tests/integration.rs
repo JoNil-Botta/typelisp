@@ -84,6 +84,12 @@ fn type_lisp_programs_compile_link_and_run() {
             stdout: "",
             deps: &[],
         },
+        Case {
+            name: "register_scalar_homes",
+            exit_code: 42,
+            stdout: "",
+            deps: &[],
+        },
         // refs #670: scalar f32 params/locals/arithmetic/comparison/return plus
         // an f64 -> f32 -> f64 round-trip. Returns 42 only when single-precision
         // codegen is correct.

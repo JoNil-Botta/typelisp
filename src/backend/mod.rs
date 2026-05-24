@@ -362,6 +362,8 @@ pub struct X86_64Backend {
     function_sigs: HashMap<String, (Vec<Type>, Type)>,
     closure_descriptor_names: BTreeSet<String>,
     address_vars: HashSet<VarId>,
+    reg_plan: Option<regalloc::RegPlan>,
+    callee_saved_offsets: HashMap<&'static str, i32>,
     extern_names: HashSet<String>,
     runtime_print_names: HashSet<String>,
     /// Whether the program references the bump allocator `tl_alloc` and the
@@ -1938,6 +1940,8 @@ impl X86_64Backend {
             function_sigs: HashMap::new(),
             closure_descriptor_names: BTreeSet::new(),
             address_vars: HashSet::new(),
+            reg_plan: None,
+            callee_saved_offsets: HashMap::new(),
             extern_names: HashSet::new(),
             runtime_print_names: HashSet::new(),
             needs_alloc_runtime: false,
@@ -5428,6 +5432,8 @@ impl X86_64Backend {
         // contains no `Phi` instructions and can be selected directly.
         let func = eliminate_phis(func);
         let func = &func;
+        let function_liveness = liveness::analyze(func);
+        self.reg_plan = Some(regalloc::plan(func, &function_liveness, self.target));
 
         // Prologue
         self.emit("    push %rbp");
@@ -5438,6 +5444,7 @@ impl X86_64Backend {
         self.var_offsets.clear();
         self.var_types.clear();
         self.address_vars.clear();
+        self.callee_saved_offsets.clear();
         self.return_ty = func.ret.clone();
         self.param_vars = func.params.iter().map(|(v, _)| *v).collect();
         self.current_entry_label = func.entry.clone();
@@ -5465,11 +5472,23 @@ impl X86_64Backend {
             }
         }
 
+        let saved_home_regs = self.assigned_callee_saved_home_regs();
+        for reg in &saved_home_regs {
+            self.stack_size = (self.stack_size + 7) & !7;
+            self.stack_size += 8;
+            self.callee_saved_offsets.insert(*reg, -self.stack_size);
+        }
+
         // Align stack to 16 bytes
         self.stack_size = (self.stack_size + 15) & !15;
 
         if self.stack_size > 0 {
             self.emit(&format!("    sub ${}, %rsp", self.stack_size));
+        }
+
+        for reg in &saved_home_regs {
+            let offset = self.callee_saved_offsets[reg];
+            self.emit(&format!("    movq {}, {}(%rbp)", reg, offset));
         }
 
         if self.target.runtime_policy().emits_windows_runtime_helpers
@@ -5581,6 +5600,8 @@ impl X86_64Backend {
                 self.generate_instruction(instr);
             }
         }
+        self.reg_plan = None;
+        self.callee_saved_offsets.clear();
     }
 
     fn generate_instruction(&mut self, instr: &Instruction) {
@@ -5589,30 +5610,30 @@ impl X86_64Backend {
             // no-op here. (Non-parameter Allocs are rejected by validation.)
             Instruction::Alloc { .. } => {}
             Instruction::Mov { dst, src, ty } => {
-                let dst_offset = self.var_offsets[dst];
                 if is_scalar_float(ty) {
                     self.load_value(src, "%xmm0", ty);
-                    self.store_xmm_value("%xmm0", dst_offset, ty);
+                    self.store_xmm_value_to_var(*dst, "%xmm0", ty);
                     return;
                 }
 
                 match (src, ty) {
                     (Value::ConstI64(n), _) => {
-                        self.store_integer_immediate(*n as i128, dst_offset, ty);
+                        self.store_integer_immediate_to_var(*dst, *n as i128, ty);
                     }
                     (Value::ConstI32(n), _) => {
-                        self.store_integer_immediate(*n as i128, dst_offset, ty);
+                        self.store_integer_immediate_to_var(*dst, *n as i128, ty);
                     }
                     (Value::ConstI8(n), _) => {
-                        self.store_integer_immediate(*n as i128, dst_offset, ty);
+                        self.store_integer_immediate_to_var(*dst, *n as i128, ty);
                     }
                     (Value::ConstBool(b), _) => {
                         let n = if *b { 1 } else { 0 };
-                        self.store_integer_immediate(n, dst_offset, ty);
+                        self.store_integer_immediate_to_var(*dst, n, ty);
                     }
                     (Value::ConstF64(n), _) => {
                         // Load float from constant pool (simplified)
                         self.emit(&format!("    movabsq ${:#x}, %rax", n.to_bits()));
+                        let dst_offset = self.var_offsets[dst];
                         self.emit(&format!("    movq %rax, {}(%rbp)", dst_offset));
                     }
                     (
@@ -5624,7 +5645,7 @@ impl X86_64Backend {
                         _,
                     ) => {
                         self.load_value(src, "%rax", ty);
-                        self.store_gpr_value("%rax", dst_offset, ty);
+                        self.store_gpr_value_to_var(*dst, "%rax", ty);
                     }
                     _ => {}
                 }
@@ -5641,7 +5662,6 @@ impl X86_64Backend {
                 from_ty,
                 to_ty,
             } => {
-                let dst_offset = self.var_offsets[dst];
                 // Floating-point precision conversions flow through XMM:
                 // `cvtsd2ss` rounds an f64 to binary32, `cvtss2sd` widens an
                 // f32 to f64 exactly. (Same-width float casts are folded away by
@@ -5654,17 +5674,11 @@ impl X86_64Backend {
                         // Same-width float cast: no conversion instruction.
                         _ => {}
                     }
-                    self.store_xmm_value("%xmm0", dst_offset, to_ty);
+                    self.store_xmm_value_to_var(*dst, "%xmm0", to_ty);
                     return;
                 }
                 self.load_value(src, "%rax", from_ty);
-                match to_ty.size() {
-                    8 => self.emit(&format!("    movq %rax, {}(%rbp)", dst_offset)),
-                    4 => self.emit(&format!("    movl %eax, {}(%rbp)", dst_offset)),
-                    2 => self.emit(&format!("    movw %ax, {}(%rbp)", dst_offset)),
-                    1 => self.emit(&format!("    movb %al, {}(%rbp)", dst_offset)),
-                    _ => {}
-                }
+                self.store_gpr_value_to_var(*dst, "%rax", to_ty);
             }
             Instruction::BinOp {
                 dst,
@@ -5673,7 +5687,6 @@ impl X86_64Backend {
                 rhs,
                 ty,
             } => {
-                let dst_offset = self.var_offsets[dst];
                 let operand_ty = self.binop_operand_ty(op, lhs, rhs, ty);
                 let result_ty = self
                     .var_types
@@ -5681,7 +5694,7 @@ impl X86_64Backend {
                     .cloned()
                     .unwrap_or_else(|| ty.clone());
                 if is_scalar_float(&operand_ty) {
-                    self.generate_float_binop(dst_offset, op, lhs, rhs, &operand_ty, &result_ty);
+                    self.generate_float_binop(*dst, op, lhs, rhs, &operand_ty, &result_ty);
                     return;
                 }
 
@@ -5809,10 +5822,9 @@ impl X86_64Backend {
                     _ => {}
                 }
 
-                self.store_gpr_value("%rax", dst_offset, &result_ty);
+                self.store_gpr_value_to_var(*dst, "%rax", &result_ty);
             }
             Instruction::UnOp { dst, op, src, ty } => {
-                let dst_offset = self.var_offsets[dst];
                 if is_scalar_float(ty) {
                     self.load_value(src, "%xmm0", ty);
                     match op {
@@ -5838,7 +5850,7 @@ impl X86_64Backend {
                         // codegen.
                         IrUnOp::Not | IrUnOp::BitNot => {}
                     }
-                    self.store_xmm_value("%xmm0", dst_offset, ty);
+                    self.store_xmm_value_to_var(*dst, "%xmm0", ty);
                     return;
                 }
 
@@ -5860,7 +5872,7 @@ impl X86_64Backend {
                     }
                 }
 
-                self.store_gpr_value("%rax", dst_offset, ty);
+                self.store_gpr_value_to_var(*dst, "%rax", ty);
             }
             Instruction::Call {
                 dst,
@@ -5927,10 +5939,9 @@ impl X86_64Backend {
                     self.store_value_through_pointer(dst_var, src, ty);
                     return;
                 }
-                let dst_offset = self.var_offsets[&dst_var];
                 if is_scalar_float(ty) {
                     self.load_value(src, "%xmm0", ty);
-                    self.store_xmm_value("%xmm0", dst_offset, ty);
+                    self.store_xmm_value_to_var(dst_var, "%xmm0", ty);
                     return;
                 }
 
@@ -5942,20 +5953,20 @@ impl X86_64Backend {
                     | Value::FunctionEntry(_) => {
                         // Round-trip through a register sized to the value.
                         self.load_value(src, "%rax", ty);
-                        self.store_gpr_value("%rax", dst_offset, ty);
+                        self.store_gpr_value_to_var(dst_var, "%rax", ty);
                     }
                     Value::ConstI64(n) => {
-                        self.store_integer_immediate(*n as i128, dst_offset, ty);
+                        self.store_integer_immediate_to_var(dst_var, *n as i128, ty);
                     }
                     Value::ConstI32(n) => {
-                        self.store_integer_immediate(*n as i128, dst_offset, ty);
+                        self.store_integer_immediate_to_var(dst_var, *n as i128, ty);
                     }
                     Value::ConstI8(n) => {
-                        self.store_integer_immediate(*n as i128, dst_offset, ty);
+                        self.store_integer_immediate_to_var(dst_var, *n as i128, ty);
                     }
                     Value::ConstBool(b) => {
                         let n = if *b { 1 } else { 0 };
-                        self.store_integer_immediate(n, dst_offset, ty);
+                        self.store_integer_immediate_to_var(dst_var, n, ty);
                     }
                     _ => {}
                 }
@@ -5963,45 +5974,26 @@ impl X86_64Backend {
             // Read a local's stack slot into the destination's slot, or
             // dereference a pointer-valued local produced by AddrOf/Gep.
             Instruction::Load { dst, src, ty } => {
-                let dst_offset = self.var_offsets[dst];
                 if let Value::Var(src_var) = src
                     && self.is_pointer_deref_var(*src_var, ty)
                 {
-                    self.load_value_through_pointer(*src_var, dst_offset, ty);
+                    self.load_value_through_pointer(*src_var, *dst, ty);
                     return;
                 }
                 if is_scalar_float(ty) {
                     self.load_value(src, "%xmm0", ty);
-                    self.store_xmm_value("%xmm0", dst_offset, ty);
+                    self.store_xmm_value_to_var(*dst, "%xmm0", ty);
                     return;
                 }
 
-                match ty.size() {
-                    8 => {
-                        self.load_value(src, "%rax", ty);
-                        self.emit(&format!("    movq %rax, {}(%rbp)", dst_offset));
-                    }
-                    4 => {
-                        self.load_value(src, "%rax", ty);
-                        self.emit(&format!("    movl %eax, {}(%rbp)", dst_offset));
-                    }
-                    2 => {
-                        self.load_value(src, "%rax", ty);
-                        self.emit(&format!("    movw %ax, {}(%rbp)", dst_offset));
-                    }
-                    1 => {
-                        self.load_value(src, "%rax", ty);
-                        self.emit(&format!("    movb %al, {}(%rbp)", dst_offset));
-                    }
-                    _ => {}
-                }
+                self.load_value(src, "%rax", ty);
+                self.store_gpr_value_to_var(*dst, "%rax", ty);
             }
             Instruction::AddrOf { dst, src } => {
                 let src_offset = self.var_offsets[src];
-                let dst_offset = self.var_offsets[dst];
                 let dst_ty = self.var_types.get(dst).cloned().unwrap_or(Type::U64);
                 self.emit(&format!("    leaq {}(%rbp), %rax", src_offset));
-                self.store_gpr_value("%rax", dst_offset, &dst_ty);
+                self.store_gpr_value_to_var(*dst, "%rax", &dst_ty);
             }
             Instruction::Gep {
                 dst,
@@ -6009,7 +6001,6 @@ impl X86_64Backend {
                 offset,
                 elem_ty,
             } => {
-                let dst_offset = self.var_offsets[dst];
                 let dst_ty = self.var_types.get(dst).cloned().unwrap_or(Type::U64);
                 let base_ty = self.value_type(base).unwrap_or(Type::U64);
                 let offset_ty = self.value_type(offset).unwrap_or(Type::I64);
@@ -6020,7 +6011,7 @@ impl X86_64Backend {
                     self.emit(&format!("    imulq ${}, %rcx", elem_size));
                 }
                 self.emit("    addq %rcx, %rax");
-                self.store_gpr_value("%rax", dst_offset, &dst_ty);
+                self.store_gpr_value_to_var(*dst, "%rax", &dst_ty);
             }
             Instruction::VectorBinOp {
                 dst,
@@ -6149,16 +6140,41 @@ impl X86_64Backend {
                 {
                     self.emit("    xor %eax, %eax");
                 }
-                // Epilogue
-                if self.target.mode == BackendMode::Avx2 || self.target.mode == BackendMode::Avx512
-                {
-                    self.emit("    vzeroupper");
-                }
-                self.emit("    mov %rbp, %rsp");
-                self.emit("    pop %rbp");
-                self.emit("    ret");
+                self.emit_epilogue();
             }
         }
+    }
+
+    fn assigned_callee_saved_home_regs(&self) -> Vec<&'static str> {
+        let mut assigned = BTreeSet::new();
+        if let Some(plan) = &self.reg_plan {
+            for location in plan.assignments.values() {
+                if let regalloc::Location::Reg(reg) = location {
+                    assigned.insert(*reg);
+                }
+            }
+        }
+
+        regalloc::target_register_info(self.target)
+            .callee_saved_integer
+            .iter()
+            .copied()
+            .filter(|reg| assigned.contains(reg))
+            .collect()
+    }
+
+    fn emit_epilogue(&mut self) {
+        if self.target.mode == BackendMode::Avx2 || self.target.mode == BackendMode::Avx512 {
+            self.emit("    vzeroupper");
+        }
+
+        for reg in self.assigned_callee_saved_home_regs().into_iter().rev() {
+            let offset = self.callee_saved_offsets[reg];
+            self.emit(&format!("    movq {}(%rbp), {}", offset, reg));
+        }
+        self.emit("    mov %rbp, %rsp");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
     }
 
     fn generate_avx2_vector_binop(
@@ -6670,12 +6686,11 @@ impl X86_64Backend {
 
     fn store_call_result(&mut self, dst: &Option<VarId>, ty: &Type) {
         if let Some(dst_var) = dst {
-            let dst_offset = self.var_offsets[dst_var];
             let calling_convention = self.target.calling_convention();
             if is_scalar_float(ty) {
-                self.store_xmm_value(calling_convention.return_float_reg, dst_offset, ty);
+                self.store_xmm_value_to_var(*dst_var, calling_convention.return_float_reg, ty);
             } else {
-                self.store_gpr_value(calling_convention.return_gpr, dst_offset, ty);
+                self.store_gpr_value_to_var(*dst_var, calling_convention.return_gpr, ty);
             }
         }
     }
@@ -6702,15 +6717,14 @@ impl X86_64Backend {
         }
 
         for (param_var, param_ty) in staged.iter().rev() {
-            let offset = self.var_offsets[param_var];
             if is_scalar_float(param_ty) {
                 let mov = scalar_float_move(param_ty);
                 self.emit(&format!("    {} (%rsp), %xmm15", mov));
                 self.emit("    add $8, %rsp");
-                self.store_xmm_value("%xmm15", offset, param_ty);
+                self.store_xmm_value_to_var(*param_var, "%xmm15", param_ty);
             } else {
                 self.emit("    pop %r11");
-                self.store_gpr_value("%r11", offset, param_ty);
+                self.store_gpr_value_to_var(*param_var, "%r11", param_ty);
             }
         }
 
@@ -6728,12 +6742,12 @@ impl X86_64Backend {
         }
     }
 
-    fn load_value_through_pointer(&mut self, ptr_var: VarId, dst_offset: i32, ty: &Type) {
+    fn load_value_through_pointer(&mut self, ptr_var: VarId, dst_var: VarId, ty: &Type) {
         self.load_pointer_value(ptr_var, "%r10");
         if is_scalar_float(ty) {
             let mov = scalar_float_move(ty);
             self.emit(&format!("    {} (%r10), %xmm0", mov));
-            self.store_xmm_value("%xmm0", dst_offset, ty);
+            self.store_xmm_value_to_var(dst_var, "%xmm0", ty);
             return;
         }
 
@@ -6742,13 +6756,7 @@ impl X86_64Backend {
         // sign-extend, unsigned/bool/char zero-extend — e.g. a `char` byte is
         // loaded with `movzbq`). The full register is then spilled width-first.
         self.load_memory_value("(%r10)", "%rax", ty);
-        match ty.size() {
-            8 => self.emit(&format!("    movq %rax, {}(%rbp)", dst_offset)),
-            4 => self.emit(&format!("    movl %eax, {}(%rbp)", dst_offset)),
-            2 => self.emit(&format!("    movw %ax, {}(%rbp)", dst_offset)),
-            1 => self.emit(&format!("    movb %al, {}(%rbp)", dst_offset)),
-            _ => {}
-        }
+        self.store_gpr_value_to_var(dst_var, "%rax", ty);
     }
 
     fn store_value_through_pointer(&mut self, ptr_var: VarId, src: &Value, ty: &Type) {
@@ -6773,6 +6781,99 @@ impl X86_64Backend {
     fn load_pointer_value(&mut self, ptr_var: VarId, reg: &str) {
         let ptr_ty = self.var_types.get(&ptr_var).cloned().unwrap_or(Type::U64);
         self.load_value(&Value::Var(ptr_var), reg, &ptr_ty);
+    }
+
+    fn reg_home_for(&self, var: VarId) -> Option<&'static str> {
+        match self.reg_plan.as_ref()?.assignments.get(&var) {
+            Some(regalloc::Location::Reg(reg)) => Some(*reg),
+            _ => None,
+        }
+    }
+
+    fn store_gpr_value_to_var(&mut self, var: VarId, reg: &str, ty: &Type) {
+        if let Some(home) = self.reg_home_for(var) {
+            self.store_gpr_value_to_register(reg, home, ty);
+            return;
+        }
+
+        let offset = self.var_offsets[&var];
+        self.store_gpr_value(reg, offset, ty);
+    }
+
+    fn store_xmm_value_to_var(&mut self, var: VarId, reg: &str, ty: &Type) {
+        let offset = self.var_offsets[&var];
+        self.store_xmm_value(reg, offset, ty);
+    }
+
+    fn store_integer_immediate_to_var(&mut self, var: VarId, value: i128, ty: &Type) {
+        if let Some(home) = self.reg_home_for(var) {
+            match ty.size() {
+                8 if (i32::MIN as i128..=i32::MAX as i128).contains(&value) => {
+                    self.emit(&format!("    movq ${}, {}", value, home));
+                }
+                8 => {
+                    self.emit(&format!("    movabsq ${}, {}", value, home));
+                }
+                4 => self.emit(&format!("    movl ${}, {}", value, Self::gpr32(home))),
+                2 => self.emit(&format!("    movw ${}, {}", value, Self::gpr16(home))),
+                1 => self.emit(&format!("    movb ${}, {}", value, Self::gpr8(home))),
+                _ => {}
+            }
+            return;
+        }
+
+        let offset = self.var_offsets[&var];
+        self.store_integer_immediate(value, offset, ty);
+    }
+
+    fn store_gpr_value_to_register(&mut self, src_reg: &str, dst_reg: &str, ty: &Type) {
+        match ty.size() {
+            8 if src_reg != dst_reg => {
+                self.emit(&format!("    movq {}, {}", src_reg, dst_reg));
+            }
+            4 if Self::gpr32(src_reg) != Self::gpr32(dst_reg) => self.emit(&format!(
+                "    movl {}, {}",
+                Self::gpr32(src_reg),
+                Self::gpr32(dst_reg)
+            )),
+            2 if Self::gpr16(src_reg) != Self::gpr16(dst_reg) => self.emit(&format!(
+                "    movw {}, {}",
+                Self::gpr16(src_reg),
+                Self::gpr16(dst_reg)
+            )),
+            1 if Self::gpr8(src_reg) != Self::gpr8(dst_reg) => self.emit(&format!(
+                "    movb {}, {}",
+                Self::gpr8(src_reg),
+                Self::gpr8(dst_reg)
+            )),
+            _ => {}
+        }
+    }
+
+    fn load_register_value(&mut self, src_reg: &str, dst_reg: &str, ty: &Type) {
+        let signed = ty.is_signed();
+        match ty.size() {
+            8 if src_reg != dst_reg => {
+                self.emit(&format!("    movq {}, {}", src_reg, dst_reg));
+            }
+            4 if signed => {
+                self.emit(&format!("    movslq {}, {}", Self::gpr32(src_reg), dst_reg));
+            }
+            4 => self.emit(&format!(
+                "    movl {}, {}",
+                Self::gpr32(src_reg),
+                Self::gpr32(dst_reg)
+            )),
+            2 if signed => {
+                self.emit(&format!("    movswq {}, {}", Self::gpr16(src_reg), dst_reg));
+            }
+            2 => self.emit(&format!("    movzwq {}, {}", Self::gpr16(src_reg), dst_reg)),
+            1 if signed => {
+                self.emit(&format!("    movsbq {}, {}", Self::gpr8(src_reg), dst_reg));
+            }
+            1 => self.emit(&format!("    movzbq {}, {}", Self::gpr8(src_reg), dst_reg)),
+            _ => {}
+        }
     }
 
     fn load_value(&mut self, val: &Value, reg: &str, ty: &Type) {
@@ -6814,6 +6915,10 @@ impl X86_64Backend {
                 self.emit(&format!("    leaq {}(%rip), {}", symbol, reg));
             }
             Value::Var(v) => {
+                if let Some(home) = self.reg_home_for(*v) {
+                    self.load_register_value(home, reg, ty);
+                    return;
+                }
                 let offset = self.var_offsets[v];
                 let addr = format!("{}(%rbp)", offset);
                 self.load_memory_value(&addr, reg, ty);
@@ -7012,7 +7117,7 @@ impl X86_64Backend {
 
     fn generate_float_binop(
         &mut self,
-        dst_offset: i32,
+        dst: VarId,
         op: &IrBinOp,
         lhs: &Value,
         rhs: &Value,
@@ -7041,7 +7146,7 @@ impl X86_64Backend {
                 };
                 self.emit(&format!("    {} %al", setcc));
                 self.emit("    movzbq %al, %rax");
-                self.store_gpr_value("%rax", dst_offset, result_ty);
+                self.store_gpr_value_to_var(dst, "%rax", result_ty);
                 return;
             }
             // Integer-only operators (modulo, logical and bitwise/shift) are
@@ -7057,7 +7162,7 @@ impl X86_64Backend {
             | IrBinOp::Shr => {}
         }
 
-        self.store_xmm_value("%xmm0", dst_offset, operand_ty);
+        self.store_xmm_value_to_var(dst, "%xmm0", operand_ty);
     }
 
     fn binop_operand_ty(&self, op: &IrBinOp, lhs: &Value, rhs: &Value, result_ty: &Type) -> Type {
@@ -7105,6 +7210,10 @@ impl X86_64Backend {
             "%r9" => "%r9d",
             "%r10" => "%r10d",
             "%r11" => "%r11d",
+            "%r12" => "%r12d",
+            "%r13" => "%r13d",
+            "%r14" => "%r14d",
+            "%r15" => "%r15d",
             _ => reg,
         }
     }
@@ -7122,6 +7231,10 @@ impl X86_64Backend {
             "%r9" => "%r9w",
             "%r10" => "%r10w",
             "%r11" => "%r11w",
+            "%r12" => "%r12w",
+            "%r13" => "%r13w",
+            "%r14" => "%r14w",
+            "%r15" => "%r15w",
             _ => reg,
         }
     }
@@ -7140,6 +7253,10 @@ impl X86_64Backend {
             "%r9" => "%r9b",
             "%r10" => "%r10b",
             "%r11" => "%r11b",
+            "%r12" => "%r12b",
+            "%r13" => "%r13b",
+            "%r14" => "%r14b",
+            "%r15" => "%r15b",
             _ => reg,
         }
     }
@@ -9443,6 +9560,49 @@ mod tests {
     }
 
     #[test]
+    fn test_register_backed_scalar_locals_use_callee_saved_homes() {
+        let asm = compile_ok(
+            r#"
+            (define (main) : i64
+              (let ([a : i64 40] [b : i64 2])
+                (+ a b)))
+            "#,
+        );
+
+        assert!(asm.contains("    movq %rbx, -"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %r12, -"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %r13, -"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $40, %rbx"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $2, %r12"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %rax, %r13"), "asm:\n{}", asm);
+        assert!(asm.contains("(%rbp), %r13"), "asm:\n{}", asm);
+        assert!(asm.contains("(%rbp), %r12"), "asm:\n{}", asm);
+        assert!(asm.contains("(%rbp), %rbx"), "asm:\n{}", asm);
+        assert!(!asm.contains("    movq $40, -"), "asm:\n{}", asm);
+        assert!(!asm.contains("    movq $2, -"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_windows_register_homes_include_windows_callee_saved_regs() {
+        let asm = compile_ok_for_target(
+            r#"
+            (define (main) : i64
+              (let ([a : i64 1] [b : i64 2] [c : i64 3] [d : i64 4]
+                    [e : i64 5] [f : i64 6] [g : i64 7])
+                (+ (+ (+ a b) (+ c d)) (+ (+ e f) g))))
+            "#,
+            BackendTarget::windows_x86_64(),
+        );
+
+        assert!(asm.contains("    movq %rbx, -"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %rsi, -"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %rdi, -"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $1, %rbx"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $2, %rsi"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $3, %rdi"), "asm:\n{}", asm);
+    }
+
+    #[test]
     fn test_compile_comptime_function_params_emit_specialized_symbols() {
         let asm = compile_ok(
             r#"
@@ -9823,7 +9983,8 @@ mod tests {
         };
         let asm = generate_assembly(&program).expect("address-of should compile");
         assert!(asm.contains("    leaq -8(%rbp), %rax"), "asm:\n{}", asm);
-        assert!(asm.contains("    movq %rax, -16(%rbp)"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %rax, %rbx"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %rbx, %rax"), "asm:\n{}", asm);
         assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
     }
 
@@ -9858,10 +10019,12 @@ mod tests {
             externs: vec![],
         };
         let asm = generate_assembly(&program).expect("gep should compile");
-        assert!(asm.contains("    movq -8(%rbp), %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $1000, %rbx"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %rbx, %rax"), "asm:\n{}", asm);
         assert!(asm.contains("    movq $3, %rcx"), "asm:\n{}", asm);
         assert!(asm.contains("    imulq $8, %rcx"), "asm:\n{}", asm);
         assert!(asm.contains("    addq %rcx, %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %rax, %r12"), "asm:\n{}", asm);
         assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
     }
 
@@ -9897,11 +10060,12 @@ mod tests {
         };
         let asm = generate_assembly(&program).expect("computed-address load/store should compile");
         assert!(asm.contains("    leaq -8(%rbp), %rax"), "asm:\n{}", asm);
-        assert!(asm.contains("    movq -16(%rbp), %r10"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %rax, %rbx"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %rbx, %r10"), "asm:\n{}", asm);
         assert!(asm.contains("    movq $99, %rax"), "asm:\n{}", asm);
         assert!(asm.contains("    movq %rax, (%r10)"), "asm:\n{}", asm);
         assert!(asm.contains("    movq (%r10), %rax"), "asm:\n{}", asm);
-        assert!(asm.contains("    movq %rax, -24(%rbp)"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq %rax, %r12"), "asm:\n{}", asm);
         assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
     }
 
@@ -11043,10 +11207,10 @@ mod tests {
             externs: vec![],
         };
         let asm = generate_assembly(&program).expect("narrow immediate mov should compile");
-        assert!(asm.contains("movb $7, -1(%rbp)"), "asm:\n{}", asm);
+        assert!(asm.contains("movb $7, %bl"), "asm:\n{}", asm);
         assert!(
-            !asm.contains("movq $7, -1(%rbp)"),
-            "i8 immediate mov must not use 64-bit store; asm:\n{}",
+            !asm.contains("movq $7"),
+            "i8 immediate mov must not use a 64-bit store; asm:\n{}",
             asm
         );
     }
@@ -11077,13 +11241,13 @@ mod tests {
         };
         let asm = generate_assembly(&program).expect("large immediate mov should compile");
         assert!(
-            asm.contains("movabsq $9223372036854775807, %rax"),
+            asm.contains("movabsq $9223372036854775807, %rbx"),
             "large i64 immediate must be materialized through a register; asm:\n{}",
             asm
         );
         assert!(
-            asm.contains("movq %rax, -8(%rbp)"),
-            "large i64 immediate register value must be stored to the stack; asm:\n{}",
+            asm.contains("movq %rbx, %rax"),
+            "large i64 immediate register value must be returned from its home; asm:\n{}",
             asm
         );
         assert!(
@@ -11122,10 +11286,10 @@ mod tests {
             externs: vec![],
         };
         let asm = generate_assembly(&program).expect("narrow immediate store should compile");
-        assert!(asm.contains("movw $300, -2(%rbp)"), "asm:\n{}", asm);
+        assert!(asm.contains("movw $300, %bx"), "asm:\n{}", asm);
         assert!(
-            !asm.contains("movq $300, -2(%rbp)"),
-            "i16 immediate store must not use 64-bit store; asm:\n{}",
+            !asm.contains("movq $300"),
+            "i16 immediate store must not use a 64-bit store; asm:\n{}",
             asm
         );
     }

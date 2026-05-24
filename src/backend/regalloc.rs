@@ -8,19 +8,14 @@ const SYSV_CALLER_SAVED_INTEGER_REGS: [&str; 9] = [
     "%rax", "%rcx", "%rdx", "%rsi", "%rdi", "%r8", "%r9", "%r10", "%r11",
 ];
 const SYSV_CALLEE_SAVED_INTEGER_REGS: [&str; 5] = ["%rbx", "%r12", "%r13", "%r14", "%r15"];
-const SYSV_ALLOCATABLE_INTEGER_REGS: [&str; 14] = [
-    "%rax", "%rcx", "%rdx", "%rsi", "%rdi", "%r8", "%r9", "%r10", "%r11", "%rbx", "%r12", "%r13",
-    "%r14", "%r15",
-];
+const SYSV_ALLOCATABLE_INTEGER_REGS: [&str; 5] = ["%rbx", "%r12", "%r13", "%r14", "%r15"];
 
 const WIN64_CALLER_SAVED_INTEGER_REGS: [&str; 7] =
     ["%rax", "%rcx", "%rdx", "%r8", "%r9", "%r10", "%r11"];
 const WIN64_CALLEE_SAVED_INTEGER_REGS: [&str; 7] =
     ["%rbx", "%rsi", "%rdi", "%r12", "%r13", "%r14", "%r15"];
-const WIN64_ALLOCATABLE_INTEGER_REGS: [&str; 14] = [
-    "%rax", "%rcx", "%rdx", "%r8", "%r9", "%r10", "%r11", "%rbx", "%rsi", "%rdi", "%r12", "%r13",
-    "%r14", "%r15",
-];
+const WIN64_ALLOCATABLE_INTEGER_REGS: [&str; 7] =
+    ["%rbx", "%rsi", "%rdi", "%r12", "%r13", "%r14", "%r15"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TargetRegisterInfo {
@@ -200,6 +195,7 @@ fn ineligible_vars(
             vars.insert(*var);
         }
     }
+    vars.extend(func.params.iter().map(|(var, _)| *var));
     vars.extend(liveness.address_taken_vars.iter().copied());
     vars.extend(call_live_vars(func, liveness));
     vars.extend(unsupported_def_vars(func));
@@ -385,7 +381,9 @@ mod tests {
         assert!(!plan.assignments.contains_key(&2));
         assert!(!plan.assignments.contains_key(&3));
         assert!(!plan.assignments.contains_key(&4));
-        assert_eq!(plan.assignments.get(&0), Some(&Location::Reg("%rax")));
+        assert!(plan.ineligible.contains(&0));
+        assert!(!plan.assignments.contains_key(&0));
+        assert_eq!(plan.assignments.get(&5), Some(&Location::Reg("%rbx")));
     }
 
     #[test]
@@ -418,7 +416,8 @@ mod tests {
 
         assert!(plan.ineligible.contains(&1));
         assert!(!plan.assignments.contains_key(&1));
-        assert!(matches!(plan.assignments.get(&0), Some(Location::Reg(_))));
+        assert!(plan.ineligible.contains(&0));
+        assert!(!plan.assignments.contains_key(&0));
         assert!(matches!(plan.assignments.get(&2), Some(Location::Reg(_))));
     }
 
@@ -427,7 +426,7 @@ mod tests {
         let mut locals = Vec::new();
         let mut instructions = Vec::new();
 
-        for var in 0..15 {
+        for var in 0..6 {
             locals.push((var, Type::I64));
             instructions.push(Instruction::Mov {
                 dst: var,
@@ -435,7 +434,7 @@ mod tests {
                 ty: Type::I64,
             });
         }
-        for var in 0..15 {
+        for var in 0..6 {
             instructions.push(Instruction::Store {
                 dst: Value::Global(format!("g{var}")),
                 src: Value::Var(var),
@@ -455,9 +454,9 @@ mod tests {
             })
             .collect();
 
-        assert_eq!(plan.assignments.len(), 15);
+        assert_eq!(plan.assignments.len(), 6);
         assert_eq!(spills.len(), 1);
-        assert_eq!(spills[0].0, 14);
+        assert_eq!(spills[0].0, 5);
         assert!(spills[0].1.offset < 0);
     }
 

@@ -585,7 +585,8 @@
                                   next-cursor
                                   fail-label)])])])
                     (ErrLowerEnv
-                      "lower: unsupported enum payload literal pattern type"))]
+                      (lower-diagnostic
+                        "lower: unsupported enum payload literal pattern type")))]
                 [_
                   (ErrLowerEnv
                     (lower-diagnostic

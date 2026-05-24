@@ -281,7 +281,7 @@ typelisp debug tokenize file.tl    # Print token stream
 typelisp debug parse    file.tl    # Print AST
 typelisp debug check    file.tl    # Type check
 typelisp lsp                      # Start stdio LSP diagnostics server
-typelisp repl                     # Start minimal stdio REPL (.help, .exit)
+typelisp repl                     # Start minimal stdio REPL (.help, .type, .exit)
 typelisp compile        file.tl    # Generate assembly (.s); -o <path>, --target <target>, --emit-ir, --backend-mode <mode>
 typelisp build          file.tl    # Build native executable; -o <path>, --target <target>, --backend-mode <mode>
 typelisp run            file.tl    # Compile, assemble, link, and run; --target <target>, --backend-mode <mode>
@@ -293,7 +293,8 @@ The older top-level `tokenize`, `parse`, and `check` commands remain as
 compatibility aliases.
 
 The `repl` command currently provides a minimal stdio command loop. It supports
-`.help` and `.exit`; TypeLisp evaluation is planned in follow-up work.
+`.help`, `.type <expr>`, and `.exit`. Top-level declarations are remembered for
+later `.type` commands; TypeLisp evaluation is planned in follow-up work.
 
 `compile`, `run`, and `build` accept `--backend-mode scalar|avx2|avx512`.
 `scalar` is the default. `avx2` supports a first contiguous SPMD `foreach`

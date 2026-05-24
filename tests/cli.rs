@@ -454,6 +454,7 @@ fn repl_help_and_exit_from_piped_stdin() {
         stdout
     );
     assert!(stdout.contains(".help"), "stdout:\n{}", stdout);
+    assert!(stdout.contains(".type"), "stdout:\n{}", stdout);
     assert!(stdout.contains(".exit"), "stdout:\n{}", stdout);
 }
 
@@ -481,19 +482,14 @@ fn repl_unknown_dot_command_reports_and_continues() {
 
 #[test]
 fn repl_accumulates_multiline_declaration_input() {
-    let output = typelisp_with_stdin(&["repl"], "(define answer : i64\n  42)\n.exit\n");
+    let output = typelisp_with_stdin(
+        &["repl"],
+        "(define answer : i64\n  42)\n.type answer\n.exit\n",
+    );
 
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
-    assert_eq!(stdout(&output), "");
-    let stderr = stderr(&output);
-    assert_eq!(
-        stderr
-            .matches("REPL evaluation is not implemented yet")
-            .count(),
-        1,
-        "stderr:\n{}",
-        stderr
-    );
+    assert_eq!(stdout(&output), "i64\n");
+    assert_eq!(stderr(&output), "");
 }
 
 #[test]
@@ -585,6 +581,69 @@ fn repl_reports_errors_and_recovers_for_next_input() {
     );
     assert!(
         stderr.contains("REPL parse error: parse error"),
+        "stderr:\n{}",
+        stderr
+    );
+}
+
+#[test]
+fn repl_type_prints_literal_and_session_decl_types() {
+    let output = typelisp_with_stdin(
+        &["repl"],
+        ".type 42\n(define answer : i64 41)\n.type (+ answer 1)\n.exit\n",
+    );
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    assert_eq!(stdout(&output), "i64\ni64\n");
+}
+
+#[test]
+fn repl_type_reports_parse_errors_and_continues() {
+    let output = typelisp_with_stdin(&["repl"], ".type (+ 1)\n.type true\n.exit\n");
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stdout(&output), "bool\n");
+    let stderr = stderr(&output);
+    assert!(stderr.contains("error[E0100]"), "stderr:\n{}", stderr);
+    assert!(stderr.contains("--> <repl>:"), "stderr:\n{}", stderr);
+}
+
+#[test]
+fn repl_type_reports_type_errors_and_keeps_session() {
+    let output = typelisp_with_stdin(
+        &["repl"],
+        "(define answer : i64 41)\n.type (+ answer true)\n.type answer\n.exit\n",
+    );
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stdout(&output), "i64\n");
+    let stderr = stderr(&output);
+    assert!(stderr.contains("error[E0200]"), "stderr:\n{}", stderr);
+    assert!(
+        stderr.contains("arithmetic operator requires numeric types"),
+        "stderr:\n{}",
+        stderr
+    );
+}
+
+#[test]
+fn repl_type_rejects_declarations_without_mutating_session() {
+    let output = typelisp_with_stdin(
+        &["repl"],
+        ".type (define answer : i64 41)\n.type answer\n.exit\n",
+    );
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stdout(&output), "");
+    let stderr = stderr(&output);
+    assert!(
+        stderr.contains("Error: .type expects an expression, got a declaration"),
+        "stderr:\n{}",
+        stderr
+    );
+    assert!(
+        stderr.contains("unbound variable: answer"),
         "stderr:\n{}",
         stderr
     );

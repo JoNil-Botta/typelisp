@@ -1,7 +1,7 @@
 use crate::diagnostic::Diagnostic;
 use crate::ir::{
     BasicBlock, BinOp as IrBinOp, Function, Instruction, Label, Program, SourceSpans,
-    UnOp as IrUnOp, Value, VarId,
+    UnOp as IrUnOp, Value, VarId, VectorReduceOp,
 };
 use crate::span::Span;
 use crate::types::{DYN_ARRAY_PTR_OFFSET, Type};
@@ -891,6 +891,33 @@ fn validate_function(
                         return unsupported(&what);
                     }
                 }
+                Instruction::VectorReduce {
+                    dst,
+                    op,
+                    src,
+                    lanes,
+                    elem_ty,
+                } => {
+                    if mode == BackendMode::Scalar {
+                        return unsupported("vector/mask IR requires a SIMD backend target");
+                    }
+                    if mode != BackendMode::Avx2 {
+                        return unsupported("vector reduce IR requires the AVX2 backend target");
+                    }
+                    if let Err(what) = validate_vector_reduce(
+                        *dst,
+                        *op,
+                        src,
+                        *lanes,
+                        elem_ty,
+                        ValidationTypes {
+                            var_types: &var_types,
+                            global_types,
+                        },
+                    ) {
+                        return unsupported(&what);
+                    }
+                }
                 Instruction::VectorLoad {
                     dst,
                     base,
@@ -1009,7 +1036,6 @@ fn validate_function(
                 Instruction::LaneId { .. }
                 | Instruction::Splat { .. }
                 | Instruction::VectorCompare { .. }
-                | Instruction::VectorReduce { .. }
                 | Instruction::MaskBinOp { .. }
                 | Instruction::MaskNot { .. }
                 | Instruction::MaskReduce { .. }
@@ -1148,6 +1174,50 @@ fn validate_vector_binop(
         types.var_types,
         types.global_types,
         "vector binop rhs",
+    )?;
+    Ok(())
+}
+
+fn validate_vector_reduce(
+    dst: VarId,
+    op: VectorReduceOp,
+    src: &Value,
+    lanes: usize,
+    elem_ty: &Type,
+    types: ValidationTypes<'_>,
+) -> Result<(), String> {
+    validate_vector_shape(elem_ty, lanes, BackendMode::Avx2)?;
+    if op != VectorReduceOp::Sum {
+        return Err(format!("AVX2 vector reduction {:?} is not implemented", op));
+    }
+    if !matches!(elem_ty, Type::I64 | Type::I32) {
+        return Err(format!(
+            "AVX2 vector sum reduction over {} is not implemented",
+            elem_ty
+        ));
+    }
+    match types.var_types.get(&dst) {
+        Some(ty) if ty == elem_ty => {}
+        Some(ty) => {
+            return Err(format!(
+                "vector reduce destination %{} has type {}, expected {}",
+                dst, ty, elem_ty
+            ));
+        }
+        None => {
+            return Err(format!(
+                "vector reduce destination %{} has no recorded type",
+                dst
+            ));
+        }
+    }
+    validate_vector_value(
+        src,
+        elem_ty,
+        lanes,
+        types.var_types,
+        types.global_types,
+        "vector reduce source",
     )?;
     Ok(())
 }
@@ -5968,6 +6038,15 @@ impl X86_64Backend {
             } if self.target.mode == BackendMode::Avx512 => {
                 self.generate_avx512_vector_binop(*dst, *op, lhs, rhs, *lanes, elem_ty);
             }
+            Instruction::VectorReduce {
+                dst,
+                op,
+                src,
+                lanes,
+                elem_ty,
+            } if self.target.mode == BackendMode::Avx2 => {
+                self.generate_avx2_vector_reduce(*dst, *op, src, *lanes, elem_ty);
+            }
             Instruction::VectorLoad {
                 dst,
                 base,
@@ -6096,6 +6175,45 @@ impl X86_64Backend {
         self.emit(&format!("    {} %ymm1, %ymm0, %ymm0", mnemonic));
         let dst_offset = self.var_offsets[&dst];
         self.store_vector_reg("%ymm0", dst_offset, elem_ty);
+    }
+
+    fn generate_avx2_vector_reduce(
+        &mut self,
+        dst: VarId,
+        op: VectorReduceOp,
+        src: &Value,
+        _lanes: usize,
+        elem_ty: &Type,
+    ) {
+        if op != VectorReduceOp::Sum {
+            self.emit("    # unsupported AVX2 vector reduction rejected by backend validation");
+            return;
+        }
+        self.load_vector_value(src, "%ymm0", elem_ty);
+        match elem_ty {
+            Type::I64 => {
+                self.emit("    vextracti128 $1, %ymm0, %xmm1");
+                self.emit("    vpaddq %xmm1, %xmm0, %xmm0");
+                self.emit("    vpsrldq $8, %xmm0, %xmm1");
+                self.emit("    vpaddq %xmm1, %xmm0, %xmm0");
+                self.emit("    vmovq %xmm0, %rax");
+            }
+            Type::I32 => {
+                self.emit("    vextracti128 $1, %ymm0, %xmm1");
+                self.emit("    vpaddd %xmm1, %xmm0, %xmm0");
+                self.emit("    vpsrldq $8, %xmm0, %xmm1");
+                self.emit("    vpaddd %xmm1, %xmm0, %xmm0");
+                self.emit("    vpsrldq $4, %xmm0, %xmm1");
+                self.emit("    vpaddd %xmm1, %xmm0, %xmm0");
+                self.emit("    vmovd %xmm0, %eax");
+            }
+            _ => {
+                self.emit("    # unsupported AVX2 vector reduction rejected by backend validation");
+                return;
+            }
+        }
+        let dst_offset = self.var_offsets[&dst];
+        self.store_gpr_value("%rax", dst_offset, elem_ty);
     }
 
     fn generate_avx2_vector_load(
@@ -7545,6 +7663,45 @@ mod tests {
         }
         assert!(
             asm.contains("foreach_tail_header"),
+            "expected scalar cleanup tail; asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_avx2_spmd_reduce_sum_emits_horizontal_instruction_families() {
+        let asm = compile_ok_for_target(
+            r#"
+            (define (sum-i64 [xs : (Array i64)] [n : i64]) : i64
+              (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))
+
+            (define (sum-i32 [xs : (Array i32)] [n : i64]) : i32
+              (spmd-reduce sum ([i : i64 0 n]) (cast 0 : i32) (array-ref xs i)))
+
+            (define (main) : i64 42)
+            "#,
+            BackendTarget::default().with_mode(BackendMode::Avx2),
+        );
+
+        for expected in [
+            "%ymm",
+            "vmovdqu",
+            "vextracti128",
+            "vpaddq",
+            "vpaddd",
+            "vpsrldq",
+            "    vmovq %xmm0, %rax",
+            "    vmovd %xmm0, %eax",
+        ] {
+            assert!(asm.contains(expected), "missing {expected}; asm:\n{asm}");
+        }
+        assert!(
+            asm.contains("reduce_avx2_header"),
+            "expected AVX2 reduction loop; asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("reduce_tail_header"),
             "expected scalar cleanup tail; asm:\n{}",
             asm
         );

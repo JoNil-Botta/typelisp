@@ -4,7 +4,7 @@ use crate::ir::{
     UnOp as IrUnOp, Value, VarId,
 };
 use crate::span::Span;
-use crate::types::Type;
+use crate::types::{DYN_ARRAY_PTR_OFFSET, Type};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 
@@ -148,9 +148,9 @@ impl BackendTarget {
 
     fn validate_mode(self) -> Result<(), String> {
         match self.mode {
-            BackendMode::Scalar => Ok(()),
+            BackendMode::Scalar | BackendMode::Avx2 => Ok(()),
             mode => Err(format!(
-                "backend mode {} is not implemented yet; scalar is the only supported backend mode",
+                "backend mode {} is not implemented yet; scalar and avx2 are the supported backend modes",
                 mode
             )),
         }
@@ -463,7 +463,12 @@ pub struct X86_64Backend {
 /// are rejected here with a clear message instead of being silently
 /// miscompiled (they would otherwise fall through to a `# TODO` comment and
 /// produce wrong code).
+#[allow(dead_code)]
 pub fn validate_program(program: &Program) -> Result<(), String> {
+    validate_program_for_target(program, BackendTarget::default())
+}
+
+fn validate_program_for_target(program: &Program, target: BackendTarget) -> Result<(), String> {
     if program.functions.is_empty() {
         return Err("backend: program defines no functions to compile".into());
     }
@@ -479,7 +484,7 @@ pub fn validate_program(program: &Program) -> Result<(), String> {
         validate_extern(name, ty)?;
     }
     for func in &program.functions {
-        validate_function(func, &global_types)?;
+        validate_function(func, &global_types, target.mode)?;
     }
     Ok(())
 }
@@ -499,6 +504,7 @@ fn unsupported_function_message(func_name: &str, what: &str) -> String {
 fn validate_program_source_spans(
     program: &Program,
     source_spans: &SourceSpans,
+    target: BackendTarget,
 ) -> Result<(), BackendError> {
     for func in &program.functions {
         let span = source_spans.functions.get(&func.name).copied();
@@ -520,7 +526,7 @@ fn validate_program_source_spans(
             }
         }
         for (var, ty) in &func.locals {
-            if !is_backend_local_type(ty) {
+            if !is_backend_local_type_for_mode(ty, target.mode) {
                 return Err(BackendError::at(
                     unsupported_function_message(
                         &func.name,
@@ -590,7 +596,11 @@ fn validate_extern(name: &str, ty: &Type) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_function(func: &Function, global_types: &HashMap<String, Type>) -> Result<(), String> {
+fn validate_function(
+    func: &Function,
+    global_types: &HashMap<String, Type>,
+    mode: BackendMode,
+) -> Result<(), String> {
     let var_types: HashMap<VarId, Type> = func
         .params
         .iter()
@@ -609,7 +619,7 @@ fn validate_function(func: &Function, global_types: &HashMap<String, Type>) -> R
         }
     }
     for (var, ty) in &func.locals {
-        if !is_backend_local_type(ty) {
+        if !is_backend_local_type_for_mode(ty, mode) {
             return unsupported(&format!("local %{} has type {}", var, ty));
         }
     }
@@ -816,23 +826,255 @@ fn validate_function(func: &Function, global_types: &HashMap<String, Type>) -> R
                     check_operand(offset, global_types)
                         .map_err(|w| unsupported_value(&func.name, &w))?;
                 }
+                Instruction::VectorBinOp {
+                    dst,
+                    op,
+                    lhs,
+                    rhs,
+                    lanes,
+                    elem_ty,
+                } => {
+                    if mode != BackendMode::Avx2 {
+                        return unsupported("vector/mask IR requires a SIMD backend target");
+                    }
+                    if let Err(what) = validate_avx2_vector_binop(
+                        *dst,
+                        *op,
+                        lhs,
+                        rhs,
+                        *lanes,
+                        elem_ty,
+                        ValidationTypes {
+                            var_types: &var_types,
+                            global_types,
+                        },
+                    ) {
+                        return unsupported(&what);
+                    }
+                }
+                Instruction::VectorLoad {
+                    dst,
+                    base,
+                    index,
+                    lanes,
+                    elem_ty,
+                } => {
+                    if mode != BackendMode::Avx2 {
+                        return unsupported("vector/mask IR requires a SIMD backend target");
+                    }
+                    if let Err(what) = validate_avx2_vector_load(
+                        *dst,
+                        base,
+                        index,
+                        *lanes,
+                        elem_ty,
+                        &var_types,
+                        global_types,
+                    ) {
+                        return unsupported(&what);
+                    }
+                }
+                Instruction::VectorStore {
+                    base,
+                    index,
+                    value,
+                    lanes,
+                    elem_ty,
+                } => {
+                    if mode != BackendMode::Avx2 {
+                        return unsupported("vector/mask IR requires a SIMD backend target");
+                    }
+                    if let Err(what) = validate_avx2_vector_store(
+                        base,
+                        index,
+                        value,
+                        *lanes,
+                        elem_ty,
+                        &var_types,
+                        global_types,
+                    ) {
+                        return unsupported(&what);
+                    }
+                }
                 Instruction::LaneId { .. }
                 | Instruction::Splat { .. }
-                | Instruction::VectorBinOp { .. }
                 | Instruction::VectorCompare { .. }
                 | Instruction::MaskBinOp { .. }
                 | Instruction::MaskNot { .. }
                 | Instruction::Select { .. }
-                | Instruction::VectorLoad { .. }
-                | Instruction::VectorStore { .. }
                 | Instruction::PredicatedStore { .. }
                 | Instruction::TailMask { .. } => {
+                    if mode == BackendMode::Avx2 {
+                        return unsupported("unsupported AVX2 vector/mask IR");
+                    }
                     return unsupported("vector/mask IR requires a SIMD backend target");
                 }
             }
         }
     }
     Ok(())
+}
+
+#[derive(Clone, Copy)]
+struct ValidationTypes<'a> {
+    var_types: &'a HashMap<VarId, Type>,
+    global_types: &'a HashMap<String, Type>,
+}
+
+fn validate_avx2_vector_binop(
+    dst: VarId,
+    op: IrBinOp,
+    lhs: &Value,
+    rhs: &Value,
+    lanes: usize,
+    elem_ty: &Type,
+    types: ValidationTypes<'_>,
+) -> Result<(), String> {
+    validate_avx2_vector_shape(elem_ty, lanes)?;
+    if op != IrBinOp::Add {
+        return Err(format!("AVX2 vector operator {:?} is not implemented", op));
+    }
+    validate_vector_var(
+        dst,
+        elem_ty,
+        lanes,
+        types.var_types,
+        "vector binop destination",
+    )?;
+    validate_vector_value(
+        lhs,
+        elem_ty,
+        lanes,
+        types.var_types,
+        types.global_types,
+        "vector binop lhs",
+    )?;
+    validate_vector_value(
+        rhs,
+        elem_ty,
+        lanes,
+        types.var_types,
+        types.global_types,
+        "vector binop rhs",
+    )?;
+    Ok(())
+}
+
+fn validate_avx2_vector_load(
+    dst: VarId,
+    base: &Value,
+    index: &Value,
+    lanes: usize,
+    elem_ty: &Type,
+    var_types: &HashMap<VarId, Type>,
+    global_types: &HashMap<String, Type>,
+) -> Result<(), String> {
+    validate_avx2_vector_shape(elem_ty, lanes)?;
+    validate_vector_var(dst, elem_ty, lanes, var_types, "vector load destination")?;
+    validate_dyn_array_base(base, elem_ty, var_types, global_types, "vector load base")?;
+    validate_integer_index(index, var_types, global_types, "vector load index")?;
+    check_operand(base, global_types)?;
+    check_operand(index, global_types)?;
+    Ok(())
+}
+
+fn validate_avx2_vector_store(
+    base: &Value,
+    index: &Value,
+    value: &Value,
+    lanes: usize,
+    elem_ty: &Type,
+    var_types: &HashMap<VarId, Type>,
+    global_types: &HashMap<String, Type>,
+) -> Result<(), String> {
+    validate_avx2_vector_shape(elem_ty, lanes)?;
+    validate_dyn_array_base(base, elem_ty, var_types, global_types, "vector store base")?;
+    validate_integer_index(index, var_types, global_types, "vector store index")?;
+    validate_vector_value(
+        value,
+        elem_ty,
+        lanes,
+        var_types,
+        global_types,
+        "vector store value",
+    )?;
+    check_operand(base, global_types)?;
+    check_operand(index, global_types)?;
+    Ok(())
+}
+
+fn validate_avx2_vector_shape(elem_ty: &Type, lanes: usize) -> Result<(), String> {
+    match (elem_ty, lanes) {
+        (Type::I64 | Type::U64 | Type::F64, 4) | (Type::I32 | Type::U32, 8) => Ok(()),
+        _ => Err(format!(
+            "unsupported AVX2 vector shape {} x {}",
+            lanes, elem_ty
+        )),
+    }
+}
+
+fn validate_vector_var(
+    var: VarId,
+    elem_ty: &Type,
+    lanes: usize,
+    var_types: &HashMap<VarId, Type>,
+    role: &str,
+) -> Result<(), String> {
+    let expected = Type::Vector(Box::new(elem_ty.clone()), lanes);
+    match var_types.get(&var) {
+        Some(ty) if *ty == expected => Ok(()),
+        Some(ty) => Err(format!(
+            "{role} %{} has type {}, expected {}",
+            var, ty, expected
+        )),
+        None => Err(format!("{role} %{} has no recorded type", var)),
+    }
+}
+
+fn validate_vector_value(
+    value: &Value,
+    elem_ty: &Type,
+    lanes: usize,
+    var_types: &HashMap<VarId, Type>,
+    global_types: &HashMap<String, Type>,
+    role: &str,
+) -> Result<(), String> {
+    let expected = Type::Vector(Box::new(elem_ty.clone()), lanes);
+    match validate_value_type(value, var_types, global_types) {
+        Some(ty) if ty == expected => Ok(()),
+        Some(ty) => Err(format!("{role} has type {}, expected {}", ty, expected)),
+        None => Err(format!("{role} has unknown type")),
+    }
+}
+
+fn validate_dyn_array_base(
+    value: &Value,
+    elem_ty: &Type,
+    var_types: &HashMap<VarId, Type>,
+    global_types: &HashMap<String, Type>,
+    role: &str,
+) -> Result<(), String> {
+    match validate_value_type(value, var_types, global_types) {
+        Some(Type::DynArray(elem)) if *elem == *elem_ty => Ok(()),
+        Some(ty) => Err(format!(
+            "{role} has type {}, expected (Array {})",
+            ty, elem_ty
+        )),
+        None => Err(format!("{role} has unknown type")),
+    }
+}
+
+fn validate_integer_index(
+    value: &Value,
+    var_types: &HashMap<VarId, Type>,
+    global_types: &HashMap<String, Type>,
+    role: &str,
+) -> Result<(), String> {
+    match validate_value_type(value, var_types, global_types) {
+        Some(ty) if ty.is_integer() => Ok(()),
+        Some(ty) => Err(format!("{role} has type {}, expected integer", ty)),
+        None => Err(format!("{role} has unknown type")),
+    }
 }
 
 /// Reject operand kinds the code generator cannot materialize.
@@ -929,8 +1171,23 @@ fn is_backend_abi_value_type(ty: &Type) -> bool {
     )
 }
 
-fn is_backend_local_type(ty: &Type) -> bool {
+fn is_backend_local_type_for_mode(ty: &Type, mode: BackendMode) -> bool {
+    if mode == BackendMode::Avx2 && is_avx2_vector_local_type(ty) {
+        return true;
+    }
     *ty == Type::Unit || is_sized_backend_type(ty)
+}
+
+fn is_avx2_vector_local_type(ty: &Type) -> bool {
+    match ty {
+        Type::Vector(elem, lanes) => {
+            matches!(
+                (&**elem, *lanes),
+                (Type::I64 | Type::U64 | Type::F64, 4) | (Type::I32 | Type::U32, 8)
+            )
+        }
+        _ => false,
+    }
 }
 
 fn is_sized_backend_type(ty: &Type) -> bool {
@@ -4796,6 +5053,34 @@ impl X86_64Backend {
                 self.emit("    addq %rcx, %rax");
                 self.store_gpr_value("%rax", dst_offset, &dst_ty);
             }
+            Instruction::VectorBinOp {
+                dst,
+                op,
+                lhs,
+                rhs,
+                lanes,
+                elem_ty,
+            } if self.target.mode == BackendMode::Avx2 => {
+                self.generate_avx2_vector_binop(*dst, *op, lhs, rhs, *lanes, elem_ty);
+            }
+            Instruction::VectorLoad {
+                dst,
+                base,
+                index,
+                lanes,
+                elem_ty,
+            } if self.target.mode == BackendMode::Avx2 => {
+                self.generate_avx2_vector_load(*dst, base, index, *lanes, elem_ty);
+            }
+            Instruction::VectorStore {
+                base,
+                index,
+                value,
+                lanes,
+                elem_ty,
+            } if self.target.mode == BackendMode::Avx2 => {
+                self.generate_avx2_vector_store(base, index, value, *lanes, elem_ty);
+            }
             Instruction::LaneId { .. }
             | Instruction::Splat { .. }
             | Instruction::VectorBinOp { .. }
@@ -4828,10 +5113,116 @@ impl X86_64Backend {
                     self.emit("    xor %eax, %eax");
                 }
                 // Epilogue
+                if self.target.mode == BackendMode::Avx2 {
+                    self.emit("    vzeroupper");
+                }
                 self.emit("    mov %rbp, %rsp");
                 self.emit("    pop %rbp");
                 self.emit("    ret");
             }
+        }
+    }
+
+    fn generate_avx2_vector_binop(
+        &mut self,
+        dst: VarId,
+        op: IrBinOp,
+        lhs: &Value,
+        rhs: &Value,
+        _lanes: usize,
+        elem_ty: &Type,
+    ) {
+        let Some(mnemonic) = Self::avx2_vector_binop_mnemonic(op, elem_ty) else {
+            self.emit("    # unsupported AVX2 vector binop rejected by backend validation");
+            return;
+        };
+        self.load_vector_value(lhs, "%ymm0", elem_ty);
+        self.load_vector_value(rhs, "%ymm1", elem_ty);
+        self.emit(&format!("    {} %ymm1, %ymm0, %ymm0", mnemonic));
+        let dst_offset = self.var_offsets[&dst];
+        self.store_vector_reg("%ymm0", dst_offset, elem_ty);
+    }
+
+    fn generate_avx2_vector_load(
+        &mut self,
+        dst: VarId,
+        base: &Value,
+        index: &Value,
+        _lanes: usize,
+        elem_ty: &Type,
+    ) {
+        self.load_dyn_array_data_ptr(base, "%rax");
+        self.load_vector_index(index, "%rcx");
+        let addr = Self::indexed_addr("%rax", "%rcx", elem_ty);
+        let move_mnemonic = Self::vector_move_mnemonic(elem_ty);
+        self.emit(&format!("    {} {}, %ymm0", move_mnemonic, addr));
+        let dst_offset = self.var_offsets[&dst];
+        self.store_vector_reg("%ymm0", dst_offset, elem_ty);
+    }
+
+    fn generate_avx2_vector_store(
+        &mut self,
+        base: &Value,
+        index: &Value,
+        value: &Value,
+        _lanes: usize,
+        elem_ty: &Type,
+    ) {
+        self.load_dyn_array_data_ptr(base, "%rax");
+        self.load_vector_index(index, "%rcx");
+        self.load_vector_value(value, "%ymm0", elem_ty);
+        let addr = Self::indexed_addr("%rax", "%rcx", elem_ty);
+        let move_mnemonic = Self::vector_move_mnemonic(elem_ty);
+        self.emit(&format!("    {} %ymm0, {}", move_mnemonic, addr));
+    }
+
+    fn load_dyn_array_data_ptr(&mut self, base: &Value, reg: &str) {
+        let base_ty = self.value_type(base).unwrap_or(Type::U64);
+        self.load_value(base, reg, &base_ty);
+        self.emit(&format!(
+            "    movq {}({}), {}",
+            DYN_ARRAY_PTR_OFFSET, reg, reg
+        ));
+    }
+
+    fn load_vector_index(&mut self, index: &Value, reg: &str) {
+        let index_ty = self.value_type(index).unwrap_or(Type::I64);
+        self.load_value(index, reg, &index_ty);
+    }
+
+    fn load_vector_value(&mut self, value: &Value, reg: &str, elem_ty: &Type) {
+        let Value::Var(var) = value else {
+            self.emit("    # unsupported vector value rejected by backend validation");
+            return;
+        };
+        let offset = self.var_offsets[var];
+        let move_mnemonic = Self::vector_move_mnemonic(elem_ty);
+        self.emit(&format!("    {} {}(%rbp), {}", move_mnemonic, offset, reg));
+    }
+
+    fn store_vector_reg(&mut self, reg: &str, offset: i32, elem_ty: &Type) {
+        let move_mnemonic = Self::vector_move_mnemonic(elem_ty);
+        self.emit(&format!("    {} {}, {}(%rbp)", move_mnemonic, reg, offset));
+    }
+
+    fn indexed_addr(base_reg: &str, index_reg: &str, elem_ty: &Type) -> String {
+        format!("({},{},{})", base_reg, index_reg, elem_ty.size())
+    }
+
+    fn vector_move_mnemonic(elem_ty: &Type) -> &'static str {
+        if *elem_ty == Type::F64 {
+            "vmovupd"
+        } else {
+            "vmovdqu"
+        }
+    }
+
+    fn avx2_vector_binop_mnemonic(op: IrBinOp, elem_ty: &Type) -> Option<&'static str> {
+        match (op, elem_ty) {
+            (IrBinOp::Add, Type::I64 | Type::U64) => Some("vpaddq"),
+            (IrBinOp::Add, Type::I32 | Type::U32) => Some("vpaddd"),
+            (IrBinOp::Add, Type::F64) => Some("vaddpd"),
+            _ => None,
         }
     }
 
@@ -5619,7 +6010,7 @@ pub fn generate_assembly_for_target(
     target: BackendTarget,
 ) -> Result<String, String> {
     target.validate_mode()?;
-    validate_program(program)?;
+    validate_program_for_target(program, target)?;
     validate_target_runtime_support(program, target)?;
     let mut backend = X86_64Backend::with_target(target);
     Ok(backend.generate(program))
@@ -5641,8 +6032,8 @@ pub fn generate_assembly_with_spans_for_target(
     target: BackendTarget,
 ) -> Result<String, BackendError> {
     target.validate_mode().map_err(BackendError::unspanned)?;
-    validate_program_source_spans(program, source_spans)?;
-    validate_program(program).map_err(BackendError::unspanned)?;
+    validate_program_source_spans(program, source_spans, target)?;
+    validate_program_for_target(program, target).map_err(BackendError::unspanned)?;
     validate_target_runtime_support(program, target).map_err(BackendError::unspanned)?;
     let mut backend = X86_64Backend::with_target(target);
     Ok(backend.generate(program))
@@ -5671,7 +6062,9 @@ mod tests {
     use super::*;
     use crate::ast;
     use crate::ir::*;
-    use crate::lower::{lower_program, lower_program_with_spans};
+    use crate::lower::{
+        LowerMode, lower_program, lower_program_with_spans, lower_program_with_spans_for_mode,
+    };
     use crate::optimizer::Optimizer;
     use crate::parser::parse;
 
@@ -5686,9 +6079,18 @@ mod tests {
 
     fn compile_ok_for_target(source: &str, target: BackendTarget) -> String {
         let prog = parse(source).expect("parse failed");
-        let mut ir = lower_program(&prog);
+        let mut ir =
+            lower_program_with_spans_for_mode(&prog, lower_mode_for_target(target)).program;
         Optimizer::optimize(&mut ir);
         generate_assembly_for_target(&ir, target).expect("backend should accept this program")
+    }
+
+    fn lower_mode_for_target(target: BackendTarget) -> LowerMode {
+        match target.mode {
+            BackendMode::Scalar => LowerMode::Scalar,
+            BackendMode::Avx2 => LowerMode::Avx2,
+            BackendMode::Avx512 => LowerMode::Avx512,
+        }
     }
 
     fn assert_windows_runtime_has_no_linux_syscalls(asm: &str) {
@@ -5890,22 +6292,53 @@ mod tests {
     }
 
     #[test]
-    fn test_avx2_backend_mode_is_rejected_before_codegen() {
-        let prog = parse("(define (main) : i64 42)").expect("parse failed");
-        let mut ir = lower_program(&prog);
-        Optimizer::optimize(&mut ir);
-        let err = generate_assembly_for_target(
-            &ir,
+    fn test_avx2_backend_mode_accepts_scalar_ir() {
+        let asm = compile_ok_for_target(
+            "(define (main) : i64 42)",
             BackendTarget::default().with_mode(BackendMode::Avx2),
-        )
-        .expect_err("avx2 mode should not be implemented yet");
+        );
 
+        assert!(asm.contains("main:"), "asm:\n{}", asm);
+        assert!(asm.contains("vzeroupper"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_avx2_foreach_maps_emit_ymm_instruction_families() {
+        let asm = compile_ok_for_target(
+            r#"
+            (define (fill-i64 [a : (Array i64)]
+                              [b : (Array i64)]
+                              [out : (Array i64)]
+                              [n : i64]) : unit
+              (foreach ([i : i64 0 n])
+                (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+
+            (define (fill-i32 [a : (Array i32)]
+                              [b : (Array i32)]
+                              [out : (Array i32)]
+                              [n : i64]) : unit
+              (foreach ([i : i64 0 n])
+                (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+
+            (define (fill-f64 [a : (Array f64)]
+                              [b : (Array f64)]
+                              [out : (Array f64)]
+                              [n : i64]) : unit
+              (foreach ([i : i64 0 n])
+                (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+
+            (define (main) : i64 42)
+            "#,
+            BackendTarget::default().with_mode(BackendMode::Avx2),
+        );
+
+        for expected in ["%ymm", "vmovdqu", "vmovupd", "vpaddq", "vpaddd", "vaddpd"] {
+            assert!(asm.contains(expected), "missing {expected}; asm:\n{asm}");
+        }
         assert!(
-            err.contains(
-                "backend mode avx2 is not implemented yet; scalar is the only supported backend mode"
-            ),
-            "error: {}",
-            err
+            asm.contains("foreach_tail_header"),
+            "expected scalar cleanup tail; asm:\n{}",
+            asm
         );
     }
 
@@ -5924,7 +6357,7 @@ mod tests {
         assert_eq!(err.span, None);
         assert!(
             err.message.contains(
-                "backend mode avx512 is not implemented yet; scalar is the only supported backend mode"
+                "backend mode avx512 is not implemented yet; scalar and avx2 are the supported backend modes"
             ),
             "error: {}",
             err

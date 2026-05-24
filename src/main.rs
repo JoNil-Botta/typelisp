@@ -22,7 +22,7 @@ mod types;
 use ast::Program;
 use backend::{BackendMode, BackendOs, BackendTarget, generate_assembly_with_spans_for_target};
 use diagnostic::format_diagnostic;
-use lower::{LoweredProgram, lower_program_with_spans};
+use lower::{LowerMode, LoweredProgram, lower_program_with_spans_for_mode};
 use module::{
     FsSource, LoadError, LoadOptions, LoadedProgram, SourceFile, load_program,
     load_program_with_options,
@@ -73,9 +73,18 @@ fn typecheck_or_exit(prog: &Program, sources: &[SourceFile]) {
     }
 }
 
-fn optimized_ir_or_exit(loaded: &LoadedProgram) -> LoweredProgram {
+fn lower_mode_for_backend(mode: BackendMode) -> LowerMode {
+    match mode {
+        BackendMode::Scalar => LowerMode::Scalar,
+        BackendMode::Avx2 => LowerMode::Avx2,
+        BackendMode::Avx512 => LowerMode::Avx512,
+    }
+}
+
+fn optimized_ir_or_exit(loaded: &LoadedProgram, target: BackendTarget) -> LoweredProgram {
     typecheck_or_exit(&loaded.program, &loaded.sources);
-    let mut lowered = lower_program_with_spans(&loaded.program);
+    let mut lowered =
+        lower_program_with_spans_for_mode(&loaded.program, lower_mode_for_backend(target.mode));
     Optimizer::optimize(&mut lowered.program);
     lowered
 }
@@ -171,7 +180,7 @@ fn print_usage() {
     eprintln!();
     eprintln!("    --emit-ir                      Emit intermediate representation");
     eprintln!(
-        "    --backend-mode <mode>          scalar, avx2, or avx512; only scalar is implemented"
+        "    --backend-mode <mode>          scalar, avx2, or avx512; avx2 supports simple foreach maps"
     );
     eprintln!("    --target <target>              linux-x86_64 or windows-x86_64");
     eprintln!("    --manifest-path <file>         Package manifest for build");
@@ -497,7 +506,7 @@ fn package_or_exit<T>(result: Result<T, PackageError>) -> T {
 
 fn source_assembly_or_exit(file: &Path, options: &LoadOptions, target: BackendTarget) -> String {
     let loaded = load_or_exit(file, options);
-    let lowered = optimized_ir_or_exit(&loaded);
+    let lowered = optimized_ir_or_exit(&loaded, target);
     assembly_or_exit(&lowered, &loaded.sources, target)
 }
 
@@ -704,7 +713,7 @@ fn run_cli() {
 
             let options = load_options_with_env_stdlib_root(stdlib_roots);
             let loaded = load_or_exit(&file, &options);
-            let lowered = optimized_ir_or_exit(&loaded);
+            let lowered = optimized_ir_or_exit(&loaded, target);
 
             if emit_ir {
                 let ir_text = format!("{:#?}", lowered.program);
@@ -746,7 +755,7 @@ fn run_cli() {
                 let manifest = package_or_exit(load_manifest(&manifest_path));
                 options.package_roots = manifest.dependencies.clone();
                 let loaded = load_or_exit(&manifest.entry_path(), &options);
-                let lowered = optimized_ir_or_exit(&loaded);
+                let lowered = optimized_ir_or_exit(&loaded, target);
                 let asm = assembly_or_exit(&lowered, &loaded.sources, target);
                 let output_path = manifest.output_asm_path();
                 if let Some(parent) = output_path.parent() {

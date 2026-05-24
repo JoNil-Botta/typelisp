@@ -19,6 +19,13 @@ pub fn lower_program(prog: &ast::Program) -> Program {
     lower_program_with_spans(prog).program
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LowerMode {
+    Scalar,
+    Avx2,
+    Avx512,
+}
+
 /// Lowered IR plus the source side table needed for later diagnostics.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LoweredProgram {
@@ -30,11 +37,16 @@ pub struct LoweredProgram {
 /// backend diagnostics. The plain `lower_program` entry keeps tests and callers
 /// that only need IR unchanged.
 pub fn lower_program_with_spans(prog: &ast::Program) -> LoweredProgram {
-    let mut lowerer = ProgramLowerer::new();
+    lower_program_with_spans_for_mode(prog, LowerMode::Scalar)
+}
+
+pub fn lower_program_with_spans_for_mode(prog: &ast::Program, mode: LowerMode) -> LoweredProgram {
+    let mut lowerer = ProgramLowerer::new(mode);
     lowerer.lower(prog)
 }
 
 struct ProgramLowerer {
+    mode: LowerMode,
     functions: Vec<Function>,
     globals: Vec<(String, Type, Option<Value>)>,
     externs: Vec<(String, Type)>,
@@ -46,8 +58,9 @@ struct ProgramLowerer {
 }
 
 impl ProgramLowerer {
-    fn new() -> Self {
+    fn new(mode: LowerMode) -> Self {
         ProgramLowerer {
+            mode,
             functions: Vec::new(),
             globals: Vec::new(),
             externs: Vec::new(),
@@ -71,6 +84,7 @@ impl ProgramLowerer {
             global_types: &self.global_types,
             enums: &self.enums,
             structs: &self.structs,
+            mode: self.mode,
         }
     }
 
@@ -348,6 +362,7 @@ fn extract_const_cast(expr: &ast::Expr, to_ty: &Type) -> Option<Value> {
 
 struct FnLowerer {
     name: String,
+    mode: LowerMode,
     builder: IrBuilder,
     vars: HashMap<String, VarId>,
     /// Real type of every IR variable we create (params, locals, temporaries).
@@ -388,12 +403,31 @@ struct CaptureInfo {
     offset: usize,
 }
 
+#[derive(Debug, Clone)]
+struct SimpleVectorMap {
+    dst_array: VarId,
+    lhs_array: VarId,
+    rhs_array: VarId,
+    op: BinOp,
+    elem_ty: Type,
+    lanes: usize,
+}
+
+struct ForeachLoopState {
+    index_ty: Type,
+    storage_ty: Type,
+    start_val: Value,
+    end_val: Value,
+    outer_vars: HashMap<String, VarId>,
+}
+
 #[derive(Clone, Copy)]
 struct FnLowererContext<'a> {
     function_types: &'a HashMap<String, Type>,
     global_types: &'a HashMap<String, Type>,
     enums: &'a ast::EnumRegistry,
     structs: &'a ast::StructRegistry,
+    mode: LowerMode,
 }
 
 struct CaptureEnv {
@@ -598,6 +632,7 @@ impl FnLowerer {
 
         FnLowerer {
             name: name.to_string(),
+            mode: context.mode,
             builder,
             vars,
             var_types,
@@ -629,6 +664,7 @@ impl FnLowerer {
             global_types: &self.global_types,
             enums: &self.enums,
             structs: &self.structs,
+            mode: self.mode,
         }
     }
 
@@ -1852,7 +1888,6 @@ impl FnLowerer {
     ) -> Value {
         let index_ty = self.resolve_type(index_ty);
         let storage_ty = Self::backend_value_type(&index_ty);
-
         let outer_vars = self.vars.clone();
         let start_val = {
             let value = self.lower_expr(start);
@@ -1866,6 +1901,37 @@ impl FnLowerer {
 
         self.vars = outer_vars.clone();
 
+        let state = ForeachLoopState {
+            index_ty,
+            storage_ty,
+            start_val,
+            end_val,
+            outer_vars,
+        };
+
+        if self.mode == LowerMode::Avx2
+            && state.index_ty == Type::I64
+            && let Some(plan) = self.simple_vector_map(index, body)
+        {
+            return self.lower_avx2_vector_foreach(index, body, state, plan);
+        }
+
+        self.lower_scalar_foreach(index, body, state)
+    }
+
+    fn lower_scalar_foreach(
+        &mut self,
+        index: &str,
+        body: &ast::Expr,
+        state: ForeachLoopState,
+    ) -> Value {
+        let ForeachLoopState {
+            index_ty,
+            storage_ty,
+            start_val,
+            end_val,
+            outer_vars,
+        } = state;
         let index_var = self.builder.fresh_var();
         self.builder.emit(Instruction::Alloc {
             var: index_var,
@@ -1923,6 +1989,250 @@ impl FnLowerer {
 
         self.builder.finish_block(&exit_label);
         Value::ConstUnit
+    }
+
+    fn lower_avx2_vector_foreach(
+        &mut self,
+        index: &str,
+        body: &ast::Expr,
+        state: ForeachLoopState,
+        plan: SimpleVectorMap,
+    ) -> Value {
+        let ForeachLoopState {
+            index_ty,
+            storage_ty,
+            start_val,
+            end_val,
+            outer_vars,
+        } = state;
+        let index_var = self.builder.fresh_var();
+        self.builder.emit(Instruction::Alloc {
+            var: index_var,
+            ty: storage_ty.clone(),
+        });
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(index_var),
+            src: start_val,
+            ty: storage_ty.clone(),
+        });
+        self.record_value_local(index_var, index_ty.clone());
+        self.vars.insert(index.to_string(), index_var);
+
+        let out_len = self.load_fat_len(&Value::Var(plan.dst_array), DYN_ARRAY_LEN_OFFSET);
+        let lhs_len = self.load_fat_len(&Value::Var(plan.lhs_array), DYN_ARRAY_LEN_OFFSET);
+        let rhs_len = self.load_fat_len(&Value::Var(plan.rhs_array), DYN_ARRAY_LEN_OFFSET);
+
+        let vector_header_label = self.builder.fresh_label("foreach_avx2_header");
+        let vector_body_label = self.builder.fresh_label("foreach_avx2_body");
+        let scalar_header_label = self.builder.fresh_label("foreach_tail_header");
+        let scalar_body_label = self.builder.fresh_label("foreach_tail_body");
+        let exit_label = self.builder.fresh_label("foreach_exit");
+
+        self.builder
+            .emit(Instruction::Jump(vector_header_label.clone()));
+
+        self.builder.finish_block(&vector_header_label);
+        let next_vector_index = self.emit_binop_value(
+            BinOp::Add,
+            Value::Var(index_var),
+            Self::int_compare_const(plan.lanes as i64, &index_ty),
+            index_ty.clone(),
+        );
+        let mut vector_ok = self.emit_binop_value(
+            BinOp::Ge,
+            Value::Var(index_var),
+            Value::ConstI64(0),
+            Type::Bool,
+        );
+        let no_index_overflow = self.emit_binop_value(
+            BinOp::Le,
+            Value::Var(index_var),
+            Value::ConstI64(i64::MAX - plan.lanes as i64),
+            Type::Bool,
+        );
+        vector_ok = self.emit_binop_value(BinOp::And, vector_ok, no_index_overflow, Type::Bool);
+        for bound in [end_val.clone(), out_len, lhs_len, rhs_len] {
+            let within =
+                self.emit_binop_value(BinOp::Le, next_vector_index.clone(), bound, Type::Bool);
+            vector_ok = self.emit_binop_value(BinOp::And, vector_ok, within, Type::Bool);
+        }
+        self.builder.emit(Instruction::Branch {
+            cond: vector_ok,
+            true_label: vector_body_label.clone(),
+            false_label: scalar_header_label.clone(),
+        });
+
+        self.builder.finish_block(&vector_body_label);
+        self.lower_avx2_vector_map_body(index_var, next_vector_index, &plan);
+        self.builder.emit(Instruction::Jump(vector_header_label));
+
+        self.builder.finish_block(&scalar_header_label);
+        let in_range = self.emit_binop_value(BinOp::Lt, Value::Var(index_var), end_val, Type::Bool);
+        self.builder.emit(Instruction::Branch {
+            cond: in_range,
+            true_label: scalar_body_label.clone(),
+            false_label: exit_label.clone(),
+        });
+
+        self.builder.finish_block(&scalar_body_label);
+        self.lower_expr(body);
+        self.vars = outer_vars;
+
+        let next_index = self.emit_binop_value(
+            BinOp::Add,
+            Value::Var(index_var),
+            Self::int_compare_const(1, &index_ty),
+            index_ty,
+        );
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(index_var),
+            src: next_index,
+            ty: storage_ty,
+        });
+        self.builder.emit(Instruction::Jump(scalar_header_label));
+
+        self.builder.finish_block(&exit_label);
+        Value::ConstUnit
+    }
+
+    fn lower_avx2_vector_map_body(
+        &mut self,
+        index_var: VarId,
+        next_vector_index: Value,
+        plan: &SimpleVectorMap,
+    ) {
+        let vector_ty = Type::Vector(Box::new(plan.elem_ty.clone()), plan.lanes);
+        let lhs_vec = self.builder.fresh_var();
+        self.builder.emit(Instruction::VectorLoad {
+            dst: lhs_vec,
+            base: Value::Var(plan.lhs_array),
+            index: Value::Var(index_var),
+            lanes: plan.lanes,
+            elem_ty: plan.elem_ty.clone(),
+        });
+        self.record_local(lhs_vec, vector_ty.clone());
+
+        let rhs_vec = self.builder.fresh_var();
+        self.builder.emit(Instruction::VectorLoad {
+            dst: rhs_vec,
+            base: Value::Var(plan.rhs_array),
+            index: Value::Var(index_var),
+            lanes: plan.lanes,
+            elem_ty: plan.elem_ty.clone(),
+        });
+        self.record_local(rhs_vec, vector_ty.clone());
+
+        let result_vec = self.builder.fresh_var();
+        self.builder.emit(Instruction::VectorBinOp {
+            dst: result_vec,
+            op: plan.op,
+            lhs: Value::Var(lhs_vec),
+            rhs: Value::Var(rhs_vec),
+            lanes: plan.lanes,
+            elem_ty: plan.elem_ty.clone(),
+        });
+        self.record_local(result_vec, vector_ty);
+
+        self.builder.emit(Instruction::VectorStore {
+            base: Value::Var(plan.dst_array),
+            index: Value::Var(index_var),
+            value: Value::Var(result_vec),
+            lanes: plan.lanes,
+            elem_ty: plan.elem_ty.clone(),
+        });
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(index_var),
+            src: next_vector_index,
+            ty: Type::I64,
+        });
+    }
+
+    fn emit_binop_value(&mut self, op: BinOp, lhs: Value, rhs: Value, ty: Type) -> Value {
+        let dst = self.builder.fresh_var();
+        self.builder.emit(Instruction::BinOp {
+            dst,
+            op,
+            lhs,
+            rhs,
+            ty: ty.clone(),
+        });
+        self.record_local(dst, ty);
+        Value::Var(dst)
+    }
+
+    fn simple_vector_map(&self, index: &str, body: &ast::Expr) -> Option<SimpleVectorMap> {
+        let ast::Expr::ArraySet {
+            expr,
+            index: set_index,
+            value,
+        } = body.unspan()
+        else {
+            return None;
+        };
+        if !Self::expr_is_var(set_index, index) {
+            return None;
+        }
+
+        let (dst_array, dst_elem) = self.dynamic_array_var(expr)?;
+        let ast::Expr::Binary { op, lhs, rhs } = value.unspan() else {
+            return None;
+        };
+        let op = match op {
+            ast::BinOp::Add => BinOp::Add,
+            _ => return None,
+        };
+        let (lhs_array, lhs_elem) = self.array_ref_var_for_index(lhs, index)?;
+        let (rhs_array, rhs_elem) = self.array_ref_var_for_index(rhs, index)?;
+        if lhs_elem != rhs_elem || lhs_elem != dst_elem {
+            return None;
+        }
+        let lanes = Self::avx2_lanes_for_elem(&lhs_elem)?;
+
+        Some(SimpleVectorMap {
+            dst_array,
+            lhs_array,
+            rhs_array,
+            op,
+            elem_ty: lhs_elem,
+            lanes,
+        })
+    }
+
+    fn array_ref_var_for_index(&self, expr: &ast::Expr, index: &str) -> Option<(VarId, Type)> {
+        let ast::Expr::ArrayRef {
+            expr: array_expr,
+            index: array_index,
+        } = expr.unspan()
+        else {
+            return None;
+        };
+        if !Self::expr_is_var(array_index, index) {
+            return None;
+        }
+        self.dynamic_array_var(array_expr)
+    }
+
+    fn dynamic_array_var(&self, expr: &ast::Expr) -> Option<(VarId, Type)> {
+        let ast::Expr::Var(name) = expr.unspan() else {
+            return None;
+        };
+        let var = *self.vars.get(name)?;
+        let Type::DynArray(elem) = self.value_type(&Value::Var(var)) else {
+            return None;
+        };
+        Some((var, *elem))
+    }
+
+    fn expr_is_var(expr: &ast::Expr, expected: &str) -> bool {
+        matches!(expr.unspan(), ast::Expr::Var(name) if name == expected)
+    }
+
+    fn avx2_lanes_for_elem(elem_ty: &Type) -> Option<usize> {
+        match elem_ty {
+            Type::I64 | Type::U64 | Type::F64 => Some(4),
+            Type::I32 | Type::U32 => Some(8),
+            _ => None,
+        }
     }
 
     fn lower_begin(&mut self, exprs: &[ast::Expr]) -> Value {
@@ -4227,6 +4537,62 @@ mod tests {
                 .iter()
                 .any(|i| matches!(i, Instruction::Store { ty: Type::I64, .. }))
         );
+    }
+
+    #[test]
+    fn test_lower_avx2_foreach_map_emits_vector_loop_and_scalar_tail() {
+        let prog = parse(
+            r#"
+            (define (fill [a : (Array i64)]
+                          [b : (Array i64)]
+                          [out : (Array i64)]
+                          [n : i64]) : unit
+              (foreach ([i : i64 0 n])
+                (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+        "#,
+        )
+        .unwrap();
+        let lowered = lower_program_with_spans_for_mode(&prog, LowerMode::Avx2);
+        let ir = lowered.program;
+        let instrs = all_instrs(&ir);
+
+        assert!(
+            ir.functions[0]
+                .blocks
+                .iter()
+                .any(|b| b.label.starts_with("foreach_avx2_header."))
+        );
+        assert!(
+            ir.functions[0]
+                .blocks
+                .iter()
+                .any(|b| b.label.starts_with("foreach_tail_header."))
+        );
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::VectorLoad {
+                lanes: 4,
+                elem_ty: Type::I64,
+                ..
+            }
+        )));
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::VectorBinOp {
+                op: BinOp::Add,
+                lanes: 4,
+                elem_ty: Type::I64,
+                ..
+            }
+        )));
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::VectorStore {
+                lanes: 4,
+                elem_ty: Type::I64,
+                ..
+            }
+        )));
     }
 
     #[test]

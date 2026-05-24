@@ -46,7 +46,7 @@ fn assert_backend_mode_rejected(output: &Output, mode: &str) {
     assert_eq!(stdout(output), "", "{mode} wrote stdout");
     assert!(
         stderr(output).contains(&format!(
-            "backend mode {mode} is not implemented yet; scalar is the only supported backend mode"
+            "backend mode {mode} is not implemented yet; scalar and avx2 are the supported backend modes"
         )),
         "{mode} stderr:\n{}",
         stderr(output)
@@ -134,6 +134,30 @@ fn compile_accepts_explicit_scalar_backend_mode() {
 }
 
 #[test]
+fn compile_accepts_avx2_backend_mode_for_scalar_program() {
+    let dir = fixture_dir("backend-mode-avx2");
+    let source = write_main_source(&dir);
+    let output_path = dir.join("main.s");
+    let source_arg = source.to_str().expect("source path is utf-8");
+    let output_arg = output_path.to_str().expect("output path is utf-8");
+
+    let output = typelisp(&[
+        "compile",
+        source_arg,
+        "--backend-mode",
+        "avx2",
+        "-o",
+        output_arg,
+    ]);
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    let asm = fs::read_to_string(&output_path).expect("read assembly");
+    assert!(asm.contains("main:"), "assembly:\n{}", asm);
+    assert!(asm.contains("vzeroupper"), "assembly:\n{}", asm);
+}
+
+#[test]
 fn compile_accepts_windows_target_aliases() {
     for target in ["windows-x86_64", "windows_x86_64"] {
         let dir = fixture_dir(&format!("target-{target}"));
@@ -216,7 +240,7 @@ fn target_flags_reject_unknown_target_across_commands() {
 
 #[test]
 fn compile_rejects_unimplemented_backend_modes() {
-    for mode in ["avx2", "avx512"] {
+    for mode in ["avx512"] {
         let dir = fixture_dir(&format!("backend-mode-{mode}"));
         let source = write_main_source(&dir);
         let source_arg = source.to_str().expect("source path is utf-8");
@@ -251,9 +275,9 @@ fn run_accepts_backend_mode_flag_and_rejects_unimplemented_modes() {
     let source = write_main_source(&dir);
     let source_arg = source.to_str().expect("source path is utf-8");
 
-    let output = typelisp(&["run", source_arg, "--backend-mode", "avx2", "--", "arg"]);
+    let output = typelisp(&["run", source_arg, "--backend-mode", "avx512", "--", "arg"]);
 
-    assert_backend_mode_rejected(&output, "avx2");
+    assert_backend_mode_rejected(&output, "avx512");
 }
 
 #[test]
@@ -306,9 +330,9 @@ fn build_source_rejects_unimplemented_backend_mode() {
     let source = write_main_source(&dir);
     let source_arg = source.to_str().expect("source path is utf-8");
 
-    let output = typelisp(&["build", source_arg, "--backend-mode", "avx2"]);
+    let output = typelisp(&["build", source_arg, "--backend-mode", "avx512"]);
 
-    assert_backend_mode_rejected(&output, "avx2");
+    assert_backend_mode_rejected(&output, "avx512");
 }
 
 #[test]

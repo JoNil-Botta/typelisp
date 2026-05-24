@@ -4,11 +4,11 @@
   (OpMul)
   (OpUnknown))
 
-(define (parse-op [op : i64]) : BinOp
+(define (parse-op [op : char]) : BinOp
   (cond
-    [(= op 43) (OpAdd)]
-    [(= op 45) (OpSub)]
-    [(= op 42) (OpMul)]
+    [(= op #+') (OpAdd)]
+    [(= op #-') (OpSub)]
+    [(= op #*') (OpMul)]
     [else (OpUnknown)]))
 
 (define (score [op : BinOp]) : i64
@@ -20,5 +20,5 @@
 
 (define (main) : i64
   (+
-    (score (parse-op 43))
-    (+ (score (parse-op 45)) (+ (score (parse-op 42)) (score (parse-op 47))))))
+    (score (parse-op #+'))
+    (+ (score (parse-op #-')) (+ (score (parse-op #*')) (score (parse-op #/'))))))

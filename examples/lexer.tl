@@ -88,18 +88,17 @@
 (define (code [c : char]) : i64
   (cast c : i64))
 
-;; `c` is a decimal digit char (ASCII '0'..'9' == 48..57).
+;; `c` is a decimal digit char.
 
 (define (is-digit [c : char]) : bool
-  (and (>= (code c) 48) (<= (code c) 57)))
+  (and (>= c #0') (<= c #9')))
 
-;; `c` is an ASCII letter (A-Z == 65..90, a-z == 97..122) or `_` (95): the set
+;; `c` is an ASCII letter (A-Z, a-z) or `_`: the set of characters that may
 
-;; of characters that may start an identifier.
+;; start an identifier.
 
 (define (is-alpha [c : char]) : bool
-  (let ([k : i64 (code c)])
-    (or (= k 95) (or (and (>= k 65) (<= k 90)) (and (>= k 97) (<= k 122))))))
+  (or (= c #_') (or (and (>= c #A') (<= c #Z')) (and (>= c #a') (<= c #z')))))
 
 ;; `c` may appear in an identifier after the first char: a letter, `_`, or a
 
@@ -108,16 +107,15 @@
 (define (is-ident-char [c : char]) : bool
   (or (is-alpha c) (is-digit c)))
 
-;; `c` is ASCII whitespace: space (32), tab (9), or newline (10).
+;; `c` is ASCII whitespace: space, tab, or newline.
 
 (define (is-space [c : char]) : bool
-  (let ([k : i64 (code c)])
-    (or (= k 32) (or (= k 9) (= k 10)))))
+  (or (= c #\space') (or (= c #\tab') (= c #\newline'))))
 
 ;; Decimal value of a digit char, e.g. the digit char `7` -> 7.
 
 (define (digit-value [c : char]) : i64
-  (- (code c) 48))
+  (- (code c) (code #0')))
 
 ;; Classify a single (non-digit, non-letter, non-space) char into its Token,
 
@@ -130,23 +128,17 @@
 ;; unit and never returns.
 
 (define (single-token [c : char]) : Token
-  (if (= (code c) 43)
-    ; '+'
+  (if (= c #+')
     TPlus
-    (if (= (code c) 45)
-      ; '-'
+    (if (= c #-')
       TMinus
-      (if (= (code c) 42)
-        ; '*'
+      (if (= c #*')
         TStar
-        (if (= (code c) 47)
-          ; '/'
+        (if (= c #/')
           TSlash
-          (if (= (code c) 40)
-            ; '('
+          (if (= c #(')
             TLParen
-            (if (= (code c) 41)
-              ; ')'
+            (if (= c #)')
               TRParen
               (begin
                 (panic "lexer: unexpected character")

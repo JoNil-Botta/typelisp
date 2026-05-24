@@ -2,11 +2,13 @@
 
 (import "compiler_parse_core.tl")
 
+(import "compiler_diagnostic.tl")
+
 (import "sym_i64_env.tl")
 
 (defenum ResultCompilerLoad
   (OkCompilerLoad AstDeclList SymI64Env)
-  (ErrCompilerLoad String))
+  (ErrCompilerLoad CompilerDiagnostic))
 
 (define (compiler-load-char-code-at [text : String] [idx : i64]) : i64
   (cast (string-ref text idx) : i64))
@@ -113,23 +115,25 @@
                     (OkCompilerLoad
                       (compiler-load-decl-list-append imported-decls rest-decls)
                       rest-seen)]
-                  [(ErrCompilerLoad message) (ErrCompilerLoad message)])]
-              [(ErrCompilerLoad message) (ErrCompilerLoad message)]))]
+                  [(ErrCompilerLoad diag) (ErrCompilerLoad diag)])]
+              [(ErrCompilerLoad diag) (ErrCompilerLoad diag)]))]
         [_
           (match (compiler-load-decls rest importer-path seen)
             [(OkCompilerLoad rest-decls rest-seen)
               (OkCompilerLoad (AstDeclCons decl rest-decls) rest-seen)]
-            [(ErrCompilerLoad message) (ErrCompilerLoad message)])])]))
+            [(ErrCompilerLoad diag) (ErrCompilerLoad diag)])])]))
 
 (define (compiler-load-file [path : String] [seen : SymI64Env]) : ResultCompilerLoad
   (if (sym-i64-contains seen path)
     (OkCompilerLoad AstDeclNil seen)
     (if (file-exists? path)
-      (match (parse-ast-source (read-file path))
-        [(OkAstProgram program)
+      (match (parse-ast-source-diagnostic path (read-file path))
+        [(OkAstProgramDiagnostic program)
           (match program
             [(AstProgram decls)
               (compiler-load-decls decls path (sym-i64-bind seen path 1))])]
-        [(ErrAstProgram message) (ErrCompilerLoad message)])
+        [(ErrAstProgramDiagnostic diag) (ErrCompilerLoad diag)])
       (ErrCompilerLoad
-        (string-append "compiler-load: cannot read import " path)))))
+        (compiler-diagnostic-at-start
+          path
+          (string-append "compiler-load: cannot read import " path))))))

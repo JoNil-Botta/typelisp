@@ -194,10 +194,12 @@ fn compiler_driver_tl_compiles_to_assembly() {
     for sym in [
         "_tl_compiler_driver_compile_file:",
         "_tl_compiler_driver_emit_file:",
+        "_tl_compiler_diagnostic_render:",
         "_tl_compiler_load_file:",
         "_tl_compiler_load_resolve_import:",
         "_tl_compiler_backend_emit_source:",
         "_tl_lower_compiler_source:",
+        "_tl_parse_ast_source_diagnostic:",
         "_tl_parse_ast_source:",
         // The driver runs the optimizer between lowering and backend emission.
         "_tl_optimize_program:",

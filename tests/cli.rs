@@ -1180,6 +1180,30 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
         !bad_asm.exists(),
         "failing selfhost compile should not write assembly"
     );
+
+    let malformed_source = dir.join("malformed.tl");
+    let malformed_asm = dir.join("malformed.s");
+    fs::write(&malformed_source, ")\n").expect("write malformed source");
+    let malformed_source_arg = malformed_source
+        .to_str()
+        .expect("malformed source path is utf-8");
+    let malformed_asm_arg = malformed_asm.to_str().expect("malformed asm path is utf-8");
+    let parse_failure = Command::new(&driver_bin)
+        .args([malformed_source_arg, "-o", malformed_asm_arg])
+        .output()
+        .expect("run selfhost compile driver on malformed source");
+    assert!(!parse_failure.status.success());
+    assert_eq!(stdout(&parse_failure), "");
+    let expected = format!("{}:1:1: reader: unexpected ')'", malformed_source.display());
+    assert!(
+        stderr(&parse_failure).contains(&expected),
+        "expected {expected:?}\nstderr:\n{}",
+        stderr(&parse_failure)
+    );
+    assert!(
+        !malformed_asm.exists(),
+        "malformed selfhost compile should not write assembly"
+    );
 }
 
 #[cfg(target_os = "linux")]

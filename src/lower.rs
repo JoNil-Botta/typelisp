@@ -1356,24 +1356,12 @@ impl FnLowerer {
         for capture in captures {
             let ptr = self.gep_byte(&env, capture.offset);
             let handle = self.lower_var(&capture.name);
-            // `String` and dynamic-array captures are pointer-sized handles to a
-            // fat `{ ptr, len }` value that may live on the creator's frame.
-            // Since the environment can outlive that frame, snapshot the fat
-            // value onto the heap so the stored handle cannot dangle. A
-            // scalar-field tuple/struct/enum is a pointer handle to inline POD
-            // storage, snapshotted with a shallow byte copy (#542 tuples, #540
-            // structs/enums). Scalars and function values are copied by value
-            // directly. (Fixed-array capture is rejected by the typechecker, so
-            // no `Array` arm is needed here.)
-            let src = match self.resolve_type(&capture.ty) {
-                Type::String | Type::DynArray(_) => {
-                    self.snapshot_fat_value_to_heap(&handle, capture.ty.clone())
-                }
-                ty @ (Type::Tuple(_) | Type::Struct(_) | Type::Enum(_)) => {
-                    self.snapshot_storage_to_heap(&handle, ty)
-                }
-                _ => handle,
-            };
+            // Captured handles may point at storage owned by the creator's
+            // frame. Snapshot the captured value into heap storage, recursively
+            // rewriting nested aggregate fields so they cannot dangle after the
+            // creator returns (#584). Scalars and function values are copied by
+            // value directly. Fixed-array capture is rejected by the typechecker.
+            let src = self.snapshot_capture_value_to_heap(&handle, capture.ty.clone());
             let storage_ty = Self::backend_value_type(&capture.ty);
             self.builder.emit(Instruction::Store {
                 dst: Value::Var(ptr),
@@ -1396,6 +1384,55 @@ impl FnLowerer {
             ty: Type::U64,
         });
         desc
+    }
+
+    fn snapshot_capture_value_to_heap(&mut self, handle: &Value, storage_ty: Type) -> Value {
+        let mut seen_enums = HashSet::new();
+        let mut seen_structs = HashSet::new();
+        self.snapshot_capture_value_to_heap_inner(
+            handle,
+            storage_ty,
+            &mut seen_enums,
+            &mut seen_structs,
+        )
+    }
+
+    fn snapshot_capture_value_to_heap_inner(
+        &mut self,
+        handle: &Value,
+        storage_ty: Type,
+        seen_enums: &mut HashSet<String>,
+        seen_structs: &mut HashSet<String>,
+    ) -> Value {
+        match self.resolve_type(&storage_ty) {
+            ty @ (Type::String | Type::DynArray(_)) => self.snapshot_fat_value_to_heap(handle, ty),
+            ty @ Type::Tuple(_) => {
+                let dst = self.snapshot_storage_to_heap(handle, ty.clone());
+                self.deep_copy_nested_storage_fields(&dst, &ty, seen_enums, seen_structs);
+                dst
+            }
+            Type::Struct(name) => {
+                if !seen_structs.insert(name.clone()) {
+                    return handle.clone();
+                }
+                let ty = Type::Struct(name.clone());
+                let dst = self.snapshot_storage_to_heap(handle, ty.clone());
+                self.deep_copy_nested_storage_fields(&dst, &ty, seen_enums, seen_structs);
+                seen_structs.remove(&name);
+                dst
+            }
+            Type::Enum(name) => {
+                if !seen_enums.insert(name.clone()) {
+                    return handle.clone();
+                }
+                let ty = Type::Enum(name.clone());
+                let dst = self.snapshot_storage_to_heap(handle, ty.clone());
+                self.deep_copy_nested_storage_fields(&dst, &ty, seen_enums, seen_structs);
+                seen_enums.remove(&name);
+                dst
+            }
+            _ => handle.clone(),
+        }
     }
 
     /// Snapshot a 16-byte fat aggregate value (`String` or dynamic array) into
@@ -1445,13 +1482,10 @@ impl FnLowerer {
         dst
     }
 
-    /// Snapshot a scalar aggregate value (tuple, struct, or enum) into fresh heap
-    /// storage and return a handle to the copy. These values are pointer handles
-    /// to inline POD storage of a statically known size; copying those bytes onto
-    /// the heap lets a captured handle outlive its creator frame without dangling
-    /// (#542 tuples, #540 structs/enums). The typechecker only admits
-    /// scalar-field aggregates here, so a shallow byte copy is a complete,
-    /// non-sharing snapshot.
+    /// Snapshot aggregate inline storage (tuple, struct, or enum) into fresh
+    /// heap storage and return a handle to the copy. The initial copy is shallow;
+    /// callers that allow nested handles must rewrite those copied fields to
+    /// point at their own heap snapshots.
     fn snapshot_storage_to_heap(&mut self, handle: &Value, storage_ty: Type) -> Value {
         // An aggregate *value* is pointer-sized (`Type::size() == 8`), so the
         // inline storage size must come from the field layout, not `size()`.
@@ -1471,6 +1505,147 @@ impl FnLowerer {
         let dst = self.reserve_aggregate_storage(size.max(1), storage_ty, true);
         self.copy_storage_bytes(handle, &dst, size);
         dst
+    }
+
+    fn deep_copy_nested_storage_fields(
+        &mut self,
+        dst: &Value,
+        storage_ty: &Type,
+        seen_enums: &mut HashSet<String>,
+        seen_structs: &mut HashSet<String>,
+    ) {
+        match storage_ty {
+            Type::Tuple(elems) => {
+                let elems: Vec<Type> = elems.iter().map(|elem| self.resolve_type(elem)).collect();
+                let offsets = Self::tuple_field_offsets(&elems);
+                self.deep_copy_nested_fields(
+                    dst,
+                    elems.iter().zip(offsets.iter()),
+                    seen_enums,
+                    seen_structs,
+                );
+            }
+            Type::Struct(name) => {
+                let fields = self.resolved_struct_fields(name);
+                let offsets = self.structs.field_offsets(&fields);
+                let field_tys: Vec<Type> = fields.iter().map(|field| field.ty.clone()).collect();
+                self.deep_copy_nested_fields(
+                    dst,
+                    field_tys.iter().zip(offsets.iter()),
+                    seen_enums,
+                    seen_structs,
+                );
+            }
+            Type::Enum(name) => {
+                self.deep_copy_enum_payload_fields(dst, name, seen_enums, seen_structs)
+            }
+            _ => {}
+        }
+    }
+
+    fn deep_copy_nested_fields<'a, I>(
+        &mut self,
+        dst: &Value,
+        fields: I,
+        seen_enums: &mut HashSet<String>,
+        seen_structs: &mut HashSet<String>,
+    ) where
+        I: IntoIterator<Item = (&'a Type, &'a usize)>,
+    {
+        for (field_ty, off) in fields {
+            let field_ty = self.resolve_type(field_ty);
+            if !self.capture_field_needs_heap_snapshot(&field_ty) || field_ty.size() == 0 {
+                continue;
+            }
+            let loaded = Value::Var(self.load_field(dst, *off, &field_ty));
+            let snapshot = self.snapshot_capture_value_to_heap_inner(
+                &loaded,
+                field_ty.clone(),
+                seen_enums,
+                seen_structs,
+            );
+            let field_ptr = self.gep_byte(dst, *off);
+            self.builder.emit(Instruction::Store {
+                dst: Value::Var(field_ptr),
+                src: snapshot,
+                ty: field_ty,
+            });
+        }
+    }
+
+    fn deep_copy_enum_payload_fields(
+        &mut self,
+        dst: &Value,
+        enum_name: &str,
+        seen_enums: &mut HashSet<String>,
+        seen_structs: &mut HashSet<String>,
+    ) {
+        let Some(variants) = self
+            .enums
+            .variants(enum_name)
+            .map(|variants| variants.to_vec())
+        else {
+            return;
+        };
+        let mut cases = Vec::new();
+        for (tag, variant) in variants.iter().enumerate() {
+            let field_tys: Vec<Type> = variant
+                .fields
+                .iter()
+                .map(|field| self.resolve_type(field))
+                .collect();
+            if !field_tys
+                .iter()
+                .any(|field| self.capture_field_needs_heap_snapshot(field))
+            {
+                continue;
+            }
+            let offsets = self.enums.field_offsets(&field_tys);
+            cases.push((tag, field_tys, offsets));
+        }
+        if cases.is_empty() {
+            return;
+        }
+
+        let tag = Value::Var(self.load_field(dst, 0, &Type::I64));
+        let done_label = self.builder.fresh_label("capture_enum_done");
+        for (tag_idx, field_tys, offsets) in cases {
+            let arm_label = self.builder.fresh_label("capture_enum_arm");
+            let next_label = self.builder.fresh_label("capture_enum_next");
+            let cmp = self.builder.fresh_var();
+            self.builder.emit(Instruction::BinOp {
+                dst: cmp,
+                op: BinOp::Eq,
+                lhs: tag.clone(),
+                rhs: Value::ConstI64(tag_idx as i64),
+                ty: Type::Bool,
+            });
+            self.record_local(cmp, Type::Bool);
+            self.builder.emit(Instruction::Branch {
+                cond: Value::Var(cmp),
+                true_label: arm_label.clone(),
+                false_label: next_label.clone(),
+            });
+
+            self.builder.finish_block(&arm_label);
+            self.deep_copy_nested_fields(
+                dst,
+                field_tys.iter().zip(offsets.iter()),
+                seen_enums,
+                seen_structs,
+            );
+            self.builder.emit(Instruction::Jump(done_label.clone()));
+            self.builder.finish_block(&next_label);
+        }
+        self.builder.emit(Instruction::Jump(done_label.clone()));
+        self.builder.finish_block(&done_label);
+    }
+
+    fn capture_field_needs_heap_snapshot(&self, ty: &Type) -> bool {
+        matches!(
+            self.resolve_type(ty),
+            Type::String | Type::DynArray(_) | Type::Tuple(_) | Type::Struct(_) | Type::Enum(_)
+        )
     }
 
     /// Copy `size` bytes from `src` to `dst` (both pointer handles) using the
@@ -2099,11 +2274,15 @@ impl FnLowerer {
             outer_vars,
         };
 
-        if self.mode == LowerMode::Avx2
+        if (self.mode == LowerMode::Avx2 || self.mode == LowerMode::Avx512)
             && state.index_ty == Type::I64
             && let Some(plan) = self.simple_vector_map(index, body)
         {
-            return self.lower_avx2_vector_foreach(index, body, state, plan);
+            return match self.mode {
+                LowerMode::Avx2 => self.lower_avx2_vector_foreach(index, body, state, plan),
+                LowerMode::Avx512 => self.lower_avx512_vector_foreach(state, plan),
+                LowerMode::Scalar => unreachable!("scalar mode rejected above"),
+            };
         }
 
         self.lower_scalar_foreach(index, body, state)
@@ -2253,7 +2432,7 @@ impl FnLowerer {
         });
 
         self.builder.finish_block(&vector_body_label);
-        self.lower_avx2_vector_map_body(index_var, next_vector_index, &plan);
+        self.lower_vector_map_body(index_var, next_vector_index, &plan);
         self.builder.emit(Instruction::Jump(vector_header_label));
 
         self.builder.finish_block(&scalar_header_label);
@@ -2285,7 +2464,138 @@ impl FnLowerer {
         Value::ConstUnit
     }
 
-    fn lower_avx2_vector_map_body(
+    fn lower_avx512_vector_foreach(
+        &mut self,
+        state: ForeachLoopState,
+        plan: SimpleVectorMap,
+    ) -> Value {
+        let ForeachLoopState {
+            index_ty,
+            storage_ty,
+            start_val,
+            end_val,
+            outer_vars,
+        } = state;
+        let index_var = self.builder.fresh_var();
+        self.builder.emit(Instruction::Alloc {
+            var: index_var,
+            ty: storage_ty.clone(),
+        });
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(index_var),
+            src: start_val,
+            ty: storage_ty.clone(),
+        });
+        self.record_value_local(index_var, index_ty.clone());
+
+        let out_len = self.load_fat_len(&Value::Var(plan.dst_array), DYN_ARRAY_LEN_OFFSET);
+        let lhs_len = self.load_fat_len(&Value::Var(plan.lhs_array), DYN_ARRAY_LEN_OFFSET);
+        let rhs_len = self.load_fat_len(&Value::Var(plan.rhs_array), DYN_ARRAY_LEN_OFFSET);
+
+        let vector_header_label = self.builder.fresh_label("foreach_avx512_header");
+        let vector_body_label = self.builder.fresh_label("foreach_avx512_body");
+        let tail_header_label = self.builder.fresh_label("foreach_avx512_tail");
+        let tail_nonnegative_label = self.builder.fresh_label("foreach_avx512_tail_nonnegative");
+        let tail_body_label = self.builder.fresh_label("foreach_avx512_tail_body");
+        let abort_label = self.builder.fresh_label("foreach_avx512_oob");
+        let exit_label = self.builder.fresh_label("foreach_exit");
+
+        self.builder
+            .emit(Instruction::Jump(vector_header_label.clone()));
+
+        self.builder.finish_block(&vector_header_label);
+        let next_vector_index = self.emit_binop_value(
+            BinOp::Add,
+            Value::Var(index_var),
+            Self::int_compare_const(plan.lanes as i64, &index_ty),
+            index_ty.clone(),
+        );
+        let mut vector_ok = self.emit_binop_value(
+            BinOp::Ge,
+            Value::Var(index_var),
+            Value::ConstI64(0),
+            Type::Bool,
+        );
+        let no_index_overflow = self.emit_binop_value(
+            BinOp::Le,
+            Value::Var(index_var),
+            Value::ConstI64(i64::MAX - plan.lanes as i64),
+            Type::Bool,
+        );
+        vector_ok = self.emit_binop_value(BinOp::And, vector_ok, no_index_overflow, Type::Bool);
+        for bound in [
+            end_val.clone(),
+            out_len.clone(),
+            lhs_len.clone(),
+            rhs_len.clone(),
+        ] {
+            let within =
+                self.emit_binop_value(BinOp::Le, next_vector_index.clone(), bound, Type::Bool);
+            vector_ok = self.emit_binop_value(BinOp::And, vector_ok, within, Type::Bool);
+        }
+        self.builder.emit(Instruction::Branch {
+            cond: vector_ok,
+            true_label: vector_body_label.clone(),
+            false_label: tail_header_label.clone(),
+        });
+
+        self.builder.finish_block(&vector_body_label);
+        self.lower_vector_map_body(index_var, next_vector_index, &plan);
+        self.builder.emit(Instruction::Jump(vector_header_label));
+
+        self.builder.finish_block(&tail_header_label);
+        let tail_has_work = self.emit_binop_value(
+            BinOp::Lt,
+            Value::Var(index_var),
+            end_val.clone(),
+            Type::Bool,
+        );
+        self.builder.emit(Instruction::Branch {
+            cond: tail_has_work,
+            true_label: tail_nonnegative_label.clone(),
+            false_label: exit_label.clone(),
+        });
+
+        self.builder.finish_block(&tail_nonnegative_label);
+        let nonnegative = self.emit_binop_value(
+            BinOp::Ge,
+            Value::Var(index_var),
+            Value::ConstI64(0),
+            Type::Bool,
+        );
+        self.builder.emit(Instruction::Branch {
+            cond: nonnegative,
+            true_label: tail_body_label.clone(),
+            false_label: abort_label.clone(),
+        });
+
+        self.builder.finish_block(&tail_body_label);
+        let end_out_min = self.emit_min_i64_value(end_val.clone(), out_len);
+        let lhs_rhs_min = self.emit_min_i64_value(lhs_len, rhs_len);
+        let tail_len = self.emit_min_i64_value(end_out_min, lhs_rhs_min);
+        self.lower_avx512_predicated_vector_map_body(index_var, tail_len.clone(), &plan);
+        let tail_complete = self.emit_binop_value(BinOp::Ge, tail_len, end_val, Type::Bool);
+        self.builder.emit(Instruction::Branch {
+            cond: tail_complete,
+            true_label: exit_label.clone(),
+            false_label: abort_label.clone(),
+        });
+
+        self.builder.finish_block(&abort_label);
+        self.builder.emit(Instruction::Call {
+            dst: None,
+            func: "tl_oob_abort".into(),
+            args: vec![],
+            ty: Type::Unit,
+        });
+        self.builder.emit(Instruction::Jump(exit_label.clone()));
+
+        self.vars = outer_vars;
+        self.builder.finish_block(&exit_label);
+        Value::ConstUnit
+    }
+
+    fn lower_vector_map_body(
         &mut self,
         index_var: VarId,
         next_vector_index: Value,
@@ -2337,6 +2647,67 @@ impl FnLowerer {
         });
     }
 
+    fn lower_avx512_predicated_vector_map_body(
+        &mut self,
+        index_var: VarId,
+        tail_len: Value,
+        plan: &SimpleVectorMap,
+    ) {
+        let vector_ty = Type::Vector(Box::new(plan.elem_ty.clone()), plan.lanes);
+        let mask_ty = Type::Mask(plan.lanes);
+
+        let mask = self.builder.fresh_var();
+        self.builder.emit(Instruction::TailMask {
+            dst: mask,
+            index: Value::Var(index_var),
+            len: tail_len,
+            lanes: plan.lanes,
+        });
+        self.record_local(mask, mask_ty);
+
+        let lhs_vec = self.builder.fresh_var();
+        self.builder.emit(Instruction::PredicatedLoad {
+            dst: lhs_vec,
+            base: Value::Var(plan.lhs_array),
+            index: Value::Var(index_var),
+            mask: Value::Var(mask),
+            lanes: plan.lanes,
+            elem_ty: plan.elem_ty.clone(),
+        });
+        self.record_local(lhs_vec, vector_ty.clone());
+
+        let rhs_vec = self.builder.fresh_var();
+        self.builder.emit(Instruction::PredicatedLoad {
+            dst: rhs_vec,
+            base: Value::Var(plan.rhs_array),
+            index: Value::Var(index_var),
+            mask: Value::Var(mask),
+            lanes: plan.lanes,
+            elem_ty: plan.elem_ty.clone(),
+        });
+        self.record_local(rhs_vec, vector_ty.clone());
+
+        let result_vec = self.builder.fresh_var();
+        self.builder.emit(Instruction::VectorBinOp {
+            dst: result_vec,
+            op: plan.op,
+            lhs: Value::Var(lhs_vec),
+            rhs: Value::Var(rhs_vec),
+            lanes: plan.lanes,
+            elem_ty: plan.elem_ty.clone(),
+        });
+        self.record_local(result_vec, vector_ty);
+
+        self.builder.emit(Instruction::PredicatedStore {
+            base: Value::Var(plan.dst_array),
+            index: Value::Var(index_var),
+            value: Value::Var(result_vec),
+            mask: Value::Var(mask),
+            lanes: plan.lanes,
+            elem_ty: plan.elem_ty.clone(),
+        });
+    }
+
     fn emit_binop_value(&mut self, op: BinOp, lhs: Value, rhs: Value, ty: Type) -> Value {
         let dst = self.builder.fresh_var();
         self.builder.emit(Instruction::BinOp {
@@ -2347,6 +2718,35 @@ impl FnLowerer {
             ty: ty.clone(),
         });
         self.record_local(dst, ty);
+        Value::Var(dst)
+    }
+
+    fn emit_min_i64_value(&mut self, lhs: Value, rhs: Value) -> Value {
+        let cond = self.emit_binop_value(BinOp::Le, lhs.clone(), rhs.clone(), Type::Bool);
+        let left_label = self.builder.fresh_label("min_left");
+        let right_label = self.builder.fresh_label("min_right");
+        let merge_label = self.builder.fresh_label("min_merge");
+
+        self.builder.emit(Instruction::Branch {
+            cond,
+            true_label: left_label.clone(),
+            false_label: right_label.clone(),
+        });
+
+        self.builder.finish_block(&left_label);
+        self.builder.emit(Instruction::Jump(merge_label.clone()));
+
+        self.builder.finish_block(&right_label);
+        self.builder.emit(Instruction::Jump(merge_label.clone()));
+
+        self.builder.finish_block(&merge_label);
+        let dst = self.builder.fresh_var();
+        self.builder.emit(Instruction::Phi {
+            dst,
+            incoming: vec![(lhs, left_label), (rhs, right_label)],
+            ty: Type::I64,
+        });
+        self.record_local(dst, Type::I64);
         Value::Var(dst)
     }
 
@@ -2376,7 +2776,11 @@ impl FnLowerer {
         if lhs_elem != rhs_elem || lhs_elem != dst_elem {
             return None;
         }
-        let lanes = Self::avx2_lanes_for_elem(&lhs_elem)?;
+        let lanes = match self.mode {
+            LowerMode::Avx2 => Self::avx2_lanes_for_elem(&lhs_elem)?,
+            LowerMode::Avx512 => Self::avx512_lanes_for_elem(&lhs_elem)?,
+            LowerMode::Scalar => return None,
+        };
 
         Some(SimpleVectorMap {
             dst_array,
@@ -2421,6 +2825,14 @@ impl FnLowerer {
         match elem_ty {
             Type::I64 | Type::U64 | Type::F64 => Some(4),
             Type::I32 | Type::U32 => Some(8),
+            _ => None,
+        }
+    }
+
+    fn avx512_lanes_for_elem(elem_ty: &Type) -> Option<usize> {
+        match elem_ty {
+            Type::I64 | Type::U64 | Type::F64 => Some(8),
+            Type::I32 | Type::U32 => Some(16),
             _ => None,
         }
     }
@@ -4857,6 +5269,135 @@ mod tests {
     }
 
     #[test]
+    fn test_lower_avx512_foreach_map_emits_zmm_loop_and_predicated_tail() {
+        let prog = parse(
+            r#"
+            (define (fill [a : (Array i64)]
+                          [b : (Array i64)]
+                          [out : (Array i64)]
+                          [n : i64]) : unit
+              (foreach ([i : i64 0 n])
+                (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+        "#,
+        )
+        .unwrap();
+        let lowered = lower_program_with_spans_for_mode(&prog, LowerMode::Avx512);
+        let ir = lowered.program;
+        let instrs = all_instrs(&ir);
+
+        assert!(
+            ir.functions[0]
+                .blocks
+                .iter()
+                .any(|b| b.label.starts_with("foreach_avx512_header."))
+        );
+        assert!(
+            ir.functions[0]
+                .blocks
+                .iter()
+                .any(|b| b.label.starts_with("foreach_avx512_tail."))
+        );
+        assert!(
+            !ir.functions[0]
+                .blocks
+                .iter()
+                .any(|b| b.label.starts_with("foreach_tail_header."))
+        );
+        assert!(
+            !ir.functions[0]
+                .blocks
+                .iter()
+                .any(|b| b.label.starts_with("foreach_tail_body."))
+        );
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::VectorLoad {
+                lanes: 8,
+                elem_ty: Type::I64,
+                ..
+            }
+        )));
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::VectorBinOp {
+                op: BinOp::Add,
+                lanes: 8,
+                elem_ty: Type::I64,
+                ..
+            }
+        )));
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::VectorStore {
+                lanes: 8,
+                elem_ty: Type::I64,
+                ..
+            }
+        )));
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::TailMask { lanes: 8, .. }))
+        );
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::PredicatedLoad {
+                lanes: 8,
+                elem_ty: Type::I64,
+                ..
+            }
+        )));
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::PredicatedStore {
+                lanes: 8,
+                elem_ty: Type::I64,
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn test_lower_avx512_foreach_map_uses_i32_sixteen_lane_shape() {
+        let prog = parse(
+            r#"
+            (define (fill [a : (Array i32)]
+                          [b : (Array i32)]
+                          [out : (Array i32)]
+                          [n : i64]) : unit
+              (foreach ([i : i64 0 n])
+                (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+        "#,
+        )
+        .unwrap();
+        let lowered = lower_program_with_spans_for_mode(&prog, LowerMode::Avx512);
+        let ir = lowered.program;
+        let instrs = all_instrs(&ir);
+
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::VectorLoad {
+                lanes: 16,
+                elem_ty: Type::I32,
+                ..
+            }
+        )));
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::TailMask { lanes: 16, .. }))
+        );
+        assert!(instrs.iter().any(|i| matches!(
+            i,
+            Instruction::PredicatedStore {
+                lanes: 16,
+                elem_ty: Type::I32,
+                ..
+            }
+        )));
+    }
+
+    #[test]
     fn test_lower_foreach_materializes_end_bound_once() {
         let prog = parse(
             r#"
@@ -6897,6 +7438,103 @@ mod tests {
             alloc_sizes,
             vec![Value::ConstI64(8), Value::ConstI64(16), Value::ConstI64(16)],
             "expected env(8) + tuple-storage snapshot(16) + descriptor(16) heap allocations"
+        );
+    }
+
+    #[test]
+    fn test_lower_capturing_lambda_deep_copies_struct_string_field() {
+        // Capturing a struct with a String field first snapshots the struct's
+        // inline storage, then rewrites the copied String field to point at a
+        // heap snapshot of the fat `{ ptr, len }` value (#584).
+        let prog = parse(
+            r#"
+            (defstruct Named (id i64) (name String))
+            (define (get_fn) : (-> i64)
+              (let ([n : Named (Named 40 "hi")])
+                (lambda () : i64 (+ (struct-get n id) (string-length (struct-get n name))))))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let get_fn = ir
+            .functions
+            .iter()
+            .find(|f| f.name == "get_fn")
+            .expect("get_fn lowered");
+        let alloc_sizes: Vec<Value> = get_fn
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .filter_map(|i| match i {
+                Instruction::Call { func, args, .. } if func == "tl_alloc" => args.first().cloned(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            alloc_sizes,
+            vec![
+                Value::ConstI64(8),
+                Value::ConstI64(16),
+                Value::ConstI64(16),
+                Value::ConstI64(16)
+            ],
+            "expected env(8) + struct snapshot(16) + nested String snapshot(16) + descriptor(16)"
+        );
+    }
+
+    #[test]
+    fn test_lower_capturing_lambda_deep_copies_enum_payload_tag_aware() {
+        // Enum capture branches on the copied tag and only deep-copies the
+        // active variant's aggregate payload fields (#584).
+        let prog = parse(
+            r#"
+            (defenum Msg (Text String) (Code i64))
+            (define (get_fn) : (-> i64)
+              (let ([m : Msg (Text "hi")])
+                (lambda () : i64 (match m [(Text s) (string-length s)] [(Code n) n]))))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let get_fn = ir
+            .functions
+            .iter()
+            .find(|f| f.name == "get_fn")
+            .expect("get_fn lowered");
+        let alloc_sizes: Vec<Value> = get_fn
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .filter_map(|i| match i {
+                Instruction::Call { func, args, .. } if func == "tl_alloc" => args.first().cloned(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            alloc_sizes,
+            vec![
+                Value::ConstI64(8),
+                Value::ConstI64(16),
+                Value::ConstI64(16),
+                Value::ConstI64(16)
+            ],
+            "expected env(8) + enum snapshot(16) + active String snapshot(16) + descriptor(16)"
+        );
+        assert!(
+            get_fn.blocks.iter().any(|block| {
+                block.instructions.iter().any(|instr| {
+                    matches!(
+                        instr,
+                        Instruction::Branch {
+                            true_label,
+                            false_label,
+                            ..
+                        } if true_label.starts_with("capture_enum_arm")
+                            && false_label.starts_with("capture_enum_next")
+                    )
+                })
+            }),
+            "expected capture lowering to branch on the copied enum tag"
         );
     }
 

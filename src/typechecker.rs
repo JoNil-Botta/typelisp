@@ -603,31 +603,24 @@ impl TypeChecker {
         }
     }
 
-    fn capture_type_supported(&self, ty: &Type) -> bool {
+    fn unsupported_capture_type_reason(&self, ty: &Type) -> Option<String> {
+        let mut seen_enums = HashSet::new();
+        let mut seen_structs = HashSet::new();
+        self.unsupported_capture_type_reason_inner(ty, &mut seen_enums, &mut seen_structs)
+    }
+
+    fn unsupported_capture_type_reason_inner(
+        &self,
+        ty: &Type,
+        seen_enums: &mut HashSet<String>,
+        seen_structs: &mut HashSet<String>,
+    ) -> Option<String> {
         // Scalars and function values are captured as immutable snapshots (#434).
-        // `String` and dynamic-array values are pointer-sized handles to fat
-        // `{ ptr, len }` storage whose underlying buffer is already heap- or
-        // rodata-stable, so the lowerer can snapshot the fat value onto the heap
-        // and the capture cannot dangle (#435).
-        //
-        // A tuple value is a pointer handle to inline POD storage of a
-        // statically known size; when every element is a scalar, the lowerer can
-        // shallow-copy that storage onto the heap and the capture cannot dangle
-        // (#542). Nested aggregate elements would need a deep copy (shared inner
-        // handles could dangle) and stay rejected.
-        //
-        // A struct or enum value is likewise a pointer handle to inline storage;
-        // when every field (struct) or every variant payload field (enum) is a
-        // scalar, the storage holds no inner handles, so the same shallow
-        // storage snapshot is a complete, non-sharing copy (#540). A struct/enum
-        // carrying any aggregate field (String, dynamic array, tuple, struct,
-        // enum, function) would need a deep copy of the nested handle and stays
-        // rejected.
-        //
-        // Fixed `(Array T N)` capture stays rejected for now: unlike a tuple, a
-        // fixed-array value is inline storage the backend does not treat as a
-        // pointer-sized handle, so the storage-snapshot path is not wired yet
-        // (representation gap tracked in #435).
+        // `String` and dynamic-array values snapshot their fat handle storage
+        // onto the heap (#435). Tuples/structs/enums snapshot their inline
+        // storage and then recursively snapshot any nested aggregate handles
+        // (#584). Fixed arrays stay out of scope until #571 wires their value
+        // representation into closure environments.
         match self.resolve_type(ty) {
             Type::I64
             | Type::I32
@@ -642,49 +635,79 @@ impl TypeChecker {
             | Type::F64
             | Type::Func(_, _)
             | Type::String
-            | Type::DynArray(_) => true,
-            Type::Tuple(elems) => elems.iter().all(|elem| self.capture_shallow_scalar(elem)),
-            Type::Struct(name) => match self.structs.fields(&name) {
-                Some(fields) => {
-                    let tys: Vec<Type> = fields.iter().map(|f| f.ty.clone()).collect();
-                    tys.iter().all(|t| self.capture_shallow_scalar(t))
+            | Type::DynArray(_) => None,
+            Type::Tuple(elems) => {
+                for (idx, elem) in elems.iter().enumerate() {
+                    if let Some(reason) =
+                        self.unsupported_capture_type_reason_inner(elem, seen_enums, seen_structs)
+                    {
+                        return Some(format!("tuple element {} {}", idx, reason));
+                    }
                 }
-                None => false,
-            },
-            Type::Enum(name) => match self.enums.variants(&name) {
-                Some(variants) => {
-                    let payloads: Vec<Type> = variants
-                        .iter()
-                        .flat_map(|v| v.fields.iter().cloned())
-                        .collect();
-                    payloads.iter().all(|t| self.capture_shallow_scalar(t))
+                None
+            }
+            Type::Struct(name) => {
+                if !seen_structs.insert(name.clone()) {
+                    return Some(format!(
+                        "recursive struct '{}' capture is not supported",
+                        name
+                    ));
                 }
-                None => false,
-            },
-            _ => false,
+                let mut found = None;
+                if let Some(fields) = self.structs.fields(&name) {
+                    for field in fields {
+                        if let Some(reason) = self.unsupported_capture_type_reason_inner(
+                            &field.ty,
+                            seen_enums,
+                            seen_structs,
+                        ) {
+                            found = Some(format!("field '{}' {}", field.name, reason));
+                            break;
+                        }
+                    }
+                } else {
+                    found = Some(format!("unknown struct '{}'", name));
+                }
+                seen_structs.remove(&name);
+                found
+            }
+            Type::Enum(name) => {
+                if !seen_enums.insert(name.clone()) {
+                    return Some(format!(
+                        "recursive enum '{}' capture is not yet supported; \
+                         recursive aggregate deep-copy is tracked separately from #584",
+                        name
+                    ));
+                }
+                let mut found = None;
+                if let Some(variants) = self.enums.variants(&name) {
+                    'variants: for variant in variants {
+                        for (idx, field) in variant.fields.iter().enumerate() {
+                            if let Some(reason) = self.unsupported_capture_type_reason_inner(
+                                field,
+                                seen_enums,
+                                seen_structs,
+                            ) {
+                                found = Some(format!(
+                                    "variant '{}' field {} {}",
+                                    variant.name, idx, reason
+                                ));
+                                break 'variants;
+                            }
+                        }
+                    }
+                } else {
+                    found = Some(format!("unknown enum '{}'", name));
+                }
+                seen_enums.remove(&name);
+                found
+            }
+            Type::Array(_, _) => Some(
+                "uses fixed-size array storage, which is not yet supported in closure captures (#571)"
+                    .into(),
+            ),
+            other => Some(format!("has unsupported type {}", other)),
         }
-    }
-
-    /// A type whose inline storage holds no pointers/handles, so it can be
-    /// snapshotted into a (longer-lived) closure environment with a shallow byte
-    /// copy. This gates scalar-tuple capture: a shallow copy is a correct,
-    /// non-dangling snapshot only when no element is itself a handle to other
-    /// storage (#542).
-    fn capture_shallow_scalar(&self, ty: &Type) -> bool {
-        matches!(
-            self.resolve_type(ty),
-            Type::I64
-                | Type::I32
-                | Type::I16
-                | Type::I8
-                | Type::U64
-                | Type::U32
-                | Type::U16
-                | Type::U8
-                | Type::Bool
-                | Type::Char
-                | Type::F64
-        )
     }
 
     fn collect_pattern_bindings(pat: &Pattern, top_level: bool, bindings: &mut HashSet<String>) {
@@ -1305,11 +1328,13 @@ impl TypeChecker {
                     let Some(ty) = self.lookup(captured) else {
                         continue;
                     };
-                    if !self.capture_type_supported(&ty) {
+                    if let Some(reason) = self.unsupported_capture_type_reason(&ty) {
                         return Err(TypeError::at(
                             format!(
-                                "capturing value '{}' of type {} is not yet supported; capture scalar, function, String, dynamic-array, or scalar-field tuple/struct/enum values only (fixed-array and aggregate-field capture is tracked in #435)",
-                                captured, ty
+                                "capturing value '{}' of type {} is not yet supported: {}; \
+                                 capture scalar, function, String, dynamic-array, or recursively \
+                                 supported tuple/struct/enum values",
+                                captured, ty, reason
                             ),
                             *span,
                         ));
@@ -3204,9 +3229,9 @@ mod tests {
     }
 
     #[test]
-    fn test_typecheck_aggregate_field_struct_capture_rejected() {
-        // A struct carrying a non-scalar field (here `String`) would need a deep
-        // copy of the inner handle, so it stays rejected (#540/#435).
+    fn test_typecheck_nested_aggregate_field_struct_capture_ok() {
+        // A struct carrying an aggregate field is capture-supported by the
+        // recursive deep-copy path (#584).
         let prog = parse(
             r#"
             (defstruct Named (id i64) (name String))
@@ -3218,17 +3243,10 @@ mod tests {
         )
         .unwrap();
         let mut tc = TypeChecker::new();
-        let err = tc.check_program(&prog).unwrap_err();
         assert!(
-            err.msg
-                .contains("capturing value 'n' of type Named is not yet supported"),
-            "err: {}",
-            err
-        );
-        assert!(
-            err.msg.contains("#435"),
-            "err should reference #435: {}",
-            err
+            tc.check_program(&prog).is_ok(),
+            "{:?}",
+            tc.check_program(&prog)
         );
     }
 
@@ -3259,7 +3277,7 @@ mod tests {
         // A fixed array is inline storage that the backend does not treat as a
         // pointer-sized handle, so the storage-snapshot path is not wired and
         // capture stays rejected (#542 ships scalar tuples; the fixed-array
-        // representation gap is tracked in #435).
+        // representation gap is tracked in #571).
         let prog = parse(
             r#"
             (define (main) : i64
@@ -3273,16 +3291,16 @@ mod tests {
         let err = tc.check_program(&prog).unwrap_err();
         assert!(err.msg.contains("is not yet supported"), "err: {}", err);
         assert!(
-            err.msg.contains("#435"),
-            "err should reference #435: {}",
+            err.msg.contains("#571"),
+            "err should reference #571: {}",
             err
         );
     }
 
     #[test]
-    fn test_typecheck_aggregate_element_tuple_capture_rejected() {
-        // A tuple with a non-scalar element (here `String`) would need a deep
-        // copy of the inner handle, so it stays rejected (#542/#435).
+    fn test_typecheck_nested_aggregate_element_tuple_capture_ok() {
+        // A tuple with a nested aggregate element is capture-supported by the
+        // recursive deep-copy path (#584).
         let prog = parse(
             r#"
             (define (main) : i64
@@ -3293,11 +3311,84 @@ mod tests {
         )
         .unwrap();
         let mut tc = TypeChecker::new();
-        let err = tc.check_program(&prog).unwrap_err();
-        assert!(err.msg.contains("is not yet supported"), "err: {}", err);
         assert!(
-            err.msg.contains("#435"),
-            "err should reference #435: {}",
+            tc.check_program(&prog).is_ok(),
+            "{:?}",
+            tc.check_program(&prog)
+        );
+    }
+
+    #[test]
+    fn test_typecheck_string_payload_enum_capture_ok() {
+        // Enum payloads with aggregate handles are capture-supported; lowering
+        // deep-copies only the active variant's aggregate payload fields (#584).
+        let prog = parse(
+            r#"
+            (defenum Msg (Text String) (Code i64))
+            (define (main) : i64
+              (let ([m : Msg (Text "hello")]
+                    [f : (-> i64) (lambda () : i64 (match m [(Text s) (string-length s)] [(Code n) n]))])
+                (f)))
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        assert!(
+            tc.check_program(&prog).is_ok(),
+            "{:?}",
+            tc.check_program(&prog)
+        );
+    }
+
+    #[test]
+    fn test_typecheck_fixed_array_field_capture_still_rejected() {
+        // Fixed-array fields still need the separate representation work in
+        // #571 before they can be captured through aggregate deep-copy.
+        let prog = parse(
+            r#"
+            (defstruct Chunk (items (Array i64 3)))
+            (define (main) : i64
+              (let ([c : Chunk (Chunk (array 1 2 3))]
+                    [f : (-> i64) (lambda () : i64 (array-ref (struct-get c items) 0))])
+                (f)))
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(
+            err.msg
+                .contains("field 'items' uses fixed-size array storage"),
+            "err: {}",
+            err
+        );
+        assert!(
+            err.msg.contains("#571"),
+            "err should reference #571: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_typecheck_recursive_enum_capture_rejected() {
+        // Recursive enum values would need runtime recursive graph copying.
+        // Reject them precisely so #584 cannot infinite-recurse while lowering.
+        let prog = parse(
+            r#"
+            (defenum List (Cons i64 List) (Nil))
+            (define (main) : i64
+              (let ([xs : List (Cons 1 Nil)]
+                    [f : (-> i64) (lambda () : i64 (match xs [(Cons n _) n] [(Nil) 0]))])
+                (f)))
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(
+            err.msg
+                .contains("recursive enum 'List' capture is not yet supported"),
+            "err: {}",
             err
         );
     }

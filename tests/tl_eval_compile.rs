@@ -154,11 +154,17 @@ fn tl_eval_tl_compiles_to_assembly() {
         "_tl_let_init:",
         "_tl_let_body:",
         "_tl_eval_seq:",
+        "_tl_eval_sexpr_result:",
+        "_tl_eval_symbol_call_result:",
+        "_tl_as_int_result:",
+        "_tl_bind_args_result:",
         "_tl_define_name:",
         "_tl_define_params:",
         "_tl_define_body:",
         "_tl_is_define:",
         "_tl_run_forms:",
+        "_tl_run_program_result:",
+        "_tl_eval_main:",
         "_tl_run_program:",
     ] {
         assert!(
@@ -888,9 +894,20 @@ fn tl_eval_tl_compiles_to_assembly() {
         asm,
     );
 
-    // A malformed program (a non-symbol operator, too few/many arguments, or an
-    // unknown operator) aborts via `(panic ...)`, lowered to the private abort runtime -
-    // exactly how a real interpreter reports a malformed program.
+    for msg in [
+        "eval: unbound variable",
+        "eval: too few arguments in call",
+        "eval: a non-final top-level form must be a (define ...)",
+    ] {
+        assert!(
+            asm.contains(msg),
+            "tl_eval assembly is missing recoverable evaluator diagnostic {msg:?}:\n{}",
+            asm,
+        );
+    }
+
+    // The legacy panic-path helpers intentionally remain emitted as smoke-test
+    // witnesses even though the public driver uses recoverable `Result*` values.
     assert!(
         asm.contains("call .L_tl_abort"),
         "tl_eval assembly is missing the eval-error abort path (.L_tl_abort):\n{}",

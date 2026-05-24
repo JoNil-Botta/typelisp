@@ -242,6 +242,38 @@
   (FNil)
   (FBind String Sexpr Sexpr FnEnv))
 
+(defenum ResultValue
+  (OkValue Value)
+  (ErrValue String))
+
+(defenum ResultI64
+  (OkI64 i64)
+  (ErrI64 String))
+
+(defenum ResultString
+  (OkString String)
+  (ErrString String))
+
+(defenum ResultEnv
+  (OkEnv Env)
+  (ErrEnv String))
+
+(defenum ResultFnDef
+  (OkFnDef String Sexpr Sexpr)
+  (ErrFnDef String))
+
+(defenum ResultUnaryArg
+  (OkUnaryArg Sexpr)
+  (ErrUnaryArg String))
+
+(defenum ResultBinaryArgs
+  (OkBinaryArgs Sexpr Sexpr)
+  (ErrBinaryArgs String))
+
+(defenum ResultTernaryArgs
+  (OkTernaryArgs Sexpr Sexpr Sexpr)
+  (ErrTernaryArgs String))
+
 ;; lookup: resolve a variable name to its value in the environment, walking the
 ;; assoc-list head-first so the most recently pushed (innermost) binding wins. An
 ;; unbound variable is a malformed program - abort via `panic`, exactly how an
@@ -1086,6 +1118,337 @@
                                         0)))))))))))
 
 ;; --------------------------------------------------------------------------
+;; Recoverable evaluator path (#445).
+;; --------------------------------------------------------------------------
+;; The original evaluator helpers above intentionally remain as a compact
+;; smoke-test witness. The public driver below now uses these `*-result` helpers
+;; so malformed interpreted programs return plain String diagnostics instead of
+;; aborting the compiled evaluator through `panic`.
+
+(define (as-int-result [v : Value]) : ResultI64
+  (match v
+    [(VInt n) (OkI64 n)]
+    [(VStr _) (ErrI64 "type error: expected int")]
+    [(VClosure _ _ _) (ErrI64 "type error: expected int")]
+    [(VPair _ _) (ErrI64 "type error: expected int")]))
+
+(define (as-str-result [v : Value]) : ResultString
+  (match v
+    [(VStr s) (OkString s)]
+    [(VInt _) (ErrString "type error: expected string")]
+    [(VClosure _ _ _) (ErrString "type error: expected string")]
+    [(VPair _ _) (ErrString "type error: expected string")]))
+
+(define (lookup-result [env : Env] [name : String]) : ResultValue
+  (match env
+    [(ENil) (ErrValue "eval: unbound variable")]
+    [(EBind bound val rest)
+     (if (string-eq bound name)
+         (OkValue val)
+         (lookup-result rest name))]))
+
+(define (lookup-fn-result [fenv : FnEnv] [name : String]) : ResultFnDef
+  (match fenv
+    [(FNil) (ErrFnDef "eval: unknown function")]
+    [(FBind fname params body rest)
+     (if (string-eq fname name)
+         (OkFnDef fname params body)
+         (lookup-fn-result rest name))]))
+
+(define (eval-value-as-int [expr : Sexpr] [env : Env] [fenv : FnEnv]) : ResultI64
+  (match (eval-sexpr-result expr env fenv)
+    [(OkValue v) (as-int-result v)]
+    [(ErrValue message) (ErrI64 message)]))
+
+(define (eval-value-as-str [expr : Sexpr] [env : Env] [fenv : FnEnv]) : ResultString
+  (match (eval-sexpr-result expr env fenv)
+    [(OkValue v) (as-str-result v)]
+    [(ErrValue message) (ErrString message)]))
+
+(define (eval-let-bindings-result [bindings : Sexpr] [acc : Env] [fenv : FnEnv]) : ResultEnv
+  (match bindings
+    [(SNil) (OkEnv acc)]
+    [(SCons (SCons (SSym var) (SCons init (SNil))) more)
+     (match (eval-sexpr-result init acc fenv)
+       [(OkValue v) (eval-let-bindings-result more (EBind var v acc) fenv)]
+       [(ErrValue message) (ErrEnv message)])]
+    [(SCons (SCons _ _) _) (ErrEnv "eval: malformed let binding name")]
+    [(SCons _ _) (ErrEnv "eval: malformed let binding list")]
+    [_ (ErrEnv "eval: malformed let binding list")]))
+
+(define (eval-seq-result [forms : Sexpr] [env : Env] [fenv : FnEnv]) : ResultValue
+  (match forms
+    [(SNil) (OkValue (VInt 0))]
+    [(SCons form rest)
+     (match (eval-sexpr-result form env fenv)
+       [(OkValue v)
+        (match rest
+          [(SNil) (OkValue v)]
+          [(SCons _ _) (eval-seq-result rest env fenv)]
+          [_ (ErrValue "eval: malformed begin body")])]
+       [(ErrValue message) (ErrValue message)])]
+    [_ (ErrValue "eval: malformed begin body")]))
+
+(define (eval-list-result [elems : Sexpr] [env : Env] [fenv : FnEnv]) : ResultValue
+  (match elems
+    [(SNil) (OkValue (VInt 0))]
+    [(SCons head tail)
+     (match (eval-sexpr-result head env fenv)
+       [(OkValue head-val)
+        (match (eval-list-result tail env fenv)
+          [(OkValue tail-val) (OkValue (VPair head-val tail-val))]
+          [(ErrValue message) (ErrValue message)])]
+       [(ErrValue message) (ErrValue message)])]
+    [_ (ErrValue "eval: malformed list elements")]))
+
+(define (bind-args-result [params : Sexpr] [args : Sexpr] [caller : Env] [fenv : FnEnv]) : ResultEnv
+  (bind-args-onto-result params args caller fenv ENil))
+
+(define (bind-args-onto-result [params : Sexpr] [args : Sexpr] [caller : Env] [fenv : FnEnv] [base : Env]) : ResultEnv
+  (match params
+    [(SNil)
+     (match args
+       [(SNil) (OkEnv base)]
+       [_ (ErrEnv "eval: too many arguments in call")])]
+    [(SCons (SSym pname) ptail)
+     (match args
+       [(SCons arg atail)
+        (match (eval-sexpr-result arg caller fenv)
+          [(OkValue arg-val)
+           (match (bind-args-onto-result ptail atail caller fenv base)
+             [(OkEnv rest-env) (OkEnv (EBind pname arg-val rest-env))]
+             [(ErrEnv message) (ErrEnv message)])]
+          [(ErrValue message) (ErrEnv message)])]
+       [(SNil) (ErrEnv "eval: too few arguments in call")]
+       [_ (ErrEnv "eval: malformed argument list")])]
+    [_ (ErrEnv "eval: malformed parameter list")]))
+
+(define (apply-value-result [f : Value] [args : Sexpr] [caller : Env] [fenv : FnEnv]) : ResultValue
+  (match f
+    [(VClosure params body captured)
+     (match (bind-args-onto-result params args caller fenv captured)
+       [(OkEnv call-env) (eval-sexpr-result body call-env fenv)]
+       [(ErrEnv message) (ErrValue message)])]
+    [(VInt _) (ErrValue "eval: cannot apply a non-function value")]
+    [(VStr _) (ErrValue "eval: cannot apply a non-function value")]
+    [(VPair _ _) (ErrValue "eval: cannot apply a non-function value")]))
+
+(define (eval-unary-arg [rest : Sexpr] [message : String]) : ResultUnaryArg
+  (match rest
+    [(SCons arg (SNil)) (OkUnaryArg arg)]
+    [_ (ErrUnaryArg message)]))
+
+(define (eval-binary-args [rest : Sexpr] [message : String]) : ResultBinaryArgs
+  (match rest
+    [(SCons a (SCons b (SNil))) (OkBinaryArgs a b)]
+    [_ (ErrBinaryArgs message)]))
+
+(define (eval-ternary-args [rest : Sexpr] [message : String]) : ResultTernaryArgs
+  (match rest
+    [(SCons a (SCons b (SCons c (SNil)))) (OkTernaryArgs a b c)]
+    [_ (ErrTernaryArgs message)]))
+
+(define (eval-symbol-call-result [name : String] [rest : Sexpr] [env : Env] [fenv : FnEnv]) : ResultValue
+  (if (string-eq name "list")
+      (eval-list-result rest env fenv)
+      (if (string-eq name "begin")
+          (eval-seq-result rest env fenv)
+          (if (string-eq name "lambda")
+              (match rest
+                [(SCons params (SCons body (SNil))) (OkValue (VClosure params body env))]
+                [_ (ErrValue "eval: malformed lambda")])
+              (if (string-eq name "let")
+                  (match rest
+                    [(SCons bindings (SCons body (SNil)))
+                     (match (eval-let-bindings-result bindings env fenv)
+                       [(OkEnv let-env) (eval-sexpr-result body let-env fenv)]
+                       [(ErrEnv message) (ErrValue message)])]
+                    [_ (ErrValue "eval: malformed let")])
+                  (if (string-eq name "if")
+                      (match rest
+                        [(SCons cond-e (SCons then-e (SCons else-e (SNil))))
+                         (match (eval-value-as-int cond-e env fenv)
+                           [(OkI64 c)
+                            (if (= c 0)
+                                (eval-sexpr-result else-e env fenv)
+                                (eval-sexpr-result then-e env fenv))]
+                           [(ErrI64 message) (ErrValue message)])]
+                        [_ (ErrValue "eval: malformed if")])
+                      (if (string-eq name "print")
+                          (match (eval-unary-arg rest "eval: malformed print")
+                            [(OkUnaryArg arg)
+                             (match (eval-sexpr-result arg env fenv)
+                               [(OkValue v)
+                                (begin
+                                  (match v
+                                    [(VInt n) (print n)]
+                                    [(VStr s) (print-string s)]
+                                    [(VClosure _ _ _) (print-string "#<closure>")]
+                                    [(VPair _ _) (print-value v)])
+                                  (OkValue v))]
+                               [(ErrValue message) (ErrValue message)])]
+                            [(ErrUnaryArg message) (ErrValue message)])
+                          (if (string-eq name "string-length")
+                              (match (eval-unary-arg rest "eval: malformed string-length")
+                                [(OkUnaryArg arg)
+                                 (match (eval-value-as-str arg env fenv)
+                                   [(OkString s) (OkValue (VInt (string-length s)))]
+                                   [(ErrString message) (ErrValue message)])]
+                                [(ErrUnaryArg message) (ErrValue message)])
+                              (if (string-eq name "substring")
+                                  (match (eval-ternary-args rest "eval: malformed substring")
+                                    [(OkTernaryArgs se ie ne)
+                                     (match (eval-value-as-str se env fenv)
+                                       [(OkString s)
+                                        (match (eval-value-as-int ie env fenv)
+                                          [(OkI64 i)
+                                           (match (eval-value-as-int ne env fenv)
+                                             [(OkI64 n) (OkValue (VStr (substring s i n)))]
+                                             [(ErrI64 message) (ErrValue message)])]
+                                          [(ErrI64 message) (ErrValue message)])]
+                                       [(ErrString message) (ErrValue message)])]
+                                    [(ErrTernaryArgs message) (ErrValue message)])
+                                  (if (string-eq name "string-eq")
+                                      (match (eval-binary-args rest "eval: malformed string-eq")
+                                        [(OkBinaryArgs ae be)
+                                         (match (eval-value-as-str ae env fenv)
+                                           [(OkString a)
+                                            (match (eval-value-as-str be env fenv)
+                                              [(OkString b) (OkValue (VInt (if (string-eq a b) 1 0)))]
+                                              [(ErrString message) (ErrValue message)])]
+                                           [(ErrString message) (ErrValue message)])]
+                                        [(ErrBinaryArgs message) (ErrValue message)])
+                                      (if (string-eq name "int->string")
+                                          (match (eval-unary-arg rest "eval: malformed int->string")
+                                            [(OkUnaryArg arg)
+                                             (match (eval-value-as-int arg env fenv)
+                                               [(OkI64 n) (OkValue (VStr (int->string n)))]
+                                               [(ErrI64 message) (ErrValue message)])]
+                                            [(ErrUnaryArg message) (ErrValue message)])
+                                          (if (string-eq name "string->int")
+                                              (match (eval-unary-arg rest "eval: malformed string->int")
+                                                [(OkUnaryArg arg)
+                                                 (match (eval-value-as-str arg env fenv)
+                                                   [(OkString s) (OkValue (VInt (string->int s)))]
+                                                   [(ErrString message) (ErrValue message)])]
+                                                [(ErrUnaryArg message) (ErrValue message)])
+                                              (if (string-eq name "string-append")
+                                                  (match (eval-binary-args rest "eval: malformed string-append")
+                                                    [(OkBinaryArgs ae be)
+                                                     (match (eval-value-as-str ae env fenv)
+                                                       [(OkString a)
+                                                        (match (eval-value-as-str be env fenv)
+                                                          [(OkString b) (OkValue (VStr (string-append a b)))]
+                                                          [(ErrString message) (ErrValue message)])]
+                                                       [(ErrString message) (ErrValue message)])]
+                                                    [(ErrBinaryArgs message) (ErrValue message)])
+                                                  (if (string-eq name "cons")
+                                                      (match (eval-binary-args rest "eval: malformed cons")
+                                                        [(OkBinaryArgs ae be)
+                                                         (match (eval-sexpr-result ae env fenv)
+                                                           [(OkValue a)
+                                                            (match (eval-sexpr-result be env fenv)
+                                                              [(OkValue b) (OkValue (VPair a b))]
+                                                              [(ErrValue message) (ErrValue message)])]
+                                                           [(ErrValue message) (ErrValue message)])]
+                                                        [(ErrBinaryArgs message) (ErrValue message)])
+                                                      (if (string-eq name "car")
+                                                          (match (eval-unary-arg rest "eval: malformed car")
+                                                            [(OkUnaryArg pe)
+                                                             (match (eval-sexpr-result pe env fenv)
+                                                               [(OkValue pair-val)
+                                                                (match pair-val
+                                                                  [(VPair a _) (OkValue a)]
+                                                                  [_ (ErrValue "car: not a pair")])]
+                                                               [(ErrValue message) (ErrValue message)])]
+                                                            [(ErrUnaryArg message) (ErrValue message)])
+                                                          (if (string-eq name "cdr")
+                                                              (match (eval-unary-arg rest "eval: malformed cdr")
+                                                                [(OkUnaryArg pe)
+                                                                 (match (eval-sexpr-result pe env fenv)
+                                                                   [(OkValue pair-val)
+                                                                    (match pair-val
+                                                                      [(VPair _ d) (OkValue d)]
+                                                                      [_ (ErrValue "cdr: not a pair")])]
+                                                                   [(ErrValue message) (ErrValue message)])]
+                                                                [(ErrUnaryArg message) (ErrValue message)])
+                                                              (if (string-eq name "pair?")
+                                                                  (match (eval-unary-arg rest "eval: malformed pair?")
+                                                                    [(OkUnaryArg pe)
+                                                                     (match (eval-sexpr-result pe env fenv)
+                                                                       [(OkValue pair-val)
+                                                                        (match pair-val
+                                                                          [(VPair _ _) (OkValue (VInt 1))]
+                                                                          [_ (OkValue (VInt 0))])]
+                                                                       [(ErrValue message) (ErrValue message)])]
+                                                                    [(ErrUnaryArg message) (ErrValue message)])
+                                                                  (if (string-eq name "null?")
+                                                                      (match (eval-unary-arg rest "eval: malformed null?")
+                                                                        [(OkUnaryArg pe)
+                                                                         (match (eval-sexpr-result pe env fenv)
+                                                                           [(OkValue null-val)
+                                                                            (match null-val
+                                                                              [(VInt n) (OkValue (if (= n 0) (VInt 1) (VInt 0)))]
+                                                                              [_ (OkValue (VInt 0))])]
+                                                                           [(ErrValue message) (ErrValue message)])]
+                                                                        [(ErrUnaryArg message) (ErrValue message)])
+                                                                      (if (is-builtin-op name)
+                                                                          (match (eval-binary-args rest "eval: malformed binary expression")
+                                                                            [(OkBinaryArgs arg1 arg2)
+                                                                             (match (eval-value-as-int arg1 env fenv)
+                                                                               [(OkI64 a)
+                                                                                (match (eval-value-as-int arg2 env fenv)
+                                                                                  [(OkI64 b) (OkValue (VInt (eval-builtin name a b)))]
+                                                                                  [(ErrI64 message) (ErrValue message)])]
+                                                                               [(ErrI64 message) (ErrValue message)])]
+                                                                            [(ErrBinaryArgs message) (ErrValue message)])
+                                                                          (if (env-has env name)
+                                                                              (match (lookup-result env name)
+                                                                                [(OkValue f) (apply-value-result f rest env fenv)]
+                                                                                [(ErrValue message) (ErrValue message)])
+                                                                              (match (lookup-fn-result fenv name)
+                                                                                [(OkFnDef _ params body)
+                                                                                 (match (bind-args-result params rest env fenv)
+                                                                                   [(OkEnv call-env) (eval-sexpr-result body call-env fenv)]
+                                                                                   [(ErrEnv message) (ErrValue message)])]
+                                                                                [(ErrFnDef message) (ErrValue message)])))))))))))))))))))))
+
+(define (eval-sexpr-result [s : Sexpr] [env : Env] [fenv : FnEnv]) : ResultValue
+  (match s
+    [(SInt n) (OkValue (VInt n))]
+    [(SSym name) (lookup-result env name)]
+    [(SStr s) (OkValue (VStr s))]
+    [(SChar _) (ErrValue "eval: char literal not supported yet")]
+    [(SNil) (ErrValue "eval: cannot evaluate the empty list")]
+    [(SCons (SSym name) rest) (eval-symbol-call-result name rest env fenv)]
+    [(SCons head rest)
+     (match (eval-sexpr-result head env fenv)
+       [(OkValue f) (apply-value-result f rest env fenv)]
+       [(ErrValue message) (ErrValue message)])]
+    [_ (ErrValue "eval: not an evaluable expression")]))
+
+;; Parse a top-level define form into the function environment record that the
+;; evaluator needs. This is recoverable because a REPL/tool may want to report a
+;; malformed non-final form without terminating the whole evaluator process.
+(define (define-result [s : Sexpr]) : ResultFnDef
+  (match s
+    [(SCons (SSym head) rest)
+     (if (string-eq head "define")
+         (match rest
+           [(SCons (SCons (SSym name) params) (SCons body (SNil)))
+            (OkFnDef name params body)]
+           [_ (ErrFnDef "eval: malformed define")])
+         (ErrFnDef "eval: expected define"))]
+    [_ (ErrFnDef "eval: expected define")]))
+
+;; Convert a final expression result to the process-level integer result. A
+;; string/pair/closure final value is a recoverable evaluator type error.
+(define (value-result-as-int-result [result : ResultValue]) : ResultI64
+  (match result
+    [(OkValue v) (as-int-result v)]
+    [(ErrValue message) (ErrI64 message)]))
+
+;; --------------------------------------------------------------------------
 ;; The program reader: read MULTIPLE top-level forms from one token stream.
 ;; --------------------------------------------------------------------------
 ;; The reader's own public `read` returns just the FIRST datum, but a real program
@@ -1104,7 +1467,7 @@
 ;;     this and all earlier definitions - which is what makes recursion resolve.
 ;; A non-define form that is NOT the last form is a malformed program (only the
 ;; trailing form may be a bare expression) and aborts.
-(define (run-forms [toks : (Array Token)] [cur : (Array i64)] [fenv : FnEnv]) : i64
+(define (run-forms-panic [toks : (Array Token)] [cur : (Array i64)] [fenv : FnEnv]) : i64
   (let ([form : Sexpr (read-form toks cur)])
     (if (= (peek-tag toks cur) (tag-end))
         ;; Last form: the trailing expression to evaluate. Its `Value` result is
@@ -1113,7 +1476,7 @@
         (as-int (eval-sexpr form ENil fenv))
         ;; A leading form must be a definition; fold it into the function env.
         (if (is-define form)
-            (run-forms toks cur
+            (run-forms-panic toks cur
               (FBind (define-name form) (define-params form)
                      (define-body form) fenv))
             (begin
@@ -1124,12 +1487,43 @@
 ;; set a fresh cursor at index 0, then `run-forms` over every top-level form with
 ;; an initially empty function environment `FNil`. The result is the i64 the
 ;; trailing expression denotes after all definitions are in scope.
-(define (run-program [src : String]) : i64
+(define (run-program-panic [src : String]) : i64
+  (let ([toks : (Array Token) (lex src)]
+        [cur : (Array i64) (make-array i64 1)])
+    (begin
+      (array-set! cur 0 0)
+      (run-forms-panic toks cur FNil))))
+
+(define (run-forms [toks : (Array Token)] [cur : (Array i64)] [fenv : FnEnv]) : ResultI64
+  (let ([form : Sexpr (read-form toks cur)])
+    (if (= (peek-tag toks cur) (tag-end))
+        (value-result-as-int-result (eval-sexpr-result form ENil fenv))
+        (if (is-define form)
+            (match (define-result form)
+              [(OkFnDef name params body)
+               (run-forms toks cur (FBind name params body fenv))]
+              [(ErrFnDef message) (ErrI64 message)])
+            (ErrI64 "eval: a non-final top-level form must be a (define ...)")))))
+
+(define (run-program-result [src : String]) : ResultI64
   (let ([toks : (Array Token) (lex src)]
         [cur : (Array i64) (make-array i64 1)])
     (begin
       (array-set! cur 0 0)
       (run-forms toks cur FNil))))
+
+(define (eval-main [src : String]) : i64
+  (match (run-program-result src)
+    [(OkI64 n) n]
+    [(ErrI64 message)
+     (begin
+       (print-error message)
+       1)]))
+
+(define (run-program [src : String]) : i64
+  (if (= (arg-count) 2)
+      (eval-main (arg 1))
+      (eval-main src)))
 
 ;; --------------------------------------------------------------------------
 ;; main: the whole front end composed - lex, read MANY forms, interpret with

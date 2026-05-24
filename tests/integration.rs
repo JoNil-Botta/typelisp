@@ -2957,6 +2957,59 @@ fn selfhost_doc_driver_writes_single_file_markdown() {
 }
 
 #[test]
+fn selfhost_eval_reports_recoverable_errors() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let selfhost_dir = manifest_dir.join("selfhost");
+    let work_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("selfhost-eval-errors");
+    fs::create_dir_all(&work_dir).expect("create selfhost eval error test work dir");
+
+    let driver_path = work_dir.join("eval.tl");
+    fs::copy(selfhost_dir.join("eval.tl"), &driver_path).expect("copy eval.tl to work dir");
+    copy_case_deps(
+        &manifest_dir,
+        &selfhost_dir,
+        &work_dir,
+        &["read.tl", "lex.tl", "token.tl"],
+    );
+
+    for (name, source, expected_stderr) in [
+        ("type_mismatch", r#"(+ "a" 1)"#, "type error: expected int"),
+        ("unbound_variable", "missing", "eval: unbound variable"),
+        (
+            "arity_mismatch",
+            "(define (id x) x) (id)",
+            "eval: too few arguments in call",
+        ),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+            .arg("run")
+            .arg(&driver_path)
+            .arg("--")
+            .arg(source)
+            .output()
+            .unwrap_or_else(|err| panic!("run selfhost eval error case {name}: {err}"));
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "selfhost eval error case {name} exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert_eq!(stdout, "", "selfhost eval error case {name} wrote stdout");
+        assert!(
+            stderr.contains(expected_stderr),
+            "selfhost eval error case {name} stderr differed\nexpected substring: {expected_stderr}\nstderr:\n{stderr}",
+        );
+    }
+}
+
+#[test]
 fn file_exists_builtin_reports_existing_and_missing_paths() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let work_dir = manifest_dir

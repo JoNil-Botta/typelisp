@@ -303,6 +303,9 @@
 (define (compiler-parse-tag-expr-struct-get) : i64
   246)
 
+(define (compiler-parse-tag-expr-comptime) : i64
+  247)
+
 (define (compiler-parse-tag-lit-true) : i64
   300)
 
@@ -582,10 +585,17 @@
                                         e18
                                         "foreach"
                                         (compiler-parse-tag-expr-foreach))])
-                                    (sym-i64-bind
-                                      e19
-                                      "struct-get"
-                                      (compiler-parse-tag-expr-struct-get))))))))))))))))))))
+                                    (let ([e20
+                                        :
+                                        SymI64Env
+                                        (sym-i64-bind
+                                          e19
+                                          "struct-get"
+                                          (compiler-parse-tag-expr-struct-get))])
+                                      (sym-i64-bind
+                                        e20
+                                        "comptime"
+                                        (compiler-parse-tag-expr-comptime)))))))))))))))))))))
 
 (define (compiler-parse-dispatch-patterns [e : SymI64Env]) : SymI64Env
   (let ([e1 : SymI64Env (sym-i64-bind e "true" (compiler-parse-tag-lit-true))])
@@ -1202,6 +1212,18 @@
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed struct-get")]))
 
+;; `(comptime expr)` (#718) wraps exactly one inner expression for compile-time
+
+;; evaluation; evaluation itself is reserved for #719.
+
+(define (parse-ast-comptime [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSCons expr (SpSNil _) _)
+      (match (parse-ast-expr dispatch expr)
+        [(OkAstExpr parsed-expr) (OkAstExpr (AstExprComptime parsed-expr))]
+        [(ErrAstExpr message) (ErrAstExpr message)])]
+    [_ (ErrAstExpr "parse: comptime expects exactly one expression")]))
+
 (define (parse-ast-match-arm [dispatch : SymI64Env] [s : SpannedSexpr]) : ResultAstMatchArm
   (match s
     [(SpSCons pattern (SpSCons body (SpSNil _) _) _)
@@ -1345,7 +1367,11 @@
                                     tag
                                     (compiler-parse-tag-expr-struct-get))
                                     (parse-ast-struct-get dispatch rest)
-                                    (parse-ast-call dispatch head rest)))))))))))))))))))
+                                    (if (=
+                                      tag
+                                      (compiler-parse-tag-expr-comptime))
+                                      (parse-ast-comptime dispatch rest)
+                                      (parse-ast-call dispatch head rest))))))))))))))))))))
 
 (define (parse-ast-list-expr
   [dispatch : SymI64Env]

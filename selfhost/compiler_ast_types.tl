@@ -160,7 +160,10 @@
   (AstExprCast AstExpr AstType)
   (AstExprMatch AstExpr AstMatchArmList)
   (AstExprForeach String AstType AstExpr AstExpr AstExpr)
-  (AstExprStructGet AstExpr String))
+  (AstExprStructGet AstExpr String)
+  ;; Reserved compile-time evaluation form `(comptime expr)` (#718). Parsed and
+  ;; type-checked (as the inner expression's type); evaluation lands in #719.
+  (AstExprComptime AstExpr))
 
 (defenum AstExprList
   (AstExprNil)
@@ -231,7 +234,8 @@
     [(AstExprCast _ _) 21]
     [(AstExprMatch _ _) 22]
     [(AstExprForeach _ _ _ _ _) 23]
-    [(AstExprStructGet _ _) 24]))
+    [(AstExprStructGet _ _) 24]
+    [(AstExprComptime _) 25]))
 
 (define (ast-expr-unspan [expr : AstExpr]) : AstExpr
   (match expr

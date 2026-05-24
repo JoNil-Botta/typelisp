@@ -1083,6 +1083,13 @@
       (lower-array-ref ctx state env type-env arr index)]
     [(AstExprArraySet arr index value)
       (lower-array-set ctx state env type-env arr index value)]
+    ;; `(comptime expr)` is parsed and type-checked (#718) but not yet evaluated;
+    ;; CTFE + folding to a literal lands in #719.
+    [(AstExprComptime _)
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr
+          origin
+          "lower: comptime evaluation not yet implemented (#719)"))]
     [_
       (ErrLowerExpr
         (lower-diagnostic-at-expr origin "lower: unsupported expression"))]))
@@ -3207,6 +3214,13 @@
   "(define (main) : (Tuple i64 bool)
   (tuple 1 true))")
 
+;; `(comptime expr)` parses and type-checks (inner type), but lowering reserves
+
+;; it until the evaluator (#719) lands (#718).
+
+(define (compiler-lower-comptime-reserved-source) : String
+  "(define (main) : i64 (comptime (+ 1 2)))")
+
 (define (compiler-lower-error-ok? [src : String] [want : String]) : bool
   (match (lower-compiler-source src)
     [(ErrCompilerLower diag)
@@ -3676,9 +3690,13 @@
                             (compiler-lower-error-ok?
                               (compiler-typecheck-branch-mismatch-source)
                               "typecheck: if branches must match")
-                            (compiler-lower-error-ok?
-                              (compiler-lower-unsupported-source)
-                              "lower: unsupported expression"))))))))))))))
+                            (and
+                              (compiler-lower-error-ok?
+                                (compiler-lower-unsupported-source)
+                                "lower: unsupported expression")
+                              (compiler-lower-error-ok?
+                                (compiler-lower-comptime-reserved-source)
+                                "lower: comptime evaluation not yet implemented (#719)")))))))))))))))
     42
     (begin
       (panic "lower: smoke score mismatch")

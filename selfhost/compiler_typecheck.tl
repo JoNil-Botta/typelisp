@@ -1578,6 +1578,11 @@
 (define (compiler-typecheck-string-index-source) : String
   "(define (main) : char (string-ref \"hi\" true))")
 
+(define (compiler-typecheck-string-shadow-source) : String
+  "(define (string-ref [a : i64] [b : i64]) : i64 (+ a b))
+(define (char-at [a : i64] [b : i64]) : i64 (* a b))
+(define (main) : i64 (+ (string-ref 10 7) (char-at 3 4)))")
+
 (define (compiler-typecheck-cast-bad-source) : String
   "(define (main) : i64 (cast true : i64))")
 
@@ -1609,16 +1614,20 @@
                 (compiler-typecheck-string-index-source)
                 "typecheck: string index must be integer")
               (and
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-cast-bad-source)
-                  "typecheck: cast requires integer/char source and target")
+                (compiler-typecheck-ok-score?
+                  (compiler-typecheck-string-shadow-source)
+                  30)
                 (and
                   (compiler-typecheck-error-ok?
-                    (compiler-typecheck-foreach-body-source)
-                    "typecheck: foreach body must be unit")
-                  (compiler-typecheck-error-ok?
-                    (compiler-typecheck-lambda-ret-source)
-                    "typecheck: lambda return type mismatch"))))))))))
+                    (compiler-typecheck-cast-bad-source)
+                    "typecheck: cast requires integer/char source and target")
+                  (and
+                    (compiler-typecheck-error-ok?
+                      (compiler-typecheck-foreach-body-source)
+                      "typecheck: foreach body must be unit")
+                    (compiler-typecheck-error-ok?
+                      (compiler-typecheck-lambda-ret-source)
+                      "typecheck: lambda return type mismatch")))))))))))
 
 (define (compiler-typecheck-nominal-source) : String
   "(defenum Maybe (None) (Some i64))

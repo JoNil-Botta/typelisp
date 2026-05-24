@@ -260,6 +260,42 @@ fn native_cases() -> Vec<Case> {
             &["doc_render.tl", "doc_extract.tl", "format_tokens.tl"],
         ),
         case_with_args("argv", 7, "alpha\n", &["alpha", "beta"]),
+        // refs #538: fixtures mirrored from tests/integration.rs so the Windows
+        // native suite tracks the Linux integration suite. Exit codes/deps match
+        // the corresponding `Case` in integration.rs. (`with_region_*` stay
+        // Linux-only by design — region reclaim is linux-x86_64 System V only.)
+        case("comptime_scalar", 3, ""),
+        case("f32_scalar", 42, ""),
+        case("spmd_reduce_scalar", 42, ""),
+        case("lambda_capture_scalar", 42, ""),
+        case("lambda_capture_tuple", 42, ""),
+        case("lambda_capture_aggregate", 42, ""),
+        case("lambda_capture_struct_enum", 42, ""),
+        case("lambda_capture_nested_aggregate", 42, ""),
+        case("lambda_capture_fixed_array", 42, ""),
+        case("lambda_capture_fixed_array_aggregate", 42, ""),
+        case_with_deps("lex_span_smoke", 42, "", &["lex.tl", "token.tl"]),
+        case_with_deps(
+            "compiler_optimize_smoke",
+            42,
+            "",
+            &[
+                "compiler_optimize.tl",
+                "compiler_ir_types.tl",
+                "compiler_ast_types.tl",
+            ],
+        ),
+        case_with_deps(
+            "compiler_regalloc_smoke",
+            42,
+            "",
+            &[
+                "compiler_regalloc.tl",
+                "compiler_liveness.tl",
+                "compiler_ir_types.tl",
+                "compiler_ast_types.tl",
+            ],
+        ),
     ]
 }
 
@@ -365,7 +401,10 @@ fn source_path_for_case(manifest_dir: &Path, name: &str) -> PathBuf {
         "compiler_typecheck_smoke" => "compiler_typecheck_smoke.tl",
         "compiler_lower_smoke" => "compiler_lower_smoke.tl",
         "compiler_liveness_smoke" => "compiler_liveness_smoke.tl",
+        "compiler_optimize_smoke" => "compiler_optimize_smoke.tl",
+        "compiler_regalloc_smoke" => "compiler_regalloc_smoke.tl",
         "compiler_backend_smoke" => "compiler_backend_smoke.tl",
+        "lex_span_smoke" => "lex_span_smoke.tl",
         "doc_extract_smoke" => "doc_extract_smoke.tl",
         "doc_render_smoke" => "doc_render_smoke.tl",
         _ => panic!("no TypeLisp source path configured for Windows native case {name}"),

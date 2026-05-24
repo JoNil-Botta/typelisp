@@ -1543,6 +1543,8 @@ fn selfhost_backend_runtime_helpers_emit_assemble_link_and_run() {
     for snippet in [
         ".globl tl_alloc\n",
         "\ntl_alloc:\n",
+        "tl_current_arena:\n",
+        "    movq tl_current_arena(%rip)",
         ".globl tl_oob_abort\n",
         "\ntl_oob_abort:\n",
         ".globl tl_substring\n",

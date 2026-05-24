@@ -2986,13 +2986,23 @@
               "\n"
               (compiler-backend-emit-externs rest plan)))])]))
 
-(define (compiler-backend-runtime-alloc-data) : String
-  "    .section .rodata
+(define (compiler-backend-runtime-alloc-data-for-target
+  [target : CompilerBackendTarget]) : String
+  (string-append
+    (if (compiler-backend-target-windows? target)
+      ""
+      "    .section .bss
+    .balign 8
+tl_current_arena:
+    .zero 8
+
+")
+    "    .section .rodata
 .L_tl_alloc_msg:
     .byte 116,108,58,32,97,108,108,111,99,97,116,105,111,110,32,102,97,105,108,101,100,10
     .set .L_tl_alloc_msg_len, . - .L_tl_alloc_msg
 
-")
+"))
 
 (define (compiler-backend-runtime-oob-data) : String
   "    .section .rodata
@@ -3115,7 +3125,7 @@
         flush-stdout)
       (string-append
         (if alloc
-          (compiler-backend-runtime-alloc-data)
+          (compiler-backend-runtime-alloc-data-for-target target)
           "")
         (string-append
           (if oob
@@ -3144,11 +3154,30 @@ tl_alloc:
     addq $7, %rdi
     jc .L_tl_alloc_abort
     andq $-8, %rdi
-    cmpq $0, %rdi
-    jne .L_tl_alloc_size_ready
-    movq $8, %rdi
-.L_tl_alloc_size_ready:
     movq %rdi, %rsi
+    movq tl_current_arena(%rip), %r8
+    testq %r8, %r8
+    jz .L_tl_alloc_new_arena
+    movq 16(%r8), %rax
+    movq %rax, %rcx
+    addq %rsi, %rcx
+    jc .L_tl_alloc_abort
+    cmpq 24(%r8), %rcx
+    ja .L_tl_alloc_new_arena
+    movq %rcx, 16(%r8)
+    ret
+.L_tl_alloc_new_arena:
+    movq $0x4000000, %rdx
+    movq %rsi, %rcx
+    addq $32, %rcx
+    jc .L_tl_alloc_abort
+    cmpq %rdx, %rcx
+    jbe .L_tl_alloc_len_ready
+    movq %rcx, %rdx
+.L_tl_alloc_len_ready:
+    push %rdx
+    push %rsi
+    movq %rdx, %rsi
     xorq %rdi, %rdi
     movq $3, %rdx
     movq $0x22, %r10
@@ -3156,8 +3185,23 @@ tl_alloc:
     xorq %r9, %r9
     movq $9, %rax
     syscall
+    pop %rsi
+    pop %rdx
     testq %rax, %rax
     js .L_tl_alloc_abort
+    movq %rax, %rcx
+    addq %rdx, %rcx
+    jc .L_tl_alloc_abort
+    movq tl_current_arena(%rip), %r8
+    movq %r8, 0(%rax)
+    leaq 32(%rax), %r8
+    movq %r8, 8(%rax)
+    movq %rcx, 24(%rax)
+    movq %r8, %rcx
+    addq %rsi, %rcx
+    movq %rcx, 16(%rax)
+    movq %rax, tl_current_arena(%rip)
+    movq %r8, %rax
     ret
 .L_tl_alloc_abort:
     movq $1, %rax
@@ -4835,11 +4879,13 @@ tl_string_concat:
       (let ([base-labels
           :
           bool
-          (backend-and4
-            (compiler-backend-string-contains? asm ".globl tl_alloc\n")
-            (compiler-backend-string-contains? asm "tl_alloc:\n")
-            (compiler-backend-string-contains? asm ".globl tl_oob_abort\n")
-            (compiler-backend-string-contains? asm "tl_oob_abort:\n"))]
+          (and
+            (backend-and4
+              (compiler-backend-string-contains? asm ".globl tl_alloc\n")
+              (compiler-backend-string-contains? asm "tl_alloc:\n")
+              (compiler-backend-string-contains? asm ".globl tl_oob_abort\n")
+              (compiler-backend-string-contains? asm "tl_oob_abort:\n"))
+            (compiler-backend-string-contains? asm "tl_current_arena:\n"))]
         [string-labels
           :
           bool

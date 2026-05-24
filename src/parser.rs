@@ -12,6 +12,13 @@ pub struct ParseError {
     pub span: Span,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)] // Used by the REPL command added in follow-up issues.
+pub enum ReplItem {
+    Decl(Decl),
+    Expr(Expr),
+}
+
 impl ParseError {
     /// Render this error as a located `Diagnostic` (with the `E0100` parse-error
     /// code) so the CLI can print a snippet + caret.
@@ -110,9 +117,41 @@ impl<'a> Parser<'a> {
         Ok(Program { decls })
     }
 
+    #[allow(dead_code)] // Used by the REPL command added in follow-up issues.
+    pub fn parse_repl_item(&mut self) -> Result<ReplItem, ParseError> {
+        if self.current == Token::Eof {
+            return Err(ParseError {
+                msg: "expected REPL item, got EOF".into(),
+                span: self.span(),
+            });
+        }
+
+        let item = match &self.current {
+            Token::LParen => {
+                let start = self.span();
+                self.expect(Token::LParen)?;
+                match &self.current {
+                    Token::Define | Token::Extern | Token::Import => {
+                        ReplItem::Decl(self.parse_decl_after_open()?)
+                    }
+                    Token::Ident(s) if s == "defenum" || s == "defstruct" => {
+                        ReplItem::Decl(self.parse_decl_after_open()?)
+                    }
+                    _ => ReplItem::Expr(self.parse_list_expr_after_open(start)?),
+                }
+            }
+            _ => ReplItem::Expr(self.parse_expr()?),
+        };
+        self.expect_eof()?;
+        Ok(item)
+    }
+
     fn parse_decl(&mut self) -> Result<Decl, ParseError> {
         self.expect(Token::LParen)?;
+        self.parse_decl_after_open()
+    }
 
+    fn parse_decl_after_open(&mut self) -> Result<Decl, ParseError> {
         match &self.current {
             Token::Define => {
                 self.advance()?;
@@ -141,6 +180,18 @@ impl<'a> Parser<'a> {
                 ),
                 span: self.span(),
             }),
+        }
+    }
+
+    #[allow(dead_code)] // Used by the REPL parser entry point.
+    fn expect_eof(&self) -> Result<(), ParseError> {
+        if self.current == Token::Eof {
+            Ok(())
+        } else {
+            Err(ParseError {
+                msg: format!("unexpected trailing token: {:?}", self.current),
+                span: self.span(),
+            })
         }
     }
 
@@ -469,7 +520,10 @@ impl<'a> Parser<'a> {
     fn parse_list_expr(&mut self) -> Result<Expr, ParseError> {
         let start = self.span();
         self.expect(Token::LParen)?;
+        self.parse_list_expr_after_open(start)
+    }
 
+    fn parse_list_expr_after_open(&mut self, start: Span) -> Result<Expr, ParseError> {
         let (expr, end) = match &self.current {
             Token::If => {
                 self.advance()?;
@@ -844,6 +898,18 @@ pub fn parse_with_file_id(input: &str, file_id: u32) -> Result<Program, ParseErr
     parser.parse()
 }
 
+#[allow(dead_code)] // Used by the REPL command added in follow-up issues.
+pub fn parse_repl_item(input: &str) -> Result<ReplItem, ParseError> {
+    let mut parser = Parser::new(input)?;
+    parser.parse_repl_item()
+}
+
+#[allow(dead_code)] // Mirrors parse_with_file_id for future REPL diagnostics.
+pub fn parse_repl_item_with_file_id(input: &str, file_id: u32) -> Result<ReplItem, ParseError> {
+    let mut parser = Parser::new_with_file_id(input, file_id)?;
+    parser.parse_repl_item()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -885,6 +951,62 @@ mod tests {
     fn test_parse_import_requires_string() {
         // A bare identifier where the path string is expected is a parse error.
         assert!(parse("(import foo)").is_err());
+    }
+
+    #[test]
+    fn test_parse_repl_item_decl() {
+        let item = parse_repl_item("(define x : i64 42)").unwrap();
+        match item {
+            ReplItem::Decl(Decl::Def { name, ty, value }) => {
+                assert_eq!(name, "x");
+                assert_eq!(ty, Some(Type::I64));
+                assert_eq!(value.unspan(), &Expr::Literal(Literal::Int(42)));
+            }
+            other => panic!("expected REPL decl, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_repl_item_expr() {
+        let item = parse_repl_item("(+ 1 2)").unwrap();
+        match item {
+            ReplItem::Expr(expr) => match expr.unspan() {
+                Expr::Binary { op, .. } => assert_eq!(*op, BinOp::Add),
+                other => panic!("expected binary expression, got {:?}", other),
+            },
+            other => panic!("expected REPL expression, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_repl_item_bare_expr() {
+        let item = parse_repl_item("42").unwrap();
+        match item {
+            ReplItem::Expr(expr) => {
+                assert_eq!(expr.unspan(), &Expr::Literal(Literal::Int(42)));
+            }
+            other => panic!("expected REPL expression, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_repl_item_rejects_trailing_tokens() {
+        let err = parse_repl_item("42 43").unwrap_err();
+        assert!(
+            err.msg.contains("unexpected trailing token"),
+            "got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_parse_repl_item_reports_malformed_expr() {
+        let err = parse_repl_item("(+ 1)").unwrap_err();
+        assert!(
+            err.msg.contains("unexpected token in expression"),
+            "got: {}",
+            err
+        );
     }
 
     #[test]

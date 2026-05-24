@@ -616,6 +616,25 @@ impl TypeChecker {
         Ok(())
     }
 
+    #[allow(dead_code)] // Used by the REPL command added in follow-up issues.
+    pub fn check_repl_decl(session_decls: &[Decl], candidate: &Decl) -> Result<(), TypeError> {
+        let mut decls = session_decls.to_vec();
+        decls.push(candidate.clone());
+        let program = Program { decls };
+        let mut checker = Self::new();
+        checker.check_program(&program)
+    }
+
+    #[allow(dead_code)] // Used by the REPL command added in follow-up issues.
+    pub fn check_repl_expr(session_decls: &[Decl], expr: &Expr) -> Result<Type, TypeError> {
+        let program = Program {
+            decls: session_decls.to_vec(),
+        };
+        let mut checker = Self::new();
+        checker.check_program(&program)?;
+        checker.check_expr(expr)
+    }
+
     fn check_expr(&mut self, expr: &Expr) -> Result<Type, TypeError> {
         let span = expr.span();
         match expr.unspan() {
@@ -1820,13 +1839,75 @@ fn is_dyn_array_elem_supported(ty: &Type) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::parse;
+    use crate::parser::{ReplItem, parse, parse_repl_item};
+
+    fn repl_decl(src: &str) -> Decl {
+        match parse_repl_item(src).unwrap() {
+            ReplItem::Decl(decl) => decl,
+            other => panic!("expected REPL declaration, got {:?}", other),
+        }
+    }
+
+    fn repl_expr(src: &str) -> Expr {
+        match parse_repl_item(src).unwrap() {
+            ReplItem::Expr(expr) => expr,
+            other => panic!("expected REPL expression, got {:?}", other),
+        }
+    }
 
     #[test]
     fn test_typecheck_basic() {
         let prog = parse("(define x : i64 42)").unwrap();
         let mut tc = TypeChecker::new();
         assert!(tc.check_program(&prog).is_ok());
+    }
+
+    #[test]
+    fn test_check_repl_expr_uses_session_decls() {
+        let session = parse("(define answer : i64 41)").unwrap();
+        let expr = repl_expr("(+ answer 1)");
+
+        let ty = TypeChecker::check_repl_expr(&session.decls, &expr).unwrap();
+
+        assert_eq!(ty, Type::I64);
+    }
+
+    #[test]
+    fn test_check_repl_expr_error_does_not_mutate_session_decls() {
+        let session = parse("(define answer : i64 41)").unwrap();
+        let missing = repl_expr("(+ missing 1)");
+        let err = TypeChecker::check_repl_expr(&session.decls, &missing).unwrap_err();
+        assert!(
+            err.msg.contains("unbound variable: missing"),
+            "got: {}",
+            err
+        );
+        assert_eq!(session.decls.len(), 1);
+
+        let answer = repl_expr("answer");
+        let ty = TypeChecker::check_repl_expr(&session.decls, &answer).unwrap();
+        assert_eq!(ty, Type::I64);
+    }
+
+    #[test]
+    fn test_check_repl_decl_uses_session_decls() {
+        let session = parse("(define answer : i64 41)").unwrap();
+        let candidate = repl_decl("(define next : i64 (+ answer 1))");
+
+        assert!(TypeChecker::check_repl_decl(&session.decls, &candidate).is_ok());
+    }
+
+    #[test]
+    fn test_check_repl_decl_detects_duplicate_names() {
+        let session = parse("(define answer : i64 41)").unwrap();
+        let candidate = repl_decl("(define answer : i64 42)");
+
+        let err = TypeChecker::check_repl_decl(&session.decls, &candidate).unwrap_err();
+        assert!(
+            err.msg.contains("duplicate top-level name 'answer'"),
+            "got: {}",
+            err
+        );
     }
 
     #[test]

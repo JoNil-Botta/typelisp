@@ -71,6 +71,7 @@ fn compiler_ir_types_tl_compiles_to_assembly() {
         "_tl_compiler_ir_summary_instructions:",
         "_tl_compiler_ir_summary_vars:",
         "_tl_compiler_ir_summary_score:",
+        "_tl_compiler_ir_program_summary:",
     ] {
         assert_symbol(&asm, sym, "compiler_ir_types");
     }

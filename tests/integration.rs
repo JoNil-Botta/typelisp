@@ -908,7 +908,8 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         },
         // refs #446: selfhost compiler IR and first scalar lowerer. The smoke
         // parses, symbol-checks, typechecks, and lowers a small program with a
-        // direct call, let/set!, while, and if into a deterministic IR summary.
+        // direct call, let/set!, while, and if into a deterministic IR program
+        // whose summary is derived by walking the emitted payload.
         Case {
             name: "compiler_lower_smoke",
             exit_code: 42,

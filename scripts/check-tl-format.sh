@@ -16,12 +16,13 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-# `typelisp fmt` runs the self-hosted formatter as native code for the host
-# target (linux-x86_64 on Linux, windows-x86_64 on Windows via clang/lld-link).
+# `typelisp fmt` runs the self-hosted formatter as native code for the host.
 # Allow Linux and Windows (Git Bash / MSYS / MINGW / Cygwin) hosts so both CI
 # jobs run the check (#763); other hosts stay skipped.
+HOST_OS=linux
 case "$(uname -s)" in
-    Linux* | MINGW* | MSYS* | CYGWIN*) ;;
+    Linux*) HOST_OS=linux ;;
+    MINGW* | MSYS* | CYGWIN*) HOST_OS=windows ;;
     *)
         echo "TypeLisp format check is unsupported on this host (selfhost fmt runs native code)" >&2
         exit 0
@@ -33,6 +34,7 @@ if [ -n "${TYPELISP_BIN:-}" ]; then
 else
     cargo build --release --quiet
     COMPILER="$ROOT/target/release/typelisp"
+    [ "$HOST_OS" = windows ] && COMPILER="$COMPILER.exe"
 fi
 
 if [ ! -x "$COMPILER" ]; then

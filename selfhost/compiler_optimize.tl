@@ -150,6 +150,105 @@
        [(OptInstrResult new-env new-instr)
         (IrInstrCons new-instr (opt-fold-instrs new-env rest))])]))
 
+;; --- dead-code elimination (#544) --------------------------------------------
+;;
+;; Conservative DCE matching the Rust optimizer's first slice: collect every IR
+;; var id referenced as an operand anywhere in the function, then drop pure
+;; temporary-producing instructions (`Mov`/`BinOp`/`UnOp`/`Phi`) whose result is
+;; never used. Calls, stores, jumps, branches, and returns are kept regardless
+;; (they have side effects or drive control flow). The used set is gathered over
+;; the *whole function* before any removal, so a var used in another block is
+;; never dropped — no CFG analysis or unreachable-block removal is needed here.
+
+(defenum OptUsedSet
+  (OptUsedNil)
+  (OptUsedCons i64 OptUsedSet))
+
+(define (opt-used-contains [set : OptUsedSet] [var : i64]) : bool
+  (match set
+    [(OptUsedNil) false]
+    [(OptUsedCons id rest) (if (= id var) true (opt-used-contains rest var))]))
+
+(define (opt-used-add [set : OptUsedSet] [var : i64]) : OptUsedSet
+  (if (opt-used-contains set var) set (OptUsedCons var set)))
+
+(define (opt-collect-value-uses [set : OptUsedSet] [value : CompilerIrValue]) : OptUsedSet
+  (match value
+    [(IrValueVar id) (opt-used-add set id)]
+    [_ set]))
+
+(define (opt-collect-value-list-uses [set : OptUsedSet] [values : CompilerIrValueList]) : OptUsedSet
+  (match values
+    [(IrValueNil) set]
+    [(IrValueCons value rest)
+     (opt-collect-value-list-uses (opt-collect-value-uses set value) rest)]))
+
+(define (opt-collect-phi-uses [set : OptUsedSet] [inputs : CompilerIrPhiInputList]) : OptUsedSet
+  (match inputs
+    [(IrPhiInputNil) set]
+    [(IrPhiInputCons input rest)
+     (match input
+       [(IrPhiInput value _)
+        (opt-collect-phi-uses (opt-collect-value-uses set value) rest)])]))
+
+(define (opt-collect-instr-uses [set : OptUsedSet] [instr : CompilerIrInstr]) : OptUsedSet
+  (match instr
+    [(IrInstrMov _ src _) (opt-collect-value-uses set src)]
+    [(IrInstrBinOp _ _ l r _)
+     (opt-collect-value-uses (opt-collect-value-uses set l) r)]
+    [(IrInstrUnOp _ _ src _) (opt-collect-value-uses set src)]
+    [(IrInstrCall _ _ args _) (opt-collect-value-list-uses set args)]
+    [(IrInstrStore _ value _) (opt-collect-value-uses set value)]
+    [(IrInstrBranch cond _ _) (opt-collect-value-uses set cond)]
+    [(IrInstrReturn maybe)
+     (match maybe
+       [(IrSomeValue value) (opt-collect-value-uses set value)]
+       [(IrNoValue) set])]
+    [(IrInstrPhi _ inputs _) (opt-collect-phi-uses set inputs)]
+    [_ set]))
+
+(define (opt-collect-instrs-uses [set : OptUsedSet] [instrs : CompilerIrInstrList]) : OptUsedSet
+  (match instrs
+    [(IrInstrNil) set]
+    [(IrInstrCons instr rest)
+     (opt-collect-instrs-uses (opt-collect-instr-uses set instr) rest)]))
+
+(define (opt-collect-blocks-uses [set : OptUsedSet] [blocks : CompilerIrBlockList]) : OptUsedSet
+  (match blocks
+    [(IrBlockNil) set]
+    [(IrBlockCons block rest)
+     (match block
+       [(IrBlock _ instrs)
+        (opt-collect-blocks-uses (opt-collect-instrs-uses set instrs) rest)])]))
+
+;; A pure temporary-producing instruction is dead when its result var is unused.
+;; Calls (side-effecting) and control-flow instructions are never dead here.
+(define (opt-instr-dead? [set : OptUsedSet] [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(IrInstrMov dst _ _) (not (opt-used-contains set dst))]
+    [(IrInstrBinOp dst _ _ _ _) (not (opt-used-contains set dst))]
+    [(IrInstrUnOp dst _ _ _) (not (opt-used-contains set dst))]
+    [(IrInstrPhi dst _ _) (not (opt-used-contains set dst))]
+    [_ false]))
+
+(define (opt-dce-instrs [set : OptUsedSet] [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (match instrs
+    [(IrInstrNil) (IrInstrNil)]
+    [(IrInstrCons instr rest)
+     (if (opt-instr-dead? set instr)
+         (opt-dce-instrs set rest)
+         (IrInstrCons instr (opt-dce-instrs set rest)))]))
+
+(define (opt-dce-block [set : OptUsedSet] [block : CompilerIrBlock]) : CompilerIrBlock
+  (match block
+    [(IrBlock label instrs) (IrBlock label (opt-dce-instrs set instrs))]))
+
+(define (opt-dce-block-list [set : OptUsedSet] [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) (IrBlockNil)]
+    [(IrBlockCons block rest)
+     (IrBlockCons (opt-dce-block set block) (opt-dce-block-list set rest))]))
+
 (define (optimize-block [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(IrBlock label instrs) (IrBlock label (opt-fold-instrs (OptConstNil) instrs))]))
@@ -163,7 +262,11 @@
 (define (optimize-function [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
     [(IrFunction name params ret-ty frame blocks)
-     (IrFunction name params ret-ty frame (optimize-block-list blocks))]))
+     ;; Fold first (folding can turn used temporaries dead), then collect uses
+     ;; across the folded function and eliminate dead pure assignments.
+     (let ([folded : CompilerIrBlockList (optimize-block-list blocks)])
+       (let ([used : OptUsedSet (opt-collect-blocks-uses (OptUsedNil) folded)])
+         (IrFunction name params ret-ty frame (opt-dce-block-list used folded))))]))
 
 (define (optimize-function-list [funcs : CompilerIrFunctionList]) : CompilerIrFunctionList
   (match funcs
@@ -232,3 +335,32 @@
                   3)
               2)
           1))))
+
+;; Builds `[Mov v0=99 (unused), Call v1 = noop(), Return v1]`. `v0` is a dead
+;; pure temporary; `v1` is produced by a side-effecting call and used by the
+;; return, so DCE must drop only `v0`'s Mov (3 instrs -> 2).
+(define (opt-dce-self-test-instrs) : CompilerIrInstrList
+  (IrInstrCons (IrInstrMov 0 (IrValueI64 99) (AstTyI64))
+    (IrInstrCons (IrInstrCall 1 "noop" (IrValueNil) (AstTyI64))
+      (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+        (IrInstrNil)))))
+
+;; Returns 42 when DCE keeps the used call result `v1` and the side-effecting
+;; instructions, drops the unused `v0`, and is idempotent on a second pass.
+(define (compiler-optimize-dce-self-test) : i64
+  (let ([instrs : CompilerIrInstrList (opt-dce-self-test-instrs)])
+    (let ([used : OptUsedSet (opt-collect-instrs-uses (OptUsedNil) instrs)])
+      (let ([cleaned : CompilerIrInstrList (opt-dce-instrs used instrs)])
+        (let ([again : CompilerIrInstrList
+                (opt-dce-instrs (opt-collect-instrs-uses (OptUsedNil) cleaned) cleaned)])
+          (if (opt-used-contains used 1)
+              (if (not (opt-used-contains used 0))
+                  (if (= (compiler-ir-instr-list-count instrs) 3)
+                      (if (= (compiler-ir-instr-list-count cleaned) 2)
+                          (if (= (compiler-ir-instr-list-count again) 2)
+                              42
+                              4)
+                          3)
+                      2)
+                  1)
+              0))))))

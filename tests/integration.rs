@@ -1132,12 +1132,24 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
     );
 
     let input_path = work_dir.join("input.tl");
+    let helper_path = work_dir.join("helper.tl");
+    let shared_path = work_dir.join("shared.tl");
     let asm_path = work_dir.join("generated.s");
     let asm_again_path = work_dir.join("generated-again.s");
     let obj_path = work_dir.join("generated.o");
     let bin_path = work_dir.join("generated");
-    fs::write(&input_path, "(define (main) : i64 42)\n")
-        .expect("write compiler_driver input fixture");
+    fs::write(&shared_path, "(define shared : i64 2)\n")
+        .expect("write compiler_driver shared fixture");
+    fs::write(
+        &helper_path,
+        "(import \"shared.tl\")\n(define (helper) : i64 (+ 38 shared))\n",
+    )
+    .expect("write compiler_driver imported fixture");
+    fs::write(
+        &input_path,
+        "(import \"helper.tl\")\n(import \"shared.tl\")\n(define (main) : i64 (+ (helper) shared))\n",
+    )
+    .expect("write compiler_driver input fixture");
 
     for output_path in [&asm_path, &asm_again_path] {
         let run = Command::new(&driver_bin)
@@ -1170,8 +1182,11 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
     assert_eq!(asm_again, asm, "compiler_driver output changed across runs");
     for snippet in [
         ".text\n.globl _start\n",
+        "shared:\n",
+        "helper:\n",
         "main:\n",
-        "    movq $42, %rax\n",
+        "    call helper\n",
+        "shared(%rip)",
         "_start:\n    call main\n",
     ] {
         assert!(

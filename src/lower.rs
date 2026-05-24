@@ -1365,7 +1365,7 @@ impl FnLowerer {
                 Type::String | Type::DynArray(_) => {
                     self.snapshot_fat_value_to_heap(&handle, capture.ty.clone())
                 }
-                ty @ (Type::Tuple(_) | Type::Struct(_) | Type::Enum(_)) => {
+                ty @ (Type::Tuple(_) | Type::Struct(_) | Type::Enum(_) | Type::Array(_, _)) => {
                     self.snapshot_storage_to_heap(&handle, ty)
                 }
                 _ => handle,
@@ -1462,9 +1462,19 @@ impl FnLowerer {
                 ast::StructRegistry::struct_size_for_types(&field_tys)
             }
             Type::Enum(name) => self.enum_storage_size(name),
+            Type::Array(elem, n) => self.resolve_type(elem).size() * n,
             other => other.size(),
         };
-        let dst = self.reserve_aggregate_storage(size.max(1), storage_ty, true);
+        // The heap copy is a pointer-sized handle to the snapshotted storage. A
+        // fixed-array *value* is a pointer to inline storage but `Type::Array` is
+        // not pointer-sized for Gep validation, so reserve the copy with a
+        // pointer-sized handle type; the capture-load reconstructs the array
+        // view (via `fixed_array_types`) when the value is read inside the body.
+        let handle_ty = match &storage_ty {
+            Type::Array(_, _) => Type::U64,
+            _ => storage_ty.clone(),
+        };
+        let dst = self.reserve_aggregate_storage(size.max(1), handle_ty, true);
         self.copy_storage_bytes(handle, &dst, size);
         dst
     }

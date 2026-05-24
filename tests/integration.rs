@@ -190,6 +190,12 @@ fn type_lisp_programs_compile_link_and_run() {
             deps: &[],
         },
         Case {
+            name: "lambda_capture_fixed_array",
+            exit_code: 42,
+            stdout: "",
+            deps: &[],
+        },
+        Case {
             name: "lambda_aggregate_returns",
             exit_code: 42,
             stdout: "",

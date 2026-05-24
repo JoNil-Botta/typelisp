@@ -606,10 +606,11 @@ impl TypeChecker {
         // enum, function) would need a deep copy of the nested handle and stays
         // rejected.
         //
-        // Fixed `(Array T N)` capture stays rejected for now: unlike a tuple, a
-        // fixed-array value is inline storage the backend does not treat as a
-        // pointer-sized handle, so the storage-snapshot path is not wired yet
-        // (representation gap tracked in #435).
+        // A fixed `(Array T N)` value is a pointer to inline element storage of a
+        // statically known size; when the element type is a scalar, the lowerer
+        // shallow-copies that storage onto the heap and reconstructs the array
+        // view on capture-load, so the capture cannot dangle (#571). Arrays with
+        // an aggregate element type would need a deep copy and stay rejected.
         match self.resolve_type(ty) {
             Type::I64
             | Type::I32
@@ -626,6 +627,7 @@ impl TypeChecker {
             | Type::String
             | Type::DynArray(_) => true,
             Type::Tuple(elems) => elems.iter().all(|elem| self.capture_shallow_scalar(elem)),
+            Type::Array(elem, _) => self.capture_shallow_scalar(&elem),
             Type::Struct(name) => match self.structs.fields(&name) {
                 Some(fields) => {
                     let tys: Vec<Type> = fields.iter().map(|f| f.ty.clone()).collect();
@@ -1290,7 +1292,7 @@ impl TypeChecker {
                     if !self.capture_type_supported(&ty) {
                         return Err(TypeError::at(
                             format!(
-                                "capturing value '{}' of type {} is not yet supported; capture scalar, function, String, dynamic-array, or scalar-field tuple/struct/enum values only (fixed-array and aggregate-field capture is tracked in #435)",
+                                "capturing value '{}' of type {} is not yet supported; capture scalar, function, String, dynamic-array, or scalar-field tuple/struct/enum/array values only (aggregate-field/element capture is tracked in #435)",
                                 captured, ty
                             ),
                             *span,
@@ -3237,16 +3239,37 @@ mod tests {
     }
 
     #[test]
-    fn test_typecheck_fixed_array_capture_still_rejected() {
-        // A fixed array is inline storage that the backend does not treat as a
-        // pointer-sized handle, so the storage-snapshot path is not wired and
-        // capture stays rejected (#542 ships scalar tuples; the fixed-array
-        // representation gap is tracked in #435).
+    fn test_typecheck_scalar_fixed_array_capture_ok() {
+        // A fixed array of scalars is a pointer to inline POD storage; the
+        // lowerer shallow-copies that storage onto the heap and reconstructs the
+        // array view on capture-load, so the capture cannot dangle (#571).
         let prog = parse(
             r#"
             (define (main) : i64
               (let ([a : (Array i64 3) (array 1 2 3)]
                     [f : (-> i64) (lambda () : i64 (array-ref a 0))])
+                (f)))
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        assert!(
+            tc.check_program(&prog).is_ok(),
+            "{:?}",
+            tc.check_program(&prog)
+        );
+    }
+
+    #[test]
+    fn test_typecheck_aggregate_element_fixed_array_capture_rejected() {
+        // A fixed array whose element is itself an aggregate (here `String`)
+        // would need a deep copy of the inner handles, so it stays rejected
+        // (#571/#435).
+        let prog = parse(
+            r#"
+            (define (main) : i64
+              (let ([a : (Array String 2) (array "x" "y")]
+                    [f : (-> i64) (lambda () : i64 (string-length (array-ref a 0)))])
                 (f)))
             "#,
         )

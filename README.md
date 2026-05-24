@@ -193,10 +193,10 @@ struct field.
 Named top-level functions and `lambda` literals can be passed as pointer-sized
 closure descriptor values. Non-capturing lambdas use static descriptors.
 Capturing lambdas snapshot supported captures into heap environments: scalars,
-function values, `String`, dynamic arrays, and scalar-field tuples, structs, and
-enums (the aggregate captures snapshot their storage onto the heap so the
-environment can outlive the creating frame). Fixed-array captures, aggregates
-with non-scalar fields, and mutation of captured names are still rejected.
+function values, `String`, dynamic arrays, and scalar-field tuples, structs,
+enums, and fixed arrays (the aggregate captures snapshot their storage onto the
+heap so the environment can outlive the creating frame). Aggregates with
+non-scalar fields/elements, and mutation of captured names, are still rejected.
 SPMD/SIMD `foreach` is documented in [SPEC.md section 5.15](SPEC.md). The
 compiler parses and type-checks the first source form and lowers it to scalar
 reference loops; `--backend-mode avx2` supports a first contiguous map/zip
@@ -307,8 +307,8 @@ x86_64 Linux/Windows backend targets. Integers, floats (`f64`), bool/char/unit,
 `extern`, multi-file modules, scalar `foreach`, and an initial AVX2 `foreach`
 map/zip path all compile to native code. See the
 [project roadmap](https://github.com/JoNil-Botta/typelisp/issues/8) and
-[SPEC.md §8](SPEC.md) for what is not yet supported (fixed-array and
-aggregate-field captures, tail calls, tuple/fixed-array by-value returns, `f32`
+[SPEC.md §8](SPEC.md) for what is not yet supported (aggregate-field/element
+captures, tail calls, tuple/fixed-array by-value returns, `f32`
 codegen, general GC/free, ownership/borrowing, and later SPMD/SIMD
 reductions/cross-lane work).
 

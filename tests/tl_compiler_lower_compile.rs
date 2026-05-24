@@ -98,7 +98,11 @@ fn compiler_lower_tl_compiles_to_assembly() {
         "_tl_lower_call:",
         "_tl_lower_stdio_builtin_question:",
         "_tl_lower_stdio_runtime_name:",
+        "_tl_lower_construct_enum_with_handle:",
+        "_tl_lower_construct_struct:",
+        "_tl_lower_struct_get:",
         "_tl_lower_args:",
+        "_tl_lower_args_as:",
         "_tl_lower_let_bindings:",
         "_tl_lower_begin:",
         "_tl_lower_if:",
@@ -125,6 +129,8 @@ fn compiler_lower_tl_compiles_to_assembly() {
         ".L_tl_read_stdin_bytes",
         ".L_tl_stdin_eof",
         ".L_tl_flush_stdout",
+        "(defstruct Point (x i64) (y i64))",
+        "(struct-get p y)",
     ] {
         assert_message(&asm, message, "compiler_lower");
     }

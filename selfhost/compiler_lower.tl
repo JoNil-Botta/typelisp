@@ -1,8 +1,9 @@
 ;; compiler_lower.tl - First selfhost compiler AST-to-IR lowering slice (#446).
 ;;
 ;; The lowerer accepts the checked scalar subset and builds a deterministic
-;; CompilerIrProgram. Aggregate, closure, match, and backend emission lowering
-;; remain explicit future work.
+;; CompilerIrProgram. It also covers scalar match and heap-backed struct/enum
+;; construction/projection; closure, array, and enum-match lowering remain
+;; explicit future work.
 
 (import "compiler_typecheck.tl")
 (import "compiler_ir_types.tl")
@@ -27,6 +28,10 @@
   (OkLowerArgs LowerState CompilerIrValueList)
   (ErrLowerArgs String))
 
+(defenum ResultLowerState
+  (OkLowerState LowerState)
+  (ErrLowerState String))
+
 (defenum ResultLowerEnv
   (OkLowerEnv LowerState SymI64Env TcTypeEnv)
   (ErrLowerEnv String))
@@ -46,6 +51,13 @@
 (defenum ResultCompilerLower
   (OkCompilerLower CompilerIrProgram)
   (ErrCompilerLower String))
+
+(defenum LowerFieldInfo
+  (LowerFieldInfo i64 AstType))
+
+(defenum ResultLowerFieldInfo
+  (OkLowerFieldInfo LowerFieldInfo)
+  (ErrLowerFieldInfo String))
 
 (define (lower-instr-list-append [instrs : CompilerIrInstrList] [instr : CompilerIrInstr]) : CompilerIrInstrList
   (match instrs
@@ -164,6 +176,184 @@
     [(AstUnNot) IrUnNot]
     [(AstUnBitNot) IrUnBitNot]))
 
+(define (lower-align-up [n : i64] [align : i64]) : i64
+  (if (<= align 1)
+      n
+      (* (/ (+ n (- align 1)) align) align)))
+
+(define (lower-type-size [ctx : TcContext] [ty : AstType]) : i64
+  (match (tc-resolve-type ctx ty)
+    [(AstTyI64) 8]
+    [(AstTyU64) 8]
+    [(AstTyF64) 8]
+    [(AstTyI32) 4]
+    [(AstTyU32) 4]
+    [(AstTyF32) 4]
+    [(AstTyI16) 2]
+    [(AstTyU16) 2]
+    [(AstTyI8) 1]
+    [(AstTyU8) 1]
+    [(AstTyBool) 1]
+    [(AstTyChar) 1]
+    [(AstTyUnit) 0]
+    [(AstTyNever) 0]
+    [(AstTyFunc _ _) 8]
+    [(AstTyTuple _) 8]
+    [(AstTyArray elem count) (* (lower-type-size ctx elem) count)]
+    [(AstTyDynArray _) 8]
+    [(AstTyEnum _) 8]
+    [(AstTyStruct _) 8]
+    [(AstTyString) 8]
+    [(AstTyVar _) 8]))
+
+(define (lower-type-align [ctx : TcContext] [ty : AstType]) : i64
+  (match (tc-resolve-type ctx ty)
+    [(AstTyI64) 8]
+    [(AstTyU64) 8]
+    [(AstTyF64) 8]
+    [(AstTyI32) 4]
+    [(AstTyU32) 4]
+    [(AstTyF32) 4]
+    [(AstTyI16) 2]
+    [(AstTyU16) 2]
+    [(AstTyI8) 1]
+    [(AstTyU8) 1]
+    [(AstTyBool) 1]
+    [(AstTyChar) 1]
+    [(AstTyUnit) 1]
+    [(AstTyNever) 1]
+    [(AstTyFunc _ _) 8]
+    [(AstTyTuple _) 8]
+    [(AstTyArray elem _) (lower-type-align ctx elem)]
+    [(AstTyDynArray _) 8]
+    [(AstTyEnum _) 8]
+    [(AstTyStruct _) 8]
+    [(AstTyString) 8]
+    [(AstTyVar _) 8]))
+
+(define (lower-type-list-extent [ctx : TcContext] [types : AstTypeList] [cursor : i64]) : i64
+  (match types
+    [(AstTypeNil) cursor]
+    [(AstTypeCons ty rest)
+     (let ([resolved : AstType (tc-resolve-type ctx ty)])
+       (let ([offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))])
+         (lower-type-list-extent
+           ctx
+           rest
+           (+ offset (lower-type-size ctx resolved)))))]))
+
+(define (lower-type-list-storage-size [ctx : TcContext] [types : AstTypeList]) : i64
+  (let ([extent : i64 (lower-type-list-extent ctx types 0)])
+    (lower-align-up (if (= extent 0) 1 extent) 8)))
+
+(define (lower-variant-storage-size [ctx : TcContext] [variant : AstVariantDef]) : i64
+  (match variant
+    [(AstVariantDef _ fields)
+     (lower-align-up (lower-type-list-extent ctx fields 8) 8)]))
+
+(define (lower-enum-variants-storage-size [ctx : TcContext] [variants : AstVariantDefList] [max-size : i64]) : i64
+  (match variants
+    [(AstVariantDefNil) max-size]
+    [(AstVariantDefCons variant rest)
+     (let ([size : i64 (lower-variant-storage-size ctx variant)])
+       (lower-enum-variants-storage-size
+         ctx
+         rest
+         (if (> size max-size) size max-size)))]))
+
+(define (lower-enum-storage-size [ctx : TcContext] [enum-name : String]) : i64
+  (match ctx
+    [(TcContext program _ _)
+     (match (tc-program-enum-variants program enum-name)
+       [(OkAstVariantDefList variants) (lower-enum-variants-storage-size ctx variants 8)]
+       [(ErrAstVariantDefList _) 8])]))
+
+(define (lower-struct-fields [ctx : TcContext] [struct-name : String]) : ResultAstFieldDefList
+  (match ctx
+    [(TcContext program symbols _)
+     (match (compiler-symbols-lookup-type symbols struct-name)
+       [(SomeI64 handle)
+        (if (= (compiler-symbol-handle-kind handle) (compiler-symbol-kind-defstruct))
+            (match (compiler-program-decl-at-index program (compiler-symbol-handle-index handle))
+              [(OkAstDecl decl)
+               (match decl
+                 [(AstDeclDefStruct _ fields) (OkAstFieldDefList fields)]
+                 [_ (ErrAstFieldDefList "lower: struct symbol owner is not a struct")])]
+              [(ErrAstDecl message) (ErrAstFieldDefList message)])
+            (ErrAstFieldDefList (string-append "lower: unknown struct " struct-name)))]
+       [(NoneI64) (ErrAstFieldDefList (string-append "lower: unknown struct " struct-name))])]))
+
+(define (lower-reserve-heap-storage [state : LowerState] [size : i64] [ty : AstType]) : LowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc allocated var-id)
+     (LowerExpr
+       (lower-state-emit
+         allocated
+         (IrInstrCall
+           var-id
+           "tl_alloc"
+           (IrValueCons (IrValueI64 size) IrValueNil)
+           ty))
+       (IrValueVar var-id)
+       ty)]))
+
+(define (lower-gep-byte [state : LowerState] [base : CompilerIrValue] [offset : i64]) : LowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc allocated var-id)
+     (LowerExpr
+       (lower-state-emit
+         allocated
+         (IrInstrGep var-id base (IrValueI64 offset) (AstTyU8)))
+       (IrValueVar var-id)
+       (AstTyU64))]))
+
+(define (lower-store-at-offset [state : LowerState] [base : CompilerIrValue] [offset : i64] [value : CompilerIrValue] [ty : AstType]) : LowerState
+  (match (lower-gep-byte state base offset)
+    [(LowerExpr ptr-state ptr _)
+     (lower-state-emit ptr-state (IrInstrStorePtr ptr value ty))]))
+
+(define (lower-store-values [ctx : TcContext] [state : LowerState] [base : CompilerIrValue] [values : CompilerIrValueList] [types : AstTypeList] [cursor : i64]) : ResultLowerState
+  (match values
+    [(IrValueNil)
+     (match types
+       [(AstTypeNil) (OkLowerState state)]
+       [_ (ErrLowerState "lower: constructor arity mismatch")])]
+    [(IrValueCons value rest-values)
+     (match types
+       [(AstTypeCons ty rest-types)
+        (let ([resolved : AstType (tc-resolve-type ctx ty)])
+          (let ([offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))])
+            (lower-store-values
+              ctx
+              (lower-store-at-offset state base offset value resolved)
+              base
+              rest-values
+              rest-types
+              (+ offset (lower-type-size ctx resolved)))))]
+       [(AstTypeNil) (ErrLowerState "lower: constructor arity mismatch")])]))
+
+(define (lower-field-info-from-list [ctx : TcContext] [fields : AstFieldDefList] [field-name : String] [cursor : i64]) : ResultLowerFieldInfo
+  (match fields
+    [(AstFieldDefNil)
+     (ErrLowerFieldInfo (string-append "lower: unknown struct field " field-name))]
+    [(AstFieldDefCons field rest)
+     (match field
+       [(AstFieldDef name ty)
+        (let ([resolved : AstType (tc-resolve-type ctx ty)])
+          (let ([offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))])
+            (if (string-eq name field-name)
+                (OkLowerFieldInfo (LowerFieldInfo offset resolved))
+                (lower-field-info-from-list
+                  ctx
+                  rest
+                  field-name
+                  (+ offset (lower-type-size ctx resolved))))))])]))
+
+(define (lower-struct-field-info [ctx : TcContext] [struct-name : String] [field-name : String]) : ResultLowerFieldInfo
+  (match (lower-struct-fields ctx struct-name)
+    [(OkAstFieldDefList fields) (lower-field-info-from-list ctx fields field-name 0)]
+    [(ErrAstFieldDefList message) (ErrLowerFieldInfo message)]))
+
 (define (lower-var [state : LowerState] [env : SymI64Env] [name : String] [ty : AstType]) : ResultLowerExpr
   (match (sym-i64-lookup env name)
     [(SomeI64 id) (lower-materialize state (IrValueVar id) ty)]
@@ -199,6 +389,95 @@
               ".L_tl_stdin_eof"
               ".L_tl_flush_stdout"))))
 
+(define (lower-args-as [ctx : TcContext] [state : LowerState] [env : SymI64Env] [type-env : TcTypeEnv] [args : AstExprList] [types : AstTypeList]) : ResultLowerArgs
+  (match args
+    [(AstExprNil)
+     (match types
+       [(AstTypeNil) (OkLowerArgs state IrValueNil)]
+       [_ (ErrLowerArgs "lower: constructor arity mismatch")])]
+    [(AstExprCons arg rest-args)
+     (match types
+       [(AstTypeCons _ rest-types)
+        (match (lower-expr ctx state env type-env arg)
+          [(OkLowerExpr lowered)
+           (match lowered
+             [(LowerExpr arg-state value _)
+              (match (lower-args-as ctx arg-state env type-env rest-args rest-types)
+                [(OkLowerArgs rest-state rest-values)
+                 (OkLowerArgs rest-state (IrValueCons value rest-values))]
+                [(ErrLowerArgs message) (ErrLowerArgs message)])])]
+          [(ErrLowerExpr message) (ErrLowerArgs message)])]
+       [(AstTypeNil) (ErrLowerArgs "lower: constructor arity mismatch")])]))
+
+(define (lower-construct-enum-with-handle [ctx : TcContext] [state : LowerState] [env : SymI64Env] [type-env : TcTypeEnv] [variant-name : String] [handle : i64] [args : AstExprList] [result-ty : AstType]) : ResultLowerExpr
+  (match (tc-resolve-type ctx result-ty)
+    [(AstTyEnum enum-name)
+     (match ctx
+       [(TcContext program _ _)
+        (match (compiler-registries-variant-fields program handle)
+          [(OkAstTypeList fields)
+           (match (lower-args-as ctx state env type-env args (tc-resolve-type-list ctx fields))
+             [(OkLowerArgs args-state values)
+              (let ([size : i64 (lower-enum-storage-size ctx enum-name)])
+                (match (lower-reserve-heap-storage args-state size (AstTyEnum enum-name))
+                  [(LowerExpr base-state base _)
+                   (let ([tag-state : LowerState
+                          (lower-store-at-offset
+                            base-state
+                            base
+                            0
+                            (IrValueI64 (compiler-registry-handle-child-index handle))
+                            (AstTyI64))])
+                     (match (lower-store-values ctx tag-state base values fields 8)
+                       [(OkLowerState done-state)
+                        (OkLowerExpr (LowerExpr done-state base (AstTyEnum enum-name)))]
+                       [(ErrLowerState message) (ErrLowerExpr message)]))]))]
+             [(ErrLowerArgs message) (ErrLowerExpr message)])]
+          [(ErrAstTypeList message) (ErrLowerExpr message)])])]
+    [_ (ErrLowerExpr (string-append "lower: enum constructor result is not enum: " variant-name))]))
+
+(define (lower-construct-struct [ctx : TcContext] [state : LowerState] [env : SymI64Env] [type-env : TcTypeEnv] [struct-name : String] [args : AstExprList] [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-struct-fields ctx struct-name)
+    [(OkAstFieldDefList fields)
+     (let ([field-types : AstTypeList (tc-field-type-list ctx fields)])
+       (match (lower-args-as ctx state env type-env args field-types)
+         [(OkLowerArgs args-state values)
+          (let ([struct-ty : AstType (tc-resolve-type ctx result-ty)])
+            (let ([size : i64 (lower-type-list-storage-size ctx field-types)])
+              (match (lower-reserve-heap-storage args-state size struct-ty)
+                [(LowerExpr base-state base _)
+                 (match (lower-store-values ctx base-state base values field-types 0)
+                   [(OkLowerState done-state)
+                    (OkLowerExpr (LowerExpr done-state base struct-ty))]
+                   [(ErrLowerState message) (ErrLowerExpr message)])])))]
+         [(ErrLowerArgs message) (ErrLowerExpr message)]))]
+    [(ErrAstFieldDefList message) (ErrLowerExpr message)]))
+
+(define (lower-var-or-nullary-variant [ctx : TcContext] [state : LowerState] [env : SymI64Env] [type-env : TcTypeEnv] [name : String] [expr-ty : AstType]) : ResultLowerExpr
+  (match (sym-i64-lookup env name)
+    [(SomeI64 _) (lower-var state env name expr-ty)]
+    [(NoneI64)
+     (match ctx
+       [(TcContext program _ registries)
+        (match (compiler-registries-lookup-variant registries name)
+          [(SomeI64 handle)
+           (match (compiler-registries-variant-fields program handle)
+             [(OkAstTypeList fields)
+              (match fields
+                [(AstTypeNil)
+                 (lower-construct-enum-with-handle
+                   ctx
+                   state
+                   env
+                   type-env
+                   name
+                   handle
+                   AstExprNil
+                   expr-ty)]
+                [_ (lower-var state env name expr-ty)])]
+             [(ErrAstTypeList _) (lower-var state env name expr-ty)])]
+          [(NoneI64) (lower-var state env name expr-ty)])])]))
+
 (define (lower-expr [ctx : TcContext] [state : LowerState] [env : SymI64Env] [type-env : TcTypeEnv] [expr : AstExpr]) : ResultLowerExpr
   (match (tc-expr ctx type-env expr)
     [(OkTcType expr-ty) (lower-expr-with-type ctx state env type-env expr expr-ty)]
@@ -208,7 +487,7 @@
   (match expr
     [(AstExprSpanned inner _) (lower-expr ctx state env type-env inner)]
     [(AstExprLiteral lit) (lower-materialize state (lower-literal-value lit) expr-ty)]
-    [(AstExprVar name) (lower-var state env name expr-ty)]
+    [(AstExprVar name) (lower-var-or-nullary-variant ctx state env type-env name expr-ty)]
     [(AstExprAnn inner _)
      (match (lower-expr ctx state env type-env inner)
        [(OkLowerExpr lowered)
@@ -289,27 +568,33 @@
      (lower-while ctx state env type-env cond body)]
     [(AstExprMatch scrutinee arms)
      (lower-match ctx state env type-env scrutinee arms expr-ty)]
+    [(AstExprStructGet receiver field)
+     (lower-struct-get ctx state env type-env receiver field expr-ty)]
     [_ (ErrLowerExpr "lower: unsupported expression")]))
 
-(define (lower-call [ctx : TcContext] [state : LowerState] [env : SymI64Env] [type-env : TcTypeEnv] [func : AstExpr] [args : AstExprList] [result-ty : AstType]) : ResultLowerExpr
-  (match func
-    [(AstExprVar name)
-     ;; `array-length`/`length` on a dynamic array load the fat value's length
-     ;; field directly instead of calling a runtime symbol (#528). `length` on
-     ;; other types (e.g. String) keeps the ordinary direct-call path.
-      (if (or (string-eq name "array-length") (string-eq name "length"))
-          (lower-array-length ctx state env type-env name args result-ty)
-          (if (and (lower-stdio-builtin? name) (not (lower-top-level-value-defined? ctx name)))
-              (lower-direct-call
-                ctx
-                state
-                env
-                type-env
-                (lower-stdio-runtime-name name)
-                args
-                result-ty)
-              (lower-direct-call ctx state env type-env name args result-ty)))]
-     [_ (ErrLowerExpr "lower: only direct calls are supported")]))
+(define (lower-struct-get [ctx : TcContext] [state : LowerState] [env : SymI64Env] [type-env : TcTypeEnv] [receiver : AstExpr] [field : String] [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-expr ctx state env type-env receiver)
+    [(OkLowerExpr lowered)
+     (match lowered
+       [(LowerExpr receiver-state receiver-value receiver-ty)
+        (match (tc-resolve-type ctx receiver-ty)
+          [(AstTyStruct struct-name)
+           (match (lower-struct-field-info ctx struct-name field)
+             [(OkLowerFieldInfo info)
+              (match info
+                [(LowerFieldInfo offset field-ty)
+                 (match (lower-gep-byte receiver-state receiver-value offset)
+                   [(LowerExpr ptr-state ptr _)
+                    (match (lower-state-alloc-var ptr-state)
+                      [(LowerAlloc allocated var-id)
+                       (OkLowerExpr
+                         (LowerExpr
+                           (lower-state-emit allocated (IrInstrLoad var-id ptr field-ty))
+                           (IrValueVar var-id)
+                           result-ty))])])])]
+             [(ErrLowerFieldInfo message) (ErrLowerExpr message)])]
+          [_ (ErrLowerExpr "lower: struct-get requires struct")])])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 (define (lower-direct-call [ctx : TcContext] [state : LowerState] [env : SymI64Env] [type-env : TcTypeEnv] [name : String] [args : AstExprList] [result-ty : AstType]) : ResultLowerExpr
   (match (lower-args ctx state env type-env args)
@@ -322,6 +607,40 @@
             (IrValueVar var-id)
             result-ty))])]
     [(ErrLowerArgs message) (ErrLowerExpr message)]))
+
+(define (lower-call [ctx : TcContext] [state : LowerState] [env : SymI64Env] [type-env : TcTypeEnv] [func : AstExpr] [args : AstExprList] [result-ty : AstType]) : ResultLowerExpr
+  (match func
+    [(AstExprVar name)
+     ;; `array-length`/`length` on a dynamic array load the fat value's length
+     ;; field directly instead of calling a runtime symbol (#528). `length` on
+     ;; other types (e.g. String) keeps the ordinary direct-call path.
+     (if (or (string-eq name "array-length") (string-eq name "length"))
+         (lower-array-length ctx state env type-env name args result-ty)
+         (if (and (lower-stdio-builtin? name) (not (lower-top-level-value-defined? ctx name)))
+             (lower-direct-call
+               ctx
+               state
+               env
+               type-env
+               (lower-stdio-runtime-name name)
+               args
+               result-ty)
+             (match (sym-i64-lookup env name)
+               [(SomeI64 _) (lower-direct-call ctx state env type-env name args result-ty)]
+               [(NoneI64)
+                (match ctx
+                  [(TcContext _ symbols registries)
+                   (match (compiler-registries-lookup-variant registries name)
+                     [(SomeI64 handle)
+                      (lower-construct-enum-with-handle ctx state env type-env name handle args result-ty)]
+                     [(NoneI64)
+                      (match (compiler-symbols-lookup-type symbols name)
+                        [(SomeI64 handle)
+                         (if (= (compiler-symbol-handle-kind handle) (compiler-symbol-kind-defstruct))
+                             (lower-construct-struct ctx state env type-env name args result-ty)
+                             (lower-direct-call ctx state env type-env name args result-ty))]
+                        [(NoneI64) (lower-direct-call ctx state env type-env name args result-ty)])])])])))]
+    [_ (ErrLowerExpr "lower: only direct calls are supported")]))
 
 ;; A dynamic-array value is a pointer to inline fat storage `{data_ptr, length}`
 ;; with the i64 length at byte offset 8. `Gep` scales the index by the element
@@ -818,6 +1137,24 @@
         (string-length (read-stdin-line))
         (string-length (read-stdin-bytes 3)))))")
 
+(define (compiler-lower-aggregate-source) : String
+  "(defstruct Point (x i64) (y i64))
+(defenum Shape (Nothing) (Circle i64) (Pair Point))
+(define (make-point [x : i64] [y : i64]) : Point
+  (Point x y))
+(define (get-y [p : Point]) : i64
+  (struct-get p y))
+(define (make-none) : Shape
+  Nothing)
+(define (make-none-call) : Shape
+  (Nothing))
+(define (make-circle [r : i64]) : Shape
+  (Circle r))
+(define (make-pair [x : i64]) : Shape
+  (Pair (Point x (+ x 1))))
+(define (main) : i64
+  (get-y (make-point 20 22)))")
+
 (define (compiler-lower-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(OkCompilerLower _) true]
@@ -837,13 +1174,14 @@
 
 (define (compiler-lower-self-test) : i64
   (if (and (compiler-lower-ok-summary? (compiler-lower-smoke-source))
-            (and (compiler-lower-ok? (compiler-lower-match-source))
-                 (and (compiler-lower-ok? (compiler-lower-array-length-source))
-                      (and (compiler-lower-ok? (compiler-lower-stdio-source))
-                           (and (compiler-lower-error-ok? (compiler-typecheck-branch-mismatch-source)
-                                                          "typecheck: if branches must match")
-                                (compiler-lower-error-ok? (compiler-lower-unsupported-source)
-                                                          "lower: unsupported expression"))))))
+           (and (compiler-lower-ok? (compiler-lower-match-source))
+                (and (compiler-lower-ok? (compiler-lower-array-length-source))
+                     (and (compiler-lower-ok? (compiler-lower-stdio-source))
+                          (and (compiler-lower-ok? (compiler-lower-aggregate-source))
+                               (and (compiler-lower-error-ok? (compiler-typecheck-branch-mismatch-source)
+                                                              "typecheck: if branches must match")
+                                    (compiler-lower-error-ok? (compiler-lower-unsupported-source)
+                                                              "lower: unsupported expression")))))))
       42
       (begin
         (panic "lower: smoke score mismatch")

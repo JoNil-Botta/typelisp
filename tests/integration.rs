@@ -2829,6 +2829,134 @@ fn write_file_invalid_path_aborts() {
 }
 
 #[test]
+fn selfhost_doc_driver_writes_single_file_markdown() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let selfhost_dir = manifest_dir.join("selfhost");
+    let work_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("selfhost-doc-driver");
+    fs::create_dir_all(&work_dir).expect("create selfhost doc driver test work dir");
+
+    let driver_path = work_dir.join("doc.tl");
+    fs::copy(selfhost_dir.join("doc.tl"), &driver_path).expect("copy doc.tl to work dir");
+    copy_case_deps(
+        &manifest_dir,
+        &selfhost_dir,
+        &work_dir,
+        &["doc_render.tl", "doc_extract.tl", "format_tokens.tl"],
+    );
+
+    let input_path = work_dir.join("fixture.tl");
+    fs::write(
+        &input_path,
+        concat!(
+            ";;;; Module docs for driver output.\n",
+            ";;;; Includes a second line.\n",
+            "\n",
+            ";; ordinary comment ignored\n",
+            ";;; Public answer docs.\n",
+            "(define answer : i64 42)\n",
+            "\n",
+            "(define undocumented : i64 7)\n",
+            "\n",
+            ";;; Function docs.\n",
+            "(define (add-one [x : i64]) : i64 (+ x 1))\n",
+        ),
+    )
+    .expect("write doc driver input fixture");
+    let output_path = work_dir.join("fixture.md");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&driver_path)
+        .arg("--")
+        .arg(&input_path)
+        .arg(&output_path)
+        .output()
+        .expect("run selfhost doc driver");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "doc driver exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(stdout, "", "doc driver wrote stdout");
+    assert_eq!(stderr, "", "doc driver wrote stderr");
+
+    let rendered = fs::read_to_string(&output_path).expect("read generated markdown");
+    let expected = concat!(
+        "# TypeLisp Documentation\n",
+        "\n",
+        "Module docs for driver output.\n",
+        "Includes a second line.\n",
+        "\n",
+        "## Items\n",
+        "\n",
+        "<a id=\"tl-answer\"></a>\n",
+        "\n",
+        "### answer\n",
+        "\n",
+        "Kind: define\n",
+        "\n",
+        "```typelisp\n",
+        "(define answer : i64 42)\n",
+        "```\n",
+        "\n",
+        "Public answer docs.\n",
+        "\n",
+        "<a id=\"tl-add-one\"></a>\n",
+        "\n",
+        "### add-one\n",
+        "\n",
+        "Kind: define-function\n",
+        "\n",
+        "```typelisp\n",
+        "(define (add-one [x : i64]) : i64 (+ x 1))\n",
+        "```\n",
+        "\n",
+        "Function docs.\n",
+        "\n",
+    );
+    assert_eq!(rendered, expected, "doc driver markdown differed");
+    assert!(
+        !rendered.contains("undocumented"),
+        "undocumented declarations should not be rendered yet:\n{}",
+        rendered
+    );
+
+    let invalid = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&driver_path)
+        .arg("--")
+        .output()
+        .expect("run selfhost doc driver without paths");
+
+    let invalid_stdout = String::from_utf8_lossy(&invalid.stdout);
+    let invalid_stderr = String::from_utf8_lossy(&invalid.stderr);
+    assert_eq!(
+        invalid.status.code(),
+        Some(1),
+        "doc driver invalid-args run exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        invalid_stdout,
+        invalid_stderr,
+    );
+    assert_eq!(
+        invalid_stdout, "",
+        "doc driver invalid-args run wrote stdout"
+    );
+    assert!(
+        invalid_stderr.contains("doc: expected input and output paths"),
+        "doc driver invalid-args stderr differed:\n{}",
+        invalid_stderr
+    );
+}
+
+#[test]
 fn file_exists_builtin_reports_existing_and_missing_paths() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let work_dir = manifest_dir

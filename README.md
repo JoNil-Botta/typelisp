@@ -138,6 +138,9 @@ Documentation comments can contain checked examples. `typelisp doc --test
 <file.tl>` extracts fenced `typelisp` or `tl` blocks from `;;;;` module docs and
 attached `;;;` item docs, writes each example to a deterministic temporary
 source file, type-checks it, and removes the temporary directory before exiting.
+The self-hosted Markdown generator can render one source file through
+`typelisp run selfhost/doc.tl -- input.tl output.md`; import-graph traversal and
+Rust CLI plumbing are separate follow-up work.
 
 ```lisp
 ;;;; ```typelisp

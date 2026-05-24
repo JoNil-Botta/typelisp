@@ -447,7 +447,7 @@ impl LspServer {
         let mut stale_uris = self.published_diagnostics.remove(uri).unwrap_or_default();
         stale_uris.insert(uri.to_string());
         for stale_uri in stale_uris {
-            publish_diagnostics(writer, &stale_uri, Vec::new())?;
+            self.clear_stale_diagnostics(uri, &stale_uri, writer)?;
         }
         Ok(())
     }
@@ -461,7 +461,7 @@ impl LspServer {
         let current_uris = diagnostics.keys().cloned().collect::<BTreeSet<_>>();
         if let Some(previous_uris) = self.published_diagnostics.get(uri) {
             for stale_uri in previous_uris.difference(&current_uris) {
-                publish_diagnostics(writer, stale_uri, Vec::new())?;
+                self.clear_stale_diagnostics(uri, stale_uri, writer)?;
             }
         }
         for (diag_uri, items) in diagnostics {
@@ -470,6 +470,22 @@ impl LspServer {
         self.published_diagnostics
             .insert(uri.to_string(), current_uris);
         Ok(())
+    }
+
+    fn clear_stale_diagnostics(
+        &self,
+        root_uri: &str,
+        diagnostic_uri: &str,
+        writer: &mut impl Write,
+    ) -> io::Result<()> {
+        if self
+            .published_diagnostics
+            .iter()
+            .any(|(other_root, uris)| other_root != root_uri && uris.contains(diagnostic_uri))
+        {
+            return Ok(());
+        }
+        publish_diagnostics(writer, diagnostic_uri, Vec::new())
     }
 
     fn analyze_document(&self, root_uri: &str, open: &OpenDocument) -> BTreeMap<String, Vec<Json>> {

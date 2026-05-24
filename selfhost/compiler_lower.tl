@@ -269,17 +269,63 @@
 (define (lower-call [ctx : TcContext] [state : LowerState] [env : SymI64Env] [type-env : TcTypeEnv] [func : AstExpr] [args : AstExprList] [result-ty : AstType]) : ResultLowerExpr
   (match func
     [(AstExprVar name)
-     (match (lower-args ctx state env type-env args)
-       [(OkLowerArgs args-state values)
-        (match (lower-state-alloc-var args-state)
-          [(LowerAlloc allocated var-id)
-           (OkLowerExpr
-             (LowerExpr
-               (lower-state-emit allocated (IrInstrCall var-id name values result-ty))
-               (IrValueVar var-id)
-               result-ty))])]
-       [(ErrLowerArgs message) (ErrLowerExpr message)])]
+     ;; `array-length`/`length` on a dynamic array load the fat value's length
+     ;; field directly instead of calling a runtime symbol (#528). `length` on
+     ;; other types (e.g. String) keeps the ordinary direct-call path.
+     (if (or (string-eq name "array-length") (string-eq name "length"))
+         (lower-array-length ctx state env type-env name args result-ty)
+         (lower-direct-call ctx state env type-env name args result-ty))]
     [_ (ErrLowerExpr "lower: only direct calls are supported")]))
+
+(define (lower-direct-call [ctx : TcContext] [state : LowerState] [env : SymI64Env] [type-env : TcTypeEnv] [name : String] [args : AstExprList] [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-args ctx state env type-env args)
+    [(OkLowerArgs args-state values)
+     (match (lower-state-alloc-var args-state)
+       [(LowerAlloc allocated var-id)
+        (OkLowerExpr
+          (LowerExpr
+            (lower-state-emit allocated (IrInstrCall var-id name values result-ty))
+            (IrValueVar var-id)
+            result-ty))])]
+    [(ErrLowerArgs message) (ErrLowerExpr message)]))
+
+;; A dynamic-array value is a pointer to inline fat storage `{data_ptr, length}`
+;; with the i64 length at byte offset 8. `Gep` scales the index by the element
+;; size, so index 1 with element type i64 addresses that length field, which a
+;; typed `Load` then reads. Only the dynamic-array case is intercepted; other
+;; `length` arguments (such as `String`) fall back to the direct-call path so
+;; their runtime helper is unchanged.
+(define (lower-array-length [ctx : TcContext] [state : LowerState] [env : SymI64Env] [type-env : TcTypeEnv] [name : String] [args : AstExprList] [result-ty : AstType]) : ResultLowerExpr
+  (match args
+    [(AstExprCons arr (AstExprNil))
+     (match (tc-expr ctx type-env arr)
+       [(OkTcType arr-ty)
+        (match arr-ty
+          [(AstTyDynArray _) (lower-array-length-load ctx state env type-env arr)]
+          [_ (lower-direct-call ctx state env type-env name args result-ty)])]
+       [(ErrTcType _) (lower-direct-call ctx state env type-env name args result-ty)])]
+    [_ (lower-direct-call ctx state env type-env name args result-ty)]))
+
+(define (lower-array-length-load [ctx : TcContext] [state : LowerState] [env : SymI64Env] [type-env : TcTypeEnv] [arr : AstExpr]) : ResultLowerExpr
+  (match (lower-expr ctx state env type-env arr)
+    [(OkLowerExpr lowered)
+     (match lowered
+       [(LowerExpr arr-state arr-value _)
+        (match (lower-state-alloc-var arr-state)
+          [(LowerAlloc gep-alloc gep-var)
+           (let ([gep-state : LowerState
+                  (lower-state-emit gep-alloc
+                    (IrInstrGep gep-var arr-value (IrValueI64 1) (AstTyI64)))])
+             (match (lower-state-alloc-var gep-state)
+               [(LowerAlloc load-alloc load-var)
+                (OkLowerExpr
+                  (LowerExpr
+                    (lower-state-emit load-alloc
+                      (IrInstrLoad load-var (IrValueVar gep-var) (AstTyI64)))
+                    (IrValueVar load-var)
+                    (AstTyI64)))]))])]
+       )]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 (define (lower-args [ctx : TcContext] [state : LowerState] [env : SymI64Env] [type-env : TcTypeEnv] [args : AstExprList]) : ResultLowerArgs
   (match args
@@ -723,6 +769,13 @@
     (announce (classify 1))
     (+ (sign 7) (+ (classify 1) (flag-score true)))))")
 
+;; Dynamic-array length lowering smoke (#528): `array-length` and `length` on a
+;; dynamic array lower to a fat-value length load rather than a runtime call.
+(define (compiler-lower-array-length-source) : String
+  "(define (dyn-len [a : (Array i64)]) : i64 (array-length a))
+(define (dyn-len-alias [a : (Array i64)]) : i64 (length a))
+(define (main) : i64 0)")
+
 (define (compiler-lower-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(OkCompilerLower _) true]
@@ -743,10 +796,11 @@
 (define (compiler-lower-self-test) : i64
   (if (and (compiler-lower-ok-summary? (compiler-lower-smoke-source))
            (and (compiler-lower-ok? (compiler-lower-match-source))
-                (and (compiler-lower-error-ok? (compiler-typecheck-branch-mismatch-source)
-                                               "typecheck: if branches must match")
-                     (compiler-lower-error-ok? (compiler-lower-unsupported-source)
-                                               "lower: unsupported expression"))))
+                (and (compiler-lower-ok? (compiler-lower-array-length-source))
+                     (and (compiler-lower-error-ok? (compiler-typecheck-branch-mismatch-source)
+                                                    "typecheck: if branches must match")
+                          (compiler-lower-error-ok? (compiler-lower-unsupported-source)
+                                                    "lower: unsupported expression")))))
       42
       (begin
         (panic "lower: smoke score mismatch")

@@ -902,10 +902,13 @@
   [result-ty : AstType]) : ResultLowerExpr
   (match func
     [(AstExprVar name)
-      ;; `array-length`/`length` on a dynamic array load the fat value's length
-      ;; field directly instead of calling a runtime symbol (#528). `length` on
-      ;; other types (e.g. String) keeps the ordinary direct-call path.
-      (if (or (string-eq name "array-length") (string-eq name "length"))
+      ;; `array-length`/`length` on a dynamic array, and `string-length`/`length`
+      ;; on a String, load the fat value's length field directly instead of
+      ;; calling a runtime symbol (#528, #527). Other `length` argument types
+      ;; keep the ordinary direct-call path.
+      (if (or
+        (string-eq name "array-length")
+        (or (string-eq name "length") (string-eq name "string-length")))
         (lower-array-length ctx state env type-env name args result-ty)
         (if (and
           (lower-stdio-builtin? name)
@@ -974,9 +977,9 @@
 
 ;; size, so index 1 with element type i64 addresses that length field, which a
 
-;; typed `Load` then reads. Only the dynamic-array case is intercepted; other
+;; typed `Load` then reads. Dynamic-array and String arguments are both
 
-;; `length` arguments (such as `String`) fall back to the direct-call path so
+;; intercepted; other `length` arguments fall back to the direct-call path so
 
 ;; their runtime helper is unchanged.
 
@@ -995,6 +998,7 @@
           (match arr-ty
             [(AstTyDynArray _)
               (lower-array-length-load ctx state env type-env arr)]
+            [(AstTyString) (lower-array-length-load ctx state env type-env arr)]
             [_ (lower-direct-call ctx state env type-env name args result-ty)])]
         [(ErrTcType _)
           (lower-direct-call ctx state env type-env name args result-ty)])]
@@ -2070,6 +2074,15 @@
 (define (dyn-len-alias [a : (Array i64)]) : i64 (length a))
 (define (main) : i64 0)")
 
+;; `string-length`/`length` on a String lower to the same fat `{ptr, len}`
+
+;; length load as `array-length` (#527): both lay out the i64 length at offset 8.
+
+(define (compiler-lower-string-length-source) : String
+  "(define (str-len [s : String]) : i64 (string-length s))
+(define (str-len-alias [s : String]) : i64 (length s))
+(define (main) : i64 0)")
+
 (define (compiler-lower-stdio-source) : String
   "(define (main) : i64
   (begin
@@ -2268,16 +2281,18 @@
             (and
               (compiler-lower-ok? (compiler-lower-array-length-source))
               (and
-                (compiler-lower-ok? (compiler-lower-stdio-source))
+                (compiler-lower-ok? (compiler-lower-string-length-source))
                 (and
-                  (compiler-lower-ok? (compiler-lower-aggregate-source))
+                  (compiler-lower-ok? (compiler-lower-stdio-source))
                   (and
-                    (compiler-lower-error-ok?
-                      (compiler-typecheck-branch-mismatch-source)
-                      "typecheck: if branches must match")
-                    (compiler-lower-error-ok?
-                      (compiler-lower-unsupported-source)
-                      "lower: unsupported expression"))))))))))
+                    (compiler-lower-ok? (compiler-lower-aggregate-source))
+                    (and
+                      (compiler-lower-error-ok?
+                        (compiler-typecheck-branch-mismatch-source)
+                        "typecheck: if branches must match")
+                      (compiler-lower-error-ok?
+                        (compiler-lower-unsupported-source)
+                        "lower: unsupported expression")))))))))))
     42
     (begin
       (panic "lower: smoke score mismatch")

@@ -262,42 +262,45 @@
 (define (compiler-backend-char-code [c : char]) : i64
   (cast c : i64))
 
-(define (compiler-backend-symbol-char [text : String] [idx : i64] [k : i64]) : String
+(define (compiler-backend-symbol-char [text : String] [idx : i64] [c : char]) : String
   (if (or
-    (and (>= k 65) (<= k 90))
-    (or (and (>= k 97) (<= k 122)) (or (and (>= k 48) (<= k 57)) (= k 95))))
+    (and (>= c #A') (<= c #Z'))
+    (or (and (>= c #a') (<= c #z')) (or (and (>= c #0') (<= c #9')) (= c #_'))))
     (substring text idx 1)
-    (if (= k 45)
+    (if (= c #-')
       "_"
-      (if (= k 63)
+      (if (= c #?')
         "_question"
-        (if (= k 33)
+        (if (= c #!')
           "_bang"
-          (if (= k 43)
+          (if (= c #+')
             "_plus"
-            (if (= k 42)
+            (if (= c #*')
               "_star"
-              (if (= k 47)
+              (if (= c #/')
                 "_slash"
-                (if (= k 61)
+                (if (= c #=')
                   "_eq"
-                  (if (= k 60)
+                  (if (= c #<')
                     "_lt"
-                    (if (= k 62)
+                    (if (= c #>')
                       "_gt"
-                      (if (= k 58)
+                      (if (= c #:')
                         "_colon"
-                        (string-append "_u" (compiler-backend-hex-byte k))))))))))))))
+                        (string-append
+                          "_u"
+                          (compiler-backend-hex-byte
+                            (compiler-backend-char-code c)))))))))))))))
 
 (define (compiler-backend-asm-safe-symbol [name : String]) : String
   (let ([i : i64 0] [n : i64 (string-length name)] [out : String ""])
     (begin
       (while (< i n)
-        (let ([k : i64 (compiler-backend-char-code-at name i)])
+        (let ([c : char (string-ref name i)])
           (begin
             (set!
               out
-              (string-append out (compiler-backend-symbol-char name i k)))
+              (string-append out (compiler-backend-symbol-char name i c)))
             (set! i (+ i 1)))))
       out)))
 
@@ -419,30 +422,30 @@
 (define (compiler-backend-escape-string-byte
   [text : String]
   [idx : i64]
-  [k : i64]) : String
-  (if (= k 34)
+  [c : char]) : String
+  (if (= c #"')
     "\\\""
-    (if (= k 92)
+    (if (= c #\\')
       "\\\\"
-      (if (= k 10)
+      (if (= c #\newline')
         "\\n"
-        (if (= k 9)
+        (if (= c #\tab')
           "\\t"
-          (if (= k 13)
+          (if (= c #\return')
             "\\r"
-            (if (and (>= k 32) (<= k 126))
+            (if (and (>= c #\space') (<= c #~'))
               (substring text idx 1)
-              (compiler-backend-octal-escape k))))))))
+              (compiler-backend-octal-escape (compiler-backend-char-code c)))))))))
 
 (define (compiler-backend-escape-string [text : String]) : String
   (let ([i : i64 0] [n : i64 (string-length text)] [out : String ""])
     (begin
       (while (< i n)
-        (let ([k : i64 (compiler-backend-char-code-at text i)])
+        (let ([c : char (string-ref text i)])
           (begin
             (set!
               out
-              (string-append out (compiler-backend-escape-string-byte text i k)))
+              (string-append out (compiler-backend-escape-string-byte text i c)))
             (set! i (+ i 1)))))
       out)))
 
@@ -460,7 +463,8 @@
             out
             (string-append
               out
-              (compiler-backend-hex-byte (compiler-backend-char-code-at text i))))
+              (compiler-backend-hex-byte
+                (compiler-backend-char-code (string-ref text i)))))
           (set! i (+ i 1))))
       (if (= n 0)
         "empty"
@@ -2441,9 +2445,6 @@ tl_string_concat:
       (compiler-backend-emit-program-for-target program target)]
     [(ErrCompilerLower diag) (ErrCompilerBackend diag)]))
 
-(define (compiler-backend-char-code-at [text : String] [idx : i64]) : i64
-  (compiler-backend-char-code (string-ref text idx)))
-
 (define (compiler-backend-string-prefix-at?
   [text : String]
   [prefix : String]
@@ -2458,9 +2459,7 @@ tl_string_concat:
           (begin
             (while ok
               (if (< i prefix-len)
-                (if (=
-                  (compiler-backend-char-code-at text (+ start i))
-                  (compiler-backend-char-code-at prefix i))
+                (if (= (string-ref text (+ start i)) (string-ref prefix i))
                   (set! i (+ i 1))
                   (set! ok false))
                 (set! ok false)))

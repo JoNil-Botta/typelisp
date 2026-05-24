@@ -20,11 +20,8 @@
 (define (compile-cli-cat3 [a : String] [b : String] [c : String]) : String
   (string-append a (string-append b c)))
 
-(define (compile-cli-char-code-at [text : String] [idx : i64]) : i64
-  (cast (string-ref text idx) : i64))
-
-(define (compile-cli-path-separator-code? [code : i64]) : bool
-  (or (= code 47) (= code 92)))
+(define (compile-cli-path-separator? [c : char]) : bool
+  (or (= c #/') (= c #\\')))
 
 (define (compile-cli-flag? [value : String]) : bool
   (and (> (string-length value) 0) (= (string-ref value 0) #-')))
@@ -36,12 +33,12 @@
     [last-sep : i64 -1])
     (begin
       (while (< i n)
-        (let ([code : i64 (compile-cli-char-code-at input-path i)])
+        (let ([c : char (string-ref input-path i)])
           (begin
-            (if (= code 46)
+            (if (= c #.')
               (set! last-dot i)
               (set! last-dot last-dot))
-            (if (compile-cli-path-separator-code? code)
+            (if (compile-cli-path-separator? c)
               (set! last-sep i)
               (set! last-sep last-sep))
             (set! i (+ i 1)))))

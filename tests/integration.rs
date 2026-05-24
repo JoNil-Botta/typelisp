@@ -1030,6 +1030,150 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
 }
 
 #[test]
+fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let selfhost_dir = manifest_dir.join("selfhost");
+    let source_path = selfhost_dir.join("compiler_driver.tl");
+    let work_dir = manifest_dir
+        .join("target")
+        .join("integration-tests")
+        .join("compiler_driver_file_to_file");
+    fs::create_dir_all(&work_dir).expect("create compiler_driver file-to-file test work dir");
+
+    let work_path = work_dir.join("compiler_driver.tl");
+    fs::copy(&source_path, &work_path).expect("copy compiler_driver.tl to work dir");
+    copy_case_deps(
+        &manifest_dir,
+        &selfhost_dir,
+        &work_dir,
+        &[
+            "compiler_backend.tl",
+            "compiler_lower.tl",
+            "compiler_ir_types.tl",
+            "compiler_typecheck.tl",
+            "compiler_symbols.tl",
+            "compiler_parse_core.tl",
+            "compiler_ast_types.tl",
+            "sym_i64_env.tl",
+            "text_buf.tl",
+            "read.tl",
+            "lex.tl",
+            "token.tl",
+        ],
+    );
+
+    let driver_bin = work_dir.join("compiler-driver");
+    let build = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("build")
+        .arg(&work_path)
+        .arg("-o")
+        .arg(&driver_bin)
+        .output()
+        .expect("build compiler_driver.tl");
+    assert!(
+        build.status.success(),
+        "compiler_driver build failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    assert!(
+        driver_bin.exists(),
+        "compiler_driver build did not write binary"
+    );
+
+    let input_path = work_dir.join("input.tl");
+    let asm_path = work_dir.join("generated.s");
+    let asm_again_path = work_dir.join("generated-again.s");
+    let obj_path = work_dir.join("generated.o");
+    let bin_path = work_dir.join("generated");
+    fs::write(&input_path, "(define (main) : i64 42)\n")
+        .expect("write compiler_driver input fixture");
+
+    for output_path in [&asm_path, &asm_again_path] {
+        let run = Command::new(&driver_bin)
+            .arg(&input_path)
+            .arg(output_path)
+            .output()
+            .expect("run compiler_driver binary");
+        assert_eq!(
+            run.status.code(),
+            Some(0),
+            "compiler_driver exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&run.stdout),
+            String::from_utf8_lossy(&run.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&run.stdout),
+            "",
+            "compiler_driver wrote stdout"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&run.stderr),
+            "",
+            "compiler_driver wrote stderr"
+        );
+    }
+
+    let asm = fs::read_to_string(&asm_path).expect("read compiler_driver generated assembly");
+    let asm_again =
+        fs::read_to_string(&asm_again_path).expect("read repeated compiler_driver assembly");
+    assert_eq!(asm_again, asm, "compiler_driver output changed across runs");
+    for snippet in [
+        ".text\n.globl _start\n",
+        "main:\n",
+        "    movq $42, %rax\n",
+        "_start:\n    call main\n",
+    ] {
+        assert!(
+            asm.contains(snippet),
+            "compiler_driver generated assembly missing {:?}:\n{}",
+            snippet,
+            asm
+        );
+    }
+
+    let status = Command::new("as")
+        .arg(&asm_path)
+        .arg("-o")
+        .arg(&obj_path)
+        .status()
+        .expect("run assembler on compiler_driver output");
+    assert!(status.success(), "assembling compiler_driver output failed");
+
+    let status = Command::new("ld")
+        .arg(&obj_path)
+        .arg("-o")
+        .arg(&bin_path)
+        .arg("-dynamic-linker")
+        .arg("/lib64/ld-linux-x86-64.so.2")
+        .arg("-lc")
+        .status()
+        .expect("run linker on compiler_driver output");
+    assert!(status.success(), "linking compiler_driver output failed");
+
+    let output = Command::new(&bin_path)
+        .output()
+        .expect("run binary assembled from compiler_driver output");
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "compiler_driver output program exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "",
+        "compiler_driver output program stdout"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "",
+        "compiler_driver output program stderr"
+    );
+}
+
+#[test]
 fn tl_emit_printed_program_assembles_links_and_exits_7() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let selfhost_dir = manifest_dir.join("selfhost");

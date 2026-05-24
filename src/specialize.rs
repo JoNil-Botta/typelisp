@@ -125,7 +125,7 @@ impl Specializer {
                 ),
                 expr.span(),
             )),
-            Expr::Var(_) | Expr::Literal(_) => Ok(expr.clone()),
+            Expr::Var(_) | Expr::Literal(_) | Expr::TypeLiteral { .. } => Ok(expr.clone()),
             Expr::Binary { op, lhs, rhs } => Ok(Expr::Binary {
                 op: *op,
                 lhs: Box::new(self.rewrite_expr(lhs)?),
@@ -349,13 +349,13 @@ impl Specializer {
                         span,
                     ),
                 })?;
-                if value.ty() != *param_ty {
+                if value.runtime_ty().as_ref() != Some(param_ty) {
                     return Err(SpecializeError::at(
                         format!(
                             "comptime argument '{}' for function '{}' has type {}, expected {}",
                             param_name,
                             name,
-                            value.ty(),
+                            value.type_label(),
                             param_ty
                         ),
                         arg.span(),
@@ -529,8 +529,14 @@ fn safe_symbol_fragment(text: &str) -> String {
     if out.is_empty() { "fn".into() } else { out }
 }
 
-fn literal_expr(value: &CtfeValue, span: Span) -> Expr {
-    Expr::spanned(Expr::Literal(value.to_literal()), span)
+fn literal_expr(value: &CtfeValue, span: Span) -> Result<Expr, SpecializeError> {
+    match value.to_literal() {
+        Some(lit) => Ok(Expr::spanned(Expr::Literal(lit), span)),
+        None => Err(SpecializeError::at(
+            "cannot substitute compile-time type value into runtime expression",
+            span,
+        )),
+    }
 }
 
 fn substitute_comptime_params(
@@ -545,12 +551,12 @@ fn substitute_comptime_params(
         )),
         Expr::Var(name) if !shadowed.contains(name) => {
             if let Some(value) = values.get(name) {
-                Ok(literal_expr(value, expr.span()))
+                literal_expr(value, expr.span())
             } else {
                 Ok(expr.clone())
             }
         }
-        Expr::Var(_) | Expr::Literal(_) => Ok(expr.clone()),
+        Expr::Var(_) | Expr::Literal(_) | Expr::TypeLiteral { .. } => Ok(expr.clone()),
         Expr::Binary { op, lhs, rhs } => Ok(Expr::Binary {
             op: *op,
             lhs: Box::new(substitute_comptime_params(lhs, values, shadowed)?),
@@ -816,6 +822,10 @@ mod tests {
         assert_eq!(CtfeValue::Bool(false).key_fragment(), "bool:0");
         assert_eq!(CtfeValue::Char('A').key_fragment(), "char:41");
         assert_eq!(CtfeValue::Unit.key_fragment(), "unit");
+        assert_eq!(
+            CtfeValue::Type(Type::Array(Box::new(Type::I64), 4)).key_fragment(),
+            "type:(Array i64 4)"
+        );
     }
 
     #[test]

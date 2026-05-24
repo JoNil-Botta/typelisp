@@ -1558,6 +1558,30 @@ fn check_rejects_unsupported_type_kind_before_backend() {
 }
 
 #[test]
+fn check_rejects_runtime_use_of_comptime_type_literal_before_backend() {
+    let dir = fixture_dir("runtime-type-literal");
+    let source = dir.join("main.tl");
+    fs::write(&source, "(define (main) : i64 (comptime (type i64)))\n").expect("write source");
+    let source_arg = source.to_str().expect("source path is utf-8");
+
+    let output = typelisp(&["check", source_arg]);
+
+    assert!(!output.status.success());
+    assert_eq!(stdout(&output), "");
+    let stderr = stderr(&output);
+    assert!(
+        stderr.contains("type value i64 is compile-time only"),
+        "stderr:\n{}",
+        stderr
+    );
+    assert!(
+        !stderr.contains("backend:"),
+        "type literal should fail before backend validation:\n{}",
+        stderr
+    );
+}
+
+#[test]
 fn check_rejects_region_allocating_builtin_escape() {
     let dir = fixture_dir("region-builtin-escape");
     let source = dir.join("main.tl");

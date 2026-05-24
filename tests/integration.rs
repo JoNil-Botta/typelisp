@@ -1489,6 +1489,21 @@ fn selfhost_check_driver_reports_success_and_errors() {
         parse_stderr
     );
 
+    let lex_error_path = work_dir.join("lex_error.tl");
+    fs::write(&lex_error_path, "(define (main) : i64 @)\n")
+        .expect("write selfhost check lex error fixture");
+    let lex_error = Command::new(&driver_bin)
+        .arg(&lex_error_path)
+        .output()
+        .expect("run selfhost check lex error fixture");
+    assert_eq!(lex_error.status.code(), Some(1));
+    assert_eq!(String::from_utf8_lossy(&lex_error.stdout), "");
+    assert!(
+        String::from_utf8_lossy(&lex_error.stderr).contains("lexer: unexpected character"),
+        "lex error stderr:\n{}",
+        String::from_utf8_lossy(&lex_error.stderr)
+    );
+
     let load_error_path = work_dir.join("load_error.tl");
     fs::write(
         &load_error_path,

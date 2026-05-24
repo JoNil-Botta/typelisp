@@ -229,6 +229,21 @@ impl TypeChecker {
             "error".into(),
             Type::Func(vec![Type::String], Box::new(Type::Never)),
         );
+        // `(string-ref s i)` / `(char-at s i)` -> the byte at index `i` of String
+        // `s` as a `char`, bounds-checked at runtime. Registered as builtins (not
+        // special-cased at parse time) so a user definition named `string-ref` or
+        // `char-at` shadows the builtin and is called as an ordinary direct call
+        // (#677). The `Call` arm special-cases the unshadowed builtin to preserve
+        // its exact behavior (any integer index is accepted, not just i64); the
+        // registered signature is a fallback/shape and is overridden when shadowed.
+        globals.insert(
+            "string-ref".into(),
+            Type::Func(vec![Type::String, Type::I64], Box::new(Type::Char)),
+        );
+        globals.insert(
+            "char-at".into(),
+            Type::Func(vec![Type::String, Type::I64], Box::new(Type::Char)),
+        );
         let builtin_names = globals.keys().cloned().collect();
         TypeChecker {
             env: vec![globals],
@@ -601,7 +616,7 @@ impl TypeChecker {
                     captured_sets,
                 );
             }
-            Expr::ArrayRef { expr, index } | Expr::StringRef { expr, index } => {
+            Expr::ArrayRef { expr, index } => {
                 Self::collect_lambda_captures(
                     expr,
                     outer_locals,
@@ -1351,6 +1366,35 @@ impl TypeChecker {
                     }
                     // `length` on a non-array: defer to the String builtin.
                 }
+                // `(string-ref s i)` / `(char-at s i)` over the *unshadowed*
+                // builtin is the String byte-index: `(-> String <int> char)`.
+                // The parser emits this as an ordinary `Call`; here we recover
+                // the builtin behavior exactly (a String plus any integer index,
+                // yielding `char`) when the name resolves to neither a local
+                // binding nor a user-defined top-level function (#677). A
+                // shadowing user definition falls through to the ordinary call
+                // path below and is checked against its own signature.
+                if let Expr::Var(name) = func.unspan()
+                    && (name == "string-ref" || name == "char-at")
+                    && args.len() == 2
+                    && self.is_unshadowed_builtin(name)
+                {
+                    let str_ty = self.check_expr(&args[0])?;
+                    if !self.types_equal(&str_ty, &Type::String) {
+                        return Err(TypeError::at(
+                            format!("{} requires String, got {}", name, str_ty),
+                            args[0].span(),
+                        ));
+                    }
+                    let idx_ty = self.check_expr(&args[1])?;
+                    if !idx_ty.is_integer() {
+                        return Err(TypeError::at(
+                            format!("string index must be integer, got {}", idx_ty),
+                            args[1].span(),
+                        ));
+                    }
+                    return Ok(Type::Char);
+                }
                 let func_ty = self.check_expr(func)?;
                 match func_ty {
                     Type::Func(param_tys, ret_ty) => {
@@ -1729,24 +1773,6 @@ impl TypeChecker {
                     &format!("array of type {}", arr_ty),
                 )?;
                 Ok(Type::Unit)
-            }
-            Expr::StringRef { expr, index } => {
-                // `(string-ref s i)` / `(char-at s i)` : `(-> String i64 char)`.
-                let str_ty = self.check_expr(expr)?;
-                if !self.types_equal(&str_ty, &Type::String) {
-                    return Err(TypeError::at(
-                        format!("string-ref requires String, got {}", str_ty),
-                        expr.span(),
-                    ));
-                }
-                let idx_ty = self.check_expr(index)?;
-                if !idx_ty.is_integer() {
-                    return Err(TypeError::at(
-                        format!("string index must be integer, got {}", idx_ty),
-                        index.span(),
-                    ));
-                }
-                Ok(Type::Char)
             }
             Expr::While { cond, body } => {
                 let cond_ty = self.check_expr(cond)?;

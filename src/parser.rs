@@ -713,14 +713,13 @@ impl<'a> Parser<'a> {
                 let end = self.expect_rparen_span()?;
                 (Expr::ArraySet { expr, index, value }, end)
             }
-            Token::Ident(s) if s == "string-ref" || s == "char-at" => {
-                // (string-ref s i) / (char-at s i)
-                self.advance()?;
-                let expr = Box::new(self.parse_expr()?);
-                let index = Box::new(self.parse_expr()?);
-                let end = self.expect_rparen_span()?;
-                (Expr::StringRef { expr, index }, end)
-            }
+            // `string-ref`/`char-at` are NOT special-cased at parse time: the
+            // parser cannot know whether a user `define` shadows the builtin, so
+            // these names parse as ordinary `Expr::Call`s (head `Var("string-ref"
+            // | "char-at")`). The typechecker and lowerer rewrite an *unshadowed*
+            // call back into the builtin String-index behavior (yielding `char`,
+            // lowering to the bounds-checked byte load), while a shadowing
+            // user-defined function is left as a normal direct call (#677).
             Token::Ident(s) if s == "match" => {
                 // (match scrutinee [pattern body] ...)
                 self.advance()?;

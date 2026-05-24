@@ -55,7 +55,6 @@ fn describe_expr(expr: &Expr) -> &'static str {
         Expr::MakeArray { .. } => "make-array",
         Expr::ArrayRef { .. } => "array-ref",
         Expr::ArraySet { .. } => "array-set!",
-        Expr::StringRef { .. } => "string-ref",
         Expr::While { .. } => "while",
         Expr::Begin(_) => "begin",
         Expr::Set(_, _) => "set!",

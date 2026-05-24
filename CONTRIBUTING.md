@@ -22,6 +22,9 @@ This keeps the project simple, auditable, and free from supply-chain risk. If yo
 - `cargo test` — ensure tests pass
 - `cargo check` — ensure zero compiler warnings (CI will fail on warnings)
 - Verify `Cargo.toml` has no `[dependencies]` or `[dev-dependencies]` sections (CI will fail if any are present)
+- For selfhost compiler changes, follow [`selfhost/TESTING.md`](selfhost/TESTING.md)
+  when choosing module self-tests, smoke drivers, Rust compile tests, and
+  integration coverage.
 
 ## Picking Work
 

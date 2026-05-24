@@ -11,6 +11,10 @@ expression subset `compile_smoke.tl` can lower **today** — integer arithmetic,
 `and` / `or` / `not`, `define`, direct calls, and literal-only `print`. It grows
 as the backend gaps tracked in #520 close.
 
+For the broader selfhost compiler testing convention, including module-local
+self-tests, smoke drivers, Rust compile tests, Linux integration checks, and CI
+expectations, see [`selfhost/TESTING.md`](../TESTING.md).
+
 ## Layout
 
 - `*.tl` — success programs. Each is compiled by the driver, then the emitted

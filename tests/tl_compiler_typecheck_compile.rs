@@ -63,7 +63,10 @@ fn compiler_typecheck_tl_compiles_to_assembly() {
 
     for sym in [
         "_tl_tc_type_eq:",
+        "_tl_tc_resolve_type:",
         "_tl_tc_expr:",
+        "_tl_tc_check_match:",
+        "_tl_tc_struct_field_type:",
         "_tl_tc_check_decl:",
         "_tl_typecheck_compiler_program:",
         "_tl_typecheck_compiler_source:",
@@ -88,9 +91,16 @@ fn compiler_typecheck_tl_compiles_to_assembly() {
         "typecheck: cast requires integer/char source and target",
         "typecheck: foreach body must be unit",
         "typecheck: lambda return type mismatch",
+        "typecheck: struct field not found",
+        "typecheck: match arms must have same type",
+        "typecheck: unknown variant in match",
+        "typecheck: unknown type Missing",
         "typecheck: smoke score mismatch",
         "(extern print-i64 : (-> i64 unit))",
         "[fixed : (Array i64 3) (array 1 2 3)]",
+        "(defenum Maybe (Some i64) (None))",
+        "(if flag value (None))",
+        "(struct-get p x)",
     ] {
         assert_message(&asm, message, "compiler_typecheck");
     }

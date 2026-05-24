@@ -87,6 +87,10 @@
           "hello"
           "world"
           "process argv")
+        (assert-i64-eq
+          (process-args-count (process-command-argv command))
+          2
+          "process argv count")
         (assert-process-some-string
           (process-command-cwd command)
           "target"
@@ -100,6 +104,10 @@
           "TL_TEST"
           "1"
           "process env")
+        (assert-i64-eq
+          (process-env-count (process-command-env command))
+          1
+          "process env count")
         (assert-process-env-head
           (process-command-env
             (process-command-with-env-list
@@ -114,6 +122,16 @@
         (assert-process-invalid-command
           (process-output (process-command "" (process-args-empty)))
           "process: executable path is empty")
+        (assert-process-invalid-command
+          (process-output (process-command-with-cwd command ""))
+          "process: cwd path is empty")
+        (assert-process-invalid-command
+          (process-output (process-command-with-env command "" "1"))
+          "process: environment variable name is empty")
+        (assert-true (process-command-valid? command) "process valid command")
+        (assert-false
+          (process-command-valid? (process-command "" (process-args-empty)))
+          "process invalid empty executable")
         (assert-process-unsupported
           (process-run command)
           "process: runtime execution is not implemented")

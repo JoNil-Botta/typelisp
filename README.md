@@ -1,13 +1,13 @@
 # TypeLisp
 
 A statically typed Lisp/Scheme dialect that compiles directly to native
-x86_64 Linux assembly. Written in Rust with **zero third-party dependencies**
-(`std` only).
+x86_64 assembly for Linux and Windows. Written in Rust with **zero third-party
+dependencies** (`std` only).
 
 ## Goals
 
 - **Typed**: Every expression has a known type at compile time. No runtime type tagging.
-- **Native**: Compiles straight to x86_64 assembly, then `as` + `ld` to an ELF binary. No bytecode VM, no interpreter, no garbage collector.
+- **Native**: Compiles straight to x86_64 assembly, then native toolchains produce executables. Linux uses `as` + `ld`; Windows uses `clang` + `lld-link`. No bytecode VM, no interpreter, no garbage collector.
 - **Zero dependencies**: Built with Rust `std` only. No third-party crates.
 - **Self-hostable front end**: A lexer, s-expression reader, and tree-walking evaluator for TypeLisp are themselves written in TypeLisp (see [`selfhost/`](selfhost)).
 
@@ -18,11 +18,13 @@ git clone https://github.com/JoNil-Botta/typelisp
 cd typelisp
 cargo build --release
 
-# Type-check, compile, build, or run a program (build/run require `as`/`ld` on Linux):
+# Type-check, compile, build, or run a program.
+# Linux build/run require `as`/`ld`; Windows target build/run require `clang`/`lld-link`.
 ./target/release/typelisp debug check examples/hello.tl
 ./target/release/typelisp compile examples/hello.tl     # writes examples/hello.s
 ./target/release/typelisp build   examples/hello.tl     # writes examples/hello
 ./target/release/typelisp run     examples/hello.tl
+./target/release/typelisp run     examples/hello.tl --target windows-x86_64
 ./target/release/typelisp build                         # builds nearest typelisp.pkg
 ```
 
@@ -254,7 +256,7 @@ Source (.tl)
     ↓  Lowerer      → IR (3-address code, basic blocks)
     ↓  Optimizer    → constant folding, basic-block CSE, DCE, strength reduction, copy propagation
     ↓  Backend      → x86_64 assembly (.s)
-    ↓  as + ld      → ELF binary
+    ↓  target tools → native executable
 ```
 
 ## CLI
@@ -264,10 +266,10 @@ typelisp debug tokenize file.tl    # Print token stream
 typelisp debug parse    file.tl    # Print AST
 typelisp debug check    file.tl    # Type check
 typelisp repl                     # Start minimal stdio REPL (.help, .exit)
-typelisp compile        file.tl    # Generate assembly (.s); -o <path>, --emit-ir, --backend-mode <mode>
-typelisp build          file.tl    # Build native executable; -o <path>, --backend-mode <mode>
-typelisp run            file.tl    # Compile, assemble, link, and run (needs as/ld); --backend-mode <mode>
-typelisp build                    # Build nearest typelisp.pkg to package assembly; --backend-mode <mode>
+typelisp compile        file.tl    # Generate assembly (.s); -o <path>, --target <target>, --emit-ir, --backend-mode <mode>
+typelisp build          file.tl    # Build native executable; -o <path>, --target <target>, --backend-mode <mode>
+typelisp run            file.tl    # Compile, assemble, link, and run; --target <target>, --backend-mode <mode>
+typelisp build                    # Build nearest typelisp.pkg to package assembly; --target <target>, --backend-mode <mode>
 ```
 
 The older top-level `tokenize`, `parse`, and `check` commands remain as
@@ -280,13 +282,18 @@ The `repl` command currently provides a minimal stdio command loop. It supports
 `scalar` is the default and only implemented mode today; `avx2` and `avx512`
 parse but are rejected until SIMD code generation lands.
 
+`compile`, `run`, and source-file `build` accept
+`--target linux-x86_64|windows-x86_64`. Linux is the default target. Windows
+native builds use the Windows x64 ABI, a CRT-linked runtime helper policy, and
+the `clang` + `lld-link` toolchain.
+
 ## Status
 
-Implemented: lexer, parser, type checker, IR lowering, optimizer, and a working
-x86_64 backend. Integers, floats (`f64`), bool/char/unit, `if`/`while`/`begin`,
-local & global variables, direct and indirect calls, `cast`, enums + `match`,
-structs + field access, dynamic arrays, strings, `extern`, and multi-file
-modules all compile to native code. See the
+Implemented: lexer, parser, type checker, IR lowering, optimizer, and working
+x86_64 Linux/Windows backend targets. Integers, floats (`f64`), bool/char/unit,
+`if`/`while`/`begin`, local & global variables, direct and indirect calls,
+`cast`, enums + `match`, structs + field access, dynamic arrays, strings,
+`extern`, and multi-file modules all compile to native code. See the
 [project roadmap](https://github.com/JoNil-Botta/typelisp/issues/8) and
 [SPEC.md §8](SPEC.md) for what is not yet supported (closures, tail calls,
 tuple/fixed-array by-value returns, `f32` codegen, general GC/free,

@@ -100,6 +100,14 @@
           "TL_TEST"
           "1"
           "process env")
+        (assert-process-env-head
+          (process-command-env
+            (process-command-with-env-list
+              command
+              (process-env-cons "TL_REPLACED" "yes" (process-env-empty))))
+          "TL_REPLACED"
+          "yes"
+          "process env list")
         (assert-process-no-string
           (process-command-cwd (process-command "echo" (process-args-empty)))
           "process default cwd")

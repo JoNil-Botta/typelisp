@@ -17,6 +17,9 @@ Coverage notes:
   invalid input, escapes, nesting, arrays, objects, lookup, and number forms.
 - `io_edges.tl` covers `read-file-or`, `append-file`, and `file-nonempty?` on
   missing, empty, and existing files without masking host I/O failures.
+- `env_api.tl` covers missing, empty, and present environment variables,
+  host-separator PATH splitting/joining, and explicit Windows `;` path-list
+  behavior.
 - `process_api.tl` covers command construction, argv/cwd/stdin/env accessors,
   invalid-command diagnostics, and the current unsupported execution result.
 - `test_assert_success.tl` covers successful assertion helpers. The

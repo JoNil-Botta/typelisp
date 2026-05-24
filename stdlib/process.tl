@@ -150,6 +150,18 @@
     (ProcessEnvCons name value (process-command-env command))
     (process-command-stdin command)))
 
+;;; Return a copy of `command` with the full env override list replaced.
+
+(define (process-command-with-env-list
+  [command : ProcessCommand]
+  [env : ProcessEnvList]) : ProcessCommand
+  (ProcessCommand
+    (process-command-executable command)
+    (process-command-argv command)
+    (process-command-cwd command)
+    env
+    (process-command-stdin command)))
+
 ;;; Return a copy of `command` with stdin set to `stdin`.
 
 (define (process-command-with-stdin [command : ProcessCommand] [stdin : String]) : ProcessCommand

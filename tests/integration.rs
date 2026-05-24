@@ -1080,6 +1080,15 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
                 "compiler_ast_types.tl",
             ],
         },
+        // refs #599: selfhost frontend carries source line/column through the
+        // token stream. The smoke lexes a multi-line, nested source and checks
+        // each token's 1-based position, including a nested-list token and EOF.
+        Case {
+            name: "lex_span_smoke",
+            exit_code: 42,
+            stdout: "",
+            deps: &["lex.tl", "token.tl"],
+        },
         // refs #447: first selfhost backend emitter over the real compiler IR.
         // The smoke parses, typechecks, lowers, emits deterministic Linux x86_64
         // assembly text, and verifies representative labels/instructions.
@@ -3577,6 +3586,7 @@ fn source_path_for_case(manifest_dir: &PathBuf, name: &str) -> PathBuf {
         "compiler_lower_smoke" => "compiler_lower_smoke.tl",
         "compiler_liveness_smoke" => "compiler_liveness_smoke.tl",
         "compiler_optimize_smoke" => "compiler_optimize_smoke.tl",
+        "lex_span_smoke" => "lex_span_smoke.tl",
         "compiler_backend_smoke" => "compiler_backend_smoke.tl",
         "doc_extract_smoke" => "doc_extract_smoke.tl",
         "doc_render_smoke" => "doc_render_smoke.tl",

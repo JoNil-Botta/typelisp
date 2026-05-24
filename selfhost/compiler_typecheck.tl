@@ -1584,7 +1584,45 @@
           (tc-check-decls ctx top-env rest (tc-summary-add-decl summary decl))]
         [(ErrTcUnit message) (ErrCompilerTypecheck (tc-decl-diag decl message))])]))
 
-(define (typecheck-compiler-program [program : AstProgram]) : ResultCompilerTypecheck
+(define (tc-check-decls-with-paths
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [summary : CompilerTypecheckSummary]) : ResultCompilerTypecheck
+  (match decls
+    [(AstDeclNil) (OkCompilerTypecheck summary)]
+    [(AstDeclCons decl rest)
+      (let ([decl-path
+          :
+          String
+          (match paths
+            [(AstDeclPathCons path _) path]
+            [(AstDeclPathNil) ""])]
+        [rest-paths
+          :
+          AstDeclPathList
+          (match paths
+            [(AstDeclPathCons _ path-rest) path-rest]
+            [(AstDeclPathNil) AstDeclPathNil])])
+        (match (tc-check-decl ctx top-env decl)
+          [(OkTcUnit)
+            (tc-check-decls-with-paths
+              ctx
+              top-env
+              rest
+              rest-paths
+              (tc-summary-add-decl summary decl))]
+          [(ErrTcUnit message)
+            (let ([diag : CompilerDiagnostic (tc-decl-diag decl message)])
+              (if (string-eq decl-path "")
+                (ErrCompilerTypecheck diag)
+                (ErrCompilerTypecheck
+                  (compiler-diagnostic-with-path diag decl-path))))]))]))
+
+(define (typecheck-compiler-program-with-paths
+  [program : AstProgram]
+  [paths : AstDeclPathList]) : ResultCompilerTypecheck
   (match (build-compiler-symbols program)
     [(OkCompilerSymbols symbols)
       (match (build-compiler-registries program)
@@ -1594,10 +1632,11 @@
               [(OkTcEnv top-env)
                 (match program
                   [(AstProgram decls)
-                    (tc-check-decls
+                    (tc-check-decls-with-paths
                       ctx
                       top-env
                       decls
+                      paths
                       (CompilerTypecheckSummary 0 0 0))])]
               [(ErrTcEnv message)
                 (ErrCompilerTypecheck (tc-diag-at-start message))]))]
@@ -1605,6 +1644,9 @@
           (ErrCompilerTypecheck (tc-diag-at-start message))])]
     [(ErrCompilerSymbols message)
       (ErrCompilerTypecheck (tc-diag-at-start message))]))
+
+(define (typecheck-compiler-program [program : AstProgram]) : ResultCompilerTypecheck
+  (typecheck-compiler-program-with-paths program AstDeclPathNil))
 
 (define (typecheck-compiler-source [src : String]) : ResultCompilerTypecheck
   (match (parse-ast-source src)

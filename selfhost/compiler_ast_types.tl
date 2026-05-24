@@ -181,6 +181,10 @@
   (AstDeclNil)
   (AstDeclCons AstDecl AstDeclList))
 
+(defenum AstDeclPathList
+  (AstDeclPathNil)
+  (AstDeclPathCons String AstDeclPathList))
+
 (defenum AstProgram
   (AstProgram AstDeclList))
 

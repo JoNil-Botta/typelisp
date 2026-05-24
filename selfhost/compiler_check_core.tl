@@ -8,21 +8,37 @@
   (OkCompilerCheck CompilerTypecheckSummary)
   (ErrCompilerCheck CompilerDiagnostic))
 
-(define (compiler-check-program [path : String] [decls : AstDeclList]) : ResultCompilerCheck
-  (match (typecheck-compiler-program (AstProgram decls))
+(define (compiler-check-diagnostic-with-fallback-path
+  [diag : CompilerDiagnostic]
+  [path : String]) : CompilerDiagnostic
+  (if (string-eq (compiler-diagnostic-path diag) "")
+    (compiler-diagnostic-with-path diag path)
+    diag))
+
+(define (compiler-check-program-with-paths
+  [path : String]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]) : ResultCompilerCheck
+  (match (typecheck-compiler-program-with-paths (AstProgram decls) paths)
     [(OkCompilerTypecheck summary) (OkCompilerCheck summary)]
     [(ErrCompilerTypecheck diag)
-      (ErrCompilerCheck (compiler-diagnostic-with-path diag path))]))
+      (ErrCompilerCheck
+        (compiler-check-diagnostic-with-fallback-path diag path))]))
+
+(define (compiler-check-program [path : String] [decls : AstDeclList]) : ResultCompilerCheck
+  (compiler-check-program-with-paths path decls AstDeclPathNil))
 
 (define (compiler-check-file [path : String]) : ResultCompilerCheck
-  (match (compiler-load-file path (sym-i64-empty))
-    [(OkCompilerLoad decls _) (compiler-check-program path decls)]
-    [(ErrCompilerLoad diag) (ErrCompilerCheck diag)]))
+  (match (compiler-load-file-with-paths path (sym-i64-empty))
+    [(OkCompilerLoadWithPaths decls paths _)
+      (compiler-check-program-with-paths path decls paths)]
+    [(ErrCompilerLoadWithPaths diag) (ErrCompilerCheck diag)]))
 
 (define (compiler-check-source [path : String] [source : String]) : ResultCompilerCheck
-  (match (compiler-load-source path source (sym-i64-empty))
-    [(OkCompilerLoad decls _) (compiler-check-program path decls)]
-    [(ErrCompilerLoad diag) (ErrCompilerCheck diag)]))
+  (match (compiler-load-source-with-paths path source (sym-i64-empty))
+    [(OkCompilerLoadWithPaths decls paths _)
+      (compiler-check-program-with-paths path decls paths)]
+    [(ErrCompilerLoadWithPaths diag) (ErrCompilerCheck diag)]))
 
 (define (compiler-check-virtual-import-source) : String
   "(import \"compiler_ast_types.tl\")

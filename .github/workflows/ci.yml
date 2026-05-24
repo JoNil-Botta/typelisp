@@ -92,6 +92,14 @@ jobs:
         shell: bash
         run: TYPELISP_BIN=target/debug/typelisp.exe scripts/check-deterministic-asm.sh
 
+      - name: Verify examples (windows-x86_64)
+        shell: bash
+        run: TYPELISP_BIN=target/debug/typelisp.exe scripts/verify-examples.sh
+
+      - name: Verify stdlib modules (windows-x86_64)
+        shell: bash
+        run: TYPELISP_BIN=target/debug/typelisp.exe scripts/verify-stdlib.sh
+
       - name: Test frontend CLI commands
         run: |
           cargo run --quiet -- tokenize examples/hello.tl

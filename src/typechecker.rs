@@ -291,6 +291,28 @@ impl TypeChecker {
         Ok(resolved)
     }
 
+    fn eval_comptime_value(&self, expr: &Expr) -> Result<CtfeValue, TypeError> {
+        let resolve_type = |ty: &Type, span: Span| {
+            let resolved = self.resolve_type(ty);
+            Self::reject_unresolved_type_vars(&resolved, span).map_err(|err| {
+                CtfeError::Message {
+                    msg: err.msg,
+                    span: err.span,
+                }
+            })?;
+            Ok(resolved)
+        };
+
+        CtfeEvaluator::new()
+            .eval_with_type_resolver(expr, resolve_type)
+            .map_err(|err| match err {
+                CtfeError::Message {
+                    msg,
+                    span: ctfe_span,
+                } => TypeError::at(format!("comptime error: {}", msg), ctfe_span),
+            })
+    }
+
     fn active_region(&self) -> Option<&str> {
         self.active_regions.last().map(String::as_str)
     }
@@ -505,7 +527,7 @@ impl TypeChecker {
         captured_sets: &mut Vec<(String, Span)>,
     ) {
         match expr.unspan() {
-            Expr::Literal(_) => {}
+            Expr::Literal(_) | Expr::TypeLiteral { .. } => {}
             Expr::Var(name) => {
                 if outer_locals.contains(name) && !local_bindings.contains(name) {
                     Self::push_capture(captures, name, expr.span());
@@ -1421,17 +1443,24 @@ impl TypeChecker {
             Expr::Var(name) => self
                 .lookup(name)
                 .ok_or_else(|| TypeError::at(format!("unbound variable: {}", name), span)),
-            Expr::Comptime { expr } => match CtfeEvaluator::new().eval(expr) {
-                Ok(CtfeValue::I64(_)) => Ok(Type::I64),
-                Ok(CtfeValue::F64(_)) => Ok(Type::F64),
-                Ok(CtfeValue::Bool(_)) => Ok(Type::Bool),
-                Ok(CtfeValue::Char(_)) => Ok(Type::Char),
-                Ok(CtfeValue::Unit) => Ok(Type::Unit),
-                Err(CtfeError::Message {
-                    msg,
-                    span: ctfe_span,
-                }) => Err(TypeError::at(format!("comptime error: {}", msg), ctfe_span)),
+            Expr::Comptime { expr } => match self.eval_comptime_value(expr)? {
+                CtfeValue::I64(_) => Ok(Type::I64),
+                CtfeValue::F64(_) => Ok(Type::F64),
+                CtfeValue::Bool(_) => Ok(Type::Bool),
+                CtfeValue::Char(_) => Ok(Type::Char),
+                CtfeValue::Unit => Ok(Type::Unit),
+                CtfeValue::Type(ty) => Err(TypeError::at(
+                    format!("type value {} is compile-time only", ty),
+                    span,
+                )),
             },
+            Expr::TypeLiteral { ty } => {
+                let resolved = self.resolve_type_checked(ty, span)?;
+                Err(TypeError::at(
+                    format!("type value {} is compile-time only", resolved),
+                    span,
+                ))
+            }
             Expr::Binary { op, lhs, rhs } => {
                 let lhs_ty = self.check_expr(lhs)?;
                 let rhs_ty = self.check_expr_with_expected_or_actual(rhs, &lhs_ty)?;
@@ -3182,6 +3211,54 @@ mod tests {
 
         assert!(
             err.msg.contains("unsupported type kind 'type'"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_rejects_runtime_use_of_comptime_type_literal() {
+        let prog = parse("(define (main) : i64 (comptime (type i64)))").unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+
+        assert!(
+            err.msg.contains("type value i64 is compile-time only"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_type_literal_resolves_nominal_type() {
+        let prog = parse(
+            "(defstruct Box (value i64))
+             (define (main) : i64 (comptime (type Box)))",
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+
+        assert!(
+            err.msg.contains("type value Box is compile-time only"),
+            "got: {}",
+            err.msg
+        );
+        assert!(
+            !err.msg.contains("'Box'"),
+            "nominal type should be resolved before diagnostics: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_rejects_unknown_type_literal() {
+        let prog = parse("(define (main) : i64 (comptime (type Missing)))").unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+
+        assert!(
+            err.msg.contains("unknown type name 'Missing'"),
             "got: {}",
             err.msg
         );

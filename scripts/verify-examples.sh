@@ -7,11 +7,16 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
+# Linux verifies through the GNU `as`/`ld` pipeline; Windows (Git Bash / MSYS /
+# Cygwin on the CI runner) verifies through the native `windows-x86_64` toolchain
+# (`typelisp build` -> `clang`/`lld-link`), mirroring tests/windows_native.rs.
+HOST_OS=linux
 case "$(uname -s)" in
-    Linux*) ;;
+    Linux*) HOST_OS=linux ;;
+    MINGW* | MSYS* | CYGWIN*) HOST_OS=windows ;;
     *)
-        echo "example verification is Linux-only (requires as + ld)" >&2
-        exit 0
+        echo "example verification is unsupported on this host" >&2
+        exit 1
         ;;
 esac
 
@@ -20,6 +25,7 @@ if [ -n "${TYPELISP_BIN:-}" ]; then
 else
     cargo build --release --quiet
     COMPILER="$ROOT/target/release/typelisp"
+    [ "$HOST_OS" = windows ] && COMPILER="$COMPILER.exe"
 fi
 
 if [ ! -x "$COMPILER" ]; then
@@ -46,6 +52,14 @@ WORKDIR="$ROOT/target/example-verify"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 
+# On Windows, `typelisp build` emits intermediate .s/.obj next to its input, so
+# build from copies under the gitignored WORKDIR instead of polluting examples/.
+# Copy the whole directory at once so sibling imports (e.g. calc.tl imports
+# token.tl) still resolve among the copies.
+if [ "$HOST_OS" = windows ]; then
+    cp "$ROOT/examples/"*.tl "$WORKDIR/"
+fi
+
 failed=0
 
 for source in "$ROOT/examples/"*.tl; do
@@ -55,17 +69,28 @@ for source in "$ROOT/examples/"*.tl; do
     obj="$WORKDIR/$name.o"
     bin="$WORKDIR/$name"
 
-    echo "[$name] compiling $source"
-    "$COMPILER" compile "$source" -o "$asm"
+    if [ "$HOST_OS" = windows ]; then
+        echo "[$name] building (windows-x86_64)"
+        "$COMPILER" build "$WORKDIR/$name.tl" -o "$bin.exe" --target windows-x86_64
 
-    as "$asm" -o "$obj"
-    ld "$obj" -o "$bin"
+        echo "[$name] running -> expect exit $want"
+        set +e
+        "$bin.exe"
+        got=$?
+        set -e
+    else
+        echo "[$name] compiling $source"
+        "$COMPILER" compile "$source" -o "$asm"
 
-    echo "[$name] running -> expect exit $want"
-    set +e
-    "$bin"
-    got=$?
-    set -e
+        as "$asm" -o "$obj"
+        ld "$obj" -o "$bin"
+
+        echo "[$name] running -> expect exit $want"
+        set +e
+        "$bin"
+        got=$?
+        set -e
+    fi
 
     if [ "$got" -ne "$want" ]; then
         echo "FAIL: $name expected exit $want, got $got" >&2

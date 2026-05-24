@@ -8,10 +8,9 @@
 //! idempotence property. This file fills that gap (re-scoped #328) using the
 //! fixtures under `tests/format_golden/`.
 //!
-//! `typelisp fmt` compiles and runs the selfhost driver natively, so execution
-//! is gated to Linux (native `as`/`ld`), matching the in-place fmt tests in
-//! `tests/cli.rs` and the run-based tests in `tests/integration.rs`. The file
-//! still compiles on every platform.
+//! `typelisp fmt` compiles and runs the selfhost driver for the host platform,
+//! so execution is covered on Linux and Windows while the file still compiles
+//! on every platform.
 
 use std::fs;
 use std::path::PathBuf;
@@ -29,7 +28,7 @@ const NEGATIVE_INT_EXPECTED: &str = "(define (main) : i64\n  -128)";
 
 #[test]
 fn fmt_produces_golden_output_and_is_idempotent() {
-    if cfg!(target_os = "linux") {
+    if cfg!(any(target_os = "linux", target_os = "windows")) {
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let golden_dir = manifest_dir.join("tests").join("format_golden");
         let work_dir = manifest_dir.join("target").join("fmt-golden-test");

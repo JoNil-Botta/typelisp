@@ -200,6 +200,9 @@ jobs:
       - name: Verify stdlib modules
         run: TYPELISP_BIN=./target/release/typelisp ./scripts/verify-stdlib.sh
 
+      - name: Verify stdlib documentation
+        run: TYPELISP_BIN=./target/release/typelisp ./scripts/verify-stdlib-docs.sh
+
       - name: Check TypeLisp source formatting
         run: TYPELISP_BIN=./target/release/typelisp ./scripts/check-tl-format.sh
 

@@ -1,31 +1,23 @@
-;; stdlib/json.tl - JSON parser and serializer for TypeLisp.
+;;;; JSON parser and serializer for TypeLisp.
+;;;;
+;;;; Provides a canonical JSON value model, recoverable parser, and serializer
+;;;; for tools that need JSON without a private selfhost-only implementation.
+;;;;
+;;;; Primitives required from the compiler/runtime: `string-length`,
+;;;; `string-ref`, `substring`, `string-append`, and `string-eq`.
+;;;;
+;;;; Usage: `(import "stdlib/json.tl")`
+;;;;
+;;;; Parsed values, list nodes, decoded strings, and serialized strings are
+;;;; ordinary TypeLisp heap values. They are allocated in the active arena once
+;;;; scoped arenas are enabled, and in the default program-lifetime arena today.
+;;;;
+;;;; ```typelisp
+;;;; (import "stdlib/json.tl")
+;;;; (define sample : String (json-stringify (JsonBool true)))
+;;;; ```
 
-;;
-
-;; Provides a canonical JSON value model, recoverable parser, and serializer for
-
-;; tools that need JSON without a private selfhost-only implementation.
-
-;;
-
-;; Primitives required from the compiler/runtime:
-
-;;   string-length, string-ref, substring, string-append, string-eq
-
-;;
-
-;; Usage: (import "stdlib/json.tl")
-
-;;
-
-;; Allocation policy: parsed values, list nodes, decoded Strings, and serialized
-
-;; Strings are ordinary TypeLisp heap values. They are allocated in the currently
-
-;; active arena once scoped arenas are enabled, and in the default program
-
-;; lifetime arena today.
-
+;;; Canonical JSON value model used by the stdlib parser and serializer.
 (defenum Json
   (JsonNull)
   (JsonBool bool)

@@ -898,6 +898,85 @@ fn validate_function(
                         return unsupported(&what);
                     }
                 }
+                // AVX-512 k-mask predicated memory ops + tail-mask generation
+                // (#507). These require k-registers, so they are AVX-512 only;
+                // scalar and AVX2 reject them cleanly.
+                Instruction::TailMask {
+                    dst,
+                    index,
+                    len,
+                    lanes,
+                } => {
+                    if mode != BackendMode::Avx512 {
+                        if mode == BackendMode::Avx2 {
+                            return unsupported("unsupported vector/mask IR for this backend mode");
+                        }
+                        return unsupported("vector/mask IR requires a SIMD backend target");
+                    }
+                    if let Err(what) =
+                        validate_tail_mask(*dst, index, len, *lanes, &var_types, global_types)
+                    {
+                        return unsupported(&what);
+                    }
+                }
+                Instruction::PredicatedLoad {
+                    dst,
+                    base,
+                    index,
+                    mask,
+                    lanes,
+                    elem_ty,
+                } => {
+                    if mode != BackendMode::Avx512 {
+                        if mode == BackendMode::Avx2 {
+                            return unsupported("unsupported vector/mask IR for this backend mode");
+                        }
+                        return unsupported("vector/mask IR requires a SIMD backend target");
+                    }
+                    if let Err(what) = validate_vector_load(
+                        *dst,
+                        base,
+                        index,
+                        *lanes,
+                        elem_ty,
+                        mode,
+                        &var_types,
+                        global_types,
+                    )
+                    .and_then(|()| validate_mask_operand(mask, *lanes, &var_types))
+                    {
+                        return unsupported(&what);
+                    }
+                }
+                Instruction::PredicatedStore {
+                    base,
+                    index,
+                    value,
+                    mask,
+                    lanes,
+                    elem_ty,
+                } => {
+                    if mode != BackendMode::Avx512 {
+                        if mode == BackendMode::Avx2 {
+                            return unsupported("unsupported vector/mask IR for this backend mode");
+                        }
+                        return unsupported("vector/mask IR requires a SIMD backend target");
+                    }
+                    if let Err(what) = validate_vector_store(
+                        base,
+                        index,
+                        value,
+                        *lanes,
+                        elem_ty,
+                        mode,
+                        &var_types,
+                        global_types,
+                    )
+                    .and_then(|()| validate_mask_operand(mask, *lanes, &var_types))
+                    {
+                        return unsupported(&what);
+                    }
+                }
                 Instruction::LaneId { .. }
                 | Instruction::Splat { .. }
                 | Instruction::VectorCompare { .. }
@@ -905,9 +984,7 @@ fn validate_function(
                 | Instruction::MaskBinOp { .. }
                 | Instruction::MaskNot { .. }
                 | Instruction::MaskReduce { .. }
-                | Instruction::Select { .. }
-                | Instruction::PredicatedStore { .. }
-                | Instruction::TailMask { .. } => {
+                | Instruction::Select { .. } => {
                     if mode == BackendMode::Avx2 || mode == BackendMode::Avx512 {
                         return unsupported("unsupported vector/mask IR for this backend mode");
                     }
@@ -1014,6 +1091,68 @@ fn validate_vector_store(
     check_operand(base, global_types)?;
     check_operand(index, global_types)?;
     Ok(())
+}
+
+/// Validate a `TailMask` instruction: the destination must be a `Mask` of the
+/// declared lane count, and `index`/`len` must be integer scalars. Only the
+/// AVX-512 lane widths (8 or 16) are supported.
+fn validate_tail_mask(
+    dst: VarId,
+    index: &Value,
+    len: &Value,
+    lanes: usize,
+    var_types: &HashMap<VarId, Type>,
+    global_types: &HashMap<String, Type>,
+) -> Result<(), String> {
+    if lanes != 8 && lanes != 16 {
+        return Err(format!(
+            "unsupported AVX-512 tail-mask lane count {}",
+            lanes
+        ));
+    }
+    match var_types.get(&dst) {
+        Some(Type::Mask(mask_lanes)) if *mask_lanes == lanes => {}
+        Some(ty) => {
+            return Err(format!(
+                "tail-mask destination %{} has type {}, expected (Mask {})",
+                dst, ty, lanes
+            ));
+        }
+        None => {
+            return Err(format!(
+                "tail-mask destination %{} has no recorded type",
+                dst
+            ));
+        }
+    }
+    validate_integer_index(index, var_types, global_types, "tail-mask index")?;
+    validate_integer_index(len, var_types, global_types, "tail-mask length")?;
+    check_operand(index, global_types)?;
+    check_operand(len, global_types)?;
+    Ok(())
+}
+
+/// Validate a predicated load/store mask operand: it must be a `Mask` var of the
+/// matching lane count (produced by `TailMask`).
+fn validate_mask_operand(
+    mask: &Value,
+    lanes: usize,
+    var_types: &HashMap<VarId, Type>,
+) -> Result<(), String> {
+    match mask {
+        Value::Var(var) => match var_types.get(var) {
+            Some(Type::Mask(mask_lanes)) if *mask_lanes == lanes => Ok(()),
+            Some(ty) => Err(format!(
+                "predicated memory mask %{} has type {}, expected (Mask {})",
+                var, ty, lanes
+            )),
+            None => Err(format!(
+                "predicated memory mask %{} has no recorded type",
+                var
+            )),
+        },
+        _ => Err("predicated memory mask must be a mask variable".to_string()),
+    }
 }
 
 fn validate_vector_shape(elem_ty: &Type, lanes: usize, mode: BackendMode) -> Result<(), String> {
@@ -1202,6 +1341,11 @@ fn is_backend_local_type_for_mode(ty: &Type, mode: BackendMode) -> bool {
         return true;
     }
     if mode == BackendMode::Avx512 && is_avx512_vector_local_type(ty) {
+        return true;
+    }
+    // AVX-512 k-mask locals (produced by `TailMask`, consumed by predicated
+    // memory ops, #507) are stored as a small integer lane bitmask.
+    if mode == BackendMode::Avx512 && matches!(ty, Type::Mask(8) | Type::Mask(16)) {
         return true;
     }
     *ty == Type::Unit || is_sized_backend_type(ty)
@@ -2775,6 +2919,13 @@ impl X86_64Backend {
                 Self::collect_function_value(base, names);
                 Self::collect_function_value(index, names);
                 Self::collect_function_value(value, names);
+                Self::collect_function_value(mask, names);
+            }
+            Instruction::PredicatedLoad {
+                base, index, mask, ..
+            } => {
+                Self::collect_function_value(base, names);
+                Self::collect_function_value(index, names);
                 Self::collect_function_value(mask, names);
             }
             Instruction::TailMask { index, len, .. } => {
@@ -5152,6 +5303,36 @@ impl X86_64Backend {
             } if self.target.mode == BackendMode::Avx512 => {
                 self.generate_avx512_vector_store(base, index, value, *lanes, elem_ty);
             }
+            // AVX-512 k-mask tail-mask generation and predicated memory ops
+            // (#507). Validation guarantees AVX-512 mode and a valid shape here.
+            Instruction::TailMask {
+                dst,
+                index,
+                len,
+                lanes,
+            } if self.target.mode == BackendMode::Avx512 => {
+                self.generate_avx512_tail_mask(*dst, index, len, *lanes);
+            }
+            Instruction::PredicatedLoad {
+                dst,
+                base,
+                index,
+                mask,
+                lanes,
+                elem_ty,
+            } if self.target.mode == BackendMode::Avx512 => {
+                self.generate_avx512_predicated_load(*dst, base, index, mask, *lanes, elem_ty);
+            }
+            Instruction::PredicatedStore {
+                base,
+                index,
+                value,
+                mask,
+                lanes,
+                elem_ty,
+            } if self.target.mode == BackendMode::Avx512 => {
+                self.generate_avx512_predicated_store(base, index, value, mask, *lanes, elem_ty);
+            }
             Instruction::LaneId { .. }
             | Instruction::Splat { .. }
             | Instruction::VectorBinOp { .. }
@@ -5164,6 +5345,7 @@ impl X86_64Backend {
             | Instruction::VectorLoad { .. }
             | Instruction::VectorStore { .. }
             | Instruction::PredicatedStore { .. }
+            | Instruction::PredicatedLoad { .. }
             | Instruction::TailMask { .. } => {
                 self.emit("    # vector/mask IR rejected by backend validation");
             }
@@ -5301,6 +5483,96 @@ impl X86_64Backend {
         let addr = Self::indexed_addr("%rax", "%rcx", elem_ty);
         let move_mnemonic = Self::vector_move_mnemonic(elem_ty);
         self.emit(&format!("    {} %zmm0, {}", move_mnemonic, addr));
+    }
+
+    /// Build an AVX-512 tail mask into `dst`'s slot: lanes `[0, len-index)` are
+    /// active, capped at `lanes`. The mask is materialized as a small integer
+    /// lane bitmask (low `lanes` bits) using `bzhi`, then stored; predicated
+    /// memory ops later move it into a k-register.
+    fn generate_avx512_tail_mask(&mut self, dst: VarId, index: &Value, len: &Value, lanes: usize) {
+        let len_ty = self.value_type(len).unwrap_or(Type::I64);
+        self.load_value(len, "%rax", &len_ty);
+        let index_ty = self.value_type(index).unwrap_or(Type::I64);
+        self.load_value(index, "%rcx", &index_ty);
+        // remaining = len - index, clamped to be non-negative.
+        self.emit("    subq %rcx, %rax");
+        self.emit("    xorl %edx, %edx");
+        self.emit("    cmovsq %rdx, %rax");
+        // mask = low `remaining` bits of all-ones (bzhi), then cap to `lanes`.
+        self.emit("    movq $-1, %rdx");
+        self.emit("    bzhi %rax, %rdx, %rdx");
+        let lane_mask: u64 = if lanes >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << lanes) - 1
+        };
+        self.emit(&format!("    andq ${}, %rdx", lane_mask));
+        let dst_offset = self.var_offsets[&dst];
+        self.emit(&format!("    movq %rdx, {}(%rbp)", dst_offset));
+    }
+
+    /// AVX-512 masked vector load: inactive lanes are zeroed (`{z}`), so a tail
+    /// load never reads past the live elements.
+    fn generate_avx512_predicated_load(
+        &mut self,
+        dst: VarId,
+        base: &Value,
+        index: &Value,
+        mask: &Value,
+        _lanes: usize,
+        elem_ty: &Type,
+    ) {
+        self.load_dyn_array_data_ptr(base, "%rax");
+        self.load_vector_index(index, "%rcx");
+        self.load_mask_into_k1(mask);
+        let addr = Self::indexed_addr("%rax", "%rcx", elem_ty);
+        let move_mnemonic = Self::masked_vector_move_mnemonic(elem_ty);
+        self.emit(&format!(
+            "    {} {}, %zmm0{{%k1}}{{z}}",
+            move_mnemonic, addr
+        ));
+        let dst_offset = self.var_offsets[&dst];
+        self.store_vector_reg("%zmm0", dst_offset, elem_ty);
+    }
+
+    /// AVX-512 masked vector store: only active lanes are written (merge mask),
+    /// so a tail store never writes past the live elements.
+    fn generate_avx512_predicated_store(
+        &mut self,
+        base: &Value,
+        index: &Value,
+        value: &Value,
+        mask: &Value,
+        _lanes: usize,
+        elem_ty: &Type,
+    ) {
+        self.load_dyn_array_data_ptr(base, "%rax");
+        self.load_vector_index(index, "%rcx");
+        self.load_vector_value(value, "%zmm0", elem_ty);
+        self.load_mask_into_k1(mask);
+        let addr = Self::indexed_addr("%rax", "%rcx", elem_ty);
+        let move_mnemonic = Self::masked_vector_move_mnemonic(elem_ty);
+        self.emit(&format!("    {} %zmm0, {}{{%k1}}", move_mnemonic, addr));
+    }
+
+    /// Load a lane bitmask (produced by `TailMask`) into `%k1`. `%k0` is never
+    /// used as an active predicate because AVX-512 treats it as no-mask.
+    fn load_mask_into_k1(&mut self, mask: &Value) {
+        if let Value::Var(var) = mask {
+            let offset = self.var_offsets[var];
+            self.emit(&format!("    movzwl {}(%rbp), %edx", offset));
+            self.emit("    kmovw %edx, %k1");
+        }
+    }
+
+    /// Width-specific vector move mnemonic required for EVEX masking (the
+    /// suffix-less `vmovdqu` form cannot carry a `{%k}` write-mask).
+    fn masked_vector_move_mnemonic(elem_ty: &Type) -> &'static str {
+        match elem_ty {
+            Type::F64 => "vmovupd",
+            Type::I32 | Type::U32 => "vmovdqu32",
+            _ => "vmovdqu64",
+        }
     }
 
     fn load_dyn_array_data_ptr(&mut self, base: &Value, reg: &str) {
@@ -6709,6 +6981,222 @@ mod tests {
             "expected %zmm registers; asm:\n{}",
             asm
         );
+    }
+
+    #[test]
+    fn test_avx512_tail_mask_and_predicated_load_store_emit_kmask() {
+        // Hand-built IR: build a tail mask, masked-load the live lanes, then
+        // masked-store them (#507). Verifies k-mask emission without an
+        // AVX-512 lowerer or an AVX-512 CPU.
+        let func = Function {
+            name: "masked_kernel".into(),
+            params: vec![
+                (0, Type::DynArray(Box::new(Type::I64))),
+                (1, Type::DynArray(Box::new(Type::I64))),
+                (2, Type::I64),
+            ],
+            ret: Type::Unit,
+            locals: vec![
+                (3, Type::Mask(8)),
+                (4, Type::Vector(Box::new(Type::I64), 8)),
+            ],
+            blocks: vec![BasicBlock {
+                label: "entry".into(),
+                instructions: vec![
+                    Instruction::TailMask {
+                        dst: 3,
+                        index: Value::ConstI64(0),
+                        len: Value::Var(2),
+                        lanes: 8,
+                    },
+                    Instruction::PredicatedLoad {
+                        dst: 4,
+                        base: Value::Var(0),
+                        index: Value::ConstI64(0),
+                        mask: Value::Var(3),
+                        lanes: 8,
+                        elem_ty: Type::I64,
+                    },
+                    Instruction::PredicatedStore {
+                        base: Value::Var(1),
+                        index: Value::ConstI64(0),
+                        value: Value::Var(4),
+                        mask: Value::Var(3),
+                        lanes: 8,
+                        elem_ty: Type::I64,
+                    },
+                    Instruction::Return(None),
+                ],
+            }],
+            entry: "entry".into(),
+        };
+
+        let program = Program {
+            functions: vec![func],
+            globals: vec![],
+            externs: vec![],
+        };
+
+        let asm = generate_assembly_for_target(
+            &program,
+            BackendTarget::default().with_mode(BackendMode::Avx512),
+        )
+        .expect("AVX-512 backend should accept tail-mask + predicated memory IR");
+
+        // Tail mask is built with bzhi and moved into a k-register.
+        assert!(
+            asm.contains("bzhi"),
+            "expected bzhi tail mask; asm:\n{}",
+            asm
+        );
+        assert!(asm.contains("kmovw"), "expected kmovw; asm:\n{}", asm);
+        assert!(asm.contains("%k1"), "expected %k1 predicate; asm:\n{}", asm);
+        // Masked load zeroes inactive lanes; masked store merges.
+        assert!(
+            asm.contains("vmovdqu64") && asm.contains("{%k1}{z}"),
+            "expected zeroing-masked vmovdqu64 load; asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("%zmm0{%k1}{z}"),
+            "expected masked load into %zmm0; asm:\n{}",
+            asm
+        );
+        // `k0` is the implicit all-ones register and must not be the active mask.
+        assert!(
+            !asm.contains("%k0"),
+            "k0 must not be used as an active predicate; asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_avx512_predicated_memory_i32_and_f64_mnemonics() {
+        // i32 x 16 uses vmovdqu32; f64 x 8 uses vmovupd for the masked moves.
+        let func = Function {
+            name: "masked_shapes".into(),
+            params: vec![
+                (0, Type::DynArray(Box::new(Type::I32))),
+                (1, Type::DynArray(Box::new(Type::F64))),
+                (2, Type::I64),
+            ],
+            ret: Type::Unit,
+            locals: vec![
+                (3, Type::Mask(16)),
+                (4, Type::Vector(Box::new(Type::I32), 16)),
+                (5, Type::Mask(8)),
+                (6, Type::Vector(Box::new(Type::F64), 8)),
+            ],
+            blocks: vec![BasicBlock {
+                label: "entry".into(),
+                instructions: vec![
+                    Instruction::TailMask {
+                        dst: 3,
+                        index: Value::ConstI64(0),
+                        len: Value::Var(2),
+                        lanes: 16,
+                    },
+                    Instruction::PredicatedLoad {
+                        dst: 4,
+                        base: Value::Var(0),
+                        index: Value::ConstI64(0),
+                        mask: Value::Var(3),
+                        lanes: 16,
+                        elem_ty: Type::I32,
+                    },
+                    Instruction::TailMask {
+                        dst: 5,
+                        index: Value::ConstI64(0),
+                        len: Value::Var(2),
+                        lanes: 8,
+                    },
+                    Instruction::PredicatedStore {
+                        base: Value::Var(1),
+                        index: Value::ConstI64(0),
+                        value: Value::Var(6),
+                        mask: Value::Var(5),
+                        lanes: 8,
+                        elem_ty: Type::F64,
+                    },
+                    Instruction::Return(None),
+                ],
+            }],
+            entry: "entry".into(),
+        };
+
+        let program = Program {
+            functions: vec![func],
+            globals: vec![],
+            externs: vec![],
+        };
+
+        let asm = generate_assembly_for_target(
+            &program,
+            BackendTarget::default().with_mode(BackendMode::Avx512),
+        )
+        .expect("AVX-512 backend should accept i32/f64 predicated memory IR");
+
+        assert!(
+            asm.contains("vmovdqu32") && asm.contains("{%k1}{z}"),
+            "expected masked vmovdqu32 load for i32x16; asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("vmovupd") && asm.contains("{%k1}"),
+            "expected masked vmovupd store for f64x8; asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_predicated_memory_rejected_outside_avx512() {
+        // The k-mask IR must be rejected cleanly by the scalar and AVX2 backends.
+        let make_program = || Program {
+            functions: vec![Function {
+                name: "masked_kernel".into(),
+                params: vec![(0, Type::DynArray(Box::new(Type::I64))), (1, Type::I64)],
+                ret: Type::Unit,
+                locals: vec![
+                    (2, Type::Mask(8)),
+                    (3, Type::Vector(Box::new(Type::I64), 8)),
+                ],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![
+                        Instruction::TailMask {
+                            dst: 2,
+                            index: Value::ConstI64(0),
+                            len: Value::Var(1),
+                            lanes: 8,
+                        },
+                        Instruction::PredicatedLoad {
+                            dst: 3,
+                            base: Value::Var(0),
+                            index: Value::ConstI64(0),
+                            mask: Value::Var(2),
+                            lanes: 8,
+                            elem_ty: Type::I64,
+                        },
+                        Instruction::Return(None),
+                    ],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![],
+        };
+
+        for mode in [BackendMode::Scalar, BackendMode::Avx2] {
+            let result = generate_assembly_for_target(
+                &make_program(),
+                BackendTarget::default().with_mode(mode),
+            );
+            assert!(
+                result.is_err(),
+                "{:?} backend must reject k-mask IR, got Ok",
+                mode
+            );
+        }
     }
 
     #[test]

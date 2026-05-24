@@ -302,6 +302,18 @@ pub enum Instruction {
         lanes: usize,
         elem_ty: Type,
     },
+    /// Contiguous vector load guarded by a lane mask. Mirrors `PredicatedStore`
+    /// with a destination: inactive lanes read as zero rather than touching
+    /// memory, so a masked tail load never reads past the live elements.
+    #[allow(dead_code)]
+    PredicatedLoad {
+        dst: VarId,
+        base: Value,
+        index: Value,
+        mask: Value,
+        lanes: usize,
+        elem_ty: Type,
+    },
     /// Tail mask: lane is active when `index + lane < len`.
     #[allow(dead_code)]
     TailMask {
@@ -367,7 +379,9 @@ impl Instruction {
             | Instruction::Select { .. }
             | Instruction::TailMask { .. }
             | Instruction::Phi { .. } => IrEffect::Pure,
-            Instruction::Load { .. } | Instruction::VectorLoad { .. } => IrEffect::MemoryRead,
+            Instruction::Load { .. }
+            | Instruction::VectorLoad { .. }
+            | Instruction::PredicatedLoad { .. } => IrEffect::MemoryRead,
             Instruction::Store { .. }
             | Instruction::VectorStore { .. }
             | Instruction::PredicatedStore { .. }
@@ -800,6 +814,20 @@ impl fmt::Display for Instruction {
                     base, index, value, mask, lanes, elem_ty
                 )
             }
+            Instruction::PredicatedLoad {
+                dst,
+                base,
+                index,
+                mask,
+                lanes,
+                elem_ty,
+            } => {
+                write!(
+                    f,
+                    "  %{} = predicated_load {}, {}, {} : {} x {}",
+                    dst, base, index, mask, lanes, elem_ty
+                )
+            }
             Instruction::TailMask {
                 dst,
                 index,
@@ -1070,6 +1098,18 @@ mod tests {
                 dst: 0,
                 base: Value::Var(1),
                 index: Value::ConstI64(0),
+                lanes: 4,
+                elem_ty: Type::I64,
+            }
+            .effect(),
+            IrEffect::MemoryRead
+        );
+        assert_eq!(
+            Instruction::PredicatedLoad {
+                dst: 0,
+                base: Value::Var(1),
+                index: Value::ConstI64(0),
+                mask: Value::Var(2),
                 lanes: 4,
                 elem_ty: Type::I64,
             }

@@ -978,6 +978,7 @@ Commands:
   debug tokenize    Print token stream
   debug parse       Print AST
   debug check       Run type checker
+  repl              Minimal stdio command loop
   compile           Generate assembly (.s)
   build <file.tl>   Compile, assemble, and link a native executable
   run               Compile, assemble, link, and run binary
@@ -1004,6 +1005,9 @@ native executables.
 
 `tokenize`, `parse`, and `check` are also accepted as top-level compatibility
 aliases for the corresponding `debug` commands.
+
+`repl` currently supports dot commands only: `.help` prints command help, and
+`.exit` terminates the session. Form evaluation is reserved for later work.
 
 ---
 

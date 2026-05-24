@@ -4946,6 +4946,32 @@ tl_string_concat:
                     ".L_tl_stdin_eof_flag:\n")))))))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-alloc-runtime-arena-ok?) : bool
+  (match (compiler-backend-emit-program
+    (compiler-backend-runtime-helper-program))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "tl_current_arena:\n")
+        (and
+          (compiler-backend-string-contains?
+            asm
+            "    movq tl_current_arena(%rip), %r8\n")
+          (and
+            (compiler-backend-string-contains? asm ".L_tl_alloc_new_arena:\n")
+            (and
+              (compiler-backend-string-contains?
+                asm
+                "    movq $0x4000000, %rdx\n")
+              (and
+                (compiler-backend-string-contains?
+                  asm
+                  "    movq %rax, tl_current_arena(%rip)\n")
+                (not
+                  (compiler-backend-string-contains?
+                    asm
+                    ".L_tl_alloc_size_ready:\n")))))))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-user-helper-name-program) : CompilerIrProgram
   (IrProgram
     IrGlobalNil
@@ -5930,8 +5956,10 @@ tl_string_concat:
                             (and
                               (compiler-backend-runtime-helper-asm-ok?)
                               (and
-                                (compiler-backend-user-helper-name-ok?)
-                                (compiler-backend-runtime-coexist-ok?))))))))))))))))
+                                (compiler-backend-alloc-runtime-arena-ok?)
+                                (and
+                                  (compiler-backend-user-helper-name-ok?)
+                                  (compiler-backend-runtime-coexist-ok?)))))))))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

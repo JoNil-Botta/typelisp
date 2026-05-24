@@ -344,6 +344,9 @@
 (define (compiler-parse-tag-decl-import) : i64
   404)
 
+(define (compiler-parse-tag-decl-comptime-decl) : i64
+  405)
+
 (define (compiler-parse-dispatch-binops [e : SymI64Env]) : SymI64Env
   (let ([e1 : SymI64Env (sym-i64-bind e "+" (compiler-parse-tag-bin-add))])
     (let ([e2 : SymI64Env (sym-i64-bind e1 "-" (compiler-parse-tag-bin-sub))])
@@ -650,7 +653,14 @@
             :
             SymI64Env
             (sym-i64-bind e3 "defstruct" (compiler-parse-tag-decl-defstruct))])
-          (sym-i64-bind e4 "import" (compiler-parse-tag-decl-import)))))))
+          (let ([e5
+              :
+              SymI64Env
+              (sym-i64-bind e4 "import" (compiler-parse-tag-decl-import))])
+            (sym-i64-bind
+              e5
+              "comptime-decl"
+              (compiler-parse-tag-decl-comptime-decl))))))))
 
 (define (compiler-parse-dispatch-env) : SymI64Env
   (compiler-parse-dispatch-decls
@@ -1432,7 +1442,12 @@
                                         tag
                                         (compiler-parse-tag-expr-with-region))
                                         (parse-ast-with-region dispatch rest)
-                                        (parse-ast-call dispatch head rest)))))))))))))))))))))
+                                        (if (=
+                                          tag
+                                          (compiler-parse-tag-decl-comptime-decl))
+                                          (ErrAstExpr
+                                            "parse: comptime-decl is only valid as a top-level declaration")
+                                          (parse-ast-call dispatch head rest))))))))))))))))))))))
 
 (define (parse-ast-list-expr
   [dispatch : SymI64Env]
@@ -1579,6 +1594,22 @@
     [(SpSCons (SpSStr path _) (SpSNil _) _) (OkAstDecl (AstDeclImport path))]
     [_ (ErrAstDecl "parse: malformed import")]))
 
+(define (parse-ast-comptime-decl [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstDecl
+  (match rest
+    [(SpSCons template (SpSNil _) _)
+      (match template
+        [(SpSCons (SpSSym head _) template-rest _)
+          (let ([tag : i64 (compiler-parse-dispatch-tag dispatch head)])
+            (if (= tag (compiler-parse-tag-decl-defenum))
+              (parse-ast-defenum dispatch template-rest)
+              (if (= tag (compiler-parse-tag-decl-defstruct))
+                (parse-ast-defstruct dispatch template-rest)
+                (ErrAstDecl
+                  "parse: comptime-decl accepts only defstruct or defenum"))))]
+        [_
+          (ErrAstDecl "parse: comptime-decl accepts only defstruct or defenum")])]
+    [_ (ErrAstDecl "parse: comptime-decl expects exactly one template")]))
+
 (define (parse-ast-decl [dispatch : SymI64Env] [s : SpannedSexpr]) : ResultAstDecl
   (match s
     [(SpSCons (SpSSym head _) rest _)
@@ -1593,7 +1624,9 @@
                 (parse-ast-defstruct dispatch rest)
                 (if (= tag (compiler-parse-tag-decl-import))
                   (parse-ast-import rest)
-                  (ErrAstDecl "parse: expected declaration")))))))]
+                  (if (= tag (compiler-parse-tag-decl-comptime-decl))
+                    (parse-ast-comptime-decl dispatch rest)
+                    (ErrAstDecl "parse: expected declaration"))))))))]
     [_ (ErrAstDecl "parse: malformed declaration")]))
 
 (define (parse-ast-program-forms
@@ -1858,6 +1891,40 @@
     [(OkAstProgram _) true]
     [(ErrAstProgram _) false]))
 
+(define (compiler-parse-comptime-decl-source) : String
+  "(comptime-decl (defstruct Point (x i64) (y i64)))
+(comptime-decl (defenum Maybe (None) (Some i64)))")
+
+(define (compiler-parse-comptime-decl-ok?) : bool
+  (match (parse-ast-source (compiler-parse-comptime-decl-source))
+    [(OkAstProgram (AstProgram decls))
+      (and
+        (= (ast-decl-list-count decls) 2)
+        (= (ast-decl-list-tag-sum decls) 9))]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-parse-comptime-decl-bad-payload-source) : String
+  "(comptime-decl (define x : i64 1))")
+
+(define (compiler-parse-comptime-decl-expression-source) : String
+  "(define (main) : i64 (comptime-decl (defstruct Point (x i64))))")
+
+(define (compiler-parse-comptime-decl-extra-source) : String
+  "(comptime-decl (defstruct Point (x i64)) (defenum Maybe (None)))")
+
+(define (compiler-parse-comptime-decl-error-tests-ok?) : bool
+  (and
+    (compiler-parse-error-ok?
+      (compiler-parse-comptime-decl-bad-payload-source)
+      "parse: comptime-decl accepts only defstruct or defenum")
+    (and
+      (compiler-parse-error-ok?
+        (compiler-parse-comptime-decl-expression-source)
+        "parse: comptime-decl is only valid as a top-level declaration")
+      (compiler-parse-error-ok?
+        (compiler-parse-comptime-decl-extra-source)
+        "parse: comptime-decl expects exactly one template"))))
+
 (define (compiler-parse-error-tests-ok?) : bool
   (and
     (compiler-parse-error-ok?
@@ -1883,9 +1950,11 @@
               (compiler-parse-error-ok?
                 (compiler-parse-with-region-empty-source)
                 "parse: with-region 'r' requires a non-empty body")
-              (compiler-parse-error-ok?
-                (compiler-parse-region-type-bad-source)
-                "parse: region name must be an identifier"))))))))
+              (and
+                (compiler-parse-error-ok?
+                  (compiler-parse-region-type-bad-source)
+                  "parse: region name must be an identifier")
+                (compiler-parse-comptime-decl-error-tests-ok?)))))))))
 
 (define (compiler-parse-smoke) : i64
   (match (parse-ast-source (compiler-parse-smoke-source))
@@ -1896,7 +1965,11 @@
           (compiler-parse-nested-expr-span-ok?)
           (and
             (compiler-parse-error-span-ok?)
-            (and (compiler-parse-float-literal-ok?) (compiler-parse-region-ok?)))))
+            (and
+              (compiler-parse-float-literal-ok?)
+              (and
+                (compiler-parse-region-ok?)
+                (compiler-parse-comptime-decl-ok?))))))
         (if (compiler-parse-error-tests-ok?)
           42
           (begin

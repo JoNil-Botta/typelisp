@@ -668,6 +668,37 @@
         (= (compiler-registry-handle-owner-index handle) 1234)
         (= (compiler-registry-handle-child-index handle) 5)))))
 
+(define (compiler-symbols-comptime-decl-source) : String
+  "(comptime-decl (defstruct Point (x i64) (y i64)))
+(comptime-decl (defenum Maybe (None) (Some i64)))
+(define (main) : i64 0)")
+
+(define (compiler-symbols-comptime-decl-ok?) : bool
+  (match (parse-ast-source (compiler-symbols-comptime-decl-source))
+    [(OkAstProgram program)
+      (match (build-compiler-symbols program)
+        [(OkCompilerSymbols symbols)
+          (match (build-compiler-registries program)
+            [(OkCompilerRegistries registries)
+              (and
+                (=
+                  (compiler-symbol-lookup-score
+                    (compiler-symbols-lookup-type symbols "Point")
+                    (compiler-symbol-kind-defstruct)
+                    0)
+                  1)
+                (and
+                  (=
+                    (compiler-symbol-lookup-score
+                      (compiler-symbols-lookup-type symbols "Maybe")
+                      (compiler-symbol-kind-defenum)
+                      1)
+                    1)
+                  (= (compiler-registries-smoke-score program registries) 8)))]
+            [(ErrCompilerRegistries _) false])]
+        [(ErrCompilerSymbols _) false])]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-symbols-self-test) : i64
   (match (parse-ast-source (compiler-symbols-smoke-source))
     [(OkAstProgram program)
@@ -687,7 +718,9 @@
                         (compiler-registries-duplicate-variant-ok?)
                         (and
                           (compiler-registries-duplicate-field-ok?)
-                          (compiler-registry-large-owner-handle-ok?)))))))
+                          (and
+                            (compiler-registry-large-owner-handle-ok?)
+                            (compiler-symbols-comptime-decl-ok?))))))))
                 42
                 (begin
                   (panic "symbols: smoke score mismatch")

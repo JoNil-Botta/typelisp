@@ -2548,6 +2548,15 @@
   (let ([p : Point (Point 40 2)])
     (+ (struct-get p x) (from-maybe (Some (struct-get p y))))))")
 
+(define (compiler-typecheck-comptime-decl-source) : String
+  "(comptime-decl (defstruct Point (x i64) (y i64)))
+(comptime-decl (defenum Maybe (None) (Some i64)))
+(define (main) : i64
+  (let ([p : Point (Point 40 2)])
+    (match (Some (struct-get p y))
+      [(Some n) (+ (struct-get p x) n)]
+      [None 0])))")
+
 (define (compiler-typecheck-match-mismatch-source) : String
   "(defenum Maybe (None) (Some i64))
 (define (main [m : Maybe]) : i64
@@ -2572,20 +2581,22 @@
   (and
     (compiler-typecheck-ok? (compiler-typecheck-nominal-source))
     (and
-      (compiler-typecheck-error-ok?
-        (compiler-typecheck-match-mismatch-source)
-        "typecheck: match arms must agree")
+      (compiler-typecheck-ok? (compiler-typecheck-comptime-decl-source))
       (and
         (compiler-typecheck-error-ok?
-          (compiler-typecheck-unknown-variant-source)
-          "typecheck: unknown variant Other")
+          (compiler-typecheck-match-mismatch-source)
+          "typecheck: match arms must agree")
         (and
           (compiler-typecheck-error-ok?
-            (compiler-typecheck-unknown-field-source)
-            "typecheck: unknown struct field Point.z")
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-duplicate-variant-source)
-            "symbols: duplicate enum variant Same"))))))
+            (compiler-typecheck-unknown-variant-source)
+            "typecheck: unknown variant Other")
+          (and
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-unknown-field-source)
+              "typecheck: unknown struct field Point.z")
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-duplicate-variant-source)
+              "symbols: duplicate enum variant Same")))))))
 
 (define (compiler-typecheck-region-builtin-source) : String
   "(define (main) : i64

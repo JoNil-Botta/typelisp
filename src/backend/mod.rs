@@ -845,6 +845,7 @@ fn check_operand(val: &Value, global_types: &HashMap<String, Type>) -> Result<()
         | Value::ConstBool(_)
         | Value::ConstStr(_)
         | Value::Function(_)
+        | Value::FunctionEntry(_)
         | Value::Var(_) => Ok(()),
         Value::ConstUnit => Err("unit value".into()),
         Value::Global(name) => match global_types.get(name) {
@@ -869,7 +870,7 @@ fn validate_value_type(
         Value::ConstUnit => Some(Type::Unit),
         // A `ConstStr` operand is the raw data pointer of a string literal.
         Value::ConstStr(_) => Some(Type::U64),
-        Value::Function(_) => Some(Type::U64),
+        Value::Function(_) | Value::FunctionEntry(_) => Some(Type::U64),
         Value::Var(var) => var_types.get(var).cloned(),
         Value::Global(name) => global_types.get(name).cloned(),
     }
@@ -4408,7 +4409,11 @@ impl X86_64Backend {
                         self.emit(&format!("    movq %rax, {}(%rbp)", dst_offset));
                     }
                     (
-                        Value::Var(_) | Value::Global(_) | Value::ConstStr(_) | Value::Function(_),
+                        Value::Var(_)
+                        | Value::Global(_)
+                        | Value::ConstStr(_)
+                        | Value::Function(_)
+                        | Value::FunctionEntry(_),
                         _,
                     ) => {
                         self.load_value(src, "%rax", ty);
@@ -4692,7 +4697,11 @@ impl X86_64Backend {
                 }
 
                 match src {
-                    Value::Var(_) | Value::Global(_) | Value::ConstStr(_) | Value::Function(_) => {
+                    Value::Var(_)
+                    | Value::Global(_)
+                    | Value::ConstStr(_)
+                    | Value::Function(_)
+                    | Value::FunctionEntry(_) => {
                         // Round-trip through a register sized to the value.
                         self.load_value(src, "%rax", ty);
                         self.store_gpr_value("%rax", dst_offset, ty);
@@ -5107,6 +5116,10 @@ impl X86_64Backend {
                 let symbol = Self::closure_descriptor_label(name);
                 self.emit(&format!("    leaq {}(%rip), {}", symbol, reg));
             }
+            Value::FunctionEntry(name) => {
+                let symbol = Self::mangle_name(name);
+                self.emit(&format!("    leaq {}(%rip), {}", symbol, reg));
+            }
             Value::Var(v) => {
                 let offset = self.var_offsets[v];
                 let addr = format!("{}(%rbp)", offset);
@@ -5350,7 +5363,7 @@ impl X86_64Backend {
             Value::ConstUnit => Some(Type::Unit),
             // A `ConstStr` operand is the raw data pointer of a string literal.
             Value::ConstStr(_) => Some(Type::U64),
-            Value::Function(_) => Some(Type::U64),
+            Value::Function(_) | Value::FunctionEntry(_) => Some(Type::U64),
             Value::Var(v) => self.var_types.get(v).cloned(),
             Value::Global(name) => self.global_types.get(name).cloned(),
         }

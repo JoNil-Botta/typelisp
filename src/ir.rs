@@ -65,6 +65,9 @@ pub enum Value {
     /// Pointer-sized closure descriptor for a named function or extern.
     /// The backend materializes a descriptor address, not a raw code pointer.
     Function(String),
+    /// Raw address of a function entry point. Used to build heap closure
+    /// descriptors whose environment pointer is only known at runtime.
+    FunctionEntry(String),
     Var(VarId),
     Global(String),
 }
@@ -450,7 +453,7 @@ impl Value {
             Value::ConstStr(_) => Some(Type::U64),
             // The exact function type depends on the symbol table, so callers
             // that need it must use contextual type maps.
-            Value::Function(_) => None,
+            Value::Function(_) | Value::FunctionEntry(_) => None,
             Value::Var(_) | Value::Global(_) => None, // Need type context
         }
     }
@@ -467,6 +470,7 @@ impl fmt::Display for Value {
             Value::ConstUnit => write!(f, "unit"),
             Value::ConstStr(s) => write!(f, "{:?}", s),
             Value::Function(name) => write!(f, "&{}", name),
+            Value::FunctionEntry(name) => write!(f, "&entry {}", name),
             Value::Var(v) => write!(f, "%{}", v),
             Value::Global(g) => write!(f, "@{}", g),
         }

@@ -214,7 +214,7 @@ impl Optimizer {
 
     fn can_inline_known_const(value: &KnownConst) -> bool {
         match &value.value {
-            Value::Function(_) => true,
+            Value::Function(_) | Value::FunctionEntry(_) => true,
             _ => value.value.ty().is_some_and(|ty| ty == value.ty),
         }
     }
@@ -230,6 +230,7 @@ impl Optimizer {
                 | Value::ConstUnit
                 | Value::ConstStr(_)
                 | Value::Function(_)
+                | Value::FunctionEntry(_)
         )
     }
 
@@ -890,7 +891,7 @@ impl Optimizer {
         }
 
         match src {
-            Value::Var(_) | Value::Function(_) => true,
+            Value::Var(_) | Value::Function(_) | Value::FunctionEntry(_) => true,
             Value::ConstI64(_)
             | Value::ConstI32(_)
             | Value::ConstI8(_)
@@ -1071,6 +1072,7 @@ enum CseValue {
     ConstUnit,
     ConstStr(String),
     Function(String),
+    FunctionEntry(String),
     Var(VarId),
 }
 
@@ -1085,6 +1087,7 @@ impl CseValue {
             Value::ConstUnit => Some(CseValue::ConstUnit),
             Value::ConstStr(value) => Some(CseValue::ConstStr(value.clone())),
             Value::Function(value) => Some(CseValue::Function(value.clone())),
+            Value::FunctionEntry(value) => Some(CseValue::FunctionEntry(value.clone())),
             Value::Var(value) => Some(CseValue::Var(*value)),
             Value::Global(_) => None,
         }

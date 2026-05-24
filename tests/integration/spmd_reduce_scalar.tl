@@ -43,6 +43,12 @@
 (define (reduce-sum-i32 [gs : (Array i32)] [n : i64]) : i32
   (spmd-reduce sum ([i : i64 0 n]) (cast 0 : i32) (array-ref gs i)))
 
+(define (reduce-max-i32 [gs : (Array i32)] [n : i64] [seed : i32]) : i32
+  (spmd-reduce max ([i : i64 0 n]) seed (array-ref gs i)))
+
+(define (reduce-min-i32 [gs : (Array i32)] [n : i64] [seed : i32]) : i32
+  (spmd-reduce min ([i : i64 0 n]) seed (array-ref gs i)))
+
 ; bool: are all elements positive? is any element zero?
 
 (define (reduce-all-pos [xs : (Array i64)] [n : i64]) : bool
@@ -120,4 +126,27 @@
                                         true
                                         (> (array-ref xs i) 0)))
                                       15
-                                      42)))))))))))))))))))
+                                      ; i32 max/min: element wins, then seed wins
+                                      (if (!=
+                                        (reduce-max-i32 gs n (cast 0 : i32))
+                                        (cast 5 : i32))
+                                        17
+                                        (if (!=
+                                          (reduce-max-i32 gs n (cast 100 : i32))
+                                          (cast 100 : i32))
+                                          18
+                                          (if (!=
+                                            (reduce-min-i32
+                                              gs
+                                              n
+                                              (cast 1000 : i32))
+                                            (cast 1 : i32))
+                                            19
+                                            (if (!=
+                                              (reduce-min-i32
+                                                gs
+                                                n
+                                                (cast 0 : i32))
+                                              (cast 0 : i32))
+                                              20
+                                              42)))))))))))))))))))))))

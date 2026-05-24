@@ -1,9 +1,10 @@
 //! Compile-Time Function Evaluation (CTFE) evaluator for expression-position
 //! `(comptime expr)`.
 //!
-//! The first slice supports only scalar runtime-representable values:
-//! i64, f64, bool, char, unit.  Strings, arrays, tuples, structs, enums,
-//! lambdas, calls, and all side-effecting forms are rejected.
+//! The first slices support scalar runtime-representable values
+//! (i64, f64, bool, char, unit) plus compile-time-only type values. Strings,
+//! arrays, tuples, structs, enums, lambdas, calls, and all side-effecting forms
+//! are rejected.
 
 use crate::ast::{BinOp, Expr, Literal, UnOp};
 use crate::span::Span;
@@ -23,16 +24,25 @@ pub enum CtfeValue {
     Bool(bool),
     Char(char),
     Unit,
+    Type(Type),
 }
 
 impl CtfeValue {
-    pub fn ty(&self) -> Type {
+    pub fn runtime_ty(&self) -> Option<Type> {
         match self {
-            CtfeValue::I64(_) => Type::I64,
-            CtfeValue::F64(_) => Type::F64,
-            CtfeValue::Bool(_) => Type::Bool,
-            CtfeValue::Char(_) => Type::Char,
-            CtfeValue::Unit => Type::Unit,
+            CtfeValue::I64(_) => Some(Type::I64),
+            CtfeValue::F64(_) => Some(Type::F64),
+            CtfeValue::Bool(_) => Some(Type::Bool),
+            CtfeValue::Char(_) => Some(Type::Char),
+            CtfeValue::Unit => Some(Type::Unit),
+            CtfeValue::Type(_) => None,
+        }
+    }
+
+    pub fn type_label(&self) -> String {
+        match self.runtime_ty() {
+            Some(ty) => ty.to_string(),
+            None => "type".into(),
         }
     }
 
@@ -49,16 +59,18 @@ impl CtfeValue {
             }
             CtfeValue::Char(c) => format!("char:{:x}", *c as u32),
             CtfeValue::Unit => "unit".into(),
+            CtfeValue::Type(ty) => format!("type:{}", ty),
         }
     }
 
-    pub fn to_literal(&self) -> Literal {
+    pub fn to_literal(&self) -> Option<Literal> {
         match self {
-            CtfeValue::I64(n) => Literal::Int(*n),
-            CtfeValue::F64(n) => Literal::Float(*n),
-            CtfeValue::Bool(b) => Literal::Bool(*b),
-            CtfeValue::Char(c) => Literal::Char(*c),
-            CtfeValue::Unit => Literal::Unit,
+            CtfeValue::I64(n) => Some(Literal::Int(*n)),
+            CtfeValue::F64(n) => Some(Literal::Float(*n)),
+            CtfeValue::Bool(b) => Some(Literal::Bool(*b)),
+            CtfeValue::Char(c) => Some(Literal::Char(*c)),
+            CtfeValue::Unit => Some(Literal::Unit),
+            CtfeValue::Type(_) => None,
         }
     }
 }
@@ -72,6 +84,7 @@ fn describe_expr(expr: &Expr) -> &'static str {
         Expr::Unary { .. } => "unary operation",
         Expr::Call { .. } => "function call",
         Expr::Comptime { .. } => "comptime",
+        Expr::TypeLiteral { .. } => "type literal",
         Expr::If { .. } => "if",
         Expr::Let { .. } => "let",
         Expr::Lambda { .. } => "lambda",
@@ -148,30 +161,45 @@ impl CtfeEvaluator {
         Ok(())
     }
 
-    /// Evaluate a CTFE expression, returning the scalar value.
+    /// Evaluate a CTFE expression.
     pub fn eval(&mut self, expr: &Expr) -> Result<CtfeValue, CtfeError> {
-        self.eval_expr(expr)
+        self.eval_with_type_resolver(expr, |ty, _span| Ok(ty.clone()))
     }
 
-    fn eval_expr(&mut self, expr: &Expr) -> Result<CtfeValue, CtfeError> {
+    pub fn eval_with_type_resolver<F>(
+        &mut self,
+        expr: &Expr,
+        resolve_type: F,
+    ) -> Result<CtfeValue, CtfeError>
+    where
+        F: Fn(&Type, Span) -> Result<Type, CtfeError>,
+    {
+        self.eval_expr(expr, &resolve_type)
+    }
+
+    fn eval_expr<F>(&mut self, expr: &Expr, resolve_type: &F) -> Result<CtfeValue, CtfeError>
+    where
+        F: Fn(&Type, Span) -> Result<Type, CtfeError>,
+    {
         let span = expr.span();
         self.use_fuel(span)?;
 
         match expr.unspan() {
             Expr::Literal(lit) => self.eval_literal(lit, span),
             Expr::Var(name) => self.eval_var(name, span),
-            Expr::Binary { op, lhs, rhs } => self.eval_binary(*op, lhs, rhs, span),
-            Expr::Unary { op, expr } => self.eval_unary(*op, expr, span),
+            Expr::Binary { op, lhs, rhs } => self.eval_binary(*op, lhs, rhs, span, resolve_type),
+            Expr::Unary { op, expr } => self.eval_unary(*op, expr, span, resolve_type),
             Expr::If {
                 cond,
                 then_branch,
                 else_branch,
-            } => self.eval_if(cond, then_branch, else_branch, span),
-            Expr::Let { bindings, body } => self.eval_let(bindings, body, span),
-            Expr::Begin(exprs) => self.eval_begin(exprs, span),
-            Expr::Ann { expr, .. } => self.eval_expr(expr),
-            Expr::Comptime { expr } => self.eval_expr(expr),
-            Expr::Spanned { expr, .. } => self.eval_expr(expr),
+            } => self.eval_if(cond, then_branch, else_branch, span, resolve_type),
+            Expr::Let { bindings, body } => self.eval_let(bindings, body, span, resolve_type),
+            Expr::Begin(exprs) => self.eval_begin(exprs, span, resolve_type),
+            Expr::Ann { expr, .. } => self.eval_expr(expr, resolve_type),
+            Expr::Comptime { expr } => self.eval_expr(expr, resolve_type),
+            Expr::TypeLiteral { ty } => Ok(CtfeValue::Type(resolve_type(ty, span)?)),
+            Expr::Spanned { expr, .. } => self.eval_expr(expr, resolve_type),
             other => Err(CtfeError::Message {
                 msg: format!(
                     "'{}' is not supported in compile-time evaluation",
@@ -206,15 +234,19 @@ impl CtfeEvaluator {
         })
     }
 
-    fn eval_binary(
+    fn eval_binary<F>(
         &mut self,
         op: BinOp,
         lhs: &Expr,
         rhs: &Expr,
         span: Span,
-    ) -> Result<CtfeValue, CtfeError> {
-        let lv = self.eval_expr(lhs)?;
-        let rv = self.eval_expr(rhs)?;
+        resolve_type: &F,
+    ) -> Result<CtfeValue, CtfeError>
+    where
+        F: Fn(&Type, Span) -> Result<Type, CtfeError>,
+    {
+        let lv = self.eval_expr(lhs, resolve_type)?;
+        let rv = self.eval_expr(rhs, resolve_type)?;
 
         // Helper for mismatched-type errors.
         let bad_types = |hint: &str| {
@@ -223,8 +255,8 @@ impl CtfeEvaluator {
                     "'{}' in comptime: {} (got {} and {})",
                     op_name(op),
                     hint,
-                    lv.ty(),
-                    rv.ty()
+                    lv.type_label(),
+                    rv.type_label()
                 ),
                 span,
             })
@@ -281,6 +313,7 @@ impl CtfeEvaluator {
                 (CtfeValue::Bool(a), CtfeValue::Bool(b)) => CtfeValue::Bool(a == b),
                 (CtfeValue::Char(a), CtfeValue::Char(b)) => CtfeValue::Bool(a == b),
                 (CtfeValue::Unit, CtfeValue::Unit) => CtfeValue::Bool(true),
+                (CtfeValue::Type(a), CtfeValue::Type(b)) => CtfeValue::Bool(a == b),
                 _ => return bad_types("requires matching types"),
             },
             BinOp::Ne => match (&lv, &rv) {
@@ -289,6 +322,7 @@ impl CtfeEvaluator {
                 (CtfeValue::Bool(a), CtfeValue::Bool(b)) => CtfeValue::Bool(a != b),
                 (CtfeValue::Char(a), CtfeValue::Char(b)) => CtfeValue::Bool(a != b),
                 (CtfeValue::Unit, CtfeValue::Unit) => CtfeValue::Bool(false),
+                (CtfeValue::Type(a), CtfeValue::Type(b)) => CtfeValue::Bool(a != b),
                 _ => return bad_types("requires matching types"),
             },
             BinOp::Lt => match (&lv, &rv) {
@@ -352,8 +386,17 @@ impl CtfeEvaluator {
         Ok(res)
     }
 
-    fn eval_unary(&mut self, op: UnOp, expr: &Expr, span: Span) -> Result<CtfeValue, CtfeError> {
-        let v = self.eval_expr(expr)?;
+    fn eval_unary<F>(
+        &mut self,
+        op: UnOp,
+        expr: &Expr,
+        span: Span,
+        resolve_type: &F,
+    ) -> Result<CtfeValue, CtfeError>
+    where
+        F: Fn(&Type, Span) -> Result<Type, CtfeError>,
+    {
+        let v = self.eval_expr(expr, resolve_type)?;
         match op {
             UnOp::Neg => match v {
                 CtfeValue::I64(n) => Ok(CtfeValue::I64(n.wrapping_neg())),
@@ -361,7 +404,7 @@ impl CtfeEvaluator {
                 other => Err(CtfeError::Message {
                     msg: format!(
                         "negation in comptime requires a numeric type, got {}",
-                        other.ty()
+                        other.type_label()
                     ),
                     span,
                 }),
@@ -369,58 +412,83 @@ impl CtfeEvaluator {
             UnOp::Not => match v {
                 CtfeValue::Bool(b) => Ok(CtfeValue::Bool(!b)),
                 other => Err(CtfeError::Message {
-                    msg: format!("'not' in comptime requires bool, got {}", other.ty()),
+                    msg: format!(
+                        "'not' in comptime requires bool, got {}",
+                        other.type_label()
+                    ),
                     span,
                 }),
             },
             UnOp::BitNot => match v {
                 CtfeValue::I64(n) => Ok(CtfeValue::I64(!n)),
                 other => Err(CtfeError::Message {
-                    msg: format!("bitwise not in comptime requires i64, got {}", other.ty()),
+                    msg: format!(
+                        "bitwise not in comptime requires i64, got {}",
+                        other.type_label()
+                    ),
                     span,
                 }),
             },
         }
     }
 
-    fn eval_if(
+    fn eval_if<F>(
         &mut self,
         cond: &Expr,
         then_branch: &Expr,
         else_branch: &Expr,
         _span: Span,
-    ) -> Result<CtfeValue, CtfeError> {
-        let cond_val = self.eval_expr(cond)?;
+        resolve_type: &F,
+    ) -> Result<CtfeValue, CtfeError>
+    where
+        F: Fn(&Type, Span) -> Result<Type, CtfeError>,
+    {
+        let cond_val = self.eval_expr(cond, resolve_type)?;
         match cond_val {
-            CtfeValue::Bool(true) => self.eval_expr(then_branch),
-            CtfeValue::Bool(false) => self.eval_expr(else_branch),
+            CtfeValue::Bool(true) => self.eval_expr(then_branch, resolve_type),
+            CtfeValue::Bool(false) => self.eval_expr(else_branch, resolve_type),
             other => Err(CtfeError::Message {
-                msg: format!("comptime 'if' condition must be bool, got {}", other.ty()),
+                msg: format!(
+                    "comptime 'if' condition must be bool, got {}",
+                    other.type_label()
+                ),
                 span: cond.span(),
             }),
         }
     }
 
-    fn eval_let(
+    fn eval_let<F>(
         &mut self,
         bindings: &[(String, Option<Type>, Expr)],
         body: &Expr,
         _span: Span,
-    ) -> Result<CtfeValue, CtfeError> {
+        resolve_type: &F,
+    ) -> Result<CtfeValue, CtfeError>
+    where
+        F: Fn(&Type, Span) -> Result<Type, CtfeError>,
+    {
         self.push_scope();
         for (name, _ty, value_expr) in bindings {
-            let val = self.eval_expr(value_expr)?;
+            let val = self.eval_expr(value_expr, resolve_type)?;
             self.bind(name.clone(), val);
         }
-        let result = self.eval_expr(body);
+        let result = self.eval_expr(body, resolve_type);
         self.pop_scope();
         result
     }
 
-    fn eval_begin(&mut self, exprs: &[Expr], _span: Span) -> Result<CtfeValue, CtfeError> {
+    fn eval_begin<F>(
+        &mut self,
+        exprs: &[Expr],
+        _span: Span,
+        resolve_type: &F,
+    ) -> Result<CtfeValue, CtfeError>
+    where
+        F: Fn(&Type, Span) -> Result<Type, CtfeError>,
+    {
         let mut last = CtfeValue::Unit;
         for e in exprs {
-            last = self.eval_expr(e)?;
+            last = self.eval_expr(e, resolve_type)?;
         }
         Ok(last)
     }
@@ -446,5 +514,44 @@ fn op_name(op: BinOp) -> &'static str {
         BinOp::BitXor => "bitxor",
         BinOp::Shl => "shl",
         BinOp::Shr => "shr",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::{ReplItem, parse_repl_item};
+
+    fn repl_expr(source: &str) -> Expr {
+        match parse_repl_item(source).unwrap() {
+            ReplItem::Expr(expr) => expr,
+            other => panic!("expected expression, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn type_literal_evaluates_to_ctfe_type_value() {
+        let expr = repl_expr("(type (Array i64 4))");
+        let value = CtfeEvaluator::new().eval(&expr).unwrap();
+
+        assert_eq!(value, CtfeValue::Type(Type::Array(Box::new(Type::I64), 4)));
+        assert_eq!(value.runtime_ty(), None);
+        assert_eq!(value.type_label(), "type");
+        assert_eq!(value.key_fragment(), "type:(Array i64 4)");
+    }
+
+    #[test]
+    fn type_values_compare_in_ctfe() {
+        let same = repl_expr("(= (type i64) (type i64))");
+        let different = repl_expr("(= (type i64) (type i32))");
+
+        assert_eq!(
+            CtfeEvaluator::new().eval(&same).unwrap(),
+            CtfeValue::Bool(true)
+        );
+        assert_eq!(
+            CtfeEvaluator::new().eval(&different).unwrap(),
+            CtfeValue::Bool(false)
+        );
     }
 }

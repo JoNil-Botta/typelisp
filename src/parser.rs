@@ -670,6 +670,24 @@ impl<'a> Parser<'a> {
                 let end = self.expect_rparen_span()?;
                 (Expr::Comptime { expr }, end)
             }
+            Token::Ident(s) if s == "type" => {
+                self.advance()?;
+                if self.current == Token::RParen {
+                    return Err(ParseError {
+                        msg: "type expects exactly one type".into(),
+                        span: self.span(),
+                    });
+                }
+                let ty = self.parse_type()?;
+                if self.current != Token::RParen {
+                    return Err(ParseError {
+                        msg: "type expects exactly one type".into(),
+                        span: self.span(),
+                    });
+                }
+                let end = self.expect_rparen_span()?;
+                (Expr::TypeLiteral { ty }, end)
+            }
             Token::Ident(s) if s == "tuple" => {
                 self.advance()?;
                 let mut elems = Vec::new();
@@ -1303,6 +1321,44 @@ mod tests {
             }
             other => panic!("expected Comptime, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_parse_type_literal_expression() {
+        let prog = parse("(define (main) : i64 (comptime (type (Array i64 4))))").unwrap();
+        let body = match &prog.decls[0] {
+            Decl::DefFn { body, .. } => body.unspan(),
+            other => panic!("expected DefFn, got {:?}", other),
+        };
+        match body {
+            Expr::Comptime { expr } => match expr.unspan() {
+                Expr::TypeLiteral { ty } => {
+                    assert_eq!(ty, &Type::Array(Box::new(Type::I64), 4));
+                }
+                other => panic!("expected TypeLiteral, got {:?}", other),
+            },
+            other => panic!("expected Comptime, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_type_literal_rejects_extra_type() {
+        let err = parse("(define (main) : i64 (comptime (type i64 i32)))").unwrap_err();
+        assert!(
+            err.msg.contains("type expects exactly one type"),
+            "got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_parse_type_literal_rejects_missing_type() {
+        let err = parse("(define (main) : i64 (comptime (type)))").unwrap_err();
+        assert!(
+            err.msg.contains("type expects exactly one type"),
+            "got: {}",
+            err
+        );
     }
 
     #[test]

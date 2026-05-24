@@ -575,6 +575,13 @@ impl TypeChecker {
     }
 
     fn capture_type_supported(&self, ty: &Type) -> bool {
+        // Scalars and function values are captured as immutable snapshots (#434).
+        // `String` and dynamic-array values are pointer-sized handles to fat
+        // `{ ptr, len }` storage whose underlying buffer is already heap- or
+        // rodata-stable, so the lowerer can snapshot the fat value onto the heap
+        // and the capture cannot dangle (#435). Struct/enum/tuple/fixed-array
+        // capture needs storage copying (and nested-handle handling) and stays
+        // rejected for now.
         matches!(
             self.resolve_type(ty),
             Type::I64
@@ -589,6 +596,8 @@ impl TypeChecker {
                 | Type::Char
                 | Type::F64
                 | Type::Func(_, _)
+                | Type::String
+                | Type::DynArray(_)
         )
     }
 
@@ -1213,7 +1222,7 @@ impl TypeChecker {
                     if !self.capture_type_supported(&ty) {
                         return Err(TypeError::at(
                             format!(
-                                "capturing value '{}' of type {} is not yet supported; capture scalar or function values only (see #435)",
+                                "capturing value '{}' of type {} is not yet supported; capture scalar, function, String, or dynamic-array values only (struct/enum/tuple/fixed-array capture is tracked in #435)",
                                 captured, ty
                             ),
                             *span,
@@ -3011,7 +3020,9 @@ mod tests {
     }
 
     #[test]
-    fn test_typecheck_aggregate_capture_rejected() {
+    fn test_typecheck_string_capturing_lambda_ok() {
+        // String capture is a fat-value handle whose buffer is rodata-stable, so
+        // the lowerer can snapshot it onto the heap (#435).
         let prog = parse(
             r#"
             (define (main) : i64
@@ -3022,13 +3033,77 @@ mod tests {
         )
         .unwrap();
         let mut tc = TypeChecker::new();
+        assert!(
+            tc.check_program(&prog).is_ok(),
+            "{:?}",
+            tc.check_program(&prog)
+        );
+    }
+
+    #[test]
+    fn test_typecheck_dynarray_capturing_lambda_ok() {
+        // Dynamic-array capture snapshots the fat `{ ptr, len }` value; the
+        // tl_alloc'd element buffer is already heap-stable (#435).
+        let prog = parse(
+            r#"
+            (define (main) : i64
+              (let ([a : (Array i64) (make-array i64 3)]
+                    [f : (-> (Array i64)) (lambda () : (Array i64) a)])
+                (array-length (f))))
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        assert!(
+            tc.check_program(&prog).is_ok(),
+            "{:?}",
+            tc.check_program(&prog)
+        );
+    }
+
+    #[test]
+    fn test_typecheck_struct_capture_still_rejected() {
+        // Struct/enum/tuple/fixed-array capture needs storage copying and
+        // nested-handle handling, deferred from the first #435 slice.
+        let prog = parse(
+            r#"
+            (defstruct Pair (x i64) (y i64))
+            (define (main) : i64
+              (let ([p : Pair (Pair 1 2)]
+                    [f : (-> i64) (lambda () : i64 (struct-get p x))])
+                (f)))
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
         let err = tc.check_program(&prog).unwrap_err();
         assert!(
             err.msg
-                .contains("capturing value 's' of type String is not yet supported"),
+                .contains("capturing value 'p' of type Pair is not yet supported"),
             "err: {}",
             err
         );
+        assert!(
+            err.msg.contains("#435"),
+            "err should reference #435: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_typecheck_tuple_capture_still_rejected() {
+        let prog = parse(
+            r#"
+            (define (main) : i64
+              (let ([t : (Tuple i64 i64) (tuple 1 2)]
+                    [f : (-> i64) (lambda () : i64 (tuple-ref t 0))])
+                (f)))
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(err.msg.contains("is not yet supported"), "err: {}", err);
     }
 
     #[test]

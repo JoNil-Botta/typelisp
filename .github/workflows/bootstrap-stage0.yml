@@ -1,15 +1,8 @@
 name: Bootstrap Stage0
 
-# On every merge to main, build release binaries and store them as permanent
-# GitHub releases. A lightweight "stage0-latest" release is recreated to point
-# at the newest permanent release, but the underlying permanent releases are
-# never deleted.
-#
-# CI in other workflows can fetch the newest stage0 with a stable URL:
-#   curl -L https://github.com/JoNil-Botta/typelisp/releases/download/stage0-latest/typelisp-stage0-linux
-#
-# Historical releases remain browsable forever:
-#   https://github.com/JoNil-Botta/typelisp/releases?q=stage0-&expanded=true
+# On every merge to main, build release binaries and publish them as permanent
+# GitHub releases. A lightweight "stage0-latest" release is recreated with the
+# same assets, giving CI a stable download URL while permanent releases remain.
 
 on:
   push:
@@ -35,49 +28,19 @@ jobs:
       - name: Build release
         run: cargo build --release
 
-      - name: Strip binary
+      - name: Stage binary
         run: |
-          cp target/release/typelisp /tmp/typelisp-stage0-linux
-          strip /tmp/typelisp-stage0-linux
+          cp target/release/typelisp typelisp-stage0-linux
+          strip typelisp-stage0-linux
+          file typelisp-stage0-linux
+          ls -lh typelisp-stage0-linux
 
-      - name: Verify binary
-        run: |
-          file /tmp/typelisp-stage0-linux
-          ls -lh /tmp/typelisp-stage0-linux
-
-      - name: Upload artifact
+      - name: Upload stage0 artifact
         uses: actions/upload-artifact@v4
         with:
           name: stage0-linux
-          path: /tmp/typelisp-stage0-linux
-
-      - name: Create permanent release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG="stage0-$(date +%Y%m%d-%H%M%S)-r${{ github.run_id }}"
-          gh release create "$TAG" \
-            --title "Stage0 $TAG" \
-            --notes "Bootstrap compiler built from commit ${{ github.sha }}" \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "${{ github.sha }}" \
-            /tmp/typelisp-stage0-linux
-          echo "PERMANENT_TAG=$TAG" >> $GITHUB_ENV
-
-      - name: Update latest convenience release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # Delete and recreate ONLY the lightweight "stage0-latest" wrapper.
-          # The permanent release created in the previous step is untouched.
-          gh release delete stage0-latest --yes --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
-          git push origin :refs/tags/stage0-latest 2>/dev/null || true
-          gh release create stage0-latest \
-            --title "Stage0 — latest" \
-            --notes "Latest bootstrap compiler. Permanent copy at release \`${{ env.PERMANENT_TAG }}\`.\n\nSHA: ${{ github.sha }}" \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "${{ github.sha }}" \
-            /tmp/typelisp-stage0-linux
+          path: typelisp-stage0-linux
+          if-no-files-found: error
 
   build-windows:
     name: Build Stage0 (Windows)
@@ -91,46 +54,89 @@ jobs:
       - name: Build release
         run: cargo build --release
 
-      - name: Verify binary
-        shell: pwsh
-        run: |
-          Get-Item .\target\release\typelisp.exe
-
       - name: Stage binary
         shell: pwsh
         run: |
-          Copy-Item .\target\release\typelisp.exe C:\typelisp-stage0-windows.exe
+          Copy-Item .\target\release\typelisp.exe .\typelisp-stage0-windows.exe
+          Get-Item .\typelisp-stage0-windows.exe
 
-      - name: Upload artifact
+      - name: Upload stage0 artifact
         uses: actions/upload-artifact@v4
         with:
           name: stage0-windows
-          path: C:\typelisp-stage0-windows.exe
+          path: typelisp-stage0-windows.exe
+          if-no-files-found: error
+
+  publish:
+    name: Publish Stage0 Releases
+    runs-on: ubuntu-latest
+    needs:
+      - build-linux
+      - build-windows
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download stage0 artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: stage0-artifacts
+          merge-multiple: true
+
+      - name: Verify staged assets
+        run: |
+          test -s stage0-artifacts/typelisp-stage0-linux
+          test -s stage0-artifacts/typelisp-stage0-windows.exe
+          chmod +x stage0-artifacts/typelisp-stage0-linux
+          file stage0-artifacts/typelisp-stage0-linux
+          ls -lh stage0-artifacts
 
       - name: Create permanent release
-        shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $tag = "stage0-$(Get-Date -Format 'yyyyMMdd-HHmmss')-r${{ github.run_id }}"
-          gh release create "$tag" `
-            --title "Stage0 $tag" `
-            --notes "Bootstrap compiler built from commit ${{ github.sha }}" `
-            --repo "$env:GITHUB_REPOSITORY" `
-            --target "${{ github.sha }}" `
-            C:\typelisp-stage0-windows.exe
-          echo "PERMANENT_TAG=$tag" >> $env:GITHUB_ENV
+          tag="stage0-$(date -u +%Y%m%d-%H%M%S)-r${{ github.run_id }}"
+          notes="$(cat <<EOF
+          Bootstrap compiler built from commit ${{ github.sha }}.
+
+          Assets:
+          - typelisp-stage0-linux
+          - typelisp-stage0-windows.exe
+          EOF
+          )"
+
+          gh release create "$tag" \
+            --title "Stage0 $tag" \
+            --notes "$notes" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "${{ github.sha }}" \
+            stage0-artifacts/typelisp-stage0-linux \
+            stage0-artifacts/typelisp-stage0-windows.exe
+
+          echo "PERMANENT_TAG=$tag" >> "$GITHUB_ENV"
 
       - name: Update latest convenience release
-        shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release delete stage0-latest --yes --repo "$env:GITHUB_REPOSITORY" 2>$null
-          git push origin ":refs/tags/stage0-latest" 2>$null
-          gh release create stage0-latest `
-            --title "Stage0 — latest (Windows)" `
-            --notes "Latest Windows bootstrap compiler. Permanent copy at release ``$env:PERMANENT_TAG``.``n``nSHA: ${{ github.sha }}" `
-            --repo "$env:GITHUB_REPOSITORY" `
-            --target "${{ github.sha }}" `
-            C:\typelisp-stage0-windows.exe
+          gh release delete stage0-latest --yes \
+            --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+          git push origin :refs/tags/stage0-latest 2>/dev/null || true
+
+          notes="$(cat <<EOF
+          Latest bootstrap compiler built from commit ${{ github.sha }}.
+
+          Permanent copy: $PERMANENT_TAG
+
+          Stable asset URLs:
+          - https://github.com/${{ github.repository }}/releases/download/stage0-latest/typelisp-stage0-linux
+          - https://github.com/${{ github.repository }}/releases/download/stage0-latest/typelisp-stage0-windows.exe
+          EOF
+          )"
+
+          gh release create stage0-latest \
+            --title "Stage0 latest" \
+            --notes "$notes" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "${{ github.sha }}" \
+            stage0-artifacts/typelisp-stage0-linux \
+            stage0-artifacts/typelisp-stage0-windows.exe

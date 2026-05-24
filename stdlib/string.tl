@@ -1,14 +1,25 @@
 ;;;; String utility library for TypeLisp.
+
 ;;;;
+
 ;;;; Provides higher-level string operations built on compiler primitives:
+
 ;;;; `string-length`, `string-ref`, `substring`, `string-append`, and
+
 ;;;; `string-eq`.
+
 ;;;;
+
 ;;;; Usage: `(import "stdlib/string.tl")`
+
 ;;;;
+
 ;;;; ```typelisp
+
 ;;;; (import "stdlib/string.tl")
+
 ;;;; (define ok : bool (string-contains (string-trim "  alpha  ") "ph"))
+
 ;;;; ```
 
 ;;; Return true if the character is ASCII whitespace.
@@ -91,8 +102,11 @@
       found)))
 
 ;;; Replace first occurrence of old with new in s.
+
 ;;;
+
 ;;; Returns s unchanged if old is not present. Full multi-replace needs a string
+
 ;;; builder.
 
 (define (string-replace [s : String] [old : String] [new : String]) : String

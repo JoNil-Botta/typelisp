@@ -14,11 +14,13 @@
 
 ;;
 
-;; Item doc lines must be contiguous. A blank line, ordinary comment, module
+;; Item doc lines stay pending across blank physical lines because the
 
-;; doc, unsupported top-level form, or other source text clears pending item
+;; self-hosted formatter may separate doc comment lines. Ordinary comments,
 
-;; docs. Pending item docs at EOF are ignored. Declaration identities are read
+;; module docs, unsupported top-level forms, or other source text clear pending
+
+;; item docs. Pending item docs at EOF are ignored. Declaration identities are read
 
 ;; from the captured top-level form with the formatter token lexer so original
 
@@ -348,10 +350,7 @@
         (let ([line-end : i64 (doc-line-end src i n)])
           (let ([line-start : i64 (doc-first-nonspace src i line-end)])
             (if (= line-start line-end)
-              (begin
-                (set! pending-doc "")
-                (set! pending-has false)
-                (set! i (doc-next-line-start src line-end n)))
+              (set! i (doc-next-line-start src line-end n))
               (let ([c : char (string-ref src line-start)])
                 (if (= c #;')
                   (if (doc-string-prefix-at? src ";;;;" line-start)
@@ -416,8 +415,8 @@
 ;;; still answer
 (define answer : i64 42)
 
-;;; lost before blank
-
+;;; lost before ordinary comment
+;; ordinary comment clears pending docs
 (define missed : i64 0)
 ;;; function doc
 (define (main [argc : i64]) : i64
@@ -425,6 +424,7 @@
 ; ordinary comment clears pending docs
 ;;; enum doc
 (defenum Maybe (None) (Some i64))
+
 ;;;; later module
 ;;; external doc
 (extern print : (-> String unit))

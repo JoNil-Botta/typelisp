@@ -67,8 +67,8 @@ check_markdown() {
         echo "stdlib doc verification failed: $module generated no documented declarations" >&2
         exit 1
     fi
-    if ! grep -q 'Source: `' "$markdown"; then
-        echo "stdlib doc verification failed: $module Markdown has no source marker" >&2
+    if ! grep -q '^# TypeLisp Documentation' "$markdown"; then
+        echo "stdlib doc verification failed: $module Markdown has no title" >&2
         exit 1
     fi
 }

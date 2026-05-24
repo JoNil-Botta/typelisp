@@ -1407,6 +1407,9 @@
               (tc-struct-field-type ctx struct-name field)]
             [_ (ErrTcType "typecheck: struct-get requires struct")])]
         [(ErrTcType message) (ErrTcType message)])]
+    ;; `(comptime expr)` in expression position yields the inner expression's
+    ;; type (#718); compile-time evaluation is reserved for #719.
+    [(AstExprComptime inner) (tc-expr ctx env inner)]
     [_ (ErrTcType "typecheck: unsupported expression")]))
 
 (define (tc-summary-add-decl

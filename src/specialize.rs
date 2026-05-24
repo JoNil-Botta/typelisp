@@ -349,7 +349,23 @@ impl Specializer {
                         span,
                     ),
                 })?;
-                if value.runtime_ty().as_ref() != Some(param_ty) {
+                if is_type_kind_param(param_ty) {
+                    // A `type`-kind comptime parameter accepts only a
+                    // compile-time-known type value, e.g. `(type i64)`. A scalar
+                    // (runtime-representable) value here is a kind mismatch.
+                    if !matches!(value, CtfeValue::Type(_)) {
+                        return Err(SpecializeError::at(
+                            format!(
+                                "comptime argument '{}' for function '{}' must be a type value \
+                                 such as `(type i64)`, got a {} value",
+                                param_name,
+                                name,
+                                value.type_label()
+                            ),
+                            arg.span(),
+                        ));
+                    }
+                } else if value.runtime_ty().as_ref() != Some(param_ty) {
                     return Err(SpecializeError::at(
                         format!(
                             "comptime argument '{}' for function '{}' has type {}, expected {}",
@@ -394,6 +410,7 @@ impl Specializer {
 
         let comptime_set: HashSet<usize> = template.comptime_params.iter().copied().collect();
         let mut substitutions = HashMap::new();
+        let mut type_substitutions = HashMap::new();
         let mut value_idx = 0;
         let mut runtime_params = Vec::new();
         for (idx, (param_name, param_ty)) in template.params.iter().enumerate() {
@@ -404,15 +421,29 @@ impl Specializer {
                         call_span,
                     ));
                 };
-                substitutions.insert(param_name.clone(), value.clone());
+                if is_type_kind_param(param_ty) {
+                    let CtfeValue::Type(ty) = value else {
+                        return Err(SpecializeError::at(
+                            "internal specialization value mismatch",
+                            call_span,
+                        ));
+                    };
+                    type_substitutions.insert(param_name.clone(), ty.clone());
+                } else {
+                    substitutions.insert(param_name.clone(), value.clone());
+                }
                 value_idx += 1;
             } else {
                 runtime_params.push((param_name.clone(), param_ty.clone()));
             }
         }
 
+        // Bind type-valued comptime parameters into the selected type position
+        // (array element type) first, rejecting any other use, then substitute
+        // scalar comptime parameters into the runtime expression tree.
+        let substituted = substitute_type_params(&template.body, &type_substitutions)?;
         let substituted =
-            substitute_comptime_params(&template.body, &substitutions, &HashSet::new())?;
+            substitute_comptime_params(&substituted, &substitutions, &HashSet::new())?;
         let shadowed = self.shadow_templates(runtime_params.iter().map(|(name, _)| name.clone()));
         let body = self.rewrite_expr(&substituted);
         self.restore_templates(shadowed);
@@ -474,7 +505,7 @@ fn validate_params(
         if !is_supported_comptime_param_type(ty) {
             return Err(SpecializeError::at(
                 format!(
-                    "unsupported comptime parameter type {}; supported scalar types are i64, f64, bool, char, and unit",
+                    "unsupported comptime parameter type {}; supported scalar types are i64, f64, bool, char, and unit, or the `type` kind for type-valued parameters",
                     ty
                 ),
                 span,
@@ -484,11 +515,21 @@ fn validate_params(
     Ok(())
 }
 
+/// Whether a comptime parameter annotation denotes the `type` *kind* — i.e. the
+/// parameter is type-valued (`[comptime T : type]`) rather than carrying a
+/// runtime scalar value. The `type` keyword parses as `Type::Var("type")` in
+/// type position (it is not a runtime value type), which is how the kind is
+/// distinguished from a nominal `Type::Var` naming a declared enum/struct.
+fn is_type_kind_param(ty: &Type) -> bool {
+    matches!(ty, Type::Var(name) if name == "type")
+}
+
 fn is_supported_comptime_param_type(ty: &Type) -> bool {
-    matches!(
-        ty,
-        Type::I64 | Type::F64 | Type::Bool | Type::Char | Type::Unit
-    )
+    is_type_kind_param(ty)
+        || matches!(
+            ty,
+            Type::I64 | Type::F64 | Type::Bool | Type::Char | Type::Unit
+        )
 }
 
 fn specialization_key(name: &str, values: &[CtfeValue]) -> String {
@@ -741,6 +782,306 @@ fn substitute_comptime_params(
     }
 }
 
+/// Substitute type-valued comptime parameters into the generated specialization
+/// body. Type values are bound into exactly one selected type position — the
+/// element type of a `make-array` form (`(make-array T n)`) — where a bare type
+/// name `T` (`Type::Var("T")`) resolves to the compile-time type value. Any
+/// other use of a type parameter is rejected with a focused diagnostic, keeping
+/// the supported surface narrow until further positions are explicitly added:
+///   * a type parameter named in any other type position (annotation, cast,
+///     binding, lambda, loop index, etc.) is rejected, and
+///   * observing a type parameter as a runtime value (a bare `Var(T)`
+///     expression) is rejected before lowering.
+///
+/// When `type_subs` is empty this is an identity transform, so functions with
+/// only scalar comptime parameters are untouched.
+fn substitute_type_params(
+    expr: &Expr,
+    type_subs: &HashMap<String, Type>,
+) -> Result<Expr, SpecializeError> {
+    if type_subs.is_empty() {
+        return Ok(expr.clone());
+    }
+    substitute_type_params_with_shadow(expr, type_subs, &HashSet::new())
+}
+
+fn substitute_type_params_with_shadow(
+    expr: &Expr,
+    type_subs: &HashMap<String, Type>,
+    shadowed: &HashSet<String>,
+) -> Result<Expr, SpecializeError> {
+    let go = |e: &Expr| substitute_type_params_with_shadow(e, type_subs, shadowed);
+    match expr {
+        Expr::Spanned { expr: inner, span } => Ok(Expr::spanned(go(inner)?, *span)),
+        // Observing a type parameter as a runtime value is rejected before
+        // lowering: a type value has no runtime representation.
+        Expr::Var(name) if type_subs.contains_key(name) && !shadowed.contains(name) => {
+            Err(SpecializeError::at(
+                format!(
+                    "type-valued comptime parameter '{}' cannot be used as a runtime value; \
+                 it is only consumable in the element type of a `make-array` form",
+                    name
+                ),
+                expr.span(),
+            ))
+        }
+        Expr::Var(_) | Expr::Literal(_) | Expr::TypeLiteral { .. } => Ok(expr.clone()),
+        Expr::Binary { op, lhs, rhs } => Ok(Expr::Binary {
+            op: *op,
+            lhs: Box::new(go(lhs)?),
+            rhs: Box::new(go(rhs)?),
+        }),
+        Expr::Unary { op, expr: inner } => Ok(Expr::Unary {
+            op: *op,
+            expr: Box::new(go(inner)?),
+        }),
+        Expr::Call { func, args } => Ok(Expr::Call {
+            func: Box::new(go(func)?),
+            args: args.iter().map(go).collect::<Result<_, _>>()?,
+        }),
+        Expr::Comptime { expr: inner } => Ok(Expr::Comptime {
+            expr: Box::new(go(inner)?),
+        }),
+        Expr::If {
+            cond,
+            then_branch,
+            else_branch,
+        } => Ok(Expr::If {
+            cond: Box::new(go(cond)?),
+            then_branch: Box::new(go(then_branch)?),
+            else_branch: Box::new(go(else_branch)?),
+        }),
+        Expr::Let { bindings, body } => {
+            let mut current_shadowed = shadowed.clone();
+            let mut rewritten_bindings = Vec::with_capacity(bindings.len());
+            for (name, ty, value) in bindings {
+                if let Some(ty) = ty {
+                    reject_type_param_use(ty, type_subs, value.span(), "a let binding type")?;
+                }
+                rewritten_bindings.push((
+                    name.clone(),
+                    ty.clone(),
+                    substitute_type_params_with_shadow(value, type_subs, &current_shadowed)?,
+                ));
+                current_shadowed.insert(name.clone());
+            }
+            Ok(Expr::Let {
+                bindings: rewritten_bindings,
+                body: Box::new(substitute_type_params_with_shadow(
+                    body,
+                    type_subs,
+                    &current_shadowed,
+                )?),
+            })
+        }
+        Expr::Lambda { params, ret, body } => {
+            for (_, ty) in params {
+                reject_type_param_use(ty, type_subs, body.span(), "a lambda parameter type")?;
+            }
+            if let Some(ret) = ret {
+                reject_type_param_use(ret, type_subs, body.span(), "a lambda return type")?;
+            }
+            let mut body_shadowed = shadowed.clone();
+            for (name, _) in params {
+                body_shadowed.insert(name.clone());
+            }
+            Ok(Expr::Lambda {
+                params: params.clone(),
+                ret: ret.clone(),
+                body: Box::new(substitute_type_params_with_shadow(
+                    body,
+                    type_subs,
+                    &body_shadowed,
+                )?),
+            })
+        }
+        Expr::Tuple(elems) => Ok(Expr::Tuple(elems.iter().map(go).collect::<Result<_, _>>()?)),
+        Expr::TupleRef { expr: inner, index } => Ok(Expr::TupleRef {
+            expr: Box::new(go(inner)?),
+            index: *index,
+        }),
+        Expr::Array(elems) => Ok(Expr::Array(elems.iter().map(go).collect::<Result<_, _>>()?)),
+        // The single selected consumer position: substitute type parameters into
+        // the element type of `make-array`.
+        Expr::MakeArray { elem_ty, len } => Ok(Expr::MakeArray {
+            elem_ty: substitute_type_in_type(elem_ty, type_subs),
+            len: Box::new(go(len)?),
+        }),
+        Expr::ArrayRef { expr: inner, index } => Ok(Expr::ArrayRef {
+            expr: Box::new(go(inner)?),
+            index: Box::new(go(index)?),
+        }),
+        Expr::ArraySet {
+            expr: inner,
+            index,
+            value,
+        } => Ok(Expr::ArraySet {
+            expr: Box::new(go(inner)?),
+            index: Box::new(go(index)?),
+            value: Box::new(go(value)?),
+        }),
+        Expr::While { cond, body } => Ok(Expr::While {
+            cond: Box::new(go(cond)?),
+            body: Box::new(go(body)?),
+        }),
+        Expr::Begin(exprs) => Ok(Expr::Begin(exprs.iter().map(go).collect::<Result<_, _>>()?)),
+        Expr::Set(name, value) => Ok(Expr::Set(name.clone(), Box::new(go(value)?))),
+        Expr::Ann { expr: inner, ty } => {
+            reject_type_param_use(ty, type_subs, inner.span(), "an `ann` target type")?;
+            Ok(Expr::Ann {
+                expr: Box::new(go(inner)?),
+                ty: ty.clone(),
+            })
+        }
+        Expr::Cast { expr: inner, ty } => {
+            reject_type_param_use(ty, type_subs, inner.span(), "a `cast` target type")?;
+            Ok(Expr::Cast {
+                expr: Box::new(go(inner)?),
+                ty: ty.clone(),
+            })
+        }
+        Expr::Match { scrutinee, arms } => Ok(Expr::Match {
+            scrutinee: Box::new(go(scrutinee)?),
+            arms: arms
+                .iter()
+                .map(|(pat, body)| {
+                    let mut arm_shadowed = shadowed.clone();
+                    collect_pattern_bindings(pat, &mut arm_shadowed);
+                    Ok((
+                        pat.clone(),
+                        substitute_type_params_with_shadow(body, type_subs, &arm_shadowed)?,
+                    ))
+                })
+                .collect::<Result<_, SpecializeError>>()?,
+        }),
+        Expr::Foreach {
+            index,
+            index_ty,
+            start,
+            end,
+            body,
+        } => {
+            reject_type_param_use(index_ty, type_subs, body.span(), "a loop index type")?;
+            let mut body_shadowed = shadowed.clone();
+            body_shadowed.insert(index.clone());
+            Ok(Expr::Foreach {
+                index: index.clone(),
+                index_ty: index_ty.clone(),
+                start: Box::new(go(start)?),
+                end: Box::new(go(end)?),
+                body: Box::new(substitute_type_params_with_shadow(
+                    body,
+                    type_subs,
+                    &body_shadowed,
+                )?),
+            })
+        }
+        Expr::SpmdReduce {
+            op,
+            index,
+            index_ty,
+            start,
+            end,
+            init,
+            value,
+        } => {
+            reject_type_param_use(index_ty, type_subs, value.span(), "a loop index type")?;
+            let mut value_shadowed = shadowed.clone();
+            value_shadowed.insert(index.clone());
+            Ok(Expr::SpmdReduce {
+                op: *op,
+                index: index.clone(),
+                index_ty: index_ty.clone(),
+                start: Box::new(go(start)?),
+                end: Box::new(go(end)?),
+                init: Box::new(go(init)?),
+                value: Box::new(substitute_type_params_with_shadow(
+                    value,
+                    type_subs,
+                    &value_shadowed,
+                )?),
+            })
+        }
+        Expr::StructGet { expr: inner, field } => Ok(Expr::StructGet {
+            expr: Box::new(go(inner)?),
+            field: field.clone(),
+        }),
+        Expr::WithRegion { region, body } => Ok(Expr::WithRegion {
+            region: region.clone(),
+            body: body.iter().map(go).collect::<Result<_, _>>()?,
+        }),
+    }
+}
+
+/// Replace every `Type::Var(name)` that names a bound type parameter with its
+/// compile-time type value, recursing through compound types so a parameter
+/// nested in `(Array T 4)`/`(Tuple T ...)`/`(-> T ...)` is substituted too.
+fn substitute_type_in_type(ty: &Type, type_subs: &HashMap<String, Type>) -> Type {
+    match ty {
+        Type::Var(name) => match type_subs.get(name) {
+            Some(resolved) => resolved.clone(),
+            None => ty.clone(),
+        },
+        Type::Func(args, ret) => Type::Func(
+            args.iter()
+                .map(|a| substitute_type_in_type(a, type_subs))
+                .collect(),
+            Box::new(substitute_type_in_type(ret, type_subs)),
+        ),
+        Type::Tuple(elems) => Type::Tuple(
+            elems
+                .iter()
+                .map(|e| substitute_type_in_type(e, type_subs))
+                .collect(),
+        ),
+        Type::Array(elem, n) => Type::Array(Box::new(substitute_type_in_type(elem, type_subs)), *n),
+        Type::DynArray(elem) => Type::DynArray(Box::new(substitute_type_in_type(elem, type_subs))),
+        Type::Region(region, elem) => Type::Region(
+            region.clone(),
+            Box::new(substitute_type_in_type(elem, type_subs)),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// Whether a type mentions any bound type parameter at any depth.
+fn type_mentions_type_param(ty: &Type, type_subs: &HashMap<String, Type>) -> bool {
+    match ty {
+        Type::Var(name) => type_subs.contains_key(name),
+        Type::Func(args, ret) => {
+            args.iter().any(|a| type_mentions_type_param(a, type_subs))
+                || type_mentions_type_param(ret, type_subs)
+        }
+        Type::Tuple(elems) => elems.iter().any(|e| type_mentions_type_param(e, type_subs)),
+        Type::Array(elem, _) | Type::DynArray(elem) | Type::Region(_, elem) => {
+            type_mentions_type_param(elem, type_subs)
+        }
+        _ => false,
+    }
+}
+
+/// Reject a type position that names a type-valued comptime parameter outside
+/// the single selected consumer (array element type). The diagnostic identifies
+/// the offending type and the unsupported position.
+fn reject_type_param_use(
+    ty: &Type,
+    type_subs: &HashMap<String, Type>,
+    span: Span,
+    position: &str,
+) -> Result<(), SpecializeError> {
+    if type_mentions_type_param(ty, type_subs) {
+        return Err(SpecializeError::at(
+            format!(
+                "type-valued comptime parameter used in {} ({}); the only supported type position \
+                 is the element type of a `make-array` form",
+                position, ty
+            ),
+            span,
+        ));
+    }
+    Ok(())
+}
+
 fn collect_pattern_bindings(pat: &Pattern, out: &mut HashSet<String>) {
     match pat {
         Pattern::Var(name, _) | Pattern::Binding(name) => {
@@ -891,6 +1232,218 @@ mod tests {
             err.msg.contains("not compile-time-known"),
             "got: {}",
             err.msg
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Type-valued comptime parameters — Issue #742
+    // ------------------------------------------------------------------
+
+    /// The element type of the (single) `make-array` form in the generated body.
+    fn generated_make_array_elem(program: &Program) -> Type {
+        let generated = program
+            .decls
+            .iter()
+            .find(|decl| matches!(decl, Decl::DefFn { name, .. } if name.starts_with("__tl_specialized_")))
+            .expect("generated specialization");
+        let Decl::DefFn { body, .. } = generated else {
+            panic!("expected generated function");
+        };
+        find_make_array_elem(body).expect("make-array in generated body")
+    }
+
+    fn find_make_array_elem(expr: &Expr) -> Option<Type> {
+        match expr.unspan() {
+            Expr::MakeArray { elem_ty, .. } => Some(elem_ty.clone()),
+            Expr::Begin(exprs) => exprs.iter().find_map(find_make_array_elem),
+            Expr::Let { body, .. } => find_make_array_elem(body),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn type_valued_param_substitutes_into_make_array_elem_type() {
+        let program = parse(
+            "(define (alloc [comptime T : type] [n : i64]) : (Array i64)
+               (make-array T n))
+             (define (main) : (Array i64) (alloc (type i64) 4))",
+        )
+        .unwrap();
+        let specialized = specialize_program(&program).unwrap();
+        assert_eq!(generated_make_array_elem(&specialized), Type::I64);
+    }
+
+    #[test]
+    fn type_valued_param_repeated_identical_calls_reuse_one_function() {
+        let program = parse(
+            "(define (alloc [comptime T : type] [n : i64]) : (Array i64)
+               (make-array T n))
+             (define (main) : i64
+               (begin (alloc (type i64) 4) (alloc (type i64) 8) 0))",
+        )
+        .unwrap();
+        let specialized = specialize_program(&program).unwrap();
+        assert_eq!(generated_names(&specialized).len(), 1);
+    }
+
+    #[test]
+    fn type_valued_param_distinct_shapes_generate_distinct_functions() {
+        let program = parse(
+            "(define (alloc [comptime T : type] [n : i64]) : (Array i64)
+               (make-array T n))
+             (define (main) : i64
+               (begin (alloc (type i64) 4) (alloc (type f64) 4) 0))",
+        )
+        .unwrap();
+        let specialized = specialize_program(&program).unwrap();
+        assert_eq!(generated_names(&specialized).len(), 2);
+    }
+
+    #[test]
+    fn type_valued_param_key_fragment_distinguishes_runtime_shape() {
+        // i32 and i64 differ in runtime shape, so the cache keys differ.
+        let i32_key = specialization_key("alloc", &[CtfeValue::Type(Type::I32), CtfeValue::I64(4)]);
+        let i64_key = specialization_key("alloc", &[CtfeValue::Type(Type::I64), CtfeValue::I64(4)]);
+        assert_ne!(i32_key, i64_key);
+        assert!(i64_key.contains("type:i64"), "{i64_key}");
+    }
+
+    #[test]
+    fn type_valued_param_generated_names_are_deterministic() {
+        let src = "(define (alloc [comptime T : type] [n : i64]) : (Array i64)
+                     (make-array T n))
+                   (define (main) : (Array i64) (alloc (type i64) 4))";
+        let first = generated_names(&specialize_program(&parse(src).unwrap()).unwrap());
+        let second = generated_names(&specialize_program(&parse(src).unwrap()).unwrap());
+        assert_eq!(first, second);
+        assert_eq!(first.len(), 1);
+    }
+
+    #[test]
+    fn type_valued_param_rejects_runtime_observation() {
+        let program = parse(
+            "(define (bad [comptime T : type] [n : i64]) : i64 T)
+             (define (main) : i64 (bad (type i64) 4))",
+        )
+        .unwrap();
+        let err = specialize_program(&program).unwrap_err();
+        assert!(
+            err.msg.contains("cannot be used as a runtime value"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn type_valued_param_let_binding_can_shadow_runtime_name() {
+        let program = parse(
+            "(define (pick [comptime T : type] [x : i64]) : i64
+               (let ([T : i64 1]) T))
+             (define (main) : i64 (pick (type i64) 0))",
+        )
+        .unwrap();
+        specialize_program(&program).unwrap();
+    }
+
+    #[test]
+    fn type_valued_param_match_binding_can_shadow_runtime_name() {
+        let program = parse(
+            "(defenum Box (Box i64))
+             (define (unbox [comptime T : type] [b : Box]) : i64
+               (match b [(Box T) T]))
+             (define (main) : i64 (unbox (type i64) (Box 7)))",
+        )
+        .unwrap();
+        specialize_program(&program).unwrap();
+    }
+
+    #[test]
+    fn type_valued_param_loop_index_can_shadow_runtime_name() {
+        let program = parse(
+            "(define (sum [comptime T : type] [n : i64]) : i64
+               (spmd-reduce sum ([T : i64 0 n]) 0 T))
+             (define (main) : i64 (sum (type i64) 4))",
+        )
+        .unwrap();
+        specialize_program(&program).unwrap();
+    }
+
+    #[test]
+    fn type_valued_param_rejects_unselected_type_position() {
+        let program = parse(
+            "(define (bad [comptime T : type] [x : i64]) : i64 (ann x : T))
+             (define (main) : i64 (bad (type i64) 4))",
+        )
+        .unwrap();
+        let err = specialize_program(&program).unwrap_err();
+        assert!(
+            err.msg.contains("only supported type position")
+                && err.msg.contains("`ann` target type"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn type_valued_param_rejects_scalar_argument() {
+        let program = parse(
+            "(define (alloc [comptime T : type] [n : i64]) : (Array i64)
+               (make-array T n))
+             (define (main) : (Array i64) (alloc 4 4))",
+        )
+        .unwrap();
+        let err = specialize_program(&program).unwrap_err();
+        assert!(err.msg.contains("must be a type value"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn scalar_param_rejects_type_argument() {
+        let program = parse(
+            "(define (scale [comptime n : i64] [x : i64]) : i64 (* n x))
+             (define (main) : i64 (scale (type i64) 10))",
+        )
+        .unwrap();
+        let err = specialize_program(&program).unwrap_err();
+        assert!(
+            err.msg.contains("has type type, expected i64"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn type_valued_param_omitted_from_runtime_signature() {
+        let program = parse(
+            "(define (alloc [comptime T : type] [n : i64]) : (Array i64)
+               (make-array T n))
+             (define (main) : (Array i64) (alloc (type i64) 4))",
+        )
+        .unwrap();
+        let specialized = specialize_program(&program).unwrap();
+        let generated = specialized
+            .decls
+            .iter()
+            .find(|decl| matches!(decl, Decl::DefFn { name, .. } if name.starts_with("__tl_specialized_")))
+            .unwrap();
+        let Decl::DefFn { params, .. } = generated else {
+            panic!("expected generated function");
+        };
+        assert_eq!(params.len(), 1, "comptime type param must be removed");
+        assert_eq!(params[0].0, "n");
+    }
+
+    #[test]
+    fn type_valued_param_nested_in_compound_type_is_substituted() {
+        let program = parse(
+            "(define (alloc [comptime T : type] [n : i64]) : (Array (Array i64 2))
+               (make-array (Array T 2) n))
+             (define (main) : (Array (Array i64 2)) (alloc (type i64) 4))",
+        )
+        .unwrap();
+        let specialized = specialize_program(&program).unwrap();
+        assert_eq!(
+            generated_make_array_elem(&specialized),
+            Type::Array(Box::new(Type::I64), 2)
         );
     }
 }

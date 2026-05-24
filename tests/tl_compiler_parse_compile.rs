@@ -76,6 +76,9 @@ fn compiler_parse_core_tl_compiles_to_assembly() {
     for sym in [
         "_tl_compiler_parse_dispatch_env:",
         "_tl_compiler_parse_dispatch_tag:",
+        "_tl_ast_source_span_from_source_span:",
+        "_tl_ast_expr_wrap_span:",
+        "_tl_ast_expr_inner_tag:",
         "_tl_parse_ast_type:",
         "_tl_parse_ast_expr:",
         "_tl_parse_ast_decl:",
@@ -85,6 +88,10 @@ fn compiler_parse_core_tl_compiles_to_assembly() {
         "_tl_parse_ast_foreach:",
         "_tl_parse_ast_cond:",
         "_tl_compiler_parse_smoke:",
+        "_tl_compiler_parse_nested_expr_span_ok_question:",
+        "_tl_compiler_parse_error_span_ok_question:",
+        "_tl_read_form_spanned_result:",
+        "_tl_lex_spanned_result:",
         "_tl_read_form:",
         "_tl_lex:",
         "_tl_sym_i64_lookup:",
@@ -109,6 +116,8 @@ fn compiler_parse_core_tl_compiles_to_assembly() {
     for datum in [
         "(import \\\"stdlib/test.tl\\\")",
         "(define (main [argc : i64] [name : String]) : i64",
+        "(define (main) : i64 (+ 1 (* 2 3)))",
+        "(define)",
         "(cond",
         "(match (Some x) [(Some v) v] [_ 0])",
     ] {

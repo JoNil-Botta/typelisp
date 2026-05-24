@@ -522,7 +522,7 @@
       (match maybe-ty
         [(AstSomeType ty) (OkTcType (tc-resolve-type ctx ty))]
         [(AstNoType)
-          (match expr
+          (match (ast-expr-unspan expr)
             [(AstExprLiteral lit) (OkTcType (tc-literal-type lit))]
             [(AstExprAnn _ ty) (OkTcType (tc-resolve-type ctx ty))]
             [_ (ErrTcType "typecheck: top-level value requires annotation")])])]
@@ -735,7 +735,7 @@
   [env : TcTypeEnv]
   [func : AstExpr]
   [args : AstExprList]) : ResultTcType
-  (match func
+  (match (ast-expr-unspan func)
     [(AstExprVar name)
       (if (or (string-eq name "array-length") (string-eq name "length"))
         (tc-array-length-call ctx env name func args)

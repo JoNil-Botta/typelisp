@@ -9,16 +9,17 @@
 ; capture snapshots the storage onto the heap.
 
 (define (make-reader) : (-> i64)
-  (let ([a : (Array i64 3) (array 40 1 1)])
+  (let
+    [a : (Array i64 3) (array 40 1 1)]
     (lambda () : i64 (+ (array-ref a 0) (+ (array-ref a 1) (array-ref a 2))))))
 
 (define (case-returned) : bool
   (= ((make-reader)) 42))
 
 (define (case-immediate) : bool
-  (let (
+  (let
     [a : (Array i64 4) (array 10 20 30 42)]
-    [f : (-> i64) (lambda () : i64 (array-ref a 3))])
+    [f : (-> i64) (lambda () : i64 (array-ref a 3))]
     (= (f) 42)))
 
 (define (main) : i64

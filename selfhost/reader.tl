@@ -122,7 +122,8 @@
   (SpSCons SpannedSexpr SpannedSexpr SourceSpan)
   (SpSStr String SourceSpan)
   (SpSChar char SourceSpan)
-  (SpSFloat String SourceSpan))
+  (SpSFloat String SourceSpan)
+  (SpSBracketList SpannedSexpr SourceSpan))
 
 (defenum ResultSpannedSexpr
   (OkSpannedSexpr SpannedSexpr)
@@ -136,7 +137,8 @@
     [(SpSCons _ _ span) span]
     [(SpSStr _ span) span]
     [(SpSChar _ span) span]
-    [(SpSFloat _ span) span]))
+    [(SpSFloat _ span) span]
+    [(SpSBracketList _ span) span]))
 
 (define (spanned-sexpr-form [s : SpannedSexpr]) : Sexpr
   (match s
@@ -147,7 +149,8 @@
       (SCons (spanned-sexpr-form head) (spanned-sexpr-form tail))]
     [(SpSStr text _) (SStr text)]
     [(SpSChar c _) (SChar c)]
-    [(SpSFloat text _) (SFloat text)]))
+    [(SpSFloat text _) (SFloat text)]
+    [(SpSBracketList items _) (spanned-sexpr-form items)]))
 
 ;; --------------------------------------------------------------------------
 
@@ -230,33 +233,40 @@
 (define (read-form-spanned-result
   [toks : (Array SpannedToken)]
   [cur : (Array i64)]) : ResultSpannedSexpr
-  (let ([st : SpannedToken (peek-spanned-token toks cur)])
-    (let (
+  (let
+    [st : SpannedToken (peek-spanned-token toks cur)]
+    (let
       [tok : Token (spanned-token-token st)]
-      [span : SourceSpan (spanned-token-span st)])
-      (let ([t : i64 (token-tag tok)])
+      [span : SourceSpan (spanned-token-span st)]
+      (let
+        [t : i64 (token-tag tok)]
         (if (= t (tag-int))
-          (let ([v : i64 (token-int tok)])
+          (let
+            [v : i64 (token-int tok)]
             (begin
               (advance cur)
               (OkSpannedSexpr (SpSInt v span))))
           (if (= t (tag-float))
-            (let ([s : String (token-float tok)])
+            (let
+              [s : String (token-float tok)]
               (begin
                 (advance cur)
                 (OkSpannedSexpr (SpSFloat s span))))
             (if (= t (tag-sym))
-              (let ([s : String (token-sym tok)])
+              (let
+                [s : String (token-sym tok)]
                 (begin
                   (advance cur)
                   (OkSpannedSexpr (SpSSym s span))))
               (if (= t (tag-str))
-                (let ([s : String (token-str tok)])
+                (let
+                  [s : String (token-str tok)]
                   (begin
                     (advance cur)
                     (OkSpannedSexpr (SpSStr s span))))
                 (if (= t (tag-char))
-                  (let ([c : char (token-char tok)])
+                  (let
+                    [c : char (token-char tok)]
                     (begin
                       (advance cur)
                       (OkSpannedSexpr (SpSChar c span))))
@@ -264,30 +274,44 @@
                     (begin
                       (advance cur)
                       (read-list-spanned-result toks cur span))
-                    (if (= t (tag-rparen))
-                      (ErrSpannedSexpr
-                        (SourceError "reader: unexpected ')'" span))
-                      (ErrSpannedSexpr
-                        (SourceError "reader: unexpected end of input" span)))))))))))))
+                    (if (= t (tag-lbracket))
+                      (begin
+                        (advance cur)
+                        (read-bracket-list-spanned-result toks cur span))
+                      (if (= t (tag-rparen))
+                        (ErrSpannedSexpr
+                          (SourceError "reader: unexpected ')'" span))
+                        (if (= t (tag-rbracket))
+                          (ErrSpannedSexpr
+                            (SourceError "reader: unexpected ']'" span))
+                          (ErrSpannedSexpr
+                            (SourceError "reader: unexpected end of input" span)))))))))))))))
 
-(define (read-list-spanned-result
+(define (read-list-spanned-items-result
   [toks : (Array SpannedToken)]
   [cur : (Array i64)]
-  [open-span : SourceSpan]) : ResultSpannedSexpr
-  (let ([st : SpannedToken (peek-spanned-token toks cur)])
-    (let (
+  [open-span : SourceSpan]
+  [close-tag : i64]
+  [unterminated-message : String]) : ResultSpannedSexpr
+  (let
+    [st : SpannedToken (peek-spanned-token toks cur)]
+    (let
       [span : SourceSpan (spanned-token-span st)]
-      [t : i64 (token-tag (spanned-token-token st))])
-      (if (= t (tag-rparen))
+      [t : i64 (token-tag (spanned-token-token st))]
+      (if (= t close-tag)
         (begin
           (advance cur)
           (OkSpannedSexpr (SpSNil (merge-spans open-span span))))
         (if (= t (tag-end))
-          (ErrSpannedSexpr
-            (SourceError "reader: unterminated list (missing ')')" span))
+          (ErrSpannedSexpr (SourceError unterminated-message span))
           (match (read-form-spanned-result toks cur)
             [(OkSpannedSexpr head)
-              (match (read-list-spanned-result toks cur open-span)
+              (match (read-list-spanned-items-result
+                toks
+                cur
+                open-span
+                close-tag
+                unterminated-message)
                 [(OkSpannedSexpr tail)
                   (OkSpannedSexpr
                     (SpSCons
@@ -297,23 +321,52 @@
                 [(ErrSpannedSexpr err) (ErrSpannedSexpr err)])]
             [(ErrSpannedSexpr err) (ErrSpannedSexpr err)]))))))
 
+(define (read-list-spanned-result
+  [toks : (Array SpannedToken)]
+  [cur : (Array i64)]
+  [open-span : SourceSpan]) : ResultSpannedSexpr
+  (read-list-spanned-items-result
+    toks
+    cur
+    open-span
+    (tag-rparen)
+    "reader: unterminated list (missing ')')"))
+
+(define (read-bracket-list-spanned-result
+  [toks : (Array SpannedToken)]
+  [cur : (Array i64)]
+  [open-span : SourceSpan]) : ResultSpannedSexpr
+  (match (read-list-spanned-items-result
+    toks
+    cur
+    open-span
+    (tag-rbracket)
+    "reader: unterminated list (missing ']')")
+    [(OkSpannedSexpr items)
+      (OkSpannedSexpr (SpSBracketList items (spanned-sexpr-span items)))]
+    [(ErrSpannedSexpr err) (ErrSpannedSexpr err)]))
+
 (define (read-form-result [toks : (Array Token)] [cur : (Array i64)]) : ResultSexpr
-  (let ([t : i64 (peek-tag toks cur)])
+  (let
+    [t : i64 (peek-tag toks cur)]
     (if (= t (tag-int))
       ;; An integer atom: project the literal out of the TInt and consume it.
-      (let ([v : i64 (token-int (peek-tok toks cur))])
+      (let
+        [v : i64 (token-int (peek-tok toks cur))]
         (begin
           (advance cur)
           (OkSexpr (SInt v))))
       (if (= t (tag-float))
         ;; A float atom: carry the lexeme text through the reader.
-        (let ([s : String (token-float (peek-tok toks cur))])
+        (let
+          [s : String (token-float (peek-tok toks cur))]
           (begin
             (advance cur)
             (OkSexpr (SFloat s))))
         (if (= t (tag-sym))
           ;; A symbol atom: project the lexeme out of the TSym and consume it.
-          (let ([s : String (token-sym (peek-tok toks cur))])
+          (let
+            [s : String (token-sym (peek-tok toks cur))]
             (begin
               (advance cur)
               (OkSexpr (SSym s))))
@@ -321,14 +374,16 @@
             ;; A string-literal atom: project the inner text out of the TStr
             ;; (via the imported `token-str` accessor, #128) and consume it.
             ;; `SStr` keeps it distinct from a same-character `SSym`.
-            (let ([s : String (token-str (peek-tok toks cur))])
+            (let
+              [s : String (token-str (peek-tok toks cur))]
               (begin
                 (advance cur)
                 (OkSexpr (SStr s))))
             (if (= t (tag-char))
               ;; A character-literal atom: project the char out of the
               ;; TChar token (via imported `token-char`) and consume it.
-              (let ([c : char (token-char (peek-tok toks cur))])
+              (let
+                [c : char (token-char (peek-tok toks cur))]
                 (begin
                   (advance cur)
                   (OkSexpr (SChar c))))
@@ -337,10 +392,16 @@
                 (begin
                   (advance cur)
                   (read-list-result toks cur))
-                (if (= t (tag-rparen))
-                  (ErrSexpr "reader: unexpected ')'")
-                  ;; tag-end (or anything else): premature end of stream.
-                  (ErrSexpr "reader: unexpected end of input"))))))))))
+                (if (= t (tag-lbracket))
+                  (begin
+                    (advance cur)
+                    (read-bracket-list-result toks cur))
+                  (if (= t (tag-rparen))
+                    (ErrSexpr "reader: unexpected ')'")
+                    (if (= t (tag-rbracket))
+                      (ErrSexpr "reader: unexpected ']'")
+                      ;; tag-end (or anything else): premature end of stream.
+                      (ErrSexpr "reader: unexpected end of input"))))))))))))
 
 ;; read-list: the cursor is positioned just AFTER an opening '('. Read forms
 
@@ -362,23 +423,46 @@
 
 ;; level reads its next sibling.
 
-(define (read-list-result [toks : (Array Token)] [cur : (Array i64)]) : ResultSexpr
-  (let ([t : i64 (peek-tag toks cur)])
-    (if (= t (tag-rparen))
+(define (read-list-result-with-close
+  [toks : (Array Token)]
+  [cur : (Array i64)]
+  [close-tag : i64]
+  [unterminated-message : String]) : ResultSexpr
+  (let
+    [t : i64 (peek-tag toks cur)]
+    (if (= t close-tag)
       ;; End of this list: consume the ')' and terminate the spine with SNil.
       (begin
         (advance cur)
         (OkSexpr SNil))
       (if (= t (tag-end))
-        (ErrSexpr "reader: unterminated list (missing ')')")
+        (ErrSexpr unterminated-message)
         ;; A list element: read the head form (which advances the cursor past
         ;; it, however deeply nested), then recurse for the tail and cons.
         (match (read-form-result toks cur)
           [(OkSexpr head)
-            (match (read-list-result toks cur)
+            (match (read-list-result-with-close
+              toks
+              cur
+              close-tag
+              unterminated-message)
               [(OkSexpr tail) (OkSexpr (SCons head tail))]
               [(ErrSexpr message) (ErrSexpr message)])]
           [(ErrSexpr message) (ErrSexpr message)])))))
+
+(define (read-list-result [toks : (Array Token)] [cur : (Array i64)]) : ResultSexpr
+  (read-list-result-with-close
+    toks
+    cur
+    (tag-rparen)
+    "reader: unterminated list (missing ')')"))
+
+(define (read-bracket-list-result [toks : (Array Token)] [cur : (Array i64)]) : ResultSexpr
+  (read-list-result-with-close
+    toks
+    cur
+    (tag-rbracket)
+    "reader: unterminated list (missing ']')"))
 
 (define (read-form [toks : (Array Token)] [cur : (Array i64)]) : Sexpr
   (match (read-form-result toks cur)
@@ -405,13 +489,15 @@
 ;; one datum at a time.)
 
 (define (read-result [toks : (Array Token)]) : ResultSexpr
-  (let ([cur : (Array i64) (make-array i64 1)])
+  (let
+    [cur : (Array i64) (make-array i64 1)]
     (begin
       (array-set! cur 0 0)
       (read-form-result toks cur))))
 
 (define (read-spanned-result [toks : (Array SpannedToken)]) : ResultSpannedSexpr
-  (let ([cur : (Array i64) (make-array i64 1)])
+  (let
+    [cur : (Array i64) (make-array i64 1)]
     (begin
       (array-set! cur 0 0)
       (read-form-spanned-result toks cur))))
@@ -539,7 +625,8 @@
         0))))
 
 (define (reader-nested-list-spans-ok?) : bool
-  (let ([tree : SpannedSexpr (read-spanned (lex-spanned "(a (b))"))])
+  (let
+    [tree : SpannedSexpr (read-spanned (lex-spanned "(a (b))"))]
     (match tree
       [(SpSCons _ tail outer-span)
         (match tail
@@ -577,10 +664,11 @@
 ;; preserves char values. The recoverable error probes add 3 more.
 
 (define (main) : i64
-  (let ([tree : Sexpr
-    (read
-      (lex
-        "(greet \"hi\" #x' 7 1.5 (msg \"yo\" #\\space' #\\newline' 35 #\\n'))"))])
+  (let
+    [tree : Sexpr
+      (read
+        (lex
+          "(greet \"hi\" #x' 7 1.5 (msg \"yo\" #\\space' #\\newline' 35 #\\n'))"))]
     (+
       (sum-ints tree)
       (+

@@ -21,10 +21,11 @@
     (begin
       (print-error "compiler-backend-stack-args-fixture: expected output path")
       1)
-    (let ([target-name : String
-      (if (< (arg-count) 3)
-        "linux-x86_64"
-        (arg 2))])
+    (let
+      [target-name : String
+        (if (< (arg-count) 3)
+          "linux-x86_64"
+          (arg 2))]
       (match (compiler-backend-stack-args-fixture-for-name target-name)
         [(OkCompilerBackend asm)
           (begin

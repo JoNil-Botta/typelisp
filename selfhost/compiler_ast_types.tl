@@ -260,7 +260,7 @@
     [(AstDeclImport _) 6]))
 
 (define (compiler-ast-smoke) : i64
-  (let (
+  (let
     [i64-ty : AstType (AstTyI64)]
     [string-ty : AstType (AstTyString)]
     [arg-tys : AstTypeList
@@ -272,7 +272,7 @@
     [param : AstParam (AstParam "x" i64-ty)]
     [params : AstParamList (AstParamCons param AstParamNil)]
     [decl : AstDecl (AstDeclDefFn "main" params i64-ty expr)]
-    [program : AstProgram (AstProgram (AstDeclCons decl AstDeclNil))])
+    [program : AstProgram (AstProgram (AstDeclCons decl AstDeclNil))]
     (match program
       [(AstProgram _)
         (+ (ast-type-tag fn-ty) (+ (ast-expr-tag expr) (ast-decl-tag decl)))])))

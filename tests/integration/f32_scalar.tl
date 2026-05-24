@@ -37,20 +37,20 @@
   (cast x : f32))
 
 (define (main) : i64
-  (let (
+  (let
     [two : f32 2.0]
     [three : f32 3.0]
-    [half : f32 0.5])
+    [half : f32 0.5]
     ;; f32 locals and arithmetic: (2 + 3) = 5, (3 - 2) = 1, (2 * 3) = 6,
     ;; (3 / 2) = 1.5.
-    (let (
+    (let
       [sum : f32 (addf two three)]
       [diff : f32 (subf three two)]
       [prod : f32 (mulf two three)]
-      [quot : f32 (divf three two)])
+      [quot : f32 (divf three two)]
       ;; Build the answer from comparisons over the f32 results so the exit
       ;; code only reaches 42 if single-precision codegen is correct.
-      (let (
+      (let
         [a : i64
           (if (ltf diff sum)
             20
@@ -75,5 +75,5 @@
             100
             (if (< 2.5 (roundtrip 2.5))
               100
-              0))])
+              0))]
         (+ rt (+ a (+ b c)))))))

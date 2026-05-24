@@ -7,9 +7,9 @@
 ; main returns 3 + 0 + 10 + 20 = 33.
 
 (define (main) : i64
-  (let (
+  (let
     [mid : String (substring "abcdef" 2 3)]
-    [empty : String (string-slice "abc" 1 0)])
+    [empty : String (string-slice "abc" 1 0)]
     (+
       (+ (string-length mid) (string-length empty))
       (+

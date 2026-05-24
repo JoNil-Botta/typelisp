@@ -6,7 +6,8 @@
 
 (define (case-let-bound) : bool
   (=
-    (let ([f : (-> i64 i64) (lambda ([x : i64]) : i64 (* x 2))])
+    (let
+      [f : (-> i64 i64) (lambda ([x : i64]) : i64 (* x 2))]
       (f 21))
     42))
 
@@ -19,7 +20,8 @@
     true))
 
 (define (all-cases) : bool
-  (let ([ok : bool true])
+  (let
+    [ok : bool true]
     (begin
       (if (case-immediate)
         unit

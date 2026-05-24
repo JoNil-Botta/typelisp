@@ -224,10 +224,12 @@
   [tags : (Array i64)]
   [vals : (Array i64)]
   [cur : (Array i64)]) : Expr
-  (let ([t : i64 (current-tag tags cur)])
+  (let
+    [t : i64 (current-tag tags cur)]
     (if (= t (tag-int))
       ;; A literal: build (ENum v) and consume the TInt token.
-      (let ([v : i64 (current-val vals cur)])
+      (let
+        [v : i64 (current-val vals cur)]
         (begin
           (advance cur)
           (ENum v)))
@@ -235,7 +237,8 @@
         ;; '(' expr ')': consume '(', parse the inner expr, consume ')'.
         (begin
           (expect tags cur (tag-lparen))
-          (let ([inner : Expr (parse-expr tags vals cur)])
+          (let
+            [inner : Expr (parse-expr tags vals cur)]
             (begin
               (expect tags cur (tag-rparen))
               inner)))
@@ -258,7 +261,8 @@
   [tags : (Array i64)]
   [vals : (Array i64)]
   [cur : (Array i64)]) : Expr
-  (let ([acc : Expr (parse-factor tags vals cur)])
+  (let
+    [acc : Expr (parse-factor tags vals cur)]
     (begin
       (while (or
         (= (current-tag tags cur) (tag-star))
@@ -288,7 +292,8 @@
   [tags : (Array i64)]
   [vals : (Array i64)]
   [cur : (Array i64)]) : Expr
-  (let ([acc : Expr (parse-term tags vals cur)])
+  (let
+    [acc : Expr (parse-term tags vals cur)]
     (begin
       (while (or
         (= (current-tag tags cur) (tag-plus))
@@ -365,10 +370,10 @@
 ;; process exit code.
 
 (define (main) : i64
-  (let (
+  (let
     [tags : (Array i64) (make-array i64 16)]
     [vals : (Array i64) (make-array i64 16)]
-    [cur : (Array i64) (make-array i64 1)])
+    [cur : (Array i64) (make-array i64 1)]
     (begin
       (build-sample-tags tags)
       (build-sample-vals vals)

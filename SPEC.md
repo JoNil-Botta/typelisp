@@ -487,12 +487,14 @@ as the head of the final `cond` arm.
   [else 30])
 ```
 
-### 5.7 `(let ([name [: type] init] ...) body)` — local bindings
+### 5.7 `(let [name [: type] init] ... body)` — local bindings
 
 - Declares one or more local variables.
+- Bindings are the leading bracket forms after `let`; the first non-bracket form is the body expression.
 - Variables are in scope for `body` and for subsequent bindings in the same `let` (sequential, not parallel).
 - Type annotation is optional. If omitted, the initializer type is inferred.
 - The body is a single expression; use `begin` for a multi-expression body.
+- Empty binding lists are rejected.
 
 ### 5.8 `(begin expr ... last_expr)` — sequence
 
@@ -750,7 +752,8 @@ Negative examples for later parser/typechecker tests:
 
 ```lisp test=ignore name=spmd-reject-mutation-reduction reason="future SPMD negative example"
 (define (sum-array [xs : (Array i64)] [n : i64]) : i64
-  (let ([sum : i64 0])
+  (let
+    [sum : i64 0]
     (begin
       (foreach ([i : i64 0 n])
         (set! sum (+ sum (array-ref xs i))))
@@ -787,7 +790,8 @@ nesting `with-region` forms.
 ```lisp test=check name=with-region-basic
 (define (main) : i64
   (with-region r
-    (let ([s : String (int->string 42)])
+    (let
+      [s : String (int->string 42)]
       (begin
         (print-string s)
         0))))
@@ -977,7 +981,8 @@ reclamation between phases.
 ```lisp test=check name=with-region-example
 (define (process-phase [input : String]) : i64
   (with-region phase
-    (let ([buf : (Array i64) (make-array i64 100)])
+    (let
+      [buf : (Array i64) (make-array i64 100)]
       (begin
         (array-set! buf 0 42)
         (array-ref buf 0)))))
@@ -1079,8 +1084,10 @@ replacement.
 
 ```lisp test=run name=dynamic-array-aliasing exit=42 stdout=""
 (define (main) : i64
-  (let ([a : (Array i64) (make-array i64 1)])
-    (let ([b : (Array i64) a])
+  (let
+    [a : (Array i64) (make-array i64 1)]
+    (let
+      [b : (Array i64) a]
       (begin
         (array-set! a 0 42)
         (array-ref b 0)))))
@@ -1380,7 +1387,8 @@ later work.
 (defstruct Point (x i64) (y i64))
 
 (define (main) : i64
-  (let ([p : Point (Point 3 4)])
+  (let
+    [p : Point (Point 3 4)]
     (+ (struct-get p x) (struct-get p y))))  ; returns 7
 ```
 
@@ -1388,7 +1396,8 @@ later work.
 
 ```lisp test=run name=dynamic-array exit=30 stdout=""
 (define (main) : i64
-  (let ([arr : (Array i64) (make-array i64 5)])
+  (let
+    [arr : (Array i64) (make-array i64 5)]
     (begin
       (array-set! arr 0 10)
       (array-set! arr 1 20)
@@ -1399,7 +1408,8 @@ later work.
 
 ```lisp test=run name=string-length exit=5 stdout=""
 (define (main) : i64
-  (let ([s : String "hello"])
+  (let
+    [s : String "hello"]
     (string-length s)))  ; returns 5
 ```
 
@@ -1450,7 +1460,7 @@ expr          ::= literal
                 | ident
                 | "(" "if" expr expr expr ")"
                 | "(" "cond" cond-arm+ ")"
-                | "(" "let" "(" binding* ")" expr ")"
+                | "(" "let" binding+ expr ")"
                 | "(" "while" expr expr ")"
                 | "(" "begin" expr+ ")"
                 | "(" "set!" ident expr ")"

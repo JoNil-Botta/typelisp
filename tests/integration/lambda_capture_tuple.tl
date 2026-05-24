@@ -9,9 +9,9 @@
 ; A scalar tuple captured and read while the creator scope is still live.
 
 (define (case-tuple-immediate) : bool
-  (let (
+  (let
     [t : (Tuple i64 i64) (tuple 17 25)]
-    [f : (-> i64) (lambda () : i64 (+ (tuple-ref t 0) (tuple-ref t 1)))])
+    [f : (-> i64) (lambda () : i64 (+ (tuple-ref t 0) (tuple-ref t 1)))]
     (= (f) 42)))
 
 ; A scalar tuple created inside a frame, captured by the returned closure, and
@@ -21,7 +21,8 @@
 ; snapshots the inline storage onto the heap.
 
 (define (make-tuple-reader) : (-> i64)
-  (let ([t : (Tuple i64 i64) (tuple 40 2)])
+  (let
+    [t : (Tuple i64 i64) (tuple 40 2)]
     (lambda () : i64 (+ (tuple-ref t 0) (tuple-ref t 1)))))
 
 (define (case-tuple-returned) : bool
@@ -30,9 +31,9 @@
 ; Mixed capture: a scalar and a scalar tuple captured together.
 
 (define (case-tuple-mixed) : bool
-  (let (
+  (let
     [n : i64 30]
-    [t : (Tuple i64 i64) (tuple 8 4)])
+    [t : (Tuple i64 i64) (tuple 8 4)]
     (= ((lambda () : i64 (+ n (+ (tuple-ref t 0) (tuple-ref t 1))))) 42)))
 
 (define (main) : i64

@@ -130,39 +130,38 @@
     [(FmtCstNil) (format-rules-inline-form-doc head FmtCstNil)]
     [(FmtCstCons first tail) (format-rules-first-line-form-doc head first tail)]))
 
-(define (format-rules-define-doc [rest : FormatCstList]) : Doc
+(define (format-rules-list-append
+  [left : FormatCstList]
+  [right : FormatCstList]) : FormatCstList
+  (match left
+    [(FmtCstNil) right]
+    [(FmtCstCons node rest)
+      (FmtCstCons node (format-rules-list-append rest right))]))
+
+(define (format-rules-bracket-binding-items?
+  [items : FormatCstList]
+  [seen : bool]) : bool
+  (match items
+    [(FmtCstNil) seen]
+    [(FmtCstCons node rest)
+      (match node
+        [(FmtCstComment _) (format-rules-bracket-binding-items? rest seen)]
+        [(FmtCstBracketList _) (format-rules-bracket-binding-items? rest true)]
+        [_ false])]))
+
+(define (format-rules-bracket-binding-list? [items : FormatCstList]) : bool
+  (format-rules-bracket-binding-items? items false))
+
+(define (format-rules-let-rest [rest : FormatCstList]) : FormatCstList
   (match rest
-    [(FmtCstCons
-        target
-        (FmtCstCons colon (FmtCstCons typ (FmtCstCons body (FmtCstNil)))))
-      (doc-append
-        (doc-text "(")
-        (doc-append
-          (doc-text "define")
-          (doc-append
-            (format-rules-space (format-rules-cst-doc target))
-            (doc-append
-              (format-rules-space (format-rules-cst-doc colon))
-              (doc-append
-                (format-rules-space (format-rules-cst-doc typ))
-                (doc-append
-                  (doc-nest
-                    2
-                    (doc-append (doc-hard-line) (format-rules-cst-doc body)))
-                  (doc-text ")")))))))]
-    [(FmtCstCons target (FmtCstCons body (FmtCstNil)))
-      (doc-append
-        (doc-text "(")
-        (doc-append
-          (doc-text "define")
-          (doc-append
-            (format-rules-space (format-rules-cst-doc target))
-            (doc-append
-              (doc-nest
-                2
-                (doc-append (doc-hard-line) (format-rules-cst-doc body)))
-              (doc-text ")")))))]
-    [_ (format-rules-first-or-line-form-doc "define" rest)]))
+    [(FmtCstCons first tail)
+      (match first
+        [(FmtCstList bindings)
+          (if (format-rules-bracket-binding-list? bindings)
+            (format-rules-list-append bindings tail)
+            rest)]
+        [_ rest])]
+    [_ rest]))
 
 (define (format-rules-let-binding-annotated-doc
   [name : FormatCst]
@@ -196,7 +195,7 @@
           (doc-nest 2 (doc-append (doc-soft-line) (format-rules-cst-doc init)))
           (doc-text "]"))))))
 
-(define (format-rules-let-binding-doc [node : FormatCst]) : Doc
+(define (format-rules-let-item-doc [node : FormatCst]) : Doc
   (match node
     [(FmtCstBracketList items)
       (match items
@@ -211,56 +210,58 @@
         [_ (format-rules-delimited-doc "[" items "]")])]
     [_ (format-rules-cst-doc node)]))
 
-(define (format-rules-let-binding-lines-doc [items : FormatCstList]) : Doc
+(define (format-rules-let-tail-doc [items : FormatCstList]) : Doc
   (match items
     [(FmtCstNil) (doc-empty)]
     [(FmtCstCons node rest)
       (doc-append
         (doc-hard-line)
         (doc-append
-          (format-rules-let-binding-doc node)
-          (format-rules-let-binding-lines-doc rest)))]))
+          (format-rules-let-item-doc node)
+          (format-rules-let-tail-doc rest)))]))
 
-(define (format-rules-let-bindings-vertical-doc [items : FormatCstList]) : Doc
+(define (format-rules-let-doc [rest : FormatCstList]) : Doc
   (doc-append
     (doc-text "(")
     (doc-append
-      (doc-nest 2 (format-rules-let-binding-lines-doc items))
-      (doc-text ")"))))
+      (doc-text "let")
+      (doc-append
+        (doc-nest 2 (format-rules-let-tail-doc (format-rules-let-rest rest)))
+        (doc-text ")")))))
 
-(define (format-rules-let-bindings-inline-doc [items : FormatCstList]) : Doc
-  (match items
-    [(FmtCstCons node FmtCstNil)
-      (doc-group
-        (doc-append
-          (doc-text "(")
-          (doc-append (format-rules-let-binding-doc node) (doc-text ")"))))]
-    [_ (format-rules-let-bindings-vertical-doc items)]))
-
-(define (format-rules-let-bindings-doc [items : FormatCstList]) : Doc
-  (if (and
-    (= (fmt-list-count items) 1)
-    (= (fmt-cst-list-comment-count items) 0))
-    (format-rules-let-bindings-inline-doc items)
-    (format-rules-let-bindings-vertical-doc items)))
-
-(define (format-rules-let-doc [rest : FormatCstList]) : Doc
+(define (format-rules-define-doc [rest : FormatCstList]) : Doc
   (match rest
-    [(FmtCstCons bindings body)
-      (match bindings
-        [(FmtCstList binding-items)
+    [(FmtCstCons
+        target
+        (FmtCstCons colon (FmtCstCons typ (FmtCstCons body (FmtCstNil)))))
+      (doc-append
+        (doc-text "(")
+        (doc-append
+          (doc-text "define")
           (doc-append
-            (doc-text "(")
+            (format-rules-space (format-rules-cst-doc target))
             (doc-append
-              (doc-text "let")
+              (format-rules-space (format-rules-cst-doc colon))
               (doc-append
-                (format-rules-space
-                  (format-rules-let-bindings-doc binding-items))
+                (format-rules-space (format-rules-cst-doc typ))
                 (doc-append
-                  (doc-nest 2 (format-rules-hard-tail-doc body))
-                  (doc-text ")")))))]
-        [_ (format-rules-first-or-line-form-doc "let" rest)])]
-    [_ (format-rules-first-or-line-form-doc "let" rest)]))
+                  (doc-nest
+                    2
+                    (doc-append (doc-hard-line) (format-rules-cst-doc body)))
+                  (doc-text ")")))))))]
+    [(FmtCstCons target (FmtCstCons body (FmtCstNil)))
+      (doc-append
+        (doc-text "(")
+        (doc-append
+          (doc-text "define")
+          (doc-append
+            (format-rules-space (format-rules-cst-doc target))
+            (doc-append
+              (doc-nest
+                2
+                (doc-append (doc-hard-line) (format-rules-cst-doc body)))
+              (doc-text ")")))))]
+    [_ (format-rules-first-or-line-form-doc "define" rest)]))
 
 (define (format-rules-special-list-doc
   [head : FormatCst]
@@ -346,7 +347,7 @@
   "(define (main [x : i64]) : i64 (begin (let ([y : i64 1]) (if (< x y) (while (< x 10) (set! x (+ x 1))) x)) (match (Some x) [(Some v) v] [None 0])))")
 
 (define (format-rules-flow-expected) : String
-  "(define (main [x : i64]) : i64\n  (begin\n    (let ([y : i64 1])\n      (if (< x y)\n        (while (< x 10)\n          (set! x (+ x 1)))\n        x))\n    (match (Some x)\n      [(Some v) v]\n      [None 0])))")
+  "(define (main [x : i64]) : i64\n  (begin\n    (let\n      [y : i64 1]\n      (if (< x y)\n        (while (< x 10)\n          (set! x (+ x 1)))\n        x))\n    (match (Some x)\n      [(Some v) v]\n      [None 0])))")
 
 (define (format-rules-comments-source) : String
   "(begin ; keep\n (print-string \"x\"))")
@@ -355,13 +356,13 @@
   "(begin\n  ; keep\n  (print-string \"x\"))")
 
 (define (format-rules-self-test) : i64
-  (let (
+  (let
     [decls : String
       (format-rules-render-source-width (format-rules-decls-source) 80)]
     [flow : String
       (format-rules-render-source-width (format-rules-flow-source) 80)]
     [comments : String
-      (format-rules-render-source-width (format-rules-comments-source) 80)])
+      (format-rules-render-source-width (format-rules-comments-source) 80)]
     (if (string-eq decls (format-rules-decls-expected))
       (if (string-eq flow (format-rules-flow-expected))
         (if (string-eq comments (format-rules-comments-expected))

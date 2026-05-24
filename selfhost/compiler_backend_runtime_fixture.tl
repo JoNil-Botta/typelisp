@@ -19,10 +19,11 @@
     (begin
       (print-error "compiler-backend-runtime-fixture: expected output path")
       1)
-    (let ([target-name : String
-      (if (< (arg-count) 3)
-        "linux-x86_64"
-        (arg 2))])
+    (let
+      [target-name : String
+        (if (< (arg-count) 3)
+          "linux-x86_64"
+          (arg 2))]
       (match (compiler-backend-runtime-fixture-emit target-name)
         [(OkCompilerBackend asm)
           (begin

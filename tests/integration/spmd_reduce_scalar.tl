@@ -9,7 +9,8 @@
 ; when every case agrees.
 
 (define (manual-sum [xs : (Array i64)] [n : i64]) : i64
-  (let ([acc : i64 0])
+  (let
+    [acc : i64 0]
     (begin
       (foreach ([i : i64 0 n]) (set! acc (+ acc (array-ref xs i))))
       acc)))
@@ -18,7 +19,8 @@
   (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))
 
 (define (manual-max [xs : (Array i64)] [n : i64] [seed : i64]) : i64
-  (let ([acc : i64 seed])
+  (let
+    [acc : i64 seed]
     (begin
       (foreach
         ([i : i64 0 n])
@@ -74,11 +76,11 @@
   (foreach ([i : i64 0 n]) (array-set! gs i (cast (+ i 1) : i32))))
 
 (define (main) : i64
-  (let (
+  (let
     [n : i64 5]
     [xs : (Array i64) (make-array i64 5)]
     [fs : (Array f64) (make-array f64 5)]
-    [gs : (Array i32) (make-array i32 5)])
+    [gs : (Array i32) (make-array i32 5)]
     (begin
       (fill-i64 xs n)
       (fill-f64 fs)

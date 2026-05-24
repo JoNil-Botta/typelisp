@@ -50,7 +50,8 @@
       (if has-output
         (ErrBuildPlanConfig "build: -o requires a source file argument")
         (ErrBuildPlanConfig "build: expected source path")))
-    (let ([current : String (arg idx)])
+    (let
+      [current : String (arg idx)]
       (if (string-eq current "-o")
         (if (>= (+ idx 1) count)
           (ErrBuildPlanConfig "build: -o requires a value")
@@ -82,7 +83,8 @@
           (if (string-eq current "--target")
             (if (>= (+ idx 1) count)
               (ErrBuildPlanConfig "build: --target requires a value")
-              (let ([value : String (arg (+ idx 1))])
+              (let
+                [value : String (arg (+ idx 1))]
                 (if (host-plan-target-valid? value)
                   (build-plan-parse-options
                     (+ idx 2)
@@ -98,7 +100,8 @@
             (if (string-eq current "--backend-mode")
               (if (>= (+ idx 1) count)
                 (ErrBuildPlanConfig "build: --backend-mode requires a value")
-                (let ([value : String (arg (+ idx 1))])
+                (let
+                  [value : String (arg (+ idx 1))]
                   (if (host-plan-backend-mode-valid? value)
                     (build-plan-parse-options
                       (+ idx 2)

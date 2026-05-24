@@ -1,4 +1,5 @@
-(let ((x 0))
+(let
+  ((x 0))
   (begin
     (while (and (< x 6) (not (= x 6)))
       (set! x (+ x 1)))

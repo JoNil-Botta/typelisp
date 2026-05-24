@@ -72,7 +72,9 @@
   (TEnd)
   (TStr String)
   (TChar char)
-  (TFloat String))
+  (TFloat String)
+  (TLBracket)
+  (TRBracket))
 
 ;; Source locations are 1-based line/column pairs. The end position is
 
@@ -140,7 +142,9 @@
     [(TEnd) 5]
     [(TStr _) 6]
     [(TChar _) 7]
-    [(TFloat _) 8]))
+    [(TFloat _) 8]
+    [(TLBracket) 9]
+    [(TRBracket) 10]))
 
 ;; Integer payload of a TInt token (0 for any other kind): projects the literal
 
@@ -155,7 +159,9 @@
     [(TEnd) 0]
     [(TStr _) 0]
     [(TChar _) 0]
-    [(TFloat _) 0]))
+    [(TFloat _) 0]
+    [(TLBracket) 0]
+    [(TRBracket) 0]))
 
 ;; Symbol text of a TSym token (the empty string for any other kind): projects
 
@@ -170,7 +176,9 @@
     [(TEnd) ""]
     [(TStr _) ""]
     [(TChar _) ""]
-    [(TFloat _) ""]))
+    [(TFloat _) ""]
+    [(TLBracket) ""]
+    [(TRBracket) ""]))
 
 ;; String text of a TStr token (the empty string for any other kind): projects
 
@@ -189,7 +197,9 @@
     [(TEnd) ""]
     [(TStr s) s]
     [(TChar _) ""]
-    [(TFloat _) ""]))
+    [(TFloat _) ""]
+    [(TLBracket) ""]
+    [(TRBracket) ""]))
 
 ;; Float literal text of a TFloat token (the empty string for any other kind):
 
@@ -206,7 +216,9 @@
     [(TEnd) ""]
     [(TStr _) ""]
     [(TChar _) ""]
-    [(TFloat s) s]))
+    [(TFloat s) s]
+    [(TLBracket) ""]
+    [(TRBracket) ""]))
 
 ;; Character payload of a TChar token (NUL for any other kind): projects the
 
@@ -223,7 +235,9 @@
     [(TEnd) #\nul']
     [(TStr _) #\nul']
     [(TChar c) c]
-    [(TFloat _) #\nul']))
+    [(TFloat _) #\nul']
+    [(TLBracket) #\nul']
+    [(TRBracket) #\nul']))
 
 ;; A token paired with the 1-based source line and column where its lexeme
 
@@ -287,3 +301,9 @@
 
 (define (tag-float) : i64
   8)
+
+(define (tag-lbracket) : i64
+  9)
+
+(define (tag-rbracket) : i64
+  10)

@@ -224,9 +224,9 @@
   [b : char]
   [expr : AstExpr]
   [fuel : i64]) : ResultCtfe
-  (let (
+  (let
     [ca : i64 (ctfe-char-code a)]
-    [cb : i64 (ctfe-char-code b)])
+    [cb : i64 (ctfe-char-code b)]
     (match op
       [(AstBinEq) (OkCtfe (CtfeBool (= ca cb)) fuel)]
       [(AstBinNe) (OkCtfe (CtfeBool (!= ca cb)) fuel)]

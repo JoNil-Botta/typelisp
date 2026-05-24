@@ -248,10 +248,15 @@
   [index : i64]
   [point : i64]
   [instr : CompilerIrInstr]) : CompilerRegIntervalList
-  (let ([with-defs : CompilerRegIntervalList
-    (compiler-reg-extend-set intervals (compiler-live-instr-defs instr) point)])
-    (let ([with-uses : CompilerRegIntervalList
-      (compiler-reg-extend-set with-defs (compiler-live-instr-uses instr) point)])
+  (let
+    [with-defs : CompilerRegIntervalList
+      (compiler-reg-extend-set intervals (compiler-live-instr-defs instr) point)]
+    (let
+      [with-uses : CompilerRegIntervalList
+        (compiler-reg-extend-set
+          with-defs
+          (compiler-live-instr-uses instr)
+          point)]
       (compiler-reg-extend-set
         with-uses
         (compiler-live-after liveness label index)
@@ -366,13 +371,14 @@
   (match instrs
     [(IrInstrNil) set]
     [(IrInstrCons instr rest)
-      (let ([next-set : CompilerLiveI64Set
-        (match instr
-          [(IrInstrCall _ _ _ _)
-            (compiler-live-set-union
-              set
-              (compiler-live-after liveness label index))]
-          [_ set])])
+      (let
+        [next-set : CompilerLiveI64Set
+          (match instr
+            [(IrInstrCall _ _ _ _)
+              (compiler-live-set-union
+                set
+                (compiler-live-after liveness label index))]
+            [_ set])]
         (compiler-reg-call-live-instrs rest liveness label (+ index 1) next-set))]))
 
 (define (compiler-reg-call-live-blocks
@@ -441,8 +447,9 @@
     [(CompilerRegIntervalCons interval rest)
       (match interval
         [(CompilerRegInterval var _ _)
-          (let ([tail : CompilerRegIntervalList
-            (compiler-reg-candidates rest types ineligible)])
+          (let
+            [tail : CompilerRegIntervalList
+              (compiler-reg-candidates rest types ineligible)]
             (if (compiler-live-set-contains? ineligible var)
               tail
               (match (compiler-reg-var-type-lookup types var)
@@ -641,8 +648,9 @@
     [(CompilerRegIntervalCons interval rest)
       (match interval
         [(CompilerRegInterval var start end)
-          (let ([expired : CompilerRegActiveList
-            (compiler-reg-expire-active active start)])
+          (let
+            [expired : CompilerRegActiveList
+              (compiler-reg-expire-active active start)]
             (if (=
               (compiler-reg-active-count expired)
               (compiler-reg-string-list-count regs))
@@ -656,8 +664,8 @@
                     regs
                     next-active
                     next-assignments)])
-              (let ([reg : String
-                (compiler-reg-first-free-register regs expired)])
+              (let
+                [reg : String (compiler-reg-first-free-register regs expired)]
                 (compiler-reg-assign-candidates
                   rest
                   regs
@@ -670,14 +678,16 @@
                     (CompilerRegRegister reg))))))])]))
 
 (define (compiler-reg-plan-function [func : CompilerIrFunction]) : CompilerRegPlan
-  (let ([liveness : CompilerFunctionLiveness
-    (compiler-live-analyze-function func)])
-    (let ([types : CompilerRegVarTypeList
-      (compiler-reg-function-var-types func)])
-      (let ([intervals : CompilerRegIntervalList
-        (compiler-reg-live-intervals func liveness)])
-        (let ([ineligible : CompilerLiveI64Set
-          (compiler-reg-ineligible-vars func liveness types)])
+  (let
+    [liveness : CompilerFunctionLiveness (compiler-live-analyze-function func)]
+    (let
+      [types : CompilerRegVarTypeList (compiler-reg-function-var-types func)]
+      (let
+        [intervals : CompilerRegIntervalList
+          (compiler-reg-live-intervals func liveness)]
+        (let
+          [ineligible : CompilerLiveI64Set
+            (compiler-reg-ineligible-vars func liveness types)]
           (match (compiler-reg-assign-candidates
             (compiler-reg-candidates intervals types ineligible)
             (compiler-reg-sysv-integer-registers)

@@ -21,8 +21,10 @@
 (import "doc_test.tl")
 
 (define (doc-generate-file [input-path : String] [output-path : String]) : i64
-  (let ([source : String (read-file input-path)])
-    (let ([markdown : String (doc-render-markdown (doc-extract-source source))])
+  (let
+    [source : String (read-file input-path)]
+    (let
+      [markdown : String (doc-render-markdown (doc-extract-source source))]
       (begin
         (write-file output-path markdown)
         0))))
@@ -35,20 +37,24 @@
       (doc-read-modules (+ idx 1) end))))
 
 (define (doc-generate-module-graph [output-path : String]) : i64
-  (let ([modules : DocModuleList (doc-read-modules 1 (- (arg-count) 1))])
+  (let
+    [modules : DocModuleList (doc-read-modules 1 (- (arg-count) 1))]
     (begin
       (write-file output-path (doc-render-module-graph-markdown modules))
       0)))
 
 (define (doc-generate-html-file [input-path : String] [output-path : String]) : i64
-  (let ([source : String (read-file input-path)])
-    (let ([html : String (doc-html-render-source input-path source)])
+  (let
+    [source : String (read-file input-path)]
+    (let
+      [html : String (doc-html-render-source input-path source)]
       (begin
         (write-file output-path html)
         0))))
 
 (define (doc-generate-html-module-graph [output-path : String]) : i64
-  (let ([modules : DocModuleList (doc-read-modules 2 (- (arg-count) 1))])
+  (let
+    [modules : DocModuleList (doc-read-modules 2 (- (arg-count) 1))]
     (begin
       (write-file output-path (doc-html-render-module-graph modules))
       0)))
@@ -56,8 +62,9 @@
 (define (doc-test-file
   [input-path : String]
   [stdlib-roots : CompilerLoadRootList]) : i64
-  (let ([report : DocTestRunReport
-    (doc-test-run-file-with-roots input-path stdlib-roots)])
+  (let
+    [report : DocTestRunReport
+      (doc-test-run-file-with-roots input-path stdlib-roots)]
     (begin
       (if (doc-test-run-report-ok? report)
         (print-string (string-append (doc-test-run-report-render report) "\n"))

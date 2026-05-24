@@ -1,5 +1,7 @@
-(let ((i 0))
-  (let ((acc 0))
+(let
+  ((i 0))
+  (let
+    ((acc 0))
     (begin
       (while (< i 6)
         (begin

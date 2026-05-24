@@ -8,7 +8,8 @@
 
 (define (main) : i64
   (begin
-    (let ([x : unit unit])
+    (let
+      [x : unit unit]
       x)
     (noop)
     (branch-unit true)

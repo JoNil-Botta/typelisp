@@ -579,6 +579,53 @@ impl<'a> Parser<'a> {
         self.parse_list_expr_after_open(start)
     }
 
+    fn parse_let_binding(&mut self) -> Result<(String, Option<Type>, Expr), ParseError> {
+        self.expect(Token::LBracket)?;
+        let name = self.expect_ident()?;
+        let ty = if self.current == Token::Colon {
+            self.advance()?;
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        let value = self.parse_expr()?;
+        self.expect(Token::RBracket)?;
+        Ok((name, ty, value))
+    }
+
+    fn parse_flat_let_bindings(&mut self) -> Result<Vec<(String, Option<Type>, Expr)>, ParseError> {
+        let mut bindings = Vec::new();
+        while self.current == Token::LBracket {
+            bindings.push(self.parse_let_binding()?);
+        }
+        if bindings.is_empty() {
+            return Err(ParseError {
+                msg: "let requires at least one binding".into(),
+                span: self.span(),
+            });
+        }
+        Ok(bindings)
+    }
+
+    fn parse_legacy_let_bindings(
+        &mut self,
+    ) -> Result<Vec<(String, Option<Type>, Expr)>, ParseError> {
+        self.expect(Token::LParen)?;
+        let mut bindings = Vec::new();
+        while self.current != Token::RParen {
+            bindings.push(self.parse_let_binding()?);
+        }
+        let end = self.span();
+        self.expect(Token::RParen)?;
+        if bindings.is_empty() {
+            return Err(ParseError {
+                msg: "let requires at least one binding".into(),
+                span: end,
+            });
+        }
+        Ok(bindings)
+    }
+
     fn parse_list_expr_after_open(&mut self, start: Span) -> Result<Expr, ParseError> {
         let (expr, end) = match &self.current {
             Token::If => {
@@ -602,22 +649,11 @@ impl<'a> Parser<'a> {
             }
             Token::Let => {
                 self.advance()?;
-                self.expect(Token::LParen)?;
-                let mut bindings = Vec::new();
-                while self.current != Token::RParen {
-                    self.expect(Token::LBracket)?;
-                    let name = self.expect_ident()?;
-                    let ty = if self.current == Token::Colon {
-                        self.advance()?;
-                        Some(self.parse_type()?)
-                    } else {
-                        None
-                    };
-                    let value = self.parse_expr()?;
-                    self.expect(Token::RBracket)?;
-                    bindings.push((name, ty, value));
-                }
-                self.advance()?; // consume RParen
+                let bindings = if self.current == Token::LParen {
+                    self.parse_legacy_let_bindings()?
+                } else {
+                    self.parse_flat_let_bindings()?
+                };
                 let body = Box::new(self.parse_expr()?);
                 let end = self.expect_rparen_span()?;
                 (Expr::Let { bindings, body }, end)
@@ -1100,6 +1136,14 @@ pub fn parse_repl_item_with_file_id(input: &str, file_id: u32) -> Result<ReplIte
 mod tests {
     use super::*;
 
+    fn parsed_function_body(src: &str) -> Expr {
+        let prog = parse(src).unwrap();
+        match prog.decls.into_iter().next().unwrap() {
+            Decl::DefFn { body, .. } => body,
+            other => panic!("expected DefFn, got {:?}", other),
+        }
+    }
+
     #[test]
     fn test_parse_define() {
         let prog = parse("(define x : i64 42)").unwrap();
@@ -1209,6 +1253,79 @@ mod tests {
             }
             _ => panic!("expected DefFn"),
         }
+    }
+
+    #[test]
+    fn test_parse_flat_let_bindings() {
+        let body =
+            parsed_function_body("(define (main) : i64 (let [x : i64 1] [y : i64 (+ x 1)] y))");
+        match body.unspan() {
+            Expr::Let {
+                bindings,
+                body: let_body,
+            } => {
+                assert_eq!(bindings.len(), 2);
+                assert_eq!(bindings[0].0, "x");
+                assert_eq!(bindings[0].1, Some(Type::I64));
+                assert_eq!(bindings[1].0, "y");
+                assert_eq!(bindings[1].1, Some(Type::I64));
+                assert_eq!(let_body.unspan(), &Expr::Var("y".into()));
+            }
+            other => panic!("expected Let, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_flat_let_untyped_binding() {
+        let body = parsed_function_body("(define (main) : i64 (let [x 41] (+ x 1)))");
+        match body.unspan() {
+            Expr::Let { bindings, .. } => {
+                assert_eq!(bindings.len(), 1);
+                assert_eq!(bindings[0].0, "x");
+                assert_eq!(bindings[0].1, None);
+            }
+            other => panic!("expected Let, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_legacy_parenthesized_let_bindings_temporarily() {
+        let body = parsed_function_body("(define (main) : i64 (let ([x : i64 1]) x))");
+        match body.unspan() {
+            Expr::Let { bindings, .. } => {
+                assert_eq!(bindings.len(), 1);
+                assert_eq!(bindings[0].0, "x");
+            }
+            other => panic!("expected Let, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_let_rejects_empty_bindings() {
+        let err = parse("(define (main) : i64 (let () 1))").unwrap_err();
+        assert!(
+            err.msg.contains("let requires at least one binding"),
+            "got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_parse_let_rejects_malformed_binding() {
+        let err = parse("(define (main) : i64 (let [x : i64 1 2] x))").unwrap_err();
+        assert!(err.msg.contains("expected RBracket"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_parse_let_rejects_missing_body() {
+        let err = parse("(define (main) : i64 (let [x : i64 1]))").unwrap_err();
+        assert!(err.msg.contains("unexpected token"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_parse_let_rejects_extra_body_form() {
+        let err = parse("(define (main) : i64 (let [x : i64 1] x x))").unwrap_err();
+        assert!(err.msg.contains("expected RParen"), "got: {}", err);
     }
 
     #[test]

@@ -26,12 +26,12 @@
     [_ (panic "ast: expected end of list")]))
 
 (define (parse-binary [op : BinOp] [rest : Sexpr]) : Expr
-  (let (
+  (let
     [a : Sexpr (sexpr-head rest)]
-    [after-a : Sexpr (sexpr-tail rest)])
-    (let (
+    [after-a : Sexpr (sexpr-tail rest)]
+    (let
       [b : Sexpr (sexpr-head after-a)]
-      [after-b : Sexpr (sexpr-tail after-a)])
+      [after-b : Sexpr (sexpr-tail after-a)]
       (begin
         (sexpr-expect-nil after-b)
         (EBin op (parse-expr a) (parse-expr b))))))
@@ -192,12 +192,12 @@
   (match s
     [(SCons (SSym head) rest)
       (if (string-eq head "define")
-        (let (
+        (let
           [header : Sexpr (sexpr-head rest)]
-          [after-header : Sexpr (sexpr-tail rest)])
-          (let (
+          [after-header : Sexpr (sexpr-tail rest)]
+          (let
             [body : Sexpr (sexpr-head after-header)]
-            [after-body : Sexpr (sexpr-tail after-header)])
+            [after-body : Sexpr (sexpr-tail after-header)]
             (begin
               (sexpr-expect-nil after-body)
               (match header

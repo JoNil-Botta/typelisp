@@ -3,12 +3,13 @@
 (import "compiler_check_core.tl")
 
 (define (selfhost-check-extra-args-status [i : i64]) : i64
-  (let (
+  (let
     [n : i64 (arg-count)]
-    [status : i64 0])
+    [status : i64 0]
     (begin
       (while (and (= status 0) (< i n))
-        (let ([a : String (arg i)])
+        (let
+          [a : String (arg i)]
           (if (string-eq a "--stdlib-root")
             (begin
               (print-error "selfhost-check: --stdlib-root is not supported yet")
@@ -32,7 +33,8 @@
     (begin
       (print-error "selfhost-check: expected input path")
       1)
-    (let ([extra-status : i64 (selfhost-check-extra-args-status 2)])
+    (let
+      [extra-status : i64 (selfhost-check-extra-args-status 2)]
       (if (= extra-status 0)
         (selfhost-check-file (arg 1))
         extra-status))))

@@ -2,6 +2,7 @@ use crate::ast::*;
 use crate::ctfe::{CtfeError, CtfeEvaluator, CtfeValue};
 use crate::diagnostic::{Diagnostic, Level};
 use crate::span::Span;
+use crate::specialize::specialize_program;
 use crate::types::Type;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -920,7 +921,9 @@ impl TypeChecker {
     }
 
     pub fn check_program(&mut self, prog: &Program) -> Result<(), TypeError> {
-        let expanded = ExpandedProgram::from_program(prog);
+        let specialized =
+            specialize_program(prog).map_err(|err| TypeError::at(err.msg, err.span))?;
+        let expanded = ExpandedProgram::from_program(&specialized);
         self.check_expanded_program(&expanded)
     }
 
@@ -1166,6 +1169,7 @@ impl TypeChecker {
                     // The body expression is checked in the second pass below;
                     // this pass only uses its span for signature diagnostics.
                     body,
+                    ..
                 } => {
                     let ret = self.resolve_type_checked(ret, body.span())?;
                     // Returning enum / String / DynArray values is now supported:
@@ -1207,6 +1211,7 @@ impl TypeChecker {
                 params,
                 ret,
                 body,
+                ..
             } = decl
             {
                 self.push_scope();
@@ -4184,6 +4189,54 @@ mod tests {
         let mut tc = TypeChecker::new();
         tc.check_program(&prog)
             .expect("comptime let/if/begin should typecheck");
+    }
+
+    #[test]
+    fn test_typecheck_comptime_function_param_success() {
+        let src = "
+            (define (scale [comptime n : i64] [x : i64]) : i64
+              (* n x))
+            (define (main) : i64
+              (+ (scale 2 10) (scale (comptime (+ 1 2)) 20)))
+        ";
+        let prog = parse(src).unwrap();
+        let mut tc = TypeChecker::new();
+        tc.check_program(&prog)
+            .expect("scalar comptime parameters should specialize and typecheck");
+    }
+
+    #[test]
+    fn test_typecheck_comptime_function_param_rejects_runtime_arg() {
+        let src = "
+            (define (scale [comptime n : i64] [x : i64]) : i64
+              (* n x))
+            (define (main [n : i64]) : i64
+              (scale n 10))
+        ";
+        let prog = parse(src).unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(
+            err.msg.contains("not compile-time-known"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_comptime_function_param_rejects_unsupported_type() {
+        let src = "
+            (define (bad [comptime s : String] [x : i64]) : i64 x)
+            (define (main) : i64 (bad \"a\" 1))
+        ";
+        let prog = parse(src).unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+        assert!(
+            err.msg.contains("unsupported comptime parameter type"),
+            "got: {}",
+            err.msg
+        );
     }
 
     fn check(src: &str) -> Result<(), TypeError> {

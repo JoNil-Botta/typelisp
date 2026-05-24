@@ -140,6 +140,9 @@ pub enum Decl {
     DefFn {
         name: Symbol,
         params: Vec<(Symbol, Type)>,
+        /// Indexes into `params` that are evaluated at compile time and removed
+        /// from specialized runtime signatures.
+        comptime_params: Vec<usize>,
         ret: Type,
         body: Expr,
     },

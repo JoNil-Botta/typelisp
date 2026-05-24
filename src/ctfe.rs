@@ -35,6 +35,32 @@ impl CtfeValue {
             CtfeValue::Unit => Type::Unit,
         }
     }
+
+    pub fn key_fragment(&self) -> String {
+        match self {
+            CtfeValue::I64(n) => format!("i64:{n}"),
+            CtfeValue::F64(n) => format!("f64:{:016x}", n.to_bits()),
+            CtfeValue::Bool(b) => {
+                if *b {
+                    "bool:1".into()
+                } else {
+                    "bool:0".into()
+                }
+            }
+            CtfeValue::Char(c) => format!("char:{:x}", *c as u32),
+            CtfeValue::Unit => "unit".into(),
+        }
+    }
+
+    pub fn to_literal(&self) -> Literal {
+        match self {
+            CtfeValue::I64(n) => Literal::Int(*n),
+            CtfeValue::F64(n) => Literal::Float(*n),
+            CtfeValue::Bool(b) => Literal::Bool(*b),
+            CtfeValue::Char(c) => Literal::Char(*c),
+            CtfeValue::Unit => Literal::Unit,
+        }
+    }
 }
 
 fn describe_expr(expr: &Expr) -> &'static str {

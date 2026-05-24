@@ -270,6 +270,14 @@ pub enum Expr {
     /// Struct field access: `(struct-get s field)`. Reads the named field of the
     /// struct value `s`.
     StructGet { expr: Box<Expr>, field: Symbol },
+    /// Lexically scoped region: `(with-region r body ...)`. Introduces a region
+    /// named `region` whose lifetime is the form's body; the body is a non-empty
+    /// expression sequence and the last expression is the result. Subregions are
+    /// expressed by nesting `with-region` forms. This node only carries the
+    /// surface form; region-tagged value typing and escape checking are added in
+    /// #549, and `tl_region_mark`/`tl_region_reset` lowering in a later slice.
+    /// See #523/#547.
+    WithRegion { region: Symbol, body: Vec<Expr> },
 }
 
 /// A complete program

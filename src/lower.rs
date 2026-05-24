@@ -707,6 +707,7 @@ impl FnLowerer {
             }
             ast::Expr::While { cond, .. } => self.expr_diverges(cond),
             ast::Expr::Begin(exprs) => exprs.iter().any(|expr| self.expr_diverges(expr)),
+            ast::Expr::WithRegion { body, .. } => body.iter().any(|expr| self.expr_diverges(expr)),
             ast::Expr::Call { func, args } => {
                 self.is_builtin_diverging_call(func, args)
                     || self.expr_diverges(func)
@@ -832,6 +833,10 @@ impl FnLowerer {
                 self.infer_expr_type_with_locals(body, &scoped)
             }
             ast::Expr::Begin(exprs) => exprs
+                .last()
+                .map(|expr| self.infer_expr_type_with_locals(expr, local_types))
+                .unwrap_or(Type::Unit),
+            ast::Expr::WithRegion { body, .. } => body
                 .last()
                 .map(|expr| self.infer_expr_type_with_locals(expr, local_types))
                 .unwrap_or(Type::Unit),
@@ -995,6 +1000,12 @@ impl FnLowerer {
             ast::Expr::Let { bindings, body } => self.lower_let(bindings, body),
             ast::Expr::While { cond, body } => self.lower_while(cond, body),
             ast::Expr::Begin(exprs) => self.lower_begin(exprs),
+            // #548 adds only the surface form: lower the body as an expression
+            // sequence (the last expression is the result). The region scope is a
+            // no-op here — `tl_region_mark`/`tl_region_reset` reclamation is a
+            // later lowering slice (#547/#549), and not resetting only means the
+            // arena lives to process exit, which is safe.
+            ast::Expr::WithRegion { body, .. } => self.lower_begin(body),
             ast::Expr::Call { func, args } => self.lower_call(func, args),
             ast::Expr::Comptime { expr } => match CtfeEvaluator::new().eval(expr) {
                 Ok(CtfeValue::I64(n)) => Value::ConstI64(n),
@@ -1199,6 +1210,11 @@ impl FnLowerer {
             }
             ast::Expr::Tuple(elems) | ast::Expr::Array(elems) | ast::Expr::Begin(elems) => {
                 for elem in elems {
+                    Self::collect_captured_names(elem, candidates, local_bindings, captures);
+                }
+            }
+            ast::Expr::WithRegion { body, .. } => {
+                for elem in body {
                     Self::collect_captured_names(elem, candidates, local_bindings, captures);
                 }
             }

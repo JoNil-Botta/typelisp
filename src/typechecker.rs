@@ -411,6 +411,17 @@ impl TypeChecker {
                     );
                 }
             }
+            Expr::WithRegion { body, .. } => {
+                for elem in body {
+                    Self::collect_lambda_captures(
+                        elem,
+                        outer_locals,
+                        local_bindings,
+                        captures,
+                        captured_sets,
+                    );
+                }
+            }
             Expr::MakeArray { len, .. } => {
                 Self::collect_lambda_captures(
                     len,
@@ -1415,6 +1426,18 @@ impl TypeChecker {
             Expr::Begin(exprs) => {
                 let mut last_ty = Type::Unit;
                 for e in exprs {
+                    last_ty = self.check_expr(e)?;
+                }
+                Ok(last_ty)
+            }
+            Expr::WithRegion { region: _, body } => {
+                // #548 adds only the surface form. The body type-checks as an
+                // expression sequence (the last expression is the result), the
+                // same as `begin`. Region-tagged handle typing and the escape
+                // rule that a region value may not leave this scope are added in
+                // #549; the region binder is not a value binding here.
+                let mut last_ty = Type::Unit;
+                for e in body {
                     last_ty = self.check_expr(e)?;
                 }
                 Ok(last_ty)

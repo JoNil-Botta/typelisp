@@ -391,6 +391,35 @@ fn debug_usage_errors_are_specific() {
 }
 
 #[test]
+fn check_rejects_unsupported_type_kind_before_backend() {
+    let dir = fixture_dir("unsupported-type-kind");
+    let source = dir.join("main.tl");
+    fs::write(&source, "(define (f [T : type]) : i64 0)\n").expect("write source");
+    let source_arg = source.to_str().expect("source path is utf-8");
+
+    let output = typelisp(&["check", source_arg]);
+
+    assert!(!output.status.success());
+    assert_eq!(stdout(&output), "");
+    let stderr = stderr(&output);
+    assert!(
+        stderr.contains("unsupported type kind 'type'"),
+        "stderr:\n{}",
+        stderr
+    );
+    assert!(
+        stderr.contains("comptime type values are not implemented yet"),
+        "stderr:\n{}",
+        stderr
+    );
+    assert!(
+        !stderr.contains("backend:"),
+        "type kind should fail before backend validation:\n{}",
+        stderr
+    );
+}
+
+#[test]
 fn build_source_rejects_unimplemented_backend_mode() {
     let dir = fixture_dir("backend-mode-source-build");
     let source = write_main_source(&dir);

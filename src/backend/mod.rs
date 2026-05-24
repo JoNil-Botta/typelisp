@@ -114,6 +114,36 @@ impl BackendTarget {
         Self { mode, ..self }
     }
 
+    pub const fn as_str(self) -> &'static str {
+        match (self.arch, self.os, self.abi) {
+            (BackendArch::X86_64, BackendOs::Linux, BackendAbi::SystemV) => "linux-x86_64",
+            (BackendArch::X86_64, BackendOs::Windows, BackendAbi::WindowsX64) => "windows-x86_64",
+            _ => "unknown",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "linux-x86_64" | "linux_x86_64" => Some(Self::linux_x86_64_system_v()),
+            "windows-x86_64" | "windows_x86_64" => Some(Self::windows_x86_64()),
+            _ => None,
+        }
+    }
+
+    pub const fn object_extension(self) -> &'static str {
+        match self.os {
+            BackendOs::Linux => "o",
+            BackendOs::Windows => "obj",
+        }
+    }
+
+    pub const fn executable_extension(self) -> Option<&'static str> {
+        match self.os {
+            BackendOs::Linux => None,
+            BackendOs::Windows => Some("exe"),
+        }
+    }
+
     fn validate_mode(self) -> Result<(), String> {
         match self.mode {
             BackendMode::Scalar => Ok(()),
@@ -208,6 +238,12 @@ impl BackendTarget {
 impl Default for BackendTarget {
     fn default() -> Self {
         Self::linux_x86_64_system_v()
+    }
+}
+
+impl fmt::Display for BackendTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
@@ -5513,6 +5549,37 @@ mod tests {
         assert_eq!(BackendMode::Scalar.to_string(), "scalar");
         assert_eq!(BackendMode::Avx2.to_string(), "avx2");
         assert_eq!(BackendMode::Avx512.to_string(), "avx512");
+    }
+
+    #[test]
+    fn test_backend_target_names_parse_display_and_extensions() {
+        assert_eq!(
+            BackendTarget::parse("linux-x86_64"),
+            Some(BackendTarget::linux_x86_64_system_v())
+        );
+        assert_eq!(
+            BackendTarget::parse("linux_x86_64"),
+            Some(BackendTarget::linux_x86_64_system_v())
+        );
+        assert_eq!(
+            BackendTarget::parse("windows-x86_64"),
+            Some(BackendTarget::windows_x86_64())
+        );
+        assert_eq!(
+            BackendTarget::parse("windows_x86_64"),
+            Some(BackendTarget::windows_x86_64())
+        );
+        assert_eq!(BackendTarget::parse("macos-x86_64"), None);
+
+        let linux = BackendTarget::linux_x86_64_system_v();
+        assert_eq!(linux.to_string(), "linux-x86_64");
+        assert_eq!(linux.object_extension(), "o");
+        assert_eq!(linux.executable_extension(), None);
+
+        let windows = BackendTarget::windows_x86_64();
+        assert_eq!(windows.to_string(), "windows-x86_64");
+        assert_eq!(windows.object_extension(), "obj");
+        assert_eq!(windows.executable_extension(), Some("exe"));
     }
 
     #[test]

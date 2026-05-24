@@ -115,6 +115,21 @@ pub enum MaskBinOp {
     Or,
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum VectorReduceOp {
+    Sum,
+    Min,
+    Max,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MaskReduceOp {
+    All,
+    Any,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Instruction {
     /// Binary operation: dst = lhs op rhs
@@ -203,6 +218,18 @@ pub enum Instruction {
         lanes: usize,
         elem_ty: Type,
     },
+    /// Horizontal vector reduction. This is a private IR primitive for
+    /// `spmd-reduce`; public source-level cross-lane operations remain deferred.
+    /// `f64 sum` represents the ordered source-level result and must stay on a
+    /// scalar path unless a backend can preserve that contract.
+    #[allow(dead_code)]
+    VectorReduce {
+        dst: VarId,
+        op: VectorReduceOp,
+        src: Value,
+        lanes: usize,
+        elem_ty: Type,
+    },
     /// Vector comparison, producing a mask.
     #[allow(dead_code)]
     VectorCompare {
@@ -226,6 +253,14 @@ pub enum Instruction {
     #[allow(dead_code)]
     MaskNot {
         dst: VarId,
+        src: Value,
+        lanes: usize,
+    },
+    /// Horizontal lane-mask reduction to a scalar bool.
+    #[allow(dead_code)]
+    MaskReduce {
+        dst: VarId,
+        op: MaskReduceOp,
         src: Value,
         lanes: usize,
     },
@@ -324,9 +359,11 @@ impl Instruction {
             | Instruction::LaneId { .. }
             | Instruction::Splat { .. }
             | Instruction::VectorBinOp { .. }
+            | Instruction::VectorReduce { .. }
             | Instruction::VectorCompare { .. }
             | Instruction::MaskBinOp { .. }
             | Instruction::MaskNot { .. }
+            | Instruction::MaskReduce { .. }
             | Instruction::Select { .. }
             | Instruction::TailMask { .. }
             | Instruction::Phi { .. } => IrEffect::Pure,
@@ -524,6 +561,27 @@ impl fmt::Display for MaskBinOp {
     }
 }
 
+impl fmt::Display for VectorReduceOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            VectorReduceOp::Sum => "sum",
+            VectorReduceOp::Min => "min",
+            VectorReduceOp::Max => "max",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+impl fmt::Display for MaskReduceOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            MaskReduceOp::All => "all",
+            MaskReduceOp::Any => "any",
+        };
+        write!(f, "{}", s)
+    }
+}
+
 impl fmt::Display for Instruction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -641,6 +699,19 @@ impl fmt::Display for Instruction {
                     dst, op, lhs, rhs, lanes, elem_ty
                 )
             }
+            Instruction::VectorReduce {
+                dst,
+                op,
+                src,
+                lanes,
+                elem_ty,
+            } => {
+                write!(
+                    f,
+                    "  %{} = vector_reduce_{} {} : {} x {}",
+                    dst, op, src, lanes, elem_ty
+                )
+            }
             Instruction::VectorCompare {
                 dst,
                 op,
@@ -666,6 +737,14 @@ impl fmt::Display for Instruction {
             }
             Instruction::MaskNot { dst, src, lanes } => {
                 write!(f, "  %{} = mask_not {} : {}", dst, src, lanes)
+            }
+            Instruction::MaskReduce {
+                dst,
+                op,
+                src,
+                lanes,
+            } => {
+                write!(f, "  %{} = mask_reduce_{} {} : {}", dst, op, src, lanes)
             }
             Instruction::Select {
                 dst,
@@ -893,6 +972,17 @@ mod tests {
             pure
         );
         assert_eq!(
+            Instruction::VectorReduce {
+                dst: 0,
+                op: VectorReduceOp::Sum,
+                src: Value::Var(1),
+                lanes: 4,
+                elem_ty: Type::I64,
+            }
+            .effect(),
+            pure
+        );
+        assert_eq!(
             Instruction::VectorCompare {
                 dst: 0,
                 op: BinOp::Lt,
@@ -918,6 +1008,16 @@ mod tests {
         assert_eq!(
             Instruction::MaskNot {
                 dst: 0,
+                src: Value::Var(1),
+                lanes: 4,
+            }
+            .effect(),
+            pure
+        );
+        assert_eq!(
+            Instruction::MaskReduce {
+                dst: 0,
+                op: MaskReduceOp::Any,
                 src: Value::Var(1),
                 lanes: 4,
             }
@@ -1123,6 +1223,15 @@ mod tests {
     }
 
     #[test]
+    fn vector_and_mask_reduce_ops_display_supported_set() {
+        assert_eq!(VectorReduceOp::Sum.to_string(), "sum");
+        assert_eq!(VectorReduceOp::Min.to_string(), "min");
+        assert_eq!(VectorReduceOp::Max.to_string(), "max");
+        assert_eq!(MaskReduceOp::All.to_string(), "all");
+        assert_eq!(MaskReduceOp::Any.to_string(), "any");
+    }
+
+    #[test]
     fn vector_and_mask_ir_pretty_prints_each_primitive() {
         let instrs = vec![
             Instruction::LaneId {
@@ -1144,6 +1253,13 @@ mod tests {
                 lanes: 4,
                 elem_ty: Type::I64,
             },
+            Instruction::VectorReduce {
+                dst: 8,
+                op: VectorReduceOp::Sum,
+                src: Value::Var(2),
+                lanes: 4,
+                elem_ty: Type::I64,
+            },
             Instruction::VectorCompare {
                 dst: 3,
                 op: BinOp::Lt,
@@ -1162,6 +1278,12 @@ mod tests {
             Instruction::MaskNot {
                 dst: 5,
                 src: Value::Var(4),
+                lanes: 4,
+            },
+            Instruction::MaskReduce {
+                dst: 9,
+                op: MaskReduceOp::Any,
+                src: Value::Var(5),
                 lanes: 4,
             },
             Instruction::Select {
@@ -1205,9 +1327,11 @@ mod tests {
             "%0 = lane_id 4 x i64",
             "%1 = splat 7 : 4 x i64",
             "%2 = vector_add %0, %1 : 4 x i64",
+            "%8 = vector_reduce_sum %2 : 4 x i64",
             "%3 = vector_cmp_lt %0, %1 : 4 x i64",
             "%4 = mask_or %3, %3 : 4",
             "%5 = mask_not %4 : 4",
+            "%9 = mask_reduce_any %5 : 4",
             "%6 = select %5, %2, %1 : 4 x i64",
             "%7 = vector_load %10, %11 : 4 x i64",
             "vector_store %12, %11, %6 : 4 x i64",

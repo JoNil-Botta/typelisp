@@ -148,6 +148,8 @@ fn instruction_uses(instr: &Instruction) -> BTreeSet<VarId> {
         | Instruction::Load { src, .. }
         | Instruction::Branch { cond: src, .. }
         | Instruction::Splat { value: src, .. }
+        | Instruction::VectorReduce { src, .. }
+        | Instruction::MaskReduce { src, .. }
         | Instruction::MaskNot { src, .. } => {
             collect_value_vars(src, &mut uses);
         }
@@ -237,9 +239,11 @@ fn instruction_defs(instr: &Instruction) -> BTreeSet<VarId> {
         | Instruction::LaneId { dst, .. }
         | Instruction::Splat { dst, .. }
         | Instruction::VectorBinOp { dst, .. }
+        | Instruction::VectorReduce { dst, .. }
         | Instruction::VectorCompare { dst, .. }
         | Instruction::MaskBinOp { dst, .. }
         | Instruction::MaskNot { dst, .. }
+        | Instruction::MaskReduce { dst, .. }
         | Instruction::Select { dst, .. }
         | Instruction::VectorLoad { dst, .. }
         | Instruction::TailMask { dst, .. }

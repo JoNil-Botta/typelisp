@@ -52,7 +52,7 @@
   7)
 
 (define (compiler-symbol-handle-stride) : i64
-  1000000)
+  1000000000)
 
 (define (compiler-registry-child-stride) : i64
   1000)
@@ -655,6 +655,19 @@
         (compiler-registries-duplicate-field-message "Pair" "x"))]
     [(OkCompilerRegistries _) false]))
 
+(define (compiler-registry-large-owner-handle-ok?) : bool
+  (let ([handle
+      :
+      i64
+      (compiler-registry-make-handle (compiler-symbol-kind-enum-variant) 1234 5)])
+    (and
+      (=
+        (compiler-registry-handle-kind handle)
+        (compiler-symbol-kind-enum-variant))
+      (and
+        (= (compiler-registry-handle-owner-index handle) 1234)
+        (= (compiler-registry-handle-child-index handle) 5)))))
+
 (define (compiler-symbols-self-test) : i64
   (match (parse-ast-source (compiler-symbols-smoke-source))
     [(OkAstProgram program)
@@ -672,7 +685,9 @@
                       (compiler-symbols-duplicate-type-ok?)
                       (and
                         (compiler-registries-duplicate-variant-ok?)
-                        (compiler-registries-duplicate-field-ok?))))))
+                        (and
+                          (compiler-registries-duplicate-field-ok?)
+                          (compiler-registry-large-owner-handle-ok?)))))))
                 42
                 (begin
                   (panic "symbols: smoke score mismatch")

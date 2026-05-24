@@ -12,6 +12,8 @@
 
 (import "compiler_typecheck.tl")
 
+(import "compiler_diagnostic.tl")
+
 (import "compiler_ir_types.tl")
 
 (defenum LowerState
@@ -28,48 +30,60 @@
 
 (defenum ResultLowerExpr
   (OkLowerExpr LowerExpr)
-  (ErrLowerExpr String))
+  (ErrLowerExpr CompilerDiagnostic))
 
 (defenum ResultLowerArgs
   (OkLowerArgs LowerState CompilerIrValueList)
-  (ErrLowerArgs String))
+  (ErrLowerArgs CompilerDiagnostic))
 
 (defenum ResultLowerState
   (OkLowerState LowerState)
-  (ErrLowerState String))
+  (ErrLowerState CompilerDiagnostic))
 
 (defenum ResultLowerEnv
   (OkLowerEnv LowerState SymI64Env TcTypeEnv)
-  (ErrLowerEnv String))
+  (ErrLowerEnv CompilerDiagnostic))
 
 (defenum ResultLowerValue
   (OkLowerValue CompilerIrValue)
-  (ErrLowerValue String))
+  (ErrLowerValue CompilerDiagnostic))
 
 (defenum ResultLowerFunction
   (OkLowerFunction CompilerIrFunction)
-  (ErrLowerFunction String))
+  (ErrLowerFunction CompilerDiagnostic))
 
 (defenum ResultLowerDecls
   (OkLowerDecls
     CompilerIrGlobalList
     CompilerIrFunctionList
     CompilerIrExternList)
-  (ErrLowerDecls String))
+  (ErrLowerDecls CompilerDiagnostic))
 
 (defenum ResultCompilerLower
   (OkCompilerLower CompilerIrProgram)
-  (ErrCompilerLower String))
+  (ErrCompilerLower CompilerDiagnostic))
 
 (defenum LowerFieldInfo
   (LowerFieldInfo i64 AstType))
 
 (defenum ResultLowerFieldInfo
   (OkLowerFieldInfo LowerFieldInfo)
-  (ErrLowerFieldInfo String))
+  (ErrLowerFieldInfo CompilerDiagnostic))
 
 (defenum LowerStringFields
   (LowerStringFields LowerState CompilerIrValue CompilerIrValue))
+
+(define (lower-diagnostic [message : String]) : CompilerDiagnostic
+  (compiler-diagnostic-at-start "" message))
+
+(define (lower-diagnostic-at-expr [expr : AstExpr] [message : String]) : CompilerDiagnostic
+  (match expr
+    [(AstExprSpanned _ span)
+      (compiler-diagnostic-from-ast-span "" span message)]
+    [_ (lower-diagnostic message)]))
+
+(define (lower-diagnostic-with-path [diag : CompilerDiagnostic] [path : String]) : CompilerDiagnostic
+  (compiler-diagnostic-with-path diag path))
 
 (define (lower-instr-list-append
   [instrs : CompilerIrInstrList]
@@ -440,7 +454,8 @@
     [(IrValueNil)
       (match types
         [(AstTypeNil) (OkLowerState state)]
-        [_ (ErrLowerState "lower: constructor arity mismatch")])]
+        [_
+          (ErrLowerState (lower-diagnostic "lower: constructor arity mismatch"))])]
     [(IrValueCons value rest-values)
       (match types
         [(AstTypeCons ty rest-types)
@@ -456,7 +471,8 @@
                 rest-values
                 rest-types
                 (+ offset (lower-type-size ctx resolved)))))]
-        [(AstTypeNil) (ErrLowerState "lower: constructor arity mismatch")])]))
+        [(AstTypeNil)
+          (ErrLowerState (lower-diagnostic "lower: constructor arity mismatch"))])]))
 
 ;; Bind a matched variant's payload fields. Irrefutable subpatterns (wildcard,
 
@@ -484,7 +500,9 @@
     [(AstPatternNil)
       (match types
         [(AstTypeNil) (OkLowerEnv state env type-env)]
-        [_ (ErrLowerEnv "lower: enum payload pattern arity mismatch")])]
+        [_
+          (ErrLowerEnv
+            (lower-diagnostic "lower: enum payload pattern arity mismatch"))])]
     [(AstPatternCons pattern rest-patterns)
       (match types
         [(AstTypeCons ty rest-types)
@@ -523,7 +541,8 @@
                             fail-label)]
                         [_
                           (ErrLowerEnv
-                            "lower: internal enum payload load failed")])])]
+                            (lower-diagnostic
+                              "lower: internal enum payload load failed"))])])]
                 [(AstPatLiteral lit)
                   (match (lower-load-at-offset state base offset resolved)
                     [(LowerExpr load-state field-value _)
@@ -559,9 +578,11 @@
                                 fail-label)])])])]
                 [_
                   (ErrLowerEnv
-                    "lower: unsupported enum payload pattern (nested variant subpatterns not yet supported)")])))]
+                    (lower-diagnostic
+                      "lower: unsupported enum payload pattern (nested variant subpatterns not yet supported)"))])))]
         [(AstTypeNil)
-          (ErrLowerEnv "lower: enum payload pattern arity mismatch")])]))
+          (ErrLowerEnv
+            (lower-diagnostic "lower: enum payload pattern arity mismatch"))])]))
 
 ;; A payload subpattern is refutable when it can fail to match at run time. Only
 
@@ -591,7 +612,8 @@
   (match fields
     [(AstFieldDefNil)
       (ErrLowerFieldInfo
-        (string-append "lower: unknown struct field " field-name))]
+        (lower-diagnostic
+          (string-append "lower: unknown struct field " field-name)))]
     [(AstFieldDefCons field rest)
       (match field
         [(AstFieldDef name ty)
@@ -615,7 +637,8 @@
   (match (lower-struct-fields ctx struct-name)
     [(OkAstFieldDefList fields)
       (lower-field-info-from-list ctx fields field-name 0)]
-    [(ErrAstFieldDefList message) (ErrLowerFieldInfo message)]))
+    [(ErrAstFieldDefList message)
+      (ErrLowerFieldInfo (lower-diagnostic message))]))
 
 (define (lower-var
   [state : LowerState]
@@ -684,7 +707,8 @@
     [(AstExprNil)
       (match types
         [(AstTypeNil) (OkLowerArgs state IrValueNil)]
-        [_ (ErrLowerArgs "lower: constructor arity mismatch")])]
+        [_
+          (ErrLowerArgs (lower-diagnostic "lower: constructor arity mismatch"))])]
     [(AstExprCons arg rest-args)
       (match types
         [(AstTypeCons _ rest-types)
@@ -703,7 +727,8 @@
                       (OkLowerArgs rest-state (IrValueCons value rest-values))]
                     [(ErrLowerArgs message) (ErrLowerArgs message)])])]
             [(ErrLowerExpr message) (ErrLowerArgs message)])]
-        [(AstTypeNil) (ErrLowerArgs "lower: constructor arity mismatch")])]))
+        [(AstTypeNil)
+          (ErrLowerArgs (lower-diagnostic "lower: constructor arity mismatch"))])]))
 
 (define (lower-construct-enum-with-handle
   [ctx : TcContext]
@@ -759,12 +784,13 @@
                                   (AstTyEnum enum-name)))]
                             [(ErrLowerState message) (ErrLowerExpr message)]))]))]
                 [(ErrLowerArgs message) (ErrLowerExpr message)])]
-            [(ErrAstTypeList message) (ErrLowerExpr message)])])]
+            [(ErrAstTypeList message) (ErrLowerExpr (lower-diagnostic message))])])]
     [_
       (ErrLowerExpr
-        (string-append
-          "lower: enum constructor result is not enum: "
-          variant-name))]))
+        (lower-diagnostic
+          (string-append
+            "lower: enum constructor result is not enum: "
+            variant-name)))]))
 
 (define (lower-construct-struct
   [ctx : TcContext]
@@ -794,7 +820,7 @@
                         (OkLowerExpr (LowerExpr done-state base struct-ty))]
                       [(ErrLowerState message) (ErrLowerExpr message)])])))]
           [(ErrLowerArgs message) (ErrLowerExpr message)]))]
-    [(ErrAstFieldDefList message) (ErrLowerExpr message)]))
+    [(ErrAstFieldDefList message) (ErrLowerExpr (lower-diagnostic message))]))
 
 (define (lower-var-or-nullary-variant
   [ctx : TcContext]
@@ -835,8 +861,8 @@
   [expr : AstExpr]) : ResultLowerExpr
   (match (tc-expr ctx type-env expr)
     [(OkTcType expr-ty)
-      (lower-expr-with-type ctx state env type-env expr expr-ty)]
-    [(ErrTcType message) (ErrLowerExpr message)]))
+      (lower-expr-with-type ctx state env type-env expr expr expr-ty)]
+    [(ErrTcType message) (ErrLowerExpr (lower-diagnostic-at-expr expr message))]))
 
 (define (lower-expr-with-type
   [ctx : TcContext]
@@ -844,9 +870,11 @@
   [env : SymI64Env]
   [type-env : TcTypeEnv]
   [expr : AstExpr]
+  [origin : AstExpr]
   [expr-ty : AstType]) : ResultLowerExpr
   (match expr
-    [(AstExprSpanned inner _) (lower-expr ctx state env type-env inner)]
+    [(AstExprSpanned inner _)
+      (lower-expr-with-type ctx state env type-env inner origin expr-ty)]
     [(AstExprLiteral lit)
       (lower-materialize state (lower-literal-value lit) expr-ty)]
     [(AstExprVar name)
@@ -939,9 +967,11 @@
                           expr-ty))]
                     [(ErrTcType _)
                       (ErrLowerExpr
-                        (string-append
-                          "lower: assignment to unknown local "
-                          name))])])])]
+                        (lower-diagnostic-at-expr
+                          origin
+                          (string-append
+                            "lower: assignment to unknown local "
+                            name)))])])])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
     [(AstExprIf cond then-branch else-branch)
       (lower-if ctx state env type-env cond then-branch else-branch expr-ty)]
@@ -956,7 +986,9 @@
       (lower-array-ref ctx state env type-env arr index)]
     [(AstExprArraySet arr index value)
       (lower-array-set ctx state env type-env arr index value)]
-    [_ (ErrLowerExpr "lower: unsupported expression")]))
+    [_
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr origin "lower: unsupported expression"))]))
 
 (define (lower-struct-get
   [ctx : TcContext]
@@ -991,7 +1023,11 @@
                                   (IrValueVar var-id)
                                   result-ty))])])])]
                 [(ErrLowerFieldInfo message) (ErrLowerExpr message)])]
-            [_ (ErrLowerExpr "lower: struct-get requires struct")])])]
+            [_
+              (ErrLowerExpr
+                (lower-diagnostic-at-expr
+                  receiver
+                  "lower: struct-get requires struct"))])])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 (define (lower-string-ref-byte
@@ -1099,7 +1135,11 @@
                             str-value
                             index-value)])])]
                 [(ErrLowerExpr message) (ErrLowerExpr message)])]
-            [_ (ErrLowerExpr "lower: string-ref requires String")])])]
+            [_
+              (ErrLowerExpr
+                (lower-diagnostic-at-expr
+                  str
+                  "lower: string-ref requires String"))])])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 (define (lower-substring-call-runtime
@@ -1303,7 +1343,11 @@
                                             len-value)])])]
                                 [(ErrLowerExpr message) (ErrLowerExpr message)])])])]
                     [(ErrLowerExpr message) (ErrLowerExpr message)])])]
-            [_ (ErrLowerExpr "lower: substring requires String")])])]
+            [_
+              (ErrLowerExpr
+                (lower-diagnostic-at-expr
+                  str
+                  "lower: substring requires String"))])])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 (define (lower-string-concat
@@ -1360,9 +1404,16 @@
                                           (IrValueVar var-id)
                                           (AstTyString)))])])])]
                         [_
-                          (ErrLowerExpr "lower: string-concat requires String")])])]
+                          (ErrLowerExpr
+                            (lower-diagnostic-at-expr
+                              right
+                              "lower: string-concat requires String"))])])]
                 [(ErrLowerExpr message) (ErrLowerExpr message)])]
-            [_ (ErrLowerExpr "lower: string-concat requires String")])])]
+            [_
+              (ErrLowerExpr
+                (lower-diagnostic-at-expr
+                  left
+                  "lower: string-concat requires String"))])])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 (define (lower-direct-call
@@ -1542,7 +1593,9 @@
                                 name
                                 args
                                 result-ty)])])])])))))]
-    [_ (ErrLowerExpr "lower: only direct calls are supported")]))
+    [_
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr func "lower: only direct calls are supported"))]))
 
 ;; A dynamic-array value is a pointer to inline fat storage `{data_ptr, length}`
 
@@ -1782,12 +1835,20 @@
                                           load-value
                                           elem-ty))])])])]
                         [(ErrLowerExpr message) (ErrLowerExpr message)])]
-                    [(ErrTcType message) (ErrLowerExpr message)])])]
+                    [(ErrTcType message)
+                      (ErrLowerExpr (lower-diagnostic-at-expr index message))])])]
             [(ErrLowerExpr message) (ErrLowerExpr message)])]
         [(AstTyArray _ _)
-          (ErrLowerExpr "lower: fixed-array array-ref not yet supported")]
-        [_ (ErrLowerExpr "lower: array-ref requires a dynamic array")])]
-    [(ErrTcType message) (ErrLowerExpr message)]))
+          (ErrLowerExpr
+            (lower-diagnostic-at-expr
+              arr
+              "lower: fixed-array array-ref not yet supported"))]
+        [_
+          (ErrLowerExpr
+            (lower-diagnostic-at-expr
+              arr
+              "lower: array-ref requires a dynamic array"))])]
+    [(ErrTcType message) (ErrLowerExpr (lower-diagnostic-at-expr arr message))]))
 
 ;; `(array-set! arr index value)` -> bounds-checked typed element store.
 
@@ -1841,12 +1902,20 @@
                                               (AstTyUnit)))])])]
                                 [(ErrLowerExpr message) (ErrLowerExpr message)])])]
                         [(ErrLowerExpr message) (ErrLowerExpr message)])]
-                    [(ErrTcType message) (ErrLowerExpr message)])])]
+                    [(ErrTcType message)
+                      (ErrLowerExpr (lower-diagnostic-at-expr index message))])])]
             [(ErrLowerExpr message) (ErrLowerExpr message)])]
         [(AstTyArray _ _)
-          (ErrLowerExpr "lower: fixed-array array-set! not yet supported")]
-        [_ (ErrLowerExpr "lower: array-set! requires a dynamic array")])]
-    [(ErrTcType message) (ErrLowerExpr message)]))
+          (ErrLowerExpr
+            (lower-diagnostic-at-expr
+              arr
+              "lower: fixed-array array-set! not yet supported"))]
+        [_
+          (ErrLowerExpr
+            (lower-diagnostic-at-expr
+              arr
+              "lower: array-set! requires a dynamic array"))])]
+    [(ErrTcType message) (ErrLowerExpr (lower-diagnostic-at-expr arr message))]))
 
 (define (lower-args
   [ctx : TcContext]
@@ -2186,7 +2255,9 @@
             merge-label
             expr-ty
             IrPhiInputNil)]
-        [_ (ErrLowerExpr "lower: internal enum tag load failed")])]))
+        [_
+          (ErrLowerExpr
+            (lower-diagnostic "lower: internal enum tag load failed"))])]))
 
 (define (lower-match-arms
   [ctx : TcContext]
@@ -2200,7 +2271,8 @@
   [expr-ty : AstType]
   [phi-inputs : CompilerIrPhiInputList]) : ResultLowerExpr
   (match arms
-    [(AstMatchArmNil) (ErrLowerExpr "lower: match with no arms")]
+    [(AstMatchArmNil)
+      (ErrLowerExpr (lower-diagnostic "lower: match with no arms"))]
     [(AstMatchArmCons arm rest)
       (match rest
         [(AstMatchArmNil)
@@ -2257,7 +2329,9 @@
                     merge-label
                     expr-ty
                     phi-inputs)]
-                [_ (ErrLowerExpr "lower: unsupported match pattern")])])])]))
+                [_
+                  (ErrLowerExpr
+                    (lower-diagnostic "lower: unsupported match pattern"))])])])]))
 
 (define (lower-match-enum-arms
   [ctx : TcContext]
@@ -2272,7 +2346,8 @@
   [expr-ty : AstType]
   [phi-inputs : CompilerIrPhiInputList]) : ResultLowerExpr
   (match arms
-    [(AstMatchArmNil) (ErrLowerExpr "lower: match with no arms")]
+    [(AstMatchArmNil)
+      (ErrLowerExpr (lower-diagnostic "lower: match with no arms"))]
     [(AstMatchArmCons arm rest)
       (match arm
         [(AstMatchArm pat body)
@@ -2317,7 +2392,9 @@
                     merge-label
                     expr-ty
                     phi-inputs)]
-                [_ (ErrLowerExpr "lower: unsupported enum match pattern")])]
+                [_
+                  (ErrLowerExpr
+                    (lower-diagnostic "lower: unsupported enum match pattern"))])]
             [_
               (match pat
                 [(AstPatWildcard)
@@ -2364,7 +2441,9 @@
                     merge-label
                     expr-ty
                     phi-inputs)]
-                [_ (ErrLowerExpr "lower: unsupported enum match pattern")])])])]))
+                [_
+                  (ErrLowerExpr
+                    (lower-diagnostic "lower: unsupported enum match pattern"))])])])]))
 
 (define (lower-match-variant-final
   [ctx : TcContext]
@@ -2389,7 +2468,8 @@
               ;; require a trailing catch-all instead (#651).
               (if (lower-pattern-list-refutable? args)
                 (ErrLowerExpr
-                  "lower: refutable payload pattern in final match arm requires a trailing catch-all")
+                  (lower-diagnostic
+                    "lower: refutable payload pattern in final match arm requires a trailing catch-all"))
                 (match (lower-bind-variant-payloads
                   ctx
                   state
@@ -2425,9 +2505,11 @@
                                   phi-inputs)))])]
                       [(ErrLowerExpr message) (ErrLowerExpr message)])]
                   [(ErrLowerEnv message) (ErrLowerExpr message)]))]
-            [(ErrAstTypeList message) (ErrLowerExpr message)])]
+            [(ErrAstTypeList message) (ErrLowerExpr (lower-diagnostic message))])]
         [(NoneI64)
-          (ErrLowerExpr (string-append "lower: unknown variant " variant-name))])]))
+          (ErrLowerExpr
+            (lower-diagnostic
+              (string-append "lower: unknown variant " variant-name)))])]))
 
 (define (lower-match-variant-body
   [ctx : TcContext]
@@ -2551,9 +2633,11 @@
                                 merge-label
                                 expr-ty
                                 phi-inputs))])]))])]
-            [(ErrAstTypeList message) (ErrLowerExpr message)])]
+            [(ErrAstTypeList message) (ErrLowerExpr (lower-diagnostic message))])]
         [(NoneI64)
-          (ErrLowerExpr (string-append "lower: unknown variant " variant-name))])]))
+          (ErrLowerExpr
+            (lower-diagnostic
+              (string-append "lower: unknown variant " variant-name)))])]))
 
 (define (lower-match-literal-arm
   [ctx : TcContext]
@@ -2751,7 +2835,8 @@
     [(AstExprCast inner _) (lower-global-value inner)]
     [(AstExprLiteral lit) (OkLowerValue (lower-literal-value lit))]
     [(AstExprVar name) (OkLowerValue (IrValueGlobal name))]
-    [_ (ErrLowerValue "lower: unsupported global initializer")]))
+    [_
+      (ErrLowerValue (lower-diagnostic "lower: unsupported global initializer"))]))
 
 (define (lower-decls
   [ctx : TcContext]
@@ -2777,7 +2862,7 @@
                     functions
                     externs)]
                 [(ErrLowerValue message) (ErrLowerDecls message)])]
-            [(ErrTcType message) (ErrLowerDecls message)])]
+            [(ErrTcType message) (ErrLowerDecls (lower-diagnostic message))])]
         [(AstDeclExtern name ty)
           (lower-decls
             ctx
@@ -2823,7 +2908,7 @@
           (OkCompilerLower (IrProgram globals functions externs))]
         [(ErrLowerDecls message) (ErrCompilerLower message)])]))
 
-(define (lower-compiler-program [program : AstProgram]) : ResultCompilerLower
+(define (lower-compiler-program-unlocated [program : AstProgram]) : ResultCompilerLower
   (match (typecheck-compiler-program program)
     [(OkCompilerTypecheck _)
       (match (build-compiler-symbols program)
@@ -2834,18 +2919,34 @@
                 (match (tc-build-top-env ctx program)
                   [(OkTcEnv top-env)
                     (lower-compiler-program-checked ctx top-env program)]
-                  [(ErrTcEnv message) (ErrCompilerLower message)]))]
-            [(ErrCompilerRegistries message) (ErrCompilerLower message)])]
-        [(ErrCompilerSymbols message) (ErrCompilerLower message)])]
-    ;; The lower/backend diagnostic-payload migration is a separate phase (#604
-    ;; follow-up), so flatten the typecheck diagnostic back to its message here.
-    [(ErrCompilerTypecheck diag)
-      (ErrCompilerLower (compiler-diagnostic-message diag))]))
+                  [(ErrTcEnv message)
+                    (ErrCompilerLower (lower-diagnostic message))]))]
+            [(ErrCompilerRegistries message)
+              (ErrCompilerLower (lower-diagnostic message))])]
+        [(ErrCompilerSymbols message)
+          (ErrCompilerLower (lower-diagnostic message))])]
+    [(ErrCompilerTypecheck diag) (ErrCompilerLower diag)]))
+
+(define (lower-compiler-program-with-path
+  [path : String]
+  [program : AstProgram]) : ResultCompilerLower
+  (match (lower-compiler-program-unlocated program)
+    [(OkCompilerLower ir) (OkCompilerLower ir)]
+    [(ErrCompilerLower diag)
+      (ErrCompilerLower (lower-diagnostic-with-path diag path))]))
+
+(define (lower-compiler-program [program : AstProgram]) : ResultCompilerLower
+  (lower-compiler-program-with-path "<source>" program))
 
 (define (lower-compiler-source [src : String]) : ResultCompilerLower
+  (lower-compiler-source-with-path "<source>" src))
+
+(define (lower-compiler-source-with-path [path : String] [src : String]) : ResultCompilerLower
   (match (parse-ast-source src)
-    [(OkAstProgram program) (lower-compiler-program program)]
-    [(ErrAstProgram message) (ErrCompilerLower message)]))
+    [(OkAstProgram program) (lower-compiler-program-with-path path program)]
+    [(ErrAstProgram message)
+      (ErrCompilerLower
+        (lower-diagnostic-with-path (lower-diagnostic message) path))]))
 
 (define (compiler-lower-smoke-source) : String
   "(extern print-i64 : (-> i64 unit))
@@ -2865,7 +2966,8 @@
 
 (define (compiler-lower-error-ok? [src : String] [want : String]) : bool
   (match (lower-compiler-source src)
-    [(ErrCompilerLower message) (string-eq message want)]
+    [(ErrCompilerLower diag)
+      (string-eq (compiler-diagnostic-message diag) want)]
     [(OkCompilerLower _) false]))
 
 ;; Scalar match lowering smoke (#568): an i64 literal match with a binding

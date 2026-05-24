@@ -92,7 +92,11 @@ fn compiler_lower_tl_compiles_to_assembly() {
 
     for sym in [
         "_tl_lower_compiler_source:",
+        "_tl_lower_compiler_source_with_path:",
         "_tl_lower_compiler_program:",
+        "_tl_lower_compiler_program_with_path:",
+        "_tl_lower_compiler_program_unlocated:",
+        "_tl_lower_diagnostic_at_expr:",
         "_tl_lower_function:",
         "_tl_lower_expr:",
         "_tl_lower_call:",

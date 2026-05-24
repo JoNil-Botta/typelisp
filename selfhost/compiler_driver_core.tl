@@ -15,15 +15,14 @@
 (define (compiler-driver-emit-file [input-path : String]) : ResultCompilerDriver
   (match (compiler-load-file input-path (sym-i64-empty))
     [(OkCompilerLoad decls _)
-      (match (lower-compiler-program (AstProgram decls))
+      (match (lower-compiler-program-with-path input-path (AstProgram decls))
         [(OkCompilerLower program)
           (match (compiler-backend-emit-program (optimize-program program))
             [(OkCompilerBackend asm) (OkCompilerDriver asm)]
             [(ErrCompilerBackend message)
               (ErrCompilerDriver
                 (compiler-diagnostic-at-start input-path message))])]
-        [(ErrCompilerLower message)
-          (ErrCompilerDriver (compiler-diagnostic-at-start input-path message))])]
+        [(ErrCompilerLower diag) (ErrCompilerDriver diag)])]
     [(ErrCompilerLoad diag) (ErrCompilerDriver diag)]))
 
 (define (compiler-driver-compile-file

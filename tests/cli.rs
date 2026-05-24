@@ -1181,6 +1181,37 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
         "failing selfhost compile should not write assembly"
     );
 
+    let lower_source = dir.join("lower.tl");
+    let lower_asm = dir.join("lower.s");
+    fs::write(
+        &lower_source,
+        "(define (main) : (Tuple i64 bool)\n  (tuple 1 true))\n",
+    )
+    .expect("write lowerer-error source");
+    let lower_source_arg = lower_source
+        .to_str()
+        .expect("lowerer-error source path is utf-8");
+    let lower_asm_arg = lower_asm.to_str().expect("lowerer-error asm path is utf-8");
+    let lower_failure = Command::new(&driver_bin)
+        .args([lower_source_arg, "-o", lower_asm_arg])
+        .output()
+        .expect("run selfhost compile driver on lowerer-error source");
+    assert!(!lower_failure.status.success());
+    assert_eq!(stdout(&lower_failure), "");
+    let expected = format!(
+        "{}:2:3: lower: unsupported expression",
+        lower_source.display()
+    );
+    assert!(
+        stderr(&lower_failure).contains(&expected),
+        "expected {expected:?}\nstderr:\n{}",
+        stderr(&lower_failure)
+    );
+    assert!(
+        !lower_asm.exists(),
+        "lowerer-error selfhost compile should not write assembly"
+    );
+
     let malformed_source = dir.join("malformed.tl");
     let malformed_asm = dir.join("malformed.s");
     fs::write(&malformed_source, ")\n").expect("write malformed source");

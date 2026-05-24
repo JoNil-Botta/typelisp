@@ -1050,6 +1050,78 @@ fn doc_test_passes_when_docs_have_no_examples() {
     assert_doctest_temp_cleaned(&source);
 }
 
+#[test]
+#[cfg(target_os = "linux")]
+fn doc_generates_markdown_for_source_file() {
+    let dir = fixture_dir("doc-generate");
+    let source = dir.join("simple.tl");
+    fs::write(
+        &source,
+        r#";;;; Module docs.
+
+;;; Item docs.
+(define answer : i64 42)
+"#,
+    )
+    .expect("write doc source");
+
+    let source_arg = source.to_str().expect("source path is utf-8");
+    let output = typelisp(&["doc", source_arg]);
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    let expected_md = dir.join("simple.md");
+    assert!(expected_md.is_file(), "expected output markdown file");
+    let md = fs::read_to_string(&expected_md).expect("read output markdown");
+    assert!(
+        md.contains("Module docs."),
+        "expected module docs in markdown"
+    );
+    assert!(md.contains("answer"), "expected item name in markdown");
+    assert!(
+        stdout(&output).contains("Generated:"),
+        "expected success message"
+    );
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn doc_generates_markdown_with_custom_output() {
+    let dir = fixture_dir("doc-generate-custom");
+    let source = dir.join("input.tl");
+    let out = dir.join("custom.md");
+    fs::write(
+        &source,
+        r#";;; Single item.
+(define x : i64 1)
+"#,
+    )
+    .expect("write doc source");
+
+    let output = typelisp(&["doc", source.to_str().unwrap(), "-o", out.to_str().unwrap()]);
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert!(out.is_file(), "expected custom output markdown file");
+    let md = fs::read_to_string(&out).expect("read output markdown");
+    assert!(md.contains("x"), "expected item name in markdown");
+}
+
+#[test]
+fn doc_generate_missing_file_shows_usage() {
+    let output = typelisp(&["doc"]);
+    assert!(!output.status.success(), "expected failure on missing arg");
+    let stderr = stderr(&output);
+    assert!(
+        stderr.contains("Usage:"),
+        "expected usage text in stderr, got:\n{}",
+        stderr
+    );
+    assert!(
+        stderr.contains("typelisp doc <file.tl>"),
+        "expected doc usage in stderr, got:\n{}",
+        stderr
+    );
+}
+
 fn stdout(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }

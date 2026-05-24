@@ -88,6 +88,10 @@ jobs:
       - name: Run tests
         run: cargo test --verbose
 
+      - name: Check deterministic assembly output
+        shell: bash
+        run: TYPELISP_BIN=target/debug/typelisp.exe scripts/check-deterministic-asm.sh
+
       - name: Test frontend CLI commands
         run: |
           cargo run --quiet -- tokenize examples/hello.tl
@@ -100,6 +104,15 @@ jobs:
 
       - name: Run clippy
         run: cargo clippy -- -D warnings
+
+      - name: Verify zero dependencies
+        shell: bash
+        run: |
+          if grep -qE '^\[dependencies\]|^\[dev-dependencies\]' Cargo.toml; then
+            echo "ERROR: Cargo.toml contains dependencies. TypeLisp must have zero third-party crates."
+            exit 1
+          fi
+          echo "OK: No third-party dependencies found."
 
   integration:
     name: Integration Tests

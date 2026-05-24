@@ -27,10 +27,16 @@ while [ "$#" -gt 0 ]; do
     shift
 done
 
+# The check is host-agnostic in substance: it only runs `typelisp compile` (the
+# default linux-x86_64 backend emits identical `.s` text regardless of host; no
+# assembler/linker is invoked) twice and `cmp`s the outputs. Allow it on Linux
+# and on Windows hosts (Git Bash / MSYS / Cygwin) so the Windows CI job can run
+# it for parity (#755). Other hosts stay gated until the check is exercised
+# there.
 case "$(uname -s)" in
-    Linux*) ;;
+    Linux* | MINGW* | MSYS* | CYGWIN*) ;;
     *)
-        echo "deterministic assembly check is Linux-only" >&2
+        echo "deterministic assembly check is unsupported on this host" >&2
         exit 1
         ;;
 esac

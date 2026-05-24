@@ -616,6 +616,14 @@ fn type_lisp_programs_compile_link_and_run() {
             stdout: "left-right\n",
             deps: &["text_buf_core.tl"],
         },
+        // stdlib/json.tl: parse nested objects/arrays with strings, numbers,
+        // booleans, null, whitespace, recoverable errors, and stringify escapes.
+        Case {
+            name: "stdlib_json",
+            exit_code: 42,
+            stdout: "",
+            deps: &["stdlib/json.tl"],
+        },
     ];
 
     for case in cases {
@@ -1167,6 +1175,14 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             exit_code: 42,
             stdout: "",
             deps: &["stdlib/io.tl"],
+        },
+        // stdlib/json.tl: parse/stringify through the explicit compile -> as
+        // -> ld -> run pipeline.
+        Case {
+            name: "stdlib_json",
+            exit_code: 42,
+            stdout: "",
+            deps: &["stdlib/json.tl"],
         },
         // refs #335: selfhost parser from Sexpr into the real compiler AST.
         // The smoke parses a representative multi-declaration source string
@@ -2068,6 +2084,118 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
         String::from_utf8_lossy(&output.stderr),
         "",
         "compiler_driver string output stderr"
+    );
+
+    let stdlib_dir = work_dir.join("stdlib");
+    fs::create_dir_all(&stdlib_dir).expect("create compiler_driver stdlib dir");
+    fs::copy(
+        manifest_dir.join("stdlib").join("json.tl"),
+        stdlib_dir.join("json.tl"),
+    )
+    .expect("copy stdlib/json.tl for compiler_driver fixture");
+
+    let json_input_path = work_dir.join("json_input.tl");
+    let json_asm_path = work_dir.join("json_generated.s");
+    let json_obj_path = work_dir.join("json_generated.o");
+    let json_bin_path = work_dir.join("json_generated");
+    fs::write(
+        &json_input_path,
+        r#"(import "stdlib/json.tl")
+
+(define (main) : i64
+  (match (json-parse "{\"ok\":true,\"values\":[1,2,null]}")
+    [(OkJson value)
+      (if (string-eq
+        (json-stringify value)
+        "{\"ok\":true,\"values\":[1,2,null]}")
+        42
+        2)]
+    [(ErrJson _) 1]))"#,
+    )
+    .expect("write compiler_driver stdlib JSON fixture");
+
+    let run = Command::new(&driver_bin)
+        .arg(&json_input_path)
+        .arg(&json_asm_path)
+        .output()
+        .expect("run compiler_driver stdlib JSON fixture");
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "compiler_driver stdlib JSON fixture exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "",
+        "compiler_driver stdlib JSON fixture stdout"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stderr),
+        "",
+        "compiler_driver stdlib JSON fixture stderr"
+    );
+
+    let json_asm =
+        fs::read_to_string(&json_asm_path).expect("read compiler_driver stdlib JSON assembly");
+    for snippet in [
+        "_tl_json_parse:",
+        "_tl_json_stringify:",
+        "_tl_json_parse_object:",
+    ] {
+        assert!(
+            json_asm.contains(snippet),
+            "compiler_driver stdlib JSON assembly missing {:?}:\n{}",
+            snippet,
+            json_asm
+        );
+    }
+
+    let status = Command::new("as")
+        .arg(&json_asm_path)
+        .arg("-o")
+        .arg(&json_obj_path)
+        .status()
+        .expect("run assembler on compiler_driver stdlib JSON output");
+    assert!(
+        status.success(),
+        "assembling compiler_driver stdlib JSON output failed"
+    );
+
+    let status = Command::new("ld")
+        .arg(&json_obj_path)
+        .arg("-o")
+        .arg(&json_bin_path)
+        .arg("-dynamic-linker")
+        .arg("/lib64/ld-linux-x86-64.so.2")
+        .arg("-lc")
+        .status()
+        .expect("run linker on compiler_driver stdlib JSON output");
+    assert!(
+        status.success(),
+        "linking compiler_driver stdlib JSON output failed"
+    );
+
+    let output = Command::new(&json_bin_path)
+        .output()
+        .expect("run compiler_driver stdlib JSON output binary");
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "compiler_driver stdlib JSON output program exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "",
+        "compiler_driver stdlib JSON output stdout"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "",
+        "compiler_driver stdlib JSON output stderr"
     );
 
     let array_input_path = work_dir.join("array_input.tl");
@@ -4947,6 +5075,9 @@ fn dep_source_path(manifest_dir: &Path, source_dir: &Path, dep: &str) -> PathBuf
     }
     if dep == "stdlib/io.tl" {
         return manifest_dir.join("stdlib").join("io.tl");
+    }
+    if dep == "stdlib/json.tl" {
+        return manifest_dir.join("stdlib").join("json.tl");
     }
     source_dir.join(dep)
 }

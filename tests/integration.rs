@@ -1446,6 +1446,11 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
     let asm_again =
         fs::read_to_string(&asm_again_path).expect("read repeated compiler_driver assembly");
     assert_eq!(asm_again, asm, "compiler_driver output changed across runs");
+    assert_eq!(
+        asm,
+        include_str!("golden/selfhost_compiler_driver_import.s"),
+        "compiler_driver output no longer matches the multi-file import golden"
+    );
     for snippet in [
         ".text\n.globl _start\n",
         "_tl_shared:\n",

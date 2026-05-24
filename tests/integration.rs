@@ -1074,6 +1074,21 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
                 "compiler_ast_types.tl",
             ],
         },
+        // refs #554: selfhost scalar register-allocation planner over
+        // CompilerIrFunction liveness. The smoke checks register reuse, stable
+        // spill fallback, non-scalar/address-taken exclusion, and call-live
+        // exclusion without changing backend emission.
+        Case {
+            name: "compiler_regalloc_smoke",
+            exit_code: 42,
+            stdout: "",
+            deps: &[
+                "compiler_regalloc.tl",
+                "compiler_liveness.tl",
+                "compiler_ir_types.tl",
+                "compiler_ast_types.tl",
+            ],
+        },
         // refs #543: selfhost optimizer pass framework + scalar constant folding.
         // The smoke folds a constant `BinOp` into a `Mov` literal and checks the
         // arithmetic instruction count drops while the folded value is correct.
@@ -3899,6 +3914,7 @@ fn source_path_for_case(manifest_dir: &PathBuf, name: &str) -> PathBuf {
         "compiler_typecheck_smoke" => "compiler_typecheck_smoke.tl",
         "compiler_lower_smoke" => "compiler_lower_smoke.tl",
         "compiler_liveness_smoke" => "compiler_liveness_smoke.tl",
+        "compiler_regalloc_smoke" => "compiler_regalloc_smoke.tl",
         "compiler_optimize_smoke" => "compiler_optimize_smoke.tl",
         "lex_span_smoke" => "lex_span_smoke.tl",
         "compiler_backend_smoke" => "compiler_backend_smoke.tl",

@@ -206,3 +206,55 @@ fn compiler_liveness_smoke_tl_compiles_to_assembly() {
         assert_symbol(&asm, sym, "compiler_liveness_smoke");
     }
 }
+
+#[test]
+fn compiler_regalloc_tl_compiles_to_assembly() {
+    let asm = compile_selfhost_source(
+        "compiler_regalloc.tl",
+        "tl-compiler-regalloc-compile-test",
+        "compiler_regalloc.s",
+    );
+
+    assert_no_todo(&asm, "compiler_regalloc");
+
+    for sym in [
+        "_tl_compiler_reg_plan_function:",
+        "_tl_compiler_reg_live_intervals:",
+        "_tl_compiler_reg_ineligible_vars:",
+        "_tl_compiler_reg_assign_candidates:",
+        "_tl_compiler_reg_spill_at_interval:",
+        "_tl_compiler_regalloc_self_test:",
+    ] {
+        assert_symbol(&asm, sym, "compiler_regalloc");
+    }
+
+    for message in ["regalloc: smoke mismatch", "%r12", "%r15"] {
+        assert_message(&asm, message, "compiler_regalloc");
+    }
+}
+
+#[test]
+fn compiler_regalloc_smoke_tl_compiles_to_assembly() {
+    let asm = compile_selfhost_source(
+        "compiler_regalloc_smoke.tl",
+        "tl-compiler-regalloc-smoke-compile-test",
+        "compiler_regalloc_smoke.s",
+    );
+
+    assert_no_todo(&asm, "compiler_regalloc_smoke");
+    assert_eq!(
+        asm.matches("\nmain:").count() + usize::from(asm.starts_with("main:")),
+        1,
+        "compiler_regalloc_smoke assembly must have exactly one main:\n{asm}",
+    );
+
+    for sym in [
+        "_tl_compiler_regalloc_self_test:",
+        "_tl_compiler_reg_plan_function:",
+        "_tl_compiler_reg_reuse_ok_question:",
+        "_tl_compiler_reg_overlap_spill_ok_question:",
+        "_tl_compiler_reg_call_live_ok_question:",
+    ] {
+        assert_symbol(&asm, sym, "compiler_regalloc_smoke");
+    }
+}

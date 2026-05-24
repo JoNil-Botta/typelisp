@@ -3136,6 +3136,26 @@ tl_string_concat:
       (compiler-backend-string-contains? asm "call tl_oob_abort")]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-make-array-source) : String
+  "(define (main) : i64
+  (let ([a : (Array i64) (make-array i64 2)])
+    (begin
+      (array-set! a 0 40)
+      (array-set! a 1 2)
+      (+ (array-ref a 0) (array-ref a 1)))))")
+
+(define (compiler-backend-make-array-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-make-array-source))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "main:\n")
+        (and
+          (compiler-backend-string-contains? asm "    call tl_alloc\n")
+          (and
+            (compiler-backend-string-contains? asm "call tl_oob_abort")
+            (compiler-backend-string-contains? asm "make_array_len_ok"))))]
+    [(ErrCompilerBackend _) false]))
+
 ;; A refutable literal payload match (#651) lowers to a payload comparison that
 
 ;; branches to the next arm; confirm the resulting CFG reaches valid assembly.
@@ -3172,30 +3192,32 @@ tl_string_concat:
     (and
       (compiler-backend-array-access-asm-ok?)
       (and
-        (compiler-backend-source-ok? (compiler-backend-smoke-source))
+        (compiler-backend-make-array-ok?)
         (and
-          (compiler-backend-deterministic-ok? (compiler-backend-smoke-source))
+          (compiler-backend-source-ok? (compiler-backend-smoke-source))
           (and
-            (compiler-backend-string-ok?)
+            (compiler-backend-deterministic-ok? (compiler-backend-smoke-source))
             (and
-              (compiler-backend-memory-op-ok?)
+              (compiler-backend-string-ok?)
               (and
+                (compiler-backend-memory-op-ok?)
                 (and
-                  (compiler-backend-aggregate-ok?)
-                  (compiler-backend-literal-payload-ok?))
-                (and
-                  (compiler-backend-enum-match-ok?)
                   (and
-                    (compiler-backend-regalloc-ok?)
+                    (compiler-backend-aggregate-ok?)
+                    (compiler-backend-literal-payload-ok?))
+                  (and
+                    (compiler-backend-enum-match-ok?)
                     (and
-                      (compiler-backend-error-ok?
-                        (compiler-backend-too-many-call-source)
-                        "backend: too many call args")
+                      (compiler-backend-regalloc-ok?)
                       (and
-                        (compiler-backend-runtime-helper-asm-ok?)
+                        (compiler-backend-error-ok?
+                          (compiler-backend-too-many-call-source)
+                          "backend: too many call args")
                         (and
-                          (compiler-backend-user-helper-name-ok?)
-                          (compiler-backend-runtime-coexist-ok?)))))))))))))
+                          (compiler-backend-runtime-helper-asm-ok?)
+                          (and
+                            (compiler-backend-user-helper-name-ok?)
+                            (compiler-backend-runtime-coexist-ok?))))))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

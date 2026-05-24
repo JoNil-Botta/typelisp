@@ -993,6 +993,8 @@
       (lower-string-ref ctx state env type-env str index)]
     [(AstExprStructGet receiver field)
       (lower-struct-get ctx state env type-env receiver field expr-ty)]
+    [(AstExprMakeArray elem-ty len)
+      (lower-make-array ctx state env type-env elem-ty len)]
     [(AstExprArrayRef arr index)
       (lower-array-ref ctx state env type-env arr index)]
     [(AstExprArraySet arr index value)
@@ -1804,6 +1806,152 @@
                                     ok-label
                                     fail-label
                                     elem-ty)])])])])])])])]))
+
+;; `(make-array T len)` -> checked length, `tl_alloc` element buffer, and a
+
+;; heap-backed dynamic-array fat value `{ ptr, len }`.
+
+(define (lower-make-array-store-fat
+  [state : LowerState]
+  [arr-ty : AstType]
+  [buf-var : i64]
+  [len-i64 : CompilerIrValue]) : ResultLowerExpr
+  (match (lower-reserve-heap-storage state 16 arr-ty)
+    [(LowerExpr arr-state arr-value _)
+      (OkLowerExpr
+        (LowerExpr
+          (lower-store-at-offset
+            (lower-store-at-offset
+              arr-state
+              arr-value
+              0
+              (IrValueVar buf-var)
+              (AstTyU64))
+            arr-value
+            8
+            len-i64
+            (AstTyI64))
+          arr-value
+          arr-ty))]))
+
+(define (lower-make-array-alloc-buffer
+  [state : LowerState]
+  [arr-ty : AstType]
+  [len-i64 : CompilerIrValue]
+  [elem-size : i64]) : ResultLowerExpr
+  (match (lower-emit-binop
+    state
+    (IrBinMul)
+    len-i64
+    (IrValueI64 elem-size)
+    (AstTyI64))
+    [(LowerExpr byte-state byte-count _)
+      (match (lower-state-alloc-var byte-state)
+        [(LowerAlloc buf-alloc buf-var)
+          (lower-make-array-store-fat
+            (lower-state-emit
+              buf-alloc
+              (IrInstrCall
+                buf-var
+                "tl_alloc"
+                (IrValueCons byte-count IrValueNil)
+                (AstTyU64)))
+            arr-ty
+            buf-var
+            len-i64)])]))
+
+(define (lower-make-array-after-max-check
+  [state : LowerState]
+  [fail-label : String]
+  [alloc-label : String]
+  [arr-ty : AstType]
+  [len-i64 : CompilerIrValue]
+  [elem-size : i64]) : ResultLowerExpr
+  (let ([fail-start : LowerState (lower-state-finish-block state fail-label)])
+    (let ([alloc-start
+        :
+        LowerState
+        (lower-state-finish-block
+          (lower-state-emit
+            (lower-oob-abort fail-start)
+            (IrInstrJump alloc-label))
+          alloc-label)])
+      (lower-make-array-alloc-buffer alloc-start arr-ty len-i64 elem-size))))
+
+(define (lower-make-array-from-len
+  [ctx : TcContext]
+  [state : LowerState]
+  [elem-ty : AstType]
+  [len-value : CompilerIrValue]
+  [len-ty : AstType]) : ResultLowerExpr
+  (let ([resolved-elem : AstType (tc-resolve-type ctx elem-ty)])
+    (match (lower-cast-value state len-value len-ty (AstTyI64))
+      [(LowerExpr len-state len-i64 _)
+        (let ([elem-size : i64 (lower-type-size ctx resolved-elem)]
+          [arr-ty : AstType (AstTyDynArray resolved-elem)])
+          (match (lower-state-fresh-label len-state "make_array_len_nonneg")
+            [(LowerLabel s1 check-max-label)
+              (match (lower-state-fresh-label s1 "make_array_len_fail")
+                [(LowerLabel s2 fail-label)
+                  (match (lower-state-fresh-label s2 "make_array_len_ok")
+                    [(LowerLabel s3 alloc-label)
+                      (match (lower-emit-binop
+                        s3
+                        (IrBinLe)
+                        (IrValueI64 0)
+                        len-i64
+                        (AstTyBool))
+                        [(LowerExpr s4 non-negative _)
+                          (let ([check-start
+                              :
+                              LowerState
+                              (lower-state-finish-block
+                                (lower-state-emit
+                                  s4
+                                  (IrInstrBranch
+                                    non-negative
+                                    check-max-label
+                                    fail-label))
+                                check-max-label)])
+                            (let ([max-len
+                                :
+                                i64
+                                (if (= elem-size 0)
+                                  9223372036854775807
+                                  (/ 9223372036854775807 elem-size))])
+                              (match (lower-emit-binop
+                                check-start
+                                (IrBinLe)
+                                len-i64
+                                (IrValueI64 max-len)
+                                (AstTyBool))
+                                [(LowerExpr s5 within-max _)
+                                  (lower-make-array-after-max-check
+                                    (lower-state-emit
+                                      s5
+                                      (IrInstrBranch
+                                        within-max
+                                        alloc-label
+                                        fail-label))
+                                    fail-label
+                                    alloc-label
+                                    arr-ty
+                                    len-i64
+                                    elem-size)])))])])])]))])))
+
+(define (lower-make-array
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [elem-ty : AstType]
+  [len : AstExpr]) : ResultLowerExpr
+  (match (lower-expr ctx state env type-env len)
+    [(OkLowerExpr lowered)
+      (match lowered
+        [(LowerExpr len-state len-value len-ty)
+          (lower-make-array-from-len ctx len-state elem-ty len-value len-ty)])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 ;; `(array-ref arr index)` -> bounds-checked typed element load.
 
@@ -3027,6 +3175,22 @@
 (define (put [a : (Array i64)] [i : i64] [v : i64]) : unit (array-set! a i v))
 (define (main) : i64 0)")
 
+;; `make-array` lowers to checked byte-count math, a `tl_alloc` element buffer,
+
+;; and a dynamic-array fat value. The fixture also immediately uses
+
+;; `array-set!`, `array-ref`, and `array-length` so the generated IR exercises
+
+;; the full dynamic-array primitive set.
+
+(define (compiler-lower-make-array-source) : String
+  "(define (main [n : i64]) : i64
+  (let ([a : (Array i64) (make-array i64 n)])
+    (begin
+      (array-set! a 0 40)
+      (array-set! a 1 2)
+      (+ (array-length a) (+ (array-ref a 0) (array-ref a 1))))))")
+
 ;; `string-length`/`length` on a String lower to the same fat `{ptr, len}`
 
 ;; length load as `array-length` (#527): both lay out the i64 length at offset 8.
@@ -3304,6 +3468,16 @@
                     (> (lower-test-function-load-count functions "or-zero") 1))))))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-make-array-shape-ok? [src : String]) : bool
+  (match (lower-compiler-source src)
+    [(OkCompilerLower program)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (> (lower-test-functions-call-count functions "tl_alloc") 1)
+            (> (lower-test-functions-call-count functions "tl_oob_abort") 0))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-string-runtime-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(OkCompilerLower program)
@@ -3377,7 +3551,10 @@
             (and
               (and
                 (compiler-lower-ok? (compiler-lower-array-length-source))
-                (compiler-lower-ok? (compiler-lower-array-access-source)))
+                (and
+                  (compiler-lower-ok? (compiler-lower-array-access-source))
+                  (compiler-lower-make-array-shape-ok?
+                    (compiler-lower-make-array-source))))
               (and
                 (compiler-lower-ok? (compiler-lower-string-length-source))
                 (and

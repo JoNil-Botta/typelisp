@@ -575,7 +575,12 @@
         (front-cat3 "\", ty: " (front-type-render ty) " }"))]
     [(AstDeclDefEnum name _) (front-cat3 "DefEnum { name: \"" name "\" }")]
     [(AstDeclDefStruct name _) (front-cat3 "DefStruct { name: \"" name "\" }")]
-    [(AstDeclImport path) (front-cat3 "Import(\"" path "\")")]))
+    [(AstDeclImport path) (front-cat3 "Import(\"" path "\")")]
+    [(AstDeclTest name body _)
+      (front-cat3
+        "Test { name: \""
+        name
+        (front-cat3 "\", body: " (front-expr-render body) " }"))]))
 
 (define (front-decl-list-render [decls : AstDeclList]) : String
   (match decls

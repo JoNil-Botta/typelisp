@@ -487,6 +487,15 @@ contains|_tl_run_plan_render:
 contains|run: expected source path
 end
 
+case|selfhost_test|selfhost/test.tl|assembly|skip|direct
+contains|_tl_tltest_run_config:
+contains|_tl_tltest_build_harness:
+contains|_tl_compiler_backend_emit_program_with_spans_for_target:
+contains|run-scratch-assembly
+contains|scratch-assembly-path
+contains|test: expected source path
+end
+
 case|selfhost_sym_i64_env|selfhost/sym_i64_env.tl|assembly|skip|direct
 contains|_tl_sym_i64_empty:
 contains|_tl_sym_i64_bind:

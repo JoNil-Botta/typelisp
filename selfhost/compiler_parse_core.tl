@@ -347,6 +347,9 @@
 (define (compiler-parse-tag-decl-comptime-decl) : i64
   405)
 
+(define (compiler-parse-tag-decl-test) : i64
+  406)
+
 (define (compiler-parse-dispatch-binops [e : SymI64Env]) : SymI64Env
   (let ([e1 : SymI64Env (sym-i64-bind e "+" (compiler-parse-tag-bin-add))])
     (let ([e2 : SymI64Env (sym-i64-bind e1 "-" (compiler-parse-tag-bin-sub))])
@@ -657,10 +660,14 @@
               :
               SymI64Env
               (sym-i64-bind e4 "import" (compiler-parse-tag-decl-import))])
-            (sym-i64-bind
-              e5
-              "comptime-decl"
-              (compiler-parse-tag-decl-comptime-decl))))))))
+            (let ([e6
+                :
+                SymI64Env
+                (sym-i64-bind
+                  e5
+                  "comptime-decl"
+                  (compiler-parse-tag-decl-comptime-decl))])
+              (sym-i64-bind e6 "test" (compiler-parse-tag-decl-test)))))))))
 
 (define (compiler-parse-dispatch-env) : SymI64Env
   (compiler-parse-dispatch-decls
@@ -1594,6 +1601,27 @@
     [(SpSCons (SpSStr path _) (SpSNil _) _) (OkAstDecl (AstDeclImport path))]
     [_ (ErrAstDecl "parse: malformed import")]))
 
+(define (parse-ast-test-body [exprs : AstExprList]) : AstExpr
+  (match exprs
+    [(AstExprCons only (AstExprNil)) only]
+    [_ (AstExprBegin exprs)]))
+
+(define (parse-ast-test
+  [dispatch : SymI64Env]
+  [rest : SpannedSexpr]
+  [form-span : AstSourceSpan]) : ResultAstDecl
+  (match rest
+    [(SpSCons (SpSSym name _) body-forms _)
+      (match body-forms
+        [(SpSNil _) (ErrAstDecl "parse: test needs at least one expression")]
+        [_
+          (match (parse-ast-expr-list dispatch body-forms)
+            [(OkAstExprList exprs)
+              (OkAstDecl
+                (AstDeclTest name (parse-ast-test-body exprs) form-span))]
+            [(ErrAstExprList message) (ErrAstDecl message)])])]
+    [_ (ErrAstDecl "parse: malformed test")]))
+
 (define (parse-ast-comptime-decl [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
     [(SpSCons template (SpSNil _) _)
@@ -1626,7 +1654,13 @@
                   (parse-ast-import rest)
                   (if (= tag (compiler-parse-tag-decl-comptime-decl))
                     (parse-ast-comptime-decl dispatch rest)
-                    (ErrAstDecl "parse: expected declaration"))))))))]
+                    (if (= tag (compiler-parse-tag-decl-test))
+                      (parse-ast-test
+                        dispatch
+                        rest
+                        (ast-source-span-from-source-span
+                          (spanned-sexpr-span s)))
+                      (ErrAstDecl "parse: expected declaration")))))))))]
     [_ (ErrAstDecl "parse: malformed declaration")]))
 
 (define (parse-ast-program-forms
@@ -1903,6 +1937,27 @@
         (= (ast-decl-list-tag-sum decls) 9))]
     [(ErrAstProgram _) false]))
 
+(define (compiler-parse-inline-test-source) : String
+  "(test parser-basic
+  (+ 1 2)
+  3)")
+
+(define (compiler-parse-inline-test-ok?) : bool
+  (match (parse-ast-source (compiler-parse-inline-test-source))
+    [(OkAstProgram (AstProgram decls))
+      (match decls
+        [(AstDeclCons (AstDeclTest name body span) (AstDeclNil))
+          (and
+            (string-eq name "parser-basic")
+            (and
+              (= (ast-source-span-start-line span) 1)
+              (match (ast-expr-unspan body)
+                [(AstExprBegin (AstExprCons _ (AstExprCons _ (AstExprNil))))
+                  true]
+                [_ false])))]
+        [_ false])]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-parse-comptime-decl-bad-payload-source) : String
   "(comptime-decl (define x : i64 1))")
 
@@ -1911,6 +1966,9 @@
 
 (define (compiler-parse-comptime-decl-extra-source) : String
   "(comptime-decl (defstruct Point (x i64)) (defenum Maybe (None)))")
+
+(define (compiler-parse-empty-test-source) : String
+  "(test empty)")
 
 (define (compiler-parse-comptime-decl-error-tests-ok?) : bool
   (and
@@ -1925,7 +1983,7 @@
         (compiler-parse-comptime-decl-extra-source)
         "parse: comptime-decl expects exactly one template"))))
 
-(define (compiler-parse-error-tests-ok?) : bool
+(define (compiler-parse-special-form-error-tests-ok?) : bool
   (and
     (compiler-parse-error-ok?
       (compiler-parse-malformed-binary-source)
@@ -1950,11 +2008,18 @@
               (compiler-parse-error-ok?
                 (compiler-parse-with-region-empty-source)
                 "parse: with-region 'r' requires a non-empty body")
-              (and
-                (compiler-parse-error-ok?
-                  (compiler-parse-region-type-bad-source)
-                  "parse: region name must be an identifier")
-                (compiler-parse-comptime-decl-error-tests-ok?)))))))))
+              (compiler-parse-error-ok?
+                (compiler-parse-region-type-bad-source)
+                "parse: region name must be an identifier"))))))))
+
+(define (compiler-parse-error-tests-ok?) : bool
+  (and
+    (compiler-parse-special-form-error-tests-ok?)
+    (and
+      (compiler-parse-comptime-decl-error-tests-ok?)
+      (compiler-parse-error-ok?
+        (compiler-parse-empty-test-source)
+        "parse: test needs at least one expression"))))
 
 (define (compiler-parse-smoke) : i64
   (match (parse-ast-source (compiler-parse-smoke-source))
@@ -1969,7 +2034,9 @@
               (compiler-parse-float-literal-ok?)
               (and
                 (compiler-parse-region-ok?)
-                (compiler-parse-comptime-decl-ok?))))))
+                (and
+                  (compiler-parse-comptime-decl-ok?)
+                  (compiler-parse-inline-test-ok?)))))))
         (if (compiler-parse-error-tests-ok?)
           42
           (begin

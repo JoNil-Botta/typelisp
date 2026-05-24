@@ -343,7 +343,31 @@ Imports another TypeLisp file. All top-level definitions from the imported file 
   declarations share the same flat top-level namespace as ordinary modules, so
   duplicate value or type names are errors.
 
-### 4.5 `typelisp.pkg` — local package manifest
+### 4.5 `(test name body...)` - inline test item
+
+Declares a source-owned inline test. The name is an identifier. The body must
+contain one or more expressions; multiple expressions are sequenced like
+`begin`.
+
+Normal production commands (`check`, `compile`, `build`, and `run`) ignore
+`test` items. `typelisp test <file.tl>` loads the import graph, lowers every
+inline test into a private unit-returning function, skips any production
+`main`, generates a test-owned `main`, and runs the resulting executable.
+`typelisp test --check <file.tl>` type-checks that generated harness without
+assembling or linking. The current runner is intended for unit-returning test
+bodies; assertion helpers in `stdlib/test.tl` panic on failure.
+
+Example:
+```lisp test=check name=inline-test-declaration
+(define (inc [x : i64]) : i64 (+ x 1))
+
+(test inc-basic
+  (if (= (inc 41) 42)
+    unit
+    (panic "inc result")))
+```
+
+### 4.6 `typelisp.pkg` — local package manifest
 
 `typelisp.pkg` is an S-expression package manifest for local builds:
 
@@ -1249,6 +1273,7 @@ Commands:
   build <file.tl>   Compile, assemble, and link a native executable
   run               Compile, assemble, link, and run binary
   build             Build nearest typelisp.pkg to package assembly
+  test              Run inline `(test ...)` items
 
 Options:
   compile -o <file>       Write assembly to the given path
@@ -1256,13 +1281,18 @@ Options:
   compile --target <target>
   run --target <target>
   build --target <target>
+  test --target <target>
                           Select linux-x86_64 or windows-x86_64;
-                          linux-x86_64 is the default target
+                          linux-x86_64 is the default output target, while
+                          test defaults to the host target
   compile --backend-mode <mode>
   run --backend-mode <mode>
   build --backend-mode <mode>
                           Select scalar, avx2, or avx512 backend mode;
                           scalar is the only implemented mode
+  test --check <file.tl>
+                          Type-check the generated inline test harness without
+                          assembling or running it
   build <file.tl> -o <exe>
                           Write the native executable to the given path
   build --manifest-path <file>
@@ -1434,6 +1464,7 @@ top-level     ::= define-var
                 | import-decl
                 | defenum
                 | defstruct
+                | test-decl
 
 define-var    ::= "(" "define" ident [":" type] expr ")"
 define-func   ::= "(" "define" "(" ident param* ")" [":" type] expr ")"
@@ -1441,6 +1472,7 @@ extern-decl   ::= "(" "extern" ident ":" type ")"
 import-decl   ::= "(" "import" string ")"
 defenum       ::= "(" "defenum" ident variant+ ")"
 defstruct     ::= "(" "defstruct" ident field+ ")"
+test-decl     ::= "(" "test" ident expr+ ")"
 
 param         ::= "[" ident ":" type "]"
 field         ::= "(" ident type ")"

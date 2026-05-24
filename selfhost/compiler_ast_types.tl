@@ -177,7 +177,8 @@
   (AstDeclExtern String AstType)
   (AstDeclDefEnum String AstVariantDefList)
   (AstDeclDefStruct String AstFieldDefList)
-  (AstDeclImport String))
+  (AstDeclImport String)
+  (AstDeclTest String AstExpr AstSourceSpan))
 
 (defenum AstDeclList
   (AstDeclNil)
@@ -257,7 +258,8 @@
     [(AstDeclExtern _ _) 3]
     [(AstDeclDefEnum _ _) 4]
     [(AstDeclDefStruct _ _) 5]
-    [(AstDeclImport _) 6]))
+    [(AstDeclImport _) 6]
+    [(AstDeclTest _ _ _) 7]))
 
 (define (compiler-ast-smoke) : i64
   (let ([i64-ty : AstType (AstTyI64)]

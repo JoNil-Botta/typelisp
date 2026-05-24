@@ -40,7 +40,10 @@
             false))))))
 
 (define (compiler-load-dirname [path : String]) : String
-  (let ([n : i64 (string-length path)] [i : i64 0] [last : i64 -1])
+  (let (
+    [n : i64 (string-length path)]
+    [i : i64 0]
+    [last : i64 -1])
     (begin
       (while (< i n)
         (begin
@@ -63,13 +66,16 @@
   [text : String]
   [prefix : String]
   [start : i64]) : bool
-  (let ([text-len : i64 (string-length text)]
+  (let (
+    [text-len : i64 (string-length text)]
     [prefix-len : i64 (string-length prefix)])
     (if (< start 0)
       false
       (if (> (+ start prefix-len) text-len)
         false
-        (let ([i : i64 0] [ok : bool true])
+        (let (
+          [i : i64 0]
+          [ok : bool true])
           (begin
             (while ok
               (if (< i prefix-len)
@@ -119,10 +125,8 @@
   [importer-path : String]
   [import-path : String]
   [stdlib-roots : CompilerLoadRootList]) : String
-  (let ([primary
-      :
-      String
-      (compiler-load-join-import-path importer-path import-path)])
+  (let ([primary : String
+    (compiler-load-join-import-path importer-path import-path)])
     (if (file-exists? primary)
       primary
       (if (compiler-load-stdlib-import? import-path)
@@ -177,13 +181,11 @@
     [(AstDeclCons decl rest)
       (match decl
         [(AstDeclImport import-path)
-          (let ([resolved
-              :
-              String
-              (compiler-load-resolve-import-with-roots
-                importer-path
-                import-path
-                stdlib-roots)])
+          (let ([resolved : String
+            (compiler-load-resolve-import-with-roots
+              importer-path
+              import-path
+              stdlib-roots)])
             (match (compiler-load-file-with-paths-and-roots
               resolved
               seen

@@ -69,14 +69,17 @@
   (or (= c #\space') (or (= c #\tab') (or (= c #\newline') (= c #\return')))))
 
 (define (repl-string-prefix? [text : String] [prefix : String]) : bool
-  (let ([text-len : i64 (string-length text)]
+  (let (
+    [text-len : i64 (string-length text)]
     [prefix-len : i64 (string-length prefix)])
     (if (> prefix-len text-len)
       false
       (string-eq (substring text 0 prefix-len) prefix))))
 
 (define (repl-trim-left-from [text : String] [start : i64]) : String
-  (let ([i : i64 start] [len : i64 (string-length text)])
+  (let (
+    [i : i64 start]
+    [len : i64 (string-length text)])
     (begin
       (while (and (< i len) (repl-space? (string-ref text i)))
         (set! i (+ i 1)))
@@ -188,10 +191,8 @@
     [(OkAstReplItem item)
       (match item
         [(AstReplDecl _)
-          (let ([candidate
-              :
-              String
-              (repl-session-candidate session-source input)])
+          (let ([candidate : String
+            (repl-session-candidate session-source input)])
             (match (typecheck-compiler-source candidate)
               [(OkCompilerTypecheck _) candidate]
               [(ErrCompilerTypecheck diag)

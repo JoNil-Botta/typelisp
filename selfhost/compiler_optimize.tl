@@ -792,21 +792,15 @@
 
 (define (compiler-optimize-self-test) : i64
   (let ([instrs : CompilerIrInstrList (opt-self-test-instrs)])
-    (let ([optimized
-        :
-        CompilerIrInstrList
-        (opt-fold-instrs (OptConstNil) instrs)])
+    (let ([optimized : CompilerIrInstrList
+      (opt-fold-instrs (OptConstNil) instrs)])
       (if (= (opt-count-arith-instrs instrs) 1)
         (if (= (opt-count-arith-instrs optimized) 0)
           (if (= (opt-sum-mov-i64 optimized) 84)
-            (let ([stale-instrs
-                :
-                CompilerIrInstrList
-                (opt-stale-load-test-instrs)])
-              (let ([stale-optimized
-                  :
-                  CompilerIrInstrList
-                  (opt-fold-instrs (OptConstNil) stale-instrs)])
+            (let ([stale-instrs : CompilerIrInstrList
+              (opt-stale-load-test-instrs)])
+              (let ([stale-optimized : CompilerIrInstrList
+                (opt-fold-instrs (OptConstNil) stale-instrs)])
                 (if (= (opt-count-arith-instrs stale-optimized) 1)
                   42
                   4)))
@@ -835,12 +829,10 @@
   (let ([instrs : CompilerIrInstrList (opt-dce-self-test-instrs)])
     (let ([used : OptUsedSet (opt-collect-instrs-uses (OptUsedNil) instrs)])
       (let ([cleaned : CompilerIrInstrList (opt-dce-instrs used instrs)])
-        (let ([again
-            :
-            CompilerIrInstrList
-            (opt-dce-instrs
-              (opt-collect-instrs-uses (OptUsedNil) cleaned)
-              cleaned)])
+        (let ([again : CompilerIrInstrList
+          (opt-dce-instrs
+            (opt-collect-instrs-uses (OptUsedNil) cleaned)
+            cleaned)])
           (if (opt-used-contains used 1)
             (if (not (opt-used-contains used 0))
               (if (= (compiler-ir-instr-list-count instrs) 3)
@@ -926,18 +918,12 @@
 ;; store and across an operand redefinition (still 2 arithmetic instrs each).
 
 (define (compiler-optimize-cse-self-test) : i64
-  (let ([cse
-      :
-      CompilerIrInstrList
-      (opt-cse-instrs (OptExprNil) (opt-cse-self-test-instrs))])
-    (let ([store
-        :
-        CompilerIrInstrList
-        (opt-cse-instrs (OptExprNil) (opt-cse-store-clears-instrs))])
-      (let ([redef
-          :
-          CompilerIrInstrList
-          (opt-cse-instrs (OptExprNil) (opt-cse-operand-redef-instrs))])
+  (let ([cse : CompilerIrInstrList
+    (opt-cse-instrs (OptExprNil) (opt-cse-self-test-instrs))])
+    (let ([store : CompilerIrInstrList
+      (opt-cse-instrs (OptExprNil) (opt-cse-store-clears-instrs))])
+      (let ([redef : CompilerIrInstrList
+        (opt-cse-instrs (OptExprNil) (opt-cse-operand-redef-instrs))])
         (if (= (opt-count-arith-instrs cse) 1)
           (if (= (opt-count-arith-instrs store) 2)
             (if (= (opt-count-arith-instrs redef) 2)
@@ -1039,32 +1025,20 @@
 ;; propagate an unsafe F64 source (f64: lhs stays v1).
 
 (define (compiler-optimize-copy-self-test) : i64
-  (let ([pos
-      :
-      CompilerIrInstrList
-      (opt-copy-instrs (OptCopyNil) (opt-copy-pos-instrs))])
-    (let ([src-redef
-        :
-        CompilerIrInstrList
-        (opt-copy-instrs (OptCopyNil) (opt-copy-src-redef-instrs))])
-      (let ([dst-redef
-          :
-          CompilerIrInstrList
-          (opt-copy-instrs (OptCopyNil) (opt-copy-dst-redef-instrs))])
-        (let ([cse
-            :
-            CompilerIrInstrList
-            (opt-copy-instrs
-              (OptCopyNil)
-              (opt-cse-instrs (OptExprNil) (opt-copy-cse-instrs)))])
-          (let ([cse-dce
-              :
-              CompilerIrInstrList
-              (opt-dce-instrs (opt-collect-instrs-uses (OptUsedNil) cse) cse)])
-            (let ([f64
-                :
-                CompilerIrInstrList
-                (opt-copy-instrs (OptCopyNil) (opt-copy-f64-instrs))])
+  (let ([pos : CompilerIrInstrList
+    (opt-copy-instrs (OptCopyNil) (opt-copy-pos-instrs))])
+    (let ([src-redef : CompilerIrInstrList
+      (opt-copy-instrs (OptCopyNil) (opt-copy-src-redef-instrs))])
+      (let ([dst-redef : CompilerIrInstrList
+        (opt-copy-instrs (OptCopyNil) (opt-copy-dst-redef-instrs))])
+        (let ([cse : CompilerIrInstrList
+          (opt-copy-instrs
+            (OptCopyNil)
+            (opt-cse-instrs (OptExprNil) (opt-copy-cse-instrs)))])
+          (let ([cse-dce : CompilerIrInstrList
+            (opt-dce-instrs (opt-collect-instrs-uses (OptUsedNil) cse) cse)])
+            (let ([f64 : CompilerIrInstrList
+              (opt-copy-instrs (OptCopyNil) (opt-copy-f64-instrs))])
               (if (= (opt-copy-binop-lhs-var pos 2) 0)
                 (if (= (opt-copy-binop-lhs-var src-redef 2) 1)
                   (if (= (opt-copy-binop-lhs-var dst-redef 2) 1)

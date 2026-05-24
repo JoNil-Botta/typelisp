@@ -100,7 +100,8 @@
                   (FmtParsedCstList (FmtCstCons node rest) final)])]))))))
 
 (define (fmt-parse-one [stream : FormatTokenStream] [idx : i64]) : FormatParsedCst
-  (let ([tok : FormatToken (format-token-at stream idx)]
+  (let (
+    [tok : FormatToken (format-token-at stream idx)]
     [tag : i64 (format-token-tag (format-token-at stream idx))])
     (if (= tag (fmt-tag-lparen))
       (match (fmt-parse-seq stream (+ idx 1) (fmt-tag-rparen))
@@ -142,7 +143,8 @@
       [None 0])))")
 
 (define (format-cst-self-test) : i64
-  (let ([stream : FormatTokenStream (format-lex (format-cst-fixture))]
+  (let (
+    [stream : FormatTokenStream (format-lex (format-cst-fixture))]
     [tree : FormatCst (parse-format-source (format-cst-fixture))])
     (if (> (format-token-count stream) 40)
       (if (> (fmt-cst-count tree) 40)

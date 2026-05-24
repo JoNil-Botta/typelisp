@@ -366,7 +366,8 @@
 ;; process exit code.
 
 (define (main) : i64
-  (let ([tags : (Array i64) (make-array i64 16)]
+  (let (
+    [tags : (Array i64) (make-array i64 16)]
     [vals : (Array i64) (make-array i64 16)]
     [cur : (Array i64) (make-array i64 1)])
     (begin

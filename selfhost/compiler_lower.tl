@@ -433,10 +433,8 @@
     [(AstTypeNil) cursor]
     [(AstTypeCons ty rest)
       (let ([resolved : AstType (tc-resolve-type ctx ty)])
-        (let ([offset
-            :
-            i64
-            (lower-align-up cursor (lower-type-align ctx resolved))])
+        (let ([offset : i64
+          (lower-align-up cursor (lower-type-align ctx resolved))])
           (lower-type-list-extent
             ctx
             rest
@@ -600,10 +598,8 @@
       (match types
         [(AstTypeCons ty rest-types)
           (let ([resolved : AstType (tc-resolve-type ctx ty)])
-            (let ([offset
-                :
-                i64
-                (lower-align-up cursor (lower-type-align ctx resolved))])
+            (let ([offset : i64
+              (lower-align-up cursor (lower-type-align ctx resolved))])
               (lower-store-values
                 ctx
                 (lower-store-at-offset state base offset value resolved)
@@ -654,9 +650,8 @@
       (match types
         [(AstTypeCons ty rest-types)
           (let ([resolved : AstType (tc-resolve-type ctx ty)])
-            (let ([offset
-                :
-                i64
+            (let (
+              [offset : i64
                 (lower-align-up cursor (lower-type-align ctx resolved))]
               [next-cursor : i64 (+ offset (lower-type-size ctx resolved))])
               (match pattern
@@ -853,10 +848,8 @@
       (match field
         [(AstFieldDef name ty)
           (let ([resolved : AstType (tc-resolve-type ctx ty)])
-            (let ([offset
-                :
-                i64
-                (lower-align-up cursor (lower-type-align ctx resolved))])
+            (let ([offset : i64
+              (lower-align-up cursor (lower-type-align ctx resolved))])
               (if (string-eq name field-name)
                 (OkLowerFieldInfo (LowerFieldInfo offset resolved))
                 (lower-field-info-from-list
@@ -1019,16 +1012,14 @@
                       size
                       (AstTyEnum enum-name))
                       [(LowerExpr base-state base _)
-                        (let ([tag-state
-                            :
-                            LowerState
-                            (lower-store-at-offset
-                              base-state
-                              base
-                              0
-                              (IrValueI64
-                                (compiler-registry-handle-child-index handle))
-                              (AstTyI64))])
+                        (let ([tag-state : LowerState
+                          (lower-store-at-offset
+                            base-state
+                            base
+                            0
+                            (IrValueI64
+                              (compiler-registry-handle-child-index handle))
+                            (AstTyI64))])
                           (match (lower-store-values
                             ctx
                             tag-state
@@ -1321,12 +1312,10 @@
   [index-value : CompilerIrValue]) : ResultLowerExpr
   (match (lower-state-alloc-var state)
     [(LowerAlloc gep-alloc gep-var)
-      (let ([gep-state
-          :
-          LowerState
-          (lower-state-emit
-            gep-alloc
-            (IrInstrGep gep-var data-ptr index-value (AstTyChar)))])
+      (let ([gep-state : LowerState
+        (lower-state-emit
+          gep-alloc
+          (IrInstrGep gep-var data-ptr index-value (AstTyChar)))])
         (match (lower-state-alloc-var gep-state)
           [(LowerAlloc load-alloc load-var)
             (OkLowerExpr
@@ -1349,17 +1338,10 @@
             [(LowerExpr len-u-state len-u _)
               (match (lower-state-alloc-var len-u-state)
                 [(LowerAlloc bounds-alloc bounds-var)
-                  (let ([bounds-state
-                      :
-                      LowerState
-                      (lower-state-emit
-                        bounds-alloc
-                        (IrInstrBinOp
-                          bounds-var
-                          IrBinLt
-                          index-u
-                          len-u
-                          (AstTyU64)))])
+                  (let ([bounds-state : LowerState
+                    (lower-state-emit
+                      bounds-alloc
+                      (IrInstrBinOp bounds-var IrBinLt index-u len-u (AstTyU64)))])
                     (match (lower-state-fresh-label
                       bounds-state
                       "str_bounds_ok")
@@ -1368,25 +1350,21 @@
                           ok-label-state
                           "str_bounds_fail")
                           [(LowerLabel fail-label-state fail-label)
-                            (let ([fail-start
-                                :
-                                LowerState
+                            (let ([fail-start : LowerState
+                              (lower-state-finish-block
+                                (lower-state-emit
+                                  fail-label-state
+                                  (IrInstrBranch
+                                    (IrValueVar bounds-var)
+                                    ok-label
+                                    fail-label))
+                                fail-label)])
+                              (let ([ok-start : LowerState
                                 (lower-state-finish-block
                                   (lower-state-emit
-                                    fail-label-state
-                                    (IrInstrBranch
-                                      (IrValueVar bounds-var)
-                                      ok-label
-                                      fail-label))
-                                  fail-label)])
-                              (let ([ok-start
-                                  :
-                                  LowerState
-                                  (lower-state-finish-block
-                                    (lower-state-emit
-                                      (lower-oob-abort fail-start)
-                                      (IrInstrJump ok-label))
-                                    ok-label)])
+                                    (lower-oob-abort fail-start)
+                                    (IrInstrJump ok-label))
+                                  ok-label)])
                                 (lower-string-ref-byte
                                   ok-start
                                   data-ptr
@@ -1456,22 +1434,16 @@
   [len-ok-var : i64]
   [fail-label : String]
   [copy-label : String]) : ResultLowerExpr
-  (let ([fail-start
-      :
-      LowerState
+  (let ([fail-start : LowerState
+    (lower-state-finish-block
+      (lower-state-emit
+        state
+        (IrInstrBranch (IrValueVar len-ok-var) copy-label fail-label))
+      fail-label)])
+    (let ([copy-start : LowerState
       (lower-state-finish-block
-        (lower-state-emit
-          state
-          (IrInstrBranch (IrValueVar len-ok-var) copy-label fail-label))
-        fail-label)])
-    (let ([copy-start
-        :
-        LowerState
-        (lower-state-finish-block
-          (lower-state-emit
-            (lower-oob-abort fail-start)
-            (IrInstrJump copy-label))
-          copy-label)])
+        (lower-state-emit (lower-oob-abort fail-start) (IrInstrJump copy-label))
+        copy-label)])
       (lower-substring-call-runtime copy-start src-ptr start-value len-value))))
 
 (define (lower-substring-check-len
@@ -1484,12 +1456,10 @@
   [copy-label : String]) : ResultLowerExpr
   (match (lower-state-alloc-var state)
     [(LowerAlloc rem-alloc rem-var)
-      (let ([rem-state
-          :
-          LowerState
-          (lower-state-emit
-            rem-alloc
-            (IrInstrBinOp rem-var IrBinSub src-len start-value (AstTyI64)))])
+      (let ([rem-state : LowerState
+        (lower-state-emit
+          rem-alloc
+          (IrInstrBinOp rem-var IrBinSub src-len start-value (AstTyI64)))])
         (match (lower-cast-value
           rem-state
           (IrValueVar rem-var)
@@ -1504,17 +1474,10 @@
               [(LowerExpr len-u-state len-u _)
                 (match (lower-state-alloc-var len-u-state)
                   [(LowerAlloc len-ok-alloc len-ok-var)
-                    (let ([len-ok-state
-                        :
-                        LowerState
-                        (lower-state-emit
-                          len-ok-alloc
-                          (IrInstrBinOp
-                            len-ok-var
-                            IrBinLe
-                            len-u
-                            rem-u
-                            (AstTyU64)))])
+                    (let ([len-ok-state : LowerState
+                      (lower-state-emit
+                        len-ok-alloc
+                        (IrInstrBinOp len-ok-var IrBinLe len-u rem-u (AstTyU64)))])
                       (lower-substring-finish-after-len-check
                         len-ok-state
                         src-ptr
@@ -1536,17 +1499,15 @@
         [(LowerExpr src-len-u-state src-len-u _)
           (match (lower-state-alloc-var src-len-u-state)
             [(LowerAlloc start-ok-alloc start-ok-var)
-              (let ([start-ok-state
-                  :
-                  LowerState
-                  (lower-state-emit
-                    start-ok-alloc
-                    (IrInstrBinOp
-                      start-ok-var
-                      IrBinLe
-                      start-u
-                      src-len-u
-                      (AstTyU64)))])
+              (let ([start-ok-state : LowerState
+                (lower-state-emit
+                  start-ok-alloc
+                  (IrInstrBinOp
+                    start-ok-var
+                    IrBinLe
+                    start-u
+                    src-len-u
+                    (AstTyU64)))])
                 (match (lower-state-fresh-label
                   start-ok-state
                   "substr_start_ok")
@@ -1559,17 +1520,15 @@
                           fail-label-state
                           "substr_ok")
                           [(LowerLabel copy-label-state copy-label)
-                            (let ([rem-start
-                                :
-                                LowerState
-                                (lower-state-finish-block
-                                  (lower-state-emit
-                                    copy-label-state
-                                    (IrInstrBranch
-                                      (IrValueVar start-ok-var)
-                                      rem-label
-                                      fail-label))
-                                  rem-label)])
+                            (let ([rem-start : LowerState
+                              (lower-state-finish-block
+                                (lower-state-emit
+                                  copy-label-state
+                                  (IrInstrBranch
+                                    (IrValueVar start-ok-var)
+                                    rem-label
+                                    fail-label))
+                                rem-label)])
                               (lower-substring-check-len
                                 rem-start
                                 src-ptr
@@ -1714,10 +1673,8 @@
     [(OkLowerArgs args-state values)
       (match (lower-state-alloc-var args-state)
         [(LowerAlloc allocated var-id)
-          (let ([instr
-              :
-              CompilerIrInstr
-              (IrInstrCall var-id name values result-ty)])
+          (let ([instr : CompilerIrInstr
+            (IrInstrCall var-id name values result-ty)])
             (OkLowerExpr
               (LowerExpr
                 (lower-state-emit-at-expr allocated instr origin)
@@ -2400,12 +2357,10 @@
         [(LowerExpr arr-state arr-value _)
           (match (lower-state-alloc-var arr-state)
             [(LowerAlloc gep-alloc gep-var)
-              (let ([gep-state
-                  :
-                  LowerState
-                  (lower-state-emit
-                    gep-alloc
-                    (IrInstrGep gep-var arr-value (IrValueI64 1) (AstTyI64)))])
+              (let ([gep-state : LowerState
+                (lower-state-emit
+                  gep-alloc
+                  (IrInstrGep gep-var arr-value (IrValueI64 1) (AstTyI64)))])
                 (match (lower-state-alloc-var gep-state)
                   [(LowerAlloc load-alloc load-var)
                     (OkLowerExpr
@@ -2486,24 +2441,20 @@
   [ok-label : String]
   [fail-label : String]
   [elem-ty : AstType]) : LowerExpr
-  (let ([fail-start
-      :
-      LowerState
-      (lower-state-finish-block
-        (lower-state-emit state (IrInstrBranch cond-val ok-label fail-label))
-        fail-label)])
+  (let ([fail-start : LowerState
+    (lower-state-finish-block
+      (lower-state-emit state (IrInstrBranch cond-val ok-label fail-label))
+      fail-label)])
     (match (lower-state-alloc-var fail-start)
       [(LowerAlloc abort-state abort-var)
-        (let ([ok-start
-            :
-            LowerState
-            (lower-state-finish-block
+        (let ([ok-start : LowerState
+          (lower-state-finish-block
+            (lower-state-emit
               (lower-state-emit
-                (lower-state-emit
-                  abort-state
-                  (IrInstrCall abort-var "tl_oob_abort" IrValueNil (AstTyUnit)))
-                (IrInstrJump ok-label))
-              ok-label)])
+                abort-state
+                (IrInstrCall abort-var "tl_oob_abort" IrValueNil (AstTyUnit)))
+              (IrInstrJump ok-label))
+            ok-label)])
           (match (lower-emit-gep ok-start arr-value (IrValueI64 0) (AstTyI64))
             [(LowerExpr buf-gep-state buf-gep _)
               (match (lower-emit-load buf-gep-state buf-gep (AstTyU64))
@@ -2613,14 +2564,12 @@
   [len-i64 : CompilerIrValue]
   [elem-size : i64]) : ResultLowerExpr
   (let ([fail-start : LowerState (lower-state-finish-block state fail-label)])
-    (let ([alloc-start
-        :
-        LowerState
-        (lower-state-finish-block
-          (lower-state-emit
-            (lower-oob-abort fail-start)
-            (IrInstrJump alloc-label))
-          alloc-label)])
+    (let ([alloc-start : LowerState
+      (lower-state-finish-block
+        (lower-state-emit
+          (lower-oob-abort fail-start)
+          (IrInstrJump alloc-label))
+        alloc-label)])
       (lower-make-array-alloc-buffer alloc-start arr-ty len-i64 elem-size))))
 
 (define (lower-make-array-from-len
@@ -2632,7 +2581,8 @@
   (let ([resolved-elem : AstType (tc-resolve-type ctx elem-ty)])
     (match (lower-cast-value state len-value len-ty (AstTyI64))
       [(LowerExpr len-state len-i64 _)
-        (let ([elem-size : i64 (lower-type-size ctx resolved-elem)]
+        (let (
+          [elem-size : i64 (lower-type-size ctx resolved-elem)]
           [arr-ty : AstType (AstTyDynArray resolved-elem)])
           (match (lower-state-fresh-label len-state "make_array_len_nonneg")
             [(LowerLabel s1 check-max-label)
@@ -2647,23 +2597,19 @@
                         len-i64
                         (AstTyBool))
                         [(LowerExpr s4 non-negative _)
-                          (let ([check-start
-                              :
-                              LowerState
-                              (lower-state-finish-block
-                                (lower-state-emit
-                                  s4
-                                  (IrInstrBranch
-                                    non-negative
-                                    check-max-label
-                                    fail-label))
-                                check-max-label)])
-                            (let ([max-len
-                                :
-                                i64
-                                (if (= elem-size 0)
-                                  9223372036854775807
-                                  (/ 9223372036854775807 elem-size))])
+                          (let ([check-start : LowerState
+                            (lower-state-finish-block
+                              (lower-state-emit
+                                s4
+                                (IrInstrBranch
+                                  non-negative
+                                  check-max-label
+                                  fail-label))
+                              check-max-label)])
+                            (let ([max-len : i64
+                              (if (= elem-size 0)
+                                9223372036854775807
+                                (/ 9223372036854775807 elem-size))])
                               (match (lower-emit-binop
                                 check-start
                                 (IrBinLe)
@@ -2864,10 +2810,8 @@
             [(OkLowerExpr lowered)
               (match lowered
                 [(LowerExpr init-state init-value init-ty)
-                  (let ([binding-ty
-                      :
-                      AstType
-                      (lower-let-binding-type ctx maybe-ty init-ty)])
+                  (let ([binding-ty : AstType
+                    (lower-let-binding-type ctx maybe-ty init-ty)])
                     (match (lower-state-alloc-var init-state)
                       [(LowerAlloc allocated var-id)
                         (lower-let-bindings
@@ -2907,12 +2851,10 @@
   [body : AstExprList]) : ResultLowerExpr
   (match (lower-state-alloc-var state)
     [(LowerAlloc mark-allocated mark-var)
-      (let ([marked-state
-          :
-          LowerState
-          (lower-state-emit
-            mark-allocated
-            (IrInstrCall mark-var "tl_region_mark" IrValueNil (AstTyU64)))])
+      (let ([marked-state : LowerState
+        (lower-state-emit
+          mark-allocated
+          (IrInstrCall mark-var "tl_region_mark" IrValueNil (AstTyU64)))])
         (match (lower-begin ctx marked-state env type-env body)
           [(OkLowerExpr lowered)
             (match lowered
@@ -2940,12 +2882,10 @@
   [merge-label : String]
   [expr-ty : AstType]) : ResultLowerExpr
   (let ([else-end-label : String (lower-state-current-label else-state)])
-    (let ([merge-start
-        :
-        LowerState
-        (lower-state-finish-block
-          (lower-state-emit else-state (IrInstrJump merge-label))
-          merge-label)])
+    (let ([merge-start : LowerState
+      (lower-state-finish-block
+        (lower-state-emit else-state (IrInstrJump merge-label))
+        merge-label)])
       (match (lower-state-alloc-var merge-start)
         [(LowerAlloc allocated var-id)
           (OkLowerExpr
@@ -3001,12 +2941,10 @@
       (match then-lowered
         [(LowerExpr then-state then-value _)
           (let ([then-end-label : String (lower-state-current-label then-state)])
-            (let ([else-start
-                :
-                LowerState
-                (lower-state-finish-block
-                  (lower-state-emit then-state (IrInstrJump merge-label))
-                  else-label)])
+            (let ([else-start : LowerState
+              (lower-state-finish-block
+                (lower-state-emit then-state (IrInstrJump merge-label))
+                else-label)])
               (lower-if-else
                 ctx
                 else-start
@@ -3038,12 +2976,10 @@
                 [(LowerLabel else-label-state else-label)
                   (match (lower-state-fresh-label else-label-state "if_merge")
                     [(LowerLabel merge-label-state merge-label)
-                      (let ([branch-state
-                          :
-                          LowerState
-                          (lower-state-emit
-                            merge-label-state
-                            (IrInstrBranch cond-value then-label else-label))])
+                      (let ([branch-state : LowerState
+                        (lower-state-emit
+                          merge-label-state
+                          (IrInstrBranch cond-value then-label else-label))])
                         (lower-if-then
                           ctx
                           (lower-state-finish-block branch-state then-label)
@@ -3069,26 +3005,20 @@
         [(LowerLabel body-label-state body-label)
           (match (lower-state-fresh-label body-label-state "while_exit")
             [(LowerLabel exit-label-state exit-label)
-              (let ([header-start
-                  :
-                  LowerState
-                  (lower-state-finish-block
-                    (lower-state-emit
-                      exit-label-state
-                      (IrInstrJump header-label))
-                    header-label)])
+              (let ([header-start : LowerState
+                (lower-state-finish-block
+                  (lower-state-emit exit-label-state (IrInstrJump header-label))
+                  header-label)])
                 (match (lower-expr ctx header-start env type-env cond)
                   [(OkLowerExpr cond-lowered)
                     (match cond-lowered
                       [(LowerExpr cond-state cond-value _)
-                        (let ([body-start
-                            :
-                            LowerState
-                            (lower-state-finish-block
-                              (lower-state-emit
-                                cond-state
-                                (IrInstrBranch cond-value body-label exit-label))
-                              body-label)])
+                        (let ([body-start : LowerState
+                          (lower-state-finish-block
+                            (lower-state-emit
+                              cond-state
+                              (IrInstrBranch cond-value body-label exit-label))
+                            body-label)])
                           (match (lower-expr ctx body-start env type-env body)
                             [(OkLowerExpr body-lowered)
                               (match body-lowered
@@ -3428,10 +3358,8 @@
                       [(OkLowerExpr body-lowered)
                         (match body-lowered
                           [(LowerExpr body-state body-value _)
-                            (let ([body-end-label
-                                :
-                                String
-                                (lower-state-current-label body-state)])
+                            (let ([body-end-label : String
+                              (lower-state-current-label body-state)])
                               (lower-match-finish
                                 (lower-state-emit
                                   body-state
@@ -3480,10 +3408,8 @@
         [(OkLowerExpr body-lowered)
           (match body-lowered
             [(LowerExpr body-state body-value _)
-              (let ([body-end-label
-                  :
-                  String
-                  (lower-state-current-label body-state)])
+              (let ([body-end-label : String
+                (lower-state-current-label body-state)])
                 (lower-match-enum-arms
                   ctx
                   (lower-state-finish-block
@@ -3526,35 +3452,31 @@
             [(OkAstTypeList fields)
               (match (lower-state-alloc-var state)
                 [(LowerAlloc eq-alloc eq-var)
-                  (let ([eq-state
-                      :
-                      LowerState
-                      (lower-state-emit
-                        eq-alloc
-                        (IrInstrBinOp
-                          eq-var
-                          IrBinEq
-                          (IrValueVar tag-var)
-                          (IrValueI64
-                            (compiler-registry-handle-child-index handle))
-                          (AstTyI64)))])
+                  (let ([eq-state : LowerState
+                    (lower-state-emit
+                      eq-alloc
+                      (IrInstrBinOp
+                        eq-var
+                        IrBinEq
+                        (IrValueVar tag-var)
+                        (IrValueI64
+                          (compiler-registry-handle-child-index handle))
+                        (AstTyI64)))])
                     (match (lower-state-fresh-label eq-state "match_arm")
                       [(LowerLabel body-label-state body-label)
                         (match (lower-state-fresh-label
                           body-label-state
                           "match_next")
                           [(LowerLabel next-label-state next-label)
-                            (let ([body-start
-                                :
-                                LowerState
-                                (lower-state-finish-block
-                                  (lower-state-emit
-                                    next-label-state
-                                    (IrInstrBranch
-                                      (IrValueVar eq-var)
-                                      body-label
-                                      next-label))
-                                  body-label)])
+                            (let ([body-start : LowerState
+                              (lower-state-finish-block
+                                (lower-state-emit
+                                  next-label-state
+                                  (IrInstrBranch
+                                    (IrValueVar eq-var)
+                                    body-label
+                                    next-label))
+                                body-label)])
                               (lower-match-variant-body
                                 ctx
                                 body-start
@@ -3592,40 +3514,31 @@
   [phi-inputs : CompilerIrPhiInputList]) : ResultLowerExpr
   (match (lower-state-alloc-var state)
     [(LowerAlloc eq-alloc eq-var)
-      (let ([eq-state
-          :
-          LowerState
-          (lower-state-emit
-            eq-alloc
-            (IrInstrBinOp
-              eq-var
-              IrBinEq
-              (IrValueVar scrut-var)
-              (lower-literal-value lit)
-              scrut-ty))])
+      (let ([eq-state : LowerState
+        (lower-state-emit
+          eq-alloc
+          (IrInstrBinOp
+            eq-var
+            IrBinEq
+            (IrValueVar scrut-var)
+            (lower-literal-value lit)
+            scrut-ty))])
         (match (lower-state-fresh-label eq-state "match_arm")
           [(LowerLabel body-label-state body-label)
             (match (lower-state-fresh-label body-label-state "match_next")
               [(LowerLabel next-label-state next-label)
-                (let ([body-start
-                    :
-                    LowerState
-                    (lower-state-finish-block
-                      (lower-state-emit
-                        next-label-state
-                        (IrInstrBranch
-                          (IrValueVar eq-var)
-                          body-label
-                          next-label))
-                      body-label)])
+                (let ([body-start : LowerState
+                  (lower-state-finish-block
+                    (lower-state-emit
+                      next-label-state
+                      (IrInstrBranch (IrValueVar eq-var) body-label next-label))
+                    body-label)])
                   (match (lower-expr ctx body-start env type-env body)
                     [(OkLowerExpr body-lowered)
                       (match body-lowered
                         [(LowerExpr body-state body-value _)
-                          (let ([body-end-label
-                              :
-                              String
-                              (lower-state-current-label body-state)])
+                          (let ([body-end-label : String
+                            (lower-state-current-label body-state)])
                             (lower-match-arms
                               ctx
                               (lower-state-finish-block
@@ -3658,15 +3571,12 @@
   [phi-inputs : CompilerIrPhiInputList]) : ResultLowerExpr
   (match arm
     [(AstMatchArm pat body)
-      (let ([body-env
-          :
-          SymI64Env
+      (let (
+        [body-env : SymI64Env
           (match pat
             [(AstPatBinding name) (sym-i64-bind env name scrut-var)]
             [_ env])]
-        [body-type-env
-          :
-          TcTypeEnv
+        [body-type-env : TcTypeEnv
           (match pat
             [(AstPatBinding name) (tc-bind type-env name scrut-ty)]
             [_ type-env])])
@@ -3674,10 +3584,8 @@
           [(OkLowerExpr body-lowered)
             (match body-lowered
               [(LowerExpr body-state body-value _)
-                (let ([body-end-label
-                    :
-                    String
-                    (lower-state-current-label body-state)])
+                (let ([body-end-label : String
+                  (lower-state-current-label body-state)])
                   (lower-match-finish
                     (lower-state-emit body-state (IrInstrJump merge-label))
                     merge-label
@@ -3744,15 +3652,12 @@
   [body : AstExpr]
   [spans : CompilerSourceSpans]) : ResultLowerFunction
   (let ([param-count : i64 (lower-param-count params)])
-    (let ([env : SymI64Env (lower-bind-params params 0 (sym-i64-empty))]
+    (let (
+      [env : SymI64Env (lower-bind-params params 0 (sym-i64-empty))]
       [type-env : TcTypeEnv (tc-bind-params ctx top-env params)]
-      [function-spans
-        :
-        CompilerSourceSpans
+      [function-spans : CompilerSourceSpans
         (lower-record-function-span spans name body)]
-      [state
-        :
-        LowerState
+      [state : LowerState
         (LowerState
           param-count
           0
@@ -3766,12 +3671,10 @@
         [(OkLowerExpr lowered)
           (match lowered
             [(LowerExpr body-state value _)
-              (let ([final-state
-                  :
-                  LowerState
-                  (lower-state-emit
-                    body-state
-                    (IrInstrReturn (lower-return-maybe value ret-ty)))])
+              (let ([final-state : LowerState
+                (lower-state-emit
+                  body-state
+                  (IrInstrReturn (lower-return-maybe value ret-ty)))])
                 (OkLowerFunction
                   (IrFunction
                     name

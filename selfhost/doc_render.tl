@@ -38,7 +38,10 @@
   (or (doc-render-alpha? c) (or (doc-render-digit? c) (or (= c #-') (= c #_')))))
 
 (define (doc-render-anchor [name : String]) : String
-  (let ([i : i64 0] [n : i64 (string-length name)] [out : String "tl-"])
+  (let (
+    [i : i64 0]
+    [n : i64 (string-length name)]
+    [out : String "tl-"])
     (begin
       (while (< i n)
         (let ([c : char (string-ref name i)])
@@ -80,7 +83,10 @@
                           (substring text idx 1))))))))))))))
 
 (define (doc-render-escape-markdown [text : String]) : String
-  (let ([i : i64 0] [n : i64 (string-length text)] [out : String ""])
+  (let (
+    [i : i64 0]
+    [n : i64 (string-length text)]
+    [out : String ""])
     (begin
       (while (< i n)
         (begin
@@ -102,7 +108,8 @@
     (string-append (doc-render-escape-markdown doc-text) "\n")))
 
 (define (doc-render-item-heading [item : DocItem]) : String
-  (let ([name : String (doc-item-name item)]
+  (let (
+    [name : String (doc-item-name item)]
     [anchor : String (doc-render-anchor (doc-item-name item))])
     (string-append
       "<a id=\""
@@ -164,7 +171,8 @@
         (doc-render-module-nav rest))]))
 
 (define (doc-render-module-section [module : DocModule]) : String
-  (let ([path : String (doc-module-path module)]
+  (let (
+    [path : String (doc-module-path module)]
     [docs : DocExtraction (doc-module-docs module)])
     (string-append
       "<a id=\""
@@ -308,13 +316,10 @@ _No documented declarations._
 ")
 
 (define (doc-render-smoke) : i64
-  (let ([rendered
-      :
-      String
+  (let (
+    [rendered : String
       (doc-render-markdown (doc-extract-source (doc-render-smoke-source)))]
-    [empty-rendered
-      :
-      String
+    [empty-rendered : String
       (doc-render-markdown (doc-extract-source "(define hidden : i64 1)\n"))])
     (if (string-eq rendered (doc-render-smoke-expected))
       (if (string-eq empty-rendered (doc-render-empty-expected))

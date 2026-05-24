@@ -44,7 +44,9 @@
                         (or (= c #>') (or (= c #$') (or (= c #%') (= c #&'))))))))))))))))
 
 (define (front-scan-ident-end [src : String] [start : i64] [n : i64]) : i64
-  (let ([j : i64 (+ start 1)] [keep : bool true])
+  (let (
+    [j : i64 (+ start 1)]
+    [keep : bool true])
     (begin
       (while keep
         (if (< j n)
@@ -64,7 +66,10 @@
         false))))
 
 (define (front-scan-number-end [src : String] [start : i64] [n : i64]) : i64
-  (let ([j : i64 start] [seen-dot : bool false] [keep : bool true])
+  (let (
+    [j : i64 start]
+    [seen-dot : bool false]
+    [keep : bool true])
     (begin
       (while keep
         (if (< j n)
@@ -80,7 +85,10 @@
       j)))
 
 (define (front-strip-underscores [text : String]) : String
-  (let ([i : i64 0] [n : i64 (string-length text)] [out : String ""])
+  (let (
+    [i : i64 0]
+    [n : i64 (string-length text)]
+    [out : String ""])
     (begin
       (while (< i n)
         (begin
@@ -91,7 +99,10 @@
       out)))
 
 (define (front-has-dot? [text : String]) : bool
-  (let ([i : i64 0] [n : i64 (string-length text)] [found : bool false])
+  (let (
+    [i : i64 0]
+    [n : i64 (string-length text)]
+    [found : bool false])
     (begin
       (while (and (< i n) (not found))
         (begin
@@ -102,7 +113,9 @@
       found)))
 
 (define (front-trim-float-len [text : String]) : i64
-  (let ([end : i64 (string-length text)] [keep : bool true])
+  (let (
+    [end : i64 (string-length text)]
+    [keep : bool true])
     (begin
       (while keep
         (if (> end 0)
@@ -178,7 +191,8 @@
     [(ErrLexChar message) (front-step-error message)]))
 
 (define (front-scan-token [src : String] [i : i64] [n : i64]) : FrontScanStep
-  (let ([c : char (string-ref src i)]
+  (let (
+    [c : char (string-ref src i)]
     [step : FrontScanStep (front-step-ok i)]
     [handled : bool false])
     (begin
@@ -313,7 +327,8 @@
       step)))
 
 (define (front-tokenize-string [src : String]) : i64
-  (let ([i : i64 0]
+  (let (
+    [i : i64 0]
     [n : i64 (string-length src)]
     [status : i64 0]
     [keep : bool true])
@@ -613,7 +628,9 @@
     (begin
       (front-usage)
       1)
-    (let ([mode : String (arg 1)] [path : String (arg 2)])
+    (let (
+      [mode : String (arg 1)]
+      [path : String (arg 2)])
       (if (string-eq mode "tokenize")
         (front-tokenize-file path)
         (if (string-eq mode "parse")

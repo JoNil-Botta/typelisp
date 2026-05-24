@@ -28,7 +28,9 @@
 
 (define (string-trim-left [s : String]) : String
   (let ([n : i64 (string-length s)])
-    (let ([i : i64 0] [done : bool false])
+    (let (
+      [i : i64 0]
+      [done : bool false])
       (begin
         (while (and (not done) (< i n))
           (if (is-char-whitespace (string-ref s i))
@@ -40,7 +42,9 @@
 
 (define (string-trim-right [s : String]) : String
   (let ([n : i64 (string-length s)])
-    (let ([i : i64 (- n 1)] [done : bool false])
+    (let (
+      [i : i64 (- n 1)]
+      [done : bool false])
       (begin
         (while (and (not done) (>= i 0))
           (if (is-char-whitespace (string-ref s i))
@@ -56,13 +60,16 @@
 ;; Return true if haystack contains needle at any position.
 
 (define (string-contains [haystack : String] [needle : String]) : bool
-  (let ([hlen : i64 (string-length haystack)]
+  (let (
+    [hlen : i64 (string-length haystack)]
     [nlen : i64 (string-length needle)])
     (if (= nlen 0)
       true
       (if (> nlen hlen)
         false
-        (let ([found : bool false] [i : i64 0])
+        (let (
+          [found : bool false]
+          [i : i64 0])
           (begin
             (while (and (not found) (<= i (- hlen nlen)))
               (if (is-string-prefix-at haystack needle i)
@@ -73,7 +80,10 @@
 ;; Return true if haystack contains the character c.
 
 (define (string-contains-char [haystack : String] [c : char]) : bool
-  (let ([n : i64 (string-length haystack)] [found : bool false] [i : i64 0])
+  (let (
+    [n : i64 (string-length haystack)]
+    [found : bool false]
+    [i : i64 0])
     (begin
       (while (and (not found) (< i n))
         (if (char-eq (string-ref haystack i) c)
@@ -89,7 +99,8 @@
 
 (define (string-replace [s : String] [old : String] [new : String]) : String
   (if (string-contains s old)
-    (let ([hlen : i64 (string-length s)]
+    (let (
+      [hlen : i64 (string-length s)]
       [olen : i64 (string-length old)]
       [i : i64 0]
       [found : bool false])
@@ -109,13 +120,16 @@
   [haystack : String]
   [needle : String]
   [start : i64]) : bool
-  (let ([hlen : i64 (string-length haystack)]
+  (let (
+    [hlen : i64 (string-length haystack)]
     [nlen : i64 (string-length needle)])
     (if (< start 0)
       false
       (if (> (+ start nlen) hlen)
         false
-        (let ([ok : bool true] [j : i64 0])
+        (let (
+          [ok : bool true]
+          [j : i64 0])
           (begin
             (while (and ok (< j nlen))
               (if (char-eq

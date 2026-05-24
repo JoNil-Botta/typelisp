@@ -158,7 +158,9 @@
 ;; `string-ref` (boolean `and` is not a short-circuit guard in lowered code).
 
 (define (scan-int-end [src : String] [start : i64] [n : i64]) : i64
-  (let ([j : i64 start] [keep : bool true])
+  (let (
+    [j : i64 start]
+    [keep : bool true])
     (begin
       (while keep
         (if (< j n)
@@ -206,7 +208,9 @@
 ;; `src`. Same bounds-check discipline as `scan-int-end`.
 
 (define (scan-symbol-end [src : String] [start : i64] [n : i64]) : i64
-  (let ([j : i64 start] [keep : bool true])
+  (let (
+    [j : i64 start]
+    [keep : bool true])
     (begin
       (while keep
         (if (< j n)
@@ -231,7 +235,10 @@
 ;; scanners.
 
 (define (scan-str-end-result [src : String] [start : i64] [n : i64]) : ResultLexI64
-  (let ([j : i64 start] [keep : bool true] [message : String ""])
+  (let (
+    [j : i64 start]
+    [keep : bool true]
+    [message : String ""])
     (begin
       (while keep
         (if (< j n)
@@ -275,7 +282,9 @@
               (substring src idx 1))))))))
 
 (define (unescape-string-literal [src : String] [start : i64] [end : i64]) : String
-  (let ([i : i64 start] [out : String ""])
+  (let (
+    [i : i64 start]
+    [out : String ""])
     (begin
       (while (< i end)
         (let ([c : char (string-ref src i)])
@@ -303,7 +312,9 @@
 ;; discipline as the other scanners.
 
 (define (scan-comment-end [src : String] [start : i64] [n : i64]) : i64
-  (let ([j : i64 start] [keep : bool true])
+  (let (
+    [j : i64 start]
+    [keep : bool true])
     (begin
       (while keep
         (if (< j n)
@@ -329,7 +340,9 @@
 ;; Return the end index (exclusive) of a named char's alphabetic name.
 
 (define (scan-char-name-end [src : String] [start : i64] [n : i64]) : i64
-  (let ([j : i64 start] [keep : bool true])
+  (let (
+    [j : i64 start]
+    [keep : bool true])
     (begin
       (while keep
         (if (< j n)
@@ -487,7 +500,8 @@
                     (ErrLexI64 "lexer: unexpected character")))))))))))
 
 (define (lex-check-spanned [src : String]) : ResultLexCheck
-  (let ([i : i64 0]
+  (let (
+    [i : i64 0]
     [n : i64 (string-length src)]
     [message : String ""]
     [err-pos : i64 0])
@@ -534,7 +548,10 @@
   [src : String]
   [toks : (Array Token)]
   [starts : (Array i64)]) : i64
-  (let ([i : i64 0] [n : i64 (string-length src)] [count : i64 0])
+  (let (
+    [i : i64 0]
+    [n : i64 (string-length src)]
+    [count : i64 0])
     (begin
       (while (< i n)
         (let ([c : char (string-ref src i)])
@@ -648,7 +665,9 @@
 ;; `idx`.
 
 (define (index-line [src : String] [idx : i64]) : i64
-  (let ([line : i64 1] [k : i64 0])
+  (let (
+    [line : i64 1]
+    [k : i64 0])
     (begin
       (while (< k idx)
         (begin
@@ -663,7 +682,9 @@
 ;; first column is 1).
 
 (define (index-col [src : String] [idx : i64]) : i64
-  (let ([col : i64 1] [k : i64 0])
+  (let (
+    [col : i64 1]
+    [k : i64 0])
     (begin
       (while (< k idx)
         (begin
@@ -693,7 +714,9 @@
         (set! k (+ k 1))))))
 
 (define (source-error-at [src : String] [idx : i64] [message : String]) : SourceError
-  (let ([line : i64 (index-line src idx)] [col : i64 (index-col src idx)])
+  (let (
+    [line : i64 (index-line src idx)]
+    [col : i64 (index-col src idx)])
     (SourceError message (SourceSpan line col line col))))
 
 ;; `lex-spanned-result : (-> String ResultSpannedTokens)` - lex into a token +
@@ -706,13 +729,12 @@
   (match (lex-check-spanned src)
     [(OkLexCheck _)
       (let ([cap : i64 (+ (string-length src) 1)])
-        (let ([toks : (Array Token) (make-array Token cap)]
+        (let (
+          [toks : (Array Token) (make-array Token cap)]
           [starts : (Array i64) (make-array i64 cap)])
           (let ([count : i64 (lex-into-spanned src toks starts)])
-            (let ([stoks
-                :
-                (Array SpannedToken)
-                (make-array SpannedToken (+ count 1))])
+            (let ([stoks : (Array SpannedToken)
+              (make-array SpannedToken (+ count 1))])
               (begin
                 (fill-spanned src toks starts stoks (+ count 1))
                 (OkSpannedTokens stoks))))))]
@@ -800,7 +822,9 @@
       (string-append (lex-backslash-text) (lex-quote-text)))))
 
 (define (lex-string-escapes-ok?) : bool
-  (let ([slash : String (lex-backslash-text)] [quote : String (lex-quote-text)])
+  (let (
+    [slash : String (lex-backslash-text)]
+    [quote : String (lex-quote-text)])
     (and
       (lex-string-token-ok? (lex-string-source "hello\\nworld") "hello\nworld")
       (and

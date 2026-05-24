@@ -100,9 +100,8 @@
   (render-doc-width (format-core-source-doc src) width))
 
 (define (format-core-self-test) : i64
-  (let ([flat
-      :
-      String
+  (let (
+    [flat : String
       (format-core-render-source-width "(foo [bar 1] baz)\n; leading\n(qux)" 80)]
     [narrow : String (format-core-render-source-width "(alpha beta gamma)" 10)]
     [commented : String (format-core-render-source-width "(a ; note\n b)" 80)]

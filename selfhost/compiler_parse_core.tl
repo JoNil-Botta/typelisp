@@ -351,80 +351,46 @@
   (let ([e1 : SymI64Env (sym-i64-bind e "+" (compiler-parse-tag-bin-add))])
     (let ([e2 : SymI64Env (sym-i64-bind e1 "-" (compiler-parse-tag-bin-sub))])
       (let ([e3 : SymI64Env (sym-i64-bind e2 "*" (compiler-parse-tag-bin-mul))])
-        (let ([e4
-            :
-            SymI64Env
-            (sym-i64-bind e3 "/" (compiler-parse-tag-bin-div))])
-          (let ([e5
-              :
-              SymI64Env
-              (sym-i64-bind e4 "%" (compiler-parse-tag-bin-mod))])
-            (let ([e6
-                :
-                SymI64Env
-                (sym-i64-bind e5 "=" (compiler-parse-tag-bin-eq))])
-              (let ([e7
-                  :
-                  SymI64Env
-                  (sym-i64-bind e6 "!=" (compiler-parse-tag-bin-ne))])
-                (let ([e8
-                    :
-                    SymI64Env
-                    (sym-i64-bind e7 "<" (compiler-parse-tag-bin-lt))])
-                  (let ([e9
-                      :
-                      SymI64Env
-                      (sym-i64-bind e8 "<=" (compiler-parse-tag-bin-le))])
-                    (let ([e10
-                        :
-                        SymI64Env
-                        (sym-i64-bind e9 ">" (compiler-parse-tag-bin-gt))])
-                      (let ([e11
-                          :
-                          SymI64Env
-                          (sym-i64-bind e10 ">=" (compiler-parse-tag-bin-ge))])
-                        (let ([e12
-                            :
-                            SymI64Env
-                            (sym-i64-bind
-                              e11
-                              "and"
-                              (compiler-parse-tag-bin-and))])
-                          (let ([e13
-                              :
-                              SymI64Env
+        (let ([e4 : SymI64Env
+          (sym-i64-bind e3 "/" (compiler-parse-tag-bin-div))])
+          (let ([e5 : SymI64Env
+            (sym-i64-bind e4 "%" (compiler-parse-tag-bin-mod))])
+            (let ([e6 : SymI64Env
+              (sym-i64-bind e5 "=" (compiler-parse-tag-bin-eq))])
+              (let ([e7 : SymI64Env
+                (sym-i64-bind e6 "!=" (compiler-parse-tag-bin-ne))])
+                (let ([e8 : SymI64Env
+                  (sym-i64-bind e7 "<" (compiler-parse-tag-bin-lt))])
+                  (let ([e9 : SymI64Env
+                    (sym-i64-bind e8 "<=" (compiler-parse-tag-bin-le))])
+                    (let ([e10 : SymI64Env
+                      (sym-i64-bind e9 ">" (compiler-parse-tag-bin-gt))])
+                      (let ([e11 : SymI64Env
+                        (sym-i64-bind e10 ">=" (compiler-parse-tag-bin-ge))])
+                        (let ([e12 : SymI64Env
+                          (sym-i64-bind e11 "and" (compiler-parse-tag-bin-and))])
+                          (let ([e13 : SymI64Env
+                            (sym-i64-bind e12 "or" (compiler-parse-tag-bin-or))])
+                            (let ([e14 : SymI64Env
                               (sym-i64-bind
-                                e12
-                                "or"
-                                (compiler-parse-tag-bin-or))])
-                            (let ([e14
-                                :
-                                SymI64Env
+                                e13
+                                "bit-and"
+                                (compiler-parse-tag-bin-bit-and))])
+                              (let ([e15 : SymI64Env
                                 (sym-i64-bind
-                                  e13
-                                  "bit-and"
-                                  (compiler-parse-tag-bin-bit-and))])
-                              (let ([e15
-                                  :
-                                  SymI64Env
+                                  e14
+                                  "bit-or"
+                                  (compiler-parse-tag-bin-bit-or))])
+                                (let ([e16 : SymI64Env
                                   (sym-i64-bind
-                                    e14
-                                    "bit-or"
-                                    (compiler-parse-tag-bin-bit-or))])
-                                (let ([e16
-                                    :
-                                    SymI64Env
+                                    e15
+                                    "bit-xor"
+                                    (compiler-parse-tag-bin-bit-xor))])
+                                  (let ([e17 : SymI64Env
                                     (sym-i64-bind
-                                      e15
-                                      "bit-xor"
-                                      (compiler-parse-tag-bin-bit-xor))])
-                                  (let ([e17
-                                      :
-                                      SymI64Env
-                                      (sym-i64-bind
-                                        e16
-                                        "shl"
-                                        (compiler-parse-tag-bin-shl))])
+                                      e16
+                                      "shl"
+                                      (compiler-parse-tag-bin-shl))])
                                     (sym-i64-bind
                                       e17
                                       "shr"
@@ -440,83 +406,52 @@
     (let ([e2 : SymI64Env (sym-i64-bind e1 "i32" (compiler-parse-tag-ty-i32))])
       (let ([e3 : SymI64Env (sym-i64-bind e2 "i16" (compiler-parse-tag-ty-i16))])
         (let ([e4 : SymI64Env (sym-i64-bind e3 "i8" (compiler-parse-tag-ty-i8))])
-          (let ([e5
-              :
-              SymI64Env
-              (sym-i64-bind e4 "u64" (compiler-parse-tag-ty-u64))])
-            (let ([e6
-                :
-                SymI64Env
-                (sym-i64-bind e5 "u32" (compiler-parse-tag-ty-u32))])
-              (let ([e7
-                  :
-                  SymI64Env
-                  (sym-i64-bind e6 "u16" (compiler-parse-tag-ty-u16))])
-                (let ([e8
-                    :
-                    SymI64Env
-                    (sym-i64-bind e7 "u8" (compiler-parse-tag-ty-u8))])
-                  (let ([e9
-                      :
-                      SymI64Env
-                      (sym-i64-bind e8 "f64" (compiler-parse-tag-ty-f64))])
-                    (let ([e10
-                        :
-                        SymI64Env
-                        (sym-i64-bind e9 "f32" (compiler-parse-tag-ty-f32))])
-                      (let ([e11
-                          :
-                          SymI64Env
-                          (sym-i64-bind e10 "bool" (compiler-parse-tag-ty-bool))])
-                        (let ([e12
-                            :
-                            SymI64Env
+          (let ([e5 : SymI64Env
+            (sym-i64-bind e4 "u64" (compiler-parse-tag-ty-u64))])
+            (let ([e6 : SymI64Env
+              (sym-i64-bind e5 "u32" (compiler-parse-tag-ty-u32))])
+              (let ([e7 : SymI64Env
+                (sym-i64-bind e6 "u16" (compiler-parse-tag-ty-u16))])
+                (let ([e8 : SymI64Env
+                  (sym-i64-bind e7 "u8" (compiler-parse-tag-ty-u8))])
+                  (let ([e9 : SymI64Env
+                    (sym-i64-bind e8 "f64" (compiler-parse-tag-ty-f64))])
+                    (let ([e10 : SymI64Env
+                      (sym-i64-bind e9 "f32" (compiler-parse-tag-ty-f32))])
+                      (let ([e11 : SymI64Env
+                        (sym-i64-bind e10 "bool" (compiler-parse-tag-ty-bool))])
+                        (let ([e12 : SymI64Env
+                          (sym-i64-bind e11 "char" (compiler-parse-tag-ty-char))])
+                          (let ([e13 : SymI64Env
                             (sym-i64-bind
-                              e11
-                              "char"
-                              (compiler-parse-tag-ty-char))])
-                          (let ([e13
-                              :
-                              SymI64Env
+                              e12
+                              "String"
+                              (compiler-parse-tag-ty-string))])
+                            (let ([e14 : SymI64Env
                               (sym-i64-bind
-                                e12
-                                "String"
-                                (compiler-parse-tag-ty-string))])
-                            (let ([e14
-                                :
-                                SymI64Env
+                                e13
+                                "unit"
+                                (compiler-parse-tag-unit))])
+                              (let ([e15 : SymI64Env
                                 (sym-i64-bind
-                                  e13
-                                  "unit"
-                                  (compiler-parse-tag-unit))])
-                              (let ([e15
-                                  :
-                                  SymI64Env
+                                  e14
+                                  "never"
+                                  (compiler-parse-tag-ty-never))])
+                                (let ([e16 : SymI64Env
                                   (sym-i64-bind
-                                    e14
-                                    "never"
-                                    (compiler-parse-tag-ty-never))])
-                                (let ([e16
-                                    :
-                                    SymI64Env
+                                    e15
+                                    "->"
+                                    (compiler-parse-tag-ty-func))])
+                                  (let ([e17 : SymI64Env
                                     (sym-i64-bind
-                                      e15
-                                      "->"
-                                      (compiler-parse-tag-ty-func))])
-                                  (let ([e17
-                                      :
-                                      SymI64Env
+                                      e16
+                                      "Tuple"
+                                      (compiler-parse-tag-ty-tuple))])
+                                    (let ([e18 : SymI64Env
                                       (sym-i64-bind
-                                        e16
-                                        "Tuple"
-                                        (compiler-parse-tag-ty-tuple))])
-                                    (let ([e18
-                                        :
-                                        SymI64Env
-                                        (sym-i64-bind
-                                          e17
-                                          "Array"
-                                          (compiler-parse-tag-ty-array))])
+                                        e17
+                                        "Array"
+                                        (compiler-parse-tag-ty-array))])
                                       (sym-i64-bind
                                         e18
                                         "in"
@@ -525,104 +460,67 @@
 (define (compiler-parse-dispatch-exprs [e : SymI64Env]) : SymI64Env
   (let ([e1 : SymI64Env (sym-i64-bind e "if" (compiler-parse-tag-expr-if))])
     (let ([e2 : SymI64Env (sym-i64-bind e1 "let" (compiler-parse-tag-expr-let))])
-      (let ([e3
-          :
-          SymI64Env
-          (sym-i64-bind e2 "lambda" (compiler-parse-tag-expr-lambda))])
-        (let ([e4
-            :
-            SymI64Env
-            (sym-i64-bind e3 "while" (compiler-parse-tag-expr-while))])
-          (let ([e5
-              :
-              SymI64Env
-              (sym-i64-bind e4 "begin" (compiler-parse-tag-expr-begin))])
-            (let ([e6
-                :
-                SymI64Env
-                (sym-i64-bind e5 "set!" (compiler-parse-tag-expr-set))])
-              (let ([e7
-                  :
-                  SymI64Env
-                  (sym-i64-bind e6 "ann" (compiler-parse-tag-expr-ann))])
-                (let ([e8
-                    :
-                    SymI64Env
-                    (sym-i64-bind e7 "cast" (compiler-parse-tag-expr-cast))])
-                  (let ([e9
-                      :
-                      SymI64Env
-                      (sym-i64-bind e8 "cond" (compiler-parse-tag-expr-cond))])
-                    (let ([e10
-                        :
-                        SymI64Env
+      (let ([e3 : SymI64Env
+        (sym-i64-bind e2 "lambda" (compiler-parse-tag-expr-lambda))])
+        (let ([e4 : SymI64Env
+          (sym-i64-bind e3 "while" (compiler-parse-tag-expr-while))])
+          (let ([e5 : SymI64Env
+            (sym-i64-bind e4 "begin" (compiler-parse-tag-expr-begin))])
+            (let ([e6 : SymI64Env
+              (sym-i64-bind e5 "set!" (compiler-parse-tag-expr-set))])
+              (let ([e7 : SymI64Env
+                (sym-i64-bind e6 "ann" (compiler-parse-tag-expr-ann))])
+                (let ([e8 : SymI64Env
+                  (sym-i64-bind e7 "cast" (compiler-parse-tag-expr-cast))])
+                  (let ([e9 : SymI64Env
+                    (sym-i64-bind e8 "cond" (compiler-parse-tag-expr-cond))])
+                    (let ([e10 : SymI64Env
+                      (sym-i64-bind e9 "tuple" (compiler-parse-tag-expr-tuple))])
+                      (let ([e11 : SymI64Env
                         (sym-i64-bind
-                          e9
-                          "tuple"
-                          (compiler-parse-tag-expr-tuple))])
-                      (let ([e11
-                          :
-                          SymI64Env
+                          e10
+                          "tuple-ref"
+                          (compiler-parse-tag-expr-tuple-ref))])
+                        (let ([e12 : SymI64Env
                           (sym-i64-bind
-                            e10
-                            "tuple-ref"
-                            (compiler-parse-tag-expr-tuple-ref))])
-                        (let ([e12
-                            :
-                            SymI64Env
+                            e11
+                            "array"
+                            (compiler-parse-tag-expr-array))])
+                          (let ([e13 : SymI64Env
                             (sym-i64-bind
-                              e11
-                              "array"
-                              (compiler-parse-tag-expr-array))])
-                          (let ([e13
-                              :
-                              SymI64Env
+                              e12
+                              "make-array"
+                              (compiler-parse-tag-expr-make-array))])
+                            (let ([e14 : SymI64Env
                               (sym-i64-bind
-                                e12
-                                "make-array"
-                                (compiler-parse-tag-expr-make-array))])
-                            (let ([e14
-                                :
-                                SymI64Env
+                                e13
+                                "array-ref"
+                                (compiler-parse-tag-expr-array-ref))])
+                              (let ([e15 : SymI64Env
                                 (sym-i64-bind
-                                  e13
-                                  "array-ref"
-                                  (compiler-parse-tag-expr-array-ref))])
-                              (let ([e15
-                                  :
-                                  SymI64Env
+                                  e14
+                                  "array-set!"
+                                  (compiler-parse-tag-expr-array-set))])
+                                (let ([e18 : SymI64Env
                                   (sym-i64-bind
-                                    e14
-                                    "array-set!"
-                                    (compiler-parse-tag-expr-array-set))])
-                                (let ([e18
-                                    :
-                                    SymI64Env
+                                    e15
+                                    "match"
+                                    (compiler-parse-tag-expr-match))])
+                                  (let ([e19 : SymI64Env
                                     (sym-i64-bind
-                                      e15
-                                      "match"
-                                      (compiler-parse-tag-expr-match))])
-                                  (let ([e19
-                                      :
-                                      SymI64Env
+                                      e18
+                                      "foreach"
+                                      (compiler-parse-tag-expr-foreach))])
+                                    (let ([e20 : SymI64Env
                                       (sym-i64-bind
-                                        e18
-                                        "foreach"
-                                        (compiler-parse-tag-expr-foreach))])
-                                    (let ([e20
-                                        :
-                                        SymI64Env
+                                        e19
+                                        "struct-get"
+                                        (compiler-parse-tag-expr-struct-get))])
+                                      (let ([e21 : SymI64Env
                                         (sym-i64-bind
-                                          e19
-                                          "struct-get"
-                                          (compiler-parse-tag-expr-struct-get))])
-                                      (let ([e21
-                                          :
-                                          SymI64Env
-                                          (sym-i64-bind
-                                            e20
-                                            "comptime"
-                                            (compiler-parse-tag-expr-comptime))])
+                                          e20
+                                          "comptime"
+                                          (compiler-parse-tag-expr-comptime))])
                                         (sym-i64-bind
                                           e21
                                           "with-region"
@@ -630,33 +528,21 @@
 
 (define (compiler-parse-dispatch-patterns [e : SymI64Env]) : SymI64Env
   (let ([e1 : SymI64Env (sym-i64-bind e "true" (compiler-parse-tag-lit-true))])
-    (let ([e2
-        :
-        SymI64Env
-        (sym-i64-bind e1 "false" (compiler-parse-tag-lit-false))])
+    (let ([e2 : SymI64Env
+      (sym-i64-bind e1 "false" (compiler-parse-tag-lit-false))])
       (sym-i64-bind e2 "_" (compiler-parse-tag-pattern-wildcard)))))
 
 (define (compiler-parse-dispatch-decls [e : SymI64Env]) : SymI64Env
-  (let ([e1
-      :
-      SymI64Env
-      (sym-i64-bind e "define" (compiler-parse-tag-decl-define))])
-    (let ([e2
-        :
-        SymI64Env
-        (sym-i64-bind e1 "extern" (compiler-parse-tag-decl-extern))])
-      (let ([e3
-          :
-          SymI64Env
-          (sym-i64-bind e2 "defenum" (compiler-parse-tag-decl-defenum))])
-        (let ([e4
-            :
-            SymI64Env
-            (sym-i64-bind e3 "defstruct" (compiler-parse-tag-decl-defstruct))])
-          (let ([e5
-              :
-              SymI64Env
-              (sym-i64-bind e4 "import" (compiler-parse-tag-decl-import))])
+  (let ([e1 : SymI64Env
+    (sym-i64-bind e "define" (compiler-parse-tag-decl-define))])
+    (let ([e2 : SymI64Env
+      (sym-i64-bind e1 "extern" (compiler-parse-tag-decl-extern))])
+      (let ([e3 : SymI64Env
+        (sym-i64-bind e2 "defenum" (compiler-parse-tag-decl-defenum))])
+        (let ([e4 : SymI64Env
+          (sym-i64-bind e3 "defstruct" (compiler-parse-tag-decl-defstruct))])
+          (let ([e5 : SymI64Env
+            (sym-i64-bind e4 "import" (compiler-parse-tag-decl-import))])
             (sym-i64-bind
               e5
               "comptime-decl"
@@ -1665,7 +1551,8 @@
 (define (parse-ast-repl-source [src : String]) : ResultAstReplItem
   (match (lex-spanned-result src)
     [(OkSpannedTokens toks)
-      (let ([cur : (Array i64) (make-array i64 1)]
+      (let (
+        [cur : (Array i64) (make-array i64 1)]
         [dispatch : SymI64Env (parse-ast-program-dispatch)])
         (begin
           (array-set! cur 0 0)

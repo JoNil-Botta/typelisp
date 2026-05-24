@@ -56,10 +56,8 @@
 (define (doc-test-file
   [input-path : String]
   [stdlib-roots : CompilerLoadRootList]) : i64
-  (let ([report
-      :
-      DocTestRunReport
-      (doc-test-run-file-with-roots input-path stdlib-roots)])
+  (let ([report : DocTestRunReport
+    (doc-test-run-file-with-roots input-path stdlib-roots)])
     (begin
       (if (doc-test-run-report-ok? report)
         (print-string (string-append (doc-test-run-report-render report) "\n"))

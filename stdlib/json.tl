@@ -98,7 +98,10 @@
     false))
 
 (define (json-skip-ws [text : String] [pos : i64]) : i64
-  (let ([i : i64 pos] [n : i64 (string-length text)] [done : bool false])
+  (let (
+    [i : i64 pos]
+    [n : i64 (string-length text)]
+    [done : bool false])
     (begin
       (while (not done)
         (if (< i n)
@@ -109,11 +112,14 @@
       i)))
 
 (define (json-string-prefix-at? [text : String] [prefix : String] [start : i64]) : bool
-  (let ([text-len : i64 (string-length text)]
+  (let (
+    [text-len : i64 (string-length text)]
     [prefix-len : i64 (string-length prefix)])
     (if (> (+ start prefix-len) text-len)
       false
-      (let ([i : i64 0] [ok : bool true])
+      (let (
+        [i : i64 0]
+        [ok : bool true])
         (begin
           (while (and ok (< i prefix-len))
             (if (=
@@ -234,7 +240,8 @@
       (json-control-escape code))))
 
 (define (json-escape-string [text : String]) : String
-  (let ([n : i64 (string-length text)]
+  (let (
+    [n : i64 (string-length text)]
     [i : i64 0]
     [segment-start : i64 0]
     [out : String ""])
@@ -267,10 +274,8 @@
   (match items
     [(JsonMemberListNil) ""]
     [(JsonMemberListCons key value rest)
-      (let ([item
-          :
-          String
-          (json-cat4 "\"" (json-escape-string key) "\":" (json-stringify value))])
+      (let ([item : String
+        (json-cat4 "\"" (json-escape-string key) "\":" (json-stringify value))])
         (match rest
           [(JsonMemberListNil) item]
           [(JsonMemberListCons _ _ _)
@@ -305,7 +310,11 @@
   (let ([n : i64 (string-length text)])
     (if (> (+ pos 4) n)
       (ErrJsonParseEscape "json: unterminated unicode escape")
-      (let ([j : i64 0] [value : i64 0] [ok : bool true] [message : String ""])
+      (let (
+        [j : i64 0]
+        [value : i64 0]
+        [ok : bool true]
+        [message : String ""])
         (begin
           (while (and ok (< j 4))
             (let ([digit : i64 (json-hex-value (string-ref text (+ pos j)))])
@@ -346,7 +355,8 @@
 (define (json-parse-string [text : String] [pos : i64]) : JsonParseStringResult
   (if (not (json-char-code-eq-at text pos 34))
     (ErrJsonParseString "json: expected string")
-    (let ([n : i64 (string-length text)]
+    (let (
+      [n : i64 (string-length text)]
       [i : i64 (+ pos 1)]
       [segment-start : i64 (+ pos 1)]
       [out : String ""]
@@ -399,7 +409,9 @@
           (ErrJsonParseString message))))))
 
 (define (json-consume-digits [text : String] [pos : i64]) : i64
-  (let ([i : i64 pos] [done : bool false])
+  (let (
+    [i : i64 pos]
+    [done : bool false])
     (begin
       (while (not done)
         (if (json-digit-at? text i)
@@ -408,7 +420,8 @@
       i)))
 
 (define (json-parse-number [text : String] [pos : i64]) : JsonParseValueResult
-  (let ([n : i64 (string-length text)]
+  (let (
+    [n : i64 (string-length text)]
     [i : i64 pos]
     [ok : bool true]
     [message : String ""])
@@ -479,7 +492,8 @@
     (ErrJsonParseValue "json: expected keyword")))
 
 (define (json-parse-array [text : String] [pos : i64]) : JsonParseValueResult
-  (let ([i : i64 (json-skip-ws text (+ pos 1))]
+  (let (
+    [i : i64 (json-skip-ws text (+ pos 1))]
     [items : JsonList JsonListNil]
     [ok : bool true]
     [done : bool false]
@@ -514,7 +528,8 @@
         (ErrJsonParseValue message)))))
 
 (define (json-parse-object [text : String] [pos : i64]) : JsonParseValueResult
-  (let ([i : i64 (json-skip-ws text (+ pos 1))]
+  (let (
+    [i : i64 (json-skip-ws text (+ pos 1))]
     [members : JsonMemberList JsonMemberListNil]
     [ok : bool true]
     [done : bool false]
@@ -560,7 +575,9 @@
         (ErrJsonParseValue message)))))
 
 (define (json-parse-value [text : String] [pos : i64]) : JsonParseValueResult
-  (let ([i : i64 (json-skip-ws text pos)] [n : i64 (string-length text)])
+  (let (
+    [i : i64 (json-skip-ws text pos)]
+    [n : i64 (string-length text)])
     (if (>= i n)
       (ErrJsonParseValue "json: expected JSON value")
       (let ([code : i64 (json-char-code-at text i)])

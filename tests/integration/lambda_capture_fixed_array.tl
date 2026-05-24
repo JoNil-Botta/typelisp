@@ -16,7 +16,8 @@
   (= ((make-reader)) 42))
 
 (define (case-immediate) : bool
-  (let ([a : (Array i64 4) (array 10 20 30 42)]
+  (let (
+    [a : (Array i64 4) (array 10 20 30 42)]
     [f : (-> i64) (lambda () : i64 (array-ref a 3))])
     (= (f) 42)))
 

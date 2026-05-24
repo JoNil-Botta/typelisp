@@ -74,7 +74,8 @@
   (foreach ([i : i64 0 n]) (array-set! gs i (cast (+ i 1) : i32))))
 
 (define (main) : i64
-  (let ([n : i64 5]
+  (let (
+    [n : i64 5]
     [xs : (Array i64) (make-array i64 5)]
     [fs : (Array f64) (make-array f64 5)]
     [gs : (Array i32) (make-array i32 5)])

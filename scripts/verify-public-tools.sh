@@ -254,6 +254,7 @@ char_literal
 comments
 decls
 flow
+let_bindings
 negative_int
 EOF
 }

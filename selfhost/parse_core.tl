@@ -82,38 +82,22 @@
                 (let ([e7 : SymI64Env (sym-i64-bind e6 "+" (parse-tag-add))])
                   (let ([e8 : SymI64Env (sym-i64-bind e7 "-" (parse-tag-sub))])
                     (let ([e9 : SymI64Env (sym-i64-bind e8 "*" (parse-tag-mul))])
-                      (let ([e10
-                          :
-                          SymI64Env
-                          (sym-i64-bind e9 "<" (parse-tag-lt))])
-                        (let ([e11
-                            :
-                            SymI64Env
-                            (sym-i64-bind e10 "=" (parse-tag-eq))])
-                          (let ([e12
-                              :
-                              SymI64Env
-                              (sym-i64-bind e11 "<=" (parse-tag-le))])
-                            (let ([e13
-                                :
-                                SymI64Env
-                                (sym-i64-bind e12 ">" (parse-tag-gt))])
-                              (let ([e14
-                                  :
-                                  SymI64Env
-                                  (sym-i64-bind e13 ">=" (parse-tag-ge))])
-                                (let ([e15
-                                    :
-                                    SymI64Env
-                                    (sym-i64-bind e14 "!=" (parse-tag-ne))])
-                                  (let ([e16
-                                      :
-                                      SymI64Env
-                                      (sym-i64-bind e15 "and" (parse-tag-and))])
-                                    (let ([e17
-                                        :
-                                        SymI64Env
-                                        (sym-i64-bind e16 "or" (parse-tag-or))])
+                      (let ([e10 : SymI64Env
+                        (sym-i64-bind e9 "<" (parse-tag-lt))])
+                        (let ([e11 : SymI64Env
+                          (sym-i64-bind e10 "=" (parse-tag-eq))])
+                          (let ([e12 : SymI64Env
+                            (sym-i64-bind e11 "<=" (parse-tag-le))])
+                            (let ([e13 : SymI64Env
+                              (sym-i64-bind e12 ">" (parse-tag-gt))])
+                              (let ([e14 : SymI64Env
+                                (sym-i64-bind e13 ">=" (parse-tag-ge))])
+                                (let ([e15 : SymI64Env
+                                  (sym-i64-bind e14 "!=" (parse-tag-ne))])
+                                  (let ([e16 : SymI64Env
+                                    (sym-i64-bind e15 "and" (parse-tag-and))])
+                                    (let ([e17 : SymI64Env
+                                      (sym-i64-bind e16 "or" (parse-tag-or))])
                                       (sym-i64-bind e17 "not" (parse-tag-not)))))))))))))))))))))
 
 (define (parse-dispatch-tag [dispatch : SymI64Env] [op : String]) : i64

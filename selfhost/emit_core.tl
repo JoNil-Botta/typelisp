@@ -146,7 +146,10 @@
               (octal-escape k))))))))
 
 (define (escape-string [text : String]) : String
-  (let ([i : i64 0] [n : i64 (string-length text)] [out : String ""])
+  (let (
+    [i : i64 0]
+    [n : i64 (string-length text)]
+    [out : String ""])
     (begin
       (while (< i n)
         (let ([k : i64 (char-code (string-ref text i))])
@@ -336,7 +339,8 @@
   [c : Expr]
   [t : Expr]
   [e : Expr]) : String
-  (let ([lelse : String (fresh-label lc ".Lelse_")]
+  (let (
+    [lelse : String (fresh-label lc ".Lelse_")]
     [lend : String (fresh-label lc ".Lend_")])
     (string-append
       (emit-expr-in strings env depth lc c)
@@ -371,7 +375,8 @@
   [lc : (Array i64)]
   [c : Expr]
   [body : Expr]) : String
-  (let ([lhead : String (fresh-label lc ".Lwhile_")]
+  (let (
+    [lhead : String (fresh-label lc ".Lwhile_")]
     [lend : String (fresh-label lc ".Lwend_")])
     (string-append
       lhead
@@ -429,10 +434,8 @@
   [lc : (Array i64)]
   [name : String]
   [args : ExprList]) : String
-  (let ([argc
-      :
-      i64
-      (checked-max-six (expr-list-count args) "emit: too many call args")])
+  (let ([argc : i64
+    (checked-max-six (expr-list-count args) "emit: too many call args")])
     (string-append
       (emit-call-arg-pushes strings env depth lc args)
       (string-append
@@ -527,10 +530,8 @@
 (define (emit-def [strings : StrList] [lc : (Array i64)] [item : Item]) : String
   (match item
     [(IDefFn name params body)
-      (let ([nparams
-          :
-          i64
-          (checked-max-six (str-list-count params) "emit: too many params")])
+      (let ([nparams : i64
+        (checked-max-six (str-list-count params) "emit: too many params")])
         (let ([frame : i64 (function-frame-size params body)])
           (string-append
             name
@@ -597,7 +598,8 @@
 ;; `emit-program` stays as the no-define compatibility wrapper.
 
 (define (emit-program-with-defs [defs : ItemList] [e : Expr]) : String
-  (let ([frame : i64 (frame-size e)]
+  (let (
+    [frame : i64 (frame-size e)]
     [strings : StrList (collect-strings e (collect-items-strings defs SLNil))]
     [lc : (Array i64) (make-array i64 1)])
     (begin

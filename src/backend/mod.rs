@@ -901,8 +901,10 @@ fn validate_function(
                 Instruction::LaneId { .. }
                 | Instruction::Splat { .. }
                 | Instruction::VectorCompare { .. }
+                | Instruction::VectorReduce { .. }
                 | Instruction::MaskBinOp { .. }
                 | Instruction::MaskNot { .. }
+                | Instruction::MaskReduce { .. }
                 | Instruction::Select { .. }
                 | Instruction::PredicatedStore { .. }
                 | Instruction::TailMask { .. } => {
@@ -2715,6 +2717,8 @@ impl X86_64Backend {
             | Instruction::Load { src, .. }
             | Instruction::Branch { cond: src, .. }
             | Instruction::Splat { value: src, .. }
+            | Instruction::VectorReduce { src, .. }
+            | Instruction::MaskReduce { src, .. }
             | Instruction::MaskNot { src, .. } => {
                 Self::collect_function_value(src, names);
             }
@@ -5152,8 +5156,10 @@ impl X86_64Backend {
             | Instruction::Splat { .. }
             | Instruction::VectorBinOp { .. }
             | Instruction::VectorCompare { .. }
+            | Instruction::VectorReduce { .. }
             | Instruction::MaskBinOp { .. }
             | Instruction::MaskNot { .. }
+            | Instruction::MaskReduce { .. }
             | Instruction::Select { .. }
             | Instruction::VectorLoad { .. }
             | Instruction::VectorStore { .. }
@@ -7084,6 +7090,40 @@ mod tests {
             externs: vec![],
         })
         .expect_err("scalar backend should reject vector/mask IR");
+        assert!(
+            err.contains("vector/mask IR requires a SIMD backend target"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_reject_vector_reduction_ir_before_codegen() {
+        let err = generate_assembly(&Program {
+            functions: vec![Function {
+                name: "main".into(),
+                params: vec![],
+                ret: Type::I64,
+                locals: vec![(0, Type::I64)],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![
+                        Instruction::VectorReduce {
+                            dst: 0,
+                            op: VectorReduceOp::Sum,
+                            src: Value::ConstI64(1),
+                            lanes: 4,
+                            elem_ty: Type::I64,
+                        },
+                        Instruction::Return(Some(Value::Var(0))),
+                    ],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![],
+        })
+        .expect_err("scalar backend should reject vector reduction IR");
         assert!(
             err.contains("vector/mask IR requires a SIMD backend target"),
             "unexpected error: {}",

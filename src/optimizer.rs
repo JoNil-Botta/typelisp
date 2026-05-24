@@ -681,6 +681,9 @@ impl Optimizer {
                 Self::add_value_uses(lhs, used);
                 Self::add_value_uses(rhs, used);
             }
+            Instruction::VectorReduce { src, .. } | Instruction::MaskReduce { src, .. } => {
+                Self::add_value_uses(src, used)
+            }
             Instruction::MaskNot { src, .. } => Self::add_value_uses(src, used),
             Instruction::Select {
                 mask,
@@ -951,6 +954,9 @@ impl Optimizer {
                 substitute(lhs);
                 substitute(rhs);
             }
+            Instruction::VectorReduce { src, .. } | Instruction::MaskReduce { src, .. } => {
+                substitute(src)
+            }
             Instruction::MaskNot { src, .. } => substitute(src),
             Instruction::Select {
                 mask,
@@ -1007,9 +1013,11 @@ impl Optimizer {
             | Instruction::LaneId { dst, .. }
             | Instruction::Splat { dst, .. }
             | Instruction::VectorBinOp { dst, .. }
+            | Instruction::VectorReduce { dst, .. }
             | Instruction::VectorCompare { dst, .. }
             | Instruction::MaskBinOp { dst, .. }
             | Instruction::MaskNot { dst, .. }
+            | Instruction::MaskReduce { dst, .. }
             | Instruction::Select { dst, .. }
             | Instruction::VectorLoad { dst, .. }
             | Instruction::TailMask { dst, .. }
@@ -1096,7 +1104,10 @@ impl CseValue {
 
 #[cfg(test)]
 mod tests {
-    use crate::ir::{BasicBlock, BinOp, Function, Instruction, MaskBinOp, Program, UnOp, Value};
+    use crate::ir::{
+        BasicBlock, BinOp, Function, Instruction, MaskBinOp, MaskReduceOp, Program, UnOp, Value,
+        VectorReduceOp,
+    };
     use crate::lower::lower_program;
     use crate::parser::parse;
     use crate::types::Type;
@@ -1955,6 +1966,126 @@ mod tests {
     }
 
     #[test]
+    fn test_vector_reduction_ir_is_not_cse_rewritten_by_scalar_optimizer() {
+        let vec_ty = Type::Vector(Box::new(Type::I64), 4);
+        let mut program = Program {
+            functions: vec![Function {
+                name: "f".into(),
+                params: vec![(0, vec_ty)],
+                ret: Type::Unit,
+                locals: vec![(1, Type::I64), (2, Type::I64)],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![
+                        Instruction::VectorReduce {
+                            dst: 1,
+                            op: VectorReduceOp::Sum,
+                            src: Value::Var(0),
+                            lanes: 4,
+                            elem_ty: Type::I64,
+                        },
+                        Instruction::VectorReduce {
+                            dst: 2,
+                            op: VectorReduceOp::Sum,
+                            src: Value::Var(0),
+                            lanes: 4,
+                            elem_ty: Type::I64,
+                        },
+                        Instruction::Return(None),
+                    ],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![],
+        };
+
+        Optimizer::optimize(&mut program);
+
+        let instrs = &program.functions[0].blocks[0].instructions;
+        assert_eq!(
+            instrs
+                .iter()
+                .filter(|instr| matches!(instr, Instruction::VectorReduce { .. }))
+                .count(),
+            2,
+            "vector reductions need explicit vector-aware CSE: {instrs:?}"
+        );
+        assert!(
+            !instrs
+                .iter()
+                .any(|instr| matches!(instr, Instruction::Mov { dst: 2, .. })),
+            "scalar CSE must not rewrite vector reduction to a move: {instrs:?}"
+        );
+    }
+
+    #[test]
+    fn test_vector_reduce_result_clears_stale_scalar_constant() {
+        let vec_ty = Type::Vector(Box::new(Type::I64), 4);
+        let mut program = Program {
+            functions: vec![Function {
+                name: "f".into(),
+                params: vec![(0, vec_ty)],
+                ret: Type::I64,
+                locals: vec![(1, Type::I64), (2, Type::I64)],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![
+                        Instruction::Mov {
+                            dst: 1,
+                            src: Value::ConstI64(10),
+                            ty: Type::I64,
+                        },
+                        Instruction::VectorReduce {
+                            dst: 1,
+                            op: VectorReduceOp::Sum,
+                            src: Value::Var(0),
+                            lanes: 4,
+                            elem_ty: Type::I64,
+                        },
+                        Instruction::BinOp {
+                            dst: 2,
+                            op: BinOp::Add,
+                            lhs: Value::Var(1),
+                            rhs: Value::ConstI64(1),
+                            ty: Type::I64,
+                        },
+                        Instruction::Return(Some(Value::Var(2))),
+                    ],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![],
+        };
+
+        Optimizer::optimize(&mut program);
+
+        let instrs = &program.functions[0].blocks[0].instructions;
+        assert!(
+            instrs.iter().any(|instr| matches!(
+                instr,
+                Instruction::BinOp {
+                    lhs: Value::Var(1),
+                    ..
+                }
+            )),
+            "vector reduction result must clear stale scalar constants: {instrs:?}"
+        );
+        assert!(
+            !instrs.iter().any(|instr| matches!(
+                instr,
+                Instruction::Mov {
+                    dst: 2,
+                    src: Value::ConstI64(11),
+                    ..
+                }
+            )),
+            "scalar folding must not reuse constants overwritten by reductions: {instrs:?}"
+        );
+    }
+
+    #[test]
     fn test_vector_copy_is_not_propagated_by_scalar_optimizer() {
         let vec_ty = Type::Vector(Box::new(Type::I64), 4);
         let mut func = Function {
@@ -2030,6 +2161,43 @@ mod tests {
             func.blocks[0].instructions[1],
             Instruction::MaskBinOp {
                 lhs: Value::Var(2),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_mask_reduce_does_not_receive_propagated_mask_copy() {
+        let mut func = Function {
+            name: "f".into(),
+            params: vec![(0, Type::Mask(4))],
+            ret: Type::Unit,
+            locals: vec![(1, Type::Mask(4)), (2, Type::Bool)],
+            blocks: vec![BasicBlock {
+                label: "entry".into(),
+                instructions: vec![
+                    Instruction::Mov {
+                        dst: 1,
+                        src: Value::Var(0),
+                        ty: Type::Mask(4),
+                    },
+                    Instruction::MaskReduce {
+                        dst: 2,
+                        op: MaskReduceOp::Any,
+                        src: Value::Var(1),
+                        lanes: 4,
+                    },
+                    Instruction::Return(None),
+                ],
+            }],
+            entry: "entry".into(),
+        };
+
+        assert!(!Optimizer::copy_propagation(&mut func));
+        assert!(matches!(
+            func.blocks[0].instructions[1],
+            Instruction::MaskReduce {
+                src: Value::Var(1),
                 ..
             }
         ));

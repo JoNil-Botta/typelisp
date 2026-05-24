@@ -932,6 +932,28 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
                 "token.tl",
             ],
         },
+        // refs #447: first selfhost backend emitter over the real compiler IR.
+        // The smoke parses, typechecks, lowers, emits deterministic Linux x86_64
+        // assembly text, and verifies representative labels/instructions.
+        Case {
+            name: "compiler_backend_smoke",
+            exit_code: 42,
+            stdout: "",
+            deps: &[
+                "compiler_backend.tl",
+                "compiler_lower.tl",
+                "compiler_ir_types.tl",
+                "compiler_typecheck.tl",
+                "compiler_symbols.tl",
+                "compiler_parse_core.tl",
+                "compiler_ast_types.tl",
+                "sym_i64_env.tl",
+                "text_buf.tl",
+                "read.tl",
+                "lex.tl",
+                "token.tl",
+            ],
+        },
         // refs #387: selfhost doc comment extraction over TypeLisp source.
         // The smoke checks module docs, supported item docs, ignored ordinary
         // comments, blank-line clearing, and unattached EOF docs.
@@ -3152,6 +3174,7 @@ fn source_path_for_case(manifest_dir: &PathBuf, name: &str) -> PathBuf {
         "compiler_symbols_smoke" => "compiler_symbols_smoke.tl",
         "compiler_typecheck_smoke" => "compiler_typecheck_smoke.tl",
         "compiler_lower_smoke" => "compiler_lower_smoke.tl",
+        "compiler_backend_smoke" => "compiler_backend_smoke.tl",
         "doc_extract_smoke" => "doc_extract_smoke.tl",
         "doc_render_smoke" => "doc_render_smoke.tl",
         "tl_read" => "read.tl",

@@ -458,6 +458,13 @@
                 (+ offset (lower-type-size ctx resolved)))))]
         [(AstTypeNil) (ErrLowerState "lower: constructor arity mismatch")])]))
 
+(define (lower-literal-payload-supported? [lit : AstLiteral]) : bool
+  (match lit
+    [(AstLitInt _) true]
+    [(AstLitBool _) true]
+    [(AstLitChar _) true]
+    [_ false]))
+
 ;; Bind a matched variant's payload fields. Irrefutable subpatterns (wildcard,
 
 ;; binding) just load/bind; a refutable literal subpattern (#651) loads the
@@ -525,38 +532,41 @@
                           (ErrLowerEnv
                             "lower: internal enum payload load failed")])])]
                 [(AstPatLiteral lit)
-                  (match (lower-load-at-offset state base offset resolved)
-                    [(LowerExpr load-state field-value _)
-                      (match (lower-state-alloc-var load-state)
-                        [(LowerAlloc eq-alloc eq-var)
-                          (match (lower-state-fresh-label
-                            (lower-state-emit
-                              eq-alloc
-                              (IrInstrBinOp
-                                eq-var
-                                IrBinEq
-                                field-value
-                                (lower-literal-value lit)
-                                resolved))
-                            "payload_ok")
-                            [(LowerLabel ok-state ok-label)
-                              (lower-bind-variant-payloads
-                                ctx
-                                (lower-state-finish-block
-                                  (lower-state-emit
-                                    ok-state
-                                    (IrInstrBranch
-                                      (IrValueVar eq-var)
-                                      ok-label
-                                      fail-label))
-                                  ok-label)
-                                env
-                                type-env
-                                base
-                                rest-patterns
-                                rest-types
-                                next-cursor
-                                fail-label)])])])]
+                  (if (lower-literal-payload-supported? lit)
+                    (match (lower-load-at-offset state base offset resolved)
+                      [(LowerExpr load-state field-value _)
+                        (match (lower-state-alloc-var load-state)
+                          [(LowerAlloc eq-alloc eq-var)
+                            (match (lower-state-fresh-label
+                              (lower-state-emit
+                                eq-alloc
+                                (IrInstrBinOp
+                                  eq-var
+                                  IrBinEq
+                                  field-value
+                                  (lower-literal-value lit)
+                                  resolved))
+                              "payload_ok")
+                              [(LowerLabel ok-state ok-label)
+                                (lower-bind-variant-payloads
+                                  ctx
+                                  (lower-state-finish-block
+                                    (lower-state-emit
+                                      ok-state
+                                      (IrInstrBranch
+                                        (IrValueVar eq-var)
+                                        ok-label
+                                        fail-label))
+                                    ok-label)
+                                  env
+                                  type-env
+                                  base
+                                  rest-patterns
+                                  rest-types
+                                  next-cursor
+                                  fail-label)])])])
+                    (ErrLowerEnv
+                      "lower: unsupported enum payload literal pattern type"))]
                 [_
                   (ErrLowerEnv
                     "lower: unsupported enum payload pattern (nested variant subpatterns not yet supported)")])))]
@@ -2966,6 +2976,15 @@
     [None 5]))
 (define (main) : i64 0)")
 
+(define (compiler-lower-enum-string-literal-payload-source) : String
+  "(defenum Token (TIdent String) (TEnd))
+(define (classify [t : Token]) : i64
+  (match t
+    [(TIdent \"if\") 10]
+    [(TIdent _) 1]
+    [TEnd 0]))
+(define (main) : i64 0)")
+
 (define (compiler-lower-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(OkCompilerLower _) true]
@@ -3193,8 +3212,12 @@
         (compiler-lower-match-phi-shape-ok? (compiler-lower-match-source))
         (and
           (and
-            (compiler-lower-ok? (compiler-lower-enum-match-source))
-            (compiler-lower-ok? (compiler-lower-enum-literal-payload-source)))
+            (and
+              (compiler-lower-ok? (compiler-lower-enum-match-source))
+              (compiler-lower-ok? (compiler-lower-enum-literal-payload-source)))
+            (compiler-lower-error-ok?
+              (compiler-lower-enum-string-literal-payload-source)
+              "lower: unsupported enum payload literal pattern type"))
           (and
             (compiler-lower-enum-match-shape-ok?
               (compiler-lower-enum-match-source))

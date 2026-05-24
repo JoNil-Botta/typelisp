@@ -802,19 +802,29 @@ fn substitute_type_params(
     if type_subs.is_empty() {
         return Ok(expr.clone());
     }
-    let go = |e: &Expr| substitute_type_params(e, type_subs);
+    substitute_type_params_with_shadow(expr, type_subs, &HashSet::new())
+}
+
+fn substitute_type_params_with_shadow(
+    expr: &Expr,
+    type_subs: &HashMap<String, Type>,
+    shadowed: &HashSet<String>,
+) -> Result<Expr, SpecializeError> {
+    let go = |e: &Expr| substitute_type_params_with_shadow(e, type_subs, shadowed);
     match expr {
         Expr::Spanned { expr: inner, span } => Ok(Expr::spanned(go(inner)?, *span)),
         // Observing a type parameter as a runtime value is rejected before
         // lowering: a type value has no runtime representation.
-        Expr::Var(name) if type_subs.contains_key(name) => Err(SpecializeError::at(
-            format!(
-                "type-valued comptime parameter '{}' cannot be used as a runtime value; \
+        Expr::Var(name) if type_subs.contains_key(name) && !shadowed.contains(name) => {
+            Err(SpecializeError::at(
+                format!(
+                    "type-valued comptime parameter '{}' cannot be used as a runtime value; \
                  it is only consumable in the element type of a `make-array` form",
-                name
-            ),
-            expr.span(),
-        )),
+                    name
+                ),
+                expr.span(),
+            ))
+        }
         Expr::Var(_) | Expr::Literal(_) | Expr::TypeLiteral { .. } => Ok(expr.clone()),
         Expr::Binary { op, lhs, rhs } => Ok(Expr::Binary {
             op: *op,
@@ -841,18 +851,29 @@ fn substitute_type_params(
             then_branch: Box::new(go(then_branch)?),
             else_branch: Box::new(go(else_branch)?),
         }),
-        Expr::Let { bindings, body } => Ok(Expr::Let {
-            bindings: bindings
-                .iter()
-                .map(|(name, ty, value)| {
-                    if let Some(ty) = ty {
-                        reject_type_param_use(ty, type_subs, value.span(), "a let binding type")?;
-                    }
-                    Ok((name.clone(), ty.clone(), go(value)?))
-                })
-                .collect::<Result<_, SpecializeError>>()?,
-            body: Box::new(go(body)?),
-        }),
+        Expr::Let { bindings, body } => {
+            let mut current_shadowed = shadowed.clone();
+            let mut rewritten_bindings = Vec::with_capacity(bindings.len());
+            for (name, ty, value) in bindings {
+                if let Some(ty) = ty {
+                    reject_type_param_use(ty, type_subs, value.span(), "a let binding type")?;
+                }
+                rewritten_bindings.push((
+                    name.clone(),
+                    ty.clone(),
+                    substitute_type_params_with_shadow(value, type_subs, &current_shadowed)?,
+                ));
+                current_shadowed.insert(name.clone());
+            }
+            Ok(Expr::Let {
+                bindings: rewritten_bindings,
+                body: Box::new(substitute_type_params_with_shadow(
+                    body,
+                    type_subs,
+                    &current_shadowed,
+                )?),
+            })
+        }
         Expr::Lambda { params, ret, body } => {
             for (_, ty) in params {
                 reject_type_param_use(ty, type_subs, body.span(), "a lambda parameter type")?;
@@ -860,10 +881,18 @@ fn substitute_type_params(
             if let Some(ret) = ret {
                 reject_type_param_use(ret, type_subs, body.span(), "a lambda return type")?;
             }
+            let mut body_shadowed = shadowed.clone();
+            for (name, _) in params {
+                body_shadowed.insert(name.clone());
+            }
             Ok(Expr::Lambda {
                 params: params.clone(),
                 ret: ret.clone(),
-                body: Box::new(go(body)?),
+                body: Box::new(substitute_type_params_with_shadow(
+                    body,
+                    type_subs,
+                    &body_shadowed,
+                )?),
             })
         }
         Expr::Tuple(elems) => Ok(Expr::Tuple(elems.iter().map(go).collect::<Result<_, _>>()?)),
@@ -915,7 +944,14 @@ fn substitute_type_params(
             scrutinee: Box::new(go(scrutinee)?),
             arms: arms
                 .iter()
-                .map(|(pat, body)| Ok((pat.clone(), go(body)?)))
+                .map(|(pat, body)| {
+                    let mut arm_shadowed = shadowed.clone();
+                    collect_pattern_bindings(pat, &mut arm_shadowed);
+                    Ok((
+                        pat.clone(),
+                        substitute_type_params_with_shadow(body, type_subs, &arm_shadowed)?,
+                    ))
+                })
                 .collect::<Result<_, SpecializeError>>()?,
         }),
         Expr::Foreach {
@@ -926,12 +962,18 @@ fn substitute_type_params(
             body,
         } => {
             reject_type_param_use(index_ty, type_subs, body.span(), "a loop index type")?;
+            let mut body_shadowed = shadowed.clone();
+            body_shadowed.insert(index.clone());
             Ok(Expr::Foreach {
                 index: index.clone(),
                 index_ty: index_ty.clone(),
                 start: Box::new(go(start)?),
                 end: Box::new(go(end)?),
-                body: Box::new(go(body)?),
+                body: Box::new(substitute_type_params_with_shadow(
+                    body,
+                    type_subs,
+                    &body_shadowed,
+                )?),
             })
         }
         Expr::SpmdReduce {
@@ -944,6 +986,8 @@ fn substitute_type_params(
             value,
         } => {
             reject_type_param_use(index_ty, type_subs, value.span(), "a loop index type")?;
+            let mut value_shadowed = shadowed.clone();
+            value_shadowed.insert(index.clone());
             Ok(Expr::SpmdReduce {
                 op: *op,
                 index: index.clone(),
@@ -951,7 +995,11 @@ fn substitute_type_params(
                 start: Box::new(go(start)?),
                 end: Box::new(go(end)?),
                 init: Box::new(go(init)?),
-                value: Box::new(go(value)?),
+                value: Box::new(substitute_type_params_with_shadow(
+                    value,
+                    type_subs,
+                    &value_shadowed,
+                )?),
             })
         }
         Expr::StructGet { expr: inner, field } => Ok(Expr::StructGet {
@@ -1284,6 +1332,40 @@ mod tests {
             "got: {}",
             err.msg
         );
+    }
+
+    #[test]
+    fn type_valued_param_let_binding_can_shadow_runtime_name() {
+        let program = parse(
+            "(define (pick [comptime T : type] [x : i64]) : i64
+               (let ([T : i64 1]) T))
+             (define (main) : i64 (pick (type i64) 0))",
+        )
+        .unwrap();
+        specialize_program(&program).unwrap();
+    }
+
+    #[test]
+    fn type_valued_param_match_binding_can_shadow_runtime_name() {
+        let program = parse(
+            "(defenum Box (Box i64))
+             (define (unbox [comptime T : type] [b : Box]) : i64
+               (match b [(Box T) T]))
+             (define (main) : i64 (unbox (type i64) (Box 7)))",
+        )
+        .unwrap();
+        specialize_program(&program).unwrap();
+    }
+
+    #[test]
+    fn type_valued_param_loop_index_can_shadow_runtime_name() {
+        let program = parse(
+            "(define (sum [comptime T : type] [n : i64]) : i64
+               (spmd-reduce sum ([T : i64 0 n]) 0 T))
+             (define (main) : i64 (sum (type i64) 4))",
+        )
+        .unwrap();
+        specialize_program(&program).unwrap();
     }
 
     #[test]

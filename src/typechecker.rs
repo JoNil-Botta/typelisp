@@ -202,6 +202,38 @@ impl TypeChecker {
         self.structs.resolve_type(&self.enums.resolve_type(ty))
     }
 
+    fn resolve_type_checked(&self, ty: &Type, span: Span) -> Result<Type, TypeError> {
+        let resolved = self.resolve_type(ty);
+        Self::reject_unresolved_type_vars(&resolved, span)?;
+        Ok(resolved)
+    }
+
+    fn reject_unresolved_type_vars(ty: &Type, span: Span) -> Result<(), TypeError> {
+        match ty {
+            Type::Var(name) if name == "type" => Err(TypeError::at(
+                "unsupported type kind 'type'; comptime type values are not implemented yet",
+                span,
+            )),
+            Type::Var(name) => Err(TypeError::at(format!("unknown type name '{}'", name), span)),
+            Type::Func(args, ret) => {
+                for arg in args {
+                    Self::reject_unresolved_type_vars(arg, span)?;
+                }
+                Self::reject_unresolved_type_vars(ret, span)
+            }
+            Type::Tuple(elems) => {
+                for elem in elems {
+                    Self::reject_unresolved_type_vars(elem, span)?;
+                }
+                Ok(())
+            }
+            Type::Array(elem, _) | Type::DynArray(elem) | Type::Vector(elem, _) => {
+                Self::reject_unresolved_type_vars(elem, span)
+            }
+            _ => Ok(()),
+        }
+    }
+
     fn lookup(&self, name: &str) -> Option<Type> {
         for scope in self.env.iter().rev() {
             if let Some(ty) = scope.get(name) {
@@ -619,10 +651,10 @@ impl TypeChecker {
             if let Decl::DefEnum { name, variants } = decl {
                 for v in variants {
                     for f in &v.fields {
-                        let resolved = self.enums.resolve_type(f);
                         // A direct self-reference (`Type::Enum(name)`) is the
                         // supported case; skip it. Only flag recursion buried
                         // inside an inline-carrying compound type.
+                        let resolved = self.resolve_type_checked(f, Span::default())?;
                         if type_mentions_enum_indirectly(&resolved, name) {
                             return Err(TypeError::at(
                                 format!(
@@ -646,7 +678,11 @@ impl TypeChecker {
         for decl in &prog.decls {
             if let Decl::DefEnum { name, variants } = decl {
                 for v in variants {
-                    let fields: Vec<Type> = v.fields.iter().map(|t| self.resolve_type(t)).collect();
+                    let fields: Vec<Type> = v
+                        .fields
+                        .iter()
+                        .map(|t| self.resolve_type_checked(t, Span::default()))
+                        .collect::<Result<_, _>>()?;
                     let ctor_ty = if fields.is_empty() {
                         Type::Enum(name.clone())
                     } else {
@@ -664,7 +700,10 @@ impl TypeChecker {
         for decl in &prog.decls {
             if let Decl::DefStruct { name, fields } = decl {
                 for f in fields {
-                    if type_mentions_struct(&self.resolve_type(&f.ty), name) {
+                    if type_mentions_struct(
+                        &self.resolve_type_checked(&f.ty, Span::default())?,
+                        name,
+                    ) {
                         return Err(TypeError::at(
                             format!(
                                 "recursive struct '{}' (field '{}') is not yet supported \
@@ -685,8 +724,10 @@ impl TypeChecker {
         // enum variant constructor.
         for decl in &prog.decls {
             if let Decl::DefStruct { name, fields } = decl {
-                let field_tys: Vec<Type> =
-                    fields.iter().map(|f| self.resolve_type(&f.ty)).collect();
+                let field_tys: Vec<Type> = fields
+                    .iter()
+                    .map(|f| self.resolve_type_checked(&f.ty, Span::default()))
+                    .collect::<Result<_, _>>()?;
                 let ctor_ty = Type::Func(field_tys, Box::new(Type::Struct(name.clone())));
                 self.bind(name.clone(), ctor_ty);
             }
@@ -697,7 +738,7 @@ impl TypeChecker {
             match decl {
                 Decl::Def { name, ty, value } => {
                     let inferred = if let Some(ty) = ty {
-                        let ty = self.resolve_type(ty);
+                        let ty = self.resolve_type_checked(ty, value.span())?;
                         let val_ty = self.check_expr(value)?;
                         if !self.type_compatible(&ty, &val_ty) {
                             return Err(TypeError::at(
@@ -729,11 +770,11 @@ impl TypeChecker {
                     name,
                     params,
                     ret,
-                    // The body is checked in the second pass below; this pass
-                    // only binds the function signature.
-                    body: _,
+                    // The body expression is checked in the second pass below;
+                    // this pass only uses its span for signature diagnostics.
+                    body,
                 } => {
-                    let ret = self.resolve_type(ret);
+                    let ret = self.resolve_type_checked(ret, body.span())?;
                     // Returning enum / String / DynArray values is now supported:
                     // the lowerer heap-promotes (via `tl_alloc`) the storage for
                     // aggregate constructors that can escape via `return`, so the
@@ -743,13 +784,16 @@ impl TypeChecker {
                     // global initializers use the same hidden-function return
                     // path, so their aggregate results are heap-promoted too.
                     let func_ty = Type::Func(
-                        params.iter().map(|(_, t)| self.resolve_type(t)).collect(),
+                        params
+                            .iter()
+                            .map(|(_, t)| self.resolve_type_checked(t, body.span()))
+                            .collect::<Result<_, _>>()?,
                         Box::new(ret),
                     );
                     self.bind(name.clone(), func_ty);
                 }
                 Decl::Extern { name, ty } => {
-                    let ty = self.resolve_type(ty);
+                    let ty = self.resolve_type_checked(ty, Span::default())?;
                     self.bind(name.clone(), ty);
                 }
                 Decl::DefEnum { .. } => {}
@@ -773,9 +817,9 @@ impl TypeChecker {
             {
                 self.push_scope();
                 for (param, ty) in params {
-                    self.bind(param.clone(), self.resolve_type(ty));
+                    self.bind(param.clone(), self.resolve_type_checked(ty, body.span())?);
                 }
-                let ret = self.resolve_type(ret);
+                let ret = self.resolve_type_checked(ret, body.span())?;
                 let old_ret = self.func_ret.clone();
                 self.func_ret = Some(ret.clone());
                 let body_ty = self.check_expr(body)?;
@@ -1046,7 +1090,10 @@ impl TypeChecker {
                 self.push_scope();
                 for (name, ty, value) in bindings {
                     let val_ty = self.check_expr(value)?;
-                    let ty = ty.as_ref().map(|t| self.resolve_type(t));
+                    let ty = ty
+                        .as_ref()
+                        .map(|t| self.resolve_type_checked(t, value.span()))
+                        .transpose()?;
                     let binding_ty = if let Some(expected) = &ty {
                         if !self.type_compatible(expected, &val_ty) {
                             return Err(TypeError::at(
@@ -1106,9 +1153,13 @@ impl TypeChecker {
 
                 self.push_scope();
                 for (param, ty) in params {
-                    self.bind(param.clone(), ty.clone());
+                    self.bind(param.clone(), self.resolve_type_checked(ty, body.span())?);
                 }
                 let old_ret = self.func_ret.clone();
+                let ret = ret
+                    .as_ref()
+                    .map(|ty| self.resolve_type_checked(ty, body.span()))
+                    .transpose()?;
                 self.func_ret = ret.clone();
                 let body_ty = self.check_expr(body)?;
                 self.func_ret = old_ret;
@@ -1126,7 +1177,10 @@ impl TypeChecker {
                 }
 
                 Ok(Type::Func(
-                    params.iter().map(|(_, t)| t.clone()).collect(),
+                    params
+                        .iter()
+                        .map(|(_, t)| self.resolve_type_checked(t, body.span()))
+                        .collect::<Result<_, _>>()?,
                     Box::new(ret_ty),
                 ))
             }
@@ -1176,7 +1230,7 @@ impl TypeChecker {
                 Ok(Type::Array(Box::new(first_ty), elems.len()))
             }
             Expr::MakeArray { elem_ty, len } => {
-                let elem_ty = self.resolve_type(elem_ty);
+                let elem_ty = self.resolve_type_checked(elem_ty, span)?;
                 let len_ty = self.check_expr(len)?;
                 if !len_ty.is_integer() {
                     return Err(TypeError::at(
@@ -1303,7 +1357,7 @@ impl TypeChecker {
                 Ok(Type::Unit)
             }
             Expr::Ann { expr, ty } => {
-                let ty = self.resolve_type(ty);
+                let ty = self.resolve_type_checked(ty, span)?;
                 let expr_ty = self.check_expr(expr)?;
                 if !self.type_compatible(&ty, &expr_ty) {
                     return Err(TypeError::at(
@@ -1333,7 +1387,7 @@ impl TypeChecker {
                 }
             }
             Expr::Cast { expr, ty } => {
-                let ty = self.resolve_type(ty);
+                let ty = self.resolve_type_checked(ty, span)?;
                 let expr_ty = self.check_expr(expr)?;
                 // Casts are only defined between scalar number-like types
                 // (integers and `char`, which is an 8-bit code unit here).
@@ -1356,7 +1410,7 @@ impl TypeChecker {
                 end,
                 body,
             } => {
-                let index_ty = self.resolve_type(index_ty);
+                let index_ty = self.resolve_type_checked(index_ty, span)?;
                 if !index_ty.is_integer() {
                     return Err(TypeError::at(
                         format!(
@@ -2066,6 +2120,69 @@ mod tests {
         let prog = parse("(define x : i64 42)").unwrap();
         let mut tc = TypeChecker::new();
         assert!(tc.check_program(&prog).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_rejects_unsupported_type_kind_in_parameter() {
+        let prog = parse("(define (f [T : type]) : i64 0)").unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+
+        assert!(
+            err.msg.contains("unsupported type kind 'type'"),
+            "got: {}",
+            err.msg
+        );
+        assert!(
+            err.msg
+                .contains("comptime type values are not implemented yet"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_rejects_unsupported_type_kind_in_definition() {
+        let prog = parse("(define x : type 0)").unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+
+        assert!(
+            err.msg.contains("unsupported type kind 'type'"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_rejects_unsupported_type_kind_in_expression_type_position() {
+        let prog = parse("(define (main) : i64 (ann 1 : type))").unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+
+        assert!(
+            err.msg.contains("unsupported type kind 'type'"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_unknown_nominal_type_is_distinct_from_type_kind() {
+        let prog = parse("(define (f [x : Missing]) : i64 0)").unwrap();
+        let mut tc = TypeChecker::new();
+        let err = tc.check_program(&prog).unwrap_err();
+
+        assert!(
+            err.msg.contains("unknown type name 'Missing'"),
+            "got: {}",
+            err.msg
+        );
+        assert!(
+            !err.msg.contains("unsupported type kind"),
+            "got: {}",
+            err.msg
+        );
     }
 
     #[test]

@@ -890,34 +890,6 @@ impl TypeChecker {
                 self.pop_scope();
 
                 let ret_ty = ret.clone().unwrap_or(body_ty.clone());
-                if type_contains_enum(&ret_ty) {
-                    return Err(TypeError::at(
-                        "lambdas returning enum values are not yet supported \
-                         because enum constructors currently produce stack-owned storage",
-                        body.span(),
-                    ));
-                }
-                if type_contains_string_value(&ret_ty) {
-                    return Err(TypeError::at(
-                        "lambdas returning string values are not yet supported \
-                         because string literals currently produce stack-owned storage",
-                        body.span(),
-                    ));
-                }
-                if type_contains_dyn_array_value(&ret_ty) {
-                    return Err(TypeError::at(
-                        "lambdas returning dynamic-array values are not yet supported \
-                         because the fat array value is stack-owned storage",
-                        body.span(),
-                    ));
-                }
-                if type_contains_struct_value(&ret_ty) {
-                    return Err(TypeError::at(
-                        "lambdas returning struct values are not yet supported \
-                         because struct constructors currently produce stack-owned storage",
-                        body.span(),
-                    ));
-                }
                 if !self.type_compatible(&ret_ty, &body_ty) {
                     return Err(TypeError::at(
                         format!(
@@ -1814,67 +1786,6 @@ fn unsupported_global_aggregate_reason_inner(
     }
 }
 
-fn type_contains_enum(ty: &Type) -> bool {
-    match ty {
-        Type::Enum(_) => true,
-        Type::Func(args, ret) => args.iter().any(type_contains_enum) || type_contains_enum(ret),
-        Type::Tuple(elems) => elems.iter().any(type_contains_enum),
-        Type::Array(elem, _) => type_contains_enum(elem),
-        Type::DynArray(elem) => type_contains_enum(elem),
-        _ => false,
-    }
-}
-
-/// Whether `ty` is (or nests) a `String`. A string literal's fat `{ptr,len}`
-/// storage is constructed in a stack slot of the *current* function, so —
-/// exactly like an enum constructor's storage — it must not escape via a
-/// global initializer or a function/lambda return (that would dangle). String
-/// *parameters* are fine: the caller owns the storage. This restriction is
-/// lifted once strings are heap-allocated (deferred to #13).
-fn type_contains_string_value(ty: &Type) -> bool {
-    match ty {
-        Type::String => true,
-        Type::Tuple(elems) => elems.iter().any(type_contains_string_value),
-        Type::Array(elem, _) => type_contains_string_value(elem),
-        Type::DynArray(elem) => type_contains_string_value(elem),
-        _ => false,
-    }
-}
-
-/// Whether `ty` is (or nests) a dynamic array value. The fat `{ ptr, len }`
-/// value is built in a stack slot of the *current* function (only the element
-/// buffer it points at is heap-allocated via `tl_alloc`), so — like an enum
-/// constructor or string literal — it must not escape via a global initializer
-/// or a function/lambda return (the fat value would dangle). Dynamic-array
-/// *parameters* are fine: the caller owns the fat value's storage.
-fn type_contains_dyn_array_value(ty: &Type) -> bool {
-    match ty {
-        Type::DynArray(_) => true,
-        Type::Func(args, ret) => {
-            args.iter().any(type_contains_dyn_array_value) || type_contains_dyn_array_value(ret)
-        }
-        Type::Tuple(elems) => elems.iter().any(type_contains_dyn_array_value),
-        Type::Array(elem, _) => type_contains_dyn_array_value(elem),
-        _ => false,
-    }
-}
-
-/// Whether `ty` is (or nests) a struct value. A struct constructor's inline
-/// field storage is built in a stack slot of the *current* function (unless
-/// heap-promoted for a function `return`, per #85), so — like an enum
-/// constructor or string literal — it must not escape via a global initializer
-/// or a lambda return (that would dangle). Struct *parameters* are fine: the
-/// caller owns the storage.
-fn type_contains_struct_value(ty: &Type) -> bool {
-    match ty {
-        Type::Struct(_) => true,
-        Type::Tuple(elems) => elems.iter().any(type_contains_struct_value),
-        Type::Array(elem, _) => type_contains_struct_value(elem),
-        Type::DynArray(elem) => type_contains_struct_value(elem),
-        _ => false,
-    }
-}
-
 /// Whether a dynamic array may hold elements of `ty` (after nominal
 /// resolution). Two element categories are supported:
 ///
@@ -2341,6 +2252,29 @@ mod tests {
             err
         );
         assert!(err.msg.contains("n"), "err: {}", err);
+    }
+
+    #[test]
+    fn test_typecheck_aggregate_returning_lambdas_ok() {
+        let prog = parse(
+            r#"
+            (defenum Box (BoxI i64))
+            (defstruct Pair (x i64) (y i64))
+
+            (define (main) : i64
+              (let ([mk-string : (-> String) (lambda () : String "hello")]
+                    [mk-enum : (-> Box) (lambda () : Box (BoxI 11))]
+                    [mk-array : (-> (Array i64)) (lambda () : (Array i64) (make-array i64 13))]
+                    [mk-struct : (-> Pair) (lambda () : Pair (Pair 1 13))])
+                (+ (string-length (mk-string))
+                   (+ (match (mk-enum) [(BoxI n) n])
+                      (+ (array-length (mk-array))
+                         (struct-get (mk-struct) y))))))
+            "#,
+        )
+        .unwrap();
+        let mut tc = TypeChecker::new();
+        assert!(tc.check_program(&prog).is_ok());
     }
 
     #[test]

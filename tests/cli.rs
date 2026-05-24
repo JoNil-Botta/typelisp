@@ -1,6 +1,7 @@
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn fixture_dir(name: &str) -> PathBuf {
@@ -20,6 +21,25 @@ fn typelisp(args: &[&str]) -> Output {
         .args(args)
         .output()
         .expect("run typelisp CLI")
+}
+
+fn typelisp_with_stdin(args: &[&str], stdin: &str) -> Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn typelisp CLI");
+
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin is piped")
+        .write_all(stdin.as_bytes())
+        .expect("write CLI stdin");
+
+    child.wait_with_output().expect("wait for typelisp CLI")
 }
 
 fn typelisp_with_path(args: &[&str], path: &std::path::Path) -> Output {
@@ -62,6 +82,52 @@ fn assert_doctest_temp_cleaned(source: &std::path::Path) {
         !temp_parent.exists(),
         "doctest temp directory was not cleaned: {}",
         temp_parent.display()
+    );
+}
+
+#[test]
+fn repl_is_listed_in_usage() {
+    let output = typelisp(&["--help"]);
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert!(stderr(&output).contains("typelisp repl"));
+}
+
+#[test]
+fn repl_help_and_exit_from_piped_stdin() {
+    let output = typelisp_with_stdin(&["repl"], ".help\n.exit\n");
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    let stdout = stdout(&output);
+    assert!(
+        stdout.contains("TypeLisp REPL commands:"),
+        "stdout:\n{}",
+        stdout
+    );
+    assert!(stdout.contains(".help"), "stdout:\n{}", stdout);
+    assert!(stdout.contains(".exit"), "stdout:\n{}", stdout);
+}
+
+#[test]
+fn repl_eof_exits_cleanly() {
+    let output = typelisp_with_stdin(&["repl"], "");
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stdout(&output), "");
+    assert_eq!(stderr(&output), "");
+}
+
+#[test]
+fn repl_unknown_dot_command_reports_and_continues() {
+    let output = typelisp_with_stdin(&["repl"], ".wat\n.help\n.exit\n");
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert!(stdout(&output).contains("TypeLisp REPL commands:"));
+    assert!(
+        stderr(&output).contains("Unknown REPL command: .wat"),
+        "stderr:\n{}",
+        stderr(&output)
     );
 }
 

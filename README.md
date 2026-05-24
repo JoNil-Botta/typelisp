@@ -263,6 +263,7 @@ Source (.tl)
 typelisp debug tokenize file.tl    # Print token stream
 typelisp debug parse    file.tl    # Print AST
 typelisp debug check    file.tl    # Type check
+typelisp repl                     # Start minimal stdio REPL (.help, .exit)
 typelisp compile        file.tl    # Generate assembly (.s); -o <path>, --emit-ir, --backend-mode <mode>
 typelisp build          file.tl    # Build native executable; -o <path>, --backend-mode <mode>
 typelisp run            file.tl    # Compile, assemble, link, and run (needs as/ld); --backend-mode <mode>
@@ -271,6 +272,9 @@ typelisp build                    # Build nearest typelisp.pkg to package assemb
 
 The older top-level `tokenize`, `parse`, and `check` commands remain as
 compatibility aliases.
+
+The `repl` command currently provides a minimal stdio command loop. It supports
+`.help` and `.exit`; TypeLisp evaluation is planned in follow-up work.
 
 `compile`, `run`, and `build` accept `--backend-mode scalar|avx2|avx512`.
 `scalar` is the default and only implemented mode today; `avx2` and `avx512`

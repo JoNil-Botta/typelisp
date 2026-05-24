@@ -14,6 +14,7 @@ mod module;
 mod optimizer;
 mod package;
 mod parser;
+mod repl;
 mod runtime;
 mod span;
 mod typechecker;
@@ -150,6 +151,7 @@ fn print_usage() {
     eprintln!("    typelisp debug tokenize <file.tl>    Show tokens");
     eprintln!("    typelisp debug parse <file.tl>       Show AST");
     eprintln!("    typelisp debug check <file.tl> [--stdlib-root <dir>...]");
+    eprintln!("    typelisp repl                           Start minimal stdio REPL");
     eprintln!(
         "    typelisp compile <file.tl> [-o <file>] [--emit-ir] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...]"
     );
@@ -654,6 +656,17 @@ fn run_cli() {
         }
         "doc" => {
             run_doc_command(&args);
+        }
+        "repl" => {
+            if args.len() > 2 {
+                eprintln!("Error: repl does not accept arguments");
+                print_usage();
+                std::process::exit(1);
+            }
+            if let Err(err) = repl::run_stdio() {
+                eprintln!("Error: REPL I/O failed: {}", err);
+                std::process::exit(1);
+            }
         }
         "compile" => {
             if args.len() < 3 {

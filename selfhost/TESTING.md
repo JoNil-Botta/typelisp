@@ -81,8 +81,8 @@ For new selfhost tests:
 - Add standalone source programs to `selfhost/tests/` when the external compiler
   driver should accept or reject them, then update `scripts/verify-selfhost.sh`.
 - Add public command, package, docs, LSP, REPL, formatter, or platform cases to
-  the relevant verification script or to the follow-up harness that owns that
-  layer.
+  `scripts/verify-public-tools.sh` or the narrower verification script that
+  owns that layer.
 - If a temporary Rust test is still needed, update
   `RUST_TEST_COVERAGE.md` in the same PR with the replacement path.
 
@@ -124,6 +124,7 @@ cargo test --test tl_compiler_parse_compile
 cargo test --test tl_compiler_lower_compile
 cargo test --test tl_compiler_backend_compile
 TYPELISP_BIN=./target/debug/typelisp ./scripts/check-tl-format.sh
+TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-public-tools.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-selfhost.sh
 ```
 

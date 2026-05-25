@@ -3889,6 +3889,8 @@
             [(ErrLowerFunction message) (ErrLowerDecls message)])]
         [(AstDeclImport _)
           (lower-decls ctx top-env rest globals functions externs spans names)]
+        [(AstDeclTest _ _ _)
+          (lower-decls ctx top-env rest globals functions externs spans names)]
         [(AstDeclDefEnum _ _)
           (lower-decls ctx top-env rest globals functions externs spans names)]
         [(AstDeclDefStruct _ _)

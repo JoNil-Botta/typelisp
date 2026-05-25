@@ -70,6 +70,7 @@ fn flatten_comptime_decls(prog: &ast::Program) -> ast::Program {
     for decl in &prog.decls {
         match decl {
             ast::Decl::ComptimeDecl { template, .. } => decls.push((**template).clone()),
+            ast::Decl::Test { .. } => {}
             other => decls.push(other.clone()),
         }
     }
@@ -299,6 +300,8 @@ impl ProgramLowerer {
                 ast::Decl::Import(_) => {}
                 // Flattened away above; arm kept for exhaustiveness.
                 ast::Decl::ComptimeDecl { .. } => {}
+                // Inline tests are stripped before production lowering.
+                ast::Decl::Test { .. } => {}
             }
         }
 
@@ -357,6 +360,8 @@ impl ProgramLowerer {
                 ast::Decl::Import(_) => {}
                 // Flattened away above; arm kept for exhaustiveness.
                 ast::Decl::ComptimeDecl { .. } => {}
+                // Inline tests are stripped before production lowering.
+                ast::Decl::Test { .. } => {}
             }
         }
 

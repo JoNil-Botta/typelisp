@@ -17,25 +17,29 @@
 //!
 //! ```text
 //! typelisp-host-plan v1\n
-//! action <build-source|run-source>\n
-//! source <netstring>\n
+//! action <build-source|run-source|run-assembly|run-scratch-assembly>\n
+//! source <netstring>\n                ; source actions only
+//! assembly <netstring>\n              ; run-assembly only
+//! scratch-assembly-path <netstring>\n ; run-scratch-assembly only
 //! output <netstring>\n          ; build-source only, optional
 //! target <linux-x86_64|windows-x86_64>\n
 //! backend-mode <scalar|avx2|avx512>\n
 //! stdlib-root <netstring>\n      ; repeatable, zero or more
-//! runtime-arg <netstring>\n      ; run-source only, repeatable, zero or more
+//! runtime-arg <netstring>\n      ; run-source/run-assembly/run-scratch-assembly
 //! end\n
 //! ```
 //!
 //! A `<netstring>` is `<decimal-byte-length>:<bytes>` followed by a newline.
 //! Fixed-vocabulary fields (`action`, `target`, `backend-mode`) are validated
-//! against their known sets. `action`, `source`, `target`, and `backend-mode`
-//! are required; directive order after the header is free.
+//! against their known sets. `action`, `target`, and `backend-mode` are
+//! required; `source` is required for source actions, `assembly` for
+//! run-assembly, and `scratch-assembly-path` for run-scratch-assembly.
+//! Directive order after the header is free.
 
 use crate::backend::{BackendMode, BackendTarget};
 use crate::module::LoadOptions;
 use crate::native::{self, NativeError, NativeRunOutput};
-use std::path::PathBuf;
+use std::{fs, path::PathBuf};
 
 const PLAN_HEADER: &str = "typelisp-host-plan v1";
 
@@ -52,6 +56,16 @@ pub enum HostActionPlan {
         source: PathBuf,
         target: BackendTarget,
         stdlib_roots: Vec<PathBuf>,
+        runtime_args: Vec<String>,
+    },
+    RunAssembly {
+        assembly: String,
+        target: BackendTarget,
+        runtime_args: Vec<String>,
+    },
+    RunScratchAssembly {
+        assembly_path: PathBuf,
+        target: BackendTarget,
         runtime_args: Vec<String>,
     },
 }
@@ -233,6 +247,8 @@ pub fn parse_plan(text: &str) -> Result<HostActionPlan, PlanError> {
 
     let mut action: Option<String> = None;
     let mut source: Option<PathBuf> = None;
+    let mut assembly: Option<String> = None;
+    let mut scratch_assembly_path: Option<PathBuf> = None;
     let mut output: Option<PathBuf> = None;
     let mut target_name: Option<String> = None;
     let mut mode_name: Option<String> = None;
@@ -274,6 +290,19 @@ pub fn parse_plan(text: &str) -> Result<HostActionPlan, PlanError> {
                 let value = cursor.read_netstring(&keyword)?;
                 set_once(&mut source, PathBuf::from(value), "source")?;
             }
+            "assembly" => {
+                cursor.expect_space(&keyword)?;
+                set_once(&mut assembly, cursor.read_netstring(&keyword)?, "assembly")?;
+            }
+            "scratch-assembly-path" => {
+                cursor.expect_space(&keyword)?;
+                let value = cursor.read_netstring(&keyword)?;
+                set_once(
+                    &mut scratch_assembly_path,
+                    PathBuf::from(value),
+                    "scratch-assembly-path",
+                )?;
+            }
             "output" => {
                 cursor.expect_space(&keyword)?;
                 let value = cursor.read_netstring(&keyword)?;
@@ -311,7 +340,6 @@ pub fn parse_plan(text: &str) -> Result<HostActionPlan, PlanError> {
     }
 
     let action = action.ok_or_else(|| PlanError::new("host-action plan is missing 'action'"))?;
-    let source = source.ok_or_else(|| PlanError::new("host-action plan is missing 'source'"))?;
     let target_name =
         target_name.ok_or_else(|| PlanError::new("host-action plan is missing 'target'"))?;
     let mode_name =
@@ -331,6 +359,18 @@ pub fn parse_plan(text: &str) -> Result<HostActionPlan, PlanError> {
 
     match action.as_str() {
         "build-source" => {
+            let source =
+                source.ok_or_else(|| PlanError::new("host-action plan is missing 'source'"))?;
+            if assembly.is_some() {
+                return Err(PlanError::new(
+                    "host-action 'build-source' does not accept an 'assembly' directive",
+                ));
+            }
+            if scratch_assembly_path.is_some() {
+                return Err(PlanError::new(
+                    "host-action 'build-source' does not accept a 'scratch-assembly-path' directive",
+                ));
+            }
             if !runtime_args.is_empty() {
                 return Err(PlanError::new(
                     "host-action 'build-source' does not accept 'runtime-arg' directives",
@@ -344,6 +384,18 @@ pub fn parse_plan(text: &str) -> Result<HostActionPlan, PlanError> {
             })
         }
         "run-source" => {
+            let source =
+                source.ok_or_else(|| PlanError::new("host-action plan is missing 'source'"))?;
+            if assembly.is_some() {
+                return Err(PlanError::new(
+                    "host-action 'run-source' does not accept an 'assembly' directive",
+                ));
+            }
+            if scratch_assembly_path.is_some() {
+                return Err(PlanError::new(
+                    "host-action 'run-source' does not accept a 'scratch-assembly-path' directive",
+                ));
+            }
             if output.is_some() {
                 return Err(PlanError::new(
                     "host-action 'run-source' does not accept an 'output' directive",
@@ -356,8 +408,62 @@ pub fn parse_plan(text: &str) -> Result<HostActionPlan, PlanError> {
                 runtime_args,
             })
         }
+        "run-assembly" => {
+            if source.is_some() {
+                return Err(PlanError::new(
+                    "host-action 'run-assembly' does not accept a 'source' directive",
+                ));
+            }
+            if output.is_some() {
+                return Err(PlanError::new(
+                    "host-action 'run-assembly' does not accept an 'output' directive",
+                ));
+            }
+            if !stdlib_roots.is_empty() {
+                return Err(PlanError::new(
+                    "host-action 'run-assembly' does not accept 'stdlib-root' directives",
+                ));
+            }
+            let assembly =
+                assembly.ok_or_else(|| PlanError::new("host-action plan is missing 'assembly'"))?;
+            Ok(HostActionPlan::RunAssembly {
+                assembly,
+                target,
+                runtime_args,
+            })
+        }
+        "run-scratch-assembly" => {
+            if source.is_some() {
+                return Err(PlanError::new(
+                    "host-action 'run-scratch-assembly' does not accept a 'source' directive",
+                ));
+            }
+            if assembly.is_some() {
+                return Err(PlanError::new(
+                    "host-action 'run-scratch-assembly' does not accept an 'assembly' directive",
+                ));
+            }
+            if output.is_some() {
+                return Err(PlanError::new(
+                    "host-action 'run-scratch-assembly' does not accept an 'output' directive",
+                ));
+            }
+            if !stdlib_roots.is_empty() {
+                return Err(PlanError::new(
+                    "host-action 'run-scratch-assembly' does not accept 'stdlib-root' directives",
+                ));
+            }
+            let assembly_path = scratch_assembly_path.ok_or_else(|| {
+                PlanError::new("host-action plan is missing 'scratch-assembly-path'")
+            })?;
+            Ok(HostActionPlan::RunScratchAssembly {
+                assembly_path,
+                target,
+                runtime_args,
+            })
+        }
         other => Err(PlanError::new(format!(
-            "unknown host action '{other}'; expected build-source or run-source"
+            "unknown host action '{other}'; expected build-source, run-source, run-assembly, or run-scratch-assembly"
         ))),
     }
 }
@@ -395,6 +501,30 @@ pub fn execute_plan(plan: &HostActionPlan) -> Result<HostActionOutcome, NativeEr
         } => {
             let options = load_options(stdlib_roots);
             let output = native::run_source_file(source, &options, runtime_args, *target)?;
+            Ok(HostActionOutcome::Ran(output))
+        }
+        HostActionPlan::RunAssembly {
+            assembly,
+            target,
+            runtime_args,
+        } => {
+            let output = native::run_assembly_in_temp_dir(assembly, runtime_args, *target)?;
+            Ok(HostActionOutcome::Ran(output))
+        }
+        HostActionPlan::RunScratchAssembly {
+            assembly_path,
+            target,
+            runtime_args,
+        } => {
+            let assembly = fs::read_to_string(assembly_path).map_err(|err| {
+                NativeError::new(format!(
+                    "Error: failed to read scratch assembly '{}': {}",
+                    assembly_path.display(),
+                    err
+                ))
+            })?;
+            let _ = fs::remove_file(assembly_path);
+            let output = native::run_assembly_in_temp_dir(&assembly, runtime_args, *target)?;
             Ok(HostActionOutcome::Ran(output))
         }
     }
@@ -484,6 +614,55 @@ mod tests {
                 target: BackendTarget::windows_x86_64().with_mode(BackendMode::Avx2),
                 stdlib_roots: vec![PathBuf::from("std"), PathBuf::from("vendor/std")],
                 runtime_args: vec!["--name=value".to_string()],
+            }
+        );
+    }
+
+    #[test]
+    fn parses_run_assembly_plan_with_runtime_arg() {
+        let asm = ".globl main\nmain:\n    movq $0, %rax\n    ret\n";
+        let plan = format!(
+            "typelisp-host-plan v1\n\
+             action run-assembly\n\
+             assembly {}\n\
+             target windows-x86_64\n\
+             backend-mode avx2\n\
+             runtime-arg {}\n\
+             end\n",
+            netstring(asm),
+            netstring("--case=smoke")
+        );
+        let parsed = parse_plan(&plan).expect("plan parses");
+        assert_eq!(
+            parsed,
+            HostActionPlan::RunAssembly {
+                assembly: asm.to_string(),
+                target: BackendTarget::windows_x86_64().with_mode(BackendMode::Avx2),
+                runtime_args: vec!["--case=smoke".to_string()],
+            }
+        );
+    }
+
+    #[test]
+    fn parses_run_scratch_assembly_plan() {
+        let plan = format!(
+            "typelisp-host-plan v1\n\
+             action run-scratch-assembly\n\
+             scratch-assembly-path {}\n\
+             target linux-x86_64\n\
+             backend-mode scalar\n\
+             runtime-arg {}\n\
+             end\n",
+            netstring("target/inline test.s"),
+            netstring("--case=smoke")
+        );
+        let parsed = parse_plan(&plan).expect("plan parses");
+        assert_eq!(
+            parsed,
+            HostActionPlan::RunScratchAssembly {
+                assembly_path: PathBuf::from("target/inline test.s"),
+                target: BackendTarget::linux_x86_64_system_v(),
+                runtime_args: vec!["--case=smoke".to_string()],
             }
         );
     }

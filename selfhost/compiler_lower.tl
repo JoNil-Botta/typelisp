@@ -5748,6 +5748,46 @@
           (compiler-lower-foreach-shape-ok?
             "(define (main) : i64 (begin (foreach ([i : i64 0 3]) unit) 0))"))))))
 
+;; Comptime folding of the remaining scalar operators: each `(comptime ...)`
+;; must collapse to a single constant `mov` with no residual runtime binop,
+;; complementing the `+`/`<`/`*`/`let` cases already in the self-test (#1043).
+(define (compiler-lower-comptime-op-fold-tests-ok?) : bool
+  (and
+    (compiler-lower-comptime-fold-ok?
+      "(define (main) : i64 (comptime (- 50 8)))"
+      42)
+    (and
+      (compiler-lower-comptime-fold-ok?
+        "(define (main) : i64 (comptime (/ 84 2)))"
+        42)
+      (and
+        (compiler-lower-comptime-fold-ok?
+          "(define (main) : i64 (comptime (% 142 100)))"
+          42)
+        (and
+          (compiler-lower-comptime-fold-ok?
+            "(define (main) : i64 (comptime (bit-and 63 42)))"
+            42)
+          (and
+            (compiler-lower-comptime-fold-ok?
+              "(define (main) : i64 (comptime (bit-or 40 2)))"
+              42)
+            (and
+              (compiler-lower-comptime-fold-ok?
+                "(define (main) : i64 (comptime (bit-xor 63 21)))"
+                42)
+              (and
+                (compiler-lower-comptime-fold-ok?
+                  "(define (main) : i64 (comptime (shl 21 1)))"
+                  42)
+                (and
+                  (compiler-lower-comptime-fold-ok?
+                    "(define (main) : i64 (comptime (shr 84 1)))"
+                    42)
+                  (compiler-lower-comptime-fold-ok?
+                    "(define (main) : i64 (comptime (if (= 5 5) 42 0)))"
+                    42))))))))))
+
 (define (compiler-lower-self-test) : i64
   (if (and
     (and
@@ -5840,7 +5880,9 @@
                                                       (compiler-lower-error-ok?
                                                         (compiler-lower-comptime-f64-source)
                                                         "comptime: f64 compile-time evaluation not yet supported (#735)")
-                                                      (compiler-lower-foreach-tests-ok?)))))))))))))))))))))))))))
+                                                      (and
+                                                        (compiler-lower-comptime-op-fold-tests-ok?)
+                                                        (compiler-lower-foreach-tests-ok?))))))))))))))))))))))))))))
     42
     (begin
       (panic "lower: smoke score mismatch")

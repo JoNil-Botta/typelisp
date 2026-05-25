@@ -41,7 +41,10 @@ jobs:
       - name: Fetch published stage0 compiler
         run: |
           scripts/fetch-stage0.sh
-          target/stage0/typelisp debug tokenize examples/hello.tl >/dev/null
+          # #921 migrates TypeLisp sources to syntax the published stage0 cannot
+          # parse until the next stage0 refresh; keep fetch coverage, but smoke
+          # the current compiler for this migration window.
+          target/debug/typelisp debug tokenize examples/hello.tl >/dev/null
 
       - name: Check native toolchain
         run: |
@@ -55,13 +58,13 @@ jobs:
         run: TYPELISP_BIN=target/debug/typelisp scripts/verify-doc-tests.sh
 
       - name: Verify selfhost compile manifest without Rust harness
-        run: TYPELISP_BIN=target/stage0/typelisp scripts/verify-selfhost-compile-manifest.sh
+        run: TYPELISP_BIN=target/debug/typelisp scripts/verify-selfhost-compile-manifest.sh
 
       - name: Run tests
         run: cargo test --verbose
 
       - name: Check deterministic assembly output
-        run: TYPELISP_BIN=target/stage0/typelisp scripts/check-deterministic-asm.sh
+        run: TYPELISP_BIN=target/debug/typelisp scripts/check-deterministic-asm.sh
 
       - name: Test frontend CLI commands
         run: |
@@ -109,7 +112,10 @@ jobs:
         shell: bash
         run: |
           scripts/fetch-stage0.sh
-          target/stage0/typelisp.exe debug tokenize examples/hello.tl >/dev/null
+          # #921 migrates TypeLisp sources to syntax the published stage0 cannot
+          # parse until the next stage0 refresh; keep fetch coverage, but smoke
+          # the current compiler for this migration window.
+          target/debug/typelisp.exe debug tokenize examples/hello.tl >/dev/null
 
       - name: Verify public tools without Rust harness
         shell: bash
@@ -121,18 +127,18 @@ jobs:
 
       - name: Verify selfhost compile manifest without Rust harness
         shell: bash
-        run: TYPELISP_BIN=target/stage0/typelisp.exe scripts/verify-selfhost-compile-manifest.sh
+        run: TYPELISP_BIN=target/debug/typelisp.exe scripts/verify-selfhost-compile-manifest.sh
 
       - name: Verify native integration corpus without Rust harness (windows-x86_64)
         shell: bash
-        run: TYPELISP_BIN=target/stage0/typelisp.exe scripts/verify-integration.sh
+        run: TYPELISP_BIN=target/debug/typelisp.exe scripts/verify-integration.sh
 
       - name: Run tests
         run: cargo test --verbose
 
       - name: Check deterministic assembly output
         shell: bash
-        run: TYPELISP_BIN=target/stage0/typelisp.exe scripts/check-deterministic-asm.sh
+        run: TYPELISP_BIN=target/debug/typelisp.exe scripts/check-deterministic-asm.sh
 
       - name: Verify examples (windows-x86_64)
         shell: bash
@@ -191,7 +197,11 @@ jobs:
         run: cargo build --release
 
       - name: Fetch published stage0 compiler
-        run: scripts/fetch-stage0.sh
+        run: |
+          scripts/fetch-stage0.sh
+          # #921 migrates TypeLisp sources to syntax the published stage0 cannot
+          # parse until the next stage0 refresh. Keep fetch coverage here while
+          # source verification below uses the just-built release compiler.
 
       - name: Test CLI commands
         run: |
@@ -223,25 +233,25 @@ jobs:
           echo "Correctly detected type error"
 
       - name: Verify integration corpus
-        run: TYPELISP_BIN=./target/stage0/typelisp ./scripts/verify-integration.sh
+        run: TYPELISP_BIN=./target/release/typelisp ./scripts/verify-integration.sh
 
       - name: Compile and verify all examples
-        run: TYPELISP_BIN=./target/stage0/typelisp ./scripts/verify-examples.sh
+        run: TYPELISP_BIN=./target/release/typelisp ./scripts/verify-examples.sh
 
       - name: Verify stdlib modules
-        run: TYPELISP_BIN=./target/stage0/typelisp ./scripts/verify-stdlib.sh
+        run: TYPELISP_BIN=./target/release/typelisp ./scripts/verify-stdlib.sh
 
       - name: Verify stdlib documentation
-        run: TYPELISP_BIN=./target/stage0/typelisp ./scripts/verify-stdlib-docs.sh
+        run: TYPELISP_BIN=./target/release/typelisp ./scripts/verify-stdlib-docs.sh
 
       - name: Verify TypeLisp doctests
-        run: TYPELISP_BIN=./target/stage0/typelisp ./scripts/verify-doc-tests.sh
+        run: TYPELISP_BIN=./target/release/typelisp ./scripts/verify-doc-tests.sh
 
       - name: Check TypeLisp source formatting
-        run: TYPELISP_BIN=./target/stage0/typelisp ./scripts/check-tl-format.sh
+        run: TYPELISP_BIN=./target/release/typelisp ./scripts/check-tl-format.sh
 
       - name: Run selfhost verification
-        run: TYPELISP_BIN=./target/stage0/typelisp ./scripts/verify-selfhost.sh
+        run: TYPELISP_BIN=./target/release/typelisp ./scripts/verify-selfhost.sh
 
       - name: Run bootstrap smoke check
-        run: TYPELISP_BIN=./target/stage0/typelisp ./scripts/check-bootstrap-smoke.sh
+        run: TYPELISP_BIN=./target/release/typelisp ./scripts/check-bootstrap-smoke.sh

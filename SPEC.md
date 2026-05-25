@@ -1500,6 +1500,8 @@ The current source spelling remains `(with-region ...)`; issue #801 tracks the
 planned `(with-arena ...)` spelling/alias. Unless a function explicitly says
 otherwise, allocation always uses the active arena: the innermost scoped arena,
 or the default program-lifetime arena when no scoped arena is active.
+Until the spelling migration lands, executable stdlib policy tests use
+`with-region` to verify the same active-arena semantics.
 
 #### Standard library and builtin allocation policy
 

@@ -48,6 +48,10 @@ or the innermost scoped arena inside `(with-region ...)`. The arena model uses
 the term "scoped arena" for this behavior; issue #801 tracks the source spelling
 migration from `(with-region ...)` to `(with-arena ...)`.
 
+Until that spelling lands, stdlib policy tests use `(with-region ...)` as the
+executable witness for the same active-arena semantics that `(with-arena ...)`
+will expose.
+
 Current function signatures cannot write arena lifetimes yet (#802), so stdlib
 APIs keep plain `String`/aggregate signatures. The checker conservatively tags
 aggregate results from stdlib calls made inside a scoped arena as arena-owned,
@@ -149,11 +153,13 @@ the caller-provided message.
 4. Add the new top-level `.tl` file to `scripts/verify-stdlib.sh`'s module
    manifest.
 5. Add focused fixtures under `stdlib/tests/` and list them in
-   `scripts/verify-stdlib.sh`'s test manifest with expected exit/stdout/stderr.
+   `scripts/verify-stdlib.sh`'s runnable test manifest with expected
+   exit/stdout/stderr or check-only manifest with expected pass/fail behavior.
 6. Document the intended public API coverage in `stdlib/tests/README.md`.
 7. Add `;;;;` module docs, attached `;;;` item docs for every public top-level
-   declaration, allocation-behavior notes for allocating APIs, and at least one
-   checked doctest example that runs with `--stdlib-root`.
+   declaration, allocation-behavior notes for allocating APIs, an update to the
+   arena allocation classification table above, and at least one checked doctest
+   example that runs with `--stdlib-root`.
 8. Run `scripts/verify-stdlib-docs.sh` to generate Markdown and run doctests
    for every stdlib module.
 9. Run `scripts/verify-doc-tests.sh` to confirm the repository-wide doctest

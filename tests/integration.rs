@@ -2097,9 +2097,9 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
         "    call tl_substring\n",
         "    call tl_string_concat\n",
         "tl_oob_abort:\n",
-        "str_bounds_fail",
+        "    jb .Lmain_str_bounds_ok",
+        ".Lmain_str_bounds_ok",
         "substr_bounds_fail",
-        "    setb %al\n",
         "    setbe %al\n",
     ] {
         assert!(

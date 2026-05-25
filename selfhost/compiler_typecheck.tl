@@ -4996,11 +4996,72 @@
                   (compiler-typecheck-ok?
                     (compiler-typecheck-stmt-ok-cast-ann-source)))))))))))
 
+;; Operator and call type rules (#1042): equality/comparison/integer operator
+;; operand matching and call arity, plus accepting arithmetic/comparison/call
+;; programs. Migrated from src/typechecker.rs unit coverage.
+(define (compiler-typecheck-op-eq-mismatch-source) : String
+  "(define (main) : bool (= 1 true))")
+
+(define (compiler-typecheck-op-int-mismatch-source) : String
+  "(define (main) : i64 (+ 1 true))")
+
+(define (compiler-typecheck-op-cmp-mismatch-source) : String
+  "(define (main) : bool (< 1 true))")
+
+(define (compiler-typecheck-op-arity-many-source) : String
+  "(define (f [x : i64]) : i64 x)
+(define (main) : i64 (f 1 2))")
+
+(define (compiler-typecheck-op-arity-few-source) : String
+  "(define (f [x : i64] [y : i64]) : i64 (+ x y))
+(define (main) : i64 (f 1))")
+
+(define (compiler-typecheck-op-ok-arith-source) : String
+  "(define (main) : i64 (+ (* 2 3) (- 10 4)))")
+
+(define (compiler-typecheck-op-ok-cmp-eq-source) : String
+  "(define (main) : bool (and (< 1 2) (= 3 3)))")
+
+(define (compiler-typecheck-op-ok-call-source) : String
+  "(define (add [a : i64] [b : i64]) : i64 (+ a b))
+(define (main) : i64 (add 2 3))")
+
+(define (compiler-typecheck-operator-tests-ok?) : bool
+  (and
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-op-eq-mismatch-source)
+      "typecheck: equality operands must match")
+    (and
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-op-int-mismatch-source)
+        "typecheck: integer operator expects matching integer operands")
+      (and
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-op-cmp-mismatch-source)
+          "typecheck: comparison expects matching ordered scalar operands")
+        (and
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-op-arity-many-source)
+            "typecheck: arity mismatch")
+          (and
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-op-arity-few-source)
+              "typecheck: arity mismatch")
+            (and
+              (compiler-typecheck-ok? (compiler-typecheck-op-ok-arith-source))
+              (and
+                (compiler-typecheck-ok?
+                  (compiler-typecheck-op-ok-cmp-eq-source))
+                (compiler-typecheck-ok? (compiler-typecheck-op-ok-call-source))))))))))
+
 (define (compiler-typecheck-self-test) : i64
   (begin
     (if (compiler-typecheck-statement-tests-ok?)
       unit
       (panic "typecheck: statement/control-flow tests failed"))
+    (if (compiler-typecheck-operator-tests-ok?)
+      unit
+      (panic "typecheck: operator/arity tests failed"))
     (match (typecheck-compiler-source (compiler-typecheck-smoke-source))
       [(OkCompilerTypecheck summary)
         (if (and

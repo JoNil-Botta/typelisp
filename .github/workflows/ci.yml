@@ -61,7 +61,7 @@ jobs:
         run: cargo test --verbose
 
       - name: Check deterministic assembly output
-        run: scripts/check-deterministic-asm.sh
+        run: TYPELISP_BIN=target/stage0/typelisp scripts/check-deterministic-asm.sh
 
       - name: Test frontend CLI commands
         run: |
@@ -123,12 +123,16 @@ jobs:
         shell: bash
         run: TYPELISP_BIN=target/stage0/typelisp.exe scripts/verify-selfhost-compile-manifest.sh
 
+      - name: Verify native integration corpus without Rust harness (windows-x86_64)
+        shell: bash
+        run: TYPELISP_BIN=target/stage0/typelisp.exe scripts/verify-integration.sh
+
       - name: Run tests
         run: cargo test --verbose
 
       - name: Check deterministic assembly output
         shell: bash
-        run: TYPELISP_BIN=target/debug/typelisp.exe scripts/check-deterministic-asm.sh
+        run: TYPELISP_BIN=target/stage0/typelisp.exe scripts/check-deterministic-asm.sh
 
       - name: Verify examples (windows-x86_64)
         shell: bash

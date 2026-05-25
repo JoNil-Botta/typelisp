@@ -125,17 +125,20 @@ For new selfhost tests:
 - If a temporary Rust test is still needed, update
   `RUST_TEST_COVERAGE.md` in the same PR with the replacement path.
 
-### Linux integration tests
+### Native integration tests
 
-`tests/integration.rs` contains the heavier Linux-only checks that assemble,
-link, and run generated assembly. Use this layer for behavior that only shows up
-after execution: exit status, stdout/stderr, diagnostic rendering, deterministic
-file output, and import-aware driver behavior.
+`scripts/verify-integration.sh` contains the heavier native checks that build
+and run TypeLisp programs outside the Rust harness. Linux uses the explicit
+`compile -> as -> ld` path; Windows Git Bash/MSYS/Cygwin uses `typelisp build
+--target windows-x86_64` and a small PowerShell runner to preserve native
+Windows exit codes. Use this layer for behavior that only shows up after
+execution: exit status, stdout/stderr, diagnostic rendering, deterministic file
+output, and import-aware driver behavior.
 
-The integration harness also runs smoke drivers through explicit build cases.
-When a smoke driver needs another imported module, add the dependency to the
-corresponding staged input list so the Linux integration job exercises the same
-import graph reviewers see locally.
+The integration manifests live in `tests/integration/native-linux.manifest` and
+`tests/integration/native-windows.manifest`. When a program or smoke driver
+needs another imported module, add the dependency to the owning manifest row so
+the no-Rust runner exercises the same import graph reviewers see locally.
 
 ### External compiler corpus
 
@@ -169,9 +172,9 @@ automatically adds doctest coverage.
 ### CI expectations
 
 Pull requests get Linux and Windows `cargo test` coverage from the main CI test
-jobs. The Linux test job also runs deterministic assembly checks. The separate
-integration job builds a release compiler and runs the TypeLisp source format,
-stdlib, examples, and selfhost verification scripts.
+jobs. The no-Rust checks run through the fetched stage0 compiler where possible:
+native integration manifests, deterministic assembly, selfhost compile
+manifests, TypeLisp source format, stdlib, examples, and selfhost verification.
 
 For a selfhost compiler change, a typical local check is:
 

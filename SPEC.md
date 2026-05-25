@@ -218,6 +218,55 @@ narrower or unsigned integer is required. Floating-point literals are always
 - Structs are heap-allocated when returned from functions (same rule as enums).
 - Not valid as global variables.
 
+#### 3.4.3 C-compatible `repr c` structs (specified, selfhost pending)
+
+Default TypeLisp struct layout is compiler-owned and may use aggregate-handle
+rules that are not a C ABI contract. FFI-facing structs must opt into a stable
+C-compatible layout with metadata immediately after the struct name and before
+the first field:
+
+```lisp test=ignore name=repr-c-struct-syntax reason="selfhost repr c parsing is tracked by #987"
+(defstruct Stat
+  (:repr c)
+  (size i64)
+  (mtime i64))
+```
+
+V1 accepts only the metadata form `(:repr c)`. Omitting it preserves the default
+TypeLisp layout. Metadata forms must appear before all fields; a metadata form
+after a field is rejected. Duplicate `:repr` metadata is rejected. Unknown
+metadata keys and unknown representation names are rejected. `packed`,
+`(:repr packed)`, and equivalent packed-layout spellings are reserved and
+rejected until an unsafe packed-field slice exists.
+
+V1 `repr c` fields are restricted to ABI-safe types:
+
+- Fixed-width scalar types supported by the backend: `i8`, `u8`, `i16`, `u16`,
+  `i32`, `u32`, `i64`, `u64`, `f64`, `bool`, and `char`. `f32` remains rejected
+  until the backend supports it.
+- Raw pointer types once the raw-pointer surface from #955 lands.
+- Nested structs that are themselves marked `repr c`.
+
+Default-layout structs, strings, dynamic arrays, enums, tuples, fixed arrays,
+functions/closures, safe references, region-tagged references, unresolved
+types, and any other aggregate handle are not ABI-safe `repr c` fields in v1.
+They must be rejected with a source-located diagnostic rather than silently
+lowered as C-compatible storage.
+
+Recursive by-value `repr c` struct cycles are rejected. Recursive structures
+through raw pointers can be accepted only after raw pointers exist.
+
+`repr c` layout uses declaration order. Each field starts at the next offset
+aligned for that field. The total size is rounded up to the maximum field
+alignment. Empty `repr c` structs are rejected in v1.
+
+Supported v1 targets use an x86_64 data model: fixed-width integer and floating
+types use their explicit sizes; `bool` and `char` are one byte; raw pointers are
+8 bytes with 8-byte alignment on both Linux x86_64 System V and Windows x64.
+If future targets need different pointer sizes or alignments, layout queries are
+target-sensitive compile-time results and tests must either pin the target or
+assert the target-specific values.
+
 ### 3.5 Type aliases
 
 There are no explicit type aliases. Identifiers naming enums or structs are resolved to their nominal types during type checking.
@@ -1002,6 +1051,40 @@ not perform a reset; the semantics match minus reclamation. The form still
 prevents escapes, so programs compile and run identically, but allocations
 accumulate in the process-lifetime arena instead of being reclaimed.
 
+### 5.17 Layout queries (specified, selfhost pending)
+
+The selfhost FFI layout surface reserves three comptime-only query forms:
+
+```lisp test=ignore name=repr-c-layout-query-syntax reason="layout queries are tracked by #989"
+(defstruct Stat
+  (:repr c)
+  (size i64)
+  (mtime i64))
+
+(define stat-size : i64 (comptime (size-of (type Stat))))
+(define stat-align : i64 (comptime (align-of (type Stat))))
+(define stat-mtime-offset : i64 (comptime (offset-of (type Stat) mtime)))
+```
+
+- `(size-of type-expr)` returns the byte size as `i64`.
+- `(align-of type-expr)` returns the ABI alignment as `i64`.
+- `(offset-of type-expr field-name)` returns the byte offset of `field-name`
+  inside a `repr c` struct as `i64`; `field-name` is a bare field identifier,
+  not a string and not an evaluated expression.
+
+`type-expr` must evaluate at compile time to a type value, usually from
+`(type T)` or a comptime type parameter. `offset-of` requires a `repr c` struct
+type and a field that exists on that struct. All three forms are valid only in
+compile-time-required contexts such as comptime parameters, generated
+declaration evaluation, and explicit `(comptime expr)` folds. To use a query
+result at runtime, the program must fold it through normal comptime evaluation
+and store the resulting `i64`; the compiler must not expose type or layout
+metadata as a runtime value.
+
+Queries reject wrong arity, missing or runtime-only type operands, non-type
+operands, non-`repr c` structs where a C layout is required, unsupported field
+types, invalid field names, and use outside a compile-time-required context.
+
 ---
 
 ## 6. Built-in functions and runtime
@@ -1523,6 +1606,10 @@ later work.
 
 ### 11.3 Data layout
 
+Default TypeLisp layout is the compiler's internal representation. It is stable
+enough for TypeLisp code generation, but it is not the C FFI contract. Use
+`repr c` only when a struct must be shared with external ABI code.
+
 | Type | Size | Alignment |
 |------|------|-----------|
 | `i8`/`u8`/`bool`/`char` | 1 | 1 |
@@ -1537,6 +1624,11 @@ later work.
   slots. Their pointed-to inline storage is larger: strings and dynamic arrays
   are 16-byte `{ptr,len}` records; structs and enum payload storage depend on
   their declared fields.
+
+For `repr c` structs, field layout follows section 3.4.3 instead of the
+aggregate-handle rule. A by-value nested `repr c` struct contributes its C
+layout size and alignment, not a TypeLisp pointer-sized handle. Unsupported
+fields are rejected before lowering.
 
 ---
 
@@ -1648,7 +1740,8 @@ export-item   ::= "(" "value" ident ")"
                 | "(" "field" ident ident ")"
                 | "(" "variant" ident ")"
 defenum       ::= "(" "defenum" ident variant+ ")"
-defstruct     ::= "(" "defstruct" ident field+ ")"
+defstruct     ::= "(" "defstruct" ident struct-meta* field+ ")"
+struct-meta   ::= "(" ":repr" "c" ")"
 test-decl     ::= "(" "test" ident expr+ ")"
 
 param         ::= "[" ident ":" type "]"
@@ -1670,6 +1763,11 @@ expr          ::= literal
                 | "(" "spmd-reduce" reduce-op foreach-clause expr expr ")"
                 | "(" "lambda" "(" param* ")" [":" type] expr ")"
                 | "(" "with-region" ident expr+ ")"
+                | "(" "comptime" expr ")"
+                | "(" "type" type ")"
+                | "(" "size-of" expr ")"
+                | "(" "align-of" expr ")"
+                | "(" "offset-of" expr ident ")"
                 | "(" expr expr* ")"          ; function call
 
 binding       ::= "[" ident [":" type] expr "]"

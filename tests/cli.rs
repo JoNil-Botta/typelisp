@@ -181,17 +181,27 @@ fn run_lsp(messages: &[String]) -> Output {
 
 #[cfg(target_os = "linux")]
 fn run_selfhost_lsp_frame(work_name: &str, stdin: &str) -> Output {
-    let dir = fixture_dir(work_name);
-    let source = dir.join("lsp_frame.tl");
-    fs::copy(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("selfhost")
-            .join("lsp_frame.tl"),
-        &source,
-    )
-    .expect("copy selfhost LSP frame source");
+    let work_dir = fixture_dir(work_name);
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let selfhost_src = manifest_dir.join("selfhost");
+    let selfhost_work = work_dir.join("selfhost");
+    fs::create_dir_all(&selfhost_work).expect("create staged selfhost LSP source dir");
+    for entry in fs::read_dir(&selfhost_src).expect("read selfhost source dir") {
+        let entry = entry.expect("read selfhost source entry");
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) == Some("tl") {
+            fs::copy(
+                &path,
+                selfhost_work.join(path.file_name().expect("selfhost source has file name")),
+            )
+            .expect("copy staged selfhost source");
+        }
+    }
+    let source = selfhost_work.join("lsp_frame.tl");
+    let stdlib_root = manifest_dir.join("stdlib");
     let source_arg = source.to_str().expect("source path is utf-8");
-    let mut args = vec!["run", source_arg];
+    let stdlib_arg = stdlib_root.to_str().expect("stdlib path is utf-8");
+    let mut args = vec!["run", source_arg, "--stdlib-root", stdlib_arg];
     if cfg!(target_os = "windows") {
         args.push("--target");
         args.push("windows-x86_64");
@@ -483,9 +493,13 @@ fn selfhost_lsp_frame_reads_one_request() {
         stderr(&output)
     );
     assert_eq!(stderr(&output), "");
-    assert_eq!(
-        lsp_messages(&output),
-        vec![r#"{"jsonrpc":"2.0","id":null,"result":null}"#.to_string()]
+    let messages = lsp_messages(&output);
+    assert_eq!(messages.len(), 1, "messages: {messages:#?}");
+    assert!(messages[0].contains(r#""id":1"#), "{}", messages[0]);
+    assert!(
+        messages[0].contains(r#""textDocumentSync":{"openClose":true,"change":1}"#),
+        "{}",
+        messages[0]
     );
 }
 
@@ -505,13 +519,82 @@ fn selfhost_lsp_frame_reads_multiple_requests() {
         stderr(&output)
     );
     assert_eq!(stderr(&output), "");
-    assert_eq!(
-        lsp_messages(&output),
-        vec![
-            r#"{"jsonrpc":"2.0","id":null,"result":null}"#.to_string(),
-            r#"{"jsonrpc":"2.0","id":null,"result":null}"#.to_string(),
-        ]
+    let messages = lsp_messages(&output);
+    assert_eq!(messages.len(), 2, "messages: {messages:#?}");
+    assert!(messages[0].contains(r#""id":1"#), "{}", messages[0]);
+    assert!(
+        messages[0].contains(r#""textDocumentSync":{"openClose":true,"change":1}"#),
+        "{}",
+        messages[0]
     );
+    assert!(
+        messages[1].contains(r#""id":2,"result":null"#),
+        "{}",
+        messages[1]
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn selfhost_lsp_frame_reports_unknown_request_method() {
+    let request = r#"{"jsonrpc":"2.0","id":9,"method":"workspace/unknown","params":{}}"#;
+    let output = run_selfhost_lsp_frame("selfhost-lsp-unknown-method", &lsp_frame(request));
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "selfhost LSP frame exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stderr(&output), "");
+    let messages = lsp_messages(&output);
+    assert_eq!(messages.len(), 1, "messages: {messages:#?}");
+    assert!(messages[0].contains(r#""id":9"#), "{}", messages[0]);
+    assert!(messages[0].contains(r#""code":-32601"#), "{}", messages[0]);
+    assert!(
+        messages[0].contains(r#""message":"Method not found""#),
+        "{}",
+        messages[0]
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn selfhost_lsp_frame_tracks_document_changes_and_diagnostics() {
+    let dir = fixture_dir("selfhost-lsp-doc-diagnostics");
+    let uri = file_uri(&dir.join("main.tl"));
+    let input = format!(
+        "{}{}{}{}",
+        lsp_frame(&lsp_initialize(1)),
+        lsp_frame(&lsp_did_open(&uri, "(define (main) : i64 true)\n")),
+        lsp_frame(&lsp_did_change(&uri, "(define (main) : i64 0)\n")),
+        lsp_frame(&lsp_did_close(&uri))
+    );
+    let output = run_selfhost_lsp_frame("selfhost-lsp-doc-diagnostics", &input);
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "selfhost LSP frame exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stderr(&output), "");
+    let messages = lsp_messages(&output);
+    assert!(
+        messages.iter().any(|message| {
+            message.contains(&uri)
+                && message.contains(r#""code":"E0200""#)
+                && message.contains("typecheck: return type mismatch")
+        }),
+        "messages: {messages:#?}"
+    );
+    let clears = messages
+        .iter()
+        .filter(|message| message.contains(&uri) && message.contains(r#""diagnostics":[]"#))
+        .count();
+    assert_eq!(clears, 2, "messages: {messages:#?}");
 }
 
 #[cfg(target_os = "linux")]

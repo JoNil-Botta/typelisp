@@ -649,7 +649,8 @@
         name
         (front-cat3 "\", ty: " (front-type-render ty) " }"))]
     [(AstDeclDefEnum name _) (front-cat3 "DefEnum { name: \"" name "\" }")]
-    [(AstDeclDefStruct name _) (front-cat3 "DefStruct { name: \"" name "\" }")]
+    [(AstDeclDefStruct name _ _)
+      (front-cat3 "DefStruct { name: \"" name "\" }")]
     [(AstDeclImport spec) (front-import-render spec)]
     [(AstDeclTest name body _)
       (front-cat3

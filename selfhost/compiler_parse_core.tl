@@ -44,6 +44,10 @@
   (OkAstFieldDefList AstFieldDefList)
   (ErrAstFieldDefList String))
 
+(defenum ResultAstStructParts
+  (OkAstStructParts AstStructLayout AstFieldDefList)
+  (ErrAstStructParts String))
+
 (defenum ResultAstVariantDef
   (OkAstVariantDef AstVariantDef)
   (ErrAstVariantDef String))
@@ -120,6 +124,11 @@
   (match s
     [(SSym text) (string-eq text ":")]
     [_ false]))
+
+(define (compiler-parse-symbol-starts-colon? [text : String]) : bool
+  (if (> (string-length text) 0)
+    (= (string-ref text 0) #:')
+    false))
 
 (define (compiler-parse-abstraction-policy-message) : String
   "parse: TypeLisp does not support source-level generics or traits; use comptime-decl and comptime-generated concrete declarations instead (#893/#913/#483)")
@@ -899,6 +908,99 @@
             [(ErrAstFieldDefList message) (ErrAstFieldDefList message)])]
         [(ErrAstFieldDef message) (ErrAstFieldDefList message)])]
     [_ (ErrAstFieldDefList "parse: malformed field list")]))
+
+(define (parse-ast-defstruct-metadata-form? [s : Sexpr]) : bool
+  (match s
+    [(SCons (SSym head) args)
+      (if (string-eq head ":repr")
+        true
+        (if (compiler-parse-symbol-starts-colon? head)
+          true
+          (if (string-eq head "repr")
+            true
+            (if (string-eq head "packed")
+              (match args
+                [(SNil) true]
+                [_ false])
+              false))))]
+    [_ false]))
+
+(define (parse-ast-defstruct-repr-meta [args : Sexpr] [seen-repr : bool]) : ResultAstStructParts
+  (if seen-repr
+    (ErrAstStructParts "parse: duplicate defstruct :repr metadata")
+    (match args
+      [(SCons (SSym repr-name) (SNil))
+        (if (string-eq repr-name "c")
+          (OkAstStructParts (AstStructLayoutReprC) AstFieldDefNil)
+          (if (string-eq repr-name "packed")
+            (ErrAstStructParts "parse: repr packed is reserved")
+            (ErrAstStructParts
+              (string-append "parse: unknown defstruct repr " repr-name))))]
+      [_ (ErrAstStructParts "parse: malformed defstruct :repr metadata")])))
+
+(define (parse-ast-defstruct-meta [s : Sexpr] [seen-repr : bool]) : ResultAstStructParts
+  (match s
+    [(SCons (SSym head) args)
+      (if (string-eq head ":repr")
+        (parse-ast-defstruct-repr-meta args seen-repr)
+        (if (string-eq head ":packed")
+          (ErrAstStructParts "parse: repr packed is reserved")
+          (if (string-eq head "packed")
+            (ErrAstStructParts "parse: repr packed is reserved")
+            (if (string-eq head "repr")
+              (ErrAstStructParts "parse: defstruct metadata must use :repr")
+              (ErrAstStructParts
+                (string-append "parse: unknown defstruct metadata " head))))))]
+    [_ (ErrAstStructParts "parse: malformed defstruct metadata")]))
+
+(define (parse-ast-defstruct-parts-inner
+  [dispatch : SymI64Env]
+  [forms : Sexpr]
+  [layout : AstStructLayout]
+  [seen-repr : bool]
+  [seen-field : bool]) : ResultAstStructParts
+  (match forms
+    [(SNil)
+      (if seen-field
+        (OkAstStructParts layout AstFieldDefNil)
+        (ErrAstStructParts "parse: defstruct needs at least one field"))]
+    [(SCons head tail)
+      (if (parse-ast-defstruct-metadata-form? head)
+        (if seen-field
+          (ErrAstStructParts
+            "parse: defstruct metadata must appear before fields")
+          (match (parse-ast-defstruct-meta head seen-repr)
+            [(OkAstStructParts parsed-layout _)
+              (parse-ast-defstruct-parts-inner
+                dispatch
+                tail
+                parsed-layout
+                true
+                false)]
+            [(ErrAstStructParts message) (ErrAstStructParts message)]))
+        (match (parse-ast-field-def dispatch head)
+          [(OkAstFieldDef parsed-head)
+            (match (parse-ast-defstruct-parts-inner
+              dispatch
+              tail
+              layout
+              seen-repr
+              true)
+              [(OkAstStructParts parsed-layout parsed-tail)
+                (OkAstStructParts
+                  parsed-layout
+                  (AstFieldDefCons parsed-head parsed-tail))]
+              [(ErrAstStructParts message) (ErrAstStructParts message)])]
+          [(ErrAstFieldDef message) (ErrAstStructParts message)]))]
+    [_ (ErrAstStructParts "parse: malformed field list")]))
+
+(define (parse-ast-defstruct-parts [dispatch : SymI64Env] [forms : Sexpr]) : ResultAstStructParts
+  (parse-ast-defstruct-parts-inner
+    dispatch
+    forms
+    (AstStructLayoutDefault)
+    false
+    false))
 
 (define (parse-ast-variant-def [dispatch : SymI64Env] [s : Sexpr]) : ResultAstVariantDef
   (match s
@@ -1738,13 +1840,10 @@
 (define (parse-ast-defstruct [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
     [(SpSCons (SpSSym name _) fields _)
-      (match (spanned-sexpr-form fields)
-        [(SNil) (ErrAstDecl "parse: defstruct needs at least one field")]
-        [_
-          (match (parse-ast-field-def-list dispatch (spanned-sexpr-form fields))
-            [(OkAstFieldDefList parsed-fields)
-              (OkAstDecl (AstDeclDefStruct name parsed-fields))]
-            [(ErrAstFieldDefList message) (ErrAstDecl message)])])]
+      (match (parse-ast-defstruct-parts dispatch (spanned-sexpr-form fields))
+        [(OkAstStructParts layout parsed-fields)
+          (OkAstDecl (AstDeclDefStruct name layout parsed-fields))]
+        [(ErrAstStructParts message) (ErrAstDecl message)])]
     [_ (ErrAstDecl "parse: malformed defstruct")]))
 
 (define (parse-ast-module [rest : SpannedSexpr]) : ResultAstDecl
@@ -2204,6 +2303,56 @@
         (= (ast-decl-list-tag-sum decls) 16))]
     [(ErrAstProgram _) false]))
 
+(define (compiler-parse-default-defstruct-layout-ok?) : bool
+  (match (parse-ast-source "(defstruct Point (x i64) (y i64))")
+    [(OkAstProgram (AstProgram decls))
+      (match decls
+        [(AstDeclCons (AstDeclDefStruct name layout fields) AstDeclNil)
+          (and
+            (string-eq name "Point")
+            (and
+              (ast-struct-layout-default? layout)
+              (match fields
+                [(AstFieldDefCons _ (AstFieldDefCons _ AstFieldDefNil)) true]
+                [_ false])))]
+        [_ false])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-parse-repr-c-defstruct-ok?) : bool
+  (match (parse-ast-source "(defstruct Stat (:repr c) (size i64) (mtime i64))")
+    [(OkAstProgram (AstProgram decls))
+      (match decls
+        [(AstDeclCons (AstDeclDefStruct name layout fields) AstDeclNil)
+          (and
+            (string-eq name "Stat")
+            (and
+              (ast-struct-layout-repr-c? layout)
+              (match fields
+                [(AstFieldDefCons _ (AstFieldDefCons _ AstFieldDefNil)) true]
+                [_ false])))]
+        [_ false])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-parse-comptime-decl-repr-c-ok?) : bool
+  (match (parse-ast-source
+    "(comptime-decl (defstruct Stat (:repr c) (size i64)))")
+    [(OkAstProgram (AstProgram decls))
+      (match decls
+        [(AstDeclCons
+            (AstDeclComptimeDecl
+              (AstDeclDefStruct name layout (AstFieldDefCons _ AstFieldDefNil)))
+            AstDeclNil)
+          (and (string-eq name "Stat") (ast-struct-layout-repr-c? layout))]
+        [_ false])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-parse-defstruct-metadata-tests-ok?) : bool
+  (and
+    (compiler-parse-default-defstruct-layout-ok?)
+    (and
+      (compiler-parse-repr-c-defstruct-ok?)
+      (compiler-parse-comptime-decl-repr-c-ok?))))
+
 (define (compiler-parse-inline-test-source) : String
   "(test parser-basic
   (+ 1 2)
@@ -2233,6 +2382,24 @@
 
 (define (compiler-parse-comptime-decl-extra-source) : String
   "(comptime-decl (defstruct Point (x i64)) (defenum Maybe (None)))")
+
+(define (compiler-parse-defstruct-duplicate-repr-source) : String
+  "(defstruct Stat (:repr c) (:repr c) (size i64))")
+
+(define (compiler-parse-defstruct-unknown-repr-source) : String
+  "(defstruct Stat (:repr rust) (size i64))")
+
+(define (compiler-parse-defstruct-packed-repr-source) : String
+  "(defstruct Stat (:repr packed) (size i64))")
+
+(define (compiler-parse-defstruct-late-metadata-source) : String
+  "(defstruct Stat (size i64) (:repr c))")
+
+(define (compiler-parse-defstruct-metadata-only-source) : String
+  "(defstruct Stat (:repr c))")
+
+(define (compiler-parse-defstruct-unknown-metadata-source) : String
+  "(defstruct Stat (:layout c) (size i64))")
 
 (define (compiler-parse-malformed-module-source) : String
   "(module)")
@@ -2267,6 +2434,31 @@
       (compiler-parse-error-ok?
         (compiler-parse-comptime-decl-extra-source)
         "parse: comptime-decl expects exactly one template"))))
+
+(define (compiler-parse-defstruct-metadata-error-tests-ok?) : bool
+  (and
+    (compiler-parse-error-ok?
+      (compiler-parse-defstruct-duplicate-repr-source)
+      "parse: duplicate defstruct :repr metadata")
+    (and
+      (compiler-parse-error-ok?
+        (compiler-parse-defstruct-unknown-repr-source)
+        "parse: unknown defstruct repr rust")
+      (and
+        (compiler-parse-error-ok?
+          (compiler-parse-defstruct-packed-repr-source)
+          "parse: repr packed is reserved")
+        (and
+          (compiler-parse-error-ok?
+            (compiler-parse-defstruct-late-metadata-source)
+            "parse: defstruct metadata must appear before fields")
+          (and
+            (compiler-parse-error-ok?
+              (compiler-parse-defstruct-metadata-only-source)
+              "parse: defstruct needs at least one field")
+            (compiler-parse-error-ok?
+              (compiler-parse-defstruct-unknown-metadata-source)
+              "parse: unknown defstruct metadata :layout")))))))
 
 (define (compiler-parse-flat-let-call-body-ok?) : bool
   (match (parse-ast-source
@@ -2344,20 +2536,22 @@
     (and
       (compiler-parse-comptime-decl-error-tests-ok?)
       (and
-        (compiler-parse-error-ok?
-          (compiler-parse-malformed-module-source)
-          "parse: malformed module")
+        (compiler-parse-defstruct-metadata-error-tests-ok?)
         (and
           (compiler-parse-error-ok?
-            (compiler-parse-malformed-import-source)
-            "parse: malformed import")
+            (compiler-parse-malformed-module-source)
+            "parse: malformed module")
           (and
             (compiler-parse-error-ok?
-              (compiler-parse-empty-test-source)
-              "parse: test needs at least one expression")
+              (compiler-parse-malformed-import-source)
+              "parse: malformed import")
             (and
-              (compiler-parse-let-error-tests-ok?)
-              (compiler-parse-abstraction-policy-tests-ok?))))))))
+              (compiler-parse-error-ok?
+                (compiler-parse-empty-test-source)
+                "parse: test needs at least one expression")
+              (and
+                (compiler-parse-let-error-tests-ok?)
+                (compiler-parse-abstraction-policy-tests-ok?)))))))))
 
 (define (compiler-parse-smoke) : i64
   (match (parse-ast-source (compiler-parse-smoke-source))
@@ -2381,8 +2575,10 @@
                       (and
                         (compiler-parse-flat-let-call-body-ok?)
                         (and
-                          (compiler-parse-inline-test-ok?)
-                          (compiler-parse-try-ok?)))))))))))
+                          (compiler-parse-defstruct-metadata-tests-ok?)
+                          (and
+                            (compiler-parse-inline-test-ok?)
+                            (compiler-parse-try-ok?))))))))))))
         (if (compiler-parse-error-tests-ok?)
           42
           (begin

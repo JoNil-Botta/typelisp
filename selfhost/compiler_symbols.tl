@@ -176,7 +176,7 @@
         symbols
         name
         (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))]
-    [(AstDeclDefStruct name _)
+    [(AstDeclDefStruct name _ _)
       (compiler-symbols-add-type
         symbols
         name
@@ -348,7 +348,7 @@
             [(OkCompilerRegistries next-registries)
               (build-compiler-registry-list rest next-registries (+ index 1))]
             [(ErrCompilerRegistries message) (ErrCompilerRegistries message)])]
-        [(AstDeclDefStruct name fields)
+        [(AstDeclDefStruct name _ fields)
           (match (build-compiler-field-registry-list
             fields
             registries
@@ -374,7 +374,7 @@
                     (+ index 1))]
                 [(ErrCompilerRegistries message)
                   (ErrCompilerRegistries message)])]
-            [(AstDeclDefStruct name fields)
+            [(AstDeclDefStruct name _ fields)
               (match (build-compiler-field-registry-list
                 fields
                 registries
@@ -477,7 +477,7 @@
     (compiler-registry-handle-owner-index handle))
     [(OkAstDecl decl)
       (match decl
-        [(AstDeclDefStruct _ fields)
+        [(AstDeclDefStruct _ _ fields)
           (compiler-field-type-at-index
             fields
             (compiler-registry-handle-child-index handle)

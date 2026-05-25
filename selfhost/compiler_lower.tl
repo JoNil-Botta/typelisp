@@ -619,7 +619,7 @@
               (compiler-symbol-handle-index handle))
               [(OkAstDecl decl)
                 (match decl
-                  [(AstDeclDefStruct _ fields) (OkAstFieldDefList fields)]
+                  [(AstDeclDefStruct _ _ fields) (OkAstFieldDefList fields)]
                   [_
                     (ErrAstFieldDefList
                       "lower: struct symbol owner is not a struct")])]
@@ -4303,7 +4303,7 @@
           (lower-decls ctx top-env rest globals functions externs spans names)]
         [(AstDeclDefEnum _ _)
           (lower-decls ctx top-env rest globals functions externs spans names)]
-        [(AstDeclDefStruct _ _)
+        [(AstDeclDefStruct _ _ _)
           (lower-decls ctx top-env rest globals functions externs spans names)]
         [(AstDeclComptimeDecl _)
           (lower-decls ctx top-env rest globals functions externs spans names)])]))

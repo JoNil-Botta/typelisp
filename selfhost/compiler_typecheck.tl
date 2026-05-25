@@ -886,7 +886,7 @@
     [(AstDeclExtern _ ty) (tc-source-type-policy-ok ctx ty)]
     [(AstDeclDefEnum _ variants)
       (tc-source-variant-list-policy-ok ctx variants)]
-    [(AstDeclDefStruct _ fields) (tc-source-field-list-policy-ok ctx fields)]
+    [(AstDeclDefStruct _ _ fields) (tc-source-field-list-policy-ok ctx fields)]
     [(AstDeclImport _) OkTcUnit]
     [(AstDeclModule _) OkTcUnit]
     [(AstDeclTest _ body _) (tc-source-expr-policy-ok ctx body)]
@@ -1254,7 +1254,7 @@
           (match (tc-bind-enum-variants ctx env name variants)
             [(OkTcEnv next-env) (tc-build-top-env-list ctx rest next-env)]
             [(ErrTcEnv message) (ErrTcEnv message)])]
-        [(AstDeclDefStruct name fields)
+        [(AstDeclDefStruct name _ fields)
           (tc-build-top-env-list
             ctx
             rest
@@ -1268,7 +1268,7 @@
               (match (tc-bind-enum-variants ctx env name variants)
                 [(OkTcEnv next-env) (tc-build-top-env-list ctx rest next-env)]
                 [(ErrTcEnv message) (ErrTcEnv message)])]
-            [(AstDeclDefStruct name fields)
+            [(AstDeclDefStruct name _ fields)
               (tc-build-top-env-list
                 ctx
                 rest
@@ -3184,6 +3184,13 @@
       [(Some n) (+ (struct-get p x) n)]
       [None 0])))")
 
+(define (compiler-typecheck-repr-c-source) : String
+  "(defstruct Stat (:repr c) (size i64) (mtime i64))
+(define (main) : i64
+  (let
+    [s : Stat (Stat 40 2)]
+    (+ (struct-get s size) (struct-get s mtime))))")
+
 (define (compiler-typecheck-match-mismatch-source) : String
   "(defenum Maybe (None) (Some i64))
 (define (main [m : Maybe]) : i64
@@ -3210,20 +3217,22 @@
     (and
       (compiler-typecheck-ok? (compiler-typecheck-comptime-decl-source))
       (and
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-match-mismatch-source)
-          "typecheck: match arms must agree")
+        (compiler-typecheck-ok? (compiler-typecheck-repr-c-source))
         (and
           (compiler-typecheck-error-ok?
-            (compiler-typecheck-unknown-variant-source)
-            "typecheck: unknown variant Other")
+            (compiler-typecheck-match-mismatch-source)
+            "typecheck: match arms must agree")
           (and
             (compiler-typecheck-error-ok?
-              (compiler-typecheck-unknown-field-source)
-              "typecheck: unknown struct field Point.z")
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-duplicate-variant-source)
-              "symbols: duplicate enum variant Same")))))))
+              (compiler-typecheck-unknown-variant-source)
+              "typecheck: unknown variant Other")
+            (and
+              (compiler-typecheck-error-ok?
+                (compiler-typecheck-unknown-field-source)
+                "typecheck: unknown struct field Point.z")
+              (compiler-typecheck-error-ok?
+                (compiler-typecheck-duplicate-variant-source)
+                "symbols: duplicate enum variant Same"))))))))
 
 (define (compiler-typecheck-region-builtin-source) : String
   "(define (main) : i64

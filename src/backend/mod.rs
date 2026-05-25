@@ -2509,6 +2509,22 @@ impl X86_64Backend {
         if self.needs_flush_stdout_runtime {
             externs.insert("fflush");
         }
+        if self.needs_process_output_runtime {
+            for symbol in [
+                "_close",
+                "_dup",
+                "_dup2",
+                "_fileno",
+                "_lseeki64",
+                "_read",
+                "_spawnv",
+                "fclose",
+                "fflush",
+                "tmpfile",
+            ] {
+                externs.insert(symbol);
+            }
+        }
 
         for symbol in externs {
             self.emit(&format!("    .extern {}", symbol));
@@ -5364,46 +5380,7 @@ impl X86_64Backend {
 
     fn generate_process_output_runtime_functions(&mut self) {
         if self.target.runtime_policy().emits_windows_runtime_helpers {
-            self.emit_many(&[
-                "tl_process_output:",
-                "    leaq .L_tl_process_unsupported_msg(%rip), %rcx",
-                "    movq $.L_tl_process_unsupported_msg_len, %rdx",
-                "    movq $3, %r8",
-                "    jmp .L_tl_process_make_error_win",
-                "",
-                ".L_tl_process_make_error_win:",
-                "    push %rbp",
-                "    mov %rsp, %rbp",
-                "    push %rbx",
-                "    push %r12",
-                "    push %r13",
-                "    sub $40, %rsp",
-                "    movq %rcx, %r12",
-                "    movq %rdx, %r13",
-                "    movq %r8, %rbx",
-                "    movq $16, %rcx",
-                "    call tl_alloc",
-                "    movq %r12, 0(%rax)",
-                "    movq %r13, 8(%rax)",
-                "    movq %rax, %r12",
-                "    movq $16, %rcx",
-                "    call tl_alloc",
-                "    movq %rbx, 0(%rax)",
-                "    movq %r12, 8(%rax)",
-                "    movq %rax, %r12",
-                "    movq $16, %rcx",
-                "    call tl_alloc",
-                "    movq $1, 0(%rax)",
-                "    movq %r12, 8(%rax)",
-                "    add $40, %rsp",
-                "    pop %r13",
-                "    pop %r12",
-                "    pop %rbx",
-                "    mov %rbp, %rsp",
-                "    pop %rbp",
-                "    ret",
-                "",
-            ]);
+            self.generate_windows_process_output_runtime_functions();
             return;
         }
 
@@ -6056,6 +6033,372 @@ impl X86_64Backend {
             "    ret",
             "",
         ]);
+    }
+
+    fn generate_windows_process_output_runtime_functions(&mut self) {
+        self.emit(&format!("    .globl {}", PROCESS_OUTPUT_RUNTIME_SYMBOL));
+        self.emit(&format!("{}:", PROCESS_OUTPUT_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    push %r15");
+        self.emit("    sub $104, %rsp");
+        self.emit("    movq %rcx, %rbx");
+        self.emit("    movq $0, -48(%rbp)");
+        self.emit("    movq $0, -56(%rbp)");
+        self.emit("    movq $0, -64(%rbp)");
+        self.emit("    movq $0, -72(%rbp)");
+        self.emit("    movq $-1, -80(%rbp)");
+        self.emit("    movq $-1, -88(%rbp)");
+
+        // Build a null-terminated executable path and argv array. argv[0] is the
+        // executable, followed by the ProcessStringList entries, then NULL.
+        self.emit("    movq 0(%rbx), %rcx");
+        self.emit_call(".L_tl_process_copy_c_string");
+        self.emit("    movq %rax, %r12");
+        self.emit("    movq $1, %r13");
+        self.emit("    movq 8(%rbx), %r14");
+        self.emit(".L_tl_process_count_argv:");
+        self.emit("    testq %r14, %r14");
+        self.emit("    jz .L_tl_process_count_argv_done");
+        self.emit("    cmpq $1, 0(%r14)");
+        self.emit("    jne .L_tl_process_count_argv_done");
+        self.emit("    incq %r13");
+        self.emit("    movq 16(%r14), %r14");
+        self.emit("    jmp .L_tl_process_count_argv");
+        self.emit(".L_tl_process_count_argv_done:");
+        self.emit("    movq %r13, %rcx");
+        self.emit("    incq %rcx");
+        self.emit("    shlq $3, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rax, %r14");
+        self.emit("    movq %r12, 0(%r14)");
+        self.emit("    movq 8(%rbx), %r13");
+        self.emit("    movq $1, %r15");
+        self.emit(".L_tl_process_fill_argv:");
+        self.emit("    testq %r13, %r13");
+        self.emit("    jz .L_tl_process_fill_argv_done");
+        self.emit("    cmpq $1, 0(%r13)");
+        self.emit("    jne .L_tl_process_fill_argv_done");
+        self.emit("    movq 8(%r13), %rcx");
+        self.emit_call(".L_tl_process_copy_c_string");
+        self.emit("    movq %rax, (%r14,%r15,8)");
+        self.emit("    incq %r15");
+        self.emit("    movq 16(%r13), %r13");
+        self.emit("    jmp .L_tl_process_fill_argv");
+        self.emit(".L_tl_process_fill_argv_done:");
+        self.emit("    movq $0, (%r14,%r15,8)");
+
+        // Capture stdout/stderr via temporary files, then restore this process's
+        // descriptors immediately after the child exits.
+        self.emit_call("tmpfile");
+        self.emit("    testq %rax, %rax");
+        self.emit("    jz .L_tl_process_output_wait_failed_close");
+        self.emit("    movq %rax, -48(%rbp)");
+        self.emit("    movq %rax, %rcx");
+        self.emit_call("_fileno");
+        self.emit("    testl %eax, %eax");
+        self.emit("    js .L_tl_process_output_wait_failed_close");
+        self.emit("    movslq %eax, %rax");
+        self.emit("    movq %rax, -56(%rbp)");
+        self.emit_call("tmpfile");
+        self.emit("    testq %rax, %rax");
+        self.emit("    jz .L_tl_process_output_wait_failed_close");
+        self.emit("    movq %rax, -64(%rbp)");
+        self.emit("    movq %rax, %rcx");
+        self.emit_call("_fileno");
+        self.emit("    testl %eax, %eax");
+        self.emit("    js .L_tl_process_output_wait_failed_close");
+        self.emit("    movslq %eax, %rax");
+        self.emit("    movq %rax, -72(%rbp)");
+        self.emit("    movq $1, %rcx");
+        self.emit_call("_dup");
+        self.emit("    testl %eax, %eax");
+        self.emit("    js .L_tl_process_output_wait_failed_close");
+        self.emit("    movslq %eax, %rax");
+        self.emit("    movq %rax, -80(%rbp)");
+        self.emit("    movq $2, %rcx");
+        self.emit_call("_dup");
+        self.emit("    testl %eax, %eax");
+        self.emit("    js .L_tl_process_output_wait_failed_close");
+        self.emit("    movslq %eax, %rax");
+        self.emit("    movq %rax, -88(%rbp)");
+        self.emit("    xorq %rcx, %rcx");
+        self.emit_call("fflush");
+        self.emit("    movq -56(%rbp), %rcx");
+        self.emit("    movq $1, %rdx");
+        self.emit_call("_dup2");
+        self.emit("    testl %eax, %eax");
+        self.emit("    js .L_tl_process_output_restore_wait_failed");
+        self.emit("    movq -72(%rbp), %rcx");
+        self.emit("    movq $2, %rdx");
+        self.emit_call("_dup2");
+        self.emit("    testl %eax, %eax");
+        self.emit("    js .L_tl_process_output_restore_wait_failed");
+        self.emit("    movq $0, %rcx");
+        self.emit("    movq %r12, %rdx");
+        self.emit("    movq %r14, %r8");
+        self.emit_call("_spawnv");
+        self.emit("    movslq %eax, %r15");
+        self.emit("    jmp .L_tl_process_output_restore_after_spawn");
+
+        self.emit(".L_tl_process_output_restore_wait_failed:");
+        self.emit("    movq -80(%rbp), %rcx");
+        self.emit("    cmpq $0, %rcx");
+        self.emit("    jl .L_tl_process_output_restore_wait_stderr");
+        self.emit("    movq $1, %rdx");
+        self.emit_call("_dup2");
+        self.emit("    movq -80(%rbp), %rcx");
+        self.emit_call("_close");
+        self.emit("    movq $-1, -80(%rbp)");
+        self.emit(".L_tl_process_output_restore_wait_stderr:");
+        self.emit("    movq -88(%rbp), %rcx");
+        self.emit("    cmpq $0, %rcx");
+        self.emit("    jl .L_tl_process_output_wait_failed_close");
+        self.emit("    movq $2, %rdx");
+        self.emit_call("_dup2");
+        self.emit("    movq -88(%rbp), %rcx");
+        self.emit_call("_close");
+        self.emit("    movq $-1, -88(%rbp)");
+        self.emit("    jmp .L_tl_process_output_wait_failed_close");
+
+        self.emit(".L_tl_process_output_restore_after_spawn:");
+        self.emit("    movq -80(%rbp), %rcx");
+        self.emit("    movq $1, %rdx");
+        self.emit_call("_dup2");
+        self.emit("    movq -80(%rbp), %rcx");
+        self.emit_call("_close");
+        self.emit("    movq $-1, -80(%rbp)");
+        self.emit("    movq -88(%rbp), %rcx");
+        self.emit("    movq $2, %rdx");
+        self.emit_call("_dup2");
+        self.emit("    movq -88(%rbp), %rcx");
+        self.emit_call("_close");
+        self.emit("    movq $-1, -88(%rbp)");
+        self.emit("    cmpq $0, %r15");
+        self.emit("    jl .L_tl_process_output_spawn_failed_close");
+
+        self.emit("    movq -56(%rbp), %rcx");
+        self.emit_call(".L_tl_process_read_fd_to_string");
+        self.emit("    testq %rax, %rax");
+        self.emit("    jz .L_tl_process_output_wait_failed_close");
+        self.emit("    movq %rax, -96(%rbp)");
+        self.emit("    movq -72(%rbp), %rcx");
+        self.emit_call(".L_tl_process_read_fd_to_string");
+        self.emit("    testq %rax, %rax");
+        self.emit("    jz .L_tl_process_output_wait_failed_close");
+        self.emit("    movq %rax, -104(%rbp)");
+        self.emit("    call .L_tl_process_close_temp_files");
+        self.emit("    movq $24, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %r15, 0(%rax)");
+        self.emit("    movq -96(%rbp), %rdx");
+        self.emit("    movq %rdx, 8(%rax)");
+        self.emit("    movq -104(%rbp), %rdx");
+        self.emit("    movq %rdx, 16(%rax)");
+        self.emit("    movq %rax, %r12");
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq $0, 0(%rax)");
+        self.emit("    movq %r12, 8(%rax)");
+        self.emit("    jmp .L_tl_process_output_epilogue");
+
+        self.emit(".L_tl_process_output_spawn_failed_close:");
+        self.emit("    call .L_tl_process_close_temp_files");
+        self.emit("    movq $1, %rcx");
+        self.emit("    leaq .L_tl_process_spawn_msg(%rip), %rdx");
+        self.emit("    movq $.L_tl_process_spawn_msg_len, %r8");
+        self.emit_call(".L_tl_process_error_result");
+        self.emit("    jmp .L_tl_process_output_epilogue");
+
+        self.emit(".L_tl_process_output_wait_failed_close:");
+        self.emit("    call .L_tl_process_close_temp_files");
+        self.emit("    movq $2, %rcx");
+        self.emit("    leaq .L_tl_process_wait_msg(%rip), %rdx");
+        self.emit("    movq $.L_tl_process_wait_msg_len, %r8");
+        self.emit_call(".L_tl_process_error_result");
+        self.emit("    jmp .L_tl_process_output_epilogue");
+
+        self.emit(".L_tl_process_output_epilogue:");
+        self.emit("    add $104, %rsp");
+        self.emit("    pop %r15");
+        self.emit("    pop %r14");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+
+        self.generate_windows_process_copy_c_string_runtime_function();
+        self.generate_windows_process_read_fd_to_string_runtime_function();
+        self.generate_windows_process_error_result_runtime_function();
+        self.generate_windows_process_close_temp_files_runtime_function();
+    }
+
+    fn generate_windows_process_copy_c_string_runtime_function(&mut self) {
+        self.emit(".L_tl_process_copy_c_string:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq 0(%rcx), %rbx");
+        self.emit("    movq 8(%rcx), %r12");
+        self.emit("    movq %r12, %rcx");
+        self.emit("    incq %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rax, %r13");
+        self.emit("    xorq %r10, %r10");
+        self.emit(".L_tl_process_copy_c_string_loop:");
+        self.emit("    cmpq %r12, %r10");
+        self.emit("    jge .L_tl_process_copy_c_string_done");
+        self.emit("    movzbl (%rbx,%r10), %edx");
+        self.emit("    movb %dl, (%r13,%r10)");
+        self.emit("    incq %r10");
+        self.emit("    jmp .L_tl_process_copy_c_string_loop");
+        self.emit(".L_tl_process_copy_c_string_done:");
+        self.emit("    movb $0, (%r13,%r12)");
+        self.emit("    movq %r13, %rax");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_windows_process_read_fd_to_string_runtime_function(&mut self) {
+        self.emit(".L_tl_process_read_fd_to_string:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    movq %rcx, %rbx");
+        self.emit("    movq %rbx, %rcx");
+        self.emit("    xorq %rdx, %rdx");
+        self.emit("    movq $2, %r8");
+        self.emit_call("_lseeki64");
+        self.emit("    cmpq $0, %rax");
+        self.emit("    jl .L_tl_process_read_fd_to_string_error");
+        self.emit("    movq %rax, %r12");
+        self.emit("    movq %rbx, %rcx");
+        self.emit("    xorq %rdx, %rdx");
+        self.emit("    xorq %r8, %r8");
+        self.emit_call("_lseeki64");
+        self.emit("    cmpq $0, %rax");
+        self.emit("    jl .L_tl_process_read_fd_to_string_error");
+        self.emit("    movq %r12, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rax, %r13");
+        self.emit("    xorq %r14, %r14");
+        self.emit(".L_tl_process_read_fd_to_string_loop:");
+        self.emit("    cmpq %r12, %r14");
+        self.emit("    jge .L_tl_process_read_fd_to_string_fat");
+        self.emit("    movq %rbx, %rcx");
+        self.emit("    leaq (%r13,%r14), %rdx");
+        self.emit("    movq %r12, %r8");
+        self.emit("    subq %r14, %r8");
+        self.emit_call("_read");
+        self.emit("    testl %eax, %eax");
+        self.emit("    js .L_tl_process_read_fd_to_string_error");
+        self.emit("    jz .L_tl_process_read_fd_to_string_fat");
+        self.emit("    movslq %eax, %rax");
+        self.emit("    addq %rax, %r14");
+        self.emit("    jmp .L_tl_process_read_fd_to_string_loop");
+        self.emit(".L_tl_process_read_fd_to_string_fat:");
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %r13, 0(%rax)");
+        self.emit("    movq %r14, 8(%rax)");
+        self.emit("    jmp .L_tl_process_read_fd_to_string_done");
+        self.emit(".L_tl_process_read_fd_to_string_error:");
+        self.emit("    xorq %rax, %rax");
+        self.emit(".L_tl_process_read_fd_to_string_done:");
+        self.emit("    pop %r14");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_windows_process_error_result_runtime_function(&mut self) {
+        self.emit(".L_tl_process_error_result:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    push %r15");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq %rcx, %rbx");
+        self.emit("    movq %rdx, %r12");
+        self.emit("    movq %r8, %r13");
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %r12, 0(%rax)");
+        self.emit("    movq %r13, 8(%rax)");
+        self.emit("    movq %rax, %r14");
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rbx, 0(%rax)");
+        self.emit("    movq %r14, 8(%rax)");
+        self.emit("    movq %rax, %r15");
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq $1, 0(%rax)");
+        self.emit("    movq %r15, 8(%rax)");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r15");
+        self.emit("    pop %r14");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_windows_process_close_temp_files_runtime_function(&mut self) {
+        self.emit(".L_tl_process_close_temp_files:");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq -48(%rbp), %rcx");
+        self.emit("    testq %rcx, %rcx");
+        self.emit("    jz .L_tl_process_close_temp_stderr");
+        self.emit_call("fclose");
+        self.emit("    movq $0, -48(%rbp)");
+        self.emit(".L_tl_process_close_temp_stderr:");
+        self.emit("    movq -64(%rbp), %rcx");
+        self.emit("    testq %rcx, %rcx");
+        self.emit("    jz .L_tl_process_close_temp_done");
+        self.emit_call("fclose");
+        self.emit("    movq $0, -64(%rbp)");
+        self.emit(".L_tl_process_close_temp_done:");
+        self.emit("    movq -80(%rbp), %rcx");
+        self.emit("    cmpq $0, %rcx");
+        self.emit("    jl .L_tl_process_close_saved_stderr");
+        self.emit_call("_close");
+        self.emit("    movq $-1, -80(%rbp)");
+        self.emit(".L_tl_process_close_saved_stderr:");
+        self.emit("    movq -88(%rbp), %rcx");
+        self.emit("    cmpq $0, %rcx");
+        self.emit("    jl .L_tl_process_close_all_done");
+        self.emit_call("_close");
+        self.emit("    movq $-1, -88(%rbp)");
+        self.emit(".L_tl_process_close_all_done:");
+        self.emit("    add $8, %rsp");
+        self.emit("    ret");
+        self.emit("");
     }
 
     fn generate_env_var_exists_runtime_functions(&mut self) {
@@ -14142,7 +14485,7 @@ mod tests {
     }
 
     #[test]
-    fn test_windows_target_process_output_extern_returns_unsupported() {
+    fn test_windows_target_process_output_extern_emits_crt_runtime() {
         let asm = compile_ok_for_target(
             r#"
             (extern tl_process_output : (-> i64 i64))
@@ -14152,7 +14495,6 @@ mod tests {
         );
 
         assert!(asm.contains("tl_process_output:"), "asm:\n{}", asm);
-        assert!(asm.contains("process: runtime execution is not supported on this target"));
         assert!(
             !asm.contains("    .extern tl_process_output"),
             "asm:\n{}",
@@ -14162,6 +14504,34 @@ mod tests {
         assert!(!asm.contains("    syscall"), "asm:\n{}", asm);
         assert!(!asm.contains(".L_tl_envp:"), "asm:\n{}", asm);
         assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        for symbol in [
+            "_close",
+            "_dup",
+            "_dup2",
+            "_fileno",
+            "_lseeki64",
+            "_read",
+            "_spawnv",
+            "fclose",
+            "fflush",
+            "tmpfile",
+        ] {
+            assert!(
+                asm.contains(&format!("    .extern {}", symbol)),
+                "missing extern {symbol}; asm:\n{}",
+                asm
+            );
+        }
+        for snippet in [
+            "    call _spawnv",
+            "    call _dup2",
+            "    call tmpfile",
+            ".L_tl_process_copy_c_string:",
+            ".L_tl_process_read_fd_to_string:",
+            ".L_tl_process_error_result:",
+        ] {
+            assert!(asm.contains(snippet), "missing {snippet}; asm:\n{}", asm);
+        }
     }
 
     #[test]

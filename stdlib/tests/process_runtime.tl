@@ -92,12 +92,32 @@
     (process-command "/usr/bin/cat" (process-args-empty))
     "stdin-from-typelisp"))
 
+(define (process-runtime-windows-command) : ProcessCommand
+  (process-command
+    "C:\\Windows\\System32\\cmd.exe"
+    (process-args-cons
+      "/C"
+      (process-args-cons
+        "echo stdout=ok&& 1>&2 echo stderr=err&& exit /b 7"
+        (process-args-empty)))))
+
+(define (process-runtime-windows-missing-command) : ProcessCommand
+  (process-command
+    "C:\\Windows\\System32\\definitely-missing-typelisp.exe"
+    (process-args-empty)))
+
 (define (main) : i64
   (if (string-eq (env-path-list-separator) ";")
     (begin
-      (assert-process-unsupported
-        (process-output (process-runtime-simple-command))
-        "process: runtime execution is not supported on this target")
+      (assert-process-ok
+        (process-output (process-runtime-windows-command))
+        7
+        "stdout=ok\r\n"
+        "stderr=err\r\n"
+        "windows process output capture")
+      (assert-process-spawn-failed
+        (process-output (process-runtime-windows-missing-command))
+        "windows process missing executable")
       42)
     (begin
       (assert-process-ok

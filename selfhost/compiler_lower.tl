@@ -1223,11 +1223,31 @@
     [(AstExprComptime inner)
       (match (compiler-ctfe-eval inner (ctfe-env-empty) (ctfe-fuel-limit))
         [(OkCtfe value _)
-          (lower-materialize
-            state
-            (lower-literal-value (ctfe-value-to-literal value))
-            expr-ty)]
+          (match value
+            [(CtfeType ty)
+              (ErrLowerExpr
+                (lower-diagnostic-at-expr
+                  origin
+                  (string-append
+                    "type value "
+                    (string-append
+                      (tc-type-render (tc-resolve-type ctx ty))
+                      " is compile-time only"))))]
+            [_
+              (lower-materialize
+                state
+                (lower-literal-value (ctfe-value-to-literal value))
+                expr-ty)])]
         [(ErrCtfe diag) (ErrLowerExpr diag)])]
+    [(AstExprTypeLiteral ty)
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr
+          origin
+          (string-append
+            "type value "
+            (string-append
+              (tc-type-render (tc-resolve-type ctx ty))
+              " is compile-time only"))))]
     [_
       (ErrLowerExpr
         (lower-diagnostic-at-expr origin "lower: unsupported expression"))]))
@@ -3560,7 +3580,7 @@
     [(AstParamNil) env]
     [(AstParamCons param rest)
       (match param
-        [(AstParam name _)
+        [(AstParam name _ _)
           (lower-bind-params rest (+ idx 1) (sym-i64-bind env name idx))])]))
 
 (define (lower-param-list [ctx : TcContext] [params : AstParamList] [idx : i64]) : CompilerIrParamList
@@ -3568,7 +3588,7 @@
     [(AstParamNil) IrParamNil]
     [(AstParamCons param rest)
       (match param
-        [(AstParam name ty)
+        [(AstParam name ty _)
           (IrParamCons
             (IrParam
               name
@@ -3720,23 +3740,27 @@
         [(ErrLowerDecls message) (ErrCompilerLower message)])]))
 
 (define (lower-compiler-program-unlocated [program : AstProgram]) : ResultCompilerLower
-  (match (typecheck-compiler-program program)
-    [(OkCompilerTypecheck _)
-      (match (build-compiler-symbols program)
-        [(OkCompilerSymbols symbols)
-          (match (build-compiler-registries program)
-            [(OkCompilerRegistries registries)
-              (let ([ctx : TcContext (TcContext program symbols registries)])
-                (match (tc-build-top-env ctx program)
-                  [(OkTcEnv top-env)
-                    (lower-compiler-program-checked ctx top-env program)]
-                  [(ErrTcEnv message)
-                    (ErrCompilerLower (lower-diagnostic message))]))]
-            [(ErrCompilerRegistries message)
+  (match (compiler-specialize-program program)
+    [(OkSpecProgram specialized)
+      (match (typecheck-compiler-program specialized)
+        [(OkCompilerTypecheck _)
+          (match (build-compiler-symbols specialized)
+            [(OkCompilerSymbols symbols)
+              (match (build-compiler-registries specialized)
+                [(OkCompilerRegistries registries)
+                  (let ([ctx : TcContext
+                    (TcContext specialized symbols registries)])
+                    (match (tc-build-top-env ctx specialized)
+                      [(OkTcEnv top-env)
+                        (lower-compiler-program-checked ctx top-env specialized)]
+                      [(ErrTcEnv message)
+                        (ErrCompilerLower (lower-diagnostic message))]))]
+                [(ErrCompilerRegistries message)
+                  (ErrCompilerLower (lower-diagnostic message))])]
+            [(ErrCompilerSymbols message)
               (ErrCompilerLower (lower-diagnostic message))])]
-        [(ErrCompilerSymbols message)
-          (ErrCompilerLower (lower-diagnostic message))])]
-    [(ErrCompilerTypecheck diag) (ErrCompilerLower diag)]))
+        [(ErrCompilerTypecheck diag) (ErrCompilerLower diag)])]
+    [(ErrSpecProgram diag) (ErrCompilerLower diag)]))
 
 (define (lower-compiler-program-with-path
   [path : String]

@@ -1329,6 +1329,39 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
         windows_text
     );
 
+    let comptime_type_source = dir.join("comptime-type.tl");
+    let comptime_type_asm = dir.join("comptime-type.s");
+    fs::write(
+        &comptime_type_source,
+        "(define (alloc [comptime T : type] [n : i64]) : (Array i64) (make-array T n))
+(define (main) : (Array i64) (alloc (type i64) 4))
+",
+    )
+    .expect("write comptime type source");
+    let comptime_type_source_arg = comptime_type_source
+        .to_str()
+        .expect("comptime type source path is utf-8");
+    let comptime_type_asm_arg = comptime_type_asm
+        .to_str()
+        .expect("comptime type asm path is utf-8");
+    let comptime_type = Command::new(&driver_bin)
+        .args([comptime_type_source_arg, "-o", comptime_type_asm_arg])
+        .output()
+        .expect("run selfhost compile driver on comptime type source");
+    assert!(
+        comptime_type.status.success(),
+        "selfhost compile comptime type source failed\nstdout:\n{}\nstderr:\n{}",
+        stdout(&comptime_type),
+        stderr(&comptime_type)
+    );
+    let comptime_type_text =
+        fs::read_to_string(&comptime_type_asm).expect("read comptime type asm");
+    assert!(
+        comptime_type_text.contains("__tl_specialized_alloc_type_i64_none"),
+        "comptime type assembly:\n{}",
+        comptime_type_text
+    );
+
     let region_source = dir.join("region-ok.tl");
     let region_asm = dir.join("region-ok.s");
     fs::write(

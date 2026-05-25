@@ -3,9 +3,9 @@
 ;;;; Provides recoverable environment lookup and PATH-style list helpers on top of
 ;;;; compiler/runtime primitives:
 ;;;;
-;;;;   env-var-exists?, env-var-value, env-path-separator
+;;;; `env-var-exists?`, `env-var-value`, and `env-path-separator`.
 ;;;;
-;;;; Usage: (import "stdlib/env.tl")
+;;;; Usage: `(import "stdlib/env.tl")`
 ;;;;
 ;;;; ```typelisp
 ;;;; (import "stdlib/env.tl")

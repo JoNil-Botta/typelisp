@@ -339,6 +339,9 @@
 (define (compiler-parse-tag-expr-with-region) : i64
   248)
 
+(define (compiler-parse-tag-expr-type-literal) : i64
+  249)
+
 (define (compiler-parse-tag-lit-true) : i64
   300)
 
@@ -477,73 +480,46 @@
                                         (compiler-parse-tag-ty-region)))))))))))))))))))))
 
 (define (compiler-parse-dispatch-exprs [e : SymI64Env]) : SymI64Env
-  (let ([e1 : SymI64Env (sym-i64-bind e "if" (compiler-parse-tag-expr-if))])
-    (let ([e2 : SymI64Env (sym-i64-bind e1 "let" (compiler-parse-tag-expr-let))])
-      (let ([e3 : SymI64Env
-        (sym-i64-bind e2 "lambda" (compiler-parse-tag-expr-lambda))])
-        (let ([e4 : SymI64Env
-          (sym-i64-bind e3 "while" (compiler-parse-tag-expr-while))])
-          (let ([e5 : SymI64Env
-            (sym-i64-bind e4 "begin" (compiler-parse-tag-expr-begin))])
-            (let ([e6 : SymI64Env
-              (sym-i64-bind e5 "set!" (compiler-parse-tag-expr-set))])
-              (let ([e7 : SymI64Env
-                (sym-i64-bind e6 "ann" (compiler-parse-tag-expr-ann))])
-                (let ([e8 : SymI64Env
-                  (sym-i64-bind e7 "cast" (compiler-parse-tag-expr-cast))])
-                  (let ([e9 : SymI64Env
-                    (sym-i64-bind e8 "cond" (compiler-parse-tag-expr-cond))])
-                    (let ([e10 : SymI64Env
-                      (sym-i64-bind e9 "tuple" (compiler-parse-tag-expr-tuple))])
-                      (let ([e11 : SymI64Env
-                        (sym-i64-bind
-                          e10
-                          "tuple-ref"
-                          (compiler-parse-tag-expr-tuple-ref))])
-                        (let ([e12 : SymI64Env
-                          (sym-i64-bind
-                            e11
-                            "array"
-                            (compiler-parse-tag-expr-array))])
-                          (let ([e13 : SymI64Env
-                            (sym-i64-bind
-                              e12
-                              "make-array"
-                              (compiler-parse-tag-expr-make-array))])
-                            (let ([e14 : SymI64Env
-                              (sym-i64-bind
-                                e13
-                                "array-ref"
-                                (compiler-parse-tag-expr-array-ref))])
-                              (let ([e15 : SymI64Env
-                                (sym-i64-bind
-                                  e14
-                                  "array-set!"
-                                  (compiler-parse-tag-expr-array-set))])
-                                (let ([e18 : SymI64Env
-                                  (sym-i64-bind
-                                    e15
-                                    "match"
-                                    (compiler-parse-tag-expr-match))])
-                                  (let ([e19 : SymI64Env
-                                    (sym-i64-bind
-                                      e18
-                                      "foreach"
-                                      (compiler-parse-tag-expr-foreach))])
-                                    (let ([e20 : SymI64Env
-                                      (sym-i64-bind
-                                        e19
-                                        "struct-get"
-                                        (compiler-parse-tag-expr-struct-get))])
-                                      (let ([e21 : SymI64Env
-                                        (sym-i64-bind
-                                          e20
-                                          "comptime"
-                                          (compiler-parse-tag-expr-comptime))])
-                                        (sym-i64-bind
-                                          e21
-                                          "with-region"
-                                          (compiler-parse-tag-expr-with-region))))))))))))))))))))))
+  (let ([out : SymI64Env e])
+    (begin
+      (set! out (sym-i64-bind out "if" (compiler-parse-tag-expr-if)))
+      (set! out (sym-i64-bind out "let" (compiler-parse-tag-expr-let)))
+      (set! out (sym-i64-bind out "lambda" (compiler-parse-tag-expr-lambda)))
+      (set! out (sym-i64-bind out "while" (compiler-parse-tag-expr-while)))
+      (set! out (sym-i64-bind out "begin" (compiler-parse-tag-expr-begin)))
+      (set! out (sym-i64-bind out "set!" (compiler-parse-tag-expr-set)))
+      (set! out (sym-i64-bind out "ann" (compiler-parse-tag-expr-ann)))
+      (set! out (sym-i64-bind out "cast" (compiler-parse-tag-expr-cast)))
+      (set! out (sym-i64-bind out "cond" (compiler-parse-tag-expr-cond)))
+      (set! out (sym-i64-bind out "tuple" (compiler-parse-tag-expr-tuple)))
+      (set!
+        out
+        (sym-i64-bind out "tuple-ref" (compiler-parse-tag-expr-tuple-ref)))
+      (set! out (sym-i64-bind out "array" (compiler-parse-tag-expr-array)))
+      (set!
+        out
+        (sym-i64-bind out "make-array" (compiler-parse-tag-expr-make-array)))
+      (set!
+        out
+        (sym-i64-bind out "array-ref" (compiler-parse-tag-expr-array-ref)))
+      (set!
+        out
+        (sym-i64-bind out "array-set!" (compiler-parse-tag-expr-array-set)))
+      (set! out (sym-i64-bind out "match" (compiler-parse-tag-expr-match)))
+      (set! out (sym-i64-bind out "foreach" (compiler-parse-tag-expr-foreach)))
+      (set!
+        out
+        (sym-i64-bind out "struct-get" (compiler-parse-tag-expr-struct-get)))
+      (set!
+        out
+        (sym-i64-bind out "comptime" (compiler-parse-tag-expr-comptime)))
+      (set!
+        out
+        (sym-i64-bind out "with-region" (compiler-parse-tag-expr-with-region)))
+      (set!
+        out
+        (sym-i64-bind out "type" (compiler-parse-tag-expr-type-literal)))
+      out)))
 
 (define (compiler-parse-dispatch-patterns [e : SymI64Env]) : SymI64Env
   (let ([e1 : SymI64Env (sym-i64-bind e "true" (compiler-parse-tag-lit-true))])
@@ -787,10 +763,28 @@
     [(SCons (SSym name) (SCons colon (SCons ty (SNil))))
       (if (sexpr-colon? colon)
         (match (parse-ast-type dispatch ty)
-          [(OkAstType parsed-ty) (OkAstParam (AstParam name parsed-ty))]
+          [(OkAstType parsed-ty) (OkAstParam (AstParam name parsed-ty false))]
           [(ErrAstType message) (ErrAstParam message)])
         (ErrAstParam "parse: expected ':' in parameter"))]
+    [(SCons (SSym marker) (SCons (SSym name) (SCons colon (SCons ty (SNil)))))
+      (if (string-eq marker "comptime")
+        (if (sexpr-colon? colon)
+          (match (parse-ast-type dispatch ty)
+            [(OkAstType parsed-ty) (OkAstParam (AstParam name parsed-ty true))]
+            [(ErrAstType message) (ErrAstParam message)])
+          (ErrAstParam "parse: expected ':' in parameter"))
+        (ErrAstParam "parse: malformed parameter"))]
     [_ (ErrAstParam "parse: malformed parameter")]))
+
+(define (ast-param-list-has-comptime? [params : AstParamList]) : bool
+  (match params
+    [(AstParamNil) false]
+    [(AstParamCons param rest)
+      (match param
+        [(AstParam _ _ is-comptime)
+          (if is-comptime
+            true
+            (ast-param-list-has-comptime? rest))])]))
 
 (define (parse-ast-param-list [dispatch : SymI64Env] [s : Sexpr]) : ResultAstParamList
   (match s
@@ -1077,26 +1071,32 @@
       (if (sexpr-colon? (spanned-sexpr-form colon))
         (match (parse-ast-param-list dispatch (spanned-sexpr-form params))
           [(OkAstParamList parsed-params)
-            (match (parse-ast-type dispatch (spanned-sexpr-form ret))
-              [(OkAstType parsed-ret)
-                (match (parse-ast-expr dispatch body)
-                  [(OkAstExpr parsed-body)
-                    (OkAstExpr
-                      (AstExprLambda
-                        parsed-params
-                        (AstSomeType parsed-ret)
-                        parsed-body))]
-                  [(ErrAstExpr message) (ErrAstExpr message)])]
-              [(ErrAstType message) (ErrAstExpr message)])]
+            (if (ast-param-list-has-comptime? parsed-params)
+              (ErrAstExpr
+                "comptime parameters are only supported on top-level function definitions")
+              (match (parse-ast-type dispatch (spanned-sexpr-form ret))
+                [(OkAstType parsed-ret)
+                  (match (parse-ast-expr dispatch body)
+                    [(OkAstExpr parsed-body)
+                      (OkAstExpr
+                        (AstExprLambda
+                          parsed-params
+                          (AstSomeType parsed-ret)
+                          parsed-body))]
+                    [(ErrAstExpr message) (ErrAstExpr message)])]
+                [(ErrAstType message) (ErrAstExpr message)]))]
           [(ErrAstParamList message) (ErrAstExpr message)])
         (ErrAstExpr "parse: expected ':' in lambda"))]
     [(SpSCons params (SpSCons body (SpSNil _) _) _)
       (match (parse-ast-param-list dispatch (spanned-sexpr-form params))
         [(OkAstParamList parsed-params)
-          (match (parse-ast-expr dispatch body)
-            [(OkAstExpr parsed-body)
-              (OkAstExpr (AstExprLambda parsed-params AstNoType parsed-body))]
-            [(ErrAstExpr message) (ErrAstExpr message)])]
+          (if (ast-param-list-has-comptime? parsed-params)
+            (ErrAstExpr
+              "comptime parameters are only supported on top-level function definitions")
+            (match (parse-ast-expr dispatch body)
+              [(OkAstExpr parsed-body)
+                (OkAstExpr (AstExprLambda parsed-params AstNoType parsed-body))]
+              [(ErrAstExpr message) (ErrAstExpr message)]))]
         [(ErrAstParamList message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed lambda")]))
 
@@ -1174,6 +1174,14 @@
         [(OkAstExpr parsed-expr) (OkAstExpr (AstExprComptime parsed-expr))]
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: comptime expects exactly one expression")]))
+
+(define (parse-ast-type-literal [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSCons ty (SpSNil _) _)
+      (match (parse-ast-type dispatch (spanned-sexpr-form ty))
+        [(OkAstType parsed-ty) (OkAstExpr (AstExprTypeLiteral parsed-ty))]
+        [(ErrAstType message) (ErrAstExpr message)])]
+    [_ (ErrAstExpr "parse: type expects exactly one type")]))
 
 (define (parse-ast-with-region [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -1347,10 +1355,14 @@
                                         (parse-ast-with-region dispatch rest)
                                         (if (=
                                           tag
-                                          (compiler-parse-tag-decl-comptime-decl))
-                                          (ErrAstExpr
-                                            "parse: comptime-decl is only valid as a top-level declaration")
-                                          (parse-ast-call dispatch head rest))))))))))))))))))))))
+                                          (compiler-parse-tag-expr-type-literal))
+                                          (parse-ast-type-literal dispatch rest)
+                                          (if (=
+                                            tag
+                                            (compiler-parse-tag-decl-comptime-decl))
+                                            (ErrAstExpr
+                                              "parse: comptime-decl is only valid as a top-level declaration")
+                                            (parse-ast-call dispatch head rest)))))))))))))))))))))))
 
 (define (parse-ast-list-expr
   [dispatch : SymI64Env]

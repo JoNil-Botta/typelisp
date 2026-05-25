@@ -81,7 +81,7 @@
   (AstSomeType AstType))
 
 (defenum AstParam
-  (AstParam String AstType))
+  (AstParam String AstType bool))
 
 (defenum AstParamList
   (AstParamNil)
@@ -153,6 +153,8 @@
   (AstExprForeach String AstType AstExpr AstExpr AstExpr)
   (AstExprStructGet AstExpr String)
   (AstExprWithRegion String AstExprList)
+  ;; Compile-time-only type value literal: `(type T)`.
+  (AstExprTypeLiteral AstType)
   ;; Reserved compile-time evaluation form `(comptime expr)` (#718). Parsed and
   ;; type-checked (as the inner expression's type); evaluation lands in #719.
   (AstExprComptime AstExpr))
@@ -233,7 +235,8 @@
     [(AstExprForeach _ _ _ _ _) 23]
     [(AstExprStructGet _ _) 24]
     [(AstExprWithRegion _ _) 25]
-    [(AstExprComptime _) 26]))
+    [(AstExprTypeLiteral _) 26]
+    [(AstExprComptime _) 27]))
 
 (define (ast-expr-unspan [expr : AstExpr]) : AstExpr
   (match expr
@@ -259,7 +262,7 @@
     [lit : AstLiteral (AstLitInt 41)]
     [one : AstExpr (AstExprLiteral (AstLitInt 1))]
     [expr : AstExpr (AstExprBinary (AstBinAdd) (AstExprLiteral lit) one)]
-    [param : AstParam (AstParam "x" i64-ty)]
+    [param : AstParam (AstParam "x" i64-ty false)]
     [params : AstParamList (AstParamCons param AstParamNil)]
     [decl : AstDecl (AstDeclDefFn "main" params i64-ty expr)]
     [program : AstProgram (AstProgram (AstDeclCons decl AstDeclNil))])

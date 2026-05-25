@@ -30,6 +30,7 @@ const ENV_VAR_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_env_var_exists";
 const ENV_VAR_VALUE_RUNTIME_SYMBOL: &str = ".L_tl_env_var_value";
 const ENV_PATH_SEPARATOR_RUNTIME_SYMBOL: &str = ".L_tl_env_path_separator";
 const PROCESS_OUTPUT_RUNTIME_SYMBOL: &str = "tl_process_output";
+const WINDOWS_SETUP_INSTANCES_RUNTIME_SYMBOL: &str = "tl_windows_setup_instances";
 const READ_STDIN_LINE_RUNTIME_SYMBOL: &str = ".L_tl_read_stdin_line";
 const READ_STDIN_BYTES_RUNTIME_SYMBOL: &str = ".L_tl_read_stdin_bytes";
 const STDIN_EOF_RUNTIME_SYMBOL: &str = ".L_tl_stdin_eof";
@@ -474,6 +475,10 @@ pub struct X86_64Backend {
     /// hook. Linux emits a direct fork/exec/capture helper; Windows returns a
     /// structured unsupported result for this slice.
     needs_process_output_runtime: bool,
+    /// Whether the program references stdlib/windows_setup.tl's backend
+    /// SetupConfiguration hook. Current targets return a structured unsupported
+    /// result until the Windows COM enumerator lands.
+    needs_windows_setup_instances_runtime: bool,
     /// Whether the program references stdin helpers. The read helpers allocate
     /// heap Strings and update a backend-owned EOF flag; `stdin-eof?` reads that
     /// flag; `flush-stdout` is a target-specific stdout flush/no-op helper.
@@ -1991,6 +1996,7 @@ impl X86_64Backend {
             needs_env_var_value_runtime: false,
             needs_env_path_separator_runtime: false,
             needs_process_output_runtime: false,
+            needs_windows_setup_instances_runtime: false,
             needs_read_stdin_line_runtime: false,
             needs_read_stdin_bytes_runtime: false,
             needs_stdin_eof_runtime: false,
@@ -2059,6 +2065,8 @@ impl X86_64Backend {
         self.needs_env_var_value_runtime = Self::needs_env_var_value_runtime(program);
         self.needs_env_path_separator_runtime = Self::needs_env_path_separator_runtime(program);
         self.needs_process_output_runtime = Self::needs_process_output_runtime(program);
+        self.needs_windows_setup_instances_runtime =
+            Self::needs_windows_setup_instances_runtime(program);
         self.needs_read_stdin_line_runtime = Self::needs_read_stdin_line_runtime(program);
         self.needs_read_stdin_bytes_runtime = Self::needs_read_stdin_bytes_runtime(program);
         self.needs_stdin_eof_runtime = Self::needs_stdin_eof_runtime(program);
@@ -2091,6 +2099,7 @@ impl X86_64Backend {
             || self.needs_env_var_value_runtime
             || self.needs_env_path_separator_runtime
             || self.needs_process_output_runtime
+            || self.needs_windows_setup_instances_runtime
             || self.needs_read_stdin_line_runtime
             || self.needs_read_stdin_bytes_runtime;
         let needs_print_runtime = !self.runtime_print_names.is_empty();
@@ -2174,6 +2183,9 @@ impl X86_64Backend {
         if self.needs_process_output_runtime {
             self.generate_process_output_runtime_data();
         }
+        if self.needs_windows_setup_instances_runtime {
+            self.generate_windows_setup_instances_runtime_data();
+        }
         self.generate_closure_descriptor_data();
 
         self.emit("    .text");
@@ -2222,6 +2234,8 @@ impl X86_64Backend {
                 || (self.needs_env_path_separator_runtime
                     && symbol == ENV_PATH_SEPARATOR_RUNTIME_SYMBOL)
                 || (self.needs_process_output_runtime && symbol == PROCESS_OUTPUT_RUNTIME_SYMBOL)
+                || (self.needs_windows_setup_instances_runtime
+                    && symbol == WINDOWS_SETUP_INSTANCES_RUNTIME_SYMBOL)
                 || (self.needs_read_stdin_line_runtime && symbol == READ_STDIN_LINE_RUNTIME_SYMBOL)
                 || (self.needs_read_stdin_bytes_runtime
                     && symbol == READ_STDIN_BYTES_RUNTIME_SYMBOL)
@@ -2316,6 +2330,9 @@ impl X86_64Backend {
         }
         if self.needs_process_output_runtime {
             self.generate_process_output_runtime_functions();
+        }
+        if self.needs_windows_setup_instances_runtime {
+            self.generate_windows_setup_instances_runtime_functions();
         }
         if self.needs_read_stdin_line_runtime {
             self.generate_read_stdin_line_runtime_functions();
@@ -2960,6 +2977,10 @@ impl X86_64Backend {
 
     fn needs_process_output_runtime(program: &Program) -> bool {
         Self::needs_named_runtime(program, PROCESS_OUTPUT_RUNTIME_SYMBOL)
+    }
+
+    fn needs_windows_setup_instances_runtime(program: &Program) -> bool {
+        Self::needs_named_runtime(program, WINDOWS_SETUP_INSTANCES_RUNTIME_SYMBOL)
     }
 
     fn needs_private_call_runtime(program: &Program, symbol: &str) -> bool {
@@ -3997,6 +4018,18 @@ impl X86_64Backend {
         self.emit(".L_tl_process_stdin_name:");
         self.emit("    .ascii \"typelisp-process-stdin\"");
         self.emit("    .byte 0");
+        self.emit("");
+    }
+
+    fn generate_windows_setup_instances_runtime_data(&mut self) {
+        self.emit("    .section .rodata");
+        self.emit(".L_tl_windows_setup_unsupported_msg:");
+        self.emit(
+            "    .ascii \"windows setup: SetupConfiguration enumeration is not implemented\"",
+        );
+        self.emit(
+            "    .set .L_tl_windows_setup_unsupported_msg_len, . - .L_tl_windows_setup_unsupported_msg",
+        );
         self.emit("");
     }
 
@@ -6420,6 +6453,38 @@ impl X86_64Backend {
         self.emit("    pop %r13");
         self.emit("    pop %r12");
         self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_windows_setup_instances_runtime_functions(&mut self) {
+        let arg0 = self.target.calling_convention().integer_arg_regs[0];
+
+        self.emit(&format!("{}:", WINDOWS_SETUP_INSTANCES_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    leaq .L_tl_windows_setup_unsupported_msg(%rip), %r12");
+        self.emit("    movq $.L_tl_windows_setup_unsupported_msg_len, %r13");
+        self.emit(&format!("    movq $16, {}", arg0));
+        self.emit_call("tl_alloc");
+        self.emit("    movq %r12, 0(%rax)");
+        self.emit("    movq %r13, 8(%rax)");
+        self.emit("    movq %rax, %r12");
+        self.emit(&format!("    movq $16, {}", arg0));
+        self.emit_call("tl_alloc");
+        self.emit("    movq $0, 0(%rax)");
+        self.emit("    movq %r12, 8(%rax)");
+        self.emit("    movq %rax, %r12");
+        self.emit(&format!("    movq $16, {}", arg0));
+        self.emit_call("tl_alloc");
+        self.emit("    movq $1, 0(%rax)");
+        self.emit("    movq %r12, 8(%rax)");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    mov %rbp, %rsp");
         self.emit("    pop %rbp");
         self.emit("    ret");
         self.emit("");
@@ -9528,6 +9593,10 @@ impl X86_64Backend {
             ENV_PATH_SEPARATOR_RUNTIME_SYMBOL.into()
         } else if name == PROCESS_OUTPUT_RUNTIME_SYMBOL && self.needs_process_output_runtime {
             PROCESS_OUTPUT_RUNTIME_SYMBOL.into()
+        } else if name == WINDOWS_SETUP_INSTANCES_RUNTIME_SYMBOL
+            && self.needs_windows_setup_instances_runtime
+        {
+            WINDOWS_SETUP_INSTANCES_RUNTIME_SYMBOL.into()
         } else if name == READ_STDIN_LINE_RUNTIME_SYMBOL && self.needs_read_stdin_line_runtime {
             READ_STDIN_LINE_RUNTIME_SYMBOL.into()
         } else if name == READ_STDIN_BYTES_RUNTIME_SYMBOL && self.needs_read_stdin_bytes_runtime {
@@ -14588,6 +14657,64 @@ mod tests {
         ] {
             assert!(asm.contains(snippet), "missing {snippet}; asm:\n{}", asm);
         }
+    }
+
+    #[test]
+    fn test_compile_windows_setup_instances_extern_emits_unsupported_runtime() {
+        let asm = compile_ok(
+            r#"
+            (extern tl_windows_setup_instances : (-> i64))
+            (define (main) : i64 (tl_windows_setup_instances))
+            "#,
+        );
+
+        assert!(asm.contains("tl_windows_setup_instances:"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("windows setup: SetupConfiguration enumeration is not implemented"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("    .extern tl_windows_setup_instances"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("_tl_tl_windows_setup_instances"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_windows_target_windows_setup_instances_extern_emits_unsupported_runtime() {
+        let asm = compile_ok_for_target(
+            r#"
+            (extern tl_windows_setup_instances : (-> i64))
+            (define (main) : i64 (tl_windows_setup_instances))
+            "#,
+            BackendTarget::windows_x86_64(),
+        );
+
+        assert!(asm.contains("tl_windows_setup_instances:"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("windows setup: SetupConfiguration enumeration is not implemented"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("    .extern tl_windows_setup_instances"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("_tl_tl_windows_setup_instances"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(!asm.contains("    syscall"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
     }
 
     #[test]

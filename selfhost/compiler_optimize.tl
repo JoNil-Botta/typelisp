@@ -7,114 +7,58 @@
 ;; propagation, conservative CFG simplification, and DCE.
 ;;
 ;; Safety:
-;; - Integer `+`, `-`, `*`, and `neg` wrap modulo 2^N per SPEC; this optimizer is
-;;   itself TypeLisp using the same wrapping i64 arithmetic, so folding them is
-;;   exact.
-;; - Division, modulo, and shifts are intentionally NOT folded, preserving the
-;;   runtime divide/modulo-by-zero traps and shift edge cases until the rules are
-;;   made explicit.
+;; - Integer `+`, `-`, `*`, bitwise ops, shifts, and `neg` are folded through
+;;   helpers that normalize the result back to the instruction type. This keeps
+;;   narrow signed/unsigned widths and `char` byte semantics explicit.
+;; - Division, modulo, and shifts fold only when the static operands avoid the
+;;   same runtime traps emitted by lowering: zero divisors, signed MIN / -1, and
+;;   out-of-range shift counts remain in the IR.
 ;; - Tracking is block-local (reset per block), so no value is folded across a
 ;;   control-flow edge.
 ;;
 ;; Out of scope: aggregate/String/array IR optimization.
 (import "compiler_ir_types.tl")
 
-;; --- block-local constant environment: IR var id -> known scalar literal -----
+;; --- block-local constant environment: IR var id -> known typed scalar -------
+(defenum OptMaybeI64
+  (OptNoI64)
+  (OptSomeI64 i64))
+
+(defenum OptMaybeBool
+  (OptNoBool)
+  (OptSomeBool bool))
+
+(defenum OptKnownConst
+  (OptNoConst)
+  (OptSomeConst CompilerIrValue AstType))
+
 (defenum OptConstEnv
   (OptConstNil)
-  (OptConstCons i64 CompilerIrValue OptConstEnv))
+  (OptConstCons i64 CompilerIrValue AstType OptConstEnv))
 
 (define (opt-const-unbind [env : OptConstEnv] [var : i64]) : OptConstEnv
   (match env
     [(OptConstNil) (OptConstNil)]
-    [(OptConstCons id value rest)
+    [(OptConstCons id value ty rest)
       (if (= id var)
         (opt-const-unbind rest var)
-        (OptConstCons id value (opt-const-unbind rest var)))]))
+        (OptConstCons id value ty (opt-const-unbind rest var)))]))
 
 (define (opt-const-bind
   [env : OptConstEnv]
   [var : i64]
-  [value : CompilerIrValue]) : OptConstEnv
-  (OptConstCons var value (opt-const-unbind env var)))
+  [value : CompilerIrValue]
+  [ty : AstType]) : OptConstEnv
+  (OptConstCons var value ty (opt-const-unbind env var)))
 
-(define (opt-const-lookup [env : OptConstEnv] [var : i64]) : CompilerIrMaybeValue
+(define (opt-const-lookup [env : OptConstEnv] [var : i64]) : OptKnownConst
   (match env
-    [(OptConstNil) (IrNoValue)]
-    [(OptConstCons id value rest)
+    [(OptConstNil) (OptNoConst)]
+    [(OptConstCons id value ty rest)
       (if (= id var)
-        (IrSomeValue value)
+        (OptSomeConst value ty)
         (opt-const-lookup rest var))]))
 
-;; A scalar literal we are willing to track and fold (i64 / bool only for v1).
-(define (opt-const-value? [value : CompilerIrValue]) : bool
-  (match value
-    [(IrValueI64 _) true]
-    [(IrValueBool _) true]
-    [_ false]))
-
-(define (opt-resolve [env : OptConstEnv] [value : CompilerIrValue]) : CompilerIrValue
-  (match value
-    [(IrValueVar id)
-      (match (opt-const-lookup env id)
-        [(IrSomeValue v) v]
-        [(IrNoValue) value])]
-    [_ value]))
-
-;; --- folding rules -----------------------------------------------------------
-;; Fold an integer binop with two i64 literals. Div/Mod/shifts/bitwise are left
-;; unfolded (returns IrNoValue) to preserve runtime semantics for this slice.
-(define (opt-fold-i64 [op : CompilerIrBinOp] [a : i64] [b : i64]) : CompilerIrMaybeValue
-  (match op
-    [(IrBinAdd) (IrSomeValue (IrValueI64 (+ a b)))]
-    [(IrBinSub) (IrSomeValue (IrValueI64 (- a b)))]
-    [(IrBinMul) (IrSomeValue (IrValueI64 (* a b)))]
-    [(IrBinEq) (IrSomeValue (IrValueBool (= a b)))]
-    [(IrBinNe) (IrSomeValue (IrValueBool (!= a b)))]
-    [(IrBinLt) (IrSomeValue (IrValueBool (< a b)))]
-    [(IrBinLe) (IrSomeValue (IrValueBool (<= a b)))]
-    [(IrBinGt) (IrSomeValue (IrValueBool (> a b)))]
-    [(IrBinGe) (IrSomeValue (IrValueBool (>= a b)))]
-    [_ (IrNoValue)]))
-
-(define (opt-fold-bool [op : CompilerIrBinOp] [a : bool] [b : bool]) : CompilerIrMaybeValue
-  (match op
-    [(IrBinAnd) (IrSomeValue (IrValueBool (and a b)))]
-    [(IrBinOr) (IrSomeValue (IrValueBool (or a b)))]
-    [_ (IrNoValue)]))
-
-(define (opt-fold-binop
-  [op : CompilerIrBinOp]
-  [l : CompilerIrValue]
-  [r : CompilerIrValue]) : CompilerIrMaybeValue
-  (match l
-    [(IrValueI64 a)
-      (match r
-        [(IrValueI64 b) (opt-fold-i64 op a b)]
-        [_ (IrNoValue)])]
-    [(IrValueBool a)
-      (match r
-        [(IrValueBool b) (opt-fold-bool op a b)]
-        [_ (IrNoValue)])]
-    [_ (IrNoValue)]))
-
-(define (opt-fold-unop [op : CompilerIrUnOp] [v : CompilerIrValue]) : CompilerIrMaybeValue
-  (match op
-    [(IrUnNeg)
-      (match v
-        [(IrValueI64 a) (IrSomeValue (IrValueI64 (- 0 a)))]
-        [_ (IrNoValue)])]
-    [(IrUnNot)
-      (match v
-        [(IrValueBool a) (IrSomeValue (IrValueBool (not a)))]
-        [_ (IrNoValue)])]
-    [(IrUnBitNot) (IrNoValue)]))
-
-;; --- strength reduction / algebraic identities (#924) -----------------------
-;;
-;; Rewrite only identities that are valid for all values of the instruction's
-;; type. Division, modulo, and shifts intentionally have no identities here, so
-;; potentially trapping/edge-sensitive operations stay in the IR.
 (define (opt-integer-type? [ty : AstType]) : bool
   (match ty
     [(AstTyI64) true]
@@ -127,11 +71,469 @@
     [(AstTyU8) true]
     [_ false]))
 
+(define (opt-signed-integer-type? [ty : AstType]) : bool
+  (match ty
+    [(AstTyI64) true]
+    [(AstTyI32) true]
+    [(AstTyI16) true]
+    [(AstTyI8) true]
+    [_ false]))
+
+(define (opt-unsigned-integer-type? [ty : AstType]) : bool
+  (match ty
+    [(AstTyU64) true]
+    [(AstTyU32) true]
+    [(AstTyU16) true]
+    [(AstTyU8) true]
+    [_ false]))
+
+(define (opt-int-or-char-type? [ty : AstType]) : bool
+  (if (opt-integer-type? ty)
+    true
+    (match ty
+      [(AstTyChar) true]
+      [_ false])))
+
 (define (opt-bool-type? [ty : AstType]) : bool
   (match ty
     [(AstTyBool) true]
     [_ false]))
 
+(define (opt-int-width [ty : AstType]) : i64
+  (match ty
+    [(AstTyI64) 64]
+    [(AstTyU64) 64]
+    [(AstTyI32) 32]
+    [(AstTyU32) 32]
+    [(AstTyI16) 16]
+    [(AstTyU16) 16]
+    [(AstTyI8) 8]
+    [(AstTyU8) 8]
+    [(AstTyChar) 8]
+    [_ 0]))
+
+(define (opt-value-to-i64 [value : CompilerIrValue]) : OptMaybeI64
+  (match value
+    [(IrValueI64 n) (OptSomeI64 n)]
+    [(IrValueChar c) (OptSomeI64 (cast c : i64))]
+    [_ (OptNoI64)]))
+
+(define (opt-value-to-bool [value : CompilerIrValue]) : OptMaybeBool
+  (match value
+    [(IrValueBool b) (OptSomeBool b)]
+    [_ (OptNoBool)]))
+
+(define (opt-normalize-int-to-i64 [value : i64] [ty : AstType]) : i64
+  (match ty
+    [(AstTyI64) (cast (cast value : i64) : i64)]
+    [(AstTyI32) (cast (cast value : i32) : i64)]
+    [(AstTyI16) (cast (cast value : i16) : i64)]
+    [(AstTyI8) (cast (cast value : i8) : i64)]
+    [(AstTyU64) (cast (cast value : u64) : i64)]
+    [(AstTyU32) (cast (cast value : u32) : i64)]
+    [(AstTyU16) (cast (cast value : u16) : i64)]
+    [(AstTyU8) (cast (cast value : u8) : i64)]
+    [(AstTyChar) (cast (cast value : char) : i64)]
+    [_ value]))
+
+(define (opt-normalize-const [value : CompilerIrValue] [ty : AstType]) : OptKnownConst
+  (if (opt-integer-type? ty)
+    (match (opt-value-to-i64 value)
+      [(OptSomeI64 n)
+        (OptSomeConst (IrValueI64 (opt-normalize-int-to-i64 n ty)) ty)]
+      [(OptNoI64) (OptNoConst)])
+    (match ty
+      [(AstTyChar)
+        (match (opt-value-to-i64 value)
+          [(OptSomeI64 n)
+            (OptSomeConst (IrValueChar (cast n : char)) (AstTyChar))]
+          [(OptNoI64) (OptNoConst)])]
+      [(AstTyBool)
+        (match (opt-value-to-bool value)
+          [(OptSomeBool b) (OptSomeConst (IrValueBool b) (AstTyBool))]
+          [(OptNoBool) (OptNoConst)])]
+      [_ (OptNoConst)])))
+
+(define (opt-const-value? [value : CompilerIrValue] [ty : AstType]) : bool
+  (match (opt-normalize-const value ty)
+    [(OptSomeConst _ _) true]
+    [(OptNoConst) false]))
+
+(define (opt-default-immediate-type
+  [value : CompilerIrValue]
+  [fallback : AstType]) : AstType
+  (match value
+    [(IrValueI64 _)
+      (if (opt-int-or-char-type? fallback)
+        fallback
+        (AstTyI64))]
+    [(IrValueChar _) (AstTyChar)]
+    [(IrValueBool _) (AstTyBool)]
+    [(IrValueF64 _) (AstTyF64)]
+    [(IrValueUnit) (AstTyUnit)]
+    [_ fallback]))
+
+(define (opt-resolve-known
+  [env : OptConstEnv]
+  [value : CompilerIrValue]
+  [fallback-ty : AstType]) : OptKnownConst
+  (match value
+    [(IrValueVar id)
+      (match (opt-const-lookup env id)
+        [(OptSomeConst v ty) (OptSomeConst v ty)]
+        [(OptNoConst) (OptNoConst)])]
+    [_
+      (opt-normalize-const value (opt-default-immediate-type value fallback-ty))]))
+
+(define (opt-resolve-value [env : OptConstEnv] [value : CompilerIrValue]) : CompilerIrValue
+  (match value
+    [(IrValueVar id)
+      (match (opt-const-lookup env id)
+        [(OptSomeConst v _) v]
+        [(OptNoConst) value])]
+    [_ value]))
+
+;; --- folding rules -----------------------------------------------------------
+(define (opt-normalize-scalar-to-i64 [value : CompilerIrValue] [ty : AstType]) : OptMaybeI64
+  (if (opt-int-or-char-type? ty)
+    (match (opt-value-to-i64 value)
+      [(OptSomeI64 n) (OptSomeI64 (opt-normalize-int-to-i64 n ty))]
+      [(OptNoI64) (OptNoI64)])
+    (OptNoI64)))
+
+(define (opt-binop-operand-type
+  [op : CompilerIrBinOp]
+  [lhs-ty : AstType]
+  [rhs-ty : AstType]
+  [result-ty : AstType]) : AstType
+  (match op
+    [(IrBinEq)
+      (if (opt-type-eq lhs-ty (AstTyI64))
+        rhs-ty
+        lhs-ty)]
+    [(IrBinNe)
+      (if (opt-type-eq lhs-ty (AstTyI64))
+        rhs-ty
+        lhs-ty)]
+    [(IrBinLt)
+      (if (opt-type-eq lhs-ty (AstTyI64))
+        rhs-ty
+        lhs-ty)]
+    [(IrBinLe)
+      (if (opt-type-eq lhs-ty (AstTyI64))
+        rhs-ty
+        lhs-ty)]
+    [(IrBinGt)
+      (if (opt-type-eq lhs-ty (AstTyI64))
+        rhs-ty
+        lhs-ty)]
+    [(IrBinGe)
+      (if (opt-type-eq lhs-ty (AstTyI64))
+        rhs-ty
+        lhs-ty)]
+    [(IrBinBitAnd) lhs-ty]
+    [(IrBinBitOr) lhs-ty]
+    [(IrBinBitXor) lhs-ty]
+    [(IrBinShl) lhs-ty]
+    [(IrBinShr) lhs-ty]
+    [_ result-ty]))
+
+(define (opt-signed-min [ty : AstType]) : i64
+  (match ty
+    [(AstTyI64) (- (- 0 9223372036854775807) 1)]
+    [(AstTyI32) (- 0 2147483648)]
+    [(AstTyI16) (- 0 32768)]
+    [(AstTyI8) (- 0 128)]
+    [_ 0]))
+
+(define (opt-divmod-valid? [a : i64] [b : i64] [ty : AstType]) : bool
+  (if (= b 0)
+    false
+    (if (opt-signed-integer-type? ty)
+      (not (and (= a (opt-signed-min ty)) (= b (- 0 1))))
+      true)))
+
+(define (opt-fold-div-value [a : i64] [b : i64] [ty : AstType]) : i64
+  (match ty
+    [(AstTyI64) (cast (/ (cast a : i64) (cast b : i64)) : i64)]
+    [(AstTyI32) (cast (/ (cast a : i32) (cast b : i32)) : i64)]
+    [(AstTyI16) (cast (/ (cast a : i16) (cast b : i16)) : i64)]
+    [(AstTyI8) (cast (/ (cast a : i8) (cast b : i8)) : i64)]
+    [(AstTyU64) (cast (/ (cast a : u64) (cast b : u64)) : i64)]
+    [(AstTyU32) (cast (/ (cast a : u32) (cast b : u32)) : i64)]
+    [(AstTyU16) (cast (/ (cast a : u16) (cast b : u16)) : i64)]
+    [(AstTyU8) (cast (/ (cast a : u8) (cast b : u8)) : i64)]
+    [_ 0]))
+
+(define (opt-fold-mod-value [a : i64] [b : i64] [ty : AstType]) : i64
+  (match ty
+    [(AstTyI64) (cast (% (cast a : i64) (cast b : i64)) : i64)]
+    [(AstTyI32) (cast (% (cast a : i32) (cast b : i32)) : i64)]
+    [(AstTyI16) (cast (% (cast a : i16) (cast b : i16)) : i64)]
+    [(AstTyI8) (cast (% (cast a : i8) (cast b : i8)) : i64)]
+    [(AstTyU64) (cast (% (cast a : u64) (cast b : u64)) : i64)]
+    [(AstTyU32) (cast (% (cast a : u32) (cast b : u32)) : i64)]
+    [(AstTyU16) (cast (% (cast a : u16) (cast b : u16)) : i64)]
+    [(AstTyU8) (cast (% (cast a : u8) (cast b : u8)) : i64)]
+    [_ 0]))
+
+(define (opt-unsigned-lt? [a : i64] [b : i64] [ty : AstType]) : bool
+  (match ty
+    [(AstTyU64) (< (cast a : u64) (cast b : u64))]
+    [_ (< a b)]))
+
+(define (opt-typed-lt? [a : i64] [b : i64] [ty : AstType]) : bool
+  (if (opt-unsigned-integer-type? ty)
+    (opt-unsigned-lt? a b ty)
+    (< a b)))
+
+(define (opt-typed-le? [a : i64] [b : i64] [ty : AstType]) : bool
+  (or (= a b) (opt-typed-lt? a b ty)))
+
+(define (opt-typed-gt? [a : i64] [b : i64] [ty : AstType]) : bool
+  (opt-typed-lt? b a ty))
+
+(define (opt-typed-ge? [a : i64] [b : i64] [ty : AstType]) : bool
+  (or (= a b) (opt-typed-lt? b a ty)))
+
+(define (opt-fold-compare
+  [op : CompilerIrBinOp]
+  [a : i64]
+  [b : i64]
+  [ty : AstType]) : CompilerIrMaybeValue
+  (match op
+    [(IrBinEq) (IrSomeValue (IrValueBool (= a b)))]
+    [(IrBinNe) (IrSomeValue (IrValueBool (!= a b)))]
+    [(IrBinLt) (IrSomeValue (IrValueBool (opt-typed-lt? a b ty)))]
+    [(IrBinLe) (IrSomeValue (IrValueBool (opt-typed-le? a b ty)))]
+    [(IrBinGt) (IrSomeValue (IrValueBool (opt-typed-gt? a b ty)))]
+    [(IrBinGe) (IrSomeValue (IrValueBool (opt-typed-ge? a b ty)))]
+    [_ (IrNoValue)]))
+
+(define (opt-shift-count-valid?
+  [count : i64]
+  [count-ty : AstType]
+  [width : i64]) : bool
+  (if (not (opt-integer-type? count-ty))
+    false
+    (if (opt-signed-integer-type? count-ty)
+      (and (>= count 0) (< count width))
+      (match count-ty
+        [(AstTyU64) (< (cast count : u64) (cast width : u64))]
+        [_ (< count width)]))))
+
+(define (opt-fold-shl-value [a : i64] [count : i64] [ty : AstType]) : i64
+  (match ty
+    [(AstTyI64) (cast (shl (cast a : i64) (cast count : i64)) : i64)]
+    [(AstTyI32) (cast (shl (cast a : i32) (cast count : i32)) : i64)]
+    [(AstTyI16) (cast (shl (cast a : i16) (cast count : i16)) : i64)]
+    [(AstTyI8) (cast (shl (cast a : i8) (cast count : i8)) : i64)]
+    [(AstTyU64) (cast (shl (cast a : u64) (cast count : u64)) : i64)]
+    [(AstTyU32) (cast (shl (cast a : u32) (cast count : u32)) : i64)]
+    [(AstTyU16) (cast (shl (cast a : u16) (cast count : u16)) : i64)]
+    [(AstTyU8) (cast (shl (cast a : u8) (cast count : u8)) : i64)]
+    [_ 0]))
+
+(define (opt-fold-shr-value [a : i64] [count : i64] [ty : AstType]) : i64
+  (match ty
+    [(AstTyI64) (cast (shr (cast a : i64) (cast count : i64)) : i64)]
+    [(AstTyI32) (cast (shr (cast a : i32) (cast count : i32)) : i64)]
+    [(AstTyI16) (cast (shr (cast a : i16) (cast count : i16)) : i64)]
+    [(AstTyI8) (cast (shr (cast a : i8) (cast count : i8)) : i64)]
+    [(AstTyU64) (cast (shr (cast a : u64) (cast count : u64)) : i64)]
+    [(AstTyU32) (cast (shr (cast a : u32) (cast count : u32)) : i64)]
+    [(AstTyU16) (cast (shr (cast a : u16) (cast count : u16)) : i64)]
+    [(AstTyU8) (cast (shr (cast a : u8) (cast count : u8)) : i64)]
+    [_ 0]))
+
+(define (opt-fold-shift
+  [op : CompilerIrBinOp]
+  [a : i64]
+  [rhs : CompilerIrValue]
+  [rhs-ty : AstType]
+  [ty : AstType]) : CompilerIrMaybeValue
+  (match (opt-normalize-scalar-to-i64 rhs rhs-ty)
+    [(OptSomeI64 count)
+      (if (opt-shift-count-valid? count rhs-ty (opt-int-width ty))
+        (match op
+          [(IrBinShl)
+            (IrSomeValue
+              (IrValueI64
+                (opt-normalize-int-to-i64 (opt-fold-shl-value a count ty) ty)))]
+          [(IrBinShr)
+            (IrSomeValue
+              (IrValueI64
+                (opt-normalize-int-to-i64 (opt-fold-shr-value a count ty) ty)))]
+          [_ (IrNoValue)])
+        (IrNoValue))]
+    [(OptNoI64) (IrNoValue)]))
+
+(define (opt-fold-int-char-binop
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [operand-ty : AstType]
+  [rhs-ty : AstType]) : CompilerIrMaybeValue
+  (match (opt-normalize-scalar-to-i64 lhs operand-ty)
+    [(OptSomeI64 a)
+      (match op
+        [(IrBinShl) (opt-fold-shift op a rhs rhs-ty operand-ty)]
+        [(IrBinShr) (opt-fold-shift op a rhs rhs-ty operand-ty)]
+        [_
+          (match (opt-normalize-scalar-to-i64 rhs operand-ty)
+            [(OptSomeI64 b)
+              (match op
+                [(IrBinAdd)
+                  (if (opt-integer-type? operand-ty)
+                    (IrSomeValue
+                      (IrValueI64 (opt-normalize-int-to-i64 (+ a b) operand-ty)))
+                    (IrNoValue))]
+                [(IrBinSub)
+                  (if (opt-integer-type? operand-ty)
+                    (IrSomeValue
+                      (IrValueI64 (opt-normalize-int-to-i64 (- a b) operand-ty)))
+                    (IrNoValue))]
+                [(IrBinMul)
+                  (if (opt-integer-type? operand-ty)
+                    (IrSomeValue
+                      (IrValueI64 (opt-normalize-int-to-i64 (* a b) operand-ty)))
+                    (IrNoValue))]
+                [(IrBinDiv)
+                  (if (and
+                    (opt-integer-type? operand-ty)
+                    (opt-divmod-valid? a b operand-ty))
+                    (IrSomeValue
+                      (IrValueI64 (opt-fold-div-value a b operand-ty)))
+                    (IrNoValue))]
+                [(IrBinMod)
+                  (if (and
+                    (opt-integer-type? operand-ty)
+                    (opt-divmod-valid? a b operand-ty))
+                    (IrSomeValue
+                      (IrValueI64 (opt-fold-mod-value a b operand-ty)))
+                    (IrNoValue))]
+                [(IrBinBitAnd)
+                  (if (opt-integer-type? operand-ty)
+                    (IrSomeValue
+                      (IrValueI64
+                        (opt-normalize-int-to-i64 (bit-and a b) operand-ty)))
+                    (IrNoValue))]
+                [(IrBinBitOr)
+                  (if (opt-integer-type? operand-ty)
+                    (IrSomeValue
+                      (IrValueI64
+                        (opt-normalize-int-to-i64 (bit-or a b) operand-ty)))
+                    (IrNoValue))]
+                [(IrBinBitXor)
+                  (if (opt-integer-type? operand-ty)
+                    (IrSomeValue
+                      (IrValueI64
+                        (opt-normalize-int-to-i64 (bit-xor a b) operand-ty)))
+                    (IrNoValue))]
+                [(IrBinEq) (opt-fold-compare op a b operand-ty)]
+                [(IrBinNe) (opt-fold-compare op a b operand-ty)]
+                [(IrBinLt) (opt-fold-compare op a b operand-ty)]
+                [(IrBinLe) (opt-fold-compare op a b operand-ty)]
+                [(IrBinGt) (opt-fold-compare op a b operand-ty)]
+                [(IrBinGe) (opt-fold-compare op a b operand-ty)]
+                [_ (IrNoValue)])]
+            [(OptNoI64) (IrNoValue)])])]
+    [(OptNoI64) (IrNoValue)]))
+
+(define (opt-fold-bool
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]) : CompilerIrMaybeValue
+  (match (opt-value-to-bool lhs)
+    [(OptSomeBool a)
+      (match (opt-value-to-bool rhs)
+        [(OptSomeBool b)
+          (match op
+            [(IrBinAnd) (IrSomeValue (IrValueBool (and a b)))]
+            [(IrBinOr) (IrSomeValue (IrValueBool (or a b)))]
+            [(IrBinEq) (IrSomeValue (IrValueBool (= a b)))]
+            [(IrBinNe) (IrSomeValue (IrValueBool (!= a b)))]
+            [_ (IrNoValue)])]
+        [(OptNoBool) (IrNoValue)])]
+    [(OptNoBool) (IrNoValue)]))
+
+(define (opt-fold-cast
+  [src : OptKnownConst]
+  [from-ty : AstType]
+  [to-ty : AstType]) : CompilerIrMaybeValue
+  (if (and (opt-int-or-char-type? from-ty) (opt-int-or-char-type? to-ty))
+    (match src
+      [(OptSomeConst value _)
+        (match (opt-normalize-scalar-to-i64 value from-ty)
+          [(OptSomeI64 n)
+            (match (opt-normalize-const (IrValueI64 n) to-ty)
+              [(OptSomeConst folded _) (IrSomeValue folded)]
+              [(OptNoConst) (IrNoValue)])]
+          [(OptNoI64) (IrNoValue)])]
+      [(OptNoConst) (IrNoValue)])
+    (IrNoValue)))
+
+(define (opt-fold-binop
+  [op : CompilerIrBinOp]
+  [lhs : OptKnownConst]
+  [rhs : OptKnownConst]
+  [result-ty : AstType]) : CompilerIrMaybeValue
+  (match lhs
+    [(OptSomeConst lhs-value lhs-ty)
+      (match rhs
+        [(OptSomeConst rhs-value rhs-ty)
+          (let
+            [operand-ty : AstType
+              (opt-binop-operand-type op lhs-ty rhs-ty result-ty)]
+            (if (opt-bool-type? operand-ty)
+              (opt-fold-bool op lhs-value rhs-value)
+              (if (opt-int-or-char-type? operand-ty)
+                (opt-fold-int-char-binop
+                  op
+                  lhs-value
+                  rhs-value
+                  operand-ty
+                  rhs-ty)
+                (IrNoValue))))]
+        [(OptNoConst) (IrNoValue)])]
+    [(OptNoConst) (IrNoValue)]))
+
+(define (opt-fold-unop
+  [op : CompilerIrUnOp]
+  [src : OptKnownConst]
+  [result-ty : AstType]) : CompilerIrMaybeValue
+  (match src
+    [(OptSomeConst value _)
+      (match op
+        [(IrUnNeg)
+          (if (opt-integer-type? result-ty)
+            (match (opt-normalize-scalar-to-i64 value result-ty)
+              [(OptSomeI64 a)
+                (IrSomeValue
+                  (IrValueI64 (opt-normalize-int-to-i64 (- 0 a) result-ty)))]
+              [(OptNoI64) (IrNoValue)])
+            (IrNoValue))]
+        [(IrUnNot)
+          (if (opt-bool-type? result-ty)
+            (match (opt-value-to-bool value)
+              [(OptSomeBool a) (IrSomeValue (IrValueBool (not a)))]
+              [(OptNoBool) (IrNoValue)])
+            (IrNoValue))]
+        [(IrUnBitNot)
+          (if (opt-integer-type? result-ty)
+            (match (opt-normalize-scalar-to-i64 value result-ty)
+              [(OptSomeI64 a)
+                (IrSomeValue
+                  (IrValueI64 (opt-normalize-int-to-i64 (bit-not a) result-ty)))]
+              [(OptNoI64) (IrNoValue)])
+            (IrNoValue))])]
+    [(OptNoConst) (IrNoValue)]))
+
+;; --- strength reduction / algebraic identities (#924) -----------------------
+;;
+;; Rewrite only identities that are valid for all values of the instruction's
+;; type. Division, modulo, and shifts intentionally have no identities here, so
+;; potentially trapping/edge-sensitive operations stay in the IR.
 (define (opt-i64-zero? [value : CompilerIrValue]) : bool
   (match value
     [(IrValueI64 n) (= n 0)]
@@ -230,26 +632,39 @@
 (define (opt-fold-instr [env : OptConstEnv] [instr : CompilerIrInstr]) : OptInstrResult
   (match instr
     [(IrInstrMov dst value ty)
-      (if (opt-const-value? value)
-        (OptInstrResult (opt-const-bind env dst value) instr)
-        (OptInstrResult (opt-const-unbind env dst) instr))]
+      (match (opt-resolve-known env value ty)
+        [(OptSomeConst folded _)
+          (OptInstrResult
+            (opt-const-bind env dst folded ty)
+            (IrInstrMov dst folded ty))]
+        [(OptNoConst) (OptInstrResult (opt-const-unbind env dst) instr)])]
     [(IrInstrAlloc dst ty) (opt-invalidate-def env dst instr)]
     [(IrInstrAddrOf dst src) (opt-invalidate-def env dst instr)]
     [(IrInstrGep dst base offset ty) (opt-invalidate-def env dst instr)]
     [(IrInstrLoad dst src ty) (opt-invalidate-def env dst instr)]
-    [(IrInstrCast dst src from-ty to-ty) (opt-invalidate-def env dst instr)]
-    [(IrInstrBinOp dst op l r ty)
-      (match (opt-fold-binop op (opt-resolve env l) (opt-resolve env r))
+    [(IrInstrCast dst src from-ty to-ty)
+      (match (opt-fold-cast (opt-resolve-known env src from-ty) from-ty to-ty)
         [(IrSomeValue folded)
           (OptInstrResult
-            (opt-const-bind env dst folded)
+            (opt-const-bind env dst folded to-ty)
+            (IrInstrMov dst folded to-ty))]
+        [(IrNoValue) (OptInstrResult (opt-const-unbind env dst) instr)])]
+    [(IrInstrBinOp dst op l r ty)
+      (match (opt-fold-binop
+        op
+        (opt-resolve-known env l ty)
+        (opt-resolve-known env r ty)
+        ty)
+        [(IrSomeValue folded)
+          (OptInstrResult
+            (opt-const-bind env dst folded ty)
             (IrInstrMov dst folded ty))]
         [(IrNoValue) (OptInstrResult (opt-const-unbind env dst) instr)])]
     [(IrInstrUnOp dst op v ty)
-      (match (opt-fold-unop op (opt-resolve env v))
+      (match (opt-fold-unop op (opt-resolve-known env v ty) ty)
         [(IrSomeValue folded)
           (OptInstrResult
-            (opt-const-bind env dst folded)
+            (opt-const-bind env dst folded ty)
             (IrInstrMov dst folded ty))]
         [(IrNoValue) (OptInstrResult (opt-const-unbind env dst) instr)])]
     [(IrInstrCall dst name args ty) (opt-invalidate-def env dst instr)]
@@ -267,9 +682,12 @@
 (define (opt-strength-instr [env : OptConstEnv] [instr : CompilerIrInstr]) : OptInstrResult
   (match instr
     [(IrInstrMov dst value ty)
-      (if (opt-const-value? value)
-        (OptInstrResult (opt-const-bind env dst value) instr)
-        (OptInstrResult (opt-const-unbind env dst) instr))]
+      (match (opt-resolve-known env value ty)
+        [(OptSomeConst folded _)
+          (OptInstrResult
+            (opt-const-bind env dst folded ty)
+            (IrInstrMov dst folded ty))]
+        [(OptNoConst) (OptInstrResult (opt-const-unbind env dst) instr)])]
     [(IrInstrAlloc dst ty) (opt-invalidate-def env dst instr)]
     [(IrInstrAddrOf dst src) (opt-invalidate-def env dst instr)]
     [(IrInstrGep dst base offset ty) (opt-invalidate-def env dst instr)]
@@ -280,13 +698,13 @@
         op
         l
         r
-        (opt-resolve env l)
-        (opt-resolve env r)
+        (opt-resolve-value env l)
+        (opt-resolve-value env r)
         ty)
         [(IrSomeValue replacement)
-          (if (opt-const-value? replacement)
+          (if (opt-const-value? replacement ty)
             (OptInstrResult
-              (opt-const-bind env dst replacement)
+              (opt-const-bind env dst replacement ty)
               (IrInstrMov dst replacement ty))
             (OptInstrResult
               (opt-const-unbind env dst)
@@ -1507,6 +1925,60 @@
             (opt-mov-dst-type-tag rest dst))]
         [_ (opt-mov-dst-type-tag rest dst)])]))
 
+(define (opt-mov-dst-i64-value
+  [instrs : CompilerIrInstrList]
+  [dst : i64]
+  [fallback : i64]) : i64
+  (match instrs
+    [(IrInstrNil) fallback]
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrMov d (IrValueI64 n) _)
+          (if (= d dst)
+            n
+            (opt-mov-dst-i64-value rest dst fallback))]
+        [_ (opt-mov-dst-i64-value rest dst fallback)])]))
+
+(define (opt-mov-dst-bool-value?
+  [instrs : CompilerIrInstrList]
+  [dst : i64]
+  [needle : bool]) : bool
+  (match instrs
+    [(IrInstrNil) false]
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrMov d (IrValueBool b) _)
+          (if (= d dst)
+            (if needle
+              b
+              (not b))
+            (opt-mov-dst-bool-value? rest dst needle))]
+        [_ (opt-mov-dst-bool-value? rest dst needle)])]))
+
+(define (opt-mov-dst-char-code
+  [instrs : CompilerIrInstrList]
+  [dst : i64]
+  [fallback : i64]) : i64
+  (match instrs
+    [(IrInstrNil) fallback]
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrMov d (IrValueChar c) _)
+          (if (= d dst)
+            (cast c : i64)
+            (opt-mov-dst-char-code rest dst fallback))]
+        [_ (opt-mov-dst-char-code rest dst fallback)])]))
+
+(define (opt-count-cast-instrs [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (match instr
+          [(IrInstrCast _ _ _ _) 1]
+          [_ 0])
+        (opt-count-cast-instrs rest))]))
+
 ;; Builds `[Mov v0=20, Mov v1=22, BinOp v2 = v0 + v1]` (one arithmetic instr).
 (define (opt-self-test-instrs) : CompilerIrInstrList
   (IrInstrCons
@@ -1548,6 +2020,143 @@
                   4)))
             3)
           2)
+        1))))
+
+(define (opt-typed-fold-u64-shr-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrMov 20 (IrValueI64 (- 0 1)) (AstTyU64))
+    (IrInstrCons
+      (IrInstrMov 21 (IrValueI64 63) (AstTyU8))
+      (IrInstrCons
+        (IrInstrBinOp 22 (IrBinShr) (IrValueVar 20) (IrValueVar 21) (AstTyU64))
+        (IrInstrNil)))))
+
+(define (opt-typed-fold-shift-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrMov 15 (IrValueI64 1) (AstTyI64))
+    (IrInstrCons
+      (IrInstrMov 16 (IrValueI64 3) (AstTyU8))
+      (IrInstrCons
+        (IrInstrBinOp 17 (IrBinShl) (IrValueVar 15) (IrValueVar 16) (AstTyI64))
+        (IrInstrCons
+          (IrInstrMov 18 (IrValueI64 (- 0 8)) (AstTyI64))
+          (IrInstrCons
+            (IrInstrBinOp
+              19
+              (IrBinShr)
+              (IrValueVar 18)
+              (IrValueI64 1)
+              (AstTyI64))
+            (opt-typed-fold-u64-shr-instrs)))))))
+
+(define (opt-typed-fold-div-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrBinOp 13 (IrBinDiv) (IrValueI64 42) (IrValueI64 6) (AstTyI64))
+    (IrInstrCons
+      (IrInstrBinOp 14 (IrBinMod) (IrValueI64 22) (IrValueI64 7) (AstTyU8))
+      (opt-typed-fold-shift-instrs))))
+
+(define (opt-typed-fold-bool-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrMov 11 (IrValueBool true) (AstTyBool))
+    (IrInstrCons
+      (IrInstrBinOp
+        12
+        (IrBinAnd)
+        (IrValueVar 11)
+        (IrValueBool false)
+        (AstTyBool))
+      (opt-typed-fold-div-instrs))))
+
+(define (opt-typed-fold-cast-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrCast 7 (IrValueVar 0) (AstTyU8) (AstTyI64))
+    (IrInstrCons
+      (IrInstrCast 8 (IrValueI64 300) (AstTyU16) (AstTyChar))
+      (IrInstrCons
+        (IrInstrMov 9 (IrValueChar #A') (AstTyChar))
+        (IrInstrCons
+          (IrInstrCast 10 (IrValueVar 9) (AstTyChar) (AstTyI64))
+          (opt-typed-fold-bool-instrs))))))
+
+(define (opt-typed-fold-compare-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrMov 3 (IrValueI64 (- 0 1)) (AstTyI8))
+    (IrInstrCons
+      (IrInstrMov 4 (IrValueI64 1) (AstTyI8))
+      (IrInstrCons
+        (IrInstrBinOp 5 (IrBinLt) (IrValueVar 3) (IrValueVar 4) (AstTyBool))
+        (IrInstrCons
+          (IrInstrBinOp 6 (IrBinLt) (IrValueVar 0) (IrValueVar 1) (AstTyBool))
+          (opt-typed-fold-cast-instrs))))))
+
+(define (opt-typed-fold-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrMov 0 (IrValueI64 255) (AstTyU8))
+    (IrInstrCons
+      (IrInstrMov 1 (IrValueI64 1) (AstTyU8))
+      (IrInstrCons
+        (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyU8))
+        (opt-typed-fold-compare-instrs)))))
+
+(define (opt-typed-fold-invalid-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrBinOp 30 (IrBinDiv) (IrValueI64 1) (IrValueI64 0) (AstTyI64))
+    (IrInstrCons
+      (IrInstrBinOp
+        31
+        (IrBinDiv)
+        (IrValueI64 (- 0 128))
+        (IrValueI64 (- 0 1))
+        (AstTyI8))
+      (IrInstrCons
+        (IrInstrBinOp
+          32
+          (IrBinShl)
+          (IrValueI64 1)
+          (IrValueI64 (- 0 1))
+          (AstTyI64))
+        (IrInstrCons
+          (IrInstrBinOp 33 (IrBinShl) (IrValueI64 1) (IrValueI64 8) (AstTyU8))
+          (IrInstrNil))))))
+
+(define (compiler-optimize-typed-fold-self-test) : i64
+  (let
+    [pos : CompilerIrInstrList
+      (opt-fold-instrs (OptConstNil) (opt-typed-fold-instrs))]
+    (let
+      [neg : CompilerIrInstrList
+        (opt-fold-instrs (OptConstNil) (opt-typed-fold-invalid-instrs))]
+      (if (= (opt-count-arith-instrs pos) 0)
+        (if (= (opt-count-cast-instrs pos) 0)
+          (if (= (opt-mov-dst-i64-value pos 2 (- 0 999)) 0)
+            (if (opt-mov-dst-bool-value? pos 5 true)
+              (if (opt-mov-dst-bool-value? pos 6 false)
+                (if (= (opt-mov-dst-i64-value pos 7 0) 255)
+                  (if (= (opt-mov-dst-char-code pos 8 0) 44)
+                    (if (= (opt-mov-dst-i64-value pos 10 0) 65)
+                      (if (opt-mov-dst-bool-value? pos 12 false)
+                        (if (= (opt-mov-dst-i64-value pos 13 0) 7)
+                          (if (= (opt-mov-dst-i64-value pos 14 0) 1)
+                            (if (= (opt-mov-dst-i64-value pos 17 0) 8)
+                              (if (= (opt-mov-dst-i64-value pos 19 0) (- 0 4))
+                                (if (= (opt-mov-dst-i64-value pos 22 0) 1)
+                                  (if (= (opt-count-arith-instrs neg) 4)
+                                    42
+                                    16)
+                                  15)
+                                14)
+                              13)
+                            12)
+                          11)
+                        10)
+                      9)
+                    8)
+                  7)
+                6)
+              5)
+            4)
+          3)
         1))))
 
 ;; Positive strength-reduction cases: integer neutral/absorbing identities and

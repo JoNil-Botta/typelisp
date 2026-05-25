@@ -202,6 +202,23 @@ intentionally separate from `cargo test` and does not use a hand-maintained file
 manifest, so adding documented TypeLisp source with fenced examples
 automatically adds doctest coverage.
 
+### Stdlib API site
+
+`selfhost/doc_site.tl` builds a static stdlib/API HTML directory from the
+explicit top-level stdlib manifest owned by the selfhost source. The local
+command is:
+
+```sh
+typelisp run selfhost/doc_site.tl -- target/site
+```
+
+The generated directory contains `index.html`, `stdlib.html`,
+`typelisp-docs.css`, and one deterministic `stdlib-*.html` page for each
+manifested top-level stdlib module. The smoke driver
+`selfhost/doc_site_smoke.tl` checks the navigation links, generated page
+anchors, CSS asset marker, duplicate output detection, manifest count guard, and
+HTML escaping behavior without depending on file-system writes.
+
 ### CI expectations
 
 Pull requests get Linux and Windows `cargo test` coverage from the main CI test

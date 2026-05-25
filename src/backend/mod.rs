@@ -2499,6 +2499,10 @@ impl X86_64Backend {
             externs.insert("_access");
             externs.insert("_errno");
         }
+        if self.needs_fs_runtime {
+            externs.insert("_mkdir");
+            externs.insert("_errno");
+        }
         if self.needs_env_var_exists_runtime || self.needs_env_var_value_runtime {
             externs.insert("getenv");
             externs.insert("strlen");
@@ -4899,8 +4903,8 @@ impl X86_64Backend {
 
     fn generate_fs_runtime_functions(&mut self) {
         if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.generate_windows_fs_mkdir_status_runtime_function();
             for symbol in [
-                FS_MKDIR_STATUS_RUNTIME_SYMBOL,
                 FS_REMOVE_FILE_STATUS_RUNTIME_SYMBOL,
                 FS_REMOVE_DIR_STATUS_RUNTIME_SYMBOL,
             ] {
@@ -4937,6 +4941,58 @@ impl X86_64Backend {
         self.emit(&format!("{}:", FS_PROCESS_ID_RUNTIME_SYMBOL));
         self.emit("    movq $39, %rax");
         self.emit("    syscall");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_windows_fs_mkdir_status_runtime_function(&mut self) {
+        self.emit(&format!("{}:", FS_MKDIR_STATUS_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq %rcx, %rbx");
+        self.emit("    movq %rdx, %r12");
+        self.emit("    cmpq $0, %r12");
+        self.emit("    jl .L_tl_fs_mkdir_status_win_invalid");
+        self.emit("    movq %r12, %rcx");
+        self.emit("    addq $1, %rcx");
+        self.emit("    js .L_tl_fs_mkdir_status_win_invalid");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rax, %r13");
+        self.emit("    xorq %r10, %r10");
+        self.emit(".L_tl_fs_mkdir_status_win_path_copy_loop:");
+        self.emit("    cmpq %r12, %r10");
+        self.emit("    jge .L_tl_fs_mkdir_status_win_path_copy_done");
+        self.emit("    movzbl (%rbx,%r10), %edx");
+        self.emit("    movb %dl, (%r13,%r10)");
+        self.emit("    incq %r10");
+        self.emit("    jmp .L_tl_fs_mkdir_status_win_path_copy_loop");
+        self.emit(".L_tl_fs_mkdir_status_win_path_copy_done:");
+        self.emit("    movb $0, (%r13,%r12)");
+        self.emit("    movq %r13, %rcx");
+        self.emit_call("_mkdir");
+        self.emit("    testl %eax, %eax");
+        self.emit("    js .L_tl_fs_mkdir_status_win_errno");
+        self.emit("    xorq %rax, %rax");
+        self.emit("    jmp .L_tl_fs_mkdir_status_win_return");
+        self.emit(".L_tl_fs_mkdir_status_win_errno:");
+        self.emit_call("_errno");
+        self.emit("    movslq (%rax), %rax");
+        self.emit("    testq %rax, %rax");
+        self.emit("    jne .L_tl_fs_mkdir_status_win_return");
+        self.emit("    movq $1, %rax");
+        self.emit("    jmp .L_tl_fs_mkdir_status_win_return");
+        self.emit(".L_tl_fs_mkdir_status_win_invalid:");
+        self.emit("    movq $22, %rax");
+        self.emit(".L_tl_fs_mkdir_status_win_return:");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
         self.emit("    ret");
         self.emit("");
     }
@@ -14686,6 +14742,36 @@ mod tests {
         assert!(
             !asm.contains("    .extern .L_tl_read_file_status"),
             "asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_windows_target_fs_mkdir_status_uses_crt_mkdir() {
+        let asm = compile_ok_for_target(
+            r#"(define (main) : i64 (fs-mkdir-status "target/site"))"#,
+            BackendTarget::windows_x86_64(),
+        );
+
+        assert!(asm.contains(".L_tl_fs_mkdir_status:"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("    .extern _mkdir"),
+            "asm should declare the CRT mkdir helper:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("    call _mkdir"),
+            "asm should call the CRT mkdir helper:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains(".L_tl_fs_mkdir_status_win_errno:"),
+            "asm should return errno on mkdir failure:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("    call _errno"),
+            "asm should read errno on mkdir failure:\n{}",
             asm
         );
     }

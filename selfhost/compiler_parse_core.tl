@@ -653,41 +653,25 @@
   (ast-binop-tag? (compiler-parse-dispatch-tag dispatch name)))
 
 (define (ast-binop-from-tag [tag : i64]) : AstBinOp
-  (if (= tag (compiler-parse-tag-bin-add))
-    (AstBinAdd)
-    (if (= tag (compiler-parse-tag-bin-sub))
-      (AstBinSub)
-      (if (= tag (compiler-parse-tag-bin-mul))
-        (AstBinMul)
-        (if (= tag (compiler-parse-tag-bin-div))
-          (AstBinDiv)
-          (if (= tag (compiler-parse-tag-bin-mod))
-            (AstBinMod)
-            (if (= tag (compiler-parse-tag-bin-eq))
-              (AstBinEq)
-              (if (= tag (compiler-parse-tag-bin-ne))
-                (AstBinNe)
-                (if (= tag (compiler-parse-tag-bin-lt))
-                  (AstBinLt)
-                  (if (= tag (compiler-parse-tag-bin-le))
-                    (AstBinLe)
-                    (if (= tag (compiler-parse-tag-bin-gt))
-                      (AstBinGt)
-                      (if (= tag (compiler-parse-tag-bin-ge))
-                        (AstBinGe)
-                        (if (= tag (compiler-parse-tag-bin-and))
-                          (AstBinAnd)
-                          (if (= tag (compiler-parse-tag-bin-or))
-                            (AstBinOr)
-                            (if (= tag (compiler-parse-tag-bin-bit-and))
-                              (AstBinBitAnd)
-                              (if (= tag (compiler-parse-tag-bin-bit-or))
-                                (AstBinBitOr)
-                                (if (= tag (compiler-parse-tag-bin-bit-xor))
-                                  (AstBinBitXor)
-                                  (if (= tag (compiler-parse-tag-bin-shl))
-                                    (AstBinShl)
-                                    (AstBinShr)))))))))))))))))))
+  (cond
+    [(= tag (compiler-parse-tag-bin-add)) (AstBinAdd)]
+    [(= tag (compiler-parse-tag-bin-sub)) (AstBinSub)]
+    [(= tag (compiler-parse-tag-bin-mul)) (AstBinMul)]
+    [(= tag (compiler-parse-tag-bin-div)) (AstBinDiv)]
+    [(= tag (compiler-parse-tag-bin-mod)) (AstBinMod)]
+    [(= tag (compiler-parse-tag-bin-eq)) (AstBinEq)]
+    [(= tag (compiler-parse-tag-bin-ne)) (AstBinNe)]
+    [(= tag (compiler-parse-tag-bin-lt)) (AstBinLt)]
+    [(= tag (compiler-parse-tag-bin-le)) (AstBinLe)]
+    [(= tag (compiler-parse-tag-bin-gt)) (AstBinGt)]
+    [(= tag (compiler-parse-tag-bin-ge)) (AstBinGe)]
+    [(= tag (compiler-parse-tag-bin-and)) (AstBinAnd)]
+    [(= tag (compiler-parse-tag-bin-or)) (AstBinOr)]
+    [(= tag (compiler-parse-tag-bin-bit-and)) (AstBinBitAnd)]
+    [(= tag (compiler-parse-tag-bin-bit-or)) (AstBinBitOr)]
+    [(= tag (compiler-parse-tag-bin-bit-xor)) (AstBinBitXor)]
+    [(= tag (compiler-parse-tag-bin-shl)) (AstBinShl)]
+    [else (AstBinShr)]))
 
 (define (ast-binop-from-name [dispatch : SymI64Env] [name : String]) : AstBinOp
   (ast-binop-from-tag (compiler-parse-dispatch-tag dispatch name)))

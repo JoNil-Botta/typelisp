@@ -2744,6 +2744,22 @@
             "(define (main [a : i64]) : i64 (+ a))"
             "parse: malformed binary expression"))))))
 
+(define (compiler-parse-type-literal-tests-ok?) : bool
+  (and
+    (compiler-parse-ok? "(define (main) : i64 (begin (type i64) 0))")
+    (and
+      (compiler-parse-ok? "(define (main) : i64 (begin (type (Array i64)) 0))")
+      (and
+        (compiler-parse-ok?
+          "(define (main) : i64 (begin (type (-> i64 i64)) 0))")
+        (and
+          (compiler-parse-error-ok?
+            "(define (main) : i64 (type))"
+            "parse: type expects exactly one type")
+          (compiler-parse-error-ok?
+            "(define (main) : i64 (type i64 bool))"
+            "parse: type expects exactly one type"))))))
+
 (define (compiler-parse-smoke) : i64
   (match (parse-ast-source (compiler-parse-smoke-source))
     [(OkAstProgram program)
@@ -2786,7 +2802,9 @@
                 (compiler-parse-spmd-tests-ok?)
                 (and
                   (compiler-parse-pattern-tests-ok?)
-                  (compiler-parse-operator-tests-ok?))))))
+                  (and
+                    (compiler-parse-operator-tests-ok?)
+                    (compiler-parse-type-literal-tests-ok?)))))))
           42
           (begin
             (panic "parse: error-path self-tests failed")

@@ -31,9 +31,12 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]) : ResultCompilerDriver
-  (match (compiler-load-file input-path (sym-i64-empty))
-    [(OkCompilerLoad decls _)
-      (match (lower-compiler-program-with-path input-path (AstProgram decls))
+  (match (compiler-load-file-with-paths input-path (sym-i64-empty))
+    [(OkCompilerLoadWithPaths decls paths _)
+      (match (lower-compiler-program-with-decl-paths
+        input-path
+        (AstProgram decls)
+        paths)
         ;; The lowering provenance side table (#605) is forwarded through
         ;; optimization (which preserves function names) into backend emission so
         ;; backend diagnostics report the real source line/column.
@@ -45,7 +48,7 @@
             target
             has-target)]
         [(ErrCompilerLower diag) (ErrCompilerDriver diag)])]
-    [(ErrCompilerLoad diag) (ErrCompilerDriver diag)]))
+    [(ErrCompilerLoadWithPaths diag) (ErrCompilerDriver diag)]))
 
 (define (compiler-driver-emit-file [input-path : String]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target input-path (BackendTargetLinux) false))

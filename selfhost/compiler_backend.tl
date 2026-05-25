@@ -210,7 +210,7 @@
   (compiler-backend-frame-offset (- 0 (* 8 (+ vars (+ idx 1))))))
 
 (define (compiler-backend-asm-label [function : String] [label : String]) : String
-  (backend-cat4 ".L" function "_" label))
+  (backend-cat4 ".L" (compiler-backend-asm-safe-symbol function) "_" label))
 
 (define (compiler-backend-arg-reg [idx : i64]) : ResultBackendReg
   (if (= idx 0)
@@ -5640,6 +5640,57 @@ tl_string_concat:
                     ".extern tl_substring\n")))))))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-module-symbol-program) : CompilerIrProgram
+  (IrProgram
+    IrGlobalNil
+    (IrFunctionCons
+      (IrFunction
+        "lib.tl::helper"
+        IrParamNil
+        (AstTyI64)
+        0
+        (IrBlockCons
+          (IrBlock
+            "entry"
+            (IrInstrCons
+              (IrInstrReturn (IrSomeValue (IrValueI64 7)))
+              IrInstrNil))
+          IrBlockNil))
+      (IrFunctionCons
+        (IrFunction
+          "main"
+          IrParamNil
+          (AstTyI64)
+          1
+          (IrBlockCons
+            (IrBlock
+              "entry"
+              (IrInstrCons
+                (IrInstrCall 0 "lib.tl::helper" IrValueNil (AstTyI64))
+                (IrInstrCons
+                  (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+                  IrInstrNil)))
+            IrBlockNil))
+        IrFunctionNil))
+    IrExternNil))
+
+(define (compiler-backend-module-symbol-ok?) : bool
+  (match (compiler-backend-emit-program
+    (compiler-backend-module-symbol-program))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains?
+          asm
+          ".globl _tl_lib_u2etl_colon_colonhelper\n")
+        (and
+          (compiler-backend-string-contains?
+            asm
+            "_tl_lib_u2etl_colon_colonhelper:\n")
+          (compiler-backend-string-contains?
+            asm
+            "    call _tl_lib_u2etl_colon_colonhelper\n")))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-smoke-source) : String
   "(define answer : i64 40)
 (define (inc [x : i64]) : i64 (+ x 1))
@@ -6558,7 +6609,9 @@ tl_string_concat:
                                   (compiler-backend-region-ok?)
                                   (and
                                     (compiler-backend-user-helper-name-ok?)
-                                    (compiler-backend-runtime-coexist-ok?))))))))))))))))))
+                                    (and
+                                      (compiler-backend-runtime-coexist-ok?)
+                                      (compiler-backend-module-symbol-ok?)))))))))))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

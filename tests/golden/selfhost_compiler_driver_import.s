@@ -1,18 +1,18 @@
 .data
-.globl _tl_shared
-_tl_shared:
+.globl _tl_shared_u2etl_colon_colonshared
+_tl_shared_u2etl_colon_colonshared:
     .quad 2
 .text
 .globl _start
-.globl _tl_helper
-_tl_helper:
+.globl _tl_helper_u2etl_colon_colonhelper
+_tl_helper_u2etl_colon_colonhelper:
     pushq %rbp
     movq %rsp, %rbp
     subq $64, %rsp
     movq %r12, -32(%rbp)
     movq %r13, -40(%rbp)
-.L_tl_helper_entry:
-    movq _tl_shared(%rip), %rax
+.L_tl_helper_u2etl_colon_colonhelper_entry:
+    movq _tl_shared_u2etl_colon_colonshared(%rip), %rax
     movq %rax, %r12
     movq $38, %rax
     movq %r12, %rbx
@@ -33,9 +33,9 @@ main:
     movq %r12, -32(%rbp)
     movq %r13, -40(%rbp)
 .Lmain_entry:
-    call _tl_helper
+    call _tl_helper_u2etl_colon_colonhelper
     movq %rax, -8(%rbp)
-    movq _tl_shared(%rip), %rax
+    movq _tl_shared_u2etl_colon_colonshared(%rip), %rax
     movq %rax, %r12
     movq -8(%rbp), %rax
     movq %r12, %rbx

@@ -12,6 +12,10 @@
 
 (import "compiler_ctfe.tl")
 
+(defenum LowerNameEnv
+  (LowerNameNil)
+  (LowerNameBind String String LowerNameEnv))
+
 (defenum LowerState
   (LowerState
     i64
@@ -20,7 +24,8 @@
     CompilerIrInstrList
     CompilerIrBlockList
     String
-    CompilerSourceSpans))
+    CompilerSourceSpans
+    LowerNameEnv))
 
 (defenum LowerAlloc
   (LowerAlloc LowerState i64))
@@ -153,17 +158,153 @@
     [(IrExternCons head rest)
       (IrExternCons head (lower-extern-list-append rest item))]))
 
+(define (lower-name-env-lookup [names : LowerNameEnv] [source-name : String]) : TcMaybeString
+  (match names
+    [(LowerNameNil) (TcNoString)]
+    [(LowerNameBind source logical rest)
+      (if (string-eq source source-name)
+        (TcSomeString logical)
+        (lower-name-env-lookup rest source-name))]))
+
+(define (lower-name-env-resolve [names : LowerNameEnv] [source-name : String]) : String
+  (match (lower-name-env-lookup names source-name)
+    [(TcSomeString logical) logical]
+    [(TcNoString) source-name]))
+
+(define (lower-resolve-name [state : LowerState] [source-name : String]) : String
+  (lower-name-env-resolve (lower-state-names state) source-name))
+
+(define (lower-resolve-call-name
+  [state : LowerState]
+  [env : SymI64Env]
+  [source-name : String]) : String
+  (match (sym-i64-lookup env source-name)
+    [(SomeI64 _) source-name]
+    [(NoneI64) (lower-resolve-name state source-name)]))
+
+(define (lower-path-separator? [c : char]) : bool
+  (or (= c #/') (= c #\\')))
+
+(define (lower-dirname [path : String]) : String
+  (let (
+    [n : i64 (string-length path)]
+    [i : i64 0]
+    [last : i64 -1])
+    (begin
+      (while (< i n)
+        (begin
+          (if (lower-path-separator? (string-ref path i))
+            (set! last i)
+            (set! last last))
+          (set! i (+ i 1))))
+      (if (< last 0)
+        ""
+        (substring path 0 (+ last 1))))))
+
+(define (lower-string-prefix-at?
+  [text : String]
+  [prefix : String]
+  [start : i64]) : bool
+  (let (
+    [text-len : i64 (string-length text)]
+    [prefix-len : i64 (string-length prefix)])
+    (if (< start 0)
+      false
+      (if (> (+ start prefix-len) text-len)
+        false
+        (let (
+          [i : i64 0]
+          [ok : bool true])
+          (begin
+            (while ok
+              (if (< i prefix-len)
+                (if (=
+                  (cast (string-ref text (+ start i)) : i64)
+                  (cast (string-ref prefix i) : i64))
+                  (set! i (+ i 1))
+                  (set! ok false))
+                (set! ok false)))
+            (= i prefix-len)))))))
+
+(define (lower-module-id [entry-path : String] [decl-path : String]) : String
+  (let (
+    [base : String (lower-dirname entry-path)]
+    [base-len : i64 (string-length base)]
+    [decl-len : i64 (string-length decl-path)])
+    (if (and (> base-len 0) (lower-string-prefix-at? decl-path base 0))
+      (substring decl-path base-len (- decl-len base-len))
+      decl-path)))
+
+(define (lower-module-logical-name
+  [entry-path : String]
+  [decl-path : String]
+  [source-name : String]) : String
+  (if (and (string-eq decl-path entry-path) (string-eq source-name "main"))
+    "main"
+    (string-append
+      (string-append (lower-module-id entry-path decl-path) "::")
+      source-name)))
+
+(define (lower-name-env-add-decl
+  [names : LowerNameEnv]
+  [entry-path : String]
+  [decl-path : String]
+  [decl : AstDecl]) : LowerNameEnv
+  (match decl
+    [(AstDeclDef name _ _)
+      (LowerNameBind
+        name
+        (lower-module-logical-name entry-path decl-path name)
+        names)]
+    [(AstDeclDefFn name _ _ _)
+      (LowerNameBind
+        name
+        (lower-module-logical-name entry-path decl-path name)
+        names)]
+    [(AstDeclExtern name _)
+      ;; Exact extern linker metadata is owned by #911; keep today's extern
+      ;; calls raw while user TypeLisp declarations become logical names.
+      (LowerNameBind name name names)]
+    [_ names]))
+
+(define (lower-name-env-from-decls
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [entry-path : String]
+  [names : LowerNameEnv]) : LowerNameEnv
+  (match decls
+    [(AstDeclNil) names]
+    [(AstDeclCons decl rest)
+      (let (
+        [decl-path : String
+          (match paths
+            [(AstDeclPathCons path _) path]
+            [(AstDeclPathNil) entry-path])]
+        [rest-paths : AstDeclPathList
+          (match paths
+            [(AstDeclPathCons _ path-rest) path-rest]
+            [(AstDeclPathNil) AstDeclPathNil])])
+        (lower-name-env-from-decls
+          rest
+          rest-paths
+          entry-path
+          (lower-name-env-add-decl names entry-path decl-path decl)))]))
+
 (define (lower-state-next-var [state : LowerState]) : i64
   (match state
-    [(LowerState next-var _ _ _ _ _ _) next-var]))
+    [(LowerState next-var _ _ _ _ _ _ _) next-var]))
 
 (define (lower-state-current-label [state : LowerState]) : String
   (match state
-    [(LowerState _ _ label _ _ _ _) label]))
+    [(LowerState _ _ label _ _ _ _ _) label]))
 
 (define (lower-state-spans [state : LowerState]) : CompilerSourceSpans
   (match state
-    [(LowerState _ _ _ _ _ _ spans) spans]))
+    [(LowerState _ _ _ _ _ _ spans _) spans]))
+
+(define (lower-state-names [state : LowerState]) : LowerNameEnv
+  (match state
+    [(LowerState _ _ _ _ _ _ _ names) names]))
 
 (define (lower-state-alloc-var [state : LowerState]) : LowerAlloc
   (match state
@@ -174,7 +315,8 @@
         current-instrs
         blocks
         function
-        spans)
+        spans
+        names)
       (LowerAlloc
         (LowerState
           (+ next-var 1)
@@ -183,7 +325,8 @@
           current-instrs
           blocks
           function
-          spans)
+          spans
+          names)
         next-var)]))
 
 (define (lower-state-fresh-label [state : LowerState] [prefix : String]) : LowerLabel
@@ -195,7 +338,8 @@
         current-instrs
         blocks
         function
-        spans)
+        spans
+        names)
       (LowerLabel
         (LowerState
           next-var
@@ -204,7 +348,8 @@
           current-instrs
           blocks
           function
-          spans)
+          spans
+          names)
         (string-append (string-append prefix ".") (int->string next-label)))]))
 
 (define (lower-state-emit [state : LowerState] [instr : CompilerIrInstr]) : LowerState
@@ -216,7 +361,8 @@
         current-instrs
         blocks
         function
-        spans)
+        spans
+        names)
       (LowerState
         next-var
         next-label
@@ -224,7 +370,8 @@
         (lower-instr-list-append current-instrs instr)
         blocks
         function
-        spans)]))
+        spans
+        names)]))
 
 (define (lower-state-record-instr-span
   [state : LowerState]
@@ -238,7 +385,8 @@
         current-instrs
         blocks
         function
-        spans)
+        spans
+        names)
       (LowerState
         next-var
         next-label
@@ -246,7 +394,8 @@
         current-instrs
         blocks
         function
-        (compiler-source-spans-insert-instr spans function instr span))]))
+        (compiler-source-spans-insert-instr spans function instr span)
+        names)]))
 
 (define (lower-state-emit-at-expr
   [state : LowerState]
@@ -266,7 +415,8 @@
         current-instrs
         blocks
         function
-        spans)
+        spans
+        names)
       (LowerState
         next-var
         next-label-id
@@ -274,11 +424,12 @@
         IrInstrNil
         (lower-block-list-append blocks (IrBlock current-label current-instrs))
         function
-        spans)]))
+        spans
+        names)]))
 
 (define (lower-state-build-blocks [state : LowerState]) : CompilerIrBlockList
   (match state
-    [(LowerState _ _ current-label current-instrs blocks _ _)
+    [(LowerState _ _ current-label current-instrs blocks _ _ _)
       (lower-block-list-append blocks (IrBlock current-label current-instrs))]))
 
 (define (lower-materialize
@@ -841,7 +992,11 @@
   [ty : AstType]) : ResultLowerExpr
   (match (sym-i64-lookup env name)
     [(SomeI64 id) (lower-materialize state (IrValueVar id) ty)]
-    [(NoneI64) (lower-materialize state (IrValueGlobal name) ty)]))
+    [(NoneI64)
+      (lower-materialize
+        state
+        (IrValueGlobal (lower-resolve-name state name))
+        ty)]))
 
 (define (lower-return-maybe [value : CompilerIrValue] [ty : AstType]) : CompilerIrMaybeValue
   (match ty
@@ -1189,7 +1344,10 @@
                         (LowerExpr
                           (lower-state-emit-at-expr
                             value-state
-                            (IrInstrStore name value-ir store-ty)
+                            (IrInstrStore
+                              (lower-resolve-name value-state name)
+                              value-ir
+                              store-ty)
                             origin)
                           IrValueUnit
                           expr-ty))]
@@ -1660,7 +1818,11 @@
       (match (lower-state-alloc-var args-state)
         [(LowerAlloc allocated var-id)
           (let ([instr : CompilerIrInstr
-            (IrInstrCall var-id name values result-ty)])
+            (IrInstrCall
+              var-id
+              (lower-resolve-call-name allocated env name)
+              values
+              result-ty)])
             (OkLowerExpr
               (LowerExpr
                 (lower-state-emit-at-expr allocated instr origin)
@@ -3603,13 +3765,15 @@
   [params : AstParamList]
   [ret : AstType]
   [body : AstExpr]
-  [spans : CompilerSourceSpans]) : ResultLowerFunction
+  [spans : CompilerSourceSpans]
+  [names : LowerNameEnv]) : ResultLowerFunction
   (let ([param-count : i64 (lower-param-count params)])
     (let (
       [env : SymI64Env (lower-bind-params params 0 (sym-i64-empty))]
       [type-env : TcTypeEnv (tc-bind-params ctx top-env params)]
+      [logical-name : String (lower-name-env-resolve names name)]
       [function-spans : CompilerSourceSpans
-        (lower-record-function-span spans name body)]
+        (lower-record-function-span spans logical-name body)]
       [state : LowerState
         (LowerState
           param-count
@@ -3617,8 +3781,9 @@
           "entry"
           IrInstrNil
           IrBlockNil
-          name
-          function-spans)]
+          logical-name
+          function-spans
+          names)]
       [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))])
       (match (lower-expr ctx state env type-env body)
         [(OkLowerExpr lowered)
@@ -3630,7 +3795,7 @@
                   (IrInstrReturn (lower-return-maybe value ret-ty)))])
                 (OkLowerFunction
                   (IrFunction
-                    name
+                    logical-name
                     (lower-param-list ctx params 0)
                     ret-ty
                     (lower-state-next-var final-state)
@@ -3638,13 +3803,14 @@
                   (lower-state-spans final-state)))])]
         [(ErrLowerExpr message) (ErrLowerFunction message)]))))
 
-(define (lower-global-value [expr : AstExpr]) : ResultLowerValue
+(define (lower-global-value [names : LowerNameEnv] [expr : AstExpr]) : ResultLowerValue
   (match expr
-    [(AstExprSpanned inner _) (lower-global-value inner)]
-    [(AstExprAnn inner _) (lower-global-value inner)]
-    [(AstExprCast inner _) (lower-global-value inner)]
+    [(AstExprSpanned inner _) (lower-global-value names inner)]
+    [(AstExprAnn inner _) (lower-global-value names inner)]
+    [(AstExprCast inner _) (lower-global-value names inner)]
     [(AstExprLiteral lit) (OkLowerValue (lower-literal-value lit))]
-    [(AstExprVar name) (OkLowerValue (IrValueGlobal name))]
+    [(AstExprVar name)
+      (OkLowerValue (IrValueGlobal (lower-name-env-resolve names name)))]
     [_
       (ErrLowerValue (lower-diagnostic "lower: unsupported global initializer"))]))
 
@@ -3669,7 +3835,8 @@
   [globals : CompilerIrGlobalList]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
-  [spans : CompilerSourceSpans]) : ResultLowerDecls
+  [spans : CompilerSourceSpans]
+  [names : LowerNameEnv]) : ResultLowerDecls
   (match decls
     [(AstDeclNil) (OkLowerDecls globals functions externs spans)]
     [(AstDeclCons decl rest)
@@ -3677,7 +3844,7 @@
         [(AstDeclDef name _ expr)
           (match (tc-top-decl-type ctx decl)
             [(OkTcType ty)
-              (match (lower-global-value expr)
+              (match (lower-global-value names expr)
                 [(OkLowerValue value)
                   (lower-decls
                     ctx
@@ -3685,10 +3852,14 @@
                     rest
                     (lower-global-list-append
                       globals
-                      (IrGlobal name (tc-type-without-regions ty) value))
+                      (IrGlobal
+                        (lower-name-env-resolve names name)
+                        (tc-type-without-regions ty)
+                        value))
                     functions
                     externs
-                    spans)]
+                    spans
+                    names)]
                 [(ErrLowerValue message) (ErrLowerDecls message)])]
             [(ErrTcType message) (ErrLowerDecls (lower-diagnostic message))])]
         [(AstDeclExtern name ty)
@@ -3701,9 +3872,10 @@
             (lower-extern-list-append
               externs
               (IrExtern name (tc-type-without-regions (tc-resolve-type ctx ty))))
-            spans)]
+            spans
+            names)]
         [(AstDeclDefFn name params ret body)
-          (match (lower-function ctx top-env name params ret body spans)
+          (match (lower-function ctx top-env name params ret body spans names)
             [(OkLowerFunction func function-spans)
               (lower-decls
                 ctx
@@ -3712,19 +3884,21 @@
                 globals
                 (lower-function-list-append functions func)
                 externs
-                function-spans)]
+                function-spans
+                names)]
             [(ErrLowerFunction message) (ErrLowerDecls message)])]
         [(AstDeclImport _)
-          (lower-decls ctx top-env rest globals functions externs spans)]
+          (lower-decls ctx top-env rest globals functions externs spans names)]
         [(AstDeclDefEnum _ _)
-          (lower-decls ctx top-env rest globals functions externs spans)]
+          (lower-decls ctx top-env rest globals functions externs spans names)]
         [(AstDeclDefStruct _ _)
-          (lower-decls ctx top-env rest globals functions externs spans)])]))
+          (lower-decls ctx top-env rest globals functions externs spans names)])]))
 
-(define (lower-compiler-program-checked
+(define (lower-compiler-program-checked-with-names
   [ctx : TcContext]
   [top-env : TcTypeEnv]
-  [program : AstProgram]) : ResultCompilerLower
+  [program : AstProgram]
+  [names : LowerNameEnv]) : ResultCompilerLower
   (match program
     [(AstProgram decls)
       (match (lower-decls
@@ -3734,10 +3908,17 @@
         IrGlobalNil
         IrFunctionNil
         IrExternNil
-        (compiler-source-spans-empty))
+        (compiler-source-spans-empty)
+        names)
         [(OkLowerDecls globals functions externs spans)
           (OkCompilerLower (IrProgram globals functions externs) spans)]
         [(ErrLowerDecls message) (ErrCompilerLower message)])]))
+
+(define (lower-compiler-program-checked
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [program : AstProgram]) : ResultCompilerLower
+  (lower-compiler-program-checked-with-names ctx top-env program LowerNameNil))
 
 (define (lower-compiler-program-unlocated [program : AstProgram]) : ResultCompilerLower
   (match (compiler-specialize-program program)
@@ -3769,6 +3950,62 @@
     [(OkCompilerLower ir spans) (OkCompilerLower ir spans)]
     [(ErrCompilerLower diag)
       (ErrCompilerLower (lower-diagnostic-with-path diag path))]))
+
+(define (lower-compiler-program-with-decl-paths
+  [entry-path : String]
+  [program : AstProgram]
+  [paths : AstDeclPathList]) : ResultCompilerLower
+  (let (
+    [specialized-paths : AstDeclPathList
+      (if (compiler-specialize-needed? program)
+        AstDeclPathNil
+        paths)]
+    [names : LowerNameEnv
+      (match program
+        [(AstProgram decls)
+          (lower-name-env-from-decls decls paths entry-path LowerNameNil)])])
+    (match (compiler-specialize-program program)
+      [(OkSpecProgram specialized)
+        (match (typecheck-compiler-specialized-program-with-paths
+          specialized
+          specialized-paths)
+          [(OkCompilerTypecheck _)
+            (match (build-compiler-symbols specialized)
+              [(OkCompilerSymbols symbols)
+                (match (build-compiler-registries specialized)
+                  [(OkCompilerRegistries registries)
+                    (let ([ctx : TcContext
+                      (TcContext specialized symbols registries)])
+                      (match (tc-build-top-env ctx specialized)
+                        [(OkTcEnv top-env)
+                          (match (lower-compiler-program-checked-with-names
+                            ctx
+                            top-env
+                            specialized
+                            names)
+                            [(OkCompilerLower ir spans)
+                              (OkCompilerLower ir spans)]
+                            [(ErrCompilerLower diag)
+                              (ErrCompilerLower
+                                (lower-diagnostic-with-path diag entry-path))])]
+                        [(ErrTcEnv message)
+                          (ErrCompilerLower
+                            (lower-diagnostic-with-path
+                              (lower-diagnostic message)
+                              entry-path))]))]
+                  [(ErrCompilerRegistries message)
+                    (ErrCompilerLower
+                      (lower-diagnostic-with-path
+                        (lower-diagnostic message)
+                        entry-path))])]
+              [(ErrCompilerSymbols message)
+                (ErrCompilerLower
+                  (lower-diagnostic-with-path
+                    (lower-diagnostic message)
+                    entry-path))])]
+          [(ErrCompilerTypecheck diag) (ErrCompilerLower diag)])]
+      [(ErrSpecProgram diag)
+        (ErrCompilerLower (lower-diagnostic-with-path diag entry-path))])))
 
 (define (lower-compiler-program [program : AstProgram]) : ResultCompilerLower
   (lower-compiler-program-with-path "<source>" program))
@@ -4161,6 +4398,79 @@
             (lower-test-blocks-call-count blocks name)
             (lower-test-functions-call-count rest name))])]))
 
+(define (lower-test-global-list-has-name?
+  [globals : CompilerIrGlobalList]
+  [name : String]) : bool
+  (match globals
+    [(IrGlobalNil) false]
+    [(IrGlobalCons global rest)
+      (match global
+        [(IrGlobal global-name _ _)
+          (if (string-eq global-name name)
+            true
+            (lower-test-global-list-has-name? rest name))])]))
+
+(define (compiler-lower-module-symbol-source) : String
+  "(define answer : i64 40)
+(define (inc [x : i64]) : i64 (+ x answer))
+(define (main) : i64 (inc answer))")
+
+(define (compiler-lower-module-symbol-paths) : AstDeclPathList
+  (AstDeclPathCons
+    "lib.tl"
+    (AstDeclPathCons "lib.tl" (AstDeclPathCons "app.tl" AstDeclPathNil))))
+
+(define (compiler-lower-module-symbols-ok?) : bool
+  (match (parse-ast-source (compiler-lower-module-symbol-source))
+    [(OkAstProgram program)
+      (match (lower-compiler-program-with-decl-paths
+        "app.tl"
+        program
+        (compiler-lower-module-symbol-paths))
+        [(OkCompilerLower lowered _)
+          (match lowered
+            [(IrProgram globals functions _)
+              (and
+                (lower-test-global-list-has-name? globals "lib.tl::answer")
+                (and
+                  (>
+                    (lower-test-functions-call-count functions "lib.tl::inc")
+                    0)
+                  (and
+                    (>
+                      (lower-test-function-binop-count functions "lib.tl::inc")
+                      0)
+                    (>= (lower-test-function-binop-count functions "main") 0))))])]
+        [(ErrCompilerLower _) false])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-lower-module-specialize-source) : String
+  "(define (alloc [comptime T : type] [n : i64]) : (Array i64)
+  (make-array T n))
+(define (main) : (Array i64)
+  (alloc (type i64) 4))")
+
+(define (compiler-lower-module-specialize-paths) : AstDeclPathList
+  (AstDeclPathCons "app.tl" (AstDeclPathCons "app.tl" AstDeclPathNil)))
+
+(define (compiler-lower-module-specialize-ok?) : bool
+  (match (parse-ast-source (compiler-lower-module-specialize-source))
+    [(OkAstProgram program)
+      (match (lower-compiler-program-with-decl-paths
+        "app.tl"
+        program
+        (compiler-lower-module-specialize-paths))
+        [(OkCompilerLower lowered _)
+          (match lowered
+            [(IrProgram _ functions _)
+              (>
+                (lower-test-functions-call-count
+                  functions
+                  "__tl_specialized_alloc_type_i64_none")
+                0)])]
+        [(ErrCompilerLower _) false])]
+    [(ErrAstProgram _) false]))
+
 ;; CTFE fold verification (#719): a folded `(comptime ...)` lowers to a literal,
 ;; so the function body must contain a `Mov` of the expected i64 literal and no
 ;; `BinOp`/`UnOp` instructions (the arithmetic was evaluated at compile time).
@@ -4418,32 +4728,36 @@
                             (and
                               (compiler-lower-region-shape-ok?)
                               (and
-                                (compiler-lower-error-ok?
-                                  (compiler-typecheck-branch-mismatch-source)
-                                  "typecheck: if branches must match")
+                                (compiler-lower-module-symbols-ok?)
                                 (and
-                                  (compiler-lower-error-ok?
-                                    (compiler-lower-unsupported-source)
-                                    "lower: unsupported expression")
+                                  (compiler-lower-module-specialize-ok?)
                                   (and
-                                    (compiler-lower-comptime-fold-ok?
-                                      (compiler-lower-comptime-arith-source)
-                                      3)
+                                    (compiler-lower-error-ok?
+                                      (compiler-typecheck-branch-mismatch-source)
+                                      "typecheck: if branches must match")
                                     (and
-                                      (compiler-lower-comptime-fold-ok?
-                                        (compiler-lower-comptime-if-source)
-                                        42)
+                                      (compiler-lower-error-ok?
+                                        (compiler-lower-unsupported-source)
+                                        "lower: unsupported expression")
                                       (and
                                         (compiler-lower-comptime-fold-ok?
-                                          (compiler-lower-comptime-let-source)
-                                          42)
+                                          (compiler-lower-comptime-arith-source)
+                                          3)
                                         (and
-                                          (compiler-lower-error-ok?
-                                            (compiler-lower-comptime-runtime-var-source)
-                                            "compile-time evaluation cannot reference runtime variable 'x'")
-                                          (compiler-lower-error-ok?
-                                            (compiler-lower-comptime-f64-source)
-                                            "comptime: f64 compile-time evaluation not yet supported (#735)")))))))))))))))))))))
+                                          (compiler-lower-comptime-fold-ok?
+                                            (compiler-lower-comptime-if-source)
+                                            42)
+                                          (and
+                                            (compiler-lower-comptime-fold-ok?
+                                              (compiler-lower-comptime-let-source)
+                                              42)
+                                            (and
+                                              (compiler-lower-error-ok?
+                                                (compiler-lower-comptime-runtime-var-source)
+                                                "compile-time evaluation cannot reference runtime variable 'x'")
+                                              (compiler-lower-error-ok?
+                                                (compiler-lower-comptime-f64-source)
+                                                "comptime: f64 compile-time evaluation not yet supported (#735)")))))))))))))))))))))))
     42
     (begin
       (panic "lower: smoke score mismatch")

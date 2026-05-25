@@ -61,6 +61,13 @@ under test. Import `stdlib/test.tl` for assertions such as `assert-i64-eq`.
 Keep smoke drivers for existing compiler-module self-tests until those modules
 are intentionally migrated.
 
+[`../scripts/verify-inline-tests.sh`](../scripts/verify-inline-tests.sh)
+auto-discovers top-level inline tests under `selfhost/`, `stdlib/`,
+`tests/integration/`, `tests/inline/`, and `examples/`. It runs
+`typelisp test --check` first, then `typelisp test`, so malformed, untyped,
+unbuildable, and failing inline tests all fail CI without a hand-maintained
+manifest update.
+
 ### Temporary Rust compile tests
 
 The `tests/tl_*_compile.rs` files are temporary cross-platform proof that
@@ -202,6 +209,16 @@ intentionally separate from `cargo test` and does not use a hand-maintained file
 manifest, so adding documented TypeLisp source with fenced examples
 automatically adds doctest coverage.
 
+### Repository inline-test gate
+
+`scripts/verify-inline-tests.sh` discovers `.tl` files with top-level
+`(test ...)` items under `selfhost/`, `stdlib/`, `tests/integration/`,
+`tests/inline/`, and `examples/`. For each discovered file it type-checks and
+then runs the generated inline-test harness with `--stdlib-root`, reporting the
+source path and test-runner output in CI logs. This gate is separate from
+doctests, manifest corpora, and smoke drivers so source-owned checks can be
+added next to the declarations they exercise.
+
 ### Stdlib API site
 
 `selfhost/doc_site.tl` builds a static stdlib/API HTML directory from the
@@ -238,6 +255,7 @@ TYPELISP_BIN=./target/debug/typelisp ./scripts/check-tl-format.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-public-tools.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-stdlib-docs.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-doc-tests.sh
+TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-inline-tests.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-selfhost.sh
 ```
 
@@ -260,6 +278,8 @@ Linux environment.
   change.
 - Use `selfhost/tests/` plus `scripts/verify-selfhost.sh` for source programs
   that should be accepted or rejected by `compile_smoke.tl`.
+- Use inline `(test ...)` items for source-owned runnable checks; they are
+  picked up automatically by `scripts/verify-inline-tests.sh`.
 - Keep `selfhost/compile_manifest.txt` in sync with top-level selfhost sources
   and compile/symbol smoke expectations.
 - Update `RUST_TEST_COVERAGE.md` whenever adding or changing Rust tests.

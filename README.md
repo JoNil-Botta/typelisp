@@ -238,6 +238,11 @@ executable. `typelisp test --check <file.tl>` type-checks that generated
 harness without assembling or linking. Tests commonly import `stdlib/test.tl`
 for assertion helpers.
 
+CI runs `scripts/verify-inline-tests.sh`, which auto-discovers inline
+test-bearing `.tl` files under `selfhost/`, `stdlib/`, `tests/integration/`,
+`tests/inline/`, and `examples/`. Add inline tests without editing a manifest;
+the script fails if discovered tests do not type-check, build, or pass.
+
 ### Enum and struct namespace rules
 
 In the current flat stage0 model, TypeLisp keeps **type names** and **value

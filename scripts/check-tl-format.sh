@@ -53,7 +53,7 @@ CHECK_FILES="$WORKDIR/check-files.txt"
 # The first CI gate covers the requested checked-in source roots. `git ls-files`
 # naturally excludes target/, generated test output, and untracked temporaries.
 git ls-files '*.tl' |
-    grep -E '^(selfhost|stdlib|examples|tests/integration)/' |
+    grep -E '^(selfhost|stdlib|examples|tests/(integration|inline))/' |
     sort > "$ALL_FILES"
 
 cp "$ALL_FILES" "$CHECK_FILES"

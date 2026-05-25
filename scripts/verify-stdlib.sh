@@ -38,26 +38,56 @@ fi
 # program stdout/stderr to <stem>.stdout / <stem>.stderr. Linux uses GNU as/ld;
 # Windows builds a native windows-x86_64 executable via clang/lld-link. Callers
 # pass the same <stem> they use for their .stdout/.stderr assertion paths.
+# Sets `build_status` (0 = built ok) and, on success, runs the binary setting
+# `got`. Build/link output is captured to <stem>.build.err. A build failure does
+# NOT abort the script (callers classify it) so staged-primitive rows can be
+# skipped on the no-Rust gate when the published stage0 lacks a new runtime
+# symbol (#1114).
 stdlib_build_run() {
     _src=$1
     _stem=$2
     _stdin=$3
+    build_status=0
+    : > "$_stem.build.err"
+    set +e
     if [ "$HOST_OS" = windows ]; then
         "$COMPILER" build "$_src" --stdlib-root "$ROOT/stdlib" -o "$_stem.exe" \
-            --target windows-x86_64
-        set +e
-        "$_stem.exe" < "$_stdin" > "$_stem.stdout" 2> "$_stem.stderr"
-        got=$?
-        set -e
+            --target windows-x86_64 > "$_stem.build.out" 2> "$_stem.build.err"
+        build_status=$?
+        if [ "$build_status" -eq 0 ]; then
+            "$_stem.exe" < "$_stdin" > "$_stem.stdout" 2> "$_stem.stderr"
+            got=$?
+        fi
     else
-        "$COMPILER" compile "$_src" --stdlib-root "$ROOT/stdlib" -o "$_stem.s"
-        as "$_stem.s" -o "$_stem.o"
-        ld "$_stem.o" -o "$_stem"
-        set +e
-        "$_stem" < "$_stdin" > "$_stem.stdout" 2> "$_stem.stderr"
-        got=$?
-        set -e
+        "$COMPILER" compile "$_src" --stdlib-root "$ROOT/stdlib" -o "$_stem.s" \
+            > "$_stem.build.out" 2> "$_stem.build.err"
+        build_status=$?
+        if [ "$build_status" -eq 0 ]; then
+            as "$_stem.s" -o "$_stem.o" >> "$_stem.build.out" 2>> "$_stem.build.err"
+            build_status=$?
+        fi
+        if [ "$build_status" -eq 0 ]; then
+            ld "$_stem.o" -o "$_stem" >> "$_stem.build.out" 2>> "$_stem.build.err"
+            build_status=$?
+        fi
+        if [ "$build_status" -eq 0 ]; then
+            "$_stem" < "$_stdin" > "$_stem.stdout" 2> "$_stem.stderr"
+            got=$?
+        fi
     fi
+    set -e
+}
+
+# A staged-primitive row may be skipped ONLY on the no-Rust gate, ONLY when the
+# build failed because the fetched compiler does not yet provide the named
+# runtime symbol/name (it appears as undefined/unbound in the build output).
+# Any other build failure still fails the gate. Returns 0 = skip.
+stdlib_should_skip_staged() {
+    _symbol=$1
+    _build_err=$2
+    [ -n "$_symbol" ] || return 1
+    [ "$build_status" -ne 0 ] || return 1
+    grep -qF "$_symbol" "$_build_err"
 }
 
 # Every canonical stdlib module must be listed here. Keep this manifest in sync
@@ -323,15 +353,21 @@ fi
 export WindowsSDKVersion="$SDK_VERSION"
 
 passed=0
+skipped=0
 while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do
     case "$fixture" in
         '' | \#*) continue ;;
     esac
 
-    if [ -n "${extra:-}" ]; then
-        echo "FAIL: malformed stdlib test manifest row has too many fields: $fixture" >&2
-        exit 1
-    fi
+    requires_symbol=
+    case "${extra:-}" in
+        '') ;;
+        requires-stage0-symbol:*) requires_symbol=${extra#requires-stage0-symbol:} ;;
+        *)
+            echo "FAIL: malformed stdlib test manifest row has too many fields: $fixture" >&2
+            exit 1
+            ;;
+    esac
 
     if [ -z "${stdin_spec:-}" ]; then
         stdin_spec=-
@@ -368,6 +404,21 @@ while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do
 
     echo "[stdlib] building+running $fixture (--stdlib-root)"
     stdlib_build_run "$copied" "$stem" "$stdin"
+
+    if [ "$build_status" -ne 0 ]; then
+        if stdlib_should_skip_staged "$requires_symbol" "$stem.build.err"; then
+            echo "[stdlib] SKIP $fixture (awaiting stage0 republish of '$requires_symbol')"
+            skipped=$((skipped + 1))
+            continue
+        fi
+        echo "FAIL: $fixture failed to build" >&2
+        sed 's/^/  /' "$stem.build.err" >&2 || true
+        exit 1
+    fi
+
+    if [ -n "$requires_symbol" ]; then
+        echo "[stdlib] NOTE: $fixture built with the current compiler; once the published stage0 provides '$requires_symbol', drop the requires-stage0-symbol marker" >&2
+    fi
 
     if [ "$got" -ne "$want" ]; then
         echo "FAIL: $fixture expected exit $want, got $got" >&2
@@ -464,5 +515,9 @@ while IFS='|' read -r fixture want stderr_snippet extra; do
 done < "$CHECK_MANIFEST"
 
 module_count=$(wc -l < "$EXPECTED" | tr -d ' ')
+
+if [ "$skipped" -gt 0 ]; then
+    echo "stdlib verification: $skipped runnable fixture(s) skipped (staged primitive awaiting stage0 republish)"
+fi
 
 echo "stdlib verification passed for $module_count module(s), $passed runnable fixture(s), $checked check fixture(s)"

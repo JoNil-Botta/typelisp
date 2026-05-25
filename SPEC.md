@@ -268,12 +268,14 @@ the first field:
   (mtime i64))
 ```
 
-V1 accepts only the metadata form `(:repr c)`. Omitting it preserves the default
-TypeLisp layout. Metadata forms must appear before all fields; a metadata form
-after a field is rejected. Duplicate `:repr` metadata is rejected. Unknown
-metadata keys and unknown representation names are rejected. `packed`,
-`(:repr packed)`, and equivalent packed-layout spellings are reserved and
-rejected until an unsafe packed-field slice exists.
+For layout, v1 accepts only the metadata form `(:repr c)`. Omitting it
+preserves the default TypeLisp layout. Metadata forms must appear before all
+fields; a metadata form after a field is rejected. Duplicate `:repr` metadata
+is rejected. Unknown metadata keys and unknown representation names are
+rejected. Cleanup ownership metadata is specified separately in section 4.6 and
+is not a layout contract. `packed`, `(:repr packed)`, and equivalent
+packed-layout spellings are reserved and rejected until an unsafe packed-field
+slice exists.
 
 V1 `repr c` fields are restricted to ABI-safe types:
 
@@ -654,6 +656,180 @@ Example:
 ### 4.6 `(defenum ...)` and `(defstruct ...)`
 
 See §3.5.
+
+#### 4.6.1 Cleanup-owning aggregate declarations (specified, pending implementation)
+
+Cleanup-required values are values that must be passed to a cleanup function
+exactly once before their owner scope exits. Ordinary aggregates do not own
+those values: a `defstruct` without cleanup metadata and every v1 `defenum`
+payload must reject cleanup-required fields, cleanup-owning aggregate fields,
+and cleanup-owning payloads. This prevents an aggregate handle copy from
+silently duplicating cleanup responsibility.
+
+A cleanup-owning struct opts in with type-level `(:cleanup cleanup-fn)`
+metadata immediately after the struct name and before all fields. The metadata
+declares the cleanup function for the struct type and makes values of that type
+move-only:
+
+```lisp test=ignore name=cleanup-owning-buffered-file-struct reason="cleanup-owning aggregate declarations are specified before compiler support"
+(defstruct FileHandle
+  (:cleanup close-file-handle)
+  (fd i64 (:cleanup close-fd)))
+
+(defstruct TextBuffer
+  (:cleanup close-text-buffer)
+  (ptr i64 (:cleanup free-buffer)))
+
+(defstruct BufferedFile
+  (:cleanup close-buffered-file)
+  (fd FileHandle (:owned))
+  (buffer TextBuffer (:owned)))
+
+(define (open-buffered-file [fd : i64] [ptr : i64]) : BufferedFile
+  (BufferedFile (FileHandle fd) (TextBuffer ptr)))
+
+(define (use-buffered-file [fd : i64] [ptr : i64]) : i64
+  (with ([bf (open-buffered-file fd ptr) close-buffered-file])
+    (struct-get (struct-get bf fd) fd)))
+```
+
+`cleanup-fn` names the type-level cleanup function for the aggregate. The
+compiler must expose exactly one such function for each cleanup-owning struct
+and reject another top-level value with the same name. Its type is `(-> T unit)`
+where `T` is the struct type. The generated cleanup function owns its argument,
+runs the struct field cleanup plan below, and returns `unit`. Source-level
+custom cleanup hooks for the whole value are deferred; v1 cleanup behavior is
+fully determined by field metadata and nested cleanup-owning field types.
+
+Struct field metadata may include exactly one cleanup marker after the field
+type:
+
+- `(:cleanup field-cleanup-fn)` marks a direct resource field and names the
+  cleanup function for that field. The function must have type `(-> F unit)`,
+  where `F` is the field type.
+- `(:owned)` marks a field whose type is itself cleanup-owning. The field uses
+  that type's declared cleanup function.
+
+Field-level cleanup metadata is accepted only inside a cleanup-owning struct.
+A cleanup-owning struct may contain ordinary fields with no cleanup marker.
+Every cleanup-required field must have `(:cleanup ...)`; every cleanup-owning
+aggregate field must have `(:owned)`. A field may not specify both. Field
+metadata is part of the owning contract, not layout, and is incompatible with
+`(:repr c)` in v1: a C ABI struct cannot own cleanup-required resources.
+
+Cleanup for a struct value is deterministic. When the owner scope cleans a
+value of cleanup-owning struct type:
+
+1. The value is marked moved so later reads, copies, stores, or returns of the
+   same owner are rejected.
+2. Fields with cleanup metadata are cleaned in reverse declaration order.
+3. For `(:cleanup f)`, the compiler calls `f` with the field value.
+4. For `(:owned)`, the compiler recursively calls the field type's declared
+   cleanup function.
+5. Fields without cleanup metadata are not cleaned.
+
+Nested cleanup completes before the previous field begins. If a field has
+already been moved out, that field is no longer cleaned by the containing
+struct; responsibility moved with the field. Moving a field out of a
+cleanup-owning struct leaves the whole struct partially moved, so the compiler
+must reject later cleanup of the whole value unless the field is definitely
+reinitialized before the owner scope exits. Partial moves are therefore expected
+to remain rejected until the move checker can track field initialization.
+
+Cleanup-owning structs are move-only. Assigning, passing as an ordinary by-value
+argument, returning, storing in another aggregate, or binding to another name
+transfers ownership unless the operation is explicitly a borrow in a future
+borrow/reference model. After such a move, the source value cannot be used.
+Copying a cleanup-owning value is never allowed. A cleanup-owning value cannot
+be stored in a global, captured by an escaping closure, or returned from a
+`with` scope that owns it.
+
+```lisp test=ignore name=cleanup-owning-nested-struct reason="cleanup-owning aggregate declarations are specified before compiler support"
+(defstruct FileHandle
+  (:cleanup close-file-handle)
+  (fd i64 (:cleanup close-fd)))
+
+(defstruct BufferedFile
+  (:cleanup close-buffered-file)
+  (handle FileHandle (:owned)))
+
+(defstruct LogWriter
+  (:cleanup close-log-writer)
+  (file BufferedFile (:owned))
+  (bytes-written i64))
+```
+
+The example above ignores `bytes-written` and cleans `file`; cleaning `file`
+recursively cleans `handle`.
+
+```lisp test=ignore name=cleanup-owning-reject-ordinary-storage reason="negative example for future cleanup-required aggregate checks"
+(defstruct FileHandle
+  (:cleanup close-file-handle)
+  (fd i64 (:cleanup close-fd)))
+
+(defstruct BadWrapper
+  (handle FileHandle))
+```
+
+`BadWrapper` is rejected because it stores a cleanup-owning value without
+declaring its own cleanup ownership and without marking the field `(:owned)`.
+
+```lisp test=ignore name=cleanup-owning-reject-copy reason="negative example for future move-only cleanup-owning aggregate checks"
+(defstruct FileHandle
+  (:cleanup close-file-handle)
+  (fd i64 (:cleanup close-fd)))
+
+(define (open-handle [fd : i64]) : FileHandle
+  (FileHandle fd))
+
+(define (bad-copy [fd : i64]) : i64
+  (with ([h (open-handle fd) close-file-handle])
+    (let ([copy h])
+      (struct-get h fd))))
+```
+
+The `let` binding moves `h` into `copy`; the later read from `h` is rejected as
+use-after-move. The compiler must also ensure the moved value still has exactly
+one owner that will clean it.
+
+```lisp test=ignore name=cleanup-owning-reject-escape reason="negative example for future cleanup-owning aggregate escape checks"
+(defstruct FileHandle
+  (:cleanup close-file-handle)
+  (fd i64 (:cleanup close-fd)))
+
+(define (open-handle [fd : i64]) : FileHandle
+  (FileHandle fd))
+
+(define (leak-handle [fd : i64]) : FileHandle
+  (with ([h (open-handle fd) close-file-handle])
+    h))
+```
+
+`leak-handle` is rejected because the `with` scope owns `h`; returning it would
+escape the cleanup scope.
+
+`with` is the v1 owner scope for cleanup-owning aggregates. If a `with` binding
+initializes a cleanup-owning struct, its cleanup position must be the struct's
+declared cleanup function; another cleanup function is rejected. A resource
+value moved into a cleanup-owning aggregate is not also cleaned by the source
+binding. Normal `let` still has no cleanup behavior; creating a cleanup-owning
+value in `let` is valid only if the value is immediately moved into another
+owner whose cleanup is statically known.
+
+Cleanup runs when the owner scope exits normally and before recoverable `(try
+...)` propagation leaves the scope. If initialization of a later `with` binding
+propagates recoverably, already-initialized earlier cleanup-owning values are
+cleaned in the same reverse-binding order as other resources. Cleanup functions
+return `unit`; if a cleanup function panics, the program aborts and the
+language does not guarantee that remaining field, nested, or outer cleanups
+run. A direct `panic`/abort has no unwinding cleanup guarantee.
+
+Cleanup-owning `defenum` declarations are deferred in v1. The reserved shape is
+`(defenum Name (:cleanup cleanup-fn) variant+)`, but the parser/typechecker must
+reject it until enum payload ownership is implemented. Ordinary enum payloads
+must reject cleanup-required and cleanup-owning types. A future cleanup-owning
+enum must clean only the active variant payload, in reverse payload declaration
+order, using field-style `(:cleanup ...)` and `(:owned)` payload metadata.
 
 ---
 
@@ -1262,6 +1438,10 @@ used to compute a non-resource result before cleanup runs.
 
 Ordinary `let` has no cleanup behavior. A binding is cleaned up only when it is
 introduced by `with`, with an explicit cleanup function in the binding.
+For cleanup-owning aggregate types (section 4.6.1), the explicit cleanup
+function must be the aggregate type's declared cleanup function. The field
+cleanup plan is then run by that aggregate cleanup function; `with` itself still
+only owns the bound value and invokes one cleanup function per binding.
 
 ```lisp test=ignore name=ordinary-let-does-not-cleanup reason="illustrates distinction from future scoped cleanup syntax"
 (defstruct Handle (id i64))
@@ -1537,15 +1717,17 @@ reclaim, matching the semantic contract minus the reset.
 
 The reserved `(with ([name init cleanup] ...) body ...)` form (§5.18) is the
 source surface for deterministic cleanup of non-memory resources. It does not
-select an allocation arena, does not reset heap storage, and does not make
-aggregate handles unique. Cleanup is explicit in the binding and must return
-`unit`; TypeLisp still has no implicit destructors or automatic `drop`.
+select an allocation arena and does not reset heap storage. Cleanup is explicit
+in the binding and must return `unit`; TypeLisp still has no implicit
+destructors or automatic `drop`.
 
 This keeps resource lifetime policy independent from arena lifetime policy:
 files, process handles, locks, mapped files, and temporary paths use `with`;
 heap allocation reclamation uses `with-region` or the low-level unsafe region
-helpers below. Compiler support is tracked by #907, with move-only and
-cleanup-owning aggregate follow-ups tracked separately.
+helpers below. Cleanup-owning aggregates (section 4.6.1) use the same `with`
+owner scope plus a declared aggregate cleanup function for the field cleanup
+plan. Compiler support is tracked by #907, with move-only enforcement tracked
+separately.
 
 #### Low-level extern helpers (unsafe by convention)
 
@@ -1625,7 +1807,9 @@ not the future safe reference/borrow model (#182), not a replacement for
   operation.
 - Function calls pass aggregate handles by value. Returning an aggregate may
   heap-promote storage that would otherwise be frame-local; this is storage
-  placement for safety, not ownership transfer or borrow checking.
+  placement for safety, not ownership transfer or borrow checking for ordinary
+  aggregates. Cleanup-owning aggregates are the move-only exception specified
+  in section 4.6.1 and cannot use this copyable handle rule.
 
 ```lisp test=run name=dynamic-array-aliasing exit=42 stdout=""
 (define (main) : i64
@@ -1694,6 +1878,7 @@ not the future safe reference/borrow model (#182), not a replacement for
 | Raw pointer dereference/write/offset/cast | Specified unsafe operations; implementation pending (#809/#897/#911/#912) |
 | Garbage collection / general `free` | Not implemented; allocation is process-lifetime by default with unsafe explicit region reset for tool-owned phase boundaries |
 | `(with ...)` scoped non-memory resource cleanup | Specified and reserved; parser/typechecker/lowering support pending |
+| Cleanup-owning aggregate declarations | Specified for structs and reserved for enums; parser/typechecker/lowering support pending |
 | SPMD / SIMD `foreach` | Scalar reference lowering implemented; AVX2 supports a first contiguous map/zip subset |
 | SPMD reductions and public cross-lane ops | Source semantics specified; parser/typechecker/lowering/backend support pending |
 | Windows region helpers | `tl_region_mark`/`tl_region_reset` are Linux-only |
@@ -2129,14 +2314,20 @@ export-item   ::= "(" "value" ident ")"
                 | "(" "constructor" ident ")"
                 | "(" "field" ident ident ")"
                 | "(" "variant" ident ")"
-defenum       ::= "(" "defenum" ident variant+ ")"
+defenum       ::= "(" "defenum" ident enum-meta* variant+ ")"
 defstruct     ::= "(" "defstruct" ident struct-meta* field+ ")"
 struct-meta   ::= "(" ":repr" "c" ")"
+                | aggregate-cleanup-meta
+enum-meta     ::= aggregate-cleanup-meta       ; reserved, rejected in v1
+aggregate-cleanup-meta ::= "(" ":cleanup" ident ")"
 test-decl     ::= "(" "test" ident expr+ ")"
 
 param         ::= "[" ident ":" type "]"
-field         ::= "(" ident type ")"
-variant       ::= "(" ident type* ")"
+field         ::= "(" ident type field-meta* ")"
+field-meta    ::= "(" ":cleanup" ident ")"
+                | "(" ":owned" ")"
+variant       ::= "(" ident variant-payload* ")"
+variant-payload ::= type field-meta*           ; payload cleanup metadata reserved, rejected in v1
 
 expr          ::= literal
                 | ident

@@ -58,7 +58,7 @@ returned caller-owned values.
 | `append-file` | Panic-on-error convenience wrapper over `try-append-file`. It allocates temporary active-arena strings and rewrites the whole file. |
 | `file-nonempty?` | Convenience wrapper over `try-read-file`; allocates a temporary active-arena `String` through `read-file` only when the path exists. |
 | `env-get`, `env-path-list`, `env-path-split`, `env-path-join` | Environment values and split/join results allocate fresh active-arena Strings/lists when runtime values are read or string pieces are created; missing variables return explicit `EnvNo*` options. |
-| `process-*` helpers | Construct process command/output/error aggregates in the active arena. Validators inspect argv/env/cwd metadata without allocation; `process-run` and `process-output` currently return structured errors and do not spawn child processes. |
+| `process-*` helpers | Construct process command/output/error aggregates in the active arena. Ordered argv append helpers allocate list nodes; validators inspect executable/env/cwd metadata and reject invalid env names. `process-run` and `process-output` currently return structured errors and do not spawn child processes. |
 | `assert-*` helpers in `test.tl` | Non-allocating checks on success; failures call `panic` with the caller-provided message. |
 | `text-buf-*` helpers in `text_buf.tl` | Buffer chunks and rendered strings allocate in the active arena. Append helpers avoid concatenating the accumulated prefix until `text-buf-render`; `text-buf-clear`/`text-buf-reset` return a fresh empty immutable buffer value. |
 

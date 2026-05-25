@@ -10,7 +10,11 @@
   (ErrCompilerLoad CompilerDiagnostic))
 
 (defenum ResultCompilerLoadWithPaths
-  (OkCompilerLoadWithPaths AstDeclList AstDeclPathList SymI64Env)
+  (OkCompilerLoadWithPaths
+    AstDeclList
+    AstDeclPathList
+    AstDeclModuleList
+    SymI64Env)
   (ErrCompilerLoadWithPaths CompilerDiagnostic))
 
 (defenum CompilerLoadRootList
@@ -20,6 +24,18 @@
 (defenum CompilerLoadMaybePath
   (CompilerLoadNoPath)
   (CompilerLoadSomePath String))
+
+(defenum CompilerLoadSegmentList
+  (CompilerLoadSegmentNil)
+  (CompilerLoadSegmentCons String CompilerLoadSegmentList))
+
+(defenum CompilerLoadMaybeModuleId
+  (CompilerLoadNoModuleId)
+  (CompilerLoadSomeModuleId String))
+
+(defenum ResultCompilerLoadModuleId
+  (OkCompilerLoadModuleId String)
+  (ErrCompilerLoadModuleId CompilerDiagnostic))
 
 (define (compiler-load-char-code-at [text : String] [idx : i64]) : i64
   (cast (string-ref text idx) : i64))
@@ -60,6 +76,72 @@
   (if (compiler-load-absolute-path? import-path)
     import-path
     (string-append (compiler-load-dirname importer-path) import-path)))
+
+(define (compiler-load-rooted-path? [path : String]) : bool
+  (if (= (string-length path) 0)
+    false
+    (compiler-load-path-separator? (string-ref path 0))))
+
+(define (compiler-load-segment-list-render [segments : CompilerLoadSegmentList]) : String
+  (match segments
+    [(CompilerLoadSegmentNil) ""]
+    [(CompilerLoadSegmentCons head rest)
+      (let ([prefix : String (compiler-load-segment-list-render rest)])
+        (if (= (string-length prefix) 0)
+          head
+          (string-append prefix (string-append "/" head))))]))
+
+(define (compiler-load-normalize-segment
+  [segment : String]
+  [segments : CompilerLoadSegmentList]
+  [rooted : bool]) : CompilerLoadSegmentList
+  (if (or (string-eq segment "") (string-eq segment "."))
+    segments
+    (if (string-eq segment "..")
+      (match segments
+        [(CompilerLoadSegmentNil)
+          (if rooted
+            CompilerLoadSegmentNil
+            (CompilerLoadSegmentCons segment segments))]
+        [(CompilerLoadSegmentCons top rest)
+          (if (string-eq top "..")
+            (CompilerLoadSegmentCons segment segments)
+            rest)])
+      (CompilerLoadSegmentCons segment segments))))
+
+(define (compiler-load-normalize-path [path : String]) : String
+  (let (
+    [n : i64 (string-length path)]
+    [i : i64 0]
+    [segment-start : i64 0]
+    [rooted : bool (compiler-load-rooted-path? path)]
+    [segments : CompilerLoadSegmentList CompilerLoadSegmentNil])
+    (begin
+      (while (< i n)
+        (begin
+          (if (compiler-load-path-separator? (string-ref path i))
+            (begin
+              (set!
+                segments
+                (compiler-load-normalize-segment
+                  (substring path segment-start (- i segment-start))
+                  segments
+                  rooted))
+              (set! segment-start (+ i 1)))
+            (set! segment-start segment-start))
+          (set! i (+ i 1))))
+      (set!
+        segments
+        (compiler-load-normalize-segment
+          (substring path segment-start (- n segment-start))
+          segments
+          rooted))
+      (let ([body : String (compiler-load-segment-list-render segments)])
+        (if rooted
+          (if (= (string-length body) 0)
+            "/"
+            (string-append "/" body))
+          body)))))
 
 (define (compiler-load-string-prefix-at?
   [text : String]
@@ -155,10 +237,70 @@
     [(AstDeclPathCons head rest)
       (AstDeclPathCons head (compiler-load-decl-path-list-append rest right))]))
 
+(define (compiler-load-decl-module-list-append
+  [left : AstDeclModuleList]
+  [right : AstDeclModuleList]) : AstDeclModuleList
+  (match left
+    [(AstDeclModuleNil) right]
+    [(AstDeclModuleCons head rest)
+      (AstDeclModuleCons
+        head
+        (compiler-load-decl-module-list-append rest right))]))
+
 (define (compiler-load-drop-paths [result : ResultCompilerLoadWithPaths]) : ResultCompilerLoad
   (match result
-    [(OkCompilerLoadWithPaths decls _ seen) (OkCompilerLoad decls seen)]
+    [(OkCompilerLoadWithPaths decls _ _ seen) (OkCompilerLoad decls seen)]
     [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoad diag)]))
+
+(define (compiler-load-decls-module-id-loop
+  [path : String]
+  [decls : AstDeclList]
+  [fallback : String]
+  [found : CompilerLoadMaybeModuleId]) : ResultCompilerLoadModuleId
+  (match decls
+    [(AstDeclNil)
+      (match found
+        [(CompilerLoadNoModuleId) (OkCompilerLoadModuleId fallback)]
+        [(CompilerLoadSomeModuleId name) (OkCompilerLoadModuleId name)])]
+    [(AstDeclCons decl rest)
+      (match decl
+        [(AstDeclModule name)
+          (match found
+            [(CompilerLoadNoModuleId)
+              (compiler-load-decls-module-id-loop
+                path
+                rest
+                fallback
+                (CompilerLoadSomeModuleId name))]
+            [(CompilerLoadSomeModuleId _)
+              (ErrCompilerLoadModuleId
+                (compiler-diagnostic-at-start
+                  path
+                  "compiler-load: duplicate module declaration"))])]
+        [_ (compiler-load-decls-module-id-loop path rest fallback found)])]))
+
+(define (compiler-load-decls-module-id [path : String] [decls : AstDeclList]) : ResultCompilerLoadModuleId
+  (compiler-load-decls-module-id-loop
+    path
+    decls
+    (compiler-load-normalize-path path)
+    CompilerLoadNoModuleId))
+
+(define (compiler-load-check-expected-module
+  [path : String]
+  [expected : AstMaybeModuleName]
+  [actual : String]) : ResultCompilerLoadModuleId
+  (match expected
+    [(AstNoModuleName) (OkCompilerLoadModuleId actual)]
+    [(AstSomeModuleName want)
+      (if (string-eq want actual)
+        (OkCompilerLoadModuleId actual)
+        (ErrCompilerLoadModuleId
+          (compiler-diagnostic-at-start
+            path
+            (string-append
+              "compiler-load: import expected module "
+              (string-append want (string-append " but loaded " actual))))))]))
 
 (define (compiler-load-decls-with-paths
   [decls : AstDeclList]
@@ -170,56 +312,95 @@
     seen
     CompilerLoadRootNil))
 
-(define (compiler-load-decls-with-paths-and-roots
+(define (compiler-load-decls-with-module-and-roots
   [decls : AstDeclList]
   [importer-path : String]
+  [importer-module : String]
   [seen : SymI64Env]
   [stdlib-roots : CompilerLoadRootList]) : ResultCompilerLoadWithPaths
   (match decls
-    [(AstDeclNil) (OkCompilerLoadWithPaths AstDeclNil AstDeclPathNil seen)]
+    [(AstDeclNil)
+      (OkCompilerLoadWithPaths AstDeclNil AstDeclPathNil AstDeclModuleNil seen)]
     [(AstDeclCons decl rest)
       (match decl
-        [(AstDeclImport import-path)
+        [(AstDeclImport (AstImportSpec import-path expected-module _))
           (let ([resolved : String
             (compiler-load-resolve-import-with-roots
               importer-path
               import-path
               stdlib-roots)])
-            (match (compiler-load-file-with-paths-and-roots
+            (match (compiler-load-file-with-paths-and-roots-expect
               resolved
               seen
-              stdlib-roots)
+              stdlib-roots
+              expected-module)
               [(OkCompilerLoadWithPaths
                   imported-decls
                   imported-paths
+                  imported-modules
                   import-seen)
-                (match (compiler-load-decls-with-paths-and-roots
+                (match (compiler-load-decls-with-module-and-roots
                   rest
                   importer-path
+                  importer-module
                   import-seen
                   stdlib-roots)
-                  [(OkCompilerLoadWithPaths rest-decls rest-paths rest-seen)
+                  [(OkCompilerLoadWithPaths
+                      rest-decls
+                      rest-paths
+                      rest-modules
+                      rest-seen)
                     (OkCompilerLoadWithPaths
                       (compiler-load-decl-list-append imported-decls rest-decls)
                       (compiler-load-decl-path-list-append
                         imported-paths
                         rest-paths)
+                      (compiler-load-decl-module-list-append
+                        imported-modules
+                        rest-modules)
                       rest-seen)]
                   [(ErrCompilerLoadWithPaths diag)
                     (ErrCompilerLoadWithPaths diag)])]
               [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))]
         [_
-          (match (compiler-load-decls-with-paths-and-roots
+          (match (compiler-load-decls-with-module-and-roots
             rest
             importer-path
+            importer-module
             seen
             stdlib-roots)
-            [(OkCompilerLoadWithPaths rest-decls rest-paths rest-seen)
+            [(OkCompilerLoadWithPaths
+                rest-decls
+                rest-paths
+                rest-modules
+                rest-seen)
               (OkCompilerLoadWithPaths
                 (AstDeclCons decl rest-decls)
                 (AstDeclPathCons importer-path rest-paths)
+                (AstDeclModuleCons importer-module rest-modules)
                 rest-seen)]
             [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])])]))
+
+(define (compiler-load-decls-with-paths-and-roots
+  [decls : AstDeclList]
+  [importer-path : String]
+  [seen : SymI64Env]
+  [stdlib-roots : CompilerLoadRootList]) : ResultCompilerLoadWithPaths
+  (match (compiler-load-decls-module-id importer-path decls)
+    [(OkCompilerLoadModuleId module-id)
+      (if (sym-i64-contains seen module-id)
+        (OkCompilerLoadWithPaths
+          AstDeclNil
+          AstDeclPathNil
+          AstDeclModuleNil
+          seen)
+        (compiler-load-decls-with-module-and-roots
+          decls
+          importer-path
+          module-id
+          (sym-i64-bind seen module-id 1)
+          stdlib-roots))]
+    [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)]))
 
 (define (compiler-load-decls
   [decls : AstDeclList]
@@ -255,15 +436,42 @@
   [program : AstProgram]
   [seen : SymI64Env]
   [stdlib-roots : CompilerLoadRootList]) : ResultCompilerLoadWithPaths
-  (if (sym-i64-contains seen path)
-    (OkCompilerLoadWithPaths AstDeclNil AstDeclPathNil seen)
-    (match program
-      [(AstProgram decls)
-        (compiler-load-decls-with-paths-and-roots
-          decls
-          path
-          (sym-i64-bind seen path 1)
-          stdlib-roots)])))
+  (compiler-load-program-with-paths-and-roots-expect
+    path
+    program
+    seen
+    stdlib-roots
+    AstNoModuleName))
+
+(define (compiler-load-program-with-paths-and-roots-expect
+  [path : String]
+  [program : AstProgram]
+  [seen : SymI64Env]
+  [stdlib-roots : CompilerLoadRootList]
+  [expected-module : AstMaybeModuleName]) : ResultCompilerLoadWithPaths
+  (match program
+    [(AstProgram decls)
+      (match (compiler-load-decls-module-id path decls)
+        [(OkCompilerLoadModuleId module-id)
+          (match (compiler-load-check-expected-module
+            path
+            expected-module
+            module-id)
+            [(OkCompilerLoadModuleId _)
+              (if (sym-i64-contains seen module-id)
+                (OkCompilerLoadWithPaths
+                  AstDeclNil
+                  AstDeclPathNil
+                  AstDeclModuleNil
+                  seen)
+                (compiler-load-decls-with-module-and-roots
+                  decls
+                  path
+                  module-id
+                  (sym-i64-bind seen module-id 1)
+                  stdlib-roots))]
+            [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)])]
+        [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)])]))
 
 (define (compiler-load-program
   [path : String]
@@ -295,16 +503,28 @@
   [source : String]
   [seen : SymI64Env]
   [stdlib-roots : CompilerLoadRootList]) : ResultCompilerLoadWithPaths
-  (if (sym-i64-contains seen path)
-    (OkCompilerLoadWithPaths AstDeclNil AstDeclPathNil seen)
-    (match (parse-ast-source-diagnostic path source)
-      [(OkAstProgramDiagnostic program)
-        (compiler-load-program-with-paths-and-roots
-          path
-          program
-          seen
-          stdlib-roots)]
-      [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])))
+  (compiler-load-source-with-paths-and-roots-expect
+    path
+    source
+    seen
+    stdlib-roots
+    AstNoModuleName))
+
+(define (compiler-load-source-with-paths-and-roots-expect
+  [path : String]
+  [source : String]
+  [seen : SymI64Env]
+  [stdlib-roots : CompilerLoadRootList]
+  [expected-module : AstMaybeModuleName]) : ResultCompilerLoadWithPaths
+  (match (parse-ast-source-diagnostic path source)
+    [(OkAstProgramDiagnostic program)
+      (compiler-load-program-with-paths-and-roots-expect
+        path
+        program
+        seen
+        stdlib-roots
+        expected-module)]
+    [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)]))
 
 (define (compiler-load-source
   [path : String]
@@ -327,21 +547,31 @@
   [path : String]
   [seen : SymI64Env]
   [stdlib-roots : CompilerLoadRootList]) : ResultCompilerLoadWithPaths
-  (if (sym-i64-contains seen path)
-    (OkCompilerLoadWithPaths AstDeclNil AstDeclPathNil seen)
-    (if (file-exists? path)
-      (match (parse-ast-source-diagnostic path (read-file path))
-        [(OkAstProgramDiagnostic program)
-          (compiler-load-program-with-paths-and-roots
-            path
-            program
-            seen
-            stdlib-roots)]
-        [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])
-      (ErrCompilerLoadWithPaths
-        (compiler-diagnostic-at-start
+  (compiler-load-file-with-paths-and-roots-expect
+    path
+    seen
+    stdlib-roots
+    AstNoModuleName))
+
+(define (compiler-load-file-with-paths-and-roots-expect
+  [path : String]
+  [seen : SymI64Env]
+  [stdlib-roots : CompilerLoadRootList]
+  [expected-module : AstMaybeModuleName]) : ResultCompilerLoadWithPaths
+  (if (file-exists? path)
+    (match (parse-ast-source-diagnostic path (read-file path))
+      [(OkAstProgramDiagnostic program)
+        (compiler-load-program-with-paths-and-roots-expect
           path
-          (string-append "compiler-load: cannot read import " path))))))
+          program
+          seen
+          stdlib-roots
+          expected-module)]
+      [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])
+    (ErrCompilerLoadWithPaths
+      (compiler-diagnostic-at-start
+        path
+        (string-append "compiler-load: cannot read import " path)))))
 
 (define (compiler-load-file [path : String] [seen : SymI64Env]) : ResultCompilerLoad
   (compiler-load-drop-paths (compiler-load-file-with-paths path seen)))
@@ -352,3 +582,177 @@
   [stdlib-roots : CompilerLoadRootList]) : ResultCompilerLoad
   (compiler-load-drop-paths
     (compiler-load-file-with-paths-and-roots path seen stdlib-roots)))
+
+(define (compiler-load-decl-list-count [decls : AstDeclList]) : i64
+  (match decls
+    [(AstDeclNil) 0]
+    [(AstDeclCons _ rest) (+ 1 (compiler-load-decl-list-count rest))]))
+
+(define (compiler-load-two-modules?
+  [modules : AstDeclModuleList]
+  [want : String]) : bool
+  (match modules
+    [(AstDeclModuleCons first (AstDeclModuleCons second AstDeclModuleNil))
+      (and (string-eq first want) (string-eq second want))]
+    [_ false]))
+
+(define (compiler-load-entry-cycle-modules? [modules : AstDeclModuleList]) : bool
+  (match modules
+    [(AstDeclModuleCons
+        first
+        (AstDeclModuleCons
+          second
+          (AstDeclModuleCons third (AstDeclModuleCons fourth AstDeclModuleNil))))
+      (and
+        (string-eq first "smoke.entry")
+        (and
+          (string-eq second "smoke.dep")
+          (and (string-eq third "smoke.dep") (string-eq fourth "smoke.entry"))))]
+    [_ false]))
+
+(define (compiler-load-normalize-ok?) : bool
+  (and
+    (string-eq
+      (compiler-load-normalize-path "selfhost/./x/../compiler_load.tl")
+      "selfhost/compiler_load.tl")
+    (string-eq
+      (compiler-load-normalize-path "target\\loader\\..\\dep.tl")
+      "target/dep.tl")))
+
+(define (compiler-load-source-provenance-ok?) : bool
+  (match (compiler-load-source-with-paths
+    "src/./main.tl"
+    "(module app.main)
+(define answer : i64 42)"
+    (sym-i64-empty))
+    [(OkCompilerLoadWithPaths decls _ modules seen)
+      (and
+        (= (compiler-load-decl-list-count decls) 2)
+        (and
+          (compiler-load-two-modules? modules "app.main")
+          (sym-i64-contains seen "app.main")))]
+    [(ErrCompilerLoadWithPaths _) false]))
+
+(define (compiler-load-expected-module-conflict-ok?) : bool
+  (match (compiler-load-source-with-paths-and-roots-expect
+    "src/lib.tl"
+    "(module lib.actual)
+(define value : i64 1)"
+    (sym-i64-empty)
+    CompilerLoadRootNil
+    (AstSomeModuleName "lib.want"))
+    [(ErrCompilerLoadWithPaths diag)
+      (string-eq
+        (compiler-diagnostic-message diag)
+        "compiler-load: import expected module lib.want but loaded lib.actual")]
+    [(OkCompilerLoadWithPaths _ _ _ _) false]))
+
+(define (compiler-load-duplicate-module-ok?) : bool
+  (match (compiler-load-source
+    "src/dup.tl"
+    "(module dup.one)
+(module dup.two)
+(define value : i64 1)"
+    (sym-i64-empty))
+    [(ErrCompilerLoad diag)
+      (string-eq
+        (compiler-diagnostic-message diag)
+        "compiler-load: duplicate module declaration")]
+    [(OkCompilerLoad _ _) false]))
+
+(define (compiler-load-seen-module-ok?) : bool
+  (match (compiler-load-source
+    "src/other.tl"
+    "(module seen.module)
+(define value : i64 1)"
+    (sym-i64-bind (sym-i64-empty) "seen.module" 1))
+    [(OkCompilerLoad decls _)
+      (match decls
+        [(AstDeclNil) true]
+        [_ false])]
+    [(ErrCompilerLoad _) false]))
+
+(define (compiler-load-file-import-dedup-cycle-ok?) : bool
+  (begin
+    (write-file
+      "target/compiler_load_dep.tl"
+      "(module smoke.dep)
+(import \"compiler_load_entry.tl\" module smoke.entry as entry)
+(define dep : i64 1)")
+    (write-file
+      "target/compiler_load_entry.tl"
+      "(module smoke.entry)
+(import \"compiler_load_dep.tl\" module smoke.dep as dep)
+(import \"./compiler_load_dep.tl\" module smoke.dep)
+(define (main) : i64 dep)")
+    (match (compiler-load-file-with-paths
+      "target/compiler_load_entry.tl"
+      (sym-i64-empty))
+      [(OkCompilerLoadWithPaths decls _ modules seen)
+        (and
+          (= (compiler-load-decl-list-count decls) 4)
+          (and
+            (compiler-load-entry-cycle-modules? modules)
+            (and
+              (sym-i64-contains seen "smoke.entry")
+              (sym-i64-contains seen "smoke.dep"))))]
+      [(ErrCompilerLoadWithPaths _) false])))
+
+(define (compiler-load-file-fallback-path-dedup-ok?) : bool
+  (begin
+    (write-file
+      "target/compiler_load_legacy_dep.tl"
+      "(define legacy-dep : i64 1)")
+    (write-file
+      "target/compiler_load_legacy_entry.tl"
+      "(import \"compiler_load_legacy_dep.tl\")
+(import \"./compiler_load_legacy_dep.tl\")
+(define (main) : i64 legacy-dep)")
+    (match (compiler-load-file-with-paths
+      "target/compiler_load_legacy_entry.tl"
+      (sym-i64-empty))
+      [(OkCompilerLoadWithPaths decls _ modules seen)
+        (and
+          (= (compiler-load-decl-list-count decls) 2)
+          (and
+            (match modules
+              [(AstDeclModuleCons
+                  first
+                  (AstDeclModuleCons second AstDeclModuleNil))
+                (and
+                  (string-eq first "target/compiler_load_legacy_dep.tl")
+                  (string-eq second "target/compiler_load_legacy_entry.tl"))]
+              [_ false])
+            (sym-i64-contains seen "target/compiler_load_legacy_dep.tl")))]
+      [(ErrCompilerLoadWithPaths _) false])))
+
+(define (compiler-load-self-test) : i64
+  (if (compiler-load-normalize-ok?)
+    (if (compiler-load-source-provenance-ok?)
+      (if (compiler-load-expected-module-conflict-ok?)
+        (if (compiler-load-duplicate-module-ok?)
+          (if (compiler-load-seen-module-ok?)
+            (if (compiler-load-file-import-dedup-cycle-ok?)
+              (if (compiler-load-file-fallback-path-dedup-ok?)
+                42
+                (begin
+                  (panic "compiler-load: fallback path dedup smoke mismatch")
+                  0))
+              (begin
+                (panic "compiler-load: import dedup/cycle smoke mismatch")
+                0))
+            (begin
+              (panic "compiler-load: seen module smoke mismatch")
+              0))
+          (begin
+            (panic "compiler-load: duplicate module smoke mismatch")
+            0))
+        (begin
+          (panic "compiler-load: expected module smoke mismatch")
+          0))
+      (begin
+        (panic "compiler-load: source provenance smoke mismatch")
+        0))
+    (begin
+      (panic "compiler-load: normalize smoke mismatch")
+      0)))

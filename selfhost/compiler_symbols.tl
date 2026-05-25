@@ -182,6 +182,7 @@
         name
         (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))]
     [(AstDeclImport _) (OkCompilerSymbols symbols)]
+    [(AstDeclModule _) (OkCompilerSymbols symbols)]
     [(AstDeclTest _ _ _) (OkCompilerSymbols symbols)]
     [(AstDeclComptimeDecl template)
       (compiler-symbols-add-decl symbols template index)]))
@@ -195,6 +196,7 @@
     [(AstDeclCons decl rest)
       (match decl
         [(AstDeclImport _) (build-compiler-symbol-list rest symbols index)]
+        [(AstDeclModule _) (build-compiler-symbol-list rest symbols index)]
         [(AstDeclTest _ _ _) (build-compiler-symbol-list rest symbols index)]
         [_
           (match (compiler-symbols-add-decl symbols decl index)
@@ -333,6 +335,7 @@
     [(AstDeclCons decl rest)
       (match decl
         [(AstDeclImport _) (build-compiler-registry-list rest registries index)]
+        [(AstDeclModule _) (build-compiler-registry-list rest registries index)]
         [(AstDeclTest _ _ _)
           (build-compiler-registry-list rest registries index)]
         [(AstDeclDefEnum _ variants)
@@ -410,6 +413,7 @@
     [(AstDeclCons decl rest)
       (match decl
         [(AstDeclImport _) (compiler-decl-list-at-index rest target index)]
+        [(AstDeclModule _) (compiler-decl-list-at-index rest target index)]
         [(AstDeclTest _ _ _) (compiler-decl-list-at-index rest target index)]
         [_
           (if (= target index)

@@ -1,9 +1,10 @@
 ;;;; Process command API surface for TypeLisp (#840).
 ;;;;
 ;;;; Defines the canonical process command/output/error data model for selfhost
-;;;; tools. Runtime process execution is intentionally not implemented yet:
-;;;; `process-run` and `process-output` return structured errors instead of
-;;;; routing through Rust host actions or shell-tokenized command strings.
+;;;; tools. Runtime process execution is provided by the backend-emitted
+;;;; `tl_process_output` helper; unsupported target/runtime combinations return
+;;;; structured errors instead of routing through Rust host actions or
+;;;; shell-tokenized command strings.
 ;;;;
 ;;;; Usage: `(import "stdlib/process.tl")`
 ;;;;
@@ -47,6 +48,13 @@
 (defenum ResultProcessOutput
   (OkProcessOutput ProcessOutput)
   (ErrProcessOutput ProcessError))
+
+;;; Backend runtime hook used by `process-output`.
+;;;
+;;; The public wrapper performs TypeLisp-side validation first. The runtime
+;;; helper receives structured command data and returns the same concrete result
+;;; model.
+(extern tl_process_output : (-> ProcessCommand ResultProcessOutput))
 
 ;;; Return an empty argument list.
 (define (process-args-empty) : ProcessStringList
@@ -308,16 +316,28 @@
     [(ProcessSomeString _) false]))
 
 ;;; Run a command and capture stdout, stderr, and exit status.
-;;;
-;;; Runtime execution is not implemented yet, so non-empty commands currently
-;;; return a structured unsupported diagnostic.
 (define (process-output [command : ProcessCommand]) : ResultProcessOutput
   (match (process-command-validation-error command)
     [(ProcessSomeString message)
       (ErrProcessOutput (ProcessInvalidCommand message))]
     [(ProcessNoString)
-      (ErrProcessOutput
-        (ProcessUnsupported "process: runtime execution is not implemented"))]))
+      (match (process-command-cwd command)
+        [(ProcessSomeString _)
+          (ErrProcessOutput
+            (ProcessUnsupported "process: cwd execution is not implemented"))]
+        [(ProcessNoString)
+          (match (process-command-env command)
+            [(ProcessEnvCons _ _ _)
+              (ErrProcessOutput
+                (ProcessUnsupported
+                  "process: environment overrides are not implemented"))]
+            [(ProcessEnvNil)
+              (match (process-command-stdin command)
+                [(ProcessSomeString _)
+                  (ErrProcessOutput
+                    (ProcessUnsupported
+                      "process: stdin input is not implemented"))]
+                [(ProcessNoString) (tl_process_output command)])])])]))
 
 ;;; Run a command using the same captured-output path as `process-output`.
 (define (process-run [command : ProcessCommand]) : ResultProcessOutput

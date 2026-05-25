@@ -190,5 +190,5 @@
           "process wait predicate")
         (assert-process-unsupported
           (process-run command)
-          "process: runtime execution is not implemented")
+          "process: cwd execution is not implemented")
         42))))

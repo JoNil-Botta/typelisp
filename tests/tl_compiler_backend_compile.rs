@@ -306,6 +306,10 @@ fn compiler_optimize_tl_compiles_to_assembly() {
         "_tl_opt_copy_instrs:",
         "_tl_opt_copy_invalidate_var:",
         "_tl_compiler_optimize_copy_self_test:",
+        // Fixed-point optimizer iteration (#923).
+        "_tl_optimize_function_once:",
+        "_tl_optimize_function_fixed:",
+        "_tl_compiler_optimize_fixed_point_self_test:",
     ] {
         assert_symbol(&asm, sym, "compiler_optimize");
     }

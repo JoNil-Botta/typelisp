@@ -74,7 +74,9 @@ compiler_parse_smoke|selfhost/compiler_parse_smoke.tl|42|-|-|compiler_parse_core
 compiler_symbols_smoke|selfhost/compiler_symbols_smoke.tl|42|-|-|compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl
 compiler_typecheck_smoke|selfhost/compiler_typecheck_smoke.tl|42|-|-|compiler_typecheck.tl compiler_ctfe.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl
 compiler_check_smoke|selfhost/compiler_check_smoke.tl|42|-|-|compiler_check_core.tl compiler_load.tl compiler_typecheck.tl compiler_ctfe.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl
+compiler_ctfe_smoke|selfhost/compiler_ctfe_smoke.tl|42|-|-|compiler_ctfe.tl compiler_diagnostic.tl compiler_ast_types.tl token.tl
 compiler_lower_smoke|selfhost/compiler_lower_smoke.tl|42|-|-|compiler_lower.tl compiler_ctfe.tl compiler_specialize.tl compiler_ir_types.tl compiler_typecheck.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl
+compiler_ir_types_smoke|selfhost/compiler_ir_types_smoke.tl|42|-|-|compiler_ir_types.tl compiler_ast_types.tl
 compiler_liveness_smoke|selfhost/compiler_liveness_smoke.tl|42|-|-|compiler_liveness.tl compiler_ir_types.tl compiler_ast_types.tl
 compiler_regalloc_smoke|selfhost/compiler_regalloc_smoke.tl|42|-|-|compiler_regalloc.tl compiler_liveness.tl compiler_ir_types.tl compiler_ast_types.tl
 compiler_optimize_smoke|selfhost/compiler_optimize_smoke.tl|42|-|-|compiler_optimize.tl compiler_ir_types.tl compiler_ast_types.tl

@@ -563,3 +563,52 @@
       (match b
         [(AstTyVar b-name) (string-eq a-name b-name)]
         [_ false])]))
+
+(define (compiler-ctfe-type-literal-ok?) : bool
+  (let
+    [want : AstType (AstTyArray (AstTyI64) 4)]
+    (match (compiler-ctfe-eval
+      (AstExprTypeLiteral want)
+      (ctfe-env-empty)
+      (ctfe-fuel-limit))
+      [(OkCtfe value _)
+        (match value
+          [(CtfeType actual)
+            (and
+              (ctfe-type-eq actual want)
+              (string-eq (ctfe-value-type-name value) "type"))]
+          [_ false])]
+      [(ErrCtfe _) false])))
+
+(define (compiler-ctfe-type-comparison-ok?) : bool
+  (match (compiler-ctfe-eval
+    (AstExprBinary
+      (AstBinEq)
+      (AstExprTypeLiteral (AstTyI64))
+      (AstExprTypeLiteral (AstTyI64)))
+    (ctfe-env-empty)
+    (ctfe-fuel-limit))
+    [(OkCtfe same _)
+      (match same
+        [(CtfeBool same-ok)
+          (match (compiler-ctfe-eval
+            (AstExprBinary
+              (AstBinEq)
+              (AstExprTypeLiteral (AstTyI64))
+              (AstExprTypeLiteral (AstTyI32)))
+            (ctfe-env-empty)
+            (ctfe-fuel-limit))
+            [(OkCtfe different _)
+              (match different
+                [(CtfeBool different-ok) (and same-ok (not different-ok))]
+                [_ false])]
+            [(ErrCtfe _) false])]
+        [_ false])]
+    [(ErrCtfe _) false]))
+
+(define (compiler-ctfe-self-test) : i64
+  (if (compiler-ctfe-type-literal-ok?)
+    (if (compiler-ctfe-type-comparison-ok?)
+      42
+      1)
+    1))

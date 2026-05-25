@@ -138,6 +138,34 @@ scripts that still run `cargo build --release` when `TYPELISP_BIN` is unset keep
 that path as a local fallback only until #795 removes the Rust-owned stage0
 dependency.
 
+### Staged backend primitives (#1114)
+
+A PR that introduces a new backend runtime primitive (a new `tl_*` hook emitted
+by `src/backend/mod.rs`) is in a bootstrap deadlock against the no-Rust gate: the
+gate compiles the new test with the *published* `stage0-latest`, which was built
+from an earlier commit and does not yet know the new symbol, so the build fails
+on an undefined symbol. The per-merge stage0 release (#659) only republishes
+*after* merge.
+
+To break the deadlock, mark a test that exercises a not-yet-published symbol so
+the no-Rust gate skips it (only there — the Rust-built `Test` job still runs it):
+
+- `scripts/verify-stdlib.sh`: add a sixth manifest field
+  `requires-stage0-symbol:<name>` to the runnable test row, e.g.
+  `stdlib/tests/foo_api.tl|42|-|-|-|requires-stage0-symbol:tl_foo`.
+- `scripts/verify-inline-tests.sh`: add a directive comment near the top of the
+  inline-test file: `;; requires-stage0-symbol: tl_foo`.
+
+A marked test is skipped **only** when its build fails and `<name>` appears in the
+build/typecheck output (the undefined-symbol signal); any other build failure
+still fails the gate, and unmarked tests are unaffected. Once the published
+stage0 provides the symbol the marked test builds and runs normally (with a
+"drop the marker" notice from `verify-stdlib.sh`).
+
+Workflow: introduce the primitive + a marked test in one PR → merge → let #659
+republish `stage0-latest` → drop the `requires-stage0-symbol` marker in a
+follow-up.
+
 For new selfhost tests:
 
 - Put structural compiler checks next to the owning module as small helpers or a

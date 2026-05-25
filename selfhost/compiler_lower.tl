@@ -3955,45 +3955,57 @@
   [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]) : ResultCompilerLower
-  (match (typecheck-compiler-program-with-paths program paths)
-    [(OkCompilerTypecheck _)
-      (match (build-compiler-symbols program)
-        [(OkCompilerSymbols symbols)
-          (match (build-compiler-registries program)
-            [(OkCompilerRegistries registries)
-              (let ([ctx : TcContext (TcContext program symbols registries)])
-                (match (tc-build-top-env ctx program)
-                  [(OkTcEnv top-env)
-                    (match program
-                      [(AstProgram decls)
-                        (match (lower-compiler-program-checked-with-names
-                          ctx
-                          top-env
-                          program
-                          (lower-name-env-from-decls
-                            decls
-                            paths
-                            entry-path
-                            LowerNameNil))
-                          [(OkCompilerLower ir spans)
-                            (OkCompilerLower ir spans)]
-                          [(ErrCompilerLower diag)
-                            (ErrCompilerLower
-                              (lower-diagnostic-with-path diag entry-path))])])]
-                  [(ErrTcEnv message)
+  (let (
+    [specialized-paths : AstDeclPathList
+      (if (compiler-specialize-needed? program)
+        AstDeclPathNil
+        paths)]
+    [names : LowerNameEnv
+      (match program
+        [(AstProgram decls)
+          (lower-name-env-from-decls decls paths entry-path LowerNameNil)])])
+    (match (compiler-specialize-program program)
+      [(OkSpecProgram specialized)
+        (match (typecheck-compiler-specialized-program-with-paths
+          specialized
+          specialized-paths)
+          [(OkCompilerTypecheck _)
+            (match (build-compiler-symbols specialized)
+              [(OkCompilerSymbols symbols)
+                (match (build-compiler-registries specialized)
+                  [(OkCompilerRegistries registries)
+                    (let ([ctx : TcContext
+                      (TcContext specialized symbols registries)])
+                      (match (tc-build-top-env ctx specialized)
+                        [(OkTcEnv top-env)
+                          (match (lower-compiler-program-checked-with-names
+                            ctx
+                            top-env
+                            specialized
+                            names)
+                            [(OkCompilerLower ir spans)
+                              (OkCompilerLower ir spans)]
+                            [(ErrCompilerLower diag)
+                              (ErrCompilerLower
+                                (lower-diagnostic-with-path diag entry-path))])]
+                        [(ErrTcEnv message)
+                          (ErrCompilerLower
+                            (lower-diagnostic-with-path
+                              (lower-diagnostic message)
+                              entry-path))]))]
+                  [(ErrCompilerRegistries message)
                     (ErrCompilerLower
                       (lower-diagnostic-with-path
                         (lower-diagnostic message)
-                        entry-path))]))]
-            [(ErrCompilerRegistries message)
-              (ErrCompilerLower
-                (lower-diagnostic-with-path
-                  (lower-diagnostic message)
-                  entry-path))])]
-        [(ErrCompilerSymbols message)
-          (ErrCompilerLower
-            (lower-diagnostic-with-path (lower-diagnostic message) entry-path))])]
-    [(ErrCompilerTypecheck diag) (ErrCompilerLower diag)]))
+                        entry-path))])]
+              [(ErrCompilerSymbols message)
+                (ErrCompilerLower
+                  (lower-diagnostic-with-path
+                    (lower-diagnostic message)
+                    entry-path))])]
+          [(ErrCompilerTypecheck diag) (ErrCompilerLower diag)])]
+      [(ErrSpecProgram diag)
+        (ErrCompilerLower (lower-diagnostic-with-path diag entry-path))])))
 
 (define (lower-compiler-program [program : AstProgram]) : ResultCompilerLower
   (lower-compiler-program-with-path "<source>" program))
@@ -4432,6 +4444,33 @@
         [(ErrCompilerLower _) false])]
     [(ErrAstProgram _) false]))
 
+(define (compiler-lower-module-specialize-source) : String
+  "(define (alloc [comptime T : type] [n : i64]) : (Array i64)
+  (make-array T n))
+(define (main) : (Array i64)
+  (alloc (type i64) 4))")
+
+(define (compiler-lower-module-specialize-paths) : AstDeclPathList
+  (AstDeclPathCons "app.tl" (AstDeclPathCons "app.tl" AstDeclPathNil)))
+
+(define (compiler-lower-module-specialize-ok?) : bool
+  (match (parse-ast-source (compiler-lower-module-specialize-source))
+    [(OkAstProgram program)
+      (match (lower-compiler-program-with-decl-paths
+        "app.tl"
+        program
+        (compiler-lower-module-specialize-paths))
+        [(OkCompilerLower lowered _)
+          (match lowered
+            [(IrProgram _ functions _)
+              (>
+                (lower-test-functions-call-count
+                  functions
+                  "__tl_specialized_alloc_type_i64_none")
+                0)])]
+        [(ErrCompilerLower _) false])]
+    [(ErrAstProgram _) false]))
+
 ;; CTFE fold verification (#719): a folded `(comptime ...)` lowers to a literal,
 ;; so the function body must contain a `Mov` of the expected i64 literal and no
 ;; `BinOp`/`UnOp` instructions (the arithmetic was evaluated at compile time).
@@ -4691,32 +4730,34 @@
                               (and
                                 (compiler-lower-module-symbols-ok?)
                                 (and
-                                  (compiler-lower-error-ok?
-                                    (compiler-typecheck-branch-mismatch-source)
-                                    "typecheck: if branches must match")
+                                  (compiler-lower-module-specialize-ok?)
                                   (and
                                     (compiler-lower-error-ok?
-                                      (compiler-lower-unsupported-source)
-                                      "lower: unsupported expression")
+                                      (compiler-typecheck-branch-mismatch-source)
+                                      "typecheck: if branches must match")
                                     (and
-                                      (compiler-lower-comptime-fold-ok?
-                                        (compiler-lower-comptime-arith-source)
-                                        3)
+                                      (compiler-lower-error-ok?
+                                        (compiler-lower-unsupported-source)
+                                        "lower: unsupported expression")
                                       (and
                                         (compiler-lower-comptime-fold-ok?
-                                          (compiler-lower-comptime-if-source)
-                                          42)
+                                          (compiler-lower-comptime-arith-source)
+                                          3)
                                         (and
                                           (compiler-lower-comptime-fold-ok?
-                                            (compiler-lower-comptime-let-source)
+                                            (compiler-lower-comptime-if-source)
                                             42)
                                           (and
-                                            (compiler-lower-error-ok?
-                                              (compiler-lower-comptime-runtime-var-source)
-                                              "compile-time evaluation cannot reference runtime variable 'x'")
-                                            (compiler-lower-error-ok?
-                                              (compiler-lower-comptime-f64-source)
-                                              "comptime: f64 compile-time evaluation not yet supported (#735)"))))))))))))))))))))))
+                                            (compiler-lower-comptime-fold-ok?
+                                              (compiler-lower-comptime-let-source)
+                                              42)
+                                            (and
+                                              (compiler-lower-error-ok?
+                                                (compiler-lower-comptime-runtime-var-source)
+                                                "compile-time evaluation cannot reference runtime variable 'x'")
+                                              (compiler-lower-error-ok?
+                                                (compiler-lower-comptime-f64-source)
+                                                "comptime: f64 compile-time evaluation not yet supported (#735)")))))))))))))))))))))))
     42
     (begin
       (panic "lower: smoke score mismatch")

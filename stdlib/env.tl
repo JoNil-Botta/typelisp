@@ -62,14 +62,15 @@
 
 ;;; Split a PATH-style string using the supplied one-byte separator string.
 (define (env-path-split-with-separator [value : String] [separator : String]) : EnvStringList
-  (let ([n : i64 (string-length value)])
+  (let
+    [n : i64 (string-length value)]
     (if (= n 0)
       (EnvStringNil)
-      (let (
+      (let
         [sep : char (string-ref separator 0)]
         [items : EnvStringList (EnvStringNil)]
         [start : i64 0]
-        [i : i64 0])
+        [i : i64 0]
         (begin
           (while (< i n)
             (if (char-eq (string-ref value i) sep)

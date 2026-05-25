@@ -20,7 +20,8 @@
   (string-append a (string-append b (string-append c (string-append d e)))))
 
 (define (doc-html-escape-one [text : String] [idx : i64]) : String
-  (let ([c : char (string-ref text idx)])
+  (let
+    [c : char (string-ref text idx)]
     (if (= c #&')
       "&amp;"
       (if (= c #<')
@@ -32,10 +33,10 @@
             (substring text idx 1)))))))
 
 (define (doc-html-escape [text : String]) : String
-  (let (
+  (let
     [i : i64 0]
     [n : i64 (string-length text)]
-    [out : String ""])
+    [out : String ""]
     (begin
       (while (< i n)
         (begin
@@ -44,7 +45,8 @@
       out)))
 
 (define (doc-html-escape-text-one [text : String] [idx : i64]) : String
-  (let ([c : char (string-ref text idx)])
+  (let
+    [c : char (string-ref text idx)]
     (if (= c #\newline')
       "<br>\n"
       (if (= c #\return')
@@ -52,10 +54,10 @@
         (doc-html-escape-one text idx)))))
 
 (define (doc-html-escape-text [text : String]) : String
-  (let (
+  (let
     [i : i64 0]
     [n : i64 (string-length text)]
-    [out : String ""])
+    [out : String ""]
     (begin
       (while (< i n)
         (begin
@@ -105,9 +107,9 @@
     "</code></pre>\n"))
 
 (define (doc-html-item-nav-entry [item : DocItem]) : String
-  (let (
+  (let
     [name : String (doc-item-name item)]
-    [anchor : String (doc-render-anchor (doc-item-name item))])
+    [anchor : String (doc-render-anchor (doc-item-name item))]
     (doc-html-cat5
       "<li><a href=\"#"
       anchor
@@ -133,10 +135,10 @@
         "</ul>\n</nav>\n")]))
 
 (define (doc-html-item [item : DocItem]) : String
-  (let (
+  (let
     [name : String (doc-item-name item)]
     [anchor : String (doc-render-anchor (doc-item-name item))]
-    [kind : String (doc-kind-name (doc-item-kind item))])
+    [kind : String (doc-kind-name (doc-item-kind item))]
     (doc-html-cat5
       "<a id=\""
       anchor
@@ -169,9 +171,9 @@
     [_ (doc-html-item-list items)]))
 
 (define (doc-html-module-nav-entry [module : DocModule]) : String
-  (let (
+  (let
     [path : String (doc-module-path module)]
-    [anchor : String (doc-render-anchor (doc-module-path module))])
+    [anchor : String (doc-render-anchor (doc-module-path module))]
     (doc-html-cat5
       "<li><a href=\"#"
       anchor
@@ -197,10 +199,10 @@
         "</ul>\n</nav>\n")]))
 
 (define (doc-html-module-section [module : DocModule]) : String
-  (let (
+  (let
     [path : String (doc-module-path module)]
     [docs : DocExtraction (doc-module-docs module)]
-    [anchor : String (doc-render-anchor (doc-module-path module))])
+    [anchor : String (doc-render-anchor (doc-module-path module))]
     (doc-html-cat5
       "<section class=\"tl-doc-module\" id=\""
       anchor
@@ -230,7 +232,8 @@
         (doc-html-module-sections rest))]))
 
 (define (doc-html-render-module-page [path : String] [docs : DocExtraction]) : String
-  (let ([title : String (doc-html-cat3 "TypeLisp API: " path "")])
+  (let
+    [title : String (doc-html-cat3 "TypeLisp API: " path "")]
     (doc-html-cat5
       (doc-html-page-open title)
       (doc-html-header "TypeLisp API" path)
@@ -279,17 +282,17 @@
       false)))
 
 (define (doc-html-smoke) : i64
-  (let (
+  (let
     [docs : DocExtraction (doc-extract-source (doc-html-smoke-source))]
     [second-docs : DocExtraction
-      (doc-extract-source (doc-html-second-smoke-source))])
-    (let (
+      (doc-extract-source (doc-html-second-smoke-source))]
+    (let
       [page : String (doc-html-render-module-page "smoke<&>.tl" docs)]
       [graph : String
         (doc-html-render-module-graph
           (DocModuleCons
             (DocModule "smoke<&>.tl" docs)
-            (DocModuleCons (DocModule "second.tl" second-docs) DocModuleNil)))])
+            (DocModuleCons (DocModule "second.tl" second-docs) DocModuleNil)))]
       (if (and
         (doc-html-require-contains
           page

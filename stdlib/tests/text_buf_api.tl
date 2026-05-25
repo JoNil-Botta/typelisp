@@ -17,9 +17,9 @@
         "beta")
       "alpha beta"
       "append order")
-    (let (
+    (let
       [buf : TextBuf (text-buf-empty)]
-      [i : i64 0])
+      [i : i64 0]
       (begin
         (while (< i 6)
           (begin
@@ -36,16 +36,17 @@
         -12)
       "A\n\t-12"
       "char and int append")
-    (let (
+    (let
       [left : TextBuf
         (text-buf-append (text-buf-append (text-buf-empty) "left") "-")]
       [right : TextBuf
-        (text-buf-append (text-buf-append (text-buf-empty) "right") "\n")])
+        (text-buf-append (text-buf-append (text-buf-empty) "right") "\n")]
       (assert-text-buf
         (text-buf-append-buffer left right)
         "left-right\n"
         "append buffer"))
-    (let ([original : TextBuf (text-buf-append (text-buf-empty) "keep")])
+    (let
+      [original : TextBuf (text-buf-append (text-buf-empty) "keep")]
       (begin
         (assert-text-buf (text-buf-clear original) "" "clear returns empty")
         (assert-text-buf (text-buf-reset original) "" "reset returns empty")

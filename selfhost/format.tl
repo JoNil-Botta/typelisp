@@ -5,8 +5,10 @@
 (import "format_rules.tl")
 
 (define (fmt-format-file [check : bool] [path : String]) : i64
-  (let ([source : String (read-file path)])
-    (let ([formatted : String (format-rules-render-source-width source 80)])
+  (let
+    [source : String (read-file path)]
+    (let
+      [formatted : String (format-rules-render-source-width source 80)]
       (if check
         (if (string-eq source formatted)
           0
@@ -20,7 +22,8 @@
 
 (define (fmt-files [check : bool] [index : i64] [count : i64] [status : i64]) : i64
   (if (< index count)
-    (let ([file-status : i64 (fmt-format-file check (arg index))])
+    (let
+      [file-status : i64 (fmt-format-file check (arg index))]
       (fmt-files
         check
         (+ index 1)

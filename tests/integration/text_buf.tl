@@ -12,28 +12,31 @@
       (text-buf-render (text-buf-empty))
       ""
       "text-buf empty render failed")
-    (let ([buf : TextBuf
-      (text-buf-append
-        (text-buf-append (text-buf-append (text-buf-empty) "alpha") " ")
-        "beta")])
+    (let
+      [buf : TextBuf
+        (text-buf-append
+          (text-buf-append (text-buf-append (text-buf-empty) "alpha") " ")
+          "beta")]
       (check-string
         (text-buf-render buf)
         "alpha beta"
         "text-buf multi-chunk order failed"))
-    (let ([buf : TextBuf
-      (text-buf-append
-        (text-buf-append (text-buf-append (text-buf-empty) "ha") "ha")
-        "ha")])
+    (let
+      [buf : TextBuf
+        (text-buf-append
+          (text-buf-append (text-buf-append (text-buf-empty) "ha") "ha")
+          "ha")]
       (check-string
         (text-buf-render buf)
         "hahaha"
         "text-buf repeated append failed"))
-    (let (
+    (let
       [left : TextBuf
         (text-buf-append (text-buf-append (text-buf-empty) "left") "-")]
       [right : TextBuf
-        (text-buf-append (text-buf-append (text-buf-empty) "right") "\n")])
-      (let ([joined : TextBuf (text-buf-append-buffer left right)])
+        (text-buf-append (text-buf-append (text-buf-empty) "right") "\n")]
+      (let
+        [joined : TextBuf (text-buf-append-buffer left right)]
         (begin
           (check-string
             (text-buf-render joined)

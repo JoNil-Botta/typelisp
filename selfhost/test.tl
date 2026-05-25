@@ -63,7 +63,8 @@
     (if has-source
       (OkTestConfig (TestConfig source target mode roots test-mode))
       (ErrTestConfig "test: expected source path"))
-    (let ([current : String (arg idx)])
+    (let
+      [current : String (arg idx)]
       (if (string-eq current "--check")
         (tltest-parse-options
           (+ idx 1)
@@ -77,7 +78,8 @@
         (if (string-eq current "--target")
           (if (>= (+ idx 1) count)
             (ErrTestConfig "test: --target requires a value")
-            (let ([value : String (arg (+ idx 1))])
+            (let
+              [value : String (arg (+ idx 1))]
               (if (host-plan-target-valid? value)
                 (tltest-parse-options
                   (+ idx 2)
@@ -92,7 +94,8 @@
           (if (string-eq current "--backend-mode")
             (if (>= (+ idx 1) count)
               (ErrTestConfig "test: --backend-mode requires a value")
-              (let ([value : String (arg (+ idx 1))])
+              (let
+                [value : String (arg (+ idx 1))]
                 (if (host-plan-backend-mode-valid? value)
                   (if (string-eq value "scalar")
                     (tltest-parse-options
@@ -215,14 +218,16 @@
         (tltest-inline-list-reverse tests-rev)
         test-count)]
     [(AstDeclCons decl rest)
-      (let ([decl-path : String
-        (match paths
-          [(AstDeclPathCons path _) path]
-          [(AstDeclPathNil) ""])])
-        (let ([rest-paths : AstDeclPathList
+      (let
+        [decl-path : String
           (match paths
-            [(AstDeclPathCons _ path-rest) path-rest]
-            [(AstDeclPathNil) AstDeclPathNil])])
+            [(AstDeclPathCons path _) path]
+            [(AstDeclPathNil) ""])]
+        (let
+          [rest-paths : AstDeclPathList
+            (match paths
+              [(AstDeclPathCons _ path-rest) path-rest]
+              [(AstDeclPathNil) AstDeclPathNil])]
           (match decl
             [(AstDeclTest name body span)
               (tltest-collect
@@ -343,9 +348,9 @@
   [paths : AstDeclPathList]) : InlineHarness
   (match (tltest-collect decls paths AstDeclNil AstDeclPathNil InlineTestNil 0)
     [(InlineCollect runtime-decls runtime-paths tests count)
-      (let (
+      (let
         [test-decls : AstDeclList (tltest-test-decls tests)]
-        [test-paths : AstDeclPathList (tltest-test-paths tests)])
+        [test-paths : AstDeclPathList (tltest-test-paths tests)]
         (InlineHarness
           (AstProgram
             (tltest-decl-list-append
@@ -411,7 +416,8 @@
         spans
         (tltest-backend-target target))
         [(OkCompilerBackend asm)
-          (let ([asm-path : String (tltest-scratch-asm-path source)])
+          (let
+            [asm-path : String (tltest-scratch-asm-path source)]
             (begin
               (write-file asm-path asm)
               (print-string (tltest-plan asm-path target mode))

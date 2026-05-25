@@ -96,9 +96,9 @@
   (or (= c #\newline') (= c #\return')))
 
 (define (doc-line-end [src : String] [start : i64] [n : i64]) : i64
-  (let (
+  (let
     [i : i64 start]
-    [keep : bool true])
+    [keep : bool true]
     (begin
       (while keep
         (if (< i n)
@@ -110,7 +110,8 @@
 
 (define (doc-next-line-start [src : String] [line-end : i64] [n : i64]) : i64
   (if (< line-end n)
-    (let ([k : char (string-ref src line-end)])
+    (let
+      [k : char (string-ref src line-end)]
       (if (= k #\return')
         (if (< (+ line-end 1) n)
           (if (= (string-ref src (+ line-end 1)) #\newline')
@@ -121,9 +122,9 @@
     line-end))
 
 (define (doc-first-nonspace [src : String] [start : i64] [end : i64]) : i64
-  (let (
+  (let
     [i : i64 start]
-    [keep : bool true])
+    [keep : bool true]
     (begin
       (while keep
         (if (< i end)
@@ -134,16 +135,16 @@
       i)))
 
 (define (doc-string-prefix-at? [text : String] [prefix : String] [start : i64]) : bool
-  (let (
+  (let
     [text-len : i64 (string-length text)]
-    [prefix-len : i64 (string-length prefix)])
+    [prefix-len : i64 (string-length prefix)]
     (if (< start 0)
       false
       (if (> (+ start prefix-len) text-len)
         false
-        (let (
+        (let
           [i : i64 0]
-          [ok : bool true])
+          [ok : bool true]
           (begin
             (while ok
               (if (< i prefix-len)
@@ -154,15 +155,15 @@
             (= i prefix-len)))))))
 
 (define (doc-string-contains? [text : String] [needle : String]) : bool
-  (let (
+  (let
     [text-len : i64 (string-length text)]
-    [needle-len : i64 (string-length needle)])
+    [needle-len : i64 (string-length needle)]
     (if (= needle-len 0)
       true
-      (let (
+      (let
         [i : i64 0]
         [found : bool false]
-        [done : bool false])
+        [done : bool false]
         (begin
           (while (not done)
             (if (<= (+ i needle-len) text-len)
@@ -187,7 +188,8 @@
   [line-start : i64]
   [line-end : i64]
   [prefix-len : i64]) : String
-  (let ([body-start : i64 (+ line-start prefix-len)])
+  (let
+    [body-start : i64 (+ line-start prefix-len)]
     (begin
       (if (< body-start line-end)
         (if (= (string-ref src body-start) #\space')
@@ -197,14 +199,15 @@
       (substring src body-start (- line-end body-start)))))
 
 (define (doc-scan-string-end [src : String] [start : i64] [n : i64]) : i64
-  (let (
+  (let
     [i : i64 (+ start 1)]
     [escaped : bool false]
-    [keep : bool true])
+    [keep : bool true]
     (begin
       (while keep
         (if (< i n)
-          (let ([c : char (string-ref src i)])
+          (let
+            [c : char (string-ref src i)]
             (if escaped
               (begin
                 (set! escaped false)
@@ -222,9 +225,9 @@
       i)))
 
 (define (doc-scan-char-literal-end [src : String] [start : i64] [n : i64]) : i64
-  (let (
+  (let
     [i : i64 (+ start 1)]
-    [keep : bool true])
+    [keep : bool true]
     (begin
       (while keep
         (if (< i n)
@@ -237,14 +240,15 @@
       i)))
 
 (define (doc-scan-form-end [src : String] [start : i64] [n : i64]) : i64
-  (let (
+  (let
     [i : i64 start]
     [depth : i64 0]
-    [keep : bool true])
+    [keep : bool true]
     (begin
       (while keep
         (if (< i n)
-          (let ([c : char (string-ref src i)])
+          (let
+            [c : char (string-ref src i)]
             (if (= c #;')
               (set! i (doc-next-line-start src (doc-line-end src i n) n))
               (if (= c #"')
@@ -267,12 +271,13 @@
       i)))
 
 (define (doc-next-code-token-index [stream : FormatTokenStream] [idx : i64]) : i64
-  (let (
+  (let
     [i : i64 idx]
-    [keep : bool true])
+    [keep : bool true]
     (begin
       (while keep
-        (let ([tag : i64 (format-token-tag (format-token-at stream i))])
+        (let
+          [tag : i64 (format-token-tag (format-token-at stream i))]
           (if (= tag (fmt-tag-comment))
             (set! i (+ i 1))
             (set! keep false))))
@@ -288,28 +293,33 @@
   [kind : DocItemKind]
   [stream : FormatTokenStream]
   [idx : i64]) : DocMaybeDeclInfo
-  (let ([name-idx : i64 (doc-next-code-token-index stream idx)])
+  (let
+    [name-idx : i64 (doc-next-code-token-index stream idx)]
     (if (doc-token-symbol? stream name-idx)
       (DocDeclInfo kind (doc-symbol-text stream name-idx))
       (DocNoDeclInfo))))
 
 (define (doc-info-after-define [stream : FormatTokenStream] [idx : i64]) : DocMaybeDeclInfo
-  (let ([next : i64 (doc-next-code-token-index stream idx)])
+  (let
+    [next : i64 (doc-next-code-token-index stream idx)]
     (if (= (format-token-tag (format-token-at stream next)) (fmt-tag-lparen))
       (doc-info-after-name (DocKindFunction) stream (+ next 1))
       (doc-info-after-name (DocKindDefine) stream next))))
 
 (define (doc-decl-info [signature : String]) : DocMaybeDeclInfo
-  (let ([stream : FormatTokenStream (format-lex signature)])
-    (let ([open-idx : i64 (doc-next-code-token-index stream 0)])
+  (let
+    [stream : FormatTokenStream (format-lex signature)]
+    (let
+      [open-idx : i64 (doc-next-code-token-index stream 0)]
       (if (=
         (format-token-tag (format-token-at stream open-idx))
         (fmt-tag-lparen))
-        (let ([head-idx : i64 (doc-next-code-token-index stream (+ open-idx 1))])
+        (let
+          [head-idx : i64 (doc-next-code-token-index stream (+ open-idx 1))]
           (if (doc-token-symbol? stream head-idx)
-            (let (
+            (let
               [head : String (doc-symbol-text stream head-idx)]
-              [after-head : i64 (+ head-idx 1)])
+              [after-head : i64 (+ head-idx 1)]
               (if (string-eq head "define")
                 (doc-info-after-define stream after-head)
                 (if (string-eq head "extern")
@@ -323,21 +333,24 @@
         (DocNoDeclInfo)))))
 
 (define (doc-extract-source [src : String]) : DocExtraction
-  (let (
+  (let
     [n : i64 (string-length src)]
     [i : i64 0]
     [module-doc : String ""]
     [module-has : bool false]
     [pending-doc : String ""]
     [pending-has : bool false]
-    [items : DocItemList DocItemNil])
+    [items : DocItemList DocItemNil]
     (begin
       (while (< i n)
-        (let ([line-end : i64 (doc-line-end src i n)])
-          (let ([line-start : i64 (doc-first-nonspace src i line-end)])
+        (let
+          [line-end : i64 (doc-line-end src i n)]
+          (let
+            [line-start : i64 (doc-first-nonspace src i line-end)]
             (if (= line-start line-end)
               (set! i (doc-next-line-start src line-end n))
-              (let ([c : char (string-ref src line-start)])
+              (let
+                [c : char (string-ref src line-start)]
                 (if (= c #;')
                   (if (doc-string-prefix-at? src ";;;;" line-start)
                     (begin
@@ -366,9 +379,11 @@
                         (set! pending-has false)
                         (set! i (doc-next-line-start src line-end n)))))
                   (if (= c #(')
-                    (let ([form-end : i64 (doc-scan-form-end src line-start n)])
-                      (let ([signature : String
-                        (substring src line-start (- form-end line-start))])
+                    (let
+                      [form-end : i64 (doc-scan-form-end src line-start n)]
+                      (let
+                        [signature : String
+                          (substring src line-start (- form-end line-start))]
                         (begin
                           (if pending-has
                             (match (doc-decl-info signature)

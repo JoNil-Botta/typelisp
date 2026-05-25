@@ -103,7 +103,8 @@
 ;; Return the end index (exclusive) of the identifier that starts at `start`
 ;; in `src`: scan forward over identifier characters. `n` is the source length.
 (define (ident-end [src : String] [start : i64] [n : i64]) : i64
-  (let ([j : i64 start])
+  (let
+    [j : i64 start]
     (begin
       (while (and (< j n) (is-ident-char (string-ref src j)))
         (set! j (+ j 1)))
@@ -135,27 +136,29 @@
 ;; input, a whitespace skip, multi-char accumulation for integers, an identifier
 ;; run sliced out with `substring`, and single-char tokens.
 (define (lex [src : String] [toks : (Array Token)]) : i64
-  (let (
+  (let
     [i : i64 0]
     [n : i64 (string-length src)]
-    [count : i64 0])
+    [count : i64 0]
     (begin
       (while (< i n)
-        (let ([c : char (string-ref src i)])
+        (let
+          [c : char (string-ref src i)]
           (if (is-space c)
             (set! i (+ i 1))
             (if (is-alpha c)
               ;; Accumulate a run of identifier chars into one TIdent token.
-              (let (
+              (let
                 [start : i64 i]
-                [end : i64 (ident-end src i n)])
+                [end : i64 (ident-end src i n)]
                 (begin
                   (array-set! toks count (ident-token src start end))
                   (set! count (+ count 1))
                   (set! i end)))
               (if (is-digit c)
                 ;; Accumulate a run of digits into one TInt token.
-                (let ([acc : i64 0])
+                (let
+                  [acc : i64 0]
                   (begin
                     (while (and (< i n) (is-digit (string-ref src i)))
                       (begin
@@ -182,6 +185,8 @@
 ;; main returns 9 + 3 = 12, an observable result an execution test can check
 ;; that depends on both the token count and the substring-sliced identifier.
 (define (main) : i64
-  (let ([toks : (Array Token) (make-array Token 16)])
-    (let ([count : i64 (lex "foo - 3 * (12 / 4)" toks)])
+  (let
+    [toks : (Array Token) (make-array Token 16)]
+    (let
+      [count : i64 (lex "foo - 3 * (12 / 4)" toks)]
       (+ count (ident-text-length (array-ref toks 0))))))

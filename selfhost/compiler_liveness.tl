@@ -274,9 +274,9 @@
   (match instrs
     [(IrInstrNil) (CompilerLiveUseDef uses defs)]
     [(IrInstrCons instr rest)
-      (let (
+      (let
         [instr-uses : CompilerLiveI64Set (compiler-live-instr-uses instr)]
-        [instr-defs : CompilerLiveI64Set (compiler-live-instr-defs instr)])
+        [instr-defs : CompilerLiveI64Set (compiler-live-instr-defs instr)]
         (compiler-live-block-use-def-instrs
           rest
           (compiler-live-set-union
@@ -353,8 +353,9 @@
   (match successors
     [(CompilerLiveLabelNil) CompilerLiveI64Nil]
     [(CompilerLiveLabelCons label rest)
-      (let ([rest-live : CompilerLiveI64Set
-        (compiler-live-successor-live-out rest blocks)])
+      (let
+        [rest-live : CompilerLiveI64Set
+          (compiler-live-successor-live-out rest blocks)]
         (match (compiler-live-find-block blocks label)
           [(CompilerLiveSomeBlock block)
             (match block
@@ -367,10 +368,14 @@
   [blocks : CompilerLiveBlockList]) : CompilerLiveBlock
   (match block
     [(CompilerLiveBlock label uses defs _ _ successors instr-after)
-      (let ([live-out : CompilerLiveI64Set
-        (compiler-live-successor-live-out successors blocks)])
-        (let ([live-in : CompilerLiveI64Set
-          (compiler-live-set-union uses (compiler-live-set-minus live-out defs))])
+      (let
+        [live-out : CompilerLiveI64Set
+          (compiler-live-successor-live-out successors blocks)]
+        (let
+          [live-in : CompilerLiveI64Set
+            (compiler-live-set-union
+              uses
+              (compiler-live-set-minus live-out defs))]
           (CompilerLiveBlock
             label
             uses
@@ -398,8 +403,9 @@
     [(CompilerLiveBlockNil)
       (CompilerLiveBlockListStep CompilerLiveBlockNil false)]
     [(CompilerLiveBlockCons block rest)
-      (let ([updated : CompilerLiveBlock
-        (compiler-live-recompute-block block all-blocks)])
+      (let
+        [updated : CompilerLiveBlock
+          (compiler-live-recompute-block block all-blocks)]
         (match (compiler-live-update-blocks rest all-blocks)
           [(CompilerLiveBlockListStep updated-rest rest-changed)
             (CompilerLiveBlockListStep
@@ -409,9 +415,9 @@
                 true))]))]))
 
 (define (compiler-live-fixpoint [blocks : CompilerLiveBlockList]) : CompilerLiveBlockList
-  (let (
+  (let
     [current : CompilerLiveBlockList blocks]
-    [done : bool false])
+    [done : bool false]
     (begin
       (while (not done)
         (match (compiler-live-update-blocks current current)
@@ -494,8 +500,9 @@
 (define (compiler-live-analyze-function [func : CompilerIrFunction]) : CompilerFunctionLiveness
   (match func
     [(IrFunction _ _ _ _ blocks)
-      (let ([fixed : CompilerLiveBlockList
-        (compiler-live-fixpoint (compiler-live-build-blocks blocks))])
+      (let
+        [fixed : CompilerLiveBlockList
+          (compiler-live-fixpoint (compiler-live-build-blocks blocks))]
         (CompilerFunctionLiveness
           (compiler-live-fill-instr-after-blocks blocks fixed)))]))
 
@@ -705,8 +712,9 @@
         (compiler-live-set-eq? defs (compiler-live-set5 0 1 2 3 4)))]))
 
 (define (compiler-live-straight-ok?) : bool
-  (let ([liveness : CompilerFunctionLiveness
-    (compiler-live-analyze-function (compiler-live-straight-function))])
+  (let
+    [liveness : CompilerFunctionLiveness
+      (compiler-live-analyze-function (compiler-live-straight-function))]
     (match (compiler-live-find-block
       (compiler-live-function-blocks liveness)
       "entry")
@@ -741,8 +749,9 @@
       [(CompilerLiveNoBlock) false])))
 
 (define (compiler-live-branch-ok?) : bool
-  (let ([liveness : CompilerFunctionLiveness
-    (compiler-live-analyze-function (compiler-live-branch-function))])
+  (let
+    [liveness : CompilerFunctionLiveness
+      (compiler-live-analyze-function (compiler-live-branch-function))]
     (match (compiler-live-find-block
       (compiler-live-function-blocks liveness)
       "entry")
@@ -766,8 +775,9 @@
       [(CompilerLiveNoBlock) false])))
 
 (define (compiler-live-phi-ok?) : bool
-  (let ([liveness : CompilerFunctionLiveness
-    (compiler-live-analyze-function (compiler-live-phi-function))])
+  (let
+    [liveness : CompilerFunctionLiveness
+      (compiler-live-analyze-function (compiler-live-phi-function))]
     (match (compiler-live-find-block
       (compiler-live-function-blocks liveness)
       "join")

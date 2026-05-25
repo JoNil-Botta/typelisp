@@ -48,17 +48,17 @@
   (or (= c #\space') (or (= c #\tab') (or (= c #\newline') (= c #\return')))))
 
 (define (repl-string-prefix? [text : String] [prefix : String]) : bool
-  (let (
+  (let
     [text-len : i64 (string-length text)]
-    [prefix-len : i64 (string-length prefix)])
+    [prefix-len : i64 (string-length prefix)]
     (if (> prefix-len text-len)
       false
       (string-eq (substring text 0 prefix-len) prefix))))
 
 (define (repl-trim-left-from [text : String] [start : i64]) : String
-  (let (
+  (let
     [i : i64 start]
-    [len : i64 (string-length text)])
+    [len : i64 (string-length text)]
     (begin
       (while (and (< i len) (repl-space? (string-ref text i)))
         (set! i (+ i 1)))
@@ -170,8 +170,8 @@
     [(OkAstReplItem item)
       (match item
         [(AstReplDecl _)
-          (let ([candidate : String
-            (repl-session-candidate session-source input)])
+          (let
+            [candidate : String (repl-session-candidate session-source input)]
             (match (typecheck-compiler-source candidate)
               [(OkCompilerTypecheck _) candidate]
               [(ErrCompilerTypecheck diag)
@@ -216,7 +216,8 @@
   [escaped : bool]) : bool
   (if (>= idx len)
     (and (not in-string) (and (= parens 0) (= brackets 0)))
-    (let ([c : char (string-ref text idx)])
+    (let
+      [c : char (string-ref text idx)]
       (if in-string
         (if escaped
           (repl-input-complete-loop
@@ -341,7 +342,8 @@
   [session-source : String]
   [pending : String]
   [line : String]) : ReplLineResult
-  (let ([next-pending : String (repl-append-pending pending line)])
+  (let
+    [next-pending : String (repl-append-pending pending line)]
     (if (repl-input-complete? next-pending)
       (ReplLineResult (repl-handle-input session-source next-pending) "")
       (ReplLineResult session-source next-pending))))
@@ -381,7 +383,8 @@
       (if (string-eq pending "")
         unit
         (print-error "Error: incomplete REPL input at EOF\n"))
-      (let ([line : String (read-stdin-line)])
+      (let
+        [line : String (read-stdin-line)]
         (if (and (string-eq pending "") (string-eq line ".exit"))
           unit
           (match (repl-handle-line session-source pending line)

@@ -9,9 +9,9 @@
 
 ; Struct captured and read while the creator scope is still live.
 (define (case-struct-immediate) : bool
-  (let (
+  (let
     [p : Point (Point 40 2)]
-    [f : (-> i64) (lambda () : i64 (+ (struct-get p x) (struct-get p y)))])
+    [f : (-> i64) (lambda () : i64 (+ (struct-get p x) (struct-get p y)))]
     (= (f) 42)))
 
 ; Struct captured by a closure that OUTLIVES the frame that built it.

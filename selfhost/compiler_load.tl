@@ -44,10 +44,12 @@
   (or (= c #/') (= c #\\')))
 
 (define (compiler-load-absolute-path? [path : String]) : bool
-  (let ([n : i64 (string-length path)])
+  (let
+    [n : i64 (string-length path)]
     (if (= n 0)
       false
-      (let ([first : char (string-ref path 0)])
+      (let
+        [first : char (string-ref path 0)]
         (if (compiler-load-path-separator? first)
           true
           (if (> n 1)
@@ -55,10 +57,10 @@
             false))))))
 
 (define (compiler-load-dirname [path : String]) : String
-  (let (
+  (let
     [n : i64 (string-length path)]
     [i : i64 0]
-    [last : i64 -1])
+    [last : i64 -1]
     (begin
       (while (< i n)
         (begin
@@ -86,7 +88,8 @@
   (match segments
     [(CompilerLoadSegmentNil) ""]
     [(CompilerLoadSegmentCons head rest)
-      (let ([prefix : String (compiler-load-segment-list-render rest)])
+      (let
+        [prefix : String (compiler-load-segment-list-render rest)]
         (if (= (string-length prefix) 0)
           head
           (string-append prefix (string-append "/" head))))]))
@@ -110,12 +113,12 @@
       (CompilerLoadSegmentCons segment segments))))
 
 (define (compiler-load-normalize-path [path : String]) : String
-  (let (
+  (let
     [n : i64 (string-length path)]
     [i : i64 0]
     [segment-start : i64 0]
     [rooted : bool (compiler-load-rooted-path? path)]
-    [segments : CompilerLoadSegmentList CompilerLoadSegmentNil])
+    [segments : CompilerLoadSegmentList CompilerLoadSegmentNil]
     (begin
       (while (< i n)
         (begin
@@ -136,7 +139,8 @@
           (substring path segment-start (- n segment-start))
           segments
           rooted))
-      (let ([body : String (compiler-load-segment-list-render segments)])
+      (let
+        [body : String (compiler-load-segment-list-render segments)]
         (if rooted
           (if (= (string-length body) 0)
             "/"
@@ -147,16 +151,16 @@
   [text : String]
   [prefix : String]
   [start : i64]) : bool
-  (let (
+  (let
     [text-len : i64 (string-length text)]
-    [prefix-len : i64 (string-length prefix)])
+    [prefix-len : i64 (string-length prefix)]
     (if (< start 0)
       false
       (if (> (+ start prefix-len) text-len)
         false
-        (let (
+        (let
           [i : i64 0]
-          [ok : bool true])
+          [ok : bool true]
           (begin
             (while ok
               (if (< i prefix-len)
@@ -175,10 +179,12 @@
   (substring path 7 (- (string-length path) 7)))
 
 (define (compiler-load-join-root-path [root : String] [suffix : String]) : String
-  (let ([n : i64 (string-length root)])
+  (let
+    [n : i64 (string-length root)]
     (if (= n 0)
       suffix
-      (let ([last : char (string-ref root (- n 1))])
+      (let
+        [last : char (string-ref root (- n 1))]
         (if (compiler-load-path-separator? last)
           (string-append root suffix)
           (string-append root (string-append "/" suffix)))))))
@@ -189,7 +195,8 @@
   (match roots
     [(CompilerLoadRootNil) (CompilerLoadNoPath)]
     [(CompilerLoadRootCons root rest)
-      (let ([candidate : String (compiler-load-join-root-path root suffix)])
+      (let
+        [candidate : String (compiler-load-join-root-path root suffix)]
         (if (file-exists? candidate)
           (CompilerLoadSomePath candidate)
           (compiler-load-resolve-stdlib-root suffix rest)))]))
@@ -206,8 +213,9 @@
   [importer-path : String]
   [import-path : String]
   [stdlib-roots : CompilerLoadRootList]) : String
-  (let ([primary : String
-    (compiler-load-join-import-path importer-path import-path)])
+  (let
+    [primary : String
+      (compiler-load-join-import-path importer-path import-path)]
     (if (file-exists? primary)
       primary
       (if (compiler-load-stdlib-import? import-path)
@@ -324,11 +332,12 @@
     [(AstDeclCons decl rest)
       (match decl
         [(AstDeclImport (AstImportSpec import-path expected-module _))
-          (let ([resolved : String
-            (compiler-load-resolve-import-with-roots
-              importer-path
-              import-path
-              stdlib-roots)])
+          (let
+            [resolved : String
+              (compiler-load-resolve-import-with-roots
+                importer-path
+                import-path
+                stdlib-roots)]
             (match (compiler-load-file-with-paths-and-roots-expect
               resolved
               seen

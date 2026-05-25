@@ -6,12 +6,14 @@
 (import "parse_core.tl")
 
 (define (compile-smoke [input-path : String] [output-path : String]) : i64
-  (let ([source : String (read-file input-path)])
+  (let
+    [source : String (read-file input-path)]
     (match (parse-program (lex source))
       [(OkParsedProgram program)
         (match program
           [(PProgram defs expr)
-            (let ([asm : String (emit-program-with-defs defs expr)])
+            (let
+              [asm : String (emit-program-with-defs defs expr)]
               (begin
                 (write-file output-path asm)
                 0))])]

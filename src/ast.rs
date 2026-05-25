@@ -211,7 +211,7 @@ pub enum Expr {
         then_branch: Box<Expr>,
         else_branch: Box<Expr>,
     },
-    /// Let binding: (let ([name : type value] ...) body)
+    /// Let binding: (let [name : type value] ... body)
     Let {
         bindings: Vec<(Symbol, Option<Type>, Expr)>,
         body: Box<Expr>,

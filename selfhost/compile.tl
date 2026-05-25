@@ -26,14 +26,15 @@
   (and (> (string-length value) 0) (= (string-ref value 0) #-')))
 
 (define (compile-cli-default-output [input-path : String]) : String
-  (let (
+  (let
     [n : i64 (string-length input-path)]
     [i : i64 0]
     [last-dot : i64 -1]
-    [last-sep : i64 -1])
+    [last-sep : i64 -1]
     (begin
       (while (< i n)
-        (let ([c : char (string-ref input-path i)])
+        (let
+          [c : char (string-ref input-path i)]
           (begin
             (if (= c #.')
               (set! last-dot i)
@@ -78,7 +79,8 @@
   (if (>= idx count)
     (OkCompileCliConfig
       (CompileCliConfig input-path output-path has-target target))
-    (let ([current : String (arg idx)])
+    (let
+      [current : String (arg idx)]
       (if (string-eq current "-o")
         (if (>= (+ idx 1) count)
           (ErrCompileCliConfig "compile: -o requires a value")
@@ -128,7 +130,8 @@
 (define (compile-cli-config [count : i64]) : ResultCompileCliConfig
   (if (< count 2)
     (ErrCompileCliConfig "compile: expected source path")
-    (let ([input-path : String (arg 1)])
+    (let
+      [input-path : String (arg 1)]
       (if (compile-cli-flag? input-path)
         (ErrCompileCliConfig "compile: expected source path before flags")
         (compile-cli-parse-options

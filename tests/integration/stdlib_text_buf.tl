@@ -2,11 +2,11 @@
 (import "stdlib/text_buf.tl")
 
 (define (text-buf-integration-ok?) : bool
-  (let (
+  (let
     [left : TextBuf
       (text-buf-append-char (text-buf-append (text-buf-empty) "left") #-')]
     [right : TextBuf
-      (text-buf-append-int (text-buf-append (text-buf-empty) "right") 7)])
+      (text-buf-append-int (text-buf-append (text-buf-empty) "right") 7)]
     (string-eq
       (text-buf-render (text-buf-append-buffer left right))
       "left-right7")))

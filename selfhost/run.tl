@@ -46,7 +46,8 @@
   (if (>= idx count)
     (OkRunPlanConfig
       (RunPlanConfig source target mode stdlib-lines runtime-lines))
-    (let ([current : String (arg idx)])
+    (let
+      [current : String (arg idx)]
       (if (string-eq current "--")
         (OkRunPlanConfig
           (RunPlanConfig
@@ -58,7 +59,8 @@
         (if (string-eq current "--target")
           (if (>= (+ idx 1) count)
             (ErrRunPlanConfig "run: --target requires a value")
-            (let ([value : String (arg (+ idx 1))])
+            (let
+              [value : String (arg (+ idx 1))]
               (if (host-plan-target-valid? value)
                 (run-plan-parse-options
                   (+ idx 2)
@@ -72,7 +74,8 @@
           (if (string-eq current "--backend-mode")
             (if (>= (+ idx 1) count)
               (ErrRunPlanConfig "run: --backend-mode requires a value")
-              (let ([value : String (arg (+ idx 1))])
+              (let
+                [value : String (arg (+ idx 1))]
                 (if (host-plan-backend-mode-valid? value)
                   (run-plan-parse-options
                     (+ idx 2)
@@ -105,7 +108,8 @@
 (define (run-plan-config [count : i64]) : ResultRunPlanConfig
   (if (< count 2)
     (ErrRunPlanConfig "run: expected source path")
-    (let ([source : String (arg 1)])
+    (let
+      [source : String (arg 1)]
       (if (host-plan-flag? source)
         (ErrRunPlanConfig "run: expected source path before flags")
         (run-plan-parse-options 2 count source "linux-x86_64" "scalar" "" "")))))

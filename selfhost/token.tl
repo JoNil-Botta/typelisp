@@ -39,7 +39,9 @@
   (TEnd)
   (TStr String)
   (TChar char)
-  (TFloat String))
+  (TFloat String)
+  (TLBracket)
+  (TRBracket))
 
 ;; Source locations are 1-based line/column pairs. The end position is
 ;; exclusive, so a one-character token at line 1 column 1 spans 1:1 -> 1:2.
@@ -102,7 +104,9 @@
     [(TEnd) 5]
     [(TStr _) 6]
     [(TChar _) 7]
-    [(TFloat _) 8]))
+    [(TFloat _) 8]
+    [(TLBracket) 9]
+    [(TRBracket) 10]))
 
 ;; Integer payload of a TInt token (0 for any other kind): projects the literal
 ;; value back out of the enum, the way a parser reads a numeric literal.
@@ -115,7 +119,9 @@
     [(TEnd) 0]
     [(TStr _) 0]
     [(TChar _) 0]
-    [(TFloat _) 0]))
+    [(TFloat _) 0]
+    [(TLBracket) 0]
+    [(TRBracket) 0]))
 
 ;; Symbol text of a TSym token (the empty string for any other kind): projects
 ;; the sliced lexeme back out of the enum, the way a parser reads a symbol/name.
@@ -128,7 +134,9 @@
     [(TEnd) ""]
     [(TStr _) ""]
     [(TChar _) ""]
-    [(TFloat _) ""]))
+    [(TFloat _) ""]
+    [(TLBracket) ""]
+    [(TRBracket) ""]))
 
 ;; String text of a TStr token (the empty string for any other kind): projects
 ;; the sliced inner text of a `"..."` literal back out of the enum, the way a
@@ -143,7 +151,9 @@
     [(TEnd) ""]
     [(TStr s) s]
     [(TChar _) ""]
-    [(TFloat _) ""]))
+    [(TFloat _) ""]
+    [(TLBracket) ""]
+    [(TRBracket) ""]))
 
 ;; Float literal text of a TFloat token (the empty string for any other kind):
 ;; the selfhost frontend carries source spelling until backend emission, so it
@@ -157,7 +167,9 @@
     [(TEnd) ""]
     [(TStr _) ""]
     [(TChar _) ""]
-    [(TFloat s) s]))
+    [(TFloat s) s]
+    [(TLBracket) ""]
+    [(TRBracket) ""]))
 
 ;; Character payload of a TChar token (NUL for any other kind): projects the
 ;; read character back out of the enum while keeping char atoms distinct from
@@ -171,7 +183,9 @@
     [(TEnd) #\nul']
     [(TStr _) #\nul']
     [(TChar c) c]
-    [(TFloat _) #\nul']))
+    [(TFloat _) #\nul']
+    [(TLBracket) #\nul']
+    [(TRBracket) #\nul']))
 
 ;; A token paired with the 1-based source line and column where its lexeme
 ;; begins (#599). The reader/parser recover positions from these so later
@@ -228,3 +242,9 @@
 
 (define (tag-float) : i64
   8)
+
+(define (tag-lbracket) : i64
+  9)
+
+(define (tag-rbracket) : i64
+  10)

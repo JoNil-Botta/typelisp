@@ -56,15 +56,16 @@
   (or (= c #\space') (= c #\tab')))
 
 (define (lsp-frame-trim-right-space-cr [text : String]) : String
-  (let (
+  (let
     [i : i64 (string-length text)]
     [end : i64 (string-length text)]
-    [done : bool false])
+    [done : bool false]
     (begin
       (while (> i 0)
         (if done
           (set! i 0)
-          (let ([c : char (string-ref text (- i 1))])
+          (let
+            [c : char (string-ref text (- i 1))]
             (if (or (lsp-frame-space? c) (= c #\return'))
               (begin
                 (set! end (- i 1))
@@ -73,11 +74,11 @@
       (substring text 0 end))))
 
 (define (lsp-frame-trim-left-space [text : String]) : String
-  (let (
+  (let
     [n : i64 (string-length text)]
     [i : i64 0]
     [start : i64 0]
-    [done : bool false])
+    [done : bool false]
     (begin
       (while (< i n)
         (if done
@@ -93,11 +94,11 @@
   (lsp-frame-trim-left-space (lsp-frame-trim-right-space-cr text)))
 
 (define (lsp-frame-starts-with? [text : String] [prefix : String]) : bool
-  (let (
+  (let
     [text-len : i64 (string-length text)]
     [prefix-len : i64 (string-length prefix)]
     [i : i64 0]
-    [ok : bool true])
+    [ok : bool true]
     (if (< text-len prefix-len)
       false
       (begin
@@ -115,10 +116,10 @@
   (and (>= c #0') (<= c #9')))
 
 (define (lsp-frame-decimal? [text : String]) : bool
-  (let (
+  (let
     [n : i64 (string-length text)]
     [i : i64 0]
-    [ok : bool true])
+    [ok : bool true]
     (if (= n 0)
       false
       (begin
@@ -134,11 +135,13 @@
 
 (define (lsp-frame-parse-content-length [line : String]) : LspLengthParse
   (if (lsp-frame-starts-with? line "Content-Length:")
-    (let ([value : String
-      (lsp-frame-trim-header-value
-        (substring line 15 (- (string-length line) 15)))])
+    (let
+      [value : String
+        (lsp-frame-trim-header-value
+          (substring line 15 (- (string-length line) 15)))]
       (if (lsp-frame-decimal? value)
-        (let ([n : i64 (string->int value)])
+        (let
+          [n : i64 (string->int value)]
           (if (< n 0)
             (LspLengthErr "lsp: invalid Content-Length")
             (LspLengthOk n)))
@@ -146,17 +149,17 @@
     LspLengthIgnore))
 
 (define (lsp-frame-read-message) : LspFrameRead
-  (let (
+  (let
     [content-length : i64 -1]
     [saw-header : bool false]
     [done : bool false]
     [clean-eof : bool false]
-    [err : String ""])
+    [err : String ""]
     (begin
       (while (not done)
         (if (string-eq err "")
-          (let ([line : String
-            (lsp-frame-trim-right-space-cr (read-stdin-line))])
+          (let
+            [line : String (lsp-frame-trim-right-space-cr (read-stdin-line))]
             (if (stdin-eof?)
               (if (= (string-length line) 0)
                 (if saw-header
@@ -193,7 +196,8 @@
           (LspFrameErr err)
           (if (< content-length 0)
             (LspFrameErr "lsp: missing Content-Length")
-            (let ([payload : String (read-stdin-bytes content-length)])
+            (let
+              [payload : String (read-stdin-bytes content-length)]
               (if (and (stdin-eof?) (< (string-length payload) content-length))
                 (LspFrameErr "lsp: truncated payload")
                 (LspFrameOk payload)))))))))
@@ -341,7 +345,8 @@
         (lsp-documents-lookup rest uri))]))
 
 (define (lsp-hex-value [c : char]) : i64
-  (let ([code : i64 (cast c : i64)])
+  (let
+    [code : i64 (cast c : i64)]
     (if (and (>= code 48) (<= code 57))
       (- code 48)
       (if (and (>= code 65) (<= code 70))
@@ -351,19 +356,19 @@
           -1)))))
 
 (define (lsp-percent-decode [text : String]) : LspStringResult
-  (let (
+  (let
     [n : i64 (string-length text)]
     [i : i64 0]
     [out : String ""]
-    [err : String ""])
+    [err : String ""]
     (begin
       (while (< i n)
         (if (string-eq err "")
           (if (= (string-ref text i) #%')
             (if (< (+ i 2) n)
-              (let (
+              (let
                 [hi : i64 (lsp-hex-value (string-ref text (+ i 1)))]
-                [lo : i64 (lsp-hex-value (string-ref text (+ i 2)))])
+                [lo : i64 (lsp-hex-value (string-ref text (+ i 2)))]
                 (if (and (>= hi 0) (>= lo 0))
                   (match (json-codepoint-string (+ (* hi 16) lo))
                     [(OkJsonCodepointString decoded)
@@ -389,7 +394,8 @@
         (ErrLspString err)))))
 
 (define (lsp-uri-path-strip-windows-leading-slash [path : String]) : String
-  (let ([n : i64 (string-length path)])
+  (let
+    [n : i64 (string-length path)]
     (if (and
       (> n 2)
       (and (= (string-ref path 0) #/') (= (string-ref path 2) #:')))
@@ -400,7 +406,8 @@
   (if (lsp-frame-starts-with? uri "file://")
     (match (lsp-percent-decode (substring uri 7 (- (string-length uri) 7)))
       [(OkLspString decoded)
-        (let ([path : String (lsp-uri-path-strip-windows-leading-slash decoded)])
+        (let
+          [path : String (lsp-uri-path-strip-windows-leading-slash decoded)]
           (if (> (string-length path) 0)
             (OkLspUriPath path)
             (ErrLspUriPath "unsupported TypeLisp LSP URI: empty file path")))]
@@ -421,14 +428,15 @@
             (or (= code 95) (or (= code 126) (or (= code 47) (= code 58))))))))))
 
 (define (lsp-percent-encode-path [path : String]) : String
-  (let (
+  (let
     [n : i64 (string-length path)]
     [i : i64 0]
-    [out : String ""])
+    [out : String ""]
     (begin
       (while (< i n)
         (begin
-          (let ([code : i64 (cast (string-ref path i) : i64)])
+          (let
+            [code : i64 (cast (string-ref path i) : i64)]
             (if (lsp-uri-safe-code? code)
               (set! out (string-append out (substring path i 1)))
               (set!
@@ -474,7 +482,8 @@
       "")))
 
 (define (lsp-diagnostic [line : i64] [col : i64] [message : String]) : Json
-  (let ([code : String (lsp-diagnostic-code message)])
+  (let
+    [code : String (lsp-diagnostic-code message)]
     (if (string-eq code "")
       (lsp-json-object4
         "range"
@@ -513,7 +522,8 @@
   [root-uri : String]
   [root-path : String]
   [diag : CompilerDiagnostic]) : String
-  (let ([diag-path : String (compiler-diagnostic-path diag)])
+  (let
+    [diag-path : String (compiler-diagnostic-path diag)]
     (if (or (string-eq diag-path "") (string-eq diag-path root-path))
       root-uri
       (lsp-path-to-file-uri diag-path))))
@@ -547,7 +557,8 @@
   (match (compiler-check-source-with-roots path text stdlib-roots)
     [(OkCompilerCheck _) (lsp-publish-diagnostics uri JsonListNil)]
     [(ErrCompilerCheck diag)
-      (let ([diag-uri : String (lsp-diagnostic-uri uri path diag)])
+      (let
+        [diag-uri : String (lsp-diagnostic-uri uri path diag)]
         (begin
           (if (string-eq diag-uri uri)
             unit
@@ -575,12 +586,13 @@
     [(JsonFound document)
       (match (lsp-json-string-field document "uri")
         [(OkLspJsonText uri)
-          (let ([text : String
-            (lsp-json-string-field-default document "text" "")])
+          (let
+            [text : String (lsp-json-string-field-default document "text" "")]
             (match (lsp-file-uri-to-path uri)
               [(OkLspUriPath path)
-                (let ([next-docs : LspDocumentList
-                  (lsp-documents-set docs uri path text)])
+                (let
+                  [next-docs : LspDocumentList
+                    (lsp-documents-set docs uri path text)]
                   (begin
                     (lsp-analyze-document uri path text stdlib-roots)
                     (LspContinue next-docs)))]
@@ -603,8 +615,9 @@
             [(OkLspJsonText text)
               (match (lsp-file-uri-to-path uri)
                 [(OkLspUriPath path)
-                  (let ([next-docs : LspDocumentList
-                    (lsp-documents-set docs uri path text)])
+                  (let
+                    [next-docs : LspDocumentList
+                      (lsp-documents-set docs uri path text)]
                     (begin
                       (lsp-analyze-document uri path text stdlib-roots)
                       (LspContinue next-docs)))]
@@ -688,11 +701,11 @@
       (lsp-stdlib-roots (+ idx 1)))))
 
 (define (lsp-frame-run) : i64
-  (let (
+  (let
     [done : bool false]
     [status : i64 0]
     [docs : LspDocumentList LspDocumentNil]
-    [stdlib-roots : CompilerLoadRootList (lsp-stdlib-roots 1)])
+    [stdlib-roots : CompilerLoadRootList (lsp-stdlib-roots 1)]
     (begin
       (while (not done)
         (match (lsp-frame-read-message)

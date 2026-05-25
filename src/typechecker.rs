@@ -3144,6 +3144,13 @@ mod tests {
     }
 
     #[test]
+    fn test_typecheck_flat_let_bindings_are_sequential() {
+        let prog = parse("(define (main) : i64 (let [x : i64 40] [y : i64 (+ x 2)] y))").unwrap();
+        let mut tc = TypeChecker::new();
+        assert!(tc.check_program(&prog).is_ok());
+    }
+
+    #[test]
     fn test_expanded_program_records_parsed_decl_origins() {
         let prog = parse(
             "(define x : i64 42)\n\

@@ -54,7 +54,8 @@
     [(ErrJson _) 7]))
 
 (define (main) : i64
-  (let ([document-code : i64 (json-test-document-code)])
+  (let
+    [document-code : i64 (json-test-document-code)]
     (if (= document-code 42)
       (if (json-test-string-escapes)
         (if (json-test-invalid)

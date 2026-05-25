@@ -200,8 +200,9 @@
     [(CompilerRegAssignmentCons item rest)
       (match item
         [(CompilerRegAssignment var _)
-          (let ([tail : CompilerRegAssignmentList
-            (compiler-backend-drop-param-assignments rest params)])
+          (let
+            [tail : CompilerRegAssignmentList
+              (compiler-backend-drop-param-assignments rest params)]
             (if (compiler-backend-param-var? params var)
               tail
               (CompilerRegAssignmentCons item tail)))])]))
@@ -419,13 +420,14 @@
                             (compiler-backend-char-code c)))))))))))))))
 
 (define (compiler-backend-asm-safe-symbol [name : String]) : String
-  (let (
+  (let
     [i : i64 0]
     [n : i64 (string-length name)]
-    [out : String ""])
+    [out : String ""]
     (begin
       (while (< i n)
-        (let ([c : char (string-ref name i)])
+        (let
+          [c : char (string-ref name i)]
           (begin
             (set!
               out
@@ -573,13 +575,14 @@
               (compiler-backend-octal-escape (compiler-backend-char-code c)))))))))
 
 (define (compiler-backend-escape-string [text : String]) : String
-  (let (
+  (let
     [i : i64 0]
     [n : i64 (string-length text)]
-    [out : String ""])
+    [out : String ""]
     (begin
       (while (< i n)
-        (let ([c : char (string-ref text i)])
+        (let
+          [c : char (string-ref text i)]
           (begin
             (set!
               out
@@ -593,10 +596,10 @@
     (string-append (compiler-backend-escape-string text) "\"")))
 
 (define (compiler-backend-string-label-suffix [text : String]) : String
-  (let (
+  (let
     [i : i64 0]
     [n : i64 (string-length text)]
-    [out : String ""])
+    [out : String ""]
     (begin
       (while (< i n)
         (begin
@@ -704,7 +707,8 @@
     reg))
 
 (define (compiler-backend-emit-load-memory [addr : String] [ty : AstType]) : String
-  (let ([size : i64 (compiler-backend-type-size ty)])
+  (let
+    [size : i64 (compiler-backend-type-size ty)]
     (if (= size 8)
       (backend-cat3 "    movq " addr ", %rax\n")
       (if (= size 4)
@@ -752,7 +756,8 @@
               "%r15b")))))))
 
 (define (compiler-backend-emit-load-register [reg : String] [ty : AstType]) : String
-  (let ([size : i64 (compiler-backend-type-size ty)])
+  (let
+    [size : i64 (compiler-backend-type-size ty)]
     (if (= size 8)
       (backend-cat3 "    movq " reg ", %rax\n")
       (if (= size 4)
@@ -790,7 +795,8 @@
 (define (compiler-backend-emit-store-rax-to-memory
   [addr : String]
   [ty : AstType]) : String
-  (let ([size : i64 (compiler-backend-type-size ty)])
+  (let
+    [size : i64 (compiler-backend-type-size ty)]
     (if (= size 8)
       (backend-cat3 "    movq %rax, " addr "\n")
       (if (= size 4)
@@ -1076,7 +1082,8 @@
         offset
         "%rbx")
         [(OkCompilerBackend offset-asm)
-          (let ([scale : i64 (compiler-backend-type-size elem-ty)])
+          (let
+            [scale : i64 (compiler-backend-type-size elem-ty)]
             (OkCompilerBackend
               (string-append
                 base-asm
@@ -1254,8 +1261,9 @@
   [name : String]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]) : AstTypeList
-  (let ([local-types : AstTypeList
-    (compiler-backend-function-param-types functions name)])
+  (let
+    [local-types : AstTypeList
+      (compiler-backend-function-param-types functions name)]
     (match local-types
       [(AstTypeNil) (compiler-backend-extern-param-types externs name)]
       [_ local-types])))
@@ -1292,7 +1300,7 @@
   (match args
     [(IrValueNil) stack-count]
     [(IrValueCons value rest)
-      (let (
+      (let
         [arg-ty : AstType
           (match types
             [(AstTypeCons ty _) ty]
@@ -1300,8 +1308,9 @@
         [rest-types : AstTypeList
           (match types
             [(AstTypeCons _ tail) tail]
-            [(AstTypeNil) AstTypeNil])])
-        (let ([is-f64 : bool (compiler-backend-f64-type? arg-ty)])
+            [(AstTypeNil) AstTypeNil])]
+        (let
+          [is-f64 : bool (compiler-backend-f64-type? arg-ty)]
           (compiler-backend-call-stack-arg-count
             target
             rest
@@ -1329,8 +1338,9 @@
   [target : CompilerBackendTarget]
   [args : CompilerIrValueList]
   [types : AstTypeList]) : i64
-  (let ([stack-count : i64
-    (compiler-backend-call-stack-arg-count target args types 0 0 0 0)])
+  (let
+    [stack-count : i64
+      (compiler-backend-call-stack-arg-count target args types 0 0 0 0)]
     (if (and (= stack-count 0) (not (compiler-backend-target-windows? target)))
       0
       (compiler-backend-round-up-16
@@ -1349,7 +1359,7 @@
   (match args
     [(IrValueNil) (OkCompilerBackend "")]
     [(IrValueCons value rest)
-      (let (
+      (let
         [arg-ty : AstType
           (match types
             [(AstTypeCons ty _) ty]
@@ -1357,9 +1367,10 @@
         [rest-types : AstTypeList
           (match types
             [(AstTypeCons _ tail) tail]
-            [(AstTypeNil) AstTypeNil])])
-        (let ([is-f64 : bool (compiler-backend-f64-type? arg-ty)])
-          (let (
+            [(AstTypeNil) AstTypeNil])]
+        (let
+          [is-f64 : bool (compiler-backend-f64-type? arg-ty)]
+          (let
             [next-int : i64
               (if is-f64
                 int-idx
@@ -1367,7 +1378,7 @@
             [next-float : i64
               (if is-f64
                 (+ float-idx 1)
-                float-idx)])
+                float-idx)]
             (if (compiler-backend-stack-call-arg-for-banks?
               target
               is-f64
@@ -1589,8 +1600,14 @@
   [externs : CompilerIrExternList]
   [spans : CompilerSourceSpans]
   [func-diag : CompilerDiagnostic]) : ResultCompilerBackend
-  (let ([instr-diag : CompilerDiagnostic
-    (compiler-backend-instr-diagnostic spans source-function instr func-diag "")])
+  (let
+    [instr-diag : CompilerDiagnostic
+      (compiler-backend-instr-diagnostic
+        spans
+        source-function
+        instr
+        func-diag
+        "")]
     (match instr
       [(IrInstrMov dst src ty)
         (match (compiler-backend-emit-load-typed-value-with-plan
@@ -1655,10 +1672,12 @@
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
       [(IrInstrCall dst name args ty)
-        (let ([param-types : AstTypeList
-          (compiler-backend-call-param-types name functions externs)])
-          (let ([call-space : i64
-            (compiler-backend-call-arg-space target args param-types)])
+        (let
+          [param-types : AstTypeList
+            (compiler-backend-call-param-types name functions externs)]
+          (let
+            [call-space : i64
+              (compiler-backend-call-arg-space target args param-types)]
             (match (compiler-backend-emit-call-args
               target
               assignments
@@ -1936,8 +1955,9 @@
     [(IrParamCons param rest)
       (match param
         [(IrParam _ ty var-id)
-          (let ([is-f64 : bool (compiler-backend-f64-type? ty)])
-            (let (
+          (let
+            [is-f64 : bool (compiler-backend-f64-type? ty)]
+            (let
               [next-int : i64
                 (if is-f64
                   int-idx
@@ -1945,7 +1965,7 @@
               [next-float : i64
                 (if is-f64
                   (+ float-idx 1)
-                  float-idx)])
+                  float-idx)]
               (if (compiler-backend-stack-call-arg-for-banks?
                 target
                 is-f64
@@ -2053,16 +2073,19 @@
       ;; The provenance fallback diagnostic for this function (#605): backend
       ;; errors raised while emitting its body stamp this function's source span
       ;; (or `1:1` when none was recorded) rather than always `1:1`.
-      (let ([func-diag : CompilerDiagnostic
-        (compiler-backend-function-diagnostic spans name "")])
-        (let ([reg-plan : CompilerRegPlan (compiler-reg-plan-function func)])
-          (let ([raw-assignments : CompilerRegAssignmentList
-            (compiler-reg-plan-assignments reg-plan)])
-            (let (
+      (let
+        [func-diag : CompilerDiagnostic
+          (compiler-backend-function-diagnostic spans name "")]
+        (let
+          [reg-plan : CompilerRegPlan (compiler-reg-plan-function func)]
+          (let
+            [raw-assignments : CompilerRegAssignmentList
+              (compiler-reg-plan-assignments reg-plan)]
+            (let
               [assignments : CompilerRegAssignmentList
                 (compiler-backend-drop-param-assignments raw-assignments params)]
               [types : CompilerRegVarTypeList
-                (compiler-reg-function-var-types func)])
+                (compiler-reg-function-var-types func)]
               (match (compiler-backend-emit-param-spills
                 target
                 assignments
@@ -2072,7 +2095,8 @@
                 0
                 0)
                 [(OkCompilerBackend spills)
-                  (let ([symbol : String (compiler-backend-user-symbol name)])
+                  (let
+                    [symbol : String (compiler-backend-user-symbol name)]
                     (match (compiler-backend-emit-blocks
                       target
                       symbol
@@ -2089,9 +2113,10 @@
                       spans
                       func-diag)
                       [(OkCompilerBackend body)
-                        (let ([frame : i64
-                          (compiler-backend-frame-size
-                            (compiler-backend-frame-slots vars assignments))])
+                        (let
+                          [frame : i64
+                            (compiler-backend-frame-size
+                              (compiler-backend-frame-slots vars assignments))]
                           (OkCompilerBackend
                             (backend-cat5
                               ".globl "
@@ -2494,7 +2519,8 @@
     [(IrGlobal name _ value)
       (match (compiler-backend-global-value-asm value)
         [(OkCompilerBackend value-asm)
-          (let ([symbol : String (compiler-backend-user-symbol name)])
+          (let
+            [symbol : String (compiler-backend-user-symbol name)]
             (OkCompilerBackend
               (backend-cat5
                 ".globl "
@@ -2657,7 +2683,7 @@
 (define (compiler-backend-runtime-plan-for
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]) : ResultBackendRuntimePlan
-  (let (
+  (let
     [defines-alloc : bool
       (compiler-backend-function-list-defines? functions "tl_alloc")]
     [defines-oob : bool
@@ -2759,8 +2785,8 @@
     [calls-region-mark : bool
       (compiler-backend-function-list-calls? functions "tl_region_mark")]
     [calls-region-reset : bool
-      (compiler-backend-function-list-calls? functions "tl_region_reset")])
-    (let (
+      (compiler-backend-function-list-calls? functions "tl_region_reset")]
+    (let
       [needs-oob : bool (and (not defines-oob) (or extern-oob calls-oob))]
       [needs-substring : bool
         (and (not defines-substring) (or extern-substring calls-substring))]
@@ -2797,8 +2823,8 @@
           (not defines-region-reset)
           (or extern-region-reset calls-region-reset))]
       [direct-alloc : bool
-        (and (not defines-alloc) (or extern-alloc calls-alloc))])
-      (let (
+        (and (not defines-alloc) (or extern-alloc calls-alloc))]
+      (let
         [needs-abort : bool
           (or
             direct-abort
@@ -2822,7 +2848,7 @@
                         needs-write-file
                         (or
                           needs-file-exists
-                          (or needs-read-line needs-read-bytes)))))))))])
+                          (or needs-read-line needs-read-bytes)))))))))]
         (OkBackendRuntimePlan
           (BackendRuntimePlan
             needs-alloc
@@ -4735,7 +4761,7 @@ tl_string_concat:
         flush-stdout
         region-mark
         region-reset)
-      (let (
+      (let
         [alloc-asm : String
           (if alloc
             (if (compiler-backend-target-windows? target)
@@ -4851,7 +4877,7 @@ tl_string_concat:
           (compiler-backend-runtime-linux-only
             target
             region-reset
-            (compiler-backend-runtime-region-reset-functions))])
+            (compiler-backend-runtime-region-reset-functions))]
         (string-append
           alloc-asm
           (string-append
@@ -5120,7 +5146,7 @@ tl_string_concat:
                   plan
                   spans)
                   [(OkCompilerBackend functions-asm)
-                    (let (
+                    (let
                       [strings : BackendStringList
                         (compiler-backend-collect-program-strings program)]
                       [floats : BackendStringList
@@ -5156,7 +5182,7 @@ tl_string_concat:
                             (compiler-backend-runtime-functions-for-target
                               target
                               plan))
-                          (compiler-backend-entry-for-target target plan))])
+                          (compiler-backend-entry-for-target target plan))]
                       (OkCompilerBackend (text-buf-render buf)))]
                   [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)])])
@@ -5185,16 +5211,16 @@ tl_string_concat:
   [text : String]
   [prefix : String]
   [start : i64]) : bool
-  (let (
+  (let
     [text-len : i64 (string-length text)]
-    [prefix-len : i64 (string-length prefix)])
+    [prefix-len : i64 (string-length prefix)]
     (if (< start 0)
       false
       (if (> (+ start prefix-len) text-len)
         false
-        (let (
+        (let
           [i : i64 0]
-          [ok : bool true])
+          [ok : bool true]
           (begin
             (while ok
               (if (< i prefix-len)
@@ -5205,15 +5231,15 @@ tl_string_concat:
             (= i prefix-len)))))))
 
 (define (compiler-backend-string-contains? [text : String] [needle : String]) : bool
-  (let (
+  (let
     [text-len : i64 (string-length text)]
-    [needle-len : i64 (string-length needle)])
+    [needle-len : i64 (string-length needle)]
     (if (= needle-len 0)
       true
-      (let (
+      (let
         [i : i64 0]
         [found : bool false]
-        [done : bool false])
+        [done : bool false]
         (begin
           (while (not done)
             (if (<= (+ i needle-len) text-len)
@@ -5325,7 +5351,7 @@ tl_string_concat:
   (match (compiler-backend-emit-program
     (compiler-backend-runtime-helper-program))
     [(OkCompilerBackend asm)
-      (let (
+      (let
         [base-labels : bool
           (and
             (backend-and4
@@ -5429,7 +5455,7 @@ tl_string_concat:
               (not
                 (compiler-backend-string-contains?
                   asm
-                  ".extern .L_tl_file_exists\n"))))])
+                  ".extern .L_tl_file_exists\n"))))]
         (and
           base-labels
           (and
@@ -5695,7 +5721,8 @@ tl_string_concat:
   "(define answer : i64 40)
 (define (inc [x : i64]) : i64 (+ x 1))
 (define (main) : i64
-  (let ([x : i64 (inc answer)])
+  (let
+    [x : i64 (inc answer)]
     (begin
       (set! x (+ x 1))
       (while (< x 45)
@@ -5860,8 +5887,9 @@ tl_string_concat:
 
 (define (compiler-backend-regalloc-source) : String
   "(define (calc [a : i64] [b : i64]) : i64
-  (let ([x : i64 (+ a b)]
-        [y : i64 (* x 2)])
+  (let
+    [x : i64 (+ a b)]
+    [y : i64 (* x 2)]
     (+ y x)))
 (define (main) : i64
   (calc 10 5))")
@@ -6236,7 +6264,7 @@ tl_string_concat:
   [want-message : String]
   [want-line : i64]
   [want-col : i64]) : bool
-  (let (
+  (let
     [spans : CompilerSourceSpans
       (compiler-source-spans-insert-instr
         (compiler-source-spans-insert
@@ -6259,7 +6287,7 @@ tl_string_concat:
               (IrBlock "entry" (IrInstrCons instr IrInstrNil))
               IrBlockNil))
           IrFunctionNil)
-        IrExternNil)])
+        IrExternNil)]
     (match (compiler-backend-emit-program-with-spans program spans)
       [(ErrCompilerBackend diag)
         (and
@@ -6364,7 +6392,8 @@ tl_string_concat:
 
 (define (compiler-backend-make-array-source) : String
   "(define (main) : i64
-  (let ([a : (Array i64) (make-array i64 2)])
+  (let
+    [a : (Array i64) (make-array i64 2)]
     (begin
       (array-set! a 0 40)
       (array-set! a 1 2)
@@ -6385,7 +6414,8 @@ tl_string_concat:
 (define (compiler-backend-region-source) : String
   "(define (main) : i64
   (with-region r
-    (let ([s : String (int->string 41)])
+    (let
+      [s : String (int->string 41)]
       (string-length s))))")
 
 (define (compiler-backend-region-ok?) : bool

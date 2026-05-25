@@ -45,9 +45,9 @@
   (DGroup doc))
 
 (define (spaces [count : i64]) : String
-  (let (
+  (let
     [i : i64 0]
-    [out : String ""])
+    [out : String ""]
     (begin
       (while (< i count)
         (begin
@@ -119,11 +119,11 @@
   (DGroup (DConcat (DText "a") (DConcat (DHardLine) (DText "b")))))
 
 (define (format-doc-self-test) : i64
-  (let (
+  (let
     [flat : String (render-doc-width (sample-group-doc) 80)]
     [broken : String (render-doc-width (sample-group-doc) 6)]
     [hard : String (render-doc-width (sample-hard-line-doc) 80)]
-    [empty : String (render-doc (doc-append (doc-empty) (DText "x")))])
+    [empty : String (render-doc (doc-append (doc-empty) (DText "x")))]
     (if (string-eq flat "alpha beta")
       (if (string-eq broken "alpha\n  beta")
         (if (string-eq hard "a\nb")

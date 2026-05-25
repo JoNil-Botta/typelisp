@@ -257,7 +257,8 @@
   [field-index : i64]) : ResultCompilerRegistries
   (match registries
     [(CompilerRegistries variants fields)
-      (let ([key : String (compiler-struct-field-key struct-name field-name)])
+      (let
+        [key : String (compiler-struct-field-key struct-name field-name)]
         (if (sym-i64-contains fields key)
           (ErrCompilerRegistries
             (compiler-registries-duplicate-field-message struct-name field-name))
@@ -548,7 +549,9 @@
 (extern print-string : (-> String unit))
 (define answer : i64 42)
 (define (main [argc : i64] [name : String]) : i64
-  (let ([x : i64 1] [arr (array 1 2 3)])
+  (let
+    [x : i64 1]
+    [arr (array 1 2 3)]
     (begin
       (set! x (+ x 41))
       (if (and (= x 42) true)
@@ -590,13 +593,13 @@
 (define (compiler-registries-smoke-score
   [program : AstProgram]
   [registries : CompilerRegistries]) : i64
-  (let (
+  (let
     [some : MaybeI64 (compiler-registries-lookup-variant registries "Some")]
     [none : MaybeI64 (compiler-registries-lookup-variant registries "None")]
     [x-field : MaybeI64
       (compiler-registries-lookup-struct-field registries "Point" "x")]
     [y-field : MaybeI64
-      (compiler-registries-lookup-struct-field registries "Point" "y")])
+      (compiler-registries-lookup-struct-field registries "Point" "y")]
     (+
       (compiler-registry-lookup-score
         some
@@ -690,8 +693,9 @@
     [(OkCompilerRegistries _) false]))
 
 (define (compiler-registry-large-owner-handle-ok?) : bool
-  (let ([handle : i64
-    (compiler-registry-make-handle (compiler-symbol-kind-enum-variant) 1234 5)])
+  (let
+    [handle : i64
+      (compiler-registry-make-handle (compiler-symbol-kind-enum-variant) 1234 5)]
     (and
       (=
         (compiler-registry-handle-kind handle)

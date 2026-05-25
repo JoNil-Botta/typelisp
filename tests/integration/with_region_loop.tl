@@ -13,7 +13,8 @@
         acc
         (with-region
           r
-          (let ([s : String (string-append "ab" "cd")])
+          (let
+            [s : String (string-append "ab" "cd")]
             (string-length s)))))))
 
 ; Nested regions: the inner region resets before the outer one. Both bodies
@@ -21,12 +22,14 @@
 (define (nested) : i64
   (with-region
     outer
-    (let ([a : String (string-append "x" "y")])
+    (let
+      [a : String (string-append "x" "y")]
       (+
         (string-length a)
         (with-region
           inner
-          (let ([b : String (string-append "p" "q")])
+          (let
+            [b : String (string-append "p" "q")]
             (string-length b)))))))
 
 (define (main) : i64

@@ -48,7 +48,8 @@
 
 ;;; Append `chunk` to `buf` without rendering the existing prefix.
 (define (text-buf-append [buf : TextBuf] [chunk : String]) : TextBuf
-  (let ([chunk-len : i64 (string-length chunk)])
+  (let
+    [chunk-len : i64 (string-length chunk)]
     (if (= chunk-len 0)
       buf
       (match buf
@@ -57,7 +58,8 @@
 
 ;;; Convert a supported byte-sized char to a one-byte String.
 (define (text-buf-char-string [c : char]) : String
-  (let ([code : i64 (cast c : i64)])
+  (let
+    [code : i64 (cast c : i64)]
     (if (= code 9)
       "\t"
       (if (= code 10)

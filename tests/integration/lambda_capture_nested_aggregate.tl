@@ -6,7 +6,8 @@
   (name String))
 
 (define (make-label-reader) : (-> i64)
-  (let ([l : Label (Label 38 "abcd")])
+  (let
+    [l : Label (Label 38 "abcd")]
     (lambda () : i64 (+ (struct-get l id) (string-length (struct-get l name))))))
 
 (define (case-struct-string) : bool
@@ -16,10 +17,12 @@
   (items (Array i64)))
 
 (define (make-bag-reader) : (-> i64)
-  (let ([a : (Array i64) (make-array i64 1)])
+  (let
+    [a : (Array i64) (make-array i64 1)]
     (begin
       (array-set! a 0 42)
-      (let ([b : Bag (Bag a)])
+      (let
+        [b : Bag (Bag a)]
         (lambda () : i64 (array-ref (struct-get b items) 0))))))
 
 (define (case-struct-dynarray) : bool
@@ -31,7 +34,8 @@
   (WrappedNumber i64))
 
 (define (make-wrapped-label-reader) : (-> i64)
-  (let ([w : Wrapped (WrappedLabel (Label 39 "abc"))])
+  (let
+    [w : Wrapped (WrappedLabel (Label 39 "abc"))]
     (lambda
       ()
       :
@@ -43,7 +47,8 @@
         [(WrappedNumber n) n]))))
 
 (define (make-wrapped-text-reader) : (-> i64)
-  (let ([w : Wrapped (WrappedText "abcdefghijklmnopqrstuvwxyzabcdefghijklmnop")])
+  (let
+    [w : Wrapped (WrappedText "abcdefghijklmnopqrstuvwxyzabcdefghijklmnop")]
     (lambda
       ()
       :

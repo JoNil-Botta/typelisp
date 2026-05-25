@@ -145,13 +145,14 @@
               (octal-escape k))))))))
 
 (define (escape-string [text : String]) : String
-  (let (
+  (let
     [i : i64 0]
     [n : i64 (string-length text)]
-    [out : String ""])
+    [out : String ""]
     (begin
       (while (< i n)
-        (let ([k : i64 (char-code (string-ref text i))])
+        (let
+          [k : i64 (char-code (string-ref text i))]
           (begin
             (set! out (string-append out (escape-string-byte text i k)))
             (set! i (+ i 1)))))
@@ -204,7 +205,8 @@
   (round-up-16 (* 8 (max-let-depth e))))
 
 (define (fresh-label [lc : (Array i64)] [prefix : String]) : String
-  (let ([id : i64 (array-ref lc 0)])
+  (let
+    [id : i64 (array-ref lc 0)]
     (begin
       (array-set! lc 0 (+ id 1))
       (string-append prefix (int->string id)))))
@@ -313,8 +315,10 @@
   [name : String]
   [value : Expr]
   [body : Expr]) : String
-  (let ([next-depth : i64 (+ depth 1)])
-    (let ([off : i64 (slot-offset next-depth)])
+  (let
+    [next-depth : i64 (+ depth 1)]
+    (let
+      [off : i64 (slot-offset next-depth)]
       (string-append
         (emit-expr-in strings env depth lc value)
         (string-append
@@ -338,9 +342,9 @@
   [c : Expr]
   [t : Expr]
   [e : Expr]) : String
-  (let (
+  (let
     [lelse : String (fresh-label lc ".Lelse_")]
-    [lend : String (fresh-label lc ".Lend_")])
+    [lend : String (fresh-label lc ".Lend_")]
     (string-append
       (emit-expr-in strings env depth lc c)
       (string-append
@@ -374,9 +378,9 @@
   [lc : (Array i64)]
   [c : Expr]
   [body : Expr]) : String
-  (let (
+  (let
     [lhead : String (fresh-label lc ".Lwhile_")]
-    [lend : String (fresh-label lc ".Lwend_")])
+    [lend : String (fresh-label lc ".Lwend_")]
     (string-append
       lhead
       (string-append
@@ -419,7 +423,8 @@
 (define (emit-call-arg-pops [argc : i64]) : String
   (if (= argc 0)
     ""
-    (let ([idx : i64 (- argc 1)])
+    (let
+      [idx : i64 (- argc 1)]
       (string-append
         "    popq "
         (string-append
@@ -433,8 +438,9 @@
   [lc : (Array i64)]
   [name : String]
   [args : ExprList]) : String
-  (let ([argc : i64
-    (checked-max-six (expr-list-count args) "emit: too many call args")])
+  (let
+    [argc : i64
+      (checked-max-six (expr-list-count args) "emit: too many call args")]
     (string-append
       (emit-call-arg-pushes strings env depth lc args)
       (string-append
@@ -449,7 +455,8 @@
 (define (emit-print [strings : StrList] [arg : Expr]) : String
   (match arg
     [(EStr s)
-      (let ([label : String (string-label (string-index s strings))])
+      (let
+        [label : String (string-label (string-index s strings))]
         (string-append
           "    leaq "
           (string-append
@@ -479,7 +486,8 @@
   [lc : (Array i64)]
   [name : String]
   [value : Expr]) : String
-  (let ([off : i64 (cenv-lookup env name)])
+  (let
+    [off : i64 (cenv-lookup env name)]
     (string-append
       (emit-expr-in strings env depth lc value)
       (string-append
@@ -529,9 +537,11 @@
 (define (emit-def [strings : StrList] [lc : (Array i64)] [item : Item]) : String
   (match item
     [(IDefFn name params body)
-      (let ([nparams : i64
-        (checked-max-six (str-list-count params) "emit: too many params")])
-        (let ([frame : i64 (function-frame-size params body)])
+      (let
+        [nparams : i64
+          (checked-max-six (str-list-count params) "emit: too many params")]
+        (let
+          [frame : i64 (function-frame-size params body)]
           (string-append
             name
             (string-append
@@ -562,7 +572,8 @@
       (string-append (emit-def strings lc item) (emit-defs strings lc rest))]))
 
 (define (emit-expr [e : Expr]) : String
-  (let ([lc : (Array i64) (make-array i64 1)])
+  (let
+    [lc : (Array i64) (make-array i64 1)]
     (begin
       (array-set! lc 0 0)
       (emit-expr-in (collect-strings e SLNil) (sym-i64-empty) 0 lc e))))
@@ -595,10 +606,10 @@
 ;; emit-program-with-defs: emit user `define` blocks before the entry wrapper.
 ;; `emit-program` stays as the no-define compatibility wrapper.
 (define (emit-program-with-defs [defs : ItemList] [e : Expr]) : String
-  (let (
+  (let
     [frame : i64 (frame-size e)]
     [strings : StrList (collect-strings e (collect-items-strings defs SLNil))]
-    [lc : (Array i64) (make-array i64 1)])
+    [lc : (Array i64) (make-array i64 1)]
     (begin
       (array-set! lc 0 0)
       (string-append

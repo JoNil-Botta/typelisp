@@ -75,7 +75,8 @@
   [stream : FormatTokenStream]
   [idx : i64]
   [stop-tag : i64]) : FormatParsedCstList
-  (let ([tag : i64 (format-token-tag (format-token-at stream idx))])
+  (let
+    [tag : i64 (format-token-tag (format-token-at stream idx))]
     (if (= tag (fmt-tag-end))
       (if (= stop-tag 0)
         (FmtParsedCstList FmtCstNil idx)
@@ -95,9 +96,9 @@
                   (FmtParsedCstList (FmtCstCons node rest) final)])]))))))
 
 (define (fmt-parse-one [stream : FormatTokenStream] [idx : i64]) : FormatParsedCst
-  (let (
+  (let
     [tok : FormatToken (format-token-at stream idx)]
-    [tag : i64 (format-token-tag (format-token-at stream idx))])
+    [tag : i64 (format-token-tag (format-token-at stream idx))]
     (if (= tag (fmt-tag-lparen))
       (match (fmt-parse-seq stream (+ idx 1) (fmt-tag-rparen))
         [(FmtParsedCstList items next) (FmtParsedCst (FmtCstList items) next)])
@@ -131,16 +132,17 @@
 (defenum Maybe (Some i64) (None))
 (defstruct Point (x i64) (y i64))
 (define (main [xs : (Array i64)] [p : Point]) : i64
-  (let ([n : i64 (array-ref xs 0)]
-        [c : char #\\space'])
+  (let
+    [n : i64 (array-ref xs 0)]
+    [c : char #\\space']
     (match (Some n)
       [(Some v) (+ v (cast c : i64))]
       [None 0])))")
 
 (define (format-cst-self-test) : i64
-  (let (
+  (let
     [stream : FormatTokenStream (format-lex (format-cst-fixture))]
-    [tree : FormatCst (parse-format-source (format-cst-fixture))])
+    [tree : FormatCst (parse-format-source (format-cst-fixture))]
     (if (> (format-token-count stream) 40)
       (if (> (fmt-cst-count tree) 40)
         (if (= (fmt-cst-comment-count tree) 1)

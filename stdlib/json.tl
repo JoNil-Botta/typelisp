@@ -110,10 +110,10 @@
 
 ;;; Return the first offset at or after `pos` that is not JSON whitespace.
 (define (json-skip-ws [text : String] [pos : i64]) : i64
-  (let (
+  (let
     [i : i64 pos]
     [n : i64 (string-length text)]
-    [done : bool false])
+    [done : bool false]
     (begin
       (while (not done)
         (if (< i n)
@@ -125,14 +125,14 @@
 
 ;;; Return true when `prefix` occurs in `text` at `start`.
 (define (json-string-prefix-at? [text : String] [prefix : String] [start : i64]) : bool
-  (let (
+  (let
     [text-len : i64 (string-length text)]
-    [prefix-len : i64 (string-length prefix)])
+    [prefix-len : i64 (string-length prefix)]
     (if (> (+ start prefix-len) text-len)
       false
-      (let (
+      (let
         [i : i64 0]
-        [ok : bool true])
+        [ok : bool true]
         (begin
           (while (and ok (< i prefix-len))
             (if (=
@@ -205,7 +205,8 @@
 
 ;;; Decode a hexadecimal digit char, or return -1 when it is not a hex digit.
 (define (json-hex-value [c : char]) : i64
-  (let ([code : i64 (json-char-code c)])
+  (let
+    [code : i64 (json-char-code c)]
     (if (and (>= code 48) (<= code 57))
       (- code 48)
       (if (and (>= code 65) (<= code 70))
@@ -278,14 +279,15 @@
 ;;;
 ;;; The returned escaped string is allocated in the active arena.
 (define (json-escape-string [text : String]) : String
-  (let (
+  (let
     [n : i64 (string-length text)]
     [i : i64 0]
     [segment-start : i64 0]
-    [out : TextBuf (text-buf-empty)])
+    [out : TextBuf (text-buf-empty)]
     (begin
       (while (< i n)
-        (let ([code : i64 (json-char-code-at text i)])
+        (let
+          [code : i64 (json-char-code-at text i)]
           (if (or (= code 34) (or (= code 92) (< code 32)))
             (begin
               (set!
@@ -306,7 +308,8 @@
   (match items
     [(JsonListNil) buf]
     [(JsonListCons head rest)
-      (let ([with-head : TextBuf (text-buf-append buf (json-stringify head))])
+      (let
+        [with-head : TextBuf (text-buf-append buf (json-stringify head))]
         (match rest
           [(JsonListNil) with-head]
           [(JsonListCons _ _)
@@ -323,14 +326,15 @@
   (match items
     [(JsonMemberListNil) buf]
     [(JsonMemberListCons key value rest)
-      (let ([with-item : TextBuf
-        (text-buf-append
+      (let
+        [with-item : TextBuf
           (text-buf-append
             (text-buf-append
-              (text-buf-append buf "\"")
-              (json-escape-string key))
-            "\":")
-          (json-stringify value))])
+              (text-buf-append
+                (text-buf-append buf "\"")
+                (json-escape-string key))
+              "\":")
+            (json-stringify value))]
         (match rest
           [(JsonMemberListNil) with-item]
           [(JsonMemberListCons _ _ _)
@@ -382,17 +386,19 @@
 
 ;;; Parse four hex digits after a `\u` escape and return the decoded string.
 (define (json-parse-unicode-escape [text : String] [pos : i64]) : JsonParseEscapeResult
-  (let ([n : i64 (string-length text)])
+  (let
+    [n : i64 (string-length text)]
     (if (> (+ pos 4) n)
       (ErrJsonParseEscape "json: unterminated unicode escape")
-      (let (
+      (let
         [j : i64 0]
         [value : i64 0]
         [ok : bool true]
-        [message : String ""])
+        [message : String ""]
         (begin
           (while (and ok (< j 4))
-            (let ([digit : i64 (json-hex-value (string-ref text (+ pos j)))])
+            (let
+              [digit : i64 (json-hex-value (string-ref text (+ pos j)))]
               (if (< digit 0)
                 (begin
                   (set! ok false)
@@ -413,7 +419,8 @@
 (define (json-parse-escape [text : String] [pos : i64]) : JsonParseEscapeResult
   (if (>= pos (string-length text))
     (ErrJsonParseEscape "json: unterminated JSON escape")
-    (let ([code : i64 (json-char-code-at text pos)])
+    (let
+      [code : i64 (json-char-code-at text pos)]
       (if (= code 34)
         (OkJsonParseEscape "\"" (+ pos 1))
         (if (= code 92)
@@ -436,14 +443,14 @@
 (define (json-parse-string [text : String] [pos : i64]) : JsonParseStringResult
   (if (not (json-char-code-eq-at text pos 34))
     (ErrJsonParseString "json: expected string")
-    (let (
+    (let
       [n : i64 (string-length text)]
       [i : i64 (+ pos 1)]
       [segment-start : i64 (+ pos 1)]
       [out : TextBuf (text-buf-empty)]
       [ok : bool true]
       [done : bool false]
-      [message : String ""])
+      [message : String ""]
       (begin
         (while (and ok (not done))
           (if (>= i n)
@@ -451,7 +458,8 @@
               (set! ok false)
               (set! done true)
               (set! message "json: unterminated string"))
-            (let ([code : i64 (json-char-code-at text i)])
+            (let
+              [code : i64 (json-char-code-at text i)]
               (if (= code 34)
                 (begin
                   (set!
@@ -491,9 +499,9 @@
 
 ;;; Return the first offset at or after `pos` that is not an ASCII digit.
 (define (json-consume-digits [text : String] [pos : i64]) : i64
-  (let (
+  (let
     [i : i64 pos]
-    [done : bool false])
+    [done : bool false]
     (begin
       (while (not done)
         (if (json-digit-at? text i)
@@ -505,11 +513,11 @@
 ;;;
 ;;; The numeric spelling is kept as a String allocated in the active arena.
 (define (json-parse-number [text : String] [pos : i64]) : JsonParseValueResult
-  (let (
+  (let
     [n : i64 (string-length text)]
     [i : i64 pos]
     [ok : bool true]
-    [message : String ""])
+    [message : String ""]
     (begin
       (if (json-char-code-eq-at text i 45)
         (set! i (+ i 1))
@@ -581,12 +589,12 @@
 ;;;
 ;;; The returned array list and nested values are allocated in the active arena.
 (define (json-parse-array [text : String] [pos : i64]) : JsonParseValueResult
-  (let (
+  (let
     [i : i64 (json-skip-ws text (+ pos 1))]
     [items : JsonList JsonListNil]
     [ok : bool true]
     [done : bool false]
-    [message : String ""])
+    [message : String ""]
     (begin
       (if (json-char-code-eq-at text i 93)
         (begin
@@ -620,12 +628,12 @@
 ;;;
 ;;; The returned member list, keys, and nested values allocate in the active arena.
 (define (json-parse-object [text : String] [pos : i64]) : JsonParseValueResult
-  (let (
+  (let
     [i : i64 (json-skip-ws text (+ pos 1))]
     [members : JsonMemberList JsonMemberListNil]
     [ok : bool true]
     [done : bool false]
-    [message : String ""])
+    [message : String ""]
     (begin
       (if (json-char-code-eq-at text i 125)
         (begin
@@ -635,7 +643,8 @@
       (while (and ok (not done))
         (match (json-parse-string text i)
           [(OkJsonParseString key after-key)
-            (let ([colon-pos : i64 (json-skip-ws text after-key)])
+            (let
+              [colon-pos : i64 (json-skip-ws text after-key)]
               (if (json-char-code-eq-at text colon-pos 58)
                 (match (json-parse-value text (+ colon-pos 1))
                   [(OkJsonParseValue value next)
@@ -670,12 +679,13 @@
 ;;;
 ;;; Returned aggregate, string, and number values allocate in the active arena.
 (define (json-parse-value [text : String] [pos : i64]) : JsonParseValueResult
-  (let (
+  (let
     [i : i64 (json-skip-ws text pos)]
-    [n : i64 (string-length text)])
+    [n : i64 (string-length text)]
     (if (>= i n)
       (ErrJsonParseValue "json: expected JSON value")
-      (let ([code : i64 (json-char-code-at text i)])
+      (let
+        [code : i64 (json-char-code-at text i)]
         (if (= code 110)
           (json-parse-keyword text i "null" JsonNull)
           (if (= code 116)
@@ -707,7 +717,8 @@
 (define (json-parse [text : String]) : JsonParseResult
   (match (json-parse-value text 0)
     [(OkJsonParseValue value pos)
-      (let ([end : i64 (json-skip-ws text pos)])
+      (let
+        [end : i64 (json-skip-ws text pos)]
         (if (= end (string-length text))
           (OkJson value)
           (ErrJson "json: trailing characters after JSON value")))]

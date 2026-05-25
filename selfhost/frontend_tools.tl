@@ -45,9 +45,9 @@
                           (or (= c #$') (or (= c #.') (or (= c #%') (= c #&')))))))))))))))))
 
 (define (front-scan-ident-end [src : String] [start : i64] [n : i64]) : i64
-  (let (
+  (let
     [j : i64 (+ start 1)]
-    [keep : bool true])
+    [keep : bool true]
     (begin
       (while keep
         (if (< j n)
@@ -67,14 +67,15 @@
         false))))
 
 (define (front-scan-number-end [src : String] [start : i64] [n : i64]) : i64
-  (let (
+  (let
     [j : i64 start]
     [seen-dot : bool false]
-    [keep : bool true])
+    [keep : bool true]
     (begin
       (while keep
         (if (< j n)
-          (let ([c : char (string-ref src j)])
+          (let
+            [c : char (string-ref src j)]
             (if (front-number-char? c seen-dot)
               (begin
                 (if (= c #.')
@@ -86,10 +87,10 @@
       j)))
 
 (define (front-strip-underscores [text : String]) : String
-  (let (
+  (let
     [i : i64 0]
     [n : i64 (string-length text)]
-    [out : String ""])
+    [out : String ""]
     (begin
       (while (< i n)
         (begin
@@ -100,10 +101,10 @@
       out)))
 
 (define (front-has-dot? [text : String]) : bool
-  (let (
+  (let
     [i : i64 0]
     [n : i64 (string-length text)]
-    [found : bool false])
+    [found : bool false]
     (begin
       (while (and (< i n) (not found))
         (begin
@@ -114,13 +115,14 @@
       found)))
 
 (define (front-trim-float-len [text : String]) : i64
-  (let (
+  (let
     [end : i64 (string-length text)]
-    [keep : bool true])
+    [keep : bool true]
     (begin
       (while keep
         (if (> end 0)
-          (let ([c : char (string-ref text (- end 1))])
+          (let
+            [c : char (string-ref text (- end 1))]
             (if (= c #0')
               (set! end (- end 1))
               (set! keep false)))
@@ -132,7 +134,8 @@
         end))))
 
 (define (front-normalize-number [text : String]) : String
-  (let ([clean : String (front-strip-underscores text)])
+  (let
+    [clean : String (front-strip-underscores text)]
     (if (front-has-dot? clean)
       (substring clean 0 (front-trim-float-len clean))
       clean)))
@@ -161,13 +164,15 @@
     (FrontScanStep 1 0 false)))
 
 (define (front-scan-number-token [src : String] [i : i64] [n : i64]) : FrontScanStep
-  (let ([end : i64 (front-scan-number-end src i n)])
+  (let
+    [end : i64 (front-scan-number-end src i n)]
     (begin
       (front-line (front-normalize-number (substring src i (- end i))))
       (front-step-ok end))))
 
 (define (front-scan-ident-token [src : String] [i : i64] [n : i64]) : FrontScanStep
-  (let ([end : i64 (front-scan-ident-end src i n)])
+  (let
+    [end : i64 (front-scan-ident-end src i n)]
     (begin
       (front-line (substring src i (- end i)))
       (front-step-ok end))))
@@ -192,10 +197,10 @@
     [(ErrLexChar message) (front-step-error message)]))
 
 (define (front-scan-token [src : String] [i : i64] [n : i64]) : FrontScanStep
-  (let (
+  (let
     [c : char (string-ref src i)]
     [step : FrontScanStep (front-step-ok i)]
-    [handled : bool false])
+    [handled : bool false]
     (begin
       (if (is-space c)
         (begin
@@ -328,11 +333,11 @@
       step)))
 
 (define (front-tokenize-string [src : String]) : i64
-  (let (
+  (let
     [i : i64 0]
     [n : i64 (string-length src)]
     [status : i64 0]
-    [keep : bool true])
+    [keep : bool true]
     (begin
       (while (and keep (= status 0))
         (if (>= i n)
@@ -688,9 +693,9 @@
     (begin
       (front-usage)
       1)
-    (let (
+    (let
       [mode : String (arg 1)]
-      [path : String (arg 2)])
+      [path : String (arg 2)]
       (if (string-eq mode "tokenize")
         (front-tokenize-file path)
         (if (string-eq mode "parse")

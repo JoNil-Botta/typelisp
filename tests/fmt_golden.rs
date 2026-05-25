@@ -21,46 +21,49 @@ use std::process::Command;
 // `selfhost/format_rules.tl` (and the `format_rules_integration` CI case), which
 // is exactly what the driver renders via `format-rules-render-source-width src 80`.
 const DECLS_EXPECTED: &str = "(import \"std.tl\")\n\n(extern print-string : (-> String unit))\n\n(defenum Maybe\n  (Some i64)\n  (None))\n\n(defstruct Point\n  (x i64)\n  (y i64))";
-const FLOW_EXPECTED: &str = "(define (main [x : i64]) : i64\n  (begin\n    (let ([y : i64 1])\n      (if (< x y)\n        (while (< x 10)\n          (set! x (+ x 1)))\n        x))\n    (match (Some x)\n      [(Some v) v]\n      [None 0])))";
+const FLOW_EXPECTED: &str = "(define (main [x : i64]) : i64\n  (begin\n    (let\n      [y : i64 1]\n      (if (< x y)\n        (while (< x 10)\n          (set! x (+ x 1)))\n        x))\n    (match (Some x)\n      [(Some v) v]\n      [None 0])))";
 const COMMENTS_EXPECTED: &str = ";; module header\n;; keeps adjacent lines\n(import \"std.tl\")\n\n;; item docs\n;; stay attached\n(define answer : i64\n  42)\n\n(begin\n  ; keep\n  (print-string \"x\"))";
 const CHAR_LITERAL_EXPECTED: &str = "(define (is-quote [c : char]) : bool\n  (= c #''))";
 const NEGATIVE_INT_EXPECTED: &str = "(define (main) : i64\n  -128)";
 const LET_BINDINGS_EXPECTED: &str = r#"(define (one) : i64
-  (let ([x : i64 1])
+  (let
+    [x : i64 1]
     x))
 
 (define (multi) : i64
-  (let (
+  (let
     [flat : String
       (format-core-render-source-width "(foo [bar 1] baz)\n; leading\n(qux)" 80)]
     [narrow : String (format-core-render-source-width "(alpha beta gamma)" 10)]
-    [atom : String (format-core-render (FmtCstAtom (FmtSymbol "name")))])
+    [atom : String (format-core-render (FmtCstAtom (FmtSymbol "name")))]
     0))
 
 (define (long) : i64
-  (let ([value : i64
-    (add-very-long-name alpha beta gamma delta epsilon zeta eta theta)])
+  (let
+    [value : i64
+      (add-very-long-name alpha beta gamma delta epsilon zeta eta theta)]
     value))
 
 (define (unannotated) : i64
-  (let (
+  (let
     [x 1]
-    [y (+ x 1)])
+    [y (+ x 1)]
     y))
 
 (define (commented) : i64
-  (let (
+  (let
     ; keep first binding
     [x : i64 1]
     ; keep second binding
-    [y : i64 2])
+    [y : i64 2]
     (+ x y)))
 
 (define (nested) : i64
-  (let (
+  (let
     [x : i64 1]
-    [y : i64 2])
-    (let ([z : i64 (+ x y)])
+    [y : i64 2]
+    (let
+      [z : i64 (+ x y)]
       z)))"#;
 
 #[test]
@@ -81,9 +84,9 @@ fn fmt_produces_golden_output_and_is_idempotent() {
         let cases = [
             ("decls", DECLS_EXPECTED),
             ("flow", FLOW_EXPECTED),
+            ("let_bindings", LET_BINDINGS_EXPECTED),
             ("comments", COMMENTS_EXPECTED),
             ("char_literal", CHAR_LITERAL_EXPECTED),
-            ("let_bindings", LET_BINDINGS_EXPECTED),
             ("negative_int", NEGATIVE_INT_EXPECTED),
         ];
 

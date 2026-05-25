@@ -79,9 +79,9 @@
 ;; Keep the bounds check outside the `string-ref`; boolean `and` is not a
 ;; short-circuit guard in lowered TypeLisp code.
 (define (scan-int-end [src : String] [start : i64] [n : i64]) : i64
-  (let (
+  (let
     [j : i64 start]
-    [keep : bool true])
+    [keep : bool true]
     (begin
       (while keep
         (if (< j n)
@@ -120,20 +120,21 @@
 ;; for the operators and parens. The terminating `TEnd` is recorded too, so the
 ;; parser's cursor always has a sentinel to stop on.
 (define (lex [src : String] [toks : (Array Token)]) : i64
-  (let (
+  (let
     [i : i64 0]
     [n : i64 (string-length src)]
-    [count : i64 0])
+    [count : i64 0]
     (begin
       (while (< i n)
-        (let ([c : char (string-ref src i)])
+        (let
+          [c : char (string-ref src i)]
           (if (is-space c)
             (set! i (+ i 1))
             (if (is-digit c)
               ;; Accumulate a run of digits into one TInt token.
-              (let (
+              (let
                 [end : i64 (scan-int-end src i n)]
-                [acc : i64 0])
+                [acc : i64 0]
                 (begin
                   (while (< i end)
                     (begin
@@ -190,10 +191,12 @@
 ;; factor := int | '(' expr ')'
 ;; Parse one factor under the cursor and return its `Expr` node.
 (define (parse-factor [toks : (Array Token)] [cur : (Array i64)]) : Expr
-  (let ([t : i64 (current-tag toks cur)])
+  (let
+    [t : i64 (current-tag toks cur)]
     (if (= t (tag-int))
       ;; A literal: build (ENum v) and consume the TInt token.
-      (let ([v : i64 (current-val toks cur)])
+      (let
+        [v : i64 (current-val toks cur)]
         (begin
           (advance cur)
           (ENum v)))
@@ -201,7 +204,8 @@
         ;; '(' expr ')': consume '(', parse the inner expr, consume ')'.
         (begin
           (expect toks cur (tag-lparen))
-          (let ([inner : Expr (parse-expr toks cur)])
+          (let
+            [inner : Expr (parse-expr toks cur)]
             (begin
               (expect toks cur (tag-rparen))
               inner)))
@@ -214,7 +218,8 @@
 ;; Parse a factor, then fold left-associative `EMul`/`EDiv` nodes over the
 ;; following `*`/`/` factors, giving them higher precedence than `+`/`-`.
 (define (parse-term [toks : (Array Token)] [cur : (Array i64)]) : Expr
-  (let ([acc : Expr (parse-factor toks cur)])
+  (let
+    [acc : Expr (parse-factor toks cur)]
     (begin
       (while (or
         (= (current-tag toks cur) (tag-star))
@@ -233,7 +238,8 @@
 ;; following `+`/`-` terms. Because each `term` is a full `*`/`/` chain, the tree
 ;; shape gives `*`/`/` higher precedence than `+`/`-`.
 (define (parse-expr [toks : (Array Token)] [cur : (Array i64)]) : Expr
-  (let ([acc : Expr (parse-term toks cur)])
+  (let
+    [acc : Expr (parse-term toks cur)]
     (begin
       (while (or
         (= (current-tag toks cur) (tag-plus))
@@ -251,7 +257,8 @@
 ;; through `parse-expr` and return the resulting `Expr` tree. This is the
 ;; `(Array Token) -> Expr` step of the pipeline.
 (define (parse [toks : (Array Token)]) : Expr
-  (let ([cur : (Array i64) (make-array i64 1)])
+  (let
+    [cur : (Array i64) (make-array i64 1)]
     (begin
       (array-set! cur 0 0)
       (parse-expr toks cur))))
@@ -281,7 +288,8 @@
 ;; `main` returns 14: lexing, parsing, and evaluation composed in TypeLisp, an
 ;; observable result an execution test can assert as the process exit code.
 (define (main) : i64
-  (let ([toks : (Array Token) (make-array Token 16)])
+  (let
+    [toks : (Array Token) (make-array Token 16)]
     (begin
       (lex "2 + 3 * 4" toks)
       (eval (parse toks)))))

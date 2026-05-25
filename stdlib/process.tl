@@ -94,10 +94,10 @@
 
 ;;; Return true when `text` contains `needle`.
 (define (process-string-contains-char? [text : String] [needle : char]) : bool
-  (let (
+  (let
     [n : i64 (string-length text)]
     [i : i64 0]
-    [found : bool false])
+    [found : bool false]
     (begin
       (while (and (< i n) (not found))
         (begin

@@ -1,6 +1,7 @@
 (define (main [x : i64]) : i64
   (begin
-    (let ([y : i64 1])
+    (let
+      [y : i64 1]
       (if (< x y)
         (while (< x 10)
           (set! x (+ x 1)))

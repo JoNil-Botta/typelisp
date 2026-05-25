@@ -776,12 +776,13 @@
     [(SpecTemplate name params ret body)
       (match state
         [(SpecState generated cache)
-          (let ([key : String (spec-specialization-key name values)])
+          (let
+            [key : String (spec-specialization-key name values)]
             (match (spec-cache-lookup cache key)
               [(SpecSomeString cached-name) (OkSpecEnsure cached-name state)]
               [(SpecNoString)
-                (let ([generated-name : String
-                  (spec-specialized-name name values)])
+                (let
+                  [generated-name : String (spec-specialized-name name values)]
                   (match (spec-build-specialization params values)
                     [(OkSpecBuild runtime-params value-subs type-subs)
                       (match (spec-substitute-types-expr body type-subs)
@@ -790,10 +791,11 @@
                             typed-body
                             value-subs)
                             [(OkSpecSubExpr valued-body)
-                              (let ([cached-state : SpecState
-                                (SpecState
-                                  generated
-                                  (SpecCacheCons key generated-name cache))])
+                              (let
+                                [cached-state : SpecState
+                                  (SpecState
+                                    generated
+                                    (SpecCacheCons key generated-name cache))]
                                 (match (spec-rewrite-expr
                                   valued-body
                                   (spec-template-list-remove-params
@@ -1673,7 +1675,8 @@
 (define (compiler-specialize-program [program : AstProgram]) : ResultSpecProgram
   (match program
     [(AstProgram decls)
-      (let ([templates : SpecTemplateList (spec-collect-templates decls)])
+      (let
+        [templates : SpecTemplateList (spec-collect-templates decls)]
         (match templates
           [(SpecTemplateNil) (OkSpecProgram program)]
           [_

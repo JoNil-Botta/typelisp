@@ -79,6 +79,7 @@ fn compiler_typecheck_tl_compiles_to_assembly() {
         "_tl_typecheck_compiler_program:",
         "_tl_typecheck_compiler_source:",
         "_tl_compiler_typecheck_self_test:",
+        "_tl_compiler_typecheck_foreach_control_flow_tests_ok_question:",
         "_tl_compiler_typecheck_foreach_spmd_tests_ok_question:",
         "_tl_compiler_typecheck_region_tests_ok_question:",
         "_tl_compiler_typecheck_result_try_tests_ok_question:",

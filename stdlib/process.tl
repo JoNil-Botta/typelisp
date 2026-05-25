@@ -53,7 +53,6 @@
   (ProcessStringNil))
 
 ;;; Return the number of argv entries in `args`.
-
 (define (process-args-count [args : ProcessStringList]) : i64
   (match args
     [(ProcessStringNil) 0]
@@ -68,7 +67,6 @@
   (ProcessEnvNil))
 
 ;;; Return the number of env overrides in `env`.
-
 (define (process-env-count [env : ProcessEnvList]) : i64
   (match env
     [(ProcessEnvNil) 0]
@@ -207,7 +205,6 @@
     [_ false]))
 
 ;;; Return the first env validation error, or `ProcessNoString`.
-
 (define (process-env-validation-error [env : ProcessEnvList]) : ProcessMaybeString
   (match env
     [(ProcessEnvNil) (ProcessNoString)]
@@ -217,7 +214,6 @@
         (process-env-validation-error rest))]))
 
 ;;; Return the first command validation error, or `ProcessNoString`.
-
 (define (process-command-validation-error [command : ProcessCommand]) : ProcessMaybeString
   (if (string-eq (process-command-executable command) "")
     (ProcessSomeString "process: executable path is empty")
@@ -230,7 +226,6 @@
         (process-env-validation-error (process-command-env command))])))
 
 ;;; Return true when `command` passes stdlib validation.
-
 (define (process-command-valid? [command : ProcessCommand]) : bool
   (match (process-command-validation-error command)
     [(ProcessNoString) true]

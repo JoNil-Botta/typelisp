@@ -112,8 +112,9 @@ lookup behavior.
 5. Add focused fixtures under `stdlib/tests/` and list them in
    `scripts/verify-stdlib.sh`'s test manifest with expected exit/stdout/stderr.
 6. Document the intended public API coverage in `stdlib/tests/README.md`.
-7. Add `;;;;` module docs, attached `;;;` item docs, and at least one checked
-   doctest example that runs with `--stdlib-root`.
+7. Add `;;;;` module docs, attached `;;;` item docs for every public top-level
+   declaration, allocation-behavior notes for allocating APIs, and at least one
+   checked doctest example that runs with `--stdlib-root`.
 8. Run `scripts/verify-stdlib-docs.sh` to generate Markdown and run doctests
    for every stdlib module.
 9. Run `scripts/verify-doc-tests.sh` to confirm the repository-wide doctest
@@ -126,7 +127,8 @@ That makes every new canonical module and stdlib test an explicit verification
 decision.
 
 The documentation verifier discovers every `stdlib/*.tl` file directly and
-fails when module docs, item docs, generated Markdown, or doctests regress.
-The repository doctest verifier discovers documented TypeLisp files under the
-source and test trees automatically, so new doctest fences in stdlib modules do
-not require a separate doctest manifest update.
+fails when module docs, item docs for top-level declarations, generated
+Markdown, or doctests regress. The repository doctest verifier discovers
+documented TypeLisp files under the source and test trees automatically, so new
+doctest fences in stdlib modules do not require a separate doctest manifest
+update.

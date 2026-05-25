@@ -25,69 +25,87 @@
   (JsonArray JsonList)
   (JsonObject JsonMemberList))
 
+;;; Immutable list of JSON array elements in source order.
 (defenum JsonList
   (JsonListNil)
   (JsonListCons Json JsonList))
 
+;;; Immutable list of JSON object members in source order.
 (defenum JsonMemberList
   (JsonMemberListNil)
   (JsonMemberListCons String Json JsonMemberList))
 
+;;; Recoverable top-level parse result.
 (defenum JsonParseResult
   (OkJson Json)
   (ErrJson String))
 
+;;; Internal value parser result carrying the parsed value and next offset.
 (defenum JsonParseValueResult
   (OkJsonParseValue Json i64)
   (ErrJsonParseValue String))
 
+;;; Internal string parser result carrying the decoded string and next offset.
 (defenum JsonParseStringResult
   (OkJsonParseString String i64)
   (ErrJsonParseString String))
 
+;;; Internal escape parser result carrying the decoded string and next offset.
 (defenum JsonParseEscapeResult
   (OkJsonParseEscape String i64)
   (ErrJsonParseEscape String))
 
+;;; Result for decoding a supported JSON Unicode codepoint into a String.
 (defenum JsonCodepointStringResult
   (OkJsonCodepointString String)
   (ErrJsonCodepointString String))
 
+;;; Object lookup result that distinguishes missing keys from JSON null values.
 (defenum JsonLookup
   (JsonFound Json)
   (JsonMissing))
 
+;;; ASCII printable lookup table used to materialize supported codepoints.
 (define json-ascii-printable-table : String
   " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~")
 
+;;; Concatenate three strings, allocating the joined result in the active arena.
 (define (json-cat3 [a : String] [b : String] [c : String]) : String
   (string-append a (string-append b c)))
 
+;;; Concatenate four strings, allocating the joined result in the active arena.
 (define (json-cat4 [a : String] [b : String] [c : String] [d : String]) : String
   (string-append a (string-append b (string-append c d))))
 
+;;; Return the numeric scalar code for `c`.
 (define (json-char-code [c : char]) : i64
   (cast c : i64))
 
+;;; Return the numeric scalar code at `idx` in `text`.
 (define (json-char-code-at [text : String] [idx : i64]) : i64
   (json-char-code (string-ref text idx)))
 
+;;; Return true when `text[idx]` exists and has the supplied code.
 (define (json-char-code-eq-at [text : String] [idx : i64] [code : i64]) : bool
   (if (< idx (string-length text))
     (= (json-char-code-at text idx) code)
     false))
 
+;;; Return true for JSON whitespace scalar codes.
 (define (json-space-code? [code : i64]) : bool
   (or (= code 32) (or (= code 10) (or (= code 13) (= code 9)))))
 
+;;; Return true for ASCII decimal digit scalar codes.
 (define (json-digit-code? [code : i64]) : bool
   (and (>= code 48) (<= code 57)))
 
+;;; Return true when `text[idx]` exists and is an ASCII decimal digit.
 (define (json-digit-at? [text : String] [idx : i64]) : bool
   (if (< idx (string-length text))
     (json-digit-code? (json-char-code-at text idx))
     false))
 
+;;; Return the first offset at or after `pos` that is not JSON whitespace.
 (define (json-skip-ws [text : String] [pos : i64]) : i64
   (let (
     [i : i64 pos]
@@ -102,6 +120,7 @@
           (set! done true)))
       i)))
 
+;;; Return true when `prefix` occurs in `text` at `start`.
 (define (json-string-prefix-at? [text : String] [prefix : String] [start : i64]) : bool
   (let (
     [text-len : i64 (string-length text)]
@@ -120,15 +139,18 @@
               (set! ok false)))
           ok)))))
 
+;;; Reverse `items` onto `acc`, allocating a fresh active-arena list spine.
 (define (json-list-reverse-onto [items : JsonList] [acc : JsonList]) : JsonList
   (match items
     [(JsonListNil) acc]
     [(JsonListCons head rest)
       (json-list-reverse-onto rest (JsonListCons head acc))]))
 
+;;; Return `items` in reverse order.
 (define (json-list-reverse [items : JsonList]) : JsonList
   (json-list-reverse-onto items JsonListNil))
 
+;;; Reverse object `items` onto `acc`, allocating a fresh active-arena list spine.
 (define (json-member-list-reverse-onto
   [items : JsonMemberList]
   [acc : JsonMemberList]) : JsonMemberList
@@ -137,19 +159,23 @@
     [(JsonMemberListCons key value rest)
       (json-member-list-reverse-onto rest (JsonMemberListCons key value acc))]))
 
+;;; Return object `items` in reverse order.
 (define (json-member-list-reverse [items : JsonMemberList]) : JsonMemberList
   (json-member-list-reverse-onto items JsonMemberListNil))
 
+;;; Return the number of elements in a JSON array list.
 (define (json-list-count [items : JsonList]) : i64
   (match items
     [(JsonListNil) 0]
     [(JsonListCons _ rest) (+ 1 (json-list-count rest))]))
 
+;;; Return the number of key/value entries in a JSON object member list.
 (define (json-member-list-count [items : JsonMemberList]) : i64
   (match items
     [(JsonMemberListNil) 0]
     [(JsonMemberListCons _ _ rest) (+ 1 (json-member-list-count rest))]))
 
+;;; Look up `key` in an object member list.
 (define (json-member-list-get [items : JsonMemberList] [key : String]) : JsonLookup
   (match items
     [(JsonMemberListNil) JsonMissing]
@@ -158,11 +184,23 @@
         (JsonFound value)
         (json-member-list-get rest key))]))
 
+;;; Look up `key` in `value` when it is a JSON object.
+;;;
+;;; Non-object values return `JsonMissing`.
+;;;
+;;; ```typelisp
+;;; (import "stdlib/json.tl")
+;;; (define found : JsonLookup
+;;;   (json-object-get
+;;;     (JsonObject (JsonMemberListCons "name" (JsonString "tl") JsonMemberListNil))
+;;;     "name"))
+;;; ```
 (define (json-object-get [value : Json] [key : String]) : JsonLookup
   (match value
     [(JsonObject members) (json-member-list-get members key)]
     [_ JsonMissing]))
 
+;;; Decode a hexadecimal digit char, or return -1 when it is not a hex digit.
 (define (json-hex-value [c : char]) : i64
   (let ([code : i64 (json-char-code c)])
     (if (and (>= code 48) (<= code 57))
@@ -173,6 +211,7 @@
           (+ 10 (- code 97))
           -1)))))
 
+;;; Encode a value from 0 through 15 as a one-character lowercase hex string.
 (define (json-hex-digit [value : i64]) : String
   (if (= value 0)
     "0"
@@ -206,6 +245,7 @@
                                 "e"
                                 "f"))))))))))))))))
 
+;;; Return the JSON escape spelling for a control scalar code.
 (define (json-control-escape [code : i64]) : String
   (if (= code 8)
     "\\b"
@@ -223,6 +263,7 @@
               (json-hex-digit (- code (* (/ code 16) 16)))
               "")))))))
 
+;;; Return the JSON escape spelling for one string scalar code.
 (define (json-escape-char [code : i64]) : String
   (if (= code 34)
     (string-append "\\" "\"")
@@ -230,6 +271,9 @@
       (string-append "\\" "\\")
       (json-control-escape code))))
 
+;;; Escape a raw string for JSON string output.
+;;;
+;;; The returned escaped string is allocated in the active arena.
 (define (json-escape-string [text : String]) : String
   (let (
     [n : i64 (string-length text)]
@@ -252,6 +296,9 @@
             (set! i (+ i 1)))))
       (string-append out (substring text segment-start (- n segment-start))))))
 
+;;; Serialize array `items` without the surrounding brackets.
+;;;
+;;; The returned comma-separated string is allocated in the active arena.
 (define (json-stringify-list [items : JsonList]) : String
   (match items
     [(JsonListNil) ""]
@@ -261,6 +308,9 @@
         [(JsonListCons _ _)
           (json-cat3 (json-stringify head) "," (json-stringify-list rest))])]))
 
+;;; Serialize object `items` without the surrounding braces.
+;;;
+;;; The returned comma-separated member string is allocated in the active arena.
 (define (json-stringify-members [items : JsonMemberList]) : String
   (match items
     [(JsonMemberListNil) ""]
@@ -272,6 +322,15 @@
           [(JsonMemberListCons _ _ _)
             (json-cat3 item "," (json-stringify-members rest))]))]))
 
+;;; Serialize a JSON value to canonical compact JSON text.
+;;;
+;;; The returned string is allocated in the active arena.
+;;;
+;;; ```typelisp
+;;; (import "stdlib/json.tl")
+;;; (define encoded : String
+;;;   (json-stringify (JsonArray (JsonListCons (JsonBool true) JsonListNil))))
+;;; ```
 (define (json-stringify [value : Json]) : String
   (match value
     [(JsonNull) "null"]
@@ -284,6 +343,10 @@
     [(JsonArray items) (json-cat3 "[" (json-stringify-list items) "]")]
     [(JsonObject members) (json-cat3 "{" (json-stringify-members members) "}")]))
 
+;;; Convert a supported Unicode scalar codepoint into a TypeLisp String.
+;;;
+;;; Only tab, newline, carriage return, and printable ASCII are supported today.
+;;; Successful decoded strings allocate in the active arena.
 (define (json-codepoint-string [code : i64]) : JsonCodepointStringResult
   (if (= code 9)
     (OkJsonCodepointString "\t")
@@ -297,6 +360,7 @@
           (ErrJsonCodepointString
             "json: unicode escape outside supported string range"))))))
 
+;;; Parse four hex digits after a `\u` escape and return the decoded string.
 (define (json-parse-unicode-escape [text : String] [pos : i64]) : JsonParseEscapeResult
   (let ([n : i64 (string-length text)])
     (if (> (+ pos 4) n)
@@ -323,6 +387,9 @@
               [(ErrJsonCodepointString err) (ErrJsonParseEscape err)])
             (ErrJsonParseEscape message)))))))
 
+;;; Parse a JSON string escape at `pos`.
+;;;
+;;; Successful decoded strings allocate in the active arena.
 (define (json-parse-escape [text : String] [pos : i64]) : JsonParseEscapeResult
   (if (>= pos (string-length text))
     (ErrJsonParseEscape "json: unterminated JSON escape")
@@ -343,6 +410,9 @@
                     (json-parse-unicode-escape text (+ pos 1))
                     (ErrJsonParseEscape "json: unsupported JSON string escape")))))))))))
 
+;;; Parse a JSON string starting at `pos`, including the opening quote.
+;;;
+;;; The decoded string is allocated in the active arena.
 (define (json-parse-string [text : String] [pos : i64]) : JsonParseStringResult
   (if (not (json-char-code-eq-at text pos 34))
     (ErrJsonParseString "json: expected string")
@@ -399,6 +469,7 @@
           (OkJsonParseString out i)
           (ErrJsonParseString message))))))
 
+;;; Return the first offset at or after `pos` that is not an ASCII digit.
 (define (json-consume-digits [text : String] [pos : i64]) : i64
   (let (
     [i : i64 pos]
@@ -410,6 +481,9 @@
           (set! done true)))
       i)))
 
+;;; Parse a JSON number starting at `pos`.
+;;;
+;;; The numeric spelling is kept as a String allocated in the active arena.
 (define (json-parse-number [text : String] [pos : i64]) : JsonParseValueResult
   (let (
     [n : i64 (string-length text)]
@@ -473,6 +547,7 @@
         (OkJsonParseValue (JsonNumber (substring text pos (- i pos))) i)
         (ErrJsonParseValue message)))))
 
+;;; Parse `keyword` at `pos` and return its fixed JSON value.
 (define (json-parse-keyword
   [text : String]
   [pos : i64]
@@ -482,6 +557,9 @@
     (OkJsonParseValue value (+ pos (string-length keyword)))
     (ErrJsonParseValue "json: expected keyword")))
 
+;;; Parse a JSON array starting at `pos`, including the opening bracket.
+;;;
+;;; The returned array list and nested values are allocated in the active arena.
 (define (json-parse-array [text : String] [pos : i64]) : JsonParseValueResult
   (let (
     [i : i64 (json-skip-ws text (+ pos 1))]
@@ -518,6 +596,9 @@
         (OkJsonParseValue (JsonArray (json-list-reverse items)) i)
         (ErrJsonParseValue message)))))
 
+;;; Parse a JSON object starting at `pos`, including the opening brace.
+;;;
+;;; The returned member list, keys, and nested values allocate in the active arena.
 (define (json-parse-object [text : String] [pos : i64]) : JsonParseValueResult
   (let (
     [i : i64 (json-skip-ws text (+ pos 1))]
@@ -565,6 +646,9 @@
         (OkJsonParseValue (JsonObject (json-member-list-reverse members)) i)
         (ErrJsonParseValue message)))))
 
+;;; Parse one JSON value from `text` at `pos`, after skipping whitespace.
+;;;
+;;; Returned aggregate, string, and number values allocate in the active arena.
 (define (json-parse-value [text : String] [pos : i64]) : JsonParseValueResult
   (let (
     [i : i64 (json-skip-ws text pos)]
@@ -592,6 +676,14 @@
                       (ErrJsonParseValue
                         "json: unexpected character while parsing value"))))))))))))
 
+;;; Parse an entire JSON document with recoverable errors.
+;;;
+;;; Successful values and decoded strings allocate in the active arena.
+;;;
+;;; ```typelisp
+;;; (import "stdlib/json.tl")
+;;; (define parsed : JsonParseResult (json-parse "{\"ok\":true}"))
+;;; ```
 (define (json-parse [text : String]) : JsonParseResult
   (match (json-parse-value text 0)
     [(OkJsonParseValue value pos)

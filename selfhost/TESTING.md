@@ -244,6 +244,20 @@ manifested top-level stdlib module. The smoke driver
 anchors, CSS asset marker, duplicate output detection, manifest count guard, and
 HTML escaping behavior without depending on file-system writes.
 
+To validate the on-disk site end to end (build it, run the smoke driver, and
+check that required pages/assets exist and every local link and anchor
+resolves), run the non-publishing verifier:
+
+```sh
+TYPELISP_BIN=target/debug/typelisp scripts/verify-doc-site.sh
+```
+
+It builds into `target/doc-site-verify/`, asserts `doc_site_smoke.tl` passes
+(exit 42), and fails on a build error, a missing required page, a dead local
+link, or an unresolved anchor. CI runs it on pull requests and default-branch
+pushes without deploying; the GitHub Pages publish workflow (#874) gates on it
+before uploading the artifact.
+
 ### CI expectations
 
 Pull requests get Linux and Windows no-Rust stage0 coverage from

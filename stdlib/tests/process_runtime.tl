@@ -64,6 +64,34 @@
     "/usr/bin/printf"
     (process-args-single "typelisp-process-runtime")))
 
+(define (process-runtime-cwd-command) : ProcessCommand
+  (process-command-with-cwd
+    (process-command
+      "/usr/bin/test"
+      (process-args-cons "-f" (process-args-single "process.tl")))
+    "stdlib"))
+
+(define (process-runtime-env-command) : ProcessCommand
+  (process-command-with-env
+    (process-command
+      "/usr/bin/printenv"
+      (process-args-single "TYPELISP_PROCESS_RUNTIME_ENV"))
+    "TYPELISP_PROCESS_RUNTIME_ENV"
+    "process-env-value"))
+
+(define (process-runtime-env-override-command) : ProcessCommand
+  (process-command-with-env
+    (process-command
+      "/usr/bin/printenv"
+      (process-args-single "TYPELISP_STDLIB_TEST_VALUE"))
+    "TYPELISP_STDLIB_TEST_VALUE"
+    "process-override"))
+
+(define (process-runtime-stdin-command) : ProcessCommand
+  (process-command-with-stdin
+    (process-command "/usr/bin/cat" (process-args-empty))
+    "stdin-from-typelisp"))
+
 (define (main) : i64
   (if (string-eq (env-path-list-separator) ";")
     (begin
@@ -78,6 +106,30 @@
         "typelisp-process-runtime"
         ""
         "process stdout capture")
+      (assert-process-ok
+        (process-output (process-runtime-cwd-command))
+        0
+        ""
+        ""
+        "process cwd")
+      (assert-process-ok
+        (process-output (process-runtime-env-command))
+        0
+        "process-env-value\n"
+        ""
+        "process env override")
+      (assert-process-ok
+        (process-output (process-runtime-env-override-command))
+        0
+        "process-override\n"
+        ""
+        "process env override replaces inherited")
+      (assert-process-ok
+        (process-output (process-runtime-stdin-command))
+        0
+        "stdin-from-typelisp"
+        ""
+        "process stdin")
       (assert-process-ok
         (process-output (process-command "/usr/bin/false" (process-args-empty)))
         1

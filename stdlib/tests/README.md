@@ -2,8 +2,10 @@
 
 `scripts/verify-stdlib.sh` runs the fixtures listed in its
 `stdlib_test_manifest` table. Each row maps a fixture path to the expected exit
-code, stdout, and stderr. Use `-` for an empty stream, `literal:<text>` for an
-exact inline stream without a trailing newline, or a path under this directory
+code, stdout, stderr, and optional stdin. Use `-` for an empty stream,
+`literal:<text>` for exact inline text without a trailing newline,
+`printf:<escapes>` for printf-style escapes, `host-line:<text>` for one line
+using the host executable's newline convention, or a path under this directory
 for exact expected output bytes.
 
 Coverage notes:
@@ -19,6 +21,10 @@ Coverage notes:
   `try-write-file`, `try-file-exists?`, `try-append-file`, `read-file-or`,
   `append-file`, and `file-nonempty?` on missing, empty-path, empty-file, and
   existing-file paths without masking host I/O failures.
+- `io_stdio_lines.tl` covers stdin line wrappers, blank-line vs EOF state,
+  stdout/stderr write-line helpers, and stdout flushing with fixture stdin.
+- `io_stdio_bytes.tl` covers fixed-byte stdin wrappers, short reads at EOF, and
+  zero-byte reads preserving the sticky EOF state.
 - `env_api.tl` covers missing, empty, and present environment variables,
   host-separator PATH splitting/joining, and explicit Windows `;` path-list
   behavior.

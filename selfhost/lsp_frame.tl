@@ -3,6 +3,8 @@
 ;; This driver owns JSON-RPC/LSP Content-Length framing over stdin/stdout plus
 ;; the first selfhost protocol loop: initialize/shutdown, document tracking, and
 ;; diagnostics for full-document open/change notifications.
+(import "stdlib/io.tl")
+
 (import "stdlib/json.tl")
 
 (import "compiler_check_core.tl")
@@ -159,8 +161,10 @@
       (while (not done)
         (if (string-eq err "")
           (let
-            [line : String (lsp-frame-trim-right-space-cr (read-stdin-line))]
-            (if (stdin-eof?)
+            [line-read : StdinRead (stdin-read-line)]
+            [line : String
+              (lsp-frame-trim-right-space-cr (stdin-read-text line-read))]
+            (if (stdin-read-eof? line-read)
               (if (= (string-length line) 0)
                 (if saw-header
                   (begin
@@ -197,21 +201,24 @@
           (if (< content-length 0)
             (LspFrameErr "lsp: missing Content-Length")
             (let
-              [payload : String (read-stdin-bytes content-length)]
-              (if (and (stdin-eof?) (< (string-length payload) content-length))
+              [payload-read : StdinRead (stdin-read-bytes content-length)]
+              [payload : String (stdin-read-text payload-read)]
+              (if (and
+                (stdin-read-eof? payload-read)
+                (< (string-length payload) content-length))
                 (LspFrameErr "lsp: truncated payload")
                 (LspFrameOk payload)))))))))
 
 (define (lsp-frame-write-body [body : String]) : unit
   (begin
-    (print-string
+    (stdout-write
       (lsp-frame-cat5
         "Content-Length: "
         (int->string (string-length body))
         "\r\n\r\n"
         body
         ""))
-    (flush-stdout)))
+    (stdout-flush)))
 
 (define (lsp-json-number [value : i64]) : Json
   (JsonNumber (int->string value)))
@@ -723,7 +730,7 @@
           [(LspFrameErr message)
             (begin
               (lsp-write-parse-error message)
-              (print-error message)
+              (stderr-write message)
               (set! status 1)
               (set! done true))]))
       status)))

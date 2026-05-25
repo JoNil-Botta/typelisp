@@ -87,6 +87,7 @@ fn compiler_parse_core_tl_compiles_to_assembly() {
         "_tl_parse_ast_match:",
         "_tl_parse_ast_foreach:",
         "_tl_parse_ast_with_region:",
+        "_tl_parse_ast_try:",
         "_tl_parse_ast_cond:",
         "_tl_compiler_parse_smoke:",
         "_tl_compiler_parse_nested_expr_span_ok_question:",
@@ -121,6 +122,7 @@ fn compiler_parse_core_tl_compiles_to_assembly() {
         "parse: malformed if",
         "parse: malformed while",
         "parse: malformed set!",
+        "parse: try expects exactly one expression",
         "parse: error-path self-tests failed",
     ] {
         assert_message(&asm, message, "compiler_parse_core");
@@ -132,6 +134,7 @@ fn compiler_parse_core_tl_compiles_to_assembly() {
         "(define (main) : i64 (+ 1 (* 2 3)))",
         "(define (main) : f64 1.5)",
         "(with-region r \\\"x\\\")",
+        "(try (read))",
         "(define (main) : (in r String)",
         "(define)",
         "(cond",

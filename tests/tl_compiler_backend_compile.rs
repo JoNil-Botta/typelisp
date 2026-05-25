@@ -306,6 +306,10 @@ fn compiler_optimize_tl_compiles_to_assembly() {
         "_tl_opt_copy_instrs:",
         "_tl_opt_copy_invalidate_var:",
         "_tl_compiler_optimize_copy_self_test:",
+        // Fixed-point optimizer iteration (#923).
+        "_tl_optimize_function_once:",
+        "_tl_optimize_function_fixed:",
+        "_tl_compiler_optimize_fixed_point_self_test:",
     ] {
         assert_symbol(&asm, sym, "compiler_optimize");
     }
@@ -348,11 +352,16 @@ fn compile_tl_compiles_to_assembly() {
         "_tl_compile_cli_parse_options:",
         "_tl_compile_cli_target:",
         "_tl_compile_cli_default_output:",
+        "_tl_compile_cli_root_list_append:",
         "_tl_compiler_driver_compile_file:",
+        "_tl_compiler_driver_compile_file_with_roots:",
         "_tl_compiler_driver_compile_file_for_target:",
+        "_tl_compiler_driver_compile_file_for_target_with_roots:",
         "_tl_compiler_driver_emit_file_for_target:",
+        "_tl_compiler_driver_emit_file_with_target_and_roots:",
         "_tl_compiler_backend_emit_program_with_spans_for_target:",
         "_tl_compiler_load_file:",
+        "_tl_compiler_load_file_with_path",
     ] {
         assert_symbol(&asm, sym, "compile");
     }
@@ -363,6 +372,7 @@ fn compile_tl_compiles_to_assembly() {
         "compile: -o was provided more than once",
         "compile: --target requires a value",
         "compile: --target was provided more than once",
+        "compile: --stdlib-root requires a value",
         "Error: unknown target '",
         "'. Expected linux-x86_64 or windows-x86_64",
         "--emit-ir",

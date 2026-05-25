@@ -1317,6 +1317,48 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
         explicit_text
     );
 
+    let stdlib_root = dir.join("repo-stdlib");
+    fs::create_dir_all(&stdlib_root).expect("create selfhost compile stdlib root");
+    fs::write(
+        stdlib_root.join("math.tl"),
+        "(define (bump [x : i64]) : i64 (+ x 1))\n",
+    )
+    .expect("write selfhost compile stdlib fixture");
+    let stdlib_source = dir.join("stdlib-main.tl");
+    let stdlib_asm = dir.join("stdlib-main.s");
+    fs::write(
+        &stdlib_source,
+        "(import \"stdlib/math.tl\")\n(define (main) : i64 (bump 41))\n",
+    )
+    .expect("write selfhost compile stdlib-root source");
+    let stdlib_source_arg = stdlib_source.to_str().expect("stdlib source path is utf-8");
+    let stdlib_asm_arg = stdlib_asm.to_str().expect("stdlib asm path is utf-8");
+    let stdlib_root_arg = stdlib_root.to_str().expect("stdlib root path is utf-8");
+    let stdlib_compile = Command::new(&driver_bin)
+        .args([
+            stdlib_source_arg,
+            "--stdlib-root",
+            stdlib_root_arg,
+            "-o",
+            stdlib_asm_arg,
+        ])
+        .output()
+        .expect("run selfhost compile driver with stdlib-root");
+    assert!(
+        stdlib_compile.status.success(),
+        "selfhost compile stdlib-root failed\nstdout:\n{}\nstderr:\n{}",
+        stdout(&stdlib_compile),
+        stderr(&stdlib_compile)
+    );
+    assert_eq!(stdout(&stdlib_compile), "");
+    assert_eq!(stderr(&stdlib_compile), "");
+    let stdlib_asm_text = fs::read_to_string(&stdlib_asm).expect("read stdlib asm");
+    assert!(
+        stdlib_asm_text.contains("bump:"),
+        "stdlib-root assembly missing imported function:\n{}",
+        stdlib_asm_text
+    );
+
     let explicit_linux_asm = dir.join("explicit-linux.s");
     let explicit_linux_asm_arg = explicit_linux_asm
         .to_str()
@@ -2803,6 +2845,7 @@ fn run_selfhost_repl(name: &str, stdin: &str) -> Output {
         }
     }
     let source = dir.join("repl.tl");
+    let stdlib_root = manifest_dir.join("stdlib");
     let exe = dir.join(if cfg!(target_os = "windows") {
         "repl.exe"
     } else {
@@ -2810,7 +2853,13 @@ fn run_selfhost_repl(name: &str, stdin: &str) -> Output {
     });
 
     let mut build = Command::new(env!("CARGO_BIN_EXE_typelisp"));
-    build.arg("build").arg(&source).arg("-o").arg(&exe);
+    build
+        .arg("build")
+        .arg(&source)
+        .arg("--stdlib-root")
+        .arg(&stdlib_root)
+        .arg("-o")
+        .arg(&exe);
     if cfg!(target_os = "windows") {
         build.arg("--target").arg("windows-x86_64");
     }

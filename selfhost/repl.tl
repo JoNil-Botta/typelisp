@@ -17,6 +17,8 @@
 ;; Multiline input is accumulated until its delimiters are complete. Parse and
 ;; type errors report diagnostics, discard only the failing input, and return to
 ;; the prompt with previously accepted declarations intact.
+(import "stdlib/io.tl")
+
 (import "compiler_typecheck.tl")
 
 (defenum ReplTypeCommand
@@ -35,8 +37,8 @@
 ;; Print the prompt and flush stdout so it is visible before the blocking read.
 (define (repl-prompt) : unit
   (begin
-    (print-string "tl> ")
-    (flush-stdout)))
+    (stdout-write "tl> ")
+    (stdout-flush)))
 
 ;; `line` begins with `.` (a dot command). Empty lines are handled safely.
 (define (repl-dot-command? [line : String]) : bool
@@ -131,12 +133,10 @@
     [(AstTyVar name) (string-append "'" (string-append name "'"))]))
 
 (define (repl-print-error-line [message : String]) : unit
-  (print-error (string-append message "\n")))
+  (stderr-write-line message))
 
 (define (repl-report-diagnostic [diag : CompilerDiagnostic]) : unit
-  (begin
-    (print-error (compiler-diagnostic-render diag))
-    (print-error "\n")))
+  (stderr-write-line (compiler-diagnostic-render diag)))
 
 (define (repl-handle-type-command
   [session-source : String]
@@ -153,8 +153,7 @@
             (match (parse-ast-source session-source)
               [(OkAstProgram (AstProgram decls))
                 (match (typecheck-compiler-repl-expr decls expr)
-                  [(OkTcType ty)
-                    (print-string (string-append (repl-type-render ty) "\n"))]
+                  [(OkTcType ty) (stdout-write-line (repl-type-render ty))]
                   [(ErrTcType message)
                     (repl-print-error-line (string-append "Error: " message))])]
               [(ErrAstProgram message)
@@ -180,7 +179,7 @@
                   session-source)]))]
         [(AstReplExpr _)
           (begin
-            (print-error
+            (stderr-write
               "REPL evaluation is not implemented yet. Type .help for commands.\n")
             session-source)])]
     [(ErrAstReplItem message)
@@ -365,12 +364,12 @@
         [(ReplNoTypeCommand)
           (if (string-eq line ".help")
             (begin
-              (print-string (repl-help-text))
+              (stdout-write (repl-help-text))
               (ReplLineResult session-source ""))
             (if (repl-dot-command? line)
               (begin
-                (print-error (string-append "Unknown REPL command: " line))
-                (print-error "\nType .help for commands.\n")
+                (stderr-write (string-append "Unknown REPL command: " line))
+                (stderr-write "\nType .help for commands.\n")
                 (ReplLineResult session-source ""))
               (repl-handle-source-line session-source pending line)))]))
     (repl-handle-source-line session-source pending line)))
@@ -379,12 +378,13 @@
 (define (repl-loop [session-source : String] [pending : String]) : unit
   (begin
     (repl-prompt)
-    (if (stdin-eof?)
+    (if (stdin-at-eof?)
       (if (string-eq pending "")
         unit
-        (print-error "Error: incomplete REPL input at EOF\n"))
+        (stderr-write "Error: incomplete REPL input at EOF\n"))
       (let
-        [line : String (read-stdin-line)]
+        [line-read : StdinRead (stdin-read-line)]
+        [line : String (stdin-read-text line-read)]
         (if (and (string-eq pending "") (string-eq line ".exit"))
           unit
           (match (repl-handle-line session-source pending line)
@@ -393,6 +393,6 @@
 
 (define (main) : i64
   (begin
-    (print-string (repl-banner))
+    (stdout-write (repl-banner))
     (repl-loop "" "")
     0))

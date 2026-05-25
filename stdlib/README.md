@@ -12,8 +12,9 @@ installed-root discovery, namespace isolation, or an implicit prelude.
 
 ## Current Modules
 
-- `io.tl`: file I/O helpers and monomorphic Result-style I/O error APIs built
-  on compiler/runtime primitives. Import it with `(import "stdlib/io.tl")`.
+- `io.tl`: file I/O helpers, stdio wrappers, and monomorphic Result-style I/O
+  error APIs built on compiler/runtime primitives. Import it with
+  `(import "stdlib/io.tl")`.
 - `env.tl`: recoverable environment variable lookup and PATH-style list
   helpers. Import it with `(import "stdlib/env.tl")`.
 - `json.tl`: JSON value parser and serializer for tool protocols and data
@@ -57,6 +58,9 @@ returned caller-owned values.
 | `read-file-or` | Convenience wrapper over `try-read-file`; returns the caller-provided `fallback` for every structured error. |
 | `append-file` | Panic-on-error convenience wrapper over `try-append-file`. It allocates temporary active-arena strings and rewrites the whole file. |
 | `file-nonempty?` | Convenience wrapper over `try-read-file`; allocates a temporary active-arena `String` through `read-file` only when the path exists. |
+| `stdin-read-line`, `stdin-read-bytes` | Return `StdinRead` aggregates containing a runtime-allocated active-arena `String` plus the post-read sticky EOF state. Byte reads still use `String` storage until #807 adds byte-slice/string separation. |
+| `stdin-at-eof?`, `stdin-read-text`, `stdin-read-eof?`, `stdout-write`, `stderr-write`, `stdout-flush` | Non-allocating wrappers/accessors around runtime stdio primitives and `StdinRead` values. |
+| `stdout-write-line`, `stderr-write-line` | Allocate a newline-appended active-arena `String` via `string-append`, then write it to the target stream. |
 | `env-get`, `env-path-list`, `env-path-split`, `env-path-join` | Environment values and split/join results allocate fresh active-arena Strings/lists when runtime values are read or string pieces are created; missing variables return explicit `EnvNo*` options. |
 | `process-*` helpers | Construct process command/output/error aggregates in the active arena. Ordered argv append helpers allocate list nodes; validators inspect executable/env/cwd metadata and reject invalid env names. `process-run` and `process-output` currently return structured errors and do not spawn child processes. |
 | `assert-*` helpers in `test.tl` | Non-allocating checks on success; failures call `panic` with the caller-provided message. |

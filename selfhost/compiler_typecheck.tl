@@ -26,6 +26,13 @@
   (OkTcString String)
   (ErrTcString String))
 
+(defenum TcResultInfo
+  (TcResultInfo String String AstType String AstType))
+
+(defenum ResultTcResultInfo
+  (OkTcResultInfo TcResultInfo)
+  (ErrTcResultInfo String))
+
 (defenum TcMaybeString
   (TcNoString)
   (TcSomeString String))
@@ -111,6 +118,21 @@
 
 (define (tc-region-marker-name) : String
   "__tl_active_region")
+
+(define (tc-return-type-name) : String
+  "__tl_return_type")
+
+(define (tc-bind-return-type [env : TcTypeEnv] [ty : AstType]) : TcTypeEnv
+  (tc-bind env (tc-return-type-name) ty))
+
+(define (tc-current-return-type [env : TcTypeEnv]) : ResultTcType
+  (match env
+    [(TcTypeNil)
+      (ErrTcType "typecheck: try requires enclosing Result-like function")]
+    [(TcTypeBind key ty rest)
+      (if (string-eq key (tc-return-type-name))
+        (OkTcType ty)
+        (tc-current-return-type rest))]))
 
 (define (tc-type-list1 [a : AstType]) : AstTypeList
   (AstTypeCons a AstTypeNil))
@@ -848,6 +870,7 @@
     [(AstExprStructGet receiver _) (tc-source-expr-policy-ok ctx receiver)]
     [(AstExprWithRegion _ body) (tc-source-expr-list-policy-ok ctx body)]
     [(AstExprComptime inner) (tc-source-expr-policy-ok ctx inner)]
+    [(AstExprTry inner) (tc-source-expr-policy-ok ctx inner)]
     [_ OkTcUnit]))
 
 (define (tc-source-decl-policy-ok [ctx : TcContext] [decl : AstDecl]) : ResultTcUnit
@@ -1902,7 +1925,8 @@
       (tc-expr-uses-free-name? receiver name bound)]
     [(AstExprWithRegion _ body) (tc-expr-list-uses-free-name? body name bound)]
     [(AstExprTypeLiteral _) false]
-    [(AstExprComptime inner) (tc-expr-uses-free-name? inner name bound)]))
+    [(AstExprComptime inner) (tc-expr-uses-free-name? inner name bound)]
+    [(AstExprTry inner) (tc-expr-uses-free-name? inner name bound)]))
 
 (define (tc-check-lambda-region-captures-scan
   [env : TcTypeEnv]
@@ -1973,6 +1997,152 @@
 (define (tc-program-enum-variants [program : AstProgram] [enum-name : String]) : ResultAstVariantDefList
   (match program
     [(AstProgram decls) (tc-program-enum-variants-list decls enum-name)]))
+
+(define (tc-string-prefix? [text : String] [prefix : String]) : bool
+  (let
+    [text-len : i64 (string-length text)]
+    [prefix-len : i64 (string-length prefix)]
+    (if (< text-len prefix-len)
+      false
+      (string-eq (substring text 0 prefix-len) prefix))))
+
+(define (tc-result-info-enum-name [info : TcResultInfo]) : String
+  (match info
+    [(TcResultInfo enum-name _ _ _ _) enum-name]))
+
+(define (tc-result-info-ok-name [info : TcResultInfo]) : String
+  (match info
+    [(TcResultInfo _ ok-name _ _ _) ok-name]))
+
+(define (tc-result-info-ok-type [info : TcResultInfo]) : AstType
+  (match info
+    [(TcResultInfo _ _ ok-ty _ _) ok-ty]))
+
+(define (tc-result-info-err-name [info : TcResultInfo]) : String
+  (match info
+    [(TcResultInfo _ _ _ err-name _) err-name]))
+
+(define (tc-result-info-err-type [info : TcResultInfo]) : AstType
+  (match info
+    [(TcResultInfo _ _ _ _ err-ty) err-ty]))
+
+(define (tc-ok-variant-name? [name : String]) : bool
+  (tc-string-prefix? name "Ok"))
+
+(define (tc-err-variant-name? [name : String]) : bool
+  (tc-string-prefix? name "Err"))
+
+(define (tc-result-variant-payload-type
+  [ctx : TcContext]
+  [variant-name : String]
+  [fields : AstTypeList]) : ResultTcType
+  (match fields
+    [(AstTypeCons field AstTypeNil) (OkTcType (tc-resolve-type ctx field))]
+    [_
+      (ErrTcType
+        (string-append
+          "typecheck: try requires Result-like variant with one payload "
+          variant-name))]))
+
+(define (tc-result-info-build
+  [ctx : TcContext]
+  [enum-name : String]
+  [ok-name : String]
+  [ok-fields : AstTypeList]
+  [err-name : String]
+  [err-fields : AstTypeList]) : ResultTcResultInfo
+  (match (tc-result-variant-payload-type ctx ok-name ok-fields)
+    [(OkTcType ok-ty)
+      (match (tc-result-variant-payload-type ctx err-name err-fields)
+        [(OkTcType err-ty)
+          (OkTcResultInfo
+            (TcResultInfo enum-name ok-name ok-ty err-name err-ty))]
+        [(ErrTcType message) (ErrTcResultInfo message)])]
+    [(ErrTcType message) (ErrTcResultInfo message)]))
+
+(define (tc-result-info-two-variants
+  [ctx : TcContext]
+  [enum-name : String]
+  [first-name : String]
+  [first-fields : AstTypeList]
+  [second-name : String]
+  [second-fields : AstTypeList]) : ResultTcResultInfo
+  (if (and (tc-ok-variant-name? first-name) (tc-err-variant-name? second-name))
+    (tc-result-info-build
+      ctx
+      enum-name
+      first-name
+      first-fields
+      second-name
+      second-fields)
+    (if (and
+      (tc-err-variant-name? first-name)
+      (tc-ok-variant-name? second-name))
+      (tc-result-info-build
+        ctx
+        enum-name
+        second-name
+        second-fields
+        first-name
+        first-fields)
+      (ErrTcResultInfo
+        "typecheck: try requires Result-like enum with Ok*/Err* variants"))))
+
+(define (tc-result-info-from-variants
+  [ctx : TcContext]
+  [enum-name : String]
+  [variants : AstVariantDefList]) : ResultTcResultInfo
+  (match variants
+    [(AstVariantDefCons first (AstVariantDefCons second AstVariantDefNil))
+      (match first
+        [(AstVariantDef first-name first-fields)
+          (match second
+            [(AstVariantDef second-name second-fields)
+              (tc-result-info-two-variants
+                ctx
+                enum-name
+                first-name
+                first-fields
+                second-name
+                second-fields)])])]
+    [_
+      (ErrTcResultInfo
+        "typecheck: try requires Result-like enum with exactly two variants")]))
+
+(define (tc-result-info [ctx : TcContext] [ty : AstType]) : ResultTcResultInfo
+  (match (tc-type-strip-region ty)
+    [(AstTyEnum enum-name)
+      (match (tc-program-enum-variants (tc-context-program ctx) enum-name)
+        [(OkAstVariantDefList variants)
+          (tc-result-info-from-variants ctx enum-name variants)]
+        [(ErrAstVariantDefList message) (ErrTcResultInfo message)])]
+    [_ (ErrTcResultInfo "typecheck: try requires Result-like enum")]))
+
+(define (tc-try-expr [ctx : TcContext] [env : TcTypeEnv] [inner : AstExpr]) : ResultTcType
+  (match (tc-expr ctx env inner)
+    [(OkTcType operand-ty)
+      (match (tc-result-info ctx operand-ty)
+        [(OkTcResultInfo operand-info)
+          (match (tc-current-return-type env)
+            [(OkTcType return-ty)
+              (match (tc-result-info ctx return-ty)
+                [(OkTcResultInfo return-info)
+                  (match (tc-expect
+                    (tc-result-info-err-type operand-info)
+                    (tc-result-info-err-type return-info)
+                    "typecheck: try error type mismatch")
+                    [(OkTcUnit)
+                      (OkTcType (tc-result-info-ok-type operand-info))]
+                    [(ErrTcUnit message) (ErrTcType message)])]
+                [(ErrTcResultInfo _)
+                  (ErrTcType
+                    "typecheck: try requires enclosing Result-like function")])]
+            [(ErrTcType _)
+              (ErrTcType
+                "typecheck: try requires enclosing Result-like function")])]
+        [(ErrTcResultInfo _)
+          (ErrTcType "typecheck: try operand must be Result-like enum")])]
+    [(ErrTcType message) (ErrTcType message)]))
 
 (define (tc-variant-owner-name [ctx : TcContext] [handle : i64]) : ResultTcString
   (match (tc-context-program ctx)
@@ -2443,7 +2613,16 @@
       (match (tc-check-lambda-region-captures env params body)
         [(OkTcUnit)
           (let
-            [lambda-env : TcTypeEnv (tc-bind-params ctx env params)]
+            [lambda-env : TcTypeEnv
+              (match maybe-ret
+                [(AstSomeType ret)
+                  (tc-bind-return-type
+                    (tc-bind-params ctx env params)
+                    (tc-resolve-type ctx ret))]
+                [(AstNoType)
+                  (tc-bind-return-type
+                    (tc-bind-params ctx env params)
+                    (AstTyNever))])]
             (match (tc-expr ctx lambda-env body)
               [(OkTcType body-ty)
                 (if (tc-type-contains-any-region body-ty)
@@ -2766,6 +2945,7 @@
                     (tc-type-render (tc-resolve-type ctx ty))
                     " is compile-time only")))])]
         [(ErrCtfe diag) (ErrTcType (compiler-diagnostic-message diag))])]
+    [(AstExprTry inner) (tc-try-expr ctx env inner)]
     [_ (ErrTcType "typecheck: unsupported expression")]))
 
 (define (tc-summary-add-decl
@@ -2802,7 +2982,10 @@
             [(ErrTcType message) (ErrTcUnit message)])])]
     [(AstDeclDefFn _ params ret body)
       (let
-        [env : TcTypeEnv (tc-bind-params ctx top-env params)]
+        [env : TcTypeEnv
+          (tc-bind-return-type
+            (tc-bind-params ctx top-env params)
+            (tc-resolve-type ctx ret))]
         (match (tc-expr ctx env body)
           [(OkTcType got)
             (match (tc-expect
@@ -3285,6 +3468,59 @@
                 (compiler-typecheck-ok?
                   (compiler-typecheck-region-match-source))))))))))
 
+(define (compiler-typecheck-result-try-source) : String
+  "(defenum ResultI64 (OkI64 i64) (ErrI64 String))
+(define (read [flag : bool]) : ResultI64
+  (if flag (OkI64 41) (ErrI64 \"read failed\")))
+(define (step [flag : bool]) : ResultI64
+  (OkI64 (try (read flag))))
+(define (main [a : bool] [b : bool]) : ResultI64
+  (let ([x : i64 (try (step a))]
+        [y : i64 0])
+    (begin
+      (set! y (try (read b)))
+      (OkI64 (+ x y)))))")
+
+(define (compiler-typecheck-result-try-non-result-source) : String
+  "(defenum ResultI64 (OkI64 i64) (ErrI64 String))
+(define (main) : ResultI64
+  (OkI64 (try 1)))")
+
+(define (compiler-typecheck-result-try-non-result-return-source) : String
+  "(defenum ResultI64 (OkI64 i64) (ErrI64 String))
+(define (read) : ResultI64 (OkI64 1))
+(define (main) : i64
+  (try (read)))")
+
+(define (compiler-typecheck-result-try-incompatible-error-source) : String
+  "(defenum ResultI64 (OkI64 i64) (ErrI64 String))
+(defenum OtherResult (OkOther i64) (ErrOther i64))
+(define (read) : OtherResult (ErrOther 7))
+(define (main) : ResultI64
+  (OkI64 (try (read))))")
+
+(define (compiler-typecheck-result-try-panic-source) : String
+  "(defenum ResultI64 (OkI64 i64) (ErrI64 String))
+(define (main [flag : bool]) : ResultI64
+  (if flag (panic \"stop\") (OkI64 1)))")
+
+(define (compiler-typecheck-result-try-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-result-try-source))
+    (and
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-result-try-non-result-source)
+        "typecheck: try operand must be Result-like enum")
+      (and
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-result-try-non-result-return-source)
+          "typecheck: try requires enclosing Result-like function")
+        (and
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-result-try-incompatible-error-source)
+            "typecheck: try error type mismatch")
+          (compiler-typecheck-ok? (compiler-typecheck-result-try-panic-source)))))))
+
 ;; A type error whose offending expression (`missing`) is on source line 2, so
 ;; the diagnostic must locate it there (not at the 1:1 fallback) — proving the
 ;; typechecker carries the nearest declaration-body `AstExprSpanned` span (#681).
@@ -3340,7 +3576,9 @@
                     (compiler-typecheck-abstraction-policy-tests-ok?)
                     (and
                       (compiler-typecheck-region-tests-ok?)
-                      (compiler-typecheck-located-ok?)))))))))
+                      (and
+                        (compiler-typecheck-result-try-tests-ok?)
+                        (compiler-typecheck-located-ok?))))))))))
         42
         (begin
           (panic "typecheck: smoke score mismatch")

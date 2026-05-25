@@ -260,6 +260,14 @@ fn fmt_is_listed_in_usage() {
 }
 
 #[test]
+fn test_is_listed_in_usage() {
+    let output = typelisp(&["--help"]);
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert!(stderr(&output).contains("typelisp test"));
+}
+
+#[test]
 fn lsp_initialize_shutdown_exit_over_stdio() {
     let output = run_lsp(&[
         lsp_initialize(1),
@@ -1046,6 +1054,51 @@ fn debug_check_matches_top_level_alias_with_stdlib_root() {
     assert_eq!(debug.stdout, alias.stdout);
     assert_eq!(debug.stderr, alias.stderr);
     assert_eq!(stdout(&debug), "Type checking passed!\n");
+}
+
+#[test]
+fn inline_test_runner_typechecks_discovered_tests() {
+    let dir = fixture_dir("inline-test-runner-ok");
+    let source = dir.join("inline_tests.tl");
+    fs::write(
+        &source,
+        "(define answer : i64 42)\n(test answer-ok answer)\n(test unit-ok unit)\n",
+    )
+    .expect("write inline test source");
+    let source_arg = source.to_str().expect("source path is utf-8");
+
+    let output = typelisp(&["test", source_arg]);
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    assert_eq!(
+        stdout(&output).replace("\r\n", "\n"),
+        "TypeLisp inline tests typechecked: 2 test(s)\n"
+    );
+}
+
+#[test]
+fn inline_test_runner_reports_typecheck_failures() {
+    let dir = fixture_dir("inline-test-runner-fail");
+    let source = dir.join("inline_tests.tl");
+    fs::write(&source, "(test bad true)\n").expect("write inline test source");
+    let source_arg = source.to_str().expect("source path is utf-8");
+
+    let output = typelisp(&["test", source_arg]);
+
+    assert!(!output.status.success(), "expected inline test failure");
+    assert_eq!(stdout(&output), "");
+    let err = stderr(&output);
+    assert!(
+        err.contains("TypeLisp inline tests failed during typecheck"),
+        "stderr:\n{}",
+        err
+    );
+    assert!(
+        err.contains("typecheck: test body must return unit or i64"),
+        "stderr:\n{}",
+        err
+    );
 }
 
 #[test]

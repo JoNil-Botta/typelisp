@@ -509,6 +509,12 @@ contains|_tl_run_plan_render:
 contains|run: expected source path
 end
 
+case|selfhost_test|selfhost/test.tl|assembly|skip|direct
+contains|_tl_inline_test_run_file_with_roots:
+contains|_tl_inline_test_self_test:
+contains|TypeLisp inline tests typechecked
+end
+
 case|selfhost_sym_i64_env|selfhost/sym_i64_env.tl|assembly|skip|direct
 contains|_tl_sym_i64_empty:
 contains|_tl_sym_i64_bind:

@@ -359,7 +359,24 @@ Imports another TypeLisp file. All top-level definitions from the imported file 
   declarations share the same flat top-level namespace as ordinary modules, so
   duplicate value or type names are errors.
 
-### 4.5 `typelisp.pkg` — local package manifest
+### 4.5 `(test name body...)` - inline test item
+
+Declares an inline TypeLisp test item. `name` is an identifier and `body` is one
+or more expressions; multiple body expressions are treated like `(begin ...)`.
+The selfhost parser rejects `(test ...)` in expression position.
+
+```lisp test=ignore name=inline-test-item reason="test item syntax is owned by the selfhost runner"
+(test string-length-basic
+  (assert-i64-eq (string-length "abc") 3 "length"))
+```
+
+In this first implementation slice, `typelisp test <file.tl>` loads the entry
+file and imports through the selfhost loader, type-checks every inline test body,
+and reports the number of discovered tests. Test bodies must type-check as
+`unit` or `i64`. Normal selfhost compile ignores inline test declarations during
+lowering. Runtime execution of test bodies remains follow-up work.
+
+### 4.6 `typelisp.pkg` — local package manifest
 
 `typelisp.pkg` is an S-expression package manifest for local builds:
 
@@ -393,7 +410,7 @@ Imports another TypeLisp file. All top-level definitions from the imported file 
   preludes, lockfile, workspace model, or native executable build promise for
   package manifests.
 
-### 4.6 `(defenum ...)` and `(defstruct ...)`
+### 4.7 `(defenum ...)` and `(defstruct ...)`
 
 See §3.4.
 
@@ -1262,6 +1279,7 @@ Commands:
   debug parse       Print AST
   debug check       Run type checker
   repl              Minimal stdio command loop
+  test <file.tl>    Discover and type-check inline test items
   compile           Generate assembly (.s)
   build <file.tl>   Compile, assemble, and link a native executable
   run               Compile, assemble, link, and run binary
@@ -1284,6 +1302,8 @@ Options:
                           Write the native executable to the given path
   build --manifest-path <file>
                           Use an explicit package manifest path
+  test --stdlib-root <dir>
+                          Add a fallback root for stdlib/... imports
 ```
 
 For source-file builds, the default executable path is the source path with the

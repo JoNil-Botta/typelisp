@@ -177,6 +177,7 @@ fn print_usage() {
     eprintln!("    typelisp fmt [--check] <file.tl>... [--stdlib-root <dir>...]");
     eprintln!("    typelisp doc <file.tl> [-o <out.md>] [--stdlib-root <dir>...]");
     eprintln!("    typelisp doc --test <file.tl> [--stdlib-root <dir>...]");
+    eprintln!("    typelisp test <file.tl> [--stdlib-root <dir>...]");
     eprintln!();
     eprintln!("Compatibility aliases:");
     eprintln!("    typelisp tokenize <file.tl>");
@@ -224,6 +225,11 @@ fn print_doc_usage() {
 fn print_fmt_usage() {
     eprintln!("Usage:");
     eprintln!("    typelisp fmt [--check] <file.tl>... [--stdlib-root <dir>...]");
+}
+
+fn print_test_usage() {
+    eprintln!("Usage:");
+    eprintln!("    typelisp test <file.tl> [--stdlib-root <dir>...]");
 }
 
 fn find_selfhost_file(relative: &str) -> Option<PathBuf> {
@@ -528,6 +534,64 @@ fn run_fmt_command(args: &[String]) {
         &driver,
         &options,
         &runtime_args,
+        native::host_target(),
+    ));
+    write_stream_or_exit(io::stdout(), &output.stdout, "stdout");
+    write_stream_or_exit(io::stderr(), &output.stderr, "stderr");
+    if !output.status.success() {
+        std::process::exit(output.status.code().unwrap_or(1));
+    }
+}
+
+fn run_test_command(args: &[String]) {
+    if args.len() < 3 {
+        eprintln!("Error: missing file argument");
+        print_test_usage();
+        std::process::exit(1);
+    }
+    if matches!(args[2].as_str(), "help" | "--help" | "-h") {
+        print_test_usage();
+        return;
+    }
+
+    let file = PathBuf::from(&args[2]);
+    let mut stdlib_roots = Vec::new();
+
+    let mut i = 3;
+    while i < args.len() {
+        if args[i] == "--stdlib-root" {
+            if i + 1 >= args.len() {
+                missing_option_value("--stdlib-root");
+            }
+            stdlib_roots.push(PathBuf::from(&args[i + 1]));
+            i += 2;
+        } else if args[i].starts_with('-') {
+            eprintln!("Error: unknown test flag: {}", args[i]);
+            print_test_usage();
+            std::process::exit(1);
+        } else {
+            eprintln!("Error: test accepts only one source file");
+            print_test_usage();
+            std::process::exit(1);
+        }
+    }
+
+    let driver = find_selfhost_file("selfhost/test.tl").unwrap_or_else(|| {
+        eprintln!("Error: could not find selfhost/test.tl in the repo or near the executable");
+        std::process::exit(1);
+    });
+
+    let options = load_options_with_env_stdlib_root(stdlib_roots);
+    let mut runtime_args = vec![file.display().to_string()];
+    for root in &options.stdlib_roots {
+        runtime_args.push("--stdlib-root".to_string());
+        runtime_args.push(root.display().to_string());
+    }
+
+    let output = native_or_exit(native::run_source_file_in_temp_dir(
+        &driver,
+        &options,
+        runtime_args.as_slice(),
         native::host_target(),
     ));
     write_stream_or_exit(io::stdout(), &output.stdout, "stdout");
@@ -901,6 +965,9 @@ fn run_cli() {
         }
         "fmt" => {
             run_fmt_command(&args);
+        }
+        "test" => {
+            run_test_command(&args);
         }
         "lsp" => {
             let options = parse_stdlib_roots(&args, 2);

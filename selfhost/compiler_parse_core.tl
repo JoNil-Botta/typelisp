@@ -369,6 +369,9 @@
 (define (compiler-parse-tag-decl-comptime-decl) : i64
   405)
 
+(define (compiler-parse-tag-decl-test) : i64
+  406)
+
 (define (compiler-parse-dispatch-binops [e : SymI64Env]) : SymI64Env
   (let ([e1 : SymI64Env (sym-i64-bind e "+" (compiler-parse-tag-bin-add))])
     (let ([e2 : SymI64Env (sym-i64-bind e1 "-" (compiler-parse-tag-bin-sub))])
@@ -528,20 +531,23 @@
       (sym-i64-bind e2 "_" (compiler-parse-tag-pattern-wildcard)))))
 
 (define (compiler-parse-dispatch-decls [e : SymI64Env]) : SymI64Env
-  (let ([e1 : SymI64Env
-    (sym-i64-bind e "define" (compiler-parse-tag-decl-define))])
-    (let ([e2 : SymI64Env
-      (sym-i64-bind e1 "extern" (compiler-parse-tag-decl-extern))])
-      (let ([e3 : SymI64Env
-        (sym-i64-bind e2 "defenum" (compiler-parse-tag-decl-defenum))])
-        (let ([e4 : SymI64Env
-          (sym-i64-bind e3 "defstruct" (compiler-parse-tag-decl-defstruct))])
-          (let ([e5 : SymI64Env
-            (sym-i64-bind e4 "import" (compiler-parse-tag-decl-import))])
-            (sym-i64-bind
-              e5
-              "comptime-decl"
-              (compiler-parse-tag-decl-comptime-decl))))))))
+  (let ([out : SymI64Env e])
+    (begin
+      (set! out (sym-i64-bind out "define" (compiler-parse-tag-decl-define)))
+      (set! out (sym-i64-bind out "extern" (compiler-parse-tag-decl-extern)))
+      (set! out (sym-i64-bind out "defenum" (compiler-parse-tag-decl-defenum)))
+      (set!
+        out
+        (sym-i64-bind out "defstruct" (compiler-parse-tag-decl-defstruct)))
+      (set! out (sym-i64-bind out "import" (compiler-parse-tag-decl-import)))
+      (set!
+        out
+        (sym-i64-bind
+          out
+          "comptime-decl"
+          (compiler-parse-tag-decl-comptime-decl)))
+      (set! out (sym-i64-bind out "test" (compiler-parse-tag-decl-test)))
+      out)))
 
 (define (compiler-parse-dispatch-env) : SymI64Env
   (compiler-parse-dispatch-decls
@@ -1362,7 +1368,15 @@
                                             (compiler-parse-tag-decl-comptime-decl))
                                             (ErrAstExpr
                                               "parse: comptime-decl is only valid as a top-level declaration")
-                                            (parse-ast-call dispatch head rest)))))))))))))))))))))))
+                                            (if (=
+                                              tag
+                                              (compiler-parse-tag-decl-test))
+                                              (ErrAstExpr
+                                                "parse: test is only valid as a top-level declaration")
+                                              (parse-ast-call
+                                                dispatch
+                                                head
+                                                rest))))))))))))))))))))))))
 
 (define (parse-ast-list-expr
   [dispatch : SymI64Env]
@@ -1509,6 +1523,30 @@
     [(SpSCons (SpSStr path _) (SpSNil _) _) (OkAstDecl (AstDeclImport path))]
     [_ (ErrAstDecl "parse: malformed import")]))
 
+(define (parse-ast-test-body
+  [dispatch : SymI64Env]
+  [name : String]
+  [body : SpannedSexpr]) : ResultAstExpr
+  (match body
+    [(SpSNil _)
+      (ErrAstExpr
+        (string-append
+          "parse: test '"
+          (string-append name "' requires a non-empty body")))]
+    [(SpSCons expr (SpSNil _) _) (parse-ast-expr dispatch expr)]
+    [_
+      (match (parse-ast-expr-list dispatch body)
+        [(OkAstExprList exprs) (OkAstExpr (AstExprBegin exprs))]
+        [(ErrAstExprList message) (ErrAstExpr message)])]))
+
+(define (parse-ast-test [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstDecl
+  (match rest
+    [(SpSCons (SpSSym name _) body _)
+      (match (parse-ast-test-body dispatch name body)
+        [(OkAstExpr parsed-body) (OkAstDecl (AstDeclTest name parsed-body))]
+        [(ErrAstExpr message) (ErrAstDecl message)])]
+    [_ (ErrAstDecl "parse: malformed test")]))
+
 (define (parse-ast-comptime-decl [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
     [(SpSCons template (SpSNil _) _)
@@ -1541,9 +1579,11 @@
                   (parse-ast-import rest)
                   (if (= tag (compiler-parse-tag-decl-comptime-decl))
                     (parse-ast-comptime-decl dispatch rest)
-                    (if (compiler-parse-policy-form? head)
-                      (ErrAstDecl (compiler-parse-abstraction-policy-message))
-                      (ErrAstDecl "parse: expected declaration")))))))))]
+                    (if (= tag (compiler-parse-tag-decl-test))
+                      (parse-ast-test dispatch rest)
+                      (if (compiler-parse-policy-form? head)
+                        (ErrAstDecl (compiler-parse-abstraction-policy-message))
+                        (ErrAstDecl "parse: expected declaration"))))))))))]
     [_ (ErrAstDecl "parse: malformed declaration")]))
 
 (define (parse-ast-program-forms
@@ -1816,11 +1856,37 @@
         (= (ast-decl-list-tag-sum decls) 9))]
     [(ErrAstProgram _) false]))
 
+(define (compiler-parse-inline-test-source) : String
+  "(import \"stdlib/test.tl\")
+(test string-length-basic
+  (assert-i64-eq (string-length \"abc\") 3 \"length\"))")
+
+(define (compiler-parse-inline-test-ok?) : bool
+  (match (parse-ast-source (compiler-parse-inline-test-source))
+    [(OkAstProgram (AstProgram decls))
+      (and
+        (= (ast-decl-list-count decls) 2)
+        (and
+          (= (ast-decl-list-tag-sum decls) 13)
+          (match decls
+            [(AstDeclCons
+                (AstDeclImport _)
+                (AstDeclCons (AstDeclTest name _) AstDeclNil))
+              (string-eq name "string-length-basic")]
+            [_ false])))]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-parse-comptime-decl-bad-payload-source) : String
   "(comptime-decl (define x : i64 1))")
 
 (define (compiler-parse-comptime-decl-expression-source) : String
   "(define (main) : i64 (comptime-decl (defstruct Point (x i64))))")
+
+(define (compiler-parse-inline-test-empty-source) : String
+  "(test empty)")
+
+(define (compiler-parse-inline-test-expression-source) : String
+  "(define (main) : i64 (test inner 0))")
 
 (define (compiler-parse-comptime-decl-extra-source) : String
   "(comptime-decl (defstruct Point (x i64)) (defenum Maybe (None)))")
@@ -1843,9 +1909,17 @@
       (compiler-parse-error-ok?
         (compiler-parse-comptime-decl-expression-source)
         "parse: comptime-decl is only valid as a top-level declaration")
-      (compiler-parse-error-ok?
-        (compiler-parse-comptime-decl-extra-source)
-        "parse: comptime-decl expects exactly one template"))))
+      (and
+        (compiler-parse-error-ok?
+          (compiler-parse-comptime-decl-extra-source)
+          "parse: comptime-decl expects exactly one template")
+        (and
+          (compiler-parse-error-ok?
+            (compiler-parse-inline-test-empty-source)
+            "parse: test 'empty' requires a non-empty body")
+          (compiler-parse-error-ok?
+            (compiler-parse-inline-test-expression-source)
+            "parse: test is only valid as a top-level declaration"))))))
 
 (define (compiler-parse-abstraction-policy-tests-ok?) : bool
   (and
@@ -1906,7 +1980,9 @@
               (compiler-parse-float-literal-ok?)
               (and
                 (compiler-parse-region-ok?)
-                (compiler-parse-comptime-decl-ok?))))))
+                (and
+                  (compiler-parse-comptime-decl-ok?)
+                  (compiler-parse-inline-test-ok?)))))))
         (if (compiler-parse-error-tests-ok?)
           42
           (begin

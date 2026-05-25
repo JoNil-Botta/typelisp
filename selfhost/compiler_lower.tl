@@ -265,6 +265,7 @@
       ;; Exact extern linker metadata is owned by #911; keep today's extern
       ;; calls raw while user TypeLisp declarations become logical names.
       (LowerNameBind name name names)]
+    [(AstDeclTest _ _) names]
     [_ names]))
 
 (define (lower-name-env-from-decls
@@ -3892,6 +3893,8 @@
         [(AstDeclDefEnum _ _)
           (lower-decls ctx top-env rest globals functions externs spans names)]
         [(AstDeclDefStruct _ _)
+          (lower-decls ctx top-env rest globals functions externs spans names)]
+        [(AstDeclTest _ _)
           (lower-decls ctx top-env rest globals functions externs spans names)])]))
 
 (define (lower-compiler-program-checked-with-names

@@ -22,6 +22,7 @@ cargo build --release
 # Linux build/run require `as`/`ld`; Windows target build/run require `clang`/`lld-link`.
 ./target/release/typelisp debug check examples/hello.tl
 ./target/release/typelisp fmt --check examples/hello.tl
+./target/release/typelisp test    examples/hello.tl     # type-checks inline tests
 ./target/release/typelisp compile examples/hello.tl     # writes examples/hello.s
 ./target/release/typelisp build   examples/hello.tl     # writes examples/hello
 ./target/release/typelisp run     examples/hello.tl
@@ -177,6 +178,11 @@ Examples are standalone TypeLisp source snippets. By default an example must
 parse, resolve imports, and type-check. Add `expect-error` after the language tag
 when the example is intended to fail. Ordinary `;` and `;;` comments are not
 documentation and are ignored by the doctest scanner.
+
+Inline test items are written as top-level `(test name body...)` forms. The
+selfhost runner command `typelisp test <file.tl>` loads the entry file and its
+imports, type-checks inline test bodies, and reports the number discovered.
+Runtime execution of inline test bodies is not part of this first slice.
 
 ### Enum and struct namespace rules
 

@@ -115,6 +115,10 @@ For new selfhost tests:
   `*-self-test` function.
 - Add a `*_smoke.tl` driver when the module should be executable through the
   compiler boundary.
+- Add top-level `(test name body...)` items when a source module needs
+  selfhost-owned inline typecheck coverage. The current `typelisp test` runner
+  discovers tests from the entry file and imports, type-checks their bodies, and
+  does not execute them yet.
 - Add standalone source programs to `selfhost/tests/` when the external compiler
   driver should accept or reject them, then update `scripts/verify-selfhost.sh`.
 - Add compile/symbol smoke coverage to `selfhost/compile_manifest.txt` for new
@@ -199,6 +203,8 @@ Linux environment.
   no-Rust replacement.
 - Add or extend a module-local `*-self-test` for compiler internals that can be
   checked structurally.
+- Use inline `(test name body...)` items for module-level TypeLisp typecheck
+  coverage once the source can be loaded by `typelisp test`.
 - Add or update a `*_smoke.tl` wrapper when the self-test should be executable.
 - If a temporary Rust compile test is still required, update the matching
   `tests/tl_*_compile.rs` test and the replacement map in the same PR.

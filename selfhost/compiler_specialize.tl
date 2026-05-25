@@ -1574,6 +1574,11 @@
               (SpecSomeDecl (AstDeclDefFn name params ret rewritten))
               state2)]
           [(ErrSpecExpr diag) (ErrSpecDecl diag)]))]
+    [(AstDeclTest name body)
+      (match (spec-rewrite-expr body templates state)
+        [(OkSpecExpr rewritten state2)
+          (OkSpecDecl (SpecSomeDecl (AstDeclTest name rewritten)) state2)]
+        [(ErrSpecExpr diag) (ErrSpecDecl diag)])]
     [_ (OkSpecDecl (SpecSomeDecl decl) state)]))
 
 (define (spec-rewrite-decls

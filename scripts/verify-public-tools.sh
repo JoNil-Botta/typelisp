@@ -152,6 +152,7 @@ assert_contains "$err" "typelisp repl"
 assert_contains "$err" "typelisp lsp"
 assert_contains "$err" "typelisp fmt"
 assert_contains "$err" "typelisp doc"
+assert_contains "$err" "typelisp test"
 
 run_cmd missing-command "$COMPILER"
 assert_failure
@@ -185,6 +186,27 @@ run_cmd check-hello "$COMPILER" check examples/hello.tl
 assert_success
 assert_stderr_empty
 assert_contains "$out" "Type checking passed!"
+
+cat > "$WORKDIR/inline_tests_ok.tl" <<'EOF'
+(define answer : i64 42)
+(test answer-ok answer)
+(test unit-ok unit)
+EOF
+
+run_cmd inline-test-ok "$COMPILER" test "$WORKDIR/inline_tests_ok.tl"
+assert_success
+assert_stderr_empty
+assert_contains "$out" "TypeLisp inline tests typechecked: 2 test(s)"
+
+cat > "$WORKDIR/inline_tests_bad.tl" <<'EOF'
+(test bad true)
+EOF
+
+run_cmd inline-test-type-error "$COMPILER" test "$WORKDIR/inline_tests_bad.tl"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "TypeLisp inline tests failed during typecheck"
+assert_contains "$err" "typecheck: test body must return unit or i64"
 
 run_cmd compile-hello "$COMPILER" compile examples/hello.tl -o "$WORKDIR/hello.s"
 assert_success

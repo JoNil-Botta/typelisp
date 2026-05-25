@@ -72,6 +72,7 @@
   (match decl
     [(AstDeclDef _ _ expr) (tc-expr-diag expr message)]
     [(AstDeclDefFn _ _ _ body) (tc-expr-diag body message)]
+    [(AstDeclTest _ body) (tc-expr-diag body message)]
     [_ (tc-diag-at-start message)]))
 
 (define (tc-empty-env) : TcTypeEnv
@@ -800,7 +801,8 @@
     [(AstDeclDefEnum _ variants)
       (tc-source-variant-list-policy-ok ctx variants)]
     [(AstDeclDefStruct _ fields) (tc-source-field-list-policy-ok ctx fields)]
-    [(AstDeclImport _) OkTcUnit]))
+    [(AstDeclImport _) OkTcUnit]
+    [(AstDeclTest _ body) (tc-source-expr-policy-ok ctx body)]))
 
 (define (tc-source-decl-list-policy-ok [ctx : TcContext] [decls : AstDeclList]) : ResultTcUnit
   (match decls
@@ -1172,7 +1174,8 @@
               env
               name
               (AstTyFunc (tc-field-type-list ctx fields) (AstTyStruct name))))]
-        [(AstDeclImport _) (tc-build-top-env-list ctx rest env)])]))
+        [(AstDeclImport _) (tc-build-top-env-list ctx rest env)]
+        [(AstDeclTest _ _) (tc-build-top-env-list ctx rest env)])]))
 
 (define (tc-build-top-env [ctx : TcContext] [program : AstProgram]) : ResultTcEnv
   (match program
@@ -2532,6 +2535,13 @@
       (match (tc-resolve-type ctx ty)
         [(AstTyFunc _ _) OkTcUnit]
         [_ (ErrTcUnit "typecheck: extern must have function type")])]
+    [(AstDeclTest _ body)
+      (match (tc-expr ctx top-env body)
+        [(OkTcType got)
+          (if (or (tc-type-eq got (AstTyUnit)) (tc-type-eq got (AstTyI64)))
+            OkTcUnit
+            (ErrTcUnit "typecheck: test body must return unit or i64"))]
+        [(ErrTcType message) (ErrTcUnit message)])]
     [_ OkTcUnit]))
 
 (define (tc-check-decls
@@ -2990,6 +3000,21 @@
     (compiler-typecheck-located-source-ok?
       (compiler-typecheck-located-value-source))))
 
+(define (compiler-typecheck-inline-test-source) : String
+  "(define answer : i64 42)
+(test returns-unit unit)
+(test returns-status answer)")
+
+(define (compiler-typecheck-inline-test-bad-source) : String
+  "(test bad true)")
+
+(define (compiler-typecheck-inline-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-inline-test-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-inline-test-bad-source)
+      "typecheck: test body must return unit or i64")))
+
 (define (compiler-typecheck-self-test) : i64
   (match (typecheck-compiler-source (compiler-typecheck-smoke-source))
     [(OkCompilerTypecheck summary)
@@ -3015,7 +3040,9 @@
                     (compiler-typecheck-abstraction-policy-tests-ok?)
                     (and
                       (compiler-typecheck-region-tests-ok?)
-                      (compiler-typecheck-located-ok?)))))))))
+                      (and
+                        (compiler-typecheck-located-ok?)
+                        (compiler-typecheck-inline-tests-ok?))))))))))
         42
         (begin
           (panic "typecheck: smoke score mismatch")

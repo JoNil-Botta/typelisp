@@ -111,7 +111,7 @@ ensure_compiled() {
 
     echo "[selfhost-compile] $case_id ($case_source)"
     set +e
-    "$COMPILER" compile "$compile_source" -o "$asm_path" > "$out_path" 2> "$err_path"
+    "$COMPILER" compile "$compile_source" --stdlib-root "$ROOT/stdlib" -o "$asm_path" > "$out_path" 2> "$err_path"
     code=$?
     set -e
     if [ "$code" -ne 0 ]; then

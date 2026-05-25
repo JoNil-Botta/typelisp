@@ -3894,6 +3894,8 @@
         [(AstDeclDefEnum _ _)
           (lower-decls ctx top-env rest globals functions externs spans names)]
         [(AstDeclDefStruct _ _)
+          (lower-decls ctx top-env rest globals functions externs spans names)]
+        [(AstDeclComptimeDecl _)
           (lower-decls ctx top-env rest globals functions externs spans names)])]))
 
 (define (lower-compiler-program-checked-with-names

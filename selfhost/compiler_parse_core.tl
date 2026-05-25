@@ -289,6 +289,12 @@
 (define (compiler-parse-tag-ty-region) : i64
   133)
 
+(define (compiler-parse-tag-ty-ptr) : i64
+  134)
+
+(define (compiler-parse-tag-ty-mut-ptr) : i64
+  135)
+
 (define (compiler-parse-tag-expr-if) : i64
   200)
 
@@ -475,79 +481,30 @@
 
 (define (compiler-parse-dispatch-types [e : SymI64Env]) : SymI64Env
   (let
-    [e1 : SymI64Env (sym-i64-bind e "i64" (compiler-parse-tag-ty-i64))]
-    (let
-      [e2 : SymI64Env (sym-i64-bind e1 "i32" (compiler-parse-tag-ty-i32))]
-      (let
-        [e3 : SymI64Env (sym-i64-bind e2 "i16" (compiler-parse-tag-ty-i16))]
-        (let
-          [e4 : SymI64Env (sym-i64-bind e3 "i8" (compiler-parse-tag-ty-i8))]
-          (let
-            [e5 : SymI64Env (sym-i64-bind e4 "u64" (compiler-parse-tag-ty-u64))]
-            (let
-              [e6 : SymI64Env
-                (sym-i64-bind e5 "u32" (compiler-parse-tag-ty-u32))]
-              (let
-                [e7 : SymI64Env
-                  (sym-i64-bind e6 "u16" (compiler-parse-tag-ty-u16))]
-                (let
-                  [e8 : SymI64Env
-                    (sym-i64-bind e7 "u8" (compiler-parse-tag-ty-u8))]
-                  (let
-                    [e9 : SymI64Env
-                      (sym-i64-bind e8 "f64" (compiler-parse-tag-ty-f64))]
-                    (let
-                      [e10 : SymI64Env
-                        (sym-i64-bind e9 "f32" (compiler-parse-tag-ty-f32))]
-                      (let
-                        [e11 : SymI64Env
-                          (sym-i64-bind e10 "bool" (compiler-parse-tag-ty-bool))]
-                        (let
-                          [e12 : SymI64Env
-                            (sym-i64-bind
-                              e11
-                              "char"
-                              (compiler-parse-tag-ty-char))]
-                          (let
-                            [e13 : SymI64Env
-                              (sym-i64-bind
-                                e12
-                                "String"
-                                (compiler-parse-tag-ty-string))]
-                            (let
-                              [e14 : SymI64Env
-                                (sym-i64-bind
-                                  e13
-                                  "unit"
-                                  (compiler-parse-tag-unit))]
-                              (let
-                                [e15 : SymI64Env
-                                  (sym-i64-bind
-                                    e14
-                                    "never"
-                                    (compiler-parse-tag-ty-never))]
-                                (let
-                                  [e16 : SymI64Env
-                                    (sym-i64-bind
-                                      e15
-                                      "->"
-                                      (compiler-parse-tag-ty-func))]
-                                  (let
-                                    [e17 : SymI64Env
-                                      (sym-i64-bind
-                                        e16
-                                        "Tuple"
-                                        (compiler-parse-tag-ty-tuple))]
-                                    (let
-                                      [e18 : SymI64Env
-                                        (sym-i64-bind
-                                          e17
-                                          "Array"
-                                          (compiler-parse-tag-ty-array))]
-                                      (sym-i64-bind
-                                        e18
-                                        "in"
-                                        (compiler-parse-tag-ty-region)))))))))))))))))))))
+    [out : SymI64Env e]
+    (begin
+      (set! out (sym-i64-bind out "i64" (compiler-parse-tag-ty-i64)))
+      (set! out (sym-i64-bind out "i32" (compiler-parse-tag-ty-i32)))
+      (set! out (sym-i64-bind out "i16" (compiler-parse-tag-ty-i16)))
+      (set! out (sym-i64-bind out "i8" (compiler-parse-tag-ty-i8)))
+      (set! out (sym-i64-bind out "u64" (compiler-parse-tag-ty-u64)))
+      (set! out (sym-i64-bind out "u32" (compiler-parse-tag-ty-u32)))
+      (set! out (sym-i64-bind out "u16" (compiler-parse-tag-ty-u16)))
+      (set! out (sym-i64-bind out "u8" (compiler-parse-tag-ty-u8)))
+      (set! out (sym-i64-bind out "f64" (compiler-parse-tag-ty-f64)))
+      (set! out (sym-i64-bind out "f32" (compiler-parse-tag-ty-f32)))
+      (set! out (sym-i64-bind out "bool" (compiler-parse-tag-ty-bool)))
+      (set! out (sym-i64-bind out "char" (compiler-parse-tag-ty-char)))
+      (set! out (sym-i64-bind out "String" (compiler-parse-tag-ty-string)))
+      (set! out (sym-i64-bind out "unit" (compiler-parse-tag-unit)))
+      (set! out (sym-i64-bind out "never" (compiler-parse-tag-ty-never)))
+      (set! out (sym-i64-bind out "->" (compiler-parse-tag-ty-func)))
+      (set! out (sym-i64-bind out "Tuple" (compiler-parse-tag-ty-tuple)))
+      (set! out (sym-i64-bind out "Array" (compiler-parse-tag-ty-array)))
+      (set! out (sym-i64-bind out "in" (compiler-parse-tag-ty-region)))
+      (set! out (sym-i64-bind out "Ptr" (compiler-parse-tag-ty-ptr)))
+      (set! out (sym-i64-bind out "MutPtr" (compiler-parse-tag-ty-mut-ptr)))
+      out)))
 
 (define (compiler-parse-dispatch-exprs [e : SymI64Env]) : SymI64Env
   (let
@@ -833,17 +790,32 @@
                 [(SCons _ (SCons _ (SNil)))
                   (ErrAstType "parse: array size must be integer")]
                 [_ (ErrAstType "parse: malformed array type")])
-              (if (= tag (compiler-parse-tag-ty-region))
+              (if (= tag (compiler-parse-tag-ty-ptr))
                 (match rest
-                  [(SCons (SSym region) (SCons inner (SNil)))
-                    (match (parse-ast-type dispatch inner)
-                      [(OkAstType inner-ty)
-                        (OkAstType (AstTyRegion region inner-ty))]
+                  [(SCons elem (SNil))
+                    (match (parse-ast-type dispatch elem)
+                      [(OkAstType elem-ty) (OkAstType (AstTyPtr elem-ty))]
                       [(ErrAstType message) (ErrAstType message)])]
-                  [(SCons _ (SCons _ (SNil)))
-                    (ErrAstType "parse: region name must be an identifier")]
-                  [_ (ErrAstType "parse: malformed region type")])
-                (ErrAstType (compiler-parse-generic-type-policy-message head)))))))]
+                  [_ (ErrAstType "parse: Ptr expects exactly one type")])
+                (if (= tag (compiler-parse-tag-ty-mut-ptr))
+                  (match rest
+                    [(SCons elem (SNil))
+                      (match (parse-ast-type dispatch elem)
+                        [(OkAstType elem-ty) (OkAstType (AstTyMutPtr elem-ty))]
+                        [(ErrAstType message) (ErrAstType message)])]
+                    [_ (ErrAstType "parse: MutPtr expects exactly one type")])
+                  (if (= tag (compiler-parse-tag-ty-region))
+                    (match rest
+                      [(SCons (SSym region) (SCons inner (SNil)))
+                        (match (parse-ast-type dispatch inner)
+                          [(OkAstType inner-ty)
+                            (OkAstType (AstTyRegion region inner-ty))]
+                          [(ErrAstType message) (ErrAstType message)])]
+                      [(SCons _ (SCons _ (SNil)))
+                        (ErrAstType "parse: region name must be an identifier")]
+                      [_ (ErrAstType "parse: malformed region type")])
+                    (ErrAstType
+                      (compiler-parse-generic-type-policy-message head)))))))))]
     [_ (ErrAstType "parse: expected type")]))
 
 (define (parse-ast-param [dispatch : SymI64Env] [s : Sexpr]) : ResultAstParam
@@ -2261,6 +2233,28 @@
     [(OkAstProgram _) true]
     [(ErrAstProgram _) false]))
 
+(define (compiler-parse-raw-pointer-source) : String
+  "(extern raw-map : (-> (Ptr i64) (MutPtr (Ptr u8))))")
+
+(define (compiler-parse-raw-pointer-ok?) : bool
+  (match (parse-ast-source (compiler-parse-raw-pointer-source))
+    [(OkAstProgram (AstProgram decls))
+      (match decls
+        [(AstDeclCons (AstDeclExtern name ty) AstDeclNil)
+          (and
+            (string-eq name "raw-map")
+            (match ty
+              [(AstTyFunc args ret)
+                (match args
+                  [(AstTypeCons (AstTyPtr (AstTyI64)) AstTypeNil)
+                    (match ret
+                      [(AstTyMutPtr (AstTyPtr (AstTyU8))) true]
+                      [_ false])]
+                  [_ false])]
+              [_ false]))]
+        [_ false])]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-parse-try-source) : String
   "(defenum ResultI64 (OkI64 i64) (ErrI64 String))
 (define (read) : ResultI64 (OkI64 42))
@@ -2464,6 +2458,19 @@
         (compiler-parse-generic-type-policy-source)
         (compiler-parse-generic-type-policy-message "Option")))))
 
+(define (compiler-parse-raw-pointer-error-tests-ok?) : bool
+  (and
+    (compiler-parse-error-ok?
+      "(define (main [p : (Ptr)]) : unit unit)"
+      "parse: Ptr expects exactly one type")
+    (and
+      (compiler-parse-error-ok?
+        "(define (main [p : (MutPtr i64 i64)]) : unit unit)"
+        "parse: MutPtr expects exactly one type")
+      (compiler-parse-error-ok?
+        "(define (main [p : (Ptr (Array))]) : unit unit)"
+        "parse: malformed array type"))))
+
 (define (compiler-parse-special-form-error-tests-ok?) : bool
   (and
     (compiler-parse-error-ok?
@@ -2518,7 +2525,9 @@
                 "parse: test needs at least one expression")
               (and
                 (compiler-parse-let-error-tests-ok?)
-                (compiler-parse-abstraction-policy-tests-ok?)))))))))
+                (and
+                  (compiler-parse-abstraction-policy-tests-ok?)
+                  (compiler-parse-raw-pointer-error-tests-ok?))))))))))
 
 (define (compiler-parse-smoke) : i64
   (match (parse-ast-source (compiler-parse-smoke-source))
@@ -2547,7 +2556,9 @@
                             (compiler-parse-try-ok?)
                             (and
                               (compiler-parse-repr-c-ok?)
-                              (compiler-parse-comptime-repr-c-ok?)))))))))))))
+                              (and
+                                (compiler-parse-comptime-repr-c-ok?)
+                                (compiler-parse-raw-pointer-ok?))))))))))))))
         (if (compiler-parse-error-tests-ok?)
           42
           (begin

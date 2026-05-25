@@ -77,7 +77,9 @@
   (AstTyRegion String AstType)
   (AstTyEnum String)
   (AstTyStruct String)
-  (AstTyVar String))
+  (AstTyVar String)
+  (AstTyPtr AstType)
+  (AstTyMutPtr AstType))
 
 (defenum AstTypeList
   (AstTypeNil)
@@ -240,7 +242,9 @@
     [(AstTyRegion _ _) 20]
     [(AstTyEnum _) 21]
     [(AstTyStruct _) 22]
-    [(AstTyVar _) 23]))
+    [(AstTyVar _) 23]
+    [(AstTyPtr _) 24]
+    [(AstTyMutPtr _) 25]))
 
 (define (ast-expr-tag [expr : AstExpr]) : i64
   (match expr

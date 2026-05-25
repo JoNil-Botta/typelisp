@@ -3649,6 +3649,46 @@
         (ErrTcType "typecheck: non-exhaustive match"))]
     [(ErrTcType message) (ErrTcType message)]))
 
+;; spmd-reduce operator/type rules (#1011, SPEC 5.15): the init/value/result type
+;; must be in the operator's supported set -- `sum` over i32/i64/f64, `min`/`max`
+;; over i32/i64, `all`/`any` over bool. (Effect/purity rules for the varying
+;; value expression are a separate slice.)
+(define (tc-reduce-op-type-ok? [op : AstReduceOp] [ty : AstType]) : bool
+  (match op
+    [(AstReduceSum)
+      (match ty
+        [(AstTyI32) true]
+        [(AstTyI64) true]
+        [(AstTyF64) true]
+        [_ false])]
+    [(AstReduceMin)
+      (match ty
+        [(AstTyI32) true]
+        [(AstTyI64) true]
+        [_ false])]
+    [(AstReduceMax)
+      (match ty
+        [(AstTyI32) true]
+        [(AstTyI64) true]
+        [_ false])]
+    [(AstReduceAll)
+      (match ty
+        [(AstTyBool) true]
+        [_ false])]
+    [(AstReduceAny)
+      (match ty
+        [(AstTyBool) true]
+        [_ false])]))
+
+(define (tc-reduce-op-type-msg [op : AstReduceOp]) : String
+  (match op
+    [(AstReduceSum)
+      "typecheck: spmd-reduce sum requires an i32, i64, or f64 type"]
+    [(AstReduceMin) "typecheck: spmd-reduce min requires an i32 or i64 type"]
+    [(AstReduceMax) "typecheck: spmd-reduce max requires an i32 or i64 type"]
+    [(AstReduceAll) "typecheck: spmd-reduce all requires a bool type"]
+    [(AstReduceAny) "typecheck: spmd-reduce any requires a bool type"]))
+
 (define (tc-expr [ctx : TcContext] [env : TcTypeEnv] [expr : AstExpr]) : ResultTcType
   (match expr
     [(AstExprSpanned inner _) (tc-expr ctx env inner)]
@@ -3947,7 +3987,7 @@
                   "typecheck: foreach start expression must be integer"))]
             [(ErrTcType message) (ErrTcType message)])
           (ErrTcType "typecheck: foreach index type must be integer")))]
-    [(AstExprSpmdReduce _ index index-ty start end init value)
+    [(AstExprSpmdReduce op index index-ty start end init value)
       (let
         [resolved-index-ty : AstType (tc-resolve-type ctx index-ty)]
         (if (tc-integer-type? resolved-index-ty)
@@ -3968,7 +4008,12 @@
                                   value-ty
                                   init-ty
                                   "typecheck: spmd-reduce init and value type mismatch")
-                                  [(OkTcUnit) (OkTcType init-ty)]
+                                  [(OkTcUnit)
+                                    (if (tc-reduce-op-type-ok?
+                                      op
+                                      (tc-resolve-type ctx init-ty))
+                                      (OkTcType init-ty)
+                                      (ErrTcType (tc-reduce-op-type-msg op)))]
                                   [(ErrTcUnit message) (ErrTcType message)])]
                               [(ErrTcType message) (ErrTcType message)]))]
                         [(ErrTcType message) (ErrTcType message)])
@@ -5164,6 +5209,24 @@
               "(define (f [b : bool]) : i64 (cast b : i64))"
               "typecheck: cast requires integer/char source and target")))))))
 
+;; spmd-reduce operator/type rules (#1011, SPEC 5.15): `sum` accepts i32/i64/f64,
+;; `min`/`max` accept i32/i64, `all`/`any` accept bool. (The varying-value
+;; purity/effect rules are a separate slice.)
+(define (compiler-typecheck-spmd-reduce-op-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))")
+    (and
+      (compiler-typecheck-ok?
+        "(define (main [bs : (Array bool)] [n : i64]) : bool (spmd-reduce all ([i : i64 0 n]) true (array-ref bs i)))")
+      (and
+        (compiler-typecheck-error-ok?
+          "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce all ([i : i64 0 n]) 0 (array-ref xs i)))"
+          "typecheck: spmd-reduce all requires a bool type")
+        (compiler-typecheck-error-ok?
+          "(define (main [bs : (Array bool)] [n : i64]) : bool (spmd-reduce sum ([i : i64 0 n]) true (array-ref bs i)))"
+          "typecheck: spmd-reduce sum requires an i32, i64, or f64 type")))))
+
 (define (compiler-typecheck-self-test) : i64
   (begin
     (if (compiler-typecheck-statement-tests-ok?)
@@ -5175,6 +5238,9 @@
     (if (compiler-typecheck-match-tests-ok?)
       unit
       (panic "typecheck: match/pattern tests failed"))
+    (if (compiler-typecheck-spmd-reduce-op-tests-ok?)
+      unit
+      (panic "typecheck: spmd-reduce operator/type tests failed"))
     (match (typecheck-compiler-source (compiler-typecheck-smoke-source))
       [(OkCompilerTypecheck summary)
         (if (and

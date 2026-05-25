@@ -108,15 +108,20 @@ end
 case|selfhost_compile|selfhost/compile.tl|assembly|exactly-one|direct
 contains|_tl_compile_cli_config:
 contains|_tl_compile_cli_target:
+contains|_tl_compile_cli_invalid_opt_level:
 contains|_tl_compile_cli_root_list_append:
 contains|_tl_compiler_driver_compile_file:
 contains|_tl_compiler_driver_compile_file_with_roots:
+contains|_tl_compiler_driver_compile_file_with_roots_and_level:
 contains|_tl_compiler_driver_compile_file_for_target:
 contains|_tl_compiler_driver_compile_file_for_target_with_roots:
+contains|_tl_compiler_driver_compile_file_for_target_with_roots_and_level:
 contains|_tl_compiler_backend_emit_program_with_spans_for_target:
 contains|compile: expected source path
 contains|compile: --target requires a value
 contains|compile: --stdlib-root requires a value
+contains|compile: --opt-level requires a value
+contains|compile: invalid --opt-level
 contains|Error: unknown target '
 contains|--emit-ir
 end
@@ -196,8 +201,10 @@ end
 
 case|selfhost_compiler_driver_core|selfhost/compiler_driver_core.tl|assembly|skip|direct
 contains|_tl_compiler_driver_compile_file:
+contains|_tl_compiler_driver_compile_file_with_roots_and_level:
 contains|_tl_compiler_driver_compile_file_for_target:
 contains|_tl_compiler_driver_emit_file:
+contains|_tl_compiler_driver_emit_file_with_target_roots_and_level:
 contains|_tl_compiler_driver_emit_file_for_target:
 contains|_tl_compiler_backend_emit_program_with_spans_for_target:
 contains|_tl_compiler_backend_emit_source:
@@ -241,16 +248,19 @@ end
 
 case|selfhost_compiler_optimize|selfhost/compiler_optimize.tl|assembly|skip|direct
 contains|_tl_optimize_program:
+contains|_tl_optimize_program_with_level:
 contains|_tl_opt_fold_instrs:
 contains|_tl_opt_strength_instrs:
 contains|_tl_compiler_optimize_self_test:
 contains|_tl_compiler_optimize_strength_self_test:
+contains|_tl_compiler_optimize_level_self_test:
 end
 
 case|selfhost_compiler_optimize_smoke|selfhost/compiler_optimize_smoke.tl|assembly|exactly-one|direct
 contains|_tl_compiler_optimize_self_test:
 contains|_tl_compiler_optimize_strength_self_test:
 contains|_tl_optimize_program:
+contains|_tl_compiler_optimize_level_self_test:
 end
 
 case|selfhost_compiler_parse_core|selfhost/compiler_parse_core.tl|assembly|skip|direct
@@ -524,10 +534,14 @@ end
 case|selfhost_test|selfhost/test.tl|assembly|skip|direct
 contains|_tl_tltest_run_config:
 contains|_tl_tltest_build_harness:
+contains|_tl_tltest_invalid_opt_level:
+contains|_tl_optimize_program_with_level:
 contains|_tl_compiler_backend_emit_program_with_spans_for_target:
 contains|run-scratch-assembly
 contains|scratch-assembly-path
 contains|test: expected source path
+contains|test: --opt-level requires a value
+contains|test: invalid --opt-level
 end
 
 case|selfhost_sym_i64_env|selfhost/sym_i64_env.tl|assembly|skip|direct

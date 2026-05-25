@@ -1507,6 +1507,99 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
         "default .s output was not written"
     );
 
+    let opt_source = dir.join("opt-level.tl");
+    fs::write(&opt_source, "(define (main) : i64 (+ 20 22))\n").expect("write opt-level source");
+    let opt_source_arg = opt_source.to_str().expect("opt source path is utf-8");
+    let opt_default_asm = dir.join("opt-default.s");
+    let opt_default_asm_arg = opt_default_asm
+        .to_str()
+        .expect("opt default asm path is utf-8");
+    let opt_default = Command::new(&driver_bin)
+        .args([opt_source_arg, "-o", opt_default_asm_arg])
+        .output()
+        .expect("run selfhost compile driver with default opt level");
+    assert!(
+        opt_default.status.success(),
+        "selfhost compile default opt level failed\nstdout:\n{}\nstderr:\n{}",
+        stdout(&opt_default),
+        stderr(&opt_default)
+    );
+    let opt_default_text = fs::read_to_string(&opt_default_asm).expect("read default opt asm");
+
+    let mut opt_level_texts = Vec::new();
+    for level in ["0", "1", "2", "3"] {
+        let asm_path = dir.join(format!("opt-level-{level}.s"));
+        let asm_arg = asm_path.to_str().expect("opt-level asm path is utf-8");
+        let output = Command::new(&driver_bin)
+            .args([opt_source_arg, "--opt-level", level, "-o", asm_arg])
+            .output()
+            .expect("run selfhost compile driver with opt level");
+        assert!(
+            output.status.success(),
+            "selfhost compile --opt-level {level} failed\nstdout:\n{}\nstderr:\n{}",
+            stdout(&output),
+            stderr(&output)
+        );
+        opt_level_texts.push(
+            fs::read_to_string(&asm_path)
+                .unwrap_or_else(|err| panic!("read opt-level {level} asm: {err}")),
+        );
+    }
+    assert!(
+        opt_level_texts[0].contains("    addq %rbx, %rax\n"),
+        "opt-level 0 should leave lowered arithmetic in assembly:\n{}",
+        opt_level_texts[0]
+    );
+    assert!(
+        !opt_level_texts[2].contains("    addq %rbx, %rax\n"),
+        "opt-level 2 should fold constant arithmetic:\n{}",
+        opt_level_texts[2]
+    );
+    assert_eq!(
+        opt_default_text, opt_level_texts[2],
+        "omitted --opt-level should use the shared default level 2"
+    );
+    assert_eq!(
+        opt_level_texts[2], opt_level_texts[3],
+        "opt-level 3 is currently documented as level-2 equivalent"
+    );
+
+    let missing_opt = Command::new(&driver_bin)
+        .args([opt_source_arg, "--opt-level"])
+        .output()
+        .expect("run selfhost compile driver with missing opt level");
+    assert!(!missing_opt.status.success());
+    assert_eq!(stdout(&missing_opt), "");
+    assert!(
+        stderr(&missing_opt).contains("compile: --opt-level requires a value"),
+        "stderr:\n{}",
+        stderr(&missing_opt)
+    );
+
+    let duplicate_opt = Command::new(&driver_bin)
+        .args([opt_source_arg, "--opt-level", "1", "--opt-level", "2"])
+        .output()
+        .expect("run selfhost compile driver with duplicate opt level");
+    assert!(!duplicate_opt.status.success());
+    assert_eq!(stdout(&duplicate_opt), "");
+    assert!(
+        stderr(&duplicate_opt).contains("compile: --opt-level was provided more than once"),
+        "stderr:\n{}",
+        stderr(&duplicate_opt)
+    );
+
+    let invalid_opt = Command::new(&driver_bin)
+        .args([opt_source_arg, "--opt-level", "4"])
+        .output()
+        .expect("run selfhost compile driver with invalid opt level");
+    assert!(!invalid_opt.status.success());
+    assert_eq!(stdout(&invalid_opt), "");
+    assert!(
+        stderr(&invalid_opt).contains("compile: invalid --opt-level 4; expected 0, 1, 2, or 3"),
+        "stderr:\n{}",
+        stderr(&invalid_opt)
+    );
+
     let bad_target_asm = dir.join("bad-target.s");
     let bad_target_asm_arg = bad_target_asm
         .to_str()
@@ -1652,6 +1745,147 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
     assert!(
         !malformed_asm.exists(),
         "malformed selfhost compile should not write assembly"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn selfhost_test_planner_threads_opt_level_into_harness_compile() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let driver_source = manifest_dir.join("selfhost").join("test.tl");
+    let dir = fixture_dir("selfhost-test-opt-level");
+    let driver_bin = dir.join("selfhost-test");
+    let driver_source_arg = driver_source.to_str().expect("driver path is utf-8");
+    let driver_bin_arg = driver_bin.to_str().expect("driver output path is utf-8");
+
+    let build = typelisp(&["build", driver_source_arg, "-o", driver_bin_arg]);
+    assert!(
+        build.status.success(),
+        "selfhost test planner build failed\nstdout:\n{}\nstderr:\n{}",
+        stdout(&build),
+        stderr(&build)
+    );
+
+    let source = dir.join("inline-opt.tl");
+    fs::write(
+        &source,
+        "(extern sink : (-> i64 unit))\n(test folded\n  (sink (+ 20 22)))\n",
+    )
+    .expect("write inline opt-level test source");
+    let source_arg = source.to_str().expect("source path is utf-8");
+    let scratch_asm = PathBuf::from(format!("{source_arg}.test.s"));
+
+    let default = Command::new(&driver_bin)
+        .arg(source_arg)
+        .output()
+        .expect("run selfhost test planner with default opt level");
+    assert!(
+        default.status.success(),
+        "selfhost test default opt level failed\nstdout:\n{}\nstderr:\n{}",
+        stdout(&default),
+        stderr(&default)
+    );
+    assert_eq!(stderr(&default), "");
+    assert!(
+        stdout(&default).contains("run-scratch-assembly"),
+        "stdout:\n{}",
+        stdout(&default)
+    );
+    let default_text =
+        fs::read_to_string(&scratch_asm).expect("read default inline test harness asm");
+
+    let mut opt_level_texts = Vec::new();
+    for level in ["0", "1", "2", "3"] {
+        let _ = fs::remove_file(&scratch_asm);
+        let output = Command::new(&driver_bin)
+            .args([source_arg, "--opt-level", level])
+            .output()
+            .expect("run selfhost test planner with opt level");
+        assert!(
+            output.status.success(),
+            "selfhost test --opt-level {level} failed\nstdout:\n{}\nstderr:\n{}",
+            stdout(&output),
+            stderr(&output)
+        );
+        assert_eq!(stderr(&output), "");
+        assert!(
+            stdout(&output).contains("run-scratch-assembly"),
+            "stdout:\n{}",
+            stdout(&output)
+        );
+        opt_level_texts.push(
+            fs::read_to_string(&scratch_asm)
+                .unwrap_or_else(|err| panic!("read test opt-level {level} asm: {err}")),
+        );
+    }
+
+    assert!(
+        opt_level_texts[0].contains(
+            "    addq %rbx, %rax\n    movq %rax, %r14\n    movq %r14, %rdi\n    call sink\n"
+        ),
+        "test opt-level 0 should leave lowered arithmetic in harness assembly:\n{}",
+        opt_level_texts[0]
+    );
+    assert!(
+        opt_level_texts[2].contains("    movq $42, %rdi\n    call sink\n"),
+        "test opt-level 2 should fold harness arithmetic:\n{}",
+        opt_level_texts[2]
+    );
+    assert_eq!(
+        default_text, opt_level_texts[2],
+        "omitted test --opt-level should use the shared default level 2"
+    );
+    assert_eq!(
+        opt_level_texts[2], opt_level_texts[3],
+        "test opt-level 3 is currently documented as level-2 equivalent"
+    );
+
+    let check = Command::new(&driver_bin)
+        .args([source_arg, "--check", "--opt-level", "3"])
+        .output()
+        .expect("run selfhost test planner --check with opt level");
+    assert!(
+        check.status.success(),
+        "selfhost test --check --opt-level failed\nstdout:\n{}\nstderr:\n{}",
+        stdout(&check),
+        stderr(&check)
+    );
+    assert!(stdout(&check).contains("TypeLisp test typecheck passed: 1 test(s)"));
+
+    let missing_opt = Command::new(&driver_bin)
+        .args([source_arg, "--opt-level"])
+        .output()
+        .expect("run selfhost test planner with missing opt level");
+    assert!(!missing_opt.status.success());
+    assert_eq!(stdout(&missing_opt), "");
+    assert!(
+        stderr(&missing_opt).contains("test: --opt-level requires a value"),
+        "stderr:\n{}",
+        stderr(&missing_opt)
+    );
+
+    let duplicate_opt = Command::new(&driver_bin)
+        .args([source_arg, "--opt-level", "1", "--opt-level", "2"])
+        .output()
+        .expect("run selfhost test planner with duplicate opt level");
+    assert!(!duplicate_opt.status.success());
+    assert_eq!(stdout(&duplicate_opt), "");
+    assert!(
+        stderr(&duplicate_opt).contains("test: --opt-level was provided more than once"),
+        "stderr:\n{}",
+        stderr(&duplicate_opt)
+    );
+
+    let invalid_opt = Command::new(&driver_bin)
+        .args([source_arg, "--opt-level", "4"])
+        .output()
+        .expect("run selfhost test planner with invalid opt level");
+    assert!(!invalid_opt.status.success());
+    assert_eq!(stdout(&invalid_opt), "");
+    assert!(
+        stderr(&invalid_opt).contains("test: invalid --opt-level 4; expected 0, 1, 2, or 3"),
+        "stderr:\n{}",
+        stderr(&invalid_opt)
     );
 }
 

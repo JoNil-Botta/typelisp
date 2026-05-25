@@ -19,6 +19,28 @@
 ;; Out of scope: aggregate/String/array IR optimization.
 (import "compiler_ir_types.tl")
 
+(defenum ResultCompilerOptimizeLevel
+  (OkCompilerOptimizeLevel i64)
+  (ErrCompilerOptimizeLevel))
+
+(define compiler-optimize-level-default : i64
+  2)
+
+(define (compiler-optimize-default-level) : i64
+  compiler-optimize-level-default)
+
+(define (compiler-optimize-level-valid? [level : i64]) : bool
+  (and (>= level 0) (<= level 3)))
+
+(define (compiler-optimize-parse-level [value : String]) : ResultCompilerOptimizeLevel
+  (if (= (string-length value) 1)
+    (let
+      [c : char (string-ref value 0)]
+      (if (or (= c #0') (or (= c #1') (or (= c #2') (= c #3'))))
+        (OkCompilerOptimizeLevel (string->int value))
+        (ErrCompilerOptimizeLevel)))
+    (ErrCompilerOptimizeLevel)))
+
 ;; --- block-local constant environment: IR var id -> known typed scalar -------
 (defenum OptMaybeI64
   (OptNoI64)
@@ -1837,16 +1859,40 @@
 (define (optimize-function [func : CompilerIrFunction]) : CompilerIrFunction
   (optimize-function-fixed func (optimize-function-max-iterations)))
 
+(define (optimize-function-with-level [func : CompilerIrFunction] [level : i64]) : CompilerIrFunction
+  (if (= level 0)
+    func
+    (if (= level 1)
+      (optimize-function-once func)
+      (optimize-function func))))
+
 (define (optimize-function-list [funcs : CompilerIrFunctionList]) : CompilerIrFunctionList
+  (optimize-function-list-with-level funcs (compiler-optimize-default-level)))
+
+(define (optimize-function-list-with-level
+  [funcs : CompilerIrFunctionList]
+  [level : i64]) : CompilerIrFunctionList
   (match funcs
     [(IrFunctionNil) (IrFunctionNil)]
     [(IrFunctionCons func rest)
-      (IrFunctionCons (optimize-function func) (optimize-function-list rest))]))
+      (IrFunctionCons
+        (optimize-function-with-level func level)
+        (optimize-function-list-with-level rest level))]))
 
 (define (optimize-program [program : CompilerIrProgram]) : CompilerIrProgram
+  (optimize-program-with-level program (compiler-optimize-default-level)))
+
+(define (optimize-program-with-level
+  [program : CompilerIrProgram]
+  [level : i64]) : CompilerIrProgram
   (match program
     [(IrProgram globals functions externs)
-      (IrProgram globals (optimize-function-list functions) externs)]))
+      (if (= level 0)
+        program
+        (IrProgram
+          globals
+          (optimize-function-list-with-level functions level)
+          externs))]))
 
 ;; --- self-test ---------------------------------------------------------------
 (define (opt-count-arith-instrs [instrs : CompilerIrInstrList]) : i64
@@ -2555,6 +2601,82 @@
           (match block
             [(IrBlock _ instrs) instrs])]
         [(IrBlockNil) (IrInstrNil)])]))
+
+(define (opt-program-first-instrs [program : CompilerIrProgram]) : CompilerIrInstrList
+  (match program
+    [(IrProgram _ funcs _)
+      (match funcs
+        [(IrFunctionCons func _) (opt-function-first-instrs func)]
+        [(IrFunctionNil) (IrInstrNil)])]))
+
+(define (opt-level-parse-ok? [value : String] [expected : i64]) : bool
+  (match (compiler-optimize-parse-level value)
+    [(OkCompilerOptimizeLevel level) (= level expected)]
+    [(ErrCompilerOptimizeLevel) false]))
+
+(define (opt-level-parse-err? [value : String]) : bool
+  (match (compiler-optimize-parse-level value)
+    [(OkCompilerOptimizeLevel _) false]
+    [(ErrCompilerOptimizeLevel) true]))
+
+(define (compiler-optimize-level-policy-ok?) : bool
+  (and
+    (= (compiler-optimize-default-level) 2)
+    (and
+      (compiler-optimize-level-valid? 0)
+      (and
+        (compiler-optimize-level-valid? 1)
+        (and
+          (compiler-optimize-level-valid? 2)
+          (and
+            (compiler-optimize-level-valid? 3)
+            (and
+              (not (compiler-optimize-level-valid? (- 0 1)))
+              (and
+                (not (compiler-optimize-level-valid? 4))
+                (and
+                  (opt-level-parse-ok? "0" 0)
+                  (and
+                    (opt-level-parse-ok? "1" 1)
+                    (and
+                      (opt-level-parse-ok? "2" 2)
+                      (and
+                        (opt-level-parse-ok? "3" 3)
+                        (and
+                          (opt-level-parse-err? "")
+                          (and
+                            (opt-level-parse-err? "4")
+                            (opt-level-parse-err? "10")))))))))))))))
+
+(define (compiler-optimize-level-program-ok?) : bool
+  (let
+    [program : CompilerIrProgram (opt-test-program (opt-self-test-instrs))]
+    [level0 : CompilerIrProgram (optimize-program-with-level program 0)]
+    [level1 : CompilerIrProgram (optimize-program-with-level program 1)]
+    [level2 : CompilerIrProgram (optimize-program-with-level program 2)]
+    [level3 : CompilerIrProgram (optimize-program-with-level program 3)]
+    [defaulted : CompilerIrProgram (optimize-program program)]
+    [level0-instrs : CompilerIrInstrList (opt-program-first-instrs level0)]
+    [level1-instrs : CompilerIrInstrList (opt-program-first-instrs level1)]
+    [level2-instrs : CompilerIrInstrList (opt-program-first-instrs level2)]
+    (and
+      (opt-program-eq program level0)
+      (and
+        (= (opt-count-arith-instrs level0-instrs) 1)
+        (and
+          (= (opt-count-arith-instrs level1-instrs) 0)
+          (and
+            (= (compiler-ir-instr-list-count level2-instrs) 0)
+            (and
+              (opt-program-eq level2 level3)
+              (opt-program-eq level2 defaulted))))))))
+
+(define (compiler-optimize-level-self-test) : i64
+  (if (compiler-optimize-level-policy-ok?)
+    (if (compiler-optimize-level-program-ok?)
+      42
+      2)
+    1))
 
 (define (opt-function-blocks [func : CompilerIrFunction]) : CompilerIrBlockList
   (match func

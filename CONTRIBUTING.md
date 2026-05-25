@@ -40,6 +40,25 @@ When a PR changes Rust-owned files such as `src/**/*.rs`, `tests/**/*.rs`,
 `Selfhost-Guardrail:` line with either the paired `selfhost/...` or `stdlib/...`
 path, or the temporary bootstrap/migration reason and issue link.
 
+## No Syntax Aliases Rule
+
+**When you change language syntax, do not add an alias or a second parser path
+for the old spelling. Migrate every existing usage to the new syntax and remove
+the old form in the same change.**
+
+Keeping the old spelling working "for compatibility" leaves two ways to write
+the same thing and lets the old syntax linger indefinitely. A syntax change is
+complete only when the new spelling is the *sole* spelling: update `src/`,
+`selfhost/`, `stdlib/`, `examples/`, `tests/`, `SPEC.md`, `README.md`, the
+editor grammar under `tools/`, and any verification scripts together, so that
+`git grep <old-spelling>` returns no production code or syntax. Land the rename
+as one converging change rather than an add-then-maybe-migrate-later sequence.
+
+This overrides any "replace **or alias**" allowance in individual feature
+issues. See
+[#1118](https://github.com/JoNil-Botta/typelisp/issues/1118) for the policy's
+origin (the `with-region` → `with-arena` convergence).
+
 ## Before Submitting
 
 - `cargo fmt` — format your code

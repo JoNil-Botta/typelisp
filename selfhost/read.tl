@@ -11,12 +11,14 @@
 ;; AST it builds, rather than re-derive them, and it carries its own `main`
 ;; (interpret the read tree to an i64).
 ;;
-;; The module loader (#44) is whole-program: it concatenates every imported
-;; module's declarations into a single program, then runs the unchanged
+;; The legacy stage0 module loader (#44) is whole-program: it concatenates every
+;; imported module's declarations into a single program, then runs the unchanged
 ;; `typecheck -> lower -> codegen` pipeline. So two modules that both declare a
 ;; `main` and are loaded together produce a duplicate `main` symbol - the known
-;; module limitation. Importing `reader.tl` (which HAS a `main`) into the
-;; evaluator (which also needs a `main`) would clash.
+;; legacy limitation. The selfhost namespace model specified in SPEC.md replaces
+;; this flat import behavior with qualified module identities. Importing
+;; `reader.tl` (which HAS a `main`) into the evaluator (which also needs a
+;; `main`) would clash today.
 ;;
 ;; The fix is this `main`-less module: it holds the reader's cursor helpers, the
 ;; mutually recursive `read-form` / `read-list`, the public `read` entry, AND the

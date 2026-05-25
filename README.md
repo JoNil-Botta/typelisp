@@ -116,6 +116,12 @@ The comptime implementation path is tracked by #893, #913, and #483.
 (import "lib/util.tl")                        ; relative, deduped; cycles load once
 ```
 
+The Rust stage0 loader still uses the legacy flat import model: imported
+definitions merge into one top-level namespace. The selfhost module direction is
+private-by-default modules with canonical identities, `(export ...)`, import
+aliases, and qualified names such as `math/add`; see `SPEC.md` section 4.4 for
+the specified migration contract.
+
 `stdlib/string.tl` is the canonical in-repo string utility module. Stdlib files
 are ordinary modules imported with explicit paths such as
 `(import "stdlib/string.tl")`. `check`, `compile`, `build <file.tl>`, and `run`
@@ -149,11 +155,13 @@ declared for alias `math`; ordinary string imports remain relative to the
 importing file, and `stdlib/...` imports keep their local-first then
 configured-root behavior.
 
-Imported package definitions share the same flat top-level namespace as local
-modules, so duplicate value or type names fail through the existing duplicate
-definition diagnostics. This package slice has no registry, version solving,
-lockfile, workspace model, namespace isolation, qualified symbol lookup, or
-native executable build promise for package manifests.
+Under the legacy loader, imported package definitions share the same flat
+top-level namespace as local modules, so duplicate value or type names fail
+through the existing duplicate definition diagnostics. The package slice still
+has no registry, version solving, lockfile, workspace model, or native
+executable build promise for package manifests; namespace isolation and
+qualified symbol lookup are specified for the selfhost module model in
+`SPEC.md`.
 
 Documentation comments can contain checked examples. `typelisp doc --test
 <file.tl>` extracts fenced `typelisp` or `tl` blocks from `;;;;` module docs and
@@ -189,7 +197,8 @@ for assertion helpers.
 
 ### Enum and struct namespace rules
 
-TypeLisp keeps **type names** and **value names** in separate namespaces:
+In the current flat stage0 model, TypeLisp keeps **type names** and **value
+names** in separate namespaces:
 
 - **Type namespace**: enum and struct type names share one namespace, so
   `defenum Shape` and `defstruct Shape` collide.
@@ -200,6 +209,10 @@ TypeLisp keeps **type names** and **value names** in separate namespaces:
 - An enum *type* name may intentionally share a name with one of its own
   variants (e.g. `defenum Result (Result i64) (Err String)`), because the type
   and the constructor live in different namespaces.
+
+The selfhost module model keeps the same value/type split inside each module,
+then qualifies exported names by module identity so two modules can define the
+same local value or type name without colliding.
 
 ### Expression forms
 

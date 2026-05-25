@@ -4,12 +4,41 @@ A statically typed Lisp/Scheme dialect that compiles directly to native
 x86_64 assembly for Linux and Windows. Written in Rust with **zero third-party
 dependencies** (`std` only).
 
-## Goals
+## Goals and inspirations
+
+Current implementation goals:
 
 - **Typed**: Every expression has a known type at compile time. No runtime type tagging.
 - **Native**: Compiles straight to x86_64 assembly, then native toolchains produce executables. Linux uses `as` + `ld`; Windows uses `clang` + `lld-link`. No bytecode VM, no interpreter, no garbage collector.
 - **Zero dependencies**: Built with Rust `std` only. No third-party crates.
 - **Self-hostable front end**: A lexer, s-expression reader, and tree-walking evaluator for TypeLisp are themselves written in TypeLisp (see [`selfhost/`](selfhost)).
+
+Language direction:
+
+- Keep a minimal language core with Lisp/Scheme syntax and explicit types.
+- Be expressive enough for C-style systems programming: native layout,
+  runtime/FFI escape hatches, deterministic builds, and direct linker interop.
+- Pursue Rust-style safety for ownership, borrowing, move semantics, and arena
+  lifetimes. Safe TypeLisp should not have undefined behavior; the arena and
+  borrow work is tracked by #801, #802, #803, #805, #814, and #182.
+- Treat ISPC-style SPMD as the data-parallel model. The current source surface
+  is in [SPEC.md section 5.15](SPEC.md); selfhost parity and optimization work
+  is tracked by #791 and #937.
+- Use Zig-style comptime as the abstraction mechanism. TypeLisp should not grow
+  source-level generics, traits, interfaces, or `impl` syntax; comptime code
+  should generate concrete types, functions, and implementation bundles instead.
+  See #893, #913, and #970.
+- Move toward C3-style modules where module identity participates in name
+  resolution and prefixes TypeLisp linker symbols; see #950, #952, and #953.
+- Use an arena-based memory model with a default program-lifetime arena and
+  scoped `(with-arena ...)` allocation regions (#801).
+- Land new language features in the selfhost compiler, not as new Rust compiler
+  product surface. The Rust implementation is the stage0/compiler bridge while
+  the public toolchain moves toward TypeLisp-built components (#666, #784, #787,
+  #795).
+
+The language-direction bullets above are future goals. The rest of this README
+describes current behavior unless it explicitly says a feature is planned.
 
 ## Quick Start
 

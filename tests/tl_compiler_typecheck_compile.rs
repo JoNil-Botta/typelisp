@@ -249,11 +249,12 @@ fn selfhost_check_tl_compiles_to_assembly() {
     );
 
     for sym in [
+        "_tl_selfhost_check_config:",
+        "_tl_selfhost_check_parse_options:",
         "_tl_selfhost_check_file:",
-        "_tl_selfhost_check_extra_args_status:",
-        "_tl_compiler_check_file:",
+        "_tl_compiler_check_file_with_roots:",
         "_tl_compiler_check_source:",
-        "_tl_compiler_load_file:",
+        "_tl_compiler_load_file_with_path",
         "_tl_compiler_load_source:",
         "_tl_typecheck_compiler_program:",
     ] {
@@ -262,7 +263,8 @@ fn selfhost_check_tl_compiles_to_assembly() {
 
     for message in [
         "selfhost-check: expected input path",
-        "selfhost-check: --stdlib-root is not supported yet",
+        "selfhost-check: --stdlib-root requires a value",
+        "selfhost-check: unknown flag ",
         "selfhost-check: unexpected argument ",
         "compiler-load: cannot read import ",
         "typecheck: return type mismatch",

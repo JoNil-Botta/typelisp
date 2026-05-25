@@ -97,19 +97,26 @@ contains|build: expected source path
 end
 
 case|selfhost_check|selfhost/check.tl|assembly|exactly-one|direct
+contains|_tl_selfhost_check_config:
 contains|_tl_selfhost_check_file:
-contains|_tl_compiler_check_file:
+contains|_tl_compiler_check_file_with_roots:
+contains|_tl_compiler_load_file_with_path
 contains|selfhost-check: expected input path
+contains|selfhost-check: --stdlib-root requires a value
 end
 
 case|selfhost_compile|selfhost/compile.tl|assembly|exactly-one|direct
 contains|_tl_compile_cli_config:
 contains|_tl_compile_cli_target:
+contains|_tl_compile_cli_root_list_append:
 contains|_tl_compiler_driver_compile_file:
+contains|_tl_compiler_driver_compile_file_with_roots:
 contains|_tl_compiler_driver_compile_file_for_target:
+contains|_tl_compiler_driver_compile_file_for_target_with_roots:
 contains|_tl_compiler_backend_emit_program_with_spans_for_target:
 contains|compile: expected source path
 contains|compile: --target requires a value
+contains|compile: --stdlib-root requires a value
 contains|Error: unknown target '
 contains|--emit-ir
 end

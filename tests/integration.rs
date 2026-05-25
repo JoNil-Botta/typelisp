@@ -2646,20 +2646,30 @@ fn selfhost_check_driver_reports_success_and_errors() {
         String::from_utf8_lossy(&load_error.stderr)
     );
 
-    let stdlib_reject = Command::new(&driver_bin)
-        .arg(&ok_path)
+    let stdlib_root = work_dir.join("repo-stdlib");
+    fs::create_dir_all(&stdlib_root).expect("create selfhost check stdlib root");
+    fs::write(stdlib_root.join("local.tl"), "(define helper : i64 41)\n")
+        .expect("write selfhost check stdlib fixture");
+    let stdlib_ok_path = work_dir.join("stdlib_ok.tl");
+    fs::write(
+        &stdlib_ok_path,
+        "(import \"stdlib/local.tl\")\n(define (main) : i64 (+ helper 1))\n",
+    )
+    .expect("write selfhost check stdlib-root fixture");
+    let stdlib_ok = Command::new(&driver_bin)
+        .arg(&stdlib_ok_path)
         .arg("--stdlib-root")
-        .arg(&work_dir)
+        .arg(&stdlib_root)
         .output()
-        .expect("run selfhost check stdlib-root rejection");
-    assert_eq!(stdlib_reject.status.code(), Some(1));
-    assert_eq!(String::from_utf8_lossy(&stdlib_reject.stdout), "");
+        .expect("run selfhost check stdlib-root fixture");
     assert!(
-        String::from_utf8_lossy(&stdlib_reject.stderr)
-            .contains("selfhost-check: --stdlib-root is not supported yet"),
-        "stdlib-root stderr:\n{}",
-        String::from_utf8_lossy(&stdlib_reject.stderr)
+        stdlib_ok.status.success(),
+        "stdlib-root check failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&stdlib_ok.stdout),
+        String::from_utf8_lossy(&stdlib_ok.stderr)
     );
+    assert_eq!(String::from_utf8_lossy(&stdlib_ok.stdout), "");
+    assert_eq!(String::from_utf8_lossy(&stdlib_ok.stderr), "");
 }
 
 #[test]

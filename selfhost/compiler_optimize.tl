@@ -1047,10 +1047,12 @@
 ;; Returns 42 when every positive identity is rewritten to `Mov`, the typed U8
 ;; identity keeps its result type, and the negative cases stay untouched.
 (define (compiler-optimize-strength-self-test) : i64
-  (let ([pos : CompilerIrInstrList
-    (opt-strength-instrs (OptConstNil) (opt-strength-self-test-instrs))])
-    (let ([neg : CompilerIrInstrList
-      (opt-strength-instrs (OptConstNil) (opt-strength-negative-instrs))])
+  (let
+    [pos : CompilerIrInstrList
+      (opt-strength-instrs (OptConstNil) (opt-strength-self-test-instrs))]
+    (let
+      [neg : CompilerIrInstrList
+        (opt-strength-instrs (OptConstNil) (opt-strength-negative-instrs))]
       (if (= (opt-count-arith-instrs pos) 0)
         (if (= (opt-sum-mov-var-src pos) 49)
           (if (= (opt-count-mov-i64-value pos 0) 2)

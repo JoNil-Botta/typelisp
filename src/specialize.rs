@@ -112,7 +112,8 @@ impl Specializer {
                 // Declaration-position comptime templates are expanded by
                 // `ExpandedProgram::from_program` (typecheck) and flattened by
                 // the lowerer; specialization carries them through unchanged.
-                | Decl::ComptimeDecl { .. } => decls.push(decl.clone()),
+                | Decl::ComptimeDecl { .. }
+                | Decl::Test { .. } => decls.push(decl.clone()),
             }
         }
         decls.extend(self.generated.clone());

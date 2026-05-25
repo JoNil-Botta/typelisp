@@ -175,13 +175,18 @@ impl<'a> Parser<'a> {
                 self.advance()?;
                 self.parse_comptime_decl(span)
             }
+            Token::Ident(s) if s == "test" => {
+                let span = self.span();
+                self.advance()?;
+                self.parse_test(span)
+            }
             Token::Import => {
                 self.advance()?;
                 self.parse_import()
             }
             _ => Err(ParseError {
                 msg: format!(
-                    "expected define, extern, defenum, defstruct, comptime-decl or import, got {:?}",
+                    "expected define, extern, defenum, defstruct, comptime-decl, import or test, got {:?}",
                     self.current
                 ),
                 span: self.span(),
@@ -295,6 +300,33 @@ impl<'a> Parser<'a> {
         };
         self.expect(Token::RParen)?;
         Ok(Decl::Import(path))
+    }
+
+    fn parse_test(&mut self, span: Span) -> Result<Decl, ParseError> {
+        let name = self.expect_ident()?;
+        let mut exprs = Vec::new();
+        while self.current != Token::RParen {
+            if self.current == Token::Eof {
+                return Err(ParseError {
+                    msg: "unterminated test item".into(),
+                    span: self.span(),
+                });
+            }
+            exprs.push(self.parse_expr()?);
+        }
+        self.expect(Token::RParen)?;
+        if exprs.is_empty() {
+            return Err(ParseError {
+                msg: format!("test '{}' must contain at least one expression", name),
+                span,
+            });
+        }
+        let body = if exprs.len() == 1 {
+            exprs.remove(0)
+        } else {
+            Expr::Begin(exprs)
+        };
+        Ok(Decl::Test { name, body, span })
     }
 
     /// Parse `(comptime-decl (defstruct ...))` / `(comptime-decl (defenum ...))`.

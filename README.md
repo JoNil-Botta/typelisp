@@ -25,6 +25,7 @@ cargo build --release
 ./target/release/typelisp compile examples/hello.tl     # writes examples/hello.s
 ./target/release/typelisp build   examples/hello.tl     # writes examples/hello
 ./target/release/typelisp run     examples/hello.tl
+./target/release/typelisp test --check examples/hello.tl
 ./target/release/typelisp run     examples/hello.tl --target windows-x86_64
 ./target/release/typelisp build                         # builds nearest typelisp.pkg
 ```
@@ -178,6 +179,14 @@ parse, resolve imports, and type-check. Add `expect-error` after the language ta
 when the example is intended to fail. Ordinary `;` and `;;` comments are not
 documentation and are ignored by the doctest scanner.
 
+Inline tests can live next to source declarations as `(test name body...)`
+items. Normal `check`, `compile`, `build`, and `run` ignore them. `typelisp
+test <file.tl>` loads the import graph, turns inline tests into private
+unit-returning functions, generates a test-owned `main`, and runs the resulting
+executable. `typelisp test --check <file.tl>` type-checks that generated
+harness without assembling or linking. Tests commonly import `stdlib/test.tl`
+for assertion helpers.
+
 ### Enum and struct namespace rules
 
 TypeLisp keeps **type names** and **value names** in separate namespaces:
@@ -307,6 +316,7 @@ typelisp build          file.tl    # Build native executable; -o <path>, --targe
 typelisp run            file.tl    # Compile, assemble, link, and run; --target <target>, --backend-mode <mode>
 typelisp build                    # Build nearest typelisp.pkg to package assembly; --target <target>, --backend-mode <mode>
 typelisp fmt            file.tl    # Format source in place; --check reports changes without writing
+typelisp test           file.tl    # Run inline `(test ...)` items; --check type-checks the generated harness
 ```
 
 The older top-level `tokenize`, `parse`, and `check` commands remain as
@@ -321,10 +331,11 @@ later `.type` commands; TypeLisp evaluation is planned in follow-up work.
 map/zip subset and otherwise falls back or rejects unsupported vector IR;
 `avx512` parses but is rejected until that backend lands.
 
-`compile`, `run`, and source-file `build` accept
-`--target linux-x86_64|windows-x86_64`. Linux is the default target. Windows
-native builds use the Windows x64 ABI, a CRT-linked runtime helper policy, and
-the `clang` + `lld-link` toolchain.
+`compile`, `run`, source-file `build`, and `test` accept
+`--target linux-x86_64|windows-x86_64`. Linux is the default output target for
+compile/build. `test` defaults to the host target so the generated executable
+can run locally. Windows native builds use the Windows x64 ABI, a CRT-linked
+runtime helper policy, and the `clang` + `lld-link` toolchain.
 
 ## Status
 

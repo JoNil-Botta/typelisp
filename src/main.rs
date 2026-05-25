@@ -175,6 +175,7 @@ fn print_usage() {
         "    typelisp build [--manifest-path <typelisp.pkg>] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...]"
     );
     eprintln!("    typelisp fmt [--check] <file.tl>... [--stdlib-root <dir>...]");
+    eprintln!("    typelisp test [--check] <file.tl> [--target <target>] [--stdlib-root <dir>...]");
     eprintln!("    typelisp doc <file.tl> [-o <out.md>] [--stdlib-root <dir>...]");
     eprintln!("    typelisp doc --test <file.tl> [--stdlib-root <dir>...]");
     eprintln!();
@@ -201,6 +202,8 @@ fn print_usage() {
     eprintln!(
         "    --check                        Report files that would change without writing them"
     );
+    eprintln!("Options for test:");
+    eprintln!("    --check                        Typecheck inline tests without running them");
     eprintln!("Options for doc:");
     eprintln!("    --test <file.tl>               Check TypeLisp fenced examples in docs");
 }
@@ -224,6 +227,11 @@ fn print_doc_usage() {
 fn print_fmt_usage() {
     eprintln!("Usage:");
     eprintln!("    typelisp fmt [--check] <file.tl>... [--stdlib-root <dir>...]");
+}
+
+fn print_test_usage() {
+    eprintln!("Usage:");
+    eprintln!("    typelisp test [--check] <file.tl> [--target <target>] [--stdlib-root <dir>...]");
 }
 
 fn find_selfhost_file(relative: &str) -> Option<PathBuf> {
@@ -398,6 +406,8 @@ fn add_env_stdlib_root_to_plan(plan: &mut host_action::HostActionPlan) {
         | host_action::HostActionPlan::RunSource { stdlib_roots, .. } => {
             stdlib_roots.push(env_root);
         }
+        host_action::HostActionPlan::RunAssembly { .. }
+        | host_action::HostActionPlan::RunScratchAssembly { .. } => {}
     }
 }
 
@@ -534,6 +544,110 @@ fn run_fmt_command(args: &[String]) {
     write_stream_or_exit(io::stderr(), &output.stderr, "stderr");
     if !output.status.success() {
         std::process::exit(output.status.code().unwrap_or(1));
+    }
+}
+
+fn test_args_are_check(args: &[String]) -> bool {
+    args.iter().skip(2).any(|arg| arg == "--check")
+}
+
+fn test_args_have_target(args: &[String]) -> bool {
+    args.iter().skip(2).any(|arg| arg == "--target")
+}
+
+fn test_runtime_args(args: &[String]) -> Vec<String> {
+    let mut runtime_args = args[2..].to_vec();
+    if !test_args_have_target(args) {
+        runtime_args.push("--target".to_string());
+        runtime_args.push(native::host_target().as_str().to_string());
+    }
+    if let Some(root) = env::var_os(TYPELISP_STDLIB_ROOT_ENV)
+        && !root.is_empty()
+    {
+        runtime_args.push("--stdlib-root".to_string());
+        runtime_args.push(PathBuf::from(root).display().to_string());
+    }
+    runtime_args
+}
+
+fn run_test_command(args: &[String]) {
+    if args.len() < 3 {
+        eprintln!("Error: missing file argument");
+        print_test_usage();
+        std::process::exit(1);
+    }
+    if matches!(args[2].as_str(), "help" | "--help" | "-h") {
+        print_test_usage();
+        return;
+    }
+
+    let driver = find_selfhost_file("selfhost/test.tl").unwrap_or_else(|| {
+        eprintln!("Error: could not find selfhost/test.tl in the repo or near the executable");
+        std::process::exit(1);
+    });
+    let runtime_args = test_runtime_args(args);
+    let output = native_or_exit(native::run_source_file_in_temp_dir(
+        &driver,
+        &LoadOptions::default(),
+        runtime_args.as_slice(),
+        native::host_target(),
+    ));
+
+    if test_args_are_check(args) {
+        write_stream_or_exit(io::stdout(), &output.stdout, "stdout");
+        write_stream_or_exit(io::stderr(), &output.stderr, "stderr");
+        if !output.status.success() {
+            std::process::exit(output.status.code().unwrap_or(1));
+        }
+        return;
+    }
+
+    if !output.status.success() {
+        write_stream_or_exit(io::stdout(), &output.stdout, "stdout");
+        write_stream_or_exit(io::stderr(), &output.stderr, "stderr");
+        std::process::exit(output.status.code().unwrap_or(1));
+    }
+
+    write_stream_or_exit(io::stderr(), &output.stderr, "stderr");
+    let plan_text = match String::from_utf8(output.stdout) {
+        Ok(plan_text) => plan_text,
+        Err(err) => {
+            eprintln!("Error: selfhost test runner emitted non-UTF-8 host-action plan: {err}");
+            std::process::exit(1);
+        }
+    };
+    let plan = match host_action::parse_plan(&plan_text) {
+        Ok(plan) => plan,
+        Err(err) => {
+            eprintln!("Error: invalid selfhost test host-action plan: {err}");
+            std::process::exit(1);
+        }
+    };
+
+    match native_or_exit(host_action::execute_plan(&plan)) {
+        host_action::HostActionOutcome::Ran(run_output) => {
+            write_stream_or_exit(io::stdout(), &run_output.stdout, "stdout");
+            write_stream_or_exit(io::stderr(), &run_output.stderr, "stderr");
+            if !run_output.status.success() {
+                if !run_output.stderr.is_empty()
+                    && !matches!(run_output.stderr.last(), Some(b'\n' | b'\r'))
+                {
+                    eprintln!();
+                }
+                eprintln!(
+                    "typelisp test: test executable exited with {}",
+                    run_output.status
+                );
+                std::process::exit(run_output.status.code().unwrap_or(1));
+            }
+        }
+        host_action::HostActionOutcome::Built { output_path } => {
+            eprintln!(
+                "Error: selfhost test runner unexpectedly built '{}'",
+                output_path.display()
+            );
+            std::process::exit(1);
+        }
     }
 }
 
@@ -901,6 +1015,9 @@ fn run_cli() {
         }
         "fmt" => {
             run_fmt_command(&args);
+        }
+        "test" => {
+            run_test_command(&args);
         }
         "lsp" => {
             let options = parse_stdlib_roots(&args, 2);

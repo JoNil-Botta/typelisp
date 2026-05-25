@@ -367,6 +367,52 @@ else
     echo "[public-tools] skipping doc generation on $HOST_OS"
 fi
 
+echo "[public-tools] inline test command"
+cat > "$WORKDIR/inline_test_pass.tl" <<'EOF'
+(import "stdlib/test.tl")
+
+(define (inc [x : i64]) : i64 (+ x 1))
+
+(define (main) : i64 0)
+
+(test inc-basic
+  (assert-i64-eq (inc 41) 42 "inc result"))
+EOF
+
+run_cmd inline-test-check "$COMPILER" test --check "$WORKDIR/inline_test_pass.tl" --stdlib-root "$ROOT/stdlib"
+assert_success
+assert_stderr_empty
+assert_contains "$out" "TypeLisp test typecheck passed: 1 test(s)"
+
+run_cmd inline-test-pass "$COMPILER" test "$WORKDIR/inline_test_pass.tl" --stdlib-root "$ROOT/stdlib"
+assert_success
+assert_stdout_empty
+assert_contains "$err" "test inc-basic"
+assert_contains "$err" "ok inc-basic"
+assert_contains "$err" "TypeLisp tests passed: 1 test(s)"
+[ ! -f "$WORKDIR/inline_test_pass.tl.test.s" ] || fail "typelisp test left scratch assembly behind"
+
+run_cmd inline-test-normal-compile "$COMPILER" compile "$WORKDIR/inline_test_pass.tl" -o "$WORKDIR/inline_test_pass.s" --stdlib-root "$ROOT/stdlib"
+assert_success
+assert_stderr_empty
+assert_contains "$out" "Generated:"
+assert_not_contains "$WORKDIR/inline_test_pass.s" "__tl_inline_test"
+
+cat > "$WORKDIR/inline_test_fail.tl" <<'EOF'
+(import "stdlib/test.tl")
+
+(test failing-case
+  (assert-i64-eq 1 2 "inline failure message"))
+EOF
+
+run_cmd inline-test-fail "$COMPILER" test "$WORKDIR/inline_test_fail.tl" --stdlib-root "$ROOT/stdlib"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "test failing-case"
+assert_contains "$err" "inline failure message"
+assert_contains "$err" "typelisp test: test executable exited"
+[ ! -f "$WORKDIR/inline_test_fail.tl.test.s" ] || fail "failing typelisp test left scratch assembly behind"
+
 echo "[public-tools] package build"
 PKG="$WORKDIR/pkg"
 mkdir -p "$PKG/src" "$PKG/vendor/math/src"

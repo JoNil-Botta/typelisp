@@ -140,6 +140,65 @@
             (SpecSomeTemplate template)
             (spec-template-lookup rest name))])]))
 
+(define (spec-template-list-remove-name
+  [templates : SpecTemplateList]
+  [name : String]) : SpecTemplateList
+  (match templates
+    [(SpecTemplateNil) (SpecTemplateNil)]
+    [(SpecTemplateCons template rest)
+      (match template
+        [(SpecTemplate template-name _ _ _)
+          (if (string-eq template-name name)
+            (spec-template-list-remove-name rest name)
+            (SpecTemplateCons
+              template
+              (spec-template-list-remove-name rest name)))])]))
+
+(define (spec-template-list-remove-params
+  [templates : SpecTemplateList]
+  [params : AstParamList]) : SpecTemplateList
+  (match params
+    [(AstParamNil) templates]
+    [(AstParamCons param rest)
+      (spec-template-list-remove-params
+        (spec-template-list-remove-name templates (spec-param-name param))
+        rest)]))
+
+(define (spec-template-list-remove-let-binding-names
+  [templates : SpecTemplateList]
+  [bindings : AstLetBindingList]) : SpecTemplateList
+  (match bindings
+    [(AstLetBindingNil) templates]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding name _ _)
+          (spec-template-list-remove-let-binding-names
+            (spec-template-list-remove-name templates name)
+            rest)])]))
+
+(define (spec-template-list-remove-pattern
+  [templates : SpecTemplateList]
+  [pattern : AstPattern]) : SpecTemplateList
+  (match pattern
+    [(AstPatVar name _) (spec-template-list-remove-name templates name)]
+    [(AstPatTuple patterns)
+      (spec-template-list-remove-pattern-list templates patterns)]
+    [(AstPatWildcard) templates]
+    [(AstPatBinding name) (spec-template-list-remove-name templates name)]
+    [(AstPatVariant _ patterns)
+      (spec-template-list-remove-pattern-list templates patterns)]
+    [(AstPatLiteral _) templates]))
+
+(define (spec-template-list-remove-pattern-list
+  [templates : SpecTemplateList]
+  [patterns : AstPatternList]) : SpecTemplateList
+  (match patterns
+    [(AstPatternNil) templates]
+    [(AstPatternCons pattern rest)
+      (spec-template-list-remove-pattern-list
+        (spec-template-list-remove-pattern templates pattern)
+        rest)]))
+
 (define (spec-collect-templates [decls : AstDeclList]) : SpecTemplateList
   (match decls
     [(AstDeclNil) (SpecTemplateNil)]
@@ -302,6 +361,111 @@
         value
         (spec-value-subst-value rest name))]))
 
+(define (spec-value-subst-remove-name [subs : SpecValueSubst] [name : String]) : SpecValueSubst
+  (match subs
+    [(SpecValueSubstNil) SpecValueSubstNil]
+    [(SpecValueSubstCons key value rest)
+      (if (string-eq key name)
+        (spec-value-subst-remove-name rest name)
+        (SpecValueSubstCons key value (spec-value-subst-remove-name rest name)))]))
+
+(define (spec-value-subst-remove-params
+  [subs : SpecValueSubst]
+  [params : AstParamList]) : SpecValueSubst
+  (match params
+    [(AstParamNil) subs]
+    [(AstParamCons param rest)
+      (spec-value-subst-remove-params
+        (spec-value-subst-remove-name subs (spec-param-name param))
+        rest)]))
+
+(define (spec-value-subst-remove-let-binding-names
+  [subs : SpecValueSubst]
+  [bindings : AstLetBindingList]) : SpecValueSubst
+  (match bindings
+    [(AstLetBindingNil) subs]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding name _ _)
+          (spec-value-subst-remove-let-binding-names
+            (spec-value-subst-remove-name subs name)
+            rest)])]))
+
+(define (spec-value-subst-remove-pattern
+  [subs : SpecValueSubst]
+  [pattern : AstPattern]) : SpecValueSubst
+  (match pattern
+    [(AstPatVar name _) (spec-value-subst-remove-name subs name)]
+    [(AstPatTuple patterns)
+      (spec-value-subst-remove-pattern-list subs patterns)]
+    [(AstPatWildcard) subs]
+    [(AstPatBinding name) (spec-value-subst-remove-name subs name)]
+    [(AstPatVariant _ patterns)
+      (spec-value-subst-remove-pattern-list subs patterns)]
+    [(AstPatLiteral _) subs]))
+
+(define (spec-value-subst-remove-pattern-list
+  [subs : SpecValueSubst]
+  [patterns : AstPatternList]) : SpecValueSubst
+  (match patterns
+    [(AstPatternNil) subs]
+    [(AstPatternCons pattern rest)
+      (spec-value-subst-remove-pattern-list
+        (spec-value-subst-remove-pattern subs pattern)
+        rest)]))
+
+(define (spec-type-subst-remove-name [subs : SpecTypeSubst] [name : String]) : SpecTypeSubst
+  (match subs
+    [(SpecTypeSubstNil) SpecTypeSubstNil]
+    [(SpecTypeSubstCons key ty rest)
+      (if (string-eq key name)
+        (spec-type-subst-remove-name rest name)
+        (SpecTypeSubstCons key ty (spec-type-subst-remove-name rest name)))]))
+
+(define (spec-type-subst-remove-params
+  [subs : SpecTypeSubst]
+  [params : AstParamList]) : SpecTypeSubst
+  (match params
+    [(AstParamNil) subs]
+    [(AstParamCons param rest)
+      (spec-type-subst-remove-params
+        (spec-type-subst-remove-name subs (spec-param-name param))
+        rest)]))
+
+(define (spec-type-subst-remove-let-binding-names
+  [subs : SpecTypeSubst]
+  [bindings : AstLetBindingList]) : SpecTypeSubst
+  (match bindings
+    [(AstLetBindingNil) subs]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding name _ _)
+          (spec-type-subst-remove-let-binding-names
+            (spec-type-subst-remove-name subs name)
+            rest)])]))
+
+(define (spec-type-subst-remove-pattern
+  [subs : SpecTypeSubst]
+  [pattern : AstPattern]) : SpecTypeSubst
+  (match pattern
+    [(AstPatVar name _) (spec-type-subst-remove-name subs name)]
+    [(AstPatTuple patterns) (spec-type-subst-remove-pattern-list subs patterns)]
+    [(AstPatWildcard) subs]
+    [(AstPatBinding name) (spec-type-subst-remove-name subs name)]
+    [(AstPatVariant _ patterns)
+      (spec-type-subst-remove-pattern-list subs patterns)]
+    [(AstPatLiteral _) subs]))
+
+(define (spec-type-subst-remove-pattern-list
+  [subs : SpecTypeSubst]
+  [patterns : AstPatternList]) : SpecTypeSubst
+  (match patterns
+    [(AstPatternNil) subs]
+    [(AstPatternCons pattern rest)
+      (spec-type-subst-remove-pattern-list
+        (spec-type-subst-remove-pattern subs pattern)
+        rest)]))
+
 (define (spec-substitute-type [ty : AstType] [subs : SpecTypeSubst]) : AstType
   (match ty
     [(AstTyFunc args ret)
@@ -392,7 +556,10 @@
         [(AstLetBinding name ty value)
           (match (spec-rewrite-expr value templates state)
             [(OkSpecExpr rewritten-value value-state)
-              (match (spec-rewrite-let-bindings rest templates value-state)
+              (match (spec-rewrite-let-bindings
+                rest
+                (spec-template-list-remove-name templates name)
+                value-state)
                 [(OkSpecLetBindingList rewritten-rest rest-state)
                   (OkSpecLetBindingList
                     (AstLetBindingCons
@@ -411,7 +578,10 @@
     [(AstMatchArmCons arm rest)
       (match arm
         [(AstMatchArm pattern body)
-          (match (spec-rewrite-expr body templates state)
+          (match (spec-rewrite-expr
+            body
+            (spec-template-list-remove-pattern templates pattern)
+            state)
             [(OkSpecExpr rewritten-body body-state)
               (match (spec-rewrite-match-arms rest templates body-state)
                 [(OkSpecMatchArmList rewritten-rest rest-state)
@@ -626,7 +796,9 @@
                                   (SpecCacheCons key generated-name cache))])
                                 (match (spec-rewrite-expr
                                   valued-body
-                                  templates
+                                  (spec-template-list-remove-params
+                                    templates
+                                    runtime-params)
                                   cached-state)
                                   [(OkSpecExpr rewritten-body rewritten-state)
                                     (match rewritten-state
@@ -723,7 +895,10 @@
     [(AstExprLet bindings body)
       (match (spec-rewrite-let-bindings bindings templates state)
         [(OkSpecLetBindingList rewritten-bindings binding-state)
-          (match (spec-rewrite-expr body templates binding-state)
+          (match (spec-rewrite-expr
+            body
+            (spec-template-list-remove-let-binding-names templates bindings)
+            binding-state)
             [(OkSpecExpr rewritten-body body-state)
               (OkSpecExpr
                 (AstExprLet rewritten-bindings rewritten-body)
@@ -731,7 +906,10 @@
             [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
         [(ErrSpecLetBindingList diag) (ErrSpecExpr diag)])]
     [(AstExprLambda params ret body)
-      (match (spec-rewrite-expr body templates state)
+      (match (spec-rewrite-expr
+        body
+        (spec-template-list-remove-params templates params)
+        state)
         [(OkSpecExpr rewritten-body body-state)
           (OkSpecExpr (AstExprLambda params ret rewritten-body) body-state)]
         [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
@@ -836,7 +1014,10 @@
         [(OkSpecExpr rewritten-start start-state)
           (match (spec-rewrite-expr end templates start-state)
             [(OkSpecExpr rewritten-end end-state)
-              (match (spec-rewrite-expr body templates end-state)
+              (match (spec-rewrite-expr
+                body
+                (spec-template-list-remove-name templates index)
+                end-state)
                 [(OkSpecExpr rewritten-body body-state)
                   (OkSpecExpr
                     (AstExprForeach
@@ -914,13 +1095,17 @@
     [(AstExprLet bindings body)
       (match (spec-substitute-values-let-bindings bindings subs)
         [(OkSpecSubLetBindingList rewritten-bindings)
-          (match (spec-substitute-values-expr body subs)
+          (match (spec-substitute-values-expr
+            body
+            (spec-value-subst-remove-let-binding-names subs bindings))
             [(OkSpecSubExpr rewritten-body)
               (OkSpecSubExpr (AstExprLet rewritten-bindings rewritten-body))]
             [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
         [(ErrSpecSubLetBindingList diag) (ErrSpecSubExpr diag)])]
     [(AstExprLambda params ret body)
-      (match (spec-substitute-values-expr body subs)
+      (match (spec-substitute-values-expr
+        body
+        (spec-value-subst-remove-params subs params))
         [(OkSpecSubExpr rewritten-body)
           (OkSpecSubExpr (AstExprLambda params ret rewritten-body))]
         [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
@@ -986,9 +1171,19 @@
         [(OkSpecSubExprList rewritten) (OkSpecSubExpr (AstExprBegin rewritten))]
         [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
     [(AstExprSet name value)
-      (match (spec-substitute-values-expr value subs)
-        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprSet name rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+      (match (spec-value-subst-lookup subs name)
+        [(SpecSomeString _)
+          (ErrSpecSubExpr
+            (spec-diagnostic-at-expr
+              expr
+              (string-append
+                "cannot assign to comptime parameter '"
+                (string-append name "'"))))]
+        [(SpecNoString)
+          (match (spec-substitute-values-expr value subs)
+            [(OkSpecSubExpr rewritten)
+              (OkSpecSubExpr (AstExprSet name rewritten))]
+            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])])]
     [(AstExprAnn inner ty)
       (match (spec-substitute-values-expr inner subs)
         [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprAnn rewritten ty))]
@@ -1010,7 +1205,9 @@
         [(OkSpecSubExpr rewritten-start)
           (match (spec-substitute-values-expr end subs)
             [(OkSpecSubExpr rewritten-end)
-              (match (spec-substitute-values-expr body subs)
+              (match (spec-substitute-values-expr
+                body
+                (spec-value-subst-remove-name subs index))
                 [(OkSpecSubExpr rewritten-body)
                   (OkSpecSubExpr
                     (AstExprForeach
@@ -1061,7 +1258,9 @@
         [(AstLetBinding name ty value)
           (match (spec-substitute-values-expr value subs)
             [(OkSpecSubExpr rewritten-value)
-              (match (spec-substitute-values-let-bindings rest subs)
+              (match (spec-substitute-values-let-bindings
+                rest
+                (spec-value-subst-remove-name subs name))
                 [(OkSpecSubLetBindingList rewritten-rest)
                   (OkSpecSubLetBindingList
                     (AstLetBindingCons
@@ -1079,7 +1278,9 @@
     [(AstMatchArmCons arm rest)
       (match arm
         [(AstMatchArm pattern body)
-          (match (spec-substitute-values-expr body subs)
+          (match (spec-substitute-values-expr
+            body
+            (spec-value-subst-remove-pattern subs pattern))
             [(OkSpecSubExpr rewritten-body)
               (match (spec-substitute-values-match-arms rest subs)
                 [(OkSpecSubMatchArmList rewritten-rest)
@@ -1127,7 +1328,9 @@
           (OkSpecSubExpr (AstExprCast rewritten (spec-substitute-type ty subs)))]
         [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
     [(AstExprLambda params ret body)
-      (match (spec-substitute-types-expr body subs)
+      (match (spec-substitute-types-expr
+        body
+        (spec-type-subst-remove-params subs params))
         [(OkSpecSubExpr rewritten-body)
           (OkSpecSubExpr
             (AstExprLambda
@@ -1140,7 +1343,9 @@
         [(OkSpecSubExpr rewritten-start)
           (match (spec-substitute-types-expr end subs)
             [(OkSpecSubExpr rewritten-end)
-              (match (spec-substitute-types-expr body subs)
+              (match (spec-substitute-types-expr
+                body
+                (spec-type-subst-remove-name subs index))
                 [(OkSpecSubExpr rewritten-body)
                   (OkSpecSubExpr
                     (AstExprForeach
@@ -1187,7 +1392,9 @@
     [(AstExprLet bindings body)
       (match (spec-substitute-types-let-bindings bindings subs)
         [(OkSpecSubLetBindingList rewritten-bindings)
-          (match (spec-substitute-types-expr body subs)
+          (match (spec-substitute-types-expr
+            body
+            (spec-type-subst-remove-let-binding-names subs bindings))
             [(OkSpecSubExpr rewritten-body)
               (OkSpecSubExpr (AstExprLet rewritten-bindings rewritten-body))]
             [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
@@ -1249,9 +1456,19 @@
         [(OkSpecSubExprList rewritten) (OkSpecSubExpr (AstExprBegin rewritten))]
         [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
     [(AstExprSet name value)
-      (match (spec-substitute-types-expr value subs)
-        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprSet name rewritten))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+      (match (spec-type-subst-lookup subs name)
+        [(SpecSomeString _)
+          (ErrSpecSubExpr
+            (spec-diagnostic-at-expr
+              expr
+              (string-append
+                "type-valued comptime parameter '"
+                (string-append name "' cannot be assigned"))))]
+        [(SpecNoString)
+          (match (spec-substitute-types-expr value subs)
+            [(OkSpecSubExpr rewritten)
+              (OkSpecSubExpr (AstExprSet name rewritten))]
+            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])])]
     [(AstExprMatch scrutinee arms)
       (match (spec-substitute-types-expr scrutinee subs)
         [(OkSpecSubExpr rewritten-scrutinee)
@@ -1299,7 +1516,9 @@
         [(AstLetBinding name ty value)
           (match (spec-substitute-types-expr value subs)
             [(OkSpecSubExpr rewritten-value)
-              (match (spec-substitute-types-let-bindings rest subs)
+              (match (spec-substitute-types-let-bindings
+                rest
+                (spec-type-subst-remove-name subs name))
                 [(OkSpecSubLetBindingList rewritten-rest)
                   (OkSpecSubLetBindingList
                     (AstLetBindingCons
@@ -1320,7 +1539,9 @@
     [(AstMatchArmCons arm rest)
       (match arm
         [(AstMatchArm pattern body)
-          (match (spec-substitute-types-expr body subs)
+          (match (spec-substitute-types-expr
+            body
+            (spec-type-subst-remove-pattern subs pattern))
             [(OkSpecSubExpr rewritten-body)
               (match (spec-substitute-types-match-arms rest subs)
                 [(OkSpecSubMatchArmList rewritten-rest)
@@ -1344,7 +1565,10 @@
     [(AstDeclDefFn name params ret body)
       (if (spec-param-list-has-comptime? params)
         (OkSpecDecl (SpecNoDecl) state)
-        (match (spec-rewrite-expr body templates state)
+        (match (spec-rewrite-expr
+          body
+          (spec-template-list-remove-params templates params)
+          state)
           [(OkSpecExpr rewritten state2)
             (OkSpecDecl
               (SpecSomeDecl (AstDeclDefFn name params ret rewritten))
@@ -1420,6 +1644,15 @@
   "(define (bad [comptime T : type] [n : i64]) : i64 T)
 (define (main) : i64 (bad (type i64) 4))")
 
+(define (compiler-specialize-template-shadow-source) : String
+  "(define (scale [comptime n : i64] [x : i64]) : i64 (* n x))
+(define (use-shadow [scale : (-> i64 i64)]) : i64 (scale 7))")
+
+(define (compiler-specialize-type-shadow-source) : String
+  "(define (pick [comptime T : type] [x : i64]) : i64
+  (let ([T : i64 x]) T))
+(define (main) : i64 (pick (type i64) 7))")
+
 (define (compiler-specialize-type-param-ok?) : bool
   (match (parse-ast-source (compiler-specialize-type-param-source))
     [(OkAstProgram program)
@@ -1443,9 +1676,34 @@
         [(ErrSpecProgram _) true])]
     [(ErrAstProgram _) false]))
 
+(define (compiler-specialize-template-shadow-ok?) : bool
+  (match (parse-ast-source (compiler-specialize-template-shadow-source))
+    [(OkAstProgram program)
+      (match (compiler-specialize-program program)
+        [(OkSpecProgram _) true]
+        [(ErrSpecProgram _) false])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-specialize-type-shadow-ok?) : bool
+  (match (parse-ast-source (compiler-specialize-type-shadow-source))
+    [(OkAstProgram program)
+      (match (compiler-specialize-program program)
+        [(OkSpecProgram specialized)
+          (match specialized
+            [(AstProgram decls)
+              (compiler-specialize-decl-list-defines?
+                decls
+                "__tl_specialized_pick_type_i64_none")])]
+        [(ErrSpecProgram _) false])]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-specialize-self-test) : i64
   (if (compiler-specialize-type-param-ok?)
     (if (compiler-specialize-runtime-type-use-rejected?)
-      1
+      (if (compiler-specialize-template-shadow-ok?)
+        (if (compiler-specialize-type-shadow-ok?)
+          1
+          0)
+        0)
       0)
     0))

@@ -163,6 +163,7 @@ end
 
 case|selfhost_compiler_check_smoke|selfhost/compiler_check_smoke.tl|assembly|exactly-one|direct
 contains|_tl_compiler_check_self_test:
+contains|_tl_compiler_load_self_test:
 contains|_tl_compiler_check_file:
 contains|_tl_compiler_check_source:
 end
@@ -216,6 +217,7 @@ case|selfhost_compiler_load|selfhost/compiler_load.tl|assembly|skip|direct
 contains|_tl_compiler_load_file:
 contains|_tl_compiler_load_file_with_roots:
 contains|_tl_compiler_load_resolve_import_with_roots:
+contains|_tl_compiler_load_self_test:
 end
 
 case|selfhost_compiler_lower|selfhost/compiler_lower.tl|assembly|skip|direct

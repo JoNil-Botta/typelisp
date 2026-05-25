@@ -163,13 +163,25 @@
   (AstExprNil)
   (AstExprCons AstExpr AstExprList))
 
+(defenum AstMaybeModuleName
+  (AstNoModuleName)
+  (AstSomeModuleName String))
+
+(defenum AstMaybeImportAlias
+  (AstNoImportAlias)
+  (AstSomeImportAlias String))
+
+(defenum AstImportSpec
+  (AstImportSpec String AstMaybeModuleName AstMaybeImportAlias))
+
 (defenum AstDecl
+  (AstDeclModule String)
   (AstDeclDef String AstMaybeType AstExpr)
   (AstDeclDefFn String AstParamList AstType AstExpr)
   (AstDeclExtern String AstType)
   (AstDeclDefEnum String AstVariantDefList)
   (AstDeclDefStruct String AstFieldDefList)
-  (AstDeclImport String))
+  (AstDeclImport AstImportSpec))
 
 (defenum AstDeclList
   (AstDeclNil)
@@ -178,6 +190,10 @@
 (defenum AstDeclPathList
   (AstDeclPathNil)
   (AstDeclPathCons String AstDeclPathList))
+
+(defenum AstDeclModuleList
+  (AstDeclModuleNil)
+  (AstDeclModuleCons String AstDeclModuleList))
 
 (defenum AstProgram
   (AstProgram AstDeclList))
@@ -250,7 +266,8 @@
     [(AstDeclExtern _ _) 3]
     [(AstDeclDefEnum _ _) 4]
     [(AstDeclDefStruct _ _) 5]
-    [(AstDeclImport _) 6]))
+    [(AstDeclImport _) 6]
+    [(AstDeclModule _) 7]))
 
 (define (compiler-ast-smoke) : i64
   (let (

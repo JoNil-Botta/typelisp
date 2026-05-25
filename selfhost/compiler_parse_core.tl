@@ -369,6 +369,9 @@
 (define (compiler-parse-tag-decl-comptime-decl) : i64
   405)
 
+(define (compiler-parse-tag-decl-module) : i64
+  406)
+
 (define (compiler-parse-dispatch-binops [e : SymI64Env]) : SymI64Env
   (let ([e1 : SymI64Env (sym-i64-bind e "+" (compiler-parse-tag-bin-add))])
     (let ([e2 : SymI64Env (sym-i64-bind e1 "-" (compiler-parse-tag-bin-sub))])
@@ -538,10 +541,12 @@
           (sym-i64-bind e3 "defstruct" (compiler-parse-tag-decl-defstruct))])
           (let ([e5 : SymI64Env
             (sym-i64-bind e4 "import" (compiler-parse-tag-decl-import))])
-            (sym-i64-bind
-              e5
-              "comptime-decl"
-              (compiler-parse-tag-decl-comptime-decl))))))))
+            (let ([e6 : SymI64Env
+              (sym-i64-bind
+                e5
+                "comptime-decl"
+                (compiler-parse-tag-decl-comptime-decl))])
+              (sym-i64-bind e6 "module" (compiler-parse-tag-decl-module)))))))))
 
 (define (compiler-parse-dispatch-env) : SymI64Env
   (compiler-parse-dispatch-decls
@@ -1504,9 +1509,58 @@
             [(ErrAstFieldDefList message) (ErrAstDecl message)])])]
     [_ (ErrAstDecl "parse: malformed defstruct")]))
 
+(define (parse-ast-module [rest : SpannedSexpr]) : ResultAstDecl
+  (match rest
+    [(SpSCons (SpSSym name _) (SpSNil _) _) (OkAstDecl (AstDeclModule name))]
+    [_ (ErrAstDecl "parse: malformed module")]))
+
+(define (parse-ast-import-spec
+  [path : String]
+  [module-name : AstMaybeModuleName]
+  [alias : AstMaybeImportAlias]) : ResultAstDecl
+  (OkAstDecl (AstDeclImport (AstImportSpec path module-name alias))))
+
+(define (parse-ast-import-alias
+  [path : String]
+  [module-name : AstMaybeModuleName]
+  [tail : SpannedSexpr]) : ResultAstDecl
+  (match tail
+    [(SpSCons (SpSSym as-name _) (SpSCons (SpSSym alias _) (SpSNil _) _) _)
+      (if (string-eq as-name "as")
+        (parse-ast-import-spec path module-name (AstSomeImportAlias alias))
+        (ErrAstDecl "parse: malformed import"))]
+    [_ (ErrAstDecl "parse: malformed import")]))
+
+(define (parse-ast-import-module-tail [path : String] [tail : SpannedSexpr]) : ResultAstDecl
+  (match tail
+    [(SpSCons (SpSSym module-name _) after-module _)
+      (match after-module
+        [(SpSNil _)
+          (parse-ast-import-spec
+            path
+            (AstSomeModuleName module-name)
+            AstNoImportAlias)]
+        [_
+          (parse-ast-import-alias
+            path
+            (AstSomeModuleName module-name)
+            after-module)])]
+    [_ (ErrAstDecl "parse: malformed import")]))
+
+(define (parse-ast-import-tail [path : String] [tail : SpannedSexpr]) : ResultAstDecl
+  (match tail
+    [(SpSNil _) (parse-ast-import-spec path AstNoModuleName AstNoImportAlias)]
+    [(SpSCons (SpSSym head _) after-head _)
+      (if (string-eq head "as")
+        (parse-ast-import-alias path AstNoModuleName tail)
+        (if (string-eq head "module")
+          (parse-ast-import-module-tail path after-head)
+          (ErrAstDecl "parse: malformed import")))]
+    [_ (ErrAstDecl "parse: malformed import")]))
+
 (define (parse-ast-import [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
-    [(SpSCons (SpSStr path _) (SpSNil _) _) (OkAstDecl (AstDeclImport path))]
+    [(SpSCons (SpSStr path _) tail _) (parse-ast-import-tail path tail)]
     [_ (ErrAstDecl "parse: malformed import")]))
 
 (define (parse-ast-comptime-decl [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstDecl
@@ -1539,11 +1593,13 @@
                 (parse-ast-defstruct dispatch rest)
                 (if (= tag (compiler-parse-tag-decl-import))
                   (parse-ast-import rest)
-                  (if (= tag (compiler-parse-tag-decl-comptime-decl))
-                    (parse-ast-comptime-decl dispatch rest)
-                    (if (compiler-parse-policy-form? head)
-                      (ErrAstDecl (compiler-parse-abstraction-policy-message))
-                      (ErrAstDecl "parse: expected declaration")))))))))]
+                  (if (= tag (compiler-parse-tag-decl-module))
+                    (parse-ast-module rest)
+                    (if (= tag (compiler-parse-tag-decl-comptime-decl))
+                      (parse-ast-comptime-decl dispatch rest)
+                      (if (compiler-parse-policy-form? head)
+                        (ErrAstDecl (compiler-parse-abstraction-policy-message))
+                        (ErrAstDecl "parse: expected declaration"))))))))))]
     [_ (ErrAstDecl "parse: malformed declaration")]))
 
 (define (parse-ast-program-forms
@@ -1659,8 +1715,35 @@
 
 (define (ast-first-import-ok? [decls : AstDeclList]) : bool
   (match decls
-    [(AstDeclCons (AstDeclImport path) _) (string-eq path "stdlib/test.tl")]
+    [(AstDeclCons (AstDeclImport (AstImportSpec path _ _)) _)
+      (string-eq path "stdlib/test.tl")]
     [_ false]))
+
+(define (compiler-parse-module-decl-ok?) : bool
+  (match (parse-ast-source "(module std.io)")
+    [(OkAstProgram (AstProgram decls))
+      (match decls
+        [(AstDeclCons (AstDeclModule name) AstDeclNil)
+          (string-eq name "std.io")]
+        [_ false])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-parse-import-metadata-ok?) : bool
+  (match (parse-ast-source "(import \"stdlib/io.tl\" module std.io as io)")
+    [(OkAstProgram (AstProgram decls))
+      (match decls
+        [(AstDeclCons
+            (AstDeclImport
+              (AstImportSpec
+                path
+                (AstSomeModuleName module-name)
+                (AstSomeImportAlias alias)))
+            AstDeclNil)
+          (and
+            (string-eq path "stdlib/io.tl")
+            (and (string-eq module-name "std.io") (string-eq alias "io")))]
+        [_ false])]
+    [(ErrAstProgram _) false]))
 
 (define (ast-source-span-start-line [span : AstSourceSpan]) : i64
   (struct-get span start-line))
@@ -1825,6 +1908,12 @@
 (define (compiler-parse-comptime-decl-extra-source) : String
   "(comptime-decl (defstruct Point (x i64)) (defenum Maybe (None)))")
 
+(define (compiler-parse-malformed-module-source) : String
+  "(module)")
+
+(define (compiler-parse-malformed-import-source) : String
+  "(import \"stdlib/io.tl\" as)")
+
 (define (compiler-parse-defgeneric-policy-source) : String
   "(defgeneric Box [T] (value T))")
 
@@ -1890,8 +1979,16 @@
                   (compiler-parse-region-type-bad-source)
                   "parse: region name must be an identifier")
                 (and
-                  (compiler-parse-comptime-decl-error-tests-ok?)
-                  (compiler-parse-abstraction-policy-tests-ok?))))))))))
+                  (compiler-parse-error-ok?
+                    (compiler-parse-malformed-module-source)
+                    "parse: malformed module")
+                  (and
+                    (compiler-parse-error-ok?
+                      (compiler-parse-malformed-import-source)
+                      "parse: malformed import")
+                    (and
+                      (compiler-parse-comptime-decl-error-tests-ok?)
+                      (compiler-parse-abstraction-policy-tests-ok?))))))))))))
 
 (define (compiler-parse-smoke) : i64
   (match (parse-ast-source (compiler-parse-smoke-source))
@@ -1906,7 +2003,11 @@
               (compiler-parse-float-literal-ok?)
               (and
                 (compiler-parse-region-ok?)
-                (compiler-parse-comptime-decl-ok?))))))
+                (and
+                  (compiler-parse-comptime-decl-ok?)
+                  (and
+                    (compiler-parse-module-decl-ok?)
+                    (compiler-parse-import-metadata-ok?))))))))
         (if (compiler-parse-error-tests-ok?)
           42
           (begin

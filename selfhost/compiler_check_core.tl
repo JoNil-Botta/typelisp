@@ -29,7 +29,7 @@
 
 (define (compiler-check-file [path : String]) : ResultCompilerCheck
   (match (compiler-load-file-with-paths path (sym-i64-empty))
-    [(OkCompilerLoadWithPaths decls paths _)
+    [(OkCompilerLoadWithPaths decls paths _ _)
       (compiler-check-program-with-paths path decls paths)]
     [(ErrCompilerLoadWithPaths diag) (ErrCompilerCheck diag)]))
 
@@ -40,13 +40,13 @@
     path
     (sym-i64-empty)
     stdlib-roots)
-    [(OkCompilerLoadWithPaths decls paths _)
+    [(OkCompilerLoadWithPaths decls paths _ _)
       (compiler-check-program-with-paths path decls paths)]
     [(ErrCompilerLoadWithPaths diag) (ErrCompilerCheck diag)]))
 
 (define (compiler-check-source [path : String] [source : String]) : ResultCompilerCheck
   (match (compiler-load-source-with-paths path source (sym-i64-empty))
-    [(OkCompilerLoadWithPaths decls paths _)
+    [(OkCompilerLoadWithPaths decls paths _ _)
       (compiler-check-program-with-paths path decls paths)]
     [(ErrCompilerLoadWithPaths diag) (ErrCompilerCheck diag)]))
 
@@ -59,7 +59,7 @@
     source
     (sym-i64-empty)
     stdlib-roots)
-    [(OkCompilerLoadWithPaths decls paths _)
+    [(OkCompilerLoadWithPaths decls paths _ _)
       (compiler-check-program-with-paths path decls paths)]
     [(ErrCompilerLoadWithPaths diag) (ErrCompilerCheck diag)]))
 
@@ -105,16 +105,20 @@
     [(ErrCompilerLoad _) false]))
 
 (define (compiler-check-self-test) : i64
-  (if (compiler-check-virtual-import-ok?)
-    (if (compiler-check-virtual-error-ok?)
-      (if (compiler-check-seen-root-ok?)
-        42
+  (if (= (compiler-load-self-test) 42)
+    (if (compiler-check-virtual-import-ok?)
+      (if (compiler-check-virtual-error-ok?)
+        (if (compiler-check-seen-root-ok?)
+          42
+          (begin
+            (panic "compiler-check: seen root smoke mismatch")
+            0))
         (begin
-          (panic "compiler-check: seen root smoke mismatch")
+          (panic "compiler-check: virtual diagnostic smoke mismatch")
           0))
       (begin
-        (panic "compiler-check: virtual diagnostic smoke mismatch")
+        (panic "compiler-check: virtual import smoke mismatch")
         0))
     (begin
-      (panic "compiler-check: virtual import smoke mismatch")
+      (panic "compiler-check: loader smoke mismatch")
       0)))

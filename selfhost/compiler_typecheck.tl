@@ -5227,6 +5227,27 @@
           "(define (main [bs : (Array bool)] [n : i64]) : bool (spmd-reduce sum ([i : i64 0 n]) true (array-ref bs i)))"
           "typecheck: spmd-reduce sum requires an i32, i64, or f64 type")))))
 
+;; array-builtin signature rules (#1042): make-array length, array-ref array/index
+;; types, and array-set! value-type agreement, with valid accepts.
+(define (compiler-typecheck-array-builtin-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      "(define (f [a : (Array i64)]) : i64 (begin (array-set! a 0 5) (array-ref a 0)))")
+    (and
+      (compiler-typecheck-ok?
+        "(define (f) : i64 (let [a : (Array i64) (make-array i64 4)] (array-length a)))")
+      (and
+        (compiler-typecheck-error-ok?
+          "(define (f [a : (Array i64)]) : i64 (array-ref a true))"
+          "typecheck: array index must be integer")
+        (and
+          (compiler-typecheck-error-ok?
+            "(define (f) : i64 (make-array i64 true))"
+            "typecheck: make-array length must be integer")
+          (compiler-typecheck-error-ok?
+            "(define (f [a : (Array i64)]) : unit (array-set! a 0 true))"
+            "typecheck: array-set! value type mismatch"))))))
+
 (define (compiler-typecheck-self-test) : i64
   (begin
     (if (compiler-typecheck-statement-tests-ok?)
@@ -5241,6 +5262,9 @@
     (if (compiler-typecheck-spmd-reduce-op-tests-ok?)
       unit
       (panic "typecheck: spmd-reduce operator/type tests failed"))
+    (if (compiler-typecheck-array-builtin-tests-ok?)
+      unit
+      (panic "typecheck: array-builtin signature tests failed"))
     (match (typecheck-compiler-source (compiler-typecheck-smoke-source))
       [(OkCompilerTypecheck summary)
         (if (and

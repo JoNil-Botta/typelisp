@@ -5054,6 +5054,42 @@
                   (compiler-typecheck-op-ok-cmp-eq-source))
                 (compiler-typecheck-ok? (compiler-typecheck-op-ok-call-source))))))))))
 
+;; Match / pattern type rules (#1042): arm-type agreement and unknown-variant
+;; rejection, plus accepting enum-payload, bool, and wildcard-on-scalar matches.
+;; Migrated from src/typechecker.rs unit coverage.
+(define (compiler-typecheck-match-arm-mismatch-source) : String
+  "(defenum E (A) (B))
+(define (main [e : E]) : i64 (match e [(A) 1] [(B) true]))")
+
+(define (compiler-typecheck-match-unknown-variant-source) : String
+  "(defenum E (A) (B))
+(define (main [e : E]) : i64 (match e [(A) 1] [(C) 2]))")
+
+(define (compiler-typecheck-match-ok-payload-source) : String
+  "(defenum E (A i64) (B))
+(define (main [e : E]) : i64 (match e [(A x) x] [(B) 0]))")
+
+(define (compiler-typecheck-match-ok-bool-source) : String
+  "(define (main [b : bool]) : i64 (match b [true 1] [false 0]))")
+
+(define (compiler-typecheck-match-ok-wildcard-source) : String
+  "(define (main) : i64 (match 1 [_ 0]))")
+
+(define (compiler-typecheck-match-tests-ok?) : bool
+  (and
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-match-arm-mismatch-source)
+      "typecheck: match arms must agree")
+    (and
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-match-unknown-variant-source)
+        "typecheck: unknown variant C")
+      (and
+        (compiler-typecheck-ok? (compiler-typecheck-match-ok-payload-source))
+        (and
+          (compiler-typecheck-ok? (compiler-typecheck-match-ok-bool-source))
+          (compiler-typecheck-ok? (compiler-typecheck-match-ok-wildcard-source)))))))
+
 (define (compiler-typecheck-self-test) : i64
   (begin
     (if (compiler-typecheck-statement-tests-ok?)
@@ -5062,6 +5098,9 @@
     (if (compiler-typecheck-operator-tests-ok?)
       unit
       (panic "typecheck: operator/arity tests failed"))
+    (if (compiler-typecheck-match-tests-ok?)
+      unit
+      (panic "typecheck: match/pattern tests failed"))
     (match (typecheck-compiler-source (compiler-typecheck-smoke-source))
       [(OkCompilerTypecheck summary)
         (if (and

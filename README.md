@@ -97,11 +97,14 @@ Name              ; a defenum / defstruct nominal type
 
 ### Abstraction policy
 
-TypeLisp does not plan source-level generics, traits, interfaces, or `impl`
-blocks. Library abstraction should come from Zig-style comptime generation:
+TypeLisp does not plan source-level generics, traits, interfaces, `impl`
+blocks, generic `Option<T>`/`Result<T,E>` syntax, or trait-based error
+conversion. Library abstraction should come from Zig-style comptime generation:
 compile-time code inspects type values and emits concrete structs, enums,
 functions, and implementation bundles. Until that path lands, write explicit
-monomorphic declarations such as `MaybeI64` or domain-specific `Result*` enums.
+monomorphic declarations such as `MaybeI64` or domain-specific `Result*` enums;
+the selfhost compiler already uses `(try expr)` as the Lisp-shaped propagation
+form for compatible concrete Result-like enums.
 
 The comptime implementation path is tracked by #893, #913, and #483.
 

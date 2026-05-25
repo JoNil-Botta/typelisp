@@ -2,4 +2,6 @@
 (import "compiler_parse_core.tl")
 
 (define (main) : i64
-  (compiler-parse-smoke))
+  (if (= (compiler-diagnostic-self-test) 42)
+    (compiler-parse-smoke)
+    1))

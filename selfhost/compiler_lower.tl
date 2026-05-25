@@ -1926,47 +1926,14 @@
         [(LowerExpr index-u-state index-u _)
           (match (lower-cast-value index-u-state str-len (AstTyI64) (AstTyU64))
             [(LowerExpr len-u-state len-u _)
-              (match (lower-state-alloc-var len-u-state)
-                [(LowerAlloc bounds-alloc bounds-var)
-                  (let
-                    [bounds-state : LowerState
-                      (lower-state-emit
-                        bounds-alloc
-                        (IrInstrBinOp
-                          bounds-var
-                          IrBinLt
-                          index-u
-                          len-u
-                          (AstTyU64)))]
-                    (match (lower-state-fresh-label
-                      bounds-state
-                      "str_bounds_ok")
-                      [(LowerLabel ok-label-state ok-label)
-                        (match (lower-state-fresh-label
-                          ok-label-state
-                          "str_bounds_fail")
-                          [(LowerLabel fail-label-state fail-label)
-                            (let
-                              [fail-start : LowerState
-                                (lower-state-finish-block
-                                  (lower-state-emit
-                                    fail-label-state
-                                    (IrInstrBranch
-                                      (IrValueVar bounds-var)
-                                      ok-label
-                                      fail-label))
-                                  fail-label)]
-                              (let
-                                [ok-start : LowerState
-                                  (lower-state-finish-block
-                                    (lower-state-emit
-                                      (lower-oob-abort fail-start)
-                                      (IrInstrJump ok-label))
-                                    ok-label)]
-                                (lower-string-ref-byte
-                                  ok-start
-                                  data-ptr
-                                  index-value)))])]))])])])]))
+              (match (lower-state-fresh-label len-u-state "str_bounds_ok")
+                [(LowerLabel bounds-ok-state bounds-ok-label)
+                  (lower-string-ref-byte
+                    (lower-state-emit
+                      bounds-ok-state
+                      (IrInstrBoundsCheck index-u len-u bounds-ok-label))
+                    data-ptr
+                    index-value)])])])]))
 
 (define (lower-string-ref
   [ctx : TcContext]
@@ -3167,40 +3134,29 @@
         (IrValueVar v)
         ty)]))
 
-;; CFG tail of `lower-array-element-addr`: branch on the in-bounds condition to
-;; an OK block, or a fail block that calls `tl_oob_abort` (a diverging call kept
-;; by the optimizer) then jumps to OK to keep the CFG well formed. In the OK
-;; block, load the buffer pointer (fat offset 0, a raw U64 address) and `Gep` it
-;; by the index, scaled by the element type, to the element address.
+(define (lower-emit-bounds-check
+  [state : LowerState]
+  [index : CompilerIrValue]
+  [length : CompilerIrValue]) : LowerState
+  (match (lower-state-fresh-label state "bounds_ok")
+    [(LowerLabel bounds-ok-state bounds-ok-label)
+      (lower-state-emit
+        bounds-ok-state
+        (IrInstrBoundsCheck index length bounds-ok-label))]))
+
+;; Tail of `lower-array-element-addr`: after the explicit bounds check, load the
+;; buffer pointer (fat offset 0, a raw U64 address) and `Gep` it by the index,
+;; scaled by the element type, to the element address.
 (define (lower-array-element-addr-finish
   [state : LowerState]
   [arr-value : CompilerIrValue]
   [idx-off : CompilerIrValue]
-  [cond-val : CompilerIrValue]
-  [ok-label : String]
-  [fail-label : String]
   [elem-ty : AstType]) : LowerExpr
-  (let
-    [fail-start : LowerState
-      (lower-state-finish-block
-        (lower-state-emit state (IrInstrBranch cond-val ok-label fail-label))
-        fail-label)]
-    (match (lower-state-alloc-var fail-start)
-      [(LowerAlloc abort-state abort-var)
-        (let
-          [ok-start : LowerState
-            (lower-state-finish-block
-              (lower-state-emit
-                (lower-state-emit
-                  abort-state
-                  (IrInstrCall abort-var "tl_oob_abort" IrValueNil (AstTyUnit)))
-                (IrInstrJump ok-label))
-              ok-label)]
-          (match (lower-emit-gep ok-start arr-value (IrValueI64 0) (AstTyI64))
-            [(LowerExpr buf-gep-state buf-gep _)
-              (match (lower-emit-load buf-gep-state buf-gep (AstTyU64))
-                [(LowerExpr buf-state buf-val _)
-                  (lower-emit-gep buf-state buf-val idx-off elem-ty)])]))])))
+  (match (lower-emit-gep state arr-value (IrValueI64 0) (AstTyI64))
+    [(LowerExpr buf-gep-state buf-gep _)
+      (match (lower-emit-load buf-gep-state buf-gep (AstTyU64))
+        [(LowerExpr buf-state buf-val _)
+          (lower-emit-gep buf-state buf-val idx-off elem-ty)])]))
 
 ;; Compute the address of element `idx-value` in dynamic array `arr-value`,
 ;; emitting an unsigned bounds check (negative indices wrap large and also
@@ -3221,25 +3177,11 @@
                 [(LowerExpr s4 len-val _)
                   (match (lower-emit-cast s4 len-val (AstTyI64) (AstTyU64))
                     [(LowerExpr s5 len-u _)
-                      (match (lower-emit-binop
-                        s5
-                        (IrBinLt)
-                        idx-u
-                        len-u
-                        (AstTyBool))
-                        [(LowerExpr s6 cond-val _)
-                          (match (lower-state-fresh-label s6 "bounds_ok")
-                            [(LowerLabel s7 ok-label)
-                              (match (lower-state-fresh-label s7 "bounds_fail")
-                                [(LowerLabel s8 fail-label)
-                                  (lower-array-element-addr-finish
-                                    s8
-                                    arr-value
-                                    idx-off
-                                    cond-val
-                                    ok-label
-                                    fail-label
-                                    elem-ty)])])])])])])])]))
+                      (lower-array-element-addr-finish
+                        (lower-emit-bounds-check s5 idx-u len-u)
+                        arr-value
+                        idx-off
+                        elem-ty)])])])])]))
 
 ;; `(make-array T len)` -> checked length, `tl_alloc` element buffer, and a
 ;; heap-backed dynamic-array fat value `{ ptr, len }`.
@@ -5073,6 +5015,11 @@
     [(IrInstrBranch _ _ _) 1]
     [_ 0]))
 
+(define (lower-test-instr-bounds-count [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrBoundsCheck _ _ _) 1]
+    [_ 0]))
+
 (define (lower-test-instr-return-count [instr : CompilerIrInstr]) : i64
   (match instr
     [(IrInstrReturn _) 1]
@@ -5107,6 +5054,14 @@
       (+
         (lower-test-instr-branch-count instr)
         (lower-test-instrs-branch-count rest))]))
+
+(define (lower-test-instrs-bounds-count [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (lower-test-instr-bounds-count instr)
+        (lower-test-instrs-bounds-count rest))]))
 
 (define (lower-test-instrs-return-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -5155,6 +5110,16 @@
           (+
             (lower-test-instrs-branch-count instrs)
             (lower-test-blocks-branch-count rest))])]))
+
+(define (lower-test-blocks-bounds-count [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instrs-bounds-count instrs)
+            (lower-test-blocks-bounds-count rest))])]))
 
 (define (lower-test-blocks-return-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -5215,6 +5180,18 @@
           (if (string-eq fname name)
             (lower-test-blocks-branch-count blocks)
             (lower-test-function-branch-count rest name))])]))
+
+(define (lower-test-function-bounds-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]) : i64
+  (match funcs
+    [(IrFunctionNil) (- 0 1)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ blocks)
+          (if (string-eq fname name)
+            (lower-test-blocks-bounds-count blocks)
+            (lower-test-function-bounds-count rest name))])]))
 
 (define (lower-test-function-return-count
   [funcs : CompilerIrFunctionList]
@@ -5530,6 +5507,16 @@
                 (> (lower-test-function-load-count functions "sum") 3))))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-array-access-shape-ok? [src : String]) : bool
+  (match (lower-compiler-source src)
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (> (lower-test-function-bounds-count functions "get") 0)
+            (> (lower-test-function-bounds-count functions "put") 0))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-make-array-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(OkCompilerLower program _)
@@ -5653,7 +5640,8 @@
                 (and
                   (compiler-lower-ok? (compiler-lower-array-length-source))
                   (and
-                    (compiler-lower-ok? (compiler-lower-array-access-source))
+                    (compiler-lower-array-access-shape-ok?
+                      (compiler-lower-array-access-source))
                     (compiler-lower-make-array-shape-ok?
                       (compiler-lower-make-array-source))))
                 (and

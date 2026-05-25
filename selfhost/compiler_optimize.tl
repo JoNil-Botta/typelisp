@@ -4,7 +4,8 @@
 ;; Runs between lowering (`lower-compiler-program`) and backend emission
 ;; (`compiler-backend-emit-program`). It performs conservative, scalar-only
 ;; local rewrites: constant folding, algebraic strength reduction, CSE, copy
-;; propagation, conservative CFG simplification, and DCE.
+;; propagation, redundant bounds-check elimination, conservative CFG
+;; simplification, and DCE.
 ;;
 ;; Safety:
 ;; - Integer `+`, `-`, `*`, bitwise ops, shifts, and `neg` are folded through
@@ -811,6 +812,8 @@
     [(IrInstrLoad _ src _) (opt-collect-value-uses set src)]
     [(IrInstrStorePtr ptr value _)
       (opt-collect-value-uses (opt-collect-value-uses set ptr) value)]
+    [(IrInstrBoundsCheck index length _)
+      (opt-collect-value-uses (opt-collect-value-uses set index) length)]
     [(IrInstrCast _ src _ _) (opt-collect-value-uses set src)]
     [(IrInstrBranch cond _ _) (opt-collect-value-uses set cond)]
     [(IrInstrReturn maybe)
@@ -1196,6 +1199,13 @@
             (string-eq aname bname)
             (and (opt-value-eq av bv) (opt-type-eq aty bty)))]
         [_ false])]
+    [(IrInstrBoundsCheck aindex alength alabel)
+      (match b
+        [(IrInstrBoundsCheck bindex blength blabel)
+          (and
+            (opt-value-eq aindex bindex)
+            (and (opt-value-eq alength blength) (string-eq alabel blabel)))]
+        [_ false])]
     [(IrInstrJump alabel)
       (match b
         [(IrInstrJump blabel) (string-eq alabel blabel)]
@@ -1437,6 +1447,7 @@
     [(IrInstrCall _ _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrStore _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrStorePtr _ _ _) (OptCseResult (OptExprNil) instr)]
+    [(IrInstrBoundsCheck _ _ _) (OptCseResult table instr)]
     [(IrInstrJump _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrBranch _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrReturn _) (OptCseResult (OptExprNil) instr)]))
@@ -1547,6 +1558,11 @@
       (IrInstrCall dst name (opt-copy-subst-value-list env args) ty)]
     [(IrInstrStore name value ty)
       (IrInstrStore name (opt-copy-resolve env value) ty)]
+    [(IrInstrBoundsCheck index length ok-label)
+      (IrInstrBoundsCheck
+        (opt-copy-resolve env index)
+        (opt-copy-resolve env length)
+        ok-label)]
     [(IrInstrBranch cond a b) (IrInstrBranch (opt-copy-resolve env cond) a b)]
     [(IrInstrReturn maybe)
       (match maybe
@@ -1600,6 +1616,102 @@
       (match (opt-copy-instr env instr)
         [(OptCopyResult new-env new-instr)
           (IrInstrCons new-instr (opt-copy-instrs new-env rest))])]))
+
+;; --- block-local redundant bounds-check elimination (#930) ------------------
+;;
+;; `IrInstrBoundsCheck index length ok-label` is a trapping side-effect: it must be kept
+;; unless the same `(index, length)` pair has already been checked on every
+;; preceding path within the same basic block. This pass is deliberately local.
+;; It records successful checks after copy propagation has resolved operands,
+;; invalidates facts when either operand var is redefined, and clears all facts
+;; across calls, stores, control-flow boundaries, and phi boundaries.
+(defenum OptBoundsFact
+  (OptBoundsFact CompilerIrValue CompilerIrValue))
+
+(defenum OptBoundsFacts
+  (OptBoundsNil)
+  (OptBoundsCons OptBoundsFact OptBoundsFacts))
+
+(define (opt-bounds-fact-eq
+  [fact : OptBoundsFact]
+  [index : CompilerIrValue]
+  [length : CompilerIrValue]) : bool
+  (match fact
+    [(OptBoundsFact fact-index fact-length)
+      (and (opt-value-eq fact-index index) (opt-value-eq fact-length length))]))
+
+(define (opt-bounds-contains
+  [facts : OptBoundsFacts]
+  [index : CompilerIrValue]
+  [length : CompilerIrValue]) : bool
+  (match facts
+    [(OptBoundsNil) false]
+    [(OptBoundsCons fact rest)
+      (if (opt-bounds-fact-eq fact index length)
+        true
+        (opt-bounds-contains rest index length))]))
+
+(define (opt-bounds-add
+  [facts : OptBoundsFacts]
+  [index : CompilerIrValue]
+  [length : CompilerIrValue]) : OptBoundsFacts
+  (if (opt-bounds-contains facts index length)
+    facts
+    (OptBoundsCons (OptBoundsFact index length) facts)))
+
+(define (opt-bounds-fact-uses-var? [fact : OptBoundsFact] [var : i64]) : bool
+  (match fact
+    [(OptBoundsFact index length)
+      (or (opt-value-is-var? index var) (opt-value-is-var? length var))]))
+
+(define (opt-bounds-invalidate-var [facts : OptBoundsFacts] [var : i64]) : OptBoundsFacts
+  (match facts
+    [(OptBoundsNil) (OptBoundsNil)]
+    [(OptBoundsCons fact rest)
+      (let
+        [rest2 : OptBoundsFacts (opt-bounds-invalidate-var rest var)]
+        (if (opt-bounds-fact-uses-var? fact var)
+          rest2
+          (OptBoundsCons fact rest2)))]))
+
+(define (opt-bounds-update-facts
+  [facts : OptBoundsFacts]
+  [instr : CompilerIrInstr]) : OptBoundsFacts
+  (match instr
+    [(IrInstrMov dst _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrAlloc dst _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrAddrOf dst _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrGep dst _ _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrLoad dst _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrCast dst _ _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrBinOp dst _ _ _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrUnOp dst _ _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrCall _ _ _ _) (OptBoundsNil)]
+    [(IrInstrStore _ _ _) (OptBoundsNil)]
+    [(IrInstrStorePtr _ _ _) (OptBoundsNil)]
+    [(IrInstrJump _) (OptBoundsNil)]
+    [(IrInstrBranch _ _ _) (OptBoundsNil)]
+    [(IrInstrReturn _) (OptBoundsNil)]
+    [(IrInstrPhi _ _ _) (OptBoundsNil)]
+    [(IrInstrBoundsCheck _ _ _) facts]))
+
+(define (opt-bounds-instrs
+  [facts : OptBoundsFacts]
+  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (match instrs
+    [(IrInstrNil) (IrInstrNil)]
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrBoundsCheck index length _)
+          (if (opt-bounds-contains facts index length)
+            (opt-bounds-instrs facts rest)
+            (IrInstrCons
+              instr
+              (opt-bounds-instrs (opt-bounds-add facts index length) rest)))]
+        [_
+          (IrInstrCons
+            instr
+            (opt-bounds-instrs (opt-bounds-update-facts facts instr) rest))])]))
 
 ;; --- conservative CFG simplification (#926) ---------------------------------
 ;;
@@ -1810,17 +1922,19 @@
   (match block
     [(IrBlock label instrs)
       ;; Fold scalar constants, reduce algebraic identities, eliminate repeated
-      ;; pure expressions, then propagate the resulting copies; function-level
-      ;; DCE drops the dead copies.
+      ;; pure expressions, propagate the resulting copies, then remove duplicate
+      ;; proven bounds checks; function-level DCE drops dead copies.
       (IrBlock
         label
-        (opt-copy-instrs
-          (OptCopyNil)
-          (opt-cse-instrs
-            (OptExprNil)
-            (opt-strength-instrs
-              (OptConstNil)
-              (opt-fold-instrs (OptConstNil) instrs)))))]))
+        (opt-bounds-instrs
+          (OptBoundsNil)
+          (opt-copy-instrs
+            (OptCopyNil)
+            (opt-cse-instrs
+              (OptExprNil)
+              (opt-strength-instrs
+                (OptConstNil)
+                (opt-fold-instrs (OptConstNil) instrs))))))]))
 
 (define (optimize-block-list [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
@@ -2562,6 +2676,139 @@
                     3)
                   2)
                 1))))))))
+
+;; Count explicit trapping bounds checks after the dedicated bounds pass.
+(define (opt-count-bounds-instrs [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (match instr
+          [(IrInstrBoundsCheck _ _ _) 1]
+          [_ 0])
+        (opt-count-bounds-instrs rest))]))
+
+(define (opt-count-bounds-blocks [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+ (opt-count-bounds-instrs instrs) (opt-count-bounds-blocks rest))])]))
+
+(define (opt-bounds-duplicate-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.0")
+    (IrInstrCons
+      (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.1")
+      (IrInstrNil))))
+
+(define (opt-bounds-different-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.0")
+    (IrInstrCons
+      (IrInstrBoundsCheck (IrValueVar 1) (IrValueVar 0) "bounds_ok.1")
+      (IrInstrNil))))
+
+(define (opt-bounds-redef-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.0")
+    (IrInstrCons
+      (IrInstrMov 0 (IrValueI64 7) (AstTyI64))
+      (IrInstrCons
+        (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.1")
+        (IrInstrNil)))))
+
+(define (opt-bounds-call-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.0")
+    (IrInstrCons
+      (IrInstrCall 9 "touch" (IrValueNil) (AstTyUnit))
+      (IrInstrCons
+        (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.1")
+        (IrInstrNil)))))
+
+(define (opt-bounds-branch-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.0")
+    (IrInstrCons
+      (IrInstrBranch (IrValueBool true) "ok" "fail")
+      (IrInstrCons
+        (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.1")
+        (IrInstrNil)))))
+
+(define (opt-bounds-copy-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrMov 2 (IrValueVar 0) (AstTyI64))
+    (IrInstrCons
+      (IrInstrBoundsCheck (IrValueVar 2) (IrValueVar 1) "bounds_ok.0")
+      (IrInstrCons
+        (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.1")
+        (IrInstrNil)))))
+
+(define (opt-bounds-dce-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrMov 0 (IrValueI64 1) (AstTyU64))
+    (IrInstrCons
+      (IrInstrMov 1 (IrValueI64 2) (AstTyU64))
+      (IrInstrCons
+        (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.0")
+        (IrInstrNil)))))
+
+(define (opt-bounds-cross-blocks) : CompilerIrBlockList
+  (IrBlockCons
+    (IrBlock
+      "entry"
+      (IrInstrCons
+        (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.0")
+        (IrInstrNil)))
+    (IrBlockCons
+      (IrBlock
+        "next"
+        (IrInstrCons
+          (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.1")
+          (IrInstrNil)))
+      (IrBlockNil))))
+
+(define (compiler-optimize-bounds-self-test) : i64
+  (let
+    [duplicate : CompilerIrInstrList
+      (opt-bounds-instrs (OptBoundsNil) (opt-bounds-duplicate-instrs))]
+    [different : CompilerIrInstrList
+      (opt-bounds-instrs (OptBoundsNil) (opt-bounds-different-instrs))]
+    [redef : CompilerIrInstrList
+      (opt-bounds-instrs (OptBoundsNil) (opt-bounds-redef-instrs))]
+    [call : CompilerIrInstrList
+      (opt-bounds-instrs (OptBoundsNil) (opt-bounds-call-instrs))]
+    [branch : CompilerIrInstrList
+      (opt-bounds-instrs (OptBoundsNil) (opt-bounds-branch-instrs))]
+    [copy : CompilerIrInstrList
+      (opt-bounds-instrs
+        (OptBoundsNil)
+        (opt-copy-instrs (OptCopyNil) (opt-bounds-copy-instrs)))]
+    [dce : CompilerIrInstrList
+      (opt-dce-instrs
+        (opt-collect-instrs-uses (OptUsedNil) (opt-bounds-dce-instrs))
+        (opt-bounds-dce-instrs))]
+    [cross : CompilerIrBlockList
+      (optimize-block-list (opt-bounds-cross-blocks))]
+    (if (= (opt-count-bounds-instrs duplicate) 1)
+      (if (= (opt-count-bounds-instrs different) 2)
+        (if (= (opt-count-bounds-instrs redef) 2)
+          (if (= (opt-count-bounds-instrs call) 2)
+            (if (= (opt-count-bounds-instrs branch) 2)
+              (if (= (opt-count-bounds-instrs copy) 1)
+                (if (= (compiler-ir-instr-list-count dce) 3)
+                  (if (= (opt-count-bounds-blocks cross) 2)
+                    42
+                    8)
+                  7)
+                6)
+              5)
+            4)
+          3)
+        2)
+      1)))
 
 ;; Copy propagation can expose a repeated expression only after CSE has already
 ;; run for that iteration. A second pass then CSEs `v3` to `v2`; copy propagation

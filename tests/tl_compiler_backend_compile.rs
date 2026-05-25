@@ -32,6 +32,34 @@ fn compile_selfhost_source(source_file: &str, work_name: &str, asm_file: &str) -
     fs::read_to_string(&asm_path).expect("read generated compiler backend assembly")
 }
 
+fn run_selfhost_source_expect_42(source_file: &str) {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source_path = manifest_dir.join("selfhost").join(source_file);
+    let target = if cfg!(windows) {
+        "windows-x86_64"
+    } else {
+        "linux-x86_64"
+    };
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&source_path)
+        .arg("--target")
+        .arg(target)
+        .output()
+        .expect("run typelisp selfhost smoke");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "{} run step exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        source_file,
+        stdout,
+        stderr,
+    );
+}
+
 fn assert_no_todo(asm: &str, name: &str) {
     assert!(
         !asm.contains("# TODO"),
@@ -72,6 +100,7 @@ fn compiler_backend_tl_compiles_to_assembly() {
         "_tl_compiler_backend_emit_program_linux:",
         "_tl_compiler_backend_emit_function:",
         "_tl_compiler_backend_emit_instr:",
+        "_tl_compiler_backend_emit_bounds_check:",
         "_tl_compiler_backend_emit_phi_edge_copies:",
         "_tl_compiler_backend_emit_call_args:",
         "_tl_compiler_backend_call_arg_space:",
@@ -202,6 +231,11 @@ fn compiler_backend_tl_compiles_to_assembly() {
 }
 
 #[test]
+fn compiler_bounds_check_smoke_runs() {
+    run_selfhost_source_expect_42("compiler_bounds_check_smoke.tl");
+}
+
+#[test]
 fn compiler_backend_smoke_tl_compiles_to_assembly() {
     let asm = compile_selfhost_source(
         "compiler_backend_smoke.tl",
@@ -324,6 +358,9 @@ fn compiler_optimize_tl_compiles_to_assembly() {
         "_tl_opt_copy_instrs:",
         "_tl_opt_copy_invalidate_var:",
         "_tl_compiler_optimize_copy_self_test:",
+        // Redundant bounds-check elimination pass (#930).
+        "_tl_opt_bounds_instrs:",
+        "_tl_compiler_optimize_bounds_self_test:",
         // Fixed-point optimizer iteration (#923).
         "_tl_optimize_function_once:",
         "_tl_optimize_function_fixed:",
@@ -355,6 +392,11 @@ fn compiler_optimize_smoke_tl_compiles_to_assembly() {
     assert_symbol(
         &asm,
         "_tl_compiler_optimize_level_self_test:",
+        "compiler_optimize_smoke",
+    );
+    assert_symbol(
+        &asm,
+        "_tl_compiler_optimize_bounds_self_test:",
         "compiler_optimize_smoke",
     );
 }

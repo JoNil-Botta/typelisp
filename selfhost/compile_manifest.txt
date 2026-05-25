@@ -161,6 +161,12 @@ contains|_tl_compiler_backend_emit_source:
 contains|_tl_lower_compiler_source:
 end
 
+case|selfhost_compiler_bounds_check_smoke|selfhost/compiler_bounds_check_smoke.tl|assembly|exactly-one|direct
+contains|_tl_bounds_check_smoke_program:
+contains|_tl_compiler_backend_emit_program:
+contains|_tl_optimize_program:
+end
+
 case|selfhost_compiler_backend_stack_args_fixture|selfhost/compiler_backend_stack_args_fixture.tl|assembly|exactly-one|direct
 contains|_tl_compiler_backend_stack_args_fixture_for_name:
 contains|windows-x86_64
@@ -254,12 +260,14 @@ contains|_tl_opt_fold_instrs:
 contains|_tl_opt_strength_instrs:
 contains|_tl_compiler_optimize_self_test:
 contains|_tl_compiler_optimize_strength_self_test:
+contains|_tl_compiler_optimize_bounds_self_test:
 contains|_tl_compiler_optimize_level_self_test:
 end
 
 case|selfhost_compiler_optimize_smoke|selfhost/compiler_optimize_smoke.tl|assembly|exactly-one|direct
 contains|_tl_compiler_optimize_self_test:
 contains|_tl_compiler_optimize_strength_self_test:
+contains|_tl_compiler_optimize_bounds_self_test:
 contains|_tl_optimize_program:
 contains|_tl_compiler_optimize_level_self_test:
 end

@@ -144,6 +144,12 @@ check_file_exact() {
     fi
 }
 
+assert_doctest_temp_cleaned() {
+    source_path=$1
+    temp_dir=$(dirname -- "$source_path")/.typelisp-doctest
+    [ ! -d "$temp_dir" ] || fail "$case_name left temp directory behind: $temp_dir"
+}
+
 echo "[public-tools] CLI usage and frontend aliases"
 run_cmd usage "$COMPILER" --help
 assert_success
@@ -315,7 +321,7 @@ run_cmd doc-test-pass "$COMPILER" doc --test "$WORKDIR/docs.tl"
 assert_success
 assert_stderr_empty
 assert_contains "$out" "Doc tests passed: 2 example(s)"
-[ ! -d "$WORKDIR/.typelisp-doctest" ] || fail "doc --test left temp directory behind"
+assert_doctest_temp_cleaned "$WORKDIR/docs.tl"
 
 cat > "$WORKDIR/docs_expected_error.tl" <<'EOF'
 ;;;; Expected error.
@@ -327,6 +333,48 @@ run_cmd doc-test-expected-error "$COMPILER" doc --test "$WORKDIR/docs_expected_e
 assert_success
 assert_stderr_empty
 assert_contains "$out" "Doc tests passed: 1 example(s)"
+assert_doctest_temp_cleaned "$WORKDIR/docs_expected_error.tl"
+
+cat > "$WORKDIR/docs_malformed.tl" <<'EOF'
+;;;; Bad fence.
+;;;; ```typelisp maybe
+;;;; (define (main) : i64 0)
+;;;; ```
+EOF
+run_cmd doc-test-malformed "$COMPILER" doc --test "$WORKDIR/docs_malformed.tl"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" 'unsupported TypeLisp doctest option `maybe`'
+assert_doctest_temp_cleaned "$WORKDIR/docs_malformed.tl"
+
+cat > "$WORKDIR/docs_empty.tl" <<'EOF'
+;;;; Docs without fenced examples.
+;;; Item docs without fenced examples.
+(define documented : i64 1)
+EOF
+run_cmd doc-test-empty "$COMPILER" doc --test "$WORKDIR/docs_empty.tl"
+assert_success
+assert_stderr_empty
+assert_contains "$out" "Doc tests passed: 0 example(s)"
+assert_doctest_temp_cleaned "$WORKDIR/docs_empty.tl"
+
+DOC_STDLIB_ROOT="$WORKDIR/doc-test-stdlib-root/repo-stdlib"
+mkdir -p "$DOC_STDLIB_ROOT"
+cat > "$DOC_STDLIB_ROOT/docfixture.tl" <<'EOF'
+(define stdlib-answer : i64 42)
+EOF
+cat > "$WORKDIR/docs_stdlib_root.tl" <<'EOF'
+;;;; Stdlib import example.
+;;;; ```typelisp
+;;;; (import "stdlib/docfixture.tl")
+;;;; (define (main) : i64 stdlib-answer)
+;;;; ```
+EOF
+run_cmd doc-test-stdlib-root "$COMPILER" doc --test "$WORKDIR/docs_stdlib_root.tl" --stdlib-root "$DOC_STDLIB_ROOT"
+assert_success
+assert_stderr_empty
+assert_contains "$out" "Doc tests passed: 1 example(s)"
+assert_doctest_temp_cleaned "$WORKDIR/docs_stdlib_root.tl"
 
 cat > "$WORKDIR/docs_bad.tl" <<'EOF'
 ;;;; Unexpected error.
@@ -340,6 +388,20 @@ assert_stdout_empty
 assert_contains "$err" "doc tests failed"
 assert_contains "$err" "was expected to pass"
 assert_contains "$err" "error[E0200]"
+assert_doctest_temp_cleaned "$WORKDIR/docs_bad.tl"
+
+run_cmd doc-usage-missing "$COMPILER" doc
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "Usage:"
+assert_contains "$err" "typelisp doc <file.tl>"
+assert_contains "$err" "typelisp doc --test <file.tl>"
+
+run_cmd doc-test-usage-missing "$COMPILER" doc --test
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "Usage:"
+assert_contains "$err" "typelisp doc --test <file.tl>"
 
 if [ "$HOST_OS" = linux ]; then
     cat > "$WORKDIR/doc_source.tl" <<'EOF'
@@ -354,6 +416,71 @@ EOF
     assert_contains "$out" "Generated:"
     assert_contains "$WORKDIR/doc_source.md" "Module docs."
     assert_contains "$WORKDIR/doc_source.md" "answer"
+
+    DOC_CUSTOM_DIR="$WORKDIR/custom-doc-output"
+    mkdir -p "$DOC_CUSTOM_DIR"
+    cat > "$WORKDIR/doc_custom_input.tl" <<'EOF'
+;;; Single item.
+(define x : i64 1)
+EOF
+    run_cmd doc-generate-custom "$COMPILER" doc "$WORKDIR/doc_custom_input.tl" -o "$DOC_CUSTOM_DIR/custom.md"
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "Generated: $DOC_CUSTOM_DIR/custom.md"
+    assert_contains "$DOC_CUSTOM_DIR/custom.md" "x"
+
+    DOC_GRAPH_DIR="$WORKDIR/doc-module-graph"
+    DOC_GRAPH_STDLIB="$DOC_GRAPH_DIR/repo-stdlib"
+    DOC_GRAPH_LOCAL="$DOC_GRAPH_DIR/local.tl"
+    DOC_GRAPH_STDLIB_SOURCE="$DOC_GRAPH_STDLIB/docfixture.tl"
+    DOC_GRAPH_ENTRY="$DOC_GRAPH_DIR/entry.tl"
+    DOC_GRAPH_OUT="$DOC_GRAPH_DIR/graph.md"
+    mkdir -p "$DOC_GRAPH_STDLIB"
+    cat > "$DOC_GRAPH_LOCAL" <<'EOF'
+;;;; Local module docs.
+
+;;; Local answer docs.
+(define local-answer : i64 7)
+EOF
+    cat > "$DOC_GRAPH_STDLIB_SOURCE" <<'EOF'
+;;;; Stdlib module docs.
+
+;;; Stdlib answer docs.
+(define stdlib-answer : i64 35)
+EOF
+    cat > "$DOC_GRAPH_ENTRY" <<'EOF'
+;;;; Entry module docs.
+
+(import "local.tl")
+(import "local.tl")
+(import "stdlib/docfixture.tl")
+
+;;; Entry docs.
+(define (main) : i64 (+ local-answer stdlib-answer))
+EOF
+    run_cmd doc-generate-module-graph "$COMPILER" doc "$DOC_GRAPH_ENTRY" -o "$DOC_GRAPH_OUT" --stdlib-root "$DOC_GRAPH_STDLIB"
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "Generated: $DOC_GRAPH_OUT"
+
+    DOC_GRAPH_ENTRY_PATH=$(CDPATH= cd -- "$(dirname -- "$DOC_GRAPH_ENTRY")" && printf '%s/%s' "$(pwd -P)" "$(basename -- "$DOC_GRAPH_ENTRY")")
+    DOC_GRAPH_LOCAL_PATH=$(CDPATH= cd -- "$(dirname -- "$DOC_GRAPH_LOCAL")" && printf '%s/%s' "$(pwd -P)" "$(basename -- "$DOC_GRAPH_LOCAL")")
+    DOC_GRAPH_STDLIB_PATH=$(CDPATH= cd -- "$(dirname -- "$DOC_GRAPH_STDLIB_SOURCE")" && printf '%s/%s' "$(pwd -P)" "$(basename -- "$DOC_GRAPH_STDLIB_SOURCE")")
+    assert_contains "$DOC_GRAPH_OUT" "## Modules"
+    assert_contains "$DOC_GRAPH_OUT" "- [$DOC_GRAPH_ENTRY_PATH](#"
+    assert_contains "$DOC_GRAPH_OUT" "Source: \`$DOC_GRAPH_LOCAL_PATH\`"
+    assert_contains "$DOC_GRAPH_OUT" "Source: \`$DOC_GRAPH_STDLIB_PATH\`"
+    assert_contains "$DOC_GRAPH_OUT" "Entry module docs."
+    assert_contains "$DOC_GRAPH_OUT" "Local module docs."
+    assert_contains "$DOC_GRAPH_OUT" "Stdlib module docs."
+    DOC_GRAPH_LOCAL_DOCS=$(grep -F "Local module docs." "$DOC_GRAPH_OUT" | wc -l | tr -d ' ')
+    [ "$DOC_GRAPH_LOCAL_DOCS" -eq 1 ] || fail "doc module graph duplicated local docs"
+    DOC_GRAPH_ENTRY_LINE=$(grep -nF "## $DOC_GRAPH_ENTRY_PATH" "$DOC_GRAPH_OUT" | head -n 1 | cut -d: -f1)
+    DOC_GRAPH_LOCAL_LINE=$(grep -nF "## $DOC_GRAPH_LOCAL_PATH" "$DOC_GRAPH_OUT" | head -n 1 | cut -d: -f1)
+    DOC_GRAPH_STDLIB_LINE=$(grep -nF "## $DOC_GRAPH_STDLIB_PATH" "$DOC_GRAPH_OUT" | head -n 1 | cut -d: -f1)
+    [ "$DOC_GRAPH_ENTRY_LINE" -lt "$DOC_GRAPH_LOCAL_LINE" ] &&
+        [ "$DOC_GRAPH_LOCAL_LINE" -lt "$DOC_GRAPH_STDLIB_LINE" ] ||
+        fail "doc module graph did not preserve loader source order"
 
     run_cmd doc-generate-html "$COMPILER" run selfhost/doc.tl -- --html "$WORKDIR/doc_source.tl" "$WORKDIR/doc_source.html"
     assert_success

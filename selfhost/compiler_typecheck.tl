@@ -5090,6 +5090,38 @@
           (compiler-typecheck-ok? (compiler-typecheck-match-ok-bool-source))
           (compiler-typecheck-ok? (compiler-typecheck-match-ok-wildcard-source)))))))
 
+(define (compiler-typecheck-string-builtin-ok-length-source) : String
+  "(define (main) : i64 (string-length \"hi\"))")
+
+(define (compiler-typecheck-string-builtin-ok-append-source) : String
+  "(define (f) : String (string-append \"a\" \"b\"))")
+
+(define (compiler-typecheck-string-builtin-ok-substring-source) : String
+  "(define (f) : String (substring \"abc\" 0 1))")
+
+(define (compiler-typecheck-string-builtin-ok-eq-source) : String
+  "(define (f) : bool (string-eq \"a\" \"b\"))")
+
+(define (compiler-typecheck-string-builtin-bad-arg-source) : String
+  "(define (main) : i64 (string-length 5))")
+
+(define (compiler-typecheck-string-builtin-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      (compiler-typecheck-string-builtin-ok-length-source))
+    (and
+      (compiler-typecheck-ok?
+        (compiler-typecheck-string-builtin-ok-append-source))
+      (and
+        (compiler-typecheck-ok?
+          (compiler-typecheck-string-builtin-ok-substring-source))
+        (and
+          (compiler-typecheck-ok?
+            (compiler-typecheck-string-builtin-ok-eq-source))
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-string-builtin-bad-arg-source)
+            "typecheck: argument type mismatch"))))))
+
 (define (compiler-typecheck-self-test) : i64
   (begin
     (if (compiler-typecheck-statement-tests-ok?)
@@ -5133,7 +5165,9 @@
                               (compiler-typecheck-raw-pointer-tests-ok?)
                               (and
                                 (compiler-typecheck-reference-tests-ok?)
-                                (compiler-typecheck-located-ok?)))))))))))))
+                                (and
+                                  (compiler-typecheck-located-ok?)
+                                  (compiler-typecheck-string-builtin-tests-ok?))))))))))))))
           42
           (begin
             (panic "typecheck: smoke score mismatch")

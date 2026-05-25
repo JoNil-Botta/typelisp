@@ -3,11 +3,8 @@
 ;;
 ;; Runs between lowering (`lower-compiler-program`) and backend emission
 ;; (`compiler-backend-emit-program`). It performs conservative, scalar-only
-;; constant folding: within each basic block it tracks IR vars defined by a
-;; `Mov` of a scalar literal, rewrites any `IrInstrBinOp`/`IrInstrUnOp` whose
-;; operands resolve to those literals into an `IrInstrMov` of the computed
-;; literal, and clears tracked facts when any other IR instruction redefines a
-;; variable.
+;; local rewrites: constant folding, algebraic strength reduction, CSE, copy
+;; propagation, and DCE.
 ;;
 ;; Safety:
 ;; - Integer `+`, `-`, `*`, and `neg` wrap modulo 2^N per SPEC; this optimizer is
@@ -19,8 +16,7 @@
 ;; - Tracking is block-local (reset per block), so no value is folded across a
 ;;   control-flow edge.
 ;;
-;; Out of scope (tracked separately): dead-code elimination, copy propagation,
-;; common-subexpression elimination, and aggregate/String/array IR.
+;; Out of scope: aggregate/String/array IR optimization.
 (import "compiler_ir_types.tl")
 
 ;; --- block-local constant environment: IR var id -> known scalar literal -----
@@ -114,6 +110,113 @@
         [_ (IrNoValue)])]
     [(IrUnBitNot) (IrNoValue)]))
 
+;; --- strength reduction / algebraic identities (#924) -----------------------
+;;
+;; Rewrite only identities that are valid for all values of the instruction's
+;; type. Division, modulo, and shifts intentionally have no identities here, so
+;; potentially trapping/edge-sensitive operations stay in the IR.
+(define (opt-integer-type? [ty : AstType]) : bool
+  (match ty
+    [(AstTyI64) true]
+    [(AstTyI32) true]
+    [(AstTyI16) true]
+    [(AstTyI8) true]
+    [(AstTyU64) true]
+    [(AstTyU32) true]
+    [(AstTyU16) true]
+    [(AstTyU8) true]
+    [_ false]))
+
+(define (opt-bool-type? [ty : AstType]) : bool
+  (match ty
+    [(AstTyBool) true]
+    [_ false]))
+
+(define (opt-i64-zero? [value : CompilerIrValue]) : bool
+  (match value
+    [(IrValueI64 n) (= n 0)]
+    [_ false]))
+
+(define (opt-i64-one? [value : CompilerIrValue]) : bool
+  (match value
+    [(IrValueI64 n) (= n 1)]
+    [_ false]))
+
+(define (opt-bool-true? [value : CompilerIrValue]) : bool
+  (match value
+    [(IrValueBool b) b]
+    [_ false]))
+
+(define (opt-bool-false? [value : CompilerIrValue]) : bool
+  (match value
+    [(IrValueBool b) (not b)]
+    [_ false]))
+
+(define (opt-strength-int-binop
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [resolved-lhs : CompilerIrValue]
+  [resolved-rhs : CompilerIrValue]) : CompilerIrMaybeValue
+  (match op
+    [(IrBinAdd)
+      (if (opt-i64-zero? resolved-rhs)
+        (IrSomeValue lhs)
+        (if (opt-i64-zero? resolved-lhs)
+          (IrSomeValue rhs)
+          (IrNoValue)))]
+    [(IrBinSub)
+      (if (opt-i64-zero? resolved-rhs)
+        (IrSomeValue lhs)
+        (IrNoValue))]
+    [(IrBinMul)
+      (if (or (opt-i64-zero? resolved-lhs) (opt-i64-zero? resolved-rhs))
+        (IrSomeValue (IrValueI64 0))
+        (if (opt-i64-one? resolved-rhs)
+          (IrSomeValue lhs)
+          (if (opt-i64-one? resolved-lhs)
+            (IrSomeValue rhs)
+            (IrNoValue))))]
+    [_ (IrNoValue)]))
+
+(define (opt-strength-bool-binop
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [resolved-lhs : CompilerIrValue]
+  [resolved-rhs : CompilerIrValue]) : CompilerIrMaybeValue
+  (match op
+    [(IrBinAnd)
+      (if (or (opt-bool-false? resolved-lhs) (opt-bool-false? resolved-rhs))
+        (IrSomeValue (IrValueBool false))
+        (if (opt-bool-true? resolved-rhs)
+          (IrSomeValue lhs)
+          (if (opt-bool-true? resolved-lhs)
+            (IrSomeValue rhs)
+            (IrNoValue))))]
+    [(IrBinOr)
+      (if (or (opt-bool-true? resolved-lhs) (opt-bool-true? resolved-rhs))
+        (IrSomeValue (IrValueBool true))
+        (if (opt-bool-false? resolved-rhs)
+          (IrSomeValue lhs)
+          (if (opt-bool-false? resolved-lhs)
+            (IrSomeValue rhs)
+            (IrNoValue))))]
+    [_ (IrNoValue)]))
+
+(define (opt-strength-binop
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [resolved-lhs : CompilerIrValue]
+  [resolved-rhs : CompilerIrValue]
+  [ty : AstType]) : CompilerIrMaybeValue
+  (if (opt-integer-type? ty)
+    (opt-strength-int-binop op lhs rhs resolved-lhs resolved-rhs)
+    (if (opt-bool-type? ty)
+      (opt-strength-bool-binop op lhs rhs resolved-lhs resolved-rhs)
+      (IrNoValue))))
+
 ;; --- instruction / block / function / program traversal ----------------------
 (defenum OptInstrResult
   (OptInstrResult OptConstEnv CompilerIrInstr))
@@ -160,6 +263,47 @@
       (match (opt-fold-instr env instr)
         [(OptInstrResult new-env new-instr)
           (IrInstrCons new-instr (opt-fold-instrs new-env rest))])]))
+
+(define (opt-strength-instr [env : OptConstEnv] [instr : CompilerIrInstr]) : OptInstrResult
+  (match instr
+    [(IrInstrMov dst value ty)
+      (if (opt-const-value? value)
+        (OptInstrResult (opt-const-bind env dst value) instr)
+        (OptInstrResult (opt-const-unbind env dst) instr))]
+    [(IrInstrAlloc dst ty) (opt-invalidate-def env dst instr)]
+    [(IrInstrAddrOf dst src) (opt-invalidate-def env dst instr)]
+    [(IrInstrGep dst base offset ty) (opt-invalidate-def env dst instr)]
+    [(IrInstrLoad dst src ty) (opt-invalidate-def env dst instr)]
+    [(IrInstrCast dst src from-ty to-ty) (opt-invalidate-def env dst instr)]
+    [(IrInstrBinOp dst op l r ty)
+      (match (opt-strength-binop
+        op
+        l
+        r
+        (opt-resolve env l)
+        (opt-resolve env r)
+        ty)
+        [(IrSomeValue replacement)
+          (if (opt-const-value? replacement)
+            (OptInstrResult
+              (opt-const-bind env dst replacement)
+              (IrInstrMov dst replacement ty))
+            (OptInstrResult
+              (opt-const-unbind env dst)
+              (IrInstrMov dst replacement ty)))]
+        [(IrNoValue) (OptInstrResult (opt-const-unbind env dst) instr)])]
+    [(IrInstrUnOp dst op v ty) (opt-invalidate-def env dst instr)]
+    [(IrInstrCall dst name args ty) (opt-invalidate-def env dst instr)]
+    [(IrInstrPhi dst inputs ty) (opt-invalidate-def env dst instr)]
+    [_ (OptInstrResult env instr)]))
+
+(define (opt-strength-instrs [env : OptConstEnv] [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (match instrs
+    [(IrInstrNil) (IrInstrNil)]
+    [(IrInstrCons instr rest)
+      (match (opt-strength-instr env instr)
+        [(OptInstrResult new-env new-instr)
+          (IrInstrCons new-instr (opt-strength-instrs new-env rest))])]))
 
 ;; --- dead-code elimination (#544) --------------------------------------------
 ;;
@@ -628,13 +772,18 @@
 (define (optimize-block [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(IrBlock label instrs)
-      ;; Fold scalar constants, eliminate repeated pure expressions, then
-      ;; propagate the resulting copies; function-level DCE drops the dead copies.
+      ;; Fold scalar constants, reduce algebraic identities, eliminate repeated
+      ;; pure expressions, then propagate the resulting copies; function-level
+      ;; DCE drops the dead copies.
       (IrBlock
         label
         (opt-copy-instrs
           (OptCopyNil)
-          (opt-cse-instrs (OptExprNil) (opt-fold-instrs (OptConstNil) instrs))))]))
+          (opt-cse-instrs
+            (OptExprNil)
+            (opt-strength-instrs
+              (OptConstNil)
+              (opt-fold-instrs (OptConstNil) instrs)))))]))
 
 (define (optimize-block-list [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
@@ -688,6 +837,59 @@
     [(IrInstrMov _ (IrValueI64 n) _) n]
     [_ 0]))
 
+(define (opt-count-mov-i64-value [instrs : CompilerIrInstrList] [needle : i64]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (match instr
+          [(IrInstrMov _ (IrValueI64 n) _)
+            (if (= n needle)
+              1
+              0)]
+          [_ 0])
+        (opt-count-mov-i64-value rest needle))]))
+
+(define (opt-count-mov-bool-value
+  [instrs : CompilerIrInstrList]
+  [needle : bool]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (match instr
+          [(IrInstrMov _ (IrValueBool b) _)
+            (if needle
+              (if b
+                1
+                0)
+              (if b
+                0
+                1))]
+          [_ 0])
+        (opt-count-mov-bool-value rest needle))]))
+
+(define (opt-sum-mov-var-src [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (match instr
+          [(IrInstrMov _ (IrValueVar id) _) id]
+          [_ 0])
+        (opt-sum-mov-var-src rest))]))
+
+(define (opt-mov-dst-type-tag [instrs : CompilerIrInstrList] [dst : i64]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrMov d _ ty)
+          (if (= d dst)
+            (ast-type-tag ty)
+            (opt-mov-dst-type-tag rest dst))]
+        [_ (opt-mov-dst-type-tag rest dst)])]))
+
 ;; Builds `[Mov v0=20, Mov v1=22, BinOp v2 = v0 + v1]` (one arithmetic instr).
 (define (opt-self-test-instrs) : CompilerIrInstrList
   (IrInstrCons
@@ -727,6 +929,142 @@
                 (if (= (opt-count-arith-instrs stale-optimized) 1)
                   42
                   4)))
+            3)
+          2)
+        1))))
+
+;; Positive strength-reduction cases: integer neutral/absorbing identities and
+;; boolean `and`/`or` identities. The first instruction uses `AstTyU8` to prove
+;; non-i64 integer result types keep their original type.
+(define (opt-strength-self-test-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrBinOp 10 (IrBinAdd) (IrValueVar 1) (IrValueI64 0) (AstTyU8))
+    (IrInstrCons
+      (IrInstrBinOp 11 (IrBinAdd) (IrValueI64 0) (IrValueVar 2) (AstTyI64))
+      (IrInstrCons
+        (IrInstrBinOp 12 (IrBinSub) (IrValueVar 3) (IrValueI64 0) (AstTyI64))
+        (IrInstrCons
+          (IrInstrBinOp 13 (IrBinMul) (IrValueVar 4) (IrValueI64 1) (AstTyI64))
+          (IrInstrCons
+            (IrInstrBinOp
+              14
+              (IrBinMul)
+              (IrValueI64 1)
+              (IrValueVar 5)
+              (AstTyI64))
+            (IrInstrCons
+              (IrInstrBinOp
+                15
+                (IrBinMul)
+                (IrValueVar 6)
+                (IrValueI64 0)
+                (AstTyI64))
+              (IrInstrCons
+                (IrInstrBinOp
+                  16
+                  (IrBinMul)
+                  (IrValueI64 0)
+                  (IrValueVar 7)
+                  (AstTyI64))
+                (IrInstrCons
+                  (IrInstrBinOp
+                    17
+                    (IrBinAnd)
+                    (IrValueVar 8)
+                    (IrValueBool true)
+                    (AstTyBool))
+                  (IrInstrCons
+                    (IrInstrBinOp
+                      18
+                      (IrBinAnd)
+                      (IrValueBool true)
+                      (IrValueVar 9)
+                      (AstTyBool))
+                    (IrInstrCons
+                      (IrInstrBinOp
+                        19
+                        (IrBinAnd)
+                        (IrValueVar 8)
+                        (IrValueBool false)
+                        (AstTyBool))
+                      (IrInstrCons
+                        (IrInstrBinOp
+                          20
+                          (IrBinAnd)
+                          (IrValueBool false)
+                          (IrValueVar 9)
+                          (AstTyBool))
+                        (IrInstrCons
+                          (IrInstrBinOp
+                            21
+                            (IrBinOr)
+                            (IrValueVar 8)
+                            (IrValueBool false)
+                            (AstTyBool))
+                          (IrInstrCons
+                            (IrInstrBinOp
+                              22
+                              (IrBinOr)
+                              (IrValueBool false)
+                              (IrValueVar 9)
+                              (AstTyBool))
+                            (IrInstrCons
+                              (IrInstrBinOp
+                                23
+                                (IrBinOr)
+                                (IrValueVar 8)
+                                (IrValueBool true)
+                                (AstTyBool))
+                              (IrInstrCons
+                                (IrInstrBinOp
+                                  24
+                                  (IrBinOr)
+                                  (IrValueBool true)
+                                  (IrValueVar 9)
+                                  (AstTyBool))
+                                (IrInstrNil)))))))))))))))))
+
+;; Negative cases for edge-sensitive operations and non-identities: division,
+;; modulo, shifts, and `0 - x` must stay as `BinOp`s.
+(define (opt-strength-negative-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrBinOp 30 (IrBinDiv) (IrValueVar 1) (IrValueI64 0) (AstTyI64))
+    (IrInstrCons
+      (IrInstrBinOp 31 (IrBinMod) (IrValueVar 1) (IrValueI64 0) (AstTyI64))
+      (IrInstrCons
+        (IrInstrBinOp 32 (IrBinShl) (IrValueVar 1) (IrValueI64 0) (AstTyI64))
+        (IrInstrCons
+          (IrInstrBinOp 33 (IrBinShr) (IrValueVar 1) (IrValueI64 0) (AstTyI64))
+          (IrInstrCons
+            (IrInstrBinOp
+              34
+              (IrBinSub)
+              (IrValueI64 0)
+              (IrValueVar 1)
+              (AstTyI64))
+            (IrInstrNil)))))))
+
+;; Returns 42 when every positive identity is rewritten to `Mov`, the typed U8
+;; identity keeps its result type, and the negative cases stay untouched.
+(define (compiler-optimize-strength-self-test) : i64
+  (let
+    [pos : CompilerIrInstrList
+      (opt-strength-instrs (OptConstNil) (opt-strength-self-test-instrs))]
+    (let
+      [neg : CompilerIrInstrList
+        (opt-strength-instrs (OptConstNil) (opt-strength-negative-instrs))]
+      (if (= (opt-count-arith-instrs pos) 0)
+        (if (= (opt-sum-mov-var-src pos) 49)
+          (if (= (opt-count-mov-i64-value pos 0) 2)
+            (if (= (opt-count-mov-bool-value pos false) 2)
+              (if (= (opt-count-mov-bool-value pos true) 2)
+                (if (= (opt-mov-dst-type-tag pos 10) (ast-type-tag (AstTyU8)))
+                  (if (= (opt-count-arith-instrs neg) 5)
+                    42
+                    7)
+                  6)
+                5)
+              4)
             3)
           2)
         1))))

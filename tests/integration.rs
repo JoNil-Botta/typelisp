@@ -1353,9 +1353,9 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
                 "compiler_ast_types.tl",
             ],
         },
-        // refs #543: selfhost optimizer pass framework + scalar constant folding.
-        // The smoke folds a constant `BinOp` into a `Mov` literal and checks the
-        // arithmetic instruction count drops while the folded value is correct.
+        // refs #543/#924: selfhost optimizer pass framework, scalar constant
+        // folding, and strength reduction. The smoke checks pass-specific
+        // self-tests over folded constants and algebraic identities.
         Case {
             name: "compiler_optimize_smoke",
             exit_code: 42,

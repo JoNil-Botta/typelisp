@@ -15,6 +15,14 @@
   (OkBackendValue CompilerIrValue)
   (ErrBackendValue String))
 
+(defenum CompilerBackendMaybeImmediate
+  (CompilerBackendNoImmediate)
+  (CompilerBackendSomeImmediate String))
+
+(defenum CompilerBackendMaybeAsm
+  (CompilerBackendNoAsm)
+  (CompilerBackendSomeAsm String))
+
 (defenum ResultCompilerBackend
   (OkCompilerBackend String)
   (ErrCompilerBackend CompilerDiagnostic))
@@ -307,7 +315,9 @@
     [(CompilerRegSomeLocation location)
       (match location
         [(CompilerRegRegister home)
-          (backend-cat5 "    movq " home ", " reg "\n")]
+          (if (string-eq home reg)
+            ""
+            (backend-cat5 "    movq " home ", " reg "\n"))]
         [(CompilerRegSpill offset)
           (backend-cat5
             "    movsd "
@@ -326,7 +336,9 @@
     [(CompilerRegSomeLocation location)
       (match location
         [(CompilerRegRegister home)
-          (backend-cat5 "    movq " reg ", " home "\n")]
+          (if (string-eq home reg)
+            ""
+            (backend-cat5 "    movq " reg ", " home "\n"))]
         [(CompilerRegSpill offset)
           (backend-cat5
             "    movsd "
@@ -388,6 +400,27 @@
 
 (define (compiler-backend-char-code [c : char]) : i64
   (cast c : i64))
+
+(define (compiler-backend-imm32? [n : i64]) : bool
+  (and (>= n (- 0 2147483648)) (<= n 2147483647)))
+
+(define (compiler-backend-immediate-i64 [n : i64]) : CompilerBackendMaybeImmediate
+  (if (compiler-backend-imm32? n)
+    (CompilerBackendSomeImmediate (string-append "$" (int->string n)))
+    (CompilerBackendNoImmediate)))
+
+(define (compiler-backend-immediate-operand [value : CompilerIrValue]) : CompilerBackendMaybeImmediate
+  (match value
+    [(IrValueI64 n) (compiler-backend-immediate-i64 n)]
+    [(IrValueBool b)
+      (if b
+        (CompilerBackendSomeImmediate "$1")
+        (CompilerBackendSomeImmediate "$0"))]
+    [(IrValueChar c)
+      (CompilerBackendSomeImmediate
+        (string-append "$" (int->string (compiler-backend-char-code c))))]
+    [(IrValueUnit) (CompilerBackendSomeImmediate "$0")]
+    [_ (CompilerBackendNoImmediate)]))
 
 (define (compiler-backend-symbol-char [text : String] [idx : i64] [c : char]) : String
   (if (or
@@ -921,10 +954,91 @@
     [(IrBinShl) "    movq %rbx, %rcx\n    shlq %cl, %rax\n"]
     [(IrBinShr) "    movq %rbx, %rcx\n    sarq %cl, %rax\n"]))
 
+(define (compiler-backend-binop-immediate-asm
+  [op : CompilerIrBinOp]
+  [imm : String]
+  [ty : AstType]) : CompilerBackendMaybeAsm
+  (match op
+    [(IrBinAdd)
+      (CompilerBackendSomeAsm (backend-cat3 "    addq " imm ", %rax\n"))]
+    [(IrBinSub)
+      (CompilerBackendSomeAsm (backend-cat3 "    subq " imm ", %rax\n"))]
+    [(IrBinEq)
+      (CompilerBackendSomeAsm
+        (backend-cat3
+          "    cmpq "
+          imm
+          ", %rax\n    sete %al\n    movzbq %al, %rax\n"))]
+    [(IrBinNe)
+      (CompilerBackendSomeAsm
+        (backend-cat3
+          "    cmpq "
+          imm
+          ", %rax\n    setne %al\n    movzbq %al, %rax\n"))]
+    [(IrBinLt)
+      (if (compiler-backend-unsigned-rel-ty? ty)
+        (CompilerBackendSomeAsm
+          (backend-cat3
+            "    cmpq "
+            imm
+            ", %rax\n    setb %al\n    movzbq %al, %rax\n"))
+        (CompilerBackendSomeAsm
+          (backend-cat3
+            "    cmpq "
+            imm
+            ", %rax\n    setl %al\n    movzbq %al, %rax\n")))]
+    [(IrBinLe)
+      (if (compiler-backend-unsigned-rel-ty? ty)
+        (CompilerBackendSomeAsm
+          (backend-cat3
+            "    cmpq "
+            imm
+            ", %rax\n    setbe %al\n    movzbq %al, %rax\n"))
+        (CompilerBackendSomeAsm
+          (backend-cat3
+            "    cmpq "
+            imm
+            ", %rax\n    setle %al\n    movzbq %al, %rax\n")))]
+    [(IrBinGt)
+      (if (compiler-backend-unsigned-rel-ty? ty)
+        (CompilerBackendSomeAsm
+          (backend-cat3
+            "    cmpq "
+            imm
+            ", %rax\n    seta %al\n    movzbq %al, %rax\n"))
+        (CompilerBackendSomeAsm
+          (backend-cat3
+            "    cmpq "
+            imm
+            ", %rax\n    setg %al\n    movzbq %al, %rax\n")))]
+    [(IrBinGe)
+      (if (compiler-backend-unsigned-rel-ty? ty)
+        (CompilerBackendSomeAsm
+          (backend-cat3
+            "    cmpq "
+            imm
+            ", %rax\n    setae %al\n    movzbq %al, %rax\n"))
+        (CompilerBackendSomeAsm
+          (backend-cat3
+            "    cmpq "
+            imm
+            ", %rax\n    setge %al\n    movzbq %al, %rax\n")))]
+    [(IrBinAnd)
+      (CompilerBackendSomeAsm (backend-cat3 "    andq " imm ", %rax\n"))]
+    [(IrBinOr)
+      (CompilerBackendSomeAsm (backend-cat3 "    orq " imm ", %rax\n"))]
+    [(IrBinBitAnd)
+      (CompilerBackendSomeAsm (backend-cat3 "    andq " imm ", %rax\n"))]
+    [(IrBinBitOr)
+      (CompilerBackendSomeAsm (backend-cat3 "    orq " imm ", %rax\n"))]
+    [(IrBinBitXor)
+      (CompilerBackendSomeAsm (backend-cat3 "    xorq " imm ", %rax\n"))]
+    [_ (CompilerBackendNoAsm)]))
+
 (define (compiler-backend-unop-asm [op : CompilerIrUnOp]) : String
   (match op
     [(IrUnNeg) "    negq %rax\n"]
-    [(IrUnNot) "    cmpq $0, %rax\n    sete %al\n    movzbq %al, %rax\n"]
+    [(IrUnNot) "    testq %rax, %rax\n    sete %al\n    movzbq %al, %rax\n"]
     [(IrUnBitNot) "    notq %rax\n"]))
 
 (define (compiler-backend-f64-binop-asm [op : CompilerIrBinOp]) : ResultCompilerBackend
@@ -1006,24 +1120,89 @@
       [(ErrCompilerBackend message) (ErrCompilerBackend message)])
     (match (compiler-backend-emit-load-value-with-plan assignments lhs "%rax")
       [(OkCompilerBackend lhs-asm)
-        (match (compiler-backend-emit-load-value-with-plan
-          assignments
-          rhs
-          "%rbx")
-          [(OkCompilerBackend rhs-asm)
-            (OkCompilerBackend
-              (string-append
-                lhs-asm
-                (string-append
-                  rhs-asm
+        (match (compiler-backend-immediate-operand rhs)
+          [(CompilerBackendSomeImmediate imm)
+            (match (compiler-backend-binop-immediate-asm op imm ty)
+              [(CompilerBackendSomeAsm op-asm)
+                (OkCompilerBackend
                   (string-append
-                    (compiler-backend-binop-asm op ty)
-                    (compiler-backend-emit-store-var-with-plan
-                      assignments
-                      dst
-                      "%rax")))))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+                    lhs-asm
+                    (string-append
+                      op-asm
+                      (compiler-backend-emit-store-var-with-plan
+                        assignments
+                        dst
+                        "%rax"))))]
+              [(CompilerBackendNoAsm)
+                (match (compiler-backend-emit-load-value-with-plan
+                  assignments
+                  rhs
+                  "%rbx")
+                  [(OkCompilerBackend rhs-asm)
+                    (OkCompilerBackend
+                      (string-append
+                        lhs-asm
+                        (string-append
+                          rhs-asm
+                          (string-append
+                            (compiler-backend-binop-asm op ty)
+                            (compiler-backend-emit-store-var-with-plan
+                              assignments
+                              dst
+                              "%rax")))))]
+                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
+          [(CompilerBackendNoImmediate)
+            (match (compiler-backend-emit-load-value-with-plan
+              assignments
+              rhs
+              "%rbx")
+              [(OkCompilerBackend rhs-asm)
+                (OkCompilerBackend
+                  (string-append
+                    lhs-asm
+                    (string-append
+                      rhs-asm
+                      (string-append
+                        (compiler-backend-binop-asm op ty)
+                        (compiler-backend-emit-store-var-with-plan
+                          assignments
+                          dst
+                          "%rax")))))]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
       [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+
+(define (compiler-backend-jump-label [function : String] [label : String]) : String
+  (backend-cat4 "    jmp " (compiler-backend-asm-label function label) "\n" ""))
+
+(define (compiler-backend-emit-branch
+  [assignments : CompilerRegAssignmentList]
+  [function : String]
+  [cond : CompilerIrValue]
+  [true-label : String]
+  [false-label : String]) : ResultCompilerBackend
+  (match cond
+    [(IrValueBool b)
+      (if b
+        (OkCompilerBackend (compiler-backend-jump-label function true-label))
+        (OkCompilerBackend (compiler-backend-jump-label function false-label)))]
+    [_
+      (match (compiler-backend-emit-load-value-with-plan
+        assignments
+        cond
+        "%rax")
+        [(OkCompilerBackend load)
+          (OkCompilerBackend
+            (string-append
+              load
+              (string-append
+                "    testq %rax, %rax\n"
+                (backend-cat5
+                  "    jne "
+                  (compiler-backend-asm-label function true-label)
+                  "\n    jmp "
+                  (compiler-backend-asm-label function false-label)
+                  "\n"))))]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
 
 (define (compiler-backend-emit-unop
   [assignments : CompilerRegAssignmentList]
@@ -1757,22 +1936,13 @@
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
       [(IrInstrBranch cond true-label false-label)
-        (match (compiler-backend-emit-load-value-with-plan
+        (match (compiler-backend-emit-branch
           assignments
+          function
           cond
-          "%rax")
-          [(OkCompilerBackend load)
-            (OkCompilerBackend
-              (string-append
-                load
-                (string-append
-                  "    cmpq $0, %rax\n"
-                  (backend-cat5
-                    "    jne "
-                    (compiler-backend-asm-label function true-label)
-                    "\n    jmp "
-                    (compiler-backend-asm-label function false-label)
-                    "\n"))))]
+          true-label
+          false-label)
+          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
@@ -5918,7 +6088,7 @@ tl_string_concat:
                       (and
                         (compiler-backend-string-contains?
                           asm
-                          "    cmpq $0, %rax\n")
+                          "    testq %rax, %rax\n")
                         (and
                           (compiler-backend-string-contains?
                             asm
@@ -6039,6 +6209,97 @@ tl_string_concat:
                         asm
                         "    movq %rsi, %r12\n")))))))))]
     [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-peephole-assignments) : CompilerRegAssignmentList
+  (CompilerRegAssignmentCons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+    (CompilerRegAssignmentCons
+      (CompilerRegAssignment 1 (CompilerRegRegister "%xmm0"))
+      (CompilerRegAssignmentCons
+        (CompilerRegAssignment 2 (CompilerRegRegister "%r13"))
+        CompilerRegAssignmentNil))))
+
+(define (compiler-backend-peephole-register-moves-ok?) : bool
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-backend-peephole-assignments)]
+    (and
+      (string-eq
+        (compiler-backend-emit-load-var-with-plan assignments 0 "%r12")
+        "")
+      (and
+        (string-eq
+          (compiler-backend-emit-store-var-with-plan assignments 0 "%r12")
+          "")
+        (and
+          (string-eq
+            (compiler-backend-emit-load-f64-var-with-plan assignments 1 "%xmm0")
+            "")
+          (string-eq
+            (compiler-backend-emit-store-f64-var-with-plan
+              assignments
+              1
+              "%xmm0")
+            ""))))))
+
+(define (compiler-backend-peephole-asm-ok?) : bool
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-backend-peephole-assignments)]
+    (match (compiler-backend-emit-binop
+      (CompilerRegVarTypeNil)
+      assignments
+      2
+      (IrBinAdd)
+      (IrValueVar 0)
+      (IrValueI64 5)
+      (AstTyI64))
+      [(OkCompilerBackend add-asm)
+        (match (compiler-backend-emit-binop
+          (CompilerRegVarTypeNil)
+          assignments
+          2
+          (IrBinLt)
+          (IrValueVar 0)
+          (IrValueI64 10)
+          (AstTyI64))
+          [(OkCompilerBackend cmp-asm)
+            (match (compiler-backend-emit-branch
+              assignments
+              "peephole"
+              (IrValueVar 0)
+              "then"
+              "else")
+              [(OkCompilerBackend branch-asm)
+                (and
+                  (compiler-backend-string-contains?
+                    add-asm
+                    "    addq $5, %rax\n")
+                  (and
+                    (not
+                      (compiler-backend-string-contains?
+                        add-asm
+                        "    movq $5, %rbx\n"))
+                    (and
+                      (compiler-backend-string-contains?
+                        cmp-asm
+                        "    cmpq $10, %rax\n    setl %al\n")
+                      (and
+                        (compiler-backend-string-contains?
+                          branch-asm
+                          "    testq %rax, %rax\n    jne ")
+                        (not
+                          (compiler-backend-string-contains?
+                            branch-asm
+                            "    cmpq $0, %rax\n    jne "))))))]
+              [(ErrCompilerBackend _) false])]
+          [(ErrCompilerBackend _) false])]
+      [(ErrCompilerBackend _) false])))
+
+(define (compiler-backend-peephole-ok?) : bool
+  (and
+    (compiler-backend-peephole-register-moves-ok?)
+    (compiler-backend-peephole-asm-ok?)))
 
 (define (compiler-backend-reg-is? [r : ResultBackendReg] [name : String]) : bool
   (match r
@@ -6626,22 +6887,24 @@ tl_string_concat:
                     (and
                       (compiler-backend-regalloc-ok?)
                       (and
-                        (compiler-backend-f64-ok?)
+                        (compiler-backend-peephole-ok?)
                         (and
-                          (compiler-backend-stack-args-ok?)
+                          (compiler-backend-f64-ok?)
                           (and
-                            (compiler-backend-instr-diagnostics-ok?)
+                            (compiler-backend-stack-args-ok?)
                             (and
-                              (compiler-backend-runtime-helper-asm-ok?)
+                              (compiler-backend-instr-diagnostics-ok?)
                               (and
-                                (compiler-backend-alloc-runtime-arena-ok?)
+                                (compiler-backend-runtime-helper-asm-ok?)
                                 (and
-                                  (compiler-backend-region-ok?)
+                                  (compiler-backend-alloc-runtime-arena-ok?)
                                   (and
-                                    (compiler-backend-user-helper-name-ok?)
+                                    (compiler-backend-region-ok?)
                                     (and
-                                      (compiler-backend-runtime-coexist-ok?)
-                                      (compiler-backend-module-symbol-ok?)))))))))))))))))))
+                                      (compiler-backend-user-helper-name-ok?)
+                                      (and
+                                        (compiler-backend-runtime-coexist-ok?)
+                                        (compiler-backend-module-symbol-ok?))))))))))))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

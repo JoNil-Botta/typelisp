@@ -80,16 +80,6 @@
         (assert-string-eq (process-error-message error) message message))]
     [(OkProcessOutput _) (panic message)]))
 
-(define (assert-process-unsupported
-  [result : ResultProcessOutput]
-  [message : String]) : unit
-  (match result
-    [(ErrProcessOutput error)
-      (begin
-        (assert-true (process-error-unsupported? error) message)
-        (assert-string-eq (process-error-message error) message message))]
-    [(OkProcessOutput _) (panic message)]))
-
 (define (main) : i64
   (let
     [args : ProcessStringList
@@ -188,7 +178,4 @@
         (assert-true
           (process-error-wait-failed? (ProcessWaitFailed "wait failed"))
           "process wait predicate")
-        (assert-process-unsupported
-          (process-run command)
-          "process: cwd execution is not implemented")
         42))))

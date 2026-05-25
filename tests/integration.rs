@@ -2156,6 +2156,11 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
         stdlib_dir.join("json.tl"),
     )
     .expect("copy stdlib/json.tl for compiler_driver fixture");
+    fs::copy(
+        manifest_dir.join("stdlib").join("text_buf.tl"),
+        stdlib_dir.join("text_buf.tl"),
+    )
+    .expect("copy stdlib/text_buf.tl for compiler_driver fixture");
 
     let json_input_path = work_dir.join("json_input.tl");
     let json_asm_path = work_dir.join("json_generated.s");

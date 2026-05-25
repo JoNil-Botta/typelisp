@@ -318,6 +318,11 @@ can safely lower the form to `tl_region_mark` / `tl_region_reset` around the
 body. This makes scoped cleanup safe by construction, unlike the raw extern
 helpers below. See [SPEC.md §5.16](SPEC.md) and §7.3 for the full contract.
 
+Scoped cleanup of non-memory resources is separate. The SPEC reserves
+`(with ([name init cleanup]) body ...)` for explicit cleanup of files, process
+handles, locks, mapped files, and similar resources; it is not implemented yet
+and does not imply destructors, `free`, or arena reset semantics.
+
 Programs that need manual control may still declare low-level extern helpers:
 `tl_region_mark` and `tl_region_reset` snapshot and restore the bump allocator.
 These are unsafe-by-convention — the caller must prove no live handle escapes

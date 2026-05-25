@@ -1087,6 +1087,148 @@ types, invalid field names, and use outside a compile-time-required context.
 
 ---
 
+### 5.18 `(with ([name init cleanup] ...) body ...)` - scoped resource cleanup
+
+The `(with ...)` form is reserved for explicit scoped cleanup of non-memory
+resources such as file descriptors, process handles, temporary files, locks,
+and mapped files. It is separate from `(with-region ...)`: `with` calls cleanup
+functions for resource values, while `with-region` resets arena allocation for
+memory owned by a lexical region.
+
+Each binding has the form `[name init-expr cleanup-fn]`.
+
+- `init-expr` is evaluated and bound to `name`.
+- `cleanup-fn` must name or evaluate to a function of type `(-> T unit)`, where
+  `T` is the type of `name`. Initial compiler support may restrict this
+  position to a direct function identifier. If it is an expression, it is
+  evaluated after `init-expr` succeeds and before the next binding begins.
+- `name` is in scope for later bindings and for the body, but not before its
+  own initializer.
+- The body is a non-empty expression sequence; the last expression is the
+  result of the `with` form.
+
+```lisp test=ignore name=with-resource-normal reason="reserved scoped resource cleanup syntax; compiler support tracked by #907"
+(defstruct Handle (id i64))
+
+(define (open-handle) : Handle
+  (Handle 1))
+
+(define (close-handle [h : Handle]) : unit
+  unit)
+
+(define (use-handle) : i64
+  (with ([h (open-handle) close-handle])
+    (struct-get h id)))
+```
+
+Multiple bindings are initialized left-to-right and cleaned up in reverse
+order. A binding whose initializer did not complete is not cleaned up. This
+makes a multi-binding form equivalent to nested `with` forms for lifetime
+purposes:
+
+```lisp test=ignore name=with-resource-lifo reason="reserved scoped resource cleanup syntax; compiler support tracked by #907"
+(defstruct Handle (id i64))
+
+(define (open-handle [id : i64]) : Handle
+  (Handle id))
+
+(define (close-handle [h : Handle]) : unit
+  unit)
+
+(define (use-two-handles) : i64
+  (with ([outer (open-handle 1) close-handle]
+         [inner (open-handle 2) close-handle])
+    (+ (struct-get outer id)
+       (struct-get inner id))))
+```
+
+In the example above `inner` is closed before `outer`.
+
+Nested `with` forms compose in the same way: the inner scope cleans up before
+execution continues in the outer scope.
+
+```lisp test=ignore name=with-resource-nested reason="reserved scoped resource cleanup syntax; compiler support tracked by #907"
+(defstruct Handle (id i64))
+
+(define (open-handle [id : i64]) : Handle
+  (Handle id))
+
+(define (close-handle [h : Handle]) : unit
+  unit)
+
+(define (use-nested-handles) : i64
+  (with ([outer (open-handle 1) close-handle])
+    (+ (struct-get outer id)
+       (with ([inner (open-handle 2) close-handle])
+         (struct-get inner id)))))
+```
+
+Cleanup runs when the body exits normally. Once recoverable propagation syntax
+lands (#903), cleanup also runs before a recoverable early return leaves the
+scope. Already-initialized earlier bindings are cleaned up when a later
+initializer propagates a recoverable failure. Panic/abort remains terminal and
+does not guarantee cleanup unless a future unwinding model explicitly says so.
+
+```lisp test=ignore name=with-resource-recoverable-propagation reason="reserved scoped cleanup and recoverable propagation syntax; compiler support tracked by #907/#903"
+(defstruct Handle (id i64))
+
+(defenum ResultI64
+  (OkI64 i64)
+  (ErrI64 String))
+
+(define (open-handle) : Handle
+  (Handle 1))
+
+(define (close-handle [h : Handle]) : unit
+  unit)
+
+(define (read-handle [h : Handle]) : ResultI64
+  (OkI64 (struct-get h id)))
+
+(define (read-with-cleanup) : ResultI64
+  (with ([h (open-handle) close-handle])
+    (try (read-handle h))))
+```
+
+Cleanup functions return `unit`; any cleanup value is ignored. A cleanup
+function that panics aborts the program, and the language does not guarantee
+that remaining cleanup functions run after that abort.
+
+A resource-bound value may not escape its `with` scope. It cannot be returned
+as the result of the `with` form, stored into an outer binding or global, or
+captured by a closure whose lifetime outlives the scope. The resource may be
+used to compute a non-resource result before cleanup runs.
+
+```lisp test=ignore name=with-resource-reject-escape reason="negative example for future scoped resource cleanup checks"
+(defstruct Handle (id i64))
+
+(define (open-handle) : Handle
+  (Handle 1))
+
+(define (close-handle [h : Handle]) : unit
+  unit)
+
+(define (leak-handle) : Handle
+  (with ([h (open-handle) close-handle])
+    h))
+```
+
+Ordinary `let` has no cleanup behavior. A binding is cleaned up only when it is
+introduced by `with`, with an explicit cleanup function in the binding.
+
+```lisp test=ignore name=ordinary-let-does-not-cleanup reason="illustrates distinction from future scoped cleanup syntax"
+(defstruct Handle (id i64))
+
+(define (open-handle) : Handle
+  (Handle 1))
+
+(define (use-handle-without-cleanup) : i64
+  (let ([h (open-handle)])
+    (struct-get h id)))
+```
+
+---
+
 ## 6. Built-in functions and runtime
 
 ### 6.1 Builtin functions (lowered to IR calls)
@@ -1185,10 +1327,12 @@ They are not implemented by a separate C runtime.
 ## 7. Memory model
 
 TypeLisp currently has no source-level reference, borrow, lifetime, move-only,
-destructor, `drop`, `free`, or garbage-collector model. The implementation uses
-pointer-sized handles for several aggregate values, but those handles are not
-checked references in the source language. Future ownership/borrowing work is a
-separate design track.
+implicit destructor, `drop`, `free`, or garbage-collector model. The
+implementation uses pointer-sized handles for several aggregate values, but
+those handles are not checked references in the source language. Future
+ownership/borrowing work is a separate design track. The reserved `(with ...)`
+form (§5.18) is explicit non-memory resource cleanup; it is not a general
+object destructor or heap reclamation mechanism.
 
 ### 7.1 Stack
 
@@ -1218,12 +1362,12 @@ values; returned enum and struct storage; and self-hosted data structures built
 from those primitives. Future closures are expected to allocate in the same
 heap until a more precise model exists.
 
-General per-object `free`, destructors, move-only ownership, and borrowed
-references are not part of this v1 policy. Aggregate handles are freely copied
-today, and dynamic arrays are shared mutable buffers, so adding arbitrary
-`free` before ownership/reference semantics would make double-free and
-use-after-free errors expressible. Ownership, borrowing, and reference work is a
-separate design track (#25, #182).
+General per-object `free`, implicit destructors, move-only ownership, and
+borrowed references are not part of this v1 policy. Aggregate handles are
+freely copied today, and dynamic arrays are shared mutable buffers, so adding
+arbitrary `free` before ownership/reference semantics would make double-free
+and use-after-free errors expressible. Ownership, borrowing, and reference work
+is a separate design track (#25, #182).
 
 A tracing garbage collector is also not the first reclamation step. It would
 need object metadata, root discovery or stack maps, runtime scanning policy, and
@@ -1295,6 +1439,20 @@ tag, not the inner one).
 
 On non-Linux targets `with-region` still type-checks and scopes but does not
 reclaim, matching the semantic contract minus the reset.
+
+#### Scoped non-memory resources (reserved) - `with`
+
+The reserved `(with ([name init cleanup] ...) body ...)` form (§5.18) is the
+source surface for deterministic cleanup of non-memory resources. It does not
+select an allocation arena, does not reset heap storage, and does not make
+aggregate handles unique. Cleanup is explicit in the binding and must return
+`unit`; TypeLisp still has no implicit destructors or automatic `drop`.
+
+This keeps resource lifetime policy independent from arena lifetime policy:
+files, process handles, locks, mapped files, and temporary paths use `with`;
+heap allocation reclamation uses `with-region` or the low-level unsafe region
+helpers below. Compiler support is tracked by #907, with move-only and
+cleanup-owning aggregate follow-ups tracked separately.
 
 #### Low-level extern helpers (unsafe by convention)
 
@@ -1410,6 +1568,7 @@ replacement.
 | Tail call optimization | Not implemented |
 | `struct-set!` | Not implemented |
 | Garbage collection / general `free` | Not implemented; allocation is process-lifetime by default with unsafe explicit region reset for tool-owned phase boundaries |
+| `(with ...)` scoped non-memory resource cleanup | Specified and reserved; parser/typechecker/lowering support pending |
 | SPMD / SIMD `foreach` | Scalar reference lowering implemented; AVX2 supports a first contiguous map/zip subset |
 | SPMD reductions and public cross-lane ops | Source semantics specified; parser/typechecker/lowering/backend support pending |
 | Windows region helpers | `tl_region_mark`/`tl_region_reset` are Linux-only |
@@ -1852,6 +2011,7 @@ expr          ::= literal
                 | "(" "spmd-reduce" reduce-op foreach-clause expr expr ")"
                 | "(" "lambda" "(" param* ")" [":" type] expr ")"
                 | "(" "with-region" ident expr+ ")"
+                | "(" "with" "(" resource-binding* ")" expr+ ")"
                 | "(" "comptime" expr ")"
                 | "(" "type" type ")"
                 | "(" "size-of" expr ")"
@@ -1860,6 +2020,7 @@ expr          ::= literal
                 | "(" expr expr* ")"          ; function call
 
 binding       ::= "[" ident [":" type] expr "]"
+resource-binding ::= "[" ident expr expr "]"  ; name init cleanup-fn
 foreach-clause ::= "(" "[" ident ":" type expr expr "]" ")"
 reduce-op     ::= "sum" | "min" | "max" | "all" | "any"
 cond-arm      ::= "[" expr expr "]"

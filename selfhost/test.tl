@@ -438,7 +438,7 @@
         source
         (sym-i64-empty)
         roots)
-        [(OkCompilerLoadWithPaths decls paths _)
+        [(OkCompilerLoadWithPaths decls paths _ _)
           (match (tltest-build-harness source decls paths)
             [(InlineHarness program harness-paths count)
               (match test-mode

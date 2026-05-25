@@ -235,11 +235,14 @@ end
 case|selfhost_compiler_optimize|selfhost/compiler_optimize.tl|assembly|skip|direct
 contains|_tl_optimize_program:
 contains|_tl_opt_fold_instrs:
+contains|_tl_opt_strength_instrs:
 contains|_tl_compiler_optimize_self_test:
+contains|_tl_compiler_optimize_strength_self_test:
 end
 
 case|selfhost_compiler_optimize_smoke|selfhost/compiler_optimize_smoke.tl|assembly|exactly-one|direct
 contains|_tl_compiler_optimize_self_test:
+contains|_tl_compiler_optimize_strength_self_test:
 contains|_tl_optimize_program:
 end
 

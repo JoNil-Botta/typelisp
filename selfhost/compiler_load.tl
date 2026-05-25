@@ -735,6 +735,46 @@
             (sym-i64-contains seen "target/compiler_load_legacy_dep.tl")))]
       [(ErrCompilerLoadWithPaths _) false])))
 
+;; Diamond import dedup (#1074 / #1041): entry imports A and B, both of which
+;; import C; C must load exactly once. Writes fixture modules under target/ and
+;; loads through the file loader, mirroring the existing dedup/cycle self-test.
+(define (compiler-load-diamond-import-ok?) : bool
+  (begin
+    (write-file
+      "target/cl_diamond_c.tl"
+      "(module diamond.c)
+(define c-val : i64 1)")
+    (write-file
+      "target/cl_diamond_a.tl"
+      "(module diamond.a)
+(import \"cl_diamond_c.tl\" module diamond.c as c)
+(define a-val : i64 1)")
+    (write-file
+      "target/cl_diamond_b.tl"
+      "(module diamond.b)
+(import \"cl_diamond_c.tl\" module diamond.c as c)
+(define b-val : i64 1)")
+    (write-file
+      "target/cl_diamond_entry.tl"
+      "(module diamond.entry)
+(import \"cl_diamond_a.tl\" module diamond.a as a)
+(import \"cl_diamond_b.tl\" module diamond.b as b)
+(define (main) : i64 0)")
+    (match (compiler-load-file-with-paths
+      "target/cl_diamond_entry.tl"
+      (sym-i64-empty))
+      [(OkCompilerLoadWithPaths decls _ _ seen)
+        (and
+          (= (compiler-load-decl-list-count decls) 8)
+          (and
+            (sym-i64-contains seen "diamond.c")
+            (and
+              (sym-i64-contains seen "diamond.a")
+              (and
+                (sym-i64-contains seen "diamond.b")
+                (sym-i64-contains seen "diamond.entry")))))]
+      [(ErrCompilerLoadWithPaths _) false])))
+
 (define (compiler-load-self-test) : i64
   (if (compiler-load-normalize-ok?)
     (if (compiler-load-source-provenance-ok?)
@@ -743,7 +783,11 @@
           (if (compiler-load-seen-module-ok?)
             (if (compiler-load-file-import-dedup-cycle-ok?)
               (if (compiler-load-file-fallback-path-dedup-ok?)
-                42
+                (if (compiler-load-diamond-import-ok?)
+                  42
+                  (begin
+                    (panic "compiler-load: diamond import smoke mismatch")
+                    0))
                 (begin
                   (panic "compiler-load: fallback path dedup smoke mismatch")
                   0))

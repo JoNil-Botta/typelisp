@@ -156,6 +156,20 @@ The integration manifests live in `tests/integration/native-linux.manifest` and
 needs another imported module, add the dependency to the owning manifest row so
 the no-Rust runner exercises the same import graph reviewers see locally.
 
+### Selfhost native generated programs
+
+`scripts/verify-selfhost-native.sh` covers Linux-only cases where a selfhost
+TypeLisp driver emits assembly that must then assemble, link, and run outside
+the Rust harness. It builds `selfhost/compiler_driver.tl`, verifies generated
+file-to-file assembly for multi-file imports, stdlib imports, runtime helpers,
+dynamic arrays, traps, and stack-argument call shape, and also runs the printed
+assembly from `selfhost/emit.tl` and `selfhost/parse.tl`.
+
+This runner is intentionally separate from the plain integration manifest:
+manifest rows cover source programs built by the public compiler, while this
+script covers generated-program behavior where the generated `.s` is the test
+artifact.
+
 ### External compiler corpus
 
 The standalone source corpus under `selfhost/tests/` is for programs accepted or

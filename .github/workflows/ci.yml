@@ -235,6 +235,9 @@ jobs:
       - name: Verify integration corpus
         run: TYPELISP_BIN=./target/release/typelisp ./scripts/verify-integration.sh
 
+      - name: Verify selfhost native generated programs
+        run: TYPELISP_BIN=./target/release/typelisp ./scripts/verify-selfhost-native.sh
+
       - name: Compile and verify all examples
         run: TYPELISP_BIN=./target/release/typelisp ./scripts/verify-examples.sh
 

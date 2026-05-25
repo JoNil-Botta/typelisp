@@ -140,7 +140,9 @@ lookup behavior.
 
 The assertion helpers in `stdlib/test.tl` are also intended for inline
 `(test ...)` items. They do not allocate on success; failures call `panic` with
-the caller-provided message.
+the caller-provided message. Repository CI runs
+`scripts/verify-inline-tests.sh`, so inline tests placed under stdlib modules or
+fixtures are discovered without a manifest edit.
 
 ## Adding a Module
 
@@ -155,16 +157,20 @@ the caller-provided message.
 5. Add focused fixtures under `stdlib/tests/` and list them in
    `scripts/verify-stdlib.sh`'s runnable test manifest with expected
    exit/stdout/stderr or check-only manifest with expected pass/fail behavior.
-6. Document the intended public API coverage in `stdlib/tests/README.md`.
-7. Add `;;;;` module docs, attached `;;;` item docs for every public top-level
+6. Add inline `(test ...)` items next to declarations when the check belongs to
+   a specific stdlib API; `scripts/verify-inline-tests.sh` discovers them
+   automatically.
+7. Document the intended public API coverage in `stdlib/tests/README.md`.
+8. Add `;;;;` module docs, attached `;;;` item docs for every public top-level
    declaration, allocation-behavior notes for allocating APIs, an update to the
    arena allocation classification table above, and at least one checked doctest
    example that runs with `--stdlib-root`.
-8. Run `scripts/verify-stdlib-docs.sh` to generate Markdown and run doctests
+9. Run `scripts/verify-stdlib-docs.sh` to generate Markdown and run doctests
    for every stdlib module.
-9. Run `scripts/verify-doc-tests.sh` to confirm the repository-wide doctest
+10. Run `scripts/verify-doc-tests.sh` to confirm the repository-wide doctest
    discovery gate picks up the new documented module without a manifest edit.
-10. Link user-facing docs or tests to the new module when appropriate.
+11. Run `scripts/verify-inline-tests.sh` if the module adds inline tests.
+12. Link user-facing docs or tests to the new module when appropriate.
 
 The verifier intentionally fails when a new top-level `stdlib/*.tl` module or a
 new `stdlib/tests/*.tl` fixture is not listed in its corresponding manifest.

@@ -597,7 +597,9 @@
     [(AstExprTypeLiteral ty)
       (front-cat3 "TypeLiteral { ty: " (front-type-render ty) " }")]
     [(AstExprComptime inner)
-      (front-cat3 "Comptime { expr: " (front-expr-render inner) " }")]))
+      (front-cat3 "Comptime { expr: " (front-expr-render inner) " }")]
+    [(AstExprTry inner)
+      (front-cat3 "Try { expr: " (front-expr-render inner) " }")]))
 
 (define (front-maybe-module-render [name : AstMaybeModuleName]) : String
   (match name

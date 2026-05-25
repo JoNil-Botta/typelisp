@@ -122,6 +122,7 @@ fn compiler_lower_tl_compiles_to_assembly() {
         "_tl_lower_let_bindings:",
         "_tl_lower_begin:",
         "_tl_lower_with_region:",
+        "_tl_lower_try:",
         "_tl_lower_if:",
         "_tl_lower_if_merge:",
         "_tl_lower_while:",
@@ -133,6 +134,7 @@ fn compiler_lower_tl_compiles_to_assembly() {
         // Enum-match payload-load and phi-shape self-test assertion (#517).
         "_tl_compiler_lower_enum_match_shape_ok_question:",
         "_tl_compiler_lower_make_array_shape_ok_question:",
+        "_tl_compiler_lower_result_try_shape_ok_question:",
         "_tl_compiler_lower_region_shape_ok_question:",
         "_tl_compiler_ir_program_summary:",
         "_tl_typecheck_compiler_program:",
@@ -166,6 +168,9 @@ fn compiler_lower_tl_compiles_to_assembly() {
         "(with-region r",
         "[(Pair left _) left]",
         "lower: unsupported enum payload pattern",
+        "(defenum ResultI64 (OkI64 i64) (ErrI64 String))",
+        "(try (read a 40))",
+        "typecheck: try operand must be Result-like enum",
     ] {
         assert_message(&asm, message, "compiler_lower");
     }

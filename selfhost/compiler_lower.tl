@@ -1012,6 +1012,195 @@
     [(AstTyUnit) IrNoValue]
     [_ (IrSomeValue value)]))
 
+(define (lower-load-single-payload
+  [ctx : TcContext]
+  [state : LowerState]
+  [base : CompilerIrValue]
+  [ty : AstType]) : LowerExpr
+  (let
+    [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
+    (match resolved
+      [(AstTyUnit) (LowerExpr state IrValueUnit resolved)]
+      [_ (lower-load-at-offset state base 8 resolved)])))
+
+(define (lower-return-result-err
+  [ctx : TcContext]
+  [state : LowerState]
+  [return-info : TcResultInfo]
+  [payload : CompilerIrValue]) : ResultLowerState
+  (match ctx
+    [(TcContext _ _ registries)
+      (let
+        [enum-name : String (tc-result-info-enum-name return-info)]
+        [err-name : String (tc-result-info-err-name return-info)]
+        [err-ty : AstType
+          (tc-type-without-regions (tc-result-info-err-type return-info))]
+        (match (compiler-registries-lookup-variant registries err-name)
+          [(SomeI64 handle)
+            (match (lower-reserve-heap-storage
+              state
+              (lower-enum-storage-size ctx enum-name)
+              (AstTyEnum enum-name))
+              [(LowerExpr base-state base _)
+                (let
+                  [tag-state : LowerState
+                    (lower-store-at-offset
+                      base-state
+                      base
+                      0
+                      (IrValueI64 (compiler-registry-handle-child-index handle))
+                      (AstTyI64))]
+                  (let
+                    [payload-state : LowerState
+                      (match err-ty
+                        [(AstTyUnit) tag-state]
+                        [_
+                          (lower-store-at-offset
+                            tag-state
+                            base
+                            8
+                            payload
+                            err-ty)])]
+                    (OkLowerState
+                      (lower-state-emit
+                        payload-state
+                        (IrInstrReturn
+                          (lower-return-maybe base (AstTyEnum enum-name)))))))])]
+          [(NoneI64)
+            (ErrLowerState
+              (lower-diagnostic
+                (string-append "lower: unknown variant " err-name)))]))]))
+
+(define (lower-try-finish
+  [ctx : TcContext]
+  [state : LowerState]
+  [result-value : CompilerIrValue]
+  [operand-info : TcResultInfo]
+  [return-info : TcResultInfo]
+  [ok-label : String]
+  [err-label : String]) : ResultLowerExpr
+  (let
+    [err-start : LowerState (lower-state-finish-block state err-label)]
+    (match (lower-load-single-payload
+      ctx
+      err-start
+      result-value
+      (tc-result-info-err-type operand-info))
+      [(LowerExpr err-payload-state err-payload _)
+        (match (lower-return-result-err
+          ctx
+          err-payload-state
+          return-info
+          err-payload)
+          [(OkLowerState returned-state)
+            (let
+              [ok-start : LowerState
+                (lower-state-finish-block returned-state ok-label)]
+              (match (lower-load-single-payload
+                ctx
+                ok-start
+                result-value
+                (tc-result-info-ok-type operand-info))
+                [(LowerExpr ok-state ok-payload ok-ty)
+                  (OkLowerExpr (LowerExpr ok-state ok-payload ok-ty))]))]
+          [(ErrLowerState message) (ErrLowerExpr message)])])))
+
+(define (lower-try-with-info
+  [ctx : TcContext]
+  [state : LowerState]
+  [result-value : CompilerIrValue]
+  [operand-info : TcResultInfo]
+  [return-info : TcResultInfo]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match ctx
+    [(TcContext _ _ registries)
+      (let
+        [ok-name : String (tc-result-info-ok-name operand-info)]
+        (match (compiler-registries-lookup-variant registries ok-name)
+          [(SomeI64 ok-handle)
+            (match (lower-load-at-offset state result-value 0 (AstTyI64))
+              [(LowerExpr tag-state tag-value _)
+                (match (lower-state-alloc-var tag-state)
+                  [(LowerAlloc eq-alloc eq-var)
+                    (match (lower-state-fresh-label eq-alloc "try_ok")
+                      [(LowerLabel ok-label-state ok-label)
+                        (match (lower-state-fresh-label
+                          ok-label-state
+                          "try_err")
+                          [(LowerLabel err-label-state err-label)
+                            (let
+                              [eq-state : LowerState
+                                (lower-state-emit-at-expr
+                                  err-label-state
+                                  (IrInstrBinOp
+                                    eq-var
+                                    IrBinEq
+                                    tag-value
+                                    (IrValueI64
+                                      (compiler-registry-handle-child-index
+                                        ok-handle))
+                                    (AstTyBool))
+                                  origin)]
+                              (lower-try-finish
+                                ctx
+                                (lower-state-emit
+                                  eq-state
+                                  (IrInstrBranch
+                                    (IrValueVar eq-var)
+                                    ok-label
+                                    err-label))
+                                result-value
+                                operand-info
+                                return-info
+                                ok-label
+                                err-label))])])])])]
+          [(NoneI64)
+            (ErrLowerExpr
+              (lower-diagnostic-at-expr
+                origin
+                (string-append "lower: unknown variant " ok-name)))]))]))
+
+(define (lower-try
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [inner : AstExpr]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (lower-expr ctx state env type-env inner)
+    [(OkLowerExpr lowered)
+      (match lowered
+        [(LowerExpr result-state result-value result-ty)
+          (match (tc-result-info ctx result-ty)
+            [(OkTcResultInfo operand-info)
+              (match (tc-current-return-type type-env)
+                [(OkTcType return-ty)
+                  (match (tc-result-info ctx return-ty)
+                    [(OkTcResultInfo return-info)
+                      (lower-try-with-info
+                        ctx
+                        result-state
+                        result-value
+                        operand-info
+                        return-info
+                        origin)]
+                    [(ErrTcResultInfo _)
+                      (ErrLowerExpr
+                        (lower-diagnostic-at-expr
+                          origin
+                          "typecheck: try requires enclosing Result-like function"))])]
+                [(ErrTcType _)
+                  (ErrLowerExpr
+                    (lower-diagnostic-at-expr
+                      origin
+                      "typecheck: try requires enclosing Result-like function"))])]
+            [(ErrTcResultInfo _)
+              (ErrLowerExpr
+                (lower-diagnostic-at-expr
+                  origin
+                  "typecheck: try operand must be Result-like enum"))])])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
 (define (lower-top-level-value-defined? [ctx : TcContext] [name : String]) : bool
   (match ctx
     [(TcContext _ symbols _)
@@ -1389,6 +1578,7 @@
     [(AstExprArraySet arr index value)
       (lower-array-set ctx state env type-env arr index value)]
     [(AstExprWithRegion _ body) (lower-with-region ctx state env type-env body)]
+    [(AstExprTry inner) (lower-try ctx state env type-env inner origin)]
     ;; `(comptime expr)` folds to a literal via the scalar CTFE evaluator (#719).
     ;; Successful folds reuse the ordinary literal path; CTFE rejections (free
     ;; runtime vars, unsupported forms, f64 -> #735) surface as lower errors.
@@ -3838,7 +4028,10 @@
     [param-count : i64 (lower-param-count params)]
     (let
       [env : SymI64Env (lower-bind-params params 0 (sym-i64-empty))]
-      [type-env : TcTypeEnv (tc-bind-params ctx top-env params)]
+      [type-env : TcTypeEnv
+        (tc-bind-return-type
+          (tc-bind-params ctx top-env params)
+          (tc-type-without-regions (tc-resolve-type ctx ret)))]
       [logical-name : String (lower-name-env-resolve names name)]
       [function-spans : CompilerSourceSpans
         (lower-record-function-span spans logical-name body)]
@@ -4312,6 +4505,21 @@
     [TEnd 0]))
 (define (main) : i64 0)")
 
+(define (compiler-lower-result-try-source) : String
+  "(defenum ResultI64 (OkI64 i64) (ErrI64 String))
+(define (read [flag : bool] [n : i64]) : ResultI64
+  (if flag (OkI64 n) (ErrI64 \"read failed\")))
+(define (sum [a : bool] [b : bool]) : ResultI64
+  (let ([x : i64 (try (read a 40))]
+        [y : i64 0])
+    (begin
+      (set! y (try (read b 2)))
+      (OkI64 (+ x y)))))
+(define (chain [flag : bool]) : ResultI64
+  (OkI64 (try (sum flag true))))
+(define (main [flag : bool]) : ResultI64
+  (chain flag))")
+
 (define (compiler-lower-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(OkCompilerLower _ _) true]
@@ -4376,6 +4584,16 @@
     [(IrInstrLoad _ _ _) 1]
     [_ 0]))
 
+(define (lower-test-instr-branch-count [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrBranch _ _ _) 1]
+    [_ 0]))
+
+(define (lower-test-instr-return-count [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrReturn _) 1]
+    [_ 0]))
+
 (define (lower-test-instr-call-count [instr : CompilerIrInstr] [name : String]) : i64
   (match instr
     [(IrInstrCall _ call-name _ _)
@@ -4397,6 +4615,22 @@
       (+
         (lower-test-instr-load-count instr)
         (lower-test-instrs-load-count rest))]))
+
+(define (lower-test-instrs-branch-count [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (lower-test-instr-branch-count instr)
+        (lower-test-instrs-branch-count rest))]))
+
+(define (lower-test-instrs-return-count [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (lower-test-instr-return-count instr)
+        (lower-test-instrs-return-count rest))]))
 
 (define (lower-test-instrs-call-count
   [instrs : CompilerIrInstrList]
@@ -4427,6 +4661,26 @@
           (+
             (lower-test-instrs-load-count instrs)
             (lower-test-blocks-load-count rest))])]))
+
+(define (lower-test-blocks-branch-count [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instrs-branch-count instrs)
+            (lower-test-blocks-branch-count rest))])]))
+
+(define (lower-test-blocks-return-count [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instrs-return-count instrs)
+            (lower-test-blocks-return-count rest))])]))
 
 (define (lower-test-blocks-call-count
   [blocks : CompilerIrBlockList]
@@ -4465,6 +4719,30 @@
           (if (string-eq fname name)
             (lower-test-blocks-load-count blocks)
             (lower-test-function-load-count rest name))])]))
+
+(define (lower-test-function-branch-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]) : i64
+  (match funcs
+    [(IrFunctionNil) (- 0 1)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ blocks)
+          (if (string-eq fname name)
+            (lower-test-blocks-branch-count blocks)
+            (lower-test-function-branch-count rest name))])]))
+
+(define (lower-test-function-return-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]) : i64
+  (match funcs
+    [(IrFunctionNil) (- 0 1)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ blocks)
+          (if (string-eq fname name)
+            (lower-test-blocks-return-count blocks)
+            (lower-test-function-return-count rest name))])]))
 
 (define (lower-test-functions-call-count
   [funcs : CompilerIrFunctionList]
@@ -4680,6 +4958,20 @@
                     (> (lower-test-function-load-count functions "or-zero") 1))))))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-result-try-shape-ok? [src : String]) : bool
+  (match (lower-compiler-source src)
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (> (lower-test-function-branch-count functions "sum") 1)
+            (and
+              (> (lower-test-function-return-count functions "sum") 2)
+              (and
+                (> (lower-test-function-return-count functions "chain") 1)
+                (> (lower-test-function-load-count functions "sum") 3))))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-make-array-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(OkCompilerLower program _)
@@ -4776,69 +5068,75 @@
                 (compiler-lower-ok?
                   (compiler-lower-enum-literal-payload-source))
                 (compiler-lower-ok? (compiler-lower-enum-nested-payload-source))))
-            (compiler-lower-error-ok?
-              (compiler-lower-enum-string-literal-payload-source)
-              "lower: unsupported enum payload literal pattern type"))
+            (and
+              (compiler-lower-ok? (compiler-lower-result-try-source))
+              (compiler-lower-error-ok?
+                (compiler-lower-enum-string-literal-payload-source)
+                "lower: unsupported enum payload literal pattern type")))
           (and
             (compiler-lower-enum-match-shape-ok?
               (compiler-lower-enum-match-source))
             (and
+              (compiler-lower-result-try-shape-ok?
+                (compiler-lower-result-try-source))
               (and
-                (compiler-lower-ok? (compiler-lower-array-length-source))
                 (and
-                  (compiler-lower-ok? (compiler-lower-array-access-source))
-                  (compiler-lower-make-array-shape-ok?
-                    (compiler-lower-make-array-source))))
-              (and
-                (compiler-lower-ok? (compiler-lower-string-length-source))
-                (and
-                  (compiler-lower-ok? (compiler-lower-string-runtime-source))
+                  (compiler-lower-ok? (compiler-lower-array-length-source))
                   (and
-                    (compiler-lower-string-runtime-shape-ok?
-                      (compiler-lower-string-runtime-source))
+                    (compiler-lower-ok? (compiler-lower-array-access-source))
+                    (compiler-lower-make-array-shape-ok?
+                      (compiler-lower-make-array-source))))
+                (and
+                  (compiler-lower-ok? (compiler-lower-string-length-source))
+                  (and
+                    (compiler-lower-ok? (compiler-lower-string-runtime-source))
                     (and
-                      (compiler-lower-string-shadow-shape-ok?
-                        (compiler-lower-string-shadow-source))
+                      (compiler-lower-string-runtime-shape-ok?
+                        (compiler-lower-string-runtime-source))
                       (and
-                        (compiler-lower-ok? (compiler-lower-stdio-source))
+                        (compiler-lower-string-shadow-shape-ok?
+                          (compiler-lower-string-shadow-source))
                         (and
-                          (compiler-lower-ok? (compiler-lower-aggregate-source))
+                          (compiler-lower-ok? (compiler-lower-stdio-source))
                           (and
                             (compiler-lower-ok?
-                              (compiler-lower-comptime-decl-source))
+                              (compiler-lower-aggregate-source))
                             (and
-                              (compiler-lower-region-shape-ok?)
+                              (compiler-lower-ok?
+                                (compiler-lower-comptime-decl-source))
                               (and
                                 (compiler-lower-module-symbols-ok?)
                                 (and
                                   (compiler-lower-module-specialize-ok?)
                                   (and
-                                    (compiler-lower-error-ok?
-                                      (compiler-typecheck-branch-mismatch-source)
-                                      "typecheck: if branches must match")
+                                    (compiler-lower-region-shape-ok?)
                                     (and
                                       (compiler-lower-error-ok?
-                                        (compiler-lower-unsupported-source)
-                                        "lower: unsupported expression")
+                                        (compiler-typecheck-branch-mismatch-source)
+                                        "typecheck: if branches must match")
                                       (and
-                                        (compiler-lower-comptime-fold-ok?
-                                          (compiler-lower-comptime-arith-source)
-                                          3)
+                                        (compiler-lower-error-ok?
+                                          (compiler-lower-unsupported-source)
+                                          "lower: unsupported expression")
                                         (and
                                           (compiler-lower-comptime-fold-ok?
-                                            (compiler-lower-comptime-if-source)
-                                            42)
+                                            (compiler-lower-comptime-arith-source)
+                                            3)
                                           (and
                                             (compiler-lower-comptime-fold-ok?
-                                              (compiler-lower-comptime-let-source)
+                                              (compiler-lower-comptime-if-source)
                                               42)
                                             (and
-                                              (compiler-lower-error-ok?
-                                                (compiler-lower-comptime-runtime-var-source)
-                                                "compile-time evaluation cannot reference runtime variable 'x'")
-                                              (compiler-lower-error-ok?
-                                                (compiler-lower-comptime-f64-source)
-                                                "comptime: f64 compile-time evaluation not yet supported (#735)")))))))))))))))))))))))
+                                              (compiler-lower-comptime-fold-ok?
+                                                (compiler-lower-comptime-let-source)
+                                                42)
+                                              (and
+                                                (compiler-lower-error-ok?
+                                                  (compiler-lower-comptime-runtime-var-source)
+                                                  "compile-time evaluation cannot reference runtime variable 'x'")
+                                                (compiler-lower-error-ok?
+                                                  (compiler-lower-comptime-f64-source)
+                                                  "comptime: f64 compile-time evaluation not yet supported (#735)"))))))))))))))))))))))))
     42
     (begin
       (panic "lower: smoke score mismatch")

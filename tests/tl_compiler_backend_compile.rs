@@ -35,11 +35,16 @@ fn compile_selfhost_source(source_file: &str, work_name: &str, asm_file: &str) -
 fn run_selfhost_source_expect_42(source_file: &str) {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let source_path = manifest_dir.join("selfhost").join(source_file);
+    let target = if cfg!(windows) {
+        "windows-x86_64"
+    } else {
+        "linux-x86_64"
+    };
     let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
         .arg("run")
         .arg(&source_path)
         .arg("--target")
-        .arg("windows-x86_64")
+        .arg(target)
         .output()
         .expect("run typelisp selfhost smoke");
 

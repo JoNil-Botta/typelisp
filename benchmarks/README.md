@@ -20,6 +20,14 @@ benchmarks/
 Each `<name>/` is one benchmark. `scripts/bench.sh` discovers every directory
 that contains both `bench.tl` and `baseline.c`.
 
+### Available benchmarks
+
+| Name | Workload |
+|------|----------|
+| `arith_loop` | Scalar LCG recurrence over wrapping 64-bit arithmetic. |
+| `optimization` | Optimizer-sensitive scalar loop. |
+| `spmd_map` | Data-parallel elementwise map (`out[i] = a[i] + b[i] + r`) via `foreach`, establishing the SPMD/SIMD-vs-clang baseline (refs #1125). |
+
 ### Writing a benchmark
 
 - `bench.tl` and `baseline.c` must compute the **same result** and return it as

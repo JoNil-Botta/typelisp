@@ -35,6 +35,9 @@ Coverage notes:
 - `process_runtime.tl` covers backend process execution for stdout, stderr,
   nonzero status, and failed spawn on Linux, plus the structured unsupported
   result on Windows.
+- `random_api.tl` covers deterministic seed normalization and MINSTD sequences,
+  bounded draws, invalid bounds, weighted-index edge cases, zero-weight
+  skipping, and stable picks for fixed seeds.
 - `text_buf_api.tl` covers empty buffers, repeated appends, char/int append
   helpers, buffer concatenation, clear/reset behavior, and rendering.
 - `test_assert_success.tl` covers successful assertion helpers. The

@@ -86,3 +86,4 @@ doc_extract_smoke|selfhost/doc_extract_smoke.tl|42|-|-|doc_extract.tl format_tok
 doc_test_smoke|selfhost/doc_test_smoke.tl|42|-|-|doc_test.tl compiler_check_core.tl compiler_load.tl compiler_typecheck.tl compiler_ctfe.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_ast_types.tl compiler_diagnostic.tl sym_i64_env.tl read.tl lex.tl token.tl
 doc_render_smoke|selfhost/doc_render_smoke.tl|42|-|-|doc_render.tl doc_extract.tl format_tokens.tl
 doc_html_smoke|selfhost/doc_html_smoke.tl|42|-|-|doc_html.tl doc_render.tl doc_extract.tl format_tokens.tl
+doc_site_smoke|selfhost/doc_site_smoke.tl|42|-|-|doc_site_core.tl doc_html.tl doc_render.tl doc_extract.tl format_tokens.tl

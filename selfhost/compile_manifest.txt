@@ -371,6 +371,40 @@ contains|_tl_doc_extract_source:
 contains|_tl_format_lex:
 end
 
+case|selfhost_doc_site_core|selfhost/doc_site_core.tl|assembly|skip|direct
+contains|_tl_doc_site_build:
+contains|_tl_doc_site_render_index:
+contains|_tl_doc_site_css:
+contains|_tl_doc_html_render_module_page:
+contains|_tl_doc_extract_source:
+contains|.L_tl_read_file_status:
+contains|.L_tl_write_file_status:
+contains|.L_tl_fs_mkdir_status:
+contains|stdlib-io.html
+contains|typelisp-docs.css
+contains|doc-site: missing input module:
+contains|doc-site: duplicate output path in stdlib manifest
+end
+
+case|selfhost_doc_site|selfhost/doc_site.tl|assembly|exactly-one|direct
+contains|_tl_doc_site_build:
+contains|_tl_doc_site_usage:
+contains|_tl_doc_site_render_index:
+contains|_tl_doc_html_render_module_page:
+contains|.L_tl_arg_count:
+contains|.L_tl_arg:
+contains|typelisp-docs.css
+contains|doc-site: expected zero args or output directory
+end
+
+case|selfhost_doc_site_smoke|selfhost/doc_site_smoke.tl|assembly|exactly-one|direct
+contains|_tl_doc_site_smoke:
+contains|_tl_doc_site_render_index:
+contains|_tl_doc_html_render_module_page:
+contains|_tl_doc_extract_source:
+contains|_tl_format_lex:
+end
+
 case|selfhost_doc_render|selfhost/doc_render.tl|assembly|skip|direct
 contains|_tl_doc_render_markdown:
 contains|_tl_doc_render_module_graph_markdown:

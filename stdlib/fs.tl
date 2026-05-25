@@ -80,7 +80,7 @@
 
 ;;; Create `path` as a directory, returning a structured status.
 ;;;
-;;; Linux uses mode `0700`. Unsupported targets return `IoUnsupported`.
+;;; Linux uses mode `0700`; Windows uses the backend `_mkdir` helper.
 (define (try-mkdir [path : String]) : ResultIoUnit
   (if (io-empty-path? path)
     (ErrIoUnit (IoInvalidPath path))

@@ -31,7 +31,21 @@
   [input-path : String]
   [target : CompilerBackendTarget]
   [has-target : bool]) : ResultCompilerDriver
-  (match (compiler-load-file-with-paths input-path (sym-i64-empty))
+  (compiler-driver-emit-file-with-target-and-roots
+    input-path
+    target
+    has-target
+    CompilerLoadRootNil))
+
+(define (compiler-driver-emit-file-with-target-and-roots
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [stdlib-roots : CompilerLoadRootList]) : ResultCompilerDriver
+  (match (compiler-load-file-with-paths-and-roots
+    input-path
+    (sym-i64-empty)
+    stdlib-roots)
     [(OkCompilerLoadWithPaths decls paths _ _)
       (match (lower-compiler-program-with-decl-paths
         input-path
@@ -53,10 +67,29 @@
 (define (compiler-driver-emit-file [input-path : String]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target input-path (BackendTargetLinux) false))
 
+(define (compiler-driver-emit-file-with-roots
+  [input-path : String]
+  [stdlib-roots : CompilerLoadRootList]) : ResultCompilerDriver
+  (compiler-driver-emit-file-with-target-and-roots
+    input-path
+    (BackendTargetLinux)
+    false
+    stdlib-roots))
+
 (define (compiler-driver-emit-file-for-target
   [input-path : String]
   [target : CompilerBackendTarget]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target input-path target true))
+
+(define (compiler-driver-emit-file-for-target-with-roots
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : CompilerLoadRootList]) : ResultCompilerDriver
+  (compiler-driver-emit-file-with-target-and-roots
+    input-path
+    target
+    true
+    stdlib-roots))
 
 (define (compiler-driver-write-result
   [result : ResultCompilerDriver]
@@ -78,10 +111,30 @@
     (compiler-driver-emit-file input-path)
     output-path))
 
+(define (compiler-driver-compile-file-with-roots
+  [input-path : String]
+  [output-path : String]
+  [stdlib-roots : CompilerLoadRootList]) : i64
+  (compiler-driver-write-result
+    (compiler-driver-emit-file-with-roots input-path stdlib-roots)
+    output-path))
+
 (define (compiler-driver-compile-file-for-target
   [input-path : String]
   [output-path : String]
   [target : CompilerBackendTarget]) : i64
   (compiler-driver-write-result
     (compiler-driver-emit-file-for-target input-path target)
+    output-path))
+
+(define (compiler-driver-compile-file-for-target-with-roots
+  [input-path : String]
+  [output-path : String]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : CompilerLoadRootList]) : i64
+  (compiler-driver-write-result
+    (compiler-driver-emit-file-for-target-with-roots
+      input-path
+      target
+      stdlib-roots)
     output-path))

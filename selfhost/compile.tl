@@ -1,12 +1,18 @@
 ;; compile.tl - Command-shaped selfhost compile driver (#565).
 ;;
 ;; Wraps compiler_driver.tl's input/output API with the first selfhost compile
-;; CLI slice: `<file.tl> [-o <file>] [--target <target>]`. Backend-mode/IR/stdlib-root flags
-;; remain Rust-driver-only for now and are rejected explicitly.
+;; CLI slice: `<file.tl> [-o <file>] [--target <target>] [--stdlib-root <dir>...]`.
+;; Backend-mode and IR flags remain Rust-driver-only for now and are rejected
+;; explicitly.
 (import "compiler_driver_core.tl")
 
 (defenum CompileCliConfig
-  (CompileCliConfig String String bool CompilerBackendTarget))
+  (CompileCliConfig
+    String
+    String
+    bool
+    CompilerBackendTarget
+    CompilerLoadRootList))
 
 (defenum ResultCompileCliConfig
   (OkCompileCliConfig CompileCliConfig)
@@ -68,6 +74,14 @@
     flag
     " is not supported by the selfhost compile driver yet; use Rust typelisp compile"))
 
+(define (compile-cli-root-list-append
+  [roots : CompilerLoadRootList]
+  [root : String]) : CompilerLoadRootList
+  (match roots
+    [(CompilerLoadRootNil) (CompilerLoadRootCons root CompilerLoadRootNil)]
+    [(CompilerLoadRootCons head rest)
+      (CompilerLoadRootCons head (compile-cli-root-list-append rest root))]))
+
 (define (compile-cli-parse-options
   [idx : i64]
   [count : i64]
@@ -75,10 +89,11 @@
   [output-path : String]
   [has-output : bool]
   [has-target : bool]
-  [target : CompilerBackendTarget]) : ResultCompileCliConfig
+  [target : CompilerBackendTarget]
+  [stdlib-roots : CompilerLoadRootList]) : ResultCompileCliConfig
   (if (>= idx count)
     (OkCompileCliConfig
-      (CompileCliConfig input-path output-path has-target target))
+      (CompileCliConfig input-path output-path has-target target stdlib-roots))
     (let
       [current : String (arg idx)]
       (if (string-eq current "-o")
@@ -93,11 +108,20 @@
               (arg (+ idx 1))
               true
               has-target
-              target)))
+              target
+              stdlib-roots)))
         (if (string-eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
             (ErrCompileCliConfig "compile: --stdlib-root requires a value")
-            (ErrCompileCliConfig (compile-cli-unsupported-flag current)))
+            (compile-cli-parse-options
+              (+ idx 2)
+              count
+              input-path
+              output-path
+              has-output
+              has-target
+              target
+              (compile-cli-root-list-append stdlib-roots (arg (+ idx 1)))))
           (if (string-eq current "--target")
             (if (>= (+ idx 1) count)
               (ErrCompileCliConfig "compile: --target requires a value")
@@ -113,7 +137,8 @@
                       output-path
                       has-output
                       true
-                      parsed-target)]
+                      parsed-target
+                      stdlib-roots)]
                   [(ErrCompileCliTarget message) (ErrCompileCliConfig message)])))
             (if (string-eq current "--backend-mode")
               (if (>= (+ idx 1) count)
@@ -141,19 +166,29 @@
           (compile-cli-default-output input-path)
           false
           false
-          (BackendTargetLinux))))))
+          (BackendTargetLinux)
+          CompilerLoadRootNil)))))
 
 (define (main) : i64
   (match (compile-cli-config (arg-count))
     [(OkCompileCliConfig config)
       (match config
-        [(CompileCliConfig input-path output-path has-target target)
+        [(CompileCliConfig
+            input-path
+            output-path
+            has-target
+            target
+            stdlib-roots)
           (if has-target
-            (compiler-driver-compile-file-for-target
+            (compiler-driver-compile-file-for-target-with-roots
               input-path
               output-path
-              target)
-            (compiler-driver-compile-file input-path output-path))])]
+              target
+              stdlib-roots)
+            (compiler-driver-compile-file-with-roots
+              input-path
+              output-path
+              stdlib-roots))])]
     [(ErrCompileCliConfig message)
       (begin
         (print-error message)

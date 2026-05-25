@@ -12,6 +12,7 @@ tests/public-tools/lsp/ and reports pass/fail.
 import glob
 import json
 import os
+import pathlib
 import re
 import subprocess
 import sys
@@ -158,7 +159,11 @@ def run_lsp_fixture(path):
 
     # Set up a temporary directory for this fixture
     tmpdir = tempfile.mkdtemp(prefix="typelisp-lsp-fixture-")
-    tmp_uri = "file://" + tmpdir.replace("\\", "/")
+    # Build a proper file URI: file:///tmp/... on POSIX and file:///C:/... on
+    # Windows (three slashes for the drive-letter form), matching the compiler's
+    # path_to_file_uri. A bare "file://" + path yields "file://C:/..." on
+    # Windows, which never matches the emitted diagnostic URIs.
+    tmp_uri = pathlib.Path(tmpdir).as_uri()
     tmp_env = {"TMP": tmpdir, "TMP_URI": tmp_uri}
     spec = expand_vars_in_spec(spec, tmp_env)
 
@@ -339,7 +344,11 @@ def run_selfhost_lsp_fixture(path, spec_path, binary):
         spec = json.load(f)
 
     tmpdir = tempfile.mkdtemp(prefix="typelisp-selfhost-lsp-fixture-")
-    tmp_uri = "file://" + tmpdir.replace("\\", "/")
+    # Build a proper file URI: file:///tmp/... on POSIX and file:///C:/... on
+    # Windows (three slashes for the drive-letter form), matching the compiler's
+    # path_to_file_uri. A bare "file://" + path yields "file://C:/..." on
+    # Windows, which never matches the emitted diagnostic URIs.
+    tmp_uri = pathlib.Path(tmpdir).as_uri()
     tmp_env = {"TMP": tmpdir, "TMP_URI": tmp_uri}
     spec = expand_vars_in_spec(spec, tmp_env)
 

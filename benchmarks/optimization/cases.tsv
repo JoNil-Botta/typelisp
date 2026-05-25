@@ -1,0 +1,8 @@
+# name|category|args
+arithmetic_loops|arithmetic|2000000
+array_sum|array|120000
+string_scan|string|TypeLisp_benchmark_string_scan_0123456789abcdefghijklmnopqrstuvwxyz 35000
+function_calls|calls|1500000
+recursion_tail|recursion|7000
+struct_enum_dispatch|dispatch|300000
+allocation_heavy|allocation|30000

@@ -40,6 +40,8 @@ if [ "$#" -eq 1 ]; then
 elif [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
+    # Fallback only for local development; CI should pass a fetched stage0
+    # compiler through TYPELISP_BIN until #793/#795 remove Rust stage0.
     cargo build --release --quiet
     COMPILER="$ROOT/target/release/typelisp"
 fi

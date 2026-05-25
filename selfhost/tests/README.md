@@ -35,7 +35,11 @@ The runner needs the GNU assembler (`as`) and linker (`ld`), so it is Linux
 only; it no-ops cleanly on other platforms.
 
 ```sh
-# Build the stage0 compiler and drive the whole corpus:
+# Fetch the published stage0 compiler and drive the whole corpus:
+scripts/fetch-stage0.sh
+TYPELISP_BIN=./target/stage0/typelisp ./scripts/verify-selfhost.sh
+
+# Or build the Rust stage0 fallback locally and drive the whole corpus:
 ./scripts/verify-selfhost.sh
 
 # Or reuse an already-built compiler:

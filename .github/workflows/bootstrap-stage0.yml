@@ -87,6 +87,11 @@ jobs:
           test -s stage0-artifacts/typelisp-stage0-linux
           test -s stage0-artifacts/typelisp-stage0-windows.exe
           chmod +x stage0-artifacts/typelisp-stage0-linux
+          (
+            cd stage0-artifacts
+            sha256sum typelisp-stage0-linux typelisp-stage0-windows.exe > SHA256SUMS
+            sha256sum -c SHA256SUMS
+          )
           file stage0-artifacts/typelisp-stage0-linux
           ls -lh stage0-artifacts
 
@@ -101,6 +106,7 @@ jobs:
           Assets:
           - typelisp-stage0-linux
           - typelisp-stage0-windows.exe
+          - SHA256SUMS
           EOF
           )"
 
@@ -110,7 +116,8 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "${{ github.sha }}" \
             stage0-artifacts/typelisp-stage0-linux \
-            stage0-artifacts/typelisp-stage0-windows.exe
+            stage0-artifacts/typelisp-stage0-windows.exe \
+            stage0-artifacts/SHA256SUMS
 
           echo "PERMANENT_TAG=$tag" >> "$GITHUB_ENV"
 
@@ -130,6 +137,7 @@ jobs:
           Stable asset URLs:
           - https://github.com/${{ github.repository }}/releases/download/stage0-latest/typelisp-stage0-linux
           - https://github.com/${{ github.repository }}/releases/download/stage0-latest/typelisp-stage0-windows.exe
+          - https://github.com/${{ github.repository }}/releases/download/stage0-latest/SHA256SUMS
           EOF
           )"
 
@@ -139,4 +147,5 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "${{ github.sha }}" \
             stage0-artifacts/typelisp-stage0-linux \
-            stage0-artifacts/typelisp-stage0-windows.exe
+            stage0-artifacts/typelisp-stage0-windows.exe \
+            stage0-artifacts/SHA256SUMS

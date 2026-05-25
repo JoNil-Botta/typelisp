@@ -773,6 +773,29 @@
         [(ErrAstType message) (ErrAstFuncTypeParts message)])]
     [_ (ErrAstFuncTypeParts "parse: function type needs at least return type")]))
 
+(define (parse-ast-reference-type
+  [dispatch : SymI64Env]
+  [mutable : bool]
+  [rest : Sexpr]) : ResultAstType
+  (match rest
+    [(SCons (SSym region) (SCons inner (SNil)))
+      (match (parse-ast-type dispatch inner)
+        [(OkAstType inner-ty)
+          (if mutable
+            (OkAstType (AstTyMutRef region inner-ty))
+            (OkAstType (AstTyRef region inner-ty)))]
+        [(ErrAstType message) (ErrAstType message)])]
+    [(SNil)
+      (ErrAstType "parse: reference type requires lifetime and inner type")]
+    [(SCons (SSym _) (SNil))
+      (ErrAstType "parse: reference type requires inner type")]
+    [(SCons _ (SCons _ (SNil)))
+      (ErrAstType "parse: reference lifetime must be an identifier")]
+    [(SCons _ (SCons _ _))
+      (ErrAstType
+        "parse: reference type expects exactly lifetime and inner type")]
+    [_ (ErrAstType "parse: malformed reference type")]))
+
 (define (parse-ast-type [dispatch : SymI64Env] [s : Sexpr]) : ResultAstType
   (match s
     [(SSym name)
@@ -812,38 +835,45 @@
     [(SCons (SSym head) rest)
       (let
         [tag : i64 (compiler-parse-dispatch-tag dispatch head)]
-        (if (= tag (compiler-parse-tag-ty-func))
-          (match (parse-ast-func-type-parts dispatch rest)
-            [(OkAstFuncTypeParts args ret) (OkAstType (AstTyFunc args ret))]
-            [(ErrAstFuncTypeParts message) (ErrAstType message)])
-          (if (= tag (compiler-parse-tag-ty-tuple))
-            (match (parse-ast-type-list dispatch rest)
-              [(OkAstTypeList elems) (OkAstType (AstTyTuple elems))]
-              [(ErrAstTypeList message) (ErrAstType message)])
-            (if (= tag (compiler-parse-tag-ty-array))
-              (match rest
-                [(SCons elem (SNil))
-                  (match (parse-ast-type dispatch elem)
-                    [(OkAstType elem-ty) (OkAstType (AstTyDynArray elem-ty))]
-                    [(ErrAstType message) (ErrAstType message)])]
-                [(SCons elem (SCons (SInt size) (SNil)))
-                  (match (parse-ast-type dispatch elem)
-                    [(OkAstType elem-ty) (OkAstType (AstTyArray elem-ty size))]
-                    [(ErrAstType message) (ErrAstType message)])]
-                [(SCons _ (SCons _ (SNil)))
-                  (ErrAstType "parse: array size must be integer")]
-                [_ (ErrAstType "parse: malformed array type")])
-              (if (= tag (compiler-parse-tag-ty-region))
-                (match rest
-                  [(SCons (SSym region) (SCons inner (SNil)))
-                    (match (parse-ast-type dispatch inner)
-                      [(OkAstType inner-ty)
-                        (OkAstType (AstTyRegion region inner-ty))]
-                      [(ErrAstType message) (ErrAstType message)])]
-                  [(SCons _ (SCons _ (SNil)))
-                    (ErrAstType "parse: region name must be an identifier")]
-                  [_ (ErrAstType "parse: malformed region type")])
-                (ErrAstType (compiler-parse-generic-type-policy-message head)))))))]
+        (if (string-eq head "&")
+          (parse-ast-reference-type dispatch false rest)
+          (if (string-eq head "&mut")
+            (parse-ast-reference-type dispatch true rest)
+            (if (= tag (compiler-parse-tag-ty-func))
+              (match (parse-ast-func-type-parts dispatch rest)
+                [(OkAstFuncTypeParts args ret) (OkAstType (AstTyFunc args ret))]
+                [(ErrAstFuncTypeParts message) (ErrAstType message)])
+              (if (= tag (compiler-parse-tag-ty-tuple))
+                (match (parse-ast-type-list dispatch rest)
+                  [(OkAstTypeList elems) (OkAstType (AstTyTuple elems))]
+                  [(ErrAstTypeList message) (ErrAstType message)])
+                (if (= tag (compiler-parse-tag-ty-array))
+                  (match rest
+                    [(SCons elem (SNil))
+                      (match (parse-ast-type dispatch elem)
+                        [(OkAstType elem-ty)
+                          (OkAstType (AstTyDynArray elem-ty))]
+                        [(ErrAstType message) (ErrAstType message)])]
+                    [(SCons elem (SCons (SInt size) (SNil)))
+                      (match (parse-ast-type dispatch elem)
+                        [(OkAstType elem-ty)
+                          (OkAstType (AstTyArray elem-ty size))]
+                        [(ErrAstType message) (ErrAstType message)])]
+                    [(SCons _ (SCons _ (SNil)))
+                      (ErrAstType "parse: array size must be integer")]
+                    [_ (ErrAstType "parse: malformed array type")])
+                  (if (= tag (compiler-parse-tag-ty-region))
+                    (match rest
+                      [(SCons (SSym region) (SCons inner (SNil)))
+                        (match (parse-ast-type dispatch inner)
+                          [(OkAstType inner-ty)
+                            (OkAstType (AstTyRegion region inner-ty))]
+                          [(ErrAstType message) (ErrAstType message)])]
+                      [(SCons _ (SCons _ (SNil)))
+                        (ErrAstType "parse: region name must be an identifier")]
+                      [_ (ErrAstType "parse: malformed region type")])
+                    (ErrAstType
+                      (compiler-parse-generic-type-policy-message head)))))))))]
     [_ (ErrAstType "parse: expected type")]))
 
 (define (parse-ast-param [dispatch : SymI64Env] [s : Sexpr]) : ResultAstParam
@@ -2250,15 +2280,65 @@
   "(define (main) : (in r String)
   (with-region r \"x\"))")
 
+(define (compiler-parse-reference-source) : String
+  "(define (borrow [s : (& r String)] [items : (&mut phase (Array i64))]) : (& r String)
+  s)")
+
 (define (compiler-parse-with-region-empty-source) : String
   "(define (main) : i64 (with-region r))")
 
 (define (compiler-parse-region-type-bad-source) : String
   "(define (main) : (in 1 String) 0)")
 
+(define (compiler-parse-reference-missing-source) : String
+  "(define (main) : (&) 0)")
+
+(define (compiler-parse-reference-missing-inner-source) : String
+  "(define (main) : (& r) 0)")
+
+(define (compiler-parse-reference-lifetime-bad-source) : String
+  "(define (main) : (& 1 i64) 0)")
+
+(define (compiler-parse-reference-extra-source) : String
+  "(define (main) : (& r i64 bool) 0)")
+
 (define (compiler-parse-region-ok?) : bool
   (match (parse-ast-source (compiler-parse-region-source))
     [(OkAstProgram _) true]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-parse-reference-params-ok? [params : AstParamList]) : bool
+  (match params
+    [(AstParamCons
+        (AstParam first-name (AstTyRef first-region (AstTyString)) _)
+        (AstParamCons
+          (AstParam
+            second-name
+            (AstTyMutRef second-region (AstTyDynArray (AstTyI64)))
+            _)
+          AstParamNil))
+      (and
+        (string-eq first-name "s")
+        (and
+          (string-eq first-region "r")
+          (and
+            (string-eq second-name "items")
+            (string-eq second-region "phase"))))]
+    [_ false]))
+
+(define (compiler-parse-reference-ok?) : bool
+  (match (parse-ast-source (compiler-parse-reference-source))
+    [(OkAstProgram (AstProgram decls))
+      (match decls
+        [(AstDeclCons (AstDeclDefFn name params ret _) AstDeclNil)
+          (and
+            (string-eq name "borrow")
+            (and
+              (compiler-parse-reference-params-ok? params)
+              (match ret
+                [(AstTyRef region (AstTyString)) (string-eq region "r")]
+                [_ false])))]
+        [_ false])]
     [(ErrAstProgram _) false]))
 
 (define (compiler-parse-try-source) : String
@@ -2427,6 +2507,23 @@
         (compiler-parse-comptime-decl-extra-source)
         "parse: comptime-decl expects exactly one template"))))
 
+(define (compiler-parse-reference-type-error-tests-ok?) : bool
+  (and
+    (compiler-parse-error-ok?
+      (compiler-parse-reference-missing-source)
+      "parse: reference type requires lifetime and inner type")
+    (and
+      (compiler-parse-error-ok?
+        (compiler-parse-reference-missing-inner-source)
+        "parse: reference type requires inner type")
+      (and
+        (compiler-parse-error-ok?
+          (compiler-parse-reference-lifetime-bad-source)
+          "parse: reference lifetime must be an identifier")
+        (compiler-parse-error-ok?
+          (compiler-parse-reference-extra-source)
+          "parse: reference type expects exactly lifetime and inner type")))))
+
 (define (compiler-parse-flat-let-call-body-ok?) : bool
   (match (parse-ast-source
     "(define (id [x : i64]) : i64 x)
@@ -2493,9 +2590,11 @@
                 (compiler-parse-error-ok?
                   (compiler-parse-region-type-bad-source)
                   "parse: region name must be an identifier")
-                (compiler-parse-error-ok?
-                  (compiler-parse-malformed-try-source)
-                  "parse: try expects exactly one expression")))))))))
+                (and
+                  (compiler-parse-reference-type-error-tests-ok?)
+                  (compiler-parse-error-ok?
+                    (compiler-parse-malformed-try-source)
+                    "parse: try expects exactly one expression"))))))))))
 
 (define (compiler-parse-error-tests-ok?) : bool
   (and
@@ -2534,20 +2633,22 @@
               (and
                 (compiler-parse-region-ok?)
                 (and
-                  (compiler-parse-comptime-decl-ok?)
+                  (compiler-parse-reference-ok?)
                   (and
-                    (compiler-parse-module-decl-ok?)
+                    (compiler-parse-comptime-decl-ok?)
                     (and
-                      (compiler-parse-import-metadata-ok?)
+                      (compiler-parse-module-decl-ok?)
                       (and
-                        (compiler-parse-flat-let-call-body-ok?)
+                        (compiler-parse-import-metadata-ok?)
                         (and
-                          (compiler-parse-inline-test-ok?)
+                          (compiler-parse-flat-let-call-body-ok?)
                           (and
-                            (compiler-parse-try-ok?)
+                            (compiler-parse-inline-test-ok?)
                             (and
-                              (compiler-parse-repr-c-ok?)
-                              (compiler-parse-comptime-repr-c-ok?)))))))))))))
+                              (compiler-parse-try-ok?)
+                              (and
+                                (compiler-parse-repr-c-ok?)
+                                (compiler-parse-comptime-repr-c-ok?))))))))))))))
         (if (compiler-parse-error-tests-ok?)
           42
           (begin

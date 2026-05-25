@@ -75,6 +75,8 @@
   (AstTyArray AstType i64)
   (AstTyDynArray AstType)
   (AstTyRegion String AstType)
+  (AstTyRef String AstType)
+  (AstTyMutRef String AstType)
   (AstTyEnum String)
   (AstTyStruct String)
   (AstTyVar String))
@@ -238,6 +240,8 @@
     [(AstTyArray _ _) 18]
     [(AstTyDynArray _) 19]
     [(AstTyRegion _ _) 20]
+    [(AstTyRef _ _) 24]
+    [(AstTyMutRef _ _) 25]
     [(AstTyEnum _) 21]
     [(AstTyStruct _) 22]
     [(AstTyVar _) 23]))

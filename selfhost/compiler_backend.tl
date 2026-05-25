@@ -507,6 +507,8 @@
     [(AstTyArray elem count) (* (compiler-backend-type-size elem) count)]
     [(AstTyDynArray _) 8]
     [(AstTyRegion _ inner) (compiler-backend-type-size inner)]
+    [(AstTyRef _ _) 8]
+    [(AstTyMutRef _ _) 8]
     [(AstTyEnum _) 8]
     [(AstTyStruct _) 8]
     [(AstTyString) 8]

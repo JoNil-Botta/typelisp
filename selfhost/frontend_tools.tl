@@ -398,6 +398,16 @@
         "Region(\""
         region
         (front-cat3 "\", " (front-type-render inner) ")"))]
+    [(AstTyRef region inner)
+      (front-cat3
+        "Ref(\""
+        region
+        (front-cat3 "\", " (front-type-render inner) ")"))]
+    [(AstTyMutRef region inner)
+      (front-cat3
+        "MutRef(\""
+        region
+        (front-cat3 "\", " (front-type-render inner) ")"))]
     [(AstTyEnum name) (front-cat3 "Enum(\"" name "\")")]
     [(AstTyStruct name) (front-cat3 "Struct(\"" name "\")")]
     [(AstTyVar name) (front-cat3 "Var(\"" name "\")")]))

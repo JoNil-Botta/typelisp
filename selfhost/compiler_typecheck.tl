@@ -230,6 +230,16 @@
         "(Region "
         region
         (string-append " " (string-append (tc-type-render inner) ")")))]
+    [(AstTyRef region inner)
+      (tc-cat3
+        "(& "
+        region
+        (string-append " " (string-append (tc-type-render inner) ")")))]
+    [(AstTyMutRef region inner)
+      (tc-cat3
+        "(&mut "
+        region
+        (string-append " " (string-append (tc-type-render inner) ")")))]
     [(AstTyEnum name) name]
     [(AstTyStruct name) name]
     [(AstTyVar name) name]))
@@ -530,6 +540,9 @@
     [(AstTyArray elem len) (AstTyArray (tc-type-without-regions elem) len)]
     [(AstTyDynArray elem) (AstTyDynArray (tc-type-without-regions elem))]
     [(AstTyRegion _ inner) (tc-type-without-regions inner)]
+    [(AstTyRef region inner) (AstTyRef region (tc-type-without-regions inner))]
+    [(AstTyMutRef region inner)
+      (AstTyMutRef region (tc-type-without-regions inner))]
     [_ ty]))
 
 (define (tc-type-list-contains-region [types : AstTypeList] [region : String]) : bool
@@ -551,6 +564,10 @@
     [(AstTyDynArray elem) (tc-type-contains-region elem region)]
     [(AstTyRegion name inner)
       (or (string-eq name region) (tc-type-contains-region inner region))]
+    [(AstTyRef name inner)
+      (or (string-eq name region) (tc-type-contains-region inner region))]
+    [(AstTyMutRef name inner)
+      (or (string-eq name region) (tc-type-contains-region inner region))]
     [_ false]))
 
 (define (tc-type-list-contains-any-region [types : AstTypeList]) : bool
@@ -571,6 +588,8 @@
     [(AstTyArray elem _) (tc-type-contains-any-region elem)]
     [(AstTyDynArray elem) (tc-type-contains-any-region elem)]
     [(AstTyRegion _ _) true]
+    [(AstTyRef _ _) true]
+    [(AstTyMutRef _ _) true]
     [_ false]))
 
 (define (tc-type-list-collect-regions
@@ -591,6 +610,10 @@
     [(AstTyArray elem _) (tc-type-collect-regions-into elem out)]
     [(AstTyDynArray elem) (tc-type-collect-regions-into elem out)]
     [(AstTyRegion name inner)
+      (tc-type-collect-regions-into inner (tc-string-list-add out name))]
+    [(AstTyRef name inner)
+      (tc-type-collect-regions-into inner (tc-string-list-add out name))]
+    [(AstTyMutRef name inner)
       (tc-type-collect-regions-into inner (tc-string-list-add out name))]
     [_ out]))
 
@@ -709,6 +732,9 @@
     [(AstTyDynArray elem) (AstTyDynArray (tc-resolve-type ctx elem))]
     [(AstTyRegion region inner)
       (AstTyRegion region (tc-resolve-type ctx inner))]
+    [(AstTyRef region inner) (AstTyRef region (tc-resolve-type ctx inner))]
+    [(AstTyMutRef region inner)
+      (AstTyMutRef region (tc-resolve-type ctx inner))]
     [(AstTyVar name)
       (match ctx
         [(TcContext _ symbols _)
@@ -733,6 +759,9 @@
       name
       "; TypeLisp has no source-level type parameters; use comptime-generated concrete declarations instead (#893/#913/#483)")))
 
+(define (tc-reference-type-policy-message) : String
+  "typecheck: reference types require borrow checking support (#1034/#1035/#806)")
+
 (define (tc-source-type-list-policy-ok [ctx : TcContext] [types : AstTypeList]) : ResultTcUnit
   (match types
     [(AstTypeNil) OkTcUnit]
@@ -751,6 +780,8 @@
     [(AstTyArray elem _) (tc-source-type-policy-ok ctx elem)]
     [(AstTyDynArray elem) (tc-source-type-policy-ok ctx elem)]
     [(AstTyRegion _ inner) (tc-source-type-policy-ok ctx inner)]
+    [(AstTyRef _ _) (ErrTcUnit (tc-reference-type-policy-message))]
+    [(AstTyMutRef _ _) (ErrTcUnit (tc-reference-type-policy-message))]
     [(AstTyVar name) (ErrTcUnit (tc-source-type-policy-message name))]
     [_ OkTcUnit]))
 
@@ -1076,6 +1107,16 @@
       (tc-type-eq-core
         (tc-type-without-regions inner)
         (tc-type-without-regions b))]
+    [(AstTyRef a-region a-inner)
+      (match b
+        [(AstTyRef b-region b-inner)
+          (and (string-eq a-region b-region) (tc-type-eq a-inner b-inner))]
+        [_ false])]
+    [(AstTyMutRef a-region a-inner)
+      (match b
+        [(AstTyMutRef b-region b-inner)
+          (and (string-eq a-region b-region) (tc-type-eq a-inner b-inner))]
+        [_ false])]
     [(AstTyEnum a-name)
       (match b
         [(AstTyEnum b-name) (string-eq a-name b-name)]
@@ -3554,10 +3595,43 @@
   "(define (main) : (-> i64 i64)
   (lambda ([x : i64]) : i64 true))")
 
+(define (compiler-typecheck-reference-source) : String
+  "(define (borrow [s : (& r String)]) : (& r String)
+  s)")
+
 (define (compiler-typecheck-abstraction-policy-tests-ok?) : bool
   (compiler-typecheck-error-ok?
     (compiler-typecheck-type-parameter-source)
     (tc-source-type-policy-message "T")))
+
+(define (compiler-typecheck-reference-type-model-ok?) : bool
+  (let
+    [imm : AstType (AstTyRef "r" (AstTyString))]
+    [same : AstType (AstTyRef "r" (AstTyString))]
+    [other-region : AstType (AstTyRef "other" (AstTyString))]
+    [mut : AstType (AstTyMutRef "phase" (AstTyDynArray (AstTyI64)))]
+    [nested : AstType (AstTyRef "outer" (AstTyRegion "inner" (AstTyString)))]
+    [regions : TcStringList (tc-type-collect-regions nested)]
+    (and
+      (string-eq (tc-type-render imm) "(& r String)")
+      (and
+        (string-eq (tc-type-render mut) "(&mut phase (Array i64))")
+        (and
+          (tc-type-eq imm same)
+          (and
+            (not (tc-type-eq imm other-region))
+            (and
+              (tc-type-contains-region mut "phase")
+              (and
+                (tc-string-list-contains regions "outer")
+                (tc-string-list-contains regions "inner")))))))))
+
+(define (compiler-typecheck-reference-tests-ok?) : bool
+  (and
+    (compiler-typecheck-reference-type-model-ok?)
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-reference-source)
+      (tc-reference-type-policy-message))))
 
 (define (compiler-typecheck-aggregate-tests-ok?) : bool
   (and
@@ -3989,10 +4063,12 @@
                   (and
                     (compiler-typecheck-abstraction-policy-tests-ok?)
                     (and
-                      (compiler-typecheck-region-tests-ok?)
+                      (compiler-typecheck-reference-tests-ok?)
                       (and
-                        (compiler-typecheck-result-try-tests-ok?)
-                        (compiler-typecheck-located-ok?))))))))))
+                        (compiler-typecheck-region-tests-ok?)
+                        (and
+                          (compiler-typecheck-result-try-tests-ok?)
+                          (compiler-typecheck-located-ok?)))))))))))
         42
         (begin
           (panic "typecheck: smoke score mismatch")

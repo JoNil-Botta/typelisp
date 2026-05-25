@@ -280,6 +280,14 @@
       (string-append
         "region_"
         (string-append region (string-append "_" (spec-type-key inner))))]
+    [(AstTyRef region inner)
+      (string-append
+        "ref_"
+        (string-append region (string-append "_" (spec-type-key inner))))]
+    [(AstTyMutRef region inner)
+      (string-append
+        "mutref_"
+        (string-append region (string-append "_" (spec-type-key inner))))]
     [(AstTyEnum name) (string-append "enum_" name)]
     [(AstTyStruct name) (string-append "struct_" name)]
     [(AstTyVar name) (string-append "var_" name)]))
@@ -478,6 +486,10 @@
     [(AstTyDynArray elem) (AstTyDynArray (spec-substitute-type elem subs))]
     [(AstTyRegion region inner)
       (AstTyRegion region (spec-substitute-type inner subs))]
+    [(AstTyRef region inner)
+      (AstTyRef region (spec-substitute-type inner subs))]
+    [(AstTyMutRef region inner)
+      (AstTyMutRef region (spec-substitute-type inner subs))]
     [(AstTyVar name)
       (match (spec-type-subst-lookup subs name)
         [(SpecSomeString _) (spec-type-subst-type subs name)]

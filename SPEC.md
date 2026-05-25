@@ -182,6 +182,24 @@ narrower or unsigned integer is required. Floating-point literals are always
   evaluate to closure descriptor values. Supported captures are scalars,
   function values, `String`, dynamic arrays, and tuples of scalars (see §5.14).
 
+#### 3.3.1 Safe reference type syntax (model only)
+
+Written reference types use list forms with an explicit arena/lifetime name:
+
+- `(& arena T)` is an immutable reference to `T` tied to arena/lifetime `arena`.
+- `(&mut arena T)` is a mutable reference to `T` tied to arena/lifetime `arena`.
+
+The lifetime name is a bare identifier, matching the current `(with-region r
+...)` binder and the planned `(with-arena r ...)` spelling. TypeLisp does not
+use Rust apostrophe lifetime syntax.
+
+This is a syntax and type-model surface only. Borrow expressions, reference
+creation, immutable-borrow escape checking, mutable exclusivity, returned
+reference lifetime checking, and owned-`String`/borrowed-`str` semantics are
+tracked by the borrow-checker follow-ups. Until those land, source programs
+that write reference types are rejected before lowering with a borrow-checker
+support diagnostic rather than being treated as unchecked pointer handles.
+
 ### 3.4 Raw pointer types (v1 design; implementation pending)
 
 Raw pointer syntax is specified for the v1 FFI/low-level memory surface, but the
@@ -1413,11 +1431,13 @@ They are not implemented by a separate C runtime.
 
 ## 7. Memory model
 
-TypeLisp currently has no source-level reference, borrow, lifetime, move-only,
-implicit destructor, `drop`, `free`, or garbage-collector model. The
-implementation uses pointer-sized handles for several aggregate values, but
-those handles are not checked references in the source language. Future
-ownership/borrowing work is a separate design track. The reserved `(with ...)`
+TypeLisp has written safe reference type syntax (§3.3.1), but it does not yet
+have source-level borrow expressions, lifetime checking for reference values,
+move-only ownership, implicit destructors, `drop`, `free`, or a
+garbage-collector model. The implementation uses pointer-sized handles for
+several aggregate values, but those handles are not checked references in the
+source language. Future ownership/borrowing work is a separate design track.
+The reserved `(with ...)`
 form (§5.18) is explicit non-memory resource cleanup; it is not a general
 object destructor or heap reclamation mechanism. Raw pointers are the explicit
 low-level exception: their v1 syntax is specified, but they carry no safety
@@ -1501,11 +1521,12 @@ or the default program-lifetime arena when no scoped arena is active.
 
 #### Standard library and builtin allocation policy
 
-Current stdlib signatures cannot write arena lifetimes yet (#802), so the
+Current stdlib signatures do not use written arena lifetimes yet, so the
 checker conservatively treats aggregate results from calls inside a scoped
 arena as tagged with that arena. This is stricter than the future model for
 functions that may return caller-owned data, but it prevents active-arena
-values from escaping until explicit lifetime signatures exist.
+values from escaping until explicit lifetime signatures are wired into the
+stdlib and borrow checker.
 
 | Category | Members | Arena behavior |
 |----------|---------|----------------|
@@ -2187,6 +2208,8 @@ type          ::= "i64" | "i32" | "i16" | "i8"
                 | "(" "Tuple" type+ ")"
                 | "(" "Array" type [integer] ")"
                 | ptr-type
+                | "(" "&" ident type ")"
+                | "(" "&mut" ident type ")"
                 | "(" "->" type+ ")"
                 | "(" "in" ident type ")"              ; region-tagged (v1)
                 | ident                                ; enum or struct name

@@ -128,6 +128,18 @@
         (string-append
           region
           (string-append " " (string-append (repl-type-render inner) ")"))))]
+    [(AstTyRef region inner)
+      (string-append
+        "(& "
+        (string-append
+          region
+          (string-append " " (string-append (repl-type-render inner) ")"))))]
+    [(AstTyMutRef region inner)
+      (string-append
+        "(&mut "
+        (string-append
+          region
+          (string-append " " (string-append (repl-type-render inner) ")"))))]
     [(AstTyEnum name) name]
     [(AstTyStruct name) name]
     [(AstTyVar name) (string-append "'" (string-append name "'"))]))

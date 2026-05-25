@@ -73,7 +73,7 @@
 
 ;; `c` is one of TypeLisp's symbol punctuation chars - the non-alphanumeric
 ;; characters that may appear in a symbol/operator name:
-;;   `-` `+` `*` `/` `%` `?` `!` `>` `<` `=` `:` `_`
+;;   `-` `+` `*` `/` `%` `?` `!` `>` `<` `=` `:` `_` `.` `&`
 ;; This is what makes `+`, `<=`, `string->int`, and `array-set!` all lex as one
 ;; `TSym` rather than as separate operator tokens.
 (define (is-symbol-punct [c : char]) : bool
@@ -95,7 +95,9 @@
                   (= c #<')
                   (or
                     (= c #=')
-                    (or (= c #:') (or (= c #_') (or (= c #.') (= c #%'))))))))))))))
+                    (or
+                      (= c #:')
+                      (or (= c #_') (or (= c #.') (or (= c #%') (= c #&')))))))))))))))
 
 ;; `c` may appear in a symbol: a letter, a digit, or a symbol-punctuation char.
 ;; A symbol run is the maximal span of these starting at a non-digit symbol char.
@@ -720,6 +722,16 @@
             (string-eq (token-sym (array-ref toks 2)) "-"))))]
     [(ErrTokens _) false]))
 
+(define (lex-reference-symbols-ok?) : bool
+  (match (lex-result "(& r String) (&mut phase i64)")
+    [(OkTokens toks)
+      (and
+        (string-eq (token-sym (array-ref toks 1)) "&")
+        (and
+          (string-eq (token-sym (array-ref toks 6)) "&mut")
+          (= (token-tag (array-ref toks 10)) (tag-end))))]
+    [(ErrTokens _) false]))
+
 ;; Returns 42 when the spanned lexer records correct 1-based line/column
 ;; positions, including a token inside a nested list and the trailing EOF.
 ;; Source `"(a\n  (b c))"` lexes to:
@@ -826,7 +838,9 @@
           (lex-string-escapes-ok?)
           (and
             (lex-percent-symbol-ok?)
-            (and (lex-float-token-ok?) (lex-negative-int-token-ok?)))))
+            (and
+              (lex-float-token-ok?)
+              (and (lex-negative-int-token-ok?) (lex-reference-symbols-ok?))))))
         42
         1)]
     [(ErrSpannedTokens _) 2]))

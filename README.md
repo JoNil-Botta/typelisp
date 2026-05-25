@@ -291,10 +291,11 @@ Array and string indexing is bounds-checked at runtime.
 
 ### Memory and aliasing
 
-TypeLisp does not currently have source-level references, borrowing, ownership
-transfer, destructors, `free`, or a garbage collector. Aggregate values such as
-`String`, dynamic arrays, structs, and enums are implemented as pointer-sized
-handles in the IR/ABI, but those handles are not checked language references.
+TypeLisp has written safe reference type syntax, but does not yet have borrow
+expressions, lifetime checking for reference values, ownership transfer,
+destructors, `free`, or a garbage collector. Aggregate values such as `String`,
+dynamic arrays, structs, and enums are implemented as pointer-sized handles in
+the IR/ABI, but those handles are not checked language references.
 The v1 raw pointer design is now specified as explicit unsafe syntax:
 `(Ptr T)`/`(MutPtr T)` are nullable, copyable pointer-sized values, and
 dereference/write/offset/cast operations require `(unsafe ...)`. That surface is

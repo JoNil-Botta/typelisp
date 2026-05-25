@@ -555,6 +555,11 @@
       (set!
         out
         (sym-i64-bind out "with-region" (compiler-parse-tag-expr-with-region)))
+      ;; `with-arena` is the migration spelling for `with-region` (#801): same
+      ;; scoped-arena form, default-arena shadowing, and escape rules.
+      (set!
+        out
+        (sym-i64-bind out "with-arena" (compiler-parse-tag-expr-with-region)))
       (set!
         out
         (sym-i64-bind out "type" (compiler-parse-tag-expr-type-literal)))
@@ -2266,6 +2271,25 @@
     [(OkAstProgram _) true]
     [(ErrAstProgram _) false]))
 
+(define (compiler-parse-arena-source) : String
+  "(define (main) : i64
+  (with-arena r 5))")
+
+;; `with-arena` is the migration alias for `with-region` (#801): assert it
+;; parses to the same `AstExprWithRegion` form, not an unbound call.
+(define (compiler-parse-arena-ok?) : bool
+  (match (parse-ast-source (compiler-parse-arena-source))
+    [(OkAstProgram (AstProgram decls))
+      (match decls
+        [(AstDeclCons (AstDeclDefFn name _ (AstTyI64) body) _)
+          (and
+            (string-eq name "main")
+            (match (ast-expr-unspan body)
+              [(AstExprWithRegion region _) (string-eq region "r")]
+              [_ false]))]
+        [_ false])]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-parse-raw-pointer-source) : String
   "(extern raw-map : (-> (Ptr i64) (MutPtr (Ptr u8))))")
 
@@ -2666,21 +2690,21 @@
               (and
                 (compiler-parse-region-ok?)
                 (and
-                  (compiler-parse-comptime-decl-ok?)
+                  (compiler-parse-arena-ok?)
                   (and
-                    (compiler-parse-module-decl-ok?)
+                    (compiler-parse-comptime-decl-ok?)
                     (and
-                      (compiler-parse-import-metadata-ok?)
+                      (compiler-parse-module-decl-ok?)
                       (and
-                        (compiler-parse-flat-let-call-body-ok?)
+                        (compiler-parse-import-metadata-ok?)
                         (and
-                          (compiler-parse-inline-test-ok?)
+                          (compiler-parse-flat-let-call-body-ok?)
                           (and
-                            (compiler-parse-try-ok?)
+                            (compiler-parse-inline-test-ok?)
                             (and
-                              (compiler-parse-repr-c-ok?)
+                              (compiler-parse-try-ok?)
                               (and
-                                (compiler-parse-comptime-repr-c-ok?)
+                                (compiler-parse-repr-c-ok?)
                                 (and
                                   (compiler-parse-raw-pointer-ok?)
                                   (compiler-parse-reference-ok?)))))))))))))))

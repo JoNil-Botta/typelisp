@@ -4926,45 +4926,119 @@
     (compiler-typecheck-located-source-ok?
       (compiler-typecheck-located-value-source))))
 
-(define (compiler-typecheck-self-test) : i64
-  (match (typecheck-compiler-source (compiler-typecheck-smoke-source))
-    [(OkCompilerTypecheck summary)
-      (if (and
-        (= (compiler-typecheck-summary-score summary) 121)
+;; Statement and control-flow type rules (#1042): if/while conditions, the
+;; while-body unit rule, set!/let annotation mismatches, and `ann` mismatch,
+;; plus an accepting program exercising the same forms. Migrated from
+;; src/typechecker.rs unit coverage.
+(define (compiler-typecheck-stmt-if-cond-source) : String
+  "(define (main) : i64 (if 1 2 3))")
+
+(define (compiler-typecheck-stmt-while-cond-source) : String
+  "(define (main [n : i64]) : unit
+  (let [i : i64 n] (while i (set! i (- i 1)))))")
+
+(define (compiler-typecheck-stmt-while-body-source) : String
+  "(define (main [n : i64]) : unit
+  (let [i : i64 n] (while (> i 0) i)))")
+
+(define (compiler-typecheck-stmt-set-mismatch-source) : String
+  "(define (main) : i64
+  (let [x : i64 0] (begin (set! x true) x)))")
+
+(define (compiler-typecheck-stmt-let-mismatch-source) : String
+  "(define (main) : i64 (let [x : i64 true] x))")
+
+(define (compiler-typecheck-stmt-ann-mismatch-source) : String
+  "(define (main) : i64 (ann true : i64))")
+
+(define (compiler-typecheck-stmt-ok-while-source) : String
+  "(define (main [n : i64]) : unit
+  (let [i : i64 n] (while (> i 0) (set! i (- i 1)))))")
+
+(define (compiler-typecheck-stmt-ok-if-set-source) : String
+  "(define (main [flag : bool]) : i64
+  (let [x : i64 0] (begin (set! x 5) (if flag x 0))))")
+
+(define (compiler-typecheck-stmt-ok-cast-ann-source) : String
+  "(define (main [c : char]) : i64 (ann (cast c : i64) : i64))")
+
+(define (compiler-typecheck-statement-tests-ok?) : bool
+  (and
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-stmt-if-cond-source)
+      "typecheck: if condition must be bool")
+    (and
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-stmt-while-cond-source)
+        "typecheck: while condition must be bool")
+      (and
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-stmt-while-body-source)
+          "typecheck: while body must be unit")
         (and
           (compiler-typecheck-error-ok?
-            (compiler-typecheck-unbound-source)
-            "typecheck: unbound name missing")
+            (compiler-typecheck-stmt-set-mismatch-source)
+            "typecheck: assignment type mismatch")
           (and
             (compiler-typecheck-error-ok?
-              (compiler-typecheck-bad-call-source)
-              "typecheck: argument type mismatch")
+              (compiler-typecheck-stmt-let-mismatch-source)
+              "typecheck: let binding type mismatch")
             (and
               (compiler-typecheck-error-ok?
-                (compiler-typecheck-branch-mismatch-source)
-                "typecheck: if branches must match")
+                (compiler-typecheck-stmt-ann-mismatch-source)
+                "typecheck: annotation type mismatch")
               (and
-                (compiler-typecheck-aggregate-tests-ok?)
+                (compiler-typecheck-ok?
+                  (compiler-typecheck-stmt-ok-while-source))
                 (and
-                  (compiler-typecheck-foreach-spmd-tests-ok?)
+                  (compiler-typecheck-ok?
+                    (compiler-typecheck-stmt-ok-if-set-source))
+                  (compiler-typecheck-ok?
+                    (compiler-typecheck-stmt-ok-cast-ann-source)))))))))))
+
+(define (compiler-typecheck-self-test) : i64
+  (begin
+    (if (compiler-typecheck-statement-tests-ok?)
+      unit
+      (panic "typecheck: statement/control-flow tests failed"))
+    (match (typecheck-compiler-source (compiler-typecheck-smoke-source))
+      [(OkCompilerTypecheck summary)
+        (if (and
+          (= (compiler-typecheck-summary-score summary) 121)
+          (and
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-unbound-source)
+              "typecheck: unbound name missing")
+            (and
+              (compiler-typecheck-error-ok?
+                (compiler-typecheck-bad-call-source)
+                "typecheck: argument type mismatch")
+              (and
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-branch-mismatch-source)
+                  "typecheck: if branches must match")
+                (and
+                  (compiler-typecheck-aggregate-tests-ok?)
                   (and
-                    (compiler-typecheck-nominal-tests-ok?)
+                    (compiler-typecheck-foreach-spmd-tests-ok?)
                     (and
-                      (compiler-typecheck-abstraction-policy-tests-ok?)
+                      (compiler-typecheck-nominal-tests-ok?)
                       (and
-                        (compiler-typecheck-region-tests-ok?)
+                        (compiler-typecheck-abstraction-policy-tests-ok?)
                         (and
-                          (compiler-typecheck-result-try-tests-ok?)
+                          (compiler-typecheck-region-tests-ok?)
                           (and
-                            (compiler-typecheck-raw-pointer-tests-ok?)
+                            (compiler-typecheck-result-try-tests-ok?)
                             (and
-                              (compiler-typecheck-reference-tests-ok?)
-                              (compiler-typecheck-located-ok?)))))))))))))
-        42
+                              (compiler-typecheck-raw-pointer-tests-ok?)
+                              (and
+                                (compiler-typecheck-reference-tests-ok?)
+                                (compiler-typecheck-located-ok?)))))))))))))
+          42
+          (begin
+            (panic "typecheck: smoke score mismatch")
+            0))]
+      [(ErrCompilerTypecheck diag)
         (begin
-          (panic "typecheck: smoke score mismatch")
-          0))]
-    [(ErrCompilerTypecheck diag)
-      (begin
-        (panic (compiler-diagnostic-message diag))
-        0)]))
+          (panic (compiler-diagnostic-message diag))
+          0)])))

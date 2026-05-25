@@ -6,7 +6,7 @@
 (import "host_plan.tl")
 
 (defenum RunPlanConfig
-  (RunPlanConfig String String String String String))
+  (RunPlanConfig String String String String String String))
 
 (defenum ResultRunPlanConfig
   (OkRunPlanConfig RunPlanConfig)
@@ -17,6 +17,9 @@
 
 (define (run-plan-unknown-mode [value : String]) : String
   (host-plan-cat3 "run: unknown backend mode " value ""))
+
+(define (run-plan-unknown-opt-level [value : String]) : String
+  (host-plan-cat3 "run: unknown opt level " value ""))
 
 (define (run-plan-append-stdlib [stdlib-lines : String] [root : String]) : String
   (string-append stdlib-lines (host-plan-netline "stdlib-root" root)))
@@ -41,11 +44,12 @@
   [source : String]
   [target : String]
   [mode : String]
+  [opt-level : String]
   [stdlib-lines : String]
   [runtime-lines : String]) : ResultRunPlanConfig
   (if (>= idx count)
     (OkRunPlanConfig
-      (RunPlanConfig source target mode stdlib-lines runtime-lines))
+      (RunPlanConfig source target mode opt-level stdlib-lines runtime-lines))
     (let
       [current : String (arg idx)]
       (if (string-eq current "--")
@@ -54,6 +58,7 @@
             source
             target
             mode
+            opt-level
             stdlib-lines
             (run-plan-runtime-args (+ idx 1) count runtime-lines)))
         (if (string-eq current "--target")
@@ -68,6 +73,7 @@
                   source
                   value
                   mode
+                  opt-level
                   stdlib-lines
                   runtime-lines)
                 (ErrRunPlanConfig (run-plan-unknown-target value)))))
@@ -83,27 +89,46 @@
                     source
                     target
                     value
+                    opt-level
                     stdlib-lines
                     runtime-lines)
                   (ErrRunPlanConfig (run-plan-unknown-mode value)))))
-            (if (string-eq current "--stdlib-root")
+            (if (string-eq current "--opt-level")
               (if (>= (+ idx 1) count)
-                (ErrRunPlanConfig "run: --stdlib-root requires a value")
-                (run-plan-parse-options
-                  (+ idx 2)
-                  count
-                  source
-                  target
-                  mode
-                  (run-plan-append-stdlib stdlib-lines (arg (+ idx 1)))
-                  runtime-lines))
-              (OkRunPlanConfig
-                (RunPlanConfig
-                  source
-                  target
-                  mode
-                  stdlib-lines
-                  (run-plan-runtime-args idx count runtime-lines))))))))))
+                (ErrRunPlanConfig "run: --opt-level requires a value")
+                (let
+                  [value : String (arg (+ idx 1))]
+                  (if (host-plan-opt-level-valid? value)
+                    (run-plan-parse-options
+                      (+ idx 2)
+                      count
+                      source
+                      target
+                      mode
+                      value
+                      stdlib-lines
+                      runtime-lines)
+                    (ErrRunPlanConfig (run-plan-unknown-opt-level value)))))
+              (if (string-eq current "--stdlib-root")
+                (if (>= (+ idx 1) count)
+                  (ErrRunPlanConfig "run: --stdlib-root requires a value")
+                  (run-plan-parse-options
+                    (+ idx 2)
+                    count
+                    source
+                    target
+                    mode
+                    opt-level
+                    (run-plan-append-stdlib stdlib-lines (arg (+ idx 1)))
+                    runtime-lines))
+                (OkRunPlanConfig
+                  (RunPlanConfig
+                    source
+                    target
+                    mode
+                    opt-level
+                    stdlib-lines
+                    (run-plan-runtime-args idx count runtime-lines)))))))))))
 
 (define (run-plan-config [count : i64]) : ResultRunPlanConfig
   (if (< count 2)
@@ -112,11 +137,11 @@
       [source : String (arg 1)]
       (if (host-plan-flag? source)
         (ErrRunPlanConfig "run: expected source path before flags")
-        (run-plan-parse-options 2 count source "linux-x86_64" "scalar" "" "")))))
+        (run-plan-parse-options 2 count source "linux-x86_64" "scalar" "" "" "")))))
 
 (define (run-plan-render [config : RunPlanConfig]) : String
   (match config
-    [(RunPlanConfig source target mode stdlib-lines runtime-lines)
+    [(RunPlanConfig source target mode opt-level stdlib-lines runtime-lines)
       (string-append
         (host-plan-header)
         (string-append
@@ -128,8 +153,12 @@
               (string-append
                 (host-plan-word-line "backend-mode" mode)
                 (string-append
-                  stdlib-lines
-                  (string-append runtime-lines "end\n")))))))]))
+                  (if (string-eq opt-level "")
+                    ""
+                    (host-plan-word-line "opt-level" opt-level))
+                  (string-append
+                    stdlib-lines
+                    (string-append runtime-lines "end\n"))))))))]))
 
 (define (main) : i64
   (match (run-plan-config (arg-count))

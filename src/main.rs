@@ -928,7 +928,11 @@ fn build_source_executable_or_exit(
     target: BackendTarget,
 ) -> PathBuf {
     native_or_exit(native::build_source_executable(
-        file, options, output, target,
+        file,
+        options,
+        output,
+        target,
+        native::OptLevel::DEFAULT,
     ))
 }
 

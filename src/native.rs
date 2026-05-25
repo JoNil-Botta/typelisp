@@ -146,7 +146,47 @@ fn lower_mode_for_backend(mode: BackendMode) -> LowerMode {
     }
 }
 
-fn optimized_ir(loaded: &LoadedProgram, mode: BackendMode) -> Result<LoweredProgram, NativeError> {
+/// Optimization level carried through the host-action build/run path
+/// (`--opt-level <0|1|2|3>`). The IR optimizer is currently all-or-nothing, so
+/// `O0` skips it and `O1`/`O2`/`O3` run it; the finer numeric meanings are
+/// reserved for the #939 optimizer-policy work. [`OptLevel::DEFAULT`] is the
+/// level used when no directive is present and preserves the prior behavior of
+/// always optimizing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OptLevel {
+    O0,
+    O1,
+    O2,
+    O3,
+}
+
+impl OptLevel {
+    /// The level applied when a build/run path does not specify one. Runs the
+    /// optimizer, matching the behavior before `--opt-level` existed.
+    pub const DEFAULT: OptLevel = OptLevel::O2;
+
+    /// Parses a `0|1|2|3` spelling; returns `None` for anything else.
+    pub fn from_u8(level: u8) -> Option<OptLevel> {
+        match level {
+            0 => Some(OptLevel::O0),
+            1 => Some(OptLevel::O1),
+            2 => Some(OptLevel::O2),
+            3 => Some(OptLevel::O3),
+            _ => None,
+        }
+    }
+
+    /// Whether the IR optimizer should run at this level.
+    pub fn runs_optimizer(self) -> bool {
+        !matches!(self, OptLevel::O0)
+    }
+}
+
+fn optimized_ir(
+    loaded: &LoadedProgram,
+    mode: BackendMode,
+    opt_level: OptLevel,
+) -> Result<LoweredProgram, NativeError> {
     let mut tc = TypeChecker::new();
     if let Err(err) = tc.check_program(&loaded.program) {
         return Err(NativeError::new(format_diagnostic_from_sources(
@@ -163,7 +203,9 @@ fn optimized_ir(loaded: &LoadedProgram, mode: BackendMode) -> Result<LoweredProg
 
     let mut lowered =
         lower_program_with_spans_for_mode(&loaded.program, lower_mode_for_backend(mode));
-    Optimizer::optimize(&mut lowered.program);
+    if opt_level.runs_optimizer() {
+        Optimizer::optimize(&mut lowered.program);
+    }
     Ok(lowered)
 }
 
@@ -171,9 +213,10 @@ pub fn source_assembly(
     file: &Path,
     options: &LoadOptions,
     target: BackendTarget,
+    opt_level: OptLevel,
 ) -> Result<String, NativeError> {
     let loaded = load_source(file, options)?;
-    let lowered = optimized_ir(&loaded, target.mode)?;
+    let lowered = optimized_ir(&loaded, target.mode, opt_level)?;
     match generate_assembly_with_spans_for_target(&lowered.program, &lowered.source_spans, target) {
         Ok(asm) => Ok(asm),
         Err(err) => {
@@ -331,8 +374,9 @@ pub fn compile_source_to_executable(
     asm_path: &Path,
     obj_path: &Path,
     bin_path: &Path,
+    opt_level: OptLevel,
 ) -> Result<(), NativeError> {
-    let asm = source_assembly(file, options, target)?;
+    let asm = source_assembly(file, options, target, opt_level)?;
     write_file(asm_path, asm, "assembly output")?;
     assemble_and_link(asm_path, obj_path, bin_path, target)
 }
@@ -342,9 +386,12 @@ pub fn build_source_executable(
     options: &LoadOptions,
     output: Option<PathBuf>,
     target: BackendTarget,
+    opt_level: OptLevel,
 ) -> Result<PathBuf, NativeError> {
     let (asm_path, obj_path, bin_path) = default_artifact_paths(file, output, target);
-    compile_source_to_executable(file, options, target, &asm_path, &obj_path, &bin_path)?;
+    compile_source_to_executable(
+        file, options, target, &asm_path, &obj_path, &bin_path, opt_level,
+    )?;
     Ok(bin_path)
 }
 
@@ -371,8 +418,9 @@ pub fn run_source_file(
     options: &LoadOptions,
     runtime_args: &[String],
     target: BackendTarget,
+    opt_level: OptLevel,
 ) -> Result<NativeRunOutput, NativeError> {
-    let bin_path = build_source_executable(file, options, None, target)?;
+    let bin_path = build_source_executable(file, options, None, target, opt_level)?;
     let output = run_executable(&bin_path, runtime_args, target)?;
     Ok(NativeRunOutput {
         status: output.status,
@@ -402,7 +450,15 @@ pub fn run_source_file_in_temp_dir(
             .join(format!("{}.{}", stem.to_string_lossy(), ext)),
         None => temp.path.join(stem),
     };
-    compile_source_to_executable(file, options, target, &asm_path, &obj_path, &bin_path)?;
+    compile_source_to_executable(
+        file,
+        options,
+        target,
+        &asm_path,
+        &obj_path,
+        &bin_path,
+        OptLevel::DEFAULT,
+    )?;
     let output = run_executable(&bin_path, runtime_args, target)?;
     Ok(NativeRunOutput {
         status: output.status,
@@ -465,6 +521,7 @@ pub fn run_scratch_source(
         &asm_path,
         &obj_path,
         &bin_path,
+        OptLevel::DEFAULT,
     )?;
     let output = run_executable(&bin_path, runtime_args, target)?;
     let artifact_dir = Some(temp.path.clone());

@@ -24,21 +24,24 @@
 //! output <netstring>\n          ; build-source only, optional
 //! target <linux-x86_64|windows-x86_64>\n
 //! backend-mode <scalar|avx2|avx512>\n
+//! opt-level <0|1|2|3>\n          ; source actions only, optional
 //! stdlib-root <netstring>\n      ; repeatable, zero or more
 //! runtime-arg <netstring>\n      ; run-source/run-assembly/run-scratch-assembly
 //! end\n
 //! ```
 //!
 //! A `<netstring>` is `<decimal-byte-length>:<bytes>` followed by a newline.
-//! Fixed-vocabulary fields (`action`, `target`, `backend-mode`) are validated
-//! against their known sets. `action`, `target`, and `backend-mode` are
-//! required; `source` is required for source actions, `assembly` for
-//! run-assembly, and `scratch-assembly-path` for run-scratch-assembly.
+//! Fixed-vocabulary fields (`action`, `target`, `backend-mode`, `opt-level`)
+//! are validated against their known sets. `action`, `target`, and
+//! `backend-mode` are required; `source` is required for source actions,
+//! `assembly` for run-assembly, and `scratch-assembly-path` for
+//! run-scratch-assembly. `opt-level` is optional and accepted only by the
+//! source actions; when omitted the optimizer runs (`OptLevel::DEFAULT`).
 //! Directive order after the header is free.
 
 use crate::backend::{BackendMode, BackendTarget};
 use crate::module::LoadOptions;
-use crate::native::{self, NativeError, NativeRunOutput};
+use crate::native::{self, NativeError, NativeRunOutput, OptLevel};
 use std::{fs, path::PathBuf};
 
 const PLAN_HEADER: &str = "typelisp-host-plan v1";
@@ -51,12 +54,14 @@ pub enum HostActionPlan {
         output: Option<PathBuf>,
         target: BackendTarget,
         stdlib_roots: Vec<PathBuf>,
+        opt_level: OptLevel,
     },
     RunSource {
         source: PathBuf,
         target: BackendTarget,
         stdlib_roots: Vec<PathBuf>,
         runtime_args: Vec<String>,
+        opt_level: OptLevel,
     },
     RunAssembly {
         assembly: String,
@@ -252,6 +257,7 @@ pub fn parse_plan(text: &str) -> Result<HostActionPlan, PlanError> {
     let mut output: Option<PathBuf> = None;
     let mut target_name: Option<String> = None;
     let mut mode_name: Option<String> = None;
+    let mut opt_level_name: Option<String> = None;
     let mut stdlib_roots: Vec<PathBuf> = Vec::new();
     let mut runtime_args: Vec<String> = Vec::new();
 
@@ -284,6 +290,10 @@ pub fn parse_plan(text: &str) -> Result<HostActionPlan, PlanError> {
             "backend-mode" => {
                 cursor.expect_space(&keyword)?;
                 set_once(&mut mode_name, cursor.read_to_line_end(), "backend-mode")?;
+            }
+            "opt-level" => {
+                cursor.expect_space(&keyword)?;
+                set_once(&mut opt_level_name, cursor.read_to_line_end(), "opt-level")?;
             }
             "source" => {
                 cursor.expect_space(&keyword)?;
@@ -357,6 +367,23 @@ pub fn parse_plan(text: &str) -> Result<HostActionPlan, PlanError> {
     })?;
     let target = base_target.with_mode(mode);
 
+    // `opt-level` is optional; an omitted directive preserves the prior
+    // always-optimize behavior via `OptLevel::DEFAULT`. Only source build/run
+    // honor it; the assembly actions reject it below.
+    let opt_level = match &opt_level_name {
+        None => None,
+        Some(text) => Some(
+            text.parse::<u8>()
+                .ok()
+                .and_then(OptLevel::from_u8)
+                .ok_or_else(|| {
+                    PlanError::new(format!(
+                        "unknown opt level '{text}'; expected 0, 1, 2, or 3"
+                    ))
+                })?,
+        ),
+    };
+
     match action.as_str() {
         "build-source" => {
             let source =
@@ -381,6 +408,7 @@ pub fn parse_plan(text: &str) -> Result<HostActionPlan, PlanError> {
                 output,
                 target,
                 stdlib_roots,
+                opt_level: opt_level.unwrap_or(OptLevel::DEFAULT),
             })
         }
         "run-source" => {
@@ -406,12 +434,18 @@ pub fn parse_plan(text: &str) -> Result<HostActionPlan, PlanError> {
                 target,
                 stdlib_roots,
                 runtime_args,
+                opt_level: opt_level.unwrap_or(OptLevel::DEFAULT),
             })
         }
         "run-assembly" => {
             if source.is_some() {
                 return Err(PlanError::new(
                     "host-action 'run-assembly' does not accept a 'source' directive",
+                ));
+            }
+            if opt_level_name.is_some() {
+                return Err(PlanError::new(
+                    "host-action 'run-assembly' does not accept an 'opt-level' directive",
                 ));
             }
             if output.is_some() {
@@ -436,6 +470,11 @@ pub fn parse_plan(text: &str) -> Result<HostActionPlan, PlanError> {
             if source.is_some() {
                 return Err(PlanError::new(
                     "host-action 'run-scratch-assembly' does not accept a 'source' directive",
+                ));
+            }
+            if opt_level_name.is_some() {
+                return Err(PlanError::new(
+                    "host-action 'run-scratch-assembly' does not accept an 'opt-level' directive",
                 ));
             }
             if assembly.is_some() {
@@ -487,10 +526,16 @@ pub fn execute_plan(plan: &HostActionPlan) -> Result<HostActionOutcome, NativeEr
             output,
             target,
             stdlib_roots,
+            opt_level,
         } => {
             let options = load_options(stdlib_roots);
-            let output_path =
-                native::build_source_executable(source, &options, output.clone(), *target)?;
+            let output_path = native::build_source_executable(
+                source,
+                &options,
+                output.clone(),
+                *target,
+                *opt_level,
+            )?;
             Ok(HostActionOutcome::Built { output_path })
         }
         HostActionPlan::RunSource {
@@ -498,9 +543,11 @@ pub fn execute_plan(plan: &HostActionPlan) -> Result<HostActionOutcome, NativeEr
             target,
             stdlib_roots,
             runtime_args,
+            opt_level,
         } => {
             let options = load_options(stdlib_roots);
-            let output = native::run_source_file(source, &options, runtime_args, *target)?;
+            let output =
+                native::run_source_file(source, &options, runtime_args, *target, *opt_level)?;
             Ok(HostActionOutcome::Ran(output))
         }
         HostActionPlan::RunAssembly {
@@ -560,6 +607,7 @@ mod tests {
                 output: Some(PathBuf::from("build/out")),
                 target: BackendTarget::linux_x86_64_system_v(),
                 stdlib_roots: Vec::new(),
+                opt_level: OptLevel::DEFAULT,
             }
         );
     }
@@ -585,6 +633,7 @@ mod tests {
                 output: Some(PathBuf::from("build/out")),
                 target: BackendTarget::linux_x86_64_system_v(),
                 stdlib_roots: Vec::new(),
+                opt_level: OptLevel::DEFAULT,
             }
         );
     }
@@ -614,6 +663,7 @@ mod tests {
                 target: BackendTarget::windows_x86_64().with_mode(BackendMode::Avx2),
                 stdlib_roots: vec![PathBuf::from("std"), PathBuf::from("vendor/std")],
                 runtime_args: vec!["--name=value".to_string()],
+                opt_level: OptLevel::DEFAULT,
             }
         );
     }
@@ -640,6 +690,126 @@ mod tests {
                 target: BackendTarget::windows_x86_64().with_mode(BackendMode::Avx2),
                 runtime_args: vec!["--case=smoke".to_string()],
             }
+        );
+    }
+
+    #[test]
+    fn parses_build_source_opt_level() {
+        let plan = format!(
+            "typelisp-host-plan v1\n\
+             action build-source\n\
+             source {}\n\
+             target linux-x86_64\n\
+             backend-mode scalar\n\
+             opt-level 0\n\
+             end\n",
+            netstring("src/main.tl")
+        );
+        let parsed = parse_plan(&plan).expect("plan parses");
+        match parsed {
+            HostActionPlan::BuildSource { opt_level, .. } => {
+                assert_eq!(opt_level, OptLevel::O0);
+                assert!(!opt_level.runs_optimizer());
+            }
+            other => panic!("expected build-source, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_source_opt_level_defaults_when_omitted() {
+        let plan = format!(
+            "typelisp-host-plan v1\n\
+             action build-source\n\
+             source {}\n\
+             target linux-x86_64\n\
+             backend-mode scalar\n\
+             end\n",
+            netstring("src/main.tl")
+        );
+        let parsed = parse_plan(&plan).expect("plan parses");
+        match parsed {
+            HostActionPlan::BuildSource { opt_level, .. } => {
+                assert_eq!(opt_level, OptLevel::DEFAULT);
+                assert!(opt_level.runs_optimizer());
+            }
+            other => panic!("expected build-source, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_run_source_opt_level() {
+        let plan = format!(
+            "typelisp-host-plan v1\n\
+             action run-source\n\
+             source {}\n\
+             target linux-x86_64\n\
+             backend-mode scalar\n\
+             opt-level 3\n\
+             end\n",
+            netstring("app.tl")
+        );
+        let parsed = parse_plan(&plan).expect("plan parses");
+        match parsed {
+            HostActionPlan::RunSource { opt_level, .. } => assert_eq!(opt_level, OptLevel::O3),
+            other => panic!("expected run-source, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_opt_level() {
+        let plan = format!(
+            "typelisp-host-plan v1\n\
+             action build-source\n\
+             source {}\n\
+             target linux-x86_64\n\
+             backend-mode scalar\n\
+             opt-level 9\n\
+             end\n",
+            netstring("src/main.tl")
+        );
+        let err = parse_plan(&plan).expect_err("invalid opt level is rejected");
+        assert!(
+            err.to_string().contains("unknown opt level '9'"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_opt_level() {
+        let plan = format!(
+            "typelisp-host-plan v1\n\
+             action build-source\n\
+             source {}\n\
+             target linux-x86_64\n\
+             backend-mode scalar\n\
+             opt-level 1\n\
+             opt-level 2\n\
+             end\n",
+            netstring("src/main.tl")
+        );
+        let err = parse_plan(&plan).expect_err("duplicate opt level is rejected");
+        assert!(
+            err.to_string().contains("opt-level"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn run_assembly_rejects_opt_level() {
+        let plan = format!(
+            "typelisp-host-plan v1\n\
+             action run-assembly\n\
+             assembly {}\n\
+             target linux-x86_64\n\
+             backend-mode scalar\n\
+             opt-level 1\n\
+             end\n",
+            netstring(".globl main\nmain:\n    ret\n")
+        );
+        let err = parse_plan(&plan).expect_err("run-assembly rejects opt-level");
+        assert!(
+            err.to_string().contains("does not accept an 'opt-level'"),
+            "unexpected error: {err}"
         );
     }
 

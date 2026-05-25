@@ -1,5 +1,5 @@
 # name|source|exit|stdout|args|deps
-# Windows omits the with_region_* Linux SysV fixtures; the runner validates that
+# Windows omits the with_arena_* Linux SysV fixtures; the runner validates that
 # those are the only integration sources missing from this manifest.
 aggregate_globals|tests/integration/aggregate_globals.tl|42|-|-|-
 argv|tests/integration/argv.tl|7|alpha\n|alpha beta|-

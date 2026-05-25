@@ -24,6 +24,9 @@
   (OkCompilerOptimizeLevel i64)
   (ErrCompilerOptimizeLevel))
 
+(defenum CompilerOptimizedProgram
+  (CompilerOptimizedProgram CompilerIrProgram CompilerSourceSpans))
+
 (define compiler-optimize-level-default : i64
   2)
 
@@ -2026,6 +2029,94 @@
           (optimize-function-list-with-level functions level)
           externs))]))
 
+(define (opt-remap-spans-instr
+  [source-spans : CompilerSourceSpans]
+  [out : CompilerSourceSpans]
+  [function : String]
+  [instr : CompilerIrInstr]) : CompilerSourceSpans
+  (match (compiler-source-spans-lookup-instr source-spans function instr)
+    [(CompilerSomeSourceSpan span)
+      (compiler-source-spans-insert-instr out function instr span)]
+    [(CompilerNoSourceSpan) out]))
+
+(define (opt-remap-spans-instrs
+  [source-spans : CompilerSourceSpans]
+  [out : CompilerSourceSpans]
+  [function : String]
+  [instrs : CompilerIrInstrList]) : CompilerSourceSpans
+  (match instrs
+    [(IrInstrNil) out]
+    [(IrInstrCons instr rest)
+      (opt-remap-spans-instrs
+        source-spans
+        (opt-remap-spans-instr source-spans out function instr)
+        function
+        rest)]))
+
+(define (opt-remap-spans-blocks
+  [source-spans : CompilerSourceSpans]
+  [out : CompilerSourceSpans]
+  [function : String]
+  [blocks : CompilerIrBlockList]) : CompilerSourceSpans
+  (match blocks
+    [(IrBlockNil) out]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (opt-remap-spans-blocks
+            source-spans
+            (opt-remap-spans-instrs source-spans out function instrs)
+            function
+            rest)])]))
+
+(define (opt-remap-spans-function
+  [source-spans : CompilerSourceSpans]
+  [out : CompilerSourceSpans]
+  [func : CompilerIrFunction]) : CompilerSourceSpans
+  (match func
+    [(IrFunction name _ _ _ blocks)
+      (opt-remap-spans-blocks source-spans out name blocks)]))
+
+(define (opt-remap-spans-functions
+  [source-spans : CompilerSourceSpans]
+  [out : CompilerSourceSpans]
+  [funcs : CompilerIrFunctionList]) : CompilerSourceSpans
+  (match funcs
+    [(IrFunctionNil) out]
+    [(IrFunctionCons func rest)
+      (opt-remap-spans-functions
+        source-spans
+        (opt-remap-spans-function source-spans out func)
+        rest)]))
+
+(define (opt-remap-spans-program
+  [source-spans : CompilerSourceSpans]
+  [program : CompilerIrProgram]) : CompilerSourceSpans
+  (match program
+    [(IrProgram _ functions _)
+      (opt-remap-spans-functions
+        source-spans
+        (compiler-source-spans-clear-instrs source-spans)
+        functions)]))
+
+(define (optimize-program-with-spans-and-level
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]
+  [level : i64]) : CompilerOptimizedProgram
+  (let
+    [optimized : CompilerIrProgram (optimize-program-with-level program level)]
+    (CompilerOptimizedProgram
+      optimized
+      (opt-remap-spans-program spans optimized))))
+
+(define (optimize-program-with-spans
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]) : CompilerOptimizedProgram
+  (optimize-program-with-spans-and-level
+    program
+    spans
+    (compiler-optimize-default-level)))
+
 ;; --- self-test ---------------------------------------------------------------
 (define (opt-count-arith-instrs [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -2146,6 +2237,153 @@
             (cast c : i64)
             (opt-mov-dst-char-code rest dst fallback))]
         [_ (opt-mov-dst-char-code rest dst fallback)])]))
+
+(define (opt-test-span [line : i64] [col : i64]) : AstSourceSpan
+  (AstSourceSpan line col line col))
+
+(define (opt-source-span-line-col-ok?
+  [span : AstSourceSpan]
+  [line : i64]
+  [col : i64]) : bool
+  (and
+    (= (struct-get span start-line) line)
+    (= (struct-get span start-col) col)))
+
+(define (opt-span-lookup-ok?
+  [spans : CompilerSourceSpans]
+  [function : String]
+  [instr : CompilerIrInstr]
+  [line : i64]
+  [col : i64]) : bool
+  (match (compiler-source-spans-lookup-instr spans function instr)
+    [(CompilerSomeSourceSpan span) (opt-source-span-line-col-ok? span line col)]
+    [(CompilerNoSourceSpan) false]))
+
+(define (opt-span-lookup-missing?
+  [spans : CompilerSourceSpans]
+  [function : String]
+  [instr : CompilerIrInstr]) : bool
+  (match (compiler-source-spans-lookup-instr spans function instr)
+    [(CompilerSomeSourceSpan _) false]
+    [(CompilerNoSourceSpan) true]))
+
+(define (opt-spans-function [instrs : CompilerIrInstrList]) : CompilerIrFunction
+  (IrFunction
+    "main"
+    IrParamNil
+    (AstTyI64)
+    4
+    (IrBlockCons (IrBlock "entry" instrs) IrBlockNil)))
+
+(define (opt-spans-program [instrs : CompilerIrInstrList]) : CompilerIrProgram
+  (IrProgram
+    IrGlobalNil
+    (IrFunctionCons (opt-spans-function instrs) IrFunctionNil)
+    IrExternNil))
+
+(define (opt-spans-base) : CompilerSourceSpans
+  (compiler-source-spans-insert
+    (compiler-source-spans-empty)
+    "main"
+    (opt-test-span 3 1)))
+
+(define (compiler-optimize-spans-dce-ok?) : bool
+  (let
+    [dead : CompilerIrInstr (IrInstrMov 0 (IrValueI64 1) (AstTyI64))]
+    [live : CompilerIrInstr (IrInstrCall 1 "opaque" IrValueNil (AstTyI64))]
+    [instrs : CompilerIrInstrList
+      (IrInstrCons
+        dead
+        (IrInstrCons
+          live
+          (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueVar 1))) IrInstrNil)))]
+    [spans : CompilerSourceSpans
+      (compiler-source-spans-insert-instr
+        (compiler-source-spans-insert-instr
+          (opt-spans-base)
+          "main"
+          dead
+          (opt-test-span 21 3))
+        "main"
+        live
+        (opt-test-span 31 5))]
+    (match (optimize-program-with-spans-and-level
+      (opt-spans-program instrs)
+      spans
+      1)
+      [(CompilerOptimizedProgram _ optimized-spans)
+        (and
+          (= (compiler-source-spans-instr-count optimized-spans) 1)
+          (and
+            (opt-span-lookup-missing? optimized-spans "main" dead)
+            (opt-span-lookup-ok? optimized-spans "main" live 31 5)))])))
+
+(define (compiler-optimize-spans-fold-ok?) : bool
+  (let
+    [folded : CompilerIrInstr
+      (IrInstrBinOp 2 (IrBinAdd) (IrValueI64 20) (IrValueI64 22) (AstTyI64))]
+    [rewritten : CompilerIrInstr (IrInstrMov 2 (IrValueI64 42) (AstTyI64))]
+    [instrs : CompilerIrInstrList
+      (IrInstrCons
+        folded
+        (IrInstrCons
+          (IrInstrAddrOf 3 2)
+          (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueVar 3))) IrInstrNil)))]
+    [spans : CompilerSourceSpans
+      (compiler-source-spans-insert-instr
+        (opt-spans-base)
+        "main"
+        folded
+        (opt-test-span 41 7))]
+    (match (optimize-program-with-spans-and-level
+      (opt-spans-program instrs)
+      spans
+      1)
+      [(CompilerOptimizedProgram _ optimized-spans)
+        (opt-span-lookup-ok? optimized-spans "main" rewritten 41 7)])))
+
+(define (compiler-optimize-spans-cse-ok?) : bool
+  (let
+    [first : CompilerIrInstr
+      (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))]
+    [second : CompilerIrInstr
+      (IrInstrBinOp 3 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))]
+    [rewritten : CompilerIrInstr (IrInstrMov 3 (IrValueVar 2) (AstTyI64))]
+    [instrs : CompilerIrInstrList
+      (IrInstrCons
+        first
+        (IrInstrCons
+          second
+          (IrInstrCons
+            (IrInstrAddrOf 4 3)
+            (IrInstrCons
+              (IrInstrReturn (IrSomeValue (IrValueVar 4)))
+              IrInstrNil))))]
+    [spans : CompilerSourceSpans
+      (compiler-source-spans-insert-instr
+        (compiler-source-spans-insert-instr
+          (opt-spans-base)
+          "main"
+          first
+          (opt-test-span 51 9))
+        "main"
+        second
+        (opt-test-span 61 11))]
+    (match (optimize-program-with-spans-and-level
+      (opt-spans-program instrs)
+      spans
+      1)
+      [(CompilerOptimizedProgram _ optimized-spans)
+        (and
+          (opt-span-lookup-ok? optimized-spans "main" first 51 9)
+          (opt-span-lookup-ok? optimized-spans "main" rewritten 61 11))])))
+
+(define (compiler-optimize-spans-self-test) : i64
+  (if (and
+    (compiler-optimize-spans-dce-ok?)
+    (and (compiler-optimize-spans-fold-ok?) (compiler-optimize-spans-cse-ok?)))
+    42
+    1))
 
 (define (opt-count-cast-instrs [instrs : CompilerIrInstrList]) : i64
   (match instrs

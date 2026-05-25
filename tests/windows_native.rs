@@ -781,6 +781,7 @@ fn native_cases() -> Vec<Case> {
             "",
             &[
                 "compiler_backend.tl",
+                "compiler_optimize.tl",
                 "compiler_regalloc.tl",
                 "compiler_liveness.tl",
                 "compiler_lower.tl",

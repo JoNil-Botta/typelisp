@@ -32,18 +32,17 @@
   [target : CompilerBackendTarget]
   [has-target : bool]
   [opt-level : i64]) : ResultCompilerDriver
-  (let
-    [optimized : CompilerIrProgram
-      (optimize-program-with-level program opt-level)]
-    (match (if has-target
-      (compiler-backend-emit-program-with-spans-for-target
-        optimized
-        spans
-        target)
-      (compiler-backend-emit-program-with-spans optimized spans))
-      [(OkCompilerBackend asm) (OkCompilerDriver asm)]
-      [(ErrCompilerBackend diag)
-        (ErrCompilerDriver (compiler-diagnostic-with-path diag input-path))])))
+  (match (optimize-program-with-spans-and-level program spans opt-level)
+    [(CompilerOptimizedProgram optimized optimized-spans)
+      (match (if has-target
+        (compiler-backend-emit-program-with-spans-for-target
+          optimized
+          optimized-spans
+          target)
+        (compiler-backend-emit-program-with-spans optimized optimized-spans))
+        [(OkCompilerBackend asm) (OkCompilerDriver asm)]
+        [(ErrCompilerBackend diag)
+          (ErrCompilerDriver (compiler-diagnostic-with-path diag input-path))])]))
 
 (define (compiler-driver-emit-file-with-target
   [input-path : String]
@@ -82,9 +81,9 @@
         input-path
         (AstProgram decls)
         paths)
-        ;; The lowering provenance side table (#605) is forwarded through
-        ;; optimization (which preserves function names) into backend emission so
-        ;; backend diagnostics report the real source line/column.
+        ;; The lowering provenance side table (#605/#761) is remapped after
+        ;; optimization so backend diagnostics report surviving instruction
+        ;; locations when a rewrite can preserve them.
         [(OkCompilerLower program spans)
           (compiler-driver-emit-lowered-with-level
             input-path

@@ -253,6 +253,11 @@
     (CompilerSourceSpansEntryNil)
     (CompilerSourceSpansEntryNil)))
 
+(define (compiler-source-spans-clear-instrs [spans : CompilerSourceSpans]) : CompilerSourceSpans
+  (match spans
+    [(CompilerSourceSpans entries _)
+      (CompilerSourceSpans entries (CompilerSourceSpansEntryNil))]))
+
 (define (compiler-source-spans-entry-list-append
   [entries : CompilerSourceSpansEntryList]
   [entry : CompilerSourceSpansEntry]) : CompilerSourceSpansEntryList

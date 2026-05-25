@@ -15,8 +15,10 @@ Coverage notes:
   helpers, parser subroutines, and serializer helpers directly.
 - `json_parse_stringify.tl` covers end-to-end parsing and stringifying for
   invalid input, escapes, nesting, arrays, objects, lookup, and number forms.
-- `io_edges.tl` covers `read-file-or`, `append-file`, and `file-nonempty?` on
-  missing, empty, and existing files without masking host I/O failures.
+- `io_edges.tl` covers `IoError` rendering, `try-read-file`,
+  `try-write-file`, `try-file-exists?`, `try-append-file`, `read-file-or`,
+  `append-file`, and `file-nonempty?` on missing, empty-path, empty-file, and
+  existing-file paths without masking host I/O failures.
 - `env_api.tl` covers missing, empty, and present environment variables,
   host-separator PATH splitting/joining, and explicit Windows `;` path-list
   behavior.

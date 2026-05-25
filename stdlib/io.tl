@@ -4,40 +4,157 @@
 ;;;; primitives, mirroring how `stdlib/string.tl` wraps string primitives.
 ;;;;
 ;;;; Primitives required from the compiler/runtime: `read-file`, `write-file`,
-;;;; `file-exists?`, `string-append`, and `string-length`.
+;;;; `file-exists?`, `int->string`, `string-append`, and `string-length`.
 ;;;;
-;;;; All helpers inherit the V1 panic-on-error semantics of the underlying
-;;;; primitives. Recoverable file-error handling is deferred until the
-;;;; Result/Option model is settled.
+;;;; The `try-*` helpers return explicit monomorphic result enums. The current
+;;;; runtime can classify empty paths and expected read absence before calling
+;;;; panic-on-error primitives; other host I/O failures still require
+;;;; recoverable runtime primitives.
 ;;;;
 ;;;; Usage: `(import "stdlib/io.tl")`
 ;;;;
 ;;;; ```typelisp
 ;;;; (import "stdlib/io.tl")
-;;;; (define fallback : String (read-file-or "missing-file-for-docs.txt" "fallback"))
+;;;; (define fallback : ResultIoString (try-read-file "missing-file-for-docs.txt"))
 ;;;; ```
+;;; Structured file I/O failures.
+;;;
+;;; `IoSystemCode` stores a target-specific positive error code and path.
+(defenum IoError
+  (IoNotFound String)
+  (IoPermissionDenied String)
+  (IoInvalidPath String)
+  (IoUnsupported String)
+  (IoInterrupted String)
+  (IoSystemCode i64 String)
+  (IoUnknown String))
+
+;;; Result type for string-returning file I/O APIs.
+(defenum ResultIoString
+  (OkIoString String)
+  (ErrIoString IoError))
+
+;;; Result type for unit-returning file I/O APIs.
+(defenum ResultIoUnit
+  (OkIoUnit)
+  (ErrIoUnit IoError))
+
+;;; Result type for bool-returning file I/O APIs.
+(defenum ResultIoBool
+  (OkIoBool bool)
+  (ErrIoBool IoError))
+
+;;; Return true when `path` is syntactically empty.
+(define (io-empty-path? [path : String]) : bool
+  (= (string-length path) 0))
+
+;;; Render an I/O error into a human-readable diagnostic string.
+(define (io-error-message [error : IoError]) : String
+  (match error
+    [(IoNotFound path) (string-append "io: not found: " path)]
+    [(IoPermissionDenied path) (string-append "io: permission denied: " path)]
+    [(IoInvalidPath path) (string-append "io: invalid path: " path)]
+    [(IoUnsupported message) (string-append "io: unsupported: " message)]
+    [(IoInterrupted path) (string-append "io: interrupted: " path)]
+    [(IoSystemCode code path)
+      (string-append
+        (string-append "io: system error " (int->string code))
+        (string-append ": " path))]
+    [(IoUnknown path) (string-append "io: unknown failure: " path)]))
+
+;;; Return true when `error` is a not-found diagnostic.
+(define (io-error-not-found? [error : IoError]) : bool
+  (match error
+    [(IoNotFound _) true]
+    [_ false]))
+
+;;; Return true when `error` is an invalid-path diagnostic.
+(define (io-error-invalid-path? [error : IoError]) : bool
+  (match error
+    [(IoInvalidPath _) true]
+    [_ false]))
+
+;;; Return true when `error` is an unsupported-runtime diagnostic.
+(define (io-error-unsupported? [error : IoError]) : bool
+  (match error
+    [(IoUnsupported _) true]
+    [_ false]))
+
+;;; Read `path` and return either its contents or a structured I/O error.
+;;;
+;;; Missing paths return `IoNotFound`. Empty paths return `IoInvalidPath`.
+;;; Other host read failures still panic in the underlying runtime primitive
+;;; until recoverable file runtime support lands.
+(define (try-read-file [path : String]) : ResultIoString
+  (if (io-empty-path? path)
+    (ErrIoString (IoInvalidPath path))
+    (if (file-exists? path)
+      (OkIoString (read-file path))
+      (ErrIoString (IoNotFound path)))))
+
+;;; Write `contents` to `path`, returning a structured result.
+;;;
+;;; Empty paths return `IoInvalidPath`. Other host write failures still panic in
+;;; the underlying runtime primitive until recoverable file runtime support
+;;; lands.
+(define (try-write-file [path : String] [contents : String]) : ResultIoUnit
+  (if (io-empty-path? path)
+    (ErrIoUnit (IoInvalidPath path))
+    (begin
+      (write-file path contents)
+      OkIoUnit)))
+
+;;; Probe whether `path` exists, returning a structured result.
+;;;
+;;; Missing paths are represented as `OkIoBool false`, because absence is an
+;;; expected result of an existence probe. Empty paths return `IoInvalidPath`.
+(define (try-file-exists? [path : String]) : ResultIoBool
+  (if (io-empty-path? path)
+    (ErrIoBool (IoInvalidPath path))
+    (OkIoBool (file-exists? path))))
+
+;;; Append `contents` to `path`, returning a structured result.
+;;;
+;;; This helper is non-atomic and rewrites the whole file. It can recover from
+;;; missing reads by creating the file, but hard write failures still inherit the
+;;; current runtime primitive's panic behavior.
+(define (try-append-file [path : String] [contents : String]) : ResultIoUnit
+  (if (io-empty-path? path)
+    (ErrIoUnit (IoInvalidPath path))
+    (match (try-read-file path)
+      [(OkIoString existing)
+        (try-write-file path (string-append existing contents))]
+      [(ErrIoString error)
+        (if (io-error-not-found? error)
+          (try-write-file path contents)
+          (ErrIoUnit error))])))
+
 ;;; Read the contents of `path` if it exists, otherwise return `fallback`.
 ;;;
-;;; This is a non-panicking read for optional files: `read-file` itself panics
-;;; when the path is missing, so guard it with `file-exists?` first.
+;;; This is a convenience wrapper over `try-read-file`. It returns `fallback`
+;;; for every structured error, preserving the historical optional-file API.
 (define (read-file-or [path : String] [fallback : String]) : String
-  (if (file-exists? path)
-    (read-file path)
-    fallback))
+  (match (try-read-file path)
+    [(OkIoString contents) contents]
+    [(ErrIoString _) fallback]))
 
 ;;; Append `contents` to the file at `path`, creating it when absent.
 ;;;
 ;;; Implemented as a read-modify-write because there is no append primitive, so
 ;;; it is not atomic and rewrites the whole file.
 (define (append-file [path : String] [contents : String]) : unit
-  (write-file path (string-append (read-file-or path "") contents)))
+  (match (try-append-file path contents)
+    [(OkIoUnit) unit]
+    [(ErrIoUnit error)
+      (begin
+        (panic (io-error-message error))
+        unit)]))
 
 ;;; Return true when `path` exists and its contents are non-empty.
 ;;;
-;;; `read-file` is guarded behind an `if` (not `and`) so it is only called when
-;;; the file exists: `and` evaluates both operands, which would panic
-;;; `read-file` on a missing path.
+;;; Structured errors return false. Hard host failures may still panic in the
+;;; underlying runtime primitive until recoverable file runtime support lands.
 (define (file-nonempty? [path : String]) : bool
-  (if (file-exists? path)
-    (> (string-length (read-file path)) 0)
-    false))
+  (match (try-read-file path)
+    [(OkIoString contents) (> (string-length contents) 0)]
+    [(ErrIoString _) false]))

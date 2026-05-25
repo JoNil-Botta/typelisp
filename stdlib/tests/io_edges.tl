@@ -14,8 +14,48 @@
 (define io-missing-file : String
   "target/stdlib-verify/io_edges_missing.txt")
 
+(define (expect-try-read-ok [path : String] [expected : String]) : unit
+  (match (try-read-file path)
+    [(OkIoString contents)
+      (assert-string-eq contents expected "try-read-file returned contents")]
+    [(ErrIoString error) (panic (io-error-message error))]))
+
+(define (expect-try-read-missing [path : String]) : unit
+  (match (try-read-file path)
+    [(OkIoString _) (panic "try-read-file unexpectedly read missing file")]
+    [(ErrIoString error)
+      (begin
+        (assert-true (io-error-not-found? error) "missing read error kind")
+        (assert-string-eq
+          (io-error-message error)
+          (string-append "io: not found: " path)
+          "missing read error render"))]))
+
+(define (expect-try-write-ok [path : String] [contents : String]) : unit
+  (match (try-write-file path contents)
+    [(OkIoUnit) unit]
+    [(ErrIoUnit error) (panic (io-error-message error))]))
+
+(define (expect-invalid-path [error : IoError]) : unit
+  (begin
+    (assert-true (io-error-invalid-path? error) "invalid path error kind")
+    (assert-string-eq
+      (io-error-message error)
+      "io: invalid path: "
+      "invalid path error render")))
+
 (define (main) : i64
   (begin
+    (expect-try-read-missing io-missing-file)
+    (match (try-file-exists? io-missing-file)
+      [(OkIoBool exists) (assert-false exists "missing file does not exist")]
+      [(ErrIoBool error) (panic (io-error-message error))])
+    (match (try-read-file "")
+      [(OkIoString _) (panic "empty path read should fail")]
+      [(ErrIoString error) (expect-invalid-path error)])
+    (match (try-write-file "" "bad")
+      [(OkIoUnit) (panic "empty path write should fail")]
+      [(ErrIoUnit error) (expect-invalid-path error)])
     (assert-string-eq
       (read-file-or io-missing-file "fallback")
       "fallback"
@@ -25,13 +65,16 @@
       "missing file is not nonempty")
     (write-file io-empty-file "")
     (assert-false (file-nonempty? io-empty-file) "empty file is not nonempty")
-    (write-file io-file "alpha")
+    (expect-try-write-ok io-file "alpha")
+    (expect-try-read-ok io-file "alpha")
     (assert-string-eq
       (read-file-or io-file "fallback")
       "alpha"
       "read existing file")
     (assert-true (file-nonempty? io-file) "written file is nonempty")
-    (append-file io-file "-beta")
+    (match (try-append-file io-file "-beta")
+      [(OkIoUnit) unit]
+      [(ErrIoUnit error) (panic (io-error-message error))])
     (assert-string-eq (read-file io-file) "alpha-beta" "append existing file")
     (append-file io-created-file "created")
     (assert-string-eq

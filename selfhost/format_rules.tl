@@ -56,7 +56,12 @@
         (doc-hard-line)
         (doc-append
           (format-rules-cst-doc node)
-          (format-rules-hard-tail-doc rest)))]))
+          (match rest
+            [(FmtCstNil)
+              (if (format-rules-node-comment? node)
+                (doc-hard-line)
+                (doc-empty))]
+            [_ (format-rules-hard-tail-doc rest)])))]))
 
 (define (format-rules-tail-separator
   [previous-comment : bool]
@@ -75,7 +80,15 @@
         (format-rules-tail-separator previous-comment node)
         (doc-append
           (format-rules-cst-doc node)
-          (format-rules-list-tail-doc (format-rules-node-comment? node) rest)))]))
+          (match rest
+            [(FmtCstNil)
+              (if (format-rules-node-comment? node)
+                (doc-hard-line)
+                (doc-empty))]
+            [_
+              (format-rules-list-tail-doc
+                (format-rules-node-comment? node)
+                rest)])))]))
 
 (define (format-rules-list-items-doc [items : FormatCstList]) : Doc
   (match items
@@ -83,7 +96,13 @@
     [(FmtCstCons node rest)
       (doc-append
         (format-rules-cst-doc node)
-        (format-rules-list-tail-doc (format-rules-node-comment? node) rest))]))
+        (match rest
+          [(FmtCstNil)
+            (if (format-rules-node-comment? node)
+              (doc-hard-line)
+              (doc-empty))]
+          [_
+            (format-rules-list-tail-doc (format-rules-node-comment? node) rest)]))]))
 
 (define (format-rules-delimited-doc
   [open : String]
@@ -220,7 +239,12 @@
         (doc-hard-line)
         (doc-append
           (format-rules-let-item-doc node)
-          (format-rules-let-tail-doc rest)))]))
+          (match rest
+            [(FmtCstNil)
+              (if (format-rules-node-comment? node)
+                (doc-hard-line)
+                (doc-empty))]
+            [_ (format-rules-let-tail-doc rest)])))]))
 
 (define (format-rules-let-doc [rest : FormatCstList]) : Doc
   (doc-append

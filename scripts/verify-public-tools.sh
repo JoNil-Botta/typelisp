@@ -671,6 +671,7 @@ decls
 flow
 let_bindings
 negative_int
+tail_comment
 EOF
 }
 

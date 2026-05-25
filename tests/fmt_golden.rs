@@ -25,6 +25,10 @@ const FLOW_EXPECTED: &str = "(define (main [x : i64]) : i64\n  (begin\n    (let\
 const COMMENTS_EXPECTED: &str = ";; module header\n;; keeps adjacent lines\n(import \"std.tl\")\n\n;; item docs\n;; stay attached\n(define answer : i64\n  42)\n\n(begin\n  ; keep\n  (print-string \"x\"))";
 const CHAR_LITERAL_EXPECTED: &str = "(define (is-quote [c : char]) : bool\n  (= c #''))";
 const NEGATIVE_INT_EXPECTED: &str = "(define (main) : i64\n  -128)";
+// Regression for #1100: a line comment immediately before a closing delimiter
+// (here also next to a `#('` delimiter char literal) must push the close onto
+// its own line, not append it to the comment where it would be swallowed.
+const TAIL_COMMENT_EXPECTED: &str = "(define (open-paren) : char\n  (begin\n    #('\n    ;; the closing parens below must not be swallowed by this comment\n    ))";
 const LET_BINDINGS_EXPECTED: &str = r#"(define (one) : i64
   (let
     [x : i64 1]
@@ -88,6 +92,7 @@ fn fmt_produces_golden_output_and_is_idempotent() {
             ("comments", COMMENTS_EXPECTED),
             ("char_literal", CHAR_LITERAL_EXPECTED),
             ("negative_int", NEGATIVE_INT_EXPECTED),
+            ("tail_comment", TAIL_COMMENT_EXPECTED),
         ];
 
         for (name, expected) in cases {

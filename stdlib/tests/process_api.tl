@@ -20,6 +20,29 @@
         [_ (panic message)])]
     [_ (panic message)]))
 
+(define (assert-process-string-list3
+  [items : ProcessStringList]
+  [first : String]
+  [second : String]
+  [third : String]
+  [message : String]) : unit
+  (match items
+    [(ProcessStringCons a rest)
+      (match rest
+        [(ProcessStringCons b more)
+          (match more
+            [(ProcessStringCons c tail)
+              (match tail
+                [(ProcessStringNil)
+                  (begin
+                    (assert-string-eq a first message)
+                    (assert-string-eq b second message)
+                    (assert-string-eq c third message))]
+                [_ (panic message)])]
+            [_ (panic message)])]
+        [_ (panic message)])]
+    [_ (panic message)]))
+
 (define (assert-process-some-string
   [value : ProcessMaybeString]
   [expected : String]
@@ -52,9 +75,9 @@
   [message : String]) : unit
   (match result
     [(ErrProcessOutput error)
-      (match error
-        [(ProcessInvalidCommand text) (assert-string-eq text message message)]
-        [_ (panic message)])]
+      (begin
+        (assert-true (process-error-invalid-command? error) message)
+        (assert-string-eq (process-error-message error) message message))]
     [(OkProcessOutput _) (panic message)]))
 
 (define (assert-process-unsupported
@@ -71,26 +94,36 @@
   (let ([args : ProcessStringList
     (process-args-cons "hello" (process-args-cons "world" (process-args-empty)))])
     (let ([command : ProcessCommand
-      (process-command-with-env
-        (process-command-with-stdin
-          (process-command-with-cwd (process-command "echo" args) "target")
-          "stdin")
-        "TL_TEST"
-        "1")])
+      (process-command-with-arg
+        (process-command-with-env
+          (process-command-with-stdin
+            (process-command-with-cwd (process-command "echo" args) "target")
+            "stdin")
+          "TL_TEST"
+          "1")
+        "!")])
       (begin
         (assert-string-eq
           (process-command-executable command)
           "echo"
           "process executable")
-        (assert-process-string-list
+        (assert-process-string-list args "hello" "world" "process argv")
+        (assert-process-string-list3
           (process-command-argv command)
           "hello"
           "world"
-          "process argv")
+          "!"
+          "process argv append")
         (assert-i64-eq
           (process-args-count (process-command-argv command))
-          2
+          3
           "process argv count")
+        (assert-process-string-list3
+          (process-args-append args (process-args-single "again"))
+          "hello"
+          "world"
+          "again"
+          "process args append")
         (assert-process-some-string
           (process-command-cwd command)
           "target"
@@ -128,10 +161,29 @@
         (assert-process-invalid-command
           (process-output (process-command-with-env command "" "1"))
           "process: environment variable name is empty")
+        (assert-process-invalid-command
+          (process-output (process-command-with-env command "BAD=NAME" "1"))
+          "process: environment variable name contains '='")
         (assert-true (process-command-valid? command) "process valid command")
         (assert-false
           (process-command-valid? (process-command "" (process-args-empty)))
           "process invalid empty executable")
+        (assert-true
+          (process-result-success? (OkProcessOutput (ProcessOutput 0 "" "")))
+          "process result success")
+        (assert-false
+          (process-result-success? (OkProcessOutput (ProcessOutput 7 "" "")))
+          "process result nonzero")
+        (assert-false
+          (process-result-success?
+            (ErrProcessOutput (ProcessSpawnFailed "spawn failed")))
+          "process result error")
+        (assert-true
+          (process-error-spawn-failed? (ProcessSpawnFailed "spawn failed"))
+          "process spawn predicate")
+        (assert-true
+          (process-error-wait-failed? (ProcessWaitFailed "wait failed"))
+          "process wait predicate")
         (assert-process-unsupported
           (process-run command)
           "process: runtime execution is not implemented")

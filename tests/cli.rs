@@ -1006,6 +1006,55 @@ fn parse_prints_selfhost_program_summary() {
 }
 
 #[test]
+fn parse_renders_newer_selfhost_ast_forms() {
+    let dir = fixture_dir("selfhost-parse-new-forms");
+    let source = dir.join("main.tl");
+    fs::write(
+        &source,
+        "(comptime-decl (defstruct Point (x i64)))\n\
+         (define (main [n : i64] [xs : (Array i64)]) : i64\n\
+           (begin\n\
+             (comptime (type (Array i64 4)))\n\
+             (with-region r (int->string 41))\n\
+             (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i))))\n",
+    )
+    .expect("write source");
+    let source_arg = source.to_str().expect("source path is utf-8");
+
+    let alias = typelisp(&["parse", source_arg]);
+    let debug = typelisp(&["debug", "parse", source_arg]);
+
+    assert!(alias.status.success(), "alias stderr:\n{}", stderr(&alias));
+    assert!(debug.status.success(), "debug stderr:\n{}", stderr(&debug));
+    assert_eq!(debug.stdout, alias.stdout);
+    assert_eq!(debug.stderr, alias.stderr);
+    assert_eq!(stderr(&alias), "");
+    let out = stdout(&alias);
+    assert!(
+        out.contains("ComptimeDecl { template: DefStruct"),
+        "stdout:\n{}",
+        out
+    );
+    assert!(
+        out.contains("TypeLiteral { ty: Array(I64, 4) }"),
+        "stdout:\n{}",
+        out
+    );
+    assert!(
+        out.contains("WithRegion { region: \"r\""),
+        "stdout:\n{}",
+        out
+    );
+    assert!(out.contains("SpmdReduce { op: Sum"), "stdout:\n{}", out);
+    assert!(out.contains("index: \"i\""), "stdout:\n{}", out);
+    assert!(
+        out.contains("value: ArrayRef { expr: Var(\"xs\"), index: Var(\"i\") }"),
+        "stdout:\n{}",
+        out
+    );
+}
+
+#[test]
 fn debug_parse_matches_top_level_alias() {
     let dir = fixture_dir("debug-parse");
     let source = write_main_source(&dir);

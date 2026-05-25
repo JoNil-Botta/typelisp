@@ -78,6 +78,7 @@
         (struct-get span start-line)
         (struct-get span start-col)
         message)]
+    [(AstDeclComptimeDecl template) (tc-decl-diag template message)]
     [_ (tc-diag-at-start message)]))
 
 (define (tc-empty-env) : TcTypeEnv
@@ -740,6 +741,7 @@
       (match (tc-source-expr-policy-ok ctx func)
         [(OkTcUnit) (tc-source-expr-list-policy-ok ctx args)]
         [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprTypeLiteral ty) (tc-source-type-policy-ok ctx ty)]
     [(AstExprIf cond then-branch else-branch)
       (tc-source-expr-triple-policy-ok ctx cond then-branch else-branch)]
     [(AstExprLet bindings body)
@@ -784,6 +786,13 @@
       (match (tc-source-type-policy-ok ctx index-ty)
         [(OkTcUnit) (tc-source-expr-triple-policy-ok ctx start end body)]
         [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprSpmdReduce _ _ index-ty start end init value)
+      (match (tc-source-type-policy-ok ctx index-ty)
+        [(OkTcUnit)
+          (match (tc-source-expr-triple-policy-ok ctx start end init)
+            [(OkTcUnit) (tc-source-expr-policy-ok ctx value)]
+            [(ErrTcUnit message) (ErrTcUnit message)])]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstExprStructGet receiver _) (tc-source-expr-policy-ok ctx receiver)]
     [(AstExprWithRegion _ body) (tc-source-expr-list-policy-ok ctx body)]
     [(AstExprComptime inner) (tc-source-expr-policy-ok ctx inner)]
@@ -808,7 +817,8 @@
     [(AstDeclDefStruct _ fields) (tc-source-field-list-policy-ok ctx fields)]
     [(AstDeclImport _) OkTcUnit]
     [(AstDeclModule _) OkTcUnit]
-    [(AstDeclTest _ body _) (tc-source-expr-policy-ok ctx body)]))
+    [(AstDeclTest _ body _) (tc-source-expr-policy-ok ctx body)]
+    [(AstDeclComptimeDecl template) (tc-source-decl-policy-ok ctx template)]))
 
 (define (tc-source-decl-list-policy-ok [ctx : TcContext] [decls : AstDeclList]) : ResultTcUnit
   (match decls
@@ -1180,6 +1190,21 @@
               env
               name
               (AstTyFunc (tc-field-type-list ctx fields) (AstTyStruct name))))]
+        [(AstDeclComptimeDecl template)
+          (match template
+            [(AstDeclDefEnum name variants)
+              (match (tc-bind-enum-variants ctx env name variants)
+                [(OkTcEnv next-env) (tc-build-top-env-list ctx rest next-env)]
+                [(ErrTcEnv message) (ErrTcEnv message)])]
+            [(AstDeclDefStruct name fields)
+              (tc-build-top-env-list
+                ctx
+                rest
+                (tc-bind
+                  env
+                  name
+                  (AstTyFunc (tc-field-type-list ctx fields) (AstTyStruct name))))]
+            [_ (tc-build-top-env-list ctx rest env)])]
         [(AstDeclImport _) (tc-build-top-env-list ctx rest env)]
         [(AstDeclModule _) (tc-build-top-env-list ctx rest env)]
         [(AstDeclTest _ _ _) (tc-build-top-env-list ctx rest env)])]))
@@ -1696,6 +1721,7 @@
       (or
         (tc-expr-uses-free-name? func name bound)
         (tc-expr-list-uses-free-name? args name bound))]
+    [(AstExprTypeLiteral _) false]
     [(AstExprIf cond then-branch else-branch)
       (or
         (tc-expr-uses-free-name? cond name bound)
@@ -1755,6 +1781,17 @@
         (or
           (tc-expr-uses-free-name? end name bound)
           (tc-expr-uses-free-name? body name (tc-string-list-add bound index))))]
+    [(AstExprSpmdReduce _ index _ start end init value)
+      (or
+        (tc-expr-uses-free-name? start name bound)
+        (or
+          (tc-expr-uses-free-name? end name bound)
+          (or
+            (tc-expr-uses-free-name? init name bound)
+            (tc-expr-uses-free-name?
+              value
+              name
+              (tc-string-list-add bound index)))))]
     [(AstExprStructGet receiver _)
       (tc-expr-uses-free-name? receiver name bound)]
     [(AstExprWithRegion _ body) (tc-expr-list-uses-free-name? body name bound)]
@@ -1806,6 +1843,13 @@
           (if (string-eq name enum-name)
             (OkAstVariantDefList variants)
             (tc-program-enum-variants-list rest enum-name))]
+        [(AstDeclComptimeDecl template)
+          (match template
+            [(AstDeclDefEnum name variants)
+              (if (string-eq name enum-name)
+                (OkAstVariantDefList variants)
+                (tc-program-enum-variants-list rest enum-name))]
+            [_ (tc-program-enum-variants-list rest enum-name)])]
         [_ (tc-program-enum-variants-list rest enum-name)])]))
 
 (define (tc-program-enum-variants [program : AstProgram] [enum-name : String]) : ResultAstVariantDefList
@@ -2450,6 +2494,36 @@
                   "typecheck: foreach start expression must be integer"))]
             [(ErrTcType message) (ErrTcType message)])
           (ErrTcType "typecheck: foreach index type must be integer")))]
+    [(AstExprSpmdReduce _ index index-ty start end init value)
+      (let ([resolved-index-ty : AstType (tc-resolve-type ctx index-ty)])
+        (if (tc-integer-type? resolved-index-ty)
+          (match (tc-expr ctx env start)
+            [(OkTcType start-ty)
+              (if (tc-integer-type? start-ty)
+                (match (tc-expr ctx env end)
+                  [(OkTcType end-ty)
+                    (if (tc-integer-type? end-ty)
+                      (match (tc-expr ctx env init)
+                        [(OkTcType init-ty)
+                          (let ([value-env : TcTypeEnv
+                            (tc-bind env index resolved-index-ty)])
+                            (match (tc-expr ctx value-env value)
+                              [(OkTcType value-ty)
+                                (match (tc-expect
+                                  value-ty
+                                  init-ty
+                                  "typecheck: spmd-reduce init and value type mismatch")
+                                  [(OkTcUnit) (OkTcType init-ty)]
+                                  [(ErrTcUnit message) (ErrTcType message)])]
+                              [(ErrTcType message) (ErrTcType message)]))]
+                        [(ErrTcType message) (ErrTcType message)])
+                      (ErrTcType
+                        "typecheck: spmd-reduce end expression must be integer"))]
+                  [(ErrTcType message) (ErrTcType message)])
+                (ErrTcType
+                  "typecheck: spmd-reduce start expression must be integer"))]
+            [(ErrTcType message) (ErrTcType message)])
+          (ErrTcType "typecheck: spmd-reduce index type must be integer")))]
     [(AstExprMatch scrutinee arms)
       (match (tc-expr ctx env scrutinee)
         [(OkTcType scrut-ty) (tc-match-expr ctx env scrut-ty arms)]

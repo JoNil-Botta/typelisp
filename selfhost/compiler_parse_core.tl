@@ -16,6 +16,10 @@
   (OkAstType AstType)
   (ErrAstType String))
 
+(defenum ResultAstReduceOp
+  (OkAstReduceOp AstReduceOp)
+  (ErrAstReduceOp String))
+
 (defenum ResultAstFuncTypeParts
   (OkAstFuncTypeParts AstTypeList AstType)
   (ErrAstFuncTypeParts String))
@@ -342,6 +346,9 @@
 (define (compiler-parse-tag-expr-type-literal) : i64
   249)
 
+(define (compiler-parse-tag-expr-spmd-reduce) : i64
+  250)
+
 (define (compiler-parse-tag-lit-true) : i64
   300)
 
@@ -513,6 +520,9 @@
         (sym-i64-bind out "array-set!" (compiler-parse-tag-expr-array-set)))
       (set! out (sym-i64-bind out "match" (compiler-parse-tag-expr-match)))
       (set! out (sym-i64-bind out "foreach" (compiler-parse-tag-expr-foreach)))
+      (set!
+        out
+        (sym-i64-bind out "spmd-reduce" (compiler-parse-tag-expr-spmd-reduce)))
       (set!
         out
         (sym-i64-bind out "struct-get" (compiler-parse-tag-expr-struct-get)))
@@ -1193,6 +1203,77 @@
         [(ErrAstType message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: type expects exactly one type")]))
 
+(define (parse-ast-reduce-op [name : String]) : ResultAstReduceOp
+  (if (string-eq name "sum")
+    (OkAstReduceOp (AstReduceSum))
+    (if (string-eq name "min")
+      (OkAstReduceOp (AstReduceMin))
+      (if (string-eq name "max")
+        (OkAstReduceOp (AstReduceMax))
+        (if (string-eq name "all")
+          (OkAstReduceOp (AstReduceAll))
+          (if (string-eq name "any")
+            (OkAstReduceOp (AstReduceAny))
+            (ErrAstReduceOp
+              (string-append
+                "parse: unsupported spmd-reduce operator `"
+                (string-append
+                  name
+                  "`; expected one of sum, min, max, all, any")))))))))
+
+(define (parse-ast-spmd-reduce [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSCons
+        (SpSSym op-name _)
+        (SpSCons
+          (SpSCons
+            (SpSCons
+              (SpSSym index _)
+              (SpSCons
+                colon
+                (SpSCons
+                  index-ty
+                  (SpSCons start (SpSCons end (SpSNil _) _) _)
+                  _)
+                _)
+              _)
+            (SpSNil _)
+            _)
+          (SpSCons init (SpSCons value (SpSNil _) _) _)
+          _)
+        _)
+      (match (parse-ast-reduce-op op-name)
+        [(OkAstReduceOp op)
+          (if (sexpr-colon? (spanned-sexpr-form colon))
+            (match (parse-ast-type dispatch (spanned-sexpr-form index-ty))
+              [(OkAstType parsed-index-ty)
+                (match (parse-ast-expr dispatch start)
+                  [(OkAstExpr parsed-start)
+                    (match (parse-ast-expr dispatch end)
+                      [(OkAstExpr parsed-end)
+                        (match (parse-ast-expr dispatch init)
+                          [(OkAstExpr parsed-init)
+                            (match (parse-ast-expr dispatch value)
+                              [(OkAstExpr parsed-value)
+                                (OkAstExpr
+                                  (AstExprSpmdReduce
+                                    op
+                                    index
+                                    parsed-index-ty
+                                    parsed-start
+                                    parsed-end
+                                    parsed-init
+                                    parsed-value))]
+                              [(ErrAstExpr message) (ErrAstExpr message)])]
+                          [(ErrAstExpr message) (ErrAstExpr message)])]
+                      [(ErrAstExpr message) (ErrAstExpr message)])]
+                  [(ErrAstExpr message) (ErrAstExpr message)])]
+              [(ErrAstType message) (ErrAstExpr message)])
+            (ErrAstExpr "parse: expected ':' in spmd-reduce"))]
+        [(ErrAstReduceOp message) (ErrAstExpr message)])]
+    [(SpSCons _ _ _) (ErrAstExpr "parse: malformed spmd-reduce")]
+    [_ (ErrAstExpr "parse: malformed spmd-reduce")]))
+
 (define (parse-ast-with-region [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
     [(SpSNil _)
@@ -1353,26 +1434,35 @@
                                   (parse-ast-foreach dispatch rest)
                                   (if (=
                                     tag
-                                    (compiler-parse-tag-expr-struct-get))
-                                    (parse-ast-struct-get dispatch rest)
+                                    (compiler-parse-tag-expr-spmd-reduce))
+                                    (parse-ast-spmd-reduce dispatch rest)
                                     (if (=
                                       tag
-                                      (compiler-parse-tag-expr-comptime))
-                                      (parse-ast-comptime dispatch rest)
+                                      (compiler-parse-tag-expr-struct-get))
+                                      (parse-ast-struct-get dispatch rest)
                                       (if (=
                                         tag
-                                        (compiler-parse-tag-expr-with-region))
-                                        (parse-ast-with-region dispatch rest)
+                                        (compiler-parse-tag-expr-comptime))
+                                        (parse-ast-comptime dispatch rest)
                                         (if (=
                                           tag
                                           (compiler-parse-tag-expr-type-literal))
                                           (parse-ast-type-literal dispatch rest)
                                           (if (=
                                             tag
-                                            (compiler-parse-tag-decl-comptime-decl))
-                                            (ErrAstExpr
-                                              "parse: comptime-decl is only valid as a top-level declaration")
-                                            (parse-ast-call dispatch head rest)))))))))))))))))))))))
+                                            (compiler-parse-tag-expr-with-region))
+                                            (parse-ast-with-region
+                                              dispatch
+                                              rest)
+                                            (if (=
+                                              tag
+                                              (compiler-parse-tag-decl-comptime-decl))
+                                              (ErrAstExpr
+                                                "parse: comptime-decl is only valid as a top-level declaration")
+                                              (parse-ast-call
+                                                dispatch
+                                                head
+                                                rest))))))))))))))))))))))))
 
 (define (parse-ast-list-expr
   [dispatch : SymI64Env]
@@ -1596,9 +1686,13 @@
         [(SpSCons (SpSSym head _) template-rest _)
           (let ([tag : i64 (compiler-parse-dispatch-tag dispatch head)])
             (if (= tag (compiler-parse-tag-decl-defenum))
-              (parse-ast-defenum dispatch template-rest)
+              (match (parse-ast-defenum dispatch template-rest)
+                [(OkAstDecl decl) (OkAstDecl (AstDeclComptimeDecl decl))]
+                [(ErrAstDecl message) (ErrAstDecl message)])
               (if (= tag (compiler-parse-tag-decl-defstruct))
-                (parse-ast-defstruct dispatch template-rest)
+                (match (parse-ast-defstruct dispatch template-rest)
+                  [(OkAstDecl decl) (OkAstDecl (AstDeclComptimeDecl decl))]
+                  [(ErrAstDecl message) (ErrAstDecl message)])
                 (ErrAstDecl
                   "parse: comptime-decl accepts only defstruct or defenum"))))]
         [_
@@ -1929,7 +2023,7 @@
     [(OkAstProgram (AstProgram decls))
       (and
         (= (ast-decl-list-count decls) 2)
-        (= (ast-decl-list-tag-sum decls) 9))]
+        (= (ast-decl-list-tag-sum decls) 16))]
     [(ErrAstProgram _) false]))
 
 (define (compiler-parse-inline-test-source) : String

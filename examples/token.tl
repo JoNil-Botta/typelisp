@@ -12,9 +12,11 @@
 ;; --------------------------------------------------------------------------
 ;; Why this composes cleanly across the import boundary (the key #44/#81 signal).
 ;; --------------------------------------------------------------------------
-;; The module loader (#44) is whole-program: it concatenates every imported
-;; module's declarations into a single `Program`, imported-before-importer, then
-;; runs the unchanged `typecheck -> lower -> codegen` pipeline. Consequently:
+;; The legacy stage0 module loader (#44) is whole-program: it concatenates every
+;; imported module's declarations into a single `Program`, imported-before-
+;; importer, then runs the unchanged `typecheck -> lower -> codegen` pipeline.
+;; The selfhost namespace model specified in SPEC.md replaces this flat import
+;; behavior with qualified module identities. Consequently, in today's stage0:
 ;;
 ;;   - The imported `defenum Token` defines ONE nominal type. The importer's
 ;;     `Token` parameters/locals refer to that same type - there is no

@@ -17,15 +17,14 @@
 ;; --------------------------------------------------------------------------
 ;; The token kinds, the `token-tag` / `token-int` accessors that `match` over
 ;; `Token`, and the token-kind tag constants are factored into `token.tl`, a
-;; `main`-less module imported below. The module loader (#44) is whole-program:
-;; it concatenates every imported module's declarations into a single program,
-;; imported-before-importer, then runs the unchanged `typecheck -> lower ->
-;; codegen` pipeline. So the imported `defenum Token` defines ONE nominal type
-;; that this file's lexer constructs (`(TInt acc)`, `TPlus`, ...) and that the
-;; imported accessors `match` over - the enum's type, constructors, and `match`
-;; arms all carry across the import boundary with no cross-module identity gap
-;; (refs #44/#81). Because `token.tl` declares no `main`, the concatenation
-;; yields exactly one `main` (this file's) and no duplicate-symbol clash.
+;; `main`-less module imported below. The legacy stage0 module loader (#44) is
+;; still whole-program: it concatenates every imported module's declarations
+;; into a single program, imported-before-importer, then runs the unchanged
+;; `typecheck -> lower -> codegen` pipeline. So the imported `defenum Token`
+;; defines ONE nominal type that this file's lexer constructs (`(TInt acc)`,
+;; `TPlus`, ...) and that the imported accessors `match` over. The selfhost
+;; namespace model specified in SPEC.md replaces this flat import behavior with
+;; qualified module identities.
 ;;
 ;; --------------------------------------------------------------------------
 ;; The unification that makes lex -> parse direct: a single `(Array Token)`.

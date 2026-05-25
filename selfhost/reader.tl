@@ -21,17 +21,14 @@
 ;; pulls in BOTH the `lex` entry and the `Token` enum + token accessors/tag
 ;; constants.
 ;;
-;; The module loader (#44) is whole-program: it concatenates every reachable
-;; module's declarations (post-order DFS: imported-before-importer), then runs
-;; the unchanged pipeline. So the load order is `token.tl`, then `lex.tl`,
-;; then this file. Crucially, NONE of the imported modules declares a `main` -
-;; only this reader does - so the concatenated program has exactly one `main`
-;; and there is no duplicate-symbol clash. (Importing the `main`-bearing
-;; `lexer.tl` demo instead would have clashed; that is why the reusable lexer
-;; lives in the `main`-less `lex.tl`.) The imported `defenum Token` is ONE
-;; nominal type, so the `(array-ref toks i)` values this reader classifies are
-;; the very `Token` values the imported `lex` constructed - the enum, its
-;; constructors, and the accessors' `match` arms all carry across the boundary.
+;; The legacy stage0 module loader (#44) is whole-program: it concatenates every
+;; reachable module's declarations (post-order DFS: imported-before-importer),
+;; then runs the unchanged pipeline. So the load order is `token.tl`, then
+;; `lex.tl`, then this file. Crucially, NONE of the imported modules declares a
+;; `main` - only this reader does - so the concatenated program has exactly one
+;; `main` and there is no duplicate-symbol clash. The selfhost namespace model
+;; specified in SPEC.md replaces this flat import behavior with qualified module
+;; identities.
 (import "lex.tl")
 
 ;; --------------------------------------------------------------------------

@@ -323,7 +323,10 @@ string. External symbols are emitted without the `_tl_` TypeLisp function
 prefix. Identifier punctuation is converted to assembler-safe symbol text; for
 example, hyphens become underscores and `?` becomes `_question`. Extern
 signatures may use the backend ABI value types, including pointer-valued
-`String`, dynamic array, enum, and struct values.
+`String`, dynamic array, enum, and struct values. Exact external symbol
+metadata, including symbols that should not be derived from the TypeLisp
+identifier spelling, is owned by #911 and is separate from TypeLisp
+module-prefixed user symbols.
 
 Example:
 ```lisp test=check name=extern-declaration
@@ -332,7 +335,11 @@ Example:
 
 ### 4.4 `(import "path.tl")` — module import
 
-Imports another TypeLisp file. All top-level definitions from the imported file become available.
+Imports another TypeLisp file. The current Rust stage0 loader still behaves as
+a legacy whole-program concatenation model: all top-level definitions from the
+imported file become available in one flat namespace. The selfhost module model
+specified below replaces that with canonical module identities, explicit
+exports, and qualified lookup.
 
 - Relative paths are resolved from the importing file's directory.
 - Absolute filesystem paths are accepted by the underlying path resolver.
@@ -355,9 +362,139 @@ Imports another TypeLisp file. All top-level definitions from the imported file 
   documented in `stdlib/README.md`.
 - During package builds, imports of the form `pkg:<alias>/<path>` resolve
   from a dependency package root declared in the current `typelisp.pkg`.
-  Package import suffixes must stay below that dependency root. Imported
-  declarations share the same flat top-level namespace as ordinary modules, so
-  duplicate value or type names are errors.
+  Package import suffixes must stay below that dependency root. Under the
+  legacy loader, imported declarations still share the same flat top-level
+  namespace as ordinary modules, so duplicate value or type names are errors.
+
+#### 4.4.1 Selfhost module identities and imports (specified, pending slices)
+
+A module has a canonical identity independent of the source path spelling that
+loaded it. If a source file contains an explicit `(module ident)` declaration,
+that identity is the canonical module identity for following declarations until
+another `(module ident)` declaration appears. During migration, files without an
+explicit module declaration use the loader's normalized source identity as their
+canonical identity. Different path spellings that normalize to the same source
+file must load one module instance.
+
+The canonical identity is a slash-separated identifier path such as
+`stdlib/string`, `compiler/lower`, or `math/vector`. It must be stable across
+platform path separators and package-root spellings. A `pkg:<alias>/...` import
+contributes the package alias to the loader identity, but an explicit `(module
+...)` declaration inside the file remains the public source-level identity.
+
+Importing a module loads it and binds a module alias; it does not merge exported
+declarations into the local unqualified namespace by default. The default alias
+is the final segment of the imported module identity. If that alias would
+collide with an existing module alias, the import is rejected unless the source
+uses an explicit alias:
+
+```lisp test=ignore name=module-import-alias-syntax reason="selfhost module aliases are tracked by #952"
+(import "math/vector.tl" :as vec)
+(import "io/vector.tl" :as io-vec)
+```
+
+Selected imports remain deferred in v1. Spellings such as
+`(import "math/vector.tl" :only (dot norm))` are reserved and must be rejected
+until a follow-up specifies their shadowing and re-export rules.
+
+#### 4.4.2 Exports and visibility
+
+Module declarations are private by default. Other modules may use only exported
+items through a qualified name. Value and type namespaces remain separate:
+
+- Value exports cover function `define`s, variable `define`s, and TypeLisp
+  declarations for `extern`s.
+- Type exports cover enum and struct type names.
+- Enum variant constructors and struct constructors/accessors are value-space
+  capabilities that must be exported explicitly or through a transparent type
+  export.
+
+V1 export syntax is an explicit top-level form:
+
+```lisp test=ignore name=module-export-syntax reason="selfhost exports are tracked by #910/#952"
+(module geometry)
+
+(defstruct Point
+  (x i64)
+  (y i64))
+
+(export
+  (type Point)
+  (constructor Point)
+  (field Point x)
+  (field Point y))
+```
+
+`(export (type Point))` exports only the nominal type name. For structs this is
+an opaque type export: external modules can mention `geometry/Point` but cannot
+construct it or read fields unless the constructor and fields are also exported.
+For enums, exporting only the type keeps variants private; variants can be
+exported separately with `(variant VariantName)`. A transparent convenience
+form such as `(type Point :transparent)` may be added later, but v1 semantics
+are defined by the explicit item forms above.
+
+Duplicate exports of the same item are accepted as idempotent only if they name
+the same namespace item. Unknown export names and namespace mistakes, such as
+exporting a type as a value, are rejected.
+
+#### 4.4.3 Qualified lookup
+
+Qualified names use `/`: `alias/name` for one alias segment and
+`module/path/name` for canonical module paths when no local alias is used.
+Unqualified lookup searches only local declarations and local bindings. It does
+not search imported modules.
+
+Qualified lookup applies to:
+
+- Values: `(vec/dot a b)`, `config/default-timeout`.
+- Types: `[p : geometry/Point]`.
+- Enum variants and patterns: `(json/Some value)` and `[(json/Err e) ...]`.
+- Struct constructors: `(geometry/Point 3 4)`.
+- Struct fields: `(struct-get p x)` resolves `x` through the receiver's struct
+  type; exporting the field controls whether external modules may use it.
+- Generated declarations: generated family keys include the generator module
+  identity plus the generated declaration identity.
+
+Missing module aliases, ambiguous aliases, missing qualified members, private
+members, and using a value-qualified name where a type is required are
+source-located errors.
+
+Example with colliding local names:
+
+```lisp test=ignore name=qualified-colliding-modules reason="selfhost qualified imports are tracked by #952"
+;; left.tl
+(module left)
+(export (value get))
+(define same : i64 20)
+(define (get) : i64 same)
+
+;; right.tl
+(module right)
+(export (value get))
+(define same : i64 22)
+(define (get) : i64 same)
+
+;; main.tl
+(import "left.tl")
+(import "right.tl")
+(define (main) : i64 (+ (left/get) (right/get)))
+```
+
+#### 4.4.4 TypeLisp linker symbols
+
+The TypeLisp declaration identity used by lowering and backend symbol emission
+is `(canonical-module-identity, declaration-identity)`. User TypeLisp linker
+symbols are deterministic assembler-safe encodings of both parts, with one
+special entry rule: the selected entry declaration named `main` emits the host
+entry symbol `main`, while any other declaration named `main` receives a normal
+module-prefixed TypeLisp symbol.
+
+Exact external FFI linker names are not defined by this module model. `extern`
+declarations keep a TypeLisp declaration identity for lookup and visibility,
+but backend calls may bypass TypeLisp prefixing only when explicit external
+symbol metadata from #911 says to do so. Runtime helper symbols and
+backend-local labels are likewise outside module-prefixing and must not be
+accidentally rewritten as user declarations.
 
 ### 4.5 `(test name body...)` - inline test item
 
@@ -412,10 +549,11 @@ Example:
   `target/typelisp/<package-name>/<package-name>.s` in the package root.
 - Package-root-qualified imports use the reserved string prefix
   `pkg:<alias>/...`, for example `(import "pkg:math/src/lib.tl")`.
-- This first package layer has no registry, semantic-version solving, transitive
-  manifest loading, namespace isolation, qualified symbol access, implicit
-  preludes, lockfile, workspace model, or native executable build promise for
-  package manifests.
+- This first package layer has no registry, semantic-version solving,
+  transitive manifest loading, implicit preludes, lockfile, workspace model, or
+  native executable build promise for package manifests. Namespace isolation and
+  qualified symbol access are specified by the selfhost module model in section
+  4.4, not by package resolution itself.
 
 ### 4.6 `(defenum ...)` and `(defstruct ...)`
 
@@ -1491,7 +1629,9 @@ program       ::= top-level*
 top-level     ::= define-var
                 | define-func
                 | extern-decl
+                | module-decl
                 | import-decl
+                | export-decl
                 | defenum
                 | defstruct
                 | test-decl
@@ -1499,7 +1639,14 @@ top-level     ::= define-var
 define-var    ::= "(" "define" ident [":" type] expr ")"
 define-func   ::= "(" "define" "(" ident param* ")" [":" type] expr ")"
 extern-decl   ::= "(" "extern" ident ":" type ")"
-import-decl   ::= "(" "import" string ")"
+module-decl   ::= "(" "module" module-ident ")"
+import-decl   ::= "(" "import" string [":as" ident] ")"
+export-decl   ::= "(" "export" export-item+ ")"
+export-item   ::= "(" "value" ident ")"
+                | "(" "type" ident ")"
+                | "(" "constructor" ident ")"
+                | "(" "field" ident ident ")"
+                | "(" "variant" ident ")"
 defenum       ::= "(" "defenum" ident variant+ ")"
 defstruct     ::= "(" "defstruct" ident field+ ")"
 test-decl     ::= "(" "test" ident expr+ ")"
@@ -1548,6 +1695,7 @@ type          ::= "i64" | "i32" | "i16" | "i8"
                 | "(" "in" ident type ")"              ; region-tagged (v1)
                 | ident                                ; enum or struct name
 
+module-ident  ::= ident ("/" ident)*
 ident         ::= [a-zA-Z_][a-zA-Z0-9_!?+-=*/<>:]*
 integer       ::= [-]?[0-9]+
 float         ::= [-]?[0-9]+\.[0-9]+

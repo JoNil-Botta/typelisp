@@ -395,6 +395,16 @@
     [(AstTyDynArray elem) (front-cat3 "DynArray(" (front-type-render elem) ")")]
     [(AstTyPtr elem) (front-cat3 "Ptr(" (front-type-render elem) ")")]
     [(AstTyMutPtr elem) (front-cat3 "MutPtr(" (front-type-render elem) ")")]
+    [(AstTyRef region inner)
+      (front-cat3
+        "Ref(\""
+        region
+        (front-cat3 "\", " (front-type-render inner) ")"))]
+    [(AstTyMutRef region inner)
+      (front-cat3
+        "MutRef(\""
+        region
+        (front-cat3 "\", " (front-type-render inner) ")"))]
     [(AstTyRegion region inner)
       (front-cat3
         "Region(\""

@@ -179,6 +179,8 @@
     [(AstTyFunc _ _) true]
     [(AstTyPtr _) true]
     [(AstTyMutPtr _) true]
+    [(AstTyRef _ _) true]
+    [(AstTyMutRef _ _) true]
     [_ false]))
 
 (define (compiler-reg-var-type-insert

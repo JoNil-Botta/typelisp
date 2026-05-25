@@ -2691,6 +2691,29 @@
           "(define (main) : i64 (let [] 0))"
           "parse: malformed let binding")))))
 
+(define (compiler-parse-spmd-tests-ok?) : bool
+  (and
+    (compiler-parse-ok?
+      "(define (main) : i64 (begin (foreach ([i : i64 0 3]) unit) 0))")
+    (and
+      (compiler-parse-ok?
+        "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))")
+      (and
+        (compiler-parse-error-ok?
+          "(define (main) : i64 (begin (foreach ([i i64 0 3 4]) unit) 0))"
+          "parse: expected ':' in foreach")
+        (and
+          (compiler-parse-error-ok?
+            "(define (main) : i64 (begin (foreach ([i : i64 0]) unit) 0))"
+            "parse: malformed foreach binding")
+          (and
+            (compiler-parse-error-ok?
+              "(define (main) : i64 (begin (foreach) 0))"
+              "parse: malformed foreach")
+            (compiler-parse-error-ok?
+              "(define (main) : i64 (spmd-reduce sum))"
+              "parse: malformed spmd-reduce")))))))
+
 (define (compiler-parse-smoke) : i64
   (match (parse-ast-source (compiler-parse-smoke-source))
     [(OkAstProgram program)
@@ -2727,7 +2750,7 @@
           (compiler-parse-error-tests-ok?)
           (and
             (compiler-parse-declaration-tests-ok?)
-            (compiler-parse-let-tests-ok?)))
+            (and (compiler-parse-let-tests-ok?) (compiler-parse-spmd-tests-ok?))))
           42
           (begin
             (panic "parse: error-path self-tests failed")

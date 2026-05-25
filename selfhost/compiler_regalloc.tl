@@ -107,6 +107,8 @@
     [(AstTyBool) true]
     [(AstTyChar) true]
     [(AstTyFunc _ _) true]
+    [(AstTyPtr _) true]
+    [(AstTyMutPtr _) true]
     [_ false]))
 
 (define (compiler-reg-var-type-insert

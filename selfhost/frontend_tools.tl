@@ -393,6 +393,8 @@
         (front-type-render elem)
         (front-cat3 ", " (int->string count) ")"))]
     [(AstTyDynArray elem) (front-cat3 "DynArray(" (front-type-render elem) ")")]
+    [(AstTyPtr elem) (front-cat3 "Ptr(" (front-type-render elem) ")")]
+    [(AstTyMutPtr elem) (front-cat3 "MutPtr(" (front-type-render elem) ")")]
     [(AstTyRegion region inner)
       (front-cat3
         "Region(\""

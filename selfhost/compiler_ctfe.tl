@@ -546,6 +546,14 @@
       (match b
         [(AstTyDynArray b-elem) (ctfe-type-eq a-elem b-elem)]
         [_ false])]
+    [(AstTyPtr a-elem)
+      (match b
+        [(AstTyPtr b-elem) (ctfe-type-eq a-elem b-elem)]
+        [_ false])]
+    [(AstTyMutPtr a-elem)
+      (match b
+        [(AstTyMutPtr b-elem) (ctfe-type-eq a-elem b-elem)]
+        [_ false])]
     [(AstTyRegion a-region a-inner)
       (match b
         [(AstTyRegion b-region b-inner)
@@ -606,9 +614,37 @@
         [_ false])]
     [(ErrCtfe _) false]))
 
+(define (compiler-ctfe-raw-pointer-type-comparison-ok?) : bool
+  (match (compiler-ctfe-eval
+    (AstExprBinary
+      (AstBinEq)
+      (AstExprTypeLiteral (AstTyPtr (AstTyI64)))
+      (AstExprTypeLiteral (AstTyPtr (AstTyI64))))
+    (ctfe-env-empty)
+    (ctfe-fuel-limit))
+    [(OkCtfe same _)
+      (match same
+        [(CtfeBool same-ok)
+          (match (compiler-ctfe-eval
+            (AstExprBinary
+              (AstBinEq)
+              (AstExprTypeLiteral (AstTyPtr (AstTyI64)))
+              (AstExprTypeLiteral (AstTyMutPtr (AstTyI64))))
+            (ctfe-env-empty)
+            (ctfe-fuel-limit))
+            [(OkCtfe different _)
+              (match different
+                [(CtfeBool different-ok) (and same-ok (not different-ok))]
+                [_ false])]
+            [(ErrCtfe _) false])]
+        [_ false])]
+    [(ErrCtfe _) false]))
+
 (define (compiler-ctfe-self-test) : i64
   (if (compiler-ctfe-type-literal-ok?)
     (if (compiler-ctfe-type-comparison-ok?)
-      42
+      (if (compiler-ctfe-raw-pointer-type-comparison-ok?)
+        42
+        1)
       1)
     1))

@@ -507,6 +507,8 @@
     [(AstTyTuple _) 8]
     [(AstTyArray elem count) (* (compiler-backend-type-size elem) count)]
     [(AstTyDynArray _) 8]
+    [(AstTyPtr _) 8]
+    [(AstTyMutPtr _) 8]
     [(AstTyRegion _ inner) (compiler-backend-type-size inner)]
     [(AstTyEnum _) 8]
     [(AstTyStruct _) 8]

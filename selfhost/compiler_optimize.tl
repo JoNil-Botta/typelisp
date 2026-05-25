@@ -1054,6 +1054,14 @@
       (match b
         [(AstTyDynArray b-item) (opt-type-eq a-item b-item)]
         [_ false])]
+    [(AstTyPtr a-item)
+      (match b
+        [(AstTyPtr b-item) (opt-type-eq a-item b-item)]
+        [_ false])]
+    [(AstTyMutPtr a-item)
+      (match b
+        [(AstTyMutPtr b-item) (opt-type-eq a-item b-item)]
+        [_ false])]
     [(AstTyRegion a-region a-inner)
       (match b
         [(AstTyRegion b-region b-inner)

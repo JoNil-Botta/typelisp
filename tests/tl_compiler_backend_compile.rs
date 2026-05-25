@@ -290,6 +290,10 @@ fn compiler_optimize_tl_compiles_to_assembly() {
         "_tl_opt_fold_binop:",
         "_tl_opt_const_lookup:",
         "_tl_compiler_optimize_self_test:",
+        // Strength reduction / algebraic identities (#924).
+        "_tl_opt_strength_instrs:",
+        "_tl_opt_strength_binop:",
+        "_tl_compiler_optimize_strength_self_test:",
         // Dead-code elimination pass (#544).
         "_tl_opt_collect_instrs_uses:",
         "_tl_opt_dce_instrs:",

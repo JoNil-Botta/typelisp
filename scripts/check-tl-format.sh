@@ -50,11 +50,13 @@ mkdir -p "$WORKDIR"
 ALL_FILES="$WORKDIR/all-files.txt"
 CHECK_FILES="$WORKDIR/check-files.txt"
 
-# The first CI gate covers the requested checked-in source roots. `git ls-files`
-# naturally excludes target/, generated test output, and untracked temporaries.
-git ls-files '*.tl' |
-    grep -E '^(selfhost|stdlib|examples|tests/(integration|inline))/' |
-    sort > "$ALL_FILES"
+# Check every git-tracked *.tl file in the repository so TypeLisp code in any
+# directory (including tools/, benchmarks/) meets the same formatting standard.
+# Exclusions below are explicit:
+#   - tests/format_golden/ — these are formatter golden-test fixtures that
+#     intentionally encode specific formatting; formatting them would destroy
+#     the test assertions.
+git ls-files '*.tl' | grep -v '^tests/format_golden/' | sort > "$ALL_FILES"
 
 cp "$ALL_FILES" "$CHECK_FILES"
 

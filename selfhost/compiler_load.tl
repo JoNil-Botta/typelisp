@@ -812,6 +812,20 @@
                 (sym-i64-contains seen "tr.entry")))))]
       [(ErrCompilerLoadWithPaths _) false])))
 
+;; An `(import ...)` of a path that does not resolve to a readable file reports
+;; a `cannot read import <path>` diagnostic (the imported-file diagnostic; #1074).
+(define (compiler-load-missing-import-ok?) : bool
+  (match (compiler-load-source
+    "src/app.tl"
+    "(import \"no_such_module_xyz.tl\")
+(define value : i64 1)"
+    (sym-i64-empty))
+    [(ErrCompilerLoad diag)
+      (string-eq
+        (compiler-diagnostic-message diag)
+        "compiler-load: cannot read import src/no_such_module_xyz.tl")]
+    [(OkCompilerLoad _ _) false]))
+
 (define (compiler-load-self-test) : i64
   (if (compiler-load-normalize-ok?)
     (if (compiler-load-source-provenance-ok?)
@@ -822,7 +836,11 @@
               (if (compiler-load-file-fallback-path-dedup-ok?)
                 (if (compiler-load-diamond-import-ok?)
                   (if (compiler-load-transitive-import-ok?)
-                    42
+                    (if (compiler-load-missing-import-ok?)
+                      42
+                      (begin
+                        (panic "compiler-load: missing import smoke mismatch")
+                        0))
                     (begin
                       (panic "compiler-load: transitive import smoke mismatch")
                       0))

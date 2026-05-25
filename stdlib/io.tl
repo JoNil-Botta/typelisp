@@ -4,14 +4,13 @@
 ;;;; I/O primitives, mirroring how `stdlib/string.tl` wraps string primitives.
 ;;;;
 ;;;; Primitives required from the compiler/runtime: `read-file`, `write-file`,
-;;;; `file-exists?`, `read-stdin-line`, `read-stdin-bytes`, `stdin-eof?`,
-;;;; `print-string`, `print-error`, `flush-stdout`, `int->string`,
-;;;; `string-append`, and `string-length`.
+;;;; `file-exists?`, `read-file-status`, `write-file-status`,
+;;;; `file-exists-status`, `read-stdin-line`, `read-stdin-bytes`,
+;;;; `stdin-eof?`, `print-string`, `print-error`, `flush-stdout`,
+;;;; `int->string`, `string-append`, and `string-length`.
 ;;;;
-;;;; The `try-*` helpers return explicit monomorphic result enums. The current
-;;;; runtime can classify empty paths and expected read absence before calling
-;;;; panic-on-error primitives; other host I/O failures still require
-;;;; recoverable runtime primitives.
+;;;; The `try-*` helpers return explicit monomorphic result enums. Host errors
+;;;; are reported through status-code primitives and mapped into `IoError`.
 ;;;;
 ;;;; Usage: `(import "stdlib/io.tl")`
 ;;;;
@@ -60,6 +59,42 @@
   (text String)
   (eof bool))
 
+;;; Portable errno-style status code used by runtime helpers for success.
+(define io-status-ok : i64
+  0)
+
+;;; Common host status code for interrupted syscalls.
+(define io-status-interrupted : i64
+  4)
+
+;;; Common host status code for I/O errors such as short writes.
+(define io-status-io-error : i64
+  5)
+
+;;; Common host status code for paths that cannot be accessed due to permissions.
+(define io-status-permission-denied : i64
+  13)
+
+;;; Common host status code for a missing file or final path component.
+(define io-status-not-found : i64
+  2)
+
+;;; Common host status code for a missing path prefix component.
+(define io-status-not-directory : i64
+  20)
+
+;;; Common host status code for trying to read a directory as a file.
+(define io-status-is-directory : i64
+  21)
+
+;;; Common host status code for invalid arguments or path encodings.
+(define io-status-invalid : i64
+  22)
+
+;;; Common Linux host status code for an overlong path.
+(define io-status-name-too-long : i64
+  36)
+
 ;;; Return true when `path` is syntactically empty.
 (define (io-empty-path? [path : String]) : bool
   (= (string-length path) 0))
@@ -96,29 +131,53 @@
     [(IoUnsupported _) true]
     [_ false]))
 
+;;; Return true when `code` means a path is absent rather than a hard probe error.
+(define (io-status-expected-absence? [code : i64]) : bool
+  (if (= code io-status-not-found)
+    true
+    (= code io-status-not-directory)))
+
+;;; Convert a runtime status code into the public structured error model.
+(define (io-error-from-status [path : String] [code : i64]) : IoError
+  (if (io-status-expected-absence? code)
+    (IoNotFound path)
+    (if (= code io-status-permission-denied)
+      (IoPermissionDenied path)
+      (if (= code io-status-invalid)
+        (IoInvalidPath path)
+        (if (= code io-status-name-too-long)
+          (IoInvalidPath path)
+          (if (= code io-status-interrupted)
+            (IoInterrupted path)
+            (if (= code io-status-is-directory)
+              (IoUnsupported path)
+              (if (= code io-status-ok)
+                (IoUnknown path)
+                (IoSystemCode code path)))))))))
+
 ;;; Read `path` and return either its contents or a structured I/O error.
 ;;;
 ;;; Missing paths return `IoNotFound`. Empty paths return `IoInvalidPath`.
-;;; Other host read failures still panic in the underlying runtime primitive
-;;; until recoverable file runtime support lands.
 (define (try-read-file [path : String]) : ResultIoString
   (if (io-empty-path? path)
     (ErrIoString (IoInvalidPath path))
-    (if (file-exists? path)
-      (OkIoString (read-file path))
-      (ErrIoString (IoNotFound path)))))
+    (let
+      [status : i64 (read-file-status path)]
+      (if (= status io-status-ok)
+        (OkIoString (read-file path))
+        (ErrIoString (io-error-from-status path status))))))
 
 ;;; Write `contents` to `path`, returning a structured result.
 ;;;
-;;; Empty paths return `IoInvalidPath`. Other host write failures still panic in
-;;; the underlying runtime primitive until recoverable file runtime support
-;;; lands.
+;;; Empty paths return `IoInvalidPath`.
 (define (try-write-file [path : String] [contents : String]) : ResultIoUnit
   (if (io-empty-path? path)
     (ErrIoUnit (IoInvalidPath path))
-    (begin
-      (write-file path contents)
-      OkIoUnit)))
+    (let
+      [status : i64 (write-file-status path contents)]
+      (if (= status io-status-ok)
+        OkIoUnit
+        (ErrIoUnit (io-error-from-status path status))))))
 
 ;;; Probe whether `path` exists, returning a structured result.
 ;;;
@@ -127,13 +186,18 @@
 (define (try-file-exists? [path : String]) : ResultIoBool
   (if (io-empty-path? path)
     (ErrIoBool (IoInvalidPath path))
-    (OkIoBool (file-exists? path))))
+    (let
+      [status : i64 (file-exists-status path)]
+      (if (= status io-status-ok)
+        (OkIoBool true)
+        (if (io-status-expected-absence? status)
+          (OkIoBool false)
+          (ErrIoBool (io-error-from-status path status)))))))
 
 ;;; Append `contents` to `path`, returning a structured result.
 ;;;
 ;;; This helper is non-atomic and rewrites the whole file. It can recover from
-;;; missing reads by creating the file, but hard write failures still inherit the
-;;; current runtime primitive's panic behavior.
+;;; missing reads by creating the file.
 (define (try-append-file [path : String] [contents : String]) : ResultIoUnit
   (if (io-empty-path? path)
     (ErrIoUnit (IoInvalidPath path))
@@ -168,8 +232,7 @@
 
 ;;; Return true when `path` exists and its contents are non-empty.
 ;;;
-;;; Structured errors return false. Hard host failures may still panic in the
-;;; underlying runtime primitive until recoverable file runtime support lands.
+;;; Structured errors return false.
 (define (file-nonempty? [path : String]) : bool
   (match (try-read-file path)
     [(OkIoString contents) (> (string-length contents) 0)]

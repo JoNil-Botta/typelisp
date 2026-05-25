@@ -2836,19 +2836,33 @@
                                       provides-file-exists
                                       (if (string-eq
                                         name
-                                        ".L_tl_read_stdin_line")
-                                        read-line
+                                        ".L_tl_read_file_status")
+                                        provides-read-file
                                         (if (string-eq
                                           name
-                                          ".L_tl_read_stdin_bytes")
-                                          read-bytes
-                                          (if (string-eq name ".L_tl_stdin_eof")
-                                            stdin-eof
+                                          ".L_tl_write_file_status")
+                                          provides-write-file
+                                          (if (string-eq
+                                            name
+                                            ".L_tl_file_exists_status")
+                                            provides-file-exists
                                             (if (string-eq
                                               name
-                                              ".L_tl_flush_stdout")
-                                              flush-stdout
-                                              false))))))))))))))))))))]))
+                                              ".L_tl_read_stdin_line")
+                                              read-line
+                                              (if (string-eq
+                                                name
+                                                ".L_tl_read_stdin_bytes")
+                                                read-bytes
+                                                (if (string-eq
+                                                  name
+                                                  ".L_tl_stdin_eof")
+                                                  stdin-eof
+                                                  (if (string-eq
+                                                    name
+                                                    ".L_tl_flush_stdout")
+                                                    flush-stdout
+                                                    false)))))))))))))))))))))))]))
 
 (define (compiler-backend-runtime-plan-for
   [functions : CompilerIrFunctionList]
@@ -2902,6 +2916,18 @@
       (compiler-backend-extern-list-references? externs ".L_tl_write_file")]
     [extern-file-exists : bool
       (compiler-backend-extern-list-references? externs ".L_tl_file_exists")]
+    [extern-read-file-status : bool
+      (compiler-backend-extern-list-references?
+        externs
+        ".L_tl_read_file_status")]
+    [extern-write-file-status : bool
+      (compiler-backend-extern-list-references?
+        externs
+        ".L_tl_write_file_status")]
+    [extern-file-exists-status : bool
+      (compiler-backend-extern-list-references?
+        externs
+        ".L_tl_file_exists_status")]
     [extern-read-line : bool
       (compiler-backend-extern-list-references? externs ".L_tl_read_stdin_line")]
     [extern-read-bytes : bool
@@ -2944,6 +2970,16 @@
       (compiler-backend-function-list-calls? functions ".L_tl_write_file")]
     [calls-file-exists : bool
       (compiler-backend-function-list-calls? functions ".L_tl_file_exists")]
+    [calls-read-file-status : bool
+      (compiler-backend-function-list-calls? functions ".L_tl_read_file_status")]
+    [calls-write-file-status : bool
+      (compiler-backend-function-list-calls?
+        functions
+        ".L_tl_write_file_status")]
+    [calls-file-exists-status : bool
+      (compiler-backend-function-list-calls?
+        functions
+        ".L_tl_file_exists_status")]
     [calls-read-line : bool
       (compiler-backend-function-list-calls? functions ".L_tl_read_stdin_line")]
     [calls-read-bytes : bool
@@ -2977,9 +3013,18 @@
         (and (not defines-print-err) (or extern-print-err calls-print-err))]
       [needs-arg-count : bool (or extern-arg-count calls-arg-count)]
       [needs-arg : bool (or extern-arg calls-arg)]
-      [needs-read-file : bool (or extern-read-file calls-read-file)]
-      [needs-write-file : bool (or extern-write-file calls-write-file)]
-      [needs-file-exists : bool (or extern-file-exists calls-file-exists)]
+      [needs-read-file : bool
+        (or
+          (or extern-read-file calls-read-file)
+          (or extern-read-file-status calls-read-file-status))]
+      [needs-write-file : bool
+        (or
+          (or extern-write-file calls-write-file)
+          (or extern-write-file-status calls-write-file-status))]
+      [needs-file-exists : bool
+        (or
+          (or extern-file-exists calls-file-exists)
+          (or extern-file-exists-status calls-file-exists-status))]
       [needs-read-line : bool (or extern-read-line calls-read-line)]
       [needs-read-bytes : bool (or extern-read-bytes calls-read-bytes)]
       [needs-stdin-eof : bool (or extern-stdin-eof calls-stdin-eof)]
@@ -3755,6 +3800,234 @@ tl_print_err:
 
 ")
 
+(define (compiler-backend-runtime-read-file-status-functions) : String
+  ".L_tl_read_file_status:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    sub $8, %rsp
+    movq %rdi, %rbx
+    movq %rsi, %r12
+    cmpq $0, %r12
+    jl .L_tl_read_file_status_invalid
+    movq %r12, %rdi
+    addq $1, %rdi
+    js .L_tl_read_file_status_invalid
+    call tl_alloc
+    movq %rax, %r13
+    xorq %rcx, %rcx
+.L_tl_read_file_status_path_copy_loop:
+    cmpq %r12, %rcx
+    jge .L_tl_read_file_status_path_copy_done
+    movzbl (%rbx,%rcx), %edx
+    movb %dl, (%r13,%rcx)
+    incq %rcx
+    jmp .L_tl_read_file_status_path_copy_loop
+.L_tl_read_file_status_path_copy_done:
+    movb $0, (%r13,%r12)
+    movq $257, %rax
+    movq $-100, %rdi
+    movq %r13, %rsi
+    xorq %rdx, %rdx
+    xorq %r10, %r10
+    syscall
+    testq %rax, %rax
+    js .L_tl_read_file_status_error_from_rax
+    movq %rax, %rbx
+    movq $8, %rax
+    movq %rbx, %rdi
+    xorq %rsi, %rsi
+    movq $2, %rdx
+    syscall
+    testq %rax, %rax
+    js .L_tl_read_file_status_close_error_from_rax
+    movq %rax, %r13
+    movq $8, %rax
+    movq %rbx, %rdi
+    xorq %rsi, %rsi
+    xorq %rdx, %rdx
+    syscall
+    testq %rax, %rax
+    js .L_tl_read_file_status_close_error_from_rax
+    cmpq $0, %r13
+    je .L_tl_read_file_status_close_success
+    xorq %rax, %rax
+    movq %rbx, %rdi
+    leaq -32(%rbp), %rsi
+    movq $1, %rdx
+    syscall
+    testq %rax, %rax
+    js .L_tl_read_file_status_close_error_from_rax
+.L_tl_read_file_status_close_success:
+    movq $3, %rax
+    movq %rbx, %rdi
+    syscall
+    testq %rax, %rax
+    js .L_tl_read_file_status_error_from_rax
+    xorq %rax, %rax
+    jmp .L_tl_read_file_status_return
+.L_tl_read_file_status_close_error_from_rax:
+    negq %rax
+    movq %rax, %r12
+    movq $3, %rax
+    movq %rbx, %rdi
+    syscall
+    movq %r12, %rax
+    jmp .L_tl_read_file_status_return
+.L_tl_read_file_status_error_from_rax:
+    negq %rax
+    jmp .L_tl_read_file_status_return
+.L_tl_read_file_status_invalid:
+    movq $22, %rax
+.L_tl_read_file_status_return:
+    add $8, %rsp
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+")
+
+(define (compiler-backend-runtime-write-file-status-functions) : String
+  ".L_tl_write_file_status:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    sub $8, %rsp
+    movq %rdi, %rbx
+    movq %rsi, %r12
+    movq %rdx, %r13
+    movq %rcx, %r14
+    cmpq $0, %r12
+    jl .L_tl_write_file_status_invalid
+    cmpq $0, %r14
+    jl .L_tl_write_file_status_invalid
+    movq %r12, %rdi
+    addq $1, %rdi
+    js .L_tl_write_file_status_invalid
+    call tl_alloc
+    movq %rax, %r15
+    xorq %rcx, %rcx
+.L_tl_write_file_status_path_copy_loop:
+    cmpq %r12, %rcx
+    jge .L_tl_write_file_status_path_copy_done
+    movzbl (%rbx,%rcx), %edx
+    movb %dl, (%r15,%rcx)
+    incq %rcx
+    jmp .L_tl_write_file_status_path_copy_loop
+.L_tl_write_file_status_path_copy_done:
+    movb $0, (%r15,%r12)
+    movq $257, %rax
+    movq $-100, %rdi
+    movq %r15, %rsi
+    movq $577, %rdx
+    movq $438, %r10
+    syscall
+    testq %rax, %rax
+    js .L_tl_write_file_status_error_from_rax
+    movq %rax, %r15
+    movq $1, %rax
+    movq %r15, %rdi
+    movq %r13, %rsi
+    movq %r14, %rdx
+    syscall
+    testq %rax, %rax
+    js .L_tl_write_file_status_close_error_from_rax
+    cmpq %r14, %rax
+    jne .L_tl_write_file_status_short_write
+    movq $3, %rax
+    movq %r15, %rdi
+    syscall
+    testq %rax, %rax
+    js .L_tl_write_file_status_error_from_rax
+    xorq %rax, %rax
+    jmp .L_tl_write_file_status_return
+.L_tl_write_file_status_short_write:
+    movq $5, %r12
+    movq $3, %rax
+    movq %r15, %rdi
+    syscall
+    movq %r12, %rax
+    jmp .L_tl_write_file_status_return
+.L_tl_write_file_status_close_error_from_rax:
+    negq %rax
+    movq %rax, %r12
+    movq $3, %rax
+    movq %r15, %rdi
+    syscall
+    movq %r12, %rax
+    jmp .L_tl_write_file_status_return
+.L_tl_write_file_status_error_from_rax:
+    negq %rax
+    jmp .L_tl_write_file_status_return
+.L_tl_write_file_status_invalid:
+    movq $22, %rax
+.L_tl_write_file_status_return:
+    add $8, %rsp
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+")
+
+(define (compiler-backend-runtime-file-exists-status-functions) : String
+  ".L_tl_file_exists_status:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    sub $8, %rsp
+    movq %rdi, %rbx
+    movq %rsi, %r12
+    cmpq $0, %r12
+    jl .L_tl_file_exists_status_invalid
+    movq %r12, %rdi
+    addq $1, %rdi
+    js .L_tl_file_exists_status_invalid
+    call tl_alloc
+    movq %rax, %r13
+    xorq %rcx, %rcx
+.L_tl_file_exists_status_path_copy_loop:
+    cmpq %r12, %rcx
+    jge .L_tl_file_exists_status_path_copy_done
+    movzbl (%rbx,%rcx), %edx
+    movb %dl, (%r13,%rcx)
+    incq %rcx
+    jmp .L_tl_file_exists_status_path_copy_loop
+.L_tl_file_exists_status_path_copy_done:
+    movb $0, (%r13,%r12)
+    movq $21, %rax
+    movq %r13, %rdi
+    xorq %rsi, %rsi
+    syscall
+    testq %rax, %rax
+    jz .L_tl_file_exists_status_return
+    negq %rax
+    jmp .L_tl_file_exists_status_return
+.L_tl_file_exists_status_invalid:
+    movq $22, %rax
+.L_tl_file_exists_status_return:
+    add $8, %rsp
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+")
+
 (define (compiler-backend-runtime-windows-read-file-functions) : String
   ".L_tl_read_file:
     push %rbp
@@ -3988,6 +4261,264 @@ tl_print_err:
     movq $.L_tl_file_exists_error_msg_len, %rdx
     sub $32, %rsp
     call .L_tl_abort
+
+")
+
+(define (compiler-backend-runtime-windows-read-file-status-functions) : String
+  ".L_tl_read_file_status:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    sub $8, %rsp
+    movq %rcx, %rbx
+    movq %rdx, %r12
+    cmpq $0, %r12
+    jl .L_tl_read_file_status_win_invalid
+    movq %r12, %rcx
+    addq $1, %rcx
+    js .L_tl_read_file_status_win_invalid
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %rax, %r13
+    xorq %r10, %r10
+.L_tl_read_file_status_win_path_copy_loop:
+    cmpq %r12, %r10
+    jge .L_tl_read_file_status_win_path_copy_done
+    movzbl (%rbx,%r10), %edx
+    movb %dl, (%r13,%r10)
+    incq %r10
+    jmp .L_tl_read_file_status_win_path_copy_loop
+.L_tl_read_file_status_win_path_copy_done:
+    movb $0, (%r13,%r12)
+    movq %r13, %rcx
+    movq $0x8000, %rdx
+    xorq %r8, %r8
+    sub $32, %rsp
+    call _open
+    add $32, %rsp
+    testl %eax, %eax
+    js .L_tl_read_file_status_win_errno
+    movslq %eax, %rbx
+    movq %rbx, %rcx
+    leaq -32(%rbp), %rdx
+    movq $1, %r8
+    sub $32, %rsp
+    call _read
+    add $32, %rsp
+    testl %eax, %eax
+    js .L_tl_read_file_status_win_close_errno
+    movq %rbx, %rcx
+    sub $32, %rsp
+    call _close
+    add $32, %rsp
+    testl %eax, %eax
+    js .L_tl_read_file_status_win_errno
+    xorq %rax, %rax
+    jmp .L_tl_read_file_status_win_return
+.L_tl_read_file_status_win_close_errno:
+    sub $32, %rsp
+    call _errno
+    add $32, %rsp
+    movslq (%rax), %r12
+    testq %r12, %r12
+    jne .L_tl_read_file_status_win_close_saved
+    movq $1, %r12
+.L_tl_read_file_status_win_close_saved:
+    movq %rbx, %rcx
+    sub $32, %rsp
+    call _close
+    add $32, %rsp
+    movq %r12, %rax
+    jmp .L_tl_read_file_status_win_return
+.L_tl_read_file_status_win_errno:
+    sub $32, %rsp
+    call _errno
+    add $32, %rsp
+    movslq (%rax), %rax
+    testq %rax, %rax
+    jne .L_tl_read_file_status_win_return
+    movq $1, %rax
+    jmp .L_tl_read_file_status_win_return
+.L_tl_read_file_status_win_invalid:
+    movq $22, %rax
+.L_tl_read_file_status_win_return:
+    add $8, %rsp
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+")
+
+(define (compiler-backend-runtime-windows-write-file-status-functions) : String
+  ".L_tl_write_file_status:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    sub $8, %rsp
+    movq %rcx, %rbx
+    movq %rdx, %r12
+    movq %r8, %r13
+    movq %r9, %r14
+    cmpq $0, %r12
+    jl .L_tl_write_file_status_win_invalid
+    cmpq $0, %r14
+    jl .L_tl_write_file_status_win_invalid
+    movq %r12, %rcx
+    addq $1, %rcx
+    js .L_tl_write_file_status_win_invalid
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %rax, %r15
+    xorq %r10, %r10
+.L_tl_write_file_status_win_path_copy_loop:
+    cmpq %r12, %r10
+    jge .L_tl_write_file_status_win_path_copy_done
+    movzbl (%rbx,%r10), %edx
+    movb %dl, (%r15,%r10)
+    incq %r10
+    jmp .L_tl_write_file_status_win_path_copy_loop
+.L_tl_write_file_status_win_path_copy_done:
+    movb $0, (%r15,%r12)
+    movq %r15, %rcx
+    movq $0x8301, %rdx
+    movq $0x180, %r8
+    sub $32, %rsp
+    call _open
+    add $32, %rsp
+    testl %eax, %eax
+    js .L_tl_write_file_status_win_errno
+    movslq %eax, %r15
+    movq %r15, %rcx
+    movq %r13, %rdx
+    movq %r14, %r8
+    sub $32, %rsp
+    call _write
+    add $32, %rsp
+    testl %eax, %eax
+    js .L_tl_write_file_status_win_close_errno
+    movslq %eax, %rax
+    cmpq %r14, %rax
+    jne .L_tl_write_file_status_win_short_write
+    movq %r15, %rcx
+    sub $32, %rsp
+    call _close
+    add $32, %rsp
+    testl %eax, %eax
+    js .L_tl_write_file_status_win_errno
+    xorq %rax, %rax
+    jmp .L_tl_write_file_status_win_return
+.L_tl_write_file_status_win_short_write:
+    movq $5, %r12
+    movq %r15, %rcx
+    sub $32, %rsp
+    call _close
+    add $32, %rsp
+    movq %r12, %rax
+    jmp .L_tl_write_file_status_win_return
+.L_tl_write_file_status_win_close_errno:
+    sub $32, %rsp
+    call _errno
+    add $32, %rsp
+    movslq (%rax), %r12
+    testq %r12, %r12
+    jne .L_tl_write_file_status_win_close_saved
+    movq $1, %r12
+.L_tl_write_file_status_win_close_saved:
+    movq %r15, %rcx
+    sub $32, %rsp
+    call _close
+    add $32, %rsp
+    movq %r12, %rax
+    jmp .L_tl_write_file_status_win_return
+.L_tl_write_file_status_win_errno:
+    sub $32, %rsp
+    call _errno
+    add $32, %rsp
+    movslq (%rax), %rax
+    testq %rax, %rax
+    jne .L_tl_write_file_status_win_return
+    movq $1, %rax
+    jmp .L_tl_write_file_status_win_return
+.L_tl_write_file_status_win_invalid:
+    movq $22, %rax
+.L_tl_write_file_status_win_return:
+    add $8, %rsp
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+")
+
+(define (compiler-backend-runtime-windows-file-exists-status-functions) : String
+  ".L_tl_file_exists_status:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    sub $8, %rsp
+    movq %rcx, %rbx
+    movq %rdx, %r12
+    cmpq $0, %r12
+    jl .L_tl_file_exists_status_win_invalid
+    movq %r12, %rcx
+    addq $1, %rcx
+    js .L_tl_file_exists_status_win_invalid
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %rax, %r13
+    xorq %r10, %r10
+.L_tl_file_exists_status_win_path_copy_loop:
+    cmpq %r12, %r10
+    jge .L_tl_file_exists_status_win_path_copy_done
+    movzbl (%rbx,%r10), %edx
+    movb %dl, (%r13,%r10)
+    incq %r10
+    jmp .L_tl_file_exists_status_win_path_copy_loop
+.L_tl_file_exists_status_win_path_copy_done:
+    movb $0, (%r13,%r12)
+    movq %r13, %rcx
+    xorq %rdx, %rdx
+    sub $32, %rsp
+    call _access
+    add $32, %rsp
+    testl %eax, %eax
+    jz .L_tl_file_exists_status_win_success
+    sub $32, %rsp
+    call _errno
+    add $32, %rsp
+    movslq (%rax), %rax
+    testq %rax, %rax
+    jne .L_tl_file_exists_status_win_return
+    movq $1, %rax
+    jmp .L_tl_file_exists_status_win_return
+.L_tl_file_exists_status_win_success:
+    xorq %rax, %rax
+    jmp .L_tl_file_exists_status_win_return
+.L_tl_file_exists_status_win_invalid:
+    movq $22, %rax
+.L_tl_file_exists_status_win_return:
+    add $8, %rsp
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
 
 ")
 
@@ -5004,17 +5535,35 @@ tl_string_concat:
               (compiler-backend-runtime-windows-read-file-functions)
               (compiler-backend-runtime-read-file-functions))
             "")]
+        [read-file-status-asm : String
+          (if read-file
+            (if (compiler-backend-target-windows? target)
+              (compiler-backend-runtime-windows-read-file-status-functions)
+              (compiler-backend-runtime-read-file-status-functions))
+            "")]
         [write-file-asm : String
           (if write-file
             (if (compiler-backend-target-windows? target)
               (compiler-backend-runtime-windows-write-file-functions)
               (compiler-backend-runtime-write-file-functions))
             "")]
+        [write-file-status-asm : String
+          (if write-file
+            (if (compiler-backend-target-windows? target)
+              (compiler-backend-runtime-windows-write-file-status-functions)
+              (compiler-backend-runtime-write-file-status-functions))
+            "")]
         [file-exists-asm : String
           (if file-exists
             (if (compiler-backend-target-windows? target)
               (compiler-backend-runtime-windows-file-exists-functions)
               (compiler-backend-runtime-file-exists-functions))
+            "")]
+        [file-exists-status-asm : String
+          (if file-exists
+            (if (compiler-backend-target-windows? target)
+              (compiler-backend-runtime-windows-file-exists-status-functions)
+              (compiler-backend-runtime-file-exists-status-functions))
             "")]
         [read-line-asm : String
           (if read-line
@@ -5077,16 +5626,22 @@ tl_string_concat:
                                   (string-append
                                     read-file-asm
                                     (string-append
-                                      write-file-asm
+                                      read-file-status-asm
                                       (string-append
-                                        file-exists-asm
+                                        write-file-asm
                                         (string-append
-                                          read-line-asm
+                                          write-file-status-asm
                                           (string-append
-                                            read-bytes-asm
+                                            file-exists-asm
                                             (string-append
-                                              stdin-eof-asm
-                                              flush-stdout-asm))))))))))))))))))))]))
+                                              file-exists-status-asm
+                                              (string-append
+                                                read-line-asm
+                                                (string-append
+                                                  read-bytes-asm
+                                                  (string-append
+                                                    stdin-eof-asm
+                                                    flush-stdout-asm)))))))))))))))))))))))]))
 
 ;; Argument register for call arg `idx` under the target's calling convention.
 ;; System V (Linux) uses rdi/rsi/rdx/rcx/r8/r9 via `compiler-backend-arg-reg`;
@@ -5258,6 +5813,7 @@ tl_string_concat:
     .extern _lseeki64
     .extern _close
     .extern _access
+    .extern _errno
 "
     ""))
 

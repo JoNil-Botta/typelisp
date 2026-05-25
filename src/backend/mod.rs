@@ -19,6 +19,9 @@ const ARG_RUNTIME_SYMBOL: &str = ".L_tl_arg";
 const READ_FILE_RUNTIME_SYMBOL: &str = ".L_tl_read_file";
 const WRITE_FILE_RUNTIME_SYMBOL: &str = ".L_tl_write_file";
 const FILE_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists";
+const READ_FILE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_read_file_status";
+const WRITE_FILE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_write_file_status";
+const FILE_EXISTS_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists_status";
 const ENV_VAR_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_env_var_exists";
 const ENV_VAR_VALUE_RUNTIME_SYMBOL: &str = ".L_tl_env_var_value";
 const ENV_PATH_SEPARATOR_RUNTIME_SYMBOL: &str = ".L_tl_env_path_separator";
@@ -2198,6 +2201,9 @@ impl X86_64Backend {
                 || (self.needs_read_file_runtime && symbol == READ_FILE_RUNTIME_SYMBOL)
                 || (self.needs_write_file_runtime && symbol == WRITE_FILE_RUNTIME_SYMBOL)
                 || (self.needs_file_exists_runtime && symbol == FILE_EXISTS_RUNTIME_SYMBOL)
+                || (self.needs_read_file_runtime && symbol == READ_FILE_STATUS_RUNTIME_SYMBOL)
+                || (self.needs_write_file_runtime && symbol == WRITE_FILE_STATUS_RUNTIME_SYMBOL)
+                || (self.needs_file_exists_runtime && symbol == FILE_EXISTS_STATUS_RUNTIME_SYMBOL)
                 || (self.needs_env_var_exists_runtime && symbol == ENV_VAR_EXISTS_RUNTIME_SYMBOL)
                 || (self.needs_env_var_value_runtime && symbol == ENV_VAR_VALUE_RUNTIME_SYMBOL)
                 || (self.needs_env_path_separator_runtime
@@ -2273,12 +2279,15 @@ impl X86_64Backend {
         }
         if self.needs_read_file_runtime {
             self.generate_read_file_runtime_functions();
+            self.generate_read_file_status_runtime_functions();
         }
         if self.needs_write_file_runtime {
             self.generate_write_file_runtime_functions();
+            self.generate_write_file_status_runtime_functions();
         }
         if self.needs_file_exists_runtime {
             self.generate_file_exists_runtime_functions();
+            self.generate_file_exists_status_runtime_functions();
         }
         if self.needs_env_var_exists_runtime {
             self.generate_env_var_exists_runtime_functions();
@@ -2462,14 +2471,17 @@ impl X86_64Backend {
             externs.insert("_lseeki64");
             externs.insert("_read");
             externs.insert("_close");
+            externs.insert("_errno");
         }
         if self.needs_write_file_runtime {
             externs.insert("_open");
             externs.insert("_write");
             externs.insert("_close");
+            externs.insert("_errno");
         }
         if self.needs_file_exists_runtime {
             externs.insert("_access");
+            externs.insert("_errno");
         }
         if self.needs_env_var_exists_runtime || self.needs_env_var_value_runtime {
             externs.insert("getenv");
@@ -2842,7 +2854,9 @@ impl X86_64Backend {
                 block.instructions.iter().any(|instr| {
                     matches!(
                         instr,
-                        Instruction::Call { func, .. } if func == READ_FILE_RUNTIME_SYMBOL
+                        Instruction::Call { func, .. }
+                            if func == READ_FILE_RUNTIME_SYMBOL
+                                || func == READ_FILE_STATUS_RUNTIME_SYMBOL
                     )
                 })
             })
@@ -2858,7 +2872,9 @@ impl X86_64Backend {
                 block.instructions.iter().any(|instr| {
                     matches!(
                         instr,
-                        Instruction::Call { func, .. } if func == WRITE_FILE_RUNTIME_SYMBOL
+                        Instruction::Call { func, .. }
+                            if func == WRITE_FILE_RUNTIME_SYMBOL
+                                || func == WRITE_FILE_STATUS_RUNTIME_SYMBOL
                     )
                 })
             })
@@ -2874,7 +2890,9 @@ impl X86_64Backend {
                 block.instructions.iter().any(|instr| {
                     matches!(
                         instr,
-                        Instruction::Call { func, .. } if func == FILE_EXISTS_RUNTIME_SYMBOL
+                        Instruction::Call { func, .. }
+                            if func == FILE_EXISTS_RUNTIME_SYMBOL
+                                || func == FILE_EXISTS_STATUS_RUNTIME_SYMBOL
                     )
                 })
             })
@@ -4532,6 +4550,249 @@ impl X86_64Backend {
         self.emit("");
     }
 
+    fn generate_read_file_status_runtime_functions(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.generate_windows_read_file_status_runtime_functions();
+            return;
+        }
+
+        self.emit(&format!("{}:", READ_FILE_STATUS_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq %rdi, %rbx");
+        self.emit("    movq %rsi, %r12");
+        self.emit("    cmpq $0, %r12");
+        self.emit("    jl .L_tl_read_file_status_invalid");
+        self.emit("    movq %r12, %rdi");
+        self.emit("    addq $1, %rdi");
+        self.emit("    js .L_tl_read_file_status_invalid");
+        self.emit("    call tl_alloc");
+        self.emit("    movq %rax, %r13");
+        self.emit("    xorq %rcx, %rcx");
+        self.emit(".L_tl_read_file_status_path_copy_loop:");
+        self.emit("    cmpq %r12, %rcx");
+        self.emit("    jge .L_tl_read_file_status_path_copy_done");
+        self.emit("    movzbl (%rbx,%rcx), %edx");
+        self.emit("    movb %dl, (%r13,%rcx)");
+        self.emit("    incq %rcx");
+        self.emit("    jmp .L_tl_read_file_status_path_copy_loop");
+        self.emit(".L_tl_read_file_status_path_copy_done:");
+        self.emit("    movb $0, (%r13,%r12)");
+        self.emit("    movq $257, %rax");
+        self.emit("    movq $-100, %rdi");
+        self.emit("    movq %r13, %rsi");
+        self.emit("    xorq %rdx, %rdx");
+        self.emit("    xorq %r10, %r10");
+        self.emit("    syscall");
+        self.emit("    testq %rax, %rax");
+        self.emit("    js .L_tl_read_file_status_error_from_rax");
+        self.emit("    movq %rax, %rbx");
+        self.emit("    movq $8, %rax");
+        self.emit("    movq %rbx, %rdi");
+        self.emit("    xorq %rsi, %rsi");
+        self.emit("    movq $2, %rdx");
+        self.emit("    syscall");
+        self.emit("    testq %rax, %rax");
+        self.emit("    js .L_tl_read_file_status_close_error_from_rax");
+        self.emit("    movq %rax, %r13");
+        self.emit("    movq $8, %rax");
+        self.emit("    movq %rbx, %rdi");
+        self.emit("    xorq %rsi, %rsi");
+        self.emit("    xorq %rdx, %rdx");
+        self.emit("    syscall");
+        self.emit("    testq %rax, %rax");
+        self.emit("    js .L_tl_read_file_status_close_error_from_rax");
+        self.emit("    cmpq $0, %r13");
+        self.emit("    je .L_tl_read_file_status_close_success");
+        self.emit("    xorq %rax, %rax");
+        self.emit("    movq %rbx, %rdi");
+        self.emit("    leaq -32(%rbp), %rsi");
+        self.emit("    movq $1, %rdx");
+        self.emit("    syscall");
+        self.emit("    testq %rax, %rax");
+        self.emit("    js .L_tl_read_file_status_close_error_from_rax");
+        self.emit(".L_tl_read_file_status_close_success:");
+        self.emit("    movq $3, %rax");
+        self.emit("    movq %rbx, %rdi");
+        self.emit("    syscall");
+        self.emit("    testq %rax, %rax");
+        self.emit("    js .L_tl_read_file_status_error_from_rax");
+        self.emit("    xorq %rax, %rax");
+        self.emit("    jmp .L_tl_read_file_status_return");
+        self.emit(".L_tl_read_file_status_close_error_from_rax:");
+        self.emit("    negq %rax");
+        self.emit("    movq %rax, %r12");
+        self.emit("    movq $3, %rax");
+        self.emit("    movq %rbx, %rdi");
+        self.emit("    syscall");
+        self.emit("    movq %r12, %rax");
+        self.emit("    jmp .L_tl_read_file_status_return");
+        self.emit(".L_tl_read_file_status_error_from_rax:");
+        self.emit("    negq %rax");
+        self.emit("    jmp .L_tl_read_file_status_return");
+        self.emit(".L_tl_read_file_status_invalid:");
+        self.emit("    movq $22, %rax");
+        self.emit(".L_tl_read_file_status_return:");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_write_file_status_runtime_functions(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.generate_windows_write_file_status_runtime_functions();
+            return;
+        }
+
+        self.emit(&format!("{}:", WRITE_FILE_STATUS_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    push %r15");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq %rdi, %rbx");
+        self.emit("    movq %rsi, %r12");
+        self.emit("    movq %rdx, %r13");
+        self.emit("    movq %rcx, %r14");
+        self.emit("    cmpq $0, %r12");
+        self.emit("    jl .L_tl_write_file_status_invalid");
+        self.emit("    cmpq $0, %r14");
+        self.emit("    jl .L_tl_write_file_status_invalid");
+        self.emit("    movq %r12, %rdi");
+        self.emit("    addq $1, %rdi");
+        self.emit("    js .L_tl_write_file_status_invalid");
+        self.emit("    call tl_alloc");
+        self.emit("    movq %rax, %r15");
+        self.emit("    xorq %rcx, %rcx");
+        self.emit(".L_tl_write_file_status_path_copy_loop:");
+        self.emit("    cmpq %r12, %rcx");
+        self.emit("    jge .L_tl_write_file_status_path_copy_done");
+        self.emit("    movzbl (%rbx,%rcx), %edx");
+        self.emit("    movb %dl, (%r15,%rcx)");
+        self.emit("    incq %rcx");
+        self.emit("    jmp .L_tl_write_file_status_path_copy_loop");
+        self.emit(".L_tl_write_file_status_path_copy_done:");
+        self.emit("    movb $0, (%r15,%r12)");
+        self.emit("    movq $257, %rax");
+        self.emit("    movq $-100, %rdi");
+        self.emit("    movq %r15, %rsi");
+        self.emit("    movq $577, %rdx");
+        self.emit("    movq $438, %r10");
+        self.emit("    syscall");
+        self.emit("    testq %rax, %rax");
+        self.emit("    js .L_tl_write_file_status_error_from_rax");
+        self.emit("    movq %rax, %r15");
+        self.emit("    movq $1, %rax");
+        self.emit("    movq %r15, %rdi");
+        self.emit("    movq %r13, %rsi");
+        self.emit("    movq %r14, %rdx");
+        self.emit("    syscall");
+        self.emit("    testq %rax, %rax");
+        self.emit("    js .L_tl_write_file_status_close_error_from_rax");
+        self.emit("    cmpq %r14, %rax");
+        self.emit("    jne .L_tl_write_file_status_short_write");
+        self.emit("    movq $3, %rax");
+        self.emit("    movq %r15, %rdi");
+        self.emit("    syscall");
+        self.emit("    testq %rax, %rax");
+        self.emit("    js .L_tl_write_file_status_error_from_rax");
+        self.emit("    xorq %rax, %rax");
+        self.emit("    jmp .L_tl_write_file_status_return");
+        self.emit(".L_tl_write_file_status_short_write:");
+        self.emit("    movq $5, %r12");
+        self.emit("    movq $3, %rax");
+        self.emit("    movq %r15, %rdi");
+        self.emit("    syscall");
+        self.emit("    movq %r12, %rax");
+        self.emit("    jmp .L_tl_write_file_status_return");
+        self.emit(".L_tl_write_file_status_close_error_from_rax:");
+        self.emit("    negq %rax");
+        self.emit("    movq %rax, %r12");
+        self.emit("    movq $3, %rax");
+        self.emit("    movq %r15, %rdi");
+        self.emit("    syscall");
+        self.emit("    movq %r12, %rax");
+        self.emit("    jmp .L_tl_write_file_status_return");
+        self.emit(".L_tl_write_file_status_error_from_rax:");
+        self.emit("    negq %rax");
+        self.emit("    jmp .L_tl_write_file_status_return");
+        self.emit(".L_tl_write_file_status_invalid:");
+        self.emit("    movq $22, %rax");
+        self.emit(".L_tl_write_file_status_return:");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r15");
+        self.emit("    pop %r14");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_file_exists_status_runtime_functions(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.generate_windows_file_exists_status_runtime_functions();
+            return;
+        }
+
+        self.emit(&format!("{}:", FILE_EXISTS_STATUS_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq %rdi, %rbx");
+        self.emit("    movq %rsi, %r12");
+        self.emit("    cmpq $0, %r12");
+        self.emit("    jl .L_tl_file_exists_status_invalid");
+        self.emit("    movq %r12, %rdi");
+        self.emit("    addq $1, %rdi");
+        self.emit("    js .L_tl_file_exists_status_invalid");
+        self.emit("    call tl_alloc");
+        self.emit("    movq %rax, %r13");
+        self.emit("    xorq %rcx, %rcx");
+        self.emit(".L_tl_file_exists_status_path_copy_loop:");
+        self.emit("    cmpq %r12, %rcx");
+        self.emit("    jge .L_tl_file_exists_status_path_copy_done");
+        self.emit("    movzbl (%rbx,%rcx), %edx");
+        self.emit("    movb %dl, (%r13,%rcx)");
+        self.emit("    incq %rcx");
+        self.emit("    jmp .L_tl_file_exists_status_path_copy_loop");
+        self.emit(".L_tl_file_exists_status_path_copy_done:");
+        self.emit("    movb $0, (%r13,%r12)");
+        self.emit("    movq $21, %rax");
+        self.emit("    movq %r13, %rdi");
+        self.emit("    xorq %rsi, %rsi");
+        self.emit("    syscall");
+        self.emit("    testq %rax, %rax");
+        self.emit("    jz .L_tl_file_exists_status_return");
+        self.emit("    negq %rax");
+        self.emit("    jmp .L_tl_file_exists_status_return");
+        self.emit(".L_tl_file_exists_status_invalid:");
+        self.emit("    movq $22, %rax");
+        self.emit(".L_tl_file_exists_status_return:");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
     fn generate_windows_read_file_runtime_functions(&mut self) {
         self.emit(&format!("{}:", READ_FILE_RUNTIME_SYMBOL));
         self.emit("    push %rbp");
@@ -4744,6 +5005,228 @@ impl X86_64Backend {
         self.emit("    leaq .L_tl_file_exists_error_msg(%rip), %rcx");
         self.emit("    movq $.L_tl_file_exists_error_msg_len, %rdx");
         self.emit_call(ABORT_RUNTIME_SYMBOL);
+        self.emit("");
+    }
+
+    fn generate_windows_read_file_status_runtime_functions(&mut self) {
+        self.emit(&format!("{}:", READ_FILE_STATUS_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq %rcx, %rbx");
+        self.emit("    movq %rdx, %r12");
+        self.emit("    cmpq $0, %r12");
+        self.emit("    jl .L_tl_read_file_status_win_invalid");
+        self.emit("    movq %r12, %rcx");
+        self.emit("    addq $1, %rcx");
+        self.emit("    js .L_tl_read_file_status_win_invalid");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rax, %r13");
+        self.emit("    xorq %r10, %r10");
+        self.emit(".L_tl_read_file_status_win_path_copy_loop:");
+        self.emit("    cmpq %r12, %r10");
+        self.emit("    jge .L_tl_read_file_status_win_path_copy_done");
+        self.emit("    movzbl (%rbx,%r10), %edx");
+        self.emit("    movb %dl, (%r13,%r10)");
+        self.emit("    incq %r10");
+        self.emit("    jmp .L_tl_read_file_status_win_path_copy_loop");
+        self.emit(".L_tl_read_file_status_win_path_copy_done:");
+        self.emit("    movb $0, (%r13,%r12)");
+        self.emit("    movq %r13, %rcx");
+        self.emit("    movq $0x8000, %rdx");
+        self.emit("    xorq %r8, %r8");
+        self.emit_call("_open");
+        self.emit("    testl %eax, %eax");
+        self.emit("    js .L_tl_read_file_status_win_errno");
+        self.emit("    movslq %eax, %rbx");
+        self.emit("    movq %rbx, %rcx");
+        self.emit("    leaq -32(%rbp), %rdx");
+        self.emit("    movq $1, %r8");
+        self.emit_call("_read");
+        self.emit("    testl %eax, %eax");
+        self.emit("    js .L_tl_read_file_status_win_close_errno");
+        self.emit("    movq %rbx, %rcx");
+        self.emit_call("_close");
+        self.emit("    testl %eax, %eax");
+        self.emit("    js .L_tl_read_file_status_win_errno");
+        self.emit("    xorq %rax, %rax");
+        self.emit("    jmp .L_tl_read_file_status_win_return");
+        self.emit(".L_tl_read_file_status_win_close_errno:");
+        self.emit_call("_errno");
+        self.emit("    movslq (%rax), %r12");
+        self.emit("    testq %r12, %r12");
+        self.emit("    jne .L_tl_read_file_status_win_close_saved");
+        self.emit("    movq $1, %r12");
+        self.emit(".L_tl_read_file_status_win_close_saved:");
+        self.emit("    movq %rbx, %rcx");
+        self.emit_call("_close");
+        self.emit("    movq %r12, %rax");
+        self.emit("    jmp .L_tl_read_file_status_win_return");
+        self.emit(".L_tl_read_file_status_win_errno:");
+        self.emit_call("_errno");
+        self.emit("    movslq (%rax), %rax");
+        self.emit("    testq %rax, %rax");
+        self.emit("    jne .L_tl_read_file_status_win_return");
+        self.emit("    movq $1, %rax");
+        self.emit("    jmp .L_tl_read_file_status_win_return");
+        self.emit(".L_tl_read_file_status_win_invalid:");
+        self.emit("    movq $22, %rax");
+        self.emit(".L_tl_read_file_status_win_return:");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_windows_write_file_status_runtime_functions(&mut self) {
+        self.emit(&format!("{}:", WRITE_FILE_STATUS_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    push %r15");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq %rcx, %rbx");
+        self.emit("    movq %rdx, %r12");
+        self.emit("    movq %r8, %r13");
+        self.emit("    movq %r9, %r14");
+        self.emit("    cmpq $0, %r12");
+        self.emit("    jl .L_tl_write_file_status_win_invalid");
+        self.emit("    cmpq $0, %r14");
+        self.emit("    jl .L_tl_write_file_status_win_invalid");
+        self.emit("    movq %r12, %rcx");
+        self.emit("    addq $1, %rcx");
+        self.emit("    js .L_tl_write_file_status_win_invalid");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rax, %r15");
+        self.emit("    xorq %r10, %r10");
+        self.emit(".L_tl_write_file_status_win_path_copy_loop:");
+        self.emit("    cmpq %r12, %r10");
+        self.emit("    jge .L_tl_write_file_status_win_path_copy_done");
+        self.emit("    movzbl (%rbx,%r10), %edx");
+        self.emit("    movb %dl, (%r15,%r10)");
+        self.emit("    incq %r10");
+        self.emit("    jmp .L_tl_write_file_status_win_path_copy_loop");
+        self.emit(".L_tl_write_file_status_win_path_copy_done:");
+        self.emit("    movb $0, (%r15,%r12)");
+        self.emit("    movq %r15, %rcx");
+        self.emit("    movq $0x8301, %rdx");
+        self.emit("    movq $0x180, %r8");
+        self.emit_call("_open");
+        self.emit("    testl %eax, %eax");
+        self.emit("    js .L_tl_write_file_status_win_errno");
+        self.emit("    movslq %eax, %r15");
+        self.emit("    movq %r15, %rcx");
+        self.emit("    movq %r13, %rdx");
+        self.emit("    movq %r14, %r8");
+        self.emit_call("_write");
+        self.emit("    testl %eax, %eax");
+        self.emit("    js .L_tl_write_file_status_win_close_errno");
+        self.emit("    movslq %eax, %rax");
+        self.emit("    cmpq %r14, %rax");
+        self.emit("    jne .L_tl_write_file_status_win_short_write");
+        self.emit("    movq %r15, %rcx");
+        self.emit_call("_close");
+        self.emit("    testl %eax, %eax");
+        self.emit("    js .L_tl_write_file_status_win_errno");
+        self.emit("    xorq %rax, %rax");
+        self.emit("    jmp .L_tl_write_file_status_win_return");
+        self.emit(".L_tl_write_file_status_win_short_write:");
+        self.emit("    movq $5, %r12");
+        self.emit("    movq %r15, %rcx");
+        self.emit_call("_close");
+        self.emit("    movq %r12, %rax");
+        self.emit("    jmp .L_tl_write_file_status_win_return");
+        self.emit(".L_tl_write_file_status_win_close_errno:");
+        self.emit_call("_errno");
+        self.emit("    movslq (%rax), %r12");
+        self.emit("    testq %r12, %r12");
+        self.emit("    jne .L_tl_write_file_status_win_close_saved");
+        self.emit("    movq $1, %r12");
+        self.emit(".L_tl_write_file_status_win_close_saved:");
+        self.emit("    movq %r15, %rcx");
+        self.emit_call("_close");
+        self.emit("    movq %r12, %rax");
+        self.emit("    jmp .L_tl_write_file_status_win_return");
+        self.emit(".L_tl_write_file_status_win_errno:");
+        self.emit_call("_errno");
+        self.emit("    movslq (%rax), %rax");
+        self.emit("    testq %rax, %rax");
+        self.emit("    jne .L_tl_write_file_status_win_return");
+        self.emit("    movq $1, %rax");
+        self.emit("    jmp .L_tl_write_file_status_win_return");
+        self.emit(".L_tl_write_file_status_win_invalid:");
+        self.emit("    movq $22, %rax");
+        self.emit(".L_tl_write_file_status_win_return:");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r15");
+        self.emit("    pop %r14");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_windows_file_exists_status_runtime_functions(&mut self) {
+        self.emit(&format!("{}:", FILE_EXISTS_STATUS_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq %rcx, %rbx");
+        self.emit("    movq %rdx, %r12");
+        self.emit("    cmpq $0, %r12");
+        self.emit("    jl .L_tl_file_exists_status_win_invalid");
+        self.emit("    movq %r12, %rcx");
+        self.emit("    addq $1, %rcx");
+        self.emit("    js .L_tl_file_exists_status_win_invalid");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rax, %r13");
+        self.emit("    xorq %r10, %r10");
+        self.emit(".L_tl_file_exists_status_win_path_copy_loop:");
+        self.emit("    cmpq %r12, %r10");
+        self.emit("    jge .L_tl_file_exists_status_win_path_copy_done");
+        self.emit("    movzbl (%rbx,%r10), %edx");
+        self.emit("    movb %dl, (%r13,%r10)");
+        self.emit("    incq %r10");
+        self.emit("    jmp .L_tl_file_exists_status_win_path_copy_loop");
+        self.emit(".L_tl_file_exists_status_win_path_copy_done:");
+        self.emit("    movb $0, (%r13,%r12)");
+        self.emit("    movq %r13, %rcx");
+        self.emit("    xorq %rdx, %rdx");
+        self.emit_call("_access");
+        self.emit("    testl %eax, %eax");
+        self.emit("    jz .L_tl_file_exists_status_win_success");
+        self.emit_call("_errno");
+        self.emit("    movslq (%rax), %rax");
+        self.emit("    testq %rax, %rax");
+        self.emit("    jne .L_tl_file_exists_status_win_return");
+        self.emit("    movq $1, %rax");
+        self.emit("    jmp .L_tl_file_exists_status_win_return");
+        self.emit(".L_tl_file_exists_status_win_success:");
+        self.emit("    xorq %rax, %rax");
+        self.emit("    jmp .L_tl_file_exists_status_win_return");
+        self.emit(".L_tl_file_exists_status_win_invalid:");
+        self.emit("    movq $22, %rax");
+        self.emit(".L_tl_file_exists_status_win_return:");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
         self.emit("");
     }
 
@@ -8187,6 +8670,12 @@ impl X86_64Backend {
             WRITE_FILE_RUNTIME_SYMBOL.into()
         } else if name == FILE_EXISTS_RUNTIME_SYMBOL && self.needs_file_exists_runtime {
             FILE_EXISTS_RUNTIME_SYMBOL.into()
+        } else if name == READ_FILE_STATUS_RUNTIME_SYMBOL && self.needs_read_file_runtime {
+            READ_FILE_STATUS_RUNTIME_SYMBOL.into()
+        } else if name == WRITE_FILE_STATUS_RUNTIME_SYMBOL && self.needs_write_file_runtime {
+            WRITE_FILE_STATUS_RUNTIME_SYMBOL.into()
+        } else if name == FILE_EXISTS_STATUS_RUNTIME_SYMBOL && self.needs_file_exists_runtime {
+            FILE_EXISTS_STATUS_RUNTIME_SYMBOL.into()
         } else if name == ENV_VAR_EXISTS_RUNTIME_SYMBOL && self.needs_env_var_exists_runtime {
             ENV_VAR_EXISTS_RUNTIME_SYMBOL.into()
         } else if name == ENV_VAR_VALUE_RUNTIME_SYMBOL && self.needs_env_var_value_runtime {
@@ -13339,6 +13828,49 @@ mod tests {
         assert!(!asm.contains("_tl_.L_tl_file_exists"), "asm:\n{}", asm);
         assert!(
             !asm.contains("    .extern .L_tl_file_exists"),
+            "asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_compile_file_status_helpers_emit_recoverable_runtimes() {
+        let asm = compile_ok(
+            r#"
+            (define (main) : i64
+              (+ (read-file-status "input.txt")
+                (+ (write-file-status "out.txt" "hi")
+                   (file-exists-status "input.txt"))))
+            "#,
+        );
+
+        for symbol in [
+            ".L_tl_read_file_status:",
+            ".L_tl_write_file_status:",
+            ".L_tl_file_exists_status:",
+        ] {
+            assert!(asm.contains(symbol), "asm:\n{}", asm);
+        }
+        assert!(
+            asm.contains("    call .L_tl_read_file_status"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("    call .L_tl_write_file_status"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("    call .L_tl_file_exists_status"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(asm.contains("    movq $22, %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("    negq %rax"), "asm:\n{}", asm);
+        assert!(!asm.contains("_tl_.L_tl_read_file_status"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("    .extern .L_tl_read_file_status"),
             "asm:\n{}",
             asm
         );

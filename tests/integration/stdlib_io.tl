@@ -23,7 +23,15 @@
     [(ErrIoUnit error)
       (if (io-error-invalid-path? error)
         4
-        300)]))
+        5)]))
+
+(define (bool-result-score [result : ResultIoBool]) : i64
+  (match result
+    [(OkIoBool exists)
+      (if exists
+        6
+        7)]
+    [(ErrIoBool _) 400]))
 
 (define (main) : i64
   (begin
@@ -33,25 +41,40 @@
         (read-result-score (try-read-file "target/stdlib_io_absent.txt"))
         2)
         (if (= (write-result-score (try-write-file "" "bad")) 4)
-          (if (string-eq
-            (read-file-or "target/stdlib_io_smoke.txt" "MISS")
-            "alpha")
-            (if (string-eq
-              (read-file-or "target/stdlib_io_absent.txt" "MISS")
-              "MISS")
-              (begin
-                (append-file "target/stdlib_io_smoke.txt" "-beta")
+          (if (=
+            (write-result-score
+              (try-write-file "target/stdlib_io_missing_parent/out.txt" "bad"))
+            5)
+            (if (=
+              (bool-result-score
+                (try-file-exists? "target/stdlib_io_smoke.txt"))
+              6)
+              (if (=
+                (bool-result-score
+                  (try-file-exists? "target/stdlib_io_absent.txt"))
+                7)
                 (if (string-eq
-                  (read-file "target/stdlib_io_smoke.txt")
-                  "alpha-beta")
-                  (if (file-nonempty? "target/stdlib_io_smoke.txt")
-                    (if (file-nonempty? "target/stdlib_io_absent.txt")
-                      10
-                      42)
-                    20)
-                  30))
-              40)
-            50)
+                  (read-file-or "target/stdlib_io_smoke.txt" "MISS")
+                  "alpha")
+                  (if (string-eq
+                    (read-file-or "target/stdlib_io_absent.txt" "MISS")
+                    "MISS")
+                    (begin
+                      (append-file "target/stdlib_io_smoke.txt" "-beta")
+                      (if (string-eq
+                        (read-file "target/stdlib_io_smoke.txt")
+                        "alpha-beta")
+                        (if (file-nonempty? "target/stdlib_io_smoke.txt")
+                          (if (file-nonempty? "target/stdlib_io_absent.txt")
+                            10
+                            42)
+                          20)
+                        30))
+                    40)
+                  50)
+                55)
+              56)
+            57)
           60)
         70)
       80)))

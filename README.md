@@ -227,7 +227,8 @@ subset. `spmd-reduce` reduction semantics are specified but not implemented yet.
 
 `print`, `print-bool`, `print-float`, `print-char`, `print-newline`,
 `print-string`/`print-str`; `arg-count`, `arg`, `read-file`, `write-file`,
-`file-exists?`, `read-stdin-line`, `read-stdin-bytes`, `stdin-eof?`,
+`file-exists?`, `read-file-status`, `write-file-status`,
+`file-exists-status`, `read-stdin-line`, `read-stdin-bytes`, `stdin-eof?`,
 `flush-stdout`; `make-array`, `array-ref`, `array-set!`,
 `array-length`/`length`; strings: `string-length`/`length`,
 `string-ref`/`char-at`, `string-eq`/`string=?`, `string-append`/`string-concat`,

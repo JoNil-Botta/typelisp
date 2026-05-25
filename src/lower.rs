@@ -14,6 +14,9 @@ const ARG_RUNTIME_SYMBOL: &str = ".L_tl_arg";
 const READ_FILE_RUNTIME_SYMBOL: &str = ".L_tl_read_file";
 const WRITE_FILE_RUNTIME_SYMBOL: &str = ".L_tl_write_file";
 const FILE_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists";
+const READ_FILE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_read_file_status";
+const WRITE_FILE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_write_file_status";
+const FILE_EXISTS_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists_status";
 const ENV_VAR_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_env_var_exists";
 const ENV_VAR_VALUE_RUNTIME_SYMBOL: &str = ".L_tl_env_var_value";
 const ENV_PATH_SEPARATOR_RUNTIME_SYMBOL: &str = ".L_tl_env_path_separator";
@@ -3928,6 +3931,27 @@ impl FnLowerer {
             return Value::Var(dst);
         }
 
+        // `(read-file-status path)` checks the same host read path used by
+        // `read-file` but returns 0 on success or a positive target error code.
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "read-file-status"
+            && args.len() == 1
+            && !self.has_local_value(name)
+            && !self.function_types.contains_key(name)
+        {
+            let path = self.lower_expr_as(&args[0], &Type::String);
+            let (ptr, len) = self.load_string_fields(&path);
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: READ_FILE_STATUS_RUNTIME_SYMBOL.to_string(),
+                args: vec![Value::Var(ptr), Value::Var(len)],
+                ty: Type::I64,
+            });
+            self.record_local(dst, Type::I64);
+            return Value::Var(dst);
+        }
+
         // `(write-file path contents)` writes a whole String to a file. The
         // runtime receives both Strings as `{ptr,len}` field pairs and handles
         // path NUL-termination plus panic-on-error Linux file syscalls.
@@ -3955,6 +3979,34 @@ impl FnLowerer {
             return Value::ConstUnit;
         }
 
+        // `(write-file-status path contents)` performs the write and returns 0
+        // on success or a positive target error code instead of aborting.
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "write-file-status"
+            && args.len() == 2
+            && !self.has_local_value(name)
+            && !self.function_types.contains_key(name)
+        {
+            let path = self.lower_expr_as(&args[0], &Type::String);
+            let contents = self.lower_expr_as(&args[1], &Type::String);
+            let (path_ptr, path_len) = self.load_string_fields(&path);
+            let (contents_ptr, contents_len) = self.load_string_fields(&contents);
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: WRITE_FILE_STATUS_RUNTIME_SYMBOL.to_string(),
+                args: vec![
+                    Value::Var(path_ptr),
+                    Value::Var(path_len),
+                    Value::Var(contents_ptr),
+                    Value::Var(contents_len),
+                ],
+                ty: Type::I64,
+            });
+            self.record_local(dst, Type::I64);
+            return Value::Var(dst);
+        }
+
         // `(file-exists? path)` probes a path through the same NUL-terminated
         // path-copy convention as the whole-file helpers, returning a bool.
         if let ast::Expr::Var(name) = func.unspan()
@@ -3973,6 +4025,27 @@ impl FnLowerer {
                 ty: Type::Bool,
             });
             self.record_local(dst, Type::Bool);
+            return Value::Var(dst);
+        }
+
+        // `(file-exists-status path)` returns 0 when the path exists, otherwise
+        // a positive target error code such as ENOENT for expected absence.
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "file-exists-status"
+            && args.len() == 1
+            && !self.has_local_value(name)
+            && !self.function_types.contains_key(name)
+        {
+            let path = self.lower_expr_as(&args[0], &Type::String);
+            let (ptr, len) = self.load_string_fields(&path);
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: FILE_EXISTS_STATUS_RUNTIME_SYMBOL.to_string(),
+                args: vec![Value::Var(ptr), Value::Var(len)],
+                ty: Type::I64,
+            });
+            self.record_local(dst, Type::I64);
             return Value::Var(dst);
         }
 
@@ -7799,6 +7872,39 @@ mod tests {
                 .any(|i| matches!(i, Instruction::Load { ty: Type::I64, .. })),
             "expected a Load of the path byte length"
         );
+    }
+
+    #[test]
+    fn test_lower_file_status_helpers_call_runtime() {
+        let prog = parse(
+            r#"
+            (define (r) : i64 (read-file-status "input.txt"))
+            (define (w) : i64 (write-file-status "output.txt" "hello"))
+            (define (e) : i64 (file-exists-status "input.txt"))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let instrs: Vec<&Instruction> = ir
+            .functions
+            .iter()
+            .flat_map(|f| f.blocks.iter())
+            .flat_map(|b| b.instructions.iter())
+            .collect();
+
+        for (symbol, expected_args) in [
+            (READ_FILE_STATUS_RUNTIME_SYMBOL, 2),
+            (WRITE_FILE_STATUS_RUNTIME_SYMBOL, 4),
+            (FILE_EXISTS_STATUS_RUNTIME_SYMBOL, 2),
+        ] {
+            let call = instrs.iter().find_map(|i| match i {
+                Instruction::Call { func, args, ty, .. } if func == symbol => Some((args, ty)),
+                _ => None,
+            });
+            let (args, ty) = call.unwrap_or_else(|| panic!("missing call to {symbol}"));
+            assert_eq!(args.len(), expected_args, "{symbol} argument count");
+            assert_eq!(*ty, Type::I64, "{symbol} returns an i64 status");
+        }
     }
 
     #[test]

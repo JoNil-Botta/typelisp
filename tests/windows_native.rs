@@ -112,6 +112,9 @@ fn selfhost_backend_windows_runtime_helpers_emit_assemble_link_and_run() {
         "\n.L_tl_read_stdin_bytes:\n",
         "\n.L_tl_stdin_eof:\n",
         "\n.L_tl_flush_stdout:\n",
+        "\ntl_process_output:\n",
+        ".L_tl_process_make_error_win:\n",
+        "process: runtime execution is not supported on this target",
         "\n.L_tl_argc:\n",
         "\n.L_tl_argv:\n",
         "    movq %rcx, .L_tl_argc(%rip)\n",
@@ -170,6 +173,7 @@ fn selfhost_backend_windows_runtime_helpers_emit_assemble_link_and_run() {
         ".extern .L_tl_read_stdin_bytes\n",
         ".extern .L_tl_stdin_eof\n",
         ".extern .L_tl_flush_stdout\n",
+        ".extern tl_process_output\n",
     ] {
         assert!(
             !asm.contains(helper),

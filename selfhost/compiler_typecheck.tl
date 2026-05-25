@@ -5122,6 +5122,30 @@
             (compiler-typecheck-string-builtin-bad-arg-source)
             "typecheck: argument type mismatch"))))))
 
+(define (compiler-typecheck-lambda-ok-typed-source) : String
+  "(define (main) : i64 (let [f : (-> i64 i64) (lambda ([x : i64]) : i64 x)] (f 5)))")
+
+(define (compiler-typecheck-lambda-ok-nullary-source) : String
+  "(define (main) : i64 (let [g : (-> i64) (lambda () : i64 42)] (g)))")
+
+(define (compiler-typecheck-lambda-ok-inferred-ret-source) : String
+  "(define (main) : i64 (let [h : (-> i64 i64) (lambda ([x : i64]) (+ x 1))] (h 7)))")
+
+(define (compiler-typecheck-lambda-bad-ret-source) : String
+  "(define (main) : i64 (begin (lambda ([x : i64]) : bool x) 0))")
+
+(define (compiler-typecheck-lambda-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-lambda-ok-typed-source))
+    (and
+      (compiler-typecheck-ok? (compiler-typecheck-lambda-ok-nullary-source))
+      (and
+        (compiler-typecheck-ok?
+          (compiler-typecheck-lambda-ok-inferred-ret-source))
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-lambda-bad-ret-source)
+          "typecheck: lambda return type mismatch")))))
+
 (define (compiler-typecheck-self-test) : i64
   (begin
     (if (compiler-typecheck-statement-tests-ok?)
@@ -5167,7 +5191,9 @@
                                 (compiler-typecheck-reference-tests-ok?)
                                 (and
                                   (compiler-typecheck-located-ok?)
-                                  (compiler-typecheck-string-builtin-tests-ok?))))))))))))))
+                                  (and
+                                    (compiler-typecheck-string-builtin-tests-ok?)
+                                    (compiler-typecheck-lambda-tests-ok?)))))))))))))))
           42
           (begin
             (panic "typecheck: smoke score mismatch")

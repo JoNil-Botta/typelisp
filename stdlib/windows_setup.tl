@@ -12,7 +12,6 @@
 ;;;; (define empty-count : i64
 ;;;;   (windows-setup-instance-list-count (WindowsSetupInstanceNil)))
 ;;;; ```
-
 ;;; Immutable list of SetupConfiguration package/component identifiers.
 (defenum WindowsSetupStringList
   (WindowsSetupStringNil)
@@ -110,8 +109,7 @@
   (struct-get instance product-id))
 
 ;;; Return an instance's package/component identifier list.
-(define (windows-setup-instance-package-ids
-  [instance : WindowsSetupInstance]) : WindowsSetupStringList
+(define (windows-setup-instance-package-ids [instance : WindowsSetupInstance]) : WindowsSetupStringList
   (struct-get instance package-ids))
 
 ;;; Return true when `instance` reports `package-id`.

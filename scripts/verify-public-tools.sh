@@ -26,6 +26,14 @@ else
     [ "$HOST_OS" = windows ] && COMPILER="$COMPILER.exe"
 fi
 
+# A relative TYPELISP_BIN (e.g. CI's `target/debug/typelisp`) breaks cases that
+# change directory before invoking the compiler (run_cmd_cwd), so resolve it to
+# an absolute path up front.
+case "$COMPILER" in
+    /* | [A-Za-z]:[/\\]*) ;;
+    *) COMPILER="$ROOT/$COMPILER" ;;
+esac
+
 if [ ! -x "$COMPILER" ]; then
     echo "typelisp compiler is not executable: $COMPILER" >&2
     exit 1
@@ -47,6 +55,18 @@ run_cmd() {
     err="$WORKDIR/$case_name.err"
     set +e
     "$@" > "$out" 2> "$err"
+    code=$?
+    set -e
+}
+
+run_cmd_cwd() {
+    case_name=$1
+    cwd=$2
+    shift 2
+    out="$WORKDIR/$case_name.out"
+    err="$WORKDIR/$case_name.err"
+    set +e
+    (cd "$cwd" && "$@") > "$out" 2> "$err"
     code=$?
     set -e
 }
@@ -1011,6 +1031,55 @@ assert_failure
 assert_stdout_empty
 assert_contains "$err" "pkg:math/src/lib.tl"
 assert_contains "$err" 'alias `math`'
+
+WALK_PKG="$WORKDIR/walk_pkg"
+mkdir -p "$WALK_PKG/src" "$WALK_PKG/src/nested/deeper"
+cat > "$WALK_PKG/typelisp.pkg" <<'EOF'
+(package
+  (name "walk_pkg")
+  (version "0.1.0")
+  (entry "src/main.tl"))
+EOF
+cat > "$WALK_PKG/src/main.tl" <<'EOF'
+(import "math.tl")
+(define (main) : i64 (inc 41))
+EOF
+cat > "$WALK_PKG/src/math.tl" <<'EOF'
+(define (inc [x : i64]) : i64 (+ x 1))
+EOF
+run_cmd_cwd package-discover-upward "$WALK_PKG/src/nested/deeper" "$COMPILER" build
+assert_success
+assert_stderr_empty
+WALK_ASM="$WALK_PKG/target/typelisp/walk_pkg/walk_pkg.s"
+[ -f "$WALK_ASM" ] || fail "package discover-upward did not write assembly"
+assert_contains "$out" "Generated:"
+assert_contains "$WALK_ASM" "main:"
+assert_contains "$WALK_ASM" "_tl_inc:"
+
+MISSING_DEP="$WORKDIR/missing_dep"
+mkdir -p "$MISSING_DEP/src" "$MISSING_DEP/vendor/math"
+cat > "$MISSING_DEP/typelisp.pkg" <<'EOF'
+(package
+  (name "missing_dep_file")
+  (version "0.1.0")
+  (entry "src/main.tl")
+  (dependencies
+    (math "vendor/math")))
+EOF
+cat > "$MISSING_DEP/src/main.tl" <<'EOF'
+(import "pkg:math/src/missing.tl")
+(define (main) : i64 0)
+EOF
+run_cmd package-missing-dep-file "$COMPILER" build --manifest-path "$MISSING_DEP/typelisp.pkg"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "pkg:math/src/missing.tl"
+assert_contains "$err" 'alias `math`'
+
+# Normalize backslashes for Windows path comparison in diagnostic output.
+ERR_NORMALIZED="$WORKDIR/missing_dep_err_normalized.tmp"
+tr '\\' '/' < "$err" > "$ERR_NORMALIZED"
+assert_contains "$ERR_NORMALIZED" "vendor/math/src/missing.tl"
 
 echo "[public-tools] REPL/LSP corpus via run-corpus.py"
 TYPELISP_BIN="$COMPILER" python3 "$ROOT/tests/public-tools/run-corpus.py"

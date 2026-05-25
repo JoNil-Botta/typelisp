@@ -452,21 +452,23 @@
   [opt-level : i64]) : i64
   (match (lower-compiler-program-with-decl-paths source program paths)
     [(OkCompilerLower ir spans)
-      (match (compiler-backend-emit-program-with-spans-for-target
-        (optimize-program-with-level ir opt-level)
-        spans
-        (tltest-backend-target target))
-        [(OkCompilerBackend asm)
-          (let
-            [asm-path : String (tltest-scratch-asm-path source)]
-            (begin
-              (write-file asm-path asm)
-              (print-string (tltest-plan asm-path target mode))
-              0))]
-        [(ErrCompilerBackend diag)
-          (begin
-            (print-error (compiler-diagnostic-render diag))
-            1)])]
+      (match (optimize-program-with-spans-and-level ir spans opt-level)
+        [(CompilerOptimizedProgram optimized optimized-spans)
+          (match (compiler-backend-emit-program-with-spans-for-target
+            optimized
+            optimized-spans
+            (tltest-backend-target target))
+            [(OkCompilerBackend asm)
+              (let
+                [asm-path : String (tltest-scratch-asm-path source)]
+                (begin
+                  (write-file asm-path asm)
+                  (print-string (tltest-plan asm-path target mode))
+                  0))]
+            [(ErrCompilerBackend diag)
+              (begin
+                (print-error (compiler-diagnostic-render diag))
+                1)])])]
     [(ErrCompilerLower diag)
       (begin
         (print-error (compiler-diagnostic-render diag))

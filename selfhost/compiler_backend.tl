@@ -3,6 +3,8 @@
 
 (import "compiler_diagnostic.tl")
 
+(import "compiler_optimize.tl")
+
 (import "compiler_regalloc.tl")
 
 (import "text_buf.tl")
@@ -7739,6 +7741,59 @@ tl_string_concat:
       34
       9)))
 
+(define (compiler-backend-optimizer-rewrite-diagnostic-ok?) : bool
+  (let
+    [phi : CompilerIrInstr
+      (IrInstrPhi
+        0
+        (IrPhiInputCons (IrPhiInput (IrValueF64 "1.0") "entry") IrPhiInputNil)
+        (AstTyI64))]
+    [program : CompilerIrProgram
+      (IrProgram
+        IrGlobalNil
+        (IrFunctionCons
+          (IrFunction
+            "main"
+            IrParamNil
+            (AstTyI64)
+            4
+            (IrBlockCons
+              (IrBlock "entry" (IrInstrCons (IrInstrJump "join") IrInstrNil))
+              (IrBlockCons
+                (IrBlock
+                  "join"
+                  (IrInstrCons
+                    phi
+                    (IrInstrCons
+                      (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+                      IrInstrNil)))
+                IrBlockNil)))
+          IrFunctionNil)
+        IrExternNil)]
+    [spans : CompilerSourceSpans
+      (compiler-source-spans-insert-instr
+        (compiler-source-spans-insert
+          (compiler-source-spans-empty)
+          "main"
+          (compiler-backend-test-span 10 2))
+        "main"
+        phi
+        (compiler-backend-test-span 55 13))]
+    (match (optimize-program-with-spans program spans)
+      [(CompilerOptimizedProgram optimized optimized-spans)
+        (match (compiler-backend-emit-program-with-spans
+          optimized
+          optimized-spans)
+          [(ErrCompilerBackend diag)
+            (and
+              (string-eq
+                (compiler-diagnostic-message diag)
+                "backend: f64 values are not supported yet")
+              (and
+                (= (compiler-diagnostic-line diag) 55)
+                (= (compiler-diagnostic-col diag) 13)))]
+          [(OkCompilerBackend _) false])])))
+
 (define (compiler-backend-instr-contains?
   [instr : CompilerIrInstr]
   [needle : String]) : bool
@@ -8143,20 +8198,22 @@ tl_string_concat:
                             (and
                               (compiler-backend-instr-diagnostics-ok?)
                               (and
-                                (compiler-backend-runtime-helper-asm-ok?)
+                                (compiler-backend-optimizer-rewrite-diagnostic-ok?)
                                 (and
-                                  (compiler-backend-alloc-runtime-arena-ok?)
+                                  (compiler-backend-runtime-helper-asm-ok?)
                                   (and
-                                    (compiler-backend-region-ok?)
+                                    (compiler-backend-alloc-runtime-arena-ok?)
                                     (and
-                                      (compiler-backend-process-output-ok?)
+                                      (compiler-backend-region-ok?)
                                       (and
-                                        (compiler-backend-windows-process-output-ok?)
+                                        (compiler-backend-process-output-ok?)
                                         (and
-                                          (compiler-backend-user-helper-name-ok?)
+                                          (compiler-backend-windows-process-output-ok?)
                                           (and
-                                            (compiler-backend-runtime-coexist-ok?)
-                                            (compiler-backend-module-symbol-ok?))))))))))))))))))))))
+                                            (compiler-backend-user-helper-name-ok?)
+                                            (and
+                                              (compiler-backend-runtime-coexist-ok?)
+                                              (compiler-backend-module-symbol-ok?)))))))))))))))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

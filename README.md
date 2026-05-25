@@ -123,6 +123,9 @@ Name              ; a defenum / defstruct nominal type
 ```
 
 `f32` is in the type system but rejected by backend validation today.
+Raw pointer types `(Ptr T)` and `(MutPtr T)` plus `(unsafe ...)` are specified
+for the v1 FFI surface in [SPEC.md §3.4](SPEC.md) and §5.19, but implementation
+is still pending.
 
 ### Abstraction policy
 
@@ -292,6 +295,11 @@ TypeLisp does not currently have source-level references, borrowing, ownership
 transfer, destructors, `free`, or a garbage collector. Aggregate values such as
 `String`, dynamic arrays, structs, and enums are implemented as pointer-sized
 handles in the IR/ABI, but those handles are not checked language references.
+The v1 raw pointer design is now specified as explicit unsafe syntax:
+`(Ptr T)`/`(MutPtr T)` are nullable, copyable pointer-sized values, and
+dereference/write/offset/cast operations require `(unsafe ...)`. That surface is
+for FFI/runtime work and is not implemented yet; it is not the future safe
+reference/borrow model.
 
 `String` values are immutable at the source level. Dynamic arrays are shared
 mutable buffers: copying or passing an `(Array T)` value aliases the same
@@ -406,7 +414,8 @@ map/zip path all compile to native code. See the
 [SPEC.md §8](SPEC.md) for what is not yet supported (aggregate-element /
 nested fixed-array captures, tail calls, tuple/fixed-array by-value returns,
 `f32` codegen, general GC/free, ownership/borrowing, and later SPMD/SIMD
-reductions/cross-lane work).
+reductions/cross-lane work). Raw pointer types and unsafe pointer operations are
+specified but not implemented.
 
 ## Contributing
 

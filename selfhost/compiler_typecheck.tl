@@ -87,6 +87,25 @@
 (define (tc-bind [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
   (TcTypeBind name ty env))
 
+(define (tc-bind-alias-if-free [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
+  (if (tc-name-bound? env name)
+    env
+    (tc-bind env name ty)))
+
+(define (tc-bind-module-name
+  [env : TcTypeEnv]
+  [module : String]
+  [name : String]
+  [ty : AstType]) : TcTypeEnv
+  (let
+    [key : String (compiler-symbol-module-key module name)]
+    (tc-bind
+      (if (string-eq key name)
+        env
+        (tc-bind-alias-if-free env name ty))
+      key
+      ty)))
+
 (define (tc-default-boundary-name) : String
   "__tl_default_boundary")
 
@@ -1174,73 +1193,126 @@
   [env : TcTypeEnv]
   [enum-name : String]
   [variants : AstVariantDefList]) : ResultTcEnv
+  (tc-bind-enum-variants-in-module ctx env "" enum-name variants))
+
+(define (tc-bind-enum-variants-in-module
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [module : String]
+  [enum-name : String]
+  [variants : AstVariantDefList]) : ResultTcEnv
   (match variants
     [(AstVariantDefNil) (OkTcEnv env)]
     [(AstVariantDefCons variant rest)
       (match variant
         [(AstVariantDef name fields)
-          (tc-bind-enum-variants
-            ctx
-            (tc-bind
-              env
-              name
-              (tc-enum-variant-constructor-type ctx enum-name fields))
-            enum-name
-            rest)])]))
+          (let
+            [scoped-enum : String (compiler-symbol-module-key module enum-name)]
+            (tc-bind-enum-variants-in-module
+              ctx
+              (tc-bind-module-name
+                env
+                module
+                name
+                (tc-enum-variant-constructor-type ctx scoped-enum fields))
+              module
+              enum-name
+              rest))])]))
 
 (define (tc-build-top-env-list
   [ctx : TcContext]
   [decls : AstDeclList]
   [env : TcTypeEnv]) : ResultTcEnv
+  (tc-build-top-env-list-in-module ctx decls env ""))
+
+(define (tc-build-top-env-list-in-module
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [env : TcTypeEnv]
+  [module : String]) : ResultTcEnv
   (match decls
     [(AstDeclNil) (OkTcEnv env)]
     [(AstDeclCons decl rest)
       (match decl
+        [(AstDeclModule next-module)
+          (tc-build-top-env-list-in-module ctx rest env next-module)]
         [(AstDeclDef name _ _)
           (match (tc-top-decl-type ctx decl)
             [(OkTcType ty)
-              (tc-build-top-env-list ctx rest (tc-bind env name ty))]
+              (tc-build-top-env-list-in-module
+                ctx
+                rest
+                (tc-bind-module-name env module name ty)
+                module)]
             [(ErrTcType message) (ErrTcEnv message)])]
         [(AstDeclDefFn name _ _ _)
           (match (tc-top-decl-type ctx decl)
             [(OkTcType ty)
-              (tc-build-top-env-list ctx rest (tc-bind env name ty))]
+              (tc-build-top-env-list-in-module
+                ctx
+                rest
+                (tc-bind-module-name env module name ty)
+                module)]
             [(ErrTcType message) (ErrTcEnv message)])]
         [(AstDeclExtern name _)
           (match (tc-top-decl-type ctx decl)
             [(OkTcType ty)
-              (tc-build-top-env-list ctx rest (tc-bind env name ty))]
+              (tc-build-top-env-list-in-module
+                ctx
+                rest
+                (tc-bind-module-name env module name ty)
+                module)]
             [(ErrTcType message) (ErrTcEnv message)])]
         [(AstDeclDefEnum name variants)
-          (match (tc-bind-enum-variants ctx env name variants)
-            [(OkTcEnv next-env) (tc-build-top-env-list ctx rest next-env)]
+          (match (tc-bind-enum-variants-in-module ctx env module name variants)
+            [(OkTcEnv next-env)
+              (tc-build-top-env-list-in-module ctx rest next-env module)]
             [(ErrTcEnv message) (ErrTcEnv message)])]
         [(AstDeclDefStruct name fields)
-          (tc-build-top-env-list
-            ctx
-            rest
-            (tc-bind
-              env
-              name
-              (AstTyFunc (tc-field-type-list ctx fields) (AstTyStruct name))))]
+          (let
+            [scoped-name : String (compiler-symbol-module-key module name)]
+            (tc-build-top-env-list-in-module
+              ctx
+              rest
+              (tc-bind-module-name
+                env
+                module
+                name
+                (AstTyFunc
+                  (tc-field-type-list ctx fields)
+                  (AstTyStruct scoped-name)))
+              module))]
         [(AstDeclComptimeDecl template)
           (match template
             [(AstDeclDefEnum name variants)
-              (match (tc-bind-enum-variants ctx env name variants)
-                [(OkTcEnv next-env) (tc-build-top-env-list ctx rest next-env)]
+              (match (tc-bind-enum-variants-in-module
+                ctx
+                env
+                module
+                name
+                variants)
+                [(OkTcEnv next-env)
+                  (tc-build-top-env-list-in-module ctx rest next-env module)]
                 [(ErrTcEnv message) (ErrTcEnv message)])]
             [(AstDeclDefStruct name fields)
-              (tc-build-top-env-list
-                ctx
-                rest
-                (tc-bind
-                  env
-                  name
-                  (AstTyFunc (tc-field-type-list ctx fields) (AstTyStruct name))))]
-            [_ (tc-build-top-env-list ctx rest env)])]
-        [(AstDeclImport _) (tc-build-top-env-list ctx rest env)]
-        [(AstDeclModule _) (tc-build-top-env-list ctx rest env)]
-        [(AstDeclTest _ _ _) (tc-build-top-env-list ctx rest env)])]))
+              (let
+                [scoped-name : String (compiler-symbol-module-key module name)]
+                (tc-build-top-env-list-in-module
+                  ctx
+                  rest
+                  (tc-bind-module-name
+                    env
+                    module
+                    name
+                    (AstTyFunc
+                      (tc-field-type-list ctx fields)
+                      (AstTyStruct scoped-name)))
+                  module))]
+            [_ (tc-build-top-env-list-in-module ctx rest env module)])]
+        [(AstDeclImport _)
+          (tc-build-top-env-list-in-module ctx rest env module)]
+        [(AstDeclTest _ _ _)
+          (tc-build-top-env-list-in-module ctx rest env module)])]))
 
 (define (tc-build-top-env [ctx : TcContext] [program : AstProgram]) : ResultTcEnv
   (match program
@@ -1867,38 +1939,79 @@
 (define (tc-program-enum-variants-list
   [decls : AstDeclList]
   [enum-name : String]) : ResultAstVariantDefList
+  (tc-program-enum-variants-list-in-module decls enum-name ""))
+
+(define (tc-program-enum-variants-list-in-module
+  [decls : AstDeclList]
+  [enum-name : String]
+  [module : String]) : ResultAstVariantDefList
   (match decls
     [(AstDeclNil)
       (ErrAstVariantDefList
         (string-append "typecheck: unknown enum " enum-name))]
     [(AstDeclCons decl rest)
       (match decl
+        [(AstDeclModule next-module)
+          (tc-program-enum-variants-list-in-module rest enum-name next-module)]
         [(AstDeclDefEnum name variants)
-          (if (string-eq name enum-name)
+          (if (or
+            (string-eq name enum-name)
+            (string-eq (compiler-symbol-module-key module name) enum-name))
             (OkAstVariantDefList variants)
-            (tc-program-enum-variants-list rest enum-name))]
+            (tc-program-enum-variants-list-in-module rest enum-name module))]
         [(AstDeclComptimeDecl template)
           (match template
             [(AstDeclDefEnum name variants)
-              (if (string-eq name enum-name)
+              (if (or
+                (string-eq name enum-name)
+                (string-eq (compiler-symbol-module-key module name) enum-name))
                 (OkAstVariantDefList variants)
-                (tc-program-enum-variants-list rest enum-name))]
-            [_ (tc-program-enum-variants-list rest enum-name)])]
-        [_ (tc-program-enum-variants-list rest enum-name)])]))
+                (tc-program-enum-variants-list-in-module rest enum-name module))]
+            [_ (tc-program-enum-variants-list-in-module rest enum-name module)])]
+        [_ (tc-program-enum-variants-list-in-module rest enum-name module)])]))
 
 (define (tc-program-enum-variants [program : AstProgram] [enum-name : String]) : ResultAstVariantDefList
   (match program
     [(AstProgram decls) (tc-program-enum-variants-list decls enum-name)]))
 
 (define (tc-variant-owner-name [ctx : TcContext] [handle : i64]) : ResultTcString
-  (match (compiler-program-decl-at-index
-    (tc-context-program ctx)
-    (compiler-registry-handle-owner-index handle))
-    [(OkAstDecl decl)
+  (match (tc-context-program ctx)
+    [(AstProgram decls)
+      (tc-variant-owner-name-list
+        decls
+        (compiler-registry-handle-owner-index handle)
+        0
+        "")]))
+
+(define (tc-variant-owner-name-list
+  [decls : AstDeclList]
+  [target : i64]
+  [index : i64]
+  [module : String]) : ResultTcString
+  (match decls
+    [(AstDeclNil) (ErrTcString "typecheck: variant owner is not enum")]
+    [(AstDeclCons decl rest)
       (match decl
-        [(AstDeclDefEnum name _) (OkTcString name)]
-        [_ (ErrTcString "typecheck: variant owner is not enum")])]
-    [(ErrAstDecl message) (ErrTcString message)]))
+        [(AstDeclImport _)
+          (tc-variant-owner-name-list rest target index module)]
+        [(AstDeclModule next-module)
+          (tc-variant-owner-name-list rest target index next-module)]
+        [(AstDeclTest _ _ _)
+          (tc-variant-owner-name-list rest target index module)]
+        [(AstDeclComptimeDecl template)
+          (if (= target index)
+            (match template
+              [(AstDeclDefEnum name _)
+                (OkTcString (compiler-symbol-module-key module name))]
+              [_ (ErrTcString "typecheck: variant owner is not enum")])
+            (tc-variant-owner-name-list rest target (+ index 1) module))]
+        [_
+          (if (= target index)
+            (match decl
+              [(AstDeclDefEnum name _)
+                (OkTcString (compiler-symbol-module-key module name))]
+              [_ (ErrTcString "typecheck: variant owner is not enum")])
+            (tc-variant-owner-name-list rest target (+ index 1) module))])]))
 
 (define (tc-struct-field-type
   [ctx : TcContext]
@@ -2093,15 +2206,53 @@
           (tc-match-rest-types ctx env scrut-ty rest first-ty)]
         [(ErrTcType message) (ErrTcType message)])]))
 
+(define (tc-qualified-name-last-slash [name : String]) : i64
+  (let
+    [i : i64 0]
+    [n : i64 (string-length name)]
+    [last : i64 -1]
+    (begin
+      (while (< i n)
+        (begin
+          (if (= (string-ref name i) #/')
+            (set! last i)
+            (set! last last))
+          (set! i (+ i 1))))
+      last)))
+
+(define (tc-qualified-name-module [name : String]) : String
+  (let
+    [slash : i64 (tc-qualified-name-last-slash name)]
+    (if (< slash 0)
+      ""
+      (substring name 0 slash))))
+
+(define (tc-qualified-variant-name [enum-name : String] [variant-name : String]) : String
+  (let
+    [module : String (tc-qualified-name-module enum-name)]
+    (if (string-eq module "")
+      variant-name
+      (compiler-symbol-module-key module variant-name))))
+
+(define (tc-variant-name-matches?
+  [enum-name : String]
+  [pattern-name : String]
+  [variant-name : String]) : bool
+  (or
+    (string-eq pattern-name variant-name)
+    (string-eq pattern-name (tc-qualified-variant-name enum-name variant-name))))
+
 (define (tc-enum-has-single-variant?
   [variants : AstVariantDefList]
+  [enum-name : String]
   [variant-name : String]) : bool
   (match variants
     [(AstVariantDefCons variant rest)
       (match rest
         [(AstVariantDefNil)
           (match variant
-            [(AstVariantDef name _) (string-eq name variant-name)])]
+            [(AstVariantDef name _)
+              (tc-variant-name-matches? enum-name variant-name name)])]
         [_ false])]
     [_ false]))
 
@@ -2137,7 +2288,7 @@
         [(AstTyEnum enum-name)
           (match (tc-program-enum-variants (tc-context-program ctx) enum-name)
             [(OkAstVariantDefList variants)
-              (if (tc-enum-has-single-variant? variants name)
+              (if (tc-enum-has-single-variant? variants enum-name name)
                 (tc-variant-pattern-irrefutable? ctx name args)
                 false)]
             [(ErrAstVariantDefList _) false])]
@@ -2164,31 +2315,35 @@
 (define (tc-pattern-covers-variant?
   [ctx : TcContext]
   [pattern : AstPattern]
+  [enum-name : String]
   [variant-name : String]) : bool
   (match pattern
     [(AstPatWildcard) true]
-    [(AstPatBinding name) (string-eq name variant-name)]
+    [(AstPatBinding name)
+      (tc-variant-name-matches? enum-name name variant-name)]
     [(AstPatVariant name args)
       (and
-        (string-eq name variant-name)
+        (tc-variant-name-matches? enum-name name variant-name)
         (tc-variant-pattern-irrefutable? ctx name args))]
     [_ false]))
 
 (define (tc-match-arms-cover-variant?
   [ctx : TcContext]
   [arms : AstMatchArmList]
+  [enum-name : String]
   [variant-name : String]) : bool
   (match arms
     [(AstMatchArmNil) false]
     [(AstMatchArmCons arm rest)
       (match arm
         [(AstMatchArm pattern _)
-          (if (tc-pattern-covers-variant? ctx pattern variant-name)
+          (if (tc-pattern-covers-variant? ctx pattern enum-name variant-name)
             true
-            (tc-match-arms-cover-variant? ctx rest variant-name))])]))
+            (tc-match-arms-cover-variant? ctx rest enum-name variant-name))])]))
 
 (define (tc-enum-variants-covered?
   [ctx : TcContext]
+  [enum-name : String]
   [variants : AstVariantDefList]
   [arms : AstMatchArmList]) : bool
   (match variants
@@ -2197,8 +2352,8 @@
       (match variant
         [(AstVariantDef name _)
           (and
-            (tc-match-arms-cover-variant? ctx arms name)
-            (tc-enum-variants-covered? ctx rest arms))])]))
+            (tc-match-arms-cover-variant? ctx arms enum-name name)
+            (tc-enum-variants-covered? ctx enum-name rest arms))])]))
 
 (define (tc-match-arms-have-catchall? [arms : AstMatchArmList]) : bool
   (match arms
@@ -2232,7 +2387,7 @@
     [(AstTyEnum enum-name)
       (match (tc-program-enum-variants (tc-context-program ctx) enum-name)
         [(OkAstVariantDefList variants)
-          (tc-enum-variants-covered? ctx variants arms)]
+          (tc-enum-variants-covered? ctx enum-name variants arms)]
         [(ErrAstVariantDefList _) false])]
     [(AstTyBool)
       (or
@@ -2999,6 +3154,28 @@
 (defenum Right (Same))
 (define (main) : i64 0)")
 
+(define (compiler-typecheck-module-qualified-source) : String
+  "(module left)
+(define (get) : i64 20)
+(defenum Maybe (None) (Some i64))
+(defstruct Point (x i64))
+(module right)
+(define (get) : i64 22)
+(defenum Maybe (None) (Some i64))
+(defstruct Point (x i64))
+(module main)
+(define (main) : i64
+  (+
+    (left/get)
+    (+
+      (right/get)
+      (+
+        (let ([p : right/Point (right/Point 7)])
+          (struct-get p x))
+        (match (right/Some 1)
+          [(right/Some v) v]
+          [right/None 0])))))")
+
 (define (compiler-typecheck-nominal-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-nominal-source))
@@ -3016,9 +3193,12 @@
             (compiler-typecheck-error-ok?
               (compiler-typecheck-unknown-field-source)
               "typecheck: unknown struct field Point.z")
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-duplicate-variant-source)
-              "symbols: duplicate enum variant Same")))))))
+            (and
+              (compiler-typecheck-error-ok?
+                (compiler-typecheck-duplicate-variant-source)
+                "symbols: duplicate enum variant Same")
+              (compiler-typecheck-ok?
+                (compiler-typecheck-module-qualified-source)))))))))
 
 (define (compiler-typecheck-region-builtin-source) : String
   "(define (main) : i64

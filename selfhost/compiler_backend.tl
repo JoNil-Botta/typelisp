@@ -6220,8 +6220,9 @@ tl_string_concat:
         CompilerRegAssignmentNil))))
 
 (define (compiler-backend-peephole-register-moves-ok?) : bool
-  (let ([assignments : CompilerRegAssignmentList
-    (compiler-backend-peephole-assignments)])
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-backend-peephole-assignments)]
     (and
       (string-eq
         (compiler-backend-emit-load-var-with-plan assignments 0 "%r12")
@@ -6242,8 +6243,9 @@ tl_string_concat:
             ""))))))
 
 (define (compiler-backend-peephole-asm-ok?) : bool
-  (let ([assignments : CompilerRegAssignmentList
-    (compiler-backend-peephole-assignments)])
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-backend-peephole-assignments)]
     (match (compiler-backend-emit-binop
       (CompilerRegVarTypeNil)
       assignments

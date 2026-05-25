@@ -127,6 +127,41 @@
     "symbols: duplicate field "
     (compiler-struct-field-key struct-name field-name)))
 
+(define (compiler-symbol-module-key [module : String] [name : String]) : String
+  (if (= (string-length module) 0)
+    name
+    (string-append module (string-append "/" name))))
+
+(define (compiler-symbols-add-value-alias
+  [symbols : CompilerSymbols]
+  [name : String]
+  [handle : i64]) : CompilerSymbols
+  (match symbols
+    [(CompilerSymbols values types)
+      (if (sym-i64-contains values name)
+        symbols
+        (CompilerSymbols (sym-i64-bind values name handle) types))]))
+
+(define (compiler-symbols-add-type-alias
+  [symbols : CompilerSymbols]
+  [name : String]
+  [handle : i64]) : CompilerSymbols
+  (match symbols
+    [(CompilerSymbols values types)
+      (if (sym-i64-contains types name)
+        symbols
+        (CompilerSymbols values (sym-i64-bind types name handle)))]))
+
+(define (compiler-registries-add-variant-alias
+  [registries : CompilerRegistries]
+  [name : String]
+  [handle : i64]) : CompilerRegistries
+  (match registries
+    [(CompilerRegistries variants fields)
+      (if (sym-i64-contains variants name)
+        registries
+        (CompilerRegistries (sym-i64-bind variants name handle) fields))]))
+
 (define (compiler-symbols-add-value
   [symbols : CompilerSymbols]
   [name : String]
@@ -149,19 +184,52 @@
         (OkCompilerSymbols
           (CompilerSymbols values (sym-i64-bind types name handle))))]))
 
+(define (compiler-symbols-add-value-in-module
+  [symbols : CompilerSymbols]
+  [module : String]
+  [name : String]
+  [handle : i64]) : ResultCompilerSymbols
+  (let
+    [key : String (compiler-symbol-module-key module name)]
+    (match (compiler-symbols-add-value symbols key handle)
+      [(OkCompilerSymbols next)
+        (OkCompilerSymbols (compiler-symbols-add-value-alias next name handle))]
+      [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])))
+
+(define (compiler-symbols-add-type-in-module
+  [symbols : CompilerSymbols]
+  [module : String]
+  [name : String]
+  [handle : i64]) : ResultCompilerSymbols
+  (let
+    [key : String (compiler-symbol-module-key module name)]
+    (match (compiler-symbols-add-type symbols key handle)
+      [(OkCompilerSymbols next)
+        (OkCompilerSymbols (compiler-symbols-add-type-alias next name handle))]
+      [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])))
+
 (define (compiler-symbols-add-decl
   [symbols : CompilerSymbols]
   [decl : AstDecl]
   [index : i64]) : ResultCompilerSymbols
+  (compiler-symbols-add-decl-in-module symbols "" decl index))
+
+(define (compiler-symbols-add-decl-in-module
+  [symbols : CompilerSymbols]
+  [module : String]
+  [decl : AstDecl]
+  [index : i64]) : ResultCompilerSymbols
   (match decl
     [(AstDeclDef name _ _)
-      (compiler-symbols-add-value
+      (compiler-symbols-add-value-in-module
         symbols
+        module
         name
         (compiler-symbol-make-handle (compiler-symbol-kind-value-define) index))]
     [(AstDeclDefFn name _ _ _)
-      (compiler-symbols-add-value
+      (compiler-symbols-add-value-in-module
         symbols
+        module
         name
         (compiler-symbol-make-handle
           (compiler-symbol-kind-function-define)
@@ -172,36 +240,52 @@
         name
         (compiler-symbol-make-handle (compiler-symbol-kind-extern) index))]
     [(AstDeclDefEnum name _)
-      (compiler-symbols-add-type
+      (compiler-symbols-add-type-in-module
         symbols
+        module
         name
         (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))]
     [(AstDeclDefStruct name _)
-      (compiler-symbols-add-type
+      (compiler-symbols-add-type-in-module
         symbols
+        module
         name
         (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))]
     [(AstDeclImport _) (OkCompilerSymbols symbols)]
     [(AstDeclModule _) (OkCompilerSymbols symbols)]
     [(AstDeclTest _ _ _) (OkCompilerSymbols symbols)]
     [(AstDeclComptimeDecl template)
-      (compiler-symbols-add-decl symbols template index)]))
+      (compiler-symbols-add-decl-in-module symbols module template index)]))
 
 (define (build-compiler-symbol-list
   [decls : AstDeclList]
   [symbols : CompilerSymbols]
   [index : i64]) : ResultCompilerSymbols
+  (build-compiler-symbol-list-in-module decls symbols index ""))
+
+(define (build-compiler-symbol-list-in-module
+  [decls : AstDeclList]
+  [symbols : CompilerSymbols]
+  [index : i64]
+  [module : String]) : ResultCompilerSymbols
   (match decls
     [(AstDeclNil) (OkCompilerSymbols symbols)]
     [(AstDeclCons decl rest)
       (match decl
-        [(AstDeclImport _) (build-compiler-symbol-list rest symbols index)]
-        [(AstDeclModule _) (build-compiler-symbol-list rest symbols index)]
-        [(AstDeclTest _ _ _) (build-compiler-symbol-list rest symbols index)]
+        [(AstDeclImport _)
+          (build-compiler-symbol-list-in-module rest symbols index module)]
+        [(AstDeclModule next-module)
+          (build-compiler-symbol-list-in-module rest symbols index next-module)]
+        [(AstDeclTest _ _ _)
+          (build-compiler-symbol-list-in-module rest symbols index module)]
         [_
-          (match (compiler-symbols-add-decl symbols decl index)
+          (match (compiler-symbols-add-decl-in-module symbols module decl index)
             [(OkCompilerSymbols next-symbols)
-              (build-compiler-symbol-list rest next-symbols (+ index 1))]
+              (build-compiler-symbol-list-in-module
+                rest
+                next-symbols
+                (+ index 1)
+                module)]
             [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])])]))
 
 (define (build-compiler-symbols [program : AstProgram]) : ResultCompilerSymbols
@@ -249,6 +333,30 @@
                 variant-index))
             fields)))]))
 
+(define (compiler-registries-add-variant-in-module
+  [registries : CompilerRegistries]
+  [module : String]
+  [name : String]
+  [enum-index : i64]
+  [variant-index : i64]) : ResultCompilerRegistries
+  (let
+    [key : String (compiler-symbol-module-key module name)]
+    [handle : i64
+      (compiler-registry-make-handle
+        (compiler-symbol-kind-enum-variant)
+        enum-index
+        variant-index)]
+    (match registries
+      [(CompilerRegistries variants fields)
+        (if (sym-i64-contains variants key)
+          (ErrCompilerRegistries
+            (compiler-registries-duplicate-variant-message key))
+          (OkCompilerRegistries
+            (compiler-registries-add-variant-alias
+              (CompilerRegistries (sym-i64-bind variants key handle) fields)
+              name
+              handle)))])))
+
 (define (compiler-registries-add-field
   [registries : CompilerRegistries]
   [struct-name : String]
@@ -278,20 +386,35 @@
   [registries : CompilerRegistries]
   [enum-index : i64]
   [variant-index : i64]) : ResultCompilerRegistries
+  (build-compiler-variant-registry-list-in-module
+    variants
+    registries
+    ""
+    enum-index
+    variant-index))
+
+(define (build-compiler-variant-registry-list-in-module
+  [variants : AstVariantDefList]
+  [registries : CompilerRegistries]
+  [module : String]
+  [enum-index : i64]
+  [variant-index : i64]) : ResultCompilerRegistries
   (match variants
     [(AstVariantDefNil) (OkCompilerRegistries registries)]
     [(AstVariantDefCons variant rest)
       (match variant
         [(AstVariantDef name _)
-          (match (compiler-registries-add-variant
+          (match (compiler-registries-add-variant-in-module
             registries
+            module
             name
             enum-index
             variant-index)
             [(OkCompilerRegistries next-registries)
-              (build-compiler-variant-registry-list
+              (build-compiler-variant-registry-list-in-module
                 rest
                 next-registries
+                module
                 enum-index
                 (+ variant-index 1))]
             [(ErrCompilerRegistries message) (ErrCompilerRegistries message)])])]))
@@ -331,47 +454,71 @@
   [decls : AstDeclList]
   [registries : CompilerRegistries]
   [index : i64]) : ResultCompilerRegistries
+  (build-compiler-registry-list-in-module decls registries index ""))
+
+(define (build-compiler-registry-list-in-module
+  [decls : AstDeclList]
+  [registries : CompilerRegistries]
+  [index : i64]
+  [module : String]) : ResultCompilerRegistries
   (match decls
     [(AstDeclNil) (OkCompilerRegistries registries)]
     [(AstDeclCons decl rest)
       (match decl
-        [(AstDeclImport _) (build-compiler-registry-list rest registries index)]
-        [(AstDeclModule _) (build-compiler-registry-list rest registries index)]
+        [(AstDeclImport _)
+          (build-compiler-registry-list-in-module rest registries index module)]
+        [(AstDeclModule next-module)
+          (build-compiler-registry-list-in-module
+            rest
+            registries
+            index
+            next-module)]
         [(AstDeclTest _ _ _)
-          (build-compiler-registry-list rest registries index)]
+          (build-compiler-registry-list-in-module rest registries index module)]
         [(AstDeclDefEnum _ variants)
-          (match (build-compiler-variant-registry-list
+          (match (build-compiler-variant-registry-list-in-module
             variants
             registries
+            module
             index
             0)
             [(OkCompilerRegistries next-registries)
-              (build-compiler-registry-list rest next-registries (+ index 1))]
+              (build-compiler-registry-list-in-module
+                rest
+                next-registries
+                (+ index 1)
+                module)]
             [(ErrCompilerRegistries message) (ErrCompilerRegistries message)])]
         [(AstDeclDefStruct name fields)
           (match (build-compiler-field-registry-list
             fields
             registries
             (sym-i64-empty)
-            name
+            (compiler-symbol-module-key module name)
             index
             0)
             [(OkCompilerRegistries next-registries)
-              (build-compiler-registry-list rest next-registries (+ index 1))]
+              (build-compiler-registry-list-in-module
+                rest
+                next-registries
+                (+ index 1)
+                module)]
             [(ErrCompilerRegistries message) (ErrCompilerRegistries message)])]
         [(AstDeclComptimeDecl template)
           (match template
             [(AstDeclDefEnum _ variants)
-              (match (build-compiler-variant-registry-list
+              (match (build-compiler-variant-registry-list-in-module
                 variants
                 registries
+                module
                 index
                 0)
                 [(OkCompilerRegistries next-registries)
-                  (build-compiler-registry-list
+                  (build-compiler-registry-list-in-module
                     rest
                     next-registries
-                    (+ index 1))]
+                    (+ index 1)
+                    module)]
                 [(ErrCompilerRegistries message)
                   (ErrCompilerRegistries message)])]
             [(AstDeclDefStruct name fields)
@@ -379,18 +526,29 @@
                 fields
                 registries
                 (sym-i64-empty)
-                name
+                (compiler-symbol-module-key module name)
                 index
                 0)
                 [(OkCompilerRegistries next-registries)
-                  (build-compiler-registry-list
+                  (build-compiler-registry-list-in-module
                     rest
                     next-registries
-                    (+ index 1))]
+                    (+ index 1)
+                    module)]
                 [(ErrCompilerRegistries message)
                   (ErrCompilerRegistries message)])]
-            [_ (build-compiler-registry-list rest registries (+ index 1))])]
-        [_ (build-compiler-registry-list rest registries (+ index 1))])]))
+            [_
+              (build-compiler-registry-list-in-module
+                rest
+                registries
+                (+ index 1)
+                module)])]
+        [_
+          (build-compiler-registry-list-in-module
+            rest
+            registries
+            (+ index 1)
+            module)])]))
 
 (define (build-compiler-registries [program : AstProgram]) : ResultCompilerRegistries
   (match (build-compiler-symbols program)
@@ -735,6 +893,96 @@
         [(ErrCompilerSymbols _) false])]
     [(ErrAstProgram _) false]))
 
+(define (compiler-symbols-module-scope-source) : String
+  "(module left)
+(define same : i64 1)
+(defenum Maybe (None) (Some i64))
+(defstruct Point (x i64))
+(module right)
+(define same : i64 2)
+(defenum Maybe (None) (Some i64))
+(defstruct Point (x i64))")
+
+(define (compiler-symbols-module-scope-ok?) : bool
+  (match (parse-ast-source (compiler-symbols-module-scope-source))
+    [(OkAstProgram program)
+      (match (build-compiler-symbols program)
+        [(OkCompilerSymbols symbols)
+          (match (build-compiler-registries program)
+            [(OkCompilerRegistries registries)
+              (and
+                (=
+                  (compiler-symbol-lookup-score
+                    (compiler-symbols-lookup-value symbols "left/same")
+                    (compiler-symbol-kind-value-define)
+                    0)
+                  1)
+                (and
+                  (=
+                    (compiler-symbol-lookup-score
+                      (compiler-symbols-lookup-value symbols "right/same")
+                      (compiler-symbol-kind-value-define)
+                      3)
+                    1)
+                  (and
+                    (=
+                      (compiler-symbol-lookup-score
+                        (compiler-symbols-lookup-type symbols "left/Maybe")
+                        (compiler-symbol-kind-defenum)
+                        1)
+                      1)
+                    (and
+                      (=
+                        (compiler-symbol-lookup-score
+                          (compiler-symbols-lookup-type symbols "right/Point")
+                          (compiler-symbol-kind-defstruct)
+                          5)
+                        1)
+                      (and
+                        (=
+                          (compiler-registry-lookup-score
+                            (compiler-registries-lookup-variant
+                              registries
+                              "left/None")
+                            (compiler-symbol-kind-enum-variant)
+                            1
+                            0)
+                          1)
+                        (and
+                          (=
+                            (compiler-registry-lookup-score
+                              (compiler-registries-lookup-variant
+                                registries
+                                "right/Some")
+                              (compiler-symbol-kind-enum-variant)
+                              4
+                              1)
+                            1)
+                          (and
+                            (=
+                              (compiler-registry-lookup-score
+                                (compiler-registries-lookup-struct-field
+                                  registries
+                                  "left/Point"
+                                  "x")
+                                (compiler-symbol-kind-struct-field)
+                                2
+                                0)
+                              1)
+                            (=
+                              (compiler-registry-lookup-score
+                                (compiler-registries-lookup-struct-field
+                                  registries
+                                  "right/Point"
+                                  "x")
+                                (compiler-symbol-kind-struct-field)
+                                5
+                                0)
+                              1))))))))]
+            [(ErrCompilerRegistries _) false])]
+        [(ErrCompilerSymbols _) false])]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-symbols-self-test) : i64
   (match (parse-ast-source (compiler-symbols-smoke-source))
     [(OkAstProgram program)
@@ -756,7 +1004,9 @@
                           (compiler-registries-duplicate-field-ok?)
                           (and
                             (compiler-registry-large-owner-handle-ok?)
-                            (compiler-symbols-comptime-decl-ok?))))))))
+                            (and
+                              (compiler-symbols-comptime-decl-ok?)
+                              (compiler-symbols-module-scope-ok?)))))))))
                 42
                 (begin
                   (panic "symbols: smoke score mismatch")

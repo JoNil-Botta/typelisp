@@ -36,17 +36,21 @@
     "\\"
     "/"))
 
+;;; Return the preferred path separator as a character.
 (define (fs-path-separator-char) : char
   (if (fs-windows?)
     #\\'
     #/'))
 
+;;; Return true when `c` is either Unix or Windows path separator syntax.
 (define (fs-path-separator? [c : char]) : bool
   (or (char-eq c #/') (char-eq c #\\')))
 
+;;; Return true when `path` starts with either supported separator character.
 (define (fs-path-starts-separator? [path : String]) : bool
   (and (> (string-length path) 0) (fs-path-separator? (string-ref path 0))))
 
+;;; Return true when `path` ends with either supported separator character.
 (define (fs-path-ends-separator? [path : String]) : bool
   (let
     [n : i64 (string-length path)]
@@ -68,6 +72,7 @@
           (string-append left right)
           (string-append (string-append left (fs-path-separator)) right))))))
 
+;;; Convert a runtime filesystem status into a structured `ResultIoUnit`.
 (define (fs-status-result [path : String] [status : i64]) : ResultIoUnit
   (if (= status io-status-ok)
     OkIoUnit
@@ -111,6 +116,7 @@
         OkIoUnit
         (ErrIoUnit error))]))
 
+;;; Return the host temporary root used by `try-create-temp-dir`.
 (define (fs-temp-root) : String
   (if (fs-windows?)
     (match (env-get "TEMP")
@@ -123,11 +129,13 @@
       [(EnvSomeString value) value]
       [(EnvNoString) "/tmp"])))
 
+;;; Compose one candidate temporary directory basename from prefix, pid, and attempt.
 (define (fs-temp-name [prefix : String] [pid : i64] [attempt : i64]) : String
   (string-append
     (string-append prefix "-")
     (string-append (int->string pid) (string-append "-" (int->string attempt)))))
 
+;;; Retry temporary directory creation until an unused candidate is found.
 (define (fs-create-temp-dir-loop
   [root : String]
   [prefix : String]

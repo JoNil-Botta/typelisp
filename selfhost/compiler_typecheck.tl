@@ -312,13 +312,33 @@
                                           [e19 : TcTypeEnv
                                             (tc-bind
                                               (tc-bind
-                                                e18
-                                                "file-exists?"
+                                                (tc-bind
+                                                  (tc-bind
+                                                    (tc-bind
+                                                      (tc-bind
+                                                        e18
+                                                        "file-exists?"
+                                                        (tc-fn1
+                                                          (AstTyString)
+                                                          (AstTyBool)))
+                                                      "file-exists-status"
+                                                      (tc-fn1
+                                                        (AstTyString)
+                                                        (AstTyI64)))
+                                                    "fs-mkdir-status"
+                                                    (tc-fn1
+                                                      (AstTyString)
+                                                      (AstTyI64)))
+                                                  "fs-remove-file-status"
+                                                  (tc-fn1
+                                                    (AstTyString)
+                                                    (AstTyI64)))
+                                                "fs-remove-dir-status"
                                                 (tc-fn1
                                                   (AstTyString)
-                                                  (AstTyBool)))
-                                              "file-exists-status"
-                                              (tc-fn1 (AstTyString) (AstTyI64)))]
+                                                  (AstTyI64)))
+                                              "fs-process-id"
+                                              (tc-fn0 (AstTyI64)))]
                                           (let
                                             [e20 : TcTypeEnv
                                               (tc-bind
@@ -1457,13 +1477,29 @@
                                     true
                                     (if (string-eq name "file-exists-status")
                                       true
-                                      (if (string-eq name "panic")
+                                      (if (string-eq name "fs-mkdir-status")
                                         true
-                                        (if (string-eq name "error")
+                                        (if (string-eq
+                                          name
+                                          "fs-remove-file-status")
                                           true
-                                          (if (string-eq name "env-var-exists?")
+                                          (if (string-eq
+                                            name
+                                            "fs-remove-dir-status")
                                             true
-                                            (string-eq name "env-var-value")))))))))))))))))))))))
+                                            (if (string-eq name "fs-process-id")
+                                              true
+                                              (if (string-eq name "panic")
+                                                true
+                                                (if (string-eq name "error")
+                                                  true
+                                                  (if (string-eq
+                                                    name
+                                                    "env-var-exists?")
+                                                    true
+                                                    (string-eq
+                                                      name
+                                                      "env-var-value")))))))))))))))))))))))))))
 
 (define (tc-default-builtin-unshadowed-scan? [env : TcTypeEnv] [name : String]) : bool
   (match env
@@ -3218,8 +3254,13 @@
 
 (define (compiler-typecheck-builtin-source) : String
   "(define (main [s : String]) : String
-  (string-append (substring s 0 (length s))
-                 (int->string (string->int \"7\"))))")
+  (begin
+    (fs-mkdir-status s)
+    (fs-remove-file-status s)
+    (fs-remove-dir-status s)
+    (fs-process-id)
+    (string-append (substring s 0 (length s))
+                   (int->string (string->int \"7\")))))")
 
 (define (compiler-typecheck-stdio-source) : String
   "(define (main) : i64

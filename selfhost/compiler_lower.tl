@@ -1810,6 +1810,8 @@
     [(AstExprIf cond then-branch else-branch)
       (lower-if ctx state env type-env cond then-branch else-branch expr-ty)]
     [(AstExprWhile cond body) (lower-while ctx state env type-env cond body)]
+    [(AstExprForeach index index-ty start end body)
+      (lower-foreach ctx state env type-env index index-ty start end body)]
     [(AstExprMatch scrutinee arms)
       (lower-match ctx state env type-env scrutinee arms expr-ty)]
     [(AstExprStringRef str index)
@@ -3735,6 +3737,107 @@
                             [(ErrLowerExpr message) (ErrLowerExpr message)]))])]
                   [(ErrLowerExpr message) (ErrLowerExpr message)]))])])]))
 
+;; Scalar `foreach` lowering (#1012). `(foreach ([i : ty start end]) body)`
+;; lowers to the half-open reference loop `i = start; while (i < end) { body;
+;; i = i + 1 }`, yielding unit. `start` and `end` are each lowered exactly once
+;; before the loop; the index binding is scoped to the body. Mirrors lower-while
+;; with an index var, a `<` guard, and a `+ 1` increment.
+(define (lower-foreach
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [index-ty : AstType]
+  [start : AstExpr]
+  [end : AstExpr]
+  [body : AstExpr]) : ResultLowerExpr
+  (match (lower-expr ctx state env type-env start)
+    [(OkLowerExpr start-lowered)
+      (match start-lowered
+        [(LowerExpr start-state start-value _)
+          (match (lower-expr ctx start-state env type-env end)
+            [(OkLowerExpr end-lowered)
+              (match end-lowered
+                [(LowerExpr end-state end-value _)
+                  (match (lower-state-alloc-var end-state)
+                    [(LowerAlloc index-alloc index-var)
+                      (match (lower-state-fresh-label
+                        (lower-state-emit
+                          index-alloc
+                          (IrInstrMov index-var start-value index-ty))
+                        "foreach_header")
+                        [(LowerLabel header-ls header-label)
+                          (match (lower-state-fresh-label
+                            header-ls
+                            "foreach_body")
+                            [(LowerLabel body-ls body-label)
+                              (match (lower-state-fresh-label
+                                body-ls
+                                "foreach_exit")
+                                [(LowerLabel exit-ls exit-label)
+                                  (match (lower-state-alloc-var
+                                    (lower-state-finish-block
+                                      (lower-state-emit
+                                        exit-ls
+                                        (IrInstrJump header-label))
+                                      header-label))
+                                    [(LowerAlloc cond-alloc cond-var)
+                                      (match (lower-expr
+                                        ctx
+                                        (lower-state-finish-block
+                                          (lower-state-emit
+                                            (lower-state-emit
+                                              cond-alloc
+                                              (IrInstrBinOp
+                                                cond-var
+                                                IrBinLt
+                                                (IrValueVar index-var)
+                                                end-value
+                                                index-ty))
+                                            (IrInstrBranch
+                                              (IrValueVar cond-var)
+                                              body-label
+                                              exit-label))
+                                          body-label)
+                                        (sym-i64-bind env index index-var)
+                                        (tc-bind type-env index index-ty)
+                                        body)
+                                        [(OkLowerExpr body-lowered)
+                                          (match body-lowered
+                                            [(LowerExpr post-body-state _ _)
+                                              (match (lower-state-alloc-var
+                                                post-body-state)
+                                                [(LowerAlloc inc-alloc inc-var)
+                                                  (OkLowerExpr
+                                                    (LowerExpr
+                                                      (lower-state-finish-block
+                                                        (lower-state-emit
+                                                          (lower-state-emit
+                                                            (lower-state-emit
+                                                              inc-alloc
+                                                              (IrInstrBinOp
+                                                                inc-var
+                                                                IrBinAdd
+                                                                (IrValueVar
+                                                                  index-var)
+                                                                (IrValueI64 1)
+                                                                index-ty))
+                                                            (IrInstrMov
+                                                              index-var
+                                                              (IrValueVar
+                                                                inc-var)
+                                                              index-ty))
+                                                          (IrInstrJump
+                                                            header-label))
+                                                        exit-label)
+                                                      IrValueUnit
+                                                      (AstTyUnit)))])])]
+                                        [(ErrLowerExpr message)
+                                          (ErrLowerExpr message)])])])])])])])]
+            [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
 ;; Scalar `match` lowering (#568). The scrutinee is lowered once into a fresh
 ;; local, then literal arms become a chain of `IrBinEq` tests + `IrInstrBranch`
 ;; (mirroring `lower-if`). The typechecker guarantees exhaustiveness and arm-type
@@ -5616,6 +5719,35 @@
               (> (lower-test-function-gep-offset-count functions "main" 12) 0)))])]
     [(ErrCompilerLower _) false]))
 
+;; `foreach` scalar lowering (#1012): a foreach `main` lowers to a loop, so its
+;; body holds at least the guard branch (`i < end`) and two binops (the `<`
+;; guard and the `+ 1` increment).
+(define (compiler-lower-foreach-shape-ok? [src : String]) : bool
+  (match (lower-compiler-source src)
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (> (lower-test-function-branch-count functions "main") 0)
+            (> (lower-test-function-binop-count functions "main") 1))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-foreach-tests-ok?) : bool
+  (and
+    (compiler-lower-ok?
+      "(define (main) : i64 (begin (foreach ([i : i64 0 3]) unit) 0))")
+    (and
+      (compiler-lower-ok?
+        "(define (f [a : (Array i64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (array-set! a i i)))")
+      (and
+        (compiler-lower-ok?
+          "(define (main) : i64 (begin (foreach ([i : i64 0 0]) unit) 0))")
+        (and
+          (compiler-lower-ok?
+            "(define (main) : i64 (begin (foreach ([i : i64 0 3]) (foreach ([j : i64 0 2]) unit)) 0))")
+          (compiler-lower-foreach-shape-ok?
+            "(define (main) : i64 (begin (foreach ([i : i64 0 3]) unit) 0))"))))))
+
 (define (compiler-lower-self-test) : i64
   (if (and
     (and
@@ -5704,9 +5836,11 @@
                                                     (compiler-lower-error-ok?
                                                       (compiler-lower-comptime-runtime-var-source)
                                                       "compile-time evaluation cannot reference runtime variable 'x'")
-                                                    (compiler-lower-error-ok?
-                                                      (compiler-lower-comptime-f64-source)
-                                                      "comptime: f64 compile-time evaluation not yet supported (#735)"))))))))))))))))))))))))))
+                                                    (and
+                                                      (compiler-lower-error-ok?
+                                                        (compiler-lower-comptime-f64-source)
+                                                        "comptime: f64 compile-time evaluation not yet supported (#735)")
+                                                      (compiler-lower-foreach-tests-ok?)))))))))))))))))))))))))))
     42
     (begin
       (panic "lower: smoke score mismatch")

@@ -2676,6 +2676,21 @@
                           "(import)"
                           "parse: malformed import")))))))))))))
 
+;; let-binding parsing (#1072 / #1041): accept untyped, multi-binding, and
+;; legacy-parenthesized binding forms; reject an empty binding list. Completes
+;; the let family alongside the existing flat-let accept and let error tests.
+(define (compiler-parse-let-tests-ok?) : bool
+  (and
+    (compiler-parse-ok? "(define (main) : i64 (let [x 1] x))")
+    (and
+      (compiler-parse-ok?
+        "(define (main) : i64 (let [x : i64 1] [y : i64 2] (+ x y)))")
+      (and
+        (compiler-parse-ok? "(define (main) : i64 (let ([x : i64 1]) x))")
+        (compiler-parse-error-ok?
+          "(define (main) : i64 (let [] 0))"
+          "parse: malformed let binding")))))
+
 (define (compiler-parse-smoke) : i64
   (match (parse-ast-source (compiler-parse-smoke-source))
     [(OkAstProgram program)
@@ -2710,7 +2725,9 @@
                                   (compiler-parse-reference-ok?)))))))))))))))
         (if (and
           (compiler-parse-error-tests-ok?)
-          (compiler-parse-declaration-tests-ok?))
+          (and
+            (compiler-parse-declaration-tests-ok?)
+            (compiler-parse-let-tests-ok?)))
           42
           (begin
             (panic "parse: error-path self-tests failed")

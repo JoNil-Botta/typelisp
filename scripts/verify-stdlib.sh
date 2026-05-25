@@ -93,6 +93,7 @@ stdlib/tests/io_stdio_lines.tl|42|host-line:stdout-line|host-line:stderr-line|pr
 stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef
 stdlib/tests/env_api.tl|42|-|-
 stdlib/tests/process_api.tl|42|-|-
+stdlib/tests/process_runtime.tl|42|-|-
 stdlib/tests/text_buf_api.tl|42|-|-
 stdlib/tests/test_assert_success.tl|42|-|-
 stdlib/tests/test_assert_failure.tl|134|-|literal:stdlib test failure message

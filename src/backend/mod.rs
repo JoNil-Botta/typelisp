@@ -22,6 +22,7 @@ const FILE_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists";
 const ENV_VAR_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_env_var_exists";
 const ENV_VAR_VALUE_RUNTIME_SYMBOL: &str = ".L_tl_env_var_value";
 const ENV_PATH_SEPARATOR_RUNTIME_SYMBOL: &str = ".L_tl_env_path_separator";
+const PROCESS_OUTPUT_RUNTIME_SYMBOL: &str = "tl_process_output";
 const READ_STDIN_LINE_RUNTIME_SYMBOL: &str = ".L_tl_read_stdin_line";
 const READ_STDIN_BYTES_RUNTIME_SYMBOL: &str = ".L_tl_read_stdin_bytes";
 const STDIN_EOF_RUNTIME_SYMBOL: &str = ".L_tl_stdin_eof";
@@ -461,6 +462,10 @@ pub struct X86_64Backend {
     needs_env_var_exists_runtime: bool,
     needs_env_var_value_runtime: bool,
     needs_env_path_separator_runtime: bool,
+    /// Whether the program references stdlib/process.tl's backend execution
+    /// hook. Linux emits a direct fork/exec/capture helper; Windows returns a
+    /// structured unsupported result for this slice.
+    needs_process_output_runtime: bool,
     /// Whether the program references stdin helpers. The read helpers allocate
     /// heap Strings and update a backend-owned EOF flag; `stdin-eof?` reads that
     /// flag; `flush-stdout` is a target-specific stdout flush/no-op helper.
@@ -1976,6 +1981,7 @@ impl X86_64Backend {
             needs_env_var_exists_runtime: false,
             needs_env_var_value_runtime: false,
             needs_env_path_separator_runtime: false,
+            needs_process_output_runtime: false,
             needs_read_stdin_line_runtime: false,
             needs_read_stdin_bytes_runtime: false,
             needs_stdin_eof_runtime: false,
@@ -2042,6 +2048,7 @@ impl X86_64Backend {
         self.needs_env_var_exists_runtime = Self::needs_env_var_exists_runtime(program);
         self.needs_env_var_value_runtime = Self::needs_env_var_value_runtime(program);
         self.needs_env_path_separator_runtime = Self::needs_env_path_separator_runtime(program);
+        self.needs_process_output_runtime = Self::needs_process_output_runtime(program);
         self.needs_read_stdin_line_runtime = Self::needs_read_stdin_line_runtime(program);
         self.needs_read_stdin_bytes_runtime = Self::needs_read_stdin_bytes_runtime(program);
         self.needs_stdin_eof_runtime = Self::needs_stdin_eof_runtime(program);
@@ -2072,12 +2079,15 @@ impl X86_64Backend {
             || (self.needs_env_var_exists_runtime && runtime_policy.emits_windows_runtime_helpers)
             || self.needs_env_var_value_runtime
             || self.needs_env_path_separator_runtime
+            || self.needs_process_output_runtime
             || self.needs_read_stdin_line_runtime
             || self.needs_read_stdin_bytes_runtime;
         let needs_print_runtime = !self.runtime_print_names.is_empty();
         let needs_argv_data = self.needs_arg_count_runtime || self.needs_arg_runtime;
         let needs_env_data = !runtime_policy.emits_windows_runtime_helpers
-            && (self.needs_env_var_exists_runtime || self.needs_env_var_value_runtime);
+            && (self.needs_env_var_exists_runtime
+                || self.needs_env_var_value_runtime
+                || self.needs_process_output_runtime);
         let needs_stdin_data = self.needs_read_stdin_line_runtime
             || self.needs_read_stdin_bytes_runtime
             || self.needs_stdin_eof_runtime;
@@ -2095,6 +2105,7 @@ impl X86_64Backend {
             || self.needs_read_file_runtime
             || self.needs_write_file_runtime
             || self.needs_file_exists_runtime
+            || self.needs_process_output_runtime
             || self.needs_read_stdin_line_runtime
             || self.needs_read_stdin_bytes_runtime
             || needs_argv_data;
@@ -2148,6 +2159,9 @@ impl X86_64Backend {
         if self.needs_flush_stdout_runtime {
             self.generate_flush_stdout_runtime_data();
         }
+        if self.needs_process_output_runtime {
+            self.generate_process_output_runtime_data();
+        }
         self.generate_closure_descriptor_data();
 
         self.emit("    .text");
@@ -2188,6 +2202,7 @@ impl X86_64Backend {
                 || (self.needs_env_var_value_runtime && symbol == ENV_VAR_VALUE_RUNTIME_SYMBOL)
                 || (self.needs_env_path_separator_runtime
                     && symbol == ENV_PATH_SEPARATOR_RUNTIME_SYMBOL)
+                || (self.needs_process_output_runtime && symbol == PROCESS_OUTPUT_RUNTIME_SYMBOL)
                 || (self.needs_read_stdin_line_runtime && symbol == READ_STDIN_LINE_RUNTIME_SYMBOL)
                 || (self.needs_read_stdin_bytes_runtime
                     && symbol == READ_STDIN_BYTES_RUNTIME_SYMBOL)
@@ -2273,6 +2288,9 @@ impl X86_64Backend {
         }
         if self.needs_env_path_separator_runtime {
             self.generate_env_path_separator_runtime_functions();
+        }
+        if self.needs_process_output_runtime {
+            self.generate_process_output_runtime_functions();
         }
         if self.needs_read_stdin_line_runtime {
             self.generate_read_stdin_line_runtime_functions();
@@ -2873,6 +2891,10 @@ impl X86_64Backend {
 
     fn needs_env_path_separator_runtime(program: &Program) -> bool {
         Self::needs_private_call_runtime(program, ENV_PATH_SEPARATOR_RUNTIME_SYMBOL)
+    }
+
+    fn needs_process_output_runtime(program: &Program) -> bool {
+        Self::needs_named_runtime(program, PROCESS_OUTPUT_RUNTIME_SYMBOL)
     }
 
     fn needs_private_call_runtime(program: &Program, symbol: &str) -> bool {
@@ -3887,6 +3909,29 @@ impl X86_64Backend {
         self.emit("");
     }
 
+    fn generate_process_output_runtime_data(&mut self) {
+        self.emit("    .section .rodata");
+        self.emit(".L_tl_process_unsupported_msg:");
+        self.emit("    .ascii \"process: runtime execution is not supported on this target\"");
+        self.emit("    .set .L_tl_process_unsupported_msg_len, . - .L_tl_process_unsupported_msg");
+        self.emit(".L_tl_process_spawn_msg:");
+        self.emit("    .ascii \"process: spawn failed\"");
+        self.emit("    .set .L_tl_process_spawn_msg_len, . - .L_tl_process_spawn_msg");
+        self.emit(".L_tl_process_wait_msg:");
+        self.emit("    .ascii \"process: wait failed\"");
+        self.emit("    .set .L_tl_process_wait_msg_len, . - .L_tl_process_wait_msg");
+        self.emit(".L_tl_process_exec_marker:");
+        self.emit("    .ascii \"exec\"");
+        self.emit("    .set .L_tl_process_exec_marker_len, . - .L_tl_process_exec_marker");
+        self.emit(".L_tl_process_stdout_name:");
+        self.emit("    .ascii \"typelisp-process-stdout\"");
+        self.emit("    .byte 0");
+        self.emit(".L_tl_process_stderr_name:");
+        self.emit("    .ascii \"typelisp-process-stderr\"");
+        self.emit("    .byte 0");
+        self.emit("");
+    }
+
     /// The abort message written to fd 2 (stderr) on illegal integer division
     /// or remainder (divide-by-zero or signed overflow).
     fn generate_div_runtime_data(&mut self) {
@@ -4700,6 +4745,398 @@ impl X86_64Backend {
         self.emit("    movq $.L_tl_file_exists_error_msg_len, %rdx");
         self.emit_call(ABORT_RUNTIME_SYMBOL);
         self.emit("");
+    }
+
+    fn generate_process_output_runtime_functions(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.emit_many(&[
+                "tl_process_output:",
+                "    leaq .L_tl_process_unsupported_msg(%rip), %rcx",
+                "    movq $.L_tl_process_unsupported_msg_len, %rdx",
+                "    movq $3, %r8",
+                "    jmp .L_tl_process_make_error_win",
+                "",
+                ".L_tl_process_make_error_win:",
+                "    push %rbp",
+                "    mov %rsp, %rbp",
+                "    push %rbx",
+                "    push %r12",
+                "    push %r13",
+                "    sub $40, %rsp",
+                "    movq %rcx, %r12",
+                "    movq %rdx, %r13",
+                "    movq %r8, %rbx",
+                "    movq $16, %rcx",
+                "    call tl_alloc",
+                "    movq %r12, 0(%rax)",
+                "    movq %r13, 8(%rax)",
+                "    movq %rax, %r12",
+                "    movq $16, %rcx",
+                "    call tl_alloc",
+                "    movq %rbx, 0(%rax)",
+                "    movq %r12, 8(%rax)",
+                "    movq %rax, %r12",
+                "    movq $16, %rcx",
+                "    call tl_alloc",
+                "    movq $1, 0(%rax)",
+                "    movq %r12, 8(%rax)",
+                "    add $40, %rsp",
+                "    pop %r13",
+                "    pop %r12",
+                "    pop %rbx",
+                "    mov %rbp, %rsp",
+                "    pop %rbp",
+                "    ret",
+                "",
+            ]);
+            return;
+        }
+
+        self.emit_many(&[
+            "tl_process_output:",
+            "    push %rbp",
+            "    movq %rsp, %rbp",
+            "    push %rbx",
+            "    push %r12",
+            "    push %r13",
+            "    push %r14",
+            "    push %r15",
+            "    subq $232, %rsp",
+            "    movq %rdi, -8(%rbp)",
+            "    movq 0(%rdi), %rdi",
+            "    call .L_tl_process_cstring_from_string",
+            "    movq %rax, -16(%rbp)",
+            "    movq -8(%rbp), %rax",
+            "    movq 8(%rax), %r12",
+            "    xorq %r13, %r13",
+            ".L_tl_process_count_args:",
+            "    cmpq $0, 0(%r12)",
+            "    je .L_tl_process_count_args_done",
+            "    incq %r13",
+            "    movq 16(%r12), %r12",
+            "    jmp .L_tl_process_count_args",
+            ".L_tl_process_count_args_done:",
+            "    movq %r13, -24(%rbp)",
+            "    leaq 2(%r13), %rdi",
+            "    shlq $3, %rdi",
+            "    call tl_alloc",
+            "    movq %rax, -32(%rbp)",
+            "    movq -16(%rbp), %r10",
+            "    movq %r10, 0(%rax)",
+            "    movq -8(%rbp), %r10",
+            "    movq 8(%r10), %r12",
+            "    movq -32(%rbp), %r14",
+            "    movq $1, %r15",
+            ".L_tl_process_fill_argv:",
+            "    cmpq $0, 0(%r12)",
+            "    je .L_tl_process_fill_argv_done",
+            "    movq 8(%r12), %rdi",
+            "    call .L_tl_process_cstring_from_string",
+            "    movq %rax, (%r14,%r15,8)",
+            "    incq %r15",
+            "    movq 16(%r12), %r12",
+            "    jmp .L_tl_process_fill_argv",
+            ".L_tl_process_fill_argv_done:",
+            "    movq $0, (%r14,%r15,8)",
+            "    leaq .L_tl_process_stdout_name(%rip), %rdi",
+            "    xorq %rsi, %rsi",
+            "    movq $319, %rax",
+            "    syscall",
+            "    testq %rax, %rax",
+            "    js .L_tl_process_spawn_failed",
+            "    movq %rax, -40(%rbp)",
+            "    leaq .L_tl_process_stderr_name(%rip), %rdi",
+            "    xorq %rsi, %rsi",
+            "    movq $319, %rax",
+            "    syscall",
+            "    testq %rax, %rax",
+            "    js .L_tl_process_spawn_failed",
+            "    movq %rax, -56(%rbp)",
+            "    leaq -176(%rbp), %rdi",
+            "    movq $524288, %rsi",
+            "    movq $293, %rax",
+            "    syscall",
+            "    testq %rax, %rax",
+            "    js .L_tl_process_spawn_failed",
+            "    movslq -176(%rbp), %rax",
+            "    movq %rax, -72(%rbp)",
+            "    movslq -172(%rbp), %rax",
+            "    movq %rax, -80(%rbp)",
+            "    movq $57, %rax",
+            "    syscall",
+            "    testq %rax, %rax",
+            "    js .L_tl_process_spawn_failed",
+            "    jz .L_tl_process_child",
+            "    movq %rax, -88(%rbp)",
+            "    movq -80(%rbp), %rdi",
+            "    call .L_tl_process_close_fd",
+            "    movq -88(%rbp), %rdi",
+            "    leaq -184(%rbp), %rsi",
+            "    xorq %rdx, %rdx",
+            "    xorq %r10, %r10",
+            "    movq $61, %rax",
+            "    syscall",
+            "    testq %rax, %rax",
+            "    js .L_tl_process_wait_failed",
+            "    movq -72(%rbp), %rdi",
+            "    call .L_tl_process_read_all",
+            "    movq %rax, -112(%rbp)",
+            "    movq -72(%rbp), %rdi",
+            "    call .L_tl_process_close_fd",
+            "    movq -112(%rbp), %rax",
+            "    cmpq $0, 8(%rax)",
+            "    jne .L_tl_process_spawn_failed",
+            "    movq -40(%rbp), %rdi",
+            "    call .L_tl_process_seek_start",
+            "    testq %rax, %rax",
+            "    js .L_tl_process_wait_failed",
+            "    movq -40(%rbp), %rdi",
+            "    call .L_tl_process_read_all",
+            "    movq %rax, -96(%rbp)",
+            "    movq -40(%rbp), %rdi",
+            "    call .L_tl_process_close_fd",
+            "    movq -56(%rbp), %rdi",
+            "    call .L_tl_process_seek_start",
+            "    testq %rax, %rax",
+            "    js .L_tl_process_wait_failed",
+            "    movq -56(%rbp), %rdi",
+            "    call .L_tl_process_read_all",
+            "    movq %rax, -104(%rbp)",
+            "    movq -56(%rbp), %rdi",
+            "    call .L_tl_process_close_fd",
+            "    movl -184(%rbp), %eax",
+            "    movl %eax, %ecx",
+            "    andl $127, %ecx",
+            "    cmpl $0, %ecx",
+            "    jne .L_tl_process_status_signal",
+            "    shrl $8, %eax",
+            "    andl $255, %eax",
+            "    jmp .L_tl_process_status_ready",
+            ".L_tl_process_status_signal:",
+            "    movl %ecx, %eax",
+            "    addl $128, %eax",
+            ".L_tl_process_status_ready:",
+            "    movslq %eax, %rdi",
+            "    movq -96(%rbp), %rsi",
+            "    movq -104(%rbp), %rdx",
+            "    call .L_tl_process_make_ok",
+            "    jmp .L_tl_process_return",
+            ".L_tl_process_child:",
+            "    movq -72(%rbp), %rdi",
+            "    call .L_tl_process_close_fd",
+            "    movq -40(%rbp), %rdi",
+            "    movq $1, %rsi",
+            "    movq $33, %rax",
+            "    syscall",
+            "    movq -56(%rbp), %rdi",
+            "    movq $2, %rsi",
+            "    movq $33, %rax",
+            "    syscall",
+            "    movq -40(%rbp), %rdi",
+            "    call .L_tl_process_close_fd",
+            "    movq -56(%rbp), %rdi",
+            "    call .L_tl_process_close_fd",
+            "    movq -16(%rbp), %rdi",
+            "    movq -32(%rbp), %rsi",
+            "    movq .L_tl_envp(%rip), %rdx",
+            "    movq $59, %rax",
+            "    syscall",
+            "    movq $1, %rax",
+            "    movq -80(%rbp), %rdi",
+            "    leaq .L_tl_process_exec_marker(%rip), %rsi",
+            "    movq $.L_tl_process_exec_marker_len, %rdx",
+            "    syscall",
+            "    movq $60, %rax",
+            "    movq $127, %rdi",
+            "    syscall",
+            ".L_tl_process_spawn_failed:",
+            "    leaq .L_tl_process_spawn_msg(%rip), %rdi",
+            "    movq $.L_tl_process_spawn_msg_len, %rsi",
+            "    movq $1, %rdx",
+            "    call .L_tl_process_make_error",
+            "    jmp .L_tl_process_return",
+            ".L_tl_process_wait_failed:",
+            "    leaq .L_tl_process_wait_msg(%rip), %rdi",
+            "    movq $.L_tl_process_wait_msg_len, %rsi",
+            "    movq $2, %rdx",
+            "    call .L_tl_process_make_error",
+            ".L_tl_process_return:",
+            "    addq $232, %rsp",
+            "    pop %r15",
+            "    pop %r14",
+            "    pop %r13",
+            "    pop %r12",
+            "    pop %rbx",
+            "    movq %rbp, %rsp",
+            "    pop %rbp",
+            "    ret",
+            "",
+            ".L_tl_process_close_fd:",
+            "    movq $3, %rax",
+            "    syscall",
+            "    ret",
+            "",
+            ".L_tl_process_seek_start:",
+            "    xorq %rsi, %rsi",
+            "    xorq %rdx, %rdx",
+            "    movq $8, %rax",
+            "    syscall",
+            "    ret",
+            "",
+            ".L_tl_process_cstring_from_string:",
+            "    push %rbp",
+            "    movq %rsp, %rbp",
+            "    push %rbx",
+            "    push %r12",
+            "    push %r13",
+            "    push %r14",
+            "    movq %rdi, %r12",
+            "    movq 0(%r12), %r13",
+            "    movq 8(%r12), %rbx",
+            "    leaq 1(%rbx), %rdi",
+            "    call tl_alloc",
+            "    movq %rax, %r14",
+            "    xorq %rcx, %rcx",
+            ".L_tl_process_cstring_copy:",
+            "    cmpq %rbx, %rcx",
+            "    jge .L_tl_process_cstring_done",
+            "    movzbl (%r13,%rcx), %edx",
+            "    movb %dl, (%r14,%rcx)",
+            "    incq %rcx",
+            "    jmp .L_tl_process_cstring_copy",
+            ".L_tl_process_cstring_done:",
+            "    movb $0, (%r14,%rbx)",
+            "    movq %r14, %rax",
+            "    pop %r14",
+            "    pop %r13",
+            "    pop %r12",
+            "    pop %rbx",
+            "    movq %rbp, %rsp",
+            "    pop %rbp",
+            "    ret",
+            "",
+            ".L_tl_process_read_all:",
+            "    push %rbp",
+            "    movq %rsp, %rbp",
+            "    push %rbx",
+            "    push %r12",
+            "    push %r13",
+            "    push %r14",
+            "    push %r15",
+            "    subq $8, %rsp",
+            "    movq %rdi, %r12",
+            "    movq $4096, %r13",
+            "    movq %r13, %rdi",
+            "    call tl_alloc",
+            "    movq %rax, %r14",
+            "    xorq %r15, %r15",
+            ".L_tl_process_read_loop:",
+            "    movq %r13, %rdx",
+            "    subq %r15, %rdx",
+            "    cmpq $1024, %rdx",
+            "    jl .L_tl_process_read_grow",
+            "    movq $0, %rax",
+            "    movq %r12, %rdi",
+            "    leaq (%r14,%r15), %rsi",
+            "    syscall",
+            "    testq %rax, %rax",
+            "    js .L_tl_process_read_done",
+            "    jz .L_tl_process_read_done",
+            "    addq %rax, %r15",
+            "    jmp .L_tl_process_read_loop",
+            ".L_tl_process_read_grow:",
+            "    movq %r13, %rdi",
+            "    shlq $1, %rdi",
+            "    movq %rdi, %r13",
+            "    call tl_alloc",
+            "    movq %rax, %r10",
+            "    xorq %rbx, %rbx",
+            ".L_tl_process_read_copy:",
+            "    cmpq %r15, %rbx",
+            "    jge .L_tl_process_read_copy_done",
+            "    movzbl (%r14,%rbx), %eax",
+            "    movb %al, (%r10,%rbx)",
+            "    incq %rbx",
+            "    jmp .L_tl_process_read_copy",
+            ".L_tl_process_read_copy_done:",
+            "    movq %r10, %r14",
+            "    jmp .L_tl_process_read_loop",
+            ".L_tl_process_read_done:",
+            "    movq $16, %rdi",
+            "    call tl_alloc",
+            "    movq %r14, 0(%rax)",
+            "    movq %r15, 8(%rax)",
+            "    addq $8, %rsp",
+            "    pop %r15",
+            "    pop %r14",
+            "    pop %r13",
+            "    pop %r12",
+            "    pop %rbx",
+            "    movq %rbp, %rsp",
+            "    pop %rbp",
+            "    ret",
+            "",
+            ".L_tl_process_make_ok:",
+            "    push %rbp",
+            "    movq %rsp, %rbp",
+            "    push %rbx",
+            "    push %r12",
+            "    push %r13",
+            "    subq $8, %rsp",
+            "    movq %rdi, %rbx",
+            "    movq %rsi, %r12",
+            "    movq %rdx, %r13",
+            "    movq $24, %rdi",
+            "    call tl_alloc",
+            "    movq %rbx, 0(%rax)",
+            "    movq %r12, 8(%rax)",
+            "    movq %r13, 16(%rax)",
+            "    movq %rax, %r12",
+            "    movq $16, %rdi",
+            "    call tl_alloc",
+            "    movq $0, 0(%rax)",
+            "    movq %r12, 8(%rax)",
+            "    addq $8, %rsp",
+            "    pop %r13",
+            "    pop %r12",
+            "    pop %rbx",
+            "    movq %rbp, %rsp",
+            "    pop %rbp",
+            "    ret",
+            "",
+            ".L_tl_process_make_error:",
+            "    push %rbp",
+            "    movq %rsp, %rbp",
+            "    push %rbx",
+            "    push %r12",
+            "    push %r13",
+            "    push %r14",
+            "    movq %rdi, %r12",
+            "    movq %rsi, %r13",
+            "    movq %rdx, %r14",
+            "    movq $16, %rdi",
+            "    call tl_alloc",
+            "    movq %r12, 0(%rax)",
+            "    movq %r13, 8(%rax)",
+            "    movq %rax, %r12",
+            "    movq $16, %rdi",
+            "    call tl_alloc",
+            "    movq %r14, 0(%rax)",
+            "    movq %r12, 8(%rax)",
+            "    movq %rax, %r12",
+            "    movq $16, %rdi",
+            "    call tl_alloc",
+            "    movq $1, 0(%rax)",
+            "    movq %r12, 8(%rax)",
+            "    pop %r14",
+            "    pop %r13",
+            "    pop %r12",
+            "    pop %rbx",
+            "    movq %rbp, %rsp",
+            "    pop %rbp",
+            "    ret",
+            "",
+        ]);
     }
 
     fn generate_env_var_exists_runtime_functions(&mut self) {
@@ -7642,6 +8079,12 @@ impl X86_64Backend {
         self.output.push('\n');
     }
 
+    fn emit_many(&mut self, lines: &[&str]) {
+        for line in lines {
+            self.emit(line);
+        }
+    }
+
     fn mangle_name(name: &str) -> String {
         // Simple name mangling
         if name == "main" {
@@ -7751,6 +8194,8 @@ impl X86_64Backend {
         } else if name == ENV_PATH_SEPARATOR_RUNTIME_SYMBOL && self.needs_env_path_separator_runtime
         {
             ENV_PATH_SEPARATOR_RUNTIME_SYMBOL.into()
+        } else if name == PROCESS_OUTPUT_RUNTIME_SYMBOL && self.needs_process_output_runtime {
+            PROCESS_OUTPUT_RUNTIME_SYMBOL.into()
         } else if name == READ_STDIN_LINE_RUNTIME_SYMBOL && self.needs_read_stdin_line_runtime {
             READ_STDIN_LINE_RUNTIME_SYMBOL.into()
         } else if name == READ_STDIN_BYTES_RUNTIME_SYMBOL && self.needs_read_stdin_bytes_runtime {
@@ -12733,6 +13178,57 @@ mod tests {
         assert!(asm.contains("    .extern strlen"), "asm:\n{}", asm);
         assert!(asm.contains("    call getenv"), "asm:\n{}", asm);
         assert!(!asm.contains(".L_tl_envp:"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_process_output_extern_emits_linux_runtime() {
+        let asm = compile_ok(
+            r#"
+            (extern tl_process_output : (-> i64 i64))
+            (define (main) : i64 (tl_process_output 0))
+            "#,
+        );
+
+        assert!(asm.contains("tl_process_output:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call tl_process_output"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("    .extern tl_process_output"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(!asm.contains("_tl_tl_process_output"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_process_read_all:"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_process_exec_marker:"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_envp:"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $57, %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $59, %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $61, %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $319, %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $293, %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_windows_target_process_output_extern_returns_unsupported() {
+        let asm = compile_ok_for_target(
+            r#"
+            (extern tl_process_output : (-> i64 i64))
+            (define (main) : i64 (tl_process_output 0))
+            "#,
+            BackendTarget::windows_x86_64(),
+        );
+
+        assert!(asm.contains("tl_process_output:"), "asm:\n{}", asm);
+        assert!(asm.contains("process: runtime execution is not supported on this target"));
+        assert!(
+            !asm.contains("    .extern tl_process_output"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(!asm.contains("_tl_tl_process_output"), "asm:\n{}", asm);
+        assert!(!asm.contains("    syscall"), "asm:\n{}", asm);
+        assert!(!asm.contains(".L_tl_envp:"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
     }
 
     #[test]

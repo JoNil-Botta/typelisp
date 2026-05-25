@@ -2607,6 +2607,51 @@
                     (compiler-parse-raw-pointer-error-tests-ok?)
                     (compiler-parse-reference-error-tests-ok?)))))))))))
 
+;; Top-level declaration parsing (#1072 / #1041): accept value/function `define`,
+;; `extern`, `defenum`, `defstruct`, and `import`; reject malformed forms with
+;; stable diagnostics. Migrated from src/parser.rs declaration coverage.
+(define (compiler-parse-ok? [src : String]) : bool
+  (match (parse-ast-source src)
+    [(OkAstProgram _) true]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-parse-declaration-tests-ok?) : bool
+  (and
+    (compiler-parse-ok? "(define answer : i64 42)")
+    (and
+      (compiler-parse-ok? "(define (add [a : i64] [b : i64]) : i64 (+ a b))")
+      (and
+        (compiler-parse-ok? "(extern puts : (-> String unit))")
+        (and
+          (compiler-parse-ok? "(defenum Maybe (Some i64) (None))")
+          (and
+            (compiler-parse-ok? "(defstruct Point (x i64) (y i64))")
+            (and
+              (compiler-parse-ok? "(import \"stdlib/io.tl\")")
+              (and
+                (compiler-parse-error-ok?
+                  "(define answer : i64)"
+                  "parse: malformed value definition")
+                (and
+                  (compiler-parse-error-ok?
+                    "(define (main) : i64)"
+                    "parse: malformed function definition")
+                  (and
+                    (compiler-parse-error-ok?
+                      "(extern puts)"
+                      "parse: malformed extern")
+                    (and
+                      (compiler-parse-error-ok?
+                        "(defenum)"
+                        "parse: malformed defenum")
+                      (and
+                        (compiler-parse-error-ok?
+                          "(defstruct)"
+                          "parse: malformed defstruct")
+                        (compiler-parse-error-ok?
+                          "(import)"
+                          "parse: malformed import")))))))))))))
+
 (define (compiler-parse-smoke) : i64
   (match (parse-ast-source (compiler-parse-smoke-source))
     [(OkAstProgram program)
@@ -2639,7 +2684,9 @@
                                 (and
                                   (compiler-parse-raw-pointer-ok?)
                                   (compiler-parse-reference-ok?)))))))))))))))
-        (if (compiler-parse-error-tests-ok?)
+        (if (and
+          (compiler-parse-error-tests-ok?)
+          (compiler-parse-declaration-tests-ok?))
           42
           (begin
             (panic "parse: error-path self-tests failed")

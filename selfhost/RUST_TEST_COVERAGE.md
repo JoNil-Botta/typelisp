@@ -22,7 +22,8 @@ Status meanings:
 - #846 replaces Rust compile/symbol smoke tests with a no-Rust selfhost compile
   manifest.
 - #847 replaced Rust native integration and platform runners with no-Rust
-  manifests and host-aware scripts.
+  manifests and host-aware scripts; #971 owns the Linux selfhost-generated
+  native assembly slice now covered by `scripts/verify-selfhost-native.sh`.
 
 ## File Inventory
 
@@ -32,7 +33,7 @@ Status meanings:
 | `tests/calc_compile.rs` | `tests/integration/calc.tl` compiles to assembly and keeps the tokenizer, parser, evaluator, and imported token model wired together. | Covered by `selfhost/compile_manifest.txt` and `scripts/verify-selfhost-compile-manifest.sh`; Rust harness can be deleted with #793/#795. | Covered |
 | `tests/cli.rs` | Public CLI usage/errors and behavior for compile/check/build/run/fmt/doc/doc-test/debug/package-adjacent flows, LSP, REPL, and selfhost REPL. | `scripts/verify-public-tools.sh` now covers representative public CLI, docs, LSP, REPL, formatter, package, SPEC, and diagnostic cases; `doc --test` now routes through `selfhost/doc.tl`; remaining embedded edge cases still need migration. | Partial |
 | `tests/fmt_golden.rs` | Formatter golden output and idempotence through the public `typelisp fmt` command. | Covered by `tests/format_golden/*.tl`, matching `*.expected` files, and the manifest/idempotence checks in `scripts/verify-public-tools.sh`. | Covered |
-| `tests/integration.rs` | Linux compile, assemble, link, and run coverage for `tests/integration/*.tl`, selfhost smoke drivers, deterministic assembly, explicit build, and backend/runtime helper execution. | Covered by `scripts/verify-integration.sh`, `tests/integration/native-linux.manifest`, `scripts/check-deterministic-asm.sh`, and the narrower public/stdlib/selfhost verification scripts. | Covered |
+| `tests/integration.rs` | Linux compile, assemble, link, and run coverage for `tests/integration/*.tl`, selfhost smoke drivers, deterministic assembly, explicit build, selfhost-generated assembly, and backend/runtime helper execution. | Covered by `scripts/verify-integration.sh`, `tests/integration/native-linux.manifest`, `scripts/verify-selfhost-native.sh`, `scripts/check-deterministic-asm.sh`, and the narrower public/stdlib/selfhost verification scripts. | Covered |
 | `tests/lexer_compile.rs` | Legacy TypeLisp lexer witness compiles to assembly. | Covered by `selfhost/compile_manifest.txt` and `scripts/verify-selfhost-compile-manifest.sh`; Rust harness can be deleted with #793/#795. | Covered |
 | `tests/maybe_result_compile.rs` | Monomorphic Maybe/Result witness compiles to assembly. | Covered by `selfhost/compile_manifest.txt` and `scripts/verify-selfhost-compile-manifest.sh`; Rust harness can be deleted with #793/#795. | Covered |
 | `tests/nested_eval_compile.rs` | Nested pattern evaluator compiles to assembly. | Covered by `selfhost/compile_manifest.txt` and `scripts/verify-selfhost-compile-manifest.sh`; Rust harness can be deleted with #793/#795. | Covered |

@@ -22,6 +22,8 @@ Coverage notes:
   behavior.
 - `process_api.tl` covers command construction, argv/cwd/stdin/env accessors,
   invalid-command diagnostics, and the current unsupported execution result.
+- `text_buf_api.tl` covers empty buffers, repeated appends, char/int append
+  helpers, buffer concatenation, clear/reset behavior, and rendering.
 - `test_assert_success.tl` covers successful assertion helpers. The
   `test_assert_failure.tl` fixture covers the panic-on-failure path and exact
   caller diagnostic on stderr.

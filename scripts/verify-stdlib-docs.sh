@@ -169,7 +169,10 @@ fi
 
 while IFS= read -r module; do
     [ -n "$module" ] || continue
-    if ! grep -q "stdlib/$(basename "$module")" "$INDEX_MD"; then
+    module_ref="stdlib/$(basename "$module")"
+    module_ref_escaped=$(printf '%s' "$module_ref" | sed 's/_/\\_/g')
+    if ! grep -Fq "$module_ref" "$INDEX_MD" &&
+        ! grep -Fq "$module_ref_escaped" "$INDEX_MD"; then
         echo "stdlib doc verification failed: index is missing $module" >&2
         exit 1
     fi

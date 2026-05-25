@@ -625,7 +625,15 @@ fn type_lisp_programs_compile_link_and_run() {
             name: "stdlib_json",
             exit_code: 42,
             stdout: "",
-            deps: &["stdlib/json.tl"],
+            deps: &["stdlib/json.tl", "stdlib/text_buf.tl"],
+        },
+        // stdlib/text_buf.tl: arena-aware chunked text buffer for incremental
+        // String construction.
+        Case {
+            name: "stdlib_text_buf",
+            exit_code: 42,
+            stdout: "",
+            deps: &["stdlib/text_buf.tl"],
         },
     ];
 
@@ -1185,7 +1193,15 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             name: "stdlib_json",
             exit_code: 42,
             stdout: "",
-            deps: &["stdlib/json.tl"],
+            deps: &["stdlib/json.tl", "stdlib/text_buf.tl"],
+        },
+        // stdlib/text_buf.tl: text buffer through the explicit compile -> as ->
+        // ld -> run pipeline.
+        Case {
+            name: "stdlib_text_buf",
+            exit_code: 42,
+            stdout: "",
+            deps: &["stdlib/text_buf.tl"],
         },
         // refs #335: selfhost parser from Sexpr into the real compiler AST.
         // The smoke parses a representative multi-declaration source string
@@ -2140,6 +2156,11 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
         stdlib_dir.join("json.tl"),
     )
     .expect("copy stdlib/json.tl for compiler_driver fixture");
+    fs::copy(
+        manifest_dir.join("stdlib").join("text_buf.tl"),
+        stdlib_dir.join("text_buf.tl"),
+    )
+    .expect("copy stdlib/text_buf.tl for compiler_driver fixture");
 
     let json_input_path = work_dir.join("json_input.tl");
     let json_asm_path = work_dir.join("json_generated.s");
@@ -5324,6 +5345,9 @@ fn dep_source_path(manifest_dir: &Path, source_dir: &Path, dep: &str) -> PathBuf
     }
     if dep == "stdlib/json.tl" {
         return manifest_dir.join("stdlib").join("json.tl");
+    }
+    if dep == "stdlib/text_buf.tl" {
+        return manifest_dir.join("stdlib").join("text_buf.tl");
     }
     source_dir.join(dep)
 }

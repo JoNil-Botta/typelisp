@@ -1205,6 +1205,55 @@
                   "\n"))))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
 
+(define (compiler-backend-emit-bounds-check
+  [target : CompilerBackendTarget]
+  [function : String]
+  [assignments : CompilerRegAssignmentList]
+  [index : CompilerIrValue]
+  [length : CompilerIrValue]
+  [ok-label : String]
+  [plan : CompilerBackendRuntimePlan]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]) : ResultCompilerBackend
+  (match (compiler-backend-emit-load-value-with-plan assignments index "%rax")
+    [(OkCompilerBackend index-asm)
+      (match (compiler-backend-emit-load-value-with-plan
+        assignments
+        length
+        "%r11")
+        [(OkCompilerBackend length-asm)
+          (let
+            [call-space : i64
+              (compiler-backend-call-arg-space target IrValueNil AstTypeNil)]
+            [ok-symbol : String (compiler-backend-asm-label function ok-label)]
+            (OkCompilerBackend
+              (string-append
+                index-asm
+                (string-append
+                  length-asm
+                  (string-append
+                    (backend-cat4
+                      "    cmpq %r11, %rax\n    jb "
+                      ok-symbol
+                      "\n"
+                      "")
+                    (string-append
+                      (compiler-backend-emit-call-space-sub call-space)
+                      (backend-cat5
+                        "    call "
+                        (compiler-backend-call-symbol
+                          "tl_oob_abort"
+                          plan
+                          functions
+                          externs)
+                        "\n"
+                        (string-append
+                          (compiler-backend-emit-call-space-add call-space)
+                          (backend-cat4 ok-symbol ":\n" "" ""))
+                        "")))))))]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+
 (define (compiler-backend-emit-unop
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -1833,6 +1882,21 @@
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(IrInstrBoundsCheck index length ok-label)
+        (match (compiler-backend-emit-bounds-check
+          target
+          function
+          assignments
+          index
+          length
+          ok-label
+          plan
+          functions
+          externs)
+          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackend
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
       [(IrInstrCast dst src from-ty to-ty)
         (match (compiler-backend-emit-cast assignments dst src from-ty to-ty)
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
@@ -2430,6 +2494,10 @@
       (compiler-backend-collect-value-string
         (compiler-backend-collect-value-string strings dst)
         src)]
+    [(IrInstrBoundsCheck index length _)
+      (compiler-backend-collect-value-string
+        (compiler-backend-collect-value-string strings index)
+        length)]
     [(IrInstrCast _ src _ _)
       (compiler-backend-collect-value-string strings src)]
     [_ strings]))
@@ -2544,6 +2612,10 @@
       (compiler-backend-collect-value-f64
         (compiler-backend-collect-value-f64 floats dst)
         src)]
+    [(IrInstrBoundsCheck index length _)
+      (compiler-backend-collect-value-f64
+        (compiler-backend-collect-value-f64 floats index)
+        length)]
     [(IrInstrCast _ src _ _) (compiler-backend-collect-value-f64 floats src)]
     [_ floats]))
 
@@ -2742,6 +2814,7 @@
   [name : String]) : bool
   (match instr
     [(IrInstrCall _ call-name _ _) (string-eq call-name name)]
+    [(IrInstrBoundsCheck _ _ _) (string-eq name "tl_oob_abort")]
     [_ false]))
 
 (define (compiler-backend-instr-list-calls?
@@ -6464,6 +6537,24 @@ tl_string_concat:
               (set! done true)))
           found)))))
 
+(define (compiler-backend-string-count [text : String] [needle : String]) : i64
+  (let
+    [text-len : i64 (string-length text)]
+    [needle-len : i64 (string-length needle)]
+    (if (= needle-len 0)
+      0
+      (let
+        [i : i64 0]
+        [count : i64 0]
+        (begin
+          (while (<= (+ i needle-len) text-len)
+            (if (compiler-backend-string-prefix-at? text needle i)
+              (begin
+                (set! count (+ count 1))
+                (set! i (+ i needle-len)))
+              (set! i (+ i 1))))
+          count)))))
+
 (define (compiler-backend-runtime-helper-externs) : CompilerIrExternList
   (IrExternCons
     (IrExtern "tl_alloc" (AstTyI64))
@@ -7704,9 +7795,13 @@ tl_string_concat:
           (compiler-backend-instr-contains?
             (IrInstrStorePtr (IrValueVar 1) (IrValueI64 7) (AstTyI32))
             "    movl %eax, (%r10)\n")
-          (compiler-backend-instr-contains?
-            (IrInstrCast 6 (IrValueVar 5) (AstTyI8) (AstTyI64))
-            "    movsbq -48(%rbp), %rax\n"))))))
+          (and
+            (compiler-backend-instr-contains?
+              (IrInstrCast 6 (IrValueVar 5) (AstTyI8) (AstTyI64))
+              "    movsbq -48(%rbp), %rax\n")
+            (compiler-backend-instr-contains?
+              (IrInstrBoundsCheck (IrValueVar 1) (IrValueVar 2) "bounds_ok")
+              "    jb .L_tl_test_bounds_ok\n")))))))
 
 ;; A source exercising `array-ref`, used to confirm the lowerer's bounds-check
 ;; trap (#528) reaches the backend as a `call tl_oob_abort`.

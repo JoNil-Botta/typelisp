@@ -62,6 +62,7 @@
   (IrInstrGep i64 CompilerIrValue CompilerIrValue AstType)
   (IrInstrLoad i64 CompilerIrValue AstType)
   (IrInstrStorePtr CompilerIrValue CompilerIrValue AstType)
+  (IrInstrBoundsCheck CompilerIrValue CompilerIrValue String)
   (IrInstrCast i64 CompilerIrValue AstType AstType)
   (IrInstrBinOp i64 CompilerIrBinOp CompilerIrValue CompilerIrValue AstType)
   (IrInstrUnOp i64 CompilerIrUnOp CompilerIrValue AstType)

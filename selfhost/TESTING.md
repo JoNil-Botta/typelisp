@@ -87,6 +87,28 @@ TypeLisp compiler artifact. Add Rust tests only when they are explicitly
 temporary stage0 reference coverage, and record the deletion path in the
 coverage map.
 
+### Published stage0 artifact
+
+After each merge to `main`, the `Bootstrap Stage0` workflow publishes Linux and
+Windows compiler binaries to the `stage0-latest` release and to an immutable
+`stage0-*` release. Fetch the compiler with:
+
+```sh
+scripts/fetch-stage0.sh
+TYPELISP_BIN=./target/stage0/typelisp ./scripts/verify-selfhost.sh
+```
+
+Use `scripts/fetch-stage0.sh <stage0-tag>` to pin an immutable artifact. The
+script downloads the host platform asset, verifies the file is non-empty,
+checks `SHA256SUMS` when the release provides it, and installs the binary under
+`target/stage0/`. The script uses release asset URLs instead of fetching git
+tags, so the mutable `stage0-latest` tag cannot be stale or clobber a local tag.
+
+CI should pass this fetched compiler through `TYPELISP_BIN` for no-Rust
+validation. The scripts that still run `cargo build --release` when
+`TYPELISP_BIN` is unset keep that path as a local fallback only until #793/#795
+remove the Rust-owned stage0 dependency.
+
 For new selfhost tests:
 
 - Put structural compiler checks next to the owning module as small helpers or a

@@ -276,6 +276,8 @@ TypeLisp*:
 
 Compiler self-test and smoke-driver conventions are documented in
 [`selfhost/TESTING.md`](selfhost/TESTING.md).
+Published stage0 compilers for local bootstrap checks can be fetched with
+[`scripts/fetch-stage0.sh`](scripts/fetch-stage0.sh).
 
 Smaller runnable examples, including `calc.tl`, remain in [`examples/`](examples).
 

@@ -33,19 +33,20 @@ if [ ! -x "$COMPILER" ]; then
     exit 1
 fi
 
-# Build a fixture .tl to a runnable binary and run it (host-aware), capturing the
-# program exit code in `got` and writing program stdout/stderr to <stem>.stdout /
-# <stem>.stderr. Linux uses GNU as/ld; Windows builds a native windows-x86_64
-# executable via clang/lld-link. Callers pass the same <stem> they use for their
-# .stdout/.stderr assertion paths.
+# Build a fixture .tl to a runnable binary and run it (host-aware) with the
+# supplied stdin file, capturing the program exit code in `got` and writing
+# program stdout/stderr to <stem>.stdout / <stem>.stderr. Linux uses GNU as/ld;
+# Windows builds a native windows-x86_64 executable via clang/lld-link. Callers
+# pass the same <stem> they use for their .stdout/.stderr assertion paths.
 stdlib_build_run() {
     _src=$1
     _stem=$2
+    _stdin=$3
     if [ "$HOST_OS" = windows ]; then
         "$COMPILER" build "$_src" --stdlib-root "$ROOT/stdlib" -o "$_stem.exe" \
             --target windows-x86_64
         set +e
-        "$_stem.exe" > "$_stem.stdout" 2> "$_stem.stderr"
+        "$_stem.exe" < "$_stdin" > "$_stem.stdout" 2> "$_stem.stderr"
         got=$?
         set -e
     else
@@ -53,7 +54,7 @@ stdlib_build_run() {
         as "$_stem.s" -o "$_stem.o"
         ld "$_stem.o" -o "$_stem"
         set +e
-        "$_stem" > "$_stem.stdout" 2> "$_stem.stderr"
+        "$_stem" < "$_stdin" > "$_stem.stdout" 2> "$_stem.stderr"
         got=$?
         set -e
     fi
@@ -75,17 +76,21 @@ EOF
 }
 
 # Pipe-separated fixture manifest:
-#   fixture-path|expected-exit|expected-stdout|expected-stderr
+#   fixture-path|expected-exit|expected-stdout|expected-stderr|stdin
 #
-# Use "-" for an expected empty stream, "literal:<text>" for an exact inline
-# stream without a trailing newline, or a repository-relative path for exact
-# expected output bytes.
+# Use "-" for an empty stream, "literal:<text>" for exact inline text without a
+# trailing newline, "printf:<escapes>" for printf-style escapes, "host-line:<text>"
+# for one line using the host executable's newline convention, or a
+# repository-relative path for exact stream bytes. The stdin column is optional
+# and defaults to "-".
 stdlib_test_manifest() {
     cat <<'EOF'
 stdlib/tests/string_edges.tl|42|-|-
 stdlib/tests/json_helpers.tl|42|-|-
 stdlib/tests/json_parse_stringify.tl|42|-|-
 stdlib/tests/io_edges.tl|42|-|-
+stdlib/tests/io_stdio_lines.tl|42|host-line:stdout-line|host-line:stderr-line|printf:alpha\n\nomega
+stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef
 stdlib/tests/env_api.tl|42|-|-
 stdlib/tests/process_api.tl|42|-|-
 stdlib/tests/text_buf_api.tl|42|-|-
@@ -178,6 +183,32 @@ compare_stream() {
             fi
             return
             ;;
+        printf:*)
+            _expected_printf=${_spec#printf:}
+            if ! printf '%b' "$_expected_printf" | cmp -s - "$_actual"; then
+                echo "FAIL: $_case $_kind differed from inline printf expectation" >&2
+                show_streams "$_stdout" "$_stderr"
+                exit 1
+            fi
+            return
+            ;;
+        host-line:*)
+            _expected_line=${_spec#host-line:}
+            if [ "$HOST_OS" = windows ]; then
+                if ! printf '%s\r\n' "$_expected_line" | cmp -s - "$_actual"; then
+                    echo "FAIL: $_case $_kind differed from host-line expectation" >&2
+                    show_streams "$_stdout" "$_stderr"
+                    exit 1
+                fi
+            else
+                if ! printf '%s\n' "$_expected_line" | cmp -s - "$_actual"; then
+                    echo "FAIL: $_case $_kind differed from host-line expectation" >&2
+                    show_streams "$_stdout" "$_stderr"
+                    exit 1
+                fi
+            fi
+            return
+            ;;
     esac
 
     _expected="$ROOT/$_spec"
@@ -197,6 +228,44 @@ compare_stream() {
     fi
 }
 
+materialize_stream() {
+    _case=$1
+    _kind=$2
+    _spec=$3
+    _output=$4
+
+    if [ "$_spec" = "-" ]; then
+        : > "$_output"
+        return
+    fi
+
+    case "$_spec" in
+        literal:*)
+            printf '%s' "${_spec#literal:}" > "$_output"
+            return
+            ;;
+        printf:*)
+            printf '%b' "${_spec#printf:}" > "$_output"
+            return
+            ;;
+        host-line:*)
+            if [ "$HOST_OS" = windows ]; then
+                printf '%s\r\n' "${_spec#host-line:}" > "$_output"
+            else
+                printf '%s\n' "${_spec#host-line:}" > "$_output"
+            fi
+            return
+            ;;
+    esac
+
+    _source="$ROOT/$_spec"
+    if [ ! -f "$_source" ]; then
+        echo "FAIL: $_case $_kind fixture is missing: $_spec" >&2
+        exit 1
+    fi
+    cp "$_source" "$_output"
+}
+
 TEST_COPY_ROOT="$WORKDIR/fixtures"
 RUN_ROOT="$WORKDIR/run"
 mkdir -p "$TEST_COPY_ROOT" "$RUN_ROOT"
@@ -208,10 +277,19 @@ export TYPELISP_STDLIB_TEST_VALUE=env-value-854
 export TYPELISP_STDLIB_TEST_PATH="one${PATH_SEP}two${PATH_SEP}three"
 
 passed=0
-while IFS='|' read -r fixture want stdout_spec stderr_spec; do
+while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do
     case "$fixture" in
         '' | \#*) continue ;;
     esac
+
+    if [ -n "${extra:-}" ]; then
+        echo "FAIL: malformed stdlib test manifest row has too many fields: $fixture" >&2
+        exit 1
+    fi
+
+    if [ -z "${stdin_spec:-}" ]; then
+        stdin_spec=-
+    fi
 
     if [ -z "$want" ] || [ -z "$stdout_spec" ] || [ -z "$stderr_spec" ]; then
         echo "FAIL: malformed stdlib test manifest row: $fixture" >&2
@@ -239,9 +317,11 @@ while IFS='|' read -r fixture want stdout_spec stderr_spec; do
     stem="$RUN_ROOT/$case_id"
     stdout="$stem.stdout"
     stderr="$stem.stderr"
+    stdin="$stem.stdin"
+    materialize_stream "$fixture" stdin "$stdin_spec" "$stdin"
 
     echo "[stdlib] building+running $fixture (--stdlib-root)"
-    stdlib_build_run "$copied" "$stem"
+    stdlib_build_run "$copied" "$stem" "$stdin"
 
     if [ "$got" -ne "$want" ]; then
         echo "FAIL: $fixture expected exit $want, got $got" >&2

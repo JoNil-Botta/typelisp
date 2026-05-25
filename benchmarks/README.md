@@ -28,6 +28,7 @@ that contains both `bench.tl` and `baseline.c`.
 | `optimization` | Optimizer-sensitive scalar loop. |
 | `spmd_map` | Data-parallel elementwise map (`out[i] = a[i] + b[i] + r`) via `foreach`, establishing the SPMD/SIMD-vs-clang baseline (refs #1125). |
 | `spmd_zip` | Data-parallel three-input fused multiply-add (`out[i] = a[i] * b[i] + c[i] + r`) via `foreach` (refs #1125). |
+| `spmd_mask` | Data-parallel masked conditional (`out[i] = (a[i] odd) ? a[i]+r : a[i]-r`) via `foreach`, exercising a divergent lane body (refs #1125). |
 
 ### Writing a benchmark
 

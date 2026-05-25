@@ -133,43 +133,26 @@
         (panic "ast: unsupported char literal")
         (EInt 0))]
     [(SCons (SSym op) rest)
-      (if (string-eq op "+")
-        (parse-binary (OpAdd) rest)
-        (if (string-eq op "-")
-          (parse-binary (OpSub) rest)
-          (if (string-eq op "*")
-            (parse-binary (OpMul) rest)
-            (if (string-eq op "<")
-              (parse-binary (OpLt) rest)
-              (if (string-eq op "=")
-                (parse-binary (OpEq) rest)
-                (if (string-eq op "<=")
-                  (parse-binary (OpLe) rest)
-                  (if (string-eq op ">")
-                    (parse-binary (OpGt) rest)
-                    (if (string-eq op ">=")
-                      (parse-binary (OpGe) rest)
-                      (if (string-eq op "!=")
-                        (parse-binary (OpNe) rest)
-                        (if (string-eq op "and")
-                          (parse-binary (OpAnd) rest)
-                          (if (string-eq op "or")
-                            (parse-binary (OpOr) rest)
-                            (if (string-eq op "not")
-                              (parse-not rest)
-                              (if (string-eq op "let")
-                                (parse-let rest)
-                                (if (string-eq op "if")
-                                  (parse-if rest)
-                                  (if (string-eq op "while")
-                                    (parse-while rest)
-                                    (if (string-eq op "print")
-                                      (parse-print rest)
-                                      (if (string-eq op "set!")
-                                        (parse-set rest)
-                                        (if (string-eq op "begin")
-                                          (parse-begin rest)
-                                          (ECall op (parse-args rest))))))))))))))))))))]
+      (match op
+        ["+" (parse-binary (OpAdd) rest)]
+        ["-" (parse-binary (OpSub) rest)]
+        ["*" (parse-binary (OpMul) rest)]
+        ["<" (parse-binary (OpLt) rest)]
+        ["=" (parse-binary (OpEq) rest)]
+        ["<=" (parse-binary (OpLe) rest)]
+        [">" (parse-binary (OpGt) rest)]
+        [">=" (parse-binary (OpGe) rest)]
+        ["!=" (parse-binary (OpNe) rest)]
+        ["and" (parse-binary (OpAnd) rest)]
+        ["or" (parse-binary (OpOr) rest)]
+        ["not" (parse-not rest)]
+        ["let" (parse-let rest)]
+        ["if" (parse-if rest)]
+        ["while" (parse-while rest)]
+        ["print" (parse-print rest)]
+        ["set!" (parse-set rest)]
+        ["begin" (parse-begin rest)]
+        [_ (ECall op (parse-args rest))])]
     [_
       (begin
         (panic "ast: malformed expression")

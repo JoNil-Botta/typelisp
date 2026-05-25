@@ -2738,6 +2738,28 @@
                 "(define (main) : i64 (match 1 [() 0]))"
                 "parse: expected pattern"))))))))
 
+;; operator parsing (#1073 / #1041): accept unary (not/neg/bit-not), binary
+;; arithmetic/comparison, and bitwise/shift/logical operator forms; reject
+;; parser-owned malformed unary/binary operator expressions. Parse-shape only;
+;; operator type rules live in the typechecker tests.
+(define (compiler-parse-operator-tests-ok?) : bool
+  (and
+    (compiler-parse-ok?
+      "(define (main [a : i64] [p : bool]) : i64 (begin (neg a) (bit-not a) (if (not p) 1 0)))")
+    (and
+      (compiler-parse-ok?
+        "(define (main [a : i64] [b : i64]) : i64 (begin (+ a b) (- a b) (* a b) (< a b) (<= a b) (> a b) (>= a b) (= a b) (!= a b)))")
+      (and
+        (compiler-parse-ok?
+          "(define (main [a : i64] [b : i64] [p : bool] [q : bool]) : i64 (begin (bit-and a b) (bit-or a b) (bit-xor a b) (shl a b) (shr a b) (if (and p q) 1 (if (or p q) 2 0))))")
+        (and
+          (compiler-parse-error-ok?
+            "(define (main) : i64 (not))"
+            "parse: malformed unary expression")
+          (compiler-parse-error-ok?
+            "(define (main [a : i64]) : i64 (+ a))"
+            "parse: malformed binary expression"))))))
+
 (define (compiler-parse-smoke) : i64
   (match (parse-ast-source (compiler-parse-smoke-source))
     [(OkAstProgram program)
@@ -2778,7 +2800,9 @@
               (compiler-parse-let-tests-ok?)
               (and
                 (compiler-parse-spmd-tests-ok?)
-                (compiler-parse-pattern-tests-ok?)))))
+                (and
+                  (compiler-parse-pattern-tests-ok?)
+                  (compiler-parse-operator-tests-ok?))))))
           42
           (begin
             (panic "parse: error-path self-tests failed")

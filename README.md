@@ -151,6 +151,12 @@ private-by-default modules with canonical identities, `(export ...)`, import
 aliases, and qualified names such as `math/add`; see `SPEC.md` section 4.4 for
 the specified migration contract.
 
+FFI-facing structs will use explicit `repr c` metadata and comptime layout
+queries such as `size-of`, `align-of`, and `offset-of`; this is specified for
+the selfhost compiler in `SPEC.md` and is being implemented in #987-#989.
+Default TypeLisp struct layout remains compiler-owned and should not be treated
+as a C ABI contract.
+
 `stdlib/string.tl` is the canonical in-repo string utility module. Stdlib files
 are ordinary modules imported with explicit paths such as
 `(import "stdlib/string.tl")`. `check`, `compile`, `build <file.tl>`, and `run`

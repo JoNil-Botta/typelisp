@@ -775,6 +775,43 @@
                 (sym-i64-contains seen "diamond.entry")))))]
       [(ErrCompilerLoadWithPaths _) false])))
 
+;; Transitive import dedup (#1074 / #1041): entry imports A, A imports B, B
+;; imports C; the whole chain loads with the deterministic loaded decl count and
+;; every module recorded in the seen set.
+(define (compiler-load-transitive-import-ok?) : bool
+  (begin
+    (write-file "target/cl_tr_c.tl" "(module tr.c)
+(define c-val : i64 1)")
+    (write-file
+      "target/cl_tr_b.tl"
+      "(module tr.b)
+(import \"cl_tr_c.tl\" module tr.c as c)
+(define b-val : i64 1)")
+    (write-file
+      "target/cl_tr_a.tl"
+      "(module tr.a)
+(import \"cl_tr_b.tl\" module tr.b as b)
+(define a-val : i64 1)")
+    (write-file
+      "target/cl_tr_entry.tl"
+      "(module tr.entry)
+(import \"cl_tr_a.tl\" module tr.a as a)
+(define (main) : i64 0)")
+    (match (compiler-load-file-with-paths
+      "target/cl_tr_entry.tl"
+      (sym-i64-empty))
+      [(OkCompilerLoadWithPaths decls _ _ seen)
+        (and
+          (= (compiler-load-decl-list-count decls) 8)
+          (and
+            (sym-i64-contains seen "tr.c")
+            (and
+              (sym-i64-contains seen "tr.b")
+              (and
+                (sym-i64-contains seen "tr.a")
+                (sym-i64-contains seen "tr.entry")))))]
+      [(ErrCompilerLoadWithPaths _) false])))
+
 (define (compiler-load-self-test) : i64
   (if (compiler-load-normalize-ok?)
     (if (compiler-load-source-provenance-ok?)
@@ -784,7 +821,11 @@
             (if (compiler-load-file-import-dedup-cycle-ok?)
               (if (compiler-load-file-fallback-path-dedup-ok?)
                 (if (compiler-load-diamond-import-ok?)
-                  42
+                  (if (compiler-load-transitive-import-ok?)
+                    42
+                    (begin
+                      (panic "compiler-load: transitive import smoke mismatch")
+                      0))
                   (begin
                     (panic "compiler-load: diamond import smoke mismatch")
                     0))

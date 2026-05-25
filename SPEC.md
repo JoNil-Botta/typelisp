@@ -79,10 +79,12 @@ one starts the comment.
 The self-hosted documentation extractor recognizes public documentation
 comments before the main Rust lexer discards comments:
 
-- `;;;;` starts a module/file documentation line.
-- `;;;` starts an outer item documentation line attached to the next supported
+- `;#` starts a module/file documentation line.
+- `;:` starts an outer item documentation line attached to the next supported
   top-level item: value `define`, function `define`, `extern`, `defenum`, or
   `defstruct`.
+- Legacy `;;;;` module docs and `;;;` item docs remain accepted during the
+  migration, but `;#` and `;:` are the canonical spellings.
 - `;` and `;;` remain ordinary comments and are not public documentation.
 - Outer item doc lines must be contiguous. A blank line, ordinary comment,
   module doc, unsupported top-level form, or unrelated source text clears the
@@ -90,8 +92,8 @@ comments before the main Rust lexer discards comments:
 
 Documentation tests are fenced examples inside those public documentation
 comments. `typelisp doc --test <file.tl>` recognizes Markdown code fences whose
-info string starts with `typelisp` or `tl`, extracts them from `;;;;` module docs
-and attached `;;;` item docs, and checks each example as a standalone TypeLisp
+info string starts with `typelisp` or `tl`, extracts them from `;#` module docs
+and attached `;:` item docs, and checks each example as a standalone TypeLisp
 source file. An example passes when it parses, resolves imports, and type-checks.
 Adding `expect-error` after the language tag inverts the expectation so the
 example must fail during loading, parsing, or type checking. Other fence

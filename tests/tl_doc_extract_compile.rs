@@ -86,13 +86,15 @@ fn doc_extract_tl_compiles_to_assembly() {
     }
 
     for literal in [
-        ";;;; Module title",
-        ";;; answer doc",
+        ";# Module title",
+        ";: answer doc",
         ";; ordinary comment ignored",
         "(define answer : i64 42)",
         "(define (main [argc : i64])",
-        ";;; EOF unattached",
+        ";: EOF unattached",
         "Module title\\nsecond module line\\nlater module",
+        ";;;; Legacy module",
+        ";;; legacy item",
     ] {
         assert!(
             asm.contains(literal),

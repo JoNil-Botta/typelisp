@@ -2531,15 +2531,15 @@ fn doc_test_checks_module_and_item_examples() {
     let source = dir.join("docs.tl");
     fs::write(
         &source,
-        r#";;;; Module docs.
-;;;; ```typelisp
-;;;; (define (main) : i64 42)
-;;;; ```
+        r#";# Module docs.
+;# ```typelisp
+;# (define (main) : i64 42)
+;# ```
 
-;;; Item docs.
-;;; ```tl
-;;; (define answer : i64 42)
-;;; ```
+;: Item docs.
+;: ```tl
+;: (define answer : i64 42)
+;: ```
 (define documented : i64 1)
 
 ; Ordinary comments are not docs, so this failing block is ignored.
@@ -2757,9 +2757,9 @@ fn doc_generates_markdown_for_source_file() {
     let source = dir.join("simple.tl");
     fs::write(
         &source,
-        r#";;;; Module docs.
+        r#";# Module docs.
 
-;;; Item docs.
+;: Item docs.
 (define answer : i64 42)
 "#,
     )
@@ -2791,7 +2791,7 @@ fn doc_generates_markdown_with_custom_output() {
     let out = dir.join("custom.md");
     fs::write(
         &source,
-        r#";;; Single item.
+        r#";: Single item.
 (define x : i64 1)
 "#,
     )

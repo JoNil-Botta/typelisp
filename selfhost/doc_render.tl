@@ -208,24 +208,24 @@
         (string-append "\n" (doc-render-module-sections modules))))))
 
 (define (doc-render-smoke-source) : String
-  ";;;; Module docs with `code`, [links], <tag>, & amp.
+  ";# Module docs with `code`, [links], <tag>, & amp.
 
 ;; ignored ordinary comment
-;;; Global docs for answer.
+;: Global docs for answer.
 (define answer : i64 42)
 
-;;; Function docs with `tick` and [arg].
+;: Function docs with `tick` and [arg].
 (define (add-one [x : i64]) : i64 (+ x 1))
 
-;;; Extern docs for host-log.
+;: Extern docs for host-log.
 (extern host-log : (-> String unit))
 
-;;; Enum docs mention variants.
+;: Enum docs mention variants.
 (defenum MaybeNumber
   (NoNumber)
   (SomeNumber i64))
 
-;;; Struct docs mention fields.
+;: Struct docs mention fields.
 (defstruct Point
   (x i64)
   (y i64))")

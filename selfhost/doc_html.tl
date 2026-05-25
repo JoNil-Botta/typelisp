@@ -256,18 +256,18 @@
       (doc-html-page-close))))
 
 (define (doc-html-smoke-source) : String
-  ";;;; Module docs with `code`, [links], <tag>, & amp.
-;;;; Quote docs say \"hello\".
+  ";# Module docs with `code`, [links], <tag>, & amp.
+;# Quote docs say \"hello\".
 
 ;; ignored ordinary comment
-;;; Global docs for answer mention <answer>, & value, and \"quote\".
+;: Global docs for answer mention <answer>, & value, and \"quote\".
 (define answer : i64 42)
 
-;;; Function docs with `tick` and [arg].
+;: Function docs with `tick` and [arg].
 (define (add-one [x : i64]) : i64 (+ x 1))")
 
 (define (doc-html-second-smoke-source) : String
-  ";;;; Second module docs.
+  ";# Second module docs.
 
 (define hidden : i64 1)")
 

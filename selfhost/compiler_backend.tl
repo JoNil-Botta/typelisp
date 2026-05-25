@@ -5028,16 +5028,16 @@ tl_string_concat:
           _
           _
           _
-          string-eq
-          string-to-int
-          int-to-string
-          abort
-          print-err
-          arg-count
-          arg
-          read-file
-          write-file
-          file-exists
+          _
+          _
+          _
+          _
+          _
+          _
+          _
+          _
+          _
+          _
           _
           _
           _
@@ -5449,6 +5449,58 @@ tl_string_concat:
                       (compiler-backend-string-contains?
                         asm
                         ".L_tl_stdin_eof_flag:\n")))))))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-windows-driver-runtime-source) : String
+  "(define (main) : i64
+  (if (< (arg-count) 3)
+    (begin
+      (print-error \"runtime driver: expected input and output paths\")
+      2)
+    (let ([input : String (arg 1)]
+          [output : String (arg 2)])
+      (let ([content : String (read-file input)])
+        (if (file-exists? input)
+          (let ([n : i64 (string->int content)])
+            (let ([rendered : String (int->string (+ n 1))])
+              (begin
+                (if (string-eq content \"41\")
+                  (print-error \"ok\")
+                  (print-error \"mismatch\"))
+                (write-file output rendered)
+                42)))
+          3)))))")
+
+(define (compiler-backend-windows-driver-runtime-ok?) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-windows-driver-runtime-source)
+    (BackendTargetWindows))
+    [(OkCompilerBackend asm)
+      (and
+        (backend-and8
+          (compiler-backend-string-contains? asm ".L_tl_arg_count:\n")
+          (compiler-backend-string-contains? asm ".L_tl_arg:\n")
+          (compiler-backend-string-contains? asm ".L_tl_read_file:\n")
+          (compiler-backend-string-contains? asm ".L_tl_write_file:\n")
+          (compiler-backend-string-contains? asm ".L_tl_file_exists:\n")
+          (compiler-backend-string-contains? asm "tl_print_err:\n")
+          (compiler-backend-string-contains? asm "tl_string_eq:\n")
+          (compiler-backend-string-contains? asm "tl_string_to_int:\n"))
+        (and
+          (compiler-backend-string-contains? asm "tl_int_to_string:\n")
+          (and
+            (compiler-backend-string-contains?
+              asm
+              "    movq %rcx, .L_tl_argc(%rip)\n")
+            (and
+              (compiler-backend-string-contains? asm "    call _open\n")
+              (and
+                (compiler-backend-string-contains? asm "    call _lseeki64\n")
+                (and
+                  (compiler-backend-string-contains? asm "    call _close\n")
+                  (and
+                    (compiler-backend-string-contains? asm "    call _access\n")
+                    (not (compiler-backend-string-contains? asm "syscall\n")))))))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-alloc-runtime-arena-ok?) : bool
@@ -6103,10 +6155,12 @@ tl_string_concat:
                                             (compiler-backend-string-contains?
                                               asm
                                               "    .extern malloc\n")
-                                            (not
-                                              (compiler-backend-string-contains?
-                                                asm
-                                                "syscall\n")))))))))))))))))))))]
+                                            (and
+                                              (not
+                                                (compiler-backend-string-contains?
+                                                  asm
+                                                  "syscall\n"))
+                                              (compiler-backend-windows-driver-runtime-ok?)))))))))))))))))))))]
     [(ErrCompilerBackend message) false]))
 
 (define (compiler-backend-deterministic-ok? [src : String]) : bool

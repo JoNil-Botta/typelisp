@@ -32,3 +32,8 @@
   (or
     (string-eq value "scalar")
     (or (string-eq value "avx2") (string-eq value "avx512"))))
+
+(define (host-plan-opt-level-valid? [value : String]) : bool
+  (or
+    (string-eq value "0")
+    (or (string-eq value "1") (or (string-eq value "2") (string-eq value "3")))))

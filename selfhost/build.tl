@@ -6,7 +6,7 @@
 (import "host_plan.tl")
 
 (defenum BuildPlanConfig
-  (BuildPlanConfig String bool String bool String String String))
+  (BuildPlanConfig String bool String bool String String String String))
 
 (defenum ResultBuildPlanConfig
   (OkBuildPlanConfig BuildPlanConfig)
@@ -17,6 +17,9 @@
 
 (define (build-plan-unknown-mode [value : String]) : String
   (host-plan-cat3 "build: unknown backend mode " value ""))
+
+(define (build-plan-unknown-opt-level [value : String]) : String
+  (host-plan-cat3 "build: unknown opt level " value ""))
 
 (define (build-plan-append-stdlib [stdlib-lines : String] [root : String]) : String
   (string-append stdlib-lines (host-plan-netline "stdlib-root" root)))
@@ -30,6 +33,7 @@
   [has-output : bool]
   [target : String]
   [mode : String]
+  [opt-level : String]
   [stdlib-lines : String]) : ResultBuildPlanConfig
   (if (>= idx count)
     (if has-source
@@ -41,6 +45,7 @@
           has-output
           target
           mode
+          opt-level
           stdlib-lines))
       (if has-output
         (ErrBuildPlanConfig "build: -o requires a source file argument")
@@ -61,6 +66,7 @@
               true
               target
               mode
+              opt-level
               stdlib-lines)))
         (if (string-eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
@@ -74,6 +80,7 @@
               has-output
               target
               mode
+              opt-level
               (build-plan-append-stdlib stdlib-lines (arg (+ idx 1)))))
           (if (string-eq current "--target")
             (if (>= (+ idx 1) count)
@@ -90,6 +97,7 @@
                     has-output
                     value
                     mode
+                    opt-level
                     stdlib-lines)
                   (ErrBuildPlanConfig (build-plan-unknown-target value)))))
             (if (string-eq current "--backend-mode")
@@ -107,28 +115,49 @@
                       has-output
                       target
                       value
+                      opt-level
                       stdlib-lines)
                     (ErrBuildPlanConfig (build-plan-unknown-mode value)))))
-              (if (string-eq current "--manifest-path")
+              (if (string-eq current "--opt-level")
                 (if (>= (+ idx 1) count)
-                  (ErrBuildPlanConfig "build: --manifest-path requires a value")
-                  (ErrBuildPlanConfig
-                    "build: --manifest-path is handled by Rust typelisp build; selfhost build planner expects a source file"))
-                (if (host-plan-flag? current)
-                  (ErrBuildPlanConfig
-                    (string-append "build: unknown flag " current))
-                  (if has-source
-                    (ErrBuildPlanConfig "build: accepts only one source file")
-                    (build-plan-parse-options
-                      (+ idx 1)
-                      count
-                      current
-                      true
-                      output
-                      has-output
-                      target
-                      mode
-                      stdlib-lines)))))))))))
+                  (ErrBuildPlanConfig "build: --opt-level requires a value")
+                  (let
+                    [value : String (arg (+ idx 1))]
+                    (if (host-plan-opt-level-valid? value)
+                      (build-plan-parse-options
+                        (+ idx 2)
+                        count
+                        source
+                        has-source
+                        output
+                        has-output
+                        target
+                        mode
+                        value
+                        stdlib-lines)
+                      (ErrBuildPlanConfig (build-plan-unknown-opt-level value)))))
+                (if (string-eq current "--manifest-path")
+                  (if (>= (+ idx 1) count)
+                    (ErrBuildPlanConfig
+                      "build: --manifest-path requires a value")
+                    (ErrBuildPlanConfig
+                      "build: --manifest-path is handled by Rust typelisp build; selfhost build planner expects a source file"))
+                  (if (host-plan-flag? current)
+                    (ErrBuildPlanConfig
+                      (string-append "build: unknown flag " current))
+                    (if has-source
+                      (ErrBuildPlanConfig "build: accepts only one source file")
+                      (build-plan-parse-options
+                        (+ idx 1)
+                        count
+                        current
+                        true
+                        output
+                        has-output
+                        target
+                        mode
+                        opt-level
+                        stdlib-lines))))))))))))
 
 (define (build-plan-config [count : i64]) : ResultBuildPlanConfig
   (build-plan-parse-options
@@ -140,11 +169,20 @@
     false
     "linux-x86_64"
     "scalar"
+    ""
     ""))
 
 (define (build-plan-render [config : BuildPlanConfig]) : String
   (match config
-    [(BuildPlanConfig source _ output has-output target mode stdlib-lines)
+    [(BuildPlanConfig
+        source
+        _
+        output
+        has-output
+        target
+        mode
+        opt-level
+        stdlib-lines)
       (string-append
         (host-plan-header)
         (string-append
@@ -159,7 +197,11 @@
                 (host-plan-word-line "target" target)
                 (string-append
                   (host-plan-word-line "backend-mode" mode)
-                  (string-append stdlib-lines "end\n")))))))]))
+                  (string-append
+                    (if (string-eq opt-level "")
+                      ""
+                      (host-plan-word-line "opt-level" opt-level))
+                    (string-append stdlib-lines "end\n"))))))))]))
 
 (define (main) : i64
   (match (build-plan-config (arg-count))

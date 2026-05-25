@@ -101,6 +101,7 @@ env.tl
 fs.tl
 hash.tl
 json.tl
+msvc.tl
 process.tl
 random.tl
 string.tl
@@ -138,6 +139,7 @@ stdlib/tests/visual_studio_api.tl|42|-|-
 stdlib/tests/test_assert_success.tl|42|-|-
 stdlib/tests/test_assert_failure.tl|134|-|literal:stdlib test failure message
 stdlib/tests/windows_sdk_api.tl|42|-|-
+stdlib/tests/msvc_api.tl|42|-|-
 EOF
 }
 

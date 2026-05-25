@@ -24,7 +24,7 @@ pub struct NativeError {
 }
 
 impl NativeError {
-    fn new(message: impl Into<String>) -> Self {
+    pub(crate) fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
         }
@@ -403,6 +403,32 @@ pub fn run_source_file_in_temp_dir(
         None => temp.path.join(stem),
     };
     compile_source_to_executable(file, options, target, &asm_path, &obj_path, &bin_path)?;
+    let output = run_executable(&bin_path, runtime_args, target)?;
+    Ok(NativeRunOutput {
+        status: output.status,
+        stdout: output.stdout,
+        stderr: output.stderr,
+        artifact_dir: None,
+    })
+}
+
+pub fn run_assembly_in_temp_dir(
+    assembly: &str,
+    runtime_args: &[String],
+    target: BackendTarget,
+) -> Result<NativeRunOutput, NativeError> {
+    let temp = NativeTempDir::new("typelisp-native-run")?;
+    let asm_path = temp.path.join("inline-test.s");
+    let obj_path = temp
+        .path
+        .join(format!("inline-test.{}", target.object_extension()));
+    let bin_path = match target.executable_extension() {
+        Some(ext) => temp.path.join(format!("inline-test.{}", ext)),
+        None => temp.path.join("inline-test"),
+    };
+
+    write_file(&asm_path, assembly, "assembly input")?;
+    assemble_and_link(&asm_path, &obj_path, &bin_path, target)?;
     let output = run_executable(&bin_path, runtime_args, target)?;
     Ok(NativeRunOutput {
         status: output.status,

@@ -172,6 +172,13 @@ pub enum Decl {
     /// flattens it to the bare inner declaration. The wrapper itself carries no
     /// runtime value.
     ComptimeDecl { template: Box<Decl>, span: Span },
+    /// `(test name body...)` is ignored by normal production codegen and
+    /// consumed by the TypeLisp-owned test runner.
+    Test {
+        name: Symbol,
+        body: Expr,
+        span: Span,
+    },
 }
 
 /// Expressions
@@ -365,6 +372,7 @@ impl ExpandedProgram {
                         }),
                     });
                 }
+                Decl::Test { .. } => {}
                 _ => decls.push(ExpandedDecl {
                     decl: decl.clone(),
                     origin: DeclOrigin::Parsed {
@@ -384,6 +392,7 @@ impl Decl {
             Decl::Def { value, .. } => value.span(),
             Decl::DefFn { body, .. } => body.span(),
             Decl::ComptimeDecl { span, .. } => *span,
+            Decl::Test { span, .. } => *span,
             Decl::Extern { .. }
             | Decl::DefEnum { .. }
             | Decl::DefStruct { .. }
@@ -411,6 +420,7 @@ impl Decl {
             Decl::DefStruct { .. } => "struct",
             Decl::Import(_) => "import",
             Decl::ComptimeDecl { .. } => "comptime-decl",
+            Decl::Test { .. } => "test",
         }
     }
 }

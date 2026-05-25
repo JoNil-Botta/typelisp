@@ -47,6 +47,20 @@ Use a smoke driver when the module is main-less or when CI needs to compile and
 run the module through the TypeLisp executable boundary. If a new smoke driver
 imports additional selfhost files, keep the Rust staging lists in sync.
 
+### Inline tests
+
+Top-level `(test name body...)` items are source-owned executable checks. Normal
+`check`, `compile`, `build`, and `run` ignore them. `typelisp test <file.tl>`
+loads the import graph, turns tests into private unit-returning functions,
+skips any production `main`, generates a test-owned `main`, and runs the
+resulting executable. `typelisp test --check <file.tl>` type-checks the
+generated harness without assembling or linking.
+
+Use inline tests for behavior that naturally belongs next to the declarations
+under test. Import `stdlib/test.tl` for assertions such as `assert-i64-eq`.
+Keep smoke drivers for existing compiler-module self-tests until those modules
+are intentionally migrated.
+
 ### Temporary Rust compile tests
 
 The `tests/tl_*_compile.rs` files are temporary cross-platform proof that
@@ -113,6 +127,8 @@ For new selfhost tests:
 
 - Put structural compiler checks next to the owning module as small helpers or a
   `*-self-test` function.
+- Prefer inline `(test ...)` items for new source-local runnable checks when a
+  generated test harness is enough.
 - Add a `*_smoke.tl` driver when the module should be executable through the
   compiler boundary.
 - Add standalone source programs to `selfhost/tests/` when the external compiler

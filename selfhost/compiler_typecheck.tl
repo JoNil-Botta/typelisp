@@ -72,6 +72,12 @@
   (match decl
     [(AstDeclDef _ _ expr) (tc-expr-diag expr message)]
     [(AstDeclDefFn _ _ _ body) (tc-expr-diag body message)]
+    [(AstDeclTest _ _ span)
+      (CompilerDiagnostic
+        ""
+        (struct-get span start-line)
+        (struct-get span start-col)
+        message)]
     [_ (tc-diag-at-start message)]))
 
 (define (tc-empty-env) : TcTypeEnv
@@ -833,7 +839,8 @@
     [(AstDeclDefEnum _ variants)
       (tc-source-variant-list-policy-ok ctx variants)]
     [(AstDeclDefStruct _ fields) (tc-source-field-list-policy-ok ctx fields)]
-    [(AstDeclImport _) OkTcUnit]))
+    [(AstDeclImport _) OkTcUnit]
+    [(AstDeclTest _ body _) (tc-source-expr-policy-ok ctx body)]))
 
 (define (tc-source-decl-list-policy-ok [ctx : TcContext] [decls : AstDeclList]) : ResultTcUnit
   (match decls
@@ -1205,7 +1212,8 @@
               env
               name
               (AstTyFunc (tc-field-type-list ctx fields) (AstTyStruct name))))]
-        [(AstDeclImport _) (tc-build-top-env-list ctx rest env)])]))
+        [(AstDeclImport _) (tc-build-top-env-list ctx rest env)]
+        [(AstDeclTest _ _ _) (tc-build-top-env-list ctx rest env)])]))
 
 (define (tc-build-top-env [ctx : TcContext] [program : AstProgram]) : ResultTcEnv
   (match program

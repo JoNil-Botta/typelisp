@@ -19,6 +19,8 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   helpers. Import it with `(import "stdlib/env.tl")`.
 - `fs.tl`: minimal recoverable filesystem helpers for tool artifact paths,
   temporary directories, and cleanup. Import it with `(import "stdlib/fs.tl")`.
+- `hash.tl`: deterministic, non-cryptographic hash and key equality helpers for
+  future collections. Import it with `(import "stdlib/hash.tl")`.
 - `json.tl`: JSON value parser and serializer for tool protocols and data
   exchange. Import it with `(import "stdlib/json.tl")`.
 - `process.tl`: process command/output/error data model for selfhost tools.
@@ -70,6 +72,7 @@ returned caller-owned values.
 | `stdout-write-line`, `stderr-write-line` | Allocate a newline-appended active-arena `String` via `string-append`, then write it to the target stream. |
 | `env-get`, `env-path-list`, `env-path-split`, `env-path-join` | Environment values and split/join results allocate fresh active-arena Strings/lists when runtime values are read or string pieces are created; missing variables return explicit `EnvNo*` options. |
 | `fs-path-join`, `try-mkdir`, `try-remove-file`, `try-remove-dir`, `try-create-temp-dir` | Path joins allocate active-arena Strings when a separator is inserted or duplicate separator is removed. Recoverable filesystem helpers map runtime status codes into `IoError`; Linux temp directories are created under `$TMPDIR` or `/tmp` with process-id and retry suffixes. Windows temp creation returns `IoUnsupported` until target filesystem primitives are implemented. |
+| `hash-*` helpers | Deterministic, non-cryptographic hash and key equality helpers are non-allocating. Hashes are stable bucket hints only; collection users must still compare colliding candidate keys with the matching equality predicate. |
 | `process-*` helpers | Construct process command/output/error aggregates in the active arena. Ordered argv append helpers allocate list nodes; validators inspect executable/env/cwd metadata and reject invalid env names. On Linux, `process-run` and `process-output` execute directly through the backend runtime, preserving inherited environment entries, replacing entries named by env overrides, honoring cwd, and feeding string stdin. Unsupported targets return structured errors. |
 | `random-*` helpers | Construct deterministic RNG state, draw/result aggregates, and weight-list cons nodes in the active arena. Draws are deterministic from caller-provided seeds and do not read host entropy. |
 | `assert-*` helpers in `test.tl` | Non-allocating checks on success; failures call `panic` with the caller-provided message. |
@@ -93,6 +96,7 @@ Stdlib modules are imported explicitly:
 ```lisp
 (import "stdlib/env.tl")
 (import "stdlib/fs.tl")
+(import "stdlib/hash.tl")
 (import "stdlib/io.tl")
 (import "stdlib/json.tl")
 (import "stdlib/process.tl")

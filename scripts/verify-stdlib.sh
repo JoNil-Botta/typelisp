@@ -68,6 +68,7 @@ stdlib_manifest() {
 io.tl
 env.tl
 fs.tl
+hash.tl
 json.tl
 process.tl
 random.tl
@@ -96,6 +97,7 @@ stdlib/tests/io_stdio_lines.tl|42|host-line:stdout-line|host-line:stderr-line|pr
 stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef
 stdlib/tests/env_api.tl|42|-|-
 stdlib/tests/fs_api.tl|42|-|-
+stdlib/tests/hash_api.tl|42|-|-
 stdlib/tests/process_api.tl|42|-|-
 stdlib/tests/process_runtime.tl|42|-|-
 stdlib/tests/random_api.tl|42|-|-

@@ -29,6 +29,9 @@ Coverage notes:
 - `env_api.tl` covers missing, empty, and present environment variables,
   host-separator PATH splitting/joining, and explicit Windows `;` path-list
   behavior.
+- `hash_api.tl` covers stable deterministic hashes, equal-values-same-hash
+  checks, primitive key equality predicates, known collision behavior, hash
+  range normalization, and string edge cases.
 - `process_api.tl` covers command construction, argv append helpers,
   cwd/stdin/env accessors, invalid-command diagnostics, result/error predicates,
   and unsupported optional execution settings.

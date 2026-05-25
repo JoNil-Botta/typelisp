@@ -353,6 +353,9 @@
 (define (compiler-parse-tag-expr-spmd-reduce) : i64
   250)
 
+(define (compiler-parse-tag-expr-try) : i64
+  251)
+
 (define (compiler-parse-tag-lit-true) : i64
   300)
 
@@ -582,6 +585,7 @@
       (set!
         out
         (sym-i64-bind out "type" (compiler-parse-tag-expr-type-literal)))
+      (set! out (sym-i64-bind out "try" (compiler-parse-tag-expr-try)))
       out)))
 
 (define (compiler-parse-dispatch-patterns [e : SymI64Env]) : SymI64Env
@@ -1394,6 +1398,14 @@
     [(SpSCons _ _ _) (ErrAstExpr "parse: malformed spmd-reduce")]
     [_ (ErrAstExpr "parse: malformed spmd-reduce")]))
 
+(define (parse-ast-try [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSCons expr (SpSNil _) _)
+      (match (parse-ast-expr dispatch expr)
+        [(OkAstExpr parsed-expr) (OkAstExpr (AstExprTry parsed-expr))]
+        [(ErrAstExpr message) (ErrAstExpr message)])]
+    [_ (ErrAstExpr "parse: try expects exactly one expression")]))
+
 (define (parse-ast-with-region [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
     [(SpSNil _)
@@ -1581,13 +1593,17 @@
                                               rest)
                                             (if (=
                                               tag
-                                              (compiler-parse-tag-decl-comptime-decl))
-                                              (ErrAstExpr
-                                                "parse: comptime-decl is only valid as a top-level declaration")
-                                              (parse-ast-call
-                                                dispatch
-                                                head
-                                                rest))))))))))))))))))))))))
+                                              (compiler-parse-tag-expr-try))
+                                              (parse-ast-try dispatch rest)
+                                              (if (=
+                                                tag
+                                                (compiler-parse-tag-decl-comptime-decl))
+                                                (ErrAstExpr
+                                                  "parse: comptime-decl is only valid as a top-level declaration")
+                                                (parse-ast-call
+                                                  dispatch
+                                                  head
+                                                  rest)))))))))))))))))))))))))
 
 (define (parse-ast-list-expr
   [dispatch : SymI64Env]
@@ -2152,6 +2168,30 @@
     [(OkAstProgram _) true]
     [(ErrAstProgram _) false]))
 
+(define (compiler-parse-try-source) : String
+  "(defenum ResultI64 (OkI64 i64) (ErrI64 String))
+(define (read) : ResultI64 (OkI64 42))
+(define (main) : ResultI64 (OkI64 (try (read))))")
+
+(define (compiler-parse-try-ok?) : bool
+  (match (parse-ast-source (compiler-parse-try-source))
+    [(OkAstProgram (AstProgram decls))
+      (match decls
+        [(AstDeclCons
+            _
+            (AstDeclCons _ (AstDeclCons (AstDeclDefFn _ _ _ body) AstDeclNil)))
+          (match (ast-expr-unspan body)
+            [(AstExprCall _ args)
+              (match args
+                [(AstExprCons arg AstExprNil)
+                  (match (ast-expr-unspan arg)
+                    [(AstExprTry _) true]
+                    [_ false])]
+                [_ false])]
+            [_ false])]
+        [_ false])]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-parse-comptime-decl-source) : String
   "(comptime-decl (defstruct Point (x i64) (y i64)))
 (comptime-decl (defenum Maybe (None) (Some i64)))")
@@ -2211,6 +2251,9 @@
 
 (define (compiler-parse-empty-test-source) : String
   "(test empty)")
+
+(define (compiler-parse-malformed-try-source) : String
+  "(define (main) : i64 (try))")
 
 (define (compiler-parse-comptime-decl-error-tests-ok?) : bool
   (and
@@ -2287,9 +2330,13 @@
               (compiler-parse-error-ok?
                 (compiler-parse-with-region-empty-source)
                 "parse: with-region 'r' requires a non-empty body")
-              (compiler-parse-error-ok?
-                (compiler-parse-region-type-bad-source)
-                "parse: region name must be an identifier"))))))))
+              (and
+                (compiler-parse-error-ok?
+                  (compiler-parse-region-type-bad-source)
+                  "parse: region name must be an identifier")
+                (compiler-parse-error-ok?
+                  (compiler-parse-malformed-try-source)
+                  "parse: try expects exactly one expression")))))))))
 
 (define (compiler-parse-error-tests-ok?) : bool
   (and
@@ -2333,7 +2380,9 @@
                       (compiler-parse-import-metadata-ok?)
                       (and
                         (compiler-parse-flat-let-call-body-ok?)
-                        (compiler-parse-inline-test-ok?))))))))))
+                        (and
+                          (compiler-parse-inline-test-ok?)
+                          (compiler-parse-try-ok?)))))))))))
         (if (compiler-parse-error-tests-ok?)
           42
           (begin

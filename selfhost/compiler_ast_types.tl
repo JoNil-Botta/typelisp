@@ -165,7 +165,11 @@
   (AstExprTypeLiteral AstType)
   ;; Reserved compile-time evaluation form `(comptime expr)` (#718). Parsed and
   ;; type-checked (as the inner expression's type); evaluation lands in #719.
-  (AstExprComptime AstExpr))
+  (AstExprComptime AstExpr)
+  ;; Narrow Result-like propagation form `(try expr)` (#903). The temporary
+  ;; convention recognizes concrete enums with one `Ok*` and one `Err*`
+  ;; variant, each carrying exactly one payload.
+  (AstExprTry AstExpr))
 
 (defenum AstExprList
   (AstExprNil)
@@ -263,7 +267,8 @@
     [(AstExprWithRegion _ _) 25]
     [(AstExprTypeLiteral _) 26]
     [(AstExprComptime _) 27]
-    [(AstExprSpmdReduce _ _ _ _ _ _ _) 28]))
+    [(AstExprSpmdReduce _ _ _ _ _ _ _) 28]
+    [(AstExprTry _) 29]))
 
 (define (ast-expr-unspan [expr : AstExpr]) : AstExpr
   (match expr

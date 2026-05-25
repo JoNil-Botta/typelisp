@@ -32,7 +32,7 @@
   [target : CompilerBackendTarget]
   [has-target : bool]) : ResultCompilerDriver
   (match (compiler-load-file-with-paths input-path (sym-i64-empty))
-    [(OkCompilerLoadWithPaths decls paths _)
+    [(OkCompilerLoadWithPaths decls paths _ _)
       (match (lower-compiler-program-with-decl-paths
         input-path
         (AstProgram decls)

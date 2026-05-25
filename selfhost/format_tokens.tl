@@ -158,7 +158,9 @@
                   (= c #<')
                   (or
                     (= c #=')
-                    (or (= c #_') (or (= c #$') (or (= c #%') (= c #&'))))))))))))))
+                    (or
+                      (= c #_')
+                      (or (= c #$') (or (= c #.') (or (= c #%') (= c #&')))))))))))))))
 
 (define (fmt-is-symbol-char [c : char]) : bool
   (or (fmt-is-alpha c) (or (fmt-is-digit c) (fmt-is-symbol-punct c))))

@@ -40,7 +40,9 @@
                       (= c #=')
                       (or
                         (= c #<')
-                        (or (= c #>') (or (= c #$') (or (= c #%') (= c #&'))))))))))))))))
+                        (or
+                          (= c #>')
+                          (or (= c #$') (or (= c #.') (or (= c #%') (= c #&')))))))))))))))))
 
 (define (front-scan-ident-end [src : String] [start : i64] [n : i64]) : i64
   (let (
@@ -564,8 +566,30 @@
     [(AstExprComptime inner)
       (front-cat3 "Comptime { expr: " (front-expr-render inner) " }")]))
 
+(define (front-maybe-module-render [name : AstMaybeModuleName]) : String
+  (match name
+    [(AstNoModuleName) "None"]
+    [(AstSomeModuleName module-name) (front-cat3 "Some(\"" module-name "\")")]))
+
+(define (front-maybe-alias-render [alias : AstMaybeImportAlias]) : String
+  (match alias
+    [(AstNoImportAlias) "None"]
+    [(AstSomeImportAlias alias-name) (front-cat3 "Some(\"" alias-name "\")")]))
+
+(define (front-import-render [spec : AstImportSpec]) : String
+  (match spec
+    [(AstImportSpec path module-name alias)
+      (front-cat3
+        "Import { path: \""
+        path
+        (front-cat3
+          "\", module: "
+          (front-maybe-module-render module-name)
+          (front-cat3 ", alias: " (front-maybe-alias-render alias) " }")))]))
+
 (define (front-decl-render [decl : AstDecl]) : String
   (match decl
+    [(AstDeclModule name) (front-cat3 "Module(\"" name "\")")]
     [(AstDeclDef name ty value)
       (front-cat3
         "Def { name: \""
@@ -591,7 +615,7 @@
         (front-cat3 "\", ty: " (front-type-render ty) " }"))]
     [(AstDeclDefEnum name _) (front-cat3 "DefEnum { name: \"" name "\" }")]
     [(AstDeclDefStruct name _) (front-cat3 "DefStruct { name: \"" name "\" }")]
-    [(AstDeclImport path) (front-cat3 "Import(\"" path "\")")]
+    [(AstDeclImport spec) (front-import-render spec)]
     [(AstDeclTest name body _)
       (front-cat3
         "Test { name: \""

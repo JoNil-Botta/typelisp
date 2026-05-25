@@ -807,6 +807,7 @@
       (tc-source-variant-list-policy-ok ctx variants)]
     [(AstDeclDefStruct _ fields) (tc-source-field-list-policy-ok ctx fields)]
     [(AstDeclImport _) OkTcUnit]
+    [(AstDeclModule _) OkTcUnit]
     [(AstDeclTest _ body _) (tc-source-expr-policy-ok ctx body)]))
 
 (define (tc-source-decl-list-policy-ok [ctx : TcContext] [decls : AstDeclList]) : ResultTcUnit
@@ -1180,6 +1181,7 @@
               name
               (AstTyFunc (tc-field-type-list ctx fields) (AstTyStruct name))))]
         [(AstDeclImport _) (tc-build-top-env-list ctx rest env)]
+        [(AstDeclModule _) (tc-build-top-env-list ctx rest env)]
         [(AstDeclTest _ _ _) (tc-build-top-env-list ctx rest env)])]))
 
 (define (tc-build-top-env [ctx : TcContext] [program : AstProgram]) : ResultTcEnv

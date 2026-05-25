@@ -93,7 +93,9 @@
                 (= c #>')
                 (or
                   (= c #<')
-                  (or (= c #=') (or (= c #:') (or (= c #_') (= c #%')))))))))))))
+                  (or
+                    (= c #=')
+                    (or (= c #:') (or (= c #_') (or (= c #.') (= c #%'))))))))))))))
 
 ;; `c` may appear in a symbol: a letter, a digit, or a symbol-punctuation char.
 ;; A symbol run is the maximal span of these starting at a non-digit symbol char.

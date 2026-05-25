@@ -93,6 +93,27 @@ caller-provided buffer in place, or manually calls `tl_region_mark` /
 `tl_region_reset`. Those policies should remain explicit when borrowed strings,
 mutable buffers, and unsafe reset APIs are added.
 
+### Planned file-handle API (v1, #1036)
+
+`SPEC.md` §6.4 specifies the v1 file-handle surface that extends these
+whole-file helpers with explicit open/close and streaming I/O. The
+implementation lands incrementally:
+
+- **#1056** — opaque `FileHandle`, the `OpenMode` enum (`OpenRead`,
+  `OpenWriteTruncate`, `OpenWriteAppend`), `file-open` returning `ResultIoFile`,
+  and `file-close`. v1 requires explicit close; there is no implicit drop until
+  #805.
+- **#1057** — `file-read-chunk` returning `ResultIoRead` / `FileRead` (a
+  `String` payload plus a sticky EOF flag, mirroring `StdinRead`). Chunk bytes
+  allocate in the active arena and stay `String`-typed until #807 adds a
+  byte-slice split.
+- **#1058** — streaming writes and flush, plus atomic `OpenWriteAppend`
+  semantics that supersede the non-atomic `try-append-file` read-modify-write.
+
+All handle helpers reuse the existing `IoError` model; mode violations, closed
+or invalid handles, and unsupported Windows operations return structured
+`IoError` results rather than panicking.
+
 ## Importing Stdlib Modules
 
 Stdlib modules are imported explicitly:

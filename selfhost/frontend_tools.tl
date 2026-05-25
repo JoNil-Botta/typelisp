@@ -427,6 +427,14 @@
     [(AstUnNot) "Not"]
     [(AstUnBitNot) "BitNot"]))
 
+(define (front-reduce-op-render [op : AstReduceOp]) : String
+  (match op
+    [(AstReduceSum) "Sum"]
+    [(AstReduceMin) "Min"]
+    [(AstReduceMax) "Max"]
+    [(AstReduceAll) "All"]
+    [(AstReduceAny) "Any"]))
+
 (define (front-literal-render [lit : AstLiteral]) : String
   (match lit
     [(AstLitInt value) (front-cat3 "Literal(Int(" (int->string value) "))")]
@@ -554,6 +562,26 @@
               ", end: "
               (front-expr-render end)
               (front-cat3 ", body: " (front-expr-render body) " }")))))]
+    [(AstExprSpmdReduce op name index-ty start end init value)
+      (front-cat3
+        "SpmdReduce { op: "
+        (front-reduce-op-render op)
+        (front-cat3
+          ", index: \""
+          name
+          (front-cat3
+            "\", index_ty: "
+            (front-type-render index-ty)
+            (front-cat3
+              ", start: "
+              (front-expr-render start)
+              (front-cat3
+                ", end: "
+                (front-expr-render end)
+                (front-cat3
+                  ", init: "
+                  (front-expr-render init)
+                  (front-cat3 ", value: " (front-expr-render value) " }")))))))]
     [(AstExprStructGet inner field)
       (front-cat3
         "StructGet { expr: "
@@ -601,7 +629,9 @@
       (front-cat3
         "Test { name: \""
         name
-        (front-cat3 "\", body: " (front-expr-render body) " }"))]))
+        (front-cat3 "\", body: " (front-expr-render body) " }"))]
+    [(AstDeclComptimeDecl template)
+      (front-cat3 "ComptimeDecl { template: " (front-decl-render template) " }")]))
 
 (define (front-decl-list-render [decls : AstDeclList]) : String
   (match decls

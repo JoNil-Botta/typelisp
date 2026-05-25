@@ -62,6 +62,19 @@
 (define (process-args-cons [value : String] [rest : ProcessStringList]) : ProcessStringList
   (ProcessStringCons value rest))
 
+;;; Return a one-element argument list.
+(define (process-args-single [value : String]) : ProcessStringList
+  (ProcessStringCons value (ProcessStringNil)))
+
+;;; Concatenate two argument lists while preserving argv order.
+(define (process-args-append
+  [left : ProcessStringList]
+  [right : ProcessStringList]) : ProcessStringList
+  (match left
+    [(ProcessStringNil) right]
+    [(ProcessStringCons value rest)
+      (ProcessStringCons value (process-args-append rest right))]))
+
 ;;; Return an empty environment override list.
 (define (process-env-empty) : ProcessEnvList
   (ProcessEnvNil))
@@ -78,6 +91,21 @@
   [value : String]
   [rest : ProcessEnvList]) : ProcessEnvList
   (ProcessEnvCons name value rest))
+
+;;; Return true when `text` contains `needle`.
+(define (process-string-contains-char? [text : String] [needle : char]) : bool
+  (let
+    [n : i64 (string-length text)]
+    [i : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< i n) (not found))
+        (begin
+          (if (= (string-ref text i) needle)
+            (set! found true)
+            unit)
+          (set! i (+ i 1))))
+      found)))
 
 ;;; Return a command stdin value that provides no input.
 (define (process-no-stdin) : ProcessMaybeString
@@ -103,6 +131,28 @@
     (ProcessNoString)
     (ProcessEnvNil)
     (ProcessNoString)))
+
+;;; Return a copy of `command` with `arg` appended after existing argv entries.
+(define (process-command-with-arg [command : ProcessCommand] [arg : String]) : ProcessCommand
+  (ProcessCommand
+    (process-command-executable command)
+    (process-args-append
+      (process-command-argv command)
+      (process-args-single arg))
+    (process-command-cwd command)
+    (process-command-env command)
+    (process-command-stdin command)))
+
+;;; Return a copy of `command` with `args` appended after existing argv entries.
+(define (process-command-with-args
+  [command : ProcessCommand]
+  [args : ProcessStringList]) : ProcessCommand
+  (ProcessCommand
+    (process-command-executable command)
+    (process-args-append (process-command-argv command) args)
+    (process-command-cwd command)
+    (process-command-env command)
+    (process-command-stdin command)))
 
 ;;; Construct a process command with every field supplied explicitly.
 (define (process-command-full
@@ -190,6 +240,12 @@
 (define (process-success? [output : ProcessOutput]) : bool
   (= (process-output-status output) 0))
 
+;;; Return true when `result` is a successful zero-exit process output.
+(define (process-result-success? [result : ResultProcessOutput]) : bool
+  (match result
+    [(OkProcessOutput output) (process-success? output)]
+    [(ErrProcessOutput _) false]))
+
 ;;; Return the diagnostic message stored in `error`.
 (define (process-error-message [error : ProcessError]) : String
   (match error
@@ -197,6 +253,24 @@
     [(ProcessSpawnFailed message) message]
     [(ProcessWaitFailed message) message]
     [(ProcessUnsupported message) message]))
+
+;;; Return true when `error` is a command validation diagnostic.
+(define (process-error-invalid-command? [error : ProcessError]) : bool
+  (match error
+    [(ProcessInvalidCommand _) true]
+    [_ false]))
+
+;;; Return true when `error` is a spawn failure diagnostic.
+(define (process-error-spawn-failed? [error : ProcessError]) : bool
+  (match error
+    [(ProcessSpawnFailed _) true]
+    [_ false]))
+
+;;; Return true when `error` is a wait failure diagnostic.
+(define (process-error-wait-failed? [error : ProcessError]) : bool
+  (match error
+    [(ProcessWaitFailed _) true]
+    [_ false]))
 
 ;;; Return true when `error` is an unsupported runtime/platform diagnostic.
 (define (process-error-unsupported? [error : ProcessError]) : bool
@@ -211,7 +285,9 @@
     [(ProcessEnvCons name _ rest)
       (if (string-eq name "")
         (ProcessSomeString "process: environment variable name is empty")
-        (process-env-validation-error rest))]))
+        (if (process-string-contains-char? name #=')
+          (ProcessSomeString "process: environment variable name contains '='")
+          (process-env-validation-error rest)))]))
 
 ;;; Return the first command validation error, or `ProcessNoString`.
 (define (process-command-validation-error [command : ProcessCommand]) : ProcessMaybeString

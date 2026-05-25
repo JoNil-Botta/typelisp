@@ -22,8 +22,9 @@ Coverage notes:
 - `env_api.tl` covers missing, empty, and present environment variables,
   host-separator PATH splitting/joining, and explicit Windows `;` path-list
   behavior.
-- `process_api.tl` covers command construction, argv/cwd/stdin/env accessors,
-  invalid-command diagnostics, and the current unsupported execution result.
+- `process_api.tl` covers command construction, argv append helpers,
+  cwd/stdin/env accessors, invalid-command diagnostics, result/error predicates,
+  and the current unsupported execution result.
 - `text_buf_api.tl` covers empty buffers, repeated appends, char/int append
   helpers, buffer concatenation, clear/reset behavior, and rendering.
 - `test_assert_success.tl` covers successful assertion helpers. The

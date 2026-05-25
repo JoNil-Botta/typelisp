@@ -182,7 +182,9 @@
         name
         (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))]
     [(AstDeclImport _) (OkCompilerSymbols symbols)]
-    [(AstDeclTest _ _ _) (OkCompilerSymbols symbols)]))
+    [(AstDeclTest _ _ _) (OkCompilerSymbols symbols)]
+    [(AstDeclComptimeDecl template)
+      (compiler-symbols-add-decl symbols template index)]))
 
 (define (build-compiler-symbol-list
   [decls : AstDeclList]
@@ -354,6 +356,37 @@
             [(OkCompilerRegistries next-registries)
               (build-compiler-registry-list rest next-registries (+ index 1))]
             [(ErrCompilerRegistries message) (ErrCompilerRegistries message)])]
+        [(AstDeclComptimeDecl template)
+          (match template
+            [(AstDeclDefEnum _ variants)
+              (match (build-compiler-variant-registry-list
+                variants
+                registries
+                index
+                0)
+                [(OkCompilerRegistries next-registries)
+                  (build-compiler-registry-list
+                    rest
+                    next-registries
+                    (+ index 1))]
+                [(ErrCompilerRegistries message)
+                  (ErrCompilerRegistries message)])]
+            [(AstDeclDefStruct name fields)
+              (match (build-compiler-field-registry-list
+                fields
+                registries
+                (sym-i64-empty)
+                name
+                index
+                0)
+                [(OkCompilerRegistries next-registries)
+                  (build-compiler-registry-list
+                    rest
+                    next-registries
+                    (+ index 1))]
+                [(ErrCompilerRegistries message)
+                  (ErrCompilerRegistries message)])]
+            [_ (build-compiler-registry-list rest registries (+ index 1))])]
         [_ (build-compiler-registry-list rest registries (+ index 1))])]))
 
 (define (build-compiler-registries [program : AstProgram]) : ResultCompilerRegistries
@@ -381,7 +414,9 @@
         [(AstDeclTest _ _ _) (compiler-decl-list-at-index rest target index)]
         [_
           (if (= target index)
-            (OkAstDecl decl)
+            (match decl
+              [(AstDeclComptimeDecl template) (OkAstDecl template)]
+              [_ (OkAstDecl decl)])
             (compiler-decl-list-at-index rest target (+ index 1)))])]))
 
 (define (compiler-program-decl-at-index [program : AstProgram] [target : i64]) : ResultAstDecl

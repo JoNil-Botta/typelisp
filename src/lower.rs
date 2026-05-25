@@ -2092,6 +2092,24 @@ impl FnLowerer {
     }
 
     fn lower_binary(&mut self, op: ast::BinOp, lhs: &ast::Expr, rhs: &ast::Expr) -> Value {
+        // Logical `and`/`or` short-circuit: the right operand is evaluated only
+        // when the left operand does not already decide the result. Desugar to
+        // the existing `if` lowering (a conditional branch) rather than the
+        // eager `BinOp::And`/`BinOp::Or` path, which evaluates both operands.
+        //   (and a b)  ===  (if a b false)
+        //   (or  a b)  ===  (if a true b)
+        match op {
+            ast::BinOp::And => {
+                let else_expr = ast::Expr::bool(false);
+                return self.lower_if(lhs, rhs, &else_expr);
+            }
+            ast::BinOp::Or => {
+                let then_expr = ast::Expr::bool(true);
+                return self.lower_if(lhs, &then_expr, rhs);
+            }
+            _ => {}
+        }
+
         let lhs_val = self.lower_expr(lhs);
         let lhs_expected = self.value_type(&lhs_val);
         let rhs_val = self.lower_expr_as(rhs, &lhs_expected);
@@ -10084,42 +10102,61 @@ mod tests {
         assert_eq!(unop, Some((UnOp::Not, Type::Bool)));
     }
 
-    #[test]
-    fn test_lower_and_maps_to_and() {
-        let prog = parse("(define (f [a : bool] [b : bool]) : bool (and a b))").unwrap();
-        let ir = lower_program(&prog);
-        assert_eq!(first_binop(&ir), Some(BinOp::And));
+    fn has_branch(ir: &Program) -> bool {
+        ir.functions[0].blocks.iter().any(|b| {
+            b.instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::Branch { .. }))
+        })
+    }
+
+    fn has_phi(ir: &Program) -> bool {
+        ir.functions[0].blocks.iter().any(|b| {
+            b.instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::Phi { .. }))
+        })
     }
 
     #[test]
-    fn test_lower_or_maps_to_or() {
+    fn test_lower_and_short_circuits() {
+        // `(and a b)` desugars to `(if a b false)`: a conditional branch, not an
+        // eager `BinOp::And` that evaluates both operands.
+        let prog = parse("(define (f [a : bool] [b : bool]) : bool (and a b))").unwrap();
+        let ir = lower_program(&prog);
+        assert!(
+            has_branch(&ir),
+            "and should lower to a short-circuit branch"
+        );
+        assert_eq!(first_binop(&ir), None, "and must not emit an eager BinOp");
+    }
+
+    #[test]
+    fn test_lower_or_short_circuits() {
+        // `(or a b)` desugars to `(if a true b)`.
         let prog = parse("(define (f [a : bool] [b : bool]) : bool (or a b))").unwrap();
         let ir = lower_program(&prog);
-        assert_eq!(first_binop(&ir), Some(BinOp::Or));
+        assert!(has_branch(&ir), "or should lower to a short-circuit branch");
+        assert_eq!(first_binop(&ir), None, "or must not emit an eager BinOp");
     }
 
     #[test]
     fn test_lower_and_or_result_is_bool() {
-        // The value produced by a logical op is a bool, kept canonical 0/1.
-        for (src, want) in [
-            (
-                "(define (f [a : bool] [b : bool]) : bool (and a b))",
-                BinOp::And,
-            ),
-            (
-                "(define (f [a : bool] [b : bool]) : bool (or a b))",
-                BinOp::Or,
-            ),
+        // The short-circuit desugaring merges the two arms (the evaluated right
+        // operand and the constant) through a phi; no eager logical BinOp is
+        // emitted.
+        for src in [
+            "(define (f [a : bool] [b : bool]) : bool (and a b))",
+            "(define (f [a : bool] [b : bool]) : bool (or a b))",
         ] {
             let prog = parse(src).unwrap();
             let ir = lower_program(&prog);
-            let binop = ir.functions[0].blocks.iter().find_map(|b| {
-                b.instructions.iter().find_map(|i| match i {
-                    Instruction::BinOp { op, ty, .. } => Some((*op, ty.clone())),
-                    _ => None,
-                })
-            });
-            assert_eq!(binop, Some((want, Type::Bool)));
+            assert!(has_phi(&ir), "logical op should merge its arms via a phi");
+            assert_eq!(
+                first_binop(&ir),
+                None,
+                "logical op must not emit an eager BinOp"
+            );
         }
     }
 

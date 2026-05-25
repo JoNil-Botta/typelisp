@@ -5146,6 +5146,24 @@
           (compiler-typecheck-lambda-bad-ret-source)
           "typecheck: lambda return type mismatch")))))
 
+(define (compiler-typecheck-cast-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? "(define (f [x : i32]) : i64 (cast x : i64))")
+    (and
+      (compiler-typecheck-ok? "(define (f [x : i64]) : u8 (cast x : u8))")
+      (and
+        (compiler-typecheck-ok? "(define (f [x : i64]) : char (cast x : char))")
+        (and
+          (compiler-typecheck-ok?
+            "(define (f [c : char]) : i64 (cast c : i64))")
+          (and
+            (compiler-typecheck-error-ok?
+              "(define (f [x : f64]) : i64 (cast x : i64))"
+              "typecheck: cast requires integer/char source and target")
+            (compiler-typecheck-error-ok?
+              "(define (f [b : bool]) : i64 (cast b : i64))"
+              "typecheck: cast requires integer/char source and target")))))))
+
 (define (compiler-typecheck-self-test) : i64
   (begin
     (if (compiler-typecheck-statement-tests-ok?)
@@ -5193,7 +5211,9 @@
                                   (compiler-typecheck-located-ok?)
                                   (and
                                     (compiler-typecheck-string-builtin-tests-ok?)
-                                    (compiler-typecheck-lambda-tests-ok?)))))))))))))))
+                                    (and
+                                      (compiler-typecheck-lambda-tests-ok?)
+                                      (compiler-typecheck-cast-tests-ok?))))))))))))))))
           42
           (begin
             (panic "typecheck: smoke score mismatch")

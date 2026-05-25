@@ -1812,6 +1812,19 @@
     [(AstExprWhile cond body) (lower-while ctx state env type-env cond body)]
     [(AstExprForeach index index-ty start end body)
       (lower-foreach ctx state env type-env index index-ty start end body)]
+    [(AstExprSpmdReduce op index index-ty start end init value)
+      (lower-spmd-reduce
+        ctx
+        state
+        env
+        type-env
+        op
+        index
+        index-ty
+        start
+        end
+        init
+        value)]
     [(AstExprMatch scrutinee arms)
       (lower-match ctx state env type-env scrutinee arms expr-ty)]
     [(AstExprStringRef str index)
@@ -3736,6 +3749,83 @@
                                       (AstTyUnit)))])]
                             [(ErrLowerExpr message) (ErrLowerExpr message)]))])]
                   [(ErrLowerExpr message) (ErrLowerExpr message)]))])])]))
+
+;; Scalar `spmd-reduce` lowering (#1013). v1 lowers the `sum` reduction by
+;; desugaring to an accumulator loop and reusing the let/foreach/set lowering:
+;;   (spmd-reduce sum ([i : ty start end]) init value)
+;;     === (let [acc init]
+;;           (begin (foreach ([i : ty start end]) (set! acc (+ acc value))) acc))
+;; `acc` uses a lexer-impossible name so it cannot collide with a user binding,
+;; and `value` appears once so it is evaluated exactly once per iteration. The
+;; ordered left-to-right fold matches the spec reference semantics for both
+;; integer (wrapping `+`) and f64 sums. min/max/all/any are follow-ups.
+(define (lower-spmd-reduce
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [op : AstReduceOp]
+  [index : String]
+  [index-ty : AstType]
+  [start : AstExpr]
+  [end : AstExpr]
+  [init : AstExpr]
+  [value : AstExpr]) : ResultLowerExpr
+  (match op
+    [(AstReduceSum)
+      (lower-expr
+        ctx
+        state
+        env
+        type-env
+        (AstExprLet
+          (AstLetBindingCons
+            (AstLetBinding "0spmd-reduce-acc" (AstNoType) init)
+            (AstLetBindingCons
+              (AstLetBinding "0spmd-reduce-end" (AstNoType) end)
+              (AstLetBindingCons
+                (AstLetBinding index (AstSomeType index-ty) start)
+                (AstLetBindingNil))))
+          (AstExprBegin
+            (AstExprCons
+              (AstExprWhile
+                (AstExprBinary
+                  (AstBinLt)
+                  (AstExprVar index)
+                  (AstExprVar "0spmd-reduce-end"))
+                (AstExprBegin
+                  (AstExprCons
+                    (AstExprSet
+                      "0spmd-reduce-acc"
+                      (AstExprBinary
+                        (AstBinAdd)
+                        (AstExprVar "0spmd-reduce-acc")
+                        value))
+                    (AstExprCons
+                      (AstExprSet
+                        index
+                        (AstExprBinary
+                          (AstBinAdd)
+                          (AstExprVar index)
+                          (AstExprLiteral (AstLitInt 1))))
+                      (AstExprNil)))))
+              (AstExprCons (AstExprVar "0spmd-reduce-acc") (AstExprNil))))))]
+    [(AstReduceMin)
+      (ErrLowerExpr
+        (lower-diagnostic
+          "lower: spmd-reduce min not yet lowered (scalar sum only; #1013)"))]
+    [(AstReduceMax)
+      (ErrLowerExpr
+        (lower-diagnostic
+          "lower: spmd-reduce max not yet lowered (scalar sum only; #1013)"))]
+    [(AstReduceAll)
+      (ErrLowerExpr
+        (lower-diagnostic
+          "lower: spmd-reduce all not yet lowered (scalar sum only; #1013)"))]
+    [(AstReduceAny)
+      (ErrLowerExpr
+        (lower-diagnostic
+          "lower: spmd-reduce any not yet lowered (scalar sum only; #1013)"))]))
 
 ;; Scalar `foreach` lowering (#1012). `(foreach ([i : ty start end]) body)`
 ;; lowers to the half-open reference loop `i = start; while (i < end) { body;
@@ -5748,6 +5838,23 @@
           (compiler-lower-foreach-shape-ok?
             "(define (main) : i64 (begin (foreach ([i : i64 0 3]) unit) 0))"))))))
 
+;; `spmd-reduce` sum lowering (#1013): integer and f64 sum reductions lower (to
+;; an accumulator loop, so `main` holds the guard branch + fold/increment
+;; binops), while the not-yet-lowered min/max/all/any ops reject gracefully.
+(define (compiler-lower-spmd-reduce-tests-ok?) : bool
+  (and
+    (compiler-lower-ok?
+      "(define (f [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))")
+    (and
+      (compiler-lower-ok?
+        "(define (f [xs : (Array f64)] [n : i64]) : f64 (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref xs i)))")
+      (and
+        (compiler-lower-foreach-shape-ok?
+          "(define (main [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 i))")
+        (compiler-lower-error-ok?
+          "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
+          "lower: spmd-reduce min not yet lowered (scalar sum only; #1013)")))))
+
 ;; Comptime folding of the remaining scalar operators: each `(comptime ...)`
 ;; must collapse to a single constant `mov` with no residual runtime binop,
 ;; complementing the `+`/`<`/`*`/`let` cases already in the self-test (#1043).
@@ -5882,7 +5989,9 @@
                                                         "comptime: f64 compile-time evaluation not yet supported (#735)")
                                                       (and
                                                         (compiler-lower-comptime-op-fold-tests-ok?)
-                                                        (compiler-lower-foreach-tests-ok?))))))))))))))))))))))))))))
+                                                        (and
+                                                          (compiler-lower-foreach-tests-ok?)
+                                                          (compiler-lower-spmd-reduce-tests-ok?)))))))))))))))))))))))))))))
     42
     (begin
       (panic "lower: smoke score mismatch")

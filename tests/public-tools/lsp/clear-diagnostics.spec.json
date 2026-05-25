@@ -1,0 +1,10 @@
+{
+  "exit": 0,
+  "stderr_exact": "",
+  "stdout_contains": [
+    "\"code\":\"E0200\""
+  ],
+  "message_checks": [
+    {"raw_contains": "\"diagnostics\":[]"}
+  ]
+}

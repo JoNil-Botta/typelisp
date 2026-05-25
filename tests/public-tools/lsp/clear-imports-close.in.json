@@ -1,0 +1,7 @@
+[
+  {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}},
+  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/main.tl","languageId":"typelisp","version":1,"text":"(import \"lib.tl\")\n(define (main) : i64 0)"}}},
+  {"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"${{TMP_URI}}/main.tl"}}},
+  {"jsonrpc":"2.0","id":2,"method":"shutdown","params":null},
+  {"jsonrpc":"2.0","method":"exit"}
+]

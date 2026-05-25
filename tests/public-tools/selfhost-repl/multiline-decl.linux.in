@@ -1,0 +1,5 @@
+(define (inc [x : i64]) : i64
+  (+ x 1))
+(define answer : i64 (inc 41))
+.type (+ answer 1)
+.exit

@@ -1,0 +1,4 @@
+{
+  "exit": 0,
+  "stderr_contains": ["REPL evaluation is not implemented yet"]
+}

@@ -1,0 +1,5 @@
+{
+  "exit": 0,
+  "stderr_contains": ["typecheck:", "parse"],
+  "stderr_not_contains": ["unknown value: answer"]
+}

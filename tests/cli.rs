@@ -2845,6 +2845,7 @@ fn run_selfhost_repl(name: &str, stdin: &str) -> Output {
         }
     }
     let source = dir.join("repl.tl");
+    let stdlib_root = manifest_dir.join("stdlib");
     let exe = dir.join(if cfg!(target_os = "windows") {
         "repl.exe"
     } else {
@@ -2852,7 +2853,13 @@ fn run_selfhost_repl(name: &str, stdin: &str) -> Output {
     });
 
     let mut build = Command::new(env!("CARGO_BIN_EXE_typelisp"));
-    build.arg("build").arg(&source).arg("-o").arg(&exe);
+    build
+        .arg("build")
+        .arg(&source)
+        .arg("--stdlib-root")
+        .arg(&stdlib_root)
+        .arg("-o")
+        .arg(&exe);
     if cfg!(target_os = "windows") {
         build.arg("--target").arg("windows-x86_64");
     }

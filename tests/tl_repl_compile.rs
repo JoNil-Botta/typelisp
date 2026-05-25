@@ -7,6 +7,7 @@ use std::process::Command;
 fn compile_selfhost_source(source_file: &str, work_name: &str, asm_file: &str) -> String {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let source_path = manifest_dir.join("selfhost").join(source_file);
+    let stdlib_root = manifest_dir.join("stdlib");
     let work_dir = manifest_dir.join("target").join(work_name);
     fs::create_dir_all(&work_dir).expect("create REPL compile test work dir");
     let asm_path = work_dir.join(asm_file);
@@ -14,6 +15,8 @@ fn compile_selfhost_source(source_file: &str, work_name: &str, asm_file: &str) -
     let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
         .arg("compile")
         .arg(&source_path)
+        .arg("--stdlib-root")
+        .arg(&stdlib_root)
         .arg("-o")
         .arg(&asm_path)
         .output()

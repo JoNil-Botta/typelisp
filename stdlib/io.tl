@@ -1,10 +1,12 @@
 ;;;; File I/O utility library for TypeLisp (#702).
 ;;;;
-;;;; Provides higher-level file helpers built on the compiler/runtime file
-;;;; primitives, mirroring how `stdlib/string.tl` wraps string primitives.
+;;;; Provides higher-level file and stdio helpers built on the compiler/runtime
+;;;; I/O primitives, mirroring how `stdlib/string.tl` wraps string primitives.
 ;;;;
 ;;;; Primitives required from the compiler/runtime: `read-file`, `write-file`,
-;;;; `file-exists?`, `int->string`, `string-append`, and `string-length`.
+;;;; `file-exists?`, `read-stdin-line`, `read-stdin-bytes`, `stdin-eof?`,
+;;;; `print-string`, `print-error`, `flush-stdout`, `int->string`,
+;;;; `string-append`, and `string-length`.
 ;;;;
 ;;;; The `try-*` helpers return explicit monomorphic result enums. The current
 ;;;; runtime can classify empty paths and expected read absence before calling
@@ -16,6 +18,11 @@
 ;;;; ```typelisp
 ;;;; (import "stdlib/io.tl")
 ;;;; (define fallback : ResultIoString (try-read-file "missing-file-for-docs.txt"))
+;;;; ```
+;;;;
+;;;; ```typelisp
+;;;; (import "stdlib/io.tl")
+;;;; (define empty-read : StdinRead (stdin-read-bytes 0))
 ;;;; ```
 ;;; Structured file I/O failures.
 ;;;
@@ -43,6 +50,15 @@
 (defenum ResultIoBool
   (OkIoBool bool)
   (ErrIoBool IoError))
+
+;;; Stdin read result containing the bytes/text read plus the post-read EOF flag.
+;;;
+;;; `text` is currently a `String` for both line and fixed-byte reads. This will
+;;; remain source-compatible but may gain a byte-slice variant after #807 splits
+;;; owned text strings from borrowed/binary bytes.
+(defstruct StdinRead
+  (text String)
+  (eof bool))
 
 ;;; Return true when `path` is syntactically empty.
 (define (io-empty-path? [path : String]) : bool
@@ -158,3 +174,59 @@
   (match (try-read-file path)
     [(OkIoString contents) (> (string-length contents) 0)]
     [(ErrIoString _) false]))
+
+;;; Return the text/bytes captured by a stdin read result.
+(define (stdin-read-text [read : StdinRead]) : String
+  (struct-get read text))
+
+;;; Return true when a stdin read observed EOF after the read completed.
+(define (stdin-read-eof? [read : StdinRead]) : bool
+  (struct-get read eof))
+
+;;; Return the current sticky stdin EOF state without performing a read.
+(define (stdin-at-eof?) : bool
+  (stdin-eof?))
+
+;;; Read one stdin line without the trailing newline and report post-read EOF.
+;;;
+;;; The returned string is allocated by the runtime in the active arena. Blank
+;;; lines return an empty string with `eof` false; end-of-file after the final
+;;; unterminated line returns that line with `eof` true.
+(define (stdin-read-line) : StdinRead
+  (let
+    [text : String (read-stdin-line)]
+    (StdinRead text (stdin-eof?))))
+
+;;; Read up to `count` bytes from stdin and report post-read EOF.
+;;;
+;;; The returned bytes are represented as `String` until #807 adds a distinct
+;;; byte-string/slice type. The runtime handles invalid counts consistently with
+;;; the raw primitive.
+(define (stdin-read-bytes [count : i64]) : StdinRead
+  (let
+    [text : String (read-stdin-bytes count)]
+    (StdinRead text (stdin-eof?))))
+
+;;; Write `text` to stdout without adding a newline.
+(define (stdout-write [text : String]) : unit
+  (print-string text))
+
+;;; Write `text` and a trailing newline to stdout.
+;;;
+;;; This convenience helper allocates the newline-appended string.
+(define (stdout-write-line [text : String]) : unit
+  (print-string (string-append text "\n")))
+
+;;; Flush stdout.
+(define (stdout-flush) : unit
+  (flush-stdout))
+
+;;; Write `text` to stderr without adding a newline.
+(define (stderr-write [text : String]) : unit
+  (print-error text))
+
+;;; Write `text` and a trailing newline to stderr.
+;;;
+;;; This convenience helper allocates the newline-appended string.
+(define (stderr-write-line [text : String]) : unit
+  (print-error (string-append text "\n")))

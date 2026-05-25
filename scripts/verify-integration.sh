@@ -53,6 +53,14 @@ else
         echo "missing cygpath for Windows path conversion" >&2
         exit 1
     }
+    command -v clang >/dev/null 2>&1 || {
+        echo "missing assembler: clang" >&2
+        exit 1
+    }
+    command -v lld-link >/dev/null 2>&1 || {
+        echo "missing linker: lld-link" >&2
+        exit 1
+    }
 fi
 
 MANIFEST="$ROOT/tests/integration/native-$HOST_OS.manifest"
@@ -332,6 +340,27 @@ assert_not_contains() {
     fi
 }
 
+assert_empty_file() {
+    _file=$1
+    _label=$2
+    if [ -s "$_file" ]; then
+        echo "FAIL: $_label expected empty file: $_file" >&2
+        sed 's/^/  /' "$_file" >&2 || true
+        exit 1
+    fi
+}
+
+assert_file_text() {
+    _file=$1
+    _want=$2
+    _label=$3
+    _actual=$(cat "$_file")
+    if [ "$_actual" != "$_want" ]; then
+        echo "FAIL: $_label expected file text '$_want', got '$_actual'" >&2
+        exit 1
+    fi
+}
+
 run_linux_backend_fixtures() {
     _runtime_dir="$WORKDIR/backend-runtime"
     mkdir -p "$_runtime_dir"
@@ -419,6 +448,299 @@ run_linux_backend_fixtures() {
     fi
 
     echo "Backend runtime fixture checks passed."
+}
+
+assemble_link_windows() {
+    _asm=$1
+    _obj=$2
+    _bin=$3
+    _label=$4
+
+    clang --target=x86_64-pc-windows-msvc -c "$_asm" -o "$_obj" || {
+        echo "FAIL: $_label assemble failed" >&2
+        exit 1
+    }
+    lld-link -NOLOGO "$(cygpath -aw "$_obj")" "-OUT:$(cygpath -aw "$_bin")" -SUBSYSTEM:CONSOLE \
+        msvcrt.lib legacy_stdio_definitions.lib || {
+        echo "FAIL: $_label link failed" >&2
+        exit 1
+    }
+}
+
+run_windows_backend_fixtures() {
+    _runtime_dir="$WORKDIR/windows-backend-runtime"
+    mkdir -p "$_runtime_dir"
+    _runtime_asm="$_runtime_dir/runtime_helpers.s"
+    _runtime_obj="$_runtime_dir/runtime_helpers.obj"
+    _runtime_bin="$_runtime_dir/runtime_helpers.exe"
+    _runtime_stdout="$_runtime_dir/runtime.stdout"
+    _runtime_stderr="$_runtime_dir/runtime.stderr"
+    _runtime_code="$_runtime_dir/runtime.exit"
+
+    echo "[windows-backend-runtime] emit -> assemble -> link -> run"
+    "$COMPILER" run selfhost/compiler_backend_runtime_fixture.tl \
+        --target windows-x86_64 -- "$_runtime_asm" windows-x86_64
+    for _snippet in \
+        ".globl main" \
+        ".globl tl_alloc" \
+        "tl_alloc:" \
+        ".globl tl_oob_abort" \
+        "tl_oob_abort:" \
+        ".globl tl_substring" \
+        "tl_substring:" \
+        ".globl tl_string_concat" \
+        "tl_string_concat:" \
+        ".globl tl_string_eq" \
+        "tl_string_eq:" \
+        ".globl tl_string_to_int" \
+        "tl_string_to_int:" \
+        ".globl tl_int_to_string" \
+        "tl_int_to_string:" \
+        ".globl tl_print_err" \
+        "tl_print_err:" \
+        ".L_tl_arg_count:" \
+        ".L_tl_arg:" \
+        ".L_tl_read_file:" \
+        ".L_tl_write_file:" \
+        ".L_tl_file_exists:" \
+        ".L_tl_abort:" \
+        ".L_tl_read_stdin_line:" \
+        ".L_tl_read_stdin_bytes:" \
+        ".L_tl_stdin_eof:" \
+        ".L_tl_flush_stdout:" \
+        ".L_tl_argc:" \
+        ".L_tl_argv:" \
+        "movq %rcx, .L_tl_argc(%rip)" \
+        "movq %rdx, .L_tl_argv(%rip)" \
+        ".extern malloc" \
+        ".extern _write" \
+        ".extern exit" \
+        ".extern _read" \
+        ".extern fflush" \
+        ".extern _open" \
+        ".extern _lseeki64" \
+        ".extern _close" \
+        ".extern _access" \
+        "call malloc" \
+        "call _write" \
+        "call _read" \
+        "call fflush" \
+        "call _open" \
+        "call _lseeki64" \
+        "call _close" \
+        "call _access" \
+        "call .L_tl_abort" \
+        "movq \$0x8000, %rdx" \
+        "movq \$0x8301, %rdx" \
+        "movq \$0x180, %r8" \
+        "movq %rcx, %rbx" \
+        "movq %r12, %rcx" \
+        "movq %rcx, %r10"
+    do
+        assert_contains "$_runtime_asm" "$_snippet" windows-backend-runtime
+    done
+    for _snippet in \
+        "syscall" \
+        "_start:" \
+        "tl_current_arena:" \
+        ".extern tl_alloc" \
+        ".extern tl_oob_abort" \
+        ".extern tl_substring" \
+        ".extern tl_string_concat" \
+        ".extern tl_string_eq" \
+        ".extern tl_string_to_int" \
+        ".extern tl_int_to_string" \
+        ".extern tl_print_err" \
+        ".extern .L_tl_arg_count" \
+        ".extern .L_tl_arg" \
+        ".extern .L_tl_read_file" \
+        ".extern .L_tl_write_file" \
+        ".extern .L_tl_file_exists" \
+        ".extern .L_tl_abort" \
+        ".extern .L_tl_read_stdin_line" \
+        ".extern .L_tl_read_stdin_bytes" \
+        ".extern .L_tl_stdin_eof" \
+        ".extern .L_tl_flush_stdout"
+    do
+        assert_not_contains "$_runtime_asm" "$_snippet" windows-backend-runtime
+    done
+    assemble_link_windows "$_runtime_asm" "$_runtime_obj" "$_runtime_bin" windows-backend-runtime
+    run_windows_program "$_runtime_bin" "$_runtime_stdout" "$_runtime_stderr" "$_runtime_code"
+    if [ "$got" -ne 42 ]; then
+        echo "FAIL: windows-backend-runtime expected exit 42, got $got" >&2
+        exit 1
+    fi
+    assert_empty_file "$_runtime_stdout" windows-backend-runtime-stdout
+    assert_empty_file "$_runtime_stderr" windows-backend-runtime-stderr
+
+    _driver_dir="$WORKDIR/windows-selfhost-compile-driver"
+    mkdir -p "$_driver_dir"
+    _driver_bin="$_driver_dir/selfhost-compile.exe"
+    _driver_source="$_driver_dir/main.tl"
+    _driver_asm="$_driver_dir/main.s"
+    _driver_linux_asm="$_driver_dir/main-linux.s"
+    _driver_windows_asm="$_driver_dir/main-windows.s"
+    _driver_stdout="$_driver_dir/run.stdout"
+    _driver_stderr="$_driver_dir/run.stderr"
+    _driver_code="$_driver_dir/run.exit"
+
+    echo "[windows-selfhost-compile-driver] build -> exercise"
+    "$COMPILER" build selfhost/compile.tl -o "$_driver_bin" --target windows-x86_64
+    printf '%s\n' '(define (main) : i64 42)' > "$_driver_source"
+    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" \
+        "$(cygpath -aw "$_driver_source")" -o "$(cygpath -aw "$_driver_asm")"
+    if [ "$got" -ne 0 ]; then
+        echo "FAIL: windows-selfhost-compile-driver default target got exit $got" >&2
+        exit 1
+    fi
+    assert_empty_file "$_driver_stdout" windows-selfhost-compile-driver-stdout
+    assert_empty_file "$_driver_stderr" windows-selfhost-compile-driver-stderr
+    assert_contains "$_driver_asm" ".globl main" windows-selfhost-compile-driver
+    assert_contains "$_driver_asm" "main:" windows-selfhost-compile-driver
+    assert_contains "$_driver_asm" ".globl _start" windows-selfhost-compile-driver
+
+    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" \
+        "$(cygpath -aw "$_driver_source")" --target linux-x86_64 -o "$(cygpath -aw "$_driver_linux_asm")"
+    if [ "$got" -ne 0 ]; then
+        echo "FAIL: windows-selfhost-compile-driver explicit Linux target got exit $got" >&2
+        exit 1
+    fi
+    assert_empty_file "$_driver_stdout" windows-selfhost-compile-driver-linux-stdout
+    assert_empty_file "$_driver_stderr" windows-selfhost-compile-driver-linux-stderr
+    if ! cmp -s "$_driver_asm" "$_driver_linux_asm"; then
+        echo "FAIL: explicit Linux target should match default selfhost compile output" >&2
+        exit 1
+    fi
+
+    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" \
+        "$(cygpath -aw "$_driver_source")" --target windows-x86_64 -o "$(cygpath -aw "$_driver_windows_asm")"
+    if [ "$got" -ne 0 ]; then
+        echo "FAIL: windows-selfhost-compile-driver Windows target got exit $got" >&2
+        exit 1
+    fi
+    assert_empty_file "$_driver_stdout" windows-selfhost-compile-driver-windows-stdout
+    assert_empty_file "$_driver_stderr" windows-selfhost-compile-driver-windows-stderr
+    assert_contains "$_driver_windows_asm" ".globl main" windows-selfhost-compile-driver-windows
+    assert_not_contains "$_driver_windows_asm" ".globl _start" windows-selfhost-compile-driver-windows
+
+    _bad_target_asm="$_driver_dir/bad-target.s"
+    rm -f "$_bad_target_asm"
+    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" \
+        "$(cygpath -aw "$_driver_source")" --target plan9-x86_64 -o "$(cygpath -aw "$_bad_target_asm")"
+    if [ "$got" -eq 0 ]; then
+        echo "FAIL: windows-selfhost-compile-driver invalid target unexpectedly succeeded" >&2
+        exit 1
+    fi
+    assert_empty_file "$_driver_stdout" windows-selfhost-compile-driver-bad-target-stdout
+    assert_contains "$_driver_stderr" "Error: unknown target 'plan9-x86_64'. Expected linux-x86_64 or windows-x86_64" \
+        windows-selfhost-compile-driver-bad-target
+    if [ -e "$_bad_target_asm" ]; then
+        echo "FAIL: invalid target wrote assembly: $_bad_target_asm" >&2
+        exit 1
+    fi
+
+    _comptime_source="$_driver_dir/comptime-type.tl"
+    _comptime_asm="$_driver_dir/comptime-type.s"
+    cat > "$_comptime_source" <<'EOF'
+(define (alloc [comptime T : type] [n : i64]) : (Array i64) (make-array T n))
+(define (main) : (Array i64) (alloc (type i64) 4))
+EOF
+    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" \
+        "$(cygpath -aw "$_comptime_source")" -o "$(cygpath -aw "$_comptime_asm")"
+    if [ "$got" -ne 0 ]; then
+        echo "FAIL: windows-selfhost-compile-driver comptime type source got exit $got" >&2
+        exit 1
+    fi
+    assert_contains "$_comptime_asm" "__tl_specialized_alloc_type_i64_none" \
+        windows-selfhost-compile-driver-comptime
+
+    _bad_source="$_driver_dir/bad.tl"
+    _bad_asm="$_driver_dir/bad.s"
+    printf '%s\n' '(define (main) : i64 true)' > "$_bad_source"
+    rm -f "$_bad_asm"
+    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" \
+        "$(cygpath -aw "$_bad_source")" -o "$(cygpath -aw "$_bad_asm")"
+    if [ "$got" -eq 0 ]; then
+        echo "FAIL: windows-selfhost-compile-driver invalid source unexpectedly succeeded" >&2
+        exit 1
+    fi
+    assert_empty_file "$_driver_stdout" windows-selfhost-compile-driver-bad-source-stdout
+    assert_contains "$_driver_stderr" "typecheck: return type mismatch" \
+        windows-selfhost-compile-driver-bad-source
+    if [ -e "$_bad_asm" ]; then
+        echo "FAIL: invalid source wrote assembly: $_bad_asm" >&2
+        exit 1
+    fi
+
+    _primitive_dir="$WORKDIR/windows-driver-primitives"
+    mkdir -p "$_primitive_dir"
+    _primitive_asm="$_primitive_dir/driver_primitives.s"
+    _primitive_obj="$_primitive_dir/driver_primitives.obj"
+    _primitive_bin="$_primitive_dir/driver_primitives.exe"
+    _primitive_input="$_primitive_dir/input.txt"
+    _primitive_output="$_primitive_dir/output.txt"
+    _primitive_stdout="$_primitive_dir/driver.stdout"
+    _primitive_stderr="$_primitive_dir/driver.stderr"
+    _primitive_code="$_primitive_dir/driver.exit"
+    printf '%s' 41 > "$_primitive_input"
+    rm -f "$_primitive_output"
+
+    echo "[windows-driver-primitives] emit -> assemble -> link -> run"
+    "$COMPILER" run selfhost/compiler_backend_runtime_fixture.tl \
+        --target windows-x86_64 -- "$_primitive_asm" windows-driver-primitives
+    for _snippet in \
+        ".globl main" \
+        ".L_tl_arg_count:" \
+        ".L_tl_arg:" \
+        ".L_tl_read_file:" \
+        ".L_tl_write_file:" \
+        ".L_tl_file_exists:" \
+        "tl_print_err:" \
+        "tl_string_eq:" \
+        "tl_string_to_int:" \
+        "tl_int_to_string:" \
+        "movq %rcx, .L_tl_argc(%rip)" \
+        "movq %rdx, .L_tl_argv(%rip)" \
+        ".extern _open" \
+        ".extern _lseeki64" \
+        ".extern _close" \
+        ".extern _access" \
+        "call _open" \
+        "call _lseeki64" \
+        "call _read" \
+        "call _write" \
+        "call _close" \
+        "call _access"
+    do
+        assert_contains "$_primitive_asm" "$_snippet" windows-driver-primitives
+    done
+    for _snippet in \
+        "syscall" \
+        "_start:" \
+        ".extern .L_tl_arg_count" \
+        ".extern .L_tl_arg" \
+        ".extern .L_tl_read_file" \
+        ".extern .L_tl_write_file" \
+        ".extern .L_tl_file_exists" \
+        ".extern tl_print_err" \
+        ".extern tl_string_eq" \
+        ".extern tl_string_to_int" \
+        ".extern tl_int_to_string"
+    do
+        assert_not_contains "$_primitive_asm" "$_snippet" windows-driver-primitives
+    done
+    assemble_link_windows "$_primitive_asm" "$_primitive_obj" "$_primitive_bin" windows-driver-primitives
+    run_windows_program "$_primitive_bin" "$_primitive_stdout" "$_primitive_stderr" "$_primitive_code" \
+        "$(cygpath -aw "$_primitive_input")" "$(cygpath -aw "$_primitive_output")"
+    if [ "$got" -ne 42 ]; then
+        echo "FAIL: windows-driver-primitives expected exit 42, got $got" >&2
+        exit 1
+    fi
+    assert_empty_file "$_primitive_stdout" windows-driver-primitives-stdout
+    assert_file_text "$_primitive_stderr" ok windows-driver-primitives-stderr
+    assert_file_text "$_primitive_output" 42 windows-driver-primitives-output
+
+    echo "Windows backend fixture checks passed."
 }
 
 validate_manifest
@@ -537,6 +859,8 @@ fi
 
 if [ "$HOST_OS" = linux ]; then
     run_linux_backend_fixtures
+else
+    run_windows_backend_fixtures
 fi
 
 echo "All $ran integration case(s) passed for $HOST_OS."

@@ -74,9 +74,9 @@ Rust test file must have an explicit no-Rust replacement entry in
 Add or update one of these tests when adding a new compiler module, smoke
 driver, or required import only as a temporary bridge. The same PR must update
 the replacement map with the planned selfhost/script coverage or link a
-follow-up issue. If the source should compile or run on Windows, also update the
-selfhost source mapping and dependency staging in `tests/windows_native.rs` and
-the no-Rust platform runner plan.
+follow-up issue. If the source should compile or run on Windows, also update
+`tests/integration/native-windows.manifest` or the Windows backend fixture checks
+in `scripts/verify-integration.sh`.
 
 ### Selfhost compile manifest
 
@@ -154,7 +154,9 @@ output, and import-aware driver behavior.
 The integration manifests live in `tests/integration/native-linux.manifest` and
 `tests/integration/native-windows.manifest`. When a program or smoke driver
 needs another imported module, add the dependency to the owning manifest row so
-the no-Rust runner exercises the same import graph reviewers see locally.
+the no-Rust runner exercises the same import graph reviewers see locally. The
+same script also owns host-specific backend/compiler-driver fixture checks that
+are too low-level for a manifest row.
 
 ### Selfhost native generated programs
 
@@ -235,8 +237,9 @@ Linux environment.
 - Add or update a `*_smoke.tl` wrapper when the self-test should be executable.
 - If a temporary Rust compile test is still required, update the matching
   `tests/tl_*_compile.rs` test and the replacement map in the same PR.
-- Keep dependency staging in sync for `tests/integration.rs` and
-  `tests/windows_native.rs` whenever imports change.
+- Keep dependency staging in sync for `tests/integration/native-*.manifest` and
+  the host fixture sections in `scripts/verify-integration.sh` whenever imports
+  change.
 - Use `selfhost/tests/` plus `scripts/verify-selfhost.sh` for source programs
   that should be accepted or rejected by `compile_smoke.tl`.
 - Keep `selfhost/compile_manifest.txt` in sync with top-level selfhost sources

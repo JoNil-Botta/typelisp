@@ -67,6 +67,7 @@ stdlib_manifest() {
     cat <<'EOF'
 io.tl
 env.tl
+fs.tl
 json.tl
 process.tl
 string.tl
@@ -92,6 +93,7 @@ stdlib/tests/io_edges.tl|42|-|-
 stdlib/tests/io_stdio_lines.tl|42|host-line:stdout-line|host-line:stderr-line|printf:alpha\n\nomega
 stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef
 stdlib/tests/env_api.tl|42|-|-
+stdlib/tests/fs_api.tl|42|-|-
 stdlib/tests/process_api.tl|42|-|-
 stdlib/tests/process_runtime.tl|42|-|-
 stdlib/tests/text_buf_api.tl|42|-|-

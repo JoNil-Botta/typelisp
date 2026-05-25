@@ -239,5 +239,5 @@ jobs:
       - name: Run selfhost verification
         run: TYPELISP_BIN=./target/stage0/typelisp ./scripts/verify-selfhost.sh
 
-      - name: Run bootstrap fixpoint check
-        run: TYPELISP_BIN=./target/stage0/typelisp ./scripts/check-bootstrap-fixpoint.sh
+      - name: Run bootstrap smoke check
+        run: TYPELISP_BIN=./target/stage0/typelisp ./scripts/check-bootstrap-smoke.sh

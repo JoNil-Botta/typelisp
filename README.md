@@ -123,6 +123,9 @@ Name              ; a defenum / defstruct nominal type
 ```
 
 `f32` is in the type system but rejected by backend validation today.
+Raw pointer types `(Ptr T)` and `(MutPtr T)` plus `(unsafe ...)` are specified
+for the v1 FFI surface in [SPEC.md §3.4](SPEC.md) and §5.19, but implementation
+is still pending.
 
 ### Abstraction policy
 
@@ -202,28 +205,30 @@ qualified symbol lookup are specified for the selfhost module model in
 `SPEC.md`.
 
 Documentation comments can contain checked examples. `typelisp doc --test
-<file.tl>` extracts fenced `typelisp` or `tl` blocks from `;;;;` module docs and
-attached `;;;` item docs, writes each example to a deterministic temporary
+<file.tl>` extracts fenced `typelisp` or `tl` blocks from `;#` module docs and
+attached `;:` item docs, writes each example to a deterministic temporary
 source file, type-checks it, and removes the temporary directory before exiting.
 The self-hosted Markdown generator can render one source file through
 `typelisp run selfhost/doc.tl -- input.tl output.md`; import-graph traversal and
 Rust CLI plumbing are separate follow-up work.
 
 ```lisp
-;;;; ```typelisp
-;;;; (define (main) : i64 42)
-;;;; ```
+;# ```typelisp
+;# (define (main) : i64 42)
+;# ```
 
-;;; ```tl expect-error
-;;; (define (bad) : i64 true)
-;;; ```
+;: ```tl expect-error
+;: (define (bad) : i64 true)
+;: ```
 (define documented : i64 1)
 ```
 
 Examples are standalone TypeLisp source snippets. By default an example must
 parse, resolve imports, and type-check. Add `expect-error` after the language tag
 when the example is intended to fail. Ordinary `;` and `;;` comments are not
-documentation and are ignored by the doctest scanner.
+documentation and are ignored by the doctest scanner. Legacy `;;;;` and `;;;`
+doc comments remain accepted while the repository migrates, but `;#` and `;:`
+are the canonical spellings.
 
 Inline tests can live next to source declarations as `(test name body...)`
 items. Normal `check`, `compile`, `build`, and `run` ignore them. `typelisp
@@ -292,6 +297,11 @@ TypeLisp does not currently have source-level references, borrowing, ownership
 transfer, destructors, `free`, or a garbage collector. Aggregate values such as
 `String`, dynamic arrays, structs, and enums are implemented as pointer-sized
 handles in the IR/ABI, but those handles are not checked language references.
+The v1 raw pointer design is now specified as explicit unsafe syntax:
+`(Ptr T)`/`(MutPtr T)` are nullable, copyable pointer-sized values, and
+dereference/write/offset/cast operations require `(unsafe ...)`. That surface is
+for FFI/runtime work and is not implemented yet; it is not the future safe
+reference/borrow model.
 
 `String` values are immutable at the source level. Dynamic arrays are shared
 mutable buffers: copying or passing an `(Array T)` value aliases the same
@@ -317,6 +327,11 @@ that would leave the scope, so the compiler
 can safely lower the form to `tl_region_mark` / `tl_region_reset` around the
 body. This makes scoped cleanup safe by construction, unlike the raw extern
 helpers below. See [SPEC.md §5.16](SPEC.md) and §7.3 for the full contract.
+
+Scoped cleanup of non-memory resources is separate. The SPEC reserves
+`(with ([name init cleanup]) body ...)` for explicit cleanup of files, process
+handles, locks, mapped files, and similar resources; it is not implemented yet
+and does not imply destructors, `free`, or arena reset semantics.
 
 Programs that need manual control may still declare low-level extern helpers:
 `tl_region_mark` and `tl_region_reset` snapshot and restore the bump allocator.
@@ -401,7 +416,8 @@ map/zip path all compile to native code. See the
 [SPEC.md §8](SPEC.md) for what is not yet supported (aggregate-element /
 nested fixed-array captures, tail calls, tuple/fixed-array by-value returns,
 `f32` codegen, general GC/free, ownership/borrowing, and later SPMD/SIMD
-reductions/cross-lane work).
+reductions/cross-lane work). Raw pointer types and unsafe pointer operations are
+specified but not implemented.
 
 ## Contributing
 

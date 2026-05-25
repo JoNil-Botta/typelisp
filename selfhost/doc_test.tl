@@ -1,8 +1,8 @@
 ;; doc_test.tl - Self-hosted TypeLisp doctest extraction (#722) + runner (#724).
 ;;
 ;; Extraction pulls TypeLisp fenced examples from public doc comments, mirroring
-;; the Rust doctest runner's source scanning policy: module docs (`;;;;`) are
-;; scanned as standalone doc blocks, item docs (`;;;`) attach only to the next
+;; the public doc scanning policy: module docs (`;#`, legacy `;;;;`) are
+;; scanned as standalone doc blocks, item docs (`;:`, legacy `;;;`) attach only to the next
 ;; supported top-level declaration, blank physical lines are tolerated between
 ;; doc comment lines, ordinary comments are ignored, and unattached item docs are
 ;; dropped.
@@ -272,7 +272,9 @@
     [(DocTestErrorNil) 0]
     [(DocTestErrorCons _ rest) (+ 1 (doc-test-error-list-count rest))]))
 
-(define (doc-test-doc-comment-body [line : String] [prefix : String]) : DocTestMaybeString
+(define (doc-test-doc-comment-body-with-prefix
+  [line : String]
+  [prefix : String]) : DocTestMaybeString
   (let
     [trimmed : String (doc-test-trim-left line)]
     (if (and (string-eq prefix ";;;") (doc-test-string-prefix? trimmed ";;;;"))
@@ -291,6 +293,16 @@
                 (DocTestSomeString body))
               (DocTestSomeString body))))
         (DocTestNoString)))))
+
+(define (doc-test-module-doc-comment-body [line : String]) : DocTestMaybeString
+  (match (doc-test-doc-comment-body-with-prefix line ";#")
+    [(DocTestSomeString body) (DocTestSomeString body)]
+    [(DocTestNoString) (doc-test-doc-comment-body-with-prefix line ";;;;")]))
+
+(define (doc-test-item-doc-comment-body [line : String]) : DocTestMaybeString
+  (match (doc-test-doc-comment-body-with-prefix line ";:")
+    [(DocTestSomeString body) (DocTestSomeString body)]
+    [(DocTestNoString) (doc-test-doc-comment-body-with-prefix line ";;;")]))
 
 (define (doc-test-starts-with-form-head? [text : String] [head : String]) : bool
   (if (doc-test-string-prefix? text head)
@@ -472,7 +484,7 @@
           (let
             [line : String (substring src pos (- line-end pos))]
             (begin
-              (match (doc-test-doc-comment-body line ";;;;")
+              (match (doc-test-module-doc-comment-body line)
                 [(DocTestSomeString body)
                   (begin
                     (set! pending-lines DocTestLineNil)
@@ -489,7 +501,7 @@
                         state
                         (doc-test-scan-reversed-block module-lines state))
                       (set! module-lines DocTestLineNil)
-                      (match (doc-test-doc-comment-body line ";;;")
+                      (match (doc-test-item-doc-comment-body line)
                         [(DocTestSomeString body)
                           (set!
                             pending-lines
@@ -782,22 +794,22 @@
             (doc-test-run-failures-render failures))])]))
 
 (define (doc-test-smoke-source) : String
-  ";;;; Module docs
-;;;; ```typelisp
+  ";# Module docs
+;# ```typelisp
 
-;;;; (define (main) : i64 0)
+;# (define (main) : i64 0)
 
-;;;; ```
+;# ```
 
-;;; Item docs
-;;; ```tl expect-error
+;: Item docs
+;: ```tl expect-error
 
-;;; (define (bad) : i64 true)
+;: (define (bad) : i64 true)
 
-;;; ```
+;: ```
 (define good : i64 1)
 
-;;; Unattached docs are ignored
+;: Unattached docs are ignored
 ")
 
 (define (doc-test-ordinary-comment-source) : String
@@ -807,6 +819,14 @@
 ;; ```typelisp
 ;; (define (also-bad) : i64 true)
 ;; ```
+")
+
+(define (doc-test-legacy-item-source) : String
+  ";;; Legacy item docs
+;;; ```tl
+;;; (define legacy : i64 1)
+;;; ```
+(define legacy : i64 1)
 ")
 
 (define (doc-test-malformed-source) : String
@@ -847,6 +867,12 @@
         false)]
     [_ false]))
 
+(define (doc-test-legacy-item-ok? [examples : DocTestExampleList]) : bool
+  (match examples
+    [(DocTestExampleCons example DocTestExampleNil)
+      (doc-test-example-ok? example 1 2 false "(define legacy")]
+    [_ false]))
+
 (define (doc-test-malformed-errors-ok? [errors : DocTestErrorList]) : bool
   (match errors
     [(DocTestErrorCons
@@ -871,39 +897,48 @@
         false)]
     [_ false]))
 
+(define (doc-test-ordinary-comments-ok?) : bool
+  (match (doc-test-extract-source (doc-test-ordinary-comment-source))
+    [(DocTestExtraction ordinary-examples ordinary-errors)
+      (if (= (doc-test-example-list-count ordinary-examples) 0)
+        (= (doc-test-error-list-count ordinary-errors) 0)
+        false)]))
+
+(define (doc-test-legacy-item-smoke-ok?) : bool
+  (match (doc-test-extract-source (doc-test-legacy-item-source))
+    [(DocTestExtraction legacy-examples legacy-errors)
+      (if (= (doc-test-error-list-count legacy-errors) 0)
+        (doc-test-legacy-item-ok? legacy-examples)
+        false)]))
+
+(define (doc-test-malformed-smoke-ok?) : bool
+  (match (doc-test-extract-source (doc-test-malformed-source))
+    [(DocTestExtraction malformed-examples malformed-errors)
+      (if (= (doc-test-example-list-count malformed-examples) 0)
+        (if (= (doc-test-error-list-count malformed-errors) 3)
+          (doc-test-malformed-errors-ok? malformed-errors)
+          false)
+        false)]))
+
 (define (doc-test-smoke) : i64
   (match (doc-test-extract-source (doc-test-smoke-source))
     [(DocTestExtraction examples errors)
       (if (= (doc-test-error-list-count errors) 0)
         (if (= (doc-test-example-list-count examples) 2)
           (if (doc-test-smoke-examples-ok? examples)
-            (match (doc-test-extract-source (doc-test-ordinary-comment-source))
-              [(DocTestExtraction ordinary-examples ordinary-errors)
-                (if (= (doc-test-example-list-count ordinary-examples) 0)
-                  (if (= (doc-test-error-list-count ordinary-errors) 0)
-                    (match (doc-test-extract-source (doc-test-malformed-source))
-                      [(DocTestExtraction malformed-examples malformed-errors)
-                        (if (=
-                          (doc-test-example-list-count malformed-examples)
-                          0)
-                          (if (= (doc-test-error-list-count malformed-errors) 3)
-                            (if (doc-test-malformed-errors-ok? malformed-errors)
-                              42
-                              (begin
-                                (panic "doc-test: malformed metadata mismatch")
-                                0))
-                            (begin
-                              (panic "doc-test: malformed error count mismatch")
-                              0))
-                          (begin
-                            (panic "doc-test: malformed example count mismatch")
-                            0))])
-                    (begin
-                      (panic "doc-test: ordinary comment error mismatch")
-                      0))
+            (if (doc-test-ordinary-comments-ok?)
+              (if (doc-test-legacy-item-smoke-ok?)
+                (if (doc-test-malformed-smoke-ok?)
+                  42
                   (begin
-                    (panic "doc-test: ordinary comment example mismatch")
-                    0))])
+                    (panic "doc-test: malformed smoke mismatch")
+                    0))
+                (begin
+                  (panic "doc-test: legacy item smoke mismatch")
+                  0))
+              (begin
+                (panic "doc-test: ordinary comment smoke mismatch")
+                0))
             (begin
               (panic "doc-test: example metadata mismatch")
               0))

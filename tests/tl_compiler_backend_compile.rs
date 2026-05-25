@@ -102,6 +102,9 @@ fn compiler_backend_tl_compiles_to_assembly() {
         "_tl_compiler_backend_runtime_read_stdin_line_functions:",
         "_tl_compiler_backend_runtime_read_stdin_bytes_functions:",
         "_tl_compiler_backend_runtime_stdin_eof_functions:",
+        "_tl_compiler_backend_runtime_process_output_data:",
+        "_tl_compiler_backend_runtime_process_output_functions:",
+        "_tl_compiler_backend_runtime_windows_process_output_functions:",
         "_tl_compiler_backend_runtime_flush_stdout_functions:",
         "_tl_compiler_backend_runtime_helper_program:",
         "_tl_compiler_backend_self_test:",
@@ -116,6 +119,8 @@ fn compiler_backend_tl_compiles_to_assembly() {
         "_tl_compiler_backend_memory_op_ok_question:",
         "_tl_compiler_backend_make_array_ok_question:",
         "_tl_compiler_backend_region_ok_question:",
+        "_tl_compiler_backend_process_output_ok_question:",
+        "_tl_compiler_backend_windows_process_output_ok_question:",
         "_tl_compiler_backend_regalloc_ok_question:",
         "_tl_compiler_backend_f64_ok_question:",
         "_tl_compiler_backend_f64_binop_asm:",
@@ -157,6 +162,12 @@ fn compiler_backend_tl_compiles_to_assembly() {
         ".L_tl_read_stdin_bytes:\\n",
         ".L_tl_stdin_eof:\\n",
         ".L_tl_flush_stdout:\\n",
+        "tl_process_output:\\n",
+        ".L_tl_process_read_all:\\n",
+        ".L_tl_process_exec_marker:",
+        ".L_tl_envp:",
+        "process: spawn failed",
+        "process: runtime execution is not supported on this target",
         ".L_tl_stdin_eof_flag:\\n",
         "tl: stdin failed",
         ".extern malloc\\n",
@@ -261,6 +272,7 @@ fn compiler_driver_tl_compiles_to_assembly() {
         "_tl_parse_ast_source:",
         // The driver runs the optimizer between lowering and backend emission.
         "_tl_optimize_program:",
+        "_tl_optimize_program_with_level:",
     ] {
         assert_symbol(&asm, sym, "compiler_driver");
     }
@@ -285,12 +297,17 @@ fn compiler_optimize_tl_compiles_to_assembly() {
     assert_no_todo(&asm, "compiler_optimize");
     for sym in [
         "_tl_optimize_program:",
+        "_tl_optimize_program_with_level:",
         "_tl_optimize_function:",
+        "_tl_optimize_function_with_level:",
+        "_tl_compiler_optimize_default_level:",
+        "_tl_compiler_optimize_parse_level:",
         "_tl_opt_fold_instrs:",
         "_tl_opt_fold_binop:",
         "_tl_opt_const_lookup:",
         "_tl_compiler_optimize_self_test:",
         "_tl_compiler_optimize_typed_fold_self_test:",
+        "_tl_compiler_optimize_level_self_test:",
         // Strength reduction / algebraic identities (#924).
         "_tl_opt_strength_instrs:",
         "_tl_opt_strength_binop:",
@@ -335,6 +352,11 @@ fn compiler_optimize_smoke_tl_compiles_to_assembly() {
         "_tl_compiler_optimize_self_test:",
         "compiler_optimize_smoke",
     );
+    assert_symbol(
+        &asm,
+        "_tl_compiler_optimize_level_self_test:",
+        "compiler_optimize_smoke",
+    );
 }
 
 #[test]
@@ -353,13 +375,17 @@ fn compile_tl_compiles_to_assembly() {
         "_tl_compile_cli_parse_options:",
         "_tl_compile_cli_target:",
         "_tl_compile_cli_default_output:",
+        "_tl_compile_cli_invalid_opt_level:",
         "_tl_compile_cli_root_list_append:",
         "_tl_compiler_driver_compile_file:",
         "_tl_compiler_driver_compile_file_with_roots:",
+        "_tl_compiler_driver_compile_file_with_roots_and_level:",
         "_tl_compiler_driver_compile_file_for_target:",
         "_tl_compiler_driver_compile_file_for_target_with_roots:",
+        "_tl_compiler_driver_compile_file_for_target_with_roots_and_level:",
         "_tl_compiler_driver_emit_file_for_target:",
         "_tl_compiler_driver_emit_file_with_target_and_roots:",
+        "_tl_compiler_driver_emit_file_with_target_roots_and_level:",
         "_tl_compiler_backend_emit_program_with_spans_for_target:",
         "_tl_compiler_load_file:",
         "_tl_compiler_load_file_with_path",
@@ -374,6 +400,10 @@ fn compile_tl_compiles_to_assembly() {
         "compile: --target requires a value",
         "compile: --target was provided more than once",
         "compile: --stdlib-root requires a value",
+        "compile: --opt-level requires a value",
+        "compile: --opt-level was provided more than once",
+        "compile: invalid --opt-level ",
+        "; expected 0, 1, 2, or 3",
         "Error: unknown target '",
         "'. Expected linux-x86_64 or windows-x86_64",
         "--emit-ir",
@@ -431,5 +461,32 @@ fn build_and_run_planners_compile_to_assembly() {
         "run: --target requires a value",
     ] {
         assert_message(&run_asm, message, "run planner");
+    }
+
+    let test_asm =
+        compile_selfhost_source("test.tl", "tl-test-planner-compile-test", "test_planner.s");
+    assert_no_todo(&test_asm, "test planner");
+    for sym in [
+        "_tl_tltest_config:",
+        "_tl_tltest_parse_options:",
+        "_tl_tltest_run_plan:",
+        "_tl_tltest_invalid_opt_level:",
+        "_tl_optimize_program_with_level:",
+        "_tl_compiler_backend_emit_program_with_spans_for_target:",
+        "_tl_host_plan_netline:",
+    ] {
+        assert_symbol(&test_asm, sym, "test planner");
+    }
+    for message in [
+        "typelisp-host-plan v1\\n",
+        "action",
+        "run-scratch-assembly",
+        "test: expected source path",
+        "test: --opt-level requires a value",
+        "test: --opt-level was provided more than once",
+        "test: invalid --opt-level ",
+        "; expected 0, 1, 2, or 3",
+    ] {
+        assert_message(&test_asm, message, "test planner");
     }
 }

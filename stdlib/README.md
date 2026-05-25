@@ -17,17 +17,24 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   `(import "stdlib/io.tl")`.
 - `env.tl`: recoverable environment variable lookup and PATH-style list
   helpers. Import it with `(import "stdlib/env.tl")`.
+- `fs.tl`: minimal recoverable filesystem helpers for tool artifact paths,
+  temporary directories, and cleanup. Import it with `(import "stdlib/fs.tl")`.
 - `json.tl`: JSON value parser and serializer for tool protocols and data
   exchange. Import it with `(import "stdlib/json.tl")`.
 - `process.tl`: process command/output/error data model for selfhost tools.
   Runtime execution currently returns structured unsupported diagnostics rather
   than using Rust host actions. Import it with `(import "stdlib/process.tl")`.
+- `random.tl`: deterministic, seeded, non-cryptographic random helpers and
+  weighted-index selection for selfhost tools. Import it with
+  `(import "stdlib/random.tl")`.
 - `string.tl`: string utility functions built on compiler/runtime primitives.
   Import it with `(import "stdlib/string.tl")`.
 - `test.tl`: minimal assertion helpers for TypeLisp fixtures. Import it with
   `(import "stdlib/test.tl")`.
 - `text_buf.tl`: arena-aware text buffer helpers for incremental String
   construction. Import it with `(import "stdlib/text_buf.tl")`.
+- `windows_sdk.tl`: structured Windows SDK layout discovery helpers for future
+  MSVC toolchain setup. Import it with `(import "stdlib/windows_sdk.tl")`.
 
 ## Arena Allocation Policy
 
@@ -62,9 +69,12 @@ returned caller-owned values.
 | `stdin-at-eof?`, `stdin-read-text`, `stdin-read-eof?`, `stdout-write`, `stderr-write`, `stdout-flush` | Non-allocating wrappers/accessors around runtime stdio primitives and `StdinRead` values. |
 | `stdout-write-line`, `stderr-write-line` | Allocate a newline-appended active-arena `String` via `string-append`, then write it to the target stream. |
 | `env-get`, `env-path-list`, `env-path-split`, `env-path-join` | Environment values and split/join results allocate fresh active-arena Strings/lists when runtime values are read or string pieces are created; missing variables return explicit `EnvNo*` options. |
-| `process-*` helpers | Construct process command/output/error aggregates in the active arena. Ordered argv append helpers allocate list nodes; validators inspect executable/env/cwd metadata and reject invalid env names. `process-run` and `process-output` currently return structured errors and do not spawn child processes. |
+| `fs-path-join`, `try-mkdir`, `try-remove-file`, `try-remove-dir`, `try-create-temp-dir` | Path joins allocate active-arena Strings when a separator is inserted or duplicate separator is removed. Recoverable filesystem helpers map runtime status codes into `IoError`; Linux temp directories are created under `$TMPDIR` or `/tmp` with process-id and retry suffixes. Windows temp creation returns `IoUnsupported` until target filesystem primitives are implemented. |
+| `process-*` helpers | Construct process command/output/error aggregates in the active arena. Ordered argv append helpers allocate list nodes; validators inspect executable/env/cwd metadata and reject invalid env names. On Linux, `process-run` and `process-output` execute directly through the backend runtime, preserving inherited environment entries, replacing entries named by env overrides, honoring cwd, and feeding string stdin. Unsupported targets return structured errors. |
+| `random-*` helpers | Construct deterministic RNG state, draw/result aggregates, and weight-list cons nodes in the active arena. Draws are deterministic from caller-provided seeds and do not read host entropy. |
 | `assert-*` helpers in `test.tl` | Non-allocating checks on success; failures call `panic` with the caller-provided message. |
 | `text-buf-*` helpers in `text_buf.tl` | Buffer chunks and rendered strings allocate in the active arena. Append helpers avoid concatenating the accumulated prefix until `text-buf-render`; `text-buf-clear`/`text-buf-reset` return a fresh empty immutable buffer value. |
+| `windows-sdk-*` helpers | SDK layout structs/errors allocate in the active arena. Environment discovery reads `WindowsSdkDir` / `WindowsSDKVersion`, constructs include/lib/bin path strings, and validates required directories with `try-file-exists?`. Registry probing currently returns a structured unavailable diagnostic until the narrow registry runtime primitive lands. |
 
 The recoverable I/O API maps the runtime's integer status codes into the public
 `IoError` model. Common not-found, permission, invalid-path, interrupted, and
@@ -82,12 +92,15 @@ Stdlib modules are imported explicitly:
 
 ```lisp
 (import "stdlib/env.tl")
+(import "stdlib/fs.tl")
 (import "stdlib/io.tl")
 (import "stdlib/json.tl")
 (import "stdlib/process.tl")
+(import "stdlib/random.tl")
 (import "stdlib/string.tl")
 (import "stdlib/test.tl")
 (import "stdlib/text_buf.tl")
+(import "stdlib/windows_sdk.tl")
 ```
 
 For imports whose path starts with `stdlib/`, the loader first tries the path

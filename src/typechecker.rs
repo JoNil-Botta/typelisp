@@ -215,6 +215,22 @@ impl TypeChecker {
             "file-exists-status".into(),
             Type::Func(vec![Type::String], Box::new(Type::I64)),
         );
+        globals.insert(
+            "fs-mkdir-status".into(),
+            Type::Func(vec![Type::String], Box::new(Type::I64)),
+        );
+        globals.insert(
+            "fs-remove-file-status".into(),
+            Type::Func(vec![Type::String], Box::new(Type::I64)),
+        );
+        globals.insert(
+            "fs-remove-dir-status".into(),
+            Type::Func(vec![Type::String], Box::new(Type::I64)),
+        );
+        globals.insert(
+            "fs-process-id".into(),
+            Type::Func(vec![], Box::new(Type::I64)),
+        );
         // Environment primitives wrapped by stdlib/env.tl. The raw value helper
         // returns an empty string for missing variables; stdlib/env.tl pairs it
         // with `env-var-exists?` so missing and empty variables remain distinct.
@@ -396,6 +412,10 @@ impl TypeChecker {
                     | "write-file-status"
                     | "file-exists?"
                     | "file-exists-status"
+                    | "fs-mkdir-status"
+                    | "fs-remove-file-status"
+                    | "fs-remove-dir-status"
+                    | "fs-process-id"
                     | "env-var-exists?"
                     | "env-var-value"
                     | "panic"

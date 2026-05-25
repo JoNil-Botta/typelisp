@@ -101,6 +101,10 @@
   (AstFieldDefNil)
   (AstFieldDefCons AstFieldDef AstFieldDefList))
 
+(defenum AstStructRepr
+  (AstStructReprDefault)
+  (AstStructReprC))
+
 (defenum AstVariantDef
   (AstVariantDef String AstTypeList))
 
@@ -192,7 +196,7 @@
   (AstDeclDefFn String AstParamList AstType AstExpr)
   (AstDeclExtern String AstType)
   (AstDeclDefEnum String AstVariantDefList)
-  (AstDeclDefStruct String AstFieldDefList)
+  (AstDeclDefStruct String AstStructRepr AstFieldDefList)
   (AstDeclImport AstImportSpec)
   (AstDeclTest String AstExpr AstSourceSpan)
   (AstDeclComptimeDecl AstDecl))
@@ -281,11 +285,16 @@
     [(AstDeclDefFn _ _ _ _) 2]
     [(AstDeclExtern _ _) 3]
     [(AstDeclDefEnum _ _) 4]
-    [(AstDeclDefStruct _ _) 5]
+    [(AstDeclDefStruct _ _ _) 5]
     [(AstDeclImport _) 6]
     [(AstDeclTest _ _ _) 7]
     [(AstDeclComptimeDecl _) 8]
     [(AstDeclModule _) 9]))
+
+(define (ast-struct-repr-c? [repr : AstStructRepr]) : bool
+  (match repr
+    [(AstStructReprC) true]
+    [(AstStructReprDefault) false]))
 
 (define (compiler-ast-smoke) : i64
   (let

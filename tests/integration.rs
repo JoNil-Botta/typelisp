@@ -1636,6 +1636,11 @@ fn selfhost_backend_runtime_helpers_emit_assemble_link_and_run() {
         "\n.L_tl_read_stdin_bytes:\n",
         "\n.L_tl_stdin_eof:\n",
         "\n.L_tl_flush_stdout:\n",
+        "\ntl_process_output:\n",
+        "\n.L_tl_process_read_all:\n",
+        ".L_tl_process_exec_marker:",
+        ".L_tl_envp:\n",
+        "process: spawn failed",
         ".L_tl_stdin_eof_flag:\n",
         "tl: stdin failed",
         ".L_tl_substring_copy_loop:\n",
@@ -1661,6 +1666,7 @@ fn selfhost_backend_runtime_helpers_emit_assemble_link_and_run() {
         ".extern .L_tl_read_stdin_bytes\n",
         ".extern .L_tl_stdin_eof\n",
         ".extern .L_tl_flush_stdout\n",
+        ".extern tl_process_output\n",
     ] {
         assert!(
             !asm.contains(helper),

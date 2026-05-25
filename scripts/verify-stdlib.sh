@@ -67,11 +67,14 @@ stdlib_manifest() {
     cat <<'EOF'
 io.tl
 env.tl
+fs.tl
 json.tl
 process.tl
+random.tl
 string.tl
 test.tl
 text_buf.tl
+windows_sdk.tl
 EOF
 }
 
@@ -92,11 +95,14 @@ stdlib/tests/io_edges.tl|42|-|-
 stdlib/tests/io_stdio_lines.tl|42|host-line:stdout-line|host-line:stderr-line|printf:alpha\n\nomega
 stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef
 stdlib/tests/env_api.tl|42|-|-
+stdlib/tests/fs_api.tl|42|-|-
 stdlib/tests/process_api.tl|42|-|-
 stdlib/tests/process_runtime.tl|42|-|-
+stdlib/tests/random_api.tl|42|-|-
 stdlib/tests/text_buf_api.tl|42|-|-
 stdlib/tests/test_assert_success.tl|42|-|-
 stdlib/tests/test_assert_failure.tl|134|-|literal:stdlib test failure message
+stdlib/tests/windows_sdk_api.tl|42|-|-
 EOF
 }
 
@@ -276,6 +282,22 @@ PATH_SEP=:
 export TYPELISP_STDLIB_TEST_EMPTY=
 export TYPELISP_STDLIB_TEST_VALUE=env-value-854
 export TYPELISP_STDLIB_TEST_PATH="one${PATH_SEP}two${PATH_SEP}three"
+
+SDK_ROOT_POSIX="$WORKDIR/fake-windows-sdk"
+SDK_VERSION=10.0.99999.0
+mkdir -p \
+    "$SDK_ROOT_POSIX/Include/$SDK_VERSION/ucrt" \
+    "$SDK_ROOT_POSIX/Include/$SDK_VERSION/um" \
+    "$SDK_ROOT_POSIX/Include/$SDK_VERSION/shared" \
+    "$SDK_ROOT_POSIX/Lib/$SDK_VERSION/ucrt/x64" \
+    "$SDK_ROOT_POSIX/Lib/$SDK_VERSION/um/x64" \
+    "$SDK_ROOT_POSIX/bin/$SDK_VERSION/x64"
+if [ "$HOST_OS" = windows ] && command -v cygpath >/dev/null 2>&1; then
+    export WindowsSdkDir="$(cygpath -m "$SDK_ROOT_POSIX")"
+else
+    export WindowsSdkDir="$SDK_ROOT_POSIX"
+fi
+export WindowsSDKVersion="$SDK_VERSION"
 
 passed=0
 while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do

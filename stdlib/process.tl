@@ -5,6 +5,8 @@
 ;;;; `tl_process_output` helper; unsupported target/runtime combinations return
 ;;;; structured errors instead of routing through Rust host actions or
 ;;;; shell-tokenized command strings.
+;;;; Linux execution preserves inherited environment entries except names
+;;;; provided by `ProcessEnvList`, which are replaced by the override value.
 ;;;;
 ;;;; Usage: `(import "stdlib/process.tl")`
 ;;;;
@@ -320,24 +322,7 @@
   (match (process-command-validation-error command)
     [(ProcessSomeString message)
       (ErrProcessOutput (ProcessInvalidCommand message))]
-    [(ProcessNoString)
-      (match (process-command-cwd command)
-        [(ProcessSomeString _)
-          (ErrProcessOutput
-            (ProcessUnsupported "process: cwd execution is not implemented"))]
-        [(ProcessNoString)
-          (match (process-command-env command)
-            [(ProcessEnvCons _ _ _)
-              (ErrProcessOutput
-                (ProcessUnsupported
-                  "process: environment overrides are not implemented"))]
-            [(ProcessEnvNil)
-              (match (process-command-stdin command)
-                [(ProcessSomeString _)
-                  (ErrProcessOutput
-                    (ProcessUnsupported
-                      "process: stdin input is not implemented"))]
-                [(ProcessNoString) (tl_process_output command)])])])]))
+    [(ProcessNoString) (tl_process_output command)]))
 
 ;;; Run a command using the same captured-output path as `process-output`.
 (define (process-run [command : ProcessCommand]) : ResultProcessOutput

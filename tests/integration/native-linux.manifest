@@ -45,6 +45,7 @@ nested_eval|tests/integration/nested_eval.tl|7|-|-|-
 nullary_variant_call|tests/integration/nullary_variant_call.tl|42|-|-|-
 overflow_casts|tests/integration/overflow_casts.tl|0|-|-|-
 parser|tests/integration/parser.tl|14|-|-|-
+process_runtime|tests/integration/process_runtime.tl|42|-|-|stdlib/process.tl stdlib/test.tl
 print|tests/integration/print.tl|0|42\nfalse\n|-|-
 print_char|tests/integration/print_char.tl|0|A\n|-|-
 print_string|tests/integration/print_string.tl|0|hello\nworld\n|-|-

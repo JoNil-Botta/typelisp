@@ -49,6 +49,43 @@
   (OkTcUnit)
   (ErrTcUnit String))
 
+(defenum TcSpmdClass
+  (TcSpmdUniform)
+  (TcSpmdVarying))
+
+(defenum TcSpmdScope
+  (TcSpmdOuter)
+  (TcSpmdLocal))
+
+(defenum TcSpmdEnv
+  (TcSpmdEnvNil)
+  (TcSpmdEnvBind String AstType TcSpmdClass TcSpmdScope TcSpmdEnv))
+
+(defenum TcSpmdLookup
+  (TcSpmdMissing)
+  (TcSpmdFound AstType TcSpmdClass TcSpmdScope))
+
+(defenum TcSpmdExprInfo
+  (TcSpmdExprInfo AstType TcSpmdClass TcSpmdEnv))
+
+(defenum ResultTcSpmdExprInfo
+  (OkTcSpmdExprInfo TcSpmdExprInfo)
+  (ErrTcSpmdExprInfo String))
+
+(defenum TcSpmdLetState
+  (TcSpmdLetState TcTypeEnv TcSpmdEnv i64))
+
+(defenum ResultTcSpmdLetState
+  (OkTcSpmdLetState TcSpmdLetState)
+  (ErrTcSpmdLetState String))
+
+(defenum TcSpmdExprListInfo
+  (TcSpmdExprListInfo TcSpmdClass TcSpmdEnv))
+
+(defenum ResultTcSpmdExprListInfo
+  (OkTcSpmdExprListInfo TcSpmdExprListInfo)
+  (ErrTcSpmdExprListInfo String))
+
 (defenum CompilerTypecheckSummary
   (CompilerTypecheckSummary i64 i64 i64))
 
@@ -1111,6 +1148,110 @@
       [(AstTyDynArray _) true]
       [_ false])))
 
+(define (tc-spmd-varying? [class : TcSpmdClass]) : bool
+  (match class
+    [(TcSpmdUniform) false]
+    [(TcSpmdVarying) true]))
+
+(define (tc-spmd-merge-class [a : TcSpmdClass] [b : TcSpmdClass]) : TcSpmdClass
+  (if (tc-spmd-varying? a)
+    TcSpmdVarying
+    (if (tc-spmd-varying? b)
+      TcSpmdVarying
+      TcSpmdUniform)))
+
+(define (tc-spmd-varying-value-type-supported? [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyI64) true]
+    [(AstTyI32) true]
+    [(AstTyF64) true]
+    [(AstTyBool) true]
+    [_ false]))
+
+(define (tc-spmd-lane-type-supported? [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyI64) true]
+    [(AstTyI32) true]
+    [(AstTyF64) true]
+    [_ false]))
+
+(define (tc-spmd-finish [ty : AstType] [class : TcSpmdClass] [env : TcSpmdEnv]) : ResultTcSpmdExprInfo
+  (if (and
+    (tc-spmd-varying? class)
+    (not (tc-spmd-varying-value-type-supported? ty)))
+    (ErrTcSpmdExprInfo
+      (string-append
+        "typecheck: foreach varying value type is not supported: "
+        (tc-type-render (tc-type-strip-region ty))))
+    (OkTcSpmdExprInfo (TcSpmdExprInfo ty class env))))
+
+(define (tc-spmd-finish-lane
+  [ty : AstType]
+  [class : TcSpmdClass]
+  [env : TcSpmdEnv]) : ResultTcSpmdExprInfo
+  (if (and (tc-spmd-varying? class) (not (tc-spmd-lane-type-supported? ty)))
+    (ErrTcSpmdExprInfo
+      (string-append
+        "typecheck: foreach varying array lane type is not supported: "
+        (tc-type-render (tc-type-strip-region ty))))
+    (tc-spmd-finish ty class env)))
+
+(define (tc-spmd-env-from-type-env [env : TcTypeEnv]) : TcSpmdEnv
+  (match env
+    [(TcTypeNil) TcSpmdEnvNil]
+    [(TcTypeBind name ty rest)
+      (TcSpmdEnvBind
+        name
+        ty
+        TcSpmdUniform
+        TcSpmdOuter
+        (tc-spmd-env-from-type-env rest))]))
+
+(define (tc-spmd-env-bind
+  [env : TcSpmdEnv]
+  [name : String]
+  [ty : AstType]
+  [class : TcSpmdClass]
+  [scope : TcSpmdScope]) : TcSpmdEnv
+  (TcSpmdEnvBind name ty class scope env))
+
+(define (tc-spmd-env-lookup [env : TcSpmdEnv] [name : String]) : TcSpmdLookup
+  (match env
+    [(TcSpmdEnvNil) TcSpmdMissing]
+    [(TcSpmdEnvBind key ty class scope rest)
+      (if (string-eq key name)
+        (TcSpmdFound ty class scope)
+        (tc-spmd-env-lookup rest name))]))
+
+(define (tc-spmd-env-set-class
+  [env : TcSpmdEnv]
+  [name : String]
+  [class : TcSpmdClass]) : TcSpmdEnv
+  (match env
+    [(TcSpmdEnvNil) TcSpmdEnvNil]
+    [(TcSpmdEnvBind key ty old-class scope rest)
+      (if (string-eq key name)
+        (TcSpmdEnvBind key ty class scope rest)
+        (TcSpmdEnvBind
+          key
+          ty
+          old-class
+          scope
+          (tc-spmd-env-set-class rest name class)))]))
+
+(define (tc-spmd-env-pop [env : TcSpmdEnv] [count : i64]) : TcSpmdEnv
+  (if (<= count 0)
+    env
+    (match env
+      [(TcSpmdEnvNil) TcSpmdEnvNil]
+      [(TcSpmdEnvBind _ _ _ _ rest) (tc-spmd-env-pop rest (- count 1))])))
+
+(define (tc-spmd-env-mark-outer [env : TcSpmdEnv]) : TcSpmdEnv
+  (match env
+    [(TcSpmdEnvNil) TcSpmdEnvNil]
+    [(TcSpmdEnvBind name ty class _ rest)
+      (TcSpmdEnvBind name ty class TcSpmdOuter (tc-spmd-env-mark-outer rest))]))
+
 (define (tc-literal-type [lit : AstLiteral]) : AstType
   (match lit
     [(AstLitInt _) (AstTyI64)]
@@ -1763,6 +1904,505 @@
           (match (tc-expr ctx env expr)
             [(OkTcType _) (tc-begin-list ctx env rest)]
             [(ErrTcType message) (ErrTcType message)])])]))
+
+(define (tc-spmd-require-uniform [class : TcSpmdClass] [message : String]) : ResultTcUnit
+  (if (tc-spmd-varying? class)
+    (ErrTcUnit message)
+    OkTcUnit))
+
+(define (tc-spmd-let-bindings
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [bindings : AstLetBindingList]
+  [count : i64]) : ResultTcSpmdLetState
+  (match bindings
+    [(AstLetBindingNil) (OkTcSpmdLetState (TcSpmdLetState env spmd-env count))]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding name maybe-ty init)
+          (match (tc-spmd-expr ctx env spmd-env init)
+            [(OkTcSpmdExprInfo info)
+              (match info
+                [(TcSpmdExprInfo init-ty init-class next-spmd-env)
+                  (let
+                    [bound-ty : AstType
+                      (match maybe-ty
+                        [(AstSomeType want)
+                          (if (tc-type-contains-any-region init-ty)
+                            init-ty
+                            (tc-resolve-type ctx want))]
+                        [(AstNoType) init-ty])]
+                    (tc-spmd-let-bindings
+                      ctx
+                      (tc-bind env name bound-ty)
+                      (tc-spmd-env-bind
+                        next-spmd-env
+                        name
+                        bound-ty
+                        init-class
+                        TcSpmdLocal)
+                      rest
+                      (+ count 1)))])]
+            [(ErrTcSpmdExprInfo message) (ErrTcSpmdLetState message)])])]))
+
+(define (tc-spmd-expr-list
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [exprs : AstExprList]) : ResultTcSpmdExprListInfo
+  (match exprs
+    [(AstExprNil)
+      (OkTcSpmdExprListInfo (TcSpmdExprListInfo TcSpmdUniform spmd-env))]
+    [(AstExprCons expr rest)
+      (match (tc-spmd-expr ctx env spmd-env expr)
+        [(OkTcSpmdExprInfo info)
+          (match info
+            [(TcSpmdExprInfo _ class next-spmd-env)
+              (match (tc-spmd-expr-list ctx env next-spmd-env rest)
+                [(OkTcSpmdExprListInfo rest-info)
+                  (match rest-info
+                    [(TcSpmdExprListInfo rest-class rest-env)
+                      (OkTcSpmdExprListInfo
+                        (TcSpmdExprListInfo
+                          (tc-spmd-merge-class class rest-class)
+                          rest-env))])]
+                [(ErrTcSpmdExprListInfo message)
+                  (ErrTcSpmdExprListInfo message)])])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprListInfo message)])]))
+
+(define (tc-spmd-begin-list
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [exprs : AstExprList]) : ResultTcSpmdExprInfo
+  (match exprs
+    [(AstExprNil)
+      (OkTcSpmdExprInfo (TcSpmdExprInfo (AstTyUnit) TcSpmdUniform spmd-env))]
+    [(AstExprCons expr rest)
+      (match rest
+        [(AstExprNil) (tc-spmd-expr ctx env spmd-env expr)]
+        [_
+          (match (tc-spmd-expr ctx env spmd-env expr)
+            [(OkTcSpmdExprInfo info)
+              (match info
+                [(TcSpmdExprInfo _ _ next-spmd-env)
+                  (tc-spmd-begin-list ctx env next-spmd-env rest)])]
+            [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]))
+
+(define (tc-spmd-match-arms
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [scrut-ty : AstType]
+  [arms : AstMatchArmList]
+  [class : TcSpmdClass]) : ResultTcSpmdExprListInfo
+  (match arms
+    [(AstMatchArmNil)
+      (OkTcSpmdExprListInfo (TcSpmdExprListInfo class spmd-env))]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm pattern body)
+          (match (tc-bind-match-pattern ctx env scrut-ty pattern)
+            [(OkTcEnv arm-env)
+              (match (tc-spmd-expr ctx arm-env spmd-env body)
+                [(OkTcSpmdExprInfo body-info)
+                  (match body-info
+                    [(TcSpmdExprInfo _ body-class _)
+                      (tc-spmd-match-arms
+                        ctx
+                        env
+                        spmd-env
+                        scrut-ty
+                        rest
+                        (tc-spmd-merge-class class body-class))])]
+                [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprListInfo message)])]
+            [(ErrTcEnv message) (ErrTcSpmdExprListInfo message)])])]))
+
+(define (tc-spmd-check-foreach-body-with-env
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [index : String]
+  [index-ty : AstType]
+  [body : AstExpr]) : ResultTcUnit
+  (let
+    [body-env : TcTypeEnv (tc-bind env index index-ty)]
+    [body-spmd-env : TcSpmdEnv
+      (tc-spmd-env-bind
+        (tc-spmd-env-mark-outer spmd-env)
+        index
+        index-ty
+        TcSpmdVarying
+        TcSpmdLocal)]
+    (match (tc-spmd-expr ctx body-env body-spmd-env body)
+      [(OkTcSpmdExprInfo _) OkTcUnit]
+      [(ErrTcSpmdExprInfo message) (ErrTcUnit message)])))
+
+(define (tc-spmd-check-foreach-body
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [index : String]
+  [index-ty : AstType]
+  [body : AstExpr]) : ResultTcUnit
+  (tc-spmd-check-foreach-body-with-env
+    ctx
+    env
+    (tc-spmd-env-from-type-env env)
+    index
+    index-ty
+    body))
+
+(define (tc-spmd-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [expr : AstExpr]) : ResultTcSpmdExprInfo
+  (match (tc-expr ctx env expr)
+    [(OkTcType ty) (tc-spmd-expr-typed ctx env spmd-env expr ty)]
+    [(ErrTcType message) (ErrTcSpmdExprInfo message)]))
+
+(define (tc-spmd-expr-typed
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [expr : AstExpr]
+  [expr-ty : AstType]) : ResultTcSpmdExprInfo
+  (match expr
+    [(AstExprSpanned inner _)
+      (tc-spmd-expr-typed ctx env spmd-env inner expr-ty)]
+    [(AstExprLiteral _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
+    [(AstExprVar name)
+      (match (tc-spmd-env-lookup spmd-env name)
+        [(TcSpmdFound _ class _) (tc-spmd-finish expr-ty class spmd-env)]
+        [(TcSpmdMissing) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)])]
+    [(AstExprTypeLiteral _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
+    [(AstExprAnn inner _)
+      (match (tc-spmd-expr ctx env spmd-env inner)
+        [(OkTcSpmdExprInfo info)
+          (match info
+            [(TcSpmdExprInfo _ class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprCast inner _)
+      (match (tc-spmd-expr ctx env spmd-env inner)
+        [(OkTcSpmdExprInfo info)
+          (match info
+            [(TcSpmdExprInfo _ class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprUnary _ inner)
+      (match (tc-spmd-expr ctx env spmd-env inner)
+        [(OkTcSpmdExprInfo info)
+          (match info
+            [(TcSpmdExprInfo _ class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprBinary _ left right)
+      (match (tc-spmd-expr ctx env spmd-env left)
+        [(OkTcSpmdExprInfo left-info)
+          (match left-info
+            [(TcSpmdExprInfo _ left-class left-env)
+              (match (tc-spmd-expr ctx env left-env right)
+                [(OkTcSpmdExprInfo right-info)
+                  (match right-info
+                    [(TcSpmdExprInfo _ right-class right-env)
+                      (tc-spmd-finish
+                        expr-ty
+                        (tc-spmd-merge-class left-class right-class)
+                        right-env)])]
+                [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprCall func args)
+      (match (tc-spmd-expr ctx env spmd-env func)
+        [(OkTcSpmdExprInfo func-info)
+          (match func-info
+            [(TcSpmdExprInfo _ _ func-env)
+              (match (tc-spmd-expr-list ctx env func-env args)
+                [(OkTcSpmdExprListInfo args-info)
+                  (match args-info
+                    [(TcSpmdExprListInfo args-class args-env)
+                      (match (tc-spmd-require-uniform
+                        args-class
+                        "typecheck: foreach calls with varying arguments are not supported")
+                        [(OkTcUnit)
+                          (tc-spmd-finish expr-ty TcSpmdUniform args-env)]
+                        [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
+                [(ErrTcSpmdExprListInfo message) (ErrTcSpmdExprInfo message)])])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprIf cond then-branch else-branch)
+      (match (tc-spmd-expr ctx env spmd-env cond)
+        [(OkTcSpmdExprInfo cond-info)
+          (match cond-info
+            [(TcSpmdExprInfo _ cond-class cond-env)
+              (match (tc-spmd-require-uniform
+                cond-class
+                "typecheck: foreach if condition must be uniform")
+                [(OkTcUnit)
+                  (match (tc-spmd-expr ctx env cond-env then-branch)
+                    [(OkTcSpmdExprInfo then-info)
+                      (match then-info
+                        [(TcSpmdExprInfo _ then-class _)
+                          (match (tc-spmd-expr ctx env cond-env else-branch)
+                            [(OkTcSpmdExprInfo else-info)
+                              (match else-info
+                                [(TcSpmdExprInfo _ else-class _)
+                                  (tc-spmd-finish
+                                    expr-ty
+                                    (tc-spmd-merge-class then-class else-class)
+                                    cond-env)])]
+                            [(ErrTcSpmdExprInfo message)
+                              (ErrTcSpmdExprInfo message)])])]
+                    [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+                [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprLet bindings body)
+      (match (tc-spmd-let-bindings ctx env spmd-env bindings 0)
+        [(OkTcSpmdLetState state)
+          (match state
+            [(TcSpmdLetState body-env body-spmd-env count)
+              (match (tc-spmd-expr ctx body-env body-spmd-env body)
+                [(OkTcSpmdExprInfo body-info)
+                  (match body-info
+                    [(TcSpmdExprInfo _ body-class final-spmd-env)
+                      (tc-spmd-finish
+                        expr-ty
+                        body-class
+                        (tc-spmd-env-pop final-spmd-env count))])]
+                [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
+        [(ErrTcSpmdLetState message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprLambda _ _ _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
+    [(AstExprTuple exprs)
+      (match (tc-spmd-expr-list ctx env spmd-env exprs)
+        [(OkTcSpmdExprListInfo info)
+          (match info
+            [(TcSpmdExprListInfo class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ErrTcSpmdExprListInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprTupleRef tuple _)
+      (match (tc-spmd-expr ctx env spmd-env tuple)
+        [(OkTcSpmdExprInfo info)
+          (match info
+            [(TcSpmdExprInfo _ class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprArray exprs)
+      (match (tc-spmd-expr-list ctx env spmd-env exprs)
+        [(OkTcSpmdExprListInfo info)
+          (match info
+            [(TcSpmdExprListInfo class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ErrTcSpmdExprListInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprMakeArray _ len)
+      (match (tc-spmd-expr ctx env spmd-env len)
+        [(OkTcSpmdExprInfo info)
+          (match info
+            [(TcSpmdExprInfo _ class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprArrayRef array index)
+      (match (tc-spmd-expr ctx env spmd-env array)
+        [(OkTcSpmdExprInfo array-info)
+          (match array-info
+            [(TcSpmdExprInfo _ array-class array-env)
+              (match (tc-spmd-expr ctx env array-env index)
+                [(OkTcSpmdExprInfo index-info)
+                  (match index-info
+                    [(TcSpmdExprInfo _ index-class index-env)
+                      (tc-spmd-finish-lane
+                        expr-ty
+                        (tc-spmd-merge-class array-class index-class)
+                        index-env)])]
+                [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprArraySet array index value)
+      (match (tc-spmd-expr ctx env spmd-env array)
+        [(OkTcSpmdExprInfo array-info)
+          (match array-info
+            [(TcSpmdExprInfo array-ty array-class array-env)
+              (match (tc-spmd-expr ctx env array-env index)
+                [(OkTcSpmdExprInfo index-info)
+                  (match index-info
+                    [(TcSpmdExprInfo _ index-class index-env)
+                      (match (tc-spmd-expr ctx env index-env value)
+                        [(OkTcSpmdExprInfo value-info)
+                          (match value-info
+                            [(TcSpmdExprInfo _ value-class value-env)
+                              (let
+                                [write-class : TcSpmdClass
+                                  (tc-spmd-merge-class
+                                    array-class
+                                    (tc-spmd-merge-class
+                                      index-class
+                                      value-class))]
+                                (match (tc-type-strip-region array-ty)
+                                  [(AstTyArray elem-ty _)
+                                    (if (and
+                                      (tc-spmd-varying? write-class)
+                                      (not
+                                        (tc-spmd-lane-type-supported? elem-ty)))
+                                      (ErrTcSpmdExprInfo
+                                        (string-append
+                                          "typecheck: foreach varying array lane type is not supported: "
+                                          (tc-type-render
+                                            (tc-type-strip-region elem-ty))))
+                                      (tc-spmd-finish
+                                        expr-ty
+                                        TcSpmdUniform
+                                        value-env))]
+                                  [(AstTyDynArray elem-ty)
+                                    (if (and
+                                      (tc-spmd-varying? write-class)
+                                      (not
+                                        (tc-spmd-lane-type-supported? elem-ty)))
+                                      (ErrTcSpmdExprInfo
+                                        (string-append
+                                          "typecheck: foreach varying array lane type is not supported: "
+                                          (tc-type-render
+                                            (tc-type-strip-region elem-ty))))
+                                      (tc-spmd-finish
+                                        expr-ty
+                                        TcSpmdUniform
+                                        value-env))]
+                                  [_
+                                    (tc-spmd-finish
+                                      expr-ty
+                                      TcSpmdUniform
+                                      value-env)]))])]
+                        [(ErrTcSpmdExprInfo message)
+                          (ErrTcSpmdExprInfo message)])])]
+                [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprStringRef str index)
+      (match (tc-spmd-expr ctx env spmd-env str)
+        [(OkTcSpmdExprInfo str-info)
+          (match str-info
+            [(TcSpmdExprInfo _ str-class str-env)
+              (match (tc-spmd-expr ctx env str-env index)
+                [(OkTcSpmdExprInfo index-info)
+                  (match index-info
+                    [(TcSpmdExprInfo _ index-class index-env)
+                      (tc-spmd-finish
+                        expr-ty
+                        (tc-spmd-merge-class str-class index-class)
+                        index-env)])]
+                [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprWhile cond body)
+      (match (tc-spmd-expr ctx env spmd-env cond)
+        [(OkTcSpmdExprInfo cond-info)
+          (match cond-info
+            [(TcSpmdExprInfo _ cond-class cond-env)
+              (match (tc-spmd-require-uniform
+                cond-class
+                "typecheck: foreach while condition must be uniform")
+                [(OkTcUnit)
+                  (match (tc-spmd-expr ctx env cond-env body)
+                    [(OkTcSpmdExprInfo _)
+                      (tc-spmd-finish expr-ty TcSpmdUniform cond-env)]
+                    [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+                [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprBegin exprs) (tc-spmd-begin-list ctx env spmd-env exprs)]
+    [(AstExprSet name value)
+      (match (tc-spmd-expr ctx env spmd-env value)
+        [(OkTcSpmdExprInfo value-info)
+          (match value-info
+            [(TcSpmdExprInfo _ value-class value-env)
+              (match (tc-spmd-env-lookup value-env name)
+                [(TcSpmdFound _ _ TcSpmdOuter)
+                  (ErrTcSpmdExprInfo
+                    "typecheck: foreach cannot set binding declared outside foreach")]
+                [(TcSpmdFound _ _ TcSpmdLocal)
+                  (tc-spmd-finish
+                    expr-ty
+                    TcSpmdUniform
+                    (tc-spmd-env-set-class value-env name value-class))]
+                [(TcSpmdMissing)
+                  (tc-spmd-finish expr-ty TcSpmdUniform value-env)])])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprMatch scrutinee arms)
+      (match (tc-spmd-expr ctx env spmd-env scrutinee)
+        [(OkTcSpmdExprInfo scrut-info)
+          (match scrut-info
+            [(TcSpmdExprInfo scrut-ty scrut-class scrut-env)
+              (match (tc-spmd-require-uniform
+                scrut-class
+                "typecheck: foreach match scrutinee must be uniform")
+                [(OkTcUnit)
+                  (match (tc-spmd-match-arms
+                    ctx
+                    env
+                    scrut-env
+                    scrut-ty
+                    arms
+                    TcSpmdUniform)
+                    [(OkTcSpmdExprListInfo arms-info)
+                      (match arms-info
+                        [(TcSpmdExprListInfo arms-class _)
+                          (tc-spmd-finish expr-ty arms-class scrut-env)])]
+                    [(ErrTcSpmdExprListInfo message)
+                      (ErrTcSpmdExprInfo message)])]
+                [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprForeach index index-ty start end body)
+      (match (tc-spmd-expr ctx env spmd-env start)
+        [(OkTcSpmdExprInfo start-info)
+          (match start-info
+            [(TcSpmdExprInfo _ start-class start-env)
+              (match (tc-spmd-require-uniform
+                start-class
+                "typecheck: foreach bounds must be uniform")
+                [(OkTcUnit)
+                  (match (tc-spmd-expr ctx env start-env end)
+                    [(OkTcSpmdExprInfo end-info)
+                      (match end-info
+                        [(TcSpmdExprInfo _ end-class end-env)
+                          (match (tc-spmd-require-uniform
+                            end-class
+                            "typecheck: foreach bounds must be uniform")
+                            [(OkTcUnit)
+                              (match (tc-spmd-check-foreach-body-with-env
+                                ctx
+                                env
+                                end-env
+                                index
+                                (tc-resolve-type ctx index-ty)
+                                body)
+                                [(OkTcUnit)
+                                  (tc-spmd-finish expr-ty TcSpmdUniform end-env)]
+                                [(ErrTcUnit message)
+                                  (ErrTcSpmdExprInfo message)])]
+                            [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
+                    [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+                [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprSpmdReduce _ _ _ _ _ _ _)
+      (ErrTcSpmdExprInfo
+        "typecheck: spmd-reduce inside foreach is not supported")]
+    [(AstExprStructGet receiver _)
+      (match (tc-spmd-expr ctx env spmd-env receiver)
+        [(OkTcSpmdExprInfo info)
+          (match info
+            [(TcSpmdExprInfo _ class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprWithRegion region body)
+      (tc-spmd-begin-list ctx (tc-push-region env region) spmd-env body)]
+    [(AstExprComptime inner)
+      (match (tc-spmd-expr ctx env spmd-env inner)
+        [(OkTcSpmdExprInfo info)
+          (match info
+            [(TcSpmdExprInfo _ class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprTry inner)
+      (match (tc-spmd-expr ctx env spmd-env inner)
+        [(OkTcSpmdExprInfo info)
+          (match info
+            [(TcSpmdExprInfo _ class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]))
 
 (define (tc-param-list-add-bound-names
   [params : AstParamList]
@@ -2881,7 +3521,15 @@
                               body-ty
                               (AstTyUnit)
                               "typecheck: foreach body must be unit")
-                              [(OkTcUnit) (OkTcType (AstTyUnit))]
+                              [(OkTcUnit)
+                                (match (tc-spmd-check-foreach-body
+                                  ctx
+                                  env
+                                  index
+                                  resolved-index-ty
+                                  body)
+                                  [(OkTcUnit) (OkTcType (AstTyUnit))]
+                                  [(ErrTcUnit message) (ErrTcType message)])]
                               [(ErrTcUnit message) (ErrTcType message)])]
                           [(ErrTcType message) (ErrTcType message)]))
                       (ErrTcType
@@ -3269,6 +3917,72 @@
   "(define (main) : (-> i64 i64)
   (lambda ([x : i64]) : i64 true))")
 
+(define (compiler-typecheck-foreach-spmd-ok-source) : String
+  "(define (main [n : i64]) : unit
+  (let
+    [a : (Array i64) (make-array i64 n)]
+    [b : (Array i64) (make-array i64 n)]
+    [out : (Array i64) (make-array i64 n)]
+    (foreach ([i : i64 0 n])
+      (let
+        [sum : i64 (+ (array-ref a i) (array-ref b i))]
+        (array-set! out i sum)))))")
+
+(define (compiler-typecheck-foreach-varying-if-source) : String
+  "(define (main [xs : (Array i64)] [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (if (= (array-ref xs i) 0) unit unit)))")
+
+(define (compiler-typecheck-foreach-varying-while-source) : String
+  "(define (main [xs : (Array i64)] [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (while (< (array-ref xs i) 0) unit)))")
+
+(define (compiler-typecheck-foreach-varying-call-source) : String
+  "(define (sink [x : i64]) : unit unit)
+(define (main [xs : (Array i64)] [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (sink (array-ref xs i))))")
+
+(define (compiler-typecheck-foreach-outer-set-source) : String
+  "(define (main [xs : (Array i64)] [n : i64]) : i64
+  (let
+    [sum : i64 0]
+    (begin
+      (foreach ([i : i64 0 n])
+        (set! sum (+ sum (array-ref xs i))))
+      sum)))")
+
+(define (compiler-typecheck-foreach-unsupported-lane-source) : String
+  "(define (main [ss : (Array String)] [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (let
+      [s : String (array-ref ss i)]
+      unit)))")
+
+(define (compiler-typecheck-foreach-spmd-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-foreach-spmd-ok-source))
+    (and
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-foreach-varying-if-source)
+        "typecheck: foreach if condition must be uniform")
+      (and
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-foreach-varying-while-source)
+          "typecheck: foreach while condition must be uniform")
+        (and
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-foreach-varying-call-source)
+            "typecheck: foreach calls with varying arguments are not supported")
+          (and
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-foreach-outer-set-source)
+              "typecheck: foreach cannot set binding declared outside foreach")
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-foreach-unsupported-lane-source)
+              "typecheck: foreach varying array lane type is not supported: String")))))))
+
 (define (compiler-typecheck-abstraction-policy-tests-ok?) : bool
   (compiler-typecheck-error-ok?
     (compiler-typecheck-type-parameter-source)
@@ -3593,14 +4307,16 @@
               (and
                 (compiler-typecheck-aggregate-tests-ok?)
                 (and
-                  (compiler-typecheck-nominal-tests-ok?)
+                  (compiler-typecheck-foreach-spmd-tests-ok?)
                   (and
-                    (compiler-typecheck-abstraction-policy-tests-ok?)
+                    (compiler-typecheck-nominal-tests-ok?)
                     (and
-                      (compiler-typecheck-region-tests-ok?)
+                      (compiler-typecheck-abstraction-policy-tests-ok?)
                       (and
-                        (compiler-typecheck-result-try-tests-ok?)
-                        (compiler-typecheck-located-ok?))))))))))
+                        (compiler-typecheck-region-tests-ok?)
+                        (and
+                          (compiler-typecheck-result-try-tests-ok?)
+                          (compiler-typecheck-located-ok?)))))))))))
         42
         (begin
           (panic "typecheck: smoke score mismatch")

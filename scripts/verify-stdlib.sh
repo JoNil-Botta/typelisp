@@ -2,7 +2,7 @@
 set -eu
 
 # verify-stdlib.sh - verify canonical stdlib modules through --stdlib-root.
-# refs #285, #863
+# refs #285, #814, #863
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -62,7 +62,8 @@ stdlib_build_run() {
 
 # Every canonical stdlib module must be listed here. Keep this manifest in sync
 # with stdlib/README.md so new modules land with an explicit verification
-# decision. Fixture files under stdlib/tests/ are covered by stdlib_test_manifest.
+# decision. Fixture files under stdlib/tests/ are covered by stdlib_test_manifest
+# or stdlib_check_manifest.
 stdlib_manifest() {
     cat <<'EOF'
 io.tl
@@ -108,6 +109,21 @@ stdlib/tests/windows_sdk_api.tl|42|-|-
 EOF
 }
 
+# Pipe-separated check-only fixture manifest:
+#   fixture-path|expected-status|expected-stderr-snippet
+#
+# Use these for stdlib fixtures that only need the typechecker, including
+# platform-independent with-region policy tests. The expected status is `fail`
+# or `pass`; failure rows must include a diagnostic substring that should
+# appear on stderr. Pass rows may use "-" for the diagnostic field.
+stdlib_check_manifest() {
+    cat <<'EOF'
+stdlib/tests/arena_policy.tl|pass|-
+stdlib/tests/arena_policy_escape_string.tl|fail|cannot escape with-region 'inner'
+stdlib/tests/arena_policy_escape_text_buf.tl|fail|cannot escape with-region 'inner'
+EOF
+}
+
 WORKDIR="$ROOT/target/stdlib-verify"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
@@ -133,11 +149,16 @@ if ! cmp -s "$EXPECTED" "$ACTUAL"; then
 fi
 
 TEST_MANIFEST="$WORKDIR/stdlib-test-manifest.psv"
+CHECK_MANIFEST="$WORKDIR/stdlib-check-manifest.psv"
 TEST_EXPECTED="$WORKDIR/expected-stdlib-tests.txt"
 TEST_ACTUAL="$WORKDIR/actual-stdlib-tests.txt"
 
 stdlib_test_manifest > "$TEST_MANIFEST"
-sed '/^#/d;/^$/d;s/|.*$//' "$TEST_MANIFEST" | sort > "$TEST_EXPECTED"
+stdlib_check_manifest > "$CHECK_MANIFEST"
+{
+    sed '/^#/d;/^$/d;s/|.*$//' "$TEST_MANIFEST"
+    sed '/^#/d;/^$/d;s/|.*$//' "$CHECK_MANIFEST"
+} | sort > "$TEST_EXPECTED"
 find stdlib/tests -type f -name '*.tl' | sort > "$TEST_ACTUAL"
 
 if ! cmp -s "$TEST_EXPECTED" "$TEST_ACTUAL"; then
@@ -360,6 +381,88 @@ while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do
     passed=$((passed + 1))
 done < "$TEST_MANIFEST"
 
+checked=0
+while IFS='|' read -r fixture want stderr_snippet extra; do
+    case "$fixture" in
+        '' | \#*) continue ;;
+    esac
+
+    if [ -n "${extra:-}" ]; then
+        echo "FAIL: malformed stdlib check manifest row has too many fields: $fixture" >&2
+        exit 1
+    fi
+
+    if [ -z "$want" ] || [ -z "$stderr_snippet" ]; then
+        echo "FAIL: malformed stdlib check manifest row: $fixture" >&2
+        exit 1
+    fi
+
+    case "$want" in
+        pass) ;;
+        fail)
+            if [ "$stderr_snippet" = "-" ]; then
+                echo "FAIL: failing stdlib check fixture needs a diagnostic: $fixture" >&2
+                exit 1
+            fi
+            ;;
+        *)
+            echo "FAIL: stdlib check status must be pass or fail: $fixture" >&2
+            exit 1
+            ;;
+    esac
+
+    case "$fixture" in
+        stdlib/tests/*.tl) ;;
+        *)
+            echo "FAIL: stdlib check fixture must live under stdlib/tests/: $fixture" >&2
+            exit 1
+            ;;
+    esac
+
+    if [ ! -f "$fixture" ]; then
+        echo "FAIL: stdlib check fixture is missing: $fixture" >&2
+        exit 1
+    fi
+
+    case_id=$(printf '%s' "$fixture" | sed 's#/#_#g;s#\.tl$##')
+    copied="$TEST_COPY_ROOT/$fixture"
+    mkdir -p "$(dirname "$copied")"
+    cp "$fixture" "$copied"
+
+    stem="$RUN_ROOT/$case_id.check"
+    stdout="$stem.stdout"
+    stderr="$stem.stderr"
+
+    echo "[stdlib] checking $fixture (--stdlib-root)"
+    set +e
+    "$COMPILER" check "$copied" --stdlib-root "$ROOT/stdlib" \
+        > "$stdout" 2> "$stderr"
+    got=$?
+    set -e
+
+    if [ "$want" = pass ]; then
+        if [ "$got" -ne 0 ]; then
+            echo "FAIL: $fixture expected check success, got exit $got" >&2
+            show_streams "$stdout" "$stderr"
+            exit 1
+        fi
+    else
+        if [ "$got" -eq 0 ]; then
+            echo "FAIL: $fixture expected check failure, got success" >&2
+            show_streams "$stdout" "$stderr"
+            exit 1
+        fi
+        if ! grep -F "$stderr_snippet" "$stderr" >/dev/null 2>&1; then
+            echo "FAIL: $fixture stderr did not contain expected diagnostic" >&2
+            echo "expected substring: $stderr_snippet" >&2
+            show_streams "$stdout" "$stderr"
+            exit 1
+        fi
+    fi
+
+    checked=$((checked + 1))
+done < "$CHECK_MANIFEST"
+
 module_count=$(wc -l < "$EXPECTED" | tr -d ' ')
 
-echo "stdlib verification passed for $module_count module(s), $passed fixture(s)"
+echo "stdlib verification passed for $module_count module(s), $passed runnable fixture(s), $checked check fixture(s)"

@@ -1,15 +1,20 @@
 # Stdlib Test Manifest
 
 `scripts/verify-stdlib.sh` runs the fixtures listed in its
-`stdlib_test_manifest` table. Each row maps a fixture path to the expected exit
+`stdlib_test_manifest` table and type-checks the fixtures listed in
+`stdlib_check_manifest`. Runnable rows map a fixture path to the expected exit
 code, stdout, stderr, and optional stdin. Use `-` for an empty stream,
 `literal:<text>` for exact inline text without a trailing newline,
 `printf:<escapes>` for printf-style escapes, `host-line:<text>` for one line
 using the host executable's newline convention, or a path under this directory
-for exact expected output bytes.
+for exact expected output bytes. Check-only rows map a fixture path to `pass` or
+`fail`; failure rows also name a diagnostic substring expected on stderr.
 
 Coverage notes:
 
+- `arena_policy.tl` exercises stdlib allocating APIs inside nested scoped
+  arenas. The `arena_policy_escape_*.tl` fixtures are check-only negative cases
+  proving active-arena stdlib results cannot escape their scoped arena.
 - `string_edges.tl` covers the public string predicates, trimming helpers,
   replacement paths, and prefix checks, including empty strings, empty needles,
   misses, prefix positions, and replacement edge cases.

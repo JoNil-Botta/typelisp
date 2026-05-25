@@ -29,6 +29,8 @@ that contains both `bench.tl` and `baseline.c`.
 | `spmd_map` | Data-parallel elementwise map (`out[i] = a[i] + b[i] + r`) via `foreach`, establishing the SPMD/SIMD-vs-clang baseline (refs #1125). |
 | `spmd_zip` | Data-parallel three-input fused multiply-add (`out[i] = a[i] * b[i] + c[i] + r`) via `foreach` (refs #1125). |
 | `spmd_mask` | Data-parallel masked conditional (`out[i] = (a[i] odd) ? a[i]+r : a[i]-r`) via `foreach`, exercising a divergent lane body (refs #1125). |
+| `spmd_reduce` | Data-parallel sum reduction (`sum_i (a[i] + r)`) via `spmd-reduce` vs a scalar accumulation baseline (refs #1125). |
+| `spmd_short_tail` | Data-parallel elementwise map over a non-lane-aligned length (1000) exercising the SIMD remainder/tail (refs #1125). |
 
 ### Writing a benchmark
 

@@ -37,6 +37,9 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   construction. Import it with `(import "stdlib/text_buf.tl")`.
 - `windows_sdk.tl`: structured Windows SDK layout discovery helpers for future
   MSVC toolchain setup. Import it with `(import "stdlib/windows_sdk.tl")`.
+- `windows_setup.tl`: Visual Studio / Build Tools SetupConfiguration discovery
+  data model and structured runtime result API. Import it with
+  `(import "stdlib/windows_setup.tl")`.
 
 ## Arena Allocation Policy
 
@@ -82,6 +85,7 @@ returned caller-owned values.
 | `assert-*` helpers in `test.tl` | Non-allocating checks on success; failures call `panic` with the caller-provided message. |
 | `text-buf-*` helpers in `text_buf.tl` | Buffer chunks and rendered strings allocate in the active arena. Append helpers avoid concatenating the accumulated prefix until `text-buf-render`; `text-buf-clear`/`text-buf-reset` return a fresh empty immutable buffer value. |
 | `windows-sdk-*` helpers | SDK layout structs/errors allocate in the active arena. Environment discovery reads `WindowsSdkDir` / `WindowsSDKVersion`, constructs include/lib/bin path strings, and validates required directories with `try-file-exists?`. Registry probing currently returns a structured unavailable diagnostic until the narrow registry runtime primitive lands. |
+| `windows-setup-*` helpers | Construct and inspect Visual Studio setup metadata aggregates in the active arena. `windows-setup-instances` returns structured errors through the runtime hook on current targets; future successful enumeration results will allocate returned strings and list nodes in the active arena. |
 
 The recoverable I/O API maps the runtime's integer status codes into the public
 `IoError` model. Common not-found, permission, invalid-path, interrupted, and
@@ -130,6 +134,7 @@ Stdlib modules are imported explicitly:
 (import "stdlib/test.tl")
 (import "stdlib/text_buf.tl")
 (import "stdlib/windows_sdk.tl")
+(import "stdlib/windows_setup.tl")
 ```
 
 For imports whose path starts with `stdlib/`, the loader first tries the path

@@ -48,6 +48,9 @@ Coverage notes:
   skipping, and stable picks for fixed seeds.
 - `text_buf_api.tl` covers empty buffers, repeated appends, char/int append
   helpers, buffer concatenation, clear/reset behavior, and rendering.
+- `visual_studio_api.tl` covers the SetupConfiguration stdlib data model,
+  instance/package list helpers, result/error predicates, and the current
+  structured unsupported runtime result.
 - `test_assert_success.tl` covers successful assertion helpers. The
   `test_assert_failure.tl` fixture covers the panic-on-failure path and exact
   caller diagnostic on stderr.

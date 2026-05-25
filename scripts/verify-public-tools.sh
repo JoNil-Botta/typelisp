@@ -488,14 +488,28 @@ assert_code 42
 assert_stdout_empty
 assert_stderr_empty
 
-if [ "$HOST_OS" = linux ]; then
-    run_cmd run-backend-avx512 "$COMPILER" run "$CLI_MATRIX/main.tl" --backend-mode avx512 -- arg
-    assert_code 42
-    assert_stdout_empty
-    assert_stderr_empty
-else
-    echo "[public-tools] skipping run --backend-mode avx512 on $HOST_OS"
-fi
+# SIMD-mode *execution* is gated on actual host CPU capability via runtime ISA
+# detection, not host OS (refs #1147): the fleet's Windows box has AVX-512 while
+# a generic windows-latest runner may not, so a host-OS skip is wrong both ways.
+# `build --backend-mode ...` below still only compiles text and runs anywhere.
+SIMD_ISAS=$(sh "$ROOT/scripts/detect-simd-isa.sh" 2>/dev/null || true)
+run_backend_mode_exec() {
+    # $1 = backend mode (avx2|avx512); $2 = required ISA token (avx2|avx512f)
+    if printf '%s\n' "$SIMD_ISAS" | grep -qx "$2"; then
+        if [ "$HOST_OS" = windows ]; then
+            run_cmd "run-backend-$1" "$COMPILER" run "$CLI_MATRIX/main.tl" --backend-mode "$1" --target windows-x86_64 -- arg
+        else
+            run_cmd "run-backend-$1" "$COMPILER" run "$CLI_MATRIX/main.tl" --backend-mode "$1" -- arg
+        fi
+        assert_code 42
+        assert_stdout_empty
+        assert_stderr_empty
+    else
+        echo "[public-tools] skipping run --backend-mode $1 ($2 not available on this $HOST_OS host)"
+    fi
+}
+run_backend_mode_exec avx2 avx2
+run_backend_mode_exec avx512 avx512f
 
 BUILD_MATRIX="$WORKDIR/build-matrix"
 mkdir -p "$BUILD_MATRIX/src"

@@ -326,8 +326,10 @@ GC is also larger than the next step.
 
 The first safe reclamation surface is `(with-region r body ...)` — a
 lexically scoped arena with **static escape checking**. The arena model uses
-"scoped arena" for this behavior; issue #801 tracks the planned
-`(with-arena ...)` spelling. The typechecker rejects any arena-tagged value
+"scoped arena" for this behavior; the selfhost compiler also accepts
+`(with-arena r body ...)` as an exact alias for this form (#801, the migration
+spelling), with the same scoped arena, region tags, shadowing, and escape rules.
+The typechecker rejects any arena-tagged value
 that would leave the scope, so the compiler
 can safely lower the form to `tl_region_mark` / `tl_region_reset` around the
 body. This makes scoped cleanup safe by construction, unlike the raw extern

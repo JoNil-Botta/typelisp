@@ -350,6 +350,13 @@ underlying heap-allocated type. Region tags are a compile-time-only
 annotation; they do not change ABI representation, runtime size, or data
 layout. The tag exists solely to enable static escape checking.
 
+`(with-arena r ...)` is the migration spelling for this form and is accepted as
+an exact alias of `(with-region r ...)` (#801): it produces the same scoped
+arena, the same `(in r T)` region tags, the same default-arena shadowing, and
+the same escape checking and `tl_region_mark` / `tl_region_reset` lowering.
+Allocations inside the body target the scoped arena, which shadows the
+program-lifetime default arena and is reset at scope exit.
+
 **Region-taggable types** are the heap-allocated aggregate kinds whose storage
 can be created inside a region scope:
 - `String`

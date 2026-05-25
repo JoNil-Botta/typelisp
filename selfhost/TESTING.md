@@ -125,10 +125,18 @@ checks `SHA256SUMS` when the release provides it, and installs the binary under
 `target/stage0/`. The script uses release asset URLs instead of fetching git
 tags, so the mutable `stage0-latest` tag cannot be stale or clobber a local tag.
 
-CI should pass this fetched compiler through `TYPELISP_BIN` for no-Rust
-validation. The scripts that still run `cargo build --release` when
-`TYPELISP_BIN` is unset keep that path as a local fallback only until #793/#795
-remove the Rust-owned stage0 dependency.
+The complete local no-Rust gate is:
+
+```sh
+scripts/verify-no-rust-stage0.sh
+```
+
+That wrapper fetches `stage0-latest` when `TYPELISP_BIN` is unset, exports the
+fetched compiler to the verification scripts, and installs failing `cargo` and
+`rustc` shims in `PATH` so the gate cannot silently fall back to Rust. The
+scripts that still run `cargo build --release` when `TYPELISP_BIN` is unset keep
+that path as a local fallback only until #795 removes the Rust-owned stage0
+dependency.
 
 For new selfhost tests:
 
@@ -238,10 +246,16 @@ HTML escaping behavior without depending on file-system writes.
 
 ### CI expectations
 
-Pull requests get Linux and Windows `cargo test` coverage from the main CI test
-jobs. The no-Rust checks run through the fetched stage0 compiler where possible:
-native integration manifests, deterministic assembly, selfhost compile
-manifests, TypeLisp source format, stdlib, examples, and selfhost verification.
+Pull requests get Linux and Windows no-Rust stage0 coverage from
+`scripts/verify-no-rust-stage0.sh`. The Linux job runs public tools, doctests,
+inline tests, selfhost compile manifests, deterministic assembly, TypeLisp
+source format, native integration manifests, examples, stdlib, stdlib docs,
+selfhost native generated programs, the selfhost external compiler corpus, and
+the bootstrap smoke check. The Windows job runs the same host-supported gates
+and explicitly skips the Linux-only selfhost/docs/bootstrap checks.
+
+The remaining Linux and Windows `cargo test`, `cargo fmt`, `cargo clippy`, and
+release integration jobs are temporary Rust reference coverage until #795.
 
 For a selfhost compiler change, a typical local check is:
 
@@ -257,6 +271,7 @@ TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-stdlib-docs.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-doc-tests.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-inline-tests.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-selfhost.sh
+scripts/verify-no-rust-stage0.sh
 ```
 
 Run the tests that match the layer you touched. On non-Linux platforms, scripts

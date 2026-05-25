@@ -27,8 +27,8 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   Runtime execution currently returns structured unsupported diagnostics rather
   than using Rust host actions. Import it with `(import "stdlib/process.tl")`.
 - `random.tl`: deterministic, seeded, non-cryptographic random helpers and
-  weighted-index selection for selfhost tools. Import it with
-  `(import "stdlib/random.tl")`.
+  weighted-index selection for selfhost tools, plus an OS-entropy seed source.
+  Import it with `(import "stdlib/random.tl")`.
 - `string.tl`: string utility functions built on compiler/runtime primitives.
   Import it with `(import "stdlib/string.tl")`.
 - `test.tl`: minimal assertion helpers for TypeLisp fixtures. Import it with
@@ -81,7 +81,7 @@ returned caller-owned values.
 | `fs-path-join`, `try-mkdir`, `try-remove-file`, `try-remove-dir`, `try-create-temp-dir` | Path joins allocate active-arena Strings when a separator is inserted or duplicate separator is removed. Recoverable filesystem helpers map runtime status codes into `IoError`; `try-mkdir` works on Linux and Windows. Linux temp directories are created under `$TMPDIR` or `/tmp` with process-id and retry suffixes. Windows temp creation returns `IoUnsupported` until process-id and cleanup primitives are implemented there. |
 | `hash-*` helpers | Deterministic, non-cryptographic hash and key equality helpers are non-allocating. Hashes are stable bucket hints only; collection users must still compare colliding candidate keys with the matching equality predicate. |
 | `process-*` helpers | Construct process command/output/error aggregates in the active arena. Ordered argv append helpers allocate list nodes; validators inspect executable/env/cwd metadata and reject invalid env names. On Linux, `process-run` and `process-output` execute directly through the backend runtime, preserving inherited environment entries, replacing entries named by env overrides, honoring cwd, and feeding string stdin. Unsupported targets return structured errors. |
-| `random-*` helpers | Construct deterministic RNG state, draw/result aggregates, and weight-list cons nodes in the active arena. Draws are deterministic from caller-provided seeds and do not read host entropy. |
+| `random-*` helpers | Construct deterministic RNG state, draw/result aggregates, and weight-list cons nodes in the active arena. Draws are deterministic from caller-provided seeds and do not read host entropy. `random-system-seed` returns a backend-provided value with no allocation; `random-from-system` constructs and returns a new `RandomState` aggregate in the active arena. |
 | `assert-*` helpers in `test.tl` | Non-allocating checks on success; failures call `panic` with the caller-provided message. |
 | `text-buf-*` helpers in `text_buf.tl` | Buffer chunks and rendered strings allocate in the active arena. Append helpers avoid concatenating the accumulated prefix until `text-buf-render`; `text-buf-clear`/`text-buf-reset` return a fresh empty immutable buffer value. |
 | `windows-sdk-*` helpers | SDK layout structs/errors allocate in the active arena. Environment discovery reads `WindowsSdkDir` / `WindowsSDKVersion`, constructs include/lib/bin path strings, and validates required directories with `try-file-exists?`. Registry probing currently returns a structured unavailable diagnostic until the narrow registry runtime primitive lands. |

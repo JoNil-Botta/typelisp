@@ -2,6 +2,19 @@
 
 (import "stdlib/test.tl")
 
+(define (assert-system-seed-ok [result : ResultSystemSeed]) : unit
+  (match result
+    [(OkSystemSeed _) unit]
+    [(ErrSystemSeed _) (panic "system seed should succeed on Linux")]))
+
+(define (assert-system-seed-error [result : ResultSystemSeed]) : unit
+  (match result
+    [(OkSystemSeed _) (panic "expected system seed error")]
+    [(ErrSystemSeed err)
+      (match err
+        [(RandomSystemSeedUnavailable message)
+          (assert-true (> (string-length message) 0) "error message non-empty")])]))
+
 (define (assert-random-bounded-ok
   [result : RandomBoundedResult]
   [want-state : i64]
@@ -127,4 +140,19 @@
       33614
       3
       "weighted index reaches later positive bucket")
+    (assert-system-seed-ok (random-system-seed))
+    (assert-system-seed-ok (random-system-seed))
+    (let
+      [state1 : RandomState (random-from-system)]
+      [state2 : RandomState (random-from-system)]
+      (begin
+        (assert-true
+          (> (random-state-seed state1) 0)
+          "random-from-system seed positive")
+        (assert-true
+          (<= (random-state-seed state1) 2147483647)
+          "random-from-system seed normalized")
+        (assert-true
+          (not (= (random-state-seed state1) (random-state-seed state2)))
+          "two system seeds differ")))
     42))

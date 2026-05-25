@@ -225,11 +225,13 @@
         (int->string (struct-get cand number))
         (string-append ": " (struct-get cand title))))))
 
-;;; The seed to use: first argument when present, otherwise the fallback.
+;;; The seed to use: first argument when present, otherwise system entropy.
 (define (chooser-seed) : i64
   (if (> (arg-count) 1)
     (string->int (arg 1))
-    fallback-seed))
+    (match (random-system-seed)
+      [(OkSystemSeed seed) seed]
+      [(ErrSystemSeed _) fallback-seed])))
 
 ;;; Print the chosen candidate's action line; print an error and return 1 on
 ;;; failure, 0 on success.

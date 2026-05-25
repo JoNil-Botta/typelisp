@@ -458,7 +458,10 @@ specified but not implemented.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md). Two standing policies to note: TypeLisp
+uses **Rust `std` only** (no third-party crates), and **syntax changes carry no
+aliases** — when a spelling changes, every usage migrates and the old form is
+removed in the same change rather than kept as a parallel parser path.
 
 ## License
 

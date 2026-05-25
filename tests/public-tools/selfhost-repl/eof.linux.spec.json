@@ -1,0 +1,5 @@
+{
+  "exit": 0,
+  "stdout_contains": ["TypeLisp REPL", "tl>"],
+  "stderr_exact": ""
+}

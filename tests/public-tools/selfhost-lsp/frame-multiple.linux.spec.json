@@ -1,0 +1,9 @@
+{
+  "exit": 0,
+  "stderr_exact": "",
+  "message_count": 2,
+  "message_checks": [
+    {"jsonpath_id": 1, "raw_contains": "\"textDocumentSync\""},
+    {"jsonpath_id": 2, "jsonpath_result": null}
+  ]
+}

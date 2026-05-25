@@ -17,6 +17,10 @@ const FILE_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists";
 const READ_FILE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_read_file_status";
 const WRITE_FILE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_write_file_status";
 const FILE_EXISTS_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists_status";
+const FS_MKDIR_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_fs_mkdir_status";
+const FS_REMOVE_FILE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_fs_remove_file_status";
+const FS_REMOVE_DIR_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_fs_remove_dir_status";
+const FS_PROCESS_ID_RUNTIME_SYMBOL: &str = ".L_tl_fs_process_id";
 const ENV_VAR_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_env_var_exists";
 const ENV_VAR_VALUE_RUNTIME_SYMBOL: &str = ".L_tl_env_var_value";
 const ENV_PATH_SEPARATOR_RUNTIME_SYMBOL: &str = ".L_tl_env_path_separator";
@@ -4043,6 +4047,50 @@ impl FnLowerer {
                 dst: Some(dst),
                 func: FILE_EXISTS_STATUS_RUNTIME_SYMBOL.to_string(),
                 args: vec![Value::Var(ptr), Value::Var(len)],
+                ty: Type::I64,
+            });
+            self.record_local(dst, Type::I64);
+            return Value::Var(dst);
+        }
+
+        if let ast::Expr::Var(name) = func.unspan()
+            && (name == "fs-mkdir-status"
+                || name == "fs-remove-file-status"
+                || name == "fs-remove-dir-status")
+            && args.len() == 1
+            && !self.has_local_value(name)
+            && !self.function_types.contains_key(name)
+        {
+            let path = self.lower_expr_as(&args[0], &Type::String);
+            let (ptr, len) = self.load_string_fields(&path);
+            let runtime_symbol = match name.as_str() {
+                "fs-mkdir-status" => FS_MKDIR_STATUS_RUNTIME_SYMBOL,
+                "fs-remove-file-status" => FS_REMOVE_FILE_STATUS_RUNTIME_SYMBOL,
+                "fs-remove-dir-status" => FS_REMOVE_DIR_STATUS_RUNTIME_SYMBOL,
+                _ => unreachable!(),
+            };
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: runtime_symbol.to_string(),
+                args: vec![Value::Var(ptr), Value::Var(len)],
+                ty: Type::I64,
+            });
+            self.record_local(dst, Type::I64);
+            return Value::Var(dst);
+        }
+
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "fs-process-id"
+            && args.is_empty()
+            && !self.has_local_value(name)
+            && !self.function_types.contains_key(name)
+        {
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: FS_PROCESS_ID_RUNTIME_SYMBOL.to_string(),
+                args: vec![],
                 ty: Type::I64,
             });
             self.record_local(dst, Type::I64);

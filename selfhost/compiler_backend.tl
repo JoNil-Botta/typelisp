@@ -3,6 +3,8 @@
 
 (import "compiler_diagnostic.tl")
 
+(import "compiler_optimize.tl")
+
 (import "compiler_regalloc.tl")
 
 (import "text_buf.tl")
@@ -29,6 +31,7 @@
 
 (defenum CompilerBackendRuntimePlan
   (BackendRuntimePlan
+    bool
     bool
     bool
     bool
@@ -506,6 +509,10 @@
     [(AstTyTuple _) 8]
     [(AstTyArray elem count) (* (compiler-backend-type-size elem) count)]
     [(AstTyDynArray _) 8]
+    [(AstTyPtr _) 8]
+    [(AstTyMutPtr _) 8]
+    [(AstTyRef _ _) 8]
+    [(AstTyMutRef _ _) 8]
     [(AstTyRegion _ inner) (compiler-backend-type-size inner)]
     [(AstTyEnum _) 8]
     [(AstTyStruct _) 8]
@@ -1204,6 +1211,55 @@
                   "\n"))))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
 
+(define (compiler-backend-emit-bounds-check
+  [target : CompilerBackendTarget]
+  [function : String]
+  [assignments : CompilerRegAssignmentList]
+  [index : CompilerIrValue]
+  [length : CompilerIrValue]
+  [ok-label : String]
+  [plan : CompilerBackendRuntimePlan]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]) : ResultCompilerBackend
+  (match (compiler-backend-emit-load-value-with-plan assignments index "%rax")
+    [(OkCompilerBackend index-asm)
+      (match (compiler-backend-emit-load-value-with-plan
+        assignments
+        length
+        "%r11")
+        [(OkCompilerBackend length-asm)
+          (let
+            [call-space : i64
+              (compiler-backend-call-arg-space target IrValueNil AstTypeNil)]
+            [ok-symbol : String (compiler-backend-asm-label function ok-label)]
+            (OkCompilerBackend
+              (string-append
+                index-asm
+                (string-append
+                  length-asm
+                  (string-append
+                    (backend-cat4
+                      "    cmpq %r11, %rax\n    jb "
+                      ok-symbol
+                      "\n"
+                      "")
+                    (string-append
+                      (compiler-backend-emit-call-space-sub call-space)
+                      (backend-cat5
+                        "    call "
+                        (compiler-backend-call-symbol
+                          "tl_oob_abort"
+                          plan
+                          functions
+                          externs)
+                        "\n"
+                        (string-append
+                          (compiler-backend-emit-call-space-add call-space)
+                          (backend-cat4 ok-symbol ":\n" "" ""))
+                        "")))))))]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+
 (define (compiler-backend-emit-unop
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -1832,6 +1888,21 @@
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(IrInstrBoundsCheck index length ok-label)
+        (match (compiler-backend-emit-bounds-check
+          target
+          function
+          assignments
+          index
+          length
+          ok-label
+          plan
+          functions
+          externs)
+          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackend
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
       [(IrInstrCast dst src from-ty to-ty)
         (match (compiler-backend-emit-cast assignments dst src from-ty to-ty)
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
@@ -2223,7 +2294,7 @@
   [plan : CompilerBackendRuntimePlan]) : String
   (if (and (compiler-backend-target-windows? target) (string-eq name "main"))
     (match plan
-      [(BackendRuntimePlan _ _ _ _ _ _ _ _ _ arg-count arg _ _ _ _ _ _ _ _ _)
+      [(BackendRuntimePlan _ _ _ _ _ _ _ _ _ arg-count arg _ _ _ _ _ _ _ _ _ _)
         (if (or arg-count arg)
           "    movq %rcx, .L_tl_argc(%rip)
     movq %rdx, .L_tl_argv(%rip)
@@ -2429,6 +2500,10 @@
       (compiler-backend-collect-value-string
         (compiler-backend-collect-value-string strings dst)
         src)]
+    [(IrInstrBoundsCheck index length _)
+      (compiler-backend-collect-value-string
+        (compiler-backend-collect-value-string strings index)
+        length)]
     [(IrInstrCast _ src _ _)
       (compiler-backend-collect-value-string strings src)]
     [_ strings]))
@@ -2543,6 +2618,10 @@
       (compiler-backend-collect-value-f64
         (compiler-backend-collect-value-f64 floats dst)
         src)]
+    [(IrInstrBoundsCheck index length _)
+      (compiler-backend-collect-value-f64
+        (compiler-backend-collect-value-f64 floats index)
+        length)]
     [(IrInstrCast _ src _ _) (compiler-backend-collect-value-f64 floats src)]
     [_ floats]))
 
@@ -2741,6 +2820,7 @@
   [name : String]) : bool
   (match instr
     [(IrInstrCall _ call-name _ _) (string-eq call-name name)]
+    [(IrInstrBoundsCheck _ _ _) (string-eq name "tl_oob_abort")]
     [_ false]))
 
 (define (compiler-backend-instr-list-calls?
@@ -2796,6 +2876,7 @@
         provides-read-file
         provides-write-file
         provides-file-exists
+        provides-process-output
         read-line
         read-bytes
         stdin-eof
@@ -2834,35 +2915,37 @@
                                     provides-write-file
                                     (if (string-eq name ".L_tl_file_exists")
                                       provides-file-exists
-                                      (if (string-eq
-                                        name
-                                        ".L_tl_read_file_status")
-                                        provides-read-file
+                                      (if (string-eq name "tl_process_output")
+                                        provides-process-output
                                         (if (string-eq
                                           name
-                                          ".L_tl_write_file_status")
-                                          provides-write-file
+                                          ".L_tl_read_file_status")
+                                          provides-read-file
                                           (if (string-eq
                                             name
-                                            ".L_tl_file_exists_status")
-                                            provides-file-exists
+                                            ".L_tl_write_file_status")
+                                            provides-write-file
                                             (if (string-eq
                                               name
-                                              ".L_tl_read_stdin_line")
-                                              read-line
+                                              ".L_tl_file_exists_status")
+                                              provides-file-exists
                                               (if (string-eq
                                                 name
-                                                ".L_tl_read_stdin_bytes")
-                                                read-bytes
+                                                ".L_tl_read_stdin_line")
+                                                read-line
                                                 (if (string-eq
                                                   name
-                                                  ".L_tl_stdin_eof")
-                                                  stdin-eof
+                                                  ".L_tl_read_stdin_bytes")
+                                                  read-bytes
                                                   (if (string-eq
                                                     name
-                                                    ".L_tl_flush_stdout")
-                                                    flush-stdout
-                                                    false)))))))))))))))))))))))]))
+                                                    ".L_tl_stdin_eof")
+                                                    stdin-eof
+                                                    (if (string-eq
+                                                      name
+                                                      ".L_tl_flush_stdout")
+                                                      flush-stdout
+                                                      false))))))))))))))))))))))))]))
 
 (define (compiler-backend-runtime-plan-for
   [functions : CompilerIrFunctionList]
@@ -2888,6 +2971,8 @@
       (compiler-backend-function-list-defines? functions "tl_region_mark")]
     [defines-region-reset : bool
       (compiler-backend-function-list-defines? functions "tl_region_reset")]
+    [defines-process-output : bool
+      (compiler-backend-function-list-defines? functions "tl_process_output")]
     [extern-alloc : bool
       (compiler-backend-extern-list-references? externs "tl_alloc")]
     [extern-oob : bool
@@ -2938,6 +3023,8 @@
       (compiler-backend-extern-list-references? externs ".L_tl_stdin_eof")]
     [extern-flush-stdout : bool
       (compiler-backend-extern-list-references? externs ".L_tl_flush_stdout")]
+    [extern-process-output : bool
+      (compiler-backend-extern-list-references? externs "tl_process_output")]
     [extern-region-mark : bool
       (compiler-backend-extern-list-references? externs "tl_region_mark")]
     [extern-region-reset : bool
@@ -2988,6 +3075,8 @@
       (compiler-backend-function-list-calls? functions ".L_tl_stdin_eof")]
     [calls-flush-stdout : bool
       (compiler-backend-function-list-calls? functions ".L_tl_flush_stdout")]
+    [calls-process-output : bool
+      (compiler-backend-function-list-calls? functions "tl_process_output")]
     [calls-region-mark : bool
       (compiler-backend-function-list-calls? functions "tl_region_mark")]
     [calls-region-reset : bool
@@ -3029,6 +3118,10 @@
       [needs-read-bytes : bool (or extern-read-bytes calls-read-bytes)]
       [needs-stdin-eof : bool (or extern-stdin-eof calls-stdin-eof)]
       [needs-flush-stdout : bool (or extern-flush-stdout calls-flush-stdout)]
+      [needs-process-output : bool
+        (and
+          (not defines-process-output)
+          (or extern-process-output calls-process-output))]
       [needs-region-mark : bool
         (and
           (not defines-region-mark)
@@ -3048,22 +3141,16 @@
               (or needs-read-file (or needs-write-file needs-file-exists))))]
         [needs-alloc : bool
           (or
-            direct-alloc
-            (or
+            (backend-or8
+              direct-alloc
               needs-int-to-string
-              (or
-                needs-substring
-                (or
-                  needs-concat
-                  (or
-                    needs-arg
-                    (or
-                      needs-read-file
-                      (or
-                        needs-write-file
-                        (or
-                          needs-file-exists
-                          (or needs-read-line needs-read-bytes)))))))))]
+              needs-substring
+              needs-concat
+              needs-arg
+              needs-read-file
+              needs-write-file
+              needs-file-exists)
+            (or needs-process-output (or needs-read-line needs-read-bytes)))]
         (OkBackendRuntimePlan
           (BackendRuntimePlan
             needs-alloc
@@ -3080,6 +3167,7 @@
             needs-read-file
             needs-write-file
             needs-file-exists
+            needs-process-output
             needs-read-line
             needs-read-bytes
             needs-stdin-eof
@@ -3241,6 +3329,42 @@ tl_current_arena:
 "
     ""))
 
+(define (compiler-backend-runtime-process-output-data
+  [target : CompilerBackendTarget]
+  [process-output : bool]) : String
+  (if process-output
+    (string-append
+      (if (compiler-backend-target-windows? target)
+        ""
+        "    .data
+    .balign 8
+.L_tl_envp:
+    .quad 0
+
+")
+      "    .section .rodata
+.L_tl_process_unsupported_msg:
+    .ascii \"process: runtime execution is not supported on this target\"
+    .set .L_tl_process_unsupported_msg_len, . - .L_tl_process_unsupported_msg
+.L_tl_process_spawn_msg:
+    .ascii \"process: spawn failed\"
+    .set .L_tl_process_spawn_msg_len, . - .L_tl_process_spawn_msg
+.L_tl_process_wait_msg:
+    .ascii \"process: wait failed\"
+    .set .L_tl_process_wait_msg_len, . - .L_tl_process_wait_msg
+.L_tl_process_exec_marker:
+    .ascii \"exec\"
+    .set .L_tl_process_exec_marker_len, . - .L_tl_process_exec_marker
+.L_tl_process_stdout_name:
+    .ascii \"typelisp-process-stdout\"
+    .byte 0
+.L_tl_process_stderr_name:
+    .ascii \"typelisp-process-stderr\"
+    .byte 0
+
+")
+    ""))
+
 (define (compiler-backend-runtime-data-for-target
   [target : CompilerBackendTarget]
   [plan : CompilerBackendRuntimePlan]) : String
@@ -3260,6 +3384,7 @@ tl_current_arena:
         read-file
         write-file
         file-exists
+        process-output
         read-line
         read-bytes
         stdin-eof
@@ -3289,13 +3414,17 @@ tl_current_arena:
                   (string-append
                     (compiler-backend-runtime-file-exists-data file-exists)
                     (string-append
-                      (compiler-backend-runtime-stdio-data
-                        read-line
-                        read-bytes
-                        stdin-eof)
-                      (compiler-backend-runtime-flush-stdout-data
+                      (compiler-backend-runtime-process-output-data
                         target
-                        flush-stdout)))))))))]))
+                        process-output)
+                      (string-append
+                        (compiler-backend-runtime-stdio-data
+                          read-line
+                          read-bytes
+                          stdin-eof)
+                        (compiler-backend-runtime-flush-stdout-data
+                          target
+                          flush-stdout))))))))))]))
 
 (define (compiler-backend-runtime-alloc-functions) : String
   "    .globl tl_alloc
@@ -5096,6 +5225,393 @@ tl_string_concat:
 
 ")
 
+(define (compiler-backend-runtime-windows-process-output-functions) : String
+  "tl_process_output:
+    leaq .L_tl_process_unsupported_msg(%rip), %rcx
+    movq $.L_tl_process_unsupported_msg_len, %rdx
+    movq $3, %r8
+    jmp .L_tl_process_make_error_win
+
+.L_tl_process_make_error_win:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    sub $40, %rsp
+    movq %rcx, %r12
+    movq %rdx, %r13
+    movq %r8, %rbx
+    movq $16, %rcx
+    call tl_alloc
+    movq %r12, 0(%rax)
+    movq %r13, 8(%rax)
+    movq %rax, %r12
+    movq $16, %rcx
+    call tl_alloc
+    movq %rbx, 0(%rax)
+    movq %r12, 8(%rax)
+    movq %rax, %r12
+    movq $16, %rcx
+    call tl_alloc
+    movq $1, 0(%rax)
+    movq %r12, 8(%rax)
+    add $40, %rsp
+    pop %r13
+    pop %r12
+    pop %rbx
+    mov %rbp, %rsp
+    pop %rbp
+    ret
+
+")
+
+(define (compiler-backend-runtime-process-output-functions) : String
+  "tl_process_output:
+    push %rbp
+    movq %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    subq $232, %rsp
+    movq %rdi, -8(%rbp)
+    movq 0(%rdi), %rdi
+    call .L_tl_process_cstring_from_string
+    movq %rax, -16(%rbp)
+    movq -8(%rbp), %rax
+    movq 8(%rax), %r12
+    xorq %r13, %r13
+.L_tl_process_count_args:
+    cmpq $0, 0(%r12)
+    je .L_tl_process_count_args_done
+    incq %r13
+    movq 16(%r12), %r12
+    jmp .L_tl_process_count_args
+.L_tl_process_count_args_done:
+    movq %r13, -24(%rbp)
+    leaq 2(%r13), %rdi
+    shlq $3, %rdi
+    call tl_alloc
+    movq %rax, -32(%rbp)
+    movq -16(%rbp), %r10
+    movq %r10, 0(%rax)
+    movq -8(%rbp), %r10
+    movq 8(%r10), %r12
+    movq -32(%rbp), %r14
+    movq $1, %r15
+.L_tl_process_fill_argv:
+    cmpq $0, 0(%r12)
+    je .L_tl_process_fill_argv_done
+    movq 8(%r12), %rdi
+    call .L_tl_process_cstring_from_string
+    movq %rax, (%r14,%r15,8)
+    incq %r15
+    movq 16(%r12), %r12
+    jmp .L_tl_process_fill_argv
+.L_tl_process_fill_argv_done:
+    movq $0, (%r14,%r15,8)
+    leaq .L_tl_process_stdout_name(%rip), %rdi
+    xorq %rsi, %rsi
+    movq $319, %rax
+    syscall
+    testq %rax, %rax
+    js .L_tl_process_spawn_failed
+    movq %rax, -40(%rbp)
+    leaq .L_tl_process_stderr_name(%rip), %rdi
+    xorq %rsi, %rsi
+    movq $319, %rax
+    syscall
+    testq %rax, %rax
+    js .L_tl_process_spawn_failed
+    movq %rax, -56(%rbp)
+    leaq -176(%rbp), %rdi
+    movq $524288, %rsi
+    movq $293, %rax
+    syscall
+    testq %rax, %rax
+    js .L_tl_process_spawn_failed
+    movslq -176(%rbp), %rax
+    movq %rax, -72(%rbp)
+    movslq -172(%rbp), %rax
+    movq %rax, -80(%rbp)
+    movq $57, %rax
+    syscall
+    testq %rax, %rax
+    js .L_tl_process_spawn_failed
+    jz .L_tl_process_child
+    movq %rax, -88(%rbp)
+    movq -80(%rbp), %rdi
+    call .L_tl_process_close_fd
+    movq -88(%rbp), %rdi
+    leaq -184(%rbp), %rsi
+    xorq %rdx, %rdx
+    xorq %r10, %r10
+    movq $61, %rax
+    syscall
+    testq %rax, %rax
+    js .L_tl_process_wait_failed
+    movq -72(%rbp), %rdi
+    call .L_tl_process_read_all
+    movq %rax, -112(%rbp)
+    movq -72(%rbp), %rdi
+    call .L_tl_process_close_fd
+    movq -112(%rbp), %rax
+    cmpq $0, 8(%rax)
+    jne .L_tl_process_spawn_failed
+    movq -40(%rbp), %rdi
+    call .L_tl_process_seek_start
+    testq %rax, %rax
+    js .L_tl_process_wait_failed
+    movq -40(%rbp), %rdi
+    call .L_tl_process_read_all
+    movq %rax, -96(%rbp)
+    movq -40(%rbp), %rdi
+    call .L_tl_process_close_fd
+    movq -56(%rbp), %rdi
+    call .L_tl_process_seek_start
+    testq %rax, %rax
+    js .L_tl_process_wait_failed
+    movq -56(%rbp), %rdi
+    call .L_tl_process_read_all
+    movq %rax, -104(%rbp)
+    movq -56(%rbp), %rdi
+    call .L_tl_process_close_fd
+    movl -184(%rbp), %eax
+    movl %eax, %ecx
+    andl $127, %ecx
+    cmpl $0, %ecx
+    jne .L_tl_process_status_signal
+    shrl $8, %eax
+    andl $255, %eax
+    jmp .L_tl_process_status_ready
+.L_tl_process_status_signal:
+    movl %ecx, %eax
+    addl $128, %eax
+.L_tl_process_status_ready:
+    movslq %eax, %rdi
+    movq -96(%rbp), %rsi
+    movq -104(%rbp), %rdx
+    call .L_tl_process_make_ok
+    jmp .L_tl_process_return
+.L_tl_process_child:
+    movq -72(%rbp), %rdi
+    call .L_tl_process_close_fd
+    movq -40(%rbp), %rdi
+    movq $1, %rsi
+    movq $33, %rax
+    syscall
+    movq -56(%rbp), %rdi
+    movq $2, %rsi
+    movq $33, %rax
+    syscall
+    movq -40(%rbp), %rdi
+    call .L_tl_process_close_fd
+    movq -56(%rbp), %rdi
+    call .L_tl_process_close_fd
+    movq -16(%rbp), %rdi
+    movq -32(%rbp), %rsi
+    movq .L_tl_envp(%rip), %rdx
+    movq $59, %rax
+    syscall
+    movq $1, %rax
+    movq -80(%rbp), %rdi
+    leaq .L_tl_process_exec_marker(%rip), %rsi
+    movq $.L_tl_process_exec_marker_len, %rdx
+    syscall
+    movq $60, %rax
+    movq $127, %rdi
+    syscall
+.L_tl_process_spawn_failed:
+    leaq .L_tl_process_spawn_msg(%rip), %rdi
+    movq $.L_tl_process_spawn_msg_len, %rsi
+    movq $1, %rdx
+    call .L_tl_process_make_error
+    jmp .L_tl_process_return
+.L_tl_process_wait_failed:
+    leaq .L_tl_process_wait_msg(%rip), %rdi
+    movq $.L_tl_process_wait_msg_len, %rsi
+    movq $2, %rdx
+    call .L_tl_process_make_error
+.L_tl_process_return:
+    addq $232, %rsp
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    movq %rbp, %rsp
+    pop %rbp
+    ret
+
+.L_tl_process_close_fd:
+    movq $3, %rax
+    syscall
+    ret
+
+.L_tl_process_seek_start:
+    xorq %rsi, %rsi
+    xorq %rdx, %rdx
+    movq $8, %rax
+    syscall
+    ret
+
+.L_tl_process_cstring_from_string:
+    push %rbp
+    movq %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    movq %rdi, %r12
+    movq 0(%r12), %r13
+    movq 8(%r12), %rbx
+    leaq 1(%rbx), %rdi
+    call tl_alloc
+    movq %rax, %r14
+    xorq %rcx, %rcx
+.L_tl_process_cstring_copy:
+    cmpq %rbx, %rcx
+    jge .L_tl_process_cstring_done
+    movzbl (%r13,%rcx), %edx
+    movb %dl, (%r14,%rcx)
+    incq %rcx
+    jmp .L_tl_process_cstring_copy
+.L_tl_process_cstring_done:
+    movb $0, (%r14,%rbx)
+    movq %r14, %rax
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    movq %rbp, %rsp
+    pop %rbp
+    ret
+
+.L_tl_process_read_all:
+    push %rbp
+    movq %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    subq $8, %rsp
+    movq %rdi, %r12
+    movq $4096, %r13
+    movq %r13, %rdi
+    call tl_alloc
+    movq %rax, %r14
+    xorq %r15, %r15
+.L_tl_process_read_loop:
+    movq %r13, %rdx
+    subq %r15, %rdx
+    cmpq $1024, %rdx
+    jl .L_tl_process_read_grow
+    movq $0, %rax
+    movq %r12, %rdi
+    leaq (%r14,%r15), %rsi
+    syscall
+    testq %rax, %rax
+    js .L_tl_process_read_done
+    jz .L_tl_process_read_done
+    addq %rax, %r15
+    jmp .L_tl_process_read_loop
+.L_tl_process_read_grow:
+    movq %r13, %rdi
+    shlq $1, %rdi
+    movq %rdi, %r13
+    call tl_alloc
+    movq %rax, %r10
+    xorq %rbx, %rbx
+.L_tl_process_read_copy:
+    cmpq %r15, %rbx
+    jge .L_tl_process_read_copy_done
+    movzbl (%r14,%rbx), %eax
+    movb %al, (%r10,%rbx)
+    incq %rbx
+    jmp .L_tl_process_read_copy
+.L_tl_process_read_copy_done:
+    movq %r10, %r14
+    jmp .L_tl_process_read_loop
+.L_tl_process_read_done:
+    movq $16, %rdi
+    call tl_alloc
+    movq %r14, 0(%rax)
+    movq %r15, 8(%rax)
+    addq $8, %rsp
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    movq %rbp, %rsp
+    pop %rbp
+    ret
+
+.L_tl_process_make_ok:
+    push %rbp
+    movq %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    subq $8, %rsp
+    movq %rdi, %rbx
+    movq %rsi, %r12
+    movq %rdx, %r13
+    movq $24, %rdi
+    call tl_alloc
+    movq %rbx, 0(%rax)
+    movq %r12, 8(%rax)
+    movq %r13, 16(%rax)
+    movq %rax, %r12
+    movq $16, %rdi
+    call tl_alloc
+    movq $0, 0(%rax)
+    movq %r12, 8(%rax)
+    addq $8, %rsp
+    pop %r13
+    pop %r12
+    pop %rbx
+    movq %rbp, %rsp
+    pop %rbp
+    ret
+
+.L_tl_process_make_error:
+    push %rbp
+    movq %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    movq %rdi, %r12
+    movq %rsi, %r13
+    movq %rdx, %r14
+    movq $16, %rdi
+    call tl_alloc
+    movq %r12, 0(%rax)
+    movq %r13, 8(%rax)
+    movq %rax, %r12
+    movq $16, %rdi
+    call tl_alloc
+    movq %r14, 0(%rax)
+    movq %r12, 8(%rax)
+    movq %rax, %r12
+    movq $16, %rdi
+    call tl_alloc
+    movq $1, 0(%rax)
+    movq %r12, 8(%rax)
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    movq %rbp, %rsp
+    pop %rbp
+    ret
+
+")
+
 (define (compiler-backend-runtime-stdin-abort) : String
   "    movq $1, %rax
     movq $2, %rdi
@@ -5456,6 +5972,7 @@ tl_string_concat:
         read-file
         write-file
         file-exists
+        process-output
         read-line
         read-bytes
         stdin-eof
@@ -5565,6 +6082,12 @@ tl_string_concat:
               (compiler-backend-runtime-windows-file-exists-status-functions)
               (compiler-backend-runtime-file-exists-status-functions))
             "")]
+        [process-output-asm : String
+          (if process-output
+            (if (compiler-backend-target-windows? target)
+              (compiler-backend-runtime-windows-process-output-functions)
+              (compiler-backend-runtime-process-output-functions))
+            "")]
         [read-line-asm : String
           (if read-line
             (if (compiler-backend-target-windows? target)
@@ -5636,12 +6159,14 @@ tl_string_concat:
                                             (string-append
                                               file-exists-status-asm
                                               (string-append
-                                                read-line-asm
+                                                process-output-asm
                                                 (string-append
-                                                  read-bytes-asm
+                                                  read-line-asm
                                                   (string-append
-                                                    stdin-eof-asm
-                                                    flush-stdout-asm)))))))))))))))))))))))]))
+                                                    read-bytes-asm
+                                                    (string-append
+                                                      stdin-eof-asm
+                                                      flush-stdout-asm))))))))))))))))))))))))]))
 
 ;; Argument register for call arg `idx` under the target's calling convention.
 ;; System V (Linux) uses rdi/rsi/rdx/rcx/r8/r9 via `compiler-backend-arg-reg`;
@@ -5693,18 +6218,34 @@ tl_string_concat:
     [(BackendTargetLinux) ".text\n.globl _start\n"]
     [(BackendTargetWindows) ".text\n.globl main\n"]))
 
-(define (compiler-backend-entry [capture-argv : bool]) : String
-  (if capture-argv
-    "_start:
+(define (compiler-backend-entry [capture-argv : bool] [capture-env : bool]) : String
+  (if (or capture-argv capture-env)
+    (string-append
+      "_start:
     movq (%rsp), %rax
-    movq %rax, .L_tl_argc(%rip)
+"
+      (string-append
+        (if capture-argv
+          "    movq %rax, .L_tl_argc(%rip)
     leaq 8(%rsp), %rax
     movq %rax, .L_tl_argv(%rip)
-    call main
+"
+          "")
+        (string-append
+          (if capture-env
+            (string-append
+              (if capture-argv
+                "    movq (%rsp), %rax\n"
+                "")
+              "    leaq 16(%rsp,%rax,8), %rax
+    movq %rax, .L_tl_envp(%rip)
+")
+            "")
+          "    call main
     movq %rax, %rdi
     movq $60, %rax
     syscall
-"
+")))
     "_start:\n    call main\n    movq %rax, %rdi\n    movq $60, %rax\n    syscall\n"))
 
 (define (compiler-backend-entry-for-target
@@ -5713,8 +6254,29 @@ tl_string_concat:
   (match target
     [(BackendTargetLinux)
       (match plan
-        [(BackendRuntimePlan _ _ _ _ _ _ _ _ _ arg-count arg _ _ _ _ _ _ _ _ _)
-          (compiler-backend-entry (or arg-count arg))])]
+        [(BackendRuntimePlan
+            _
+            _
+            _
+            _
+            _
+            _
+            _
+            _
+            _
+            arg-count
+            arg
+            _
+            _
+            _
+            process-output
+            _
+            _
+            _
+            _
+            _
+            _)
+          (compiler-backend-entry (or arg-count arg) process-output)])]
     [(BackendTargetWindows) ""]))
 
 (define (compiler-backend-target-windows? [target : CompilerBackendTarget]) : bool
@@ -5740,6 +6302,7 @@ tl_string_concat:
         read-file
         write-file
         file-exists
+        process-output
         read-line
         read-bytes
         stdin-eof
@@ -5765,9 +6328,11 @@ tl_string_concat:
               read-file
               write-file
               file-exists
-              read-line
-              read-bytes)
-            (or stdin-eof (or flush-stdout (or region-mark region-reset))))))]))
+              process-output
+              read-line)
+            (or
+              read-bytes
+              (or stdin-eof (or flush-stdout (or region-mark region-reset)))))))]))
 
 (define (compiler-backend-target-runtime-ok?
   [target : CompilerBackendTarget]
@@ -5775,6 +6340,7 @@ tl_string_concat:
   (if (compiler-backend-target-windows? target)
     (match plan
       [(BackendRuntimePlan
+          _
           _
           _
           _
@@ -5977,6 +6543,24 @@ tl_string_concat:
               (set! done true)))
           found)))))
 
+(define (compiler-backend-string-count [text : String] [needle : String]) : i64
+  (let
+    [text-len : i64 (string-length text)]
+    [needle-len : i64 (string-length needle)]
+    (if (= needle-len 0)
+      0
+      (let
+        [i : i64 0]
+        [count : i64 0]
+        (begin
+          (while (<= (+ i needle-len) text-len)
+            (if (compiler-backend-string-prefix-at? text needle i)
+              (begin
+                (set! count (+ count 1))
+                (set! i (+ i needle-len)))
+              (set! i (+ i 1))))
+          count)))))
+
 (define (compiler-backend-runtime-helper-externs) : CompilerIrExternList
   (IrExternCons
     (IrExtern "tl_alloc" (AstTyI64))
@@ -6004,7 +6588,13 @@ tl_string_concat:
                           (IrExtern ".L_tl_write_file" (AstTyUnit))
                           (IrExternCons
                             (IrExtern ".L_tl_file_exists" (AstTyBool))
-                            IrExternNil))))))))))))))
+                            (IrExternCons
+                              (IrExtern
+                                "tl_process_output"
+                                (AstTyFunc
+                                  (AstTypeCons (AstTyI64) AstTypeNil)
+                                  (AstTyI64)))
+                              IrExternNil)))))))))))))))
 
 (define (compiler-backend-runtime-helper-program) : CompilerIrProgram
   (IrProgram
@@ -6118,6 +6708,18 @@ tl_string_concat:
             (compiler-backend-string-contains? asm ".L_tl_read_stdin_bytes:\n")
             (compiler-backend-string-contains? asm ".L_tl_stdin_eof:\n")
             (compiler-backend-string-contains? asm ".L_tl_flush_stdout:\n"))]
+        [process-labels : bool
+          (and
+            (backend-and4
+              (compiler-backend-string-contains? asm "tl_process_output:\n")
+              (compiler-backend-string-contains?
+                asm
+                ".L_tl_process_read_all:\n")
+              (compiler-backend-string-contains?
+                asm
+                ".L_tl_process_exec_marker:")
+              (compiler-backend-string-contains? asm ".L_tl_envp:\n"))
+            (compiler-backend-string-contains? asm "process: spawn failed"))]
         [no-externs : bool
           (and
             (backend-and8
@@ -6178,10 +6780,15 @@ tl_string_concat:
                   (compiler-backend-string-contains?
                     asm
                     ".extern .L_tl_write_file\n")))
-              (not
-                (compiler-backend-string-contains?
-                  asm
-                  ".extern .L_tl_file_exists\n"))))]
+              (and
+                (not
+                  (compiler-backend-string-contains?
+                    asm
+                    ".extern .L_tl_file_exists\n"))
+                (not
+                  (compiler-backend-string-contains?
+                    asm
+                    ".extern tl_process_output\n")))))]
         (and
           base-labels
           (and
@@ -6193,14 +6800,16 @@ tl_string_concat:
                 (and
                   stdio-labels
                   (and
-                    no-externs
+                    process-labels
                     (and
-                      (compiler-backend-string-contains?
-                        asm
-                        "    call tl_alloc\n")
-                      (compiler-backend-string-contains?
-                        asm
-                        ".L_tl_stdin_eof_flag:\n")))))))))]
+                      no-externs
+                      (and
+                        (compiler-backend-string-contains?
+                          asm
+                          "    call tl_alloc\n")
+                        (compiler-backend-string-contains?
+                          asm
+                          ".L_tl_stdin_eof_flag:\n"))))))))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-windows-driver-runtime-source) : String
@@ -7132,6 +7741,59 @@ tl_string_concat:
       34
       9)))
 
+(define (compiler-backend-optimizer-rewrite-diagnostic-ok?) : bool
+  (let
+    [phi : CompilerIrInstr
+      (IrInstrPhi
+        0
+        (IrPhiInputCons (IrPhiInput (IrValueF64 "1.0") "entry") IrPhiInputNil)
+        (AstTyI64))]
+    [program : CompilerIrProgram
+      (IrProgram
+        IrGlobalNil
+        (IrFunctionCons
+          (IrFunction
+            "main"
+            IrParamNil
+            (AstTyI64)
+            4
+            (IrBlockCons
+              (IrBlock "entry" (IrInstrCons (IrInstrJump "join") IrInstrNil))
+              (IrBlockCons
+                (IrBlock
+                  "join"
+                  (IrInstrCons
+                    phi
+                    (IrInstrCons
+                      (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+                      IrInstrNil)))
+                IrBlockNil)))
+          IrFunctionNil)
+        IrExternNil)]
+    [spans : CompilerSourceSpans
+      (compiler-source-spans-insert-instr
+        (compiler-source-spans-insert
+          (compiler-source-spans-empty)
+          "main"
+          (compiler-backend-test-span 10 2))
+        "main"
+        phi
+        (compiler-backend-test-span 55 13))]
+    (match (optimize-program-with-spans program spans)
+      [(CompilerOptimizedProgram optimized optimized-spans)
+        (match (compiler-backend-emit-program-with-spans
+          optimized
+          optimized-spans)
+          [(ErrCompilerBackend diag)
+            (and
+              (string-eq
+                (compiler-diagnostic-message diag)
+                "backend: f64 values are not supported yet")
+              (and
+                (= (compiler-diagnostic-line diag) 55)
+                (= (compiler-diagnostic-col diag) 13)))]
+          [(OkCompilerBackend _) false])])))
+
 (define (compiler-backend-instr-contains?
   [instr : CompilerIrInstr]
   [needle : String]) : bool
@@ -7147,6 +7809,7 @@ tl_string_concat:
     CompilerRegVarTypeNil
     (AstTyI64)
     (BackendRuntimePlan
+      false
       false
       false
       false
@@ -7191,9 +7854,13 @@ tl_string_concat:
           (compiler-backend-instr-contains?
             (IrInstrStorePtr (IrValueVar 1) (IrValueI64 7) (AstTyI32))
             "    movl %eax, (%r10)\n")
-          (compiler-backend-instr-contains?
-            (IrInstrCast 6 (IrValueVar 5) (AstTyI8) (AstTyI64))
-            "    movsbq -48(%rbp), %rax\n"))))))
+          (and
+            (compiler-backend-instr-contains?
+              (IrInstrCast 6 (IrValueVar 5) (AstTyI8) (AstTyI64))
+              "    movsbq -48(%rbp), %rax\n")
+            (compiler-backend-instr-contains?
+              (IrInstrBoundsCheck (IrValueVar 1) (IrValueVar 2) "bounds_ok")
+              "    jb .L_tl_test_bounds_ok\n")))))))
 
 ;; A source exercising `array-ref`, used to confirm the lowerer's bounds-check
 ;; trap (#528) reaches the backend as a `call tl_oob_abort`.
@@ -7259,6 +7926,86 @@ tl_string_concat:
                     (compiler-backend-string-contains?
                       asm
                       ".extern tl_region_reset\n"))))))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-process-output-source) : String
+  "(extern tl_process_output : (-> i64 i64))
+(define (main) : i64 (tl_process_output 0))")
+
+(define (compiler-backend-process-output-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-process-output-source))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "tl_process_output:\n")
+        (and
+          (compiler-backend-string-contains? asm "    call tl_process_output\n")
+          (and
+            (not
+              (compiler-backend-string-contains?
+                asm
+                ".extern tl_process_output\n"))
+            (and
+              (not
+                (compiler-backend-string-contains? asm "_tl_tl_process_output"))
+              (and
+                (compiler-backend-string-contains?
+                  asm
+                  ".L_tl_process_read_all:\n")
+                (and
+                  (compiler-backend-string-contains?
+                    asm
+                    ".L_tl_process_exec_marker:")
+                  (and
+                    (compiler-backend-string-contains? asm ".L_tl_envp:\n")
+                    (and
+                      (compiler-backend-string-contains?
+                        asm
+                        "    movq $57, %rax\n")
+                      (and
+                        (compiler-backend-string-contains?
+                          asm
+                          "    movq $59, %rax\n")
+                        (and
+                          (compiler-backend-string-contains?
+                            asm
+                            "    movq $61, %rax\n")
+                          (and
+                            (compiler-backend-string-contains?
+                              asm
+                              "    movq $319, %rax\n")
+                            (and
+                              (compiler-backend-string-contains?
+                                asm
+                                "    movq $293, %rax\n")
+                              (compiler-backend-string-contains?
+                                asm
+                                "tl_alloc:\n")))))))))))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-windows-process-output-ok?) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-process-output-source)
+    (BackendTargetWindows))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "tl_process_output:\n")
+        (and
+          (compiler-backend-string-contains?
+            asm
+            "process: runtime execution is not supported on this target")
+          (and
+            (not
+              (compiler-backend-string-contains?
+                asm
+                ".extern tl_process_output\n"))
+            (and
+              (not
+                (compiler-backend-string-contains? asm "_tl_tl_process_output"))
+              (and
+                (not (compiler-backend-string-contains? asm "    syscall"))
+                (and
+                  (not (compiler-backend-string-contains? asm ".L_tl_envp:\n"))
+                  (compiler-backend-string-contains? asm "tl_alloc:\n")))))))]
     [(ErrCompilerBackend _) false]))
 
 ;; A refutable literal payload match (#651) lowers to a payload comparison that
@@ -7451,16 +8198,22 @@ tl_string_concat:
                             (and
                               (compiler-backend-instr-diagnostics-ok?)
                               (and
-                                (compiler-backend-runtime-helper-asm-ok?)
+                                (compiler-backend-optimizer-rewrite-diagnostic-ok?)
                                 (and
-                                  (compiler-backend-alloc-runtime-arena-ok?)
+                                  (compiler-backend-runtime-helper-asm-ok?)
                                   (and
-                                    (compiler-backend-region-ok?)
+                                    (compiler-backend-alloc-runtime-arena-ok?)
                                     (and
-                                      (compiler-backend-user-helper-name-ok?)
+                                      (compiler-backend-region-ok?)
                                       (and
-                                        (compiler-backend-runtime-coexist-ok?)
-                                        (compiler-backend-module-symbol-ok?))))))))))))))))))))
+                                        (compiler-backend-process-output-ok?)
+                                        (and
+                                          (compiler-backend-windows-process-output-ok?)
+                                          (and
+                                            (compiler-backend-user-helper-name-ok?)
+                                            (and
+                                              (compiler-backend-runtime-coexist-ok?)
+                                              (compiler-backend-module-symbol-ok?)))))))))))))))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

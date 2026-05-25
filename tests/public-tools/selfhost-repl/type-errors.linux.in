@@ -1,0 +1,4 @@
+.type
+.type (define answer : i64 41)
+.type true
+.exit

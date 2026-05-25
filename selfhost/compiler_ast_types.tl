@@ -75,9 +75,13 @@
   (AstTyArray AstType i64)
   (AstTyDynArray AstType)
   (AstTyRegion String AstType)
+  (AstTyRef String AstType)
+  (AstTyMutRef String AstType)
   (AstTyEnum String)
   (AstTyStruct String)
-  (AstTyVar String))
+  (AstTyVar String)
+  (AstTyPtr AstType)
+  (AstTyMutPtr AstType))
 
 (defenum AstTypeList
   (AstTypeNil)
@@ -100,6 +104,10 @@
 (defenum AstFieldDefList
   (AstFieldDefNil)
   (AstFieldDefCons AstFieldDef AstFieldDefList))
+
+(defenum AstStructRepr
+  (AstStructReprDefault)
+  (AstStructReprC))
 
 (defenum AstVariantDef
   (AstVariantDef String AstTypeList))
@@ -192,7 +200,7 @@
   (AstDeclDefFn String AstParamList AstType AstExpr)
   (AstDeclExtern String AstType)
   (AstDeclDefEnum String AstVariantDefList)
-  (AstDeclDefStruct String AstFieldDefList)
+  (AstDeclDefStruct String AstStructRepr AstFieldDefList)
   (AstDeclImport AstImportSpec)
   (AstDeclTest String AstExpr AstSourceSpan)
   (AstDeclComptimeDecl AstDecl))
@@ -234,9 +242,13 @@
     [(AstTyArray _ _) 18]
     [(AstTyDynArray _) 19]
     [(AstTyRegion _ _) 20]
-    [(AstTyEnum _) 21]
-    [(AstTyStruct _) 22]
-    [(AstTyVar _) 23]))
+    [(AstTyRef _ _) 21]
+    [(AstTyMutRef _ _) 22]
+    [(AstTyEnum _) 23]
+    [(AstTyStruct _) 24]
+    [(AstTyVar _) 25]
+    [(AstTyPtr _) 26]
+    [(AstTyMutPtr _) 27]))
 
 (define (ast-expr-tag [expr : AstExpr]) : i64
   (match expr
@@ -281,11 +293,16 @@
     [(AstDeclDefFn _ _ _ _) 2]
     [(AstDeclExtern _ _) 3]
     [(AstDeclDefEnum _ _) 4]
-    [(AstDeclDefStruct _ _) 5]
+    [(AstDeclDefStruct _ _ _) 5]
     [(AstDeclImport _) 6]
     [(AstDeclTest _ _ _) 7]
     [(AstDeclComptimeDecl _) 8]
     [(AstDeclModule _) 9]))
+
+(define (ast-struct-repr-c? [repr : AstStructRepr]) : bool
+  (match repr
+    [(AstStructReprC) true]
+    [(AstStructReprDefault) false]))
 
 (define (compiler-ast-smoke) : i64
   (let

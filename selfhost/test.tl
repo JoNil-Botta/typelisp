@@ -19,7 +19,7 @@
   (TestModeCheck))
 
 (defenum TestConfig
-  (TestConfig String String String CompilerLoadRootList TestMode))
+  (TestConfig String String String CompilerLoadRootList i64 TestMode))
 
 (defenum ResultTestConfig
   (OkTestConfig TestConfig)
@@ -50,6 +50,9 @@
 (define (tltest-unsupported-mode [value : String]) : String
   (host-plan-cat3 "test: backend mode " value " is not implemented"))
 
+(define (tltest-invalid-opt-level [value : String]) : String
+  (host-plan-cat3 "test: invalid --opt-level " value "; expected 0, 1, 2, or 3"))
+
 (define (tltest-parse-options
   [idx : i64]
   [count : i64]
@@ -58,10 +61,12 @@
   [target : String]
   [mode : String]
   [roots : CompilerLoadRootList]
+  [has-opt-level : bool]
+  [opt-level : i64]
   [test-mode : TestMode]) : ResultTestConfig
   (if (>= idx count)
     (if has-source
-      (OkTestConfig (TestConfig source target mode roots test-mode))
+      (OkTestConfig (TestConfig source target mode roots opt-level test-mode))
       (ErrTestConfig "test: expected source path"))
     (let
       [current : String (arg idx)]
@@ -74,6 +79,8 @@
           target
           mode
           roots
+          has-opt-level
+          opt-level
           TestModeCheck)
         (if (string-eq current "--target")
           (if (>= (+ idx 1) count)
@@ -89,6 +96,8 @@
                   value
                   mode
                   roots
+                  has-opt-level
+                  opt-level
                   test-mode)
                 (ErrTestConfig (tltest-unknown-target value)))))
           (if (string-eq current "--backend-mode")
@@ -106,6 +115,8 @@
                       target
                       value
                       roots
+                      has-opt-level
+                      opt-level
                       test-mode)
                     (ErrTestConfig (tltest-unsupported-mode value)))
                   (ErrTestConfig (tltest-unknown-mode value)))))
@@ -120,20 +131,47 @@
                   target
                   mode
                   (tltest-root-cons (arg (+ idx 1)) roots)
+                  has-opt-level
+                  opt-level
                   test-mode))
-              (if (host-plan-flag? current)
-                (ErrTestConfig (string-append "test: unknown flag " current))
-                (if has-source
-                  (ErrTestConfig "test: accepts only one source file")
-                  (tltest-parse-options
-                    (+ idx 1)
-                    count
-                    current
-                    true
-                    target
-                    mode
-                    roots
-                    test-mode))))))))))
+              (if (string-eq current "--opt-level")
+                (if (>= (+ idx 1) count)
+                  (ErrTestConfig "test: --opt-level requires a value")
+                  (if has-opt-level
+                    (ErrTestConfig
+                      "test: --opt-level was provided more than once")
+                    (let
+                      [value : String (arg (+ idx 1))]
+                      (match (compiler-optimize-parse-level value)
+                        [(OkCompilerOptimizeLevel parsed-level)
+                          (tltest-parse-options
+                            (+ idx 2)
+                            count
+                            source
+                            has-source
+                            target
+                            mode
+                            roots
+                            true
+                            parsed-level
+                            test-mode)]
+                        [(ErrCompilerOptimizeLevel)
+                          (ErrTestConfig (tltest-invalid-opt-level value))]))))
+                (if (host-plan-flag? current)
+                  (ErrTestConfig (string-append "test: unknown flag " current))
+                  (if has-source
+                    (ErrTestConfig "test: accepts only one source file")
+                    (tltest-parse-options
+                      (+ idx 1)
+                      count
+                      current
+                      true
+                      target
+                      mode
+                      roots
+                      has-opt-level
+                      opt-level
+                      test-mode)))))))))))
 
 (define (tltest-config [count : i64]) : ResultTestConfig
   (tltest-parse-options
@@ -144,6 +182,8 @@
     "linux-x86_64"
     "scalar"
     CompilerLoadRootNil
+    false
+    (compiler-optimize-default-level)
     TestModeRun))
 
 (define (tltest-decl-list-reverse-in [items : AstDeclList] [out : AstDeclList]) : AstDeclList
@@ -408,24 +448,27 @@
   [program : AstProgram]
   [paths : AstDeclPathList]
   [target : String]
-  [mode : String]) : i64
+  [mode : String]
+  [opt-level : i64]) : i64
   (match (lower-compiler-program-with-decl-paths source program paths)
     [(OkCompilerLower ir spans)
-      (match (compiler-backend-emit-program-with-spans-for-target
-        (optimize-program ir)
-        spans
-        (tltest-backend-target target))
-        [(OkCompilerBackend asm)
-          (let
-            [asm-path : String (tltest-scratch-asm-path source)]
-            (begin
-              (write-file asm-path asm)
-              (print-string (tltest-plan asm-path target mode))
-              0))]
-        [(ErrCompilerBackend diag)
-          (begin
-            (print-error (compiler-diagnostic-render diag))
-            1)])]
+      (match (optimize-program-with-spans-and-level ir spans opt-level)
+        [(CompilerOptimizedProgram optimized optimized-spans)
+          (match (compiler-backend-emit-program-with-spans-for-target
+            optimized
+            optimized-spans
+            (tltest-backend-target target))
+            [(OkCompilerBackend asm)
+              (let
+                [asm-path : String (tltest-scratch-asm-path source)]
+                (begin
+                  (write-file asm-path asm)
+                  (print-string (tltest-plan asm-path target mode))
+                  0))]
+            [(ErrCompilerBackend diag)
+              (begin
+                (print-error (compiler-diagnostic-render diag))
+                1)])])]
     [(ErrCompilerLower diag)
       (begin
         (print-error (compiler-diagnostic-render diag))
@@ -433,7 +476,7 @@
 
 (define (tltest-run-config [config : TestConfig]) : i64
   (match config
-    [(TestConfig source target mode roots test-mode)
+    [(TestConfig source target mode roots opt-level test-mode)
       (match (compiler-load-file-with-paths-and-roots
         source
         (sym-i64-empty)
@@ -445,7 +488,13 @@
                 [(TestModeCheck)
                   (tltest-check-only program harness-paths count)]
                 [(TestModeRun)
-                  (tltest-run-plan source program harness-paths target mode)])])]
+                  (tltest-run-plan
+                    source
+                    program
+                    harness-paths
+                    target
+                    mode
+                    opt-level)])])]
         [(ErrCompilerLoadWithPaths diag)
           (begin
             (print-error (compiler-diagnostic-render diag))

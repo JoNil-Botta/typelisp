@@ -1,0 +1,2 @@
+.type (begin (print-string "ran") 1)
+.exit

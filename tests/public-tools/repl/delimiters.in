@@ -1,0 +1,6 @@
+(begin
+  (print-string "not closing )")
+  #\)'
+  ; comment with ( and )
+  1)
+.exit

@@ -108,15 +108,20 @@ end
 case|selfhost_compile|selfhost/compile.tl|assembly|exactly-one|direct
 contains|_tl_compile_cli_config:
 contains|_tl_compile_cli_target:
+contains|_tl_compile_cli_invalid_opt_level:
 contains|_tl_compile_cli_root_list_append:
 contains|_tl_compiler_driver_compile_file:
 contains|_tl_compiler_driver_compile_file_with_roots:
+contains|_tl_compiler_driver_compile_file_with_roots_and_level:
 contains|_tl_compiler_driver_compile_file_for_target:
 contains|_tl_compiler_driver_compile_file_for_target_with_roots:
+contains|_tl_compiler_driver_compile_file_for_target_with_roots_and_level:
 contains|_tl_compiler_backend_emit_program_with_spans_for_target:
 contains|compile: expected source path
 contains|compile: --target requires a value
 contains|compile: --stdlib-root requires a value
+contains|compile: --opt-level requires a value
+contains|compile: invalid --opt-level
 contains|Error: unknown target '
 contains|--emit-ir
 end
@@ -156,6 +161,12 @@ contains|_tl_compiler_backend_emit_source:
 contains|_tl_lower_compiler_source:
 end
 
+case|selfhost_compiler_bounds_check_smoke|selfhost/compiler_bounds_check_smoke.tl|assembly|exactly-one|direct
+contains|_tl_bounds_check_smoke_program:
+contains|_tl_compiler_backend_emit_program:
+contains|_tl_optimize_program:
+end
+
 case|selfhost_compiler_backend_stack_args_fixture|selfhost/compiler_backend_stack_args_fixture.tl|assembly|exactly-one|direct
 contains|_tl_compiler_backend_stack_args_fixture_for_name:
 contains|windows-x86_64
@@ -179,12 +190,18 @@ case|selfhost_compiler_ctfe|selfhost/compiler_ctfe.tl|assembly|skip|direct
 contains|_tl_compiler_ctfe_eval:
 contains|_tl_ctfe_eval_node:
 contains|_tl_ctfe_value_to_literal:
+contains|_tl_compiler_ctfe_self_test:
+end
+
+case|selfhost_compiler_ctfe_smoke|selfhost/compiler_ctfe_smoke.tl|assembly|exactly-one|direct
+contains|_tl_compiler_ctfe_self_test:
 end
 
 case|selfhost_compiler_diagnostic|selfhost/compiler_diagnostic.tl|assembly|skip|direct
 contains|_tl_compiler_diagnostic_render:
 contains|_tl_compiler_diagnostic_at_start:
 contains|_tl_compiler_diagnostic_from_source_error:
+contains|_tl_compiler_diagnostic_self_test:
 end
 
 case|selfhost_compiler_driver|selfhost/compiler_driver.tl|assembly|exactly-one|direct
@@ -196,8 +213,10 @@ end
 
 case|selfhost_compiler_driver_core|selfhost/compiler_driver_core.tl|assembly|skip|direct
 contains|_tl_compiler_driver_compile_file:
+contains|_tl_compiler_driver_compile_file_with_roots_and_level:
 contains|_tl_compiler_driver_compile_file_for_target:
 contains|_tl_compiler_driver_emit_file:
+contains|_tl_compiler_driver_emit_file_with_target_roots_and_level:
 contains|_tl_compiler_driver_emit_file_for_target:
 contains|_tl_compiler_backend_emit_program_with_spans_for_target:
 contains|_tl_compiler_backend_emit_source:
@@ -207,6 +226,12 @@ case|selfhost_compiler_ir_types|selfhost/compiler_ir_types.tl|assembly|skip|dire
 contains|_tl_compiler_ir_program_summary:
 contains|_tl_compiler_ir_summary_globals:
 contains|_tl_compiler_ir_summary_functions:
+contains|_tl_compiler_ir_instr_effect:
+contains|_tl_compiler_ir_effect_self_test:
+end
+
+case|selfhost_compiler_ir_types_smoke|selfhost/compiler_ir_types_smoke.tl|assembly|exactly-one|direct
+contains|_tl_compiler_ir_effect_self_test:
 end
 
 case|selfhost_compiler_liveness|selfhost/compiler_liveness.tl|assembly|skip|direct
@@ -241,16 +266,21 @@ end
 
 case|selfhost_compiler_optimize|selfhost/compiler_optimize.tl|assembly|skip|direct
 contains|_tl_optimize_program:
+contains|_tl_optimize_program_with_level:
 contains|_tl_opt_fold_instrs:
 contains|_tl_opt_strength_instrs:
 contains|_tl_compiler_optimize_self_test:
 contains|_tl_compiler_optimize_strength_self_test:
+contains|_tl_compiler_optimize_bounds_self_test:
+contains|_tl_compiler_optimize_level_self_test:
 end
 
 case|selfhost_compiler_optimize_smoke|selfhost/compiler_optimize_smoke.tl|assembly|exactly-one|direct
 contains|_tl_compiler_optimize_self_test:
 contains|_tl_compiler_optimize_strength_self_test:
+contains|_tl_compiler_optimize_bounds_self_test:
 contains|_tl_optimize_program:
+contains|_tl_compiler_optimize_level_self_test:
 end
 
 case|selfhost_compiler_parse_core|selfhost/compiler_parse_core.tl|assembly|skip|direct
@@ -264,6 +294,7 @@ end
 
 case|selfhost_compiler_parse_smoke|selfhost/compiler_parse_smoke.tl|assembly|exactly-one|direct
 contains|_tl_compiler_parse_smoke:
+contains|_tl_compiler_diagnostic_self_test:
 contains|_tl_parse_ast_source:
 end
 
@@ -355,6 +386,40 @@ contains|_tl_doc_html_smoke:
 contains|_tl_doc_html_render_module_page:
 contains|_tl_doc_html_render_module_graph:
 contains|_tl_doc_render_anchor:
+contains|_tl_doc_extract_source:
+contains|_tl_format_lex:
+end
+
+case|selfhost_doc_site_core|selfhost/doc_site_core.tl|assembly|skip|direct
+contains|_tl_doc_site_build:
+contains|_tl_doc_site_render_index:
+contains|_tl_doc_site_css:
+contains|_tl_doc_html_render_module_page:
+contains|_tl_doc_extract_source:
+contains|.L_tl_read_file_status:
+contains|.L_tl_write_file_status:
+contains|.L_tl_fs_mkdir_status:
+contains|stdlib-io.html
+contains|typelisp-docs.css
+contains|doc-site: missing input module:
+contains|doc-site: duplicate output path in stdlib manifest
+end
+
+case|selfhost_doc_site|selfhost/doc_site.tl|assembly|exactly-one|direct
+contains|_tl_doc_site_build:
+contains|_tl_doc_site_usage:
+contains|_tl_doc_site_render_index:
+contains|_tl_doc_html_render_module_page:
+contains|.L_tl_arg_count:
+contains|.L_tl_arg:
+contains|typelisp-docs.css
+contains|doc-site: expected zero args or output directory
+end
+
+case|selfhost_doc_site_smoke|selfhost/doc_site_smoke.tl|assembly|exactly-one|direct
+contains|_tl_doc_site_smoke:
+contains|_tl_doc_site_render_index:
+contains|_tl_doc_html_render_module_page:
 contains|_tl_doc_extract_source:
 contains|_tl_format_lex:
 end
@@ -456,6 +521,9 @@ case|selfhost_lex|selfhost/lex.tl|assembly|skip|direct
 contains|_tl_lex:
 contains|_tl_lex_result:
 contains|_tl_lex_span_self_test:
+contains|_tl_lex_basic_token_sequence_ok_question:
+contains|_tl_lex_char_literals_ok_question:
+contains|_tl_lex_error_spans_ok_question:
 contains|lexer: unexpected character
 end
 
@@ -524,10 +592,14 @@ end
 case|selfhost_test|selfhost/test.tl|assembly|skip|direct
 contains|_tl_tltest_run_config:
 contains|_tl_tltest_build_harness:
+contains|_tl_tltest_invalid_opt_level:
+contains|_tl_optimize_program_with_level:
 contains|_tl_compiler_backend_emit_program_with_spans_for_target:
 contains|run-scratch-assembly
 contains|scratch-assembly-path
 contains|test: expected source path
+contains|test: --opt-level requires a value
+contains|test: invalid --opt-level
 end
 
 case|selfhost_sym_i64_env|selfhost/sym_i64_env.tl|assembly|skip|direct

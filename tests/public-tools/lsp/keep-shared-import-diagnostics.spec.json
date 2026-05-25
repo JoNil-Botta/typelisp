@@ -1,0 +1,8 @@
+{
+  "exit": 0,
+  "stderr_exact": "",
+  "message_checks": [
+    {"raw_contains": "\"code\":\"E0200\"", "raw_contains": "${{TMP_URI}}/lib.tl"},
+    {"raw_contains": "\"diagnostics\":[]", "raw_not_contains": "${{TMP_URI}}/lib.tl"}
+  ]
+}

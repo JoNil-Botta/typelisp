@@ -302,9 +302,9 @@ EOF
         "call tl_substring" \
         "call tl_string_concat" \
         "tl_oob_abort:" \
-        "str_bounds_fail" \
+        "jb .Lmain_str_bounds_ok" \
+        ".Lmain_str_bounds_ok" \
         "substr_bounds_fail" \
-        "setb %al" \
         "setbe %al"
     do
         assert_contains "$_asm" "$_snippet" compiler-driver-string-runtime

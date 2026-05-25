@@ -122,6 +122,22 @@
           (string-append " " (string-append (int->string count) ")"))))]
     [(AstTyDynArray elem)
       (string-append "(Array " (string-append (repl-type-render elem) ")"))]
+    [(AstTyPtr elem)
+      (string-append "(Ptr " (string-append (repl-type-render elem) ")"))]
+    [(AstTyMutPtr elem)
+      (string-append "(MutPtr " (string-append (repl-type-render elem) ")"))]
+    [(AstTyRef region inner)
+      (string-append
+        "(& "
+        (string-append
+          region
+          (string-append " " (string-append (repl-type-render inner) ")"))))]
+    [(AstTyMutRef region inner)
+      (string-append
+        "(&mut "
+        (string-append
+          region
+          (string-append " " (string-append (repl-type-render inner) ")"))))]
     [(AstTyRegion region inner)
       (string-append
         "(in "

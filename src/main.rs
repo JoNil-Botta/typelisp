@@ -175,7 +175,9 @@ fn print_usage() {
         "    typelisp build [--manifest-path <typelisp.pkg>] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...]"
     );
     eprintln!("    typelisp fmt [--check] <file.tl>... [--stdlib-root <dir>...]");
-    eprintln!("    typelisp test [--check] <file.tl> [--target <target>] [--stdlib-root <dir>...]");
+    eprintln!(
+        "    typelisp test [--check] <file.tl> [--target <target>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...]"
+    );
     eprintln!("    typelisp doc <file.tl> [-o <out.md>] [--stdlib-root <dir>...]");
     eprintln!("    typelisp doc --test <file.tl> [--stdlib-root <dir>...]");
     eprintln!();
@@ -204,6 +206,7 @@ fn print_usage() {
     );
     eprintln!("Options for test:");
     eprintln!("    --check                        Typecheck inline tests without running them");
+    eprintln!("    --opt-level <0|1|2|3>          Select selfhost test harness optimization");
     eprintln!("Options for doc:");
     eprintln!("    --test <file.tl>               Check TypeLisp fenced examples in docs");
 }
@@ -231,7 +234,9 @@ fn print_fmt_usage() {
 
 fn print_test_usage() {
     eprintln!("Usage:");
-    eprintln!("    typelisp test [--check] <file.tl> [--target <target>] [--stdlib-root <dir>...]");
+    eprintln!(
+        "    typelisp test [--check] <file.tl> [--target <target>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...]"
+    );
 }
 
 fn find_selfhost_file(relative: &str) -> Option<PathBuf> {

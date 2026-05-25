@@ -240,6 +240,10 @@
       (compiler-live-set-union
         (compiler-live-value-vars dst)
         (compiler-live-value-vars src))]
+    [(IrInstrBoundsCheck index length _)
+      (compiler-live-set-union
+        (compiler-live-value-vars index)
+        (compiler-live-value-vars length))]
     [(IrInstrCast _ src _ _) (compiler-live-value-vars src)]
     [(IrInstrBinOp _ _ lhs rhs _)
       (compiler-live-set-union

@@ -100,6 +100,7 @@ fn compiler_lower_tl_compiles_to_assembly() {
         "_tl_lower_function:",
         "_tl_lower_expr:",
         "_tl_lower_make_array:",
+        "_tl_lower_emit_bounds_check:",
         "_tl_lower_call:",
         "_tl_lower_stdio_builtin_question:",
         "_tl_lower_stdio_runtime_name:",
@@ -134,6 +135,7 @@ fn compiler_lower_tl_compiles_to_assembly() {
         // Enum-match payload-load and phi-shape self-test assertion (#517).
         "_tl_compiler_lower_enum_match_shape_ok_question:",
         "_tl_compiler_lower_make_array_shape_ok_question:",
+        "_tl_compiler_lower_array_access_shape_ok_question:",
         "_tl_compiler_lower_result_try_shape_ok_question:",
         "_tl_compiler_lower_region_shape_ok_question:",
         "_tl_compiler_ir_program_summary:",

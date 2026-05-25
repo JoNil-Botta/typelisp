@@ -1,0 +1,3 @@
+(define (f) : i64 1)
+(define (f) : i64 2)
+.exit

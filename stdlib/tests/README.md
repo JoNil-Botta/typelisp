@@ -1,15 +1,20 @@
 # Stdlib Test Manifest
 
 `scripts/verify-stdlib.sh` runs the fixtures listed in its
-`stdlib_test_manifest` table. Each row maps a fixture path to the expected exit
+`stdlib_test_manifest` table and type-checks the fixtures listed in
+`stdlib_check_manifest`. Runnable rows map a fixture path to the expected exit
 code, stdout, stderr, and optional stdin. Use `-` for an empty stream,
 `literal:<text>` for exact inline text without a trailing newline,
 `printf:<escapes>` for printf-style escapes, `host-line:<text>` for one line
 using the host executable's newline convention, or a path under this directory
-for exact expected output bytes.
+for exact expected output bytes. Check-only rows map a fixture path to `pass` or
+`fail`; failure rows also name a diagnostic substring expected on stderr.
 
 Coverage notes:
 
+- `arena_policy.tl` exercises stdlib allocating APIs inside nested scoped
+  arenas. The `arena_policy_escape_*.tl` fixtures are check-only negative cases
+  proving active-arena stdlib results cannot escape their scoped arena.
 - `string_edges.tl` covers the public string predicates, trimming helpers,
   replacement paths, and prefix checks, including empty strings, empty needles,
   misses, prefix positions, and replacement edge cases.
@@ -29,12 +34,18 @@ Coverage notes:
 - `env_api.tl` covers missing, empty, and present environment variables,
   host-separator PATH splitting/joining, and explicit Windows `;` path-list
   behavior.
+- `hash_api.tl` covers stable deterministic hashes, equal-values-same-hash
+  checks, primitive key equality predicates, known collision behavior, hash
+  range normalization, and string edge cases.
 - `process_api.tl` covers command construction, argv append helpers,
   cwd/stdin/env accessors, invalid-command diagnostics, result/error predicates,
   and unsupported optional execution settings.
 - `process_runtime.tl` covers backend process execution for stdout, stderr,
   nonzero status, and failed spawn on Linux, plus the structured unsupported
   result on Windows.
+- `random_api.tl` covers deterministic seed normalization and MINSTD sequences,
+  bounded draws, invalid bounds, weighted-index edge cases, zero-weight
+  skipping, and stable picks for fixed seeds.
 - `text_buf_api.tl` covers empty buffers, repeated appends, char/int append
   helpers, buffer concatenation, clear/reset behavior, and rendering.
 - `test_assert_success.tl` covers successful assertion helpers. The

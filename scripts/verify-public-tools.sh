@@ -144,6 +144,27 @@ check_file_exact() {
     fi
 }
 
+assert_doctest_temp_cleaned() {
+    source_path=$1
+    temp_dir=$(dirname -- "$source_path")/.typelisp-doctest
+    [ ! -d "$temp_dir" ] || fail "$case_name left temp directory behind: $temp_dir"
+}
+
+host_netstring() {
+    value=$1
+    bytes=$(printf '%s' "$value" | wc -c | tr -d ' ')
+    printf '%s:%s' "$bytes" "$value"
+}
+
+host_plan_path() {
+    path=$1
+    if [ "$HOST_OS" = windows ] && command -v cygpath > /dev/null 2>&1; then
+        cygpath -w "$path"
+    else
+        printf '%s' "$path"
+    fi
+}
+
 echo "[public-tools] CLI usage and frontend aliases"
 run_cmd usage "$COMPILER" --help
 assert_success
@@ -196,6 +217,400 @@ run_cmd bad-target "$COMPILER" compile examples/hello.tl --target definitely-not
 assert_failure
 assert_stdout_empty
 assert_contains "$err" "unknown target"
+
+run_cmd debug-missing "$COMPILER" debug
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "Error: missing debug subcommand"
+assert_contains "$err" "typelisp debug tokenize <file.tl>"
+
+run_cmd debug-unknown "$COMPILER" debug wat
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "Unknown debug command: wat"
+assert_contains "$err" "typelisp debug check <file.tl>"
+
+DEBUG_CHECK="$WORKDIR/debug-check"
+mkdir -p "$DEBUG_CHECK/app" "$DEBUG_CHECK/repo-stdlib"
+cat > "$DEBUG_CHECK/repo-stdlib/helper.tl" <<'EOF'
+(define (helper) : i64 42)
+EOF
+cat > "$DEBUG_CHECK/app/main.tl" <<'EOF'
+(import "stdlib/helper.tl")
+(define (main) : i64 (helper))
+EOF
+run_cmd check-stdlib-root "$COMPILER" check "$DEBUG_CHECK/app/main.tl" --stdlib-root "$DEBUG_CHECK/repo-stdlib"
+assert_success
+assert_stderr_empty
+cp "$out" "$WORKDIR/check-stdlib-root.expected"
+run_cmd debug-check-stdlib-root "$COMPILER" debug check "$DEBUG_CHECK/app/main.tl" --stdlib-root "$DEBUG_CHECK/repo-stdlib"
+assert_success
+assert_stderr_empty
+cmp -s "$out" "$WORKDIR/check-stdlib-root.expected" || fail "debug check differs from public check"
+assert_contains "$out" "Type checking passed!"
+
+echo "[public-tools] CLI command matrix and diagnostics"
+CLI_MATRIX="$WORKDIR/cli-matrix"
+mkdir -p "$CLI_MATRIX"
+
+compile_backend_modes() {
+    cat <<'EOF'
+scalar
+avx2
+avx512
+EOF
+}
+
+while IFS= read -r mode || [ -n "$mode" ]; do
+    [ -n "$mode" ] || continue
+    mode_dir="$CLI_MATRIX/backend-$mode"
+    mkdir -p "$mode_dir"
+    cat > "$mode_dir/main.tl" <<'EOF'
+(define (main) : i64 42)
+EOF
+    run_cmd "compile-backend-$mode" "$COMPILER" compile "$mode_dir/main.tl" --backend-mode "$mode" -o "$mode_dir/main.s"
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "Generated:"
+    assert_contains "$mode_dir/main.s" "main:"
+    if [ "$mode" = avx2 ]; then
+        assert_contains "$mode_dir/main.s" "vzeroupper"
+    fi
+done <<EOF
+$(compile_backend_modes)
+EOF
+
+for target_alias in windows-x86_64 windows_x86_64; do
+    target_dir="$CLI_MATRIX/target-$target_alias"
+    mkdir -p "$target_dir"
+    cat > "$target_dir/main.tl" <<'EOF'
+(define (main) : i64
+  (begin
+    (print-string "hi")
+    42))
+EOF
+    run_cmd "compile-target-$target_alias" "$COMPILER" compile "$target_dir/main.tl" --target "$target_alias" -o "$target_dir/main.s"
+    assert_success
+    assert_stderr_empty
+    assert_contains "$target_dir/main.s" "    .globl main"
+    assert_not_contains "$target_dir/main.s" "    .globl _start"
+    assert_contains "$target_dir/main.s" "    .extern _write"
+    assert_contains "$target_dir/main.s" '    sub $32, %rsp'
+done
+
+cat > "$CLI_MATRIX/main.tl" <<'EOF'
+(define (main) : i64 42)
+EOF
+
+run_cmd compile-unknown-target "$COMPILER" compile "$CLI_MATRIX/main.tl" --target plan9-x86_64
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "Error: unknown target 'plan9-x86_64'. Expected linux-x86_64 or windows-x86_64"
+
+run_cmd build-unknown-target "$COMPILER" build "$CLI_MATRIX/main.tl" --target plan9-x86_64
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "build: unknown target plan9-x86_64"
+
+run_cmd run-unknown-target "$COMPILER" run "$CLI_MATRIX/main.tl" --target plan9-x86_64
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "run: unknown target plan9-x86_64"
+
+run_cmd compile-unknown-backend-mode "$COMPILER" compile "$CLI_MATRIX/main.tl" --backend-mode neon
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "Error: unknown backend mode 'neon'. Expected scalar, avx2, or avx512"
+
+run_cmd build-unknown-backend-mode "$COMPILER" build "$CLI_MATRIX/main.tl" --backend-mode neon
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "build: unknown backend mode neon"
+
+run_cmd run-unknown-backend-mode "$COMPILER" run "$CLI_MATRIX/main.tl" --backend-mode neon
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "run: unknown backend mode neon"
+
+cat > "$CLI_MATRIX/unsupported-type-kind.tl" <<'EOF'
+(define (f [T : type]) : i64 0)
+EOF
+run_cmd check-unsupported-type-kind "$COMPILER" check "$CLI_MATRIX/unsupported-type-kind.tl"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "unsupported type kind 'type'"
+assert_contains "$err" "comptime type values are not implemented yet"
+assert_not_contains "$err" "backend:"
+
+cat > "$CLI_MATRIX/runtime-type-literal.tl" <<'EOF'
+(define (main) : i64 (comptime (type i64)))
+EOF
+run_cmd check-runtime-type-literal "$COMPILER" check "$CLI_MATRIX/runtime-type-literal.tl"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "type value i64 is compile-time only"
+assert_not_contains "$err" "backend:"
+
+cat > "$CLI_MATRIX/region-builtin-escape.tl" <<'EOF'
+(define (main) : String
+  (with-region r (int->string 41)))
+EOF
+run_cmd check-region-builtin-escape "$COMPILER" check "$CLI_MATRIX/region-builtin-escape.tl"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "region-tagged value"
+assert_contains "$err" "cannot escape with-region"
+assert_contains "$err" "error[E0200]"
+
+cat > "$CLI_MATRIX/stdlib-region-escape.tl" <<'EOF'
+(import "stdlib/string.tl")
+
+(define (main) : String
+  (with-region outer
+    (with-region inner
+      (string-trim "  scoped  "))))
+EOF
+run_cmd check-stdlib-region-escape "$COMPILER" check "$CLI_MATRIX/stdlib-region-escape.tl" --stdlib-root "$ROOT/stdlib"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "region-tagged value"
+assert_contains "$err" "cannot escape with-region 'inner'"
+assert_contains "$err" "error[E0200]"
+
+cat > "$CLI_MATRIX/text-buf-region-scalar.tl" <<'EOF'
+(import "stdlib/text_buf.tl")
+
+(define (main) : i64
+  (let ([buf : TextBuf (text-buf-append (text-buf-empty) "scoped")])
+    (with-region inner
+      (string-length (text-buf-render buf)))))
+EOF
+run_cmd check-text-buf-region-scalar "$COMPILER" check "$CLI_MATRIX/text-buf-region-scalar.tl" --stdlib-root "$ROOT/stdlib"
+assert_success
+assert_stderr_empty
+assert_contains "$out" "Type checking passed!"
+
+cat > "$CLI_MATRIX/text-buf-region-escape.tl" <<'EOF'
+(import "stdlib/text_buf.tl")
+
+(define (main) : String
+  (let ([buf : TextBuf (text-buf-append (text-buf-empty) "scoped")])
+    (with-region outer
+      (with-region inner
+        (text-buf-render buf)))))
+EOF
+run_cmd check-text-buf-region-escape "$COMPILER" check "$CLI_MATRIX/text-buf-region-escape.tl" --stdlib-root "$ROOT/stdlib"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "region-tagged value"
+assert_contains "$err" "cannot escape with-region 'inner'"
+assert_contains "$err" "error[E0200]"
+
+cat > "$CLI_MATRIX/unsupported-float-cast.tl" <<'EOF'
+(define (main) : i64 (cast 3.5 : i64))
+EOF
+run_cmd check-unsupported-float-cast "$COMPILER" check "$CLI_MATRIX/unsupported-float-cast.tl"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "floating-point casts are not supported yet"
+assert_contains "$err" "casts currently support integer/char and f64<->f32 conversions only"
+assert_contains "$err" "got f64 -> i64"
+assert_contains "$err" "error[E0200]"
+
+cat > "$CLI_MATRIX/inexact-f32-literal.tl" <<'EOF'
+(define (main) : f32 0.1)
+EOF
+run_cmd check-inexact-f32-literal "$COMPILER" check "$CLI_MATRIX/inexact-f32-literal.tl"
+assert_success
+assert_contains "$out" "Type checking passed!"
+assert_contains "$err" "warning[W0200]"
+assert_contains "$err" "not exactly representable as f32"
+
+RUN_MATRIX="$WORKDIR/run-matrix"
+mkdir -p "$RUN_MATRIX"
+cat > "$RUN_MATRIX/output_status.tl" <<'EOF'
+(define (main) : i64
+  (begin
+    (print-string "hello")
+    7))
+EOF
+if [ "$HOST_OS" = windows ]; then
+    run_cmd run-output-status "$COMPILER" run "$RUN_MATRIX/output_status.tl" --target windows-x86_64
+else
+    run_cmd run-output-status "$COMPILER" run "$RUN_MATRIX/output_status.tl"
+fi
+assert_code 7
+assert_stderr_empty
+assert_contains "$out" "hello"
+
+cat > "$RUN_MATRIX/stdin.tl" <<'EOF'
+(define (main) : unit
+  (print-string (read-stdin-line)))
+EOF
+printf 'hello from stdin\n' > "$RUN_MATRIX/stdin.in"
+if [ "$HOST_OS" = windows ]; then
+    run_stdin run-stdin "$RUN_MATRIX/stdin.in" "$COMPILER" run "$RUN_MATRIX/stdin.tl" --target windows-x86_64
+else
+    run_stdin run-stdin "$RUN_MATRIX/stdin.in" "$COMPILER" run "$RUN_MATRIX/stdin.tl"
+fi
+assert_success
+assert_stderr_empty
+assert_contains "$out" "hello from stdin"
+
+PATH_SEP=:
+[ "$HOST_OS" = windows ] && PATH_SEP=';'
+if [ "$HOST_OS" = windows ]; then
+    run_cmd run-env-fixture env -u TYPELISP_STDLIB_TEST_MISSING_854 TYPELISP_STDLIB_TEST_EMPTY= TYPELISP_STDLIB_TEST_VALUE=env-value-854 TYPELISP_STDLIB_TEST_PATH="one${PATH_SEP}two${PATH_SEP}three" "$COMPILER" run stdlib/tests/env_api.tl --stdlib-root "$ROOT/stdlib" --target windows-x86_64
+else
+    run_cmd run-env-fixture env -u TYPELISP_STDLIB_TEST_MISSING_854 TYPELISP_STDLIB_TEST_EMPTY= TYPELISP_STDLIB_TEST_VALUE=env-value-854 TYPELISP_STDLIB_TEST_PATH="one${PATH_SEP}two${PATH_SEP}three" "$COMPILER" run stdlib/tests/env_api.tl --stdlib-root "$ROOT/stdlib"
+fi
+assert_code 42
+assert_stdout_empty
+assert_stderr_empty
+
+if [ "$HOST_OS" = linux ]; then
+    run_cmd run-backend-avx512 "$COMPILER" run "$CLI_MATRIX/main.tl" --backend-mode avx512 -- arg
+    assert_code 42
+    assert_stdout_empty
+    assert_stderr_empty
+else
+    echo "[public-tools] skipping run --backend-mode avx512 on $HOST_OS"
+fi
+
+BUILD_MATRIX="$WORKDIR/build-matrix"
+mkdir -p "$BUILD_MATRIX/src"
+cat > "$BUILD_MATRIX/typelisp.pkg" <<'EOF'
+(package
+  (name "backend_mode_build")
+  (version "0.1.0")
+  (entry "src/main.tl"))
+EOF
+cat > "$BUILD_MATRIX/src/main.tl" <<'EOF'
+(define (main) : i64 42)
+EOF
+run_cmd build-package-avx512 "$COMPILER" build --manifest-path "$BUILD_MATRIX/typelisp.pkg" --backend-mode avx512
+assert_success
+assert_stderr_empty
+assert_contains "$out" "Generated:"
+
+run_cmd build-source-missing-output-value "$COMPILER" build "$CLI_MATRIX/main.tl" -o
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "build: -o requires a value"
+
+run_cmd build-output-without-source "$COMPILER" build -o "$BUILD_MATRIX/app"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "Error: build -o requires a source file argument"
+
+run_cmd build-source-missing-file "$COMPILER" build "$BUILD_MATRIX/missing.tl"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "cannot read module"
+
+echo "[public-tools] host-action boundary"
+printf 'not a plan\n' > "$WORKDIR/host-action-invalid.in"
+run_stdin host-action-invalid "$WORKDIR/host-action-invalid.in" "$COMPILER" debug host-action
+assert_code 1
+assert_stdout_empty
+assert_contains "$err" "invalid host-action plan"
+
+HOST_ACTION_DIR="$WORKDIR/host action"
+mkdir -p "$HOST_ACTION_DIR"
+cat > "$HOST_ACTION_DIR/main.tl" <<'EOF'
+(define (main) : i64 11)
+EOF
+if [ "$HOST_OS" = windows ]; then
+    HOST_ACTION_TARGET=windows-x86_64
+    HOST_ACTION_EXE="$HOST_ACTION_DIR/the program.exe"
+else
+    HOST_ACTION_TARGET=linux-x86_64
+    HOST_ACTION_EXE="$HOST_ACTION_DIR/the program"
+fi
+HOST_ACTION_SOURCE_PLAN=$(host_plan_path "$HOST_ACTION_DIR/main.tl")
+HOST_ACTION_EXE_PLAN=$(host_plan_path "$HOST_ACTION_EXE")
+{
+    printf 'typelisp-host-plan v1\n'
+    printf 'action build-source\n'
+    printf 'source %s\n' "$(host_netstring "$HOST_ACTION_SOURCE_PLAN")"
+    printf 'output %s\n' "$(host_netstring "$HOST_ACTION_EXE_PLAN")"
+    printf 'target %s\n' "$HOST_ACTION_TARGET"
+    printf 'backend-mode scalar\n'
+    printf 'end\n'
+} > "$WORKDIR/host-action-build.in"
+run_stdin host-action-build "$WORKDIR/host-action-build.in" "$COMPILER" debug host-action
+assert_success
+assert_contains "$out" "Generated: $HOST_ACTION_EXE_PLAN"
+[ -f "$HOST_ACTION_EXE" ] || fail "host-action build did not write executable with spaced path"
+
+cat > "$HOST_ACTION_DIR/run.tl" <<'EOF'
+(define (main) : i64
+  (begin
+    (print-string "from-plan")
+    13))
+EOF
+HOST_ACTION_RUN_SOURCE_PLAN=$(host_plan_path "$HOST_ACTION_DIR/run.tl")
+{
+    printf 'typelisp-host-plan v1\n'
+    printf 'action run-source\n'
+    printf 'source %s\n' "$(host_netstring "$HOST_ACTION_RUN_SOURCE_PLAN")"
+    printf 'target %s\n' "$HOST_ACTION_TARGET"
+    printf 'backend-mode scalar\n'
+    printf 'runtime-arg %s\n' "$(host_netstring "arg with spaces")"
+    printf 'end\n'
+} > "$WORKDIR/host-action-run.in"
+run_stdin host-action-run "$WORKDIR/host-action-run.in" "$COMPILER" debug host-action
+assert_code 13
+assert_stderr_empty
+assert_contains "$out" "from-plan"
+
+if [ "$HOST_OS" = linux ]; then
+    SELFHOST_PLANNER_DIR="$WORKDIR/selfhost-planners"
+    mkdir -p "$SELFHOST_PLANNER_DIR/with space" "$SELFHOST_PLANNER_DIR/stdlib one"
+    run_cmd selfhost-build-planner-build "$COMPILER" build selfhost/build.tl -o "$SELFHOST_PLANNER_DIR/build-planner"
+    assert_success
+    assert_contains "$out" "Generated:"
+    run_cmd selfhost-run-planner-build "$COMPILER" build selfhost/run.tl -o "$SELFHOST_PLANNER_DIR/run-planner"
+    assert_success
+    assert_contains "$out" "Generated:"
+
+    PLANNER_SOURCE="$SELFHOST_PLANNER_DIR/with space/main file.tl"
+    PLANNER_OUTPUT="$SELFHOST_PLANNER_DIR/with space/the program"
+    : > "$PLANNER_SOURCE"
+    run_cmd selfhost-build-plan "$SELFHOST_PLANNER_DIR/build-planner" "$PLANNER_SOURCE" -o "$PLANNER_OUTPUT" --target windows-x86_64 --backend-mode avx2 --stdlib-root "$SELFHOST_PLANNER_DIR/stdlib one" --stdlib-root "stdlib:two"
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "action build-source"
+    assert_contains "$out" "source $(host_netstring "$PLANNER_SOURCE")"
+    assert_contains "$out" "output $(host_netstring "$PLANNER_OUTPUT")"
+    assert_contains "$out" "target windows-x86_64"
+    assert_contains "$out" "backend-mode avx2"
+    assert_contains "$out" "stdlib-root $(host_netstring "$SELFHOST_PLANNER_DIR/stdlib one")"
+    assert_contains "$out" "stdlib-root $(host_netstring "stdlib:two")"
+
+    run_cmd selfhost-run-plan "$SELFHOST_PLANNER_DIR/run-planner" "$PLANNER_SOURCE" --target linux-x86_64 --backend-mode avx512 --stdlib-root "$SELFHOST_PLANNER_DIR/stdlib one" -- "arg with spaces" "colon:arg"
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "action run-source"
+    assert_contains "$out" "source $(host_netstring "$PLANNER_SOURCE")"
+    assert_contains "$out" "target linux-x86_64"
+    assert_contains "$out" "backend-mode avx512"
+    assert_contains "$out" "stdlib-root $(host_netstring "$SELFHOST_PLANNER_DIR/stdlib one")"
+    assert_contains "$out" "runtime-arg $(host_netstring "arg with spaces")"
+    assert_contains "$out" "runtime-arg $(host_netstring "colon:arg")"
+
+    run_cmd selfhost-build-plan-package-rejected "$SELFHOST_PLANNER_DIR/build-planner" --manifest-path typelisp.pkg
+    assert_failure
+    assert_stdout_empty
+    assert_contains "$err" "--manifest-path is handled by Rust typelisp build"
+
+    run_cmd selfhost-run-plan-missing-target "$SELFHOST_PLANNER_DIR/run-planner" "$PLANNER_SOURCE" --target
+    assert_failure
+    assert_stdout_empty
+    assert_contains "$err" "run: --target requires a value"
+else
+    echo "[public-tools] skipping selfhost build/run planner executables on $HOST_OS"
+fi
 
 echo "[public-tools] backend diagnostics"
 BACKEND_DIAG_DIR="$ROOT/tests/diagnostics/backend"
@@ -315,7 +730,7 @@ run_cmd doc-test-pass "$COMPILER" doc --test "$WORKDIR/docs.tl"
 assert_success
 assert_stderr_empty
 assert_contains "$out" "Doc tests passed: 2 example(s)"
-[ ! -d "$WORKDIR/.typelisp-doctest" ] || fail "doc --test left temp directory behind"
+assert_doctest_temp_cleaned "$WORKDIR/docs.tl"
 
 cat > "$WORKDIR/docs_expected_error.tl" <<'EOF'
 ;;;; Expected error.
@@ -327,6 +742,48 @@ run_cmd doc-test-expected-error "$COMPILER" doc --test "$WORKDIR/docs_expected_e
 assert_success
 assert_stderr_empty
 assert_contains "$out" "Doc tests passed: 1 example(s)"
+assert_doctest_temp_cleaned "$WORKDIR/docs_expected_error.tl"
+
+cat > "$WORKDIR/docs_malformed.tl" <<'EOF'
+;;;; Bad fence.
+;;;; ```typelisp maybe
+;;;; (define (main) : i64 0)
+;;;; ```
+EOF
+run_cmd doc-test-malformed "$COMPILER" doc --test "$WORKDIR/docs_malformed.tl"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" 'unsupported TypeLisp doctest option `maybe`'
+assert_doctest_temp_cleaned "$WORKDIR/docs_malformed.tl"
+
+cat > "$WORKDIR/docs_empty.tl" <<'EOF'
+;;;; Docs without fenced examples.
+;;; Item docs without fenced examples.
+(define documented : i64 1)
+EOF
+run_cmd doc-test-empty "$COMPILER" doc --test "$WORKDIR/docs_empty.tl"
+assert_success
+assert_stderr_empty
+assert_contains "$out" "Doc tests passed: 0 example(s)"
+assert_doctest_temp_cleaned "$WORKDIR/docs_empty.tl"
+
+DOC_STDLIB_ROOT="$WORKDIR/doc-test-stdlib-root/repo-stdlib"
+mkdir -p "$DOC_STDLIB_ROOT"
+cat > "$DOC_STDLIB_ROOT/docfixture.tl" <<'EOF'
+(define stdlib-answer : i64 42)
+EOF
+cat > "$WORKDIR/docs_stdlib_root.tl" <<'EOF'
+;;;; Stdlib import example.
+;;;; ```typelisp
+;;;; (import "stdlib/docfixture.tl")
+;;;; (define (main) : i64 stdlib-answer)
+;;;; ```
+EOF
+run_cmd doc-test-stdlib-root "$COMPILER" doc --test "$WORKDIR/docs_stdlib_root.tl" --stdlib-root "$DOC_STDLIB_ROOT"
+assert_success
+assert_stderr_empty
+assert_contains "$out" "Doc tests passed: 1 example(s)"
+assert_doctest_temp_cleaned "$WORKDIR/docs_stdlib_root.tl"
 
 cat > "$WORKDIR/docs_bad.tl" <<'EOF'
 ;;;; Unexpected error.
@@ -340,6 +797,20 @@ assert_stdout_empty
 assert_contains "$err" "doc tests failed"
 assert_contains "$err" "was expected to pass"
 assert_contains "$err" "error[E0200]"
+assert_doctest_temp_cleaned "$WORKDIR/docs_bad.tl"
+
+run_cmd doc-usage-missing "$COMPILER" doc
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "Usage:"
+assert_contains "$err" "typelisp doc <file.tl>"
+assert_contains "$err" "typelisp doc --test <file.tl>"
+
+run_cmd doc-test-usage-missing "$COMPILER" doc --test
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "Usage:"
+assert_contains "$err" "typelisp doc --test <file.tl>"
 
 if [ "$HOST_OS" = linux ]; then
     cat > "$WORKDIR/doc_source.tl" <<'EOF'
@@ -354,6 +825,71 @@ EOF
     assert_contains "$out" "Generated:"
     assert_contains "$WORKDIR/doc_source.md" "Module docs."
     assert_contains "$WORKDIR/doc_source.md" "answer"
+
+    DOC_CUSTOM_DIR="$WORKDIR/custom-doc-output"
+    mkdir -p "$DOC_CUSTOM_DIR"
+    cat > "$WORKDIR/doc_custom_input.tl" <<'EOF'
+;;; Single item.
+(define x : i64 1)
+EOF
+    run_cmd doc-generate-custom "$COMPILER" doc "$WORKDIR/doc_custom_input.tl" -o "$DOC_CUSTOM_DIR/custom.md"
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "Generated: $DOC_CUSTOM_DIR/custom.md"
+    assert_contains "$DOC_CUSTOM_DIR/custom.md" "x"
+
+    DOC_GRAPH_DIR="$WORKDIR/doc-module-graph"
+    DOC_GRAPH_STDLIB="$DOC_GRAPH_DIR/repo-stdlib"
+    DOC_GRAPH_LOCAL="$DOC_GRAPH_DIR/local.tl"
+    DOC_GRAPH_STDLIB_SOURCE="$DOC_GRAPH_STDLIB/docfixture.tl"
+    DOC_GRAPH_ENTRY="$DOC_GRAPH_DIR/entry.tl"
+    DOC_GRAPH_OUT="$DOC_GRAPH_DIR/graph.md"
+    mkdir -p "$DOC_GRAPH_STDLIB"
+    cat > "$DOC_GRAPH_LOCAL" <<'EOF'
+;;;; Local module docs.
+
+;;; Local answer docs.
+(define local-answer : i64 7)
+EOF
+    cat > "$DOC_GRAPH_STDLIB_SOURCE" <<'EOF'
+;;;; Stdlib module docs.
+
+;;; Stdlib answer docs.
+(define stdlib-answer : i64 35)
+EOF
+    cat > "$DOC_GRAPH_ENTRY" <<'EOF'
+;;;; Entry module docs.
+
+(import "local.tl")
+(import "local.tl")
+(import "stdlib/docfixture.tl")
+
+;;; Entry docs.
+(define (main) : i64 (+ local-answer stdlib-answer))
+EOF
+    run_cmd doc-generate-module-graph "$COMPILER" doc "$DOC_GRAPH_ENTRY" -o "$DOC_GRAPH_OUT" --stdlib-root "$DOC_GRAPH_STDLIB"
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "Generated: $DOC_GRAPH_OUT"
+
+    DOC_GRAPH_ENTRY_PATH=$(CDPATH= cd -- "$(dirname -- "$DOC_GRAPH_ENTRY")" && printf '%s/%s' "$(pwd -P)" "$(basename -- "$DOC_GRAPH_ENTRY")")
+    DOC_GRAPH_LOCAL_PATH=$(CDPATH= cd -- "$(dirname -- "$DOC_GRAPH_LOCAL")" && printf '%s/%s' "$(pwd -P)" "$(basename -- "$DOC_GRAPH_LOCAL")")
+    DOC_GRAPH_STDLIB_PATH=$(CDPATH= cd -- "$(dirname -- "$DOC_GRAPH_STDLIB_SOURCE")" && printf '%s/%s' "$(pwd -P)" "$(basename -- "$DOC_GRAPH_STDLIB_SOURCE")")
+    assert_contains "$DOC_GRAPH_OUT" "## Modules"
+    assert_contains "$DOC_GRAPH_OUT" "- [$DOC_GRAPH_ENTRY_PATH](#"
+    assert_contains "$DOC_GRAPH_OUT" "Source: \`$DOC_GRAPH_LOCAL_PATH\`"
+    assert_contains "$DOC_GRAPH_OUT" "Source: \`$DOC_GRAPH_STDLIB_PATH\`"
+    assert_contains "$DOC_GRAPH_OUT" "Entry module docs."
+    assert_contains "$DOC_GRAPH_OUT" "Local module docs."
+    assert_contains "$DOC_GRAPH_OUT" "Stdlib module docs."
+    DOC_GRAPH_LOCAL_DOCS=$(grep -F "Local module docs." "$DOC_GRAPH_OUT" | wc -l | tr -d ' ')
+    [ "$DOC_GRAPH_LOCAL_DOCS" -eq 1 ] || fail "doc module graph duplicated local docs"
+    DOC_GRAPH_ENTRY_LINE=$(grep -nF "## $DOC_GRAPH_ENTRY_PATH" "$DOC_GRAPH_OUT" | head -n 1 | cut -d: -f1)
+    DOC_GRAPH_LOCAL_LINE=$(grep -nF "## $DOC_GRAPH_LOCAL_PATH" "$DOC_GRAPH_OUT" | head -n 1 | cut -d: -f1)
+    DOC_GRAPH_STDLIB_LINE=$(grep -nF "## $DOC_GRAPH_STDLIB_PATH" "$DOC_GRAPH_OUT" | head -n 1 | cut -d: -f1)
+    [ "$DOC_GRAPH_ENTRY_LINE" -lt "$DOC_GRAPH_LOCAL_LINE" ] &&
+        [ "$DOC_GRAPH_LOCAL_LINE" -lt "$DOC_GRAPH_STDLIB_LINE" ] ||
+        fail "doc module graph did not preserve loader source order"
 
     run_cmd doc-generate-html "$COMPILER" run selfhost/doc.tl -- --html "$WORKDIR/doc_source.tl" "$WORKDIR/doc_source.html"
     assert_success
@@ -475,28 +1011,10 @@ assert_stdout_empty
 assert_contains "$err" "pkg:math/src/lib.tl"
 assert_contains "$err" 'alias `math`'
 
-echo "[public-tools] REPL"
-cat > "$WORKDIR/repl.in" <<'EOF'
-.help
-.type 42
-(define answer : i64 41)
-.type (+ answer 1)
-.exit
-EOF
-run_stdin repl-basic "$WORKDIR/repl.in" "$COMPILER" repl
-assert_success
-assert_stderr_empty
-assert_contains "$out" "TypeLisp REPL commands:"
-assert_contains "$out" ".type"
-assert_contains "$out" "i64"
+echo "[public-tools] REPL/LSP corpus via run-corpus.py"
+TYPELISP_BIN="$COMPILER" python3 "$ROOT/tests/public-tools/run-corpus.py"
 
-printf '(+ 1\n' > "$WORKDIR/repl-incomplete.in"
-run_stdin repl-incomplete "$WORKDIR/repl-incomplete.in" "$COMPILER" repl
-assert_success
-assert_stdout_empty
-assert_contains "$err" "Error: incomplete REPL input at EOF"
-
-echo "[public-tools] LSP"
+echo "[public-tools] LSP (legacy inline checks)"
 frame_append() {
     frame_file=$1
     frame_body=$2
@@ -517,22 +1035,6 @@ assert_stderr_empty
 assert_contains "$out" '"id":1'
 assert_contains "$out" '"capabilities"'
 assert_contains "$out" '"id":2'
-
-if [ "$HOST_OS" = linux ]; then
-    LSP_URI="file://$WORKDIR/lsp_bad.tl"
-    LSP_BAD="$WORKDIR/lsp-bad.in"
-    : > "$LSP_BAD"
-    frame_append "$LSP_BAD" '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}'
-    frame_append "$LSP_BAD" '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$LSP_URI"'","languageId":"typelisp","version":1,"text":"(define bad : i64 true)"}}}'
-    frame_append "$LSP_BAD" '{"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}'
-    run_stdin lsp-diagnostics "$LSP_BAD" "$COMPILER" lsp
-    assert_success
-    assert_stderr_empty
-    assert_contains "$out" "textDocument/publishDiagnostics"
-    assert_contains "$out" '"code":"E0200"'
-else
-    echo "[public-tools] skipping LSP diagnostics on $HOST_OS"
-fi
 
 echo "[public-tools] SPEC metadata examples"
 SPEC_WORK="$WORKDIR/spec"

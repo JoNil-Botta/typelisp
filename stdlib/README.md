@@ -17,17 +17,26 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   `(import "stdlib/io.tl")`.
 - `env.tl`: recoverable environment variable lookup and PATH-style list
   helpers. Import it with `(import "stdlib/env.tl")`.
+- `fs.tl`: minimal recoverable filesystem helpers for tool artifact paths,
+  temporary directories, and cleanup. Import it with `(import "stdlib/fs.tl")`.
+- `hash.tl`: deterministic, non-cryptographic hash and key equality helpers for
+  future collections. Import it with `(import "stdlib/hash.tl")`.
 - `json.tl`: JSON value parser and serializer for tool protocols and data
   exchange. Import it with `(import "stdlib/json.tl")`.
 - `process.tl`: process command/output/error data model for selfhost tools.
   Runtime execution currently returns structured unsupported diagnostics rather
   than using Rust host actions. Import it with `(import "stdlib/process.tl")`.
+- `random.tl`: deterministic, seeded, non-cryptographic random helpers and
+  weighted-index selection for selfhost tools. Import it with
+  `(import "stdlib/random.tl")`.
 - `string.tl`: string utility functions built on compiler/runtime primitives.
   Import it with `(import "stdlib/string.tl")`.
 - `test.tl`: minimal assertion helpers for TypeLisp fixtures. Import it with
   `(import "stdlib/test.tl")`.
 - `text_buf.tl`: arena-aware text buffer helpers for incremental String
   construction. Import it with `(import "stdlib/text_buf.tl")`.
+- `windows_sdk.tl`: structured Windows SDK layout discovery helpers for future
+  MSVC toolchain setup. Import it with `(import "stdlib/windows_sdk.tl")`.
 
 ## Arena Allocation Policy
 
@@ -38,6 +47,10 @@ the active arena: the default program-lifetime arena outside any scoped arena,
 or the innermost scoped arena inside `(with-region ...)`. The arena model uses
 the term "scoped arena" for this behavior; issue #801 tracks the source spelling
 migration from `(with-region ...)` to `(with-arena ...)`.
+
+Until that spelling lands, stdlib policy tests use `(with-region ...)` as the
+executable witness for the same active-arena semantics that `(with-arena ...)`
+will expose.
 
 Current function signatures cannot write arena lifetimes yet (#802), so stdlib
 APIs keep plain `String`/aggregate signatures. The checker conservatively tags
@@ -62,9 +75,13 @@ returned caller-owned values.
 | `stdin-at-eof?`, `stdin-read-text`, `stdin-read-eof?`, `stdout-write`, `stderr-write`, `stdout-flush` | Non-allocating wrappers/accessors around runtime stdio primitives and `StdinRead` values. |
 | `stdout-write-line`, `stderr-write-line` | Allocate a newline-appended active-arena `String` via `string-append`, then write it to the target stream. |
 | `env-get`, `env-path-list`, `env-path-split`, `env-path-join` | Environment values and split/join results allocate fresh active-arena Strings/lists when runtime values are read or string pieces are created; missing variables return explicit `EnvNo*` options. |
-| `process-*` helpers | Construct process command/output/error aggregates in the active arena. Ordered argv append helpers allocate list nodes; validators inspect executable/env/cwd metadata and reject invalid env names. `process-run` and `process-output` currently return structured errors and do not spawn child processes. |
+| `fs-path-join`, `try-mkdir`, `try-remove-file`, `try-remove-dir`, `try-create-temp-dir` | Path joins allocate active-arena Strings when a separator is inserted or duplicate separator is removed. Recoverable filesystem helpers map runtime status codes into `IoError`; `try-mkdir` works on Linux and Windows. Linux temp directories are created under `$TMPDIR` or `/tmp` with process-id and retry suffixes. Windows temp creation returns `IoUnsupported` until process-id and cleanup primitives are implemented there. |
+| `hash-*` helpers | Deterministic, non-cryptographic hash and key equality helpers are non-allocating. Hashes are stable bucket hints only; collection users must still compare colliding candidate keys with the matching equality predicate. |
+| `process-*` helpers | Construct process command/output/error aggregates in the active arena. Ordered argv append helpers allocate list nodes; validators inspect executable/env/cwd metadata and reject invalid env names. On Linux, `process-run` and `process-output` execute directly through the backend runtime, preserving inherited environment entries, replacing entries named by env overrides, honoring cwd, and feeding string stdin. Unsupported targets return structured errors. |
+| `random-*` helpers | Construct deterministic RNG state, draw/result aggregates, and weight-list cons nodes in the active arena. Draws are deterministic from caller-provided seeds and do not read host entropy. |
 | `assert-*` helpers in `test.tl` | Non-allocating checks on success; failures call `panic` with the caller-provided message. |
 | `text-buf-*` helpers in `text_buf.tl` | Buffer chunks and rendered strings allocate in the active arena. Append helpers avoid concatenating the accumulated prefix until `text-buf-render`; `text-buf-clear`/`text-buf-reset` return a fresh empty immutable buffer value. |
+| `windows-sdk-*` helpers | SDK layout structs/errors allocate in the active arena. Environment discovery reads `WindowsSdkDir` / `WindowsSDKVersion`, constructs include/lib/bin path strings, and validates required directories with `try-file-exists?`. Registry probing currently returns a structured unavailable diagnostic until the narrow registry runtime primitive lands. |
 
 The recoverable I/O API maps the runtime's integer status codes into the public
 `IoError` model. Common not-found, permission, invalid-path, interrupted, and
@@ -76,18 +93,43 @@ caller-provided buffer in place, or manually calls `tl_region_mark` /
 `tl_region_reset`. Those policies should remain explicit when borrowed strings,
 mutable buffers, and unsafe reset APIs are added.
 
+### Planned file-handle API (v1, #1036)
+
+`SPEC.md` §6.4 specifies the v1 file-handle surface that extends these
+whole-file helpers with explicit open/close and streaming I/O. The
+implementation lands incrementally:
+
+- **#1056** — opaque `FileHandle`, the `OpenMode` enum (`OpenRead`,
+  `OpenWriteTruncate`, `OpenWriteAppend`), `file-open` returning `ResultIoFile`,
+  and `file-close`. v1 requires explicit close; there is no implicit drop until
+  #805.
+- **#1057** — `file-read-chunk` returning `ResultIoRead` / `FileRead` (a
+  `String` payload plus a sticky EOF flag, mirroring `StdinRead`). Chunk bytes
+  allocate in the active arena and stay `String`-typed until #807 adds a
+  byte-slice split.
+- **#1058** — streaming writes and flush, plus atomic `OpenWriteAppend`
+  semantics that supersede the non-atomic `try-append-file` read-modify-write.
+
+All handle helpers reuse the existing `IoError` model; mode violations, closed
+or invalid handles, and unsupported Windows operations return structured
+`IoError` results rather than panicking.
+
 ## Importing Stdlib Modules
 
 Stdlib modules are imported explicitly:
 
 ```lisp
 (import "stdlib/env.tl")
+(import "stdlib/fs.tl")
+(import "stdlib/hash.tl")
 (import "stdlib/io.tl")
 (import "stdlib/json.tl")
 (import "stdlib/process.tl")
+(import "stdlib/random.tl")
 (import "stdlib/string.tl")
 (import "stdlib/test.tl")
 (import "stdlib/text_buf.tl")
+(import "stdlib/windows_sdk.tl")
 ```
 
 For imports whose path starts with `stdlib/`, the loader first tries the path
@@ -119,7 +161,9 @@ lookup behavior.
 
 The assertion helpers in `stdlib/test.tl` are also intended for inline
 `(test ...)` items. They do not allocate on success; failures call `panic` with
-the caller-provided message.
+the caller-provided message. Repository CI runs
+`scripts/verify-inline-tests.sh`, so inline tests placed under stdlib modules or
+fixtures are discovered without a manifest edit.
 
 ## Adding a Module
 
@@ -132,16 +176,22 @@ the caller-provided message.
 4. Add the new top-level `.tl` file to `scripts/verify-stdlib.sh`'s module
    manifest.
 5. Add focused fixtures under `stdlib/tests/` and list them in
-   `scripts/verify-stdlib.sh`'s test manifest with expected exit/stdout/stderr.
-6. Document the intended public API coverage in `stdlib/tests/README.md`.
-7. Add `;;;;` module docs, attached `;;;` item docs for every public top-level
-   declaration, allocation-behavior notes for allocating APIs, and at least one
-   checked doctest example that runs with `--stdlib-root`.
-8. Run `scripts/verify-stdlib-docs.sh` to generate Markdown and run doctests
+   `scripts/verify-stdlib.sh`'s runnable test manifest with expected
+   exit/stdout/stderr or check-only manifest with expected pass/fail behavior.
+6. Add inline `(test ...)` items next to declarations when the check belongs to
+   a specific stdlib API; `scripts/verify-inline-tests.sh` discovers them
+   automatically.
+7. Document the intended public API coverage in `stdlib/tests/README.md`.
+8. Add `;;;;` module docs, attached `;;;` item docs for every public top-level
+   declaration, allocation-behavior notes for allocating APIs, an update to the
+   arena allocation classification table above, and at least one checked doctest
+   example that runs with `--stdlib-root`.
+9. Run `scripts/verify-stdlib-docs.sh` to generate Markdown and run doctests
    for every stdlib module.
-9. Run `scripts/verify-doc-tests.sh` to confirm the repository-wide doctest
+10. Run `scripts/verify-doc-tests.sh` to confirm the repository-wide doctest
    discovery gate picks up the new documented module without a manifest edit.
-10. Link user-facing docs or tests to the new module when appropriate.
+11. Run `scripts/verify-inline-tests.sh` if the module adds inline tests.
+12. Link user-facing docs or tests to the new module when appropriate.
 
 The verifier intentionally fails when a new top-level `stdlib/*.tl` module or a
 new `stdlib/tests/*.tl` fixture is not listed in its corresponding manifest.

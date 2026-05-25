@@ -73,7 +73,7 @@
 
 ;; `c` is one of TypeLisp's symbol punctuation chars - the non-alphanumeric
 ;; characters that may appear in a symbol/operator name:
-;;   `-` `+` `*` `/` `%` `?` `!` `>` `<` `=` `:` `_`
+;;   `-` `+` `*` `/` `%` `&` `?` `!` `>` `<` `=` `:` `_`
 ;; This is what makes `+`, `<=`, `string->int`, and `array-set!` all lex as one
 ;; `TSym` rather than as separate operator tokens.
 (define (is-symbol-punct [c : char]) : bool
@@ -95,7 +95,9 @@
                   (= c #<')
                   (or
                     (= c #=')
-                    (or (= c #:') (or (= c #_') (or (= c #.') (= c #%'))))))))))))))
+                    (or
+                      (= c #&')
+                      (or (= c #:') (or (= c #_') (or (= c #.') (= c #%')))))))))))))))
 
 ;; `c` may appear in a symbol: a letter, a digit, or a symbol-punctuation char.
 ;; A symbol run is the maximal span of these starting at a non-digit symbol char.
@@ -700,6 +702,18 @@
         (string-eq (token-sym (array-ref toks 1)) "%"))]
     [(ErrTokens _) false]))
 
+(define (lex-ampersand-symbol-ok?) : bool
+  (match (lex-result "(& r String) (&mut r String)")
+    [(OkTokens toks)
+      (and
+        (= (token-tag (array-ref toks 1)) (tag-sym))
+        (and
+          (string-eq (token-sym (array-ref toks 1)) "&")
+          (and
+            (= (token-tag (array-ref toks 6)) (tag-sym))
+            (string-eq (token-sym (array-ref toks 6)) "&mut"))))]
+    [(ErrTokens _) false]))
+
 (define (lex-float-token-ok?) : bool
   (match (lex-result "(3.14)")
     [(OkTokens toks)
@@ -730,6 +744,105 @@
 
 (define (lex-backslash-text) : String
   "\\")
+
+(define (lex-basic-token-sequence-ok?) : bool
+  (match (lex-result "(define [x : i64] -42 \"ok\" #\\newline')")
+    [(OkTokens toks)
+      (let
+        [ok : bool true]
+        (begin
+          (if (= (token-tag (array-ref toks 0)) (tag-lparen))
+            unit
+            (set! ok false))
+          (if (= (token-tag (array-ref toks 1)) (tag-sym))
+            unit
+            (set! ok false))
+          (if (string-eq (token-sym (array-ref toks 1)) "define")
+            unit
+            (set! ok false))
+          (if (= (token-tag (array-ref toks 2)) (tag-lbracket))
+            unit
+            (set! ok false))
+          (if (string-eq (token-sym (array-ref toks 3)) "x")
+            unit
+            (set! ok false))
+          (if (string-eq (token-sym (array-ref toks 4)) ":")
+            unit
+            (set! ok false))
+          (if (string-eq (token-sym (array-ref toks 5)) "i64")
+            unit
+            (set! ok false))
+          (if (= (token-tag (array-ref toks 6)) (tag-rbracket))
+            unit
+            (set! ok false))
+          (if (= (token-int (array-ref toks 7)) -42)
+            unit
+            (set! ok false))
+          (if (string-eq (token-str (array-ref toks 8)) "ok")
+            unit
+            (set! ok false))
+          (if (= (token-char (array-ref toks 9)) #\newline')
+            unit
+            (set! ok false))
+          (if (= (token-tag (array-ref toks 10)) (tag-rparen))
+            unit
+            (set! ok false))
+          (if (= (token-tag (array-ref toks 11)) (tag-end))
+            unit
+            (set! ok false))
+          ok))]
+    [(ErrTokens _) false]))
+
+(define (lex-char-source [body : String]) : String
+  (string-append "#" (string-append body "'")))
+
+(define (lex-one-char-ok? [body : String] [want : char]) : bool
+  (match (lex-result (lex-char-source body))
+    [(OkTokens toks)
+      (and
+        (= (token-tag (array-ref toks 0)) (tag-char))
+        (and
+          (= (token-char (array-ref toks 0)) want)
+          (= (token-tag (array-ref toks 1)) (tag-end))))]
+    [(ErrTokens _) false]))
+
+(define (lex-char-literals-ok?) : bool
+  (let
+    [slash : String (lex-backslash-text)]
+    (and
+      (lex-one-char-ok? "x" #x')
+      (and
+        (lex-one-char-ok? (string-append slash "n") #\newline')
+        (and
+          (lex-one-char-ok? (string-append slash "t") #\tab')
+          (and
+            (lex-one-char-ok? (string-append slash "0") #\nul')
+            (and
+              (lex-one-char-ok? (string-append slash "space") #\space')
+              (and
+                (lex-one-char-ok? (string-append slash "newline") #\newline')
+                (and
+                  (lex-one-char-ok? (string-append slash "tab") #\tab')
+                  (and
+                    (lex-one-char-ok? (string-append slash "return") #\return')
+                    (lex-one-char-ok? (string-append slash "nul") #\nul')))))))))))
+
+(define (lex-error-ok?
+  [src : String]
+  [want-line : i64]
+  [want-col : i64]
+  [want-message : String]) : bool
+  (match (lex-spanned-result src)
+    [(OkSpannedTokens _) false]
+    [(ErrSpannedTokens err)
+      (and
+        (string-eq (source-error-message err) want-message)
+        (span-eq? (source-error-span err) want-line want-col want-line want-col))]))
+
+(define (lex-error-spans-ok?) : bool
+  (and
+    (lex-error-ok? "\n#\\bogus'" 2 1 "lexer: unknown named character literal")
+    (lex-error-ok? "ok\n@" 2 1 "lexer: unexpected character")))
 
 (define (lex-string-source [inner : String]) : String
   (string-append (lex-quote-text) (string-append inner (lex-quote-text))))
@@ -825,8 +938,16 @@
         (and
           (lex-string-escapes-ok?)
           (and
-            (lex-percent-symbol-ok?)
-            (and (lex-float-token-ok?) (lex-negative-int-token-ok?)))))
+            (lex-basic-token-sequence-ok?)
+            (and
+              (lex-char-literals-ok?)
+              (and
+                (lex-error-spans-ok?)
+                (and
+                  (lex-percent-symbol-ok?)
+                  (and
+                    (lex-ampersand-symbol-ok?)
+                    (and (lex-float-token-ok?) (lex-negative-int-token-ok?)))))))))
         42
         1)]
     [(ErrSpannedTokens _) 2]))

@@ -83,14 +83,16 @@ fn doc_test_tl_compiles_to_assembly() {
     }
 
     for literal in [
-        ";;;; ```typelisp",
-        ";;; ```tl expect-error",
+        ";# ```typelisp",
+        ";: ```tl expect-error",
+        ";;; Legacy item docs",
         "unsupported TypeLisp doctest option",
         "empty TypeLisp doctest fence",
         "unterminated TypeLisp doctest fence",
         "doc-test: example metadata mismatch",
-        "doc-test: ordinary comment example mismatch",
-        "doc-test: malformed metadata mismatch",
+        "doc-test: ordinary comment smoke mismatch",
+        "doc-test: legacy item smoke mismatch",
+        "doc-test: malformed smoke mismatch",
         // Runner (#724) diagnostics/messages.
         "was expected to fail",
         "E0200",

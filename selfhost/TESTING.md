@@ -61,6 +61,13 @@ under test. Import `stdlib/test.tl` for assertions such as `assert-i64-eq`.
 Keep smoke drivers for existing compiler-module self-tests until those modules
 are intentionally migrated.
 
+[`../scripts/verify-inline-tests.sh`](../scripts/verify-inline-tests.sh)
+auto-discovers top-level inline tests under `selfhost/`, `stdlib/`,
+`tests/integration/`, `tests/inline/`, and `examples/`. It runs
+`typelisp test --check` first, then `typelisp test`, so malformed, untyped,
+unbuildable, and failing inline tests all fail CI without a hand-maintained
+manifest update.
+
 ### Temporary Rust compile tests
 
 The `tests/tl_*_compile.rs` files are temporary cross-platform proof that
@@ -118,10 +125,18 @@ checks `SHA256SUMS` when the release provides it, and installs the binary under
 `target/stage0/`. The script uses release asset URLs instead of fetching git
 tags, so the mutable `stage0-latest` tag cannot be stale or clobber a local tag.
 
-CI should pass this fetched compiler through `TYPELISP_BIN` for no-Rust
-validation. The scripts that still run `cargo build --release` when
-`TYPELISP_BIN` is unset keep that path as a local fallback only until #793/#795
-remove the Rust-owned stage0 dependency.
+The complete local no-Rust gate is:
+
+```sh
+scripts/verify-no-rust-stage0.sh
+```
+
+That wrapper fetches `stage0-latest` when `TYPELISP_BIN` is unset, exports the
+fetched compiler to the verification scripts, and installs failing `cargo` and
+`rustc` shims in `PATH` so the gate cannot silently fall back to Rust. The
+scripts that still run `cargo build --release` when `TYPELISP_BIN` is unset keep
+that path as a local fallback only until #795 removes the Rust-owned stage0
+dependency.
 
 For new selfhost tests:
 
@@ -195,18 +210,52 @@ artifact and switch to the selfhost doctest path when #865 lands.
 
 `scripts/verify-doc-tests.sh` discovers documented `.tl` files under
 `stdlib/`, `selfhost/`, `examples/`, and `tests/` by scanning for public
-`;;;;`/`;;;` doc comments or TypeLisp fenced examples, then runs
+canonical `;#`/`;:` doc comments (legacy `;;;;`/`;;;` are still accepted) or
+TypeLisp fenced examples, then runs
 `typelisp doc --test` for each file with `--stdlib-root`. This gate is
 intentionally separate from `cargo test` and does not use a hand-maintained file
 manifest, so adding documented TypeLisp source with fenced examples
 automatically adds doctest coverage.
 
+### Repository inline-test gate
+
+`scripts/verify-inline-tests.sh` discovers `.tl` files with top-level
+`(test ...)` items under `selfhost/`, `stdlib/`, `tests/integration/`,
+`tests/inline/`, and `examples/`. For each discovered file it type-checks and
+then runs the generated inline-test harness with `--stdlib-root`, reporting the
+source path and test-runner output in CI logs. This gate is separate from
+doctests, manifest corpora, and smoke drivers so source-owned checks can be
+added next to the declarations they exercise.
+
+### Stdlib API site
+
+`selfhost/doc_site.tl` builds a static stdlib/API HTML directory from the
+explicit top-level stdlib manifest owned by the selfhost source. The local
+command is:
+
+```sh
+typelisp run selfhost/doc_site.tl -- target/site
+```
+
+The generated directory contains `index.html`, `stdlib.html`,
+`typelisp-docs.css`, and one deterministic `stdlib-*.html` page for each
+manifested top-level stdlib module. The smoke driver
+`selfhost/doc_site_smoke.tl` checks the navigation links, generated page
+anchors, CSS asset marker, duplicate output detection, manifest count guard, and
+HTML escaping behavior without depending on file-system writes.
+
 ### CI expectations
 
-Pull requests get Linux and Windows `cargo test` coverage from the main CI test
-jobs. The no-Rust checks run through the fetched stage0 compiler where possible:
-native integration manifests, deterministic assembly, selfhost compile
-manifests, TypeLisp source format, stdlib, examples, and selfhost verification.
+Pull requests get Linux and Windows no-Rust stage0 coverage from
+`scripts/verify-no-rust-stage0.sh`. The Linux job runs public tools, doctests,
+inline tests, selfhost compile manifests, deterministic assembly, TypeLisp
+source format, native integration manifests, examples, stdlib, stdlib docs,
+selfhost native generated programs, the selfhost external compiler corpus, and
+the bootstrap smoke check. The Windows job runs the same host-supported gates
+and explicitly skips the Linux-only selfhost/docs/bootstrap checks.
+
+The remaining Linux and Windows `cargo test`, `cargo fmt`, `cargo clippy`, and
+release integration jobs are temporary Rust reference coverage until #795.
 
 For a selfhost compiler change, a typical local check is:
 
@@ -220,7 +269,9 @@ TYPELISP_BIN=./target/debug/typelisp ./scripts/check-tl-format.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-public-tools.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-stdlib-docs.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-doc-tests.sh
+TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-inline-tests.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-selfhost.sh
+scripts/verify-no-rust-stage0.sh
 ```
 
 Run the tests that match the layer you touched. On non-Linux platforms, scripts
@@ -242,6 +293,8 @@ Linux environment.
   change.
 - Use `selfhost/tests/` plus `scripts/verify-selfhost.sh` for source programs
   that should be accepted or rejected by `compile_smoke.tl`.
+- Use inline `(test ...)` items for source-owned runnable checks; they are
+  picked up automatically by `scripts/verify-inline-tests.sh`.
 - Keep `selfhost/compile_manifest.txt` in sync with top-level selfhost sources
   and compile/symbol smoke expectations.
 - Update `RUST_TEST_COVERAGE.md` whenever adding or changing Rust tests.

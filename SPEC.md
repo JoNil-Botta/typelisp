@@ -79,10 +79,12 @@ one starts the comment.
 The self-hosted documentation extractor recognizes public documentation
 comments before the main Rust lexer discards comments:
 
-- `;;;;` starts a module/file documentation line.
-- `;;;` starts an outer item documentation line attached to the next supported
+- `;#` starts a module/file documentation line.
+- `;:` starts an outer item documentation line attached to the next supported
   top-level item: value `define`, function `define`, `extern`, `defenum`, or
   `defstruct`.
+- Legacy `;;;;` module docs and `;;;` item docs remain accepted during the
+  migration, but `;#` and `;:` are the canonical spellings.
 - `;` and `;;` remain ordinary comments and are not public documentation.
 - Outer item doc lines must be contiguous. A blank line, ordinary comment,
   module doc, unsupported top-level form, or unrelated source text clears the
@@ -90,8 +92,8 @@ comments before the main Rust lexer discards comments:
 
 Documentation tests are fenced examples inside those public documentation
 comments. `typelisp doc --test <file.tl>` recognizes Markdown code fences whose
-info string starts with `typelisp` or `tl`, extracts them from `;;;;` module docs
-and attached `;;;` item docs, and checks each example as a standalone TypeLisp
+info string starts with `typelisp` or `tl`, extracts them from `;#` module docs
+and attached `;:` item docs, and checks each example as a standalone TypeLisp
 source file. An example passes when it parses, resolves imports, and type-checks.
 Adding `expect-error` after the language tag inverts the expectation so the
 example must fail during loading, parsing, or type checking. Other fence
@@ -182,9 +184,43 @@ narrower or unsigned integer is required. Floating-point literals are always
   evaluate to closure descriptor values. Supported captures are scalars,
   function values, `String`, dynamic arrays, and tuples of scalars (see §5.14).
 
-### 3.4 User-defined types
+### 3.4 Raw pointer types (v1 design; implementation pending)
 
-#### 3.4.1 Enums (sum types)
+Raw pointer syntax is specified for the v1 FFI/low-level memory surface, but the
+parser, typechecker, lowerer, and backend do not implement it yet (#809/#896).
+The design is intentionally separate from safe references and borrowing (#182):
+raw pointers are explicit unsafe values, not checked references.
+
+```lisp test=ignore name=raw-pointer-type-template reason="raw pointer syntax is specified before implementation"
+(extern read-byte : (-> (Ptr u8) u8))
+(extern write-byte : (-> (MutPtr u8) u8 unit))
+```
+
+Type forms:
+
+- `(Ptr T)` is a raw pointer to a value of type `T` that may be read through
+  unsafe operations but may not be written through source-level pointer write
+  operations.
+- `(MutPtr T)` is a raw pointer to mutable storage for a value of type `T`;
+  unsafe reads and writes are allowed.
+- `Ptr`/`MutPtr` are source-level types, not ownership or lifetime types. They
+  carry no borrow, aliasing, provenance, bounds, initialization, alignment, or
+  non-null guarantee.
+- Raw pointer values are pointer-sized, nullable, freely copyable ABI values.
+  Copying a pointer copies only the address.
+- There is no implicit conversion between `Ptr` and `MutPtr` in v1. Use the
+  explicit unsafe `ptr-cast` operation when the implementation lands.
+- `T` may be any backend ABI value type that can be loaded or stored as a
+  value. Tuple and fixed-array by-value ABI limitations still apply.
+
+Safe code may mention raw pointer types, bind/copy/pass/return raw pointer
+values, call `extern` functions whose signatures contain raw pointers, construct
+typed null pointers, and test pointers for null. Safe code may not dereference,
+write through, offset, or cast raw pointers.
+
+### 3.5 User-defined types
+
+#### 3.5.1 Enums (sum types)
 
 ```lisp test=ignore name=enum-template reason=template
 (defenum Name
@@ -204,7 +240,7 @@ narrower or unsigned integer is required. Floating-point literals are always
 - Module-qualified or enum-qualified variant names are future work; write `Red`
   or `(Some x)` today, not `Color.Red` or `Color::Red`.
 
-#### 3.4.2 Structs (product types)
+#### 3.5.2 Structs (product types)
 
 ```lisp test=check name=struct-declaration
 (defstruct Point
@@ -218,11 +254,62 @@ narrower or unsigned integer is required. Floating-point literals are always
 - Structs are heap-allocated when returned from functions (same rule as enums).
 - Not valid as global variables.
 
-### 3.5 Type aliases
+#### 3.5.3 C-compatible `repr c` structs (specified, selfhost pending)
+
+Default TypeLisp struct layout is compiler-owned and may use aggregate-handle
+rules that are not a C ABI contract. FFI-facing structs must opt into a stable
+C-compatible layout with metadata immediately after the struct name and before
+the first field:
+
+```lisp test=ignore name=repr-c-struct-syntax reason="selfhost repr c parsing is tracked by #987"
+(defstruct Stat
+  (:repr c)
+  (size i64)
+  (mtime i64))
+```
+
+For layout, v1 accepts only the metadata form `(:repr c)`. Omitting it
+preserves the default TypeLisp layout. Metadata forms must appear before all
+fields; a metadata form after a field is rejected. Duplicate `:repr` metadata
+is rejected. Unknown metadata keys and unknown representation names are
+rejected. Cleanup ownership metadata is specified separately in section 4.6 and
+is not a layout contract. `packed`, `(:repr packed)`, and equivalent
+packed-layout spellings are reserved and rejected until an unsafe packed-field
+slice exists.
+
+V1 `repr c` fields are restricted to ABI-safe types:
+
+- Fixed-width scalar types supported by the backend: `i8`, `u8`, `i16`, `u16`,
+  `i32`, `u32`, `i64`, `u64`, `f64`, `bool`, and `char`. `f32` remains rejected
+  until the backend supports it.
+- Raw pointer types once the raw-pointer surface is implemented (#809/#896).
+- Nested structs that are themselves marked `repr c`.
+
+Default-layout structs, strings, dynamic arrays, enums, tuples, fixed arrays,
+functions/closures, safe references, region-tagged references, unresolved
+types, and any other aggregate handle are not ABI-safe `repr c` fields in v1.
+They must be rejected with a source-located diagnostic rather than silently
+lowered as C-compatible storage.
+
+Recursive by-value `repr c` struct cycles are rejected. Recursive structures
+through raw pointers can be accepted only after raw pointers exist.
+
+`repr c` layout uses declaration order. Each field starts at the next offset
+aligned for that field. The total size is rounded up to the maximum field
+alignment. Empty `repr c` structs are rejected in v1.
+
+Supported v1 targets use an x86_64 data model: fixed-width integer and floating
+types use their explicit sizes; `bool` and `char` are one byte; raw pointers are
+8 bytes with 8-byte alignment on both Linux x86_64 System V and Windows x64.
+If future targets need different pointer sizes or alignments, layout queries are
+target-sensitive compile-time results and tests must either pin the target or
+assert the target-specific values.
+
+### 3.6 Type aliases
 
 There are no explicit type aliases. Identifiers naming enums or structs are resolved to their nominal types during type checking.
 
-### 3.6 Abstraction policy: comptime generation, not generics/traits
+### 3.7 Abstraction policy: comptime generation, not generics/traits
 
 TypeLisp does not plan Rust-style source-level generics, traits, interfaces,
 `impl` blocks, or generic type constructors such as `Option<T>` and
@@ -238,7 +325,7 @@ primitives), and #483 (stable generated functions/type constructors).
 Until that path is complete, write explicit monomorphic declarations such as
 `MaybeI64`, `ResultStringI64`, or domain-specific structs/enums.
 
-### 3.7 Type conversions (casts)
+### 3.8 Type conversions (casts)
 
 ```lisp test=ignore name=cast-placeholder reason=placeholder
 (cast expr : target_type)
@@ -255,7 +342,7 @@ Until that path is complete, write explicit monomorphic declarations such as
   currently accepts only integer/char source and target types.
 - No implicit conversions.
 
-### 3.8 Region-tagged types (v1)
+### 3.9 Region-tagged types (v1)
 
 A value allocated inside a `(with-region r ...)` scope carries a **region tag**
 in its type, written `(in r T)` where `r` is the region name and `T` is the
@@ -287,6 +374,27 @@ region-tagged value to a function or returning it from one is an escape error.
 Region-polymorphic functions (`(forall (r) ...)`) are deferred to a follow-up
 slice; every function type in v1 is region-agnostic and therefore cannot
 accept or produce region-tagged handles.
+
+### 3.10 Written reference types (syntax/model slice)
+
+The selfhost compiler accepts written lifetime-bearing reference type forms:
+
+```lisp test=ignore name=reference-type-syntax reason=syntax-only
+(& arena T)
+(&mut arena T)
+```
+
+- `(& arena T)` is an immutable reference type to `T` tied to lifetime/arena
+  name `arena`.
+- `(&mut arena T)` is a mutable reference type to `T` tied to lifetime/arena
+  name `arena`.
+- The lifetime name is a bare identifier. It matches the current
+  `(with-region arena ...)` binder shape and the planned `(with-arena arena ...)`
+  spelling.
+- This slice only defines syntax and type representation. Borrow expressions,
+  mutable exclusivity, returned-reference lifetime checks, and borrowed `str`
+  semantics are follow-up borrow-checker work. Source programs using reference
+  types are rejected before lowering until that work lands.
 
 ---
 
@@ -328,9 +436,20 @@ metadata, including symbols that should not be derived from the TypeLisp
 identifier spelling, is owned by #911 and is separate from TypeLisp
 module-prefixed user symbols.
 
+After raw pointer implementation (#809/#896), `extern` signatures may also use
+`(Ptr T)` and `(MutPtr T)` to model C-style pointer arguments and returns
+(#897/#911/#912). Such signatures do not make the pointer safe: nullability,
+validity, aliasing, lifetime, mutability, and target ABI correctness remain the
+caller and callee's contract.
+
 Example:
 ```lisp test=check name=extern-declaration
 (extern foreign-add : (-> i64 i64 i64))
+```
+
+```lisp test=ignore name=extern-raw-pointer-signature reason="raw pointer syntax is specified before implementation"
+(extern strlen : (-> (Ptr u8) u64))
+(extern fill-bytes : (-> (MutPtr u8) u64 u8 unit))
 ```
 
 ### 4.4 `(import "path.tl")` — module import
@@ -557,7 +676,181 @@ Example:
 
 ### 4.6 `(defenum ...)` and `(defstruct ...)`
 
-See §3.4.
+See §3.5.
+
+#### 4.6.1 Cleanup-owning aggregate declarations (specified, pending implementation)
+
+Cleanup-required values are values that must be passed to a cleanup function
+exactly once before their owner scope exits. Ordinary aggregates do not own
+those values: a `defstruct` without cleanup metadata and every v1 `defenum`
+payload must reject cleanup-required fields, cleanup-owning aggregate fields,
+and cleanup-owning payloads. This prevents an aggregate handle copy from
+silently duplicating cleanup responsibility.
+
+A cleanup-owning struct opts in with type-level `(:cleanup cleanup-fn)`
+metadata immediately after the struct name and before all fields. The metadata
+declares the cleanup function for the struct type and makes values of that type
+move-only:
+
+```lisp test=ignore name=cleanup-owning-buffered-file-struct reason="cleanup-owning aggregate declarations are specified before compiler support"
+(defstruct FileHandle
+  (:cleanup close-file-handle)
+  (fd i64 (:cleanup close-fd)))
+
+(defstruct TextBuffer
+  (:cleanup close-text-buffer)
+  (ptr i64 (:cleanup free-buffer)))
+
+(defstruct BufferedFile
+  (:cleanup close-buffered-file)
+  (fd FileHandle (:owned))
+  (buffer TextBuffer (:owned)))
+
+(define (open-buffered-file [fd : i64] [ptr : i64]) : BufferedFile
+  (BufferedFile (FileHandle fd) (TextBuffer ptr)))
+
+(define (use-buffered-file [fd : i64] [ptr : i64]) : i64
+  (with ([bf (open-buffered-file fd ptr) close-buffered-file])
+    (struct-get (struct-get bf fd) fd)))
+```
+
+`cleanup-fn` names the type-level cleanup function for the aggregate. The
+compiler must expose exactly one such function for each cleanup-owning struct
+and reject another top-level value with the same name. Its type is `(-> T unit)`
+where `T` is the struct type. The generated cleanup function owns its argument,
+runs the struct field cleanup plan below, and returns `unit`. Source-level
+custom cleanup hooks for the whole value are deferred; v1 cleanup behavior is
+fully determined by field metadata and nested cleanup-owning field types.
+
+Struct field metadata may include exactly one cleanup marker after the field
+type:
+
+- `(:cleanup field-cleanup-fn)` marks a direct resource field and names the
+  cleanup function for that field. The function must have type `(-> F unit)`,
+  where `F` is the field type.
+- `(:owned)` marks a field whose type is itself cleanup-owning. The field uses
+  that type's declared cleanup function.
+
+Field-level cleanup metadata is accepted only inside a cleanup-owning struct.
+A cleanup-owning struct may contain ordinary fields with no cleanup marker.
+Every cleanup-required field must have `(:cleanup ...)`; every cleanup-owning
+aggregate field must have `(:owned)`. A field may not specify both. Field
+metadata is part of the owning contract, not layout, and is incompatible with
+`(:repr c)` in v1: a C ABI struct cannot own cleanup-required resources.
+
+Cleanup for a struct value is deterministic. When the owner scope cleans a
+value of cleanup-owning struct type:
+
+1. The value is marked moved so later reads, copies, stores, or returns of the
+   same owner are rejected.
+2. Fields with cleanup metadata are cleaned in reverse declaration order.
+3. For `(:cleanup f)`, the compiler calls `f` with the field value.
+4. For `(:owned)`, the compiler recursively calls the field type's declared
+   cleanup function.
+5. Fields without cleanup metadata are not cleaned.
+
+Nested cleanup completes before the previous field begins. If a field has
+already been moved out, that field is no longer cleaned by the containing
+struct; responsibility moved with the field. Moving a field out of a
+cleanup-owning struct leaves the whole struct partially moved, so the compiler
+must reject later cleanup of the whole value unless the field is definitely
+reinitialized before the owner scope exits. Partial moves are therefore expected
+to remain rejected until the move checker can track field initialization.
+
+Cleanup-owning structs are move-only. Assigning, passing as an ordinary by-value
+argument, returning, storing in another aggregate, or binding to another name
+transfers ownership unless the operation is explicitly a borrow in a future
+borrow/reference model. After such a move, the source value cannot be used.
+Copying a cleanup-owning value is never allowed. A cleanup-owning value cannot
+be stored in a global, captured by an escaping closure, or returned from a
+`with` scope that owns it.
+
+```lisp test=ignore name=cleanup-owning-nested-struct reason="cleanup-owning aggregate declarations are specified before compiler support"
+(defstruct FileHandle
+  (:cleanup close-file-handle)
+  (fd i64 (:cleanup close-fd)))
+
+(defstruct BufferedFile
+  (:cleanup close-buffered-file)
+  (handle FileHandle (:owned)))
+
+(defstruct LogWriter
+  (:cleanup close-log-writer)
+  (file BufferedFile (:owned))
+  (bytes-written i64))
+```
+
+The example above ignores `bytes-written` and cleans `file`; cleaning `file`
+recursively cleans `handle`.
+
+```lisp test=ignore name=cleanup-owning-reject-ordinary-storage reason="negative example for future cleanup-required aggregate checks"
+(defstruct FileHandle
+  (:cleanup close-file-handle)
+  (fd i64 (:cleanup close-fd)))
+
+(defstruct BadWrapper
+  (handle FileHandle))
+```
+
+`BadWrapper` is rejected because it stores a cleanup-owning value without
+declaring its own cleanup ownership and without marking the field `(:owned)`.
+
+```lisp test=ignore name=cleanup-owning-reject-copy reason="negative example for future move-only cleanup-owning aggregate checks"
+(defstruct FileHandle
+  (:cleanup close-file-handle)
+  (fd i64 (:cleanup close-fd)))
+
+(define (open-handle [fd : i64]) : FileHandle
+  (FileHandle fd))
+
+(define (bad-copy [fd : i64]) : i64
+  (with ([h (open-handle fd) close-file-handle])
+    (let ([copy h])
+      (struct-get h fd))))
+```
+
+The `let` binding moves `h` into `copy`; the later read from `h` is rejected as
+use-after-move. The compiler must also ensure the moved value still has exactly
+one owner that will clean it.
+
+```lisp test=ignore name=cleanup-owning-reject-escape reason="negative example for future cleanup-owning aggregate escape checks"
+(defstruct FileHandle
+  (:cleanup close-file-handle)
+  (fd i64 (:cleanup close-fd)))
+
+(define (open-handle [fd : i64]) : FileHandle
+  (FileHandle fd))
+
+(define (leak-handle [fd : i64]) : FileHandle
+  (with ([h (open-handle fd) close-file-handle])
+    h))
+```
+
+`leak-handle` is rejected because the `with` scope owns `h`; returning it would
+escape the cleanup scope.
+
+`with` is the v1 owner scope for cleanup-owning aggregates. If a `with` binding
+initializes a cleanup-owning struct, its cleanup position must be the struct's
+declared cleanup function; another cleanup function is rejected. A resource
+value moved into a cleanup-owning aggregate is not also cleaned by the source
+binding. Normal `let` still has no cleanup behavior; creating a cleanup-owning
+value in `let` is valid only if the value is immediately moved into another
+owner whose cleanup is statically known.
+
+Cleanup runs when the owner scope exits normally and before recoverable `(try
+...)` propagation leaves the scope. If initialization of a later `with` binding
+propagates recoverably, already-initialized earlier cleanup-owning values are
+cleaned in the same reverse-binding order as other resources. Cleanup functions
+return `unit`; if a cleanup function panics, the program aborts and the
+language does not guarantee that remaining field, nested, or outer cleanups
+run. A direct `panic`/abort has no unwinding cleanup guarantee.
+
+Cleanup-owning `defenum` declarations are deferred in v1. The reserved shape is
+`(defenum Name (:cleanup cleanup-fn) variant+)`, but the parser/typechecker must
+reject it until enum payload ownership is implemented. Ordinary enum payloads
+must reject cleanup-required and cleanup-owning types. A future cleanup-owning
+enum must clean only the active variant payload, in reverse payload declaration
+order, using field-style `(:cleanup ...)` and `(:owned)` payload metadata.
 
 ---
 
@@ -698,7 +991,7 @@ as the head of the final `cond` arm.
 
 ### 5.12 `(cast expr : type)` — type conversion
 
-See §3.7. Casts currently cover integer/char widening, narrowing, and
+See §3.8. Casts currently cover integer/char widening, narrowing, and
 truncation only; floating-point conversions are deferred.
 
 ### 5.13 `(match scrutinee [pattern expr] ...)` — pattern matching
@@ -711,7 +1004,7 @@ truncation only; floating-point conversions are deferred.
   nullary variant name. It is not a fresh catch-all binding; use `_` for that.
 - The `_` wildcard matches any remaining value (used for exhaustiveness).
 - All arms must return the same type.
-- Enum values are heap-allocated on return from functions (see §3.4.1).
+- Enum values are heap-allocated on return from functions (see §3.5.1).
 
 ### 5.14 `(lambda ([param : type] ...) [: ret_type] body)` — anonymous function
 
@@ -976,7 +1269,7 @@ nesting `with-region` forms.
 ```
 
 **Static escape checking:** Values allocated inside a region are typed as
-`(in r T)` (see §3.8). The typechecker rejects any attempt to let a
+`(in r T)` (see §3.9). The typechecker rejects any attempt to let a
 region-tagged value escape its scope:
 
 - As the result of the `with-region` form (`(with-region r (make-array i64 5))`).
@@ -1001,6 +1294,228 @@ where `tl_region_mark` / `tl_region_reset` are unavailable the runtime does
 not perform a reset; the semantics match minus reclamation. The form still
 prevents escapes, so programs compile and run identically, but allocations
 accumulate in the process-lifetime arena instead of being reclaimed.
+
+### 5.17 Layout queries (specified, selfhost pending)
+
+The selfhost FFI layout surface reserves three comptime-only query forms:
+
+```lisp test=ignore name=repr-c-layout-query-syntax reason="layout queries are tracked by #989"
+(defstruct Stat
+  (:repr c)
+  (size i64)
+  (mtime i64))
+
+(define stat-size : i64 (comptime (size-of (type Stat))))
+(define stat-align : i64 (comptime (align-of (type Stat))))
+(define stat-mtime-offset : i64 (comptime (offset-of (type Stat) mtime)))
+```
+
+- `(size-of type-expr)` returns the byte size as `i64`.
+- `(align-of type-expr)` returns the ABI alignment as `i64`.
+- `(offset-of type-expr field-name)` returns the byte offset of `field-name`
+  inside a `repr c` struct as `i64`; `field-name` is a bare field identifier,
+  not a string and not an evaluated expression.
+
+`type-expr` must evaluate at compile time to a type value, usually from
+`(type T)` or a comptime type parameter. `offset-of` requires a `repr c` struct
+type and a field that exists on that struct. All three forms are valid only in
+compile-time-required contexts such as comptime parameters, generated
+declaration evaluation, and explicit `(comptime expr)` folds. To use a query
+result at runtime, the program must fold it through normal comptime evaluation
+and store the resulting `i64`; the compiler must not expose type or layout
+metadata as a runtime value.
+
+Queries reject wrong arity, missing or runtime-only type operands, non-type
+operands, non-`repr c` structs where a C layout is required, unsupported field
+types, invalid field names, and use outside a compile-time-required context.
+
+---
+
+### 5.18 `(with ([name init cleanup] ...) body ...)` - scoped resource cleanup
+
+The `(with ...)` form is reserved for explicit scoped cleanup of non-memory
+resources such as file descriptors, process handles, temporary files, locks,
+and mapped files. It is separate from `(with-region ...)`: `with` calls cleanup
+functions for resource values, while `with-region` resets arena allocation for
+memory owned by a lexical region.
+
+Each binding has the form `[name init-expr cleanup-fn]`.
+
+- `init-expr` is evaluated and bound to `name`.
+- `cleanup-fn` must name or evaluate to a function of type `(-> T unit)`, where
+  `T` is the type of `name`. Initial compiler support may restrict this
+  position to a direct function identifier. If it is an expression, it is
+  evaluated after `init-expr` succeeds and before the next binding begins.
+- `name` is in scope for later bindings and for the body, but not before its
+  own initializer.
+- The body is a non-empty expression sequence; the last expression is the
+  result of the `with` form.
+
+```lisp test=ignore name=with-resource-normal reason="reserved scoped resource cleanup syntax; compiler support tracked by #907"
+(defstruct Handle (id i64))
+
+(define (open-handle) : Handle
+  (Handle 1))
+
+(define (close-handle [h : Handle]) : unit
+  unit)
+
+(define (use-handle) : i64
+  (with ([h (open-handle) close-handle])
+    (struct-get h id)))
+```
+
+Multiple bindings are initialized left-to-right and cleaned up in reverse
+order. A binding whose initializer did not complete is not cleaned up. This
+makes a multi-binding form equivalent to nested `with` forms for lifetime
+purposes:
+
+```lisp test=ignore name=with-resource-lifo reason="reserved scoped resource cleanup syntax; compiler support tracked by #907"
+(defstruct Handle (id i64))
+
+(define (open-handle [id : i64]) : Handle
+  (Handle id))
+
+(define (close-handle [h : Handle]) : unit
+  unit)
+
+(define (use-two-handles) : i64
+  (with ([outer (open-handle 1) close-handle]
+         [inner (open-handle 2) close-handle])
+    (+ (struct-get outer id)
+       (struct-get inner id))))
+```
+
+In the example above `inner` is closed before `outer`.
+
+Nested `with` forms compose in the same way: the inner scope cleans up before
+execution continues in the outer scope.
+
+```lisp test=ignore name=with-resource-nested reason="reserved scoped resource cleanup syntax; compiler support tracked by #907"
+(defstruct Handle (id i64))
+
+(define (open-handle [id : i64]) : Handle
+  (Handle id))
+
+(define (close-handle [h : Handle]) : unit
+  unit)
+
+(define (use-nested-handles) : i64
+  (with ([outer (open-handle 1) close-handle])
+    (+ (struct-get outer id)
+       (with ([inner (open-handle 2) close-handle])
+         (struct-get inner id)))))
+```
+
+Cleanup runs when the body exits normally. Once recoverable propagation syntax
+lands (#903), cleanup also runs before a recoverable early return leaves the
+scope. Already-initialized earlier bindings are cleaned up when a later
+initializer propagates a recoverable failure. Panic/abort remains terminal and
+does not guarantee cleanup unless a future unwinding model explicitly says so.
+
+```lisp test=ignore name=with-resource-recoverable-propagation reason="reserved scoped cleanup and recoverable propagation syntax; compiler support tracked by #907/#903"
+(defstruct Handle (id i64))
+
+(defenum ResultI64
+  (OkI64 i64)
+  (ErrI64 String))
+
+(define (open-handle) : Handle
+  (Handle 1))
+
+(define (close-handle [h : Handle]) : unit
+  unit)
+
+(define (read-handle [h : Handle]) : ResultI64
+  (OkI64 (struct-get h id)))
+
+(define (read-with-cleanup) : ResultI64
+  (with ([h (open-handle) close-handle])
+    (try (read-handle h))))
+```
+
+Cleanup functions return `unit`; any cleanup value is ignored. A cleanup
+function that panics aborts the program, and the language does not guarantee
+that remaining cleanup functions run after that abort.
+
+A resource-bound value may not escape its `with` scope. It cannot be returned
+as the result of the `with` form, stored into an outer binding or global, or
+captured by a closure whose lifetime outlives the scope. The resource may be
+used to compute a non-resource result before cleanup runs.
+
+```lisp test=ignore name=with-resource-reject-escape reason="negative example for future scoped resource cleanup checks"
+(defstruct Handle (id i64))
+
+(define (open-handle) : Handle
+  (Handle 1))
+
+(define (close-handle [h : Handle]) : unit
+  unit)
+
+(define (leak-handle) : Handle
+  (with ([h (open-handle) close-handle])
+    h))
+```
+
+Ordinary `let` has no cleanup behavior. A binding is cleaned up only when it is
+introduced by `with`, with an explicit cleanup function in the binding.
+For cleanup-owning aggregate types (section 4.6.1), the explicit cleanup
+function must be the aggregate type's declared cleanup function. The field
+cleanup plan is then run by that aggregate cleanup function; `with` itself still
+only owns the bound value and invokes one cleanup function per binding.
+
+```lisp test=ignore name=ordinary-let-does-not-cleanup reason="illustrates distinction from future scoped cleanup syntax"
+(defstruct Handle (id i64))
+
+(define (open-handle) : Handle
+  (Handle 1))
+
+(define (use-handle-without-cleanup) : i64
+  (let ([h (open-handle)])
+    (struct-get h id)))
+```
+
+---
+
+### 5.19 `(unsafe body ...)` and raw pointer operations (v1 design; implementation pending)
+
+`unsafe` is the v1 source marker for operations whose safety cannot be proven by
+the TypeLisp typechecker. It is specified before implementation (#809/#896).
+The form is an expression block like `begin`: it evaluates one or more body
+expressions in order and returns the last value.
+
+```lisp test=ignore name=unsafe-pointer-read-example reason="raw pointer syntax is specified before implementation"
+(extern first-byte : (-> (Ptr u8)))
+
+(define (main) : i64
+  (unsafe
+    (cast (ptr-read (first-byte)) : i64)))
+```
+
+An unsafe context does not disable normal type checking. It only permits forms
+that are rejected in safe code because they can violate memory safety, ABI
+contracts, aliasing assumptions, or region lifetime rules. Unsafe functions,
+unsafe declarations, and "unsafe by default" modules are deferred; v1 has only
+the expression/block form.
+
+Initial raw pointer operation set:
+
+| Form | Safe? | Type rule | Notes |
+|------|-------|-----------|-------|
+| `(ptr-null : (Ptr T))` / `(ptr-null : (MutPtr T))` | Yes | returns the requested raw pointer type | Constructs a typed null pointer. |
+| `(ptr-null? p)` | Yes | raw pointer -> `bool` | Does not dereference `p`. |
+| `(ptr-read p)` | Unsafe | `(Ptr T)` or `(MutPtr T)` -> `T` | Reads `sizeof(T)` bytes at `p`; alignment, validity, initialization, and lifetime are caller obligations. |
+| `(ptr-write! p value)` | Unsafe | `(MutPtr T)` and `T` -> `unit` | Writes `sizeof(T)` bytes; writing through `(Ptr T)` is rejected. |
+| `(ptr-offset p n)` | Unsafe | raw pointer and integer -> same raw pointer type | Adds `n * sizeof(T)` bytes. Negative offsets are allowed but unsafe. |
+| `(ptr-cast p : (Ptr T))` / `(ptr-cast p : (MutPtr T))` | Unsafe | raw pointer -> requested raw pointer type | Includes const/mutable pointer casts; no implicit `MutPtr` to `Ptr` coercion in v1. |
+| `(ptr->int p)` | Unsafe | raw pointer -> `u64` | Exposes the target address representation. |
+| `(int->ptr n : (Ptr T))` / `(int->ptr n : (MutPtr T))` | Unsafe | integer -> requested raw pointer type | Address validity is entirely outside the typechecker. |
+
+Deferred raw pointer operations: address-of local/global/field expressions,
+slice views, C string helpers, volatile/atomic access, provenance tracking,
+pointer comparisons beyond `ptr-null?`, pointer-to-function casts, and any
+borrow-checked reference surface. Those are follow-ups to the raw pointer/FFI
+track (#809/#897/#911/#912) and the safe reference/ownership track (#182).
 
 ---
 
@@ -1097,15 +1612,130 @@ They are not implemented by a separate C runtime.
 | `char-at` | `string-ref` |
 | `print-str` | `print-string` |
 
+### 6.4 Stdlib file I/O handles (v1 design; implementation pending)
+
+This section specifies the v1 source-level file-handle API for `stdlib/io.tl`.
+It defines the public surface — handle type, open modes, streaming reads,
+streaming writes, close, and platform policy — without committing the
+runtime/backend implementation, which lands incrementally through #1056
+(open/close), #1057 (streaming reads), and #1058 (streaming writes/flush). The
+handle API reuses the existing `IoError` model already in `stdlib/io.tl` (§9
+catalogs the variants); it does not introduce a new error vocabulary.
+
+**Handle type.** A file handle is an opaque value `FileHandle`. Source-level
+TypeLisp v1 treats it as opaque: programs obtain it from `file-open`, pass it to
+read/write/close helpers, and never inspect its representation. Internally a
+handle carries the host descriptor (a Linux file descriptor or a Windows
+`HANDLE`) plus the open mode it was created with; these fields are not part of
+the public contract and may change. A handle is a copyable value in v1 — there
+is no move-only ownership or implicit close yet; move-only handles and automatic
+close wait on #805.
+
+**Open modes.** `file-open` takes a path and an `OpenMode`:
+
+| Mode | Meaning |
+|------|---------|
+| `OpenRead` | Open an existing file for reading. A missing file yields `IoNotFound`. |
+| `OpenWriteTruncate` | Open for writing, creating the file when missing and truncating it to zero length otherwise. |
+| `OpenWriteAppend` | Open for writing at end-of-file, creating the file when missing and never truncating existing contents. |
+
+A combined read/write mode is explicitly deferred past v1.
+
+**Open / close.**
+
+| Helper | Signature | Behavior |
+|--------|-----------|----------|
+| `file-open` | `String OpenMode → ResultIoFile` | `OkIoFile FileHandle` on success; `ErrIoFile IoError` for empty paths (`IoInvalidPath`), missing files in read mode (`IoNotFound`), permission failures (`IoPermissionDenied`), and other host status codes mapped through `io-error-from-status`. |
+| `file-close` | `FileHandle → ResultIoUnit` | `OkIoUnit` on the first close. Closing an already-closed handle returns `ErrIoUnit (IoUnsupported ...)` rather than panicking. |
+
+`ResultIoFile` is a new monomorphic result enum mirroring the existing pattern:
+`(OkIoFile FileHandle)` / `(ErrIoFile IoError)`.
+
+**Close / lifetime semantics (v1).** v1 requires explicit `file-close`. There is
+no destructor, drop glue, or implicit close — a handle that is never closed
+leaks its host descriptor for the life of the process, matching TypeLisp's
+current no-reclamation memory direction (§7.3). Use-after-close (any read or
+write on a closed handle) and double-close return a structured `IoUnsupported`
+error; they never panic and never touch a host descriptor. Automatic close on
+scope exit and move-only handles are deferred to #805.
+
+**Streaming reads (#1057).** `file-read-chunk` reads up to a requested byte count
+from a read-mode handle:
+
+| Helper | Signature | Behavior |
+|--------|-----------|----------|
+| `file-read-chunk` | `FileHandle i64 → ResultIoRead` | Read up to `count` bytes; `OkIoRead FileRead` carries the bytes read plus a sticky EOF flag. |
+
+`FileRead` mirrors the shape of the existing `StdinRead` aggregate (a `String`
+payload plus a sticky `eof` flag):
+
+```
+(defstruct FileRead
+  (bytes String)
+  (eof bool))
+```
+
+- A read returns up to `count` bytes. A returned chunk shorter than `count` does
+  not by itself indicate EOF — a short read may be a partial read. EOF is
+  reported only through the `eof` flag, which becomes true once the host read
+  reaches end-of-file.
+- A zero-length read (`count` = 0) performs no host read, returns an empty
+  `bytes` string, and reports the current EOF state deterministically.
+- A read at EOF returns an empty `bytes` string with `eof` = true.
+- A negative `count` returns `ErrIoRead (IoInvalidPath ...)` (an argument error)
+  without performing a host read.
+- Reading a write-only handle (`OpenWriteTruncate` / `OpenWriteAppend`) returns
+  `ErrIoRead (IoUnsupported ...)`.
+- Reading a closed or otherwise invalid handle returns
+  `ErrIoRead (IoUnsupported ...)`.
+- Interrupted host reads map through `io-error-from-status` to `IoInterrupted`;
+  other host failures map to their `IoError` variant or `IoSystemCode`.
+
+`ResultIoRead` is a new monomorphic result enum: `(OkIoRead FileRead)` /
+`(ErrIoRead IoError)`.
+
+**Text vs. binary (v1).** Like `StdinRead`, `FileRead` carries chunk data as a
+`String`: a chunk is the raw bytes read, stored in a `String`, with no
+text/binary distinction in v1. This remains source-compatible but may gain a
+byte-slice/`str` variant after #807 splits owned text strings from
+borrowed/binary bytes. Returned chunk strings allocate in the active arena, the
+same as `read-file` and `StdinRead`.
+
+**Streaming writes / append (#1058).** Streaming writes are specified by #1058
+and reuse `ResultIoUnit`. `OpenWriteAppend` defines append semantics:
+create-if-missing, never truncate, and — where the host supports an append open
+mode (Linux `O_APPEND`) — each write lands at the current end of file. Once
+#1058 lands, this supersedes the current non-atomic read-modify-write
+`try-append-file`; the whole-file helper stays available for source
+compatibility.
+
+**Platform policy.** Linux is the reference target and must implement all three
+modes plus streaming reads and writes. On Windows, the handle API either works
+(through the equivalent Win32 file calls) or returns a structured `IoUnsupported`
+result for any mode or operation not yet implemented there, following the same
+pattern as the Windows `try-create-temp-dir` behavior. No operation panics for an
+unsupported platform; callers always receive an `IoError`.
+
+**Scope.** This is a written API/spec only. It adds no Rust-only IO
+infrastructure and no runtime/backend code; the concrete `FileHandle`
+representation, runtime status primitives, and stdlib functions land through
+#1056, #1057, and #1058.
+
 ---
 
 ## 7. Memory model
 
-TypeLisp currently has no source-level reference, borrow, lifetime, move-only,
-destructor, `drop`, `free`, or garbage-collector model. The implementation uses
-pointer-sized handles for several aggregate values, but those handles are not
-checked references in the source language. Future ownership/borrowing work is a
-separate design track.
+TypeLisp currently has syntax/type-model support for written reference types
+(`(& arena T)` and `(&mut arena T)`), but no source-level borrow expressions,
+move-only ownership, implicit destructor, `drop`, `free`, or garbage-collector
+model. The implementation uses pointer-sized handles for several aggregate
+values, but those handles are not checked references in the source language.
+Full ownership/borrowing work is a separate design track. The reserved
+`(with ...)`
+form (§5.18) is explicit non-memory resource cleanup; it is not a general
+object destructor or heap reclamation mechanism. Raw pointers are the explicit
+low-level exception: their v1 syntax is specified, but they carry no safety
+guarantees and are not implemented yet (#809/#896).
 
 ### 7.1 Stack
 
@@ -1135,12 +1765,12 @@ values; returned enum and struct storage; and self-hosted data structures built
 from those primitives. Future closures are expected to allocate in the same
 heap until a more precise model exists.
 
-General per-object `free`, destructors, move-only ownership, and borrowed
-references are not part of this v1 policy. Aggregate handles are freely copied
-today, and dynamic arrays are shared mutable buffers, so adding arbitrary
-`free` before ownership/reference semantics would make double-free and
-use-after-free errors expressible. Ownership, borrowing, and reference work is a
-separate design track (#25, #182).
+General per-object `free`, implicit destructors, move-only ownership, and
+borrowed references are not part of this v1 policy. Aggregate handles are
+freely copied today, and dynamic arrays are shared mutable buffers, so adding
+arbitrary `free` before ownership/reference semantics would make double-free
+and use-after-free errors expressible. Ownership, borrowing, and reference work
+is a separate design track (#25, #182).
 
 A tracing garbage collector is also not the first reclamation step. It would
 need object metadata, root discovery or stack maps, runtime scanning policy, and
@@ -1182,6 +1812,8 @@ The current source spelling remains `(with-region ...)`; issue #801 tracks the
 planned `(with-arena ...)` spelling/alias. Unless a function explicitly says
 otherwise, allocation always uses the active arena: the innermost scoped arena,
 or the default program-lifetime arena when no scoped arena is active.
+Until the spelling migration lands, executable stdlib policy tests use
+`with-region` to verify the same active-arena semantics.
 
 #### Standard library and builtin allocation policy
 
@@ -1213,6 +1845,22 @@ tag, not the inner one).
 On non-Linux targets `with-region` still type-checks and scopes but does not
 reclaim, matching the semantic contract minus the reset.
 
+#### Scoped non-memory resources (reserved) - `with`
+
+The reserved `(with ([name init cleanup] ...) body ...)` form (§5.18) is the
+source surface for deterministic cleanup of non-memory resources. It does not
+select an allocation arena and does not reset heap storage. Cleanup is explicit
+in the binding and must return `unit`; TypeLisp still has no implicit
+destructors or automatic `drop`.
+
+This keeps resource lifetime policy independent from arena lifetime policy:
+files, process handles, locks, mapped files, and temporary paths use `with`;
+heap allocation reclamation uses `with-region` or the low-level unsafe region
+helpers below. Cleanup-owning aggregates (section 4.6.1) use the same `with`
+owner scope plus a declared aggregate cleanup function for the field cleanup
+plan. Compiler support is tracked by #907, with move-only enforcement tracked
+separately.
+
 #### Low-level extern helpers (unsafe by convention)
 
 Programs that need manual control may still declare the raw backend externs:
@@ -1236,14 +1884,44 @@ compiler, formatter, package-tooling, or REPL iteration has discarded all
 phase-local results. It is not a safe arbitrary source-level `free`
 replacement.
 
-### 7.4 Globals
+Once `(unsafe ...)` lands, direct calls to these raw reset helpers should be
+wrapped in an unsafe context. The safe `with-region` surface remains preferred.
+
+### 7.4 Raw pointers and unsafe memory access (v1 design)
+
+Raw pointers are address values. They do not own allocation, keep regions alive,
+or prove that pointed-to storage is initialized, aligned, in-bounds, mutable, or
+valid for the requested type.
+
+- `(Ptr T)` and `(MutPtr T)` are both 8-byte pointer-sized values on supported
+  targets.
+- Raw pointers are nullable and copyable. `ptr-null` creates a typed null
+  pointer, and `ptr-null?` checks for null without dereferencing.
+- Pointer equality, ordering, provenance, and bounds are otherwise unspecified
+  in v1. Only null testing is part of the safe surface.
+- `ptr-read`, `ptr-write!`, `ptr-offset`, `ptr-cast`, `ptr->int`, and
+  `int->ptr` require `(unsafe ...)` because the typechecker cannot prove their
+  memory or ABI preconditions.
+- A raw pointer into memory reclaimed by `with-region`/`tl_region_reset` becomes
+  invalid when that region is reset. The typechecker does not track this for raw
+  pointers.
+- Extern functions may return or accept raw pointers. The ABI contract is
+  explicit in the signature but still unsafe: a `(Ptr T)` return may be null,
+  dangling, misaligned, or point to fewer than `sizeof(T)` bytes unless the
+  foreign API says otherwise.
+
+Raw pointers are for FFI and carefully isolated low-level runtime code. They are
+not the future safe reference/borrow model (#182), not a replacement for
+`with-region`, and not a general manual memory management feature.
+
+### 7.5 Globals
 
 - Stored in the `.data` or `.rodata` section.
 - Mutable globals use `.data` with an initializer.
 - String literal bytes are stored in `.rodata`; a `String` value points to
   inline `{ptr,len}` storage whose `ptr` field points into `.rodata`.
 
-### 7.5 Aggregate handles and aliasing
+### 7.6 Aggregate handles and aliasing
 
 - Passing or assigning an aggregate value copies the value handle, not the
   pointed-to storage. This applies to `String`, dynamic-array, enum, and struct
@@ -1261,7 +1939,9 @@ replacement.
   operation.
 - Function calls pass aggregate handles by value. Returning an aggregate may
   heap-promote storage that would otherwise be frame-local; this is storage
-  placement for safety, not ownership transfer or borrow checking.
+  placement for safety, not ownership transfer or borrow checking for ordinary
+  aggregates. Cleanup-owning aggregates are the move-only exception specified
+  in section 4.6.1 and cannot use this copyable handle rule.
 
 ```lisp test=run name=dynamic-array-aliasing exit=42 stdout=""
 (define (main) : i64
@@ -1326,7 +2006,11 @@ replacement.
 | Mutable captures (`set!` to captured names) in lambdas | Not implemented |
 | Tail call optimization | Not implemented |
 | `struct-set!` | Not implemented |
+| Raw pointer types and `(unsafe ...)` | Specified for v1; parser/typechecker/lowering/backend implementation pending (#809/#896) |
+| Raw pointer dereference/write/offset/cast | Specified unsafe operations; implementation pending (#809/#897/#911/#912) |
 | Garbage collection / general `free` | Not implemented; allocation is process-lifetime by default with unsafe explicit region reset for tool-owned phase boundaries |
+| `(with ...)` scoped non-memory resource cleanup | Specified and reserved; parser/typechecker/lowering support pending |
+| Cleanup-owning aggregate declarations | Specified for structs and reserved for enums; parser/typechecker/lowering support pending |
 | SPMD / SIMD `foreach` | Scalar reference lowering implemented; AVX2 supports a first contiguous map/zip subset |
 | SPMD reductions and public cross-lane ops | Source semantics specified; parser/typechecker/lowering/backend support pending |
 | Windows region helpers | `tl_region_mark`/`tl_region_reset` are Linux-only |
@@ -1375,16 +2059,34 @@ for builtin `panic`/`error`:
       0)))
 ```
 
-Recoverable failures are represented with ordinary monomorphic enums. There
-are no built-in generic `Option<T>` / `Result<T,E>` types, no `?` operator,
-and no early-return sugar yet. Code that can recover should define an explicit
-domain enum and handle every variant with `match`.
+Recoverable failures are represented with ordinary concrete enums. TypeLisp
+does not expose generic `Option<T>` / `Result<T,E>` type syntax, generic
+functions, traits, trait objects, vtables, or runtime type-erased dispatch for
+recoverable errors. Reuse comes from comptime-generated concrete declarations:
+the generator emits nominal enum types and helper functions for the requested
+payload/error type keys.
 
-- Use `Maybe*` names for absence-only APIs, such as lookup hit/miss.
-- Use `Result*` names for APIs that distinguish success from an error value.
-- Matches must be exhaustive; omitted variants are rejected by the type checker.
+The generated-family identity is a stable key, not a runtime type object:
 
-```lisp test=compile name=monomorphic-maybe-result
+- Absence-only family key: `option:<payload-type-key>`.
+- Recoverable-error family key:
+  `result:<success-type-key>:<error-type-key>`.
+- Generated declaration keys also include the generator module identity and
+  generator identity from #893, so repeated requests for the same family reuse
+  the same concrete declarations or report a precise duplicate according to the
+  generated-declaration policy.
+- Display names are deterministic ASCII identifiers derived from those keys,
+  for example `Option_String`, `Result_String_IoError`, `Some_String`,
+  `None_String`, `Ok_String_IoError`, and `Err_String_IoError`. Exact
+  mangling is compiler-owned, but generated names must be stable, readable in
+  diagnostics/docs, and collision-free within the value/type namespaces.
+
+Until the generator lands, hand-written monomorphic enums are the source
+equivalent. Use `Maybe*` or `Option*` names for absence-only APIs and `Result*`
+names for APIs that distinguish success from an error value. Matches must be
+exhaustive; omitted variants are rejected by the type checker.
+
+```lisp test=compile name=monomorphic-option-result
 (defenum MaybeI64
   (NoneI64)
   (SomeI64 i64))
@@ -1418,9 +2120,80 @@ domain enum and handle every variant with `match`.
      (result-score (read-small "no"))))
 ```
 
-Comptime-generated concrete `Option`/`Result` families and implementation
-bundles are tracked by #893/#913/#483. `?`-style propagation and richer
-diagnostic payload policy remain separate language design work.
+Propagation uses the Lisp-shaped `(try expr)` form. It is analogous to Rust
+`?` or Zig `try`, but it operates on concrete generated families rather than
+generic traits or implicit conversions.
+
+- For a recoverable-error result, `(try expr)` evaluates `expr` once. On the
+  success variant it unwraps and yields the success payload. On the error
+  variant it returns from the enclosing function with the compatible error
+  variant carrying the same error payload.
+- For an absence-only option, `(try expr)` unwraps `Some*` and returns the
+  enclosing compatible `None*` on absence.
+- V1 compatibility is exact-family compatibility. There is no trait-like
+  `From` conversion, no cross-family conversion, and no implicit
+  Option-to-Result conversion; explicit conversion helpers may be generated by
+  later stdlib/comptime work.
+- `(try expr)` is valid only inside an enclosing function whose return type is
+  a compatible generated family or convention-compatible concrete family.
+- `(try expr)` is rejected when `expr` is not a result/option family, when the
+  enclosing function is not result/option-producing, when the error/absence
+  family is incompatible, or when manual matches over these enums are
+  non-exhaustive.
+
+```lisp test=ignore name=result-try-success reason="selfhost-only try propagation; Rust stage0 does not parse try"
+(defenum ResultI64
+  (OkI64 i64)
+  (ErrI64 String))
+
+(define (read-small [text : String]) : ResultI64
+  (if (string-eq text "7")
+    (OkI64 7)
+    (ErrI64 (string-append "bad: " text))))
+
+(define (read-plus-one [text : String]) : ResultI64
+  (let ([value : i64 (try (read-small text))])
+    (OkI64 (+ value 1))))
+```
+
+```lisp test=ignore name=result-try-incompatible-error reason="selfhost-only negative propagation example; should be an expect-error once Rust stage0 supports try"
+(defenum ResultI64
+  (OkI64 i64)
+  (ErrI64 String))
+
+(defenum ResultBool
+  (OkBool bool)
+  (ErrBool bool))
+
+(define (read-small [text : String]) : ResultI64
+  (if (string-eq text "7")
+    (OkI64 7)
+    (ErrI64 (string-append "bad: " text))))
+
+(define (bad-propagation [text : String]) : ResultBool
+  (let ([value : i64 (try (read-small text))])
+    (OkBool (> value 0))))
+```
+
+Panic remains separate from recoverable results. It aborts instead of producing
+an error variant, and its internal bottom type can still inhabit a
+result-returning branch:
+
+```lisp test=compile name=panic-vs-result
+(defenum ResultI64
+  (OkI64 i64)
+  (ErrI64 String))
+
+(define (read-or-abort [ok : bool]) : ResultI64
+  (if ok
+    (OkI64 7)
+    (panic "not recoverable")))
+```
+
+Current implementation status: selfhost has the `(try expr)` Result-like v1 for
+the convention of a concrete enum with one `Ok*` payload variant and one `Err*`
+payload variant. Generated concrete Option/Result families and reusable helper
+bundles are tracked by #902 on top of #893/#913.
 
 ---
 
@@ -1523,12 +2296,17 @@ later work.
 
 ### 11.3 Data layout
 
+Default TypeLisp layout is the compiler's internal representation. It is stable
+enough for TypeLisp code generation, but it is not the C FFI contract. Use
+`repr c` only when a struct must be shared with external ABI code.
+
 | Type | Size | Alignment |
 |------|------|-----------|
 | `i8`/`u8`/`bool`/`char` | 1 | 1 |
 | `i16`/`u16` | 2 | 2 |
 | `i32`/`u32` | 4 | 4 |
 | `i64`/`u64`/`f64`/func ptr | 8 | 8 |
+| `(Ptr T)` / `(MutPtr T)` | 8 | 8 |
 | `String`/`DynArray`/`Enum`/`Struct` values | 8 | 8 |
 
 - Structs: sequential layout with natural alignment per field. No padding minimization (fields are placed in declaration order).
@@ -1537,6 +2315,11 @@ later work.
   slots. Their pointed-to inline storage is larger: strings and dynamic arrays
   are 16-byte `{ptr,len}` records; structs and enum payload storage depend on
   their declared fields.
+
+For `repr c` structs, field layout follows section 3.4.3 instead of the
+aggregate-handle rule. A by-value nested `repr c` struct contributes its C
+layout size and alignment, not a TypeLisp pointer-sized handle. Unsupported
+fields are rejected before lowering.
 
 ---
 
@@ -1619,6 +2402,22 @@ later work.
     0))
 ```
 
+### Raw pointer FFI sketch (specified, not implemented)
+
+```lisp test=ignore name=raw-pointer-ffi-sketch reason="raw pointer syntax is specified before implementation"
+(extern c-buffer : (-> (MutPtr u8)))
+
+(define (main) : i64
+  (let
+    [p : (MutPtr u8) (c-buffer)]
+    (if (ptr-null? p)
+      1
+      (unsafe
+        (begin
+          (ptr-write! p 65)
+          (cast (ptr-read p) : i64))))))
+```
+
 ---
 
 ## 13. Grammar (informal)
@@ -1647,13 +2446,20 @@ export-item   ::= "(" "value" ident ")"
                 | "(" "constructor" ident ")"
                 | "(" "field" ident ident ")"
                 | "(" "variant" ident ")"
-defenum       ::= "(" "defenum" ident variant+ ")"
-defstruct     ::= "(" "defstruct" ident field+ ")"
+defenum       ::= "(" "defenum" ident enum-meta* variant+ ")"
+defstruct     ::= "(" "defstruct" ident struct-meta* field+ ")"
+struct-meta   ::= "(" ":repr" "c" ")"
+                | aggregate-cleanup-meta
+enum-meta     ::= aggregate-cleanup-meta       ; reserved, rejected in v1
+aggregate-cleanup-meta ::= "(" ":cleanup" ident ")"
 test-decl     ::= "(" "test" ident expr+ ")"
 
 param         ::= "[" ident ":" type "]"
-field         ::= "(" ident type ")"
-variant       ::= "(" ident type* ")"
+field         ::= "(" ident type field-meta* ")"
+field-meta    ::= "(" ":cleanup" ident ")"
+                | "(" ":owned" ")"
+variant       ::= "(" ident variant-payload* ")"
+variant-payload ::= type field-meta*           ; payload cleanup metadata reserved, rejected in v1
 
 expr          ::= literal
                 | ident
@@ -1670,9 +2476,25 @@ expr          ::= literal
                 | "(" "spmd-reduce" reduce-op foreach-clause expr expr ")"
                 | "(" "lambda" "(" param* ")" [":" type] expr ")"
                 | "(" "with-region" ident expr+ ")"
+                | "(" "with" "(" resource-binding* ")" expr+ ")"
+                | "(" "unsafe" expr+ ")"       ; specified, not implemented
+                | "(" "ptr-null" ":" ptr-type ")"      ; specified, not implemented
+                | "(" "ptr-null?" expr ")"             ; specified, not implemented
+                | "(" "ptr-read" expr ")"              ; specified, not implemented
+                | "(" "ptr-write!" expr expr ")"       ; specified, not implemented
+                | "(" "ptr-offset" expr expr ")"       ; specified, not implemented
+                | "(" "ptr-cast" expr ":" ptr-type ")" ; specified, not implemented
+                | "(" "ptr->int" expr ")"              ; specified, not implemented
+                | "(" "int->ptr" expr ":" ptr-type ")" ; specified, not implemented
+                | "(" "comptime" expr ")"
+                | "(" "type" type ")"
+                | "(" "size-of" expr ")"
+                | "(" "align-of" expr ")"
+                | "(" "offset-of" expr ident ")"
                 | "(" expr expr* ")"          ; function call
 
 binding       ::= "[" ident [":" type] expr "]"
+resource-binding ::= "[" ident expr expr "]"  ; name init cleanup-fn
 foreach-clause ::= "(" "[" ident ":" type expr expr "]" ")"
 reduce-op     ::= "sum" | "min" | "max" | "all" | "any"
 cond-arm      ::= "[" expr expr "]"
@@ -1691,9 +2513,17 @@ type          ::= "i64" | "i32" | "i16" | "i8"
                 | "String"
                 | "(" "Tuple" type+ ")"
                 | "(" "Array" type [integer] ")"
+                | ptr-type
+                | ref-type
                 | "(" "->" type+ ")"
                 | "(" "in" ident type ")"              ; region-tagged (v1)
                 | ident                                ; enum or struct name
+
+ptr-type      ::= "(" "Ptr" type ")"
+                | "(" "MutPtr" type ")"
+
+ref-type      ::= "(" "&" ident type ")"
+                | "(" "&mut" ident type ")"
 
 module-ident  ::= ident ("/" ident)*
 ident         ::= [a-zA-Z_][a-zA-Z0-9_!?+-=*/<>:]*

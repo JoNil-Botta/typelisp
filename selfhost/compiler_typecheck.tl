@@ -49,6 +49,71 @@
   (OkTcUnit)
   (ErrTcUnit String))
 
+(defenum TcSpmdClass
+  (TcSpmdUniform)
+  (TcSpmdVarying))
+
+(defenum TcSpmdScope
+  (TcSpmdOuter)
+  (TcSpmdLocal))
+
+(defenum TcSpmdEnv
+  (TcSpmdEnvNil)
+  (TcSpmdEnvBind String AstType TcSpmdClass TcSpmdScope TcSpmdEnv))
+
+(defenum TcSpmdLookup
+  (TcSpmdMissing)
+  (TcSpmdFound AstType TcSpmdClass TcSpmdScope))
+
+(defenum TcSpmdExprInfo
+  (TcSpmdExprInfo AstType TcSpmdClass TcSpmdEnv))
+
+(defenum ResultTcSpmdExprInfo
+  (OkTcSpmdExprInfo TcSpmdExprInfo)
+  (ErrTcSpmdExprInfo String))
+
+(defenum TcSpmdLetState
+  (TcSpmdLetState TcTypeEnv TcSpmdEnv i64))
+
+(defenum ResultTcSpmdLetState
+  (OkTcSpmdLetState TcSpmdLetState)
+  (ErrTcSpmdLetState String))
+
+(defenum TcSpmdExprListInfo
+  (TcSpmdExprListInfo TcSpmdClass TcSpmdEnv))
+
+(defenum ResultTcSpmdExprListInfo
+  (OkTcSpmdExprListInfo TcSpmdExprListInfo)
+  (ErrTcSpmdExprListInfo String))
+
+(defenum TcStructDecl
+  (TcStructDecl AstStructRepr AstFieldDefList))
+
+(defenum ResultTcStructDecl
+  (OkTcStructDecl TcStructDecl)
+  (ErrTcStructDecl String))
+
+(defenum TcLayoutInfo
+  (TcLayoutInfo i64 i64))
+
+(defenum ResultTcLayoutInfo
+  (OkTcLayoutInfo TcLayoutInfo)
+  (ErrTcLayoutInfo String))
+
+(defenum TcReprCFieldLayout
+  (TcReprCFieldLayout String AstType i64))
+
+(defenum TcReprCFieldLayoutList
+  (TcReprCFieldLayoutNil)
+  (TcReprCFieldLayoutCons TcReprCFieldLayout TcReprCFieldLayoutList))
+
+(defenum TcReprCLayout
+  (TcReprCLayout i64 i64 TcReprCFieldLayoutList))
+
+(defenum ResultTcReprCLayout
+  (OkTcReprCLayout TcReprCLayout)
+  (ErrTcReprCLayout String))
+
 (defenum CompilerTypecheckSummary
   (CompilerTypecheckSummary i64 i64 i64))
 
@@ -93,6 +158,25 @@
 
 (define (tc-bind [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
   (TcTypeBind name ty env))
+
+(define (tc-bind-alias-if-free [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
+  (if (tc-name-bound? env name)
+    env
+    (tc-bind env name ty)))
+
+(define (tc-bind-module-name
+  [env : TcTypeEnv]
+  [module : String]
+  [name : String]
+  [ty : AstType]) : TcTypeEnv
+  (let
+    [key : String (compiler-symbol-module-key module name)]
+    (tc-bind
+      (if (string-eq key name)
+        env
+        (tc-bind-alias-if-free env name ty))
+      key
+      ty)))
 
 (define (tc-default-boundary-name) : String
   "__tl_default_boundary")
@@ -178,6 +262,18 @@
         (tc-type-render elem)
         (tc-cat3 " " (int->string count) ")"))]
     [(AstTyDynArray elem) (tc-cat3 "(Array " (tc-type-render elem) ")")]
+    [(AstTyPtr elem) (tc-cat3 "(Ptr " (tc-type-render elem) ")")]
+    [(AstTyMutPtr elem) (tc-cat3 "(MutPtr " (tc-type-render elem) ")")]
+    [(AstTyRef region inner)
+      (tc-cat3
+        "(& "
+        region
+        (string-append " " (string-append (tc-type-render inner) ")")))]
+    [(AstTyMutRef region inner)
+      (tc-cat3
+        "(&mut "
+        region
+        (string-append " " (string-append (tc-type-render inner) ")")))]
     [(AstTyRegion region inner)
       (tc-cat3
         "(Region "
@@ -293,13 +389,33 @@
                                           [e19 : TcTypeEnv
                                             (tc-bind
                                               (tc-bind
-                                                e18
-                                                "file-exists?"
+                                                (tc-bind
+                                                  (tc-bind
+                                                    (tc-bind
+                                                      (tc-bind
+                                                        e18
+                                                        "file-exists?"
+                                                        (tc-fn1
+                                                          (AstTyString)
+                                                          (AstTyBool)))
+                                                      "file-exists-status"
+                                                      (tc-fn1
+                                                        (AstTyString)
+                                                        (AstTyI64)))
+                                                    "fs-mkdir-status"
+                                                    (tc-fn1
+                                                      (AstTyString)
+                                                      (AstTyI64)))
+                                                  "fs-remove-file-status"
+                                                  (tc-fn1
+                                                    (AstTyString)
+                                                    (AstTyI64)))
+                                                "fs-remove-dir-status"
                                                 (tc-fn1
                                                   (AstTyString)
-                                                  (AstTyBool)))
-                                              "file-exists-status"
-                                              (tc-fn1 (AstTyString) (AstTyI64)))]
+                                                  (AstTyI64)))
+                                              "fs-process-id"
+                                              (tc-fn0 (AstTyI64)))]
                                           (let
                                             [e20 : TcTypeEnv
                                               (tc-bind
@@ -462,6 +578,11 @@
     [(AstTyTuple elems) (AstTyTuple (tc-type-list-without-regions elems))]
     [(AstTyArray elem len) (AstTyArray (tc-type-without-regions elem) len)]
     [(AstTyDynArray elem) (AstTyDynArray (tc-type-without-regions elem))]
+    [(AstTyPtr elem) (AstTyPtr (tc-type-without-regions elem))]
+    [(AstTyMutPtr elem) (AstTyMutPtr (tc-type-without-regions elem))]
+    [(AstTyRef region inner) (AstTyRef region (tc-type-without-regions inner))]
+    [(AstTyMutRef region inner)
+      (AstTyMutRef region (tc-type-without-regions inner))]
     [(AstTyRegion _ inner) (tc-type-without-regions inner)]
     [_ ty]))
 
@@ -482,6 +603,12 @@
     [(AstTyTuple elems) (tc-type-list-contains-region elems region)]
     [(AstTyArray elem _) (tc-type-contains-region elem region)]
     [(AstTyDynArray elem) (tc-type-contains-region elem region)]
+    [(AstTyPtr elem) (tc-type-contains-region elem region)]
+    [(AstTyMutPtr elem) (tc-type-contains-region elem region)]
+    [(AstTyRef name inner)
+      (or (string-eq name region) (tc-type-contains-region inner region))]
+    [(AstTyMutRef name inner)
+      (or (string-eq name region) (tc-type-contains-region inner region))]
     [(AstTyRegion name inner)
       (or (string-eq name region) (tc-type-contains-region inner region))]
     [_ false]))
@@ -503,6 +630,10 @@
     [(AstTyTuple elems) (tc-type-list-contains-any-region elems)]
     [(AstTyArray elem _) (tc-type-contains-any-region elem)]
     [(AstTyDynArray elem) (tc-type-contains-any-region elem)]
+    [(AstTyPtr elem) (tc-type-contains-any-region elem)]
+    [(AstTyMutPtr elem) (tc-type-contains-any-region elem)]
+    [(AstTyRef _ _) true]
+    [(AstTyMutRef _ _) true]
     [(AstTyRegion _ _) true]
     [_ false]))
 
@@ -523,6 +654,12 @@
     [(AstTyTuple elems) (tc-type-list-collect-regions elems out)]
     [(AstTyArray elem _) (tc-type-collect-regions-into elem out)]
     [(AstTyDynArray elem) (tc-type-collect-regions-into elem out)]
+    [(AstTyPtr elem) (tc-type-collect-regions-into elem out)]
+    [(AstTyMutPtr elem) (tc-type-collect-regions-into elem out)]
+    [(AstTyRef name inner)
+      (tc-type-collect-regions-into inner (tc-string-list-add out name))]
+    [(AstTyMutRef name inner)
+      (tc-type-collect-regions-into inner (tc-string-list-add out name))]
     [(AstTyRegion name inner)
       (tc-type-collect-regions-into inner (tc-string-list-add out name))]
     [_ out]))
@@ -640,6 +777,11 @@
     [(AstTyTuple elems) (AstTyTuple (tc-resolve-type-list ctx elems))]
     [(AstTyArray elem len) (AstTyArray (tc-resolve-type ctx elem) len)]
     [(AstTyDynArray elem) (AstTyDynArray (tc-resolve-type ctx elem))]
+    [(AstTyPtr elem) (AstTyPtr (tc-resolve-type ctx elem))]
+    [(AstTyMutPtr elem) (AstTyMutPtr (tc-resolve-type ctx elem))]
+    [(AstTyRef region inner) (AstTyRef region (tc-resolve-type ctx inner))]
+    [(AstTyMutRef region inner)
+      (AstTyMutRef region (tc-resolve-type ctx inner))]
     [(AstTyRegion region inner)
       (AstTyRegion region (tc-resolve-type ctx inner))]
     [(AstTyVar name)
@@ -683,6 +825,20 @@
     [(AstTyTuple elems) (tc-source-type-list-policy-ok ctx elems)]
     [(AstTyArray elem _) (tc-source-type-policy-ok ctx elem)]
     [(AstTyDynArray elem) (tc-source-type-policy-ok ctx elem)]
+    [(AstTyPtr elem) (tc-source-type-policy-ok ctx elem)]
+    [(AstTyMutPtr elem) (tc-source-type-policy-ok ctx elem)]
+    [(AstTyRef _ inner)
+      (match (tc-source-type-policy-ok ctx inner)
+        [(OkTcUnit)
+          (ErrTcUnit
+            "typecheck: reference types require borrow checker support (#803/#806/#804)")]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstTyMutRef _ inner)
+      (match (tc-source-type-policy-ok ctx inner)
+        [(OkTcUnit)
+          (ErrTcUnit
+            "typecheck: reference types require borrow checker support (#803/#806/#804)")]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstTyRegion _ inner) (tc-source-type-policy-ok ctx inner)]
     [(AstTyVar name) (ErrTcUnit (tc-source-type-policy-message name))]
     [_ OkTcUnit]))
@@ -886,7 +1042,15 @@
     [(AstDeclExtern _ ty) (tc-source-type-policy-ok ctx ty)]
     [(AstDeclDefEnum _ variants)
       (tc-source-variant-list-policy-ok ctx variants)]
-    [(AstDeclDefStruct _ fields) (tc-source-field-list-policy-ok ctx fields)]
+    [(AstDeclDefStruct name repr fields)
+      (match (tc-source-field-list-policy-ok ctx fields)
+        [(OkTcUnit)
+          (if (ast-struct-repr-c? repr)
+            (match (tc-repr-c-struct-layout ctx name)
+              [(OkTcReprCLayout _) OkTcUnit]
+              [(ErrTcReprCLayout message) (ErrTcUnit message)])
+            OkTcUnit)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstDeclImport _) OkTcUnit]
     [(AstDeclModule _) OkTcUnit]
     [(AstDeclTest _ body _) (tc-source-expr-policy-ok ctx body)]
@@ -997,6 +1161,24 @@
       (match b
         [(AstTyDynArray b-elem) (tc-type-eq a-elem b-elem)]
         [_ false])]
+    [(AstTyPtr a-elem)
+      (match b
+        [(AstTyPtr b-elem) (tc-type-eq a-elem b-elem)]
+        [_ false])]
+    [(AstTyMutPtr a-elem)
+      (match b
+        [(AstTyMutPtr b-elem) (tc-type-eq a-elem b-elem)]
+        [_ false])]
+    [(AstTyRef a-region a-inner)
+      (match b
+        [(AstTyRef b-region b-inner)
+          (and (string-eq a-region b-region) (tc-type-eq a-inner b-inner))]
+        [_ false])]
+    [(AstTyMutRef a-region a-inner)
+      (match b
+        [(AstTyMutRef b-region b-inner)
+          (and (string-eq a-region b-region) (tc-type-eq a-inner b-inner))]
+        [_ false])]
     [(AstTyRegion _ inner)
       (tc-type-eq-core
         (tc-type-without-regions inner)
@@ -1091,6 +1273,152 @@
       [(AstTyStruct _) true]
       [(AstTyDynArray _) true]
       [_ false])))
+
+(define (tc-spmd-varying? [class : TcSpmdClass]) : bool
+  (match class
+    [(TcSpmdUniform) false]
+    [(TcSpmdVarying) true]))
+
+(define (tc-spmd-merge-class [a : TcSpmdClass] [b : TcSpmdClass]) : TcSpmdClass
+  (if (tc-spmd-varying? a)
+    TcSpmdVarying
+    (if (tc-spmd-varying? b)
+      TcSpmdVarying
+      TcSpmdUniform)))
+
+(define (tc-spmd-varying-value-type-supported? [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyI64) true]
+    [(AstTyI32) true]
+    [(AstTyF64) true]
+    [(AstTyBool) true]
+    [_ false]))
+
+(define (tc-spmd-lane-type-supported? [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyI64) true]
+    [(AstTyI32) true]
+    [(AstTyF64) true]
+    [_ false]))
+
+(define (tc-spmd-finish [ty : AstType] [class : TcSpmdClass] [env : TcSpmdEnv]) : ResultTcSpmdExprInfo
+  (if (and
+    (tc-spmd-varying? class)
+    (not (tc-spmd-varying-value-type-supported? ty)))
+    (ErrTcSpmdExprInfo
+      (string-append
+        "typecheck: foreach varying value type is not supported: "
+        (tc-type-render (tc-type-strip-region ty))))
+    (OkTcSpmdExprInfo (TcSpmdExprInfo ty class env))))
+
+(define (tc-spmd-finish-lane
+  [ty : AstType]
+  [class : TcSpmdClass]
+  [env : TcSpmdEnv]) : ResultTcSpmdExprInfo
+  (if (and (tc-spmd-varying? class) (not (tc-spmd-lane-type-supported? ty)))
+    (ErrTcSpmdExprInfo
+      (string-append
+        "typecheck: foreach varying array lane type is not supported: "
+        (tc-type-render (tc-type-strip-region ty))))
+    (tc-spmd-finish ty class env)))
+
+(define (tc-spmd-env-from-type-env [env : TcTypeEnv]) : TcSpmdEnv
+  (match env
+    [(TcTypeNil) TcSpmdEnvNil]
+    [(TcTypeBind name ty rest)
+      (TcSpmdEnvBind
+        name
+        ty
+        TcSpmdUniform
+        TcSpmdOuter
+        (tc-spmd-env-from-type-env rest))]))
+
+(define (tc-spmd-env-bind
+  [env : TcSpmdEnv]
+  [name : String]
+  [ty : AstType]
+  [class : TcSpmdClass]
+  [scope : TcSpmdScope]) : TcSpmdEnv
+  (TcSpmdEnvBind name ty class scope env))
+
+(define (tc-spmd-env-lookup [env : TcSpmdEnv] [name : String]) : TcSpmdLookup
+  (match env
+    [(TcSpmdEnvNil) TcSpmdMissing]
+    [(TcSpmdEnvBind key ty class scope rest)
+      (if (string-eq key name)
+        (TcSpmdFound ty class scope)
+        (tc-spmd-env-lookup rest name))]))
+
+(define (tc-spmd-env-has-local? [env : TcSpmdEnv] [name : String]) : bool
+  (match env
+    [(TcSpmdEnvNil) false]
+    [(TcSpmdEnvBind key _ _ scope rest)
+      (if (string-eq key name)
+        (match scope
+          [(TcSpmdLocal) true]
+          [(TcSpmdOuter) (tc-spmd-env-has-local? rest name)])
+        (tc-spmd-env-has-local? rest name))]))
+
+(define (tc-spmd-env-has-outer? [env : TcSpmdEnv] [name : String]) : bool
+  (match env
+    [(TcSpmdEnvNil) false]
+    [(TcSpmdEnvBind key _ _ scope rest)
+      (if (string-eq key name)
+        (match scope
+          [(TcSpmdOuter) true]
+          [(TcSpmdLocal) (tc-spmd-env-has-outer? rest name)])
+        (tc-spmd-env-has-outer? rest name))]))
+
+(define (tc-spmd-env-set-local-class
+  [env : TcSpmdEnv]
+  [name : String]
+  [class : TcSpmdClass]) : TcSpmdEnv
+  (match env
+    [(TcSpmdEnvNil) TcSpmdEnvNil]
+    [(TcSpmdEnvBind key ty old-class scope rest)
+      (if (string-eq key name)
+        (match scope
+          [(TcSpmdLocal) (TcSpmdEnvBind key ty class scope rest)]
+          [(TcSpmdOuter)
+            (TcSpmdEnvBind
+              key
+              ty
+              old-class
+              scope
+              (tc-spmd-env-set-local-class rest name class))])
+        (TcSpmdEnvBind
+          key
+          ty
+          old-class
+          scope
+          (tc-spmd-env-set-local-class rest name class)))]))
+
+(define (tc-spmd-env-pop [env : TcSpmdEnv] [count : i64]) : TcSpmdEnv
+  (if (<= count 0)
+    env
+    (match env
+      [(TcSpmdEnvNil) TcSpmdEnvNil]
+      [(TcSpmdEnvBind _ _ _ _ rest) (tc-spmd-env-pop rest (- count 1))])))
+
+(define (tc-spmd-env-mark-outer [env : TcSpmdEnv]) : TcSpmdEnv
+  (match env
+    [(TcSpmdEnvNil) TcSpmdEnvNil]
+    [(TcSpmdEnvBind name ty class _ rest)
+      (TcSpmdEnvBind name ty class TcSpmdOuter (tc-spmd-env-mark-outer rest))]))
+
+(define (tc-spmd-env-merge-classes [left : TcSpmdEnv] [right : TcSpmdEnv]) : TcSpmdEnv
+  (match left
+    [(TcSpmdEnvNil) TcSpmdEnvNil]
+    [(TcSpmdEnvBind name ty class scope left-rest)
+      (match right
+        [(TcSpmdEnvNil) left]
+        [(TcSpmdEnvBind _ _ right-class _ right-rest)
+          (TcSpmdEnvBind
+            name
+            ty
+            (tc-spmd-merge-class class right-class)
+            scope
+            (tc-spmd-env-merge-classes left-rest right-rest))])]))
 
 (define (tc-literal-type [lit : AstLiteral]) : AstType
   (match lit
@@ -1213,73 +1541,126 @@
   [env : TcTypeEnv]
   [enum-name : String]
   [variants : AstVariantDefList]) : ResultTcEnv
+  (tc-bind-enum-variants-in-module ctx env "" enum-name variants))
+
+(define (tc-bind-enum-variants-in-module
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [module : String]
+  [enum-name : String]
+  [variants : AstVariantDefList]) : ResultTcEnv
   (match variants
     [(AstVariantDefNil) (OkTcEnv env)]
     [(AstVariantDefCons variant rest)
       (match variant
         [(AstVariantDef name fields)
-          (tc-bind-enum-variants
-            ctx
-            (tc-bind
-              env
-              name
-              (tc-enum-variant-constructor-type ctx enum-name fields))
-            enum-name
-            rest)])]))
+          (let
+            [scoped-enum : String (compiler-symbol-module-key module enum-name)]
+            (tc-bind-enum-variants-in-module
+              ctx
+              (tc-bind-module-name
+                env
+                module
+                name
+                (tc-enum-variant-constructor-type ctx scoped-enum fields))
+              module
+              enum-name
+              rest))])]))
 
 (define (tc-build-top-env-list
   [ctx : TcContext]
   [decls : AstDeclList]
   [env : TcTypeEnv]) : ResultTcEnv
+  (tc-build-top-env-list-in-module ctx decls env ""))
+
+(define (tc-build-top-env-list-in-module
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [env : TcTypeEnv]
+  [module : String]) : ResultTcEnv
   (match decls
     [(AstDeclNil) (OkTcEnv env)]
     [(AstDeclCons decl rest)
       (match decl
+        [(AstDeclModule next-module)
+          (tc-build-top-env-list-in-module ctx rest env next-module)]
         [(AstDeclDef name _ _)
           (match (tc-top-decl-type ctx decl)
             [(OkTcType ty)
-              (tc-build-top-env-list ctx rest (tc-bind env name ty))]
+              (tc-build-top-env-list-in-module
+                ctx
+                rest
+                (tc-bind-module-name env module name ty)
+                module)]
             [(ErrTcType message) (ErrTcEnv message)])]
         [(AstDeclDefFn name _ _ _)
           (match (tc-top-decl-type ctx decl)
             [(OkTcType ty)
-              (tc-build-top-env-list ctx rest (tc-bind env name ty))]
+              (tc-build-top-env-list-in-module
+                ctx
+                rest
+                (tc-bind-module-name env module name ty)
+                module)]
             [(ErrTcType message) (ErrTcEnv message)])]
         [(AstDeclExtern name _)
           (match (tc-top-decl-type ctx decl)
             [(OkTcType ty)
-              (tc-build-top-env-list ctx rest (tc-bind env name ty))]
+              (tc-build-top-env-list-in-module
+                ctx
+                rest
+                (tc-bind-module-name env module name ty)
+                module)]
             [(ErrTcType message) (ErrTcEnv message)])]
         [(AstDeclDefEnum name variants)
-          (match (tc-bind-enum-variants ctx env name variants)
-            [(OkTcEnv next-env) (tc-build-top-env-list ctx rest next-env)]
+          (match (tc-bind-enum-variants-in-module ctx env module name variants)
+            [(OkTcEnv next-env)
+              (tc-build-top-env-list-in-module ctx rest next-env module)]
             [(ErrTcEnv message) (ErrTcEnv message)])]
-        [(AstDeclDefStruct name fields)
-          (tc-build-top-env-list
-            ctx
-            rest
-            (tc-bind
-              env
-              name
-              (AstTyFunc (tc-field-type-list ctx fields) (AstTyStruct name))))]
+        [(AstDeclDefStruct name _ fields)
+          (let
+            [scoped-name : String (compiler-symbol-module-key module name)]
+            (tc-build-top-env-list-in-module
+              ctx
+              rest
+              (tc-bind-module-name
+                env
+                module
+                name
+                (AstTyFunc
+                  (tc-field-type-list ctx fields)
+                  (AstTyStruct scoped-name)))
+              module))]
         [(AstDeclComptimeDecl template)
           (match template
             [(AstDeclDefEnum name variants)
-              (match (tc-bind-enum-variants ctx env name variants)
-                [(OkTcEnv next-env) (tc-build-top-env-list ctx rest next-env)]
-                [(ErrTcEnv message) (ErrTcEnv message)])]
-            [(AstDeclDefStruct name fields)
-              (tc-build-top-env-list
+              (match (tc-bind-enum-variants-in-module
                 ctx
-                rest
-                (tc-bind
-                  env
-                  name
-                  (AstTyFunc (tc-field-type-list ctx fields) (AstTyStruct name))))]
-            [_ (tc-build-top-env-list ctx rest env)])]
-        [(AstDeclImport _) (tc-build-top-env-list ctx rest env)]
-        [(AstDeclModule _) (tc-build-top-env-list ctx rest env)]
-        [(AstDeclTest _ _ _) (tc-build-top-env-list ctx rest env)])]))
+                env
+                module
+                name
+                variants)
+                [(OkTcEnv next-env)
+                  (tc-build-top-env-list-in-module ctx rest next-env module)]
+                [(ErrTcEnv message) (ErrTcEnv message)])]
+            [(AstDeclDefStruct name _ fields)
+              (let
+                [scoped-name : String (compiler-symbol-module-key module name)]
+                (tc-build-top-env-list-in-module
+                  ctx
+                  rest
+                  (tc-bind-module-name
+                    env
+                    module
+                    name
+                    (AstTyFunc
+                      (tc-field-type-list ctx fields)
+                      (AstTyStruct scoped-name)))
+                  module))]
+            [_ (tc-build-top-env-list-in-module ctx rest env module)])]
+        [(AstDeclImport _)
+          (tc-build-top-env-list-in-module ctx rest env module)]
+        [(AstDeclTest _ _ _)
+          (tc-build-top-env-list-in-module ctx rest env module)])]))
 
 (define (tc-build-top-env [ctx : TcContext] [program : AstProgram]) : ResultTcEnv
   (match program
@@ -1385,13 +1766,29 @@
                                     true
                                     (if (string-eq name "file-exists-status")
                                       true
-                                      (if (string-eq name "panic")
+                                      (if (string-eq name "fs-mkdir-status")
                                         true
-                                        (if (string-eq name "error")
+                                        (if (string-eq
+                                          name
+                                          "fs-remove-file-status")
                                           true
-                                          (if (string-eq name "env-var-exists?")
+                                          (if (string-eq
+                                            name
+                                            "fs-remove-dir-status")
                                             true
-                                            (string-eq name "env-var-value")))))))))))))))))))))))
+                                            (if (string-eq name "fs-process-id")
+                                              true
+                                              (if (string-eq name "panic")
+                                                true
+                                                (if (string-eq name "error")
+                                                  true
+                                                  (if (string-eq
+                                                    name
+                                                    "env-var-exists?")
+                                                    true
+                                                    (string-eq
+                                                      name
+                                                      "env-var-value")))))))))))))))))))))))))))
 
 (define (tc-default-builtin-unshadowed-scan? [env : TcTypeEnv] [name : String]) : bool
   (match env
@@ -1692,6 +2089,519 @@
             [(OkTcType _) (tc-begin-list ctx env rest)]
             [(ErrTcType message) (ErrTcType message)])])]))
 
+(define (tc-spmd-require-uniform [class : TcSpmdClass] [message : String]) : ResultTcUnit
+  (if (tc-spmd-varying? class)
+    (ErrTcUnit message)
+    OkTcUnit))
+
+(define (tc-spmd-let-bindings
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [bindings : AstLetBindingList]
+  [count : i64]) : ResultTcSpmdLetState
+  (match bindings
+    [(AstLetBindingNil) (OkTcSpmdLetState (TcSpmdLetState env spmd-env count))]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding name maybe-ty init)
+          (match (tc-spmd-expr ctx env spmd-env init)
+            [(OkTcSpmdExprInfo info)
+              (match info
+                [(TcSpmdExprInfo init-ty init-class next-spmd-env)
+                  (let
+                    [bound-ty : AstType
+                      (match maybe-ty
+                        [(AstSomeType want)
+                          (if (tc-type-contains-any-region init-ty)
+                            init-ty
+                            (tc-resolve-type ctx want))]
+                        [(AstNoType) init-ty])]
+                    (tc-spmd-let-bindings
+                      ctx
+                      (tc-bind env name bound-ty)
+                      (tc-spmd-env-bind
+                        next-spmd-env
+                        name
+                        bound-ty
+                        init-class
+                        TcSpmdLocal)
+                      rest
+                      (+ count 1)))])]
+            [(ErrTcSpmdExprInfo message) (ErrTcSpmdLetState message)])])]))
+
+(define (tc-spmd-expr-list
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [exprs : AstExprList]) : ResultTcSpmdExprListInfo
+  (match exprs
+    [(AstExprNil)
+      (OkTcSpmdExprListInfo (TcSpmdExprListInfo TcSpmdUniform spmd-env))]
+    [(AstExprCons expr rest)
+      (match (tc-spmd-expr ctx env spmd-env expr)
+        [(OkTcSpmdExprInfo info)
+          (match info
+            [(TcSpmdExprInfo _ class next-spmd-env)
+              (match (tc-spmd-expr-list ctx env next-spmd-env rest)
+                [(OkTcSpmdExprListInfo rest-info)
+                  (match rest-info
+                    [(TcSpmdExprListInfo rest-class rest-env)
+                      (OkTcSpmdExprListInfo
+                        (TcSpmdExprListInfo
+                          (tc-spmd-merge-class class rest-class)
+                          rest-env))])]
+                [(ErrTcSpmdExprListInfo message)
+                  (ErrTcSpmdExprListInfo message)])])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprListInfo message)])]))
+
+(define (tc-spmd-begin-list
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [exprs : AstExprList]) : ResultTcSpmdExprInfo
+  (match exprs
+    [(AstExprNil)
+      (OkTcSpmdExprInfo (TcSpmdExprInfo (AstTyUnit) TcSpmdUniform spmd-env))]
+    [(AstExprCons expr rest)
+      (match rest
+        [(AstExprNil) (tc-spmd-expr ctx env spmd-env expr)]
+        [_
+          (match (tc-spmd-expr ctx env spmd-env expr)
+            [(OkTcSpmdExprInfo info)
+              (match info
+                [(TcSpmdExprInfo _ _ next-spmd-env)
+                  (tc-spmd-begin-list ctx env next-spmd-env rest)])]
+            [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]))
+
+(define (tc-spmd-match-arms
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [scrut-ty : AstType]
+  [arms : AstMatchArmList]
+  [class : TcSpmdClass]) : ResultTcSpmdExprListInfo
+  (match arms
+    [(AstMatchArmNil)
+      (OkTcSpmdExprListInfo (TcSpmdExprListInfo class spmd-env))]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm pattern body)
+          (match (tc-bind-match-pattern ctx env scrut-ty pattern)
+            [(OkTcEnv arm-env)
+              (match (tc-spmd-expr ctx arm-env spmd-env body)
+                [(OkTcSpmdExprInfo body-info)
+                  (match body-info
+                    [(TcSpmdExprInfo _ body-class body-env)
+                      (match (tc-spmd-match-arms
+                        ctx
+                        env
+                        spmd-env
+                        scrut-ty
+                        rest
+                        (tc-spmd-merge-class class body-class))
+                        [(OkTcSpmdExprListInfo rest-info)
+                          (match rest-info
+                            [(TcSpmdExprListInfo rest-class rest-env)
+                              (OkTcSpmdExprListInfo
+                                (TcSpmdExprListInfo
+                                  rest-class
+                                  (tc-spmd-env-merge-classes body-env rest-env)))])]
+                        [(ErrTcSpmdExprListInfo message)
+                          (ErrTcSpmdExprListInfo message)])])]
+                [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprListInfo message)])]
+            [(ErrTcEnv message) (ErrTcSpmdExprListInfo message)])])]))
+
+(define (tc-spmd-check-foreach-body-with-env
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [index : String]
+  [index-ty : AstType]
+  [body : AstExpr]) : ResultTcUnit
+  (let
+    [body-env : TcTypeEnv (tc-bind env index index-ty)]
+    [body-spmd-env : TcSpmdEnv
+      (tc-spmd-env-bind
+        (tc-spmd-env-mark-outer spmd-env)
+        index
+        index-ty
+        TcSpmdVarying
+        TcSpmdLocal)]
+    (match (tc-spmd-expr ctx body-env body-spmd-env body)
+      [(OkTcSpmdExprInfo _) OkTcUnit]
+      [(ErrTcSpmdExprInfo message) (ErrTcUnit message)])))
+
+(define (tc-spmd-check-foreach-body
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [index : String]
+  [index-ty : AstType]
+  [body : AstExpr]) : ResultTcUnit
+  (tc-spmd-check-foreach-body-with-env
+    ctx
+    env
+    (tc-spmd-env-from-type-env env)
+    index
+    index-ty
+    body))
+
+(define (tc-spmd-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [expr : AstExpr]) : ResultTcSpmdExprInfo
+  (match (tc-expr ctx env expr)
+    [(OkTcType ty) (tc-spmd-expr-typed ctx env spmd-env expr ty)]
+    [(ErrTcType message) (ErrTcSpmdExprInfo message)]))
+
+(define (tc-spmd-expr-typed
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [expr : AstExpr]
+  [expr-ty : AstType]) : ResultTcSpmdExprInfo
+  (match expr
+    [(AstExprSpanned inner _)
+      (tc-spmd-expr-typed ctx env spmd-env inner expr-ty)]
+    [(AstExprLiteral _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
+    [(AstExprVar name)
+      (match (tc-spmd-env-lookup spmd-env name)
+        [(TcSpmdFound _ class _) (tc-spmd-finish expr-ty class spmd-env)]
+        [(TcSpmdMissing) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)])]
+    [(AstExprTypeLiteral _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
+    [(AstExprAnn inner _)
+      (match (tc-spmd-expr ctx env spmd-env inner)
+        [(OkTcSpmdExprInfo info)
+          (match info
+            [(TcSpmdExprInfo _ class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprCast inner _)
+      (match (tc-spmd-expr ctx env spmd-env inner)
+        [(OkTcSpmdExprInfo info)
+          (match info
+            [(TcSpmdExprInfo _ class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprUnary _ inner)
+      (match (tc-spmd-expr ctx env spmd-env inner)
+        [(OkTcSpmdExprInfo info)
+          (match info
+            [(TcSpmdExprInfo _ class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprBinary _ left right)
+      (match (tc-spmd-expr ctx env spmd-env left)
+        [(OkTcSpmdExprInfo left-info)
+          (match left-info
+            [(TcSpmdExprInfo _ left-class left-env)
+              (match (tc-spmd-expr ctx env left-env right)
+                [(OkTcSpmdExprInfo right-info)
+                  (match right-info
+                    [(TcSpmdExprInfo _ right-class right-env)
+                      (tc-spmd-finish
+                        expr-ty
+                        (tc-spmd-merge-class left-class right-class)
+                        right-env)])]
+                [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprCall func args)
+      (match (tc-spmd-expr ctx env spmd-env func)
+        [(OkTcSpmdExprInfo func-info)
+          (match func-info
+            [(TcSpmdExprInfo _ _ func-env)
+              (match (tc-spmd-expr-list ctx env func-env args)
+                [(OkTcSpmdExprListInfo args-info)
+                  (match args-info
+                    [(TcSpmdExprListInfo args-class args-env)
+                      (match (tc-spmd-require-uniform
+                        args-class
+                        "typecheck: foreach calls with varying arguments are not supported")
+                        [(OkTcUnit)
+                          (tc-spmd-finish expr-ty TcSpmdUniform args-env)]
+                        [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
+                [(ErrTcSpmdExprListInfo message) (ErrTcSpmdExprInfo message)])])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprIf cond then-branch else-branch)
+      (match (tc-spmd-expr ctx env spmd-env cond)
+        [(OkTcSpmdExprInfo cond-info)
+          (match cond-info
+            [(TcSpmdExprInfo _ cond-class cond-env)
+              (match (tc-spmd-require-uniform
+                cond-class
+                "typecheck: foreach if condition must be uniform")
+                [(OkTcUnit)
+                  (match (tc-spmd-expr ctx env cond-env then-branch)
+                    [(OkTcSpmdExprInfo then-info)
+                      (match then-info
+                        [(TcSpmdExprInfo _ then-class then-env)
+                          (match (tc-spmd-expr ctx env cond-env else-branch)
+                            [(OkTcSpmdExprInfo else-info)
+                              (match else-info
+                                [(TcSpmdExprInfo _ else-class else-env)
+                                  (tc-spmd-finish
+                                    expr-ty
+                                    (tc-spmd-merge-class then-class else-class)
+                                    (tc-spmd-env-merge-classes
+                                      then-env
+                                      else-env))])]
+                            [(ErrTcSpmdExprInfo message)
+                              (ErrTcSpmdExprInfo message)])])]
+                    [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+                [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprLet bindings body)
+      (match (tc-spmd-let-bindings ctx env spmd-env bindings 0)
+        [(OkTcSpmdLetState state)
+          (match state
+            [(TcSpmdLetState body-env body-spmd-env count)
+              (match (tc-spmd-expr ctx body-env body-spmd-env body)
+                [(OkTcSpmdExprInfo body-info)
+                  (match body-info
+                    [(TcSpmdExprInfo _ body-class final-spmd-env)
+                      (tc-spmd-finish
+                        expr-ty
+                        body-class
+                        (tc-spmd-env-pop final-spmd-env count))])]
+                [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
+        [(ErrTcSpmdLetState message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprLambda _ _ _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
+    [(AstExprTuple exprs)
+      (match (tc-spmd-expr-list ctx env spmd-env exprs)
+        [(OkTcSpmdExprListInfo info)
+          (match info
+            [(TcSpmdExprListInfo class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ErrTcSpmdExprListInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprTupleRef tuple _)
+      (match (tc-spmd-expr ctx env spmd-env tuple)
+        [(OkTcSpmdExprInfo info)
+          (match info
+            [(TcSpmdExprInfo _ class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprArray exprs)
+      (match (tc-spmd-expr-list ctx env spmd-env exprs)
+        [(OkTcSpmdExprListInfo info)
+          (match info
+            [(TcSpmdExprListInfo class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ErrTcSpmdExprListInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprMakeArray _ len)
+      (match (tc-spmd-expr ctx env spmd-env len)
+        [(OkTcSpmdExprInfo info)
+          (match info
+            [(TcSpmdExprInfo _ class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprArrayRef array index)
+      (match (tc-spmd-expr ctx env spmd-env array)
+        [(OkTcSpmdExprInfo array-info)
+          (match array-info
+            [(TcSpmdExprInfo _ array-class array-env)
+              (match (tc-spmd-expr ctx env array-env index)
+                [(OkTcSpmdExprInfo index-info)
+                  (match index-info
+                    [(TcSpmdExprInfo _ index-class index-env)
+                      (tc-spmd-finish-lane
+                        expr-ty
+                        (tc-spmd-merge-class array-class index-class)
+                        index-env)])]
+                [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprArraySet array index value)
+      (match (tc-spmd-expr ctx env spmd-env array)
+        [(OkTcSpmdExprInfo array-info)
+          (match array-info
+            [(TcSpmdExprInfo array-ty array-class array-env)
+              (match (tc-spmd-expr ctx env array-env index)
+                [(OkTcSpmdExprInfo index-info)
+                  (match index-info
+                    [(TcSpmdExprInfo _ index-class index-env)
+                      (match (tc-spmd-expr ctx env index-env value)
+                        [(OkTcSpmdExprInfo value-info)
+                          (match value-info
+                            [(TcSpmdExprInfo _ value-class value-env)
+                              (let
+                                [write-class : TcSpmdClass
+                                  (tc-spmd-merge-class
+                                    array-class
+                                    (tc-spmd-merge-class
+                                      index-class
+                                      value-class))]
+                                (match (tc-type-strip-region array-ty)
+                                  [(AstTyArray elem-ty _)
+                                    (if (and
+                                      (tc-spmd-varying? write-class)
+                                      (not
+                                        (tc-spmd-lane-type-supported? elem-ty)))
+                                      (ErrTcSpmdExprInfo
+                                        (string-append
+                                          "typecheck: foreach varying array lane type is not supported: "
+                                          (tc-type-render
+                                            (tc-type-strip-region elem-ty))))
+                                      (tc-spmd-finish
+                                        expr-ty
+                                        TcSpmdUniform
+                                        value-env))]
+                                  [(AstTyDynArray elem-ty)
+                                    (if (and
+                                      (tc-spmd-varying? write-class)
+                                      (not
+                                        (tc-spmd-lane-type-supported? elem-ty)))
+                                      (ErrTcSpmdExprInfo
+                                        (string-append
+                                          "typecheck: foreach varying array lane type is not supported: "
+                                          (tc-type-render
+                                            (tc-type-strip-region elem-ty))))
+                                      (tc-spmd-finish
+                                        expr-ty
+                                        TcSpmdUniform
+                                        value-env))]
+                                  [_
+                                    (tc-spmd-finish
+                                      expr-ty
+                                      TcSpmdUniform
+                                      value-env)]))])]
+                        [(ErrTcSpmdExprInfo message)
+                          (ErrTcSpmdExprInfo message)])])]
+                [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprStringRef str index)
+      (match (tc-spmd-expr ctx env spmd-env str)
+        [(OkTcSpmdExprInfo str-info)
+          (match str-info
+            [(TcSpmdExprInfo _ str-class str-env)
+              (match (tc-spmd-expr ctx env str-env index)
+                [(OkTcSpmdExprInfo index-info)
+                  (match index-info
+                    [(TcSpmdExprInfo _ index-class index-env)
+                      (tc-spmd-finish
+                        expr-ty
+                        (tc-spmd-merge-class str-class index-class)
+                        index-env)])]
+                [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprWhile cond body)
+      (match (tc-spmd-expr ctx env spmd-env cond)
+        [(OkTcSpmdExprInfo cond-info)
+          (match cond-info
+            [(TcSpmdExprInfo _ cond-class cond-env)
+              (match (tc-spmd-require-uniform
+                cond-class
+                "typecheck: foreach while condition must be uniform")
+                [(OkTcUnit)
+                  (match (tc-spmd-expr ctx env cond-env body)
+                    [(OkTcSpmdExprInfo body-info)
+                      (match body-info
+                        [(TcSpmdExprInfo _ _ body-env)
+                          (tc-spmd-finish
+                            expr-ty
+                            TcSpmdUniform
+                            (tc-spmd-env-merge-classes cond-env body-env))])]
+                    [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+                [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprBegin exprs) (tc-spmd-begin-list ctx env spmd-env exprs)]
+    [(AstExprSet name value)
+      (match (tc-spmd-expr ctx env spmd-env value)
+        [(OkTcSpmdExprInfo value-info)
+          (match value-info
+            [(TcSpmdExprInfo _ value-class value-env)
+              (if (tc-spmd-env-has-local? value-env name)
+                (tc-spmd-finish
+                  expr-ty
+                  TcSpmdUniform
+                  (tc-spmd-env-set-local-class value-env name value-class))
+                (if (tc-spmd-env-has-outer? value-env name)
+                  (ErrTcSpmdExprInfo
+                    "typecheck: foreach cannot set binding declared outside foreach")
+                  (tc-spmd-finish expr-ty TcSpmdUniform value-env)))])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprMatch scrutinee arms)
+      (match (tc-spmd-expr ctx env spmd-env scrutinee)
+        [(OkTcSpmdExprInfo scrut-info)
+          (match scrut-info
+            [(TcSpmdExprInfo scrut-ty scrut-class scrut-env)
+              (match (tc-spmd-require-uniform
+                scrut-class
+                "typecheck: foreach match scrutinee must be uniform")
+                [(OkTcUnit)
+                  (match (tc-spmd-match-arms
+                    ctx
+                    env
+                    scrut-env
+                    scrut-ty
+                    arms
+                    TcSpmdUniform)
+                    [(OkTcSpmdExprListInfo arms-info)
+                      (match arms-info
+                        [(TcSpmdExprListInfo arms-class arms-env)
+                          (tc-spmd-finish expr-ty arms-class arms-env)])]
+                    [(ErrTcSpmdExprListInfo message)
+                      (ErrTcSpmdExprInfo message)])]
+                [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprForeach index index-ty start end body)
+      (match (tc-spmd-expr ctx env spmd-env start)
+        [(OkTcSpmdExprInfo start-info)
+          (match start-info
+            [(TcSpmdExprInfo _ start-class start-env)
+              (match (tc-spmd-require-uniform
+                start-class
+                "typecheck: foreach bounds must be uniform")
+                [(OkTcUnit)
+                  (match (tc-spmd-expr ctx env start-env end)
+                    [(OkTcSpmdExprInfo end-info)
+                      (match end-info
+                        [(TcSpmdExprInfo _ end-class end-env)
+                          (match (tc-spmd-require-uniform
+                            end-class
+                            "typecheck: foreach bounds must be uniform")
+                            [(OkTcUnit)
+                              (match (tc-spmd-check-foreach-body-with-env
+                                ctx
+                                env
+                                end-env
+                                index
+                                (tc-resolve-type ctx index-ty)
+                                body)
+                                [(OkTcUnit)
+                                  (tc-spmd-finish expr-ty TcSpmdUniform end-env)]
+                                [(ErrTcUnit message)
+                                  (ErrTcSpmdExprInfo message)])]
+                            [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
+                    [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+                [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprSpmdReduce _ _ _ _ _ _ _)
+      (ErrTcSpmdExprInfo
+        "typecheck: spmd-reduce inside foreach is not supported")]
+    [(AstExprStructGet receiver _)
+      (match (tc-spmd-expr ctx env spmd-env receiver)
+        [(OkTcSpmdExprInfo info)
+          (match info
+            [(TcSpmdExprInfo _ class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprWithRegion region body)
+      (tc-spmd-begin-list ctx (tc-push-region env region) spmd-env body)]
+    [(AstExprComptime inner)
+      (match (tc-spmd-expr ctx env spmd-env inner)
+        [(OkTcSpmdExprInfo info)
+          (match info
+            [(TcSpmdExprInfo _ class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprTry inner)
+      (match (tc-spmd-expr ctx env spmd-env inner)
+        [(OkTcSpmdExprInfo info)
+          (match info
+            [(TcSpmdExprInfo _ class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]))
+
 (define (tc-param-list-add-bound-names
   [params : AstParamList]
   [bound : TcStringList]) : TcStringList
@@ -1913,28 +2823,250 @@
 (define (tc-program-enum-variants-list
   [decls : AstDeclList]
   [enum-name : String]) : ResultAstVariantDefList
+  (tc-program-enum-variants-list-in-module decls enum-name ""))
+
+(define (tc-program-enum-variants-list-in-module
+  [decls : AstDeclList]
+  [enum-name : String]
+  [module : String]) : ResultAstVariantDefList
   (match decls
     [(AstDeclNil)
       (ErrAstVariantDefList
         (string-append "typecheck: unknown enum " enum-name))]
     [(AstDeclCons decl rest)
       (match decl
+        [(AstDeclModule next-module)
+          (tc-program-enum-variants-list-in-module rest enum-name next-module)]
         [(AstDeclDefEnum name variants)
-          (if (string-eq name enum-name)
+          (if (or
+            (string-eq name enum-name)
+            (string-eq (compiler-symbol-module-key module name) enum-name))
             (OkAstVariantDefList variants)
-            (tc-program-enum-variants-list rest enum-name))]
+            (tc-program-enum-variants-list-in-module rest enum-name module))]
         [(AstDeclComptimeDecl template)
           (match template
             [(AstDeclDefEnum name variants)
-              (if (string-eq name enum-name)
+              (if (or
+                (string-eq name enum-name)
+                (string-eq (compiler-symbol-module-key module name) enum-name))
                 (OkAstVariantDefList variants)
-                (tc-program-enum-variants-list rest enum-name))]
-            [_ (tc-program-enum-variants-list rest enum-name)])]
-        [_ (tc-program-enum-variants-list rest enum-name)])]))
+                (tc-program-enum-variants-list-in-module rest enum-name module))]
+            [_ (tc-program-enum-variants-list-in-module rest enum-name module)])]
+        [_ (tc-program-enum-variants-list-in-module rest enum-name module)])]))
 
 (define (tc-program-enum-variants [program : AstProgram] [enum-name : String]) : ResultAstVariantDefList
   (match program
     [(AstProgram decls) (tc-program-enum-variants-list decls enum-name)]))
+
+(define (tc-layout-info-size [info : TcLayoutInfo]) : i64
+  (match info
+    [(TcLayoutInfo size _) size]))
+
+(define (tc-layout-info-align [info : TcLayoutInfo]) : i64
+  (match info
+    [(TcLayoutInfo _ align) align]))
+
+(define (tc-repr-c-layout-size [layout : TcReprCLayout]) : i64
+  (match layout
+    [(TcReprCLayout size _ _) size]))
+
+(define (tc-repr-c-layout-align [layout : TcReprCLayout]) : i64
+  (match layout
+    [(TcReprCLayout _ align _) align]))
+
+(define (tc-repr-c-layout-fields [layout : TcReprCLayout]) : TcReprCFieldLayoutList
+  (match layout
+    [(TcReprCLayout _ _ fields) fields]))
+
+(define (tc-repr-c-field-layout-name [field : TcReprCFieldLayout]) : String
+  (match field
+    [(TcReprCFieldLayout name _ _) name]))
+
+(define (tc-repr-c-field-layout-type [field : TcReprCFieldLayout]) : AstType
+  (match field
+    [(TcReprCFieldLayout _ ty _) ty]))
+
+(define (tc-repr-c-field-layout-offset [field : TcReprCFieldLayout]) : i64
+  (match field
+    [(TcReprCFieldLayout _ _ offset) offset]))
+
+(define (tc-repr-c-layout-field-offset
+  [fields : TcReprCFieldLayoutList]
+  [name : String]) : i64
+  (match fields
+    [(TcReprCFieldLayoutNil) -1]
+    [(TcReprCFieldLayoutCons field rest)
+      (if (string-eq (tc-repr-c-field-layout-name field) name)
+        (tc-repr-c-field-layout-offset field)
+        (tc-repr-c-layout-field-offset rest name))]))
+
+(define (tc-align-up [n : i64] [align : i64]) : i64
+  (if (<= align 1)
+    n
+    (* (/ (+ n (- align 1)) align) align)))
+
+(define (tc-max-i64 [a : i64] [b : i64]) : i64
+  (if (> a b)
+    a
+    b))
+
+(define (tc-struct-decl [ctx : TcContext] [struct-name : String]) : ResultTcStructDecl
+  (match ctx
+    [(TcContext program symbols _)
+      (match (compiler-symbols-lookup-type symbols struct-name)
+        [(SomeI64 handle)
+          (if (=
+            (compiler-symbol-handle-kind handle)
+            (compiler-symbol-kind-defstruct))
+            (match (compiler-program-decl-at-index
+              program
+              (compiler-symbol-handle-index handle))
+              [(OkAstDecl decl)
+                (match decl
+                  [(AstDeclDefStruct _ repr fields)
+                    (OkTcStructDecl (TcStructDecl repr fields))]
+                  [_
+                    (ErrTcStructDecl
+                      "typecheck: struct symbol owner is not a struct")])]
+              [(ErrAstDecl message) (ErrTcStructDecl message)])
+            (ErrTcStructDecl
+              (string-append "typecheck: unknown struct " struct-name)))]
+        [(NoneI64)
+          (ErrTcStructDecl
+            (string-append "typecheck: unknown struct " struct-name))])]))
+
+(define (tc-repr-c-unsupported-field-message
+  [owner : String]
+  [field : String]
+  [ty : AstType]) : String
+  (tc-cat3
+    "typecheck: repr c struct "
+    owner
+    (tc-cat3
+      " field "
+      field
+      (string-append " has unsupported field type " (tc-type-render ty)))))
+
+(define (tc-repr-c-field-layout-info
+  [ctx : TcContext]
+  [owner : String]
+  [field : String]
+  [ty : AstType]
+  [seen : TcStringList]) : ResultTcLayoutInfo
+  (match (tc-resolve-type ctx ty)
+    [(AstTyI64) (OkTcLayoutInfo (TcLayoutInfo 8 8))]
+    [(AstTyU64) (OkTcLayoutInfo (TcLayoutInfo 8 8))]
+    [(AstTyF64) (OkTcLayoutInfo (TcLayoutInfo 8 8))]
+    [(AstTyI32) (OkTcLayoutInfo (TcLayoutInfo 4 4))]
+    [(AstTyU32) (OkTcLayoutInfo (TcLayoutInfo 4 4))]
+    [(AstTyI16) (OkTcLayoutInfo (TcLayoutInfo 2 2))]
+    [(AstTyU16) (OkTcLayoutInfo (TcLayoutInfo 2 2))]
+    [(AstTyI8) (OkTcLayoutInfo (TcLayoutInfo 1 1))]
+    [(AstTyU8) (OkTcLayoutInfo (TcLayoutInfo 1 1))]
+    [(AstTyBool) (OkTcLayoutInfo (TcLayoutInfo 1 1))]
+    [(AstTyChar) (OkTcLayoutInfo (TcLayoutInfo 1 1))]
+    [(AstTyPtr _) (OkTcLayoutInfo (TcLayoutInfo 8 8))]
+    [(AstTyMutPtr _) (OkTcLayoutInfo (TcLayoutInfo 8 8))]
+    [(AstTyStruct nested)
+      (match (tc-struct-decl ctx nested)
+        [(OkTcStructDecl decl)
+          (match decl
+            [(TcStructDecl repr _)
+              (if (ast-struct-repr-c? repr)
+                (match (tc-repr-c-struct-layout-with-seen ctx nested seen)
+                  [(OkTcReprCLayout layout)
+                    (OkTcLayoutInfo
+                      (TcLayoutInfo
+                        (tc-repr-c-layout-size layout)
+                        (tc-repr-c-layout-align layout)))]
+                  [(ErrTcReprCLayout message) (ErrTcLayoutInfo message)])
+                (ErrTcLayoutInfo
+                  (tc-cat3
+                    "typecheck: repr c struct "
+                    owner
+                    (tc-cat3
+                      " field "
+                      field
+                      (string-append
+                        " references default-layout struct "
+                        nested)))))])]
+        [(ErrTcStructDecl message) (ErrTcLayoutInfo message)])]
+    [_ (ErrTcLayoutInfo (tc-repr-c-unsupported-field-message owner field ty))]))
+
+(define (tc-repr-c-fields-layout
+  [ctx : TcContext]
+  [owner : String]
+  [fields : AstFieldDefList]
+  [cursor : i64]
+  [max-align : i64]
+  [seen : TcStringList]) : ResultTcReprCLayout
+  (match fields
+    [(AstFieldDefNil)
+      (if (= max-align 0)
+        (ErrTcReprCLayout "typecheck: repr c struct needs at least one field")
+        (OkTcReprCLayout
+          (TcReprCLayout
+            (tc-align-up cursor max-align)
+            max-align
+            TcReprCFieldLayoutNil)))]
+    [(AstFieldDefCons field rest)
+      (match field
+        [(AstFieldDef name ty)
+          (let
+            [resolved : AstType (tc-resolve-type ctx ty)]
+            (match (tc-repr-c-field-layout-info ctx owner name resolved seen)
+              [(OkTcLayoutInfo info)
+                (let
+                  [field-align : i64 (tc-layout-info-align info)]
+                  [field-size : i64 (tc-layout-info-size info)]
+                  [offset : i64 (tc-align-up cursor field-align)]
+                  [next-cursor : i64 (+ offset field-size)]
+                  [next-align : i64 (tc-max-i64 max-align field-align)]
+                  (match (tc-repr-c-fields-layout
+                    ctx
+                    owner
+                    rest
+                    next-cursor
+                    next-align
+                    seen)
+                    [(OkTcReprCLayout rest-layout)
+                      (OkTcReprCLayout
+                        (TcReprCLayout
+                          (tc-repr-c-layout-size rest-layout)
+                          (tc-repr-c-layout-align rest-layout)
+                          (TcReprCFieldLayoutCons
+                            (TcReprCFieldLayout name resolved offset)
+                            (tc-repr-c-layout-fields rest-layout))))]
+                    [(ErrTcReprCLayout message) (ErrTcReprCLayout message)]))]
+              [(ErrTcLayoutInfo message) (ErrTcReprCLayout message)]))])]))
+
+(define (tc-repr-c-struct-layout-with-seen
+  [ctx : TcContext]
+  [struct-name : String]
+  [seen : TcStringList]) : ResultTcReprCLayout
+  (if (tc-string-list-contains seen struct-name)
+    (ErrTcReprCLayout
+      (string-append
+        "typecheck: recursive repr c struct layout cycle involving "
+        struct-name))
+    (match (tc-struct-decl ctx struct-name)
+      [(OkTcStructDecl decl)
+        (match decl
+          [(TcStructDecl repr fields)
+            (if (ast-struct-repr-c? repr)
+              (tc-repr-c-fields-layout
+                ctx
+                struct-name
+                fields
+                0
+                0
+                (tc-string-list-add seen struct-name))
+              (ErrTcReprCLayout
+                (string-append "typecheck: struct is not repr c: " struct-name)))])]
+      [(ErrTcStructDecl message) (ErrTcReprCLayout message)])))
+
+(define (tc-repr-c-struct-layout [ctx : TcContext] [struct-name : String]) : ResultTcReprCLayout
+  (tc-repr-c-struct-layout-with-seen ctx struct-name TcStringNil))
 
 (define (tc-string-prefix? [text : String] [prefix : String]) : bool
   (let
@@ -2083,14 +3215,43 @@
     [(ErrTcType message) (ErrTcType message)]))
 
 (define (tc-variant-owner-name [ctx : TcContext] [handle : i64]) : ResultTcString
-  (match (compiler-program-decl-at-index
-    (tc-context-program ctx)
-    (compiler-registry-handle-owner-index handle))
-    [(OkAstDecl decl)
+  (match (tc-context-program ctx)
+    [(AstProgram decls)
+      (tc-variant-owner-name-list
+        decls
+        (compiler-registry-handle-owner-index handle)
+        0
+        "")]))
+
+(define (tc-variant-owner-name-list
+  [decls : AstDeclList]
+  [target : i64]
+  [index : i64]
+  [module : String]) : ResultTcString
+  (match decls
+    [(AstDeclNil) (ErrTcString "typecheck: variant owner is not enum")]
+    [(AstDeclCons decl rest)
       (match decl
-        [(AstDeclDefEnum name _) (OkTcString name)]
-        [_ (ErrTcString "typecheck: variant owner is not enum")])]
-    [(ErrAstDecl message) (ErrTcString message)]))
+        [(AstDeclImport _)
+          (tc-variant-owner-name-list rest target index module)]
+        [(AstDeclModule next-module)
+          (tc-variant-owner-name-list rest target index next-module)]
+        [(AstDeclTest _ _ _)
+          (tc-variant-owner-name-list rest target index module)]
+        [(AstDeclComptimeDecl template)
+          (if (= target index)
+            (match template
+              [(AstDeclDefEnum name _)
+                (OkTcString (compiler-symbol-module-key module name))]
+              [_ (ErrTcString "typecheck: variant owner is not enum")])
+            (tc-variant-owner-name-list rest target (+ index 1) module))]
+        [_
+          (if (= target index)
+            (match decl
+              [(AstDeclDefEnum name _)
+                (OkTcString (compiler-symbol-module-key module name))]
+              [_ (ErrTcString "typecheck: variant owner is not enum")])
+            (tc-variant-owner-name-list rest target (+ index 1) module))])]))
 
 (define (tc-struct-field-type
   [ctx : TcContext]
@@ -2285,15 +3446,53 @@
           (tc-match-rest-types ctx env scrut-ty rest first-ty)]
         [(ErrTcType message) (ErrTcType message)])]))
 
+(define (tc-qualified-name-last-slash [name : String]) : i64
+  (let
+    [i : i64 0]
+    [n : i64 (string-length name)]
+    [last : i64 -1]
+    (begin
+      (while (< i n)
+        (begin
+          (if (= (string-ref name i) #/')
+            (set! last i)
+            (set! last last))
+          (set! i (+ i 1))))
+      last)))
+
+(define (tc-qualified-name-module [name : String]) : String
+  (let
+    [slash : i64 (tc-qualified-name-last-slash name)]
+    (if (< slash 0)
+      ""
+      (substring name 0 slash))))
+
+(define (tc-qualified-variant-name [enum-name : String] [variant-name : String]) : String
+  (let
+    [module : String (tc-qualified-name-module enum-name)]
+    (if (string-eq module "")
+      variant-name
+      (compiler-symbol-module-key module variant-name))))
+
+(define (tc-variant-name-matches?
+  [enum-name : String]
+  [pattern-name : String]
+  [variant-name : String]) : bool
+  (or
+    (string-eq pattern-name variant-name)
+    (string-eq pattern-name (tc-qualified-variant-name enum-name variant-name))))
+
 (define (tc-enum-has-single-variant?
   [variants : AstVariantDefList]
+  [enum-name : String]
   [variant-name : String]) : bool
   (match variants
     [(AstVariantDefCons variant rest)
       (match rest
         [(AstVariantDefNil)
           (match variant
-            [(AstVariantDef name _) (string-eq name variant-name)])]
+            [(AstVariantDef name _)
+              (tc-variant-name-matches? enum-name variant-name name)])]
         [_ false])]
     [_ false]))
 
@@ -2329,7 +3528,7 @@
         [(AstTyEnum enum-name)
           (match (tc-program-enum-variants (tc-context-program ctx) enum-name)
             [(OkAstVariantDefList variants)
-              (if (tc-enum-has-single-variant? variants name)
+              (if (tc-enum-has-single-variant? variants enum-name name)
                 (tc-variant-pattern-irrefutable? ctx name args)
                 false)]
             [(ErrAstVariantDefList _) false])]
@@ -2356,31 +3555,35 @@
 (define (tc-pattern-covers-variant?
   [ctx : TcContext]
   [pattern : AstPattern]
+  [enum-name : String]
   [variant-name : String]) : bool
   (match pattern
     [(AstPatWildcard) true]
-    [(AstPatBinding name) (string-eq name variant-name)]
+    [(AstPatBinding name)
+      (tc-variant-name-matches? enum-name name variant-name)]
     [(AstPatVariant name args)
       (and
-        (string-eq name variant-name)
+        (tc-variant-name-matches? enum-name name variant-name)
         (tc-variant-pattern-irrefutable? ctx name args))]
     [_ false]))
 
 (define (tc-match-arms-cover-variant?
   [ctx : TcContext]
   [arms : AstMatchArmList]
+  [enum-name : String]
   [variant-name : String]) : bool
   (match arms
     [(AstMatchArmNil) false]
     [(AstMatchArmCons arm rest)
       (match arm
         [(AstMatchArm pattern _)
-          (if (tc-pattern-covers-variant? ctx pattern variant-name)
+          (if (tc-pattern-covers-variant? ctx pattern enum-name variant-name)
             true
-            (tc-match-arms-cover-variant? ctx rest variant-name))])]))
+            (tc-match-arms-cover-variant? ctx rest enum-name variant-name))])]))
 
 (define (tc-enum-variants-covered?
   [ctx : TcContext]
+  [enum-name : String]
   [variants : AstVariantDefList]
   [arms : AstMatchArmList]) : bool
   (match variants
@@ -2389,8 +3592,8 @@
       (match variant
         [(AstVariantDef name _)
           (and
-            (tc-match-arms-cover-variant? ctx arms name)
-            (tc-enum-variants-covered? ctx rest arms))])]))
+            (tc-match-arms-cover-variant? ctx arms enum-name name)
+            (tc-enum-variants-covered? ctx enum-name rest arms))])]))
 
 (define (tc-match-arms-have-catchall? [arms : AstMatchArmList]) : bool
   (match arms
@@ -2424,7 +3627,7 @@
     [(AstTyEnum enum-name)
       (match (tc-program-enum-variants (tc-context-program ctx) enum-name)
         [(OkAstVariantDefList variants)
-          (tc-enum-variants-covered? ctx variants arms)]
+          (tc-enum-variants-covered? ctx enum-name variants arms)]
         [(ErrAstVariantDefList _) false])]
     [(AstTyBool)
       (or
@@ -2726,7 +3929,15 @@
                               body-ty
                               (AstTyUnit)
                               "typecheck: foreach body must be unit")
-                              [(OkTcUnit) (OkTcType (AstTyUnit))]
+                              [(OkTcUnit)
+                                (match (tc-spmd-check-foreach-body
+                                  ctx
+                                  env
+                                  index
+                                  resolved-index-ty
+                                  body)
+                                  [(OkTcUnit) (OkTcType (AstTyUnit))]
+                                  [(ErrTcUnit message) (ErrTcType message)])]
                               [(ErrTcUnit message) (ErrTcType message)])]
                           [(ErrTcType message) (ErrTcType message)]))
                       (ErrTcType
@@ -3063,8 +4274,13 @@
 
 (define (compiler-typecheck-builtin-source) : String
   "(define (main [s : String]) : String
-  (string-append (substring s 0 (length s))
-                 (int->string (string->int \"7\"))))")
+  (begin
+    (fs-mkdir-status s)
+    (fs-remove-file-status s)
+    (fs-remove-dir-status s)
+    (fs-process-id)
+    (string-append (substring s 0 (length s))
+                   (int->string (string->int \"7\")))))")
 
 (define (compiler-typecheck-stdio-source) : String
   "(define (main) : i64
@@ -3113,6 +4329,130 @@
 (define (compiler-typecheck-lambda-ret-source) : String
   "(define (main) : (-> i64 i64)
   (lambda ([x : i64]) : i64 true))")
+
+(define (compiler-typecheck-foreach-spmd-ok-source) : String
+  "(define (main [n : i64]) : unit
+  (let
+    [a : (Array i64) (make-array i64 n)]
+    [b : (Array i64) (make-array i64 n)]
+    [out : (Array i64) (make-array i64 n)]
+    (foreach ([i : i64 0 n])
+      (let
+        [sum : i64 (+ (array-ref a i) (array-ref b i))]
+        (array-set! out i sum)))))")
+
+(define (compiler-typecheck-foreach-varying-if-source) : String
+  "(define (main [xs : (Array i64)] [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (if (= (array-ref xs i) 0) unit unit)))")
+
+(define (compiler-typecheck-foreach-varying-while-source) : String
+  "(define (main [xs : (Array i64)] [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (while (< (array-ref xs i) 0) unit)))")
+
+(define (compiler-typecheck-foreach-varying-call-source) : String
+  "(define (sink [x : i64]) : unit unit)
+(define (main [xs : (Array i64)] [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (sink (array-ref xs i))))")
+
+(define (compiler-typecheck-foreach-outer-set-source) : String
+  "(define (main [xs : (Array i64)] [n : i64]) : i64
+  (let
+    [sum : i64 0]
+    (begin
+      (foreach ([i : i64 0 n])
+        (set! sum (+ sum (array-ref xs i))))
+      sum)))")
+
+(define (compiler-typecheck-foreach-unsupported-lane-source) : String
+  "(define (main [ss : (Array String)] [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (let
+      [s : String (array-ref ss i)]
+      unit)))")
+
+(define (compiler-typecheck-foreach-if-local-set-source) : String
+  "(define (sink [x : i64]) : unit unit)
+(define (main [xs : (Array i64)] [flag : bool] [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (let
+      [x : i64 0]
+      (begin
+        (if flag (set! x (array-ref xs i)) unit)
+        (sink x)))))")
+
+(define (compiler-typecheck-foreach-while-local-set-source) : String
+  "(define (sink [x : i64]) : unit unit)
+(define (main [xs : (Array i64)] [flag : bool] [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (let
+      [x : i64 0]
+      (begin
+        (while flag (set! x (array-ref xs i)))
+        (sink x)))))")
+
+(define (compiler-typecheck-foreach-match-local-set-source) : String
+  "(defenum Maybe (None) (Some i64))
+(define (sink [x : i64]) : unit unit)
+(define (main [m : Maybe] [xs : (Array i64)] [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (let
+      [x : i64 0]
+      (begin
+        (match m [(Some v) (set! x (array-ref xs i))] [None unit])
+        (sink x)))))")
+
+(define (compiler-typecheck-foreach-local-set-ok-source) : String
+  "(define (sink [x : i64]) : unit unit)
+(define (main [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (let
+      [x : i64 0]
+      (begin
+        (set! x 1)
+        (sink x)))))")
+
+(define (compiler-typecheck-foreach-control-flow-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-foreach-local-set-ok-source))
+    (and
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-foreach-if-local-set-source)
+        "typecheck: foreach calls with varying arguments are not supported")
+      (and
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-foreach-while-local-set-source)
+          "typecheck: foreach calls with varying arguments are not supported")
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-foreach-match-local-set-source)
+          "typecheck: foreach calls with varying arguments are not supported")))))
+
+(define (compiler-typecheck-foreach-spmd-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-foreach-spmd-ok-source))
+    (and
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-foreach-varying-if-source)
+        "typecheck: foreach if condition must be uniform")
+      (and
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-foreach-varying-while-source)
+          "typecheck: foreach while condition must be uniform")
+        (and
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-foreach-varying-call-source)
+            "typecheck: foreach calls with varying arguments are not supported")
+          (and
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-foreach-outer-set-source)
+              "typecheck: foreach cannot set binding declared outside foreach")
+            (and
+              (compiler-typecheck-error-ok?
+                (compiler-typecheck-foreach-unsupported-lane-source)
+                "typecheck: foreach varying array lane type is not supported: String")
+              (compiler-typecheck-foreach-control-flow-tests-ok?))))))))
 
 (define (compiler-typecheck-abstraction-policy-tests-ok?) : bool
   (compiler-typecheck-error-ok?
@@ -3204,6 +4544,133 @@
 (defenum Right (Same))
 (define (main) : i64 0)")
 
+(define (compiler-typecheck-module-qualified-source) : String
+  "(module left)
+(define (get) : i64 20)
+(defenum Maybe (None) (Some i64))
+(defstruct Point (x i64))
+(module right)
+(define (get) : i64 22)
+(defenum Maybe (None) (Some i64))
+(defstruct Point (x i64))
+(module main)
+(define (main) : i64
+  (+
+    (left/get)
+    (+
+      (right/get)
+      (+
+        (let ([p : right/Point (right/Point 7)])
+          (struct-get p x))
+        (match (right/Some 1)
+          [(right/Some v) v]
+          [right/None 0])))))")
+
+(define (compiler-typecheck-repr-c-layout-source) : String
+  "(defstruct Packet
+  (:repr c)
+  (tag u8)
+  (count i64)
+  (flag bool))
+(defstruct Inner
+  (:repr c)
+  (a u8)
+  (b i32))
+(defstruct Outer
+  (:repr c)
+  (tag u8)
+  (inner Inner)
+  (tail u16))")
+
+(define (compiler-typecheck-repr-c-layout-ok?) : bool
+  (match (parse-ast-source (compiler-typecheck-repr-c-layout-source))
+    [(OkAstProgram program)
+      (match (build-compiler-symbols program)
+        [(OkCompilerSymbols symbols)
+          (match (build-compiler-registries program)
+            [(OkCompilerRegistries registries)
+              (let
+                [ctx : TcContext (TcContext program symbols registries)]
+                (match (tc-repr-c-struct-layout ctx "Packet")
+                  [(OkTcReprCLayout packet)
+                    (match (tc-repr-c-struct-layout ctx "Outer")
+                      [(OkTcReprCLayout outer)
+                        (and
+                          (= (tc-repr-c-layout-size packet) 24)
+                          (and
+                            (= (tc-repr-c-layout-align packet) 8)
+                            (and
+                              (=
+                                (tc-repr-c-layout-field-offset
+                                  (tc-repr-c-layout-fields packet)
+                                  "tag")
+                                0)
+                              (and
+                                (=
+                                  (tc-repr-c-layout-field-offset
+                                    (tc-repr-c-layout-fields packet)
+                                    "count")
+                                  8)
+                                (and
+                                  (=
+                                    (tc-repr-c-layout-field-offset
+                                      (tc-repr-c-layout-fields packet)
+                                      "flag")
+                                    16)
+                                  (and
+                                    (= (tc-repr-c-layout-size outer) 16)
+                                    (and
+                                      (= (tc-repr-c-layout-align outer) 4)
+                                      (and
+                                        (=
+                                          (tc-repr-c-layout-field-offset
+                                            (tc-repr-c-layout-fields outer)
+                                            "inner")
+                                          4)
+                                        (=
+                                          (tc-repr-c-layout-field-offset
+                                            (tc-repr-c-layout-fields outer)
+                                            "tail")
+                                          12)))))))))]
+                      [(ErrTcReprCLayout _) false])]
+                  [(ErrTcReprCLayout _) false]))]
+            [(ErrCompilerRegistries _) false])]
+        [(ErrCompilerSymbols _) false])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-typecheck-repr-c-string-source) : String
+  "(defstruct Bad
+  (:repr c)
+  (s String))")
+
+(define (compiler-typecheck-repr-c-default-nested-source) : String
+  "(defstruct Inner (x i64))
+(defstruct Bad
+  (:repr c)
+  (inner Inner))")
+
+(define (compiler-typecheck-repr-c-recursive-source) : String
+  "(defstruct Node
+  (:repr c)
+  (next Node))")
+
+(define (compiler-typecheck-repr-c-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-repr-c-layout-source))
+    (and
+      (compiler-typecheck-repr-c-layout-ok?)
+      (and
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-repr-c-string-source)
+          "typecheck: repr c struct Bad field s has unsupported field type String")
+        (and
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-repr-c-default-nested-source)
+            "typecheck: repr c struct Bad field inner references default-layout struct Inner")
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-repr-c-recursive-source)
+            "typecheck: recursive repr c struct layout cycle involving Node"))))))
+
 (define (compiler-typecheck-nominal-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-nominal-source))
@@ -3221,9 +4688,14 @@
             (compiler-typecheck-error-ok?
               (compiler-typecheck-unknown-field-source)
               "typecheck: unknown struct field Point.z")
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-duplicate-variant-source)
-              "symbols: duplicate enum variant Same")))))))
+            (and
+              (compiler-typecheck-error-ok?
+                (compiler-typecheck-duplicate-variant-source)
+                "symbols: duplicate enum variant Same")
+              (and
+                (compiler-typecheck-ok?
+                  (compiler-typecheck-module-qualified-source))
+                (compiler-typecheck-repr-c-tests-ok?)))))))))
 
 (define (compiler-typecheck-region-builtin-source) : String
   "(define (main) : i64
@@ -3363,6 +4835,67 @@
             "typecheck: try error type mismatch")
           (compiler-typecheck-ok? (compiler-typecheck-result-try-panic-source)))))))
 
+(define (compiler-typecheck-raw-pointer-source) : String
+  "(extern raw-sink : (-> (Ptr i64) unit))
+(extern raw-make : (-> (MutPtr (Ptr u8))))
+(define (main [p : (Ptr i64)]) : unit
+  (raw-sink p))")
+
+(define (compiler-typecheck-raw-pointer-render-ok?) : bool
+  (and
+    (string-eq (tc-type-render (AstTyPtr (AstTyI64))) "(Ptr i64)")
+    (and
+      (string-eq
+        (tc-type-render (AstTyMutPtr (AstTyPtr (AstTyU8))))
+        "(MutPtr (Ptr u8))")
+      (and
+        (tc-type-eq (AstTyPtr (AstTyI64)) (AstTyPtr (AstTyI64)))
+        (and
+          (not (tc-type-eq (AstTyPtr (AstTyI64)) (AstTyMutPtr (AstTyI64))))
+          (tc-type-eq
+            (AstTyPtr (AstTyRegion "r" (AstTyI64)))
+            (AstTyPtr (AstTyI64))))))))
+
+(define (compiler-typecheck-raw-pointer-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-raw-pointer-source))
+    (compiler-typecheck-raw-pointer-render-ok?)))
+
+(define (compiler-typecheck-reference-source) : String
+  "(define (use-string [s : (& r String)]) : i64
+  (string-length s))")
+
+(define (compiler-typecheck-reference-render-ok?) : bool
+  (and
+    (string-eq (tc-type-render (AstTyRef "r" (AstTyString))) "(& r String)")
+    (and
+      (string-eq
+        (tc-type-render (AstTyMutRef "phase" (AstTyDynArray (AstTyI64))))
+        "(&mut phase (Array i64))")
+      (and
+        (tc-type-eq
+          (AstTyRef "r" (AstTyRegion "inner" (AstTyI64)))
+          (AstTyRef "r" (AstTyI64)))
+        (and
+          (not (tc-type-eq (AstTyRef "r" (AstTyI64)) (AstTyRef "s" (AstTyI64))))
+          (and
+            (not
+              (tc-type-eq
+                (AstTyRef "r" (AstTyI64))
+                (AstTyMutRef "r" (AstTyI64))))
+            (and
+              (tc-type-contains-region (AstTyRef "r" (AstTyI64)) "r")
+              (tc-type-contains-region
+                (AstTyMutRef "phase" (AstTyRegion "inner" (AstTyString)))
+                "inner"))))))))
+
+(define (compiler-typecheck-reference-tests-ok?) : bool
+  (and
+    (compiler-typecheck-reference-render-ok?)
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-reference-source)
+      "typecheck: reference types require borrow checker support (#803/#806/#804)")))
+
 ;; A type error whose offending expression (`missing`) is on source line 2, so
 ;; the diagnostic must locate it there (not at the 1:1 fallback) — proving the
 ;; typechecker carries the nearest declaration-body `AstExprSpanned` span (#681).
@@ -3393,39 +4926,180 @@
     (compiler-typecheck-located-source-ok?
       (compiler-typecheck-located-value-source))))
 
-(define (compiler-typecheck-self-test) : i64
-  (match (typecheck-compiler-source (compiler-typecheck-smoke-source))
-    [(OkCompilerTypecheck summary)
-      (if (and
-        (= (compiler-typecheck-summary-score summary) 121)
+;; Statement and control-flow type rules (#1042): if/while conditions, the
+;; while-body unit rule, set!/let annotation mismatches, and `ann` mismatch,
+;; plus an accepting program exercising the same forms. Migrated from
+;; src/typechecker.rs unit coverage.
+(define (compiler-typecheck-stmt-if-cond-source) : String
+  "(define (main) : i64 (if 1 2 3))")
+
+(define (compiler-typecheck-stmt-while-cond-source) : String
+  "(define (main [n : i64]) : unit
+  (let [i : i64 n] (while i (set! i (- i 1)))))")
+
+(define (compiler-typecheck-stmt-while-body-source) : String
+  "(define (main [n : i64]) : unit
+  (let [i : i64 n] (while (> i 0) i)))")
+
+(define (compiler-typecheck-stmt-set-mismatch-source) : String
+  "(define (main) : i64
+  (let [x : i64 0] (begin (set! x true) x)))")
+
+(define (compiler-typecheck-stmt-let-mismatch-source) : String
+  "(define (main) : i64 (let [x : i64 true] x))")
+
+(define (compiler-typecheck-stmt-ann-mismatch-source) : String
+  "(define (main) : i64 (ann true : i64))")
+
+(define (compiler-typecheck-stmt-ok-while-source) : String
+  "(define (main [n : i64]) : unit
+  (let [i : i64 n] (while (> i 0) (set! i (- i 1)))))")
+
+(define (compiler-typecheck-stmt-ok-if-set-source) : String
+  "(define (main [flag : bool]) : i64
+  (let [x : i64 0] (begin (set! x 5) (if flag x 0))))")
+
+(define (compiler-typecheck-stmt-ok-cast-ann-source) : String
+  "(define (main [c : char]) : i64 (ann (cast c : i64) : i64))")
+
+(define (compiler-typecheck-statement-tests-ok?) : bool
+  (and
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-stmt-if-cond-source)
+      "typecheck: if condition must be bool")
+    (and
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-stmt-while-cond-source)
+        "typecheck: while condition must be bool")
+      (and
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-stmt-while-body-source)
+          "typecheck: while body must be unit")
         (and
           (compiler-typecheck-error-ok?
-            (compiler-typecheck-unbound-source)
-            "typecheck: unbound name missing")
+            (compiler-typecheck-stmt-set-mismatch-source)
+            "typecheck: assignment type mismatch")
           (and
             (compiler-typecheck-error-ok?
-              (compiler-typecheck-bad-call-source)
-              "typecheck: argument type mismatch")
+              (compiler-typecheck-stmt-let-mismatch-source)
+              "typecheck: let binding type mismatch")
             (and
               (compiler-typecheck-error-ok?
-                (compiler-typecheck-branch-mismatch-source)
-                "typecheck: if branches must match")
+                (compiler-typecheck-stmt-ann-mismatch-source)
+                "typecheck: annotation type mismatch")
               (and
-                (compiler-typecheck-aggregate-tests-ok?)
+                (compiler-typecheck-ok?
+                  (compiler-typecheck-stmt-ok-while-source))
                 (and
-                  (compiler-typecheck-nominal-tests-ok?)
+                  (compiler-typecheck-ok?
+                    (compiler-typecheck-stmt-ok-if-set-source))
+                  (compiler-typecheck-ok?
+                    (compiler-typecheck-stmt-ok-cast-ann-source)))))))))))
+
+;; Operator and call type rules (#1042): equality/comparison/integer operator
+;; operand matching and call arity, plus accepting arithmetic/comparison/call
+;; programs. Migrated from src/typechecker.rs unit coverage.
+(define (compiler-typecheck-op-eq-mismatch-source) : String
+  "(define (main) : bool (= 1 true))")
+
+(define (compiler-typecheck-op-int-mismatch-source) : String
+  "(define (main) : i64 (+ 1 true))")
+
+(define (compiler-typecheck-op-cmp-mismatch-source) : String
+  "(define (main) : bool (< 1 true))")
+
+(define (compiler-typecheck-op-arity-many-source) : String
+  "(define (f [x : i64]) : i64 x)
+(define (main) : i64 (f 1 2))")
+
+(define (compiler-typecheck-op-arity-few-source) : String
+  "(define (f [x : i64] [y : i64]) : i64 (+ x y))
+(define (main) : i64 (f 1))")
+
+(define (compiler-typecheck-op-ok-arith-source) : String
+  "(define (main) : i64 (+ (* 2 3) (- 10 4)))")
+
+(define (compiler-typecheck-op-ok-cmp-eq-source) : String
+  "(define (main) : bool (and (< 1 2) (= 3 3)))")
+
+(define (compiler-typecheck-op-ok-call-source) : String
+  "(define (add [a : i64] [b : i64]) : i64 (+ a b))
+(define (main) : i64 (add 2 3))")
+
+(define (compiler-typecheck-operator-tests-ok?) : bool
+  (and
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-op-eq-mismatch-source)
+      "typecheck: equality operands must match")
+    (and
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-op-int-mismatch-source)
+        "typecheck: integer operator expects matching integer operands")
+      (and
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-op-cmp-mismatch-source)
+          "typecheck: comparison expects matching ordered scalar operands")
+        (and
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-op-arity-many-source)
+            "typecheck: arity mismatch")
+          (and
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-op-arity-few-source)
+              "typecheck: arity mismatch")
+            (and
+              (compiler-typecheck-ok? (compiler-typecheck-op-ok-arith-source))
+              (and
+                (compiler-typecheck-ok?
+                  (compiler-typecheck-op-ok-cmp-eq-source))
+                (compiler-typecheck-ok? (compiler-typecheck-op-ok-call-source))))))))))
+
+(define (compiler-typecheck-self-test) : i64
+  (begin
+    (if (compiler-typecheck-statement-tests-ok?)
+      unit
+      (panic "typecheck: statement/control-flow tests failed"))
+    (if (compiler-typecheck-operator-tests-ok?)
+      unit
+      (panic "typecheck: operator/arity tests failed"))
+    (match (typecheck-compiler-source (compiler-typecheck-smoke-source))
+      [(OkCompilerTypecheck summary)
+        (if (and
+          (= (compiler-typecheck-summary-score summary) 121)
+          (and
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-unbound-source)
+              "typecheck: unbound name missing")
+            (and
+              (compiler-typecheck-error-ok?
+                (compiler-typecheck-bad-call-source)
+                "typecheck: argument type mismatch")
+              (and
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-branch-mismatch-source)
+                  "typecheck: if branches must match")
+                (and
+                  (compiler-typecheck-aggregate-tests-ok?)
                   (and
-                    (compiler-typecheck-abstraction-policy-tests-ok?)
+                    (compiler-typecheck-foreach-spmd-tests-ok?)
                     (and
-                      (compiler-typecheck-region-tests-ok?)
+                      (compiler-typecheck-nominal-tests-ok?)
                       (and
-                        (compiler-typecheck-result-try-tests-ok?)
-                        (compiler-typecheck-located-ok?))))))))))
-        42
+                        (compiler-typecheck-abstraction-policy-tests-ok?)
+                        (and
+                          (compiler-typecheck-region-tests-ok?)
+                          (and
+                            (compiler-typecheck-result-try-tests-ok?)
+                            (and
+                              (compiler-typecheck-raw-pointer-tests-ok?)
+                              (and
+                                (compiler-typecheck-reference-tests-ok?)
+                                (compiler-typecheck-located-ok?)))))))))))))
+          42
+          (begin
+            (panic "typecheck: smoke score mismatch")
+            0))]
+      [(ErrCompilerTypecheck diag)
         (begin
-          (panic "typecheck: smoke score mismatch")
-          0))]
-    [(ErrCompilerTypecheck diag)
-      (begin
-        (panic (compiler-diagnostic-message diag))
-        0)]))
+          (panic (compiler-diagnostic-message diag))
+          0)])))

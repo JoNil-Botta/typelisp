@@ -393,6 +393,18 @@
         (front-type-render elem)
         (front-cat3 ", " (int->string count) ")"))]
     [(AstTyDynArray elem) (front-cat3 "DynArray(" (front-type-render elem) ")")]
+    [(AstTyPtr elem) (front-cat3 "Ptr(" (front-type-render elem) ")")]
+    [(AstTyMutPtr elem) (front-cat3 "MutPtr(" (front-type-render elem) ")")]
+    [(AstTyRef region inner)
+      (front-cat3
+        "Ref(\""
+        region
+        (front-cat3 "\", " (front-type-render inner) ")"))]
+    [(AstTyMutRef region inner)
+      (front-cat3
+        "MutRef(\""
+        region
+        (front-cat3 "\", " (front-type-render inner) ")"))]
     [(AstTyRegion region inner)
       (front-cat3
         "Region(\""
@@ -649,7 +661,16 @@
         name
         (front-cat3 "\", ty: " (front-type-render ty) " }"))]
     [(AstDeclDefEnum name _) (front-cat3 "DefEnum { name: \"" name "\" }")]
-    [(AstDeclDefStruct name _) (front-cat3 "DefStruct { name: \"" name "\" }")]
+    [(AstDeclDefStruct name repr _)
+      (front-cat3
+        "DefStruct { name: \""
+        name
+        (front-cat3
+          "\", repr: "
+          (if (ast-struct-repr-c? repr)
+            "c"
+            "default")
+          " }"))]
     [(AstDeclImport spec) (front-import-render spec)]
     [(AstDeclTest name body _)
       (front-cat3

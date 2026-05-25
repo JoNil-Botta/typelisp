@@ -4,12 +4,41 @@ A statically typed Lisp/Scheme dialect that compiles directly to native
 x86_64 assembly for Linux and Windows. Written in Rust with **zero third-party
 dependencies** (`std` only).
 
-## Goals
+## Goals and inspirations
+
+Current implementation goals:
 
 - **Typed**: Every expression has a known type at compile time. No runtime type tagging.
 - **Native**: Compiles straight to x86_64 assembly, then native toolchains produce executables. Linux uses `as` + `ld`; Windows uses `clang` + `lld-link`. No bytecode VM, no interpreter, no garbage collector.
 - **Zero dependencies**: Built with Rust `std` only. No third-party crates.
 - **Self-hostable front end**: A lexer, s-expression reader, and tree-walking evaluator for TypeLisp are themselves written in TypeLisp (see [`selfhost/`](selfhost)).
+
+Language direction:
+
+- Keep a minimal language core with Lisp/Scheme syntax and explicit types.
+- Be expressive enough for C-style systems programming: native layout,
+  runtime/FFI escape hatches, deterministic builds, and direct linker interop.
+- Pursue Rust-style safety for ownership, borrowing, move semantics, and arena
+  lifetimes. Safe TypeLisp should not have undefined behavior; the arena and
+  borrow work is tracked by #801, #802, #803, #805, #814, and #182.
+- Treat ISPC-style SPMD as the data-parallel model. The current source surface
+  is in [SPEC.md section 5.15](SPEC.md); selfhost parity and optimization work
+  is tracked by #791 and #937.
+- Use Zig-style comptime as the abstraction mechanism. TypeLisp should not grow
+  source-level generics, traits, interfaces, or `impl` syntax; comptime code
+  should generate concrete types, functions, and implementation bundles instead.
+  See #893, #913, and #970.
+- Move toward C3-style modules where module identity participates in name
+  resolution and prefixes TypeLisp linker symbols; see #950, #952, and #953.
+- Use an arena-based memory model with a default program-lifetime arena and
+  scoped `(with-arena ...)` allocation regions (#801).
+- Land new language features in the selfhost compiler, not as new Rust compiler
+  product surface. The Rust implementation is the stage0/compiler bridge while
+  the public toolchain moves toward TypeLisp-built components (#666, #784, #787,
+  #795).
+
+The language-direction bullets above are future goals. The rest of this README
+describes current behavior unless it explicitly says a feature is planned.
 
 ## Quick Start
 
@@ -94,14 +123,20 @@ Name              ; a defenum / defstruct nominal type
 ```
 
 `f32` is in the type system but rejected by backend validation today.
+Raw pointer types `(Ptr T)` and `(MutPtr T)` plus `(unsafe ...)` are specified
+for the v1 FFI surface in [SPEC.md §3.4](SPEC.md) and §5.19, but implementation
+is still pending.
 
 ### Abstraction policy
 
-TypeLisp does not plan source-level generics, traits, interfaces, or `impl`
-blocks. Library abstraction should come from Zig-style comptime generation:
+TypeLisp does not plan source-level generics, traits, interfaces, `impl`
+blocks, generic `Option<T>`/`Result<T,E>` syntax, or trait-based error
+conversion. Library abstraction should come from Zig-style comptime generation:
 compile-time code inspects type values and emits concrete structs, enums,
 functions, and implementation bundles. Until that path lands, write explicit
-monomorphic declarations such as `MaybeI64` or domain-specific `Result*` enums.
+monomorphic declarations such as `MaybeI64` or domain-specific `Result*` enums;
+the selfhost compiler already uses `(try expr)` as the Lisp-shaped propagation
+form for compatible concrete Result-like enums.
 
 The comptime implementation path is tracked by #893, #913, and #483.
 
@@ -121,6 +156,12 @@ definitions merge into one top-level namespace. The selfhost module direction is
 private-by-default modules with canonical identities, `(export ...)`, import
 aliases, and qualified names such as `math/add`; see `SPEC.md` section 4.4 for
 the specified migration contract.
+
+FFI-facing structs will use explicit `repr c` metadata and comptime layout
+queries such as `size-of`, `align-of`, and `offset-of`; this is specified for
+the selfhost compiler in `SPEC.md` and is being implemented in #987-#989.
+Default TypeLisp struct layout remains compiler-owned and should not be treated
+as a C ABI contract.
 
 `stdlib/string.tl` is the canonical in-repo string utility module. Stdlib files
 are ordinary modules imported with explicit paths such as
@@ -164,28 +205,30 @@ qualified symbol lookup are specified for the selfhost module model in
 `SPEC.md`.
 
 Documentation comments can contain checked examples. `typelisp doc --test
-<file.tl>` extracts fenced `typelisp` or `tl` blocks from `;;;;` module docs and
-attached `;;;` item docs, writes each example to a deterministic temporary
+<file.tl>` extracts fenced `typelisp` or `tl` blocks from `;#` module docs and
+attached `;:` item docs, writes each example to a deterministic temporary
 source file, type-checks it, and removes the temporary directory before exiting.
 The self-hosted Markdown generator can render one source file through
 `typelisp run selfhost/doc.tl -- input.tl output.md`; import-graph traversal and
 Rust CLI plumbing are separate follow-up work.
 
 ```lisp
-;;;; ```typelisp
-;;;; (define (main) : i64 42)
-;;;; ```
+;# ```typelisp
+;# (define (main) : i64 42)
+;# ```
 
-;;; ```tl expect-error
-;;; (define (bad) : i64 true)
-;;; ```
+;: ```tl expect-error
+;: (define (bad) : i64 true)
+;: ```
 (define documented : i64 1)
 ```
 
 Examples are standalone TypeLisp source snippets. By default an example must
 parse, resolve imports, and type-check. Add `expect-error` after the language tag
 when the example is intended to fail. Ordinary `;` and `;;` comments are not
-documentation and are ignored by the doctest scanner.
+documentation and are ignored by the doctest scanner. Legacy `;;;;` and `;;;`
+doc comments remain accepted while the repository migrates, but `;#` and `;:`
+are the canonical spellings.
 
 Inline tests can live next to source declarations as `(test name body...)`
 items. Normal `check`, `compile`, `build`, and `run` ignore them. `typelisp
@@ -194,6 +237,11 @@ unit-returning functions, generates a test-owned `main`, and runs the resulting
 executable. `typelisp test --check <file.tl>` type-checks that generated
 harness without assembling or linking. Tests commonly import `stdlib/test.tl`
 for assertion helpers.
+
+CI runs `scripts/verify-inline-tests.sh`, which auto-discovers inline
+test-bearing `.tl` files under `selfhost/`, `stdlib/`, `tests/integration/`,
+`tests/inline/`, and `examples/`. Add inline tests without editing a manifest;
+the script fails if discovered tests do not type-check, build, or pass.
 
 ### Enum and struct namespace rules
 
@@ -254,6 +302,11 @@ TypeLisp does not currently have source-level references, borrowing, ownership
 transfer, destructors, `free`, or a garbage collector. Aggregate values such as
 `String`, dynamic arrays, structs, and enums are implemented as pointer-sized
 handles in the IR/ABI, but those handles are not checked language references.
+The v1 raw pointer design is now specified as explicit unsafe syntax:
+`(Ptr T)`/`(MutPtr T)` are nullable, copyable pointer-sized values, and
+dereference/write/offset/cast operations require `(unsafe ...)`. That surface is
+for FFI/runtime work and is not implemented yet; it is not the future safe
+reference/borrow model.
 
 `String` values are immutable at the source level. Dynamic arrays are shared
 mutable buffers: copying or passing an `(Array T)` value aliases the same
@@ -280,6 +333,11 @@ can safely lower the form to `tl_region_mark` / `tl_region_reset` around the
 body. This makes scoped cleanup safe by construction, unlike the raw extern
 helpers below. See [SPEC.md §5.16](SPEC.md) and §7.3 for the full contract.
 
+Scoped cleanup of non-memory resources is separate. The SPEC reserves
+`(with ([name init cleanup]) body ...)` for explicit cleanup of files, process
+handles, locks, mapped files, and similar resources; it is not implemented yet
+and does not imply destructors, `free`, or arena reset semantics.
+
 Programs that need manual control may still declare low-level extern helpers:
 `tl_region_mark` and `tl_region_reset` snapshot and restore the bump allocator.
 These are unsafe-by-convention — the caller must prove no live handle escapes
@@ -300,7 +358,10 @@ TypeLisp*:
 Compiler self-test and smoke-driver conventions are documented in
 [`selfhost/TESTING.md`](selfhost/TESTING.md).
 Published stage0 compilers for local bootstrap checks can be fetched with
-[`scripts/fetch-stage0.sh`](scripts/fetch-stage0.sh).
+[`scripts/fetch-stage0.sh`](scripts/fetch-stage0.sh). To run the same no-Rust
+stage0 verification gate used by CI, run
+`scripts/verify-no-rust-stage0.sh`; it fetches `stage0-latest` when
+`TYPELISP_BIN` is unset and prevents accidental Cargo fallback.
 
 Smaller runnable examples, including `calc.tl`, remain in [`examples/`](examples).
 
@@ -363,7 +424,8 @@ map/zip path all compile to native code. See the
 [SPEC.md §8](SPEC.md) for what is not yet supported (aggregate-element /
 nested fixed-array captures, tail calls, tuple/fixed-array by-value returns,
 `f32` codegen, general GC/free, ownership/borrowing, and later SPMD/SIMD
-reductions/cross-lane work).
+reductions/cross-lane work). Raw pointer types and unsafe pointer operations are
+specified but not implemented.
 
 ## Contributing
 

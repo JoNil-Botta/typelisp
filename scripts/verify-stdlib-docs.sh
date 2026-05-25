@@ -5,9 +5,9 @@ set -eu
 #
 # The public `typelisp doc` command currently runs the selfhost Markdown
 # generator through a native compile/run path, which is Linux-only until the doc
-# command grows target selection. The doctest subcommand still routes through the
-# Rust path; keep this script separate so it can switch to the selfhost doctest
-# path when #865 lands.
+# command grows target selection. The doctest subcommand runs through
+# `selfhost/doc.tl`; keep this script separate from public CLI smoke coverage
+# because it sweeps every canonical stdlib module.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"

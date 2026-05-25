@@ -276,6 +276,16 @@
           (spec-type-key elem)
           (string-append "_" (spec-int-key count))))]
     [(AstTyDynArray elem) (string-append "dynarray_" (spec-type-key elem))]
+    [(AstTyPtr elem) (string-append "ptr_" (spec-type-key elem))]
+    [(AstTyMutPtr elem) (string-append "mutptr_" (spec-type-key elem))]
+    [(AstTyRef region inner)
+      (string-append
+        "ref_"
+        (string-append region (string-append "_" (spec-type-key inner))))]
+    [(AstTyMutRef region inner)
+      (string-append
+        "mutref_"
+        (string-append region (string-append "_" (spec-type-key inner))))]
     [(AstTyRegion region inner)
       (string-append
         "region_"
@@ -476,6 +486,12 @@
     [(AstTyArray elem count)
       (AstTyArray (spec-substitute-type elem subs) count)]
     [(AstTyDynArray elem) (AstTyDynArray (spec-substitute-type elem subs))]
+    [(AstTyPtr elem) (AstTyPtr (spec-substitute-type elem subs))]
+    [(AstTyMutPtr elem) (AstTyMutPtr (spec-substitute-type elem subs))]
+    [(AstTyRef region inner)
+      (AstTyRef region (spec-substitute-type inner subs))]
+    [(AstTyMutRef region inner)
+      (AstTyMutRef region (spec-substitute-type inner subs))]
     [(AstTyRegion region inner)
       (AstTyRegion region (spec-substitute-type inner subs))]
     [(AstTyVar name)
@@ -1787,12 +1803,27 @@
         [(ErrSpecProgram _) false])]
     [(ErrAstProgram _) false]))
 
+(define (compiler-specialize-raw-pointer-type-ok?) : bool
+  (let
+    [subs : SpecTypeSubst (SpecTypeSubstCons "T" (AstTyI64) SpecTypeSubstNil)]
+    (and
+      (string-eq (spec-type-key (AstTyPtr (AstTyI64))) "ptr_i64")
+      (and
+        (string-eq
+          (spec-type-key (AstTyMutPtr (AstTyPtr (AstTyU8))))
+          "mutptr_ptr_u8")
+        (ctfe-type-eq
+          (spec-substitute-type (AstTyMutPtr (AstTyVar "T")) subs)
+          (AstTyMutPtr (AstTyI64)))))))
+
 (define (compiler-specialize-self-test) : i64
   (if (compiler-specialize-type-param-ok?)
     (if (compiler-specialize-runtime-type-use-rejected?)
       (if (compiler-specialize-template-shadow-ok?)
         (if (compiler-specialize-type-shadow-ok?)
-          1
+          (if (compiler-specialize-raw-pointer-type-ok?)
+            1
+            0)
           0)
         0)
       0)

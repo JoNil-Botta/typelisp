@@ -1,10 +1,10 @@
 ;; doc_extract.tl - Self-hosted TypeLisp doc comment extractor (#387).
 ;;
-;; Public docs use Rust-style semicolon levels:
-;;   ;;;; module/file doc line, collected separately
-;;   ;;;  outer item doc line, attached to the next supported top-level item
-;;   ;;   ordinary comment, ignored
-;;   ;    ordinary comment, ignored
+;; Public docs use explicit semicolon markers:
+;;   ;#   module/file doc line, collected separately
+;;   ;:   outer item doc line, attached to the next supported top-level item
+;; Legacy `;;;;` module docs and `;;;` item docs remain accepted while the
+;; repository migrates. `;;` and `;` ordinary comments are ignored.
 ;;
 ;; Item doc lines stay pending across blank physical lines because the
 ;; self-hosted formatter may separate doc comment lines. Ordinary comments,
@@ -198,6 +198,22 @@
         (set! body-start body-start))
       (substring src body-start (- line-end body-start)))))
 
+(define (doc-module-doc-prefix-len [src : String] [line-start : i64]) : i64
+  (if (doc-string-prefix-at? src ";#" line-start)
+    2
+    (if (doc-string-prefix-at? src ";;;;" line-start)
+      4
+      0)))
+
+(define (doc-item-doc-prefix-len [src : String] [line-start : i64]) : i64
+  (if (doc-string-prefix-at? src ";:" line-start)
+    2
+    (if (doc-string-prefix-at? src ";;;" line-start)
+      (if (doc-string-prefix-at? src ";;;;" line-start)
+        0
+        3)
+      0)))
+
 (define (doc-scan-string-end [src : String] [start : i64] [n : i64]) : i64
   (let
     [i : i64 (+ start 1)]
@@ -352,32 +368,46 @@
               (let
                 [c : char (string-ref src line-start)]
                 (if (= c #;')
-                  (if (doc-string-prefix-at? src ";;;;" line-start)
-                    (begin
-                      (set!
-                        module-doc
-                        (doc-append-line
-                          module-doc
-                          module-has
-                          (doc-comment-body src line-start line-end 4)))
-                      (set! module-has true)
-                      (set! pending-doc "")
-                      (set! pending-has false)
-                      (set! i (doc-next-line-start src line-end n)))
-                    (if (doc-string-prefix-at? src ";;;" line-start)
+                  (let
+                    [module-prefix-len : i64
+                      (doc-module-doc-prefix-len src line-start)]
+                    (if (> module-prefix-len 0)
                       (begin
                         (set!
-                          pending-doc
+                          module-doc
                           (doc-append-line
-                            pending-doc
-                            pending-has
-                            (doc-comment-body src line-start line-end 3)))
-                        (set! pending-has true)
-                        (set! i (doc-next-line-start src line-end n)))
-                      (begin
+                            module-doc
+                            module-has
+                            (doc-comment-body
+                              src
+                              line-start
+                              line-end
+                              module-prefix-len)))
+                        (set! module-has true)
                         (set! pending-doc "")
                         (set! pending-has false)
-                        (set! i (doc-next-line-start src line-end n)))))
+                        (set! i (doc-next-line-start src line-end n)))
+                      (let
+                        [item-prefix-len : i64
+                          (doc-item-doc-prefix-len src line-start)]
+                        (if (> item-prefix-len 0)
+                          (begin
+                            (set!
+                              pending-doc
+                              (doc-append-line
+                                pending-doc
+                                pending-has
+                                (doc-comment-body
+                                  src
+                                  line-start
+                                  line-end
+                                  item-prefix-len)))
+                            (set! pending-has true)
+                            (set! i (doc-next-line-start src line-end n)))
+                          (begin
+                            (set! pending-doc "")
+                            (set! pending-has false)
+                            (set! i (doc-next-line-start src line-end n)))))))
                   (if (= c #(')
                     (let
                       [form-end : i64 (doc-scan-form-end src line-start n)]
@@ -408,30 +438,36 @@
   (doc-extract-source (read-file path)))
 
 (define (doc-extract-smoke-source) : String
-  ";;;; Module title
-;;;; second module line
+  ";# Module title
+;# second module line
 
 ;; ordinary comment ignored
-;;; answer doc
-;;; still answer
+;: answer doc
+;: still answer
 (define answer : i64 42)
 
-;;; lost before ordinary comment
+;: lost before ordinary comment
 ;; ordinary comment clears pending docs
 (define missed : i64 0)
-;;; function doc
+;: function doc
 (define (main [argc : i64]) : i64
   answer)
 ; ordinary comment clears pending docs
-;;; enum doc
+;: enum doc
 (defenum Maybe (None) (Some i64))
 
-;;;; later module
-;;; external doc
+;# later module
+;: external doc
 (extern print : (-> String unit))
-;;; struct doc
+;: struct doc
 (defstruct Point (x i64) (y i64))
-;;; EOF unattached")
+;: EOF unattached")
+
+(define (doc-extract-legacy-smoke-source) : String
+  ";;;; Legacy module
+;;; legacy item
+(define legacy : i64 1)
+")
 
 (define (doc-item-ok?
   [item : DocItem]
@@ -485,7 +521,29 @@
         "Module title\nsecond module line\nlater module")
         (if (= (doc-item-list-count items) 5)
           (if (doc-extract-smoke-items-ok? items)
-            42
+            (match (doc-extract-source (doc-extract-legacy-smoke-source))
+              [(DocExtraction legacy-module legacy-items)
+                (if (string-eq legacy-module "Legacy module")
+                  (if (= (doc-item-list-count legacy-items) 1)
+                    (match legacy-items
+                      [(DocItemCons legacy DocItemNil)
+                        (if (doc-item-ok?
+                          legacy
+                          1
+                          "legacy"
+                          "legacy item"
+                          "(define legacy : i64 1)")
+                          42
+                          (begin
+                            (panic "doc-extract: legacy item mismatch")
+                            0))]
+                      [_ 0])
+                    (begin
+                      (panic "doc-extract: legacy item count mismatch")
+                      0))
+                  (begin
+                    (panic "doc-extract: legacy module doc mismatch")
+                    0))])
             (begin
               (panic "doc-extract: item doc smoke mismatch")
               0))

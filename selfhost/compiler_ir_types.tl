@@ -62,6 +62,7 @@
   (IrInstrGep i64 CompilerIrValue CompilerIrValue AstType)
   (IrInstrLoad i64 CompilerIrValue AstType)
   (IrInstrStorePtr CompilerIrValue CompilerIrValue AstType)
+  (IrInstrBoundsCheck CompilerIrValue CompilerIrValue String)
   (IrInstrCast i64 CompilerIrValue AstType AstType)
   (IrInstrBinOp i64 CompilerIrBinOp CompilerIrValue CompilerIrValue AstType)
   (IrInstrUnOp i64 CompilerIrUnOp CompilerIrValue AstType)
@@ -114,6 +115,104 @@
 (defenum CompilerIrProgram
   (IrProgram CompilerIrGlobalList CompilerIrFunctionList CompilerIrExternList))
 
+(defenum CompilerIrEffect
+  (IrEffectPure)
+  (IrEffectMemoryRead)
+  (IrEffectMemoryWrite)
+  (IrEffectControlFlow)
+  (IrEffectUnknown))
+
+(define (compiler-ir-effect-eq? [a : CompilerIrEffect] [b : CompilerIrEffect]) : bool
+  (match a
+    [(IrEffectPure)
+      (match b
+        [(IrEffectPure) true]
+        [_ false])]
+    [(IrEffectMemoryRead)
+      (match b
+        [(IrEffectMemoryRead) true]
+        [_ false])]
+    [(IrEffectMemoryWrite)
+      (match b
+        [(IrEffectMemoryWrite) true]
+        [_ false])]
+    [(IrEffectControlFlow)
+      (match b
+        [(IrEffectControlFlow) true]
+        [_ false])]
+    [(IrEffectUnknown)
+      (match b
+        [(IrEffectUnknown) true]
+        [_ false])]))
+
+(define (compiler-ir-effect-has-side-effect? [effect : CompilerIrEffect]) : bool
+  (match effect
+    [(IrEffectPure) false]
+    [(IrEffectMemoryRead) false]
+    [(IrEffectMemoryWrite) true]
+    [(IrEffectControlFlow) true]
+    [(IrEffectUnknown) true]))
+
+(define (compiler-ir-effect-invalidates-cse? [effect : CompilerIrEffect]) : bool
+  (match effect
+    [(IrEffectPure) false]
+    [_ true]))
+
+(define (compiler-ir-runtime-memory-read? [name : String]) : bool
+  (or
+    (string-eq name "tl_string_eq")
+    (or
+      (string-eq name "tl_string_to_int")
+      (or (string-eq name "tl_region_mark") (string-eq name ".L_tl_stdin_eof")))))
+
+(define (compiler-ir-runtime-memory-write? [name : String]) : bool
+  (or
+    (string-eq name "tl_alloc")
+    (or
+      (string-eq name "tl_int_to_string")
+      (or
+        (string-eq name "tl_substring")
+        (or
+          (string-eq name "tl_string_concat")
+          (or
+            (string-eq name "tl_region_reset")
+            (string-eq name ".L_tl_flush_stdout")))))))
+
+(define (compiler-ir-runtime-control-flow? [name : String]) : bool
+  (or
+    (string-eq name ".L_tl_abort")
+    (or
+      (string-eq name "tl_oob_abort")
+      (or (string-eq name "tl_div_abort") (string-eq name "tl_shift_abort")))))
+
+(define (compiler-ir-direct-call-effect [name : String]) : CompilerIrEffect
+  (if (compiler-ir-runtime-memory-read? name)
+    IrEffectMemoryRead
+    (if (compiler-ir-runtime-memory-write? name)
+      IrEffectMemoryWrite
+      (if (compiler-ir-runtime-control-flow? name)
+        IrEffectControlFlow
+        IrEffectUnknown))))
+
+(define (compiler-ir-instr-effect [instr : CompilerIrInstr]) : CompilerIrEffect
+  (match instr
+    [(IrInstrMov _ _ _) IrEffectPure]
+    [(IrInstrAddrOf _ _) IrEffectPure]
+    [(IrInstrGep _ _ _ _) IrEffectPure]
+    [(IrInstrCast _ _ _ _) IrEffectPure]
+    [(IrInstrBinOp _ _ _ _ _) IrEffectPure]
+    [(IrInstrUnOp _ _ _ _) IrEffectPure]
+    [(IrInstrPhi _ _ _) IrEffectPure]
+    [(IrInstrLoad _ _ _) IrEffectMemoryRead]
+    [(IrInstrAlloc _ _) IrEffectMemoryWrite]
+    [(IrInstrStorePtr _ _ _) IrEffectMemoryWrite]
+    [(IrInstrStore _ _ _) IrEffectMemoryWrite]
+    [(IrInstrCall _ name _ _) (compiler-ir-direct-call-effect name)]
+    [(IrInstrBoundsCheck _ _ _) IrEffectControlFlow]
+    [(IrInstrJump _) IrEffectControlFlow]
+    [(IrInstrBranch _ _ _) IrEffectControlFlow]
+    [(IrInstrReturn _) IrEffectControlFlow]))
+
 ;; Source provenance side table for the lowered IR (#605). Kept OUTSIDE
 ;;
 ;; `CompilerIrProgram` so the optimizer and liveness data model stay unchanged,
@@ -153,6 +252,11 @@
   (CompilerSourceSpans
     (CompilerSourceSpansEntryNil)
     (CompilerSourceSpansEntryNil)))
+
+(define (compiler-source-spans-clear-instrs [spans : CompilerSourceSpans]) : CompilerSourceSpans
+  (match spans
+    [(CompilerSourceSpans entries _)
+      (CompilerSourceSpans entries (CompilerSourceSpansEntryNil))]))
 
 (define (compiler-source-spans-entry-list-append
   [entries : CompilerSourceSpansEntryList]
@@ -468,3 +572,157 @@
         (compiler-ir-function-list-block-count functions)
         (compiler-ir-function-list-instruction-count functions)
         (compiler-ir-function-list-var-count functions))]))
+
+(define (compiler-ir-effect-is?
+  [instr : CompilerIrInstr]
+  [effect : CompilerIrEffect]) : bool
+  (compiler-ir-effect-eq? (compiler-ir-instr-effect instr) effect))
+
+(define (compiler-ir-instruction-effects-ok?) : bool
+  (and
+    (compiler-ir-effect-is?
+      (IrInstrMov 0 (IrValueI64 1) (AstTyI64))
+      IrEffectPure)
+    (and
+      (compiler-ir-effect-is? (IrInstrAddrOf 1 0) IrEffectPure)
+      (and
+        (compiler-ir-effect-is?
+          (IrInstrGep 2 (IrValueVar 1) (IrValueI64 0) (AstTyI64))
+          IrEffectPure)
+        (and
+          (compiler-ir-effect-is?
+            (IrInstrCast 3 (IrValueVar 2) (AstTyI64) (AstTyI32))
+            IrEffectPure)
+          (and
+            (compiler-ir-effect-is?
+              (IrInstrBinOp
+                4
+                (IrBinAdd)
+                (IrValueVar 2)
+                (IrValueI64 1)
+                (AstTyI64))
+              IrEffectPure)
+            (and
+              (compiler-ir-effect-is?
+                (IrInstrUnOp 5 (IrUnNeg) (IrValueVar 4) (AstTyI64))
+                IrEffectPure)
+              (and
+                (compiler-ir-effect-is?
+                  (IrInstrPhi
+                    6
+                    (IrPhiInputCons
+                      (IrPhiInput (IrValueI64 1) "entry")
+                      (IrPhiInputNil))
+                    (AstTyI64))
+                  IrEffectPure)
+                (and
+                  (compiler-ir-effect-is?
+                    (IrInstrLoad 7 (IrValueVar 1) (AstTyI64))
+                    IrEffectMemoryRead)
+                  (and
+                    (compiler-ir-effect-is?
+                      (IrInstrAlloc 8 (AstTyI64))
+                      IrEffectMemoryWrite)
+                    (and
+                      (compiler-ir-effect-is?
+                        (IrInstrStorePtr
+                          (IrValueVar 1)
+                          (IrValueI64 2)
+                          (AstTyI64))
+                        IrEffectMemoryWrite)
+                      (and
+                        (compiler-ir-effect-is?
+                          (IrInstrStore "global" (IrValueI64 3) (AstTyI64))
+                          IrEffectMemoryWrite)
+                        (and
+                          (compiler-ir-effect-is?
+                            (IrInstrCall
+                              9
+                              "tl_string_eq"
+                              IrValueNil
+                              (AstTyBool))
+                            IrEffectMemoryRead)
+                          (and
+                            (compiler-ir-effect-is?
+                              (IrInstrBoundsCheck
+                                (IrValueVar 0)
+                                (IrValueVar 1)
+                                "bounds_ok")
+                              IrEffectControlFlow)
+                            (and
+                              (compiler-ir-effect-is?
+                                (IrInstrJump "done")
+                                IrEffectControlFlow)
+                              (and
+                                (compiler-ir-effect-is?
+                                  (IrInstrBranch
+                                    (IrValueBool true)
+                                    "then"
+                                    "else")
+                                  IrEffectControlFlow)
+                                (compiler-ir-effect-is?
+                                  (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+                                  IrEffectControlFlow)))))))))))))))))
+
+(define (compiler-ir-runtime-effects-ok?) : bool
+  (and
+    (compiler-ir-effect-eq?
+      (compiler-ir-direct-call-effect "tl_region_mark")
+      IrEffectMemoryRead)
+    (and
+      (compiler-ir-effect-eq?
+        (compiler-ir-direct-call-effect ".L_tl_stdin_eof")
+        IrEffectMemoryRead)
+      (and
+        (compiler-ir-effect-eq?
+          (compiler-ir-direct-call-effect "tl_alloc")
+          IrEffectMemoryWrite)
+        (and
+          (compiler-ir-effect-eq?
+            (compiler-ir-direct-call-effect ".L_tl_flush_stdout")
+            IrEffectMemoryWrite)
+          (and
+            (compiler-ir-effect-eq?
+              (compiler-ir-direct-call-effect ".L_tl_abort")
+              IrEffectControlFlow)
+            (and
+              (compiler-ir-effect-eq?
+                (compiler-ir-direct-call-effect "tl_shift_abort")
+                IrEffectControlFlow)
+              (and
+                (compiler-ir-effect-eq?
+                  (compiler-ir-direct-call-effect ".L_tl_arg_count")
+                  IrEffectUnknown)
+                (compiler-ir-effect-eq?
+                  (compiler-ir-direct-call-effect "user_or_extern_call")
+                  IrEffectUnknown)))))))))
+
+(define (compiler-ir-effect-predicates-ok?) : bool
+  (and
+    (not (compiler-ir-effect-has-side-effect? IrEffectPure))
+    (and
+      (not (compiler-ir-effect-has-side-effect? IrEffectMemoryRead))
+      (and
+        (compiler-ir-effect-has-side-effect? IrEffectMemoryWrite)
+        (and
+          (compiler-ir-effect-has-side-effect? IrEffectControlFlow)
+          (and
+            (compiler-ir-effect-has-side-effect? IrEffectUnknown)
+            (and
+              (not (compiler-ir-effect-invalidates-cse? IrEffectPure))
+              (and
+                (compiler-ir-effect-invalidates-cse? IrEffectMemoryRead)
+                (and
+                  (compiler-ir-effect-invalidates-cse? IrEffectMemoryWrite)
+                  (and
+                    (compiler-ir-effect-invalidates-cse? IrEffectControlFlow)
+                    (compiler-ir-effect-invalidates-cse? IrEffectUnknown)))))))))))
+
+(define (compiler-ir-effect-self-test) : i64
+  (if (compiler-ir-instruction-effects-ok?)
+    (if (compiler-ir-runtime-effects-ok?)
+      (if (compiler-ir-effect-predicates-ok?)
+        42
+        1)
+      1)
+    1))

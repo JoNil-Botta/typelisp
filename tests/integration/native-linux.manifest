@@ -45,6 +45,7 @@ nested_eval|tests/integration/nested_eval.tl|7|-|-|-
 nullary_variant_call|tests/integration/nullary_variant_call.tl|42|-|-|-
 overflow_casts|tests/integration/overflow_casts.tl|0|-|-|-
 parser|tests/integration/parser.tl|14|-|-|-
+process_runtime|tests/integration/process_runtime.tl|42|-|-|stdlib/process.tl stdlib/test.tl
 print|tests/integration/print.tl|0|42\nfalse\n|-|-
 print_char|tests/integration/print_char.tl|0|A\n|-|-
 print_string|tests/integration/print_string.tl|0|hello\nworld\n|-|-
@@ -75,13 +76,16 @@ compiler_parse_smoke|selfhost/compiler_parse_smoke.tl|42|-|-|compiler_parse_core
 compiler_symbols_smoke|selfhost/compiler_symbols_smoke.tl|42|-|-|compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl
 compiler_typecheck_smoke|selfhost/compiler_typecheck_smoke.tl|42|-|-|compiler_typecheck.tl compiler_ctfe.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl
 compiler_check_smoke|selfhost/compiler_check_smoke.tl|42|-|-|compiler_check_core.tl compiler_load.tl compiler_typecheck.tl compiler_ctfe.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl
+compiler_ctfe_smoke|selfhost/compiler_ctfe_smoke.tl|42|-|-|compiler_ctfe.tl compiler_diagnostic.tl compiler_ast_types.tl token.tl
 compiler_lower_smoke|selfhost/compiler_lower_smoke.tl|42|-|-|compiler_lower.tl compiler_ctfe.tl compiler_specialize.tl compiler_ir_types.tl compiler_typecheck.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl
+compiler_ir_types_smoke|selfhost/compiler_ir_types_smoke.tl|42|-|-|compiler_ir_types.tl compiler_ast_types.tl
 compiler_liveness_smoke|selfhost/compiler_liveness_smoke.tl|42|-|-|compiler_liveness.tl compiler_ir_types.tl compiler_ast_types.tl
 compiler_regalloc_smoke|selfhost/compiler_regalloc_smoke.tl|42|-|-|compiler_regalloc.tl compiler_liveness.tl compiler_ir_types.tl compiler_ast_types.tl
 compiler_optimize_smoke|selfhost/compiler_optimize_smoke.tl|42|-|-|compiler_optimize.tl compiler_ir_types.tl compiler_ast_types.tl
 lex_span_smoke|selfhost/lex_span_smoke.tl|42|-|-|lex.tl token.tl
-compiler_backend_smoke|selfhost/compiler_backend_smoke.tl|42|-|-|compiler_backend.tl compiler_regalloc.tl compiler_liveness.tl compiler_lower.tl compiler_ctfe.tl compiler_specialize.tl compiler_ir_types.tl compiler_typecheck.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl text_buf.tl read.tl lex.tl token.tl
+compiler_backend_smoke|selfhost/compiler_backend_smoke.tl|42|-|-|compiler_backend.tl compiler_optimize.tl compiler_regalloc.tl compiler_liveness.tl compiler_lower.tl compiler_ctfe.tl compiler_specialize.tl compiler_ir_types.tl compiler_typecheck.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl text_buf.tl read.tl lex.tl token.tl
 doc_extract_smoke|selfhost/doc_extract_smoke.tl|42|-|-|doc_extract.tl format_tokens.tl
 doc_test_smoke|selfhost/doc_test_smoke.tl|42|-|-|doc_test.tl compiler_check_core.tl compiler_load.tl compiler_typecheck.tl compiler_ctfe.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_ast_types.tl compiler_diagnostic.tl sym_i64_env.tl read.tl lex.tl token.tl
 doc_render_smoke|selfhost/doc_render_smoke.tl|42|-|-|doc_render.tl doc_extract.tl format_tokens.tl
 doc_html_smoke|selfhost/doc_html_smoke.tl|42|-|-|doc_html.tl doc_render.tl doc_extract.tl format_tokens.tl
+doc_site_smoke|selfhost/doc_site_smoke.tl|42|-|-|doc_site_core.tl doc_html.tl doc_render.tl doc_extract.tl format_tokens.tl

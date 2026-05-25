@@ -1353,9 +1353,10 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
                 "compiler_ast_types.tl",
             ],
         },
-        // refs #543/#924: selfhost optimizer pass framework, scalar constant
-        // folding, and strength reduction. The smoke checks pass-specific
-        // self-tests over folded constants and algebraic identities.
+        // refs #543/#924/#925: selfhost optimizer pass framework, scalar
+        // constant folding, typed constant/cast folding, and strength
+        // reduction. The smoke checks pass-specific self-tests over folded
+        // constants and algebraic identities.
         Case {
             name: "compiler_optimize_smoke",
             exit_code: 42,
@@ -1384,6 +1385,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             stdout: "",
             deps: &[
                 "compiler_backend.tl",
+                "compiler_optimize.tl",
                 "compiler_regalloc.tl",
                 "compiler_liveness.tl",
                 "compiler_lower.tl",
@@ -1497,6 +1499,7 @@ fn selfhost_backend_stack_args_emit_assemble_link_and_run() {
         &work_dir,
         &[
             "compiler_backend.tl",
+            "compiler_optimize.tl",
             "compiler_regalloc.tl",
             "compiler_liveness.tl",
             "compiler_lower.tl",
@@ -1635,6 +1638,11 @@ fn selfhost_backend_runtime_helpers_emit_assemble_link_and_run() {
         "\n.L_tl_read_stdin_bytes:\n",
         "\n.L_tl_stdin_eof:\n",
         "\n.L_tl_flush_stdout:\n",
+        "\ntl_process_output:\n",
+        "\n.L_tl_process_read_all:\n",
+        ".L_tl_process_exec_marker:",
+        ".L_tl_envp:\n",
+        "process: spawn failed",
         ".L_tl_stdin_eof_flag:\n",
         "tl: stdin failed",
         ".L_tl_substring_copy_loop:\n",
@@ -1660,6 +1668,7 @@ fn selfhost_backend_runtime_helpers_emit_assemble_link_and_run() {
         ".extern .L_tl_read_stdin_bytes\n",
         ".extern .L_tl_stdin_eof\n",
         ".extern .L_tl_flush_stdout\n",
+        ".extern tl_process_output\n",
     ] {
         assert!(
             !asm.contains(helper),
@@ -2090,9 +2099,9 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
         "    call tl_substring\n",
         "    call tl_string_concat\n",
         "tl_oob_abort:\n",
-        "str_bounds_fail",
+        "    jb .Lmain_str_bounds_ok",
+        ".Lmain_str_bounds_ok",
         "substr_bounds_fail",
-        "    setb %al\n",
         "    setbe %al\n",
     ] {
         assert!(

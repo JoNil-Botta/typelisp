@@ -112,6 +112,9 @@ fn selfhost_backend_windows_runtime_helpers_emit_assemble_link_and_run() {
         "\n.L_tl_read_stdin_bytes:\n",
         "\n.L_tl_stdin_eof:\n",
         "\n.L_tl_flush_stdout:\n",
+        "\ntl_process_output:\n",
+        ".L_tl_process_make_error_win:\n",
+        "process: runtime execution is not supported on this target",
         "\n.L_tl_argc:\n",
         "\n.L_tl_argv:\n",
         "    movq %rcx, .L_tl_argc(%rip)\n",
@@ -170,6 +173,7 @@ fn selfhost_backend_windows_runtime_helpers_emit_assemble_link_and_run() {
         ".extern .L_tl_read_stdin_bytes\n",
         ".extern .L_tl_stdin_eof\n",
         ".extern .L_tl_flush_stdout\n",
+        ".extern tl_process_output\n",
     ] {
         assert!(
             !asm.contains(helper),
@@ -651,6 +655,12 @@ fn native_cases() -> Vec<Case> {
         ),
         case_with_deps("stdlib_test", 42, "", &["stdlib/test.tl"]),
         case_with_deps("stdlib_io", 42, "", &["stdlib/io.tl"]),
+        case_with_deps(
+            "process_runtime",
+            42,
+            "",
+            &["stdlib/process.tl", "stdlib/test.tl"],
+        ),
         case_with_deps("stdlib_text_buf", 42, "", &["stdlib/text_buf.tl"]),
         case_with_deps(
             "compiler_parse_smoke",
@@ -771,6 +781,7 @@ fn native_cases() -> Vec<Case> {
             "",
             &[
                 "compiler_backend.tl",
+                "compiler_optimize.tl",
                 "compiler_regalloc.tl",
                 "compiler_liveness.tl",
                 "compiler_lower.tl",
@@ -1002,6 +1013,7 @@ fn dep_source_path(manifest_dir: &Path, source_dir: &Path, dep: &str) -> PathBuf
         "stdlib/string.tl" => manifest_dir.join("stdlib").join("string.tl"),
         "stdlib/test.tl" => manifest_dir.join("stdlib").join("test.tl"),
         "stdlib/io.tl" => manifest_dir.join("stdlib").join("io.tl"),
+        "stdlib/process.tl" => manifest_dir.join("stdlib").join("process.tl"),
         "stdlib/text_buf.tl" => manifest_dir.join("stdlib").join("text_buf.tl"),
         _ => source_dir.join(dep),
     }

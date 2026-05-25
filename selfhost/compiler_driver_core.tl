@@ -17,15 +17,32 @@
   [spans : CompilerSourceSpans]
   [target : CompilerBackendTarget]
   [has-target : bool]) : ResultCompilerDriver
-  (match (if has-target
-    (compiler-backend-emit-program-with-spans-for-target
-      (optimize-program program)
-      spans
-      target)
-    (compiler-backend-emit-program-with-spans (optimize-program program) spans))
-    [(OkCompilerBackend asm) (OkCompilerDriver asm)]
-    [(ErrCompilerBackend diag)
-      (ErrCompilerDriver (compiler-diagnostic-with-path diag input-path))]))
+  (compiler-driver-emit-lowered-with-level
+    input-path
+    program
+    spans
+    target
+    has-target
+    (compiler-optimize-default-level)))
+
+(define (compiler-driver-emit-lowered-with-level
+  [input-path : String]
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [opt-level : i64]) : ResultCompilerDriver
+  (match (optimize-program-with-spans-and-level program spans opt-level)
+    [(CompilerOptimizedProgram optimized optimized-spans)
+      (match (if has-target
+        (compiler-backend-emit-program-with-spans-for-target
+          optimized
+          optimized-spans
+          target)
+        (compiler-backend-emit-program-with-spans optimized optimized-spans))
+        [(OkCompilerBackend asm) (OkCompilerDriver asm)]
+        [(ErrCompilerBackend diag)
+          (ErrCompilerDriver (compiler-diagnostic-with-path diag input-path))])]))
 
 (define (compiler-driver-emit-file-with-target
   [input-path : String]
@@ -42,6 +59,19 @@
   [target : CompilerBackendTarget]
   [has-target : bool]
   [stdlib-roots : CompilerLoadRootList]) : ResultCompilerDriver
+  (compiler-driver-emit-file-with-target-roots-and-level
+    input-path
+    target
+    has-target
+    stdlib-roots
+    (compiler-optimize-default-level)))
+
+(define (compiler-driver-emit-file-with-target-roots-and-level
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [stdlib-roots : CompilerLoadRootList]
+  [opt-level : i64]) : ResultCompilerDriver
   (match (compiler-load-file-with-paths-and-roots
     input-path
     (sym-i64-empty)
@@ -51,16 +81,17 @@
         input-path
         (AstProgram decls)
         paths)
-        ;; The lowering provenance side table (#605) is forwarded through
-        ;; optimization (which preserves function names) into backend emission so
-        ;; backend diagnostics report the real source line/column.
+        ;; The lowering provenance side table (#605/#761) is remapped after
+        ;; optimization so backend diagnostics report surviving instruction
+        ;; locations when a rewrite can preserve them.
         [(OkCompilerLower program spans)
-          (compiler-driver-emit-lowered
+          (compiler-driver-emit-lowered-with-level
             input-path
             program
             spans
             target
-            has-target)]
+            has-target
+            opt-level)]
         [(ErrCompilerLower diag) (ErrCompilerDriver diag)])]
     [(ErrCompilerLoadWithPaths diag) (ErrCompilerDriver diag)]))
 
@@ -76,6 +107,17 @@
     false
     stdlib-roots))
 
+(define (compiler-driver-emit-file-with-roots-and-level
+  [input-path : String]
+  [stdlib-roots : CompilerLoadRootList]
+  [opt-level : i64]) : ResultCompilerDriver
+  (compiler-driver-emit-file-with-target-roots-and-level
+    input-path
+    (BackendTargetLinux)
+    false
+    stdlib-roots
+    opt-level))
+
 (define (compiler-driver-emit-file-for-target
   [input-path : String]
   [target : CompilerBackendTarget]) : ResultCompilerDriver
@@ -90,6 +132,18 @@
     target
     true
     stdlib-roots))
+
+(define (compiler-driver-emit-file-for-target-with-roots-and-level
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : CompilerLoadRootList]
+  [opt-level : i64]) : ResultCompilerDriver
+  (compiler-driver-emit-file-with-target-roots-and-level
+    input-path
+    target
+    true
+    stdlib-roots
+    opt-level))
 
 (define (compiler-driver-write-result
   [result : ResultCompilerDriver]
@@ -119,6 +173,18 @@
     (compiler-driver-emit-file-with-roots input-path stdlib-roots)
     output-path))
 
+(define (compiler-driver-compile-file-with-roots-and-level
+  [input-path : String]
+  [output-path : String]
+  [stdlib-roots : CompilerLoadRootList]
+  [opt-level : i64]) : i64
+  (compiler-driver-write-result
+    (compiler-driver-emit-file-with-roots-and-level
+      input-path
+      stdlib-roots
+      opt-level)
+    output-path))
+
 (define (compiler-driver-compile-file-for-target
   [input-path : String]
   [output-path : String]
@@ -137,4 +203,18 @@
       input-path
       target
       stdlib-roots)
+    output-path))
+
+(define (compiler-driver-compile-file-for-target-with-roots-and-level
+  [input-path : String]
+  [output-path : String]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : CompilerLoadRootList]
+  [opt-level : i64]) : i64
+  (compiler-driver-write-result
+    (compiler-driver-emit-file-for-target-with-roots-and-level
+      input-path
+      target
+      stdlib-roots
+      opt-level)
     output-path))

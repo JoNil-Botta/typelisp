@@ -1,0 +1,70 @@
+name: Publish Docs
+
+# Build the selfhost docs site and publish it to GitHub Pages on pushes to the
+# default branch (main). Pull requests only build + validate the site without
+# publishing; that is handled by the "Verify docs site" step in ci.yml. Refs #874.
+#
+# The site is generated entirely by the selfhost builder selfhost/doc_site.tl,
+# compiled with the published stage0 compiler fetched via scripts/fetch-stage0.sh
+# (no Rust docs code, no Cargo rebuild in this workflow).
+#
+# Prerequisite (one-time, repo setting): Settings -> Pages -> Build and
+# deployment -> Source = "GitHub Actions". Until that is set, the deploy job's
+# actions/deploy-pages step will fail.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow a single concurrent Pages deployment; never cancel an in-progress
+# publish so a deploy always finishes cleanly.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build docs site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check native toolchain
+        run: |
+          command -v as
+          command -v ld
+
+      - name: Fetch published stage0 compiler
+        run: scripts/fetch-stage0.sh
+
+      - name: Verify docs site (build + validate)
+        run: TYPELISP_BIN=target/stage0/typelisp scripts/verify-doc-site.sh
+
+      - name: Build docs site for publishing
+        run: target/stage0/typelisp run selfhost/doc_site.tl -- _site
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

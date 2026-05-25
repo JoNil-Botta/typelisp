@@ -367,6 +367,23 @@ stage0 verification gate used by CI, run
 
 Smaller runnable examples, including `calc.tl`, remain in [`examples/`](examples).
 
+## Documentation site
+
+A static stdlib/API documentation site is generated entirely in TypeLisp by
+[`selfhost/doc_site.tl`](selfhost/doc_site.tl) and published to GitHub Pages at
+<https://jonil-botta.github.io/typelisp/>. Pushes to `main` rebuild and publish
+it automatically via the [`Publish Docs`](.github/workflows/docs-pages.yml)
+workflow; pull requests build and validate the site without publishing (the
+"Verify docs site" step in CI).
+
+Build the site locally into any output directory:
+
+```bash
+typelisp run selfhost/doc_site.tl -- target/site
+# Build + validate links/anchors the way CI does (no publish):
+scripts/verify-doc-site.sh
+```
+
 ## Architecture
 
 ```

@@ -2714,6 +2714,30 @@
               "(define (main) : i64 (spmd-reduce sum))"
               "parse: malformed spmd-reduce")))))))
 
+(define (compiler-parse-pattern-tests-ok?) : bool
+  (and
+    (compiler-parse-ok? "(define (main) : i64 (match 1 [0 1] [_ 0]))")
+    (and
+      (compiler-parse-ok?
+        "(define (main [b : bool]) : i64 (match b [true 1] [false 0]))")
+      (and
+        (compiler-parse-ok?
+          "(defenum E (A i64) (B))
+(define (main [e : E]) : i64 (match e [(A x) x] [(B) 0]))")
+        (and
+          (compiler-parse-ok? "(define (main) : i64 (match 5 [x x]))")
+          (and
+            (compiler-parse-error-ok?
+              "(define (main) : i64 (match))"
+              "parse: malformed match")
+            (and
+              (compiler-parse-error-ok?
+                "(define (main) : i64 (match 1 [_]))"
+                "parse: malformed match arm")
+              (compiler-parse-error-ok?
+                "(define (main) : i64 (match 1 [() 0]))"
+                "parse: expected pattern"))))))))
+
 (define (compiler-parse-smoke) : i64
   (match (parse-ast-source (compiler-parse-smoke-source))
     [(OkAstProgram program)
@@ -2750,7 +2774,11 @@
           (compiler-parse-error-tests-ok?)
           (and
             (compiler-parse-declaration-tests-ok?)
-            (and (compiler-parse-let-tests-ok?) (compiler-parse-spmd-tests-ok?))))
+            (and
+              (compiler-parse-let-tests-ok?)
+              (and
+                (compiler-parse-spmd-tests-ok?)
+                (compiler-parse-pattern-tests-ok?)))))
           42
           (begin
             (panic "parse: error-path self-tests failed")

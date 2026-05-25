@@ -157,8 +157,10 @@ def run_lsp_fixture(path):
     with open(spec_path, "r", encoding="utf-8") as f:
         spec = json.load(f)
 
-    # Set up a temporary directory for this fixture
-    tmpdir = tempfile.mkdtemp(prefix="typelisp-lsp-fixture-")
+    # Set up a temporary directory for this fixture. realpath() canonicalizes it
+    # (resolving Windows 8.3 short names like RUNNER~1 to the long form), matching
+    # the compiler's std::fs::canonicalize of imported module paths.
+    tmpdir = os.path.realpath(tempfile.mkdtemp(prefix="typelisp-lsp-fixture-"))
     # Build a proper file URI: file:///tmp/... on POSIX and file:///C:/... on
     # Windows (three slashes for the drive-letter form), matching the compiler's
     # path_to_file_uri. A bare "file://" + path yields "file://C:/..." on
@@ -343,7 +345,9 @@ def run_selfhost_lsp_fixture(path, spec_path, binary):
     with open(spec_path, "r", encoding="utf-8") as f:
         spec = json.load(f)
 
-    tmpdir = tempfile.mkdtemp(prefix="typelisp-selfhost-lsp-fixture-")
+    # realpath() canonicalizes Windows 8.3 short names to match the compiler's
+    # std::fs::canonicalize of imported module paths (see run_lsp_fixture).
+    tmpdir = os.path.realpath(tempfile.mkdtemp(prefix="typelisp-selfhost-lsp-fixture-"))
     # Build a proper file URI: file:///tmp/... on POSIX and file:///C:/... on
     # Windows (three slashes for the drive-letter form), matching the compiler's
     # path_to_file_uri. A bare "file://" + path yields "file://C:/..." on

@@ -1,0 +1,59 @@
+{
+  "name": "typelisp",
+  "displayName": "TypeLisp",
+  "description": "Syntax highlighting and (forthcoming) LSP client for the TypeLisp language.",
+  "version": "0.0.1",
+  "publisher": "typelisp",
+  "license": "SEE LICENSE IN ../../LICENSE",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "typelisp",
+        "aliases": [
+          "TypeLisp",
+          "typelisp"
+        ],
+        "extensions": [
+          ".tl"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "typelisp",
+        "scopeName": "source.typelisp",
+        "path": "./syntaxes/typelisp.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "TypeLisp",
+      "properties": {
+        "typelisp.executablePath": {
+          "type": "string",
+          "default": "typelisp",
+          "description": "Path to the `typelisp` executable used to launch the LSP server (`typelisp lsp`). Defaults to `typelisp` on PATH."
+        },
+        "typelisp.stdlibRoots": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Extra `--stdlib-root` directories passed to the TypeLisp tooling."
+        },
+        "typelisp.enableLanguageServer": {
+          "type": "boolean",
+          "default": true,
+          "description": "Connect to the TypeLisp LSP server (`typelisp lsp`) for diagnostics and editor features once the LSP client glue lands."
+        }
+      }
+    }
+  }
+}

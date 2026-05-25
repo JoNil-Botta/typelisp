@@ -62,7 +62,7 @@ Status meanings:
 | `tests/tl_reader_compile.rs` | Selfhost reader driver compiles with lexer/token imports. | Covered by `selfhost/compile_manifest.txt` and `scripts/verify-selfhost-compile-manifest.sh`; Rust harness can be deleted with #793/#795. | Covered |
 | `tests/tl_repl_compile.rs` | Selfhost REPL driver compiles. | Covered by `selfhost/compile_manifest.txt` and `scripts/verify-selfhost-compile-manifest.sh`; interactive behavior remains with #845. | Covered |
 | `tests/tl_text_buf_compile.rs` | Selfhost deterministic text buffer utility and driver compile. | Covered by `selfhost/compile_manifest.txt` and `scripts/verify-selfhost-compile-manifest.sh`; stdlib buffer work remains #821. | Covered |
-| `tests/windows_native.rs` | Windows target compile/link/run behavior, runtime helper cases, dependency staging, runtime args, stdout/stderr, and exit codes. | Covered by the Windows path in `scripts/verify-integration.sh`, `tests/integration/native-windows.manifest`, and the host-aware Windows paths in `verify-stdlib.sh` and `verify-examples.sh`. | Covered |
+| `tests/windows_native.rs` | Windows target compile/link/run behavior, runtime helper cases, dependency staging, runtime args, stdout/stderr, and exit codes. | Covered by the Windows path in `scripts/verify-integration.sh`, `tests/integration/native-windows.manifest`, and the script's Windows backend/compiler-driver fixture checks; the host-aware Windows paths in `verify-stdlib.sh` and `verify-examples.sh` cover stdlib/examples. | Covered |
 
 ## Maintenance Rules
 

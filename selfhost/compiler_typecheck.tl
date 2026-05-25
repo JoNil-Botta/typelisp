@@ -1279,7 +1279,27 @@
         (TcSpmdFound ty class scope)
         (tc-spmd-env-lookup rest name))]))
 
-(define (tc-spmd-env-set-class
+(define (tc-spmd-env-has-local? [env : TcSpmdEnv] [name : String]) : bool
+  (match env
+    [(TcSpmdEnvNil) false]
+    [(TcSpmdEnvBind key _ _ scope rest)
+      (if (string-eq key name)
+        (match scope
+          [(TcSpmdLocal) true]
+          [(TcSpmdOuter) (tc-spmd-env-has-local? rest name)])
+        (tc-spmd-env-has-local? rest name))]))
+
+(define (tc-spmd-env-has-outer? [env : TcSpmdEnv] [name : String]) : bool
+  (match env
+    [(TcSpmdEnvNil) false]
+    [(TcSpmdEnvBind key _ _ scope rest)
+      (if (string-eq key name)
+        (match scope
+          [(TcSpmdOuter) true]
+          [(TcSpmdLocal) (tc-spmd-env-has-outer? rest name)])
+        (tc-spmd-env-has-outer? rest name))]))
+
+(define (tc-spmd-env-set-local-class
   [env : TcSpmdEnv]
   [name : String]
   [class : TcSpmdClass]) : TcSpmdEnv
@@ -1287,13 +1307,21 @@
     [(TcSpmdEnvNil) TcSpmdEnvNil]
     [(TcSpmdEnvBind key ty old-class scope rest)
       (if (string-eq key name)
-        (TcSpmdEnvBind key ty class scope rest)
+        (match scope
+          [(TcSpmdLocal) (TcSpmdEnvBind key ty class scope rest)]
+          [(TcSpmdOuter)
+            (TcSpmdEnvBind
+              key
+              ty
+              old-class
+              scope
+              (tc-spmd-env-set-local-class rest name class))])
         (TcSpmdEnvBind
           key
           ty
           old-class
           scope
-          (tc-spmd-env-set-class rest name class)))]))
+          (tc-spmd-env-set-local-class rest name class)))]))
 
 (define (tc-spmd-env-pop [env : TcSpmdEnv] [count : i64]) : TcSpmdEnv
   (if (<= count 0)
@@ -1307,6 +1335,20 @@
     [(TcSpmdEnvNil) TcSpmdEnvNil]
     [(TcSpmdEnvBind name ty class _ rest)
       (TcSpmdEnvBind name ty class TcSpmdOuter (tc-spmd-env-mark-outer rest))]))
+
+(define (tc-spmd-env-merge-classes [left : TcSpmdEnv] [right : TcSpmdEnv]) : TcSpmdEnv
+  (match left
+    [(TcSpmdEnvNil) TcSpmdEnvNil]
+    [(TcSpmdEnvBind name ty class scope left-rest)
+      (match right
+        [(TcSpmdEnvNil) left]
+        [(TcSpmdEnvBind _ _ right-class _ right-rest)
+          (TcSpmdEnvBind
+            name
+            ty
+            (tc-spmd-merge-class class right-class)
+            scope
+            (tc-spmd-env-merge-classes left-rest right-rest))])]))
 
 (define (tc-literal-type [lit : AstLiteral]) : AstType
   (match lit
@@ -2080,14 +2122,23 @@
               (match (tc-spmd-expr ctx arm-env spmd-env body)
                 [(OkTcSpmdExprInfo body-info)
                   (match body-info
-                    [(TcSpmdExprInfo _ body-class _)
-                      (tc-spmd-match-arms
+                    [(TcSpmdExprInfo _ body-class body-env)
+                      (match (tc-spmd-match-arms
                         ctx
                         env
                         spmd-env
                         scrut-ty
                         rest
-                        (tc-spmd-merge-class class body-class))])]
+                        (tc-spmd-merge-class class body-class))
+                        [(OkTcSpmdExprListInfo rest-info)
+                          (match rest-info
+                            [(TcSpmdExprListInfo rest-class rest-env)
+                              (OkTcSpmdExprListInfo
+                                (TcSpmdExprListInfo
+                                  rest-class
+                                  (tc-spmd-env-merge-classes body-env rest-env)))])]
+                        [(ErrTcSpmdExprListInfo message)
+                          (ErrTcSpmdExprListInfo message)])])]
                 [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprListInfo message)])]
             [(ErrTcEnv message) (ErrTcSpmdExprListInfo message)])])]))
 
@@ -2214,15 +2265,17 @@
                   (match (tc-spmd-expr ctx env cond-env then-branch)
                     [(OkTcSpmdExprInfo then-info)
                       (match then-info
-                        [(TcSpmdExprInfo _ then-class _)
+                        [(TcSpmdExprInfo _ then-class then-env)
                           (match (tc-spmd-expr ctx env cond-env else-branch)
                             [(OkTcSpmdExprInfo else-info)
                               (match else-info
-                                [(TcSpmdExprInfo _ else-class _)
+                                [(TcSpmdExprInfo _ else-class else-env)
                                   (tc-spmd-finish
                                     expr-ty
                                     (tc-spmd-merge-class then-class else-class)
-                                    cond-env)])]
+                                    (tc-spmd-env-merge-classes
+                                      then-env
+                                      else-env))])]
                             [(ErrTcSpmdExprInfo message)
                               (ErrTcSpmdExprInfo message)])])]
                     [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
@@ -2370,8 +2423,13 @@
                 "typecheck: foreach while condition must be uniform")
                 [(OkTcUnit)
                   (match (tc-spmd-expr ctx env cond-env body)
-                    [(OkTcSpmdExprInfo _)
-                      (tc-spmd-finish expr-ty TcSpmdUniform cond-env)]
+                    [(OkTcSpmdExprInfo body-info)
+                      (match body-info
+                        [(TcSpmdExprInfo _ _ body-env)
+                          (tc-spmd-finish
+                            expr-ty
+                            TcSpmdUniform
+                            (tc-spmd-env-merge-classes cond-env body-env))])]
                     [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
                 [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
         [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
@@ -2381,17 +2439,15 @@
         [(OkTcSpmdExprInfo value-info)
           (match value-info
             [(TcSpmdExprInfo _ value-class value-env)
-              (match (tc-spmd-env-lookup value-env name)
-                [(TcSpmdFound _ _ TcSpmdOuter)
+              (if (tc-spmd-env-has-local? value-env name)
+                (tc-spmd-finish
+                  expr-ty
+                  TcSpmdUniform
+                  (tc-spmd-env-set-local-class value-env name value-class))
+                (if (tc-spmd-env-has-outer? value-env name)
                   (ErrTcSpmdExprInfo
-                    "typecheck: foreach cannot set binding declared outside foreach")]
-                [(TcSpmdFound _ _ TcSpmdLocal)
-                  (tc-spmd-finish
-                    expr-ty
-                    TcSpmdUniform
-                    (tc-spmd-env-set-class value-env name value-class))]
-                [(TcSpmdMissing)
-                  (tc-spmd-finish expr-ty TcSpmdUniform value-env)])])]
+                    "typecheck: foreach cannot set binding declared outside foreach")
+                  (tc-spmd-finish expr-ty TcSpmdUniform value-env)))])]
         [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
     [(AstExprMatch scrutinee arms)
       (match (tc-spmd-expr ctx env spmd-env scrutinee)
@@ -2411,8 +2467,8 @@
                     TcSpmdUniform)
                     [(OkTcSpmdExprListInfo arms-info)
                       (match arms-info
-                        [(TcSpmdExprListInfo arms-class _)
-                          (tc-spmd-finish expr-ty arms-class scrut-env)])]
+                        [(TcSpmdExprListInfo arms-class arms-env)
+                          (tc-spmd-finish expr-ty arms-class arms-env)])]
                     [(ErrTcSpmdExprListInfo message)
                       (ErrTcSpmdExprInfo message)])]
                 [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
@@ -4245,6 +4301,62 @@
       [s : String (array-ref ss i)]
       unit)))")
 
+(define (compiler-typecheck-foreach-if-local-set-source) : String
+  "(define (sink [x : i64]) : unit unit)
+(define (main [xs : (Array i64)] [flag : bool] [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (let
+      [x : i64 0]
+      (begin
+        (if flag (set! x (array-ref xs i)) unit)
+        (sink x)))))")
+
+(define (compiler-typecheck-foreach-while-local-set-source) : String
+  "(define (sink [x : i64]) : unit unit)
+(define (main [xs : (Array i64)] [flag : bool] [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (let
+      [x : i64 0]
+      (begin
+        (while flag (set! x (array-ref xs i)))
+        (sink x)))))")
+
+(define (compiler-typecheck-foreach-match-local-set-source) : String
+  "(defenum Maybe (None) (Some i64))
+(define (sink [x : i64]) : unit unit)
+(define (main [m : Maybe] [xs : (Array i64)] [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (let
+      [x : i64 0]
+      (begin
+        (match m [(Some v) (set! x (array-ref xs i))] [None unit])
+        (sink x)))))")
+
+(define (compiler-typecheck-foreach-local-set-ok-source) : String
+  "(define (sink [x : i64]) : unit unit)
+(define (main [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (let
+      [x : i64 0]
+      (begin
+        (set! x 1)
+        (sink x)))))")
+
+(define (compiler-typecheck-foreach-control-flow-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-foreach-local-set-ok-source))
+    (and
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-foreach-if-local-set-source)
+        "typecheck: foreach calls with varying arguments are not supported")
+      (and
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-foreach-while-local-set-source)
+          "typecheck: foreach calls with varying arguments are not supported")
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-foreach-match-local-set-source)
+          "typecheck: foreach calls with varying arguments are not supported")))))
+
 (define (compiler-typecheck-foreach-spmd-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-foreach-spmd-ok-source))
@@ -4264,9 +4376,11 @@
             (compiler-typecheck-error-ok?
               (compiler-typecheck-foreach-outer-set-source)
               "typecheck: foreach cannot set binding declared outside foreach")
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-foreach-unsupported-lane-source)
-              "typecheck: foreach varying array lane type is not supported: String")))))))
+            (and
+              (compiler-typecheck-error-ok?
+                (compiler-typecheck-foreach-unsupported-lane-source)
+                "typecheck: foreach varying array lane type is not supported: String")
+              (compiler-typecheck-foreach-control-flow-tests-ok?))))))))
 
 (define (compiler-typecheck-abstraction-policy-tests-ok?) : bool
   (compiler-typecheck-error-ok?

@@ -73,7 +73,7 @@
 
 ;; `c` is one of TypeLisp's symbol punctuation chars - the non-alphanumeric
 ;; characters that may appear in a symbol/operator name:
-;;   `-` `+` `*` `/` `%` `?` `!` `>` `<` `=` `:` `_`
+;;   `-` `+` `*` `/` `%` `&` `?` `!` `>` `<` `=` `:` `_`
 ;; This is what makes `+`, `<=`, `string->int`, and `array-set!` all lex as one
 ;; `TSym` rather than as separate operator tokens.
 (define (is-symbol-punct [c : char]) : bool
@@ -95,7 +95,9 @@
                   (= c #<')
                   (or
                     (= c #=')
-                    (or (= c #:') (or (= c #_') (or (= c #.') (= c #%'))))))))))))))
+                    (or
+                      (= c #&')
+                      (or (= c #:') (or (= c #_') (or (= c #.') (= c #%')))))))))))))))
 
 ;; `c` may appear in a symbol: a letter, a digit, or a symbol-punctuation char.
 ;; A symbol run is the maximal span of these starting at a non-digit symbol char.
@@ -700,6 +702,18 @@
         (string-eq (token-sym (array-ref toks 1)) "%"))]
     [(ErrTokens _) false]))
 
+(define (lex-ampersand-symbol-ok?) : bool
+  (match (lex-result "(& r String) (&mut r String)")
+    [(OkTokens toks)
+      (and
+        (= (token-tag (array-ref toks 1)) (tag-sym))
+        (and
+          (string-eq (token-sym (array-ref toks 1)) "&")
+          (and
+            (= (token-tag (array-ref toks 6)) (tag-sym))
+            (string-eq (token-sym (array-ref toks 6)) "&mut"))))]
+    [(ErrTokens _) false]))
+
 (define (lex-float-token-ok?) : bool
   (match (lex-result "(3.14)")
     [(OkTokens toks)
@@ -931,7 +945,9 @@
                 (lex-error-spans-ok?)
                 (and
                   (lex-percent-symbol-ok?)
-                  (and (lex-float-token-ok?) (lex-negative-int-token-ok?))))))))
+                  (and
+                    (lex-ampersand-symbol-ok?)
+                    (and (lex-float-token-ok?) (lex-negative-int-token-ok?)))))))))
         42
         1)]
     [(ErrSpannedTokens _) 2]))

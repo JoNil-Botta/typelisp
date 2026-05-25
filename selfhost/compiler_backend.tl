@@ -509,6 +509,8 @@
     [(AstTyDynArray _) 8]
     [(AstTyPtr _) 8]
     [(AstTyMutPtr _) 8]
+    [(AstTyRef _ _) 8]
+    [(AstTyMutRef _ _) 8]
     [(AstTyRegion _ inner) (compiler-backend-type-size inner)]
     [(AstTyEnum _) 8]
     [(AstTyStruct _) 8]

@@ -554,6 +554,16 @@
       (match b
         [(AstTyMutPtr b-elem) (ctfe-type-eq a-elem b-elem)]
         [_ false])]
+    [(AstTyRef a-region a-inner)
+      (match b
+        [(AstTyRef b-region b-inner)
+          (and (string-eq a-region b-region) (ctfe-type-eq a-inner b-inner))]
+        [_ false])]
+    [(AstTyMutRef a-region a-inner)
+      (match b
+        [(AstTyMutRef b-region b-inner)
+          (and (string-eq a-region b-region) (ctfe-type-eq a-inner b-inner))]
+        [_ false])]
     [(AstTyRegion a-region a-inner)
       (match b
         [(AstTyRegion b-region b-inner)

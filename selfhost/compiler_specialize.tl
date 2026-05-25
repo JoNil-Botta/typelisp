@@ -278,6 +278,14 @@
     [(AstTyDynArray elem) (string-append "dynarray_" (spec-type-key elem))]
     [(AstTyPtr elem) (string-append "ptr_" (spec-type-key elem))]
     [(AstTyMutPtr elem) (string-append "mutptr_" (spec-type-key elem))]
+    [(AstTyRef region inner)
+      (string-append
+        "ref_"
+        (string-append region (string-append "_" (spec-type-key inner))))]
+    [(AstTyMutRef region inner)
+      (string-append
+        "mutref_"
+        (string-append region (string-append "_" (spec-type-key inner))))]
     [(AstTyRegion region inner)
       (string-append
         "region_"
@@ -480,6 +488,10 @@
     [(AstTyDynArray elem) (AstTyDynArray (spec-substitute-type elem subs))]
     [(AstTyPtr elem) (AstTyPtr (spec-substitute-type elem subs))]
     [(AstTyMutPtr elem) (AstTyMutPtr (spec-substitute-type elem subs))]
+    [(AstTyRef region inner)
+      (AstTyRef region (spec-substitute-type inner subs))]
+    [(AstTyMutRef region inner)
+      (AstTyMutRef region (spec-substitute-type inner subs))]
     [(AstTyRegion region inner)
       (AstTyRegion region (spec-substitute-type inner subs))]
     [(AstTyVar name)

@@ -375,6 +375,27 @@ Region-polymorphic functions (`(forall (r) ...)`) are deferred to a follow-up
 slice; every function type in v1 is region-agnostic and therefore cannot
 accept or produce region-tagged handles.
 
+### 3.10 Written reference types (syntax/model slice)
+
+The selfhost compiler accepts written lifetime-bearing reference type forms:
+
+```lisp test=ignore name=reference-type-syntax reason=syntax-only
+(& arena T)
+(&mut arena T)
+```
+
+- `(& arena T)` is an immutable reference type to `T` tied to lifetime/arena
+  name `arena`.
+- `(&mut arena T)` is a mutable reference type to `T` tied to lifetime/arena
+  name `arena`.
+- The lifetime name is a bare identifier. It matches the current
+  `(with-region arena ...)` binder shape and the planned `(with-arena arena ...)`
+  spelling.
+- This slice only defines syntax and type representation. Borrow expressions,
+  mutable exclusivity, returned-reference lifetime checks, and borrowed `str`
+  semantics are follow-up borrow-checker work. Source programs using reference
+  types are rejected before lowering until that work lands.
+
 ---
 
 ## 4. Top-level forms
@@ -1595,11 +1616,13 @@ They are not implemented by a separate C runtime.
 
 ## 7. Memory model
 
-TypeLisp currently has no source-level reference, borrow, lifetime, move-only,
-implicit destructor, `drop`, `free`, or garbage-collector model. The
-implementation uses pointer-sized handles for several aggregate values, but
-those handles are not checked references in the source language. Future
-ownership/borrowing work is a separate design track. The reserved `(with ...)`
+TypeLisp currently has syntax/type-model support for written reference types
+(`(& arena T)` and `(&mut arena T)`), but no source-level borrow expressions,
+move-only ownership, implicit destructor, `drop`, `free`, or garbage-collector
+model. The implementation uses pointer-sized handles for several aggregate
+values, but those handles are not checked references in the source language.
+Full ownership/borrowing work is a separate design track. The reserved
+`(with ...)`
 form (§5.18) is explicit non-memory resource cleanup; it is not a general
 object destructor or heap reclamation mechanism. Raw pointers are the explicit
 low-level exception: their v1 syntax is specified, but they carry no safety
@@ -2382,12 +2405,16 @@ type          ::= "i64" | "i32" | "i16" | "i8"
                 | "(" "Tuple" type+ ")"
                 | "(" "Array" type [integer] ")"
                 | ptr-type
+                | ref-type
                 | "(" "->" type+ ")"
                 | "(" "in" ident type ")"              ; region-tagged (v1)
                 | ident                                ; enum or struct name
 
 ptr-type      ::= "(" "Ptr" type ")"
                 | "(" "MutPtr" type ")"
+
+ref-type      ::= "(" "&" ident type ")"
+                | "(" "&mut" ident type ")"
 
 module-ident  ::= ident ("/" ident)*
 ident         ::= [a-zA-Z_][a-zA-Z0-9_!?+-=*/<>:]*

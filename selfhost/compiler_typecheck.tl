@@ -264,6 +264,16 @@
     [(AstTyDynArray elem) (tc-cat3 "(Array " (tc-type-render elem) ")")]
     [(AstTyPtr elem) (tc-cat3 "(Ptr " (tc-type-render elem) ")")]
     [(AstTyMutPtr elem) (tc-cat3 "(MutPtr " (tc-type-render elem) ")")]
+    [(AstTyRef region inner)
+      (tc-cat3
+        "(& "
+        region
+        (string-append " " (string-append (tc-type-render inner) ")")))]
+    [(AstTyMutRef region inner)
+      (tc-cat3
+        "(&mut "
+        region
+        (string-append " " (string-append (tc-type-render inner) ")")))]
     [(AstTyRegion region inner)
       (tc-cat3
         "(Region "
@@ -570,6 +580,9 @@
     [(AstTyDynArray elem) (AstTyDynArray (tc-type-without-regions elem))]
     [(AstTyPtr elem) (AstTyPtr (tc-type-without-regions elem))]
     [(AstTyMutPtr elem) (AstTyMutPtr (tc-type-without-regions elem))]
+    [(AstTyRef region inner) (AstTyRef region (tc-type-without-regions inner))]
+    [(AstTyMutRef region inner)
+      (AstTyMutRef region (tc-type-without-regions inner))]
     [(AstTyRegion _ inner) (tc-type-without-regions inner)]
     [_ ty]))
 
@@ -592,6 +605,10 @@
     [(AstTyDynArray elem) (tc-type-contains-region elem region)]
     [(AstTyPtr elem) (tc-type-contains-region elem region)]
     [(AstTyMutPtr elem) (tc-type-contains-region elem region)]
+    [(AstTyRef name inner)
+      (or (string-eq name region) (tc-type-contains-region inner region))]
+    [(AstTyMutRef name inner)
+      (or (string-eq name region) (tc-type-contains-region inner region))]
     [(AstTyRegion name inner)
       (or (string-eq name region) (tc-type-contains-region inner region))]
     [_ false]))
@@ -615,6 +632,8 @@
     [(AstTyDynArray elem) (tc-type-contains-any-region elem)]
     [(AstTyPtr elem) (tc-type-contains-any-region elem)]
     [(AstTyMutPtr elem) (tc-type-contains-any-region elem)]
+    [(AstTyRef _ _) true]
+    [(AstTyMutRef _ _) true]
     [(AstTyRegion _ _) true]
     [_ false]))
 
@@ -637,6 +656,10 @@
     [(AstTyDynArray elem) (tc-type-collect-regions-into elem out)]
     [(AstTyPtr elem) (tc-type-collect-regions-into elem out)]
     [(AstTyMutPtr elem) (tc-type-collect-regions-into elem out)]
+    [(AstTyRef name inner)
+      (tc-type-collect-regions-into inner (tc-string-list-add out name))]
+    [(AstTyMutRef name inner)
+      (tc-type-collect-regions-into inner (tc-string-list-add out name))]
     [(AstTyRegion name inner)
       (tc-type-collect-regions-into inner (tc-string-list-add out name))]
     [_ out]))
@@ -756,6 +779,9 @@
     [(AstTyDynArray elem) (AstTyDynArray (tc-resolve-type ctx elem))]
     [(AstTyPtr elem) (AstTyPtr (tc-resolve-type ctx elem))]
     [(AstTyMutPtr elem) (AstTyMutPtr (tc-resolve-type ctx elem))]
+    [(AstTyRef region inner) (AstTyRef region (tc-resolve-type ctx inner))]
+    [(AstTyMutRef region inner)
+      (AstTyMutRef region (tc-resolve-type ctx inner))]
     [(AstTyRegion region inner)
       (AstTyRegion region (tc-resolve-type ctx inner))]
     [(AstTyVar name)
@@ -801,6 +827,18 @@
     [(AstTyDynArray elem) (tc-source-type-policy-ok ctx elem)]
     [(AstTyPtr elem) (tc-source-type-policy-ok ctx elem)]
     [(AstTyMutPtr elem) (tc-source-type-policy-ok ctx elem)]
+    [(AstTyRef _ inner)
+      (match (tc-source-type-policy-ok ctx inner)
+        [(OkTcUnit)
+          (ErrTcUnit
+            "typecheck: reference types require borrow checker support (#803/#806/#804)")]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstTyMutRef _ inner)
+      (match (tc-source-type-policy-ok ctx inner)
+        [(OkTcUnit)
+          (ErrTcUnit
+            "typecheck: reference types require borrow checker support (#803/#806/#804)")]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstTyRegion _ inner) (tc-source-type-policy-ok ctx inner)]
     [(AstTyVar name) (ErrTcUnit (tc-source-type-policy-message name))]
     [_ OkTcUnit]))
@@ -1130,6 +1168,16 @@
     [(AstTyMutPtr a-elem)
       (match b
         [(AstTyMutPtr b-elem) (tc-type-eq a-elem b-elem)]
+        [_ false])]
+    [(AstTyRef a-region a-inner)
+      (match b
+        [(AstTyRef b-region b-inner)
+          (and (string-eq a-region b-region) (tc-type-eq a-inner b-inner))]
+        [_ false])]
+    [(AstTyMutRef a-region a-inner)
+      (match b
+        [(AstTyMutRef b-region b-inner)
+          (and (string-eq a-region b-region) (tc-type-eq a-inner b-inner))]
         [_ false])]
     [(AstTyRegion _ inner)
       (tc-type-eq-core
@@ -4813,6 +4861,41 @@
     (compiler-typecheck-ok? (compiler-typecheck-raw-pointer-source))
     (compiler-typecheck-raw-pointer-render-ok?)))
 
+(define (compiler-typecheck-reference-source) : String
+  "(define (use-string [s : (& r String)]) : i64
+  (string-length s))")
+
+(define (compiler-typecheck-reference-render-ok?) : bool
+  (and
+    (string-eq (tc-type-render (AstTyRef "r" (AstTyString))) "(& r String)")
+    (and
+      (string-eq
+        (tc-type-render (AstTyMutRef "phase" (AstTyDynArray (AstTyI64))))
+        "(&mut phase (Array i64))")
+      (and
+        (tc-type-eq
+          (AstTyRef "r" (AstTyRegion "inner" (AstTyI64)))
+          (AstTyRef "r" (AstTyI64)))
+        (and
+          (not (tc-type-eq (AstTyRef "r" (AstTyI64)) (AstTyRef "s" (AstTyI64))))
+          (and
+            (not
+              (tc-type-eq
+                (AstTyRef "r" (AstTyI64))
+                (AstTyMutRef "r" (AstTyI64))))
+            (and
+              (tc-type-contains-region (AstTyRef "r" (AstTyI64)) "r")
+              (tc-type-contains-region
+                (AstTyMutRef "phase" (AstTyRegion "inner" (AstTyString)))
+                "inner"))))))))
+
+(define (compiler-typecheck-reference-tests-ok?) : bool
+  (and
+    (compiler-typecheck-reference-render-ok?)
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-reference-source)
+      "typecheck: reference types require borrow checker support (#803/#806/#804)")))
+
 ;; A type error whose offending expression (`missing`) is on source line 2, so
 ;; the diagnostic must locate it there (not at the 1:1 fallback) — proving the
 ;; typechecker carries the nearest declaration-body `AstExprSpanned` span (#681).
@@ -4874,7 +4957,9 @@
                           (compiler-typecheck-result-try-tests-ok?)
                           (and
                             (compiler-typecheck-raw-pointer-tests-ok?)
-                            (compiler-typecheck-located-ok?))))))))))))
+                            (and
+                              (compiler-typecheck-reference-tests-ok?)
+                              (compiler-typecheck-located-ok?)))))))))))))
         42
         (begin
           (panic "typecheck: smoke score mismatch")

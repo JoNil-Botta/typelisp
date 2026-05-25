@@ -711,7 +711,7 @@
               (compiler-symbol-handle-index handle))
               [(OkAstDecl decl)
                 (match decl
-                  [(AstDeclDefStruct _ fields) (OkAstFieldDefList fields)]
+                  [(AstDeclDefStruct _ _ fields) (OkAstFieldDefList fields)]
                   [_
                     (ErrAstFieldDefList
                       "lower: struct symbol owner is not a struct")])]
@@ -721,6 +721,26 @@
         [(NoneI64)
           (ErrAstFieldDefList
             (string-append "lower: unknown struct " struct-name))])]))
+
+(define (lower-struct-repr-c? [ctx : TcContext] [struct-name : String]) : bool
+  (match (tc-struct-decl ctx struct-name)
+    [(OkTcStructDecl decl)
+      (match decl
+        [(TcStructDecl repr _) (ast-struct-repr-c? repr)])]
+    [(ErrTcStructDecl _) false]))
+
+(define (lower-repr-c-inline-field? [ctx : TcContext] [field-ty : AstType]) : bool
+  (match (tc-resolve-type ctx field-ty)
+    [(AstTyStruct nested) (lower-struct-repr-c? ctx nested)]
+    [_ false]))
+
+(define (lower-repr-c-field-size [ctx : TcContext] [field-ty : AstType]) : i64
+  (match (tc-resolve-type ctx field-ty)
+    [(AstTyStruct nested)
+      (match (tc-repr-c-struct-layout ctx nested)
+        [(OkTcReprCLayout layout) (tc-repr-c-layout-size layout)]
+        [(ErrTcReprCLayout _) 8])]
+    [_ (lower-type-size ctx field-ty)]))
 
 (define (lower-reserve-heap-storage
   [state : LowerState]
@@ -775,6 +795,46 @@
             (lower-state-emit allocated (IrInstrLoad var-id ptr ty))
             (IrValueVar var-id)
             ty)])]))
+
+(define (lower-copy-chunk-size [remaining : i64]) : i64
+  (if (>= remaining 8)
+    8
+    (if (>= remaining 4)
+      4
+      (if (>= remaining 2)
+        2
+        1))))
+
+(define (lower-copy-chunk-type [chunk : i64]) : AstType
+  (if (= chunk 8)
+    (AstTyU64)
+    (if (= chunk 4)
+      (AstTyU32)
+      (if (= chunk 2)
+        (AstTyU16)
+        (AstTyU8)))))
+
+(define (lower-copy-bytes
+  [state : LowerState]
+  [dst : CompilerIrValue]
+  [dst-offset : i64]
+  [src : CompilerIrValue]
+  [src-offset : i64]
+  [size : i64]) : LowerState
+  (if (<= size 0)
+    state
+    (let
+      [chunk : i64 (lower-copy-chunk-size size)]
+      [chunk-ty : AstType (lower-copy-chunk-type chunk)]
+      (match (lower-load-at-offset state src src-offset chunk-ty)
+        [(LowerExpr loaded value _)
+          (lower-copy-bytes
+            (lower-store-at-offset loaded dst dst-offset value chunk-ty)
+            dst
+            (+ dst-offset chunk)
+            src
+            (+ src-offset chunk)
+            (- size chunk))]))))
 
 (define (lower-cast-value
   [state : LowerState]
@@ -832,6 +892,43 @@
                 rest-types
                 (+ offset (lower-type-size ctx resolved)))))]
         [(AstTypeNil)
+          (ErrLowerState (lower-diagnostic "lower: constructor arity mismatch"))])]))
+
+(define (lower-store-repr-c-values
+  [ctx : TcContext]
+  [state : LowerState]
+  [base : CompilerIrValue]
+  [values : CompilerIrValueList]
+  [fields : TcReprCFieldLayoutList]) : ResultLowerState
+  (match values
+    [(IrValueNil)
+      (match fields
+        [(TcReprCFieldLayoutNil) (OkLowerState state)]
+        [_
+          (ErrLowerState (lower-diagnostic "lower: constructor arity mismatch"))])]
+    [(IrValueCons value rest-values)
+      (match fields
+        [(TcReprCFieldLayoutCons field rest-fields)
+          (match field
+            [(TcReprCFieldLayout _ field-ty offset)
+              (let
+                [stored-state : LowerState
+                  (if (lower-repr-c-inline-field? ctx field-ty)
+                    (lower-copy-bytes
+                      state
+                      base
+                      offset
+                      value
+                      0
+                      (lower-repr-c-field-size ctx field-ty))
+                    (lower-store-at-offset state base offset value field-ty))]
+                (lower-store-repr-c-values
+                  ctx
+                  stored-state
+                  base
+                  rest-values
+                  rest-fields))])]
+        [(TcReprCFieldLayoutNil)
           (ErrLowerState (lower-diagnostic "lower: constructor arity mismatch"))])]))
 
 (define (lower-literal-payload-supported? [lit : AstLiteral]) : bool
@@ -1076,15 +1173,38 @@
                   field-name
                   (+ offset (lower-type-size ctx resolved))))))])]))
 
+(define (lower-field-info-from-repr-c-list
+  [fields : TcReprCFieldLayoutList]
+  [field-name : String]) : ResultLowerFieldInfo
+  (match fields
+    [(TcReprCFieldLayoutNil)
+      (ErrLowerFieldInfo
+        (lower-diagnostic
+          (string-append "lower: unknown struct field " field-name)))]
+    [(TcReprCFieldLayoutCons field rest)
+      (match field
+        [(TcReprCFieldLayout name ty offset)
+          (if (string-eq name field-name)
+            (OkLowerFieldInfo (LowerFieldInfo offset ty))
+            (lower-field-info-from-repr-c-list rest field-name))])]))
+
 (define (lower-struct-field-info
   [ctx : TcContext]
   [struct-name : String]
   [field-name : String]) : ResultLowerFieldInfo
-  (match (lower-struct-fields ctx struct-name)
-    [(OkAstFieldDefList fields)
-      (lower-field-info-from-list ctx fields field-name 0)]
-    [(ErrAstFieldDefList message)
-      (ErrLowerFieldInfo (lower-diagnostic message))]))
+  (if (lower-struct-repr-c? ctx struct-name)
+    (match (tc-repr-c-struct-layout ctx struct-name)
+      [(OkTcReprCLayout layout)
+        (lower-field-info-from-repr-c-list
+          (tc-repr-c-layout-fields layout)
+          field-name)]
+      [(ErrTcReprCLayout message)
+        (ErrLowerFieldInfo (lower-diagnostic message))])
+    (match (lower-struct-fields ctx struct-name)
+      [(OkAstFieldDefList fields)
+        (lower-field-info-from-list ctx fields field-name 0)]
+      [(ErrAstFieldDefList message)
+        (ErrLowerFieldInfo (lower-diagnostic message))])))
 
 (define (lower-var
   [state : LowerState]
@@ -1478,20 +1598,39 @@
           [(OkLowerArgs args-state values)
             (let
               [struct-ty : AstType (tc-resolve-type ctx result-ty)]
-              (let
-                [size : i64 (lower-type-list-storage-size ctx field-types)]
-                (match (lower-reserve-heap-storage args-state size struct-ty)
-                  [(LowerExpr base-state base _)
-                    (match (lower-store-values
-                      ctx
-                      base-state
-                      base
-                      values
-                      field-types
-                      0)
-                      [(OkLowerState done-state)
-                        (OkLowerExpr (LowerExpr done-state base struct-ty))]
-                      [(ErrLowerState message) (ErrLowerExpr message)])])))]
+              (if (lower-struct-repr-c? ctx struct-name)
+                (match (tc-repr-c-struct-layout ctx struct-name)
+                  [(OkTcReprCLayout layout)
+                    (match (lower-reserve-heap-storage
+                      args-state
+                      (tc-repr-c-layout-size layout)
+                      struct-ty)
+                      [(LowerExpr base-state base _)
+                        (match (lower-store-repr-c-values
+                          ctx
+                          base-state
+                          base
+                          values
+                          (tc-repr-c-layout-fields layout))
+                          [(OkLowerState done-state)
+                            (OkLowerExpr (LowerExpr done-state base struct-ty))]
+                          [(ErrLowerState message) (ErrLowerExpr message)])])]
+                  [(ErrTcReprCLayout message)
+                    (ErrLowerExpr (lower-diagnostic message))])
+                (let
+                  [size : i64 (lower-type-list-storage-size ctx field-types)]
+                  (match (lower-reserve-heap-storage args-state size struct-ty)
+                    [(LowerExpr base-state base _)
+                      (match (lower-store-values
+                        ctx
+                        base-state
+                        base
+                        values
+                        field-types
+                        0)
+                        [(OkLowerState done-state)
+                          (OkLowerExpr (LowerExpr done-state base struct-ty))]
+                        [(ErrLowerState message) (ErrLowerExpr message)])]))))]
           [(ErrLowerArgs message) (ErrLowerExpr message)]))]
     [(ErrAstFieldDefList message) (ErrLowerExpr (lower-diagnostic message))]))
 
@@ -1735,15 +1874,19 @@
                         receiver-value
                         offset)
                         [(LowerExpr ptr-state ptr _)
-                          (match (lower-state-alloc-var ptr-state)
-                            [(LowerAlloc allocated var-id)
-                              (OkLowerExpr
-                                (LowerExpr
-                                  (lower-state-emit
-                                    allocated
-                                    (IrInstrLoad var-id ptr field-ty))
-                                  (IrValueVar var-id)
-                                  result-ty))])])])]
+                          (if (and
+                            (lower-struct-repr-c? ctx struct-name)
+                            (lower-repr-c-inline-field? ctx field-ty))
+                            (OkLowerExpr (LowerExpr ptr-state ptr result-ty))
+                            (match (lower-state-alloc-var ptr-state)
+                              [(LowerAlloc allocated var-id)
+                                (OkLowerExpr
+                                  (LowerExpr
+                                    (lower-state-emit
+                                      allocated
+                                      (IrInstrLoad var-id ptr field-ty))
+                                    (IrValueVar var-id)
+                                    result-ty))]))])])]
                 [(ErrLowerFieldInfo message) (ErrLowerExpr message)])]
             [_
               (ErrLowerExpr
@@ -4462,7 +4605,7 @@
             spans
             names
             module)]
-        [(AstDeclDefStruct _ _)
+        [(AstDeclDefStruct _ _ _)
           (lower-decls-in-module
             ctx
             top-env
@@ -4770,6 +4913,24 @@
   (Pair (Point x (+ x 1))))
 (define (main) : i64
   (get-y (make-point 20 22)))")
+
+(define (compiler-lower-repr-c-source) : String
+  "(defstruct Inner
+  (:repr c)
+  (a u8)
+  (b i32))
+(defstruct Outer
+  (:repr c)
+  (tag u8)
+  (inner Inner)
+  (tail u16))
+(define (main) : i64
+  (let
+    [inner : Inner (Inner (cast 1 : u8) (cast 41 : i32))]
+    [outer : Outer (Outer (cast 2 : u8) inner (cast 3 : u16))]
+    (+
+      (cast (struct-get (struct-get outer inner) b) : i64)
+      (cast (struct-get outer tail) : i64))))")
 
 (define (compiler-lower-enum-match-source) : String
   "(defenum Maybe (None) (Some i64) (Pair i64 i64))
@@ -5198,6 +5359,19 @@
     [(IrInstrUnOp _ _ _ _) 1]
     [_ 0]))
 
+(define (lower-test-instr-gep-offset-count
+  [instr : CompilerIrInstr]
+  [want : i64]) : i64
+  (match instr
+    [(IrInstrGep _ _ offset _)
+      (match offset
+        [(IrValueI64 n)
+          (if (= n want)
+            1
+            0)]
+        [_ 0])]
+    [_ 0]))
+
 (define (lower-test-instrs-i64-mov-count
   [instrs : CompilerIrInstrList]
   [want : i64]) : i64
@@ -5215,6 +5389,16 @@
       (+
         (lower-test-instr-binop-count instr)
         (lower-test-instrs-binop-count rest))]))
+
+(define (lower-test-instrs-gep-offset-count
+  [instrs : CompilerIrInstrList]
+  [want : i64]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (lower-test-instr-gep-offset-count instr want)
+        (lower-test-instrs-gep-offset-count rest want))]))
 
 (define (lower-test-blocks-i64-mov-count
   [blocks : CompilerIrBlockList]
@@ -5237,6 +5421,18 @@
           (+
             (lower-test-instrs-binop-count instrs)
             (lower-test-blocks-binop-count rest))])]))
+
+(define (lower-test-blocks-gep-offset-count
+  [blocks : CompilerIrBlockList]
+  [want : i64]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instrs-gep-offset-count instrs want)
+            (lower-test-blocks-gep-offset-count rest want))])]))
 
 (define (lower-test-function-i64-mov-count
   [funcs : CompilerIrFunctionList]
@@ -5262,6 +5458,19 @@
           (if (string-eq fname name)
             (lower-test-blocks-binop-count blocks)
             (lower-test-function-binop-count rest name))])]))
+
+(define (lower-test-function-gep-offset-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]
+  [want : i64]) : i64
+  (match funcs
+    [(IrFunctionNil) (- 0 1)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ blocks)
+          (if (string-eq fname name)
+            (lower-test-blocks-gep-offset-count blocks want)
+            (lower-test-function-gep-offset-count rest name want))])]))
 
 (define (compiler-lower-comptime-fold-ok? [src : String] [want : i64]) : bool
   (match (lower-compiler-source src)
@@ -5400,6 +5609,18 @@
             (> (lower-test-functions-call-count functions "tl_region_reset") 0))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-repr-c-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-repr-c-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (> (lower-test-functions-call-count functions "tl_alloc") 0)
+            (and
+              (> (lower-test-function-gep-offset-count functions "main" 4) 0)
+              (> (lower-test-function-gep-offset-count functions "main" 12) 0)))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-self-test) : i64
   (if (and
     (and
@@ -5462,32 +5683,34 @@
                                     (and
                                       (compiler-lower-region-shape-ok?)
                                       (and
-                                        (compiler-lower-error-ok?
-                                          (compiler-typecheck-branch-mismatch-source)
-                                          "typecheck: if branches must match")
+                                        (compiler-lower-repr-c-shape-ok?)
                                         (and
                                           (compiler-lower-error-ok?
-                                            (compiler-lower-unsupported-source)
-                                            "lower: unsupported expression")
+                                            (compiler-typecheck-branch-mismatch-source)
+                                            "typecheck: if branches must match")
                                           (and
-                                            (compiler-lower-comptime-fold-ok?
-                                              (compiler-lower-comptime-arith-source)
-                                              3)
+                                            (compiler-lower-error-ok?
+                                              (compiler-lower-unsupported-source)
+                                              "lower: unsupported expression")
                                             (and
                                               (compiler-lower-comptime-fold-ok?
-                                                (compiler-lower-comptime-if-source)
-                                                42)
+                                                (compiler-lower-comptime-arith-source)
+                                                3)
                                               (and
                                                 (compiler-lower-comptime-fold-ok?
-                                                  (compiler-lower-comptime-let-source)
+                                                  (compiler-lower-comptime-if-source)
                                                   42)
                                                 (and
-                                                  (compiler-lower-error-ok?
-                                                    (compiler-lower-comptime-runtime-var-source)
-                                                    "compile-time evaluation cannot reference runtime variable 'x'")
-                                                  (compiler-lower-error-ok?
-                                                    (compiler-lower-comptime-f64-source)
-                                                    "comptime: f64 compile-time evaluation not yet supported (#735)")))))))))))))))))))))))))
+                                                  (compiler-lower-comptime-fold-ok?
+                                                    (compiler-lower-comptime-let-source)
+                                                    42)
+                                                  (and
+                                                    (compiler-lower-error-ok?
+                                                      (compiler-lower-comptime-runtime-var-source)
+                                                      "compile-time evaluation cannot reference runtime variable 'x'")
+                                                    (compiler-lower-error-ok?
+                                                      (compiler-lower-comptime-f64-source)
+                                                      "comptime: f64 compile-time evaluation not yet supported (#735)"))))))))))))))))))))))))))
     42
     (begin
       (panic "lower: smoke score mismatch")

@@ -49,6 +49,34 @@
   (OkTcUnit)
   (ErrTcUnit String))
 
+(defenum TcStructDecl
+  (TcStructDecl AstStructRepr AstFieldDefList))
+
+(defenum ResultTcStructDecl
+  (OkTcStructDecl TcStructDecl)
+  (ErrTcStructDecl String))
+
+(defenum TcLayoutInfo
+  (TcLayoutInfo i64 i64))
+
+(defenum ResultTcLayoutInfo
+  (OkTcLayoutInfo TcLayoutInfo)
+  (ErrTcLayoutInfo String))
+
+(defenum TcReprCFieldLayout
+  (TcReprCFieldLayout String AstType i64))
+
+(defenum TcReprCFieldLayoutList
+  (TcReprCFieldLayoutNil)
+  (TcReprCFieldLayoutCons TcReprCFieldLayout TcReprCFieldLayoutList))
+
+(defenum TcReprCLayout
+  (TcReprCLayout i64 i64 TcReprCFieldLayoutList))
+
+(defenum ResultTcReprCLayout
+  (OkTcReprCLayout TcReprCLayout)
+  (ErrTcReprCLayout String))
+
 (defenum CompilerTypecheckSummary
   (CompilerTypecheckSummary i64 i64 i64))
 
@@ -925,7 +953,15 @@
     [(AstDeclExtern _ ty) (tc-source-type-policy-ok ctx ty)]
     [(AstDeclDefEnum _ variants)
       (tc-source-variant-list-policy-ok ctx variants)]
-    [(AstDeclDefStruct _ fields) (tc-source-field-list-policy-ok ctx fields)]
+    [(AstDeclDefStruct name repr fields)
+      (match (tc-source-field-list-policy-ok ctx fields)
+        [(OkTcUnit)
+          (if (ast-struct-repr-c? repr)
+            (match (tc-repr-c-struct-layout ctx name)
+              [(OkTcReprCLayout _) OkTcUnit]
+              [(ErrTcReprCLayout message) (ErrTcUnit message)])
+            OkTcUnit)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstDeclImport _) OkTcUnit]
     [(AstDeclModule _) OkTcUnit]
     [(AstDeclTest _ body _) (tc-source-expr-policy-ok ctx body)]
@@ -1327,7 +1363,7 @@
             [(OkTcEnv next-env)
               (tc-build-top-env-list-in-module ctx rest next-env module)]
             [(ErrTcEnv message) (ErrTcEnv message)])]
-        [(AstDeclDefStruct name fields)
+        [(AstDeclDefStruct name _ fields)
           (let
             [scoped-name : String (compiler-symbol-module-key module name)]
             (tc-build-top-env-list-in-module
@@ -1353,7 +1389,7 @@
                 [(OkTcEnv next-env)
                   (tc-build-top-env-list-in-module ctx rest next-env module)]
                 [(ErrTcEnv message) (ErrTcEnv message)])]
-            [(AstDeclDefStruct name fields)
+            [(AstDeclDefStruct name _ fields)
               (let
                 [scoped-name : String (compiler-symbol-module-key module name)]
                 (tc-build-top-env-list-in-module
@@ -2055,6 +2091,214 @@
 (define (tc-program-enum-variants [program : AstProgram] [enum-name : String]) : ResultAstVariantDefList
   (match program
     [(AstProgram decls) (tc-program-enum-variants-list decls enum-name)]))
+
+(define (tc-layout-info-size [info : TcLayoutInfo]) : i64
+  (match info
+    [(TcLayoutInfo size _) size]))
+
+(define (tc-layout-info-align [info : TcLayoutInfo]) : i64
+  (match info
+    [(TcLayoutInfo _ align) align]))
+
+(define (tc-repr-c-layout-size [layout : TcReprCLayout]) : i64
+  (match layout
+    [(TcReprCLayout size _ _) size]))
+
+(define (tc-repr-c-layout-align [layout : TcReprCLayout]) : i64
+  (match layout
+    [(TcReprCLayout _ align _) align]))
+
+(define (tc-repr-c-layout-fields [layout : TcReprCLayout]) : TcReprCFieldLayoutList
+  (match layout
+    [(TcReprCLayout _ _ fields) fields]))
+
+(define (tc-repr-c-field-layout-name [field : TcReprCFieldLayout]) : String
+  (match field
+    [(TcReprCFieldLayout name _ _) name]))
+
+(define (tc-repr-c-field-layout-type [field : TcReprCFieldLayout]) : AstType
+  (match field
+    [(TcReprCFieldLayout _ ty _) ty]))
+
+(define (tc-repr-c-field-layout-offset [field : TcReprCFieldLayout]) : i64
+  (match field
+    [(TcReprCFieldLayout _ _ offset) offset]))
+
+(define (tc-repr-c-layout-field-offset
+  [fields : TcReprCFieldLayoutList]
+  [name : String]) : i64
+  (match fields
+    [(TcReprCFieldLayoutNil) -1]
+    [(TcReprCFieldLayoutCons field rest)
+      (if (string-eq (tc-repr-c-field-layout-name field) name)
+        (tc-repr-c-field-layout-offset field)
+        (tc-repr-c-layout-field-offset rest name))]))
+
+(define (tc-align-up [n : i64] [align : i64]) : i64
+  (if (<= align 1)
+    n
+    (* (/ (+ n (- align 1)) align) align)))
+
+(define (tc-max-i64 [a : i64] [b : i64]) : i64
+  (if (> a b)
+    a
+    b))
+
+(define (tc-struct-decl [ctx : TcContext] [struct-name : String]) : ResultTcStructDecl
+  (match ctx
+    [(TcContext program symbols _)
+      (match (compiler-symbols-lookup-type symbols struct-name)
+        [(SomeI64 handle)
+          (if (=
+            (compiler-symbol-handle-kind handle)
+            (compiler-symbol-kind-defstruct))
+            (match (compiler-program-decl-at-index
+              program
+              (compiler-symbol-handle-index handle))
+              [(OkAstDecl decl)
+                (match decl
+                  [(AstDeclDefStruct _ repr fields)
+                    (OkTcStructDecl (TcStructDecl repr fields))]
+                  [_
+                    (ErrTcStructDecl
+                      "typecheck: struct symbol owner is not a struct")])]
+              [(ErrAstDecl message) (ErrTcStructDecl message)])
+            (ErrTcStructDecl
+              (string-append "typecheck: unknown struct " struct-name)))]
+        [(NoneI64)
+          (ErrTcStructDecl
+            (string-append "typecheck: unknown struct " struct-name))])]))
+
+(define (tc-repr-c-unsupported-field-message
+  [owner : String]
+  [field : String]
+  [ty : AstType]) : String
+  (tc-cat3
+    "typecheck: repr c struct "
+    owner
+    (tc-cat3
+      " field "
+      field
+      (string-append " has unsupported field type " (tc-type-render ty)))))
+
+(define (tc-repr-c-field-layout-info
+  [ctx : TcContext]
+  [owner : String]
+  [field : String]
+  [ty : AstType]
+  [seen : TcStringList]) : ResultTcLayoutInfo
+  (match (tc-resolve-type ctx ty)
+    [(AstTyI64) (OkTcLayoutInfo (TcLayoutInfo 8 8))]
+    [(AstTyU64) (OkTcLayoutInfo (TcLayoutInfo 8 8))]
+    [(AstTyF64) (OkTcLayoutInfo (TcLayoutInfo 8 8))]
+    [(AstTyI32) (OkTcLayoutInfo (TcLayoutInfo 4 4))]
+    [(AstTyU32) (OkTcLayoutInfo (TcLayoutInfo 4 4))]
+    [(AstTyI16) (OkTcLayoutInfo (TcLayoutInfo 2 2))]
+    [(AstTyU16) (OkTcLayoutInfo (TcLayoutInfo 2 2))]
+    [(AstTyI8) (OkTcLayoutInfo (TcLayoutInfo 1 1))]
+    [(AstTyU8) (OkTcLayoutInfo (TcLayoutInfo 1 1))]
+    [(AstTyBool) (OkTcLayoutInfo (TcLayoutInfo 1 1))]
+    [(AstTyChar) (OkTcLayoutInfo (TcLayoutInfo 1 1))]
+    [(AstTyStruct nested)
+      (match (tc-struct-decl ctx nested)
+        [(OkTcStructDecl decl)
+          (match decl
+            [(TcStructDecl repr _)
+              (if (ast-struct-repr-c? repr)
+                (match (tc-repr-c-struct-layout-with-seen ctx nested seen)
+                  [(OkTcReprCLayout layout)
+                    (OkTcLayoutInfo
+                      (TcLayoutInfo
+                        (tc-repr-c-layout-size layout)
+                        (tc-repr-c-layout-align layout)))]
+                  [(ErrTcReprCLayout message) (ErrTcLayoutInfo message)])
+                (ErrTcLayoutInfo
+                  (tc-cat3
+                    "typecheck: repr c struct "
+                    owner
+                    (tc-cat3
+                      " field "
+                      field
+                      (string-append
+                        " references default-layout struct "
+                        nested)))))])]
+        [(ErrTcStructDecl message) (ErrTcLayoutInfo message)])]
+    [_ (ErrTcLayoutInfo (tc-repr-c-unsupported-field-message owner field ty))]))
+
+(define (tc-repr-c-fields-layout
+  [ctx : TcContext]
+  [owner : String]
+  [fields : AstFieldDefList]
+  [cursor : i64]
+  [max-align : i64]
+  [seen : TcStringList]) : ResultTcReprCLayout
+  (match fields
+    [(AstFieldDefNil)
+      (if (= max-align 0)
+        (ErrTcReprCLayout "typecheck: repr c struct needs at least one field")
+        (OkTcReprCLayout
+          (TcReprCLayout
+            (tc-align-up cursor max-align)
+            max-align
+            TcReprCFieldLayoutNil)))]
+    [(AstFieldDefCons field rest)
+      (match field
+        [(AstFieldDef name ty)
+          (let
+            [resolved : AstType (tc-resolve-type ctx ty)]
+            (match (tc-repr-c-field-layout-info ctx owner name resolved seen)
+              [(OkTcLayoutInfo info)
+                (let
+                  [field-align : i64 (tc-layout-info-align info)]
+                  [field-size : i64 (tc-layout-info-size info)]
+                  [offset : i64 (tc-align-up cursor field-align)]
+                  [next-cursor : i64 (+ offset field-size)]
+                  [next-align : i64 (tc-max-i64 max-align field-align)]
+                  (match (tc-repr-c-fields-layout
+                    ctx
+                    owner
+                    rest
+                    next-cursor
+                    next-align
+                    seen)
+                    [(OkTcReprCLayout rest-layout)
+                      (OkTcReprCLayout
+                        (TcReprCLayout
+                          (tc-repr-c-layout-size rest-layout)
+                          (tc-repr-c-layout-align rest-layout)
+                          (TcReprCFieldLayoutCons
+                            (TcReprCFieldLayout name resolved offset)
+                            (tc-repr-c-layout-fields rest-layout))))]
+                    [(ErrTcReprCLayout message) (ErrTcReprCLayout message)]))]
+              [(ErrTcLayoutInfo message) (ErrTcReprCLayout message)]))])]))
+
+(define (tc-repr-c-struct-layout-with-seen
+  [ctx : TcContext]
+  [struct-name : String]
+  [seen : TcStringList]) : ResultTcReprCLayout
+  (if (tc-string-list-contains seen struct-name)
+    (ErrTcReprCLayout
+      (string-append
+        "typecheck: recursive repr c struct layout cycle involving "
+        struct-name))
+    (match (tc-struct-decl ctx struct-name)
+      [(OkTcStructDecl decl)
+        (match decl
+          [(TcStructDecl repr fields)
+            (if (ast-struct-repr-c? repr)
+              (tc-repr-c-fields-layout
+                ctx
+                struct-name
+                fields
+                0
+                0
+                (tc-string-list-add seen struct-name))
+              (ErrTcReprCLayout
+                (string-append "typecheck: struct is not repr c: " struct-name)))])]
+      [(ErrTcStructDecl message) (ErrTcReprCLayout message)])))
+
+(define (tc-repr-c-struct-layout [ctx : TcContext] [struct-name : String]) : ResultTcReprCLayout
+  (tc-repr-c-struct-layout-with-seen ctx struct-name TcStringNil))
 
 (define (tc-string-prefix? [text : String] [prefix : String]) : bool
   (let
@@ -3422,6 +3666,111 @@
           [(right/Some v) v]
           [right/None 0])))))")
 
+(define (compiler-typecheck-repr-c-layout-source) : String
+  "(defstruct Packet
+  (:repr c)
+  (tag u8)
+  (count i64)
+  (flag bool))
+(defstruct Inner
+  (:repr c)
+  (a u8)
+  (b i32))
+(defstruct Outer
+  (:repr c)
+  (tag u8)
+  (inner Inner)
+  (tail u16))")
+
+(define (compiler-typecheck-repr-c-layout-ok?) : bool
+  (match (parse-ast-source (compiler-typecheck-repr-c-layout-source))
+    [(OkAstProgram program)
+      (match (build-compiler-symbols program)
+        [(OkCompilerSymbols symbols)
+          (match (build-compiler-registries program)
+            [(OkCompilerRegistries registries)
+              (let
+                [ctx : TcContext (TcContext program symbols registries)]
+                (match (tc-repr-c-struct-layout ctx "Packet")
+                  [(OkTcReprCLayout packet)
+                    (match (tc-repr-c-struct-layout ctx "Outer")
+                      [(OkTcReprCLayout outer)
+                        (and
+                          (= (tc-repr-c-layout-size packet) 24)
+                          (and
+                            (= (tc-repr-c-layout-align packet) 8)
+                            (and
+                              (=
+                                (tc-repr-c-layout-field-offset
+                                  (tc-repr-c-layout-fields packet)
+                                  "tag")
+                                0)
+                              (and
+                                (=
+                                  (tc-repr-c-layout-field-offset
+                                    (tc-repr-c-layout-fields packet)
+                                    "count")
+                                  8)
+                                (and
+                                  (=
+                                    (tc-repr-c-layout-field-offset
+                                      (tc-repr-c-layout-fields packet)
+                                      "flag")
+                                    16)
+                                  (and
+                                    (= (tc-repr-c-layout-size outer) 16)
+                                    (and
+                                      (= (tc-repr-c-layout-align outer) 4)
+                                      (and
+                                        (=
+                                          (tc-repr-c-layout-field-offset
+                                            (tc-repr-c-layout-fields outer)
+                                            "inner")
+                                          4)
+                                        (=
+                                          (tc-repr-c-layout-field-offset
+                                            (tc-repr-c-layout-fields outer)
+                                            "tail")
+                                          12)))))))))]
+                      [(ErrTcReprCLayout _) false])]
+                  [(ErrTcReprCLayout _) false]))]
+            [(ErrCompilerRegistries _) false])]
+        [(ErrCompilerSymbols _) false])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-typecheck-repr-c-string-source) : String
+  "(defstruct Bad
+  (:repr c)
+  (s String))")
+
+(define (compiler-typecheck-repr-c-default-nested-source) : String
+  "(defstruct Inner (x i64))
+(defstruct Bad
+  (:repr c)
+  (inner Inner))")
+
+(define (compiler-typecheck-repr-c-recursive-source) : String
+  "(defstruct Node
+  (:repr c)
+  (next Node))")
+
+(define (compiler-typecheck-repr-c-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-repr-c-layout-source))
+    (and
+      (compiler-typecheck-repr-c-layout-ok?)
+      (and
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-repr-c-string-source)
+          "typecheck: repr c struct Bad field s has unsupported field type String")
+        (and
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-repr-c-default-nested-source)
+            "typecheck: repr c struct Bad field inner references default-layout struct Inner")
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-repr-c-recursive-source)
+            "typecheck: recursive repr c struct layout cycle involving Node"))))))
+
 (define (compiler-typecheck-nominal-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-nominal-source))
@@ -3443,8 +3792,10 @@
               (compiler-typecheck-error-ok?
                 (compiler-typecheck-duplicate-variant-source)
                 "symbols: duplicate enum variant Same")
-              (compiler-typecheck-ok?
-                (compiler-typecheck-module-qualified-source)))))))))
+              (and
+                (compiler-typecheck-ok?
+                  (compiler-typecheck-module-qualified-source))
+                (compiler-typecheck-repr-c-tests-ok?)))))))))
 
 (define (compiler-typecheck-region-builtin-source) : String
   "(define (main) : i64

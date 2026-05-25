@@ -190,6 +190,7 @@ case|selfhost_compiler_diagnostic|selfhost/compiler_diagnostic.tl|assembly|skip|
 contains|_tl_compiler_diagnostic_render:
 contains|_tl_compiler_diagnostic_at_start:
 contains|_tl_compiler_diagnostic_from_source_error:
+contains|_tl_compiler_diagnostic_self_test:
 end
 
 case|selfhost_compiler_driver|selfhost/compiler_driver.tl|assembly|exactly-one|direct
@@ -274,6 +275,7 @@ end
 
 case|selfhost_compiler_parse_smoke|selfhost/compiler_parse_smoke.tl|assembly|exactly-one|direct
 contains|_tl_compiler_parse_smoke:
+contains|_tl_compiler_diagnostic_self_test:
 contains|_tl_parse_ast_source:
 end
 
@@ -466,6 +468,9 @@ case|selfhost_lex|selfhost/lex.tl|assembly|skip|direct
 contains|_tl_lex:
 contains|_tl_lex_result:
 contains|_tl_lex_span_self_test:
+contains|_tl_lex_basic_token_sequence_ok_question:
+contains|_tl_lex_char_literals_ok_question:
+contains|_tl_lex_error_spans_ok_question:
 contains|lexer: unexpected character
 end
 

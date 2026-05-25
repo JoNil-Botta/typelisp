@@ -81,3 +81,48 @@
           (string-append
             (int->string (compiler-diagnostic-col diag))
             (string-append ": " (compiler-diagnostic-message diag))))))))
+
+(define (compiler-diagnostic-render-ok?) : bool
+  (string-eq
+    (compiler-diagnostic-render
+      (CompilerDiagnostic "demo.tl" 3 7 "parse: malformed define"))
+    "demo.tl:3:7: parse: malformed define"))
+
+(define (compiler-diagnostic-source-error-ok?) : bool
+  (let
+    [err : SourceError
+      (SourceError "lexer: unexpected character" (SourceSpan 4 5 4 6))]
+    [diag : CompilerDiagnostic
+      (compiler-diagnostic-from-source-error "input.tl" err)]
+    (and
+      (string-eq (compiler-diagnostic-path diag) "input.tl")
+      (and
+        (= (compiler-diagnostic-line diag) 4)
+        (and
+          (= (compiler-diagnostic-col diag) 5)
+          (string-eq
+            (compiler-diagnostic-message diag)
+            "lexer: unexpected character"))))))
+
+(define (compiler-diagnostic-rewrite-ok?) : bool
+  (let
+    [diag : CompilerDiagnostic (CompilerDiagnostic "old.tl" 1 2 "old")]
+    [moved : CompilerDiagnostic (compiler-diagnostic-with-path diag "new.tl")]
+    [rewritten : CompilerDiagnostic
+      (compiler-diagnostic-with-message moved "new message")]
+    (and
+      (string-eq (compiler-diagnostic-path rewritten) "new.tl")
+      (and
+        (= (compiler-diagnostic-line rewritten) 1)
+        (and
+          (= (compiler-diagnostic-col rewritten) 2)
+          (string-eq (compiler-diagnostic-message rewritten) "new message"))))))
+
+(define (compiler-diagnostic-self-test) : i64
+  (if (compiler-diagnostic-render-ok?)
+    (if (compiler-diagnostic-source-error-ok?)
+      (if (compiler-diagnostic-rewrite-ok?)
+        42
+        3)
+      2)
+    1))

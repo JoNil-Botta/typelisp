@@ -651,6 +651,12 @@ fn native_cases() -> Vec<Case> {
         ),
         case_with_deps("stdlib_test", 42, "", &["stdlib/test.tl"]),
         case_with_deps("stdlib_io", 42, "", &["stdlib/io.tl"]),
+        case_with_deps(
+            "process_runtime",
+            42,
+            "",
+            &["stdlib/process.tl", "stdlib/test.tl"],
+        ),
         case_with_deps("stdlib_text_buf", 42, "", &["stdlib/text_buf.tl"]),
         case_with_deps(
             "compiler_parse_smoke",
@@ -1002,6 +1008,7 @@ fn dep_source_path(manifest_dir: &Path, source_dir: &Path, dep: &str) -> PathBuf
         "stdlib/string.tl" => manifest_dir.join("stdlib").join("string.tl"),
         "stdlib/test.tl" => manifest_dir.join("stdlib").join("test.tl"),
         "stdlib/io.tl" => manifest_dir.join("stdlib").join("io.tl"),
+        "stdlib/process.tl" => manifest_dir.join("stdlib").join("process.tl"),
         "stdlib/text_buf.tl" => manifest_dir.join("stdlib").join("text_buf.tl"),
         _ => source_dir.join(dep),
     }

@@ -1612,6 +1612,115 @@ They are not implemented by a separate C runtime.
 | `char-at` | `string-ref` |
 | `print-str` | `print-string` |
 
+### 6.4 Stdlib file I/O handles (v1 design; implementation pending)
+
+This section specifies the v1 source-level file-handle API for `stdlib/io.tl`.
+It defines the public surface — handle type, open modes, streaming reads,
+streaming writes, close, and platform policy — without committing the
+runtime/backend implementation, which lands incrementally through #1056
+(open/close), #1057 (streaming reads), and #1058 (streaming writes/flush). The
+handle API reuses the existing `IoError` model already in `stdlib/io.tl` (§9
+catalogs the variants); it does not introduce a new error vocabulary.
+
+**Handle type.** A file handle is an opaque value `FileHandle`. Source-level
+TypeLisp v1 treats it as opaque: programs obtain it from `file-open`, pass it to
+read/write/close helpers, and never inspect its representation. Internally a
+handle carries the host descriptor (a Linux file descriptor or a Windows
+`HANDLE`) plus the open mode it was created with; these fields are not part of
+the public contract and may change. A handle is a copyable value in v1 — there
+is no move-only ownership or implicit close yet; move-only handles and automatic
+close wait on #805.
+
+**Open modes.** `file-open` takes a path and an `OpenMode`:
+
+| Mode | Meaning |
+|------|---------|
+| `OpenRead` | Open an existing file for reading. A missing file yields `IoNotFound`. |
+| `OpenWriteTruncate` | Open for writing, creating the file when missing and truncating it to zero length otherwise. |
+| `OpenWriteAppend` | Open for writing at end-of-file, creating the file when missing and never truncating existing contents. |
+
+A combined read/write mode is explicitly deferred past v1.
+
+**Open / close.**
+
+| Helper | Signature | Behavior |
+|--------|-----------|----------|
+| `file-open` | `String OpenMode → ResultIoFile` | `OkIoFile FileHandle` on success; `ErrIoFile IoError` for empty paths (`IoInvalidPath`), missing files in read mode (`IoNotFound`), permission failures (`IoPermissionDenied`), and other host status codes mapped through `io-error-from-status`. |
+| `file-close` | `FileHandle → ResultIoUnit` | `OkIoUnit` on the first close. Closing an already-closed handle returns `ErrIoUnit (IoUnsupported ...)` rather than panicking. |
+
+`ResultIoFile` is a new monomorphic result enum mirroring the existing pattern:
+`(OkIoFile FileHandle)` / `(ErrIoFile IoError)`.
+
+**Close / lifetime semantics (v1).** v1 requires explicit `file-close`. There is
+no destructor, drop glue, or implicit close — a handle that is never closed
+leaks its host descriptor for the life of the process, matching TypeLisp's
+current no-reclamation memory direction (§7.3). Use-after-close (any read or
+write on a closed handle) and double-close return a structured `IoUnsupported`
+error; they never panic and never touch a host descriptor. Automatic close on
+scope exit and move-only handles are deferred to #805.
+
+**Streaming reads (#1057).** `file-read-chunk` reads up to a requested byte count
+from a read-mode handle:
+
+| Helper | Signature | Behavior |
+|--------|-----------|----------|
+| `file-read-chunk` | `FileHandle i64 → ResultIoRead` | Read up to `count` bytes; `OkIoRead FileRead` carries the bytes read plus a sticky EOF flag. |
+
+`FileRead` mirrors the shape of the existing `StdinRead` aggregate (a `String`
+payload plus a sticky `eof` flag):
+
+```
+(defstruct FileRead
+  (bytes String)
+  (eof bool))
+```
+
+- A read returns up to `count` bytes. A returned chunk shorter than `count` does
+  not by itself indicate EOF — a short read may be a partial read. EOF is
+  reported only through the `eof` flag, which becomes true once the host read
+  reaches end-of-file.
+- A zero-length read (`count` = 0) performs no host read, returns an empty
+  `bytes` string, and reports the current EOF state deterministically.
+- A read at EOF returns an empty `bytes` string with `eof` = true.
+- A negative `count` returns `ErrIoRead (IoInvalidPath ...)` (an argument error)
+  without performing a host read.
+- Reading a write-only handle (`OpenWriteTruncate` / `OpenWriteAppend`) returns
+  `ErrIoRead (IoUnsupported ...)`.
+- Reading a closed or otherwise invalid handle returns
+  `ErrIoRead (IoUnsupported ...)`.
+- Interrupted host reads map through `io-error-from-status` to `IoInterrupted`;
+  other host failures map to their `IoError` variant or `IoSystemCode`.
+
+`ResultIoRead` is a new monomorphic result enum: `(OkIoRead FileRead)` /
+`(ErrIoRead IoError)`.
+
+**Text vs. binary (v1).** Like `StdinRead`, `FileRead` carries chunk data as a
+`String`: a chunk is the raw bytes read, stored in a `String`, with no
+text/binary distinction in v1. This remains source-compatible but may gain a
+byte-slice/`str` variant after #807 splits owned text strings from
+borrowed/binary bytes. Returned chunk strings allocate in the active arena, the
+same as `read-file` and `StdinRead`.
+
+**Streaming writes / append (#1058).** Streaming writes are specified by #1058
+and reuse `ResultIoUnit`. `OpenWriteAppend` defines append semantics:
+create-if-missing, never truncate, and — where the host supports an append open
+mode (Linux `O_APPEND`) — each write lands at the current end of file. Once
+#1058 lands, this supersedes the current non-atomic read-modify-write
+`try-append-file`; the whole-file helper stays available for source
+compatibility.
+
+**Platform policy.** Linux is the reference target and must implement all three
+modes plus streaming reads and writes. On Windows, the handle API either works
+(through the equivalent Win32 file calls) or returns a structured `IoUnsupported`
+result for any mode or operation not yet implemented there, following the same
+pattern as the Windows `try-create-temp-dir` behavior. No operation panics for an
+unsupported platform; callers always receive an `IoError`.
+
+**Scope.** This is a written API/spec only. It adds no Rust-only IO
+infrastructure and no runtime/backend code; the concrete `FileHandle`
+representation, runtime status primitives, and stdlib functions land through
+#1056, #1057, and #1058.
+
 ---
 
 ## 7. Memory model

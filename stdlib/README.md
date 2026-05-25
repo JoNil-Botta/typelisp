@@ -47,11 +47,11 @@ The stdlib does not own an allocator API. Stdlib functions allocate only by
 calling compiler/runtime primitives such as `substring`, `string-append`,
 `read-file`, `int->string`, and aggregate constructors. Those allocations use
 the active arena: the default program-lifetime arena outside any scoped arena,
-or the innermost scoped arena inside `(with-region ...)`. The arena model uses
+or the innermost scoped arena inside `(with-arena ...)`. The arena model uses
 the term "scoped arena" for this behavior; issue #801 tracks the source spelling
-migration from `(with-region ...)` to `(with-arena ...)`.
+migration from `(with-arena ...)` to `(with-arena ...)`.
 
-Until that spelling lands, stdlib policy tests use `(with-region ...)` as the
+Until that spelling lands, stdlib policy tests use `(with-arena ...)` as the
 executable witness for the same active-arena semantics that `(with-arena ...)`
 will expose.
 

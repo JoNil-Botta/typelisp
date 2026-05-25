@@ -7897,7 +7897,7 @@ tl_string_concat:
 
 (define (compiler-backend-region-source) : String
   "(define (main) : i64
-  (with-region r
+  (with-arena r
     (let
       [s : String (int->string 41)]
       (string-length s))))")

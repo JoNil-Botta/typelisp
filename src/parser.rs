@@ -955,8 +955,8 @@ impl<'a> Parser<'a> {
                     end_span,
                 )
             }
-            Token::Ident(s) if s == "with-region" => {
-                // (with-region <region-ident> <body-expr>...) — #548. The binder
+            Token::Ident(s) if s == "with-arena" => {
+                // (with-arena <region-ident> <body-expr>...) — #548. The binder
                 // names a region whose lifetime is the body; the body is a
                 // non-empty expression sequence. Region typing/escape checking and
                 // lowering are separate slices (#549 and later).
@@ -969,14 +969,14 @@ impl<'a> Parser<'a> {
                     }
                     Token::RParen => {
                         return Err(ParseError {
-                            msg: "with-region requires a region name before its body".into(),
+                            msg: "with-arena requires a region name before its body".into(),
                             span: self.span(),
                         });
                     }
                     other => {
                         return Err(ParseError {
                             msg: format!(
-                                "with-region region name must be an identifier, got {:?}",
+                                "with-arena region name must be an identifier, got {:?}",
                                 other
                             ),
                             span: self.span(),
@@ -989,7 +989,7 @@ impl<'a> Parser<'a> {
                 }
                 if body.is_empty() {
                     return Err(ParseError {
-                        msg: format!("with-region '{}' requires a non-empty body", region),
+                        msg: format!("with-arena '{}' requires a non-empty body", region),
                         span: self.span(),
                     });
                 }
@@ -2264,14 +2264,14 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // with-region scoped form — Issue #548
+    // with-arena scoped form — Issue #548
     // ------------------------------------------------------------------
 
     #[test]
     fn test_parse_with_region_basic() {
         let prog = parse(
             "(define (f) : i64 \
-               (with-region r (+ 1 2)))",
+               (with-arena r (+ 1 2)))",
         )
         .unwrap();
         let body = match &prog.decls[0] {
@@ -2296,7 +2296,7 @@ mod tests {
     fn test_parse_with_region_multi_expr_body() {
         let prog = parse(
             "(define (f) : i64 \
-               (with-region r (print 1) (print 2) 42))",
+               (with-arena r (print 1) (print 2) 42))",
         )
         .unwrap();
         let body = match &prog.decls[0] {
@@ -2318,7 +2318,7 @@ mod tests {
     fn test_parse_with_region_nested() {
         let prog = parse(
             "(define (f) : i64 \
-               (with-region outer (with-region inner 7)))",
+               (with-arena outer (with-arena inner 7)))",
         )
         .unwrap();
         let body = match &prog.decls[0] {
@@ -2346,9 +2346,9 @@ mod tests {
 
     #[test]
     fn test_parse_with_region_missing_binder_is_error() {
-        let err = parse("(define (f) : i64 (with-region))").unwrap_err();
+        let err = parse("(define (f) : i64 (with-arena))").unwrap_err();
         assert!(
-            err.msg.contains("with-region requires a region name"),
+            err.msg.contains("with-arena requires a region name"),
             "got: {}",
             err.msg
         );
@@ -2356,10 +2356,10 @@ mod tests {
 
     #[test]
     fn test_parse_with_region_non_identifier_binder_is_error() {
-        let err = parse("(define (f) : i64 (with-region 5 (+ 1 2)))").unwrap_err();
+        let err = parse("(define (f) : i64 (with-arena 5 (+ 1 2)))").unwrap_err();
         assert!(
             err.msg
-                .contains("with-region region name must be an identifier"),
+                .contains("with-arena region name must be an identifier"),
             "got: {}",
             err.msg
         );
@@ -2367,7 +2367,7 @@ mod tests {
 
     #[test]
     fn test_parse_with_region_empty_body_is_error() {
-        let err = parse("(define (f) : i64 (with-region r))").unwrap_err();
+        let err = parse("(define (f) : i64 (with-arena r))").unwrap_err();
         assert!(
             err.msg.contains("requires a non-empty body"),
             "got: {}",

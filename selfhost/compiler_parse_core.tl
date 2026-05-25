@@ -552,11 +552,7 @@
       (set!
         out
         (sym-i64-bind out "comptime" (compiler-parse-tag-expr-comptime)))
-      (set!
-        out
-        (sym-i64-bind out "with-region" (compiler-parse-tag-expr-with-region)))
-      ;; `with-arena` is the migration spelling for `with-region` (#801): same
-      ;; scoped-arena form, default-arena shadowing, and escape rules.
+      ;; `with-arena` is the canonical scoped-arena spelling (#801, #1118).
       (set!
         out
         (sym-i64-bind out "with-arena" (compiler-parse-tag-expr-with-region)))
@@ -1507,21 +1503,21 @@
 (define (parse-ast-with-region [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
     [(SpSNil _)
-      (ErrAstExpr "parse: with-region requires a region name before its body")]
+      (ErrAstExpr "parse: with-arena requires a region name before its body")]
     [(SpSCons (SpSSym region _) body _)
       (match body
         [(SpSNil _)
           (ErrAstExpr
             (string-append
-              "parse: with-region '"
+              "parse: with-arena '"
               (string-append region "' requires a non-empty body")))]
         [_
           (match (parse-ast-expr-list dispatch body)
             [(OkAstExprList exprs) (OkAstExpr (AstExprWithRegion region exprs))]
             [(ErrAstExprList message) (ErrAstExpr message)])])]
     [(SpSCons _ _ _)
-      (ErrAstExpr "parse: with-region region name must be an identifier")]
-    [_ (ErrAstExpr "parse: malformed with-region")]))
+      (ErrAstExpr "parse: with-arena region name must be an identifier")]
+    [_ (ErrAstExpr "parse: malformed with-arena")]))
 
 (define (parse-ast-match-arm [dispatch : SymI64Env] [s : SpannedSexpr]) : ResultAstMatchArm
   (match s
@@ -2258,10 +2254,10 @@
 
 (define (compiler-parse-region-source) : String
   "(define (main) : (in r String)
-  (with-region r \"x\"))")
+  (with-arena r \"x\"))")
 
 (define (compiler-parse-with-region-empty-source) : String
-  "(define (main) : i64 (with-region r))")
+  "(define (main) : i64 (with-arena r))")
 
 (define (compiler-parse-region-type-bad-source) : String
   "(define (main) : (in 1 String) 0)")
@@ -2275,8 +2271,8 @@
   "(define (main) : i64
   (with-arena r 5))")
 
-;; `with-arena` is the migration alias for `with-region` (#801): assert it
-;; parses to the same `AstExprWithRegion` form, not an unbound call.
+;; `with-arena` is the canonical spelling (#801, #1118). Assert it parses to
+;; the `AstExprWithRegion` form, not an unbound call.
 (define (compiler-parse-arena-ok?) : bool
   (match (parse-ast-source (compiler-parse-arena-source))
     [(OkAstProgram (AstProgram decls))
@@ -2595,7 +2591,7 @@
             (and
               (compiler-parse-error-ok?
                 (compiler-parse-with-region-empty-source)
-                "parse: with-region 'r' requires a non-empty body")
+                "parse: with-arena 'r' requires a non-empty body")
               (and
                 (compiler-parse-error-ok?
                   (compiler-parse-region-type-bad-source)

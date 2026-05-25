@@ -4003,7 +4003,7 @@
             (if (tc-type-contains-region body-ty region)
               (ErrTcType
                 (string-append
-                  "typecheck: region-tagged value cannot escape with-region '"
+                  "typecheck: region-tagged value cannot escape with-arena '"
                   (string-append region "'")))
               (OkTcType body-ty))]
           [(ErrTcType message) (ErrTcType message)]))]
@@ -4699,40 +4699,40 @@
 
 (define (compiler-typecheck-region-builtin-source) : String
   "(define (main) : i64
-  (with-region r
+  (with-arena r
     (let
       [s : String (int->string 41)]
       (string-length s))))")
 
 (define (compiler-typecheck-region-escape-source) : String
   "(define (main) : String
-  (with-region r (int->string 41)))")
+  (with-arena r (int->string 41)))")
 
 (define (compiler-typecheck-region-user-call-source) : String
   "(define (sink [s : String]) : i64 (string-length s))
 (define (main) : i64
-  (with-region r
+  (with-arena r
     (let
       [s : String (int->string 41)]
       (sink s))))")
 
 (define (compiler-typecheck-region-nested-escape-source) : String
   "(define (main) : i64
-  (with-region outer
+  (with-arena outer
     (let
-      [s : String (with-region inner (int->string 1))]
+      [s : String (with-arena inner (int->string 1))]
       0)))")
 
 (define (compiler-typecheck-region-outer-in-inner-source) : String
   "(define (main) : i64
-  (with-region outer
+  (with-arena outer
     (let
       [s : String (int->string 1)]
-      (with-region inner (string-length s)))))")
+      (with-arena inner (string-length s)))))")
 
 (define (compiler-typecheck-region-array-source) : String
   "(define (main [n : i64]) : i64
-  (with-region r
+  (with-arena r
     (let
       [a : (Array i64) (make-array i64 n)]
       (begin
@@ -4742,7 +4742,7 @@
 (define (compiler-typecheck-region-struct-escape-source) : String
   "(defstruct Box (s String))
 (define (main) : String
-  (with-region r
+  (with-arena r
     (let
       [b : Box (Box (int->string 1))]
       (struct-get b s))))")
@@ -4750,7 +4750,7 @@
 (define (compiler-typecheck-region-match-source) : String
   "(defenum Token (Text String) (End))
 (define (main) : i64
-  (with-region r
+  (with-arena r
     (match (Text (int->string 1))
       [(Text s) (string-length s)]
       [End 0])))")
@@ -4761,7 +4761,7 @@
     (and
       (compiler-typecheck-error-ok?
         (compiler-typecheck-region-escape-source)
-        "typecheck: region-tagged value cannot escape with-region 'r'")
+        "typecheck: region-tagged value cannot escape with-arena 'r'")
       (and
         (compiler-typecheck-error-ok?
           (compiler-typecheck-region-user-call-source)
@@ -4769,7 +4769,7 @@
         (and
           (compiler-typecheck-error-ok?
             (compiler-typecheck-region-nested-escape-source)
-            "typecheck: region-tagged value cannot escape with-region 'inner'")
+            "typecheck: region-tagged value cannot escape with-arena 'inner'")
           (and
             (compiler-typecheck-ok?
               (compiler-typecheck-region-outer-in-inner-source))
@@ -4778,7 +4778,7 @@
               (and
                 (compiler-typecheck-error-ok?
                   (compiler-typecheck-region-struct-escape-source)
-                  "typecheck: region-tagged value cannot escape with-region 'r'")
+                  "typecheck: region-tagged value cannot escape with-arena 'r'")
                 (compiler-typecheck-ok?
                   (compiler-typecheck-region-match-source))))))))))
 

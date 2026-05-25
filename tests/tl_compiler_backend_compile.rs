@@ -204,7 +204,7 @@ fn compiler_backend_tl_compiles_to_assembly() {
         "    call _read\\n",
         "    call fflush\\n",
         "(make-array i64 2)",
-        "(with-region r",
+        "(with-arena r",
         "make_array_len_ok",
         "    jne .Lmain_while_body.1\\n",
         "    jmp .Lmain_while_header.0\\n",

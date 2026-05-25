@@ -14,6 +14,9 @@ pub const ARG_RUNTIME_SYMBOL: &str = ".L_tl_arg";
 pub const READ_FILE_RUNTIME_SYMBOL: &str = ".L_tl_read_file";
 pub const WRITE_FILE_RUNTIME_SYMBOL: &str = ".L_tl_write_file";
 pub const FILE_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists";
+pub const READ_FILE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_read_file_status";
+pub const WRITE_FILE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_write_file_status";
+pub const FILE_EXISTS_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists_status";
 pub const READ_STDIN_LINE_RUNTIME_SYMBOL: &str = ".L_tl_read_stdin_line";
 pub const READ_STDIN_BYTES_RUNTIME_SYMBOL: &str = ".L_tl_read_stdin_bytes";
 pub const STDIN_EOF_RUNTIME_SYMBOL: &str = ".L_tl_stdin_eof";
@@ -367,6 +370,9 @@ pub fn classify_direct_call_effect(func: &str) -> IrEffect {
         | READ_FILE_RUNTIME_SYMBOL
         | WRITE_FILE_RUNTIME_SYMBOL
         | FILE_EXISTS_RUNTIME_SYMBOL
+        | READ_FILE_STATUS_RUNTIME_SYMBOL
+        | WRITE_FILE_STATUS_RUNTIME_SYMBOL
+        | FILE_EXISTS_STATUS_RUNTIME_SYMBOL
         | READ_STDIN_LINE_RUNTIME_SYMBOL
         | READ_STDIN_BYTES_RUNTIME_SYMBOL => IrEffect::Unknown,
         STDIN_EOF_RUNTIME_SYMBOL => IrEffect::MemoryRead,
@@ -1269,6 +1275,9 @@ mod tests {
             READ_FILE_RUNTIME_SYMBOL,
             WRITE_FILE_RUNTIME_SYMBOL,
             FILE_EXISTS_RUNTIME_SYMBOL,
+            READ_FILE_STATUS_RUNTIME_SYMBOL,
+            WRITE_FILE_STATUS_RUNTIME_SYMBOL,
+            FILE_EXISTS_STATUS_RUNTIME_SYMBOL,
             READ_STDIN_LINE_RUNTIME_SYMBOL,
             READ_STDIN_BYTES_RUNTIME_SYMBOL,
             "user_or_extern_call",

@@ -189,6 +189,10 @@ impl TypeChecker {
             "read-file".into(),
             Type::Func(vec![Type::String], Box::new(Type::String)),
         );
+        globals.insert(
+            "read-file-status".into(),
+            Type::Func(vec![Type::String], Box::new(Type::I64)),
+        );
         // `(write-file path contents)` -> write all contents bytes to path.
         // V1 mirrors `read-file`: Linux/compiler-driver oriented and
         // panic-on-error until recoverable file errors are designed.
@@ -196,12 +200,20 @@ impl TypeChecker {
             "write-file".into(),
             Type::Func(vec![Type::String, Type::String], Box::new(Type::Unit)),
         );
+        globals.insert(
+            "write-file-status".into(),
+            Type::Func(vec![Type::String, Type::String], Box::new(Type::I64)),
+        );
         // `(file-exists? path)` -> whether the path names an existing entry.
         // Missing paths return false; unexpected syscall/path failures keep the
         // v1 file-I/O panic-on-error convention.
         globals.insert(
             "file-exists?".into(),
             Type::Func(vec![Type::String], Box::new(Type::Bool)),
+        );
+        globals.insert(
+            "file-exists-status".into(),
+            Type::Func(vec![Type::String], Box::new(Type::I64)),
         );
         // Environment primitives wrapped by stdlib/env.tl. The raw value helper
         // returns an empty string for missing variables; stdlib/env.tl pairs it
@@ -379,8 +391,11 @@ impl TypeChecker {
                     | "string-append"
                     | "string-concat"
                     | "read-file"
+                    | "read-file-status"
                     | "write-file"
+                    | "write-file-status"
                     | "file-exists?"
+                    | "file-exists-status"
                     | "env-var-exists?"
                     | "env-var-value"
                     | "panic"

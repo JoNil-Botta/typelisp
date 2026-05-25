@@ -51,9 +51,9 @@ returned caller-owned values.
 | `is-char-whitespace`, `char-eq`, `string-contains`, `string-contains-char`, `is-string-prefix-at` | Non-allocating string/char inspection. |
 | `string-trim-left`, `string-trim-right`, `string-trim` | Return fresh `String` storage from `substring`, allocated in the active arena. |
 | `string-replace` | Returns fresh `String` storage from `substring`/`string-append` when a replacement is made; returns the caller-provided `s` when `old` is not present. |
-| `try-read-file` | Performs host/runtime file inspection; returns `OkIoString` with fresh active-arena `String` storage from `read-file` when the path exists, `ErrIoString` for empty paths and expected absence. Other hard host read failures still inherit the current panic-on-error runtime primitive. |
-| `try-write-file` | Returns `ErrIoUnit` for empty paths; otherwise writes through the current runtime primitive and returns `OkIoUnit` on success. Other hard host write failures still inherit the current panic-on-error runtime primitive. |
-| `try-file-exists?` | Returns `OkIoBool` for existing or missing paths; empty paths return `ErrIoBool`. Unexpected host probe failures still inherit the current panic-on-error runtime primitive. |
+| `try-read-file` | Performs host/runtime file inspection; returns `OkIoString` with fresh active-arena `String` storage from `read-file` when the path is readable, or `ErrIoString` for empty paths, expected absence, permission failures, interrupted reads, and target status-code failures. |
+| `try-write-file` | Writes through the recoverable runtime status helper; returns `OkIoUnit` on success or `ErrIoUnit` for empty paths, missing parents, permission failures, interrupted writes, and target status-code failures. |
+| `try-file-exists?` | Returns `OkIoBool` for existing or expected missing paths; empty paths and hard probe failures return `ErrIoBool`. |
 | `try-append-file` | Performs read-modify-write through `try-read-file`, `string-append`, and `try-write-file`. It creates missing files, allocates temporary active-arena strings, and remains non-atomic. |
 | `read-file-or` | Convenience wrapper over `try-read-file`; returns the caller-provided `fallback` for every structured error. |
 | `append-file` | Panic-on-error convenience wrapper over `try-append-file`. It allocates temporary active-arena strings and rewrites the whole file. |
@@ -66,11 +66,10 @@ returned caller-owned values.
 | `assert-*` helpers in `test.tl` | Non-allocating checks on success; failures call `panic` with the caller-provided message. |
 | `text-buf-*` helpers in `text_buf.tl` | Buffer chunks and rendered strings allocate in the active arena. Append helpers avoid concatenating the accumulated prefix until `text-buf-render`; `text-buf-clear`/`text-buf-reset` return a fresh empty immutable buffer value. |
 
-The recoverable I/O API currently classifies only errors that can be detected
-before calling the panic-on-error runtime primitives, such as empty paths and
-expected read absence. Permission-denied, interrupted, and target-specific
-system-code variants are part of the public `IoError` model so later runtime
-support can expose them without reshaping the stdlib API.
+The recoverable I/O API maps the runtime's integer status codes into the public
+`IoError` model. Common not-found, permission, invalid-path, interrupted, and
+directory-read statuses get semantic variants; target-specific or unstable
+codes remain available as `IoSystemCode`.
 
 No current stdlib function returns a borrow-typed `str`, mutates a
 caller-provided buffer in place, or manually calls `tl_region_mark` /

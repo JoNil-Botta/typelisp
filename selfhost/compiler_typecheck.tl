@@ -250,18 +250,34 @@
                                       (let
                                         [e18 : TcTypeEnv
                                           (tc-bind
-                                            e17
-                                            "write-file"
+                                            (tc-bind
+                                              (tc-bind
+                                                e17
+                                                "read-file-status"
+                                                (tc-fn1
+                                                  (AstTyString)
+                                                  (AstTyI64)))
+                                              "write-file"
+                                              (tc-fn2
+                                                (AstTyString)
+                                                (AstTyString)
+                                                (AstTyUnit)))
+                                            "write-file-status"
                                             (tc-fn2
                                               (AstTyString)
                                               (AstTyString)
-                                              (AstTyUnit)))]
+                                              (AstTyI64)))]
                                         (let
                                           [e19 : TcTypeEnv
                                             (tc-bind
-                                              e18
-                                              "file-exists?"
-                                              (tc-fn1 (AstTyString) (AstTyBool)))]
+                                              (tc-bind
+                                                e18
+                                                "file-exists?"
+                                                (tc-fn1
+                                                  (AstTyString)
+                                                  (AstTyBool)))
+                                              "file-exists-status"
+                                              (tc-fn1 (AstTyString) (AstTyI64)))]
                                           (let
                                             [e20 : TcTypeEnv
                                               (tc-bind
@@ -1336,17 +1352,23 @@
                           true
                           (if (string-eq name "read-file")
                             true
-                            (if (string-eq name "write-file")
+                            (if (string-eq name "read-file-status")
                               true
-                              (if (string-eq name "file-exists?")
+                              (if (string-eq name "write-file")
                                 true
-                                (if (string-eq name "panic")
+                                (if (string-eq name "write-file-status")
                                   true
-                                  (if (string-eq name "error")
+                                  (if (string-eq name "file-exists?")
                                     true
-                                    (if (string-eq name "env-var-exists?")
+                                    (if (string-eq name "file-exists-status")
                                       true
-                                      (string-eq name "env-var-value"))))))))))))))))))))
+                                      (if (string-eq name "panic")
+                                        true
+                                        (if (string-eq name "error")
+                                          true
+                                          (if (string-eq name "env-var-exists?")
+                                            true
+                                            (string-eq name "env-var-value")))))))))))))))))))))))
 
 (define (tc-default-builtin-unshadowed-scan? [env : TcTypeEnv] [name : String]) : bool
   (match env

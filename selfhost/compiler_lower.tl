@@ -1060,15 +1060,21 @@
               true
               (if (string-eq name "read-file")
                 true
-                (if (string-eq name "write-file")
+                (if (string-eq name "read-file-status")
                   true
-                  (if (string-eq name "file-exists?")
+                  (if (string-eq name "write-file")
                     true
-                    (if (string-eq name "panic")
+                    (if (string-eq name "write-file-status")
                       true
-                      (if (string-eq name "error")
+                      (if (string-eq name "file-exists?")
                         true
-                        (string-eq name "print-error")))))))))))))
+                        (if (string-eq name "file-exists-status")
+                          true
+                          (if (string-eq name "panic")
+                            true
+                            (if (string-eq name "error")
+                              true
+                              (string-eq name "print-error"))))))))))))))))
 
 (define (lower-stdio-runtime-name [name : String]) : String
   (if (string-eq name "read-stdin-line")
@@ -2087,6 +2093,36 @@
         result-ty
         origin)]))
 
+(define (lower-read-file-status-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons arg (AstExprNil))
+      (lower-one-string-runtime-call
+        ctx
+        state
+        env
+        type-env
+        arg
+        ".L_tl_read_file_status"
+        result-ty
+        "lower: read-file-status requires String")]
+    [_
+      (lower-direct-call
+        ctx
+        state
+        env
+        type-env
+        "read-file-status"
+        args
+        result-ty
+        origin)]))
+
 (define (lower-file-exists-call
   [ctx : TcContext]
   [state : LowerState]
@@ -2113,6 +2149,36 @@
         env
         type-env
         "file-exists?"
+        args
+        result-ty
+        origin)]))
+
+(define (lower-file-exists-status-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons arg (AstExprNil))
+      (lower-one-string-runtime-call
+        ctx
+        state
+        env
+        type-env
+        arg
+        ".L_tl_file_exists_status"
+        result-ty
+        "lower: file-exists-status requires String")]
+    [_
+      (lower-direct-call
+        ctx
+        state
+        env
+        type-env
+        "file-exists-status"
         args
         result-ty
         origin)]))
@@ -2252,6 +2318,57 @@
         result-ty
         origin)]))
 
+(define (lower-write-file-status-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons path (AstExprCons contents (AstExprNil)))
+      (match (lower-expr ctx state env type-env path)
+        [(OkLowerExpr lowered-path)
+          (match lowered-path
+            [(LowerExpr path-state path-value _)
+              (match (lower-expr ctx path-state env type-env contents)
+                [(OkLowerExpr lowered-contents)
+                  (match lowered-contents
+                    [(LowerExpr contents-state contents-value _)
+                      (match (lower-string-fields contents-state path-value)
+                        [(LowerStringFields path-fields-state path-ptr path-len)
+                          (match (lower-string-fields
+                            path-fields-state
+                            contents-value)
+                            [(LowerStringFields
+                                done-fields-state
+                                contents-ptr
+                                contents-len)
+                              (lower-runtime-call-values
+                                done-fields-state
+                                ".L_tl_write_file_status"
+                                (IrValueCons
+                                  path-ptr
+                                  (IrValueCons
+                                    path-len
+                                    (IrValueCons
+                                      contents-ptr
+                                      (IrValueCons contents-len IrValueNil))))
+                                result-ty)])])])]
+                [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [_
+      (lower-direct-call
+        ctx
+        state
+        env
+        type-env
+        "write-file-status"
+        args
+        result-ty
+        origin)]))
+
 (define (lower-bootstrap-runtime-call
   [ctx : TcContext]
   [state : LowerState]
@@ -2280,8 +2397,8 @@
                 args
                 result-ty
                 origin)
-              (if (string-eq name "write-file")
-                (lower-write-file-call
+              (if (string-eq name "read-file-status")
+                (lower-read-file-status-call
                   ctx
                   state
                   env
@@ -2289,8 +2406,8 @@
                   args
                   result-ty
                   origin)
-                (if (string-eq name "file-exists?")
-                  (lower-file-exists-call
+                (if (string-eq name "write-file")
+                  (lower-write-file-call
                     ctx
                     state
                     env
@@ -2298,29 +2415,58 @@
                     args
                     result-ty
                     origin)
-                  (if (or (string-eq name "panic") (string-eq name "error"))
-                    (lower-message-runtime-call
+                  (if (string-eq name "write-file-status")
+                    (lower-write-file-status-call
                       ctx
                       state
                       env
                       type-env
                       args
-                      name
-                      ".L_tl_abort"
                       result-ty
-                      "lower: panic requires String"
                       origin)
-                    (lower-message-runtime-call
-                      ctx
-                      state
-                      env
-                      type-env
-                      args
-                      "print-error"
-                      "tl_print_err"
-                      result-ty
-                      "lower: print-error requires String"
-                      origin)))))))))))
+                    (if (string-eq name "file-exists?")
+                      (lower-file-exists-call
+                        ctx
+                        state
+                        env
+                        type-env
+                        args
+                        result-ty
+                        origin)
+                      (if (string-eq name "file-exists-status")
+                        (lower-file-exists-status-call
+                          ctx
+                          state
+                          env
+                          type-env
+                          args
+                          result-ty
+                          origin)
+                        (if (or
+                          (string-eq name "panic")
+                          (string-eq name "error"))
+                          (lower-message-runtime-call
+                            ctx
+                            state
+                            env
+                            type-env
+                            args
+                            name
+                            ".L_tl_abort"
+                            result-ty
+                            "lower: panic requires String"
+                            origin)
+                          (lower-message-runtime-call
+                            ctx
+                            state
+                            env
+                            type-env
+                            args
+                            "print-error"
+                            "tl_print_err"
+                            result-ty
+                            "lower: print-error requires String"
+                            origin))))))))))))))
 
 ;; Lower an unshadowed `(string-ref s i)` / `(char-at s i)` builtin call to the
 ;; bounds-checked String byte index. Since #677 the parser emits these names as

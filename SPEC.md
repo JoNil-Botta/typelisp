@@ -885,6 +885,9 @@ accumulate in the process-lifetime arena instead of being reclaimed.
 | `read-file` | `String → String` | Read whole file contents; panics on error |
 | `write-file` | `String String → unit` | Write whole file contents; panics on error |
 | `file-exists?` | `String → bool` | Return true when a filesystem path exists; panics on unexpected syscall/path errors |
+| `read-file-status` | `String → i64` | Return 0 when `read-file` should succeed, otherwise a positive host status code |
+| `write-file-status` | `String String → i64` | Write whole file contents and return 0 on success or a positive host status code |
+| `file-exists-status` | `String → i64` | Return 0 when a path exists, otherwise a positive host status code such as not-found |
 | `read-stdin-line` | `→ String` | Read one stdin line without trailing newline; blank line returns `""` and does not set EOF |
 | `read-stdin-bytes` | `i64 → String` | Read up to `n` stdin bytes; negative counts panic, short reads occur only at EOF |
 | `stdin-eof?` | `→ bool` | Report whether the most recent stdin read hit EOF before a full line/requested byte count |

@@ -19,8 +19,9 @@ Coverage notes:
   invalid input, escapes, nesting, arrays, objects, lookup, and number forms.
 - `io_edges.tl` covers `IoError` rendering, `try-read-file`,
   `try-write-file`, `try-file-exists?`, `try-append-file`, `read-file-or`,
-  `append-file`, and `file-nonempty?` on missing, empty-path, empty-file, and
-  existing-file paths without masking host I/O failures.
+  `append-file`, and `file-nonempty?` on missing, empty-path, directory-read,
+  missing-parent write, empty-file, and existing-file paths without masking host
+  I/O failures.
 - `io_stdio_lines.tl` covers stdin line wrappers, blank-line vs EOF state,
   stdout/stderr write-line helpers, and stdout flushing with fixture stdin.
 - `io_stdio_bytes.tl` covers fixed-byte stdin wrappers, short reads at EOF, and

@@ -1,12 +1,12 @@
 # name|source|exit|stdout|args|deps
-# stdout is "-" for empty, @path for an exact repository file, or printf escapes.
-# args and deps are space-separated; use "-" for none.
+# Windows omits the with_region_* Linux SysV fixtures; the runner validates that
+# those are the only integration sources missing from this manifest.
 aggregate_globals|tests/integration/aggregate_globals.tl|42|-|-|-
 argv|tests/integration/argv.tl|7|alpha\n|alpha beta|-
 arithmetic|tests/integration/arithmetic.tl|47|-|-|-
 calc|tests/integration/calc.tl|14|-|-|token.tl
 tl_emit|selfhost/emit.tl|0|@tests/golden/tl_emit_program.s|-|emit_core.tl ast_types.tl sym_i64_env.tl
-tl_ast|selfhost/ast.tl|173|-|-|ast_types.tl read.tl lex.tl token.tl
+tl_ast|selfhost/ast.tl|685|-|-|ast_types.tl read.tl lex.tl token.tl
 tl_lexer|selfhost/lexer.tl|19|-|-|lex.tl token.tl
 tl_reader|selfhost/reader.tl|62|-|-|lex.tl token.tl
 tl_eval|selfhost/eval.tl|30|hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10 . 20)(1 2 . 3)(1 4 9 16)(1 2)|-|read.tl lex.tl token.tl
@@ -68,8 +68,6 @@ tree|tests/integration/tree.tl|3|-|-|-
 tuple_values|tests/integration/tuple_values.tl|42|-|-|-
 unit_functions|tests/integration/unit_functions.tl|7|-|-|-
 unit_main|tests/integration/unit_main.tl|0|-|-|-
-with_region_builtin_alloc|tests/integration/with_region_builtin_alloc.tl|2|-|-|-
-with_region_loop|tests/integration/with_region_loop.tl|42|-|-|-
 compiler_parse_smoke|selfhost/compiler_parse_smoke.tl|42|-|-|compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl
 compiler_symbols_smoke|selfhost/compiler_symbols_smoke.tl|42|-|-|compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl
 compiler_typecheck_smoke|selfhost/compiler_typecheck_smoke.tl|42|-|-|compiler_typecheck.tl compiler_ctfe.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl

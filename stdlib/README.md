@@ -17,6 +17,8 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   `(import "stdlib/io.tl")`.
 - `env.tl`: recoverable environment variable lookup and PATH-style list
   helpers. Import it with `(import "stdlib/env.tl")`.
+- `fs.tl`: minimal recoverable filesystem helpers for tool artifact paths,
+  temporary directories, and cleanup. Import it with `(import "stdlib/fs.tl")`.
 - `json.tl`: JSON value parser and serializer for tool protocols and data
   exchange. Import it with `(import "stdlib/json.tl")`.
 - `process.tl`: process command/output/error data model for selfhost tools.
@@ -62,6 +64,7 @@ returned caller-owned values.
 | `stdin-at-eof?`, `stdin-read-text`, `stdin-read-eof?`, `stdout-write`, `stderr-write`, `stdout-flush` | Non-allocating wrappers/accessors around runtime stdio primitives and `StdinRead` values. |
 | `stdout-write-line`, `stderr-write-line` | Allocate a newline-appended active-arena `String` via `string-append`, then write it to the target stream. |
 | `env-get`, `env-path-list`, `env-path-split`, `env-path-join` | Environment values and split/join results allocate fresh active-arena Strings/lists when runtime values are read or string pieces are created; missing variables return explicit `EnvNo*` options. |
+| `fs-path-join`, `try-mkdir`, `try-remove-file`, `try-remove-dir`, `try-create-temp-dir` | Path joins allocate active-arena Strings when a separator is inserted or duplicate separator is removed. Recoverable filesystem helpers map runtime status codes into `IoError`; Linux temp directories are created under `$TMPDIR` or `/tmp` with process-id and retry suffixes. Windows temp creation returns `IoUnsupported` until target filesystem primitives are implemented. |
 | `process-*` helpers | Construct process command/output/error aggregates in the active arena. Ordered argv append helpers allocate list nodes; validators inspect executable/env/cwd metadata and reject invalid env names. On Linux, `process-run` and `process-output` execute directly through the backend runtime, preserving inherited environment entries, replacing entries named by env overrides, honoring cwd, and feeding string stdin. Unsupported targets return structured errors. |
 | `assert-*` helpers in `test.tl` | Non-allocating checks on success; failures call `panic` with the caller-provided message. |
 | `text-buf-*` helpers in `text_buf.tl` | Buffer chunks and rendered strings allocate in the active arena. Append helpers avoid concatenating the accumulated prefix until `text-buf-render`; `text-buf-clear`/`text-buf-reset` return a fresh empty immutable buffer value. |
@@ -82,6 +85,7 @@ Stdlib modules are imported explicitly:
 
 ```lisp
 (import "stdlib/env.tl")
+(import "stdlib/fs.tl")
 (import "stdlib/io.tl")
 (import "stdlib/json.tl")
 (import "stdlib/process.tl")

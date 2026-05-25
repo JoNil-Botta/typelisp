@@ -22,6 +22,10 @@ const FILE_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists";
 const READ_FILE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_read_file_status";
 const WRITE_FILE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_write_file_status";
 const FILE_EXISTS_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists_status";
+const FS_MKDIR_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_fs_mkdir_status";
+const FS_REMOVE_FILE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_fs_remove_file_status";
+const FS_REMOVE_DIR_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_fs_remove_dir_status";
+const FS_PROCESS_ID_RUNTIME_SYMBOL: &str = ".L_tl_fs_process_id";
 const ENV_VAR_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_env_var_exists";
 const ENV_VAR_VALUE_RUNTIME_SYMBOL: &str = ".L_tl_env_var_value";
 const ENV_PATH_SEPARATOR_RUNTIME_SYMBOL: &str = ".L_tl_env_path_separator";
@@ -462,6 +466,7 @@ pub struct X86_64Backend {
     /// Whether the program references raw environment helpers emitted for
     /// stdlib/env.tl. Lookups read process environment data and allocate
     /// returned strings through `tl_alloc`.
+    needs_fs_runtime: bool,
     needs_env_var_exists_runtime: bool,
     needs_env_var_value_runtime: bool,
     needs_env_path_separator_runtime: bool,
@@ -1981,6 +1986,7 @@ impl X86_64Backend {
             needs_read_file_runtime: false,
             needs_write_file_runtime: false,
             needs_file_exists_runtime: false,
+            needs_fs_runtime: false,
             needs_env_var_exists_runtime: false,
             needs_env_var_value_runtime: false,
             needs_env_path_separator_runtime: false,
@@ -2048,6 +2054,7 @@ impl X86_64Backend {
         self.needs_read_file_runtime = Self::needs_read_file_runtime(program);
         self.needs_write_file_runtime = Self::needs_write_file_runtime(program);
         self.needs_file_exists_runtime = Self::needs_file_exists_runtime(program);
+        self.needs_fs_runtime = Self::needs_fs_runtime(program);
         self.needs_env_var_exists_runtime = Self::needs_env_var_exists_runtime(program);
         self.needs_env_var_value_runtime = Self::needs_env_var_value_runtime(program);
         self.needs_env_path_separator_runtime = Self::needs_env_path_separator_runtime(program);
@@ -2079,6 +2086,7 @@ impl X86_64Backend {
             || self.needs_read_file_runtime
             || self.needs_write_file_runtime
             || self.needs_file_exists_runtime
+            || self.needs_fs_runtime
             || (self.needs_env_var_exists_runtime && runtime_policy.emits_windows_runtime_helpers)
             || self.needs_env_var_value_runtime
             || self.needs_env_path_separator_runtime
@@ -2108,6 +2116,7 @@ impl X86_64Backend {
             || self.needs_read_file_runtime
             || self.needs_write_file_runtime
             || self.needs_file_exists_runtime
+            || self.needs_fs_runtime
             || self.needs_process_output_runtime
             || self.needs_read_stdin_line_runtime
             || self.needs_read_stdin_bytes_runtime
@@ -2204,6 +2213,10 @@ impl X86_64Backend {
                 || (self.needs_read_file_runtime && symbol == READ_FILE_STATUS_RUNTIME_SYMBOL)
                 || (self.needs_write_file_runtime && symbol == WRITE_FILE_STATUS_RUNTIME_SYMBOL)
                 || (self.needs_file_exists_runtime && symbol == FILE_EXISTS_STATUS_RUNTIME_SYMBOL)
+                || (self.needs_fs_runtime && symbol == FS_MKDIR_STATUS_RUNTIME_SYMBOL)
+                || (self.needs_fs_runtime && symbol == FS_REMOVE_FILE_STATUS_RUNTIME_SYMBOL)
+                || (self.needs_fs_runtime && symbol == FS_REMOVE_DIR_STATUS_RUNTIME_SYMBOL)
+                || (self.needs_fs_runtime && symbol == FS_PROCESS_ID_RUNTIME_SYMBOL)
                 || (self.needs_env_var_exists_runtime && symbol == ENV_VAR_EXISTS_RUNTIME_SYMBOL)
                 || (self.needs_env_var_value_runtime && symbol == ENV_VAR_VALUE_RUNTIME_SYMBOL)
                 || (self.needs_env_path_separator_runtime
@@ -2288,6 +2301,9 @@ impl X86_64Backend {
         if self.needs_file_exists_runtime {
             self.generate_file_exists_runtime_functions();
             self.generate_file_exists_status_runtime_functions();
+        }
+        if self.needs_fs_runtime {
+            self.generate_fs_runtime_functions();
         }
         if self.needs_env_var_exists_runtime {
             self.generate_env_var_exists_runtime_functions();
@@ -2897,6 +2913,17 @@ impl X86_64Backend {
                 })
             })
         })
+    }
+
+    fn needs_fs_runtime(program: &Program) -> bool {
+        [
+            FS_MKDIR_STATUS_RUNTIME_SYMBOL,
+            FS_REMOVE_FILE_STATUS_RUNTIME_SYMBOL,
+            FS_REMOVE_DIR_STATUS_RUNTIME_SYMBOL,
+            FS_PROCESS_ID_RUNTIME_SYMBOL,
+        ]
+        .iter()
+        .any(|symbol| Self::needs_private_call_runtime(program, symbol))
     }
 
     fn needs_env_var_exists_runtime(program: &Program) -> bool {
@@ -4792,6 +4819,108 @@ impl X86_64Backend {
         self.emit("    pop %r12");
         self.emit("    pop %rbx");
         self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_fs_path_status_runtime_function(
+        &mut self,
+        symbol: &str,
+        label: &str,
+        syscall_number: i64,
+        mkdir_mode: Option<i64>,
+    ) {
+        self.emit(&format!("{}:", symbol));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq %rdi, %rbx");
+        self.emit("    movq %rsi, %r12");
+        self.emit("    cmpq $0, %r12");
+        self.emit(&format!("    jl .L_tl_{}_invalid", label));
+        self.emit("    movq %r12, %rdi");
+        self.emit("    addq $1, %rdi");
+        self.emit(&format!("    js .L_tl_{}_invalid", label));
+        self.emit("    call tl_alloc");
+        self.emit("    movq %rax, %r13");
+        self.emit("    xorq %rcx, %rcx");
+        self.emit(&format!(".L_tl_{}_path_copy_loop:", label));
+        self.emit("    cmpq %r12, %rcx");
+        self.emit(&format!("    jge .L_tl_{}_path_copy_done", label));
+        self.emit("    movzbl (%rbx,%rcx), %edx");
+        self.emit("    movb %dl, (%r13,%rcx)");
+        self.emit("    incq %rcx");
+        self.emit(&format!("    jmp .L_tl_{}_path_copy_loop", label));
+        self.emit(&format!(".L_tl_{}_path_copy_done:", label));
+        self.emit("    movb $0, (%r13,%r12)");
+        self.emit(&format!("    movq ${}, %rax", syscall_number));
+        self.emit("    movq %r13, %rdi");
+        if let Some(mode) = mkdir_mode {
+            self.emit(&format!("    movq ${}, %rsi", mode));
+        }
+        self.emit("    syscall");
+        self.emit("    testq %rax, %rax");
+        self.emit(&format!("    js .L_tl_{}_error_from_rax", label));
+        self.emit("    xorq %rax, %rax");
+        self.emit(&format!("    jmp .L_tl_{}_return", label));
+        self.emit(&format!(".L_tl_{}_error_from_rax:", label));
+        self.emit("    negq %rax");
+        self.emit(&format!("    jmp .L_tl_{}_return", label));
+        self.emit(&format!(".L_tl_{}_invalid:", label));
+        self.emit("    movq $22, %rax");
+        self.emit(&format!(".L_tl_{}_return:", label));
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_fs_runtime_functions(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            for symbol in [
+                FS_MKDIR_STATUS_RUNTIME_SYMBOL,
+                FS_REMOVE_FILE_STATUS_RUNTIME_SYMBOL,
+                FS_REMOVE_DIR_STATUS_RUNTIME_SYMBOL,
+            ] {
+                self.emit(&format!("{}:", symbol));
+                self.emit("    movq $38, %rax");
+                self.emit("    ret");
+                self.emit("");
+            }
+            self.emit(&format!("{}:", FS_PROCESS_ID_RUNTIME_SYMBOL));
+            self.emit("    xorq %rax, %rax");
+            self.emit("    ret");
+            self.emit("");
+            return;
+        }
+
+        self.generate_fs_path_status_runtime_function(
+            FS_MKDIR_STATUS_RUNTIME_SYMBOL,
+            "fs_mkdir_status",
+            83,
+            Some(448),
+        );
+        self.generate_fs_path_status_runtime_function(
+            FS_REMOVE_FILE_STATUS_RUNTIME_SYMBOL,
+            "fs_remove_file_status",
+            87,
+            None,
+        );
+        self.generate_fs_path_status_runtime_function(
+            FS_REMOVE_DIR_STATUS_RUNTIME_SYMBOL,
+            "fs_remove_dir_status",
+            84,
+            None,
+        );
+        self.emit(&format!("{}:", FS_PROCESS_ID_RUNTIME_SYMBOL));
+        self.emit("    movq $39, %rax");
+        self.emit("    syscall");
         self.emit("    ret");
         self.emit("");
     }
@@ -8983,6 +9112,14 @@ impl X86_64Backend {
             WRITE_FILE_STATUS_RUNTIME_SYMBOL.into()
         } else if name == FILE_EXISTS_STATUS_RUNTIME_SYMBOL && self.needs_file_exists_runtime {
             FILE_EXISTS_STATUS_RUNTIME_SYMBOL.into()
+        } else if name == FS_MKDIR_STATUS_RUNTIME_SYMBOL && self.needs_fs_runtime {
+            FS_MKDIR_STATUS_RUNTIME_SYMBOL.into()
+        } else if name == FS_REMOVE_FILE_STATUS_RUNTIME_SYMBOL && self.needs_fs_runtime {
+            FS_REMOVE_FILE_STATUS_RUNTIME_SYMBOL.into()
+        } else if name == FS_REMOVE_DIR_STATUS_RUNTIME_SYMBOL && self.needs_fs_runtime {
+            FS_REMOVE_DIR_STATUS_RUNTIME_SYMBOL.into()
+        } else if name == FS_PROCESS_ID_RUNTIME_SYMBOL && self.needs_fs_runtime {
+            FS_PROCESS_ID_RUNTIME_SYMBOL.into()
         } else if name == ENV_VAR_EXISTS_RUNTIME_SYMBOL && self.needs_env_var_exists_runtime {
             ENV_VAR_EXISTS_RUNTIME_SYMBOL.into()
         } else if name == ENV_VAR_VALUE_RUNTIME_SYMBOL && self.needs_env_var_value_runtime {

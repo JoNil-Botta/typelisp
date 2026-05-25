@@ -87,6 +87,10 @@
 (define io-status-is-directory : i64
   21)
 
+;;; Common host status code for unsupported operations.
+(define io-status-unsupported : i64
+  38)
+
 ;;; Common host status code for invalid arguments or path encodings.
 (define io-status-invalid : i64
   22)
@@ -151,9 +155,11 @@
             (IoInterrupted path)
             (if (= code io-status-is-directory)
               (IoUnsupported path)
-              (if (= code io-status-ok)
-                (IoUnknown path)
-                (IoSystemCode code path)))))))))
+              (if (= code io-status-unsupported)
+                (IoUnsupported path)
+                (if (= code io-status-ok)
+                  (IoUnknown path)
+                  (IoSystemCode code path))))))))))
 
 ;;; Read `path` and return either its contents or a structured I/O error.
 ;;;

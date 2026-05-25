@@ -16,6 +16,7 @@
 ;;;;
 ;;;; Usage: `typelisp run tools/work-queue-chooser/chooser.tl --stdlib-root stdlib -- <seed>`
 (import "stdlib/json.tl")
+
 (import "stdlib/random.tl")
 
 ;;; Kind tags: 0 = PR (review), 1 = ready-for-implementation issue (implement),
@@ -125,7 +126,10 @@
   (let
     [labels : JsonList (issue-label-list item)]
     [ready : bool (label-list-has? labels "ready-for-implementation")]
-    [bonus : i64 (if (label-list-priority? labels) priority-bonus 0)]
+    [bonus : i64
+      (if (label-list-priority? labels)
+        priority-bonus
+        0)]
     (if ready
       (Candidate
         kind-ready
@@ -242,7 +246,9 @@
           (begin
             (print-error "Error: no eligible candidates were provided")
             1)
-          (match (random-weighted-index (random-seed (chooser-seed)) (cand-weights cands))
+          (match (random-weighted-index
+            (random-seed (chooser-seed))
+            (cand-weights cands))
             [(ErrRandomWeightedIndex message)
               (begin
                 (print-error (string-append "Error: " message))

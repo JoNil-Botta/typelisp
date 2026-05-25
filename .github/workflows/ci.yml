@@ -77,6 +77,9 @@ jobs:
       - name: Verify selfhost compile manifest with Rust-built compiler
         run: TYPELISP_BIN=target/debug/typelisp scripts/verify-selfhost-compile-manifest.sh
 
+      - name: Verify docs site (build + validate, no publish)
+        run: TYPELISP_BIN=target/debug/typelisp scripts/verify-doc-site.sh
+
       - name: Run tests
         run: cargo test --verbose
 

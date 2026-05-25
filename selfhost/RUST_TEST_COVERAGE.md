@@ -59,7 +59,7 @@ Total inline Rust `#[test]` items under `src/`: 924.
 | `src/backend/regalloc.rs` | 5 | Register allocation eligibility, live-after-call exclusions, deterministic spills, vector/mask exclusions, and System V versus Windows clobber models. | `compiler-regalloc-self-test` now covers params/non-scalars/address-taken eligibility, live-after-call exclusions, deterministic spills in the selfhost register pool, and System V versus Windows clobber-list divergence; vector/mask exclusions remain with #1043 until those IR shapes exist in selfhost. | Partial |
 | `src/ctfe.rs` | 2 | CTFE type literal evaluation and type-value comparison. | Covered by `compiler-ctfe-self-test` in `compiler_ctfe.tl` and the native `compiler_ctfe_smoke.tl` driver. | Covered |
 | `src/native.rs` | 2 | Default executable naming by target and scratch source build/run cleanup. | #847/#971 cover native run paths; #850 and #1018 cover temp filesystem and selfhost build/run replacement where Rust host helpers remain. | Partial |
-| `src/diagnostic.rs` | 1 | Simple rendered caret diagnostic format. | #1041 migrates compiler-facing diagnostic rendering; #845 owns public diagnostic command output. | Gap |
+| `src/diagnostic.rs` | 1 | Simple rendered caret diagnostic format. | Covered by `compiler-diagnostic-render-source` and `compiler-diagnostic-source-render-ok?` in `selfhost/compiler_diagnostic.tl`, reached by `selfhost/compiler_parse_smoke.tl`; #837 still owns the broader structured diagnostic model, and #845 owns public diagnostic command output. | Covered |
 
 ## File Inventory
 

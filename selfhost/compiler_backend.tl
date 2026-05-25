@@ -1,5 +1,4 @@
 ;; compiler_backend.tl - First selfhost CompilerIrProgram -> x86_64 .s emitter (#447).
-
 (import "compiler_lower.tl")
 
 (import "compiler_diagnostic.tl")
@@ -44,9 +43,7 @@
     bool))
 
 ;; Backend code-generation target (#646). Linux/System V and Windows x64 are
-
 ;; both modeled here; target-specific runtime helpers are emitted below.
-
 (defenum CompilerBackendTarget
   (BackendTargetLinux)
   (BackendTargetWindows))
@@ -102,27 +99,16 @@
   (or (backend-or4 a b c d) (backend-or4 e f g h)))
 
 ;; Best-available diagnostic for a backend error originating inside `function`
-
 ;;
-
 ;; (#605). When the lowering provenance side table has a source span for the
-
 ;;
-
 ;; function, the diagnostic is stamped with that real line/column via
-
 ;;
-
 ;; `compiler-diagnostic-from-ast-span`; otherwise it falls back to the previous
-
 ;;
-
 ;; `path:1:1` location. `function` is the raw IR function name (the key used by
-
 ;;
-
 ;; the spans table), not the mangled assembly symbol.
-
 (define (compiler-backend-function-diagnostic
   [spans : CompilerSourceSpans]
   [function : String]
@@ -225,7 +211,7 @@
   (compiler-backend-frame-offset (- 0 (* 8 (+ vars (+ idx 1))))))
 
 (define (compiler-backend-asm-label [function : String] [label : String]) : String
-  (backend-cat4 ".L" function "_" label))
+  (backend-cat4 ".L" (compiler-backend-asm-safe-symbol function) "_" label))
 
 (define (compiler-backend-arg-reg [idx : i64]) : ResultBackendReg
   (if (= idx 0)
@@ -1202,9 +1188,7 @@
     [(BackendTargetWindows) 4]))
 
 ;; Number of f64 argument registers (#750). System V uses xmm0..xmm7 (8) and
-
 ;; Windows shares its 4 positional slots, so the float bank also tops out at 4.
-
 (define (compiler-backend-call-float-register-count
   [target : CompilerBackendTarget]) : i64
   (match target
@@ -1222,13 +1206,9 @@
     (backend-cat4 "    addq $" (int->string space) ", %rsp\n" "")))
 
 ;; Whether the argument at the given bank indexes is passed on the stack
-
 ;; (#750). Windows shares one positional slot bank (`position`); System V keeps
-
 ;; the integer and float banks independent, so an arg spills only once its own
-
 ;; bank is exhausted (rdi..r9 / xmm0..xmm7).
-
 (define (compiler-backend-stack-call-arg-for-banks?
   [target : CompilerBackendTarget]
   [is-f64 : bool]
@@ -1289,37 +1269,26 @@
       [_ local-types])))
 
 ;; Byte offset from %rsp where the `stack-idx`-th stack-passed OUTGOING argument
-
 ;; is stored (#750). Stack args are numbered sequentially in argument order (0,
-
 ;; 1, ...) independent of which register bank overflowed. System V packs them at
-
 ;; 0,8,16,...; Windows packs them after the 32-byte shadow space.
-
 (define (compiler-backend-outgoing-stack-arg-offset
   [target : CompilerBackendTarget]
   [stack-idx : i64]) : i64
   (+ (compiler-backend-outgoing-shadow-space target) (* stack-idx 8)))
 
 ;; Byte offset from %rbp where the `stack-idx`-th INCOMING stack argument lives
-
 ;; (#750). System V's first stack arg sits at 16(%rbp) (saved %rbp + return
-
 ;; address); Windows adds its 32-byte shadow space (48(%rbp)).
-
 (define (compiler-backend-incoming-stack-arg-offset
   [target : CompilerBackendTarget]
   [stack-idx : i64]) : i64
   (+ (+ 16 (compiler-backend-outgoing-shadow-space target)) (* stack-idx 8)))
 
 ;; Count the OUTGOING arguments that must be passed on the stack (#750). Walks
-
 ;; the args in order, tracking the integer/float/position banks exactly as
-
 ;; `compiler-backend-emit-call-args` does, and counts every arg whose bank is
-
 ;; already full.
-
 (define (compiler-backend-call-stack-arg-count
   [target : CompilerBackendTarget]
   [args : CompilerIrValueList]
@@ -1363,11 +1332,8 @@
               stack-count))))]))
 
 ;; Total %rsp adjustment reserved for a call's stack-passed args (#750):
-
 ;; `roundup16(shadow + stack-arg-count * 8)`. System V has no shadow space, so
-
 ;; this is 0 whenever every arg fits in registers.
-
 (define (compiler-backend-call-arg-space
   [target : CompilerBackendTarget]
   [args : CompilerIrValueList]
@@ -1972,15 +1938,10 @@
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
 
 ;; Move INCOMING parameters into their local frame slots (#750). Register
-
 ;; params come from rdi/rsi/.. (or xmm0..) per the calling convention; params
-
 ;; beyond a bank's registers are read back from the caller's stack frame at
-
 ;; `compiler-backend-incoming-stack-arg-offset`, indexed by a sequential
-
 ;; stack-param counter that mirrors the call site.
-
 (define (compiler-backend-emit-param-spills
   [target : CompilerBackendTarget]
   [assignments : CompilerRegAssignmentList]
@@ -4958,11 +4919,8 @@ tl_string_concat:
                                               flush-stdout-asm))))))))))))))))))))]))
 
 ;; Argument register for call arg `idx` under the target's calling convention.
-
 ;; System V (Linux) uses rdi/rsi/rdx/rcx/r8/r9 via `compiler-backend-arg-reg`;
-
 ;; Windows x64 passes the first four integer/pointer args in rcx/rdx/r8/r9.
-
 (define (compiler-backend-target-arg-reg
   [target : CompilerBackendTarget]
   [idx : i64]) : ResultBackendReg
@@ -4996,9 +4954,7 @@ tl_string_concat:
               (ErrBackendReg "backend: too many call args")))))]))
 
 ;; Caller-reserved outgoing shadow space in bytes: none on System V, 32 on
-
 ;; Windows x64.
-
 (define (compiler-backend-outgoing-shadow-space
   [target : CompilerBackendTarget]) : i64
   (match target
@@ -5006,9 +4962,7 @@ tl_string_concat:
     [(BackendTargetWindows) 32]))
 
 ;; Program entry section and global symbol. Linux links the bare `_start`;
-
 ;; Windows links `main` through the CRT. (The Windows entry body is #647.)
-
 (define (compiler-backend-target-entry-text [target : CompilerBackendTarget]) : String
   (match target
     [(BackendTargetLinux) ".text\n.globl _start\n"]
@@ -5100,16 +5054,16 @@ tl_string_concat:
           _
           _
           _
-          string-eq
-          string-to-int
-          int-to-string
-          abort
-          print-err
-          arg-count
-          arg
-          read-file
-          write-file
-          file-exists
+          _
+          _
+          _
+          _
+          _
+          _
+          _
+          _
+          _
+          _
           _
           _
           _
@@ -5138,27 +5092,16 @@ tl_string_concat:
     ""))
 
 ;; Emit a full program for `target`. Windows x64 has ABI-correct user function
-
 ;; entry/calls and target-specific runtime helpers.
-
 ;; Backend entry points come in two flavors (#605): the original
-
 ;;
-
 ;; program-only variants (kept for existing call sites and smoke tests) supply
-
 ;;
-
 ;; an empty provenance table, so backend diagnostics fall back to `path:1:1`;
-
 ;;
-
 ;; the `-with-spans` variants thread the lowering provenance side table so
-
 ;;
-
 ;; backend errors report the offending function's real source location.
-
 (define (compiler-backend-emit-program-for-target
   [program : CompilerIrProgram]
   [target : CompilerBackendTarget]) : ResultCompilerBackend
@@ -5534,6 +5477,58 @@ tl_string_concat:
                         ".L_tl_stdin_eof_flag:\n")))))))))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-windows-driver-runtime-source) : String
+  "(define (main) : i64
+  (if (< (arg-count) 3)
+    (begin
+      (print-error \"runtime driver: expected input and output paths\")
+      2)
+    (let ([input : String (arg 1)]
+          [output : String (arg 2)])
+      (let ([content : String (read-file input)])
+        (if (file-exists? input)
+          (let ([n : i64 (string->int content)])
+            (let ([rendered : String (int->string (+ n 1))])
+              (begin
+                (if (string-eq content \"41\")
+                  (print-error \"ok\")
+                  (print-error \"mismatch\"))
+                (write-file output rendered)
+                42)))
+          3)))))")
+
+(define (compiler-backend-windows-driver-runtime-ok?) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-windows-driver-runtime-source)
+    (BackendTargetWindows))
+    [(OkCompilerBackend asm)
+      (and
+        (backend-and8
+          (compiler-backend-string-contains? asm ".L_tl_arg_count:\n")
+          (compiler-backend-string-contains? asm ".L_tl_arg:\n")
+          (compiler-backend-string-contains? asm ".L_tl_read_file:\n")
+          (compiler-backend-string-contains? asm ".L_tl_write_file:\n")
+          (compiler-backend-string-contains? asm ".L_tl_file_exists:\n")
+          (compiler-backend-string-contains? asm "tl_print_err:\n")
+          (compiler-backend-string-contains? asm "tl_string_eq:\n")
+          (compiler-backend-string-contains? asm "tl_string_to_int:\n"))
+        (and
+          (compiler-backend-string-contains? asm "tl_int_to_string:\n")
+          (and
+            (compiler-backend-string-contains?
+              asm
+              "    movq %rcx, .L_tl_argc(%rip)\n")
+            (and
+              (compiler-backend-string-contains? asm "    call _open\n")
+              (and
+                (compiler-backend-string-contains? asm "    call _lseeki64\n")
+                (and
+                  (compiler-backend-string-contains? asm "    call _close\n")
+                  (and
+                    (compiler-backend-string-contains? asm "    call _access\n")
+                    (not (compiler-backend-string-contains? asm "syscall\n")))))))))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-alloc-runtime-arena-ok?) : bool
   (match (compiler-backend-emit-program
     (compiler-backend-runtime-helper-program))
@@ -5671,6 +5666,57 @@ tl_string_concat:
                     ".extern tl_substring\n")))))))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-module-symbol-program) : CompilerIrProgram
+  (IrProgram
+    IrGlobalNil
+    (IrFunctionCons
+      (IrFunction
+        "lib.tl::helper"
+        IrParamNil
+        (AstTyI64)
+        0
+        (IrBlockCons
+          (IrBlock
+            "entry"
+            (IrInstrCons
+              (IrInstrReturn (IrSomeValue (IrValueI64 7)))
+              IrInstrNil))
+          IrBlockNil))
+      (IrFunctionCons
+        (IrFunction
+          "main"
+          IrParamNil
+          (AstTyI64)
+          1
+          (IrBlockCons
+            (IrBlock
+              "entry"
+              (IrInstrCons
+                (IrInstrCall 0 "lib.tl::helper" IrValueNil (AstTyI64))
+                (IrInstrCons
+                  (IrInstrReturn (IrSomeValue (IrValueVar 0)))
+                  IrInstrNil)))
+            IrBlockNil))
+        IrFunctionNil))
+    IrExternNil))
+
+(define (compiler-backend-module-symbol-ok?) : bool
+  (match (compiler-backend-emit-program
+    (compiler-backend-module-symbol-program))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains?
+          asm
+          ".globl _tl_lib_u2etl_colon_colonhelper\n")
+        (and
+          (compiler-backend-string-contains?
+            asm
+            "_tl_lib_u2etl_colon_colonhelper:\n")
+          (compiler-backend-string-contains?
+            asm
+            "    call _tl_lib_u2etl_colon_colonhelper\n")))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-smoke-source) : String
   "(define answer : i64 40)
 (define (inc [x : i64]) : i64 (+ x 1))
@@ -5684,11 +5730,8 @@ tl_string_concat:
       (if (> x 44) x 0))))")
 
 ;; SysV call with more than six integer args (#750): args 7+ spill to the
-
 ;; stack. `add8` reads its last two (stack-passed) params, exercising both the
-
 ;; outgoing stack stores at the call and the incoming stack reads in the callee.
-
 (define (compiler-backend-stack-int-args-source) : String
   "(define (add8
   [a : i64]
@@ -5704,7 +5747,6 @@ tl_string_concat:
   (add8 1 2 3 4 5 6 7 8))")
 
 ;; SysV call with more than eight f64 args (#750): xmm0..xmm7 then stack.
-
 (define (compiler-backend-stack-f64-args-source) : String
   "(define (sum10
   [a : f64]
@@ -5722,13 +5764,9 @@ tl_string_concat:
   (if (< (sum10 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0) 20.0) 1 0))")
 
 ;; Mixed int/f64 call that exhausts both banks and spills (#750): the integer
-
 ;; and float register indexes advance independently under System V. There are 7
-
 ;; integer args (rdi..r9 then one stacked) and 9 f64 args (xmm0..xmm7 then one
-
 ;; stacked); `mix` returns the sum of the two stack-passed args.
-
 (define (compiler-backend-stack-mixed-args-source) : String
   "(define (mix
   [i0 : i64]
@@ -5752,21 +5790,13 @@ tl_string_concat:
   (mix 1 2 3 4 5 6 7 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0))")
 
 ;; #750 RUN-LEVEL witness source: a self-contained program that exercises all
-
 ;; three spill paths (integer, f64, and mixed) and returns 96 only when every
-
 ;; stack-passed argument arrives with the correct value and ordering. Emitted by
-
 ;; the stack-args fixture, then assembled, linked, and run by the integration
-
 ;; suite. `add8` returns g*10+h (78) so a swapped/wrong-offset int stack arg
-
 ;; changes the result; `f10check` checks the two spilled xmm-overflow floats
-
 ;; (1); `mixcheck` keeps the integer and float banks independent and returns the
-
 ;; spilled integer (17) only when the spilled float carries its value. 78+1+17.
-
 (define (compiler-backend-stack-args-fixture-source) : String
   "(define (add8
   [a : i64]
@@ -6021,13 +6051,9 @@ tl_string_concat:
     [(ErrBackendReg _) true]))
 
 ;; The target model (#646/#647): per-target arg registers / shadow space /
-
 ;; entry symbol; the Linux path is byte-identical to the default emitter and the
-
 ;; Windows path emits ABI-shaped user-function assembly and runtime helpers
-
 ;; without Linux syscalls.
-
 (define (compiler-backend-target-model-ok? [src : String]) : bool
   (and
     (compiler-backend-reg-is?
@@ -6208,10 +6234,12 @@ tl_string_concat:
                                             (compiler-backend-string-contains?
                                               asm
                                               "    .extern malloc\n")
-                                            (not
-                                              (compiler-backend-string-contains?
-                                                asm
-                                                "syscall\n")))))))))))))))))))))]
+                                            (and
+                                              (not
+                                                (compiler-backend-string-contains?
+                                                  asm
+                                                  "syscall\n"))
+                                              (compiler-backend-windows-driver-runtime-ok?)))))))))))))))))))))]
     [(ErrCompilerBackend message) false]))
 
 (define (compiler-backend-deterministic-ok? [src : String]) : bool
@@ -6351,9 +6379,7 @@ tl_string_concat:
             "    movsbq -48(%rbp), %rax\n"))))))
 
 ;; A source exercising `array-ref`, used to confirm the lowerer's bounds-check
-
 ;; trap (#528) reaches the backend as a `call tl_oob_abort`.
-
 (define (compiler-backend-array-access-source) : String
   "(define (get [a : (Array i64)] [i : i64]) : i64 (array-ref a i))
 (define (main) : i64 0)")
@@ -6419,9 +6445,7 @@ tl_string_concat:
     [(ErrCompilerBackend _) false]))
 
 ;; A refutable literal payload match (#651) lowers to a payload comparison that
-
 ;; branches to the next arm; confirm the resulting CFG reaches valid assembly.
-
 (define (compiler-backend-literal-payload-source) : String
   "(defenum Maybe (None) (Some i64))
 (define (classify [m : Maybe]) : i64
@@ -6432,13 +6456,9 @@ tl_string_concat:
 (define (main) : i64 (classify (Some 0)))")
 
 ;; Confirm the refutable literal payload (#651) reaches valid assembly: the
-
 ;; function compiles and emits a `payload_ok` block (the in-bounds branch of the
-
 ;; payload comparison). `compiler-backend-asm-ok?` is smoke-source specific, so
-
 ;; check source-specific markers instead.
-
 (define (compiler-backend-literal-payload-ok?) : bool
   (match (compiler-backend-emit-source
     (compiler-backend-literal-payload-source))
@@ -6481,13 +6501,9 @@ tl_string_concat:
     [(ErrCompilerBackend _) false]))
 
 ;; #750: a SysV call with seven integer args no longer rejects as "too many
-
 ;; call args". The 7th arg spills: 16-byte call space is reserved, the spilled
-
 ;; value is staged through %r11 and stored at 0(%rsp), and `add8` reads its
-
 ;; stack-passed params back from 16(%rbp)/24(%rbp).
-
 (define (compiler-backend-stack-int-args-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-stack-int-args-source))
     [(OkCompilerBackend asm)
@@ -6511,11 +6527,8 @@ tl_string_concat:
     [(ErrCompilerBackend _) false]))
 
 ;; #750: a SysV call with ten f64 args uses xmm0..xmm7 then spills two on the
-
 ;; stack through %xmm15; the callee reads them back via movsd from the incoming
-
 ;; stack slots.
-
 (define (compiler-backend-stack-f64-args-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-stack-f64-args-source))
     [(OkCompilerBackend asm)
@@ -6541,11 +6554,8 @@ tl_string_concat:
     [(ErrCompilerBackend _) false]))
 
 ;; #750: a mixed call spilling one int and one f64 keeps the integer and float
-
 ;; register banks independent and uses the right scratch register for each
-
 ;; spilled arg.
-
 (define (compiler-backend-stack-mixed-args-ok?) : bool
   (match (compiler-backend-emit-source
     (compiler-backend-stack-mixed-args-source))
@@ -6562,9 +6572,7 @@ tl_string_concat:
     [(ErrCompilerBackend _) false]))
 
 ;; #750: the Windows positional ABI still reserves 32-byte shadow space, stacks
-
 ;; args after the first four, and stores them after the shadow space.
-
 (define (compiler-backend-stack-windows-args-ok?) : bool
   (match (compiler-backend-emit-source-for-target
     (compiler-backend-stack-int-args-source)
@@ -6631,7 +6639,9 @@ tl_string_concat:
                                   (compiler-backend-region-ok?)
                                   (and
                                     (compiler-backend-user-helper-name-ok?)
-                                    (compiler-backend-runtime-coexist-ok?))))))))))))))))))
+                                    (and
+                                      (compiler-backend-runtime-coexist-ok?)
+                                      (compiler-backend-module-symbol-ok?)))))))))))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

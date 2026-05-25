@@ -14,6 +14,9 @@ const ARG_RUNTIME_SYMBOL: &str = ".L_tl_arg";
 const READ_FILE_RUNTIME_SYMBOL: &str = ".L_tl_read_file";
 const WRITE_FILE_RUNTIME_SYMBOL: &str = ".L_tl_write_file";
 const FILE_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists";
+const ENV_VAR_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_env_var_exists";
+const ENV_VAR_VALUE_RUNTIME_SYMBOL: &str = ".L_tl_env_var_value";
+const ENV_PATH_SEPARATOR_RUNTIME_SYMBOL: &str = ".L_tl_env_path_separator";
 const READ_STDIN_LINE_RUNTIME_SYMBOL: &str = ".L_tl_read_stdin_line";
 const READ_STDIN_BYTES_RUNTIME_SYMBOL: &str = ".L_tl_read_stdin_bytes";
 const STDIN_EOF_RUNTIME_SYMBOL: &str = ".L_tl_stdin_eof";
@@ -3965,6 +3968,64 @@ impl FnLowerer {
                 ty: Type::Bool,
             });
             self.record_local(dst, Type::Bool);
+            return Value::Var(dst);
+        }
+
+        // Raw environment helpers used by stdlib/env.tl. Values are returned as
+        // heap-owned Strings; stdlib combines `env-var-exists?` and
+        // `env-var-value` to distinguish missing variables from empty values.
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "env-var-exists?"
+            && args.len() == 1
+            && !self.has_local_value(name)
+            && !self.function_types.contains_key(name)
+        {
+            let env_name = self.lower_expr_as(&args[0], &Type::String);
+            let (ptr, len) = self.load_string_fields(&env_name);
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: ENV_VAR_EXISTS_RUNTIME_SYMBOL.to_string(),
+                args: vec![Value::Var(ptr), Value::Var(len)],
+                ty: Type::Bool,
+            });
+            self.record_local(dst, Type::Bool);
+            return Value::Var(dst);
+        }
+
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "env-var-value"
+            && args.len() == 1
+            && !self.has_local_value(name)
+            && !self.function_types.contains_key(name)
+        {
+            let env_name = self.lower_expr_as(&args[0], &Type::String);
+            let (ptr, len) = self.load_string_fields(&env_name);
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: ENV_VAR_VALUE_RUNTIME_SYMBOL.to_string(),
+                args: vec![Value::Var(ptr), Value::Var(len)],
+                ty: Type::String,
+            });
+            self.record_local(dst, Type::String);
+            return Value::Var(dst);
+        }
+
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "env-path-separator"
+            && args.is_empty()
+            && !self.has_local_value(name)
+            && !self.function_types.contains_key(name)
+        {
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: ENV_PATH_SEPARATOR_RUNTIME_SYMBOL.to_string(),
+                args: vec![],
+                ty: Type::String,
+            });
+            self.record_local(dst, Type::String);
             return Value::Var(dst);
         }
 

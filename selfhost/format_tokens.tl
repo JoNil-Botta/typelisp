@@ -1,13 +1,8 @@
 ;; format_tokens.tl - Comment-preserving tokens for the formatter (#326).
-
 ;;
-
 ;; This lexer is separate from lex.tl because a formatter must keep source
-
 ;; spelling and comments. Whitespace is skipped for now; comments are retained
-
 ;; as trivia tokens so later layout rules can place them deliberately.
-
 (defenum FormatToken
   (FmtLParen)
   (FmtRParen)

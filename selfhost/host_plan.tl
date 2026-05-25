@@ -1,13 +1,8 @@
 ;; host_plan.tl - Shared private host-action plan emit helpers (#622).
-
 ;;
-
 ;; This mirrors `src/host_action.rs`'s private `typelisp-host-plan v1` grammar.
-
 ;; The boundary is deliberately not shell-tokenized: paths and runtime args are
-
 ;; emitted as netstrings so spaces, colons, and newlines round-trip exactly.
-
 (define (host-plan-cat3 [a : String] [b : String] [c : String]) : String
   (string-append a (string-append b c)))
 

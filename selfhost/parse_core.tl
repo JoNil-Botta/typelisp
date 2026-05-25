@@ -1,13 +1,8 @@
 ;; parse_core.tl - Main-less Sexpr -> Expr parser shared by selfhost drivers.
-
 ;;
-
 ;; The runnable `parse.tl` demo used to contain these definitions directly.
-
 ;; Keeping them here lets other drivers reuse the parser without importing a
-
 ;; second `main`.
-
 (import "sym_i64_env.tl")
 
 (import "emit_core.tl")
@@ -207,9 +202,7 @@
     [_ (ErrExpr "parse: malformed not")]))
 
 ;; parse-let: single- or multi-binding let, desugared into nested ELet nodes
-
 ;; so later bindings can see earlier ones (sequential let* semantics).
-
 (define (parse-let-bindings
   [dispatch : SymI64Env]
   [bindings : Sexpr]

@@ -181,17 +181,27 @@ fn run_lsp(messages: &[String]) -> Output {
 
 #[cfg(target_os = "linux")]
 fn run_selfhost_lsp_frame(work_name: &str, stdin: &str) -> Output {
-    let dir = fixture_dir(work_name);
-    let source = dir.join("lsp_frame.tl");
-    fs::copy(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("selfhost")
-            .join("lsp_frame.tl"),
-        &source,
-    )
-    .expect("copy selfhost LSP frame source");
+    let work_dir = fixture_dir(work_name);
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let selfhost_src = manifest_dir.join("selfhost");
+    let selfhost_work = work_dir.join("selfhost");
+    fs::create_dir_all(&selfhost_work).expect("create staged selfhost LSP source dir");
+    for entry in fs::read_dir(&selfhost_src).expect("read selfhost source dir") {
+        let entry = entry.expect("read selfhost source entry");
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) == Some("tl") {
+            fs::copy(
+                &path,
+                selfhost_work.join(path.file_name().expect("selfhost source has file name")),
+            )
+            .expect("copy staged selfhost source");
+        }
+    }
+    let source = selfhost_work.join("lsp_frame.tl");
+    let stdlib_root = manifest_dir.join("stdlib");
     let source_arg = source.to_str().expect("source path is utf-8");
-    let mut args = vec!["run", source_arg];
+    let stdlib_arg = stdlib_root.to_str().expect("stdlib path is utf-8");
+    let mut args = vec!["run", source_arg, "--stdlib-root", stdlib_arg];
     if cfg!(target_os = "windows") {
         args.push("--target");
         args.push("windows-x86_64");
@@ -483,9 +493,13 @@ fn selfhost_lsp_frame_reads_one_request() {
         stderr(&output)
     );
     assert_eq!(stderr(&output), "");
-    assert_eq!(
-        lsp_messages(&output),
-        vec![r#"{"jsonrpc":"2.0","id":null,"result":null}"#.to_string()]
+    let messages = lsp_messages(&output);
+    assert_eq!(messages.len(), 1, "messages: {messages:#?}");
+    assert!(messages[0].contains(r#""id":1"#), "{}", messages[0]);
+    assert!(
+        messages[0].contains(r#""textDocumentSync":{"openClose":true,"change":1}"#),
+        "{}",
+        messages[0]
     );
 }
 
@@ -505,13 +519,82 @@ fn selfhost_lsp_frame_reads_multiple_requests() {
         stderr(&output)
     );
     assert_eq!(stderr(&output), "");
-    assert_eq!(
-        lsp_messages(&output),
-        vec![
-            r#"{"jsonrpc":"2.0","id":null,"result":null}"#.to_string(),
-            r#"{"jsonrpc":"2.0","id":null,"result":null}"#.to_string(),
-        ]
+    let messages = lsp_messages(&output);
+    assert_eq!(messages.len(), 2, "messages: {messages:#?}");
+    assert!(messages[0].contains(r#""id":1"#), "{}", messages[0]);
+    assert!(
+        messages[0].contains(r#""textDocumentSync":{"openClose":true,"change":1}"#),
+        "{}",
+        messages[0]
     );
+    assert!(
+        messages[1].contains(r#""id":2,"result":null"#),
+        "{}",
+        messages[1]
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn selfhost_lsp_frame_reports_unknown_request_method() {
+    let request = r#"{"jsonrpc":"2.0","id":9,"method":"workspace/unknown","params":{}}"#;
+    let output = run_selfhost_lsp_frame("selfhost-lsp-unknown-method", &lsp_frame(request));
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "selfhost LSP frame exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stderr(&output), "");
+    let messages = lsp_messages(&output);
+    assert_eq!(messages.len(), 1, "messages: {messages:#?}");
+    assert!(messages[0].contains(r#""id":9"#), "{}", messages[0]);
+    assert!(messages[0].contains(r#""code":-32601"#), "{}", messages[0]);
+    assert!(
+        messages[0].contains(r#""message":"Method not found""#),
+        "{}",
+        messages[0]
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn selfhost_lsp_frame_tracks_document_changes_and_diagnostics() {
+    let dir = fixture_dir("selfhost-lsp-doc-diagnostics");
+    let uri = file_uri(&dir.join("main.tl"));
+    let input = format!(
+        "{}{}{}{}",
+        lsp_frame(&lsp_initialize(1)),
+        lsp_frame(&lsp_did_open(&uri, "(define (main) : i64 true)\n")),
+        lsp_frame(&lsp_did_change(&uri, "(define (main) : i64 0)\n")),
+        lsp_frame(&lsp_did_close(&uri))
+    );
+    let output = run_selfhost_lsp_frame("selfhost-lsp-doc-diagnostics", &input);
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "selfhost LSP frame exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stderr(&output), "");
+    let messages = lsp_messages(&output);
+    assert!(
+        messages.iter().any(|message| {
+            message.contains(&uri)
+                && message.contains(r#""code":"E0200""#)
+                && message.contains("typecheck: return type mismatch")
+        }),
+        "messages: {messages:#?}"
+    );
+    let clears = messages
+        .iter()
+        .filter(|message| message.contains(&uri) && message.contains(r#""diagnostics":[]"#))
+        .count();
+    assert_eq!(clears, 2, "messages: {messages:#?}");
 }
 
 #[cfg(target_os = "linux")]
@@ -1246,6 +1329,39 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
         windows_text
     );
 
+    let comptime_type_source = dir.join("comptime-type.tl");
+    let comptime_type_asm = dir.join("comptime-type.s");
+    fs::write(
+        &comptime_type_source,
+        "(define (alloc [comptime T : type] [n : i64]) : (Array i64) (make-array T n))
+(define (main) : (Array i64) (alloc (type i64) 4))
+",
+    )
+    .expect("write comptime type source");
+    let comptime_type_source_arg = comptime_type_source
+        .to_str()
+        .expect("comptime type source path is utf-8");
+    let comptime_type_asm_arg = comptime_type_asm
+        .to_str()
+        .expect("comptime type asm path is utf-8");
+    let comptime_type = Command::new(&driver_bin)
+        .args([comptime_type_source_arg, "-o", comptime_type_asm_arg])
+        .output()
+        .expect("run selfhost compile driver on comptime type source");
+    assert!(
+        comptime_type.status.success(),
+        "selfhost compile comptime type source failed\nstdout:\n{}\nstderr:\n{}",
+        stdout(&comptime_type),
+        stderr(&comptime_type)
+    );
+    let comptime_type_text =
+        fs::read_to_string(&comptime_type_asm).expect("read comptime type asm");
+    assert!(
+        comptime_type_text.contains("__tl_specialized_alloc_type_i64_none"),
+        "comptime type assembly:\n{}",
+        comptime_type_text
+    );
+
     let region_source = dir.join("region-ok.tl");
     let region_asm = dir.join("region-ok.s");
     fs::write(
@@ -1653,6 +1769,48 @@ fn run_forwards_child_output_and_status() {
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 #[test]
+fn run_stdlib_env_fixture_reads_host_environment() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source = manifest_dir.join("stdlib").join("tests").join("env_api.tl");
+    let stdlib_root = manifest_dir.join("stdlib");
+    let source_arg = source.to_str().expect("source path is utf-8");
+    let stdlib_arg = stdlib_root.to_str().expect("stdlib path is utf-8");
+    let path_sep = if cfg!(target_os = "windows") {
+        ";"
+    } else {
+        ":"
+    };
+    let mut args = vec!["run", source_arg, "--stdlib-root", stdlib_arg];
+    if cfg!(target_os = "windows") {
+        args.push("--target");
+        args.push("windows-x86_64");
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .args(args)
+        .env("TYPELISP_STDLIB_TEST_EMPTY", "")
+        .env("TYPELISP_STDLIB_TEST_VALUE", "env-value-854")
+        .env(
+            "TYPELISP_STDLIB_TEST_PATH",
+            format!("one{path_sep}two{path_sep}three"),
+        )
+        .env_remove("TYPELISP_STDLIB_TEST_MISSING_854")
+        .output()
+        .expect("run stdlib env fixture");
+
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "stdlib env fixture exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), "");
+    assert_eq!(stderr(&output), "");
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[test]
 fn run_forwards_stdin_to_child() {
     let dir = fixture_dir("run-forward-stdin");
     let source = dir.join("main.tl");
@@ -1823,6 +1981,73 @@ fn check_rejects_stdlib_allocating_result_escape_from_nested_region() {
   (with-region outer
     (with-region inner
       (string-trim "  scoped  "))))
+"#,
+    )
+    .expect("write source");
+    let source_arg = source.to_str().expect("source path is utf-8");
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let stdlib_root = manifest_dir.join("stdlib");
+    let stdlib_arg = stdlib_root.to_str().expect("stdlib path is utf-8");
+
+    let output = typelisp(&["check", source_arg, "--stdlib-root", stdlib_arg]);
+
+    assert!(!output.status.success());
+    assert_eq!(stdout(&output), "");
+    let stderr = stderr(&output);
+    assert!(
+        stderr.contains("region-tagged value")
+            && stderr.contains("cannot escape with-region 'inner'"),
+        "stderr:\n{}",
+        stderr
+    );
+    assert!(stderr.contains("error[E0200]"), "stderr:\n{}", stderr);
+}
+
+#[test]
+fn check_accepts_stdlib_text_buf_render_used_inside_region() {
+    let dir = fixture_dir("stdlib-text-buf-region-scalar");
+    let source = dir.join("main.tl");
+    fs::write(
+        &source,
+        r#"(import "stdlib/text_buf.tl")
+
+(define (main) : i64
+  (let ([buf : TextBuf (text-buf-append (text-buf-empty) "scoped")])
+    (with-region inner
+      (string-length (text-buf-render buf)))))
+"#,
+    )
+    .expect("write source");
+    let source_arg = source.to_str().expect("source path is utf-8");
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let stdlib_root = manifest_dir.join("stdlib");
+    let stdlib_arg = stdlib_root.to_str().expect("stdlib path is utf-8");
+
+    let output = typelisp(&["check", source_arg, "--stdlib-root", stdlib_arg]);
+
+    assert!(
+        output.status.success(),
+        "text_buf region scalar check failed\nstdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), "Type checking passed!\n");
+    assert_eq!(stderr(&output), "");
+}
+
+#[test]
+fn check_rejects_stdlib_text_buf_render_escape_from_nested_region() {
+    let dir = fixture_dir("stdlib-text-buf-region-escape");
+    let source = dir.join("main.tl");
+    fs::write(
+        &source,
+        r#"(import "stdlib/text_buf.tl")
+
+(define (main) : String
+  (let ([buf : TextBuf (text-buf-append (text-buf-empty) "scoped")])
+    (with-region outer
+      (with-region inner
+        (text-buf-render buf)))))
 "#,
     )
     .expect("write source");

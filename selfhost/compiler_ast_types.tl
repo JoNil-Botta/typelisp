@@ -1,23 +1,13 @@
 ;; compiler_ast_types.tl - Self-hosted model of the real TypeLisp AST (#334).
-
 ;;
-
 ;; This module is intentionally separate from ast_types.tl, which remains the
-
 ;; smaller compile_smoke AST. The types below mirror Rust's src/ast.rs and
-
 ;; src/types.rs closely enough for the future Sexpr -> real-AST parser to target
-
 ;; them without committing to typechecking, lowering, or code generation yet.
-
 ;;
-
 ;; Deferred on purpose: parser result/error wrappers, typechecker registries,
-
 ;; inferred types, and lowered IR metadata. Source spans are represented as data
-
 ;; but later parser work decides when they are populated.
-
 (defstruct AstSourceSpan
   (start-line i64)
   (start-col i64)
@@ -91,7 +81,7 @@
   (AstSomeType AstType))
 
 (defenum AstParam
-  (AstParam String AstType))
+  (AstParam String AstType bool))
 
 (defenum AstParamList
   (AstParamNil)
@@ -163,6 +153,8 @@
   (AstExprForeach String AstType AstExpr AstExpr AstExpr)
   (AstExprStructGet AstExpr String)
   (AstExprWithRegion String AstExprList)
+  ;; Compile-time-only type value literal: `(type T)`.
+  (AstExprTypeLiteral AstType)
   ;; Reserved compile-time evaluation form `(comptime expr)` (#718). Parsed and
   ;; type-checked (as the inner expression's type); evaluation lands in #719.
   (AstExprComptime AstExpr))
@@ -243,7 +235,8 @@
     [(AstExprForeach _ _ _ _ _) 23]
     [(AstExprStructGet _ _) 24]
     [(AstExprWithRegion _ _) 25]
-    [(AstExprComptime _) 26]))
+    [(AstExprTypeLiteral _) 26]
+    [(AstExprComptime _) 27]))
 
 (define (ast-expr-unspan [expr : AstExpr]) : AstExpr
   (match expr
@@ -269,7 +262,7 @@
     [lit : AstLiteral (AstLitInt 41)]
     [one : AstExpr (AstExprLiteral (AstLitInt 1))]
     [expr : AstExpr (AstExprBinary (AstBinAdd) (AstExprLiteral lit) one)]
-    [param : AstParam (AstParam "x" i64-ty)]
+    [param : AstParam (AstParam "x" i64-ty false)]
     [params : AstParamList (AstParamCons param AstParamNil)]
     [decl : AstDecl (AstDeclDefFn "main" params i64-ty expr)]
     [program : AstProgram (AstProgram (AstDeclCons decl AstDeclNil))]

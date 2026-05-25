@@ -87,6 +87,28 @@ TypeLisp compiler artifact. Add Rust tests only when they are explicitly
 temporary stage0 reference coverage, and record the deletion path in the
 coverage map.
 
+### Published stage0 artifact
+
+After each merge to `main`, the `Bootstrap Stage0` workflow publishes Linux and
+Windows compiler binaries to the `stage0-latest` release and to an immutable
+`stage0-*` release. Fetch the compiler with:
+
+```sh
+scripts/fetch-stage0.sh
+TYPELISP_BIN=./target/stage0/typelisp ./scripts/verify-selfhost.sh
+```
+
+Use `scripts/fetch-stage0.sh <stage0-tag>` to pin an immutable artifact. The
+script downloads the host platform asset, verifies the file is non-empty,
+checks `SHA256SUMS` when the release provides it, and installs the binary under
+`target/stage0/`. The script uses release asset URLs instead of fetching git
+tags, so the mutable `stage0-latest` tag cannot be stale or clobber a local tag.
+
+CI should pass this fetched compiler through `TYPELISP_BIN` for no-Rust
+validation. The scripts that still run `cargo build --release` when
+`TYPELISP_BIN` is unset keep that path as a local fallback only until #793/#795
+remove the Rust-owned stage0 dependency.
+
 For new selfhost tests:
 
 - Put structural compiler checks next to the owning module as small helpers or a
@@ -103,17 +125,20 @@ For new selfhost tests:
 - If a temporary Rust test is still needed, update
   `RUST_TEST_COVERAGE.md` in the same PR with the replacement path.
 
-### Linux integration tests
+### Native integration tests
 
-`tests/integration.rs` contains the heavier Linux-only checks that assemble,
-link, and run generated assembly. Use this layer for behavior that only shows up
-after execution: exit status, stdout/stderr, diagnostic rendering, deterministic
-file output, and import-aware driver behavior.
+`scripts/verify-integration.sh` contains the heavier native checks that build
+and run TypeLisp programs outside the Rust harness. Linux uses the explicit
+`compile -> as -> ld` path; Windows Git Bash/MSYS/Cygwin uses `typelisp build
+--target windows-x86_64` and a small PowerShell runner to preserve native
+Windows exit codes. Use this layer for behavior that only shows up after
+execution: exit status, stdout/stderr, diagnostic rendering, deterministic file
+output, and import-aware driver behavior.
 
-The integration harness also runs smoke drivers through explicit build cases.
-When a smoke driver needs another imported module, add the dependency to the
-corresponding staged input list so the Linux integration job exercises the same
-import graph reviewers see locally.
+The integration manifests live in `tests/integration/native-linux.manifest` and
+`tests/integration/native-windows.manifest`. When a program or smoke driver
+needs another imported module, add the dependency to the owning manifest row so
+the no-Rust runner exercises the same import graph reviewers see locally.
 
 ### External compiler corpus
 
@@ -126,12 +151,30 @@ Each new corpus file must be listed in the script manifest. See
 [`selfhost/tests/README.md`](tests/README.md) for the corpus layout and local
 runner commands.
 
+### Stdlib documentation gate
+
+`scripts/verify-stdlib-docs.sh` discovers every `stdlib/*.tl` module, requires
+module and item documentation comments, generates Markdown through
+`typelisp doc`, and runs `typelisp doc --test` with `--stdlib-root`. The script
+is separate from `cargo test` so it can later run against a stage compiler
+artifact and switch to the selfhost doctest path when #865 lands.
+
+### Repository doctest gate
+
+`scripts/verify-doc-tests.sh` discovers documented `.tl` files under
+`stdlib/`, `selfhost/`, `examples/`, and `tests/` by scanning for public
+`;;;;`/`;;;` doc comments or TypeLisp fenced examples, then runs
+`typelisp doc --test` for each file with `--stdlib-root`. This gate is
+intentionally separate from `cargo test` and does not use a hand-maintained file
+manifest, so adding documented TypeLisp source with fenced examples
+automatically adds doctest coverage.
+
 ### CI expectations
 
 Pull requests get Linux and Windows `cargo test` coverage from the main CI test
-jobs. The Linux test job also runs deterministic assembly checks. The separate
-integration job builds a release compiler and runs the TypeLisp source format,
-stdlib, examples, and selfhost verification scripts.
+jobs. The no-Rust checks run through the fetched stage0 compiler where possible:
+native integration manifests, deterministic assembly, selfhost compile
+manifests, TypeLisp source format, stdlib, examples, and selfhost verification.
 
 For a selfhost compiler change, a typical local check is:
 
@@ -143,6 +186,8 @@ cargo test --test tl_compiler_backend_compile
 TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-selfhost-compile-manifest.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/check-tl-format.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-public-tools.sh
+TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-stdlib-docs.sh
+TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-doc-tests.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-selfhost.sh
 ```
 

@@ -1,13 +1,8 @@
 ;; format_core.tl - Generic formatter CST to Doc traversal (#366).
-
 ;;
-
 ;; This module is intentionally syntax-neutral. Special forms get their own
-
 ;; layout rules later; this pass preserves token spelling, delimiter shape, and
-
 ;; comment text while building reusable `Doc` values.
-
 (import "format_tokens.tl")
 
 (import "format_cst.tl")
@@ -21,6 +16,13 @@
 
 (define (format-core-gap) : Doc
   (doc-append (doc-hard-line) (doc-hard-line)))
+
+(define (format-core-forms-separator
+  [previous-comment : bool]
+  [node : FormatCst]) : Doc
+  (if previous-comment
+    (doc-hard-line)
+    (format-core-gap)))
 
 (define (format-core-tail-separator
   [previous-comment : bool]
@@ -60,21 +62,25 @@
         (doc-nest 2 (format-core-list-items-doc items))
         (doc-text close)))))
 
-(define (format-core-forms-tail-doc [items : FormatCstList]) : Doc
+(define (format-core-forms-tail-doc
+  [previous-comment : bool]
+  [items : FormatCstList]) : Doc
   (match items
     [(FmtCstNil) (doc-empty)]
     [(FmtCstCons node rest)
       (doc-append
-        (format-core-gap)
+        (format-core-forms-separator previous-comment node)
         (doc-append
           (format-core-cst-doc node)
-          (format-core-forms-tail-doc rest)))]))
+          (format-core-forms-tail-doc (format-core-node-comment? node) rest)))]))
 
 (define (format-core-forms-doc [items : FormatCstList]) : Doc
   (match items
     [(FmtCstNil) (doc-empty)]
     [(FmtCstCons node rest)
-      (doc-append (format-core-cst-doc node) (format-core-forms-tail-doc rest))]))
+      (doc-append
+        (format-core-cst-doc node)
+        (format-core-forms-tail-doc (format-core-node-comment? node) rest))]))
 
 (define (format-core-cst-doc [node : FormatCst]) : Doc
   (match node
@@ -106,7 +112,7 @@
     [narrow : String (format-core-render-source-width "(alpha beta gamma)" 10)]
     [commented : String (format-core-render-source-width "(a ; note\n b)" 80)]
     [atom : String (format-core-render (FmtCstAtom (FmtSymbol "name")))]
-    (if (string-eq flat "(foo [bar 1] baz)\n\n; leading\n\n(qux)")
+    (if (string-eq flat "(foo [bar 1] baz)\n\n; leading\n(qux)")
       (if (string-eq narrow "(alpha\n  beta\n  gamma)")
         (if (string-eq commented "(a\n  ; note\n  b)")
           (if (string-eq atom "name")

@@ -1,9 +1,6 @@
 ;; compiler_backend_stack_args_fixture.tl - emit the #750 stack-passed call
-
 ;; argument witness program's assembly for a target so the integration suite can
-
 ;; assemble, link, and RUN it, proving each spilled argument arrives correctly.
-
 (import "compiler_backend.tl")
 
 (define (compiler-backend-stack-args-fixture-for-name [target-name : String]) : ResultCompilerBackend

@@ -1,11 +1,7 @@
 ; Exercise substring/string-slice end to end:
-
 ; - "abcdef"[2..2+3] == "cde" and length 3
-
 ; - an empty slice has length 0 and compares equal to ""
-
 ; main returns 3 + 0 + 10 + 20 = 33.
-
 (define (main) : i64
   (let
     [mid : String (substring "abcdef" 2 3)]

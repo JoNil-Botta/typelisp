@@ -1,13 +1,8 @@
 ;; build.tl - Selfhost source-file build host-action planner (#622).
-
 ;;
-
 ;; Emits a private `typelisp-host-plan v1` build-source plan for Rust's
-
 ;; `typelisp debug host-action` / future top-level build routing. Package build
-
 ;; remains Rust-owned in this slice.
-
 (import "host_plan.tl")
 
 (defenum BuildPlanConfig

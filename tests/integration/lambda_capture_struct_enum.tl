@@ -1,19 +1,13 @@
 ; Capturing scalar-field struct and enum values in closure environments (#540).
-
 ; Each case reads scalars out of a captured aggregate; `main` yields 42 only if
-
 ; every case holds. The "returned" cases capture an aggregate whose inline
-
 ; storage is frame-owned in the maker, then read it after the maker returns, so
-
 ; they only pass if the capture snapshots the storage onto the heap.
-
 (defstruct Point
   (x i64)
   (y i64))
 
 ; Struct captured and read while the creator scope is still live.
-
 (define (case-struct-immediate) : bool
   (let
     [p : Point (Point 40 2)]
@@ -21,7 +15,6 @@
     (= (f) 42)))
 
 ; Struct captured by a closure that OUTLIVES the frame that built it.
-
 (define (make-x-reader [p : Point]) : (-> i64)
   (lambda () : i64 (struct-get p x)))
 
@@ -34,9 +27,7 @@
   (Nothing))
 
 ; Enum (scalar payloads) captured by a returned closure, then matched after the
-
 ; maker returns.
-
 (define (make-area [s : Shape]) : (-> i64)
   (lambda
     ()

@@ -1,11 +1,7 @@
 ;; format.tl - Self-hosted formatter CLI driver (#522).
-
 ;;
-
 ;; Usage through the Rust CLI:
-
 ;;   typelisp fmt [--check] input.tl...
-
 (import "format_rules.tl")
 
 (define (fmt-format-file [check : bool] [path : String]) : i64

@@ -1,5 +1,4 @@
 ; Locks down integer wrapping and cast bit semantics.
-
 (define (add8 [a : i8] [b : i8]) : i8
   (+ a b))
 

@@ -119,6 +119,38 @@ fn compiler_typecheck_tl_compiles_to_assembly() {
 }
 
 #[test]
+fn compiler_specialize_tl_compiles_to_assembly() {
+    let asm = compile_selfhost_source(
+        "compiler_specialize.tl",
+        "tl-compiler-specialize-compile-test",
+        "compiler_specialize.s",
+    );
+
+    assert_no_todo(&asm, "compiler_specialize");
+
+    for sym in [
+        "_tl_compiler_specialize_program:",
+        "_tl_compiler_specialize_needed_question:",
+        "_tl_compiler_specialize_self_test:",
+        "_tl_spec_rewrite_specialized_call:",
+        "_tl_spec_ensure_specialization:",
+        "_tl_spec_substitute_types_expr:",
+        "_tl_spec_substitute_values_expr:",
+    ] {
+        assert_symbol(&asm, sym, "compiler_specialize");
+    }
+
+    for message in [
+        "[comptime T : type]",
+        "(type i64)",
+        "__tl_specialized_alloc_type_i64_none",
+        "cannot be used as a runtime value",
+    ] {
+        assert_message(&asm, message, "compiler_specialize");
+    }
+}
+
+#[test]
 fn compiler_typecheck_smoke_tl_compiles_to_assembly() {
     let asm = compile_selfhost_source(
         "compiler_typecheck_smoke.tl",

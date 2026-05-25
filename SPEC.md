@@ -222,7 +222,23 @@ narrower or unsigned integer is required. Floating-point literals are always
 
 There are no explicit type aliases. Identifiers naming enums or structs are resolved to their nominal types during type checking.
 
-### 3.6 Type conversions (casts)
+### 3.6 Abstraction policy: comptime generation, not generics/traits
+
+TypeLisp does not plan Rust-style source-level generics, traits, interfaces,
+`impl` blocks, or generic type constructors such as `Option<T>` and
+`Result<T,E>`. Generic-looking top-level forms are reserved only to produce a
+diagnostic that points users at comptime-generated concrete declarations.
+
+Reusable abstractions should be built by compile-time code that inspects type
+values and emits concrete `defstruct`, `defenum`, `define`, and related
+implementation declarations. The current implementation path is tracked by
+#893 (concrete type and implementation bundles), #913 (type reflection
+primitives), and #483 (stable generated functions/type constructors).
+
+Until that path is complete, write explicit monomorphic declarations such as
+`MaybeI64`, `ResultStringI64`, or domain-specific structs/enums.
+
+### 3.7 Type conversions (casts)
 
 ```lisp test=ignore name=cast-placeholder reason=placeholder
 (cast expr : target_type)
@@ -239,7 +255,7 @@ There are no explicit type aliases. Identifiers naming enums or structs are reso
   currently accepts only integer/char source and target types.
 - No implicit conversions.
 
-### 3.7 Region-tagged types (v1)
+### 3.8 Region-tagged types (v1)
 
 A value allocated inside a `(with-region r ...)` scope carries a **region tag**
 in its type, written `(in r T)` where `r` is the region name and `T` is the
@@ -520,7 +536,7 @@ as the head of the final `cond` arm.
 
 ### 5.12 `(cast expr : type)` — type conversion
 
-See §3.6. Casts currently cover integer/char widening, narrowing, and
+See §3.7. Casts currently cover integer/char widening, narrowing, and
 truncation only; floating-point conversions are deferred.
 
 ### 5.13 `(match scrutinee [pattern expr] ...)` — pattern matching
@@ -798,7 +814,7 @@ nesting `with-region` forms.
 ```
 
 **Static escape checking:** Values allocated inside a region are typed as
-`(in r T)` (see §3.7). The typechecker rejects any attempt to let a
+`(in r T)` (see §3.8). The typechecker rejects any attempt to let a
 region-tagged value escape its scope:
 
 - As the result of the `with-region` form (`(with-region r (make-array i64 5))`).
@@ -1237,8 +1253,9 @@ domain enum and handle every variant with `match`.
      (result-score (read-small "no"))))
 ```
 
-Issue #45 tracks the remaining design work around generics, `?`-style
-propagation, and richer diagnostic payloads.
+Comptime-generated concrete `Option`/`Result` families and implementation
+bundles are tracked by #893/#913/#483. `?`-style propagation and richer
+diagnostic payload policy remain separate language design work.
 
 ---
 

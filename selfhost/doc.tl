@@ -1,19 +1,11 @@
 ;; doc.tl - Self-hosted documentation generator driver (#389, #391).
-
 ;;
-
 ;; Usage through the current compiler runner:
-
 ;;   typelisp run selfhost/doc.tl -- input.tl output.md
-
 ;;   typelisp run selfhost/doc.tl -- entry.tl imported.tl output.md
-
 ;;   typelisp run selfhost/doc.tl -- --html input.tl output.html
-
 ;;   typelisp run selfhost/doc.tl -- --html entry.tl imported.tl output.html
-
 ;;   typelisp run selfhost/doc.tl -- --test input.tl
-
 (import "doc_render.tl")
 
 (import "doc_html.tl")

@@ -1,13 +1,8 @@
 ;; compile.tl - Command-shaped selfhost compile driver (#565).
-
 ;;
-
 ;; Wraps compiler_driver.tl's input/output API with the first selfhost compile
-
 ;; CLI slice: `<file.tl> [-o <file>] [--target <target>]`. Backend-mode/IR/stdlib-root flags
-
 ;; remain Rust-driver-only for now and are rejected explicitly.
-
 (import "compiler_driver_core.tl")
 
 (defenum CompileCliConfig

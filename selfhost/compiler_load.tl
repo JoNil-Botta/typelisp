@@ -1,5 +1,4 @@
 ;; compiler_load.tl - Shared selfhost compiler source/import loader.
-
 (import "compiler_parse_core.tl")
 
 (import "compiler_diagnostic.tl")

@@ -1,5 +1,4 @@
 ; refs #189: a global initialized by a function call is computed before main.
-
 (define (factorial [n : i64]) : i64
   (if (= n 0)
     1

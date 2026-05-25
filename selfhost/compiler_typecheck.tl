@@ -1,8 +1,11 @@
 ;; compiler_typecheck.tl - First scalar typechecker pass over compiler AstProgram (#426).
-
 (import "compiler_symbols.tl")
 
 (import "compiler_diagnostic.tl")
+
+(import "compiler_ctfe.tl")
+
+(import "compiler_specialize.tl")
 
 (defenum TcTypeEnv
   (TcTypeNil)
@@ -47,11 +50,8 @@
   (ErrCompilerTypecheck CompilerDiagnostic))
 
 ;; The typechecker receives an already-loaded program and so does not know the
-
 ;; source path; it builds diagnostics with an empty path (the CLI driver stamps
-
 ;; the real path before rendering). Synthetic/internal errors fall back to 1:1.
-
 (define (tc-diag-at-start [message : String]) : CompilerDiagnostic
   (compiler-diagnostic-at-start "" message))
 
@@ -66,11 +66,8 @@
     [_ (tc-diag-at-start message)]))
 
 ;; Locate an error at the nearest available declaration body span. A top-level
-
 ;; `define` body is wrapped in `AstExprSpanned`, so its span points the
-
 ;; diagnostic at the offending declaration's expression; otherwise fall back 1:1.
-
 (define (tc-decl-diag [decl : AstDecl] [message : String]) : CompilerDiagnostic
   (match decl
     [(AstDeclDef _ _ expr) (tc-expr-diag expr message)]
@@ -109,6 +106,57 @@
 
 (define (tc-fn3 [a : AstType] [b : AstType] [c : AstType] [ret : AstType]) : AstType
   (AstTyFunc (tc-type-list3 a b c) ret))
+
+(define (tc-cat3 [a : String] [b : String] [c : String]) : String
+  (string-append a (string-append b c)))
+
+(define (tc-type-list-render [types : AstTypeList]) : String
+  (match types
+    [(AstTypeNil) ""]
+    [(AstTypeCons head rest)
+      (string-append
+        (tc-type-render head)
+        (match rest
+          [(AstTypeNil) ""]
+          [_ (string-append " " (tc-type-list-render rest))]))]))
+
+(define (tc-type-render [ty : AstType]) : String
+  (match ty
+    [(AstTyI64) "i64"]
+    [(AstTyI32) "i32"]
+    [(AstTyI16) "i16"]
+    [(AstTyI8) "i8"]
+    [(AstTyU64) "u64"]
+    [(AstTyU32) "u32"]
+    [(AstTyU16) "u16"]
+    [(AstTyU8) "u8"]
+    [(AstTyF64) "f64"]
+    [(AstTyF32) "f32"]
+    [(AstTyBool) "bool"]
+    [(AstTyChar) "char"]
+    [(AstTyString) "String"]
+    [(AstTyUnit) "unit"]
+    [(AstTyNever) "never"]
+    [(AstTyFunc args ret)
+      (tc-cat3
+        "(-> "
+        (tc-type-list-render args)
+        (string-append " " (string-append (tc-type-render ret) ")")))]
+    [(AstTyTuple elems) (tc-cat3 "(Tuple " (tc-type-list-render elems) ")")]
+    [(AstTyArray elem count)
+      (tc-cat3
+        "(Array "
+        (tc-type-render elem)
+        (tc-cat3 " " (int->string count) ")"))]
+    [(AstTyDynArray elem) (tc-cat3 "(Array " (tc-type-render elem) ")")]
+    [(AstTyRegion region inner)
+      (tc-cat3
+        "(Region "
+        region
+        (string-append " " (string-append (tc-type-render inner) ")")))]
+    [(AstTyEnum name) name]
+    [(AstTyStruct name) name]
+    [(AstTyVar name) name]))
 
 (define (tc-default-env) : TcTypeEnv
   (let
@@ -282,11 +330,25 @@
                                                                   (AstTyNever)))]
                                                             (tc-bind
                                                               (tc-bind
-                                                                e28
-                                                                "error"
-                                                                (tc-fn1
-                                                                  (AstTyString)
-                                                                  (AstTyNever)))
+                                                                (tc-bind
+                                                                  (tc-bind
+                                                                    (tc-bind
+                                                                      e28
+                                                                      "error"
+                                                                      (tc-fn1
+                                                                        (AstTyString)
+                                                                        (AstTyNever)))
+                                                                    "env-var-exists?"
+                                                                    (tc-fn1
+                                                                      (AstTyString)
+                                                                      (AstTyBool)))
+                                                                  "env-var-value"
+                                                                  (tc-fn1
+                                                                    (AstTyString)
+                                                                    (AstTyString)))
+                                                                "env-path-separator"
+                                                                (tc-fn0
+                                                                  (AstTyString)))
                                                               (tc-default-boundary-name)
                                                               (AstTyUnit))))))))))))))))))))))))))))))))
 
@@ -552,6 +614,241 @@
             [(NoneI64) (AstTyVar name)])])]
     [_ ty]))
 
+(define (tc-source-type-policy-message [name : String]) : String
+  (string-append
+    "typecheck: unknown type "
+    (string-append
+      name
+      "; TypeLisp has no source-level type parameters; use comptime-generated concrete declarations instead (#893/#913/#483)")))
+
+(define (tc-source-type-list-policy-ok [ctx : TcContext] [types : AstTypeList]) : ResultTcUnit
+  (match types
+    [(AstTypeNil) OkTcUnit]
+    [(AstTypeCons head tail)
+      (match (tc-source-type-policy-ok ctx head)
+        [(OkTcUnit) (tc-source-type-list-policy-ok ctx tail)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]))
+
+(define (tc-source-type-policy-ok [ctx : TcContext] [ty : AstType]) : ResultTcUnit
+  (match (tc-resolve-type ctx ty)
+    [(AstTyFunc args ret)
+      (match (tc-source-type-list-policy-ok ctx args)
+        [(OkTcUnit) (tc-source-type-policy-ok ctx ret)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstTyTuple elems) (tc-source-type-list-policy-ok ctx elems)]
+    [(AstTyArray elem _) (tc-source-type-policy-ok ctx elem)]
+    [(AstTyDynArray elem) (tc-source-type-policy-ok ctx elem)]
+    [(AstTyRegion _ inner) (tc-source-type-policy-ok ctx inner)]
+    [(AstTyVar name) (ErrTcUnit (tc-source-type-policy-message name))]
+    [_ OkTcUnit]))
+
+(define (tc-source-maybe-type-policy-ok
+  [ctx : TcContext]
+  [maybe-ty : AstMaybeType]) : ResultTcUnit
+  (match maybe-ty
+    [(AstNoType) OkTcUnit]
+    [(AstSomeType ty) (tc-source-type-policy-ok ctx ty)]))
+
+(define (tc-source-param-list-policy-ok
+  [ctx : TcContext]
+  [params : AstParamList]) : ResultTcUnit
+  (match params
+    [(AstParamNil) OkTcUnit]
+    [(AstParamCons param rest)
+      (match param
+        [(AstParam _ ty _)
+          (match (tc-source-type-policy-ok ctx ty)
+            [(OkTcUnit) (tc-source-param-list-policy-ok ctx rest)]
+            [(ErrTcUnit message) (ErrTcUnit message)])])]))
+
+(define (tc-source-field-list-policy-ok
+  [ctx : TcContext]
+  [fields : AstFieldDefList]) : ResultTcUnit
+  (match fields
+    [(AstFieldDefNil) OkTcUnit]
+    [(AstFieldDefCons field rest)
+      (match field
+        [(AstFieldDef _ ty)
+          (match (tc-source-type-policy-ok ctx ty)
+            [(OkTcUnit) (tc-source-field-list-policy-ok ctx rest)]
+            [(ErrTcUnit message) (ErrTcUnit message)])])]))
+
+(define (tc-source-variant-list-policy-ok
+  [ctx : TcContext]
+  [variants : AstVariantDefList]) : ResultTcUnit
+  (match variants
+    [(AstVariantDefNil) OkTcUnit]
+    [(AstVariantDefCons variant rest)
+      (match variant
+        [(AstVariantDef _ fields)
+          (match (tc-source-type-list-policy-ok ctx fields)
+            [(OkTcUnit) (tc-source-variant-list-policy-ok ctx rest)]
+            [(ErrTcUnit message) (ErrTcUnit message)])])]))
+
+(define (tc-source-pattern-list-policy-ok
+  [ctx : TcContext]
+  [patterns : AstPatternList]) : ResultTcUnit
+  (match patterns
+    [(AstPatternNil) OkTcUnit]
+    [(AstPatternCons pattern rest)
+      (match (tc-source-pattern-policy-ok ctx pattern)
+        [(OkTcUnit) (tc-source-pattern-list-policy-ok ctx rest)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]))
+
+(define (tc-source-pattern-policy-ok [ctx : TcContext] [pattern : AstPattern]) : ResultTcUnit
+  (match pattern
+    [(AstPatVar _ maybe-ty) (tc-source-maybe-type-policy-ok ctx maybe-ty)]
+    [(AstPatTuple patterns) (tc-source-pattern-list-policy-ok ctx patterns)]
+    [(AstPatVariant _ patterns) (tc-source-pattern-list-policy-ok ctx patterns)]
+    [_ OkTcUnit]))
+
+(define (tc-source-match-arm-list-policy-ok
+  [ctx : TcContext]
+  [arms : AstMatchArmList]) : ResultTcUnit
+  (match arms
+    [(AstMatchArmNil) OkTcUnit]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm pattern body)
+          (match (tc-source-pattern-policy-ok ctx pattern)
+            [(OkTcUnit)
+              (match (tc-source-expr-policy-ok ctx body)
+                [(OkTcUnit) (tc-source-match-arm-list-policy-ok ctx rest)]
+                [(ErrTcUnit message) (ErrTcUnit message)])]
+            [(ErrTcUnit message) (ErrTcUnit message)])])]))
+
+(define (tc-source-let-binding-list-policy-ok
+  [ctx : TcContext]
+  [bindings : AstLetBindingList]) : ResultTcUnit
+  (match bindings
+    [(AstLetBindingNil) OkTcUnit]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding _ maybe-ty init)
+          (match (tc-source-maybe-type-policy-ok ctx maybe-ty)
+            [(OkTcUnit)
+              (match (tc-source-expr-policy-ok ctx init)
+                [(OkTcUnit) (tc-source-let-binding-list-policy-ok ctx rest)]
+                [(ErrTcUnit message) (ErrTcUnit message)])]
+            [(ErrTcUnit message) (ErrTcUnit message)])])]))
+
+(define (tc-source-expr-list-policy-ok [ctx : TcContext] [exprs : AstExprList]) : ResultTcUnit
+  (match exprs
+    [(AstExprNil) OkTcUnit]
+    [(AstExprCons expr rest)
+      (match (tc-source-expr-policy-ok ctx expr)
+        [(OkTcUnit) (tc-source-expr-list-policy-ok ctx rest)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]))
+
+(define (tc-source-expr-pair-policy-ok
+  [ctx : TcContext]
+  [left : AstExpr]
+  [right : AstExpr]) : ResultTcUnit
+  (match (tc-source-expr-policy-ok ctx left)
+    [(OkTcUnit) (tc-source-expr-policy-ok ctx right)]
+    [(ErrTcUnit message) (ErrTcUnit message)]))
+
+(define (tc-source-expr-triple-policy-ok
+  [ctx : TcContext]
+  [first : AstExpr]
+  [second : AstExpr]
+  [third : AstExpr]) : ResultTcUnit
+  (match (tc-source-expr-pair-policy-ok ctx first second)
+    [(OkTcUnit) (tc-source-expr-policy-ok ctx third)]
+    [(ErrTcUnit message) (ErrTcUnit message)]))
+
+(define (tc-source-expr-policy-ok [ctx : TcContext] [expr : AstExpr]) : ResultTcUnit
+  (match expr
+    [(AstExprSpanned inner _) (tc-source-expr-policy-ok ctx inner)]
+    [(AstExprBinary _ left right)
+      (tc-source-expr-pair-policy-ok ctx left right)]
+    [(AstExprUnary _ inner) (tc-source-expr-policy-ok ctx inner)]
+    [(AstExprCall func args)
+      (match (tc-source-expr-policy-ok ctx func)
+        [(OkTcUnit) (tc-source-expr-list-policy-ok ctx args)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprIf cond then-branch else-branch)
+      (tc-source-expr-triple-policy-ok ctx cond then-branch else-branch)]
+    [(AstExprLet bindings body)
+      (match (tc-source-let-binding-list-policy-ok ctx bindings)
+        [(OkTcUnit) (tc-source-expr-policy-ok ctx body)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprLambda params maybe-ret body)
+      (match (tc-source-param-list-policy-ok ctx params)
+        [(OkTcUnit)
+          (match (tc-source-maybe-type-policy-ok ctx maybe-ret)
+            [(OkTcUnit) (tc-source-expr-policy-ok ctx body)]
+            [(ErrTcUnit message) (ErrTcUnit message)])]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprTuple exprs) (tc-source-expr-list-policy-ok ctx exprs)]
+    [(AstExprTupleRef tuple _) (tc-source-expr-policy-ok ctx tuple)]
+    [(AstExprArray exprs) (tc-source-expr-list-policy-ok ctx exprs)]
+    [(AstExprMakeArray elem-ty len)
+      (match (tc-source-type-policy-ok ctx elem-ty)
+        [(OkTcUnit) (tc-source-expr-policy-ok ctx len)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprArrayRef array index)
+      (tc-source-expr-pair-policy-ok ctx array index)]
+    [(AstExprArraySet array index value)
+      (tc-source-expr-triple-policy-ok ctx array index value)]
+    [(AstExprStringRef str index) (tc-source-expr-pair-policy-ok ctx str index)]
+    [(AstExprWhile cond body) (tc-source-expr-pair-policy-ok ctx cond body)]
+    [(AstExprBegin exprs) (tc-source-expr-list-policy-ok ctx exprs)]
+    [(AstExprSet _ value) (tc-source-expr-policy-ok ctx value)]
+    [(AstExprAnn inner ty)
+      (match (tc-source-expr-policy-ok ctx inner)
+        [(OkTcUnit) (tc-source-type-policy-ok ctx ty)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprCast inner ty)
+      (match (tc-source-expr-policy-ok ctx inner)
+        [(OkTcUnit) (tc-source-type-policy-ok ctx ty)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprMatch scrutinee arms)
+      (match (tc-source-expr-policy-ok ctx scrutinee)
+        [(OkTcUnit) (tc-source-match-arm-list-policy-ok ctx arms)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprForeach _ index-ty start end body)
+      (match (tc-source-type-policy-ok ctx index-ty)
+        [(OkTcUnit) (tc-source-expr-triple-policy-ok ctx start end body)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprStructGet receiver _) (tc-source-expr-policy-ok ctx receiver)]
+    [(AstExprWithRegion _ body) (tc-source-expr-list-policy-ok ctx body)]
+    [(AstExprComptime inner) (tc-source-expr-policy-ok ctx inner)]
+    [_ OkTcUnit]))
+
+(define (tc-source-decl-policy-ok [ctx : TcContext] [decl : AstDecl]) : ResultTcUnit
+  (match decl
+    [(AstDeclDef _ maybe-ty expr)
+      (match (tc-source-maybe-type-policy-ok ctx maybe-ty)
+        [(OkTcUnit) (tc-source-expr-policy-ok ctx expr)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstDeclDefFn _ params ret body)
+      (match (tc-source-param-list-policy-ok ctx params)
+        [(OkTcUnit)
+          (match (tc-source-type-policy-ok ctx ret)
+            [(OkTcUnit) (tc-source-expr-policy-ok ctx body)]
+            [(ErrTcUnit message) (ErrTcUnit message)])]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstDeclExtern _ ty) (tc-source-type-policy-ok ctx ty)]
+    [(AstDeclDefEnum _ variants)
+      (tc-source-variant-list-policy-ok ctx variants)]
+    [(AstDeclDefStruct _ fields) (tc-source-field-list-policy-ok ctx fields)]
+    [(AstDeclImport _) OkTcUnit]))
+
+(define (tc-source-decl-list-policy-ok [ctx : TcContext] [decls : AstDeclList]) : ResultTcUnit
+  (match decls
+    [(AstDeclNil) OkTcUnit]
+    [(AstDeclCons decl rest)
+      (match (tc-source-decl-policy-ok ctx decl)
+        [(OkTcUnit) (tc-source-decl-list-policy-ok ctx rest)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]))
+
+(define (tc-program-source-types-policy-ok
+  [ctx : TcContext]
+  [program : AstProgram]) : ResultTcUnit
+  (match program
+    [(AstProgram decls) (tc-source-decl-list-policy-ok ctx decls)]))
+
 (define (tc-type-list-eq [a : AstTypeList] [b : AstTypeList]) : bool
   (match a
     [(AstTypeNil)
@@ -752,7 +1049,7 @@
     [(AstParamNil) AstTypeNil]
     [(AstParamCons param rest)
       (match param
-        [(AstParam _ ty)
+        [(AstParam _ ty _)
           (AstTypeCons (tc-resolve-type ctx ty) (tc-param-type-list ctx rest))])]))
 
 (define (tc-type-list-ref [types : AstTypeList] [index : i64]) : ResultTcType
@@ -811,7 +1108,7 @@
     [(AstParamNil) env]
     [(AstParamCons param rest)
       (match param
-        [(AstParam name ty)
+        [(AstParam name ty _)
           (tc-bind-params ctx (tc-bind env name (tc-resolve-type ctx ty)) rest)])]))
 
 (define (tc-top-decl-type [ctx : TcContext] [decl : AstDecl]) : ResultTcType
@@ -1010,7 +1307,11 @@
                                 true
                                 (if (string-eq name "panic")
                                   true
-                                  (string-eq name "error"))))))))))))))))))
+                                  (if (string-eq name "error")
+                                    true
+                                    (if (string-eq name "env-var-exists?")
+                                      true
+                                      (string-eq name "env-var-value"))))))))))))))))))))
 
 (define (tc-default-builtin-unshadowed-scan? [env : TcTypeEnv] [name : String]) : bool
   (match env
@@ -1184,30 +1485,20 @@
     [(ErrTcType message) (ErrTcType message)]))
 
 ;; Whether `name` resolves to any binding in `env` (a builtin, a top-level
-
 ;; user definition, or a local). Used to decide whether an unbound builtin
-
 ;; name like `string-ref`/`char-at` should be treated as the String-index
-
 ;; builtin (unbound) or as an ordinary direct call to a shadowing user
-
 ;; definition (bound). Mirrors the host compiler's shadowing check (#677).
-
 (define (tc-name-bound? [env : TcTypeEnv] [name : String]) : bool
   (match (tc-lookup env name)
     [(OkTcType _) true]
     [(ErrTcType _) false]))
 
 ;; Typecheck the *unshadowed* `(string-ref s i)` / `(char-at s i)` builtin: a
-
 ;; String plus any integer index, yielding `char`. The parser emits this as an
-
 ;; ordinary `Call`; when `string-ref`/`char-at` is not bound to a user function
-
 ;; or local, recover the builtin String-index behavior (and its exact
-
 ;; diagnostics) here rather than via the generic call path (#677).
-
 (define (tc-string-ref-call
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -1328,7 +1619,7 @@
     [(AstParamNil) bound]
     [(AstParamCons param rest)
       (match param
-        [(AstParam name _)
+        [(AstParam name _ _)
           (tc-param-list-add-bound-names rest (tc-string-list-add bound name))])]))
 
 (define (tc-param-bound-names [params : AstParamList]) : TcStringList
@@ -1491,6 +1782,7 @@
     [(AstExprStructGet receiver _)
       (tc-expr-uses-free-name? receiver name bound)]
     [(AstExprWithRegion _ body) (tc-expr-list-uses-free-name? body name bound)]
+    [(AstExprTypeLiteral _) false]
     [(AstExprComptime inner) (tc-expr-uses-free-name? inner name bound)]))
 
 (define (tc-check-lambda-region-captures-scan
@@ -1913,6 +2205,13 @@
     [(AstExprSpanned inner _) (tc-expr ctx env inner)]
     [(AstExprLiteral lit) (OkTcType (tc-literal-type lit))]
     [(AstExprVar name) (tc-lookup env name)]
+    [(AstExprTypeLiteral ty)
+      (ErrTcType
+        (string-append
+          "type value "
+          (string-append
+            (tc-type-render (tc-resolve-type ctx ty))
+            " is compile-time only")))]
     [(AstExprAnn inner ty)
       (match (tc-expr ctx env inner)
         [(OkTcType got)
@@ -2210,9 +2509,22 @@
                   (string-append region "'")))
               (OkTcType body-ty))]
           [(ErrTcType message) (ErrTcType message)]))]
-    ;; `(comptime expr)` in expression position yields the inner expression's
-    ;; type (#718); compile-time evaluation is reserved for #719.
-    [(AstExprComptime inner) (tc-expr ctx env inner)]
+    [(AstExprComptime inner)
+      (match (compiler-ctfe-eval inner (ctfe-env-empty) (ctfe-fuel-limit))
+        [(OkCtfe value _)
+          (match value
+            [(CtfeI64 _) (OkTcType (AstTyI64))]
+            [(CtfeBool _) (OkTcType (AstTyBool))]
+            [(CtfeChar _) (OkTcType (AstTyChar))]
+            [(CtfeUnit) (OkTcType (AstTyUnit))]
+            [(CtfeType ty)
+              (ErrTcType
+                (string-append
+                  "type value "
+                  (string-append
+                    (tc-type-render (tc-resolve-type ctx ty))
+                    " is compile-time only")))])]
+        [(ErrCtfe diag) (ErrTcType (compiler-diagnostic-message diag))])]
     [_ (ErrTcType "typecheck: unsupported expression")]))
 
 (define (tc-summary-add-decl
@@ -2312,7 +2624,7 @@
                 (ErrCompilerTypecheck
                   (compiler-diagnostic-with-path diag decl-path))))]))]))
 
-(define (typecheck-compiler-program-with-paths
+(define (typecheck-compiler-specialized-program-with-paths
   [program : AstProgram]
   [paths : AstDeclPathList]) : ResultCompilerTypecheck
   (match (build-compiler-symbols program)
@@ -2321,22 +2633,41 @@
         [(OkCompilerRegistries registries)
           (let
             [ctx : TcContext (TcContext program symbols registries)]
-            (match (tc-build-top-env ctx program)
-              [(OkTcEnv top-env)
-                (match program
-                  [(AstProgram decls)
-                    (tc-check-decls-with-paths
-                      ctx
-                      top-env
-                      decls
-                      paths
-                      (CompilerTypecheckSummary 0 0 0))])]
-              [(ErrTcEnv message)
+            (match (tc-program-source-types-policy-ok ctx program)
+              [(OkTcUnit)
+                (match (tc-build-top-env ctx program)
+                  [(OkTcEnv top-env)
+                    (match program
+                      [(AstProgram decls)
+                        (tc-check-decls-with-paths
+                          ctx
+                          top-env
+                          decls
+                          paths
+                          (CompilerTypecheckSummary 0 0 0))])]
+                  [(ErrTcEnv message)
+                    (ErrCompilerTypecheck (tc-diag-at-start message))])]
+              [(ErrTcUnit message)
                 (ErrCompilerTypecheck (tc-diag-at-start message))]))]
         [(ErrCompilerRegistries message)
           (ErrCompilerTypecheck (tc-diag-at-start message))])]
     [(ErrCompilerSymbols message)
       (ErrCompilerTypecheck (tc-diag-at-start message))]))
+
+(define (typecheck-compiler-program-with-paths
+  [program : AstProgram]
+  [paths : AstDeclPathList]) : ResultCompilerTypecheck
+  (let
+    [specialized-paths : AstDeclPathList
+      (if (compiler-specialize-needed? program)
+        AstDeclPathNil
+        paths)]
+    (match (compiler-specialize-program program)
+      [(OkSpecProgram specialized)
+        (typecheck-compiler-specialized-program-with-paths
+          specialized
+          specialized-paths)]
+      [(ErrSpecProgram diag) (ErrCompilerTypecheck diag)])))
 
 (define (typecheck-compiler-program [program : AstProgram]) : ResultCompilerTypecheck
   (typecheck-compiler-program-with-paths program AstDeclPathNil))
@@ -2350,17 +2681,23 @@
           [(OkCompilerRegistries registries)
             (let
               [ctx : TcContext (TcContext program symbols registries)]
-              (match (tc-build-top-env ctx program)
-                [(OkTcEnv top-env)
-                  (match (tc-check-decls
-                    ctx
-                    top-env
-                    decls
-                    (CompilerTypecheckSummary 0 0 0))
-                    [(OkCompilerTypecheck _) (tc-expr ctx top-env expr)]
-                    [(ErrCompilerTypecheck diag)
-                      (ErrTcType (compiler-diagnostic-message diag))])]
-                [(ErrTcEnv message) (ErrTcType message)]))]
+              (match (tc-program-source-types-policy-ok ctx program)
+                [(OkTcUnit)
+                  (match (tc-source-expr-policy-ok ctx expr)
+                    [(OkTcUnit)
+                      (match (tc-build-top-env ctx program)
+                        [(OkTcEnv top-env)
+                          (match (tc-check-decls
+                            ctx
+                            top-env
+                            decls
+                            (CompilerTypecheckSummary 0 0 0))
+                            [(OkCompilerTypecheck _) (tc-expr ctx top-env expr)]
+                            [(ErrCompilerTypecheck diag)
+                              (ErrTcType (compiler-diagnostic-message diag))])]
+                        [(ErrTcEnv message) (ErrTcType message)])]
+                    [(ErrTcUnit message) (ErrTcType message)])]
+                [(ErrTcUnit message) (ErrTcType message)]))]
           [(ErrCompilerRegistries message) (ErrTcType message)])]
       [(ErrCompilerSymbols message) (ErrTcType message)])))
 
@@ -2413,6 +2750,9 @@
   "(define (main [flag : bool]) : i64
   (if flag 1 false))")
 
+(define (compiler-typecheck-type-parameter-source) : String
+  "(define (id [x : T]) : T x)")
+
 (define (compiler-typecheck-aggregate-source) : String
   "(define (id-lambda [n : i64]) : i64
   (let
@@ -2442,6 +2782,12 @@
     (if (stdin-eof?)
         (string-length (read-stdin-line))
         (string-length (read-stdin-bytes 3)))))")
+
+(define (compiler-typecheck-env-source) : String
+  "(define (main [name : String]) : String
+  (if (env-var-exists? name)
+    (env-var-value name)
+    (env-path-separator)))")
 
 (define (compiler-typecheck-tuple-oob-source) : String
   "(define (main) : i64 (tuple-ref (tuple 1 true) 2))")
@@ -2477,6 +2823,11 @@
   "(define (main) : (-> i64 i64)
   (lambda ([x : i64]) : i64 true))")
 
+(define (compiler-typecheck-abstraction-policy-tests-ok?) : bool
+  (compiler-typecheck-error-ok?
+    (compiler-typecheck-type-parameter-source)
+    (tc-source-type-policy-message "T")))
+
 (define (compiler-typecheck-aggregate-tests-ok?) : bool
   (and
     (compiler-typecheck-ok-score? (compiler-typecheck-aggregate-source) 20)
@@ -2485,40 +2836,42 @@
       (and
         (compiler-typecheck-ok-score? (compiler-typecheck-stdio-source) 10)
         (and
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-tuple-oob-source)
-            "typecheck: tuple index out of bounds")
+          (compiler-typecheck-ok-score? (compiler-typecheck-env-source) 10)
           (and
             (compiler-typecheck-error-ok?
-              (compiler-typecheck-array-mismatch-source)
-              "typecheck: array elements must have same type")
+              (compiler-typecheck-tuple-oob-source)
+              "typecheck: tuple index out of bounds")
             (and
               (compiler-typecheck-error-ok?
-                (compiler-typecheck-string-index-source)
-                "typecheck: string index must be integer")
+                (compiler-typecheck-array-mismatch-source)
+                "typecheck: array elements must have same type")
               (and
-                (compiler-typecheck-ok-score?
-                  (compiler-typecheck-string-shadow-source)
-                  30)
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-string-index-source)
+                  "typecheck: string index must be integer")
                 (and
-                  (compiler-typecheck-error-ok?
-                    (compiler-typecheck-cast-bad-source)
-                    "typecheck: cast requires integer/char source and target")
+                  (compiler-typecheck-ok-score?
+                    (compiler-typecheck-string-shadow-source)
+                    30)
                   (and
-                    (compiler-typecheck-ok-score?
-                      (compiler-typecheck-char-range-source)
-                      20)
+                    (compiler-typecheck-error-ok?
+                      (compiler-typecheck-cast-bad-source)
+                      "typecheck: cast requires integer/char source and target")
                     (and
                       (compiler-typecheck-ok-score?
-                        (compiler-typecheck-never-branch-source)
-                        10)
+                        (compiler-typecheck-char-range-source)
+                        20)
                       (and
-                        (compiler-typecheck-error-ok?
-                          (compiler-typecheck-foreach-body-source)
-                          "typecheck: foreach body must be unit")
-                        (compiler-typecheck-error-ok?
-                          (compiler-typecheck-lambda-ret-source)
-                          "typecheck: lambda return type mismatch")))))))))))))
+                        (compiler-typecheck-ok-score?
+                          (compiler-typecheck-never-branch-source)
+                          10)
+                        (and
+                          (compiler-typecheck-error-ok?
+                            (compiler-typecheck-foreach-body-source)
+                            "typecheck: foreach body must be unit")
+                          (compiler-typecheck-error-ok?
+                            (compiler-typecheck-lambda-ret-source)
+                            "typecheck: lambda return type mismatch"))))))))))))))
 
 (define (compiler-typecheck-nominal-source) : String
   "(defenum Maybe (None) (Some i64))
@@ -2667,11 +3020,8 @@
                   (compiler-typecheck-region-match-source))))))))))
 
 ;; A type error whose offending expression (`missing`) is on source line 2, so
-
 ;; the diagnostic must locate it there (not at the 1:1 fallback) — proving the
-
 ;; typechecker carries the nearest declaration-body `AstExprSpanned` span (#681).
-
 (define (compiler-typecheck-located-fn-source) : String
   "(define (main) : i64
   missing)")
@@ -2721,8 +3071,10 @@
                 (and
                   (compiler-typecheck-nominal-tests-ok?)
                   (and
-                    (compiler-typecheck-region-tests-ok?)
-                    (compiler-typecheck-located-ok?))))))))
+                    (compiler-typecheck-abstraction-policy-tests-ok?)
+                    (and
+                      (compiler-typecheck-region-tests-ok?)
+                      (compiler-typecheck-located-ok?)))))))))
         42
         (begin
           (panic "typecheck: smoke score mismatch")

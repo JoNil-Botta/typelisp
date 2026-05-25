@@ -22,7 +22,7 @@ use std::process::Command;
 // is exactly what the driver renders via `format-rules-render-source-width src 80`.
 const DECLS_EXPECTED: &str = "(import \"std.tl\")\n\n(extern print-string : (-> String unit))\n\n(defenum Maybe\n  (Some i64)\n  (None))\n\n(defstruct Point\n  (x i64)\n  (y i64))";
 const FLOW_EXPECTED: &str = "(define (main [x : i64]) : i64\n  (begin\n    (let\n      [y : i64 1]\n      (if (< x y)\n        (while (< x 10)\n          (set! x (+ x 1)))\n        x))\n    (match (Some x)\n      [(Some v) v]\n      [None 0])))";
-const COMMENTS_EXPECTED: &str = "(begin\n  ; keep\n  (print-string \"x\"))";
+const COMMENTS_EXPECTED: &str = ";; module header\n;; keeps adjacent lines\n(import \"std.tl\")\n\n;; item docs\n;; stay attached\n(define answer : i64\n  42)\n\n(begin\n  ; keep\n  (print-string \"x\"))";
 const CHAR_LITERAL_EXPECTED: &str = "(define (is-quote [c : char]) : bool\n  (= c #''))";
 const NEGATIVE_INT_EXPECTED: &str = "(define (main) : i64\n  -128)";
 const LET_BINDINGS_EXPECTED: &str = r#"(define (one) : i64

@@ -1,13 +1,8 @@
 ;; run.tl - Selfhost source-file run host-action planner (#622).
-
 ;;
-
 ;; Emits a private `typelisp-host-plan v1` run-source plan for Rust's
-
 ;; `typelisp debug host-action` / future top-level run routing. Rust remains the
-
 ;; process boundary; this driver only parses argv and emits the plan.
-
 (import "host_plan.tl")
 
 (defenum RunPlanConfig

@@ -1,43 +1,29 @@
 ;; compiler_ctfe.tl - Selfhost compile-time function evaluation (CTFE) for
-
 ;; expression-position `(comptime expr)` (#719, scalar subset).
-
 ;;
-
 ;; Ports the scalar slice of the Rust reference `src/ctfe.rs`. Supported
-
-;; compile-time value types are i64, bool, char, and unit. f64 compile-time
-
+;; compile-time value types are i64, bool, char, unit, and type values. f64 compile-time
 ;; evaluation is intentionally out of scope here (the selfhost compiler stores
-
 ;; floats as opaque text with no arithmetic primitives) and is rejected with a
-
 ;; diagnostic citing #735.
-
 ;;
-
 ;; Evaluation is purely functional: the environment is an immutable cons list
-
 ;; threaded through recursion, and the step budget ("fuel") is threaded through
-
 ;; results so the evaluator stays deterministic without a mutable counter.
-
 (import "compiler_ast_types.tl")
 
 (import "compiler_diagnostic.tl")
 
 ;; A compile-time scalar value.
-
 (defenum CompilerCtfeValue
   (CtfeI64 i64)
   (CtfeBool bool)
   (CtfeChar char)
-  (CtfeUnit))
+  (CtfeUnit)
+  (CtfeType AstType))
 
 ;; Immutable name -> value environment. Newest binding sits at the front so
-
 ;; lookup finds the most recent shadowing binding first.
-
 (defenum CtfeEnv
   (CtfeEnvNil)
   (CtfeEnvCons String CompilerCtfeValue CtfeEnv))
@@ -52,7 +38,6 @@
   (CtfeEnvCons name value env))
 
 ;; Lookup result for an environment probe.
-
 (defenum CtfeMaybeValue
   (CtfeNoValue)
   (CtfeSomeValue CompilerCtfeValue))
@@ -66,13 +51,9 @@
         (ctfe-env-lookup rest name))]))
 
 ;; Result of evaluating a sub-expression: either a value (carrying the remaining
-
 ;; fuel) or a diagnostic. Fuel is threaded so each evaluation step decrements a
-
 ;; shared budget across all sub-evaluations, matching the spirit of the Rust
-
 ;; evaluator's per-step 10_000 fuel cap.
-
 (defenum ResultCtfe
   (OkCtfe CompilerCtfeValue i64)
   (ErrCtfe CompilerDiagnostic))
@@ -81,7 +62,6 @@
   10000)
 
 ;; Build a diagnostic anchored at the (possibly spanned) expression.
-
 (define (ctfe-diagnostic-at-expr [expr : AstExpr] [message : String]) : CompilerDiagnostic
   (match expr
     [(AstExprSpanned _ span)
@@ -89,9 +69,7 @@
     [_ (compiler-diagnostic-at-start "" message)]))
 
 ;; Human-readable tag for the unsupported-form diagnostic, mirroring
-
 ;; `describe_expr` in src/ctfe.rs.
-
 (define (ctfe-describe-expr [expr : AstExpr]) : String
   (match expr
     [(AstExprSpanned _ _) "expression"]
@@ -119,6 +97,7 @@
     [(AstExprForeach _ _ _ _ _) "foreach"]
     [(AstExprStructGet _ _) "struct-get"]
     [(AstExprWithRegion _ _) "with-region"]
+    [(AstExprTypeLiteral _) "type literal"]
     [(AstExprComptime _) "comptime"]))
 
 (define (ctfe-value-type-name [value : CompilerCtfeValue]) : String
@@ -126,17 +105,15 @@
     [(CtfeI64 _) "i64"]
     [(CtfeBool _) "bool"]
     [(CtfeChar _) "char"]
-    [(CtfeUnit) "unit"]))
+    [(CtfeUnit) "unit"]
+    [(CtfeType _) "type"]))
 
 ;; Promote a char to its i64 code point so the i64 comparison primitives drive
-
 ;; char ordering/equality, matching Rust's code-point comparison.
-
 (define (ctfe-char-code [c : char]) : i64
   (cast c : i64))
 
 ;; --- literals ---------------------------------------------------------------
-
 (define (ctfe-eval-literal [lit : AstLiteral] [expr : AstExpr] [fuel : i64]) : ResultCtfe
   (match lit
     [(AstLitInt n) (OkCtfe (CtfeI64 n) fuel)]
@@ -155,9 +132,7 @@
           "strings are not supported in compile-time evaluation"))]))
 
 ;; --- binary operators -------------------------------------------------------
-
 ;; i64 arithmetic/bitwise/shift and i64 comparisons.
-
 (define (ctfe-eval-bin-i64
   [op : AstBinOp]
   [a : i64]
@@ -197,7 +172,6 @@
         (ctfe-diagnostic-at-expr expr "'or' in comptime requires bool operands"))]))
 
 ;; bool comparisons and boolean connectives.
-
 (define (ctfe-eval-bin-bool
   [op : AstBinOp]
   [a : bool]
@@ -217,7 +191,6 @@
           "this operation is not supported on bool in compile-time evaluation"))]))
 
 ;; char comparisons via code-point ordering.
-
 (define (ctfe-eval-bin-char
   [op : AstBinOp]
   [a : char]
@@ -241,7 +214,6 @@
             "this operation is not supported on char in compile-time evaluation"))])))
 
 ;; unit comparisons (only `==`/`!=`).
-
 (define (ctfe-eval-bin-unit [op : AstBinOp] [expr : AstExpr] [fuel : i64]) : ResultCtfe
   (match op
     [(AstBinEq) (OkCtfe (CtfeBool true) fuel)]
@@ -253,7 +225,6 @@
           "this operation is not supported on unit in compile-time evaluation"))]))
 
 ;; Dispatch a binary op over two already-evaluated operands.
-
 (define (ctfe-apply-binop
   [op : AstBinOp]
   [lv : CompilerCtfeValue]
@@ -292,10 +263,25 @@
           (ErrCtfe
             (ctfe-diagnostic-at-expr
               expr
+              "binary operation in comptime requires matching operand types"))])]
+    [(CtfeType a)
+      (match rv
+        [(CtfeType b)
+          (match op
+            [(AstBinEq) (OkCtfe (CtfeBool (ctfe-type-eq a b)) fuel)]
+            [(AstBinNe) (OkCtfe (CtfeBool (not (ctfe-type-eq a b))) fuel)]
+            [_
+              (ErrCtfe
+                (ctfe-diagnostic-at-expr
+                  expr
+                  "this operation is not supported on type in compile-time evaluation"))])]
+        [_
+          (ErrCtfe
+            (ctfe-diagnostic-at-expr
+              expr
               "binary operation in comptime requires matching operand types"))])]))
 
 ;; --- unary operators --------------------------------------------------------
-
 (define (ctfe-apply-unop
   [op : AstUnOp]
   [v : CompilerCtfeValue]
@@ -326,13 +312,9 @@
               "bitwise not in comptime requires i64"))])]))
 
 ;; --- core evaluator ---------------------------------------------------------
-
 ;; Evaluate `expr` under `env` with the given remaining `fuel`. Each call
-
 ;; charges one unit of fuel up front (mirroring `use_fuel`); when fuel is
-
 ;; exhausted the evaluation fails deterministically.
-
 (define (compiler-ctfe-eval [expr : AstExpr] [env : CtfeEnv] [fuel : i64]) : ResultCtfe
   (if (<= fuel 0)
     (ErrCtfe
@@ -344,6 +326,7 @@
     [(AstExprSpanned inner _) (compiler-ctfe-eval inner env fuel)]
     [(AstExprComptime inner) (compiler-ctfe-eval inner env fuel)]
     [(AstExprAnn inner _) (compiler-ctfe-eval inner env fuel)]
+    [(AstExprTypeLiteral ty) (OkCtfe (CtfeType ty) fuel)]
     [(AstExprLiteral lit) (ctfe-eval-literal lit expr fuel)]
     [(AstExprVar name) (ctfe-eval-var name expr env fuel)]
     [(AstExprBinary op left right)
@@ -423,11 +406,8 @@
     [(ErrCtfe diag) (ErrCtfe diag)]))
 
 ;; Evaluate `let` bindings sequentially, threading both fuel and the extended
-
 ;; environment. The original `env` is preserved for siblings because each
-
 ;; binding extends a fresh copy threaded forward.
-
 (define (ctfe-eval-let
   [bindings : AstLetBindingList]
   [body : AstExpr]
@@ -448,9 +428,7 @@
             [(ErrCtfe diag) (ErrCtfe diag)])])]))
 
 ;; Evaluate a `begin` to the value of its last expression; an empty body is
-
 ;; unit.
-
 (define (ctfe-eval-begin [exprs : AstExprList] [env : CtfeEnv] [fuel : i64]) : ResultCtfe
   (match exprs
     [(AstExprNil) (OkCtfe (CtfeUnit) fuel)]
@@ -463,14 +441,122 @@
         [(ErrCtfe diag) (ErrCtfe diag)])]))
 
 ;; --- folding ----------------------------------------------------------------
-
 ;; Convert a folded compile-time value into the AST literal that lowering then
-
 ;; materializes through the ordinary literal path.
-
 (define (ctfe-value-to-literal [value : CompilerCtfeValue]) : AstLiteral
   (match value
     [(CtfeI64 n) (AstLitInt n)]
     [(CtfeBool b) (AstLitBool b)]
     [(CtfeChar c) (AstLitChar c)]
-    [(CtfeUnit) (AstLitUnit)]))
+    [(CtfeUnit) (AstLitUnit)]
+    [(CtfeType _) (AstLitUnit)]))
+
+(define (ctfe-type-list-eq [a : AstTypeList] [b : AstTypeList]) : bool
+  (match a
+    [(AstTypeNil)
+      (match b
+        [(AstTypeNil) true]
+        [_ false])]
+    [(AstTypeCons ah at)
+      (match b
+        [(AstTypeCons bh bt)
+          (and (ctfe-type-eq ah bh) (ctfe-type-list-eq at bt))]
+        [_ false])]))
+
+(define (ctfe-type-eq [a : AstType] [b : AstType]) : bool
+  (match a
+    [(AstTyI64)
+      (match b
+        [(AstTyI64) true]
+        [_ false])]
+    [(AstTyI32)
+      (match b
+        [(AstTyI32) true]
+        [_ false])]
+    [(AstTyI16)
+      (match b
+        [(AstTyI16) true]
+        [_ false])]
+    [(AstTyI8)
+      (match b
+        [(AstTyI8) true]
+        [_ false])]
+    [(AstTyU64)
+      (match b
+        [(AstTyU64) true]
+        [_ false])]
+    [(AstTyU32)
+      (match b
+        [(AstTyU32) true]
+        [_ false])]
+    [(AstTyU16)
+      (match b
+        [(AstTyU16) true]
+        [_ false])]
+    [(AstTyU8)
+      (match b
+        [(AstTyU8) true]
+        [_ false])]
+    [(AstTyF64)
+      (match b
+        [(AstTyF64) true]
+        [_ false])]
+    [(AstTyF32)
+      (match b
+        [(AstTyF32) true]
+        [_ false])]
+    [(AstTyBool)
+      (match b
+        [(AstTyBool) true]
+        [_ false])]
+    [(AstTyChar)
+      (match b
+        [(AstTyChar) true]
+        [_ false])]
+    [(AstTyString)
+      (match b
+        [(AstTyString) true]
+        [_ false])]
+    [(AstTyUnit)
+      (match b
+        [(AstTyUnit) true]
+        [_ false])]
+    [(AstTyNever)
+      (match b
+        [(AstTyNever) true]
+        [_ false])]
+    [(AstTyFunc a-args a-ret)
+      (match b
+        [(AstTyFunc b-args b-ret)
+          (and (ctfe-type-list-eq a-args b-args) (ctfe-type-eq a-ret b-ret))]
+        [_ false])]
+    [(AstTyTuple a-elems)
+      (match b
+        [(AstTyTuple b-elems) (ctfe-type-list-eq a-elems b-elems)]
+        [_ false])]
+    [(AstTyArray a-elem a-count)
+      (match b
+        [(AstTyArray b-elem b-count)
+          (and (= a-count b-count) (ctfe-type-eq a-elem b-elem))]
+        [_ false])]
+    [(AstTyDynArray a-elem)
+      (match b
+        [(AstTyDynArray b-elem) (ctfe-type-eq a-elem b-elem)]
+        [_ false])]
+    [(AstTyRegion a-region a-inner)
+      (match b
+        [(AstTyRegion b-region b-inner)
+          (and (string-eq a-region b-region) (ctfe-type-eq a-inner b-inner))]
+        [_ false])]
+    [(AstTyEnum a-name)
+      (match b
+        [(AstTyEnum b-name) (string-eq a-name b-name)]
+        [_ false])]
+    [(AstTyStruct a-name)
+      (match b
+        [(AstTyStruct b-name) (string-eq a-name b-name)]
+        [_ false])]
+    [(AstTyVar a-name)
+      (match b
+        [(AstTyVar b-name) (string-eq a-name b-name)]
+        [_ false])]))

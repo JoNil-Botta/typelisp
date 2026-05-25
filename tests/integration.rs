@@ -54,6 +54,8 @@ const SELFHOST_DOC_DRIVER_DEPS: &[&str] = &[
     "compiler_check_core.tl",
     "compiler_load.tl",
     "compiler_typecheck.tl",
+    "compiler_specialize.tl",
+    "compiler_ctfe.tl",
     "compiler_symbols.tl",
     "compiler_parse_core.tl",
     "compiler_ast_types.tl",
@@ -623,7 +625,15 @@ fn type_lisp_programs_compile_link_and_run() {
             name: "stdlib_json",
             exit_code: 42,
             stdout: "",
-            deps: &["stdlib/json.tl"],
+            deps: &["stdlib/json.tl", "stdlib/text_buf.tl"],
+        },
+        // stdlib/text_buf.tl: arena-aware chunked text buffer for incremental
+        // String construction.
+        Case {
+            name: "stdlib_text_buf",
+            exit_code: 42,
+            stdout: "",
+            deps: &["stdlib/text_buf.tl"],
         },
     ];
 
@@ -1183,7 +1193,15 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             name: "stdlib_json",
             exit_code: 42,
             stdout: "",
-            deps: &["stdlib/json.tl"],
+            deps: &["stdlib/json.tl", "stdlib/text_buf.tl"],
+        },
+        // stdlib/text_buf.tl: text buffer through the explicit compile -> as ->
+        // ld -> run pipeline.
+        Case {
+            name: "stdlib_text_buf",
+            exit_code: 42,
+            stdout: "",
+            deps: &["stdlib/text_buf.tl"],
         },
         // refs #335: selfhost parser from Sexpr into the real compiler AST.
         // The smoke parses a representative multi-declaration source string
@@ -1233,7 +1251,25 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             stdout: "",
             deps: &[
                 "compiler_typecheck.tl",
+                "compiler_specialize.tl",
+                "compiler_ctfe.tl",
                 "compiler_symbols.tl",
+                "compiler_parse_core.tl",
+                "compiler_diagnostic.tl",
+                "compiler_ast_types.tl",
+                "sym_i64_env.tl",
+                "read.tl",
+                "lex.tl",
+                "token.tl",
+            ],
+        },
+        Case {
+            name: "compiler_specialize_smoke",
+            exit_code: 42,
+            stdout: "",
+            deps: &[
+                "compiler_specialize.tl",
+                "compiler_ctfe.tl",
                 "compiler_parse_core.tl",
                 "compiler_diagnostic.tl",
                 "compiler_ast_types.tl",
@@ -1255,6 +1291,8 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
                 "compiler_check_core.tl",
                 "compiler_load.tl",
                 "compiler_typecheck.tl",
+                "compiler_specialize.tl",
+                "compiler_ctfe.tl",
                 "compiler_symbols.tl",
                 "compiler_parse_core.tl",
                 "compiler_diagnostic.tl",
@@ -1275,6 +1313,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             deps: &[
                 "compiler_lower.tl",
                 "compiler_ctfe.tl",
+                "compiler_specialize.tl",
                 "compiler_ir_types.tl",
                 "compiler_typecheck.tl",
                 "compiler_symbols.tl",
@@ -1349,6 +1388,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
                 "compiler_liveness.tl",
                 "compiler_lower.tl",
                 "compiler_ctfe.tl",
+                "compiler_specialize.tl",
                 "compiler_ir_types.tl",
                 "compiler_typecheck.tl",
                 "compiler_symbols.tl",
@@ -1384,6 +1424,8 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
                 "compiler_check_core.tl",
                 "compiler_load.tl",
                 "compiler_typecheck.tl",
+                "compiler_specialize.tl",
+                "compiler_ctfe.tl",
                 "compiler_symbols.tl",
                 "compiler_parse_core.tl",
                 "compiler_ast_types.tl",
@@ -1459,6 +1501,7 @@ fn selfhost_backend_stack_args_emit_assemble_link_and_run() {
             "compiler_liveness.tl",
             "compiler_lower.tl",
             "compiler_ctfe.tl",
+            "compiler_specialize.tl",
             "compiler_ir_types.tl",
             "compiler_typecheck.tl",
             "compiler_symbols.tl",
@@ -1653,6 +1696,10 @@ fn selfhost_backend_runtime_helpers_emit_assemble_link_and_run() {
 }
 
 #[test]
+#[cfg_attr(
+    debug_assertions,
+    ignore = "debug stage0 bootstrap exceeds the ubuntu cargo-test budget; release fixpoint coverage runs through scripts/check-bootstrap-fixpoint.sh"
+)]
 fn selfhost_compile_tl_emitted_binary_links_and_emits_stage2() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let work_dir = manifest_dir
@@ -1802,6 +1849,7 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
             "compiler_optimize.tl",
             "compiler_lower.tl",
             "compiler_ctfe.tl",
+            "compiler_specialize.tl",
             "compiler_ir_types.tl",
             "compiler_typecheck.tl",
             "compiler_symbols.tl",
@@ -1942,11 +1990,11 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
     );
     for snippet in [
         ".text\n.globl _start\n",
-        "_tl_shared:\n",
-        "_tl_helper:\n",
+        "_tl_shared_u2etl_colon_colonshared:\n",
+        "_tl_helper_u2etl_colon_colonhelper:\n",
         "main:\n",
-        "    call _tl_helper\n",
-        "_tl_shared(%rip)",
+        "    call _tl_helper_u2etl_colon_colonhelper\n",
+        "_tl_shared_u2etl_colon_colonshared(%rip)",
         "_start:\n    call main\n",
     ] {
         assert!(
@@ -2108,6 +2156,11 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
         stdlib_dir.join("json.tl"),
     )
     .expect("copy stdlib/json.tl for compiler_driver fixture");
+    fs::copy(
+        manifest_dir.join("stdlib").join("text_buf.tl"),
+        stdlib_dir.join("text_buf.tl"),
+    )
+    .expect("copy stdlib/text_buf.tl for compiler_driver fixture");
 
     let json_input_path = work_dir.join("json_input.tl");
     let json_asm_path = work_dir.join("json_generated.s");
@@ -2155,9 +2208,9 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
     let json_asm =
         fs::read_to_string(&json_asm_path).expect("read compiler_driver stdlib JSON assembly");
     for snippet in [
-        "_tl_json_parse:",
-        "_tl_json_stringify:",
-        "_tl_json_parse_object:",
+        "_tl_stdlib_slashjson_u2etl_colon_colonjson_parse:",
+        "_tl_stdlib_slashjson_u2etl_colon_colonjson_stringify:",
+        "_tl_stdlib_slashjson_u2etl_colon_colonjson_parse_object:",
     ] {
         assert!(
             json_asm.contains(snippet),
@@ -2404,6 +2457,8 @@ fn selfhost_check_driver_reports_success_and_errors() {
             "compiler_check_core.tl",
             "compiler_load.tl",
             "compiler_typecheck.tl",
+            "compiler_specialize.tl",
+            "compiler_ctfe.tl",
             "compiler_symbols.tl",
             "compiler_parse_core.tl",
             "compiler_diagnostic.tl",
@@ -5043,6 +5098,40 @@ fn user_defined_file_exists_predicate_name_assembles() {
     );
 }
 
+#[test]
+fn stdlib_env_fixture_reads_host_environment() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source = manifest_dir.join("stdlib").join("tests").join("env_api.tl");
+    let stdlib_root = manifest_dir.join("stdlib");
+    let path_sep = if cfg!(windows) { ";" } else { ":" };
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&source)
+        .arg("--stdlib-root")
+        .arg(&stdlib_root)
+        .env("TYPELISP_STDLIB_TEST_EMPTY", "")
+        .env("TYPELISP_STDLIB_TEST_VALUE", "env-value-854")
+        .env(
+            "TYPELISP_STDLIB_TEST_PATH",
+            format!("one{path_sep}two{path_sep}three"),
+        )
+        .env_remove("TYPELISP_STDLIB_TEST_MISSING_854")
+        .output()
+        .expect("run stdlib env fixture");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "stdlib env fixture exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert_eq!(stdout, "", "stdlib env fixture wrote stdout");
+    assert_eq!(stderr, "", "stdlib env fixture wrote stderr");
+}
+
 fn run_stdin_fixture(
     work_name: &str,
     source_name: &str,
@@ -5203,6 +5292,7 @@ fn source_path_for_case(manifest_dir: &PathBuf, name: &str) -> PathBuf {
         "compiler_parse_smoke" => "compiler_parse_smoke.tl",
         "compiler_symbols_smoke" => "compiler_symbols_smoke.tl",
         "compiler_typecheck_smoke" => "compiler_typecheck_smoke.tl",
+        "compiler_specialize_smoke" => "compiler_specialize_smoke.tl",
         "compiler_check_smoke" => "compiler_check_smoke.tl",
         "compiler_lower_smoke" => "compiler_lower_smoke.tl",
         "compiler_liveness_smoke" => "compiler_liveness_smoke.tl",
@@ -5255,6 +5345,9 @@ fn dep_source_path(manifest_dir: &Path, source_dir: &Path, dep: &str) -> PathBuf
     }
     if dep == "stdlib/json.tl" {
         return manifest_dir.join("stdlib").join("json.tl");
+    }
+    if dep == "stdlib/text_buf.tl" {
+        return manifest_dir.join("stdlib").join("text_buf.tl");
     }
     source_dir.join(dep)
 }

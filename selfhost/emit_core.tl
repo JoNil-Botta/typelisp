@@ -1,5 +1,4 @@
 ;; emit_core.tl - Main-less M1 assembly emitter shared by demos/tests (#163).
-
 (import "ast_types.tl")
 
 (import "sym_i64_env.tl")
@@ -605,9 +604,7 @@
                         (string-append "    movq $60, %rax\n" "    syscall\n")))))))))))))
 
 ;; emit-program-with-defs: emit user `define` blocks before the entry wrapper.
-
 ;; `emit-program` stays as the no-define compatibility wrapper.
-
 (define (emit-program-with-defs [defs : ItemList] [e : Expr]) : String
   (let
     [frame : i64 (frame-size e)]

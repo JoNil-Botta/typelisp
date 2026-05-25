@@ -245,7 +245,9 @@ case|selfhost_compiler_parse_core|selfhost/compiler_parse_core.tl|assembly|skip|
 contains|_tl_parse_ast_source:
 contains|_tl_parse_ast_program:
 contains|_tl_parse_ast_decl:
+contains|_tl_compiler_parse_abstraction_policy_message:
 contains|parse: malformed define
+contains|source-level generics or traits
 end
 
 case|selfhost_compiler_parse_smoke|selfhost/compiler_parse_smoke.tl|assembly|exactly-one|direct
@@ -264,6 +266,18 @@ contains|_tl_compiler_regalloc_self_test:
 contains|_tl_compiler_reg_plan_function:
 end
 
+case|selfhost_compiler_specialize|selfhost/compiler_specialize.tl|assembly|skip|direct
+contains|_tl_compiler_specialize_program:
+contains|_tl_compiler_specialize_self_test:
+contains|__tl_specialized_alloc_type_i64_none
+contains|specialize: expected type value
+end
+
+case|selfhost_compiler_specialize_smoke|selfhost/compiler_specialize_smoke.tl|assembly|exactly-one|direct
+contains|_tl_compiler_specialize_self_test:
+contains|_tl_compiler_specialize_program:
+end
+
 case|selfhost_compiler_symbols|selfhost/compiler_symbols.tl|assembly|skip|direct
 contains|_tl_compiler_symbols_add_decl:
 contains|_tl_compiler_symbols_self_test:
@@ -278,7 +292,9 @@ end
 case|selfhost_compiler_typecheck|selfhost/compiler_typecheck.tl|assembly|skip|direct
 contains|_tl_typecheck_compiler_program:
 contains|_tl_compiler_typecheck_self_test:
+contains|_tl_tc_source_type_policy_message:
 contains|typecheck: return type mismatch
+contains|source-level type parameters
 end
 
 case|selfhost_compiler_typecheck_smoke|selfhost/compiler_typecheck_smoke.tl|assembly|exactly-one|direct
@@ -446,7 +462,11 @@ end
 case|selfhost_lsp_frame|selfhost/lsp_frame.tl|assembly|skip|direct
 contains|_tl_lsp_frame_parse_content_length:
 contains|_tl_lsp_frame_read_message:
+contains|_tl_lsp_handle_message:
+contains|_tl_lsp_analyze_document:
 contains|Content-Length
+contains|textDocument/publishDiagnostics
+contains|Method not found
 end
 
 case|selfhost_parse|selfhost/parse.tl|assembly|exactly-one|direct

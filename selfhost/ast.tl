@@ -1,5 +1,4 @@
 ;; ast.tl - Sexpr -> compiler AST parser for the M1 self-hosting slice (#154).
-
 (import "ast_types.tl")
 
 (import "read.tl")
@@ -72,11 +71,8 @@
         (EInt 0))]))
 
 ;; parse-if (#167): project `(if c t e)` onto `(EIf c t e)`. The argument spine
-
 ;; must be exactly three forms (cond, then, else); any other shape is malformed
-
 ;; input and aborts via `panic`, matching `parse-let`'s discipline.
-
 (define (parse-if [rest : Sexpr]) : Expr
   (match rest
     [(SCons c (SCons t (SCons e (SNil))))

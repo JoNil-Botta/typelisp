@@ -1,29 +1,17 @@
 ;; doc_extract.tl - Self-hosted TypeLisp doc comment extractor (#387).
-
 ;;
-
 ;; Public docs use Rust-style semicolon levels:
-
 ;;   ;;;; module/file doc line, collected separately
-
 ;;   ;;;  outer item doc line, attached to the next supported top-level item
-
 ;;   ;;   ordinary comment, ignored
-
 ;;   ;    ordinary comment, ignored
-
 ;;
-
-;; Item doc lines must be contiguous. A blank line, ordinary comment, module
-
-;; doc, unsupported top-level form, or other source text clears pending item
-
-;; docs. Pending item docs at EOF are ignored. Declaration identities are read
-
+;; Item doc lines stay pending across blank physical lines because the
+;; self-hosted formatter may separate doc comment lines. Ordinary comments,
+;; module docs, unsupported top-level forms, or other source text clear pending
+;; item docs. Pending item docs at EOF are ignored. Declaration identities are read
 ;; from the captured top-level form with the formatter token lexer so original
-
 ;; source text remains available as the item signature.
-
 (import "format_tokens.tl")
 
 (defenum DocItemKind
@@ -360,10 +348,7 @@
           (let
             [line-start : i64 (doc-first-nonspace src i line-end)]
             (if (= line-start line-end)
-              (begin
-                (set! pending-doc "")
-                (set! pending-has false)
-                (set! i (doc-next-line-start src line-end n)))
+              (set! i (doc-next-line-start src line-end n))
               (let
                 [c : char (string-ref src line-start)]
                 (if (= c #;')
@@ -431,8 +416,8 @@
 ;;; still answer
 (define answer : i64 42)
 
-;;; lost before blank
-
+;;; lost before ordinary comment
+;; ordinary comment clears pending docs
 (define missed : i64 0)
 ;;; function doc
 (define (main [argc : i64]) : i64
@@ -440,6 +425,7 @@
 ; ordinary comment clears pending docs
 ;;; enum doc
 (defenum Maybe (None) (Some i64))
+
 ;;;; later module
 ;;; external doc
 (extern print : (-> String unit))

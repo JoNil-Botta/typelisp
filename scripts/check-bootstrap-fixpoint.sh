@@ -40,6 +40,8 @@ if [ "$#" -eq 1 ]; then
 elif [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
+    # Fallback only for local development; CI should pass a fetched stage0
+    # compiler through TYPELISP_BIN until #793/#795 remove Rust stage0.
     cargo build --release --quiet
     COMPILER="$ROOT/target/release/typelisp"
 fi
@@ -48,6 +50,31 @@ if [ ! -x "$COMPILER" ]; then
     echo "typelisp compiler is not executable: $COMPILER" >&2
     exit 1
 fi
+
+HEARTBEAT_SECONDS=${TYPELISP_BOOTSTRAP_HEARTBEAT_SECONDS:-30}
+
+run_with_heartbeat() {
+    heartbeat_label=$1
+    shift
+
+    "$@" &
+    heartbeat_cmd_pid=$!
+    (
+        while kill -0 "$heartbeat_cmd_pid" 2>/dev/null; do
+            sleep "$HEARTBEAT_SECONDS"
+            if kill -0 "$heartbeat_cmd_pid" 2>/dev/null; then
+                echo "[bootstrap] ${heartbeat_label} still running"
+            fi
+        done
+    ) &
+    heartbeat_pid=$!
+
+    heartbeat_status=0
+    wait "$heartbeat_cmd_pid" || heartbeat_status=$?
+    kill "$heartbeat_pid" 2>/dev/null || true
+    wait "$heartbeat_pid" 2>/dev/null || true
+    return "$heartbeat_status"
+}
 
 WORKDIR="$ROOT/target/bootstrap-fixpoint"
 rm -rf "$WORKDIR"
@@ -62,21 +89,21 @@ STAGE2_BIN="$WORKDIR/stage2"
 STAGE3_ASM="$WORKDIR/stage3.s"
 
 echo "[bootstrap] stage0 -> stage1.s"
-"$COMPILER" compile selfhost/compile.tl -o "$STAGE1_ASM"
+run_with_heartbeat "stage0 -> stage1.s" "$COMPILER" compile selfhost/compile.tl -o "$STAGE1_ASM"
 
 echo "[bootstrap] link stage1"
 as "$STAGE1_ASM" -o "$STAGE1_OBJ"
 ld "$STAGE1_OBJ" -o "$STAGE1_BIN"
 
 echo "[bootstrap] stage1 -> stage2.s"
-"$STAGE1_BIN" selfhost/compile.tl -o "$STAGE2_ASM"
+run_with_heartbeat "stage1 -> stage2.s" "$STAGE1_BIN" selfhost/compile.tl -o "$STAGE2_ASM"
 
 echo "[bootstrap] link stage2"
 as "$STAGE2_ASM" -o "$STAGE2_OBJ"
 ld "$STAGE2_OBJ" -o "$STAGE2_BIN"
 
 echo "[bootstrap] stage2 -> stage3.s"
-"$STAGE2_BIN" selfhost/compile.tl -o "$STAGE3_ASM"
+run_with_heartbeat "stage2 -> stage3.s" "$STAGE2_BIN" selfhost/compile.tl -o "$STAGE3_ASM"
 
 echo "[bootstrap] compare stage2.s and stage3.s"
 if ! cmp -s "$STAGE2_ASM" "$STAGE3_ASM"; then

@@ -1,17 +1,10 @@
 ;; compiler_symbols.tl - Top-level compiler symbol table over AstProgram (#405).
-
 ;;
-
 ;; This is intentionally an assoc-list slice over SymI64Env, not the future
-
 ;; hash-table work from #42. Handles are packed as kind * stride + declaration
-
 ;; index, where index is the source-order position among supported declarations.
-
 ;; Import declarations have no top-level symbol name here and do not consume an
-
 ;; index.
-
 (import "compiler_parse_core.tl")
 
 (import "sym_i64_env.tl")

@@ -17,6 +17,8 @@ WORKDIR=${TYPELISP_COMPILE_MANIFEST_WORKDIR:-target/selfhost-compile-manifest}
 if [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
+    # Fallback only for local development; CI should pass a fetched stage0
+    # compiler through TYPELISP_BIN until #793/#795 remove Rust stage0.
     cargo build --quiet
     COMPILER="$ROOT/target/debug/typelisp"
 fi
@@ -109,7 +111,7 @@ ensure_compiled() {
 
     echo "[selfhost-compile] $case_id ($case_source)"
     set +e
-    "$COMPILER" compile "$compile_source" -o "$asm_path" > "$out_path" 2> "$err_path"
+    "$COMPILER" compile "$compile_source" --stdlib-root "$ROOT/stdlib" -o "$asm_path" > "$out_path" 2> "$err_path"
     code=$?
     set -e
     if [ "$code" -ne 0 ]; then

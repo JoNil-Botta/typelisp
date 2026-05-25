@@ -1,13 +1,8 @@
 ;; format_rules.tl - TypeLisp-aware formatter rules (#367).
-
 ;;
-
 ;; `format_core.tl` stays syntax-neutral. This module adds a deterministic
-
 ;; gofmt-like first pass for common TypeLisp special forms while still building
-
 ;; `Doc` values for width-aware rendering.
-
 (import "format_tokens.tl")
 
 (import "format_cst.tl")
@@ -34,6 +29,13 @@
 
 (define (format-rules-gap) : Doc
   (doc-append (doc-hard-line) (doc-hard-line)))
+
+(define (format-rules-forms-separator
+  [previous-comment : bool]
+  [node : FormatCst]) : Doc
+  (if previous-comment
+    (doc-hard-line)
+    (format-rules-gap)))
 
 (define (format-rules-space [doc : Doc]) : Doc
   (doc-append (doc-text " ") doc))
@@ -296,15 +298,17 @@
     [(FmtCstNil) (format-rules-delimited-doc "(" FmtCstNil ")")]
     [(FmtCstCons head rest) (format-rules-special-list-doc head rest)]))
 
-(define (format-rules-forms-tail-doc [items : FormatCstList]) : Doc
+(define (format-rules-forms-tail-doc
+  [previous-comment : bool]
+  [items : FormatCstList]) : Doc
   (match items
     [(FmtCstNil) (doc-empty)]
     [(FmtCstCons node rest)
       (doc-append
-        (format-rules-gap)
+        (format-rules-forms-separator previous-comment node)
         (doc-append
           (format-rules-cst-doc node)
-          (format-rules-forms-tail-doc rest)))]))
+          (format-rules-forms-tail-doc (format-rules-node-comment? node) rest)))]))
 
 (define (format-rules-forms-doc [items : FormatCstList]) : Doc
   (match items
@@ -312,7 +316,7 @@
     [(FmtCstCons node rest)
       (doc-append
         (format-rules-cst-doc node)
-        (format-rules-forms-tail-doc rest))]))
+        (format-rules-forms-tail-doc (format-rules-node-comment? node) rest))]))
 
 (define (format-rules-cst-doc [node : FormatCst]) : Doc
   (match node
@@ -350,10 +354,28 @@
   "(define (main [x : i64]) : i64\n  (begin\n    (let\n      [y : i64 1]\n      (if (< x y)\n        (while (< x 10)\n          (set! x (+ x 1)))\n        x))\n    (match (Some x)\n      [(Some v) v]\n      [None 0])))")
 
 (define (format-rules-comments-source) : String
-  "(begin ; keep\n (print-string \"x\"))")
+  ";; module header
+;; keeps adjacent lines
+(import \"std.tl\")
+;; item docs
+;; stay attached
+(define answer : i64 42)
+(begin ; keep
+ (print-string \"x\"))")
 
 (define (format-rules-comments-expected) : String
-  "(begin\n  ; keep\n  (print-string \"x\"))")
+  ";; module header
+;; keeps adjacent lines
+(import \"std.tl\")
+
+;; item docs
+;; stay attached
+(define answer : i64
+  42)
+
+(begin
+  ; keep
+  (print-string \"x\"))")
 
 (define (format-rules-self-test) : i64
   (let

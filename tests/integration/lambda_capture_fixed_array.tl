@@ -1,13 +1,8 @@
 ; Capturing top-level scalar-element fixed `(Array T N)` values in closure
-
 ; environments (#571). `main` yields 42 only if every case holds. The
-
 ; "returned" case captures a fixed array whose inline storage is frame-owned in
-
 ; the maker, then reads it after the maker returns, so it only passes if the
-
 ; capture snapshots the storage onto the heap.
-
 (define (make-reader) : (-> i64)
   (let
     [a : (Array i64 3) (array 40 1 1)]

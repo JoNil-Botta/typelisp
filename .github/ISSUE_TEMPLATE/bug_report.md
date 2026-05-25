@@ -20,6 +20,11 @@ What should happen.
 **Actual behavior**
 What actually happens. Include full compiler output.
 
+**Selfhost implementation target**
+If this affects compiler, tooling, runtime, or stdlib behavior, where should the
+TypeLisp-owned fix or regression fixture live? Prefer `selfhost/...` or
+`stdlib/...`. If Rust must change temporarily, link the no-Rust migration issue.
+
 **Environment**
 - OS:
 - Rust version (`rustc --version`):

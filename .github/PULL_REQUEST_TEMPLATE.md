@@ -11,6 +11,15 @@ Fixes #(issue number)
 - [ ] Documentation
 - [ ] Refactor
 
+## Selfhost Impact
+- Target TypeLisp path (`selfhost/...`, `stdlib/...`, or `n/a`):
+- Selfhost tests run:
+- Stdlib tests run:
+- Rust-owned change:
+  - [ ] No Rust-owned feature surface changed
+  - [ ] Temporary bootstrap exception
+- Selfhost-Guardrail: none
+
 ## Checklist
 - [ ] `cargo test` passes
 - [ ] CI passes

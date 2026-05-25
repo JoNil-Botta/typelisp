@@ -51,14 +51,12 @@ fn windows_target_compiles_links_and_runs_native_executables() {
 #[test]
 fn selfhost_backend_windows_runtime_helpers_emit_assemble_link_and_run() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let fixture_path = manifest_dir
-        .join("selfhost")
-        .join("compiler_backend_runtime_fixture.tl");
     let work_dir = manifest_dir
         .join("target")
         .join("windows-native-tests")
         .join("selfhost_backend_runtime_helpers");
     fs::create_dir_all(&work_dir).expect("create selfhost Windows runtime helper test dir");
+    let fixture_path = copy_selfhost_tl_sources(&manifest_dir, &work_dir);
 
     let asm_path = work_dir.join("runtime_helpers.s");
     let obj_path = work_dir.join("runtime_helpers.obj");
@@ -344,6 +342,34 @@ fn selfhost_compile_driver_runs_as_windows_native_executable() {
         "invalid target should not write assembly"
     );
 
+    let comptime_type_source = work_dir.join("comptime-type.tl");
+    let comptime_type_asm = work_dir.join("comptime-type.s");
+    fs::write(
+        &comptime_type_source,
+        "(define (alloc [comptime T : type] [n : i64]) : (Array i64) (make-array T n))
+(define (main) : (Array i64) (alloc (type i64) 4))
+",
+    )
+    .expect("write comptime type source");
+    let comptime_type = Command::new(&driver_bin)
+        .arg(&comptime_type_source)
+        .arg("-o")
+        .arg(&comptime_type_asm)
+        .output()
+        .expect("run selfhost compile driver on comptime type source");
+    assert!(
+        comptime_type.status.success(),
+        "selfhost compile driver rejected comptime type source\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&comptime_type.stdout),
+        String::from_utf8_lossy(&comptime_type.stderr)
+    );
+    let comptime_type_text =
+        fs::read_to_string(&comptime_type_asm).expect("read comptime type assembly");
+    assert!(
+        comptime_type_text.contains("__tl_specialized_alloc_type_i64_none"),
+        "assembly:\n{comptime_type_text}"
+    );
+
     let bad_source = work_dir.join("bad.tl");
     let bad_asm = work_dir.join("bad.s");
     fs::write(&bad_source, "(define (main) : i64 true)\n").expect("write bad source");
@@ -365,6 +391,159 @@ fn selfhost_compile_driver_runs_as_windows_native_executable() {
         !bad_asm.exists(),
         "failing selfhost compile should not write assembly"
     );
+}
+
+#[test]
+fn selfhost_backend_windows_driver_primitives_emit_assemble_link_and_run() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let work_dir = manifest_dir
+        .join("target")
+        .join("windows-native-tests")
+        .join("selfhost_backend_driver_primitives");
+    fs::create_dir_all(&work_dir).expect("create selfhost Windows driver primitive test dir");
+    let fixture_path = copy_selfhost_tl_sources(&manifest_dir, &work_dir);
+
+    let asm_path = work_dir.join("driver_primitives.s");
+    let obj_path = work_dir.join("driver_primitives.obj");
+    let bin_path = work_dir.join("driver_primitives.exe");
+    let input_path = work_dir.join("input.txt");
+    let output_path = work_dir.join("output.txt");
+    fs::write(&input_path, "41").expect("write Windows driver primitive input");
+    let _ = fs::remove_file(&output_path);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&fixture_path)
+        .arg("--target")
+        .arg("windows-x86_64")
+        .arg("--")
+        .arg(&asm_path)
+        .arg("windows-driver-primitives")
+        .output()
+        .expect("run selfhost backend driver primitive fixture for Windows target");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "selfhost Windows driver primitive fixture failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let asm = fs::read_to_string(&asm_path)
+        .expect("read selfhost Windows driver primitive assembly")
+        .replace("\r\n", "\n")
+        .replace('\r', "\n");
+    for snippet in [
+        ".globl main\n",
+        ".L_tl_arg_count:\n",
+        ".L_tl_arg:\n",
+        ".L_tl_read_file:\n",
+        ".L_tl_write_file:\n",
+        ".L_tl_file_exists:\n",
+        "tl_print_err:\n",
+        "tl_string_eq:\n",
+        "tl_string_to_int:\n",
+        "tl_int_to_string:\n",
+        "    movq %rcx, .L_tl_argc(%rip)\n",
+        "    movq %rdx, .L_tl_argv(%rip)\n",
+        "    .extern _open\n",
+        "    .extern _lseeki64\n",
+        "    .extern _close\n",
+        "    .extern _access\n",
+        "    call _open\n",
+        "    call _lseeki64\n",
+        "    call _read\n",
+        "    call _write\n",
+        "    call _close\n",
+        "    call _access\n",
+    ] {
+        assert!(
+            asm.contains(snippet),
+            "selfhost Windows driver primitive assembly missing {:?}:\n{}",
+            snippet,
+            asm
+        );
+    }
+    assert!(!asm.contains("    syscall"), "asm:\n{}", asm);
+    assert!(!asm.contains("\n_start:"), "asm:\n{}", asm);
+    for helper in [
+        ".extern .L_tl_arg_count\n",
+        ".extern .L_tl_arg\n",
+        ".extern .L_tl_read_file\n",
+        ".extern .L_tl_write_file\n",
+        ".extern .L_tl_file_exists\n",
+        ".extern tl_print_err\n",
+        ".extern tl_string_eq\n",
+        ".extern tl_string_to_int\n",
+        ".extern tl_int_to_string\n",
+    ] {
+        assert!(
+            !asm.contains(helper),
+            "runtime helper should be defined inline, not extern: {helper}\n{asm}"
+        );
+    }
+
+    let status = Command::new("clang")
+        .arg("--target=x86_64-pc-windows-msvc")
+        .arg("-c")
+        .arg(&asm_path)
+        .arg("-o")
+        .arg(&obj_path)
+        .status()
+        .expect("assemble selfhost Windows driver primitive output");
+    assert!(
+        status.success(),
+        "assembling selfhost Windows driver primitive output failed"
+    );
+
+    let status = Command::new("lld-link")
+        .arg("/NOLOGO")
+        .arg(&obj_path)
+        .arg(format!("/OUT:{}", bin_path.display()))
+        .arg("/SUBSYSTEM:CONSOLE")
+        .arg("msvcrt.lib")
+        .arg("legacy_stdio_definitions.lib")
+        .status()
+        .expect("link selfhost Windows driver primitive output");
+    assert!(
+        status.success(),
+        "linking selfhost Windows driver primitive output failed"
+    );
+
+    let output = Command::new(&bin_path)
+        .arg(&input_path)
+        .arg(&output_path)
+        .output()
+        .expect("run selfhost Windows driver primitive binary");
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "selfhost Windows driver primitive binary exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(&output_path).expect("read driver primitive output"),
+        "42"
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "ok");
+}
+
+fn copy_selfhost_tl_sources(manifest_dir: &Path, work_dir: &Path) -> PathBuf {
+    let src_dir = manifest_dir.join("selfhost");
+    let dst_dir = work_dir.join("selfhost");
+    fs::create_dir_all(&dst_dir).expect("create isolated selfhost source dir");
+
+    for entry in fs::read_dir(&src_dir).expect("read selfhost source dir") {
+        let entry = entry.expect("read selfhost source entry");
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("tl") {
+            continue;
+        }
+        fs::copy(&path, dst_dir.join(entry.file_name())).expect("copy selfhost source file");
+    }
+
+    dst_dir.join("compiler_backend_runtime_fixture.tl")
 }
 
 fn native_cases() -> Vec<Case> {
@@ -472,6 +651,7 @@ fn native_cases() -> Vec<Case> {
         ),
         case_with_deps("stdlib_test", 42, "", &["stdlib/test.tl"]),
         case_with_deps("stdlib_io", 42, "", &["stdlib/io.tl"]),
+        case_with_deps("stdlib_text_buf", 42, "", &["stdlib/text_buf.tl"]),
         case_with_deps(
             "compiler_parse_smoke",
             42,
@@ -507,7 +687,25 @@ fn native_cases() -> Vec<Case> {
             "",
             &[
                 "compiler_typecheck.tl",
+                "compiler_specialize.tl",
+                "compiler_ctfe.tl",
                 "compiler_symbols.tl",
+                "compiler_parse_core.tl",
+                "compiler_ast_types.tl",
+                "compiler_diagnostic.tl",
+                "sym_i64_env.tl",
+                "read.tl",
+                "lex.tl",
+                "token.tl",
+            ],
+        ),
+        case_with_deps(
+            "compiler_specialize_smoke",
+            42,
+            "",
+            &[
+                "compiler_specialize.tl",
+                "compiler_ctfe.tl",
                 "compiler_parse_core.tl",
                 "compiler_ast_types.tl",
                 "compiler_diagnostic.tl",
@@ -525,6 +723,8 @@ fn native_cases() -> Vec<Case> {
                 "compiler_check_core.tl",
                 "compiler_load.tl",
                 "compiler_typecheck.tl",
+                "compiler_specialize.tl",
+                "compiler_ctfe.tl",
                 "compiler_symbols.tl",
                 "compiler_parse_core.tl",
                 "compiler_ast_types.tl",
@@ -542,6 +742,7 @@ fn native_cases() -> Vec<Case> {
             &[
                 "compiler_lower.tl",
                 "compiler_ctfe.tl",
+                "compiler_specialize.tl",
                 "compiler_typecheck.tl",
                 "compiler_ir_types.tl",
                 "compiler_symbols.tl",
@@ -574,6 +775,7 @@ fn native_cases() -> Vec<Case> {
                 "compiler_liveness.tl",
                 "compiler_lower.tl",
                 "compiler_ctfe.tl",
+                "compiler_specialize.tl",
                 "compiler_typecheck.tl",
                 "compiler_ir_types.tl",
                 "compiler_symbols.tl",
@@ -602,6 +804,8 @@ fn native_cases() -> Vec<Case> {
                 "compiler_check_core.tl",
                 "compiler_load.tl",
                 "compiler_typecheck.tl",
+                "compiler_specialize.tl",
+                "compiler_ctfe.tl",
                 "compiler_symbols.tl",
                 "compiler_parse_core.tl",
                 "compiler_ast_types.tl",
@@ -769,6 +973,7 @@ fn source_path_for_case(manifest_dir: &Path, name: &str) -> PathBuf {
         "compiler_parse_smoke" => "compiler_parse_smoke.tl",
         "compiler_symbols_smoke" => "compiler_symbols_smoke.tl",
         "compiler_typecheck_smoke" => "compiler_typecheck_smoke.tl",
+        "compiler_specialize_smoke" => "compiler_specialize_smoke.tl",
         "compiler_check_smoke" => "compiler_check_smoke.tl",
         "compiler_lower_smoke" => "compiler_lower_smoke.tl",
         "compiler_liveness_smoke" => "compiler_liveness_smoke.tl",
@@ -797,6 +1002,7 @@ fn dep_source_path(manifest_dir: &Path, source_dir: &Path, dep: &str) -> PathBuf
         "stdlib/string.tl" => manifest_dir.join("stdlib").join("string.tl"),
         "stdlib/test.tl" => manifest_dir.join("stdlib").join("test.tl"),
         "stdlib/io.tl" => manifest_dir.join("stdlib").join("io.tl"),
+        "stdlib/text_buf.tl" => manifest_dir.join("stdlib").join("text_buf.tl"),
         _ => source_dir.join(dep),
     }
 }

@@ -1,5 +1,4 @@
 ; maybe_result.tl - Monomorphic Maybe/Result convention witness for #228.
-
 (defenum MaybeI64
   (NoneI64)
   (SomeI64 i64))

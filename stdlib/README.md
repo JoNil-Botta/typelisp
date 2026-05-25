@@ -14,6 +14,8 @@ installed-root discovery, namespace isolation, or an implicit prelude.
 
 - `io.tl`: file I/O helpers built on compiler/runtime primitives. Import it
   with `(import "stdlib/io.tl")`.
+- `env.tl`: recoverable environment variable lookup and PATH-style list
+  helpers. Import it with `(import "stdlib/env.tl")`.
 - `json.tl`: JSON value parser and serializer for tool protocols and data
   exchange. Import it with `(import "stdlib/json.tl")`.
 - `process.tl`: process command/output/error data model for selfhost tools.
@@ -23,6 +25,8 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   Import it with `(import "stdlib/string.tl")`.
 - `test.tl`: minimal assertion helpers for TypeLisp fixtures. Import it with
   `(import "stdlib/test.tl")`.
+- `text_buf.tl`: arena-aware text buffer helpers for incremental String
+  construction. Import it with `(import "stdlib/text_buf.tl")`.
 
 ## Arena Allocation Policy
 
@@ -49,24 +53,28 @@ returned caller-owned values.
 | `read-file-or` | Performs host/runtime file inspection; returns fresh active-arena `String` storage from `read-file` when the path exists, otherwise returns the caller-provided `fallback`. |
 | `append-file` | Performs host/runtime IO; allocates temporary active-arena strings through `read-file-or` and `string-append`, then writes the result. |
 | `file-nonempty?` | Performs host/runtime IO; allocates a temporary active-arena `String` through `read-file` only when the path exists. |
-| `process-*` helpers | Construct process command/output/error aggregates in the active arena. `process-run` and `process-output` currently return structured errors and do not spawn child processes. |
+| `env-get`, `env-path-list`, `env-path-split`, `env-path-join` | Environment values and split/join results allocate fresh active-arena Strings/lists when runtime values are read or string pieces are created; missing variables return explicit `EnvNo*` options. |
+| `process-*` helpers | Construct process command/output/error aggregates in the active arena. Validators inspect argv/env/cwd metadata without allocation; `process-run` and `process-output` currently return structured errors and do not spawn child processes. |
 | `assert-*` helpers in `test.tl` | Non-allocating checks on success; failures call `panic` with the caller-provided message. |
+| `text-buf-*` helpers in `text_buf.tl` | Buffer chunks and rendered strings allocate in the active arena. Append helpers avoid concatenating the accumulated prefix until `text-buf-render`; `text-buf-clear`/`text-buf-reset` return a fresh empty immutable buffer value. |
 
 No current stdlib function returns a borrow-typed `str`, mutates a
-caller-provided buffer, or manually calls `tl_region_mark` / `tl_region_reset`.
-Those policies should remain explicit when borrowed strings, mutable buffers,
-and unsafe reset APIs are added.
+caller-provided buffer in place, or manually calls `tl_region_mark` /
+`tl_region_reset`. Those policies should remain explicit when borrowed strings,
+mutable buffers, and unsafe reset APIs are added.
 
 ## Importing Stdlib Modules
 
 Stdlib modules are imported explicitly:
 
 ```lisp
+(import "stdlib/env.tl")
 (import "stdlib/io.tl")
 (import "stdlib/json.tl")
 (import "stdlib/process.tl")
 (import "stdlib/string.tl")
 (import "stdlib/test.tl")
+(import "stdlib/text_buf.tl")
 ```
 
 For imports whose path starts with `stdlib/`, the loader first tries the path
@@ -108,9 +116,23 @@ lookup behavior.
 5. Add focused fixtures under `stdlib/tests/` and list them in
    `scripts/verify-stdlib.sh`'s test manifest with expected exit/stdout/stderr.
 6. Document the intended public API coverage in `stdlib/tests/README.md`.
-7. Link user-facing docs or tests to the new module when appropriate.
+7. Add `;;;;` module docs, attached `;;;` item docs for every public top-level
+   declaration, allocation-behavior notes for allocating APIs, and at least one
+   checked doctest example that runs with `--stdlib-root`.
+8. Run `scripts/verify-stdlib-docs.sh` to generate Markdown and run doctests
+   for every stdlib module.
+9. Run `scripts/verify-doc-tests.sh` to confirm the repository-wide doctest
+   discovery gate picks up the new documented module without a manifest edit.
+10. Link user-facing docs or tests to the new module when appropriate.
 
 The verifier intentionally fails when a new top-level `stdlib/*.tl` module or a
 new `stdlib/tests/*.tl` fixture is not listed in its corresponding manifest.
 That makes every new canonical module and stdlib test an explicit verification
 decision.
+
+The documentation verifier discovers every `stdlib/*.tl` file directly and
+fails when module docs, item docs for top-level declarations, generated
+Markdown, or doctests regress. The repository doctest verifier discovers
+documented TypeLisp files under the source and test trees automatically, so new
+doctest fences in stdlib modules do not require a separate doctest manifest
+update.

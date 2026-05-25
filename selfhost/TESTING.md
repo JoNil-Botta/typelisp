@@ -195,7 +195,8 @@ artifact and switch to the selfhost doctest path when #865 lands.
 
 `scripts/verify-doc-tests.sh` discovers documented `.tl` files under
 `stdlib/`, `selfhost/`, `examples/`, and `tests/` by scanning for public
-`;;;;`/`;;;` doc comments or TypeLisp fenced examples, then runs
+canonical `;#`/`;:` doc comments (legacy `;;;;`/`;;;` are still accepted) or
+TypeLisp fenced examples, then runs
 `typelisp doc --test` for each file with `--stdlib-root`. This gate is
 intentionally separate from `cargo test` and does not use a hand-maintained file
 manifest, so adding documented TypeLisp source with fenced examples

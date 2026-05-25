@@ -70,6 +70,7 @@ env.tl
 fs.tl
 json.tl
 process.tl
+random.tl
 string.tl
 test.tl
 text_buf.tl
@@ -96,6 +97,7 @@ stdlib/tests/env_api.tl|42|-|-
 stdlib/tests/fs_api.tl|42|-|-
 stdlib/tests/process_api.tl|42|-|-
 stdlib/tests/process_runtime.tl|42|-|-
+stdlib/tests/random_api.tl|42|-|-
 stdlib/tests/text_buf_api.tl|42|-|-
 stdlib/tests/test_assert_success.tl|42|-|-
 stdlib/tests/test_assert_failure.tl|134|-|literal:stdlib test failure message

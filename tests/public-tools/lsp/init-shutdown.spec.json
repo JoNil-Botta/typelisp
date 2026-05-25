@@ -1,0 +1,9 @@
+{
+  "exit": 0,
+  "message_count": 2,
+  "message_checks": [
+    {"jsonpath_id": 1, "raw_contains": "\"capabilities\"", "raw_contains": "\"textDocumentSync\""},
+    {"jsonpath_id": 2, "json_contains": "\"result\":null", "jsonpath_result": null}
+  ],
+  "stderr_exact": ""
+}

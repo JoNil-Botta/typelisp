@@ -1011,28 +1011,10 @@ assert_stdout_empty
 assert_contains "$err" "pkg:math/src/lib.tl"
 assert_contains "$err" 'alias `math`'
 
-echo "[public-tools] REPL"
-cat > "$WORKDIR/repl.in" <<'EOF'
-.help
-.type 42
-(define answer : i64 41)
-.type (+ answer 1)
-.exit
-EOF
-run_stdin repl-basic "$WORKDIR/repl.in" "$COMPILER" repl
-assert_success
-assert_stderr_empty
-assert_contains "$out" "TypeLisp REPL commands:"
-assert_contains "$out" ".type"
-assert_contains "$out" "i64"
+echo "[public-tools] REPL/LSP corpus via run-corpus.py"
+TYPELISP_BIN="$COMPILER" python3 "$ROOT/tests/public-tools/run-corpus.py"
 
-printf '(+ 1\n' > "$WORKDIR/repl-incomplete.in"
-run_stdin repl-incomplete "$WORKDIR/repl-incomplete.in" "$COMPILER" repl
-assert_success
-assert_stdout_empty
-assert_contains "$err" "Error: incomplete REPL input at EOF"
-
-echo "[public-tools] LSP"
+echo "[public-tools] LSP (legacy inline checks)"
 frame_append() {
     frame_file=$1
     frame_body=$2
@@ -1053,22 +1035,6 @@ assert_stderr_empty
 assert_contains "$out" '"id":1'
 assert_contains "$out" '"capabilities"'
 assert_contains "$out" '"id":2'
-
-if [ "$HOST_OS" = linux ]; then
-    LSP_URI="file://$WORKDIR/lsp_bad.tl"
-    LSP_BAD="$WORKDIR/lsp-bad.in"
-    : > "$LSP_BAD"
-    frame_append "$LSP_BAD" '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}'
-    frame_append "$LSP_BAD" '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$LSP_URI"'","languageId":"typelisp","version":1,"text":"(define bad : i64 true)"}}}'
-    frame_append "$LSP_BAD" '{"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}'
-    run_stdin lsp-diagnostics "$LSP_BAD" "$COMPILER" lsp
-    assert_success
-    assert_stderr_empty
-    assert_contains "$out" "textDocument/publishDiagnostics"
-    assert_contains "$out" '"code":"E0200"'
-else
-    echo "[public-tools] skipping LSP diagnostics on $HOST_OS"
-fi
 
 echo "[public-tools] SPEC metadata examples"
 SPEC_WORK="$WORKDIR/spec"

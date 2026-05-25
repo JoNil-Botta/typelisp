@@ -1,0 +1,8 @@
+{
+  "exit": 0,
+  "stderr_exact": "",
+  "message_checks": [
+    {"raw_contains": "\"code\":\"E0200\"", "raw_contains": "typecheck: return type mismatch"},
+    {"raw_contains": "\"diagnostics\":[]"}
+  ]
+}

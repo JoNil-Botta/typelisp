@@ -1,0 +1,5 @@
+{
+  "exit": 0,
+  "stdout_contains": ["not closing )1"],
+  "stderr_not_contains": ["incomplete REPL input"]
+}

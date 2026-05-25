@@ -1,0 +1,5 @@
+(define answer : i64 41)
+(define broken : i64 0))
+(define bad : i64 true)
+(define after : i64 (+ answer 1))
+.exit

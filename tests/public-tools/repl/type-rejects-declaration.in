@@ -1,0 +1,3 @@
+.type (define answer : i64 41)
+.type answer
+.exit

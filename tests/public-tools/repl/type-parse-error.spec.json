@@ -1,0 +1,5 @@
+{
+  "exit": 0,
+  "stdout_contains": ["bool"],
+  "stderr_contains": ["error[E0100]", "--> <repl>:"]
+}

@@ -1,0 +1,7 @@
+{
+  "exit": 1,
+  "stderr_exact": "lsp: invalid Content-Length",
+  "message_checks": [
+    {"raw_contains": "\"code\":-32700"}
+  ]
+}

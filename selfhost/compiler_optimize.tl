@@ -519,6 +519,397 @@
         [(IrValueUnit) true]
         [_ false])]))
 
+(define (opt-type-list-eq [a : AstTypeList] [b : AstTypeList]) : bool
+  (match a
+    [(AstTypeNil)
+      (match b
+        [(AstTypeNil) true]
+        [_ false])]
+    [(AstTypeCons ah at)
+      (match b
+        [(AstTypeCons bh bt) (and (opt-type-eq ah bh) (opt-type-list-eq at bt))]
+        [_ false])]))
+
+(define (opt-type-eq [a : AstType] [b : AstType]) : bool
+  (match a
+    [(AstTyI64)
+      (match b
+        [(AstTyI64) true]
+        [_ false])]
+    [(AstTyI32)
+      (match b
+        [(AstTyI32) true]
+        [_ false])]
+    [(AstTyI16)
+      (match b
+        [(AstTyI16) true]
+        [_ false])]
+    [(AstTyI8)
+      (match b
+        [(AstTyI8) true]
+        [_ false])]
+    [(AstTyU64)
+      (match b
+        [(AstTyU64) true]
+        [_ false])]
+    [(AstTyU32)
+      (match b
+        [(AstTyU32) true]
+        [_ false])]
+    [(AstTyU16)
+      (match b
+        [(AstTyU16) true]
+        [_ false])]
+    [(AstTyU8)
+      (match b
+        [(AstTyU8) true]
+        [_ false])]
+    [(AstTyF64)
+      (match b
+        [(AstTyF64) true]
+        [_ false])]
+    [(AstTyF32)
+      (match b
+        [(AstTyF32) true]
+        [_ false])]
+    [(AstTyBool)
+      (match b
+        [(AstTyBool) true]
+        [_ false])]
+    [(AstTyChar)
+      (match b
+        [(AstTyChar) true]
+        [_ false])]
+    [(AstTyString)
+      (match b
+        [(AstTyString) true]
+        [_ false])]
+    [(AstTyUnit)
+      (match b
+        [(AstTyUnit) true]
+        [_ false])]
+    [(AstTyNever)
+      (match b
+        [(AstTyNever) true]
+        [_ false])]
+    [(AstTyFunc a-params a-ret)
+      (match b
+        [(AstTyFunc b-params b-ret)
+          (and (opt-type-list-eq a-params b-params) (opt-type-eq a-ret b-ret))]
+        [_ false])]
+    [(AstTyTuple a-items)
+      (match b
+        [(AstTyTuple b-items) (opt-type-list-eq a-items b-items)]
+        [_ false])]
+    [(AstTyArray a-item a-len)
+      (match b
+        [(AstTyArray b-item b-len)
+          (and (= a-len b-len) (opt-type-eq a-item b-item))]
+        [_ false])]
+    [(AstTyDynArray a-item)
+      (match b
+        [(AstTyDynArray b-item) (opt-type-eq a-item b-item)]
+        [_ false])]
+    [(AstTyRegion a-region a-inner)
+      (match b
+        [(AstTyRegion b-region b-inner)
+          (and (string-eq a-region b-region) (opt-type-eq a-inner b-inner))]
+        [_ false])]
+    [(AstTyEnum a-name)
+      (match b
+        [(AstTyEnum b-name) (string-eq a-name b-name)]
+        [_ false])]
+    [(AstTyStruct a-name)
+      (match b
+        [(AstTyStruct b-name) (string-eq a-name b-name)]
+        [_ false])]
+    [(AstTyVar a-name)
+      (match b
+        [(AstTyVar b-name) (string-eq a-name b-name)]
+        [_ false])]))
+
+(define (opt-maybe-value-eq
+  [a : CompilerIrMaybeValue]
+  [b : CompilerIrMaybeValue]) : bool
+  (match a
+    [(IrNoValue)
+      (match b
+        [(IrNoValue) true]
+        [_ false])]
+    [(IrSomeValue av)
+      (match b
+        [(IrSomeValue bv) (opt-value-eq av bv)]
+        [_ false])]))
+
+(define (opt-value-list-eq [a : CompilerIrValueList] [b : CompilerIrValueList]) : bool
+  (match a
+    [(IrValueNil)
+      (match b
+        [(IrValueNil) true]
+        [_ false])]
+    [(IrValueCons ah at)
+      (match b
+        [(IrValueCons bh bt)
+          (and (opt-value-eq ah bh) (opt-value-list-eq at bt))]
+        [_ false])]))
+
+(define (opt-phi-input-eq [a : CompilerIrPhiInput] [b : CompilerIrPhiInput]) : bool
+  (match a
+    [(IrPhiInput av alabel)
+      (match b
+        [(IrPhiInput bv blabel)
+          (and (string-eq alabel blabel) (opt-value-eq av bv))])]))
+
+(define (opt-phi-input-list-eq
+  [a : CompilerIrPhiInputList]
+  [b : CompilerIrPhiInputList]) : bool
+  (match a
+    [(IrPhiInputNil)
+      (match b
+        [(IrPhiInputNil) true]
+        [_ false])]
+    [(IrPhiInputCons ah at)
+      (match b
+        [(IrPhiInputCons bh bt)
+          (and (opt-phi-input-eq ah bh) (opt-phi-input-list-eq at bt))]
+        [_ false])]))
+
+(define (opt-instr-eq [a : CompilerIrInstr] [b : CompilerIrInstr]) : bool
+  (match a
+    [(IrInstrMov ad av aty)
+      (match b
+        [(IrInstrMov bd bv bty)
+          (and (= ad bd) (and (opt-value-eq av bv) (opt-type-eq aty bty)))]
+        [_ false])]
+    [(IrInstrAlloc ad aty)
+      (match b
+        [(IrInstrAlloc bd bty) (and (= ad bd) (opt-type-eq aty bty))]
+        [_ false])]
+    [(IrInstrAddrOf ad av)
+      (match b
+        [(IrInstrAddrOf bd bv) (and (= ad bd) (= av bv))]
+        [_ false])]
+    [(IrInstrGep ad abase aoffset aty)
+      (match b
+        [(IrInstrGep bd bbase boffset bty)
+          (and
+            (= ad bd)
+            (and
+              (opt-value-eq abase bbase)
+              (and (opt-value-eq aoffset boffset) (opt-type-eq aty bty))))]
+        [_ false])]
+    [(IrInstrLoad ad av aty)
+      (match b
+        [(IrInstrLoad bd bv bty)
+          (and (= ad bd) (and (opt-value-eq av bv) (opt-type-eq aty bty)))]
+        [_ false])]
+    [(IrInstrStorePtr aptr av aty)
+      (match b
+        [(IrInstrStorePtr bptr bv bty)
+          (and
+            (opt-value-eq aptr bptr)
+            (and (opt-value-eq av bv) (opt-type-eq aty bty)))]
+        [_ false])]
+    [(IrInstrCast ad av afrom ato)
+      (match b
+        [(IrInstrCast bd bv bfrom bto)
+          (and
+            (= ad bd)
+            (and
+              (opt-value-eq av bv)
+              (and (opt-type-eq afrom bfrom) (opt-type-eq ato bto))))]
+        [_ false])]
+    [(IrInstrBinOp ad aop al ar aty)
+      (match b
+        [(IrInstrBinOp bd bop bl br bty)
+          (and
+            (= ad bd)
+            (and
+              (opt-binop-eq aop bop)
+              (and
+                (opt-value-eq al bl)
+                (and (opt-value-eq ar br) (opt-type-eq aty bty)))))]
+        [_ false])]
+    [(IrInstrUnOp ad aop av aty)
+      (match b
+        [(IrInstrUnOp bd bop bv bty)
+          (and
+            (= ad bd)
+            (and
+              (opt-unop-eq aop bop)
+              (and (opt-value-eq av bv) (opt-type-eq aty bty))))]
+        [_ false])]
+    [(IrInstrCall ad aname aargs aty)
+      (match b
+        [(IrInstrCall bd bname bargs bty)
+          (and
+            (= ad bd)
+            (and
+              (string-eq aname bname)
+              (and (opt-value-list-eq aargs bargs) (opt-type-eq aty bty))))]
+        [_ false])]
+    [(IrInstrStore aname av aty)
+      (match b
+        [(IrInstrStore bname bv bty)
+          (and
+            (string-eq aname bname)
+            (and (opt-value-eq av bv) (opt-type-eq aty bty)))]
+        [_ false])]
+    [(IrInstrJump alabel)
+      (match b
+        [(IrInstrJump blabel) (string-eq alabel blabel)]
+        [_ false])]
+    [(IrInstrBranch av at bt)
+      (match b
+        [(IrInstrBranch bv af bf)
+          (and (string-eq at af) (and (string-eq bt bf) (opt-value-eq av bv)))]
+        [_ false])]
+    [(IrInstrReturn av)
+      (match b
+        [(IrInstrReturn bv) (opt-maybe-value-eq av bv)]
+        [_ false])]
+    [(IrInstrPhi ad ainputs aty)
+      (match b
+        [(IrInstrPhi bd binputs bty)
+          (and
+            (= ad bd)
+            (and (opt-phi-input-list-eq ainputs binputs) (opt-type-eq aty bty)))]
+        [_ false])]))
+
+(define (opt-instr-list-eq [a : CompilerIrInstrList] [b : CompilerIrInstrList]) : bool
+  (match a
+    [(IrInstrNil)
+      (match b
+        [(IrInstrNil) true]
+        [_ false])]
+    [(IrInstrCons ah at)
+      (match b
+        [(IrInstrCons bh bt)
+          (and (opt-instr-eq ah bh) (opt-instr-list-eq at bt))]
+        [_ false])]))
+
+(define (opt-block-eq [a : CompilerIrBlock] [b : CompilerIrBlock]) : bool
+  (match a
+    [(IrBlock alabel ainstrs)
+      (match b
+        [(IrBlock blabel binstrs)
+          (and (string-eq alabel blabel) (opt-instr-list-eq ainstrs binstrs))])]))
+
+(define (opt-block-list-eq [a : CompilerIrBlockList] [b : CompilerIrBlockList]) : bool
+  (match a
+    [(IrBlockNil)
+      (match b
+        [(IrBlockNil) true]
+        [_ false])]
+    [(IrBlockCons ah at)
+      (match b
+        [(IrBlockCons bh bt)
+          (and (opt-block-eq ah bh) (opt-block-list-eq at bt))]
+        [_ false])]))
+
+(define (opt-param-eq [a : CompilerIrParam] [b : CompilerIrParam]) : bool
+  (match a
+    [(IrParam aname aty aid)
+      (match b
+        [(IrParam bname bty bid)
+          (and (string-eq aname bname) (and (= aid bid) (opt-type-eq aty bty)))])]))
+
+(define (opt-param-list-eq [a : CompilerIrParamList] [b : CompilerIrParamList]) : bool
+  (match a
+    [(IrParamNil)
+      (match b
+        [(IrParamNil) true]
+        [_ false])]
+    [(IrParamCons ah at)
+      (match b
+        [(IrParamCons bh bt)
+          (and (opt-param-eq ah bh) (opt-param-list-eq at bt))]
+        [_ false])]))
+
+(define (opt-function-eq [a : CompilerIrFunction] [b : CompilerIrFunction]) : bool
+  (match a
+    [(IrFunction aname aparams aret aframe ablocks)
+      (match b
+        [(IrFunction bname bparams bret bframe bblocks)
+          (and
+            (string-eq aname bname)
+            (and
+              (= aframe bframe)
+              (and
+                (opt-param-list-eq aparams bparams)
+                (and
+                  (opt-type-eq aret bret)
+                  (opt-block-list-eq ablocks bblocks)))))])]))
+
+(define (opt-function-list-eq
+  [a : CompilerIrFunctionList]
+  [b : CompilerIrFunctionList]) : bool
+  (match a
+    [(IrFunctionNil)
+      (match b
+        [(IrFunctionNil) true]
+        [_ false])]
+    [(IrFunctionCons ah at)
+      (match b
+        [(IrFunctionCons bh bt)
+          (and (opt-function-eq ah bh) (opt-function-list-eq at bt))]
+        [_ false])]))
+
+(define (opt-global-eq [a : CompilerIrGlobal] [b : CompilerIrGlobal]) : bool
+  (match a
+    [(IrGlobal aname aty avalue)
+      (match b
+        [(IrGlobal bname bty bvalue)
+          (and
+            (string-eq aname bname)
+            (and (opt-type-eq aty bty) (opt-value-eq avalue bvalue)))])]))
+
+(define (opt-global-list-eq
+  [a : CompilerIrGlobalList]
+  [b : CompilerIrGlobalList]) : bool
+  (match a
+    [(IrGlobalNil)
+      (match b
+        [(IrGlobalNil) true]
+        [_ false])]
+    [(IrGlobalCons ah at)
+      (match b
+        [(IrGlobalCons bh bt)
+          (and (opt-global-eq ah bh) (opt-global-list-eq at bt))]
+        [_ false])]))
+
+(define (opt-extern-eq [a : CompilerIrExtern] [b : CompilerIrExtern]) : bool
+  (match a
+    [(IrExtern aname aty)
+      (match b
+        [(IrExtern bname bty)
+          (and (string-eq aname bname) (opt-type-eq aty bty))])]))
+
+(define (opt-extern-list-eq
+  [a : CompilerIrExternList]
+  [b : CompilerIrExternList]) : bool
+  (match a
+    [(IrExternNil)
+      (match b
+        [(IrExternNil) true]
+        [_ false])]
+    [(IrExternCons ah at)
+      (match b
+        [(IrExternCons bh bt)
+          (and (opt-extern-eq ah bh) (opt-extern-list-eq at bt))]
+        [_ false])]))
+
+(define (opt-program-eq [a : CompilerIrProgram] [b : CompilerIrProgram]) : bool
+  (match a
+    [(IrProgram aglobals afunctions aexterns)
+      (match b
+        [(IrProgram bglobals bfunctions bexterns)
+          (and
+            (opt-global-list-eq aglobals bglobals)
+            (and
+              (opt-function-list-eq afunctions bfunctions)
+              (opt-extern-list-eq aexterns bexterns)))])]))
+
 (define (opt-expr-key-eq [a : OptExprKey] [b : OptExprKey]) : bool
   (match a
     [(OptBinKey opa la ra)
@@ -769,6 +1160,12 @@
         [(OptCopyResult new-env new-instr)
           (IrInstrCons new-instr (opt-copy-instrs new-env rest))])]))
 
+(defenum OptFunctionPassResult
+  (OptFunctionPassResult CompilerIrFunction bool))
+
+(define (optimize-function-max-iterations) : i64
+  10)
+
 (define (optimize-block [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(IrBlock label instrs)
@@ -791,7 +1188,7 @@
     [(IrBlockCons block rest)
       (IrBlockCons (optimize-block block) (optimize-block-list rest))]))
 
-(define (optimize-function [func : CompilerIrFunction]) : CompilerIrFunction
+(define (optimize-function-once [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
     [(IrFunction name params ret-ty frame blocks)
       ;; Fold first (folding can turn used temporaries dead), then collect uses
@@ -801,6 +1198,23 @@
         (let
           [used : OptUsedSet (opt-collect-blocks-uses (OptUsedNil) folded)]
           (IrFunction name params ret-ty frame (opt-dce-block-list used folded))))]))
+
+(define (optimize-function-pass [func : CompilerIrFunction]) : OptFunctionPassResult
+  (let
+    [next : CompilerIrFunction (optimize-function-once func)]
+    (OptFunctionPassResult next (not (opt-function-eq func next)))))
+
+(define (optimize-function-fixed [func : CompilerIrFunction] [remaining : i64]) : CompilerIrFunction
+  (if (<= remaining 0)
+    func
+    (match (optimize-function-pass func)
+      [(OptFunctionPassResult next changed)
+        (if changed
+          (optimize-function-fixed next (- remaining 1))
+          next)])))
+
+(define (optimize-function [func : CompilerIrFunction]) : CompilerIrFunction
+  (optimize-function-fixed func (optimize-function-max-iterations)))
 
 (define (optimize-function-list [funcs : CompilerIrFunctionList]) : CompilerIrFunctionList
   (match funcs
@@ -1290,3 +1704,72 @@
                     3)
                   2)
                 1))))))))
+
+;; Copy propagation can expose a repeated expression only after CSE has already
+;; run for that iteration. A second pass then CSEs `v3` to `v2`; copy propagation
+;; rewrites `v4`, and DCE drops the now-unused copy.
+(define (opt-fixed-point-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrMov 1 (IrValueVar 0) (AstTyI64))
+    (IrInstrCons
+      (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 0) (IrValueI64 1) (AstTyI64))
+      (IrInstrCons
+        (IrInstrBinOp 3 (IrBinAdd) (IrValueVar 1) (IrValueI64 1) (AstTyI64))
+        (IrInstrCons
+          (IrInstrBinOp 4 (IrBinAdd) (IrValueVar 2) (IrValueVar 3) (AstTyI64))
+          (IrInstrCons
+            (IrInstrReturn (IrSomeValue (IrValueVar 4)))
+            (IrInstrNil)))))))
+
+(define (opt-test-function [instrs : CompilerIrInstrList]) : CompilerIrFunction
+  (IrFunction
+    "fixed"
+    (IrParamNil)
+    (AstTyI64)
+    5
+    (IrBlockCons (IrBlock "entry" instrs) (IrBlockNil))))
+
+(define (opt-test-program [instrs : CompilerIrInstrList]) : CompilerIrProgram
+  (IrProgram
+    (IrGlobalNil)
+    (IrFunctionCons (opt-test-function instrs) (IrFunctionNil))
+    (IrExternNil)))
+
+(define (opt-function-first-instrs [func : CompilerIrFunction]) : CompilerIrInstrList
+  (match func
+    [(IrFunction _ _ _ _ blocks)
+      (match blocks
+        [(IrBlockCons block _)
+          (match block
+            [(IrBlock _ instrs) instrs])]
+        [(IrBlockNil) (IrInstrNil)])]))
+
+(define (compiler-optimize-fixed-point-self-test) : i64
+  (let
+    [func : CompilerIrFunction (opt-test-function (opt-fixed-point-instrs))]
+    (let
+      [once : CompilerIrFunction (optimize-function-once func)]
+      (let
+        [fixed : CompilerIrFunction (optimize-function func)]
+        (let
+          [once-instrs : CompilerIrInstrList (opt-function-first-instrs once)]
+          (let
+            [fixed-instrs : CompilerIrInstrList
+              (opt-function-first-instrs fixed)]
+            (let
+              [optimized-program : CompilerIrProgram
+                (optimize-program (opt-test-program (opt-fixed-point-instrs)))]
+              (let
+                [again-program : CompilerIrProgram
+                  (optimize-program optimized-program)]
+                (if (= (compiler-ir-instr-list-count once-instrs) 4)
+                  (if (= (opt-count-arith-instrs once-instrs) 3)
+                    (if (= (compiler-ir-instr-list-count fixed-instrs) 3)
+                      (if (= (opt-count-arith-instrs fixed-instrs) 2)
+                        (if (opt-program-eq optimized-program again-program)
+                          42
+                          5)
+                        4)
+                      3)
+                    2)
+                  1)))))))))

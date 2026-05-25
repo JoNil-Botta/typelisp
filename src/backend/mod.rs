@@ -13560,18 +13560,39 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_and_from_source_emits_and() {
-        // `(and a b)` over canonical 0/1 bools is a bitwise `and` on the 8-bit
-        // registers (bitwise == logical for canonical bools).
+    fn test_compile_and_short_circuits() {
+        // `(and a b)` short-circuits via a conditional branch (if a then b else
+        // false), so it no longer emits an eager bitwise `andb` over both
+        // operands (Issue #1132).
         let asm = compile_ok("(define (f [a : bool] [b : bool]) : bool (and a b))");
-        assert!(asm.contains("andb"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("andb"),
+            "and must not emit an eager bitwise op:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("jmp"),
+            "and should compile to a branch:\n{}",
+            asm
+        );
         assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
     }
 
     #[test]
-    fn test_compile_or_from_source_emits_or() {
+    fn test_compile_or_short_circuits() {
+        // `(or a b)` short-circuits via a conditional branch (if a then true
+        // else b).
         let asm = compile_ok("(define (f [a : bool] [b : bool]) : bool (or a b))");
-        assert!(asm.contains("orb"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("orb"),
+            "or must not emit an eager bitwise op:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("jmp"),
+            "or should compile to a branch:\n{}",
+            asm
+        );
         assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
     }
 

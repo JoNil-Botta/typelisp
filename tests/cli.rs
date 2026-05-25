@@ -2004,6 +2004,73 @@ fn check_rejects_stdlib_allocating_result_escape_from_nested_region() {
 }
 
 #[test]
+fn check_accepts_stdlib_text_buf_render_used_inside_region() {
+    let dir = fixture_dir("stdlib-text-buf-region-scalar");
+    let source = dir.join("main.tl");
+    fs::write(
+        &source,
+        r#"(import "stdlib/text_buf.tl")
+
+(define (main) : i64
+  (let ([buf : TextBuf (text-buf-append (text-buf-empty) "scoped")])
+    (with-region inner
+      (string-length (text-buf-render buf)))))
+"#,
+    )
+    .expect("write source");
+    let source_arg = source.to_str().expect("source path is utf-8");
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let stdlib_root = manifest_dir.join("stdlib");
+    let stdlib_arg = stdlib_root.to_str().expect("stdlib path is utf-8");
+
+    let output = typelisp(&["check", source_arg, "--stdlib-root", stdlib_arg]);
+
+    assert!(
+        output.status.success(),
+        "text_buf region scalar check failed\nstdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), "Type checking passed!\n");
+    assert_eq!(stderr(&output), "");
+}
+
+#[test]
+fn check_rejects_stdlib_text_buf_render_escape_from_nested_region() {
+    let dir = fixture_dir("stdlib-text-buf-region-escape");
+    let source = dir.join("main.tl");
+    fs::write(
+        &source,
+        r#"(import "stdlib/text_buf.tl")
+
+(define (main) : String
+  (let ([buf : TextBuf (text-buf-append (text-buf-empty) "scoped")])
+    (with-region outer
+      (with-region inner
+        (text-buf-render buf)))))
+"#,
+    )
+    .expect("write source");
+    let source_arg = source.to_str().expect("source path is utf-8");
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let stdlib_root = manifest_dir.join("stdlib");
+    let stdlib_arg = stdlib_root.to_str().expect("stdlib path is utf-8");
+
+    let output = typelisp(&["check", source_arg, "--stdlib-root", stdlib_arg]);
+
+    assert!(!output.status.success());
+    assert_eq!(stdout(&output), "");
+    let stderr = stderr(&output);
+    assert!(
+        stderr.contains("region-tagged value")
+            && stderr.contains("cannot escape with-region 'inner'"),
+        "stderr:\n{}",
+        stderr
+    );
+    assert!(stderr.contains("error[E0200]"), "stderr:\n{}", stderr);
+}
+
+#[test]
 fn check_reports_explicit_unsupported_float_cast_diagnostic() {
     let dir = fixture_dir("unsupported-float-cast");
     let source = dir.join("main.tl");

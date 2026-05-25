@@ -70,6 +70,7 @@ json.tl
 process.tl
 string.tl
 test.tl
+text_buf.tl
 EOF
 }
 
@@ -87,6 +88,7 @@ stdlib/tests/json_parse_stringify.tl|42|-|-
 stdlib/tests/io_edges.tl|42|-|-
 stdlib/tests/env_api.tl|42|-|-
 stdlib/tests/process_api.tl|42|-|-
+stdlib/tests/text_buf_api.tl|42|-|-
 stdlib/tests/test_assert_success.tl|42|-|-
 stdlib/tests/test_assert_failure.tl|134|-|literal:stdlib test failure message
 EOF

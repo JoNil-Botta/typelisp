@@ -625,7 +625,15 @@ fn type_lisp_programs_compile_link_and_run() {
             name: "stdlib_json",
             exit_code: 42,
             stdout: "",
-            deps: &["stdlib/json.tl"],
+            deps: &["stdlib/json.tl", "stdlib/text_buf.tl"],
+        },
+        // stdlib/text_buf.tl: arena-aware chunked text buffer for incremental
+        // String construction.
+        Case {
+            name: "stdlib_text_buf",
+            exit_code: 42,
+            stdout: "",
+            deps: &["stdlib/text_buf.tl"],
         },
     ];
 
@@ -1185,7 +1193,15 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             name: "stdlib_json",
             exit_code: 42,
             stdout: "",
-            deps: &["stdlib/json.tl"],
+            deps: &["stdlib/json.tl", "stdlib/text_buf.tl"],
+        },
+        // stdlib/text_buf.tl: text buffer through the explicit compile -> as ->
+        // ld -> run pipeline.
+        Case {
+            name: "stdlib_text_buf",
+            exit_code: 42,
+            stdout: "",
+            deps: &["stdlib/text_buf.tl"],
         },
         // refs #335: selfhost parser from Sexpr into the real compiler AST.
         // The smoke parses a representative multi-declaration source string
@@ -5324,6 +5340,9 @@ fn dep_source_path(manifest_dir: &Path, source_dir: &Path, dep: &str) -> PathBuf
     }
     if dep == "stdlib/json.tl" {
         return manifest_dir.join("stdlib").join("json.tl");
+    }
+    if dep == "stdlib/text_buf.tl" {
+        return manifest_dir.join("stdlib").join("text_buf.tl");
     }
     source_dir.join(dep)
 }

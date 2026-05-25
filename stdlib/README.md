@@ -25,6 +25,8 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   Import it with `(import "stdlib/string.tl")`.
 - `test.tl`: minimal assertion helpers for TypeLisp fixtures. Import it with
   `(import "stdlib/test.tl")`.
+- `text_buf.tl`: arena-aware text buffer helpers for incremental String
+  construction. Import it with `(import "stdlib/text_buf.tl")`.
 
 ## Arena Allocation Policy
 
@@ -54,11 +56,12 @@ returned caller-owned values.
 | `env-get`, `env-path-list`, `env-path-split`, `env-path-join` | Environment values and split/join results allocate fresh active-arena Strings/lists when runtime values are read or string pieces are created; missing variables return explicit `EnvNo*` options. |
 | `process-*` helpers | Construct process command/output/error aggregates in the active arena. Validators inspect argv/env/cwd metadata without allocation; `process-run` and `process-output` currently return structured errors and do not spawn child processes. |
 | `assert-*` helpers in `test.tl` | Non-allocating checks on success; failures call `panic` with the caller-provided message. |
+| `text-buf-*` helpers in `text_buf.tl` | Buffer chunks and rendered strings allocate in the active arena. Append helpers avoid concatenating the accumulated prefix until `text-buf-render`; `text-buf-clear`/`text-buf-reset` return a fresh empty immutable buffer value. |
 
 No current stdlib function returns a borrow-typed `str`, mutates a
-caller-provided buffer, or manually calls `tl_region_mark` / `tl_region_reset`.
-Those policies should remain explicit when borrowed strings, mutable buffers,
-and unsafe reset APIs are added.
+caller-provided buffer in place, or manually calls `tl_region_mark` /
+`tl_region_reset`. Those policies should remain explicit when borrowed strings,
+mutable buffers, and unsafe reset APIs are added.
 
 ## Importing Stdlib Modules
 
@@ -71,6 +74,7 @@ Stdlib modules are imported explicitly:
 (import "stdlib/process.tl")
 (import "stdlib/string.tl")
 (import "stdlib/test.tl")
+(import "stdlib/text_buf.tl")
 ```
 
 For imports whose path starts with `stdlib/`, the loader first tries the path

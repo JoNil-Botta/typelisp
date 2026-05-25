@@ -4,7 +4,8 @@
 ;;;; for tools that need JSON without a private selfhost-only implementation.
 ;;;;
 ;;;; Primitives required from the compiler/runtime: `string-length`,
-;;;; `string-ref`, `substring`, `string-append`, and `string-eq`.
+;;;; `string-ref`, `substring`, `string-append`, `string-eq`, and the imported
+;;;; sibling `text_buf.tl` buffer helpers.
 ;;;;
 ;;;; Usage: `(import "stdlib/json.tl")`
 ;;;;
@@ -16,6 +17,8 @@
 ;;;; (import "stdlib/json.tl")
 ;;;; (define sample : String (json-stringify (JsonBool true)))
 ;;;; ```
+(import "text_buf.tl")
+
 ;;; Canonical JSON value model used by the stdlib parser and serializer.
 (defenum Json
   (JsonNull)
@@ -279,7 +282,7 @@
     [n : i64 (string-length text)]
     [i : i64 0]
     [segment-start : i64 0]
-    [out : String ""])
+    [out : TextBuf (text-buf-empty)])
     (begin
       (while (< i n)
         (let ([code : i64 (json-char-code-at text i)])
@@ -287,40 +290,57 @@
             (begin
               (set!
                 out
-                (json-cat3
-                  out
-                  (substring text segment-start (- i segment-start))
+                (text-buf-append
+                  (text-buf-append
+                    out
+                    (substring text segment-start (- i segment-start)))
                   (json-escape-char code)))
               (set! i (+ i 1))
               (set! segment-start i))
             (set! i (+ i 1)))))
-      (string-append out (substring text segment-start (- n segment-start))))))
+      (text-buf-render
+        (text-buf-append out (substring text segment-start (- n segment-start)))))))
+
+;;; Append serialized array elements to `buf`.
+(define (json-stringify-list-into [items : JsonList] [buf : TextBuf]) : TextBuf
+  (match items
+    [(JsonListNil) buf]
+    [(JsonListCons head rest)
+      (let ([with-head : TextBuf (text-buf-append buf (json-stringify head))])
+        (match rest
+          [(JsonListNil) with-head]
+          [(JsonListCons _ _)
+            (json-stringify-list-into rest (text-buf-append with-head ","))]))]))
 
 ;;; Serialize array `items` without the surrounding brackets.
 ;;;
 ;;; The returned comma-separated string is allocated in the active arena.
 (define (json-stringify-list [items : JsonList]) : String
+  (text-buf-render (json-stringify-list-into items (text-buf-empty))))
+
+;;; Append serialized object members to `buf`.
+(define (json-stringify-members-into [items : JsonMemberList] [buf : TextBuf]) : TextBuf
   (match items
-    [(JsonListNil) ""]
-    [(JsonListCons head rest)
-      (match rest
-        [(JsonListNil) (json-stringify head)]
-        [(JsonListCons _ _)
-          (json-cat3 (json-stringify head) "," (json-stringify-list rest))])]))
+    [(JsonMemberListNil) buf]
+    [(JsonMemberListCons key value rest)
+      (let ([with-item : TextBuf
+        (text-buf-append
+          (text-buf-append
+            (text-buf-append
+              (text-buf-append buf "\"")
+              (json-escape-string key))
+            "\":")
+          (json-stringify value))])
+        (match rest
+          [(JsonMemberListNil) with-item]
+          [(JsonMemberListCons _ _ _)
+            (json-stringify-members-into rest (text-buf-append with-item ","))]))]))
 
 ;;; Serialize object `items` without the surrounding braces.
 ;;;
 ;;; The returned comma-separated member string is allocated in the active arena.
 (define (json-stringify-members [items : JsonMemberList]) : String
-  (match items
-    [(JsonMemberListNil) ""]
-    [(JsonMemberListCons key value rest)
-      (let ([item : String
-        (json-cat4 "\"" (json-escape-string key) "\":" (json-stringify value))])
-        (match rest
-          [(JsonMemberListNil) item]
-          [(JsonMemberListCons _ _ _)
-            (json-cat3 item "," (json-stringify-members rest))]))]))
+  (text-buf-render (json-stringify-members-into items (text-buf-empty))))
 
 ;;; Serialize a JSON value to canonical compact JSON text.
 ;;;
@@ -420,7 +440,7 @@
       [n : i64 (string-length text)]
       [i : i64 (+ pos 1)]
       [segment-start : i64 (+ pos 1)]
-      [out : String ""]
+      [out : TextBuf (text-buf-empty)]
       [ok : bool true]
       [done : bool false]
       [message : String ""])
@@ -436,7 +456,7 @@
                 (begin
                   (set!
                     out
-                    (string-append
+                    (text-buf-append
                       out
                       (substring text segment-start (- i segment-start))))
                   (set! i (+ i 1))
@@ -445,13 +465,13 @@
                   (begin
                     (set!
                       out
-                      (string-append
+                      (text-buf-append
                         out
                         (substring text segment-start (- i segment-start))))
                     (match (json-parse-escape text (+ i 1))
                       [(OkJsonParseEscape decoded next)
                         (begin
-                          (set! out (string-append out decoded))
+                          (set! out (text-buf-append out decoded))
                           (set! i next)
                           (set! segment-start next))]
                       [(ErrJsonParseEscape err)
@@ -466,7 +486,7 @@
                       (set! message "json: control character in string"))
                     (set! i (+ i 1))))))))
         (if ok
-          (OkJsonParseString out i)
+          (OkJsonParseString (text-buf-render out) i)
           (ErrJsonParseString message))))))
 
 ;;; Return the first offset at or after `pos` that is not an ASCII digit.

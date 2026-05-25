@@ -30,3 +30,6 @@ target_ra
 selfhost/*.o
 selfhost/*.s
 selfhost/compiler_backend_runtime_fixture
+
+# Claude Code agent workspace
+.claude/

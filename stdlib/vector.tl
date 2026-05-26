@@ -135,3 +135,92 @@
       (I64VecPopOk
         (array-ref (i64-vec-slots v) last-index)
         (I64Vec (i64-vec-slots v) last-index)))))
+
+;;; Build a vector from the live prefix `[0, count)` of `src`, copied into a
+;;; fresh backing array. A non-positive `count` yields an empty vector; the
+;;; backing capacity is at least 1 so the result can still grow by pushing.
+(define (i64-vec-from-array [src : (Array i64)] [count : i64]) : I64Vec
+  (let
+    [n : i64
+      (if (< count 0)
+        0
+        count)]
+    [slots : (Array i64)
+      (make-array
+        i64
+        (if (< n 1)
+          1
+          n))]
+    (begin
+      (i64-vec-copy-range slots src 0 n)
+      (I64Vec slots n))))
+
+;;; Return a fresh `(Array i64)` holding exactly the `len` live elements — a
+;;; caller-owned snapshot independent of the vector's backing array.
+(define (i64-vec-to-array [v : I64Vec]) : (Array i64)
+  (let
+    [n : i64 (i64-vec-len v)]
+    [out : (Array i64) (make-array i64 n)]
+    (begin
+      (i64-vec-copy-range out (i64-vec-slots v) 0 n)
+      out)))
+
+;;; Push the first `count` elements of `src`, starting at `index`, onto `v`.
+(define (i64-vec-extend-from
+  [v : I64Vec]
+  [src : (Array i64)]
+  [index : i64]
+  [count : i64]) : I64Vec
+  (if (>= index count)
+    v
+    (i64-vec-extend-from
+      (i64-vec-push v (array-ref src index))
+      src
+      (+ index 1)
+      count)))
+
+;;; Append the first `count` elements of `src` to `v` (growing as needed) and
+;;; return the threaded vector.
+(define (i64-vec-extend [v : I64Vec] [src : (Array i64)] [count : i64]) : I64Vec
+  (i64-vec-extend-from v src 0 count))
+
+;;; Swap-reverse the slot range `[lo, hi]` in place.
+(define (i64-vec-reverse-range! [slots : (Array i64)] [lo : i64] [hi : i64]) : unit
+  (if (>= lo hi)
+    unit
+    (let
+      [tmp : i64 (array-ref slots lo)]
+      (begin
+        (array-set! slots lo (array-ref slots hi))
+        (array-set! slots hi tmp)
+        (i64-vec-reverse-range! slots (+ lo 1) (- hi 1))))))
+
+;;; Reverse the live prefix `[0, len)` in place; return the same vector.
+(define (i64-vec-reverse! [v : I64Vec]) : I64Vec
+  (begin
+    (i64-vec-reverse-range! (i64-vec-slots v) 0 (- (i64-vec-len v) 1))
+    v))
+
+;;; Sum of the live elements, accumulated from `index`.
+(define (i64-vec-sum-from [v : I64Vec] [index : i64] [acc : i64]) : i64
+  (if (>= index (i64-vec-len v))
+    acc
+    (i64-vec-sum-from v (+ index 1) (+ acc (array-ref (i64-vec-slots v) index)))))
+
+;;; Sum of the live elements (0 for an empty vector). A concrete monomorphic
+;;; reduction standing in for a generic fold until first-class function
+;;; arguments are available.
+(define (i64-vec-sum [v : I64Vec]) : i64
+  (i64-vec-sum-from v 0 0))
+
+;;; True when `x` is among the live elements at or after `index`.
+(define (i64-vec-contains-from? [v : I64Vec] [x : i64] [index : i64]) : bool
+  (if (>= index (i64-vec-len v))
+    false
+    (if (= (array-ref (i64-vec-slots v) index) x)
+      true
+      (i64-vec-contains-from? v x (+ index 1)))))
+
+;;; True when `x` is among the live elements.
+(define (i64-vec-contains? [v : I64Vec] [x : i64]) : bool
+  (i64-vec-contains-from? v x 0))

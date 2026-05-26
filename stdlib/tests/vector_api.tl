@@ -95,4 +95,57 @@
       (begin
         (assert-true (not (pop-ok? pe)) "empty pop not ok")
         (assert-i64-eq (pop-value-or pe -1) -1 "empty pop value fallback")))
+    ;; --- from-array / to-array round-trip (#1212) ---
+    (let
+      [src : (Array i64) (make-array i64 3)]
+      (begin
+        (array-set! src 0 5)
+        (array-set! src 1 6)
+        (array-set! src 2 7)
+        ;; from-array copies the live prefix [0, count)
+        (let
+          [fv : I64Vec (i64-vec-from-array src 3)]
+          (begin
+            (assert-i64-eq (i64-vec-len fv) 3 "from-array len 3")
+            (assert-i64-eq (i64-vec-get fv 0 -1) 5 "from-array[0] = 5")
+            (assert-i64-eq (i64-vec-get fv 2 -1) 7 "from-array[2] = 7")
+            ;; sum + contains? over the live elements
+            (assert-i64-eq (i64-vec-sum fv) 18 "sum 5+6+7 = 18")
+            (assert-true (i64-vec-contains? fv 6) "contains 6")
+            (assert-false (i64-vec-contains? fv 99) "does not contain 99")
+            ;; to-array snapshot has exactly len elements and is independent
+            (let
+              [snap : (Array i64) (i64-vec-to-array fv)]
+              (begin
+                (assert-i64-eq (array-length snap) 3 "to-array length = len")
+                (assert-i64-eq (array-ref snap 1) 6 "to-array[1] = 6")
+                ;; mutating the snapshot does not affect the vector
+                (array-set! snap 1 0)
+                (assert-i64-eq
+                  (i64-vec-get fv 1 -1)
+                  6
+                  "vector unaffected by snapshot mutation")))
+            ;; reverse! reverses the live prefix in place
+            (let
+              [rv : I64Vec (i64-vec-reverse! fv)]
+              (begin
+                (assert-i64-eq (i64-vec-get rv 0 -1) 7 "reverse![0] = 7")
+                (assert-i64-eq (i64-vec-get rv 2 -1) 5 "reverse![2] = 5")
+                (assert-i64-eq (i64-vec-sum rv) 18 "reverse keeps sum")))))
+        ;; from-array with non-positive count yields an empty, growable vector
+        (let
+          [ev : I64Vec (i64-vec-from-array src 0)]
+          (begin
+            (assert-true (i64-vec-is-empty? ev) "from-array 0 is empty")
+            (assert-true
+              (>= (i64-vec-capacity ev) 1)
+              "empty from-array still growable")
+            ;; extend pushes the first count elements (growing as needed)
+            (let
+              [xv : I64Vec (i64-vec-extend ev src 3)]
+              (begin
+                (assert-i64-eq (i64-vec-len xv) 3 "extend len 3")
+                (assert-i64-eq (i64-vec-get xv 0 -1) 5 "extend[0] = 5")
+                (assert-i64-eq (i64-vec-get xv 2 -1) 7 "extend[2] = 7")
+                (assert-i64-eq (i64-vec-sum xv) 18 "extend sum 18")))))))
     42))

@@ -419,7 +419,25 @@
                                           (let
                                             [e20 : TcTypeEnv
                                               (tc-bind
-                                                e19
+                                                (tc-bind
+                                                  (tc-bind
+                                                    e19
+                                                    "cpuid"
+                                                    (tc-fn2
+                                                      (AstTyI64)
+                                                      (AstTyI64)
+                                                      (AstTyTuple
+                                                        (AstTypeCons
+                                                          (AstTyI32)
+                                                          (AstTypeCons
+                                                            (AstTyI32)
+                                                            (AstTypeCons
+                                                              (AstTyI32)
+                                                              (AstTypeCons
+                                                                (AstTyI32)
+                                                                (AstTypeNil))))))))
+                                                  "xgetbv"
+                                                  (tc-fn1 (AstTyI64) (AstTyI64)))
                                                 "substring"
                                                 (tc-fn3
                                                   (AstTyString)

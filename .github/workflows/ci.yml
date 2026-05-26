@@ -68,6 +68,9 @@ jobs:
       - name: Verify public tools with Rust-built compiler
         run: TYPELISP_BIN=target/debug/typelisp scripts/verify-public-tools.sh
 
+      - name: Verify scalar-vs-SIMD SPMD execution comparison
+        run: TYPELISP_BIN=target/debug/typelisp scripts/verify-spmd-simd.sh
+
       - name: Verify TypeLisp doctests with Rust-built compiler
         run: TYPELISP_BIN=target/debug/typelisp scripts/verify-doc-tests.sh
 
@@ -134,6 +137,10 @@ jobs:
       - name: Verify public tools with Rust-built compiler
         shell: bash
         run: TYPELISP_BIN=target/debug/typelisp.exe scripts/verify-public-tools.sh
+
+      - name: Verify scalar-vs-SIMD SPMD execution comparison
+        shell: bash
+        run: TYPELISP_BIN=target/debug/typelisp.exe scripts/verify-spmd-simd.sh
 
       - name: Verify TypeLisp doctests with Rust-built compiler
         shell: bash

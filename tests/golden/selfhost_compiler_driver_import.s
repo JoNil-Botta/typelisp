@@ -10,16 +10,14 @@ _tl_helper_u2etl_colon_colonhelper:
     movq %rsp, %rbp
     subq $64, %rsp
     movq %r12, -32(%rbp)
-    movq %r13, -40(%rbp)
 .L_tl_helper_u2etl_colon_colonhelper_entry:
     movq _tl_shared_u2etl_colon_colonshared(%rip), %rax
     movq %rax, %r12
     movq $38, %rax
     movq %r12, %rbx
     addq %rbx, %rax
-    movq %rax, %r13
-    movq %r13, %rax
-    movq -40(%rbp), %r13
+    movq %rax, %r12
+    movq %r12, %rax
     movq -32(%rbp), %r12
     movq %rbp, %rsp
     popq %rbp
@@ -31,7 +29,6 @@ main:
     movq %rsp, %rbp
     subq $64, %rsp
     movq %r12, -32(%rbp)
-    movq %r13, -40(%rbp)
 .Lmain_entry:
     call _tl_helper_u2etl_colon_colonhelper
     movq %rax, -8(%rbp)
@@ -40,9 +37,8 @@ main:
     movq -8(%rbp), %rax
     movq %r12, %rbx
     addq %rbx, %rax
-    movq %rax, %r13
-    movq %r13, %rax
-    movq -40(%rbp), %r13
+    movq %rax, %r12
+    movq %r12, %rax
     movq -32(%rbp), %r12
     movq %rbp, %rsp
     popq %rbp

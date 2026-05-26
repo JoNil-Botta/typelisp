@@ -42,8 +42,13 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Check implementation language allowlist
+        run: scripts/check-implementation-languages.sh
+
       - name: Check selfhost contribution guardrail
         if: github.event_name == 'pull_request'
+        env:
+          SELFHOST_GUARDRAIL_PR_BODY: ${{ github.event.pull_request.body }}
         run: |
           git fetch --no-tags --depth=1 origin "${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
           SELFHOST_GUARDRAIL_BASE="origin/${{ github.base_ref }}" scripts/check-selfhost-guardrail.sh

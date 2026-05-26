@@ -2680,20 +2680,36 @@
       (compiler-parse-ok?
         "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))")
       (and
-        (compiler-parse-error-ok?
-          "(define (main) : i64 (begin (foreach ([i i64 0 3 4]) unit) 0))"
-          "parse: expected ':' in foreach")
+        ;; #1073: an empty range, a non-i64 index type, and expression
+        ;; start/end bounds all parse (range semantics are checked later).
+        (compiler-parse-ok?
+          "(define (main) : i64 (begin (foreach ([i : i64 5 5]) unit) 0))")
         (and
-          (compiler-parse-error-ok?
-            "(define (main) : i64 (begin (foreach ([i : i64 0]) unit) 0))"
-            "parse: malformed foreach binding")
+          (compiler-parse-ok?
+            "(define (main) : i64 (begin (foreach ([i : u32 0 3]) unit) 0))")
           (and
-            (compiler-parse-error-ok?
-              "(define (main) : i64 (begin (foreach) 0))"
-              "parse: malformed foreach")
-            (compiler-parse-error-ok?
-              "(define (main) : i64 (spmd-reduce sum))"
-              "parse: malformed spmd-reduce")))))))
+            (compiler-parse-ok?
+              "(define (main [n : i64]) : i64 (begin (foreach ([i : i64 (+ 0 1) (* n 2)]) unit) 0))")
+            (and
+              ;; #1073: an unknown reduce operator is rejected by the parser.
+              (compiler-parse-error-ok?
+                "(define (main [n : i64]) : i64 (spmd-reduce bogus ([i : i64 0 n]) 0 i))"
+                "parse: unsupported spmd-reduce operator `bogus`; expected one of sum, min, max, all, any")
+              (and
+                (compiler-parse-error-ok?
+                  "(define (main) : i64 (begin (foreach ([i i64 0 3 4]) unit) 0))"
+                  "parse: expected ':' in foreach")
+                (and
+                  (compiler-parse-error-ok?
+                    "(define (main) : i64 (begin (foreach ([i : i64 0]) unit) 0))"
+                    "parse: malformed foreach binding")
+                  (and
+                    (compiler-parse-error-ok?
+                      "(define (main) : i64 (begin (foreach) 0))"
+                      "parse: malformed foreach")
+                    (compiler-parse-error-ok?
+                      "(define (main) : i64 (spmd-reduce sum))"
+                      "parse: malformed spmd-reduce")))))))))))
 
 (define (compiler-parse-pattern-tests-ok?) : bool
   (and

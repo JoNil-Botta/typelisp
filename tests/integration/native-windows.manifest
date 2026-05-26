@@ -1,4 +1,6 @@
 # name|source|exit|stdout|args|deps
+# A deps token of requires-stage0-symbol:<name> skips the case only for the
+# published stage0 gate until that staged primitive is republished.
 # Windows omits the with_arena_* Linux SysV fixtures; the runner validates that
 # those are the only integration sources missing from this manifest.
 aggregate_globals|tests/integration/aggregate_globals.tl|42|-|-|-
@@ -52,7 +54,7 @@ print_string|tests/integration/print_string.tl|0|hello\nworld\n|-|-
 register_scalar_homes|tests/integration/register_scalar_homes.tl|42|-|-|-
 spmd_foreach|tests/integration/spmd_foreach.tl|42|-|-|-
 spmd_reduce_scalar|tests/integration/spmd_reduce_scalar.tl|42|-|-|-
-stdlib_io|tests/integration/stdlib_io.tl|42|-|-|stdlib/io.tl
+stdlib_io|tests/integration/stdlib_io.tl|42|-|-|stdlib/io.tl requires-stage0-symbol:file-open-status
 stdlib_json|tests/integration/stdlib_json.tl|42|-|-|stdlib/json.tl stdlib/text_buf.tl
 stdlib_text_buf|tests/integration/stdlib_text_buf.tl|42|-|-|stdlib/text_buf.tl
 stdlib_string|tests/integration/stdlib_string.tl|42|hello\174\nhello\174\nhello\174\nfound\n\174empty-left\n\174empty-right\n\174all-space\ncontains\nmissing\nhippo\nabx\n|-|stdlib/string.tl

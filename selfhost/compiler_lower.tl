@@ -1479,11 +1479,15 @@
                         true
                         (if (string-eq name "file-exists-status")
                           true
-                          (if (string-eq name "panic")
+                          (if (string-eq name "file-open-status")
                             true
-                            (if (string-eq name "error")
+                            (if (string-eq name "file-close-status")
                               true
-                              (string-eq name "print-error"))))))))))))))))
+                              (if (string-eq name "panic")
+                                true
+                                (if (string-eq name "error")
+                                  true
+                                  (string-eq name "print-error"))))))))))))))))))
 
 (define (lower-stdio-runtime-name [name : String]) : String
   (if (string-eq name "read-stdin-line")
@@ -2652,6 +2656,91 @@
         result-ty
         origin)]))
 
+(define (lower-file-open-status-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons path (AstExprCons mode (AstExprNil)))
+      (match (lower-expr ctx state env type-env path)
+        [(OkLowerExpr lowered-path)
+          (match lowered-path
+            [(LowerExpr path-state path-value _)
+              (match (lower-expr ctx path-state env type-env mode)
+                [(OkLowerExpr lowered-mode)
+                  (match lowered-mode
+                    [(LowerExpr mode-state mode-value mode-ty)
+                      (match (lower-cast-value
+                        mode-state
+                        mode-value
+                        mode-ty
+                        (AstTyI64))
+                        [(LowerExpr cast-state cast-value _)
+                          (match (lower-string-fields cast-state path-value)
+                            [(LowerStringFields fields-state ptr len)
+                              (lower-runtime-call-values
+                                fields-state
+                                ".L_tl_file_open_status"
+                                (IrValueCons
+                                  ptr
+                                  (IrValueCons
+                                    len
+                                    (IrValueCons cast-value IrValueNil)))
+                                result-ty)])])])]
+                [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [_
+      (lower-direct-call
+        ctx
+        state
+        env
+        type-env
+        "file-open-status"
+        args
+        result-ty
+        origin)]))
+
+(define (lower-file-close-status-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons handle (AstExprNil))
+      (match (lower-expr ctx state env type-env handle)
+        [(OkLowerExpr lowered-handle)
+          (match lowered-handle
+            [(LowerExpr handle-state handle-value handle-ty)
+              (match (lower-cast-value
+                handle-state
+                handle-value
+                handle-ty
+                (AstTyI64))
+                [(LowerExpr cast-state cast-value _)
+                  (lower-runtime-call-values
+                    cast-state
+                    ".L_tl_file_close_status"
+                    (IrValueCons cast-value IrValueNil)
+                    result-ty)])])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [_
+      (lower-direct-call
+        ctx
+        state
+        env
+        type-env
+        "file-close-status"
+        args
+        result-ty
+        origin)]))
+
 (define (lower-message-runtime-call
   [ctx : TcContext]
   [state : LowerState]
@@ -2911,31 +3000,49 @@
                           args
                           result-ty
                           origin)
-                        (if (or
-                          (string-eq name "panic")
-                          (string-eq name "error"))
-                          (lower-message-runtime-call
+                        (if (string-eq name "file-open-status")
+                          (lower-file-open-status-call
                             ctx
                             state
                             env
                             type-env
                             args
-                            name
-                            ".L_tl_abort"
                             result-ty
-                            "lower: panic requires String"
                             origin)
-                          (lower-message-runtime-call
-                            ctx
-                            state
-                            env
-                            type-env
-                            args
-                            "print-error"
-                            "tl_print_err"
-                            result-ty
-                            "lower: print-error requires String"
-                            origin))))))))))))))
+                          (if (string-eq name "file-close-status")
+                            (lower-file-close-status-call
+                              ctx
+                              state
+                              env
+                              type-env
+                              args
+                              result-ty
+                              origin)
+                            (if (or
+                              (string-eq name "panic")
+                              (string-eq name "error"))
+                              (lower-message-runtime-call
+                                ctx
+                                state
+                                env
+                                type-env
+                                args
+                                name
+                                ".L_tl_abort"
+                                result-ty
+                                "lower: panic requires String"
+                                origin)
+                              (lower-message-runtime-call
+                                ctx
+                                state
+                                env
+                                type-env
+                                args
+                                "print-error"
+                                "tl_print_err"
+                                result-ty
+                                "lower: print-error requires String"
+                                origin))))))))))))))))
 
 ;; Lower an unshadowed `(string-ref s i)` / `(char-at s i)` builtin call to the
 ;; bounds-checked String byte index. Since #677 the parser emits these names as
@@ -5117,6 +5224,12 @@
         (string-length (read-stdin-line))
         (string-length (read-stdin-bytes 3)))))")
 
+(define (compiler-lower-file-handle-status-source) : String
+  "(define (main) : i64
+  (let
+    [handle : i64 (file-open-status \"input.txt\" 0)]
+    (+ handle (file-close-status handle))))")
+
 (define (compiler-lower-aggregate-source) : String
   "(defstruct Point (x i64) (y i64))
 (defenum Shape (Nothing) (Circle i64) (Pair Point))
@@ -5870,6 +5983,34 @@
                       0))))))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-file-handle-status-shape-ok? [src : String]) : bool
+  (match (lower-compiler-source src)
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (=
+              (lower-test-functions-call-count
+                functions
+                ".L_tl_file_open_status")
+              1)
+            (and
+              (=
+                (lower-test-functions-call-count
+                  functions
+                  ".L_tl_file_close_status")
+                1)
+              (and
+                (=
+                  (lower-test-functions-call-count functions "file-open-status")
+                  0)
+                (=
+                  (lower-test-functions-call-count
+                    functions
+                    "file-close-status")
+                  0))))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-region-source) : String
   "(define (main) : i64
   (with-arena r
@@ -6094,56 +6235,59 @@
                         (and
                           (compiler-lower-ok? (compiler-lower-stdio-source))
                           (and
-                            (compiler-lower-ok?
-                              (compiler-lower-aggregate-source))
+                            (compiler-lower-file-handle-status-shape-ok?
+                              (compiler-lower-file-handle-status-source))
                             (and
                               (compiler-lower-ok?
-                                (compiler-lower-comptime-decl-source))
+                                (compiler-lower-aggregate-source))
                               (and
-                                (compiler-lower-module-symbols-ok?)
+                                (compiler-lower-ok?
+                                  (compiler-lower-comptime-decl-source))
                                 (and
-                                  (compiler-lower-module-qualified-ok?)
+                                  (compiler-lower-module-symbols-ok?)
                                   (and
-                                    (compiler-lower-module-specialize-ok?)
+                                    (compiler-lower-module-qualified-ok?)
                                     (and
-                                      (compiler-lower-region-shape-ok?)
+                                      (compiler-lower-module-specialize-ok?)
                                       (and
-                                        (compiler-lower-repr-c-shape-ok?)
+                                        (compiler-lower-region-shape-ok?)
                                         (and
-                                          (compiler-lower-error-ok?
-                                            (compiler-typecheck-branch-mismatch-source)
-                                            "typecheck: if branches must match")
+                                          (compiler-lower-repr-c-shape-ok?)
                                           (and
                                             (compiler-lower-error-ok?
-                                              (compiler-lower-unsupported-source)
-                                              "lower: unsupported expression")
+                                              (compiler-typecheck-branch-mismatch-source)
+                                              "typecheck: if branches must match")
                                             (and
-                                              (compiler-lower-comptime-fold-ok?
-                                                (compiler-lower-comptime-arith-source)
-                                                3)
+                                              (compiler-lower-error-ok?
+                                                (compiler-lower-unsupported-source)
+                                                "lower: unsupported expression")
                                               (and
                                                 (compiler-lower-comptime-fold-ok?
-                                                  (compiler-lower-comptime-if-source)
-                                                  42)
+                                                  (compiler-lower-comptime-arith-source)
+                                                  3)
                                                 (and
                                                   (compiler-lower-comptime-fold-ok?
-                                                    (compiler-lower-comptime-let-source)
+                                                    (compiler-lower-comptime-if-source)
                                                     42)
                                                   (and
-                                                    (compiler-lower-error-ok?
-                                                      (compiler-lower-comptime-runtime-var-source)
-                                                      "compile-time evaluation cannot reference runtime variable 'x'")
+                                                    (compiler-lower-comptime-fold-ok?
+                                                      (compiler-lower-comptime-let-source)
+                                                      42)
                                                     (and
                                                       (compiler-lower-error-ok?
-                                                        (compiler-lower-comptime-f64-source)
-                                                        "comptime: f64 compile-time evaluation not yet supported (#735)")
+                                                        (compiler-lower-comptime-runtime-var-source)
+                                                        "compile-time evaluation cannot reference runtime variable 'x'")
                                                       (and
+                                                        (compiler-lower-error-ok?
+                                                          (compiler-lower-comptime-f64-source)
+                                                          "comptime: f64 compile-time evaluation not yet supported (#735)")
                                                         (and
-                                                          (compiler-lower-comptime-op-fold-tests-ok?)
-                                                          (compiler-lower-layout-query-fold-tests-ok?))
-                                                        (and
-                                                          (compiler-lower-foreach-tests-ok?)
-                                                          (compiler-lower-spmd-reduce-tests-ok?)))))))))))))))))))))))))))))
+                                                          (and
+                                                            (compiler-lower-comptime-op-fold-tests-ok?)
+                                                            (compiler-lower-layout-query-fold-tests-ok?))
+                                                          (and
+                                                            (compiler-lower-foreach-tests-ok?)
+                                                            (compiler-lower-spmd-reduce-tests-ok?))))))))))))))))))))))))))))))
     42
     (begin
       (panic "lower: smoke score mismatch")

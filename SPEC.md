@@ -1548,6 +1548,8 @@ track (#809/#897/#911/#912) and the safe reference/ownership track (#182).
 | `read-file-status` | `String → i64` | Return 0 when `read-file` should succeed, otherwise a positive host status code |
 | `write-file-status` | `String String → i64` | Write whole file contents and return 0 on success or a positive host status code |
 | `file-exists-status` | `String → i64` | Return 0 when a path exists, otherwise a positive host status code such as not-found |
+| `file-open-status` | `String i64 → i64` | Open a runtime-managed file-handle slot; return a positive handle id on success or a negative host status code |
+| `file-close-status` | `i64 → i64` | Close a runtime-managed file-handle slot; return 0 on success or a positive host status code |
 | `read-stdin-line` | `→ String` | Read one stdin line without trailing newline; blank line returns `""` and does not set EOF |
 | `read-stdin-bytes` | `i64 → String` | Read up to `n` stdin bytes; negative counts panic, short reads occur only at EOF |
 | `stdin-eof?` | `→ bool` | Report whether the most recent stdin read hit EOF before a full line/requested byte count |
@@ -1606,6 +1608,8 @@ They are not implemented by a separate C runtime.
 | `.L_tl_arg` | Return copied argv entry |
 | `.L_tl_read_file` | Read whole file |
 | `.L_tl_write_file` | Write whole file |
+| `.L_tl_file_open_status` | Open a runtime-managed file-handle slot |
+| `.L_tl_file_close_status` | Close a runtime-managed file-handle slot |
 | `.L_tl_abort` | Print and abort (used by `panic`/`error`) |
 | `tl_oob_abort` | Bounds-check trap |
 
@@ -1619,24 +1623,22 @@ They are not implemented by a separate C runtime.
 | `char-at` | `string-ref` |
 | `print-str` | `print-string` |
 
-### 6.4 Stdlib file I/O handles (v1 design; implementation pending)
+### 6.4 Stdlib file I/O handles (v1)
 
 This section specifies the v1 source-level file-handle API for `stdlib/io.tl`.
-It defines the public surface — handle type, open modes, streaming reads,
-streaming writes, close, and platform policy — without committing the
-runtime/backend implementation, which lands incrementally through #1056
-(open/close), #1057 (streaming reads), and #1058 (streaming writes/flush). The
-handle API reuses the existing `IoError` model already in `stdlib/io.tl` (§9
-catalogs the variants); it does not introduce a new error vocabulary.
+Open/close support is implemented by #1056; streaming reads (#1057) and
+streaming writes/flush (#1058) land incrementally. The handle API reuses the
+existing `IoError` model already in `stdlib/io.tl` (§9 catalogs the variants);
+it does not introduce a new error vocabulary.
 
 **Handle type.** A file handle is an opaque value `FileHandle`. Source-level
 TypeLisp v1 treats it as opaque: programs obtain it from `file-open`, pass it to
-read/write/close helpers, and never inspect its representation. Internally a
-handle carries the host descriptor (a Linux file descriptor or a Windows
-`HANDLE`) plus the open mode it was created with; these fields are not part of
-the public contract and may change. A handle is a copyable value in v1 — there
-is no move-only ownership or implicit close yet; move-only handles and automatic
-close wait on #805.
+read/write/close helpers, and never inspect its representation. Internally the
+handle carries an id into a runtime-managed table that stores the host
+descriptor, open mode, and open/closed state; these fields are not part of the
+public contract and may change. A handle is a copyable value in v1 — there is no
+move-only ownership or implicit close yet; move-only handles and automatic close
+wait on #805.
 
 **Open modes.** `file-open` takes a path and an `OpenMode`:
 
@@ -1723,10 +1725,10 @@ result for any mode or operation not yet implemented there, following the same
 pattern as the Windows `try-create-temp-dir` behavior. No operation panics for an
 unsupported platform; callers always receive an `IoError`.
 
-**Scope.** This is a written API/spec only. It adds no Rust-only IO
-infrastructure and no runtime/backend code; the concrete `FileHandle`
-representation, runtime status primitives, and stdlib functions land through
-#1056, #1057, and #1058.
+**Scope.** The #1056 open/close subset is implemented for the stdlib API and
+Rust stage0 backend, with Windows returning structured `IoUnsupported` results
+until native handle support lands. Streaming reads and writes remain specified
+follow-ups through #1057 and #1058.
 
 ---
 

@@ -161,6 +161,24 @@ deps_or_empty() {
     esac
 }
 
+is_stage0_compiler() {
+    case "$COMPILER" in
+        *target/stage0/* | *target\\stage0\\*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+requires_symbol_from_deps() {
+    for _dep in $(deps_or_empty "$1"); do
+        case "$_dep" in
+            requires-stage0-symbol:*)
+                printf '%s\n' "${_dep#requires-stage0-symbol:}"
+                return
+                ;;
+        esac
+    done
+}
+
 dep_source_path() {
     _dep=$1
     _source_dir=$2
@@ -276,6 +294,9 @@ EOF
 
         _source_dir=$(dirname -- "$_source_path")
         for _dep in $(deps_or_empty "$_deps"); do
+            case "$_dep" in
+                requires-stage0-symbol:*) continue ;;
+            esac
             case "$_dep" in
                 /* | *..*)
                     echo "manifest line $_line_no has unsafe dependency path: $_dep" >&2
@@ -801,6 +822,7 @@ validate_manifest
 
 failed=0
 ran=0
+skipped=0
 
 while IFS='|' read -r name source want stdout_spec runtime_args deps || [ -n "$name" ]; do
     case "$name" in
@@ -814,7 +836,17 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps || [ -n "$n
     work_src="$case_dir/$name.tl"
     cp "$source_path" "$work_src"
 
+    requires_symbol=$(requires_symbol_from_deps "$deps")
+    if [ -n "$requires_symbol" ] && is_stage0_compiler; then
+        echo "[$name] SKIP (awaiting stage0 republish of '$requires_symbol')"
+        skipped=$((skipped + 1))
+        continue
+    fi
+
     for dep in $(deps_or_empty "$deps"); do
+        case "$dep" in
+            requires-stage0-symbol:*) continue ;;
+        esac
         copy_dep "$dep" "$source_dir" "$case_dir"
     done
 
@@ -919,3 +951,6 @@ else
 fi
 
 echo "All $ran integration case(s) passed for $HOST_OS."
+if [ "$skipped" -ne 0 ]; then
+    echo "$skipped integration case(s) skipped (staged primitive awaiting stage0 republish)."
+fi

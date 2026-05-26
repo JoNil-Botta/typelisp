@@ -393,14 +393,25 @@
                                                   (tc-bind
                                                     (tc-bind
                                                       (tc-bind
-                                                        e18
-                                                        "file-exists?"
-                                                        (tc-fn1
+                                                        (tc-bind
+                                                          (tc-bind
+                                                            e18
+                                                            "file-exists?"
+                                                            (tc-fn1
+                                                              (AstTyString)
+                                                              (AstTyBool)))
+                                                          "file-exists-status"
+                                                          (tc-fn1
+                                                            (AstTyString)
+                                                            (AstTyI64)))
+                                                        "file-open-status"
+                                                        (tc-fn2
                                                           (AstTyString)
-                                                          (AstTyBool)))
-                                                      "file-exists-status"
+                                                          (AstTyI64)
+                                                          (AstTyI64)))
+                                                      "file-close-status"
                                                       (tc-fn1
-                                                        (AstTyString)
+                                                        (AstTyI64)
                                                         (AstTyI64)))
                                                     "fs-mkdir-status"
                                                     (tc-fn1
@@ -1786,29 +1797,35 @@
                                     true
                                     (if (string-eq name "file-exists-status")
                                       true
-                                      (if (string-eq name "fs-mkdir-status")
+                                      (if (string-eq name "file-open-status")
                                         true
-                                        (if (string-eq
-                                          name
-                                          "fs-remove-file-status")
+                                        (if (string-eq name "file-close-status")
                                           true
-                                          (if (string-eq
-                                            name
-                                            "fs-remove-dir-status")
+                                          (if (string-eq name "fs-mkdir-status")
                                             true
-                                            (if (string-eq name "fs-process-id")
+                                            (if (string-eq
+                                              name
+                                              "fs-remove-file-status")
                                               true
-                                              (if (string-eq name "panic")
+                                              (if (string-eq
+                                                name
+                                                "fs-remove-dir-status")
                                                 true
-                                                (if (string-eq name "error")
+                                                (if (string-eq
+                                                  name
+                                                  "fs-process-id")
                                                   true
-                                                  (if (string-eq
-                                                    name
-                                                    "env-var-exists?")
+                                                  (if (string-eq name "panic")
                                                     true
-                                                    (string-eq
-                                                      name
-                                                      "env-var-value")))))))))))))))))))))))))))
+                                                    (if (string-eq name "error")
+                                                      true
+                                                      (if (string-eq
+                                                        name
+                                                        "env-var-exists?")
+                                                        true
+                                                        (string-eq
+                                                          name
+                                                          "env-var-value")))))))))))))))))))))))))))))
 
 (define (tc-default-builtin-unshadowed-scan? [env : TcTypeEnv] [name : String]) : bool
   (match env
@@ -5471,9 +5488,8 @@
               "(define (main) : i64 (comptime (< 1 2)))"
               "typecheck: return type mismatch")))))))
 
-;; IO-builtin signature rules (#1042): `read-file` (String -> String),
-;; `write-file` (String String -> unit), and `file-exists?` (String -> bool)
-;; accepts, plus non-String-argument, wrong-arity, and result-type-mismatch
+;; IO-builtin signature rules (#1042): whole-file helpers and file-handle status
+;; primitives accept, plus wrong-argument, wrong-arity, and result-type-mismatch
 ;; rejections. Migrated from src/typechecker.rs read-file/write-file coverage.
 (define (compiler-typecheck-io-builtin-tests-ok?) : bool
   (and
@@ -5485,20 +5501,34 @@
         (compiler-typecheck-ok?
           "(define (f [p : String]) : bool (file-exists? p))")
         (and
-          (compiler-typecheck-error-ok?
-            "(define (f [c : String]) : unit (write-file 5 c))"
-            "typecheck: argument type mismatch")
+          (compiler-typecheck-ok?
+            "(define (f [p : String]) : i64 (file-open-status p 0))")
           (and
-            (compiler-typecheck-error-ok?
-              "(define (f [p : String]) : unit (write-file p))"
-              "typecheck: arity mismatch")
+            (compiler-typecheck-ok?
+              "(define (f [h : i64]) : i64 (file-close-status h))")
             (and
               (compiler-typecheck-error-ok?
-                "(define (f [p : i64]) : String (read-file p))"
+                "(define (f [c : String]) : unit (write-file 5 c))"
                 "typecheck: argument type mismatch")
-              (compiler-typecheck-error-ok?
-                "(define (f [p : String] [c : String]) : i64 (write-file p c))"
-                "typecheck: return type mismatch"))))))))
+              (and
+                (compiler-typecheck-error-ok?
+                  "(define (f [p : String]) : unit (write-file p))"
+                  "typecheck: arity mismatch")
+                (and
+                  (compiler-typecheck-error-ok?
+                    "(define (f [p : i64]) : String (read-file p))"
+                    "typecheck: argument type mismatch")
+                  (and
+                    (compiler-typecheck-error-ok?
+                      "(define (f [p : String]) : i64 (file-open-status p \"r\"))"
+                      "typecheck: argument type mismatch")
+                    (and
+                      (compiler-typecheck-error-ok?
+                        "(define (f) : i64 (file-close-status \"h\"))"
+                        "typecheck: argument type mismatch")
+                      (compiler-typecheck-error-ok?
+                        "(define (f [p : String] [c : String]) : i64 (write-file p c))"
+                        "typecheck: return type mismatch"))))))))))))
 
 ;; Raw-pointer null construction / check (#1054).
 (define (compiler-typecheck-ptr-null-ok-source) : String

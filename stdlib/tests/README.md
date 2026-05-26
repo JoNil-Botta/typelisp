@@ -27,6 +27,10 @@ Coverage notes:
   `append-file`, and `file-nonempty?` on missing, empty-path, directory-read,
   missing-parent write, empty-file, and existing-file paths without masking host
   I/O failures.
+- `io_file_handle.tl` covers `FileHandle` open/close success, empty-path and
+  missing-file open failures, invalid and double-close failures, write-truncate
+  creation/truncation, write-append preservation/creation, and the Windows
+  unsupported result.
 - `io_stdio_lines.tl` covers stdin line wrappers, blank-line vs EOF state,
   stdout/stderr write-line helpers, and stdout flushing with fixture stdin.
 - `io_stdio_bytes.tl` covers fixed-byte stdin wrappers, short reads at EOF, and

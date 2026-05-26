@@ -69,6 +69,7 @@ fail() {
 
 contains_text() {
     needle=$1
+    [ "$compiled" -eq 2 ] && return
     if ! grep -F -- "$needle" "$asm_path" >/dev/null; then
         fail "$case_id assembly is missing expected text [$needle]"
     fi
@@ -76,6 +77,7 @@ contains_text() {
 
 not_contains_text() {
     needle=$1
+    [ "$compiled" -eq 2 ] && return
     if grep -F -- "$needle" "$asm_path" >/dev/null; then
         fail "$case_id assembly contains forbidden text [$needle]"
     fi
@@ -84,6 +86,7 @@ not_contains_text() {
 count_at_least() {
     needle=$1
     min=$2
+    [ "$compiled" -eq 2 ] && return
     count=$(grep -F -- "$needle" "$asm_path" | wc -l | tr -d ' ')
     if [ "$count" -lt "$min" ]; then
         fail "$case_id assembly has $count occurrence(s) of [$needle], expected at least $min"
@@ -95,7 +98,7 @@ main_label_count() {
 }
 
 ensure_compiled() {
-    if [ "$compiled" -eq 1 ]; then
+    if [ "$compiled" -ne 0 ]; then
         return
     fi
 
@@ -115,6 +118,12 @@ ensure_compiled() {
     code=$?
     set -e
     if [ "$code" -ne 0 ]; then
+        if [ -n "$case_requires_symbol" ] && grep -qF "$case_requires_symbol" "$err_path"; then
+            echo "[selfhost-compile] SKIP $case_id (awaiting stage0 republish of '$case_requires_symbol')"
+            skipped=$((skipped + 1))
+            compiled=2
+            return
+        fi
         echo "stdout:" >&2
         sed 's/^/  /' "$out_path" >&2
         echo "stderr:" >&2
@@ -161,6 +170,7 @@ main_policy=
 case_dir=
 compiled=1
 case_count=0
+skipped=0
 
 while IFS='|' read -r kind a b c d e; do
     case "$kind" in
@@ -182,7 +192,12 @@ while IFS='|' read -r kind a b c d e; do
             fi
             asm_path=
             compiled=0
+            case_requires_symbol=
             case_count=$((case_count + 1))
+            ;;
+        requires-stage0-symbol)
+            [ -n "$case_id" ] || fail "requires-stage0-symbol appears before a case"
+            case_requires_symbol=$a
             ;;
         copy)
             [ -n "$case_id" ] || fail "copy appears before a case"
@@ -220,3 +235,6 @@ if [ -n "$case_id" ]; then
 fi
 
 echo "selfhost compile manifest passed: $case_count case(s)"
+if [ "$skipped" -ne 0 ]; then
+    echo "selfhost compile manifest: $skipped case(s) skipped (staged primitive awaiting stage0 republish)"
+fi

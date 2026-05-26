@@ -22,6 +22,8 @@ const FILE_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists";
 const READ_FILE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_read_file_status";
 const WRITE_FILE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_write_file_status";
 const FILE_EXISTS_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists_status";
+const FILE_OPEN_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_open_status";
+const FILE_CLOSE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_close_status";
 const FS_MKDIR_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_fs_mkdir_status";
 const FS_REMOVE_FILE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_fs_remove_file_status";
 const FS_REMOVE_DIR_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_fs_remove_dir_status";
@@ -467,6 +469,9 @@ pub struct X86_64Backend {
     /// `(file-exists? path)`. The helper uses Linux syscalls, `tl_alloc`, and the
     /// panic/abort runtime for unexpected errors.
     needs_file_exists_runtime: bool,
+    /// Whether the program references the private file-handle open/close status
+    /// helpers used by stdlib/io.tl's explicit handle API.
+    needs_file_handle_runtime: bool,
     /// Whether the program references the CPUID runtime primitive `tl_cpuid`
     /// emitted for `(cpuid leaf subleaf)`. The helper executes the `cpuid`
     /// instruction and returns the four result registers in a tuple.
@@ -2003,6 +2008,7 @@ impl X86_64Backend {
             needs_read_file_runtime: false,
             needs_write_file_runtime: false,
             needs_file_exists_runtime: false,
+            needs_file_handle_runtime: false,
             needs_cpuid_runtime: false,
             needs_xgetbv_runtime: false,
             needs_fs_runtime: false,
@@ -2075,6 +2081,7 @@ impl X86_64Backend {
         self.needs_read_file_runtime = Self::needs_read_file_runtime(program);
         self.needs_write_file_runtime = Self::needs_write_file_runtime(program);
         self.needs_file_exists_runtime = Self::needs_file_exists_runtime(program);
+        self.needs_file_handle_runtime = Self::needs_file_handle_runtime(program);
         self.needs_cpuid_runtime = Self::needs_cpuid_runtime(program);
         self.needs_xgetbv_runtime = Self::needs_xgetbv_runtime(program);
         self.needs_fs_runtime = Self::needs_fs_runtime(program);
@@ -2112,6 +2119,7 @@ impl X86_64Backend {
             || self.needs_read_file_runtime
             || self.needs_write_file_runtime
             || self.needs_file_exists_runtime
+            || (self.needs_file_handle_runtime && !runtime_policy.emits_windows_runtime_helpers)
             || self.needs_cpuid_runtime
             || self.needs_fs_runtime
             || (self.needs_env_var_exists_runtime && runtime_policy.emits_windows_runtime_helpers)
@@ -2145,6 +2153,7 @@ impl X86_64Backend {
             || self.needs_read_file_runtime
             || self.needs_write_file_runtime
             || self.needs_file_exists_runtime
+            || self.needs_file_handle_runtime
             || self.needs_cpuid_runtime
             || self.needs_xgetbv_runtime
             || self.needs_fs_runtime
@@ -2199,6 +2208,9 @@ impl X86_64Backend {
         if self.needs_file_exists_runtime {
             self.generate_file_exists_runtime_data();
         }
+        if self.needs_file_handle_runtime {
+            self.generate_file_handle_runtime_data();
+        }
         if self.needs_flush_stdout_runtime {
             self.generate_flush_stdout_runtime_data();
         }
@@ -2250,6 +2262,8 @@ impl X86_64Backend {
                 || (self.needs_read_file_runtime && symbol == READ_FILE_STATUS_RUNTIME_SYMBOL)
                 || (self.needs_write_file_runtime && symbol == WRITE_FILE_STATUS_RUNTIME_SYMBOL)
                 || (self.needs_file_exists_runtime && symbol == FILE_EXISTS_STATUS_RUNTIME_SYMBOL)
+                || (self.needs_file_handle_runtime && symbol == FILE_OPEN_STATUS_RUNTIME_SYMBOL)
+                || (self.needs_file_handle_runtime && symbol == FILE_CLOSE_STATUS_RUNTIME_SYMBOL)
                 || (self.needs_cpuid_runtime && symbol == CPUID_RUNTIME_SYMBOL)
                 || (self.needs_xgetbv_runtime && symbol == XGETBV_RUNTIME_SYMBOL)
                 || (self.needs_fs_runtime && symbol == FS_MKDIR_STATUS_RUNTIME_SYMBOL)
@@ -2344,6 +2358,9 @@ impl X86_64Backend {
         if self.needs_file_exists_runtime {
             self.generate_file_exists_runtime_functions();
             self.generate_file_exists_status_runtime_functions();
+        }
+        if self.needs_file_handle_runtime {
+            self.generate_file_handle_runtime_functions();
         }
         if self.needs_cpuid_runtime {
             self.generate_cpuid_runtime_functions();
@@ -2992,6 +3009,15 @@ impl X86_64Backend {
                 })
             })
         })
+    }
+
+    fn needs_file_handle_runtime(program: &Program) -> bool {
+        [
+            FILE_OPEN_STATUS_RUNTIME_SYMBOL,
+            FILE_CLOSE_STATUS_RUNTIME_SYMBOL,
+        ]
+        .iter()
+        .any(|symbol| Self::needs_private_call_runtime(program, symbol))
     }
 
     fn needs_cpuid_runtime(program: &Program) -> bool {
@@ -4020,6 +4046,26 @@ impl X86_64Backend {
         self.emit(".L_tl_file_exists_error_msg:");
         self.emit("    .ascii \"tl: file-exists? failed\\n\"");
         self.emit("    .set .L_tl_file_exists_error_msg_len, . - .L_tl_file_exists_error_msg");
+        self.emit("");
+    }
+
+    fn generate_file_handle_runtime_data(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            return;
+        }
+
+        self.emit("    .data");
+        self.emit("    .balign 8");
+        self.emit(".L_tl_file_handle_next:");
+        self.emit("    .quad 1");
+        self.emit("    .section .bss");
+        self.emit("    .balign 8");
+        self.emit(".L_tl_file_handle_fds:");
+        self.emit("    .zero 8192");
+        self.emit(".L_tl_file_handle_modes:");
+        self.emit("    .zero 8192");
+        self.emit(".L_tl_file_handle_states:");
+        self.emit("    .zero 8192");
         self.emit("");
     }
 
@@ -5066,6 +5112,151 @@ impl X86_64Backend {
         self.emit("    shlq $32, %rdx");
         self.emit("    orq %rdx, %rax");
         self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_file_handle_runtime_functions(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.generate_windows_file_handle_runtime_functions();
+            return;
+        }
+
+        self.generate_file_open_status_runtime_function();
+        self.generate_file_close_status_runtime_function();
+    }
+
+    fn generate_file_open_status_runtime_function(&mut self) {
+        self.emit(&format!("{}:", FILE_OPEN_STATUS_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    push %r15");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq %rdi, %rbx");
+        self.emit("    movq %rsi, %r12");
+        self.emit("    movq %rdx, %r14");
+        self.emit("    cmpq $0, %r12");
+        self.emit("    jle .L_tl_file_open_status_invalid");
+        self.emit("    movq %r12, %rdi");
+        self.emit("    addq $1, %rdi");
+        self.emit("    js .L_tl_file_open_status_invalid");
+        self.emit("    call tl_alloc");
+        self.emit("    movq %rax, %r13");
+        self.emit("    xorq %rcx, %rcx");
+        self.emit(".L_tl_file_open_status_path_copy_loop:");
+        self.emit("    cmpq %r12, %rcx");
+        self.emit("    jge .L_tl_file_open_status_path_copy_done");
+        self.emit("    movzbl (%rbx,%rcx), %edx");
+        self.emit("    movb %dl, (%r13,%rcx)");
+        self.emit("    incq %rcx");
+        self.emit("    jmp .L_tl_file_open_status_path_copy_loop");
+        self.emit(".L_tl_file_open_status_path_copy_done:");
+        self.emit("    movb $0, (%r13,%r12)");
+        self.emit("    cmpq $0, %r14");
+        self.emit("    je .L_tl_file_open_status_mode_read");
+        self.emit("    cmpq $1, %r14");
+        self.emit("    je .L_tl_file_open_status_mode_truncate");
+        self.emit("    cmpq $2, %r14");
+        self.emit("    je .L_tl_file_open_status_mode_append");
+        self.emit("    jmp .L_tl_file_open_status_invalid");
+        self.emit(".L_tl_file_open_status_mode_read:");
+        self.emit("    xorq %rdx, %rdx");
+        self.emit("    xorq %r10, %r10");
+        self.emit("    jmp .L_tl_file_open_status_open");
+        self.emit(".L_tl_file_open_status_mode_truncate:");
+        self.emit("    movq $577, %rdx");
+        self.emit("    movq $438, %r10");
+        self.emit("    jmp .L_tl_file_open_status_open");
+        self.emit(".L_tl_file_open_status_mode_append:");
+        self.emit("    movq $1089, %rdx");
+        self.emit("    movq $438, %r10");
+        self.emit(".L_tl_file_open_status_open:");
+        self.emit("    movq $257, %rax");
+        self.emit("    movq $-100, %rdi");
+        self.emit("    movq %r13, %rsi");
+        self.emit("    syscall");
+        self.emit("    testq %rax, %rax");
+        self.emit("    js .L_tl_file_open_status_return");
+        self.emit("    movq %rax, %r15");
+        self.emit("    movq .L_tl_file_handle_next(%rip), %rax");
+        self.emit("    cmpq $1024, %rax");
+        self.emit("    jge .L_tl_file_open_status_table_full");
+        self.emit("    leaq .L_tl_file_handle_fds(%rip), %rcx");
+        self.emit("    movq %r15, (%rcx,%rax,8)");
+        self.emit("    leaq .L_tl_file_handle_modes(%rip), %rcx");
+        self.emit("    movq %r14, (%rcx,%rax,8)");
+        self.emit("    leaq .L_tl_file_handle_states(%rip), %rcx");
+        self.emit("    movq $1, (%rcx,%rax,8)");
+        self.emit("    leaq 1(%rax), %rcx");
+        self.emit("    movq %rcx, .L_tl_file_handle_next(%rip)");
+        self.emit("    jmp .L_tl_file_open_status_return");
+        self.emit(".L_tl_file_open_status_table_full:");
+        self.emit("    movq $3, %rax");
+        self.emit("    movq %r15, %rdi");
+        self.emit("    syscall");
+        self.emit("    movq $-38, %rax");
+        self.emit("    jmp .L_tl_file_open_status_return");
+        self.emit(".L_tl_file_open_status_invalid:");
+        self.emit("    movq $-22, %rax");
+        self.emit(".L_tl_file_open_status_return:");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r15");
+        self.emit("    pop %r14");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_file_close_status_runtime_function(&mut self) {
+        self.emit(&format!("{}:", FILE_CLOSE_STATUS_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    movq %rdi, %rbx");
+        self.emit("    cmpq $1, %rbx");
+        self.emit("    jl .L_tl_file_close_status_unsupported");
+        self.emit("    cmpq $1024, %rbx");
+        self.emit("    jge .L_tl_file_close_status_unsupported");
+        self.emit("    leaq .L_tl_file_handle_states(%rip), %rcx");
+        self.emit("    movq (%rcx,%rbx,8), %rax");
+        self.emit("    cmpq $1, %rax");
+        self.emit("    jne .L_tl_file_close_status_unsupported");
+        self.emit("    leaq .L_tl_file_handle_fds(%rip), %rcx");
+        self.emit("    movq (%rcx,%rbx,8), %rdi");
+        self.emit("    movq $3, %rax");
+        self.emit("    syscall");
+        self.emit("    testq %rax, %rax");
+        self.emit("    js .L_tl_file_close_status_error_from_rax");
+        self.emit("    leaq .L_tl_file_handle_states(%rip), %rcx");
+        self.emit("    movq $2, (%rcx,%rbx,8)");
+        self.emit("    xorq %rax, %rax");
+        self.emit("    jmp .L_tl_file_close_status_return");
+        self.emit(".L_tl_file_close_status_error_from_rax:");
+        self.emit("    negq %rax");
+        self.emit("    jmp .L_tl_file_close_status_return");
+        self.emit(".L_tl_file_close_status_unsupported:");
+        self.emit("    movq $38, %rax");
+        self.emit(".L_tl_file_close_status_return:");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_windows_file_handle_runtime_functions(&mut self) {
+        self.emit(&format!("{}:", FILE_OPEN_STATUS_RUNTIME_SYMBOL));
+        self.emit("    movq $-38, %rax");
+        self.emit("    ret");
+        self.emit("");
+        self.emit(&format!("{}:", FILE_CLOSE_STATUS_RUNTIME_SYMBOL));
+        self.emit("    movq $38, %rax");
         self.emit("    ret");
         self.emit("");
     }
@@ -9907,6 +10098,10 @@ impl X86_64Backend {
             WRITE_FILE_STATUS_RUNTIME_SYMBOL.into()
         } else if name == FILE_EXISTS_STATUS_RUNTIME_SYMBOL && self.needs_file_exists_runtime {
             FILE_EXISTS_STATUS_RUNTIME_SYMBOL.into()
+        } else if name == FILE_OPEN_STATUS_RUNTIME_SYMBOL && self.needs_file_handle_runtime {
+            FILE_OPEN_STATUS_RUNTIME_SYMBOL.into()
+        } else if name == FILE_CLOSE_STATUS_RUNTIME_SYMBOL && self.needs_file_handle_runtime {
+            FILE_CLOSE_STATUS_RUNTIME_SYMBOL.into()
         } else if name == CPUID_RUNTIME_SYMBOL && self.needs_cpuid_runtime {
             CPUID_RUNTIME_SYMBOL.into()
         } else if name == XGETBV_RUNTIME_SYMBOL && self.needs_xgetbv_runtime {
@@ -15332,6 +15527,124 @@ mod tests {
             "asm:\n{}",
             asm
         );
+    }
+
+    #[test]
+    fn test_compile_file_handle_status_helpers_emit_runtime_table() {
+        let asm = compile_ok(
+            r#"
+            (define (main) : i64
+              (let [handle : i64 (file-open-status "input.txt" 0)]
+                (+ handle (file-close-status handle))))
+            "#,
+        );
+
+        for symbol in [
+            ".L_tl_file_open_status:",
+            ".L_tl_file_close_status:",
+            ".L_tl_file_handle_next:",
+            ".L_tl_file_handle_fds:",
+            ".L_tl_file_handle_modes:",
+            ".L_tl_file_handle_states:",
+        ] {
+            assert!(asm.contains(symbol), "asm:\n{}", asm);
+        }
+        assert!(
+            asm.contains("    call .L_tl_file_open_status"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("    call .L_tl_file_close_status"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $257, %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $-100, %rdi"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $577, %rdx"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $1089, %rdx"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $438, %r10"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $3, %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $38, %rax"), "asm:\n{}", asm);
+        assert!(!asm.contains("_tl_.L_tl_file_open_status"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("_tl_.L_tl_file_close_status"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("    .extern .L_tl_file_open_status"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("    .extern .L_tl_file_close_status"),
+            "asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_windows_target_file_handle_status_helpers_return_unsupported() {
+        let asm = compile_ok_for_target(
+            r#"
+            (define (main) : i64
+              (+ (file-open-status "input.txt" 0) (file-close-status 1)))
+            "#,
+            BackendTarget::windows_x86_64(),
+        );
+
+        assert!(asm.contains(".L_tl_file_open_status:"), "asm:\n{}", asm);
+        assert!(asm.contains(".L_tl_file_close_status:"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $-38, %rax"), "asm:\n{}", asm);
+        assert!(asm.contains("    movq $38, %rax"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains(".L_tl_file_handle_next:"),
+            "windows stubs should not emit the Linux handle table:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("    syscall"),
+            "windows stubs should not emit Linux syscalls:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("    .extern .L_tl_file_open_status"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("    .extern .L_tl_file_close_status"),
+            "asm:\n{}",
+            asm
+        );
+    }
+
+    #[test]
+    fn test_compile_user_defined_file_handle_status_helpers_shadow_builtins() {
+        let asm = compile_ok(
+            r#"
+            (define (file-open-status [n : i64]) : i64 (+ n 1))
+            (define (file-close-status) : i64 3)
+            (define (main) : i64 (+ (file-open-status 41) (file-close-status)))
+            "#,
+        );
+
+        assert!(asm.contains("_tl_file_open_status:"), "asm:\n{}", asm);
+        assert!(asm.contains("_tl_file_close_status:"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("    call _tl_file_open_status"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("    call _tl_file_close_status"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(!asm.contains(".L_tl_file_open_status:"), "asm:\n{}", asm);
+        assert!(!asm.contains(".L_tl_file_close_status:"), "asm:\n{}", asm);
     }
 
     #[test]

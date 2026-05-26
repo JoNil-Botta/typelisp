@@ -100,12 +100,15 @@ io.tl
 env.tl
 fs.tl
 hash.tl
+hashmap.tl
 json.tl
+msvc.tl
 process.tl
 random.tl
 string.tl
 test.tl
 text_buf.tl
+vector.tl
 windows_sdk.tl
 windows_setup.tl
 EOF
@@ -130,14 +133,17 @@ stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef
 stdlib/tests/env_api.tl|42|-|-
 stdlib/tests/fs_api.tl|42|-|-
 stdlib/tests/hash_api.tl|42|-|-
+stdlib/tests/hashmap_api.tl|42|-|-
 stdlib/tests/process_api.tl|42|-|-
 stdlib/tests/process_runtime.tl|42|-|-
 stdlib/tests/random_api.tl|42|-|-|requires-stage0-symbol:tl_random_system_seed
 stdlib/tests/text_buf_api.tl|42|-|-
+stdlib/tests/vector_api.tl|42|-|-
 stdlib/tests/visual_studio_api.tl|42|-|-
 stdlib/tests/test_assert_success.tl|42|-|-
 stdlib/tests/test_assert_failure.tl|134|-|literal:stdlib test failure message
 stdlib/tests/windows_sdk_api.tl|42|-|-
+stdlib/tests/msvc_api.tl|42|-|-
 EOF
 }
 
@@ -145,14 +151,14 @@ EOF
 #   fixture-path|expected-status|expected-stderr-snippet
 #
 # Use these for stdlib fixtures that only need the typechecker, including
-# platform-independent with-region policy tests. The expected status is `fail`
+# platform-independent with-arena policy tests. The expected status is `fail`
 # or `pass`; failure rows must include a diagnostic substring that should
 # appear on stderr. Pass rows may use "-" for the diagnostic field.
 stdlib_check_manifest() {
     cat <<'EOF'
 stdlib/tests/arena_policy.tl|pass|-
-stdlib/tests/arena_policy_escape_string.tl|fail|cannot escape with-region 'inner'
-stdlib/tests/arena_policy_escape_text_buf.tl|fail|cannot escape with-region 'inner'
+stdlib/tests/arena_policy_escape_string.tl|fail|cannot escape with-arena 'inner'
+stdlib/tests/arena_policy_escape_text_buf.tl|fail|cannot escape with-arena 'inner'
 EOF
 }
 

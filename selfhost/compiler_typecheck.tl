@@ -3428,9 +3428,10 @@
     [(AstMatchArmCons arm rest)
       (match (tc-match-arm-type ctx env scrut-ty arm)
         [(OkTcType got)
-          (if (tc-type-eq got want)
-            (tc-match-rest-types ctx env scrut-ty rest want)
-            (ErrTcType "typecheck: match arms must agree"))]
+          (match (tc-merge-branch-type want got)
+            [(OkTcType merged)
+              (tc-match-rest-types ctx env scrut-ty rest merged)]
+            [(ErrTcType _) (ErrTcType "typecheck: match arms must agree")])]
         [(ErrTcType message) (ErrTcType message)])]))
 
 (define (tc-check-match-arm-types
@@ -3648,6 +3649,46 @@
         (OkTcType result-ty)
         (ErrTcType "typecheck: non-exhaustive match"))]
     [(ErrTcType message) (ErrTcType message)]))
+
+;; spmd-reduce operator/type rules (#1011, SPEC 5.15): the init/value/result type
+;; must be in the operator's supported set -- `sum` over i32/i64/f64, `min`/`max`
+;; over i32/i64, `all`/`any` over bool. (Effect/purity rules for the varying
+;; value expression are a separate slice.)
+(define (tc-reduce-op-type-ok? [op : AstReduceOp] [ty : AstType]) : bool
+  (match op
+    [(AstReduceSum)
+      (match ty
+        [(AstTyI32) true]
+        [(AstTyI64) true]
+        [(AstTyF64) true]
+        [_ false])]
+    [(AstReduceMin)
+      (match ty
+        [(AstTyI32) true]
+        [(AstTyI64) true]
+        [_ false])]
+    [(AstReduceMax)
+      (match ty
+        [(AstTyI32) true]
+        [(AstTyI64) true]
+        [_ false])]
+    [(AstReduceAll)
+      (match ty
+        [(AstTyBool) true]
+        [_ false])]
+    [(AstReduceAny)
+      (match ty
+        [(AstTyBool) true]
+        [_ false])]))
+
+(define (tc-reduce-op-type-msg [op : AstReduceOp]) : String
+  (match op
+    [(AstReduceSum)
+      "typecheck: spmd-reduce sum requires an i32, i64, or f64 type"]
+    [(AstReduceMin) "typecheck: spmd-reduce min requires an i32 or i64 type"]
+    [(AstReduceMax) "typecheck: spmd-reduce max requires an i32 or i64 type"]
+    [(AstReduceAll) "typecheck: spmd-reduce all requires a bool type"]
+    [(AstReduceAny) "typecheck: spmd-reduce any requires a bool type"]))
 
 (define (tc-expr [ctx : TcContext] [env : TcTypeEnv] [expr : AstExpr]) : ResultTcType
   (match expr
@@ -3947,7 +3988,7 @@
                   "typecheck: foreach start expression must be integer"))]
             [(ErrTcType message) (ErrTcType message)])
           (ErrTcType "typecheck: foreach index type must be integer")))]
-    [(AstExprSpmdReduce _ index index-ty start end init value)
+    [(AstExprSpmdReduce op index index-ty start end init value)
       (let
         [resolved-index-ty : AstType (tc-resolve-type ctx index-ty)]
         (if (tc-integer-type? resolved-index-ty)
@@ -3968,7 +4009,12 @@
                                   value-ty
                                   init-ty
                                   "typecheck: spmd-reduce init and value type mismatch")
-                                  [(OkTcUnit) (OkTcType init-ty)]
+                                  [(OkTcUnit)
+                                    (if (tc-reduce-op-type-ok?
+                                      op
+                                      (tc-resolve-type ctx init-ty))
+                                      (OkTcType init-ty)
+                                      (ErrTcType (tc-reduce-op-type-msg op)))]
                                   [(ErrTcUnit message) (ErrTcType message)])]
                               [(ErrTcType message) (ErrTcType message)]))]
                         [(ErrTcType message) (ErrTcType message)])
@@ -4003,7 +4049,7 @@
             (if (tc-type-contains-region body-ty region)
               (ErrTcType
                 (string-append
-                  "typecheck: region-tagged value cannot escape with-region '"
+                  "typecheck: region-tagged value cannot escape with-arena '"
                   (string-append region "'")))
               (OkTcType body-ty))]
           [(ErrTcType message) (ErrTcType message)]))]
@@ -4021,7 +4067,10 @@
                   "type value "
                   (string-append
                     (tc-type-render (tc-resolve-type ctx ty))
-                    " is compile-time only")))])]
+                    " is compile-time only")))]
+            [(CtfeExpr _) (ErrTcType "Expr value is compile-time only (#1135)")]
+            [(CtfeExprList _)
+              (ErrTcType "ExprList value is compile-time only (#1135)")])]
         [(ErrCtfe diag) (ErrTcType (compiler-diagnostic-message diag))])]
     [(AstExprTry inner) (tc-try-expr ctx env inner)]
     [_ (ErrTcType "typecheck: unsupported expression")]))
@@ -4699,40 +4748,40 @@
 
 (define (compiler-typecheck-region-builtin-source) : String
   "(define (main) : i64
-  (with-region r
+  (with-arena r
     (let
       [s : String (int->string 41)]
       (string-length s))))")
 
 (define (compiler-typecheck-region-escape-source) : String
   "(define (main) : String
-  (with-region r (int->string 41)))")
+  (with-arena r (int->string 41)))")
 
 (define (compiler-typecheck-region-user-call-source) : String
   "(define (sink [s : String]) : i64 (string-length s))
 (define (main) : i64
-  (with-region r
+  (with-arena r
     (let
       [s : String (int->string 41)]
       (sink s))))")
 
 (define (compiler-typecheck-region-nested-escape-source) : String
   "(define (main) : i64
-  (with-region outer
+  (with-arena outer
     (let
-      [s : String (with-region inner (int->string 1))]
+      [s : String (with-arena inner (int->string 1))]
       0)))")
 
 (define (compiler-typecheck-region-outer-in-inner-source) : String
   "(define (main) : i64
-  (with-region outer
+  (with-arena outer
     (let
       [s : String (int->string 1)]
-      (with-region inner (string-length s)))))")
+      (with-arena inner (string-length s)))))")
 
 (define (compiler-typecheck-region-array-source) : String
   "(define (main [n : i64]) : i64
-  (with-region r
+  (with-arena r
     (let
       [a : (Array i64) (make-array i64 n)]
       (begin
@@ -4742,7 +4791,7 @@
 (define (compiler-typecheck-region-struct-escape-source) : String
   "(defstruct Box (s String))
 (define (main) : String
-  (with-region r
+  (with-arena r
     (let
       [b : Box (Box (int->string 1))]
       (struct-get b s))))")
@@ -4750,7 +4799,7 @@
 (define (compiler-typecheck-region-match-source) : String
   "(defenum Token (Text String) (End))
 (define (main) : i64
-  (with-region r
+  (with-arena r
     (match (Text (int->string 1))
       [(Text s) (string-length s)]
       [End 0])))")
@@ -4761,7 +4810,7 @@
     (and
       (compiler-typecheck-error-ok?
         (compiler-typecheck-region-escape-source)
-        "typecheck: region-tagged value cannot escape with-region 'r'")
+        "typecheck: region-tagged value cannot escape with-arena 'r'")
       (and
         (compiler-typecheck-error-ok?
           (compiler-typecheck-region-user-call-source)
@@ -4769,7 +4818,7 @@
         (and
           (compiler-typecheck-error-ok?
             (compiler-typecheck-region-nested-escape-source)
-            "typecheck: region-tagged value cannot escape with-region 'inner'")
+            "typecheck: region-tagged value cannot escape with-arena 'inner'")
           (and
             (compiler-typecheck-ok?
               (compiler-typecheck-region-outer-in-inner-source))
@@ -4778,7 +4827,7 @@
               (and
                 (compiler-typecheck-error-ok?
                   (compiler-typecheck-region-struct-escape-source)
-                  "typecheck: region-tagged value cannot escape with-region 'r'")
+                  "typecheck: region-tagged value cannot escape with-arena 'r'")
                 (compiler-typecheck-ok?
                   (compiler-typecheck-region-match-source))))))))))
 
@@ -5075,6 +5124,12 @@
 (define (compiler-typecheck-match-ok-wildcard-source) : String
   "(define (main) : i64 (match 1 [_ 0]))")
 
+;; A diverging arm (panic : never) must unify with a value arm rather than
+;; being reported as a disagreement; mirrors never-in-if branch handling.
+(define (compiler-typecheck-match-ok-never-arm-source) : String
+  "(defenum E (A) (B))
+(define (main [e : E]) : i64 (match e [(A) 1] [(B) (panic \"no\")]))")
+
 (define (compiler-typecheck-match-tests-ok?) : bool
   (and
     (compiler-typecheck-error-ok?
@@ -5088,7 +5143,11 @@
         (compiler-typecheck-ok? (compiler-typecheck-match-ok-payload-source))
         (and
           (compiler-typecheck-ok? (compiler-typecheck-match-ok-bool-source))
-          (compiler-typecheck-ok? (compiler-typecheck-match-ok-wildcard-source)))))))
+          (and
+            (compiler-typecheck-ok?
+              (compiler-typecheck-match-ok-wildcard-source))
+            (compiler-typecheck-ok?
+              (compiler-typecheck-match-ok-never-arm-source))))))))
 
 (define (compiler-typecheck-string-builtin-ok-length-source) : String
   "(define (main) : i64 (string-length \"hi\"))")
@@ -5164,6 +5223,98 @@
               "(define (f [b : bool]) : i64 (cast b : i64))"
               "typecheck: cast requires integer/char source and target")))))))
 
+;; spmd-reduce operator/type rules (#1011, SPEC 5.15): `sum` accepts i32/i64/f64,
+;; `min`/`max` accept i32/i64, `all`/`any` accept bool. (The varying-value
+;; purity/effect rules are a separate slice.)
+(define (compiler-typecheck-spmd-reduce-op-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))")
+    (and
+      (compiler-typecheck-ok?
+        "(define (main [bs : (Array bool)] [n : i64]) : bool (spmd-reduce all ([i : i64 0 n]) true (array-ref bs i)))")
+      (and
+        (compiler-typecheck-error-ok?
+          "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce all ([i : i64 0 n]) 0 (array-ref xs i)))"
+          "typecheck: spmd-reduce all requires a bool type")
+        (compiler-typecheck-error-ok?
+          "(define (main [bs : (Array bool)] [n : i64]) : bool (spmd-reduce sum ([i : i64 0 n]) true (array-ref bs i)))"
+          "typecheck: spmd-reduce sum requires an i32, i64, or f64 type")))))
+
+;; array-builtin signature rules (#1042): make-array length, array-ref array/index
+;; types, and array-set! value-type agreement, with valid accepts.
+(define (compiler-typecheck-array-builtin-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      "(define (f [a : (Array i64)]) : i64 (begin (array-set! a 0 5) (array-ref a 0)))")
+    (and
+      (compiler-typecheck-ok?
+        "(define (f) : i64 (let [a : (Array i64) (make-array i64 4)] (array-length a)))")
+      (and
+        (compiler-typecheck-error-ok?
+          "(define (f [a : (Array i64)]) : i64 (array-ref a true))"
+          "typecheck: array index must be integer")
+        (and
+          (compiler-typecheck-error-ok?
+            "(define (f) : i64 (make-array i64 true))"
+            "typecheck: make-array length must be integer")
+          (compiler-typecheck-error-ok?
+            "(define (f [a : (Array i64)]) : unit (array-set! a 0 true))"
+            "typecheck: array-set! value type mismatch"))))))
+
+;; comptime typecheck rules (#1042): a `(comptime ...)` form is typed by its
+;; inner expression and flows that type to the use site (so an `i64` body is an
+;; `i64`, a `bool` comparison is a `bool`, and a `let`/`if` body keeps its type);
+;; `comptime` cannot reference a runtime variable, and a comptime result that
+;; disagrees with the surrounding type is rejected like any other mismatch.
+(define (compiler-typecheck-comptime-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? "(define (main) : i64 (comptime (+ 1 2)))")
+    (and
+      (compiler-typecheck-ok? "(define (main) : bool (comptime (< 1 2)))")
+      (and
+        (compiler-typecheck-ok?
+          "(define (main) : i64 (comptime (let [a : i64 1] (if (< a 2) a 0))))")
+        (and
+          (compiler-typecheck-ok?
+            "(define (main) : i64 (+ (comptime (* 6 7)) 0))")
+          (and
+            (compiler-typecheck-error-ok?
+              "(define (f [x : i64]) : i64 (comptime x))"
+              "compile-time evaluation cannot reference runtime variable 'x'")
+            (compiler-typecheck-error-ok?
+              "(define (main) : i64 (comptime (< 1 2)))"
+              "typecheck: return type mismatch")))))))
+
+;; IO-builtin signature rules (#1042): `read-file` (String -> String),
+;; `write-file` (String String -> unit), and `file-exists?` (String -> bool)
+;; accepts, plus non-String-argument, wrong-arity, and result-type-mismatch
+;; rejections. Migrated from src/typechecker.rs read-file/write-file coverage.
+(define (compiler-typecheck-io-builtin-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? "(define (f [p : String]) : String (read-file p))")
+    (and
+      (compiler-typecheck-ok?
+        "(define (f [p : String] [c : String]) : unit (write-file p c))")
+      (and
+        (compiler-typecheck-ok?
+          "(define (f [p : String]) : bool (file-exists? p))")
+        (and
+          (compiler-typecheck-error-ok?
+            "(define (f [c : String]) : unit (write-file 5 c))"
+            "typecheck: argument type mismatch")
+          (and
+            (compiler-typecheck-error-ok?
+              "(define (f [p : String]) : unit (write-file p))"
+              "typecheck: arity mismatch")
+            (and
+              (compiler-typecheck-error-ok?
+                "(define (f [p : i64]) : String (read-file p))"
+                "typecheck: argument type mismatch")
+              (compiler-typecheck-error-ok?
+                "(define (f [p : String] [c : String]) : i64 (write-file p c))"
+                "typecheck: return type mismatch"))))))))
+
 (define (compiler-typecheck-self-test) : i64
   (begin
     (if (compiler-typecheck-statement-tests-ok?)
@@ -5175,6 +5326,12 @@
     (if (compiler-typecheck-match-tests-ok?)
       unit
       (panic "typecheck: match/pattern tests failed"))
+    (if (compiler-typecheck-spmd-reduce-op-tests-ok?)
+      unit
+      (panic "typecheck: spmd-reduce operator/type tests failed"))
+    (if (compiler-typecheck-array-builtin-tests-ok?)
+      unit
+      (panic "typecheck: array-builtin signature tests failed"))
     (match (typecheck-compiler-source (compiler-typecheck-smoke-source))
       [(OkCompilerTypecheck summary)
         (if (and
@@ -5213,7 +5370,11 @@
                                     (compiler-typecheck-string-builtin-tests-ok?)
                                     (and
                                       (compiler-typecheck-lambda-tests-ok?)
-                                      (compiler-typecheck-cast-tests-ok?))))))))))))))))
+                                      (and
+                                        (compiler-typecheck-cast-tests-ok?)
+                                        (and
+                                          (compiler-typecheck-comptime-tests-ok?)
+                                          (compiler-typecheck-io-builtin-tests-ok?))))))))))))))))))
           42
           (begin
             (panic "typecheck: smoke score mismatch")

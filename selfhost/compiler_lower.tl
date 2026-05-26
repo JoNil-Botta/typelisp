@@ -1737,31 +1737,58 @@
                       expr-ty))])])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
     [(AstExprBinary op left right)
-      (match (lower-expr ctx state env type-env left)
-        [(OkLowerExpr left-lowered)
-          (match left-lowered
-            [(LowerExpr left-state left-value _)
-              (match (lower-expr ctx left-state env type-env right)
-                [(OkLowerExpr right-lowered)
-                  (match right-lowered
-                    [(LowerExpr right-state right-value _)
-                      (match (lower-state-alloc-var right-state)
-                        [(LowerAlloc allocated var-id)
-                          (OkLowerExpr
-                            (LowerExpr
-                              (lower-state-emit-at-expr
-                                allocated
-                                (IrInstrBinOp
-                                  var-id
-                                  (lower-binop op)
-                                  left-value
-                                  right-value
-                                  expr-ty)
-                                origin)
-                              (IrValueVar var-id)
-                              expr-ty))])])]
-                [(ErrLowerExpr message) (ErrLowerExpr message)])])]
-        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+      ;; `and`/`or` short-circuit: desugar to a conditional branch so the right
+      ;; operand is evaluated only when the left does not already decide the
+      ;; result, matching the Rust lowerer in `src/lower.rs` (#1132 / #1165):
+      ;; `(and a b)` -> `(if a b false)`, `(or a b)` -> `(if a true b)`. Every
+      ;; other binop evaluates both operands eagerly into an `IrInstrBinOp`.
+      (match op
+        [(AstBinAnd)
+          (lower-if
+            ctx
+            state
+            env
+            type-env
+            left
+            right
+            (AstExprLiteral (AstLitBool false))
+            expr-ty)]
+        [(AstBinOr)
+          (lower-if
+            ctx
+            state
+            env
+            type-env
+            left
+            (AstExprLiteral (AstLitBool true))
+            right
+            expr-ty)]
+        [_
+          (match (lower-expr ctx state env type-env left)
+            [(OkLowerExpr left-lowered)
+              (match left-lowered
+                [(LowerExpr left-state left-value _)
+                  (match (lower-expr ctx left-state env type-env right)
+                    [(OkLowerExpr right-lowered)
+                      (match right-lowered
+                        [(LowerExpr right-state right-value _)
+                          (match (lower-state-alloc-var right-state)
+                            [(LowerAlloc allocated var-id)
+                              (OkLowerExpr
+                                (LowerExpr
+                                  (lower-state-emit-at-expr
+                                    allocated
+                                    (IrInstrBinOp
+                                      var-id
+                                      (lower-binop op)
+                                      left-value
+                                      right-value
+                                      expr-ty)
+                                    origin)
+                                  (IrValueVar var-id)
+                                  expr-ty))])])]
+                    [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+            [(ErrLowerExpr message) (ErrLowerExpr message)])])]
     [(AstExprCall func args)
       (lower-call ctx state env type-env func args expr-ty origin)]
     [(AstExprLet bindings body)
@@ -1812,6 +1839,19 @@
     [(AstExprWhile cond body) (lower-while ctx state env type-env cond body)]
     [(AstExprForeach index index-ty start end body)
       (lower-foreach ctx state env type-env index index-ty start end body)]
+    [(AstExprSpmdReduce op index index-ty start end init value)
+      (lower-spmd-reduce
+        ctx
+        state
+        env
+        type-env
+        op
+        index
+        index-ty
+        start
+        end
+        init
+        value)]
     [(AstExprMatch scrutinee arms)
       (lower-match ctx state env type-env scrutinee arms expr-ty)]
     [(AstExprStringRef str index)
@@ -1824,7 +1864,7 @@
       (lower-array-ref ctx state env type-env arr index)]
     [(AstExprArraySet arr index value)
       (lower-array-set ctx state env type-env arr index value)]
-    [(AstExprWithRegion _ body) (lower-with-region ctx state env type-env body)]
+    [(AstExprWithRegion _ body) (lower-with-arena ctx state env type-env body)]
     [(AstExprTry inner) (lower-try ctx state env type-env inner origin)]
     ;; `(comptime expr)` folds to a literal via the scalar CTFE evaluator (#719).
     ;; Successful folds reuse the ordinary literal path; CTFE rejections (free
@@ -1842,6 +1882,16 @@
                     (string-append
                       (tc-type-render (tc-resolve-type ctx ty))
                       " is compile-time only"))))]
+            [(CtfeExpr _)
+              (ErrLowerExpr
+                (lower-diagnostic-at-expr
+                  origin
+                  "Expr value is compile-time only"))]
+            [(CtfeExprList _)
+              (ErrLowerExpr
+                (lower-diagnostic-at-expr
+                  origin
+                  "ExprList value is compile-time only"))]
             [_
               (lower-materialize
                 state
@@ -3535,7 +3585,7 @@
                   (lower-begin ctx next-state env type-env rest)])]
             [(ErrLowerExpr message) (ErrLowerExpr message)])])]))
 
-(define (lower-with-region
+(define (lower-with-arena
   [ctx : TcContext]
   [state : LowerState]
   [env : SymI64Env]
@@ -3736,6 +3786,119 @@
                                       (AstTyUnit)))])]
                             [(ErrLowerExpr message) (ErrLowerExpr message)]))])]
                   [(ErrLowerExpr message) (ErrLowerExpr message)]))])])]))
+
+;; Per-iteration accumulator update for an associative binop fold
+;; (`sum`/`all`/`any`): `(set! acc (<op> acc value))`. `value` appears once so it
+;; is evaluated exactly once per iteration.
+(define (spmd-reduce-acc-binop-update [op : AstBinOp] [value : AstExpr]) : AstExpr
+  (AstExprSet
+    "0spmd-reduce-acc"
+    (AstExprBinary op (AstExprVar "0spmd-reduce-acc") value)))
+
+;; Per-iteration accumulator update for a select fold (`min`/`max`): bind `value`
+;; once into a temp, then keep it when `(<cmp> val acc)` holds, else keep `acc`.
+;; The temp keeps `value` to a single evaluation even though the select names it
+;; twice.
+(define (spmd-reduce-acc-select-update [cmp : AstBinOp] [value : AstExpr]) : AstExpr
+  (AstExprLet
+    (AstLetBindingCons
+      (AstLetBinding "0spmd-reduce-val" (AstNoType) value)
+      (AstLetBindingNil))
+    (AstExprSet
+      "0spmd-reduce-acc"
+      (AstExprIf
+        (AstExprBinary
+          cmp
+          (AstExprVar "0spmd-reduce-val")
+          (AstExprVar "0spmd-reduce-acc"))
+        (AstExprVar "0spmd-reduce-val")
+        (AstExprVar "0spmd-reduce-acc")))))
+
+;; Scalar `spmd-reduce` loop scaffold (#1013): desugar to an accumulator loop and
+;; reuse the let/while/set lowering. `acc`/`end`/index are bound once before the
+;; loop (so `init`/`end`/`start` evaluate exactly once); an empty range returns
+;; `init` without evaluating `acc-update`. `acc`/`end`/temp use lexer-impossible
+;; names so they cannot collide with a user binding. The ordered left-to-right
+;; fold matches the spec reference semantics.
+;;   (spmd-reduce <op> ([i : ty start end]) init value)
+;;     === (let [acc init] [end' end] [i start]
+;;           (begin (while (< i end') (begin <acc-update> (set! i (+ i 1)))) acc))
+(define (lower-spmd-reduce-scaffold
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [index-ty : AstType]
+  [start : AstExpr]
+  [end : AstExpr]
+  [init : AstExpr]
+  [acc-update : AstExpr]) : ResultLowerExpr
+  (lower-expr
+    ctx
+    state
+    env
+    type-env
+    (AstExprLet
+      (AstLetBindingCons
+        (AstLetBinding "0spmd-reduce-acc" (AstNoType) init)
+        (AstLetBindingCons
+          (AstLetBinding "0spmd-reduce-end" (AstNoType) end)
+          (AstLetBindingCons
+            (AstLetBinding index (AstSomeType index-ty) start)
+            (AstLetBindingNil))))
+      (AstExprBegin
+        (AstExprCons
+          (AstExprWhile
+            (AstExprBinary
+              (AstBinLt)
+              (AstExprVar index)
+              (AstExprVar "0spmd-reduce-end"))
+            (AstExprBegin
+              (AstExprCons
+                acc-update
+                (AstExprCons
+                  (AstExprSet
+                    index
+                    (AstExprBinary
+                      (AstBinAdd)
+                      (AstExprVar index)
+                      (AstExprLiteral (AstLitInt 1))))
+                  (AstExprNil)))))
+          (AstExprCons (AstExprVar "0spmd-reduce-acc") (AstExprNil)))))))
+
+;; Scalar lowering for all reduction ops (#1013): `sum` (wrapping `+`, also f64
+;; ordered add), `all`/`any` (boolean `and`/`or`), and `min`/`max` (ordered
+;; select). Each supplies its per-iteration accumulator update to the shared
+;; loop scaffold.
+(define (lower-spmd-reduce
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [op : AstReduceOp]
+  [index : String]
+  [index-ty : AstType]
+  [start : AstExpr]
+  [end : AstExpr]
+  [init : AstExpr]
+  [value : AstExpr]) : ResultLowerExpr
+  (lower-spmd-reduce-scaffold
+    ctx
+    state
+    env
+    type-env
+    index
+    index-ty
+    start
+    end
+    init
+    (match op
+      [(AstReduceSum) (spmd-reduce-acc-binop-update (AstBinAdd) value)]
+      [(AstReduceAll) (spmd-reduce-acc-binop-update (AstBinAnd) value)]
+      [(AstReduceAny) (spmd-reduce-acc-binop-update (AstBinOr) value)]
+      [(AstReduceMin) (spmd-reduce-acc-select-update (AstBinLt) value)]
+      [(AstReduceMax) (spmd-reduce-acc-select-update (AstBinGt) value)])))
 
 ;; Scalar `foreach` lowering (#1012). `(foreach ([i : ty start end]) body)`
 ;; lowers to the half-open reference loop `i = start; while (i < end) { body;
@@ -5692,7 +5855,7 @@
 
 (define (compiler-lower-region-source) : String
   "(define (main) : i64
-  (with-region r
+  (with-arena r
     (let
       [s : String (int->string 41)]
       (string-length s))))")
@@ -5748,6 +5911,31 @@
           (compiler-lower-foreach-shape-ok?
             "(define (main) : i64 (begin (foreach ([i : i64 0 3]) unit) 0))"))))))
 
+;; `spmd-reduce` sum lowering (#1013): integer and f64 sum reductions lower (to
+;; an accumulator loop, so `main` holds the guard branch + fold/increment
+;; binops), while the not-yet-lowered min/max/all/any ops reject gracefully.
+(define (compiler-lower-spmd-reduce-tests-ok?) : bool
+  (and
+    (compiler-lower-ok?
+      "(define (f [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))")
+    (and
+      (compiler-lower-ok?
+        "(define (f [xs : (Array f64)] [n : i64]) : f64 (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref xs i)))")
+      (and
+        (compiler-lower-foreach-shape-ok?
+          "(define (main [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 i))")
+        (and
+          (compiler-lower-ok?
+            "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))")
+          (and
+            (compiler-lower-ok?
+              "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))")
+            (and
+              (compiler-lower-ok?
+                "(define (f [xs : (Array bool)] [n : i64]) : bool (spmd-reduce all ([i : i64 0 n]) true (array-ref xs i)))")
+              (compiler-lower-ok?
+                "(define (f [xs : (Array bool)] [n : i64]) : bool (spmd-reduce any ([i : i64 0 n]) false (array-ref xs i)))"))))))))
+
 ;; Comptime folding of the remaining scalar operators: each `(comptime ...)`
 ;; must collapse to a single constant `mov` with no residual runtime binop,
 ;; complementing the `+`/`<`/`*`/`let` cases already in the self-test (#1043).
@@ -5788,11 +5976,40 @@
                     "(define (main) : i64 (comptime (if (= 5 5) 42 0)))"
                     42))))))))))
 
+;; `and`/`or` short-circuit lowering (#1132 / #1165): `(and a b)` and `(or a b)`
+;; desugar to a conditional branch, so a function whose body is a bare `and`/`or`
+;; of two boolean params must emit at least one branch and NO eager binop (the
+;; old `IrBinAnd`/`IrBinOr` path would have produced one binop and no branch).
+(define (compiler-lower-and-short-circuit-source) : String
+  "(define (f [a : bool] [b : bool]) : bool (and a b))")
+
+(define (compiler-lower-or-short-circuit-source) : String
+  "(define (f [a : bool] [b : bool]) : bool (or a b))")
+
+(define (compiler-lower-short-circuit-branch? [src : String]) : bool
+  (match (lower-compiler-source src)
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (> (lower-test-function-branch-count functions "f") 0)
+            (= (lower-test-function-binop-count functions "f") 0))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-and-or-short-circuit-shape-ok?) : bool
+  (and
+    (compiler-lower-short-circuit-branch?
+      (compiler-lower-and-short-circuit-source))
+    (compiler-lower-short-circuit-branch?
+      (compiler-lower-or-short-circuit-source))))
+
 (define (compiler-lower-self-test) : i64
   (if (and
     (and
-      (compiler-lower-ok-summary? (compiler-lower-smoke-source))
-      (compiler-lower-spans-ok? (compiler-lower-smoke-source)))
+      (compiler-lower-and-or-short-circuit-shape-ok?)
+      (and
+        (compiler-lower-ok-summary? (compiler-lower-smoke-source))
+        (compiler-lower-spans-ok? (compiler-lower-smoke-source))))
     (and
       (compiler-lower-ok? (compiler-lower-match-source))
       (and
@@ -5882,7 +6099,9 @@
                                                         "comptime: f64 compile-time evaluation not yet supported (#735)")
                                                       (and
                                                         (compiler-lower-comptime-op-fold-tests-ok?)
-                                                        (compiler-lower-foreach-tests-ok?))))))))))))))))))))))))))))
+                                                        (and
+                                                          (compiler-lower-foreach-tests-ok?)
+                                                          (compiler-lower-spmd-reduce-tests-ok?)))))))))))))))))))))))))))))
     42
     (begin
       (panic "lower: smoke score mismatch")

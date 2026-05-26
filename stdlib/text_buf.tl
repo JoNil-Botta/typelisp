@@ -16,7 +16,7 @@
 ;;;; ```
 ;;;;
 ;;;; The buffer and rendered strings allocate in the active arena: the default
-;;;; program-lifetime arena outside `(with-region ...)`, or the scoped arena
+;;;; program-lifetime arena outside `(with-arena ...)`, or the scoped arena
 ;;;; inside one. No borrow-typed `str` API is exposed yet because the owned
 ;;;; `String` / borrowed `str` split is still tracked by #807.
 ;;; Reversed chunk list. Each cons node is allocated in the active arena.

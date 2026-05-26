@@ -109,6 +109,7 @@ case|selfhost_compile|selfhost/compile.tl|assembly|exactly-one|direct
 contains|_tl_compile_cli_config:
 contains|_tl_compile_cli_target:
 contains|_tl_compile_cli_invalid_opt_level:
+contains|_tl_compile_cli_backend_mode:
 contains|_tl_compile_cli_root_list_append:
 contains|_tl_compiler_driver_compile_file:
 contains|_tl_compiler_driver_compile_file_with_roots:
@@ -122,6 +123,9 @@ contains|compile: --target requires a value
 contains|compile: --stdlib-root requires a value
 contains|compile: --opt-level requires a value
 contains|compile: invalid --opt-level
+contains|compile: --backend-mode requires a value
+contains|requires the Rust compile driver until selfhost SIMD support
+contains|Expected scalar, avx2, or avx512
 contains|Error: unknown target '
 contains|--emit-ir
 end
@@ -618,4 +622,12 @@ case|selfhost_token|selfhost/token.tl|assembly|skip|direct
 contains|_tl_token_tag:
 contains|_tl_token_sym:
 contains|_tl_source_error_message:
+end
+
+decision|selfhost/lint_core.tl|lint rule engine (nested-if-ladder rule, #1163); imported by selfhost/lint_smoke.tl and exercised through the selfhost_lint_smoke case; has no main to compile directly
+
+case|selfhost_lint_smoke|selfhost/lint_smoke.tl|assembly|exactly-one|direct
+contains|_tl_compiler_lint_self_test:
+contains|_tl_lint_walk_expr:
+contains|_tl_lint_ladder_length:
 end

@@ -65,7 +65,7 @@ pub fn lower_program_with_spans_for_mode(prog: &ast::Program, mode: LowerMode) -
 
 /// Like `lower_program_with_spans_for_mode`, but tells the lowerer whether the
 /// target supports the `tl_region_mark`/`tl_region_reset` runtime helpers.
-/// `(with-region ...)` only lowers to mark/reset when they are available;
+/// `(with-arena ...)` only lowers to mark/reset when they are available;
 /// otherwise it falls back to running the body in the process-lifetime arena
 /// with no reset (SPEC §7.6).
 /// Replace each `(comptime-decl <template>)` wrapper with its bare inner
@@ -3687,7 +3687,7 @@ impl FnLowerer {
         last
     }
 
-    /// Lower `(with-region r body...)` (#550). On a target that provides the
+    /// Lower `(with-arena r body...)` (#550). On a target that provides the
     /// region runtime helpers, take a mark at entry, run the body in the active
     /// arena, then reset to the mark on scope exit so the body's allocations are
     /// reclaimed; the body's value — kept region-free by the escape checker
@@ -3904,6 +3904,53 @@ impl FnLowerer {
                 dst: Some(dst),
                 func: ARG_COUNT_RUNTIME_SYMBOL.to_string(),
                 args: vec![],
+                ty: Type::I64,
+            });
+            self.record_local(dst, Type::I64);
+            return Value::Var(dst);
+        }
+
+        // `(cpuid leaf subleaf)` executes the CPUID instruction and returns
+        // the four result registers (eax, ebx, ecx, edx) as a
+        // (Tuple i32 i32 i32 i32). The runtime helper allocates the tuple
+        // storage, invokes cpuid, and returns the pointer.
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "cpuid"
+            && args.len() == 2
+            && !self.has_local_value(name)
+            && !self.function_types.contains_key(name)
+        {
+            let leaf = self.lower_expr_as(&args[0], &Type::I64);
+            let subleaf = self.lower_expr_as(&args[1], &Type::I64);
+            let leaf_val = self.cast_value(leaf, Type::I64);
+            let subleaf_val = self.cast_value(subleaf, Type::I64);
+            let dst = self.builder.fresh_var();
+            let tuple_ty = Type::Tuple(vec![Type::I32, Type::I32, Type::I32, Type::I32]);
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: "tl_cpuid".to_string(),
+                args: vec![leaf_val, subleaf_val],
+                ty: tuple_ty.clone(),
+            });
+            self.record_local(dst, tuple_ty);
+            return Value::Var(dst);
+        }
+
+        // `(xgetbv index)` executes the XGETBV instruction with the given
+        // index register and returns the 64-bit XCR value.
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "xgetbv"
+            && args.len() == 1
+            && !self.has_local_value(name)
+            && !self.function_types.contains_key(name)
+        {
+            let idx = self.lower_expr_as(&args[0], &Type::I64);
+            let idx_val = self.cast_value(idx, Type::I64);
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: "tl_xgetbv".to_string(),
+                args: vec![idx_val],
                 ty: Type::I64,
             });
             self.record_local(dst, Type::I64);
@@ -6445,7 +6492,7 @@ mod tests {
         let prog = parse(
             r#"
             (define (main) : i64
-              (with-region r
+              (with-arena r
                 (let ([s : String (string-append "a" "b")])
                   (string-length s))))
         "#,
@@ -6478,13 +6525,13 @@ mod tests {
 
     #[test]
     fn test_lower_with_region_no_reset_without_region_runtime() {
-        // On a target without the region helpers, with-region runs the body in
+        // On a target without the region helpers, with-arena runs the body in
         // the process-lifetime arena with no mark/reset (SPEC §7.6), so the
         // program stays portable instead of referencing unsupported helpers.
         let prog = parse(
             r#"
             (define (main) : i64
-              (with-region r
+              (with-arena r
                 (let ([s : String (string-append "a" "b")])
                   (string-length s))))
         "#,
@@ -8219,6 +8266,81 @@ mod tests {
             .flat_map(|b| b.instructions.iter())
             .any(|i| matches!(i, Instruction::Call { func, .. } if func == "tl_substring"));
         assert!(calls_substring, "string-slice should call tl_substring");
+    }
+
+    #[test]
+    fn test_lower_cpuid_builtin_calls_runtime_and_returns_tuple() {
+        let prog = parse("(define (main) : i64 (tuple-ref (cpuid 1 0) 2))").unwrap();
+        let ir = lower_program(&prog);
+        let cpuid_call = ir.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .find_map(|i| match i {
+                Instruction::Call { func, args, ty, .. } if func == "tl_cpuid" => {
+                    Some((args.clone(), ty.clone()))
+                }
+                _ => None,
+            });
+        let (args, ty) = cpuid_call.expect("expected a Call to tl_cpuid");
+        assert_eq!(args.len(), 2, "tl_cpuid takes two i64 args");
+        assert_eq!(
+            ty,
+            Type::Tuple(vec![Type::I32, Type::I32, Type::I32, Type::I32]),
+            "cpuid yields a 4-tuple of i32s"
+        );
+    }
+
+    #[test]
+    fn test_lower_xgetbv_builtin_calls_runtime() {
+        let prog = parse("(define (main) : i64 (xgetbv 0))").unwrap();
+        let ir = lower_program(&prog);
+        let xgetbv_call = ir.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .find_map(|i| match i {
+                Instruction::Call { func, args, ty, .. } if func == "tl_xgetbv" => {
+                    Some((args.clone(), ty.clone()))
+                }
+                _ => None,
+            });
+        let (args, ty) = xgetbv_call.expect("expected a Call to tl_xgetbv");
+        assert_eq!(args.len(), 1, "tl_xgetbv takes one i64 arg");
+        assert_eq!(ty, Type::I64, "xgetbv yields i64");
+    }
+
+    #[test]
+    fn test_lower_user_defined_cpuid_shadows_builtin() {
+        let prog = parse(
+            r#"
+            (define (cpuid [a : i64] [b : i64]) : i64 (+ a b))
+            (define (main) : i64 (cpuid 1 2))
+            "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let instrs: Vec<&Instruction> = ir
+            .functions
+            .iter()
+            .find(|f| f.name == "main")
+            .unwrap()
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .collect();
+        assert!(
+            instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Call { func, .. } if func == "cpuid")),
+            "expected ordinary call to user-defined cpuid"
+        );
+        assert!(
+            !instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Call { func, .. } if func == "tl_cpuid")),
+            "user-defined cpuid must not lower to tl_cpuid"
+        );
     }
 
     #[test]

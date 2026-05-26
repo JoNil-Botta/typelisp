@@ -9,6 +9,9 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
+# Retry transient Windows segfaults (#1204) around each `typelisp` invocation.
+. "$ROOT/scripts/lib-retry.sh"
+
 HOST_OS=linux
 case "$(uname -s)" in
     Linux*) HOST_OS=linux ;;
@@ -80,9 +83,9 @@ while IFS= read -r source; do
     stderr="$WORKDIR/$case_name.stderr"
 
     echo "[doc-tests] $source"
-    if ! "$COMPILER" doc --test "$source" --stdlib-root "$ROOT/stdlib" \
-        > "$stdout" 2> "$stderr"; then
-        echo "doc test verification failed for $source" >&2
+    if ! run_with_retry "$stdout" "$stderr" "${VERIFY_DOC_TESTS_ATTEMPTS:-3}" \
+        "$COMPILER" doc --test "$source" --stdlib-root "$ROOT/stdlib"; then
+        echo "doc test verification failed for $source (after retries)" >&2
         echo "stdout:" >&2
         sed 's/^/  /' "$stdout" >&2 || true
         echo "stderr:" >&2

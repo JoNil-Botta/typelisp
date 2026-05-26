@@ -373,28 +373,28 @@ assert_not_contains "$err" "backend:"
 
 cat > "$CLI_MATRIX/region-builtin-escape.tl" <<'EOF'
 (define (main) : String
-  (with-region r (int->string 41)))
+  (with-arena r (int->string 41)))
 EOF
 run_cmd check-region-builtin-escape "$COMPILER" check "$CLI_MATRIX/region-builtin-escape.tl"
 assert_failure
 assert_stdout_empty
 assert_contains "$err" "region-tagged value"
-assert_contains "$err" "cannot escape with-region"
+assert_contains "$err" "cannot escape with-arena"
 assert_contains "$err" "error[E0200]"
 
 cat > "$CLI_MATRIX/stdlib-region-escape.tl" <<'EOF'
 (import "stdlib/string.tl")
 
 (define (main) : String
-  (with-region outer
-    (with-region inner
+  (with-arena outer
+    (with-arena inner
       (string-trim "  scoped  "))))
 EOF
 run_cmd check-stdlib-region-escape "$COMPILER" check "$CLI_MATRIX/stdlib-region-escape.tl" --stdlib-root "$ROOT/stdlib"
 assert_failure
 assert_stdout_empty
 assert_contains "$err" "region-tagged value"
-assert_contains "$err" "cannot escape with-region 'inner'"
+assert_contains "$err" "cannot escape with-arena 'inner'"
 assert_contains "$err" "error[E0200]"
 
 cat > "$CLI_MATRIX/text-buf-region-scalar.tl" <<'EOF'
@@ -402,7 +402,7 @@ cat > "$CLI_MATRIX/text-buf-region-scalar.tl" <<'EOF'
 
 (define (main) : i64
   (let ([buf : TextBuf (text-buf-append (text-buf-empty) "scoped")])
-    (with-region inner
+    (with-arena inner
       (string-length (text-buf-render buf)))))
 EOF
 run_cmd check-text-buf-region-scalar "$COMPILER" check "$CLI_MATRIX/text-buf-region-scalar.tl" --stdlib-root "$ROOT/stdlib"
@@ -415,15 +415,15 @@ cat > "$CLI_MATRIX/text-buf-region-escape.tl" <<'EOF'
 
 (define (main) : String
   (let ([buf : TextBuf (text-buf-append (text-buf-empty) "scoped")])
-    (with-region outer
-      (with-region inner
+    (with-arena outer
+      (with-arena inner
         (text-buf-render buf)))))
 EOF
 run_cmd check-text-buf-region-escape "$COMPILER" check "$CLI_MATRIX/text-buf-region-escape.tl" --stdlib-root "$ROOT/stdlib"
 assert_failure
 assert_stdout_empty
 assert_contains "$err" "region-tagged value"
-assert_contains "$err" "cannot escape with-region 'inner'"
+assert_contains "$err" "cannot escape with-arena 'inner'"
 assert_contains "$err" "error[E0200]"
 
 cat > "$CLI_MATRIX/unsupported-float-cast.tl" <<'EOF'
@@ -510,6 +510,49 @@ run_backend_mode_exec() {
 }
 run_backend_mode_exec avx2 avx2
 run_backend_mode_exec avx512 avx512f
+
+# SPMD vector-execution correctness (#1148): a real data-parallel `foreach`
+# program must produce the SAME result under avx2/avx512 as the scalar backend,
+# proving the Windows-x64 SIMD emission + ABI (vector-register clobbers, stack
+# alignment) are correct -- not merely that the mode runs on a trivial program.
+# `out[i] = a[i] + b[i]` over a 64-element array; `out[63] = 64 + 126 = 190`.
+# Gated by the same runtime CPU detection; scalar is the always-run reference.
+SPMD_EXEC="$WORKDIR/spmd-exec"
+mkdir -p "$SPMD_EXEC"
+cat > "$SPMD_EXEC/spmd.tl" <<'TLEOF'
+(define (main) : i64
+  (let
+    [a : (Array i64) (make-array i64 64)]
+    [b : (Array i64) (make-array i64 64)]
+    [out : (Array i64) (make-array i64 64)]
+    [i : i64 0]
+    (begin
+      (while (< i 64)
+        (begin
+          (array-set! a i (+ i 1))
+          (array-set! b i (* i 2))
+          (set! i (+ i 1))))
+      (foreach
+        ([j : i64 0 64])
+        (array-set! out j (+ (array-ref a j) (array-ref b j))))
+      (bit-and (array-ref out 63) 255))))
+TLEOF
+spmd_exec_target=
+[ "$HOST_OS" = windows ] && spmd_exec_target="--target windows-x86_64"
+run_spmd_exec_mode() {
+    # $1 = backend mode; $2 = required ISA token, or "-" to always run (scalar reference)
+    if [ "$2" != "-" ] && ! printf '%s\n' "$SIMD_ISAS" | grep -qx "$2"; then
+        echo "[public-tools] skipping spmd-exec --backend-mode $1 ($2 not available on this $HOST_OS host)"
+        return
+    fi
+    run_cmd "spmd-exec-$1" "$COMPILER" run "$SPMD_EXEC/spmd.tl" $spmd_exec_target --backend-mode "$1" -- arg
+    assert_code 190
+    assert_stdout_empty
+    assert_stderr_empty
+}
+run_spmd_exec_mode scalar -
+run_spmd_exec_mode avx2 avx2
+run_spmd_exec_mode avx512 avx512f
 
 BUILD_MATRIX="$WORKDIR/build-matrix"
 mkdir -p "$BUILD_MATRIX/src"

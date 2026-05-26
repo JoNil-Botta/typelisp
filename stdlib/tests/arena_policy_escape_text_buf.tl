@@ -4,4 +4,4 @@
 (define (main) : String
   (let
     [buf : TextBuf (text-buf-append (text-buf-empty) "scoped")]
-    (with-region outer (with-region inner (text-buf-render buf)))))
+    (with-arena outer (with-arena inner (text-buf-render buf)))))

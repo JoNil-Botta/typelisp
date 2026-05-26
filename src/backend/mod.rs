@@ -38,6 +38,8 @@ const FLUSH_STDOUT_RUNTIME_SYMBOL: &str = ".L_tl_flush_stdout";
 const RANDOM_SYSTEM_SEED_RUNTIME_SYMBOL: &str = "tl_random_system_seed";
 const REGION_MARK_RUNTIME_SYMBOL: &str = "tl_region_mark";
 const REGION_RESET_RUNTIME_SYMBOL: &str = "tl_region_reset";
+const CPUID_RUNTIME_SYMBOL: &str = "tl_cpuid";
+const XGETBV_RUNTIME_SYMBOL: &str = "tl_xgetbv";
 
 const SYSV_INTEGER_ARG_REGS: [&str; 6] = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
 const SYSV_FLOAT_ARG_REGS: [&str; 8] = [
@@ -140,7 +142,7 @@ impl BackendTarget {
 
     /// Whether this target provides the `tl_region_mark`/`tl_region_reset`
     /// runtime helpers. They exist only for linux-x86_64 System V today, so on
-    /// other targets `(with-region ...)` lowers without a reset (SPEC §7.6).
+    /// other targets `(with-arena ...)` lowers without a reset (SPEC §7.6).
     pub const fn supports_region_runtime(self) -> bool {
         matches!(
             (self.arch, self.os, self.abi),
@@ -465,6 +467,14 @@ pub struct X86_64Backend {
     /// `(file-exists? path)`. The helper uses Linux syscalls, `tl_alloc`, and the
     /// panic/abort runtime for unexpected errors.
     needs_file_exists_runtime: bool,
+    /// Whether the program references the CPUID runtime primitive `tl_cpuid`
+    /// emitted for `(cpuid leaf subleaf)`. The helper executes the `cpuid`
+    /// instruction and returns the four result registers in a tuple.
+    needs_cpuid_runtime: bool,
+    /// Whether the program references the XGETBV runtime primitive `tl_xgetbv`
+    /// emitted for `(xgetbv index)`. The helper executes the `xgetbv`
+    /// instruction and returns the 64-bit XCR value.
+    needs_xgetbv_runtime: bool,
     /// Whether the program references raw environment helpers emitted for
     /// stdlib/env.tl. Lookups read process environment data and allocate
     /// returned strings through `tl_alloc`.
@@ -1993,6 +2003,8 @@ impl X86_64Backend {
             needs_read_file_runtime: false,
             needs_write_file_runtime: false,
             needs_file_exists_runtime: false,
+            needs_cpuid_runtime: false,
+            needs_xgetbv_runtime: false,
             needs_fs_runtime: false,
             needs_env_var_exists_runtime: false,
             needs_env_var_value_runtime: false,
@@ -2063,6 +2075,8 @@ impl X86_64Backend {
         self.needs_read_file_runtime = Self::needs_read_file_runtime(program);
         self.needs_write_file_runtime = Self::needs_write_file_runtime(program);
         self.needs_file_exists_runtime = Self::needs_file_exists_runtime(program);
+        self.needs_cpuid_runtime = Self::needs_cpuid_runtime(program);
+        self.needs_xgetbv_runtime = Self::needs_xgetbv_runtime(program);
         self.needs_fs_runtime = Self::needs_fs_runtime(program);
         self.needs_env_var_exists_runtime = Self::needs_env_var_exists_runtime(program);
         self.needs_env_var_value_runtime = Self::needs_env_var_value_runtime(program);
@@ -2098,6 +2112,7 @@ impl X86_64Backend {
             || self.needs_read_file_runtime
             || self.needs_write_file_runtime
             || self.needs_file_exists_runtime
+            || self.needs_cpuid_runtime
             || self.needs_fs_runtime
             || (self.needs_env_var_exists_runtime && runtime_policy.emits_windows_runtime_helpers)
             || self.needs_env_var_value_runtime
@@ -2130,6 +2145,8 @@ impl X86_64Backend {
             || self.needs_read_file_runtime
             || self.needs_write_file_runtime
             || self.needs_file_exists_runtime
+            || self.needs_cpuid_runtime
+            || self.needs_xgetbv_runtime
             || self.needs_fs_runtime
             || self.needs_process_output_runtime
             || self.needs_read_stdin_line_runtime
@@ -2233,6 +2250,8 @@ impl X86_64Backend {
                 || (self.needs_read_file_runtime && symbol == READ_FILE_STATUS_RUNTIME_SYMBOL)
                 || (self.needs_write_file_runtime && symbol == WRITE_FILE_STATUS_RUNTIME_SYMBOL)
                 || (self.needs_file_exists_runtime && symbol == FILE_EXISTS_STATUS_RUNTIME_SYMBOL)
+                || (self.needs_cpuid_runtime && symbol == CPUID_RUNTIME_SYMBOL)
+                || (self.needs_xgetbv_runtime && symbol == XGETBV_RUNTIME_SYMBOL)
                 || (self.needs_fs_runtime && symbol == FS_MKDIR_STATUS_RUNTIME_SYMBOL)
                 || (self.needs_fs_runtime && symbol == FS_REMOVE_FILE_STATUS_RUNTIME_SYMBOL)
                 || (self.needs_fs_runtime && symbol == FS_REMOVE_DIR_STATUS_RUNTIME_SYMBOL)
@@ -2325,6 +2344,12 @@ impl X86_64Backend {
         if self.needs_file_exists_runtime {
             self.generate_file_exists_runtime_functions();
             self.generate_file_exists_status_runtime_functions();
+        }
+        if self.needs_cpuid_runtime {
+            self.generate_cpuid_runtime_functions();
+        }
+        if self.needs_xgetbv_runtime {
+            self.generate_xgetbv_runtime_functions();
         }
         if self.needs_fs_runtime {
             self.generate_fs_runtime_functions();
@@ -2963,6 +2988,14 @@ impl X86_64Backend {
                 })
             })
         })
+    }
+
+    fn needs_cpuid_runtime(program: &Program) -> bool {
+        Self::needs_named_runtime(program, CPUID_RUNTIME_SYMBOL)
+    }
+
+    fn needs_xgetbv_runtime(program: &Program) -> bool {
+        Self::needs_named_runtime(program, XGETBV_RUNTIME_SYMBOL)
     }
 
     fn needs_fs_runtime(program: &Program) -> bool {
@@ -4898,6 +4931,136 @@ impl X86_64Backend {
         self.emit("    pop %r13");
         self.emit("    pop %r12");
         self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    /// Emit the self-contained CPUID helper `tl_cpuid(leaf, subleaf)`.
+    ///
+    /// ABI (System V): `leaf` in `%rdi`, `subleaf` in `%rsi`; returns a
+    /// pointer to a freshly allocated `(Tuple i32 i32 i32 i32)` containing
+    /// the eax, ebx, ecx, edx results of the `cpuid` instruction. The helper
+    /// saves/restores `%rbx` (callee-saved and clobbered by `cpuid`) and
+    /// uses callee-saved registers to preserve results across the `tl_alloc`
+    /// call. It is pure (no syscalls, no libc) aside from the allocator.
+    fn generate_cpuid_runtime_functions(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.generate_windows_cpuid_runtime_functions();
+            return;
+        }
+
+        self.emit("    .globl tl_cpuid");
+        self.emit("tl_cpuid:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx"); // cpuid clobbers ebx; rbx is callee-saved
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    push %r15");
+        // args: leaf in rdi, subleaf in rsi. cpuid wants eax=leaf, ecx=subleaf.
+        self.emit("    movq %rdi, %rax");
+        self.emit("    movq %rsi, %rcx");
+        self.emit("    cpuid");
+        // Save 32-bit results in callee-saved registers before tl_alloc clobbers.
+        self.emit("    mov %eax, %r12d");
+        self.emit("    mov %ebx, %r13d");
+        self.emit("    mov %ecx, %r14d");
+        self.emit("    mov %edx, %r15d");
+        // Allocate 16 bytes for (Tuple i32 i32 i32 i32).
+        self.emit("    movq $16, %rdi");
+        self.emit("    call tl_alloc");
+        // Store results into the tuple storage.
+        self.emit("    mov %r12d, 0(%rax)");
+        self.emit("    mov %r13d, 4(%rax)");
+        self.emit("    mov %r14d, 8(%rax)");
+        self.emit("    mov %r15d, 12(%rax)");
+        self.emit("    pop %r15");
+        self.emit("    pop %r14");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_windows_cpuid_runtime_functions(&mut self) {
+        self.emit("    .globl tl_cpuid");
+        self.emit("tl_cpuid:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %rdi");
+        self.emit("    push %rsi");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    push %r15");
+        // Windows: leaf in rcx, subleaf in rdx. cpuid wants eax=leaf, ecx=subleaf.
+        self.emit("    mov %ecx, %eax");
+        self.emit("    mov %edx, %ecx");
+        self.emit("    cpuid");
+        self.emit("    mov %eax, %r12d");
+        self.emit("    mov %ebx, %r13d");
+        self.emit("    mov %ecx, %r14d");
+        self.emit("    mov %edx, %r15d");
+        // Windows: tl_alloc arg in rcx.
+        self.emit("    movq $16, %rcx");
+        self.emit("    call tl_alloc");
+        self.emit("    mov %r12d, 0(%rax)");
+        self.emit("    mov %r13d, 4(%rax)");
+        self.emit("    mov %r14d, 8(%rax)");
+        self.emit("    mov %r15d, 12(%rax)");
+        self.emit("    pop %r15");
+        self.emit("    pop %r14");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rsi");
+        self.emit("    pop %rdi");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    /// Emit the self-contained XGETBV helper `tl_xgetbv(index)`.
+    ///
+    /// ABI (System V): `index` in `%rdi`; returns the 64-bit XCR register
+    /// value with the low 32 bits from `%eax` and the high 32 bits from `%edx`.
+    /// The instruction clobbers only `%eax`, `%edx`, and `%ecx` (where the
+    /// index is supplied), so no callee-saved registers need saving.
+    fn generate_xgetbv_runtime_functions(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.generate_windows_xgetbv_runtime_functions();
+            return;
+        }
+
+        self.emit("    .globl tl_xgetbv");
+        self.emit("tl_xgetbv:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        // index in rdi -> ecx for xgetbv.
+        self.emit("    movq %rdi, %rcx");
+        self.emit("    xgetbv");
+        // Combine edx:eax into a 64-bit result in rax.
+        self.emit("    shlq $32, %rdx");
+        self.emit("    orq %rdx, %rax");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_windows_xgetbv_runtime_functions(&mut self) {
+        self.emit("    .globl tl_xgetbv");
+        self.emit("tl_xgetbv:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        // Windows: index is already in ecx, which xgetbv expects.
+        self.emit("    xgetbv");
+        self.emit("    shlq $32, %rdx");
+        self.emit("    orq %rdx, %rax");
         self.emit("    pop %rbp");
         self.emit("    ret");
         self.emit("");
@@ -9739,6 +9902,10 @@ impl X86_64Backend {
             WRITE_FILE_STATUS_RUNTIME_SYMBOL.into()
         } else if name == FILE_EXISTS_STATUS_RUNTIME_SYMBOL && self.needs_file_exists_runtime {
             FILE_EXISTS_STATUS_RUNTIME_SYMBOL.into()
+        } else if name == CPUID_RUNTIME_SYMBOL && self.needs_cpuid_runtime {
+            CPUID_RUNTIME_SYMBOL.into()
+        } else if name == XGETBV_RUNTIME_SYMBOL && self.needs_xgetbv_runtime {
+            XGETBV_RUNTIME_SYMBOL.into()
         } else if name == FS_MKDIR_STATUS_RUNTIME_SYMBOL && self.needs_fs_runtime {
             FS_MKDIR_STATUS_RUNTIME_SYMBOL.into()
         } else if name == FS_REMOVE_FILE_STATUS_RUNTIME_SYMBOL && self.needs_fs_runtime {
@@ -11183,6 +11350,52 @@ mod tests {
         assert!(asm.contains("movss %xmm0, -8(%rbp)"), "asm:\n{}", asm);
         assert!(!asm.contains("movsd"), "asm:\n{}", asm);
         assert!(!asm.contains("# TODO"), "unhandled instruction:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_cpuid_builtin_emits_cpuid_runtime() {
+        let asm = compile_ok("(define (main) : i64 (tuple-ref (cpuid 0 0) 0))");
+        assert!(asm.contains("    call tl_cpuid"), "asm:\n{}", asm);
+        assert!(asm.contains("    .globl tl_cpuid"), "asm:\n{}", asm);
+        assert!(asm.contains("    cpuid"), "asm:\n{}", asm);
+        // cpuid calls tl_alloc internally.
+        assert!(asm.contains("    .globl tl_alloc"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_xgetbv_builtin_emits_xgetbv_runtime() {
+        let asm = compile_ok("(define (main) : i64 (xgetbv 0))");
+        assert!(asm.contains("    call tl_xgetbv"), "asm:\n{}", asm);
+        assert!(asm.contains("    .globl tl_xgetbv"), "asm:\n{}", asm);
+        assert!(asm.contains("    xgetbv"), "asm:\n{}", asm);
+        // xgetbv does NOT need tl_alloc.
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_windows_target_cpuid_uses_windows_abi() {
+        let asm = compile_ok_for_target(
+            "(define (main) : i64 (tuple-ref (cpuid 0 0) 0))",
+            BackendTarget::windows_x86_64(),
+        );
+        assert!(asm.contains("    call tl_cpuid"), "asm:\n{}", asm);
+        assert!(asm.contains("    cpuid"), "asm:\n{}", asm);
+        // Windows variant saves rdi/rsi in addition to rbx and r12-r15.
+        assert!(asm.contains("    push %rdi"), "asm:\n{}", asm);
+        assert!(asm.contains("    push %rsi"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_windows_target_xgetbv_uses_windows_abi() {
+        let asm = compile_ok_for_target(
+            "(define (main) : i64 (xgetbv 0))",
+            BackendTarget::windows_x86_64(),
+        );
+        assert!(asm.contains("    call tl_xgetbv"), "asm:\n{}", asm);
+        assert!(asm.contains("    xgetbv"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
     }
 
     #[test]

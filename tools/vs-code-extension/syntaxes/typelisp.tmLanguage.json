@@ -66,7 +66,7 @@
     },
     "special-forms": {
       "name": "keyword.control.typelisp",
-      "match": "(?<=\\()(define|lambda|if|let|begin|while|set!|return|match|foreach|with-region|with-arena|with|unsafe|ann|cast|extern|import|module|test|defenum|defstruct|comptime|spmd-reduce)(?=[\\s)])"
+      "match": "(?<=\\()(define|lambda|if|let|begin|while|set!|return|match|foreach|with-arena|with-arena|with|unsafe|ann|cast|extern|import|module|test|defenum|defstruct|comptime|spmd-reduce)(?=[\\s)])"
     },
     "constants": {
       "patterns": [

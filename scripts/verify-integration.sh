@@ -164,8 +164,8 @@ copy_dep() {
 
 windows_integration_skips() {
     cat <<'EOF'
-with_region_builtin_alloc
-with_region_loop
+with_arena_builtin_alloc
+with_arena_loop
 EOF
 }
 

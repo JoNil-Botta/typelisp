@@ -21,6 +21,13 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   temporary directories, and cleanup. Import it with `(import "stdlib/fs.tl")`.
 - `hash.tl`: deterministic, non-cryptographic hash and key equality helpers for
   future collections. Import it with `(import "stdlib/hash.tl")`.
+- `hashmap.tl`: fixed-capacity, open-addressed `String -> i64` map — the
+  linear-probing core with full-table detection (#825) plus the v1 map API
+  (`string-i64-map-with-capacity` / `-insert` / `-get` / `-contains?` / `-len`,
+  copied-value lookup; #826), tombstone-based removal (`-remove` / `-deleted`,
+  with reinsert reusing tombstones; #829), and load-factor resize/rehash
+  (`-put` auto-grows; `-resized` / `-grow` / `-needs-grow?`; #827). Deterministic
+  iteration is a follow-up. Import it with `(import "stdlib/hashmap.tl")`.
 - `json.tl`: JSON value parser and serializer for tool protocols and data
   exchange. Import it with `(import "stdlib/json.tl")`.
 - `process.tl`: process command/output/error data model for selfhost tools.
@@ -35,11 +42,21 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   `(import "stdlib/test.tl")`.
 - `text_buf.tl`: arena-aware text buffer helpers for incremental String
   construction. Import it with `(import "stdlib/text_buf.tl")`.
+- `vector.tl`: growable `i64` vector (collections v1, #835) over `(Array i64)`:
+  `i64-vec-with-capacity` / `-new` / `-push` / `-pop` / `-get` / `-last` /
+  `-set!` / `-len` / `-capacity`, with doubling growth and bounds-checked reads,
+  plus conversion/iteration helpers `-from-array` / `-to-array` / `-extend` /
+  `-reverse!` / `-sum` / `-contains?` (#1212). Import it with
+  `(import "stdlib/vector.tl")`.
 - `windows_sdk.tl`: structured Windows SDK layout discovery helpers for future
   MSVC toolchain setup. Import it with `(import "stdlib/windows_sdk.tl")`.
 - `windows_setup.tl`: Visual Studio / Build Tools SetupConfiguration discovery
   data model and structured runtime result API. Import it with
   `(import "stdlib/windows_setup.tl")`.
+- `msvc.tl`: MSVC tool discovery (`link.exe` + `PATH`/`LIB`/`INCLUDE` command
+  environment) from a configured Developer Command Prompt; the newest-toolset
+  SetupConfiguration fallback is stubbed until #1015. Import it with
+  `(import "stdlib/msvc.tl")`.
 
 ## Arena Allocation Policy
 
@@ -47,11 +64,11 @@ The stdlib does not own an allocator API. Stdlib functions allocate only by
 calling compiler/runtime primitives such as `substring`, `string-append`,
 `read-file`, `int->string`, and aggregate constructors. Those allocations use
 the active arena: the default program-lifetime arena outside any scoped arena,
-or the innermost scoped arena inside `(with-region ...)`. The arena model uses
+or the innermost scoped arena inside `(with-arena ...)`. The arena model uses
 the term "scoped arena" for this behavior; issue #801 tracks the source spelling
-migration from `(with-region ...)` to `(with-arena ...)`.
+migration from `(with-arena ...)` to `(with-arena ...)`.
 
-Until that spelling lands, stdlib policy tests use `(with-region ...)` as the
+Until that spelling lands, stdlib policy tests use `(with-arena ...)` as the
 executable witness for the same active-arena semantics that `(with-arena ...)`
 will expose.
 
@@ -126,8 +143,10 @@ Stdlib modules are imported explicitly:
 (import "stdlib/env.tl")
 (import "stdlib/fs.tl")
 (import "stdlib/hash.tl")
+(import "stdlib/hashmap.tl")
 (import "stdlib/io.tl")
 (import "stdlib/json.tl")
+(import "stdlib/msvc.tl")
 (import "stdlib/process.tl")
 (import "stdlib/random.tl")
 (import "stdlib/string.tl")

@@ -552,11 +552,7 @@
       (set!
         out
         (sym-i64-bind out "comptime" (compiler-parse-tag-expr-comptime)))
-      (set!
-        out
-        (sym-i64-bind out "with-region" (compiler-parse-tag-expr-with-region)))
-      ;; `with-arena` is the migration spelling for `with-region` (#801): same
-      ;; scoped-arena form, default-arena shadowing, and escape rules.
+      ;; `with-arena` is the canonical scoped-arena spelling (#801, #1118).
       (set!
         out
         (sym-i64-bind out "with-arena" (compiler-parse-tag-expr-with-region)))
@@ -677,21 +673,19 @@
   (ast-binop-from-tag (compiler-parse-dispatch-tag dispatch name)))
 
 (define (ast-unop-tag? [tag : i64]) : bool
-  (if (= tag (compiler-parse-tag-un-not))
-    true
-    (if (= tag (compiler-parse-tag-un-neg))
-      true
-      (= tag (compiler-parse-tag-un-bit-not)))))
+  (cond
+    [(= tag (compiler-parse-tag-un-not)) true]
+    [(= tag (compiler-parse-tag-un-neg)) true]
+    [else (= tag (compiler-parse-tag-un-bit-not))]))
 
 (define (ast-unop? [dispatch : SymI64Env] [name : String]) : bool
   (ast-unop-tag? (compiler-parse-dispatch-tag dispatch name)))
 
 (define (ast-unop-from-tag [tag : i64]) : AstUnOp
-  (if (= tag (compiler-parse-tag-un-not))
-    (AstUnNot)
-    (if (= tag (compiler-parse-tag-un-neg))
-      (AstUnNeg)
-      (AstUnBitNot))))
+  (cond
+    [(= tag (compiler-parse-tag-un-not)) (AstUnNot)]
+    [(= tag (compiler-parse-tag-un-neg)) (AstUnNeg)]
+    [else (AstUnBitNot)]))
 
 (define (ast-unop-from-name [dispatch : SymI64Env] [name : String]) : AstUnOp
   (ast-unop-from-tag (compiler-parse-dispatch-tag dispatch name)))
@@ -1491,21 +1485,21 @@
 (define (parse-ast-with-region [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
     [(SpSNil _)
-      (ErrAstExpr "parse: with-region requires a region name before its body")]
+      (ErrAstExpr "parse: with-arena requires a region name before its body")]
     [(SpSCons (SpSSym region _) body _)
       (match body
         [(SpSNil _)
           (ErrAstExpr
             (string-append
-              "parse: with-region '"
+              "parse: with-arena '"
               (string-append region "' requires a non-empty body")))]
         [_
           (match (parse-ast-expr-list dispatch body)
             [(OkAstExprList exprs) (OkAstExpr (AstExprWithRegion region exprs))]
             [(ErrAstExprList message) (ErrAstExpr message)])])]
     [(SpSCons _ _ _)
-      (ErrAstExpr "parse: with-region region name must be an identifier")]
-    [_ (ErrAstExpr "parse: malformed with-region")]))
+      (ErrAstExpr "parse: with-arena region name must be an identifier")]
+    [_ (ErrAstExpr "parse: malformed with-arena")]))
 
 (define (parse-ast-match-arm [dispatch : SymI64Env] [s : SpannedSexpr]) : ResultAstMatchArm
   (match s
@@ -2242,10 +2236,10 @@
 
 (define (compiler-parse-region-source) : String
   "(define (main) : (in r String)
-  (with-region r \"x\"))")
+  (with-arena r \"x\"))")
 
 (define (compiler-parse-with-region-empty-source) : String
-  "(define (main) : i64 (with-region r))")
+  "(define (main) : i64 (with-arena r))")
 
 (define (compiler-parse-region-type-bad-source) : String
   "(define (main) : (in 1 String) 0)")
@@ -2259,8 +2253,8 @@
   "(define (main) : i64
   (with-arena r 5))")
 
-;; `with-arena` is the migration alias for `with-region` (#801): assert it
-;; parses to the same `AstExprWithRegion` form, not an unbound call.
+;; `with-arena` is the canonical spelling (#801, #1118). Assert it parses to
+;; the `AstExprWithRegion` form, not an unbound call.
 (define (compiler-parse-arena-ok?) : bool
   (match (parse-ast-source (compiler-parse-arena-source))
     [(OkAstProgram (AstProgram decls))
@@ -2579,7 +2573,7 @@
             (and
               (compiler-parse-error-ok?
                 (compiler-parse-with-region-empty-source)
-                "parse: with-region 'r' requires a non-empty body")
+                "parse: with-arena 'r' requires a non-empty body")
               (and
                 (compiler-parse-error-ok?
                   (compiler-parse-region-type-bad-source)
@@ -2744,6 +2738,46 @@
             "(define (main [a : i64]) : i64 (+ a))"
             "parse: malformed binary expression"))))))
 
+(define (compiler-parse-type-literal-tests-ok?) : bool
+  (and
+    (compiler-parse-ok? "(define (main) : i64 (begin (type i64) 0))")
+    (and
+      (compiler-parse-ok? "(define (main) : i64 (begin (type (Array i64)) 0))")
+      (and
+        (compiler-parse-ok?
+          "(define (main) : i64 (begin (type (-> i64 i64)) 0))")
+        (and
+          (compiler-parse-error-ok?
+            "(define (main) : i64 (type))"
+            "parse: type expects exactly one type")
+          (compiler-parse-error-ok?
+            "(define (main) : i64 (type i64 bool))"
+            "parse: type expects exactly one type"))))))
+
+;; region parsing (#1073 / #1041): `(with-arena <ident> body+)` accepts (basic,
+;; multi-expression body, nested region) and rejects missing binder,
+;; non-identifier binder, and empty body. Parse-shape + parser-owned diagnostics
+;; only; region typing/lowering live in their own tests.
+(define (compiler-parse-region-tests-ok?) : bool
+  (and
+    (compiler-parse-ok? "(define (main) : i64 (with-arena r 0))")
+    (and
+      (compiler-parse-ok? "(define (main) : i64 (with-arena r 1 2 0))")
+      (and
+        (compiler-parse-ok?
+          "(define (main) : i64 (with-arena r (with-arena s 0)))")
+        (and
+          (compiler-parse-error-ok?
+            "(define (main) : i64 (with-arena))"
+            "parse: with-arena requires a region name before its body")
+          (and
+            (compiler-parse-error-ok?
+              "(define (main) : i64 (with-arena 5 0))"
+              "parse: with-arena region name must be an identifier")
+            (compiler-parse-error-ok?
+              "(define (main) : i64 (with-arena r))"
+              "parse: with-arena 'r' requires a non-empty body")))))))
+
 (define (compiler-parse-smoke) : i64
   (match (parse-ast-source (compiler-parse-smoke-source))
     [(OkAstProgram program)
@@ -2786,7 +2820,11 @@
                 (compiler-parse-spmd-tests-ok?)
                 (and
                   (compiler-parse-pattern-tests-ok?)
-                  (compiler-parse-operator-tests-ok?))))))
+                  (and
+                    (compiler-parse-operator-tests-ok?)
+                    (and
+                      (compiler-parse-type-literal-tests-ok?)
+                      (compiler-parse-region-tests-ok?))))))))
           42
           (begin
             (panic "parse: error-path self-tests failed")

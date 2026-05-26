@@ -1,5 +1,5 @@
 # name|source|exit|stdout|args|deps
-# Windows omits the with_region_* Linux SysV fixtures; the runner validates that
+# Windows omits the with_arena_* Linux SysV fixtures; the runner validates that
 # those are the only integration sources missing from this manifest.
 aggregate_globals|tests/integration/aggregate_globals.tl|42|-|-|-
 argv|tests/integration/argv.tl|7|alpha\n|alpha beta|-
@@ -87,3 +87,4 @@ doc_test_smoke|selfhost/doc_test_smoke.tl|42|-|-|doc_test.tl compiler_check_core
 doc_render_smoke|selfhost/doc_render_smoke.tl|42|-|-|doc_render.tl doc_extract.tl format_tokens.tl
 doc_html_smoke|selfhost/doc_html_smoke.tl|42|-|-|doc_html.tl doc_render.tl doc_extract.tl format_tokens.tl
 doc_site_smoke|selfhost/doc_site_smoke.tl|42|-|-|doc_site_core.tl doc_html.tl doc_render.tl doc_extract.tl format_tokens.tl
+lint_smoke|selfhost/lint_smoke.tl|42|-|-|lint_core.tl compiler_ast_types.tl

@@ -264,6 +264,27 @@ impl TypeChecker {
             "flush-stdout".into(),
             Type::Func(vec![], Box::new(Type::Unit)),
         );
+        // `(cpuid leaf subleaf)` executes the CPUID instruction and returns
+        // the four result registers as a (Tuple i32 i32 i32 i32). Both
+        // arguments are i64 to match TypeLisp's integer literal default.
+        globals.insert(
+            "cpuid".into(),
+            Type::Func(
+                vec![Type::I64, Type::I64],
+                Box::new(Type::Tuple(vec![
+                    Type::I32,
+                    Type::I32,
+                    Type::I32,
+                    Type::I32,
+                ])),
+            ),
+        );
+        // `(xgetbv index)` executes the XGETBV instruction with the given
+        // index (typically 0 for XCR0) and returns the 64-bit register value.
+        globals.insert(
+            "xgetbv".into(),
+            Type::Func(vec![Type::I64], Box::new(Type::I64)),
+        );
         // `(substring s start len)` / `(string-slice s start len)` ->
         // `(-> String i64 i64 String)` — a fresh String holding the `len` bytes
         // of `s` beginning at byte offset `start` (a half-open `[start,
@@ -2103,7 +2124,7 @@ impl TypeChecker {
                 if last_ty.contains_region(region) {
                     return Err(TypeError::at(
                         format!(
-                            "region-tagged value of type {} cannot escape with-region '{}'",
+                            "region-tagged value of type {} cannot escape with-arena '{}'",
                             last_ty, region
                         ),
                         span,
@@ -4565,7 +4586,7 @@ mod tests {
     fn test_typecheck_with_region_builtin_handle_used_inside_scope() {
         let src = r#"
             (define (main) : i64
-              (with-region r
+              (with-arena r
                 (let ([s : String (int->string 41)])
                   (+ (string-length s) 1))))
         "#;
@@ -4577,14 +4598,13 @@ mod tests {
         let err = check(
             r#"
             (define (main) : String
-              (with-region r (int->string 41)))
+              (with-arena r (int->string 41)))
         "#,
         )
         .unwrap_err();
 
         assert!(
-            err.msg.contains("region-tagged value")
-                && err.msg.contains("cannot escape with-region"),
+            err.msg.contains("region-tagged value") && err.msg.contains("cannot escape with-arena"),
             "got: {}",
             err.msg
         );
@@ -4596,7 +4616,7 @@ mod tests {
             r#"
             (define (sink [s : String]) : i64 (string-length s))
             (define (main) : i64
-              (with-region r
+              (with-arena r
                 (let ([s : String (int->string 41)])
                   (sink s))))
         "#,
@@ -4616,7 +4636,7 @@ mod tests {
             r#"
             (define (sink [s : String]) : i64 0)
             (define (main) : i64
-              (with-region r
+              (with-arena r
                 (let ([s : String (int->string 41)]
                       [string-length : (-> String i64) sink])
                   (string-length s))))
@@ -4636,15 +4656,15 @@ mod tests {
         let err = check(
             r#"
             (define (main) : i64
-              (with-region outer
-                (let ([s : String (with-region inner (int->string 1))])
+              (with-arena outer
+                (let ([s : String (with-arena inner (int->string 1))])
                   (string-length s))))
         "#,
         )
         .unwrap_err();
 
         assert!(
-            err.msg.contains("cannot escape with-region 'inner'"),
+            err.msg.contains("cannot escape with-arena 'inner'"),
             "got: {}",
             err.msg
         );
@@ -4654,9 +4674,9 @@ mod tests {
     fn test_typecheck_outer_region_value_can_be_used_inside_inner_region() {
         let src = r#"
             (define (main) : i64
-              (with-region outer
+              (with-arena outer
                 (let ([s : String (int->string 41)])
-                  (with-region inner (string-length s)))))
+                  (with-arena inner (string-length s)))))
         "#;
         assert!(check(src).is_ok());
     }
@@ -4666,7 +4686,7 @@ mod tests {
         let err = check(
             r#"
             (define (main) : i64
-              (with-region r
+              (with-arena r
                 (let ([s : String (int->string 1)]
                       [f : (-> i64) (lambda () : i64 (string-length s))])
                   (f))))
@@ -4686,7 +4706,7 @@ mod tests {
     fn test_typecheck_region_dynamic_array_can_be_used_inside_scope() {
         let src = r#"
             (define (main) : i64
-              (with-region r
+              (with-arena r
                 (let ([a : (Array i64) (make-array i64 2)])
                   (begin
                     (array-set! a 0 42)
@@ -4701,7 +4721,7 @@ mod tests {
             r#"
             (defstruct Boxed (value String))
             (define (main) : String
-              (with-region r
+              (with-arena r
                 (let ([boxed : Boxed (Boxed (int->string 1))])
                   (struct-get boxed value))))
         "#,
@@ -4709,7 +4729,7 @@ mod tests {
         .unwrap_err();
 
         assert!(
-            err.msg.contains("cannot escape with-region 'r'"),
+            err.msg.contains("cannot escape with-arena 'r'"),
             "got: {}",
             err.msg
         );
@@ -4720,7 +4740,7 @@ mod tests {
         let src = r#"
             (defenum MaybeString (SomeString String) (NoString))
             (define (main) : i64
-              (with-region r
+              (with-arena r
                 (let ([value : MaybeString (SomeString (int->string 1))])
                   (match value
                     [(SomeString s) (string-length s)]
@@ -5626,6 +5646,60 @@ mod tests {
     fn test_typecheck_file_exists_result_is_not_i64() {
         let src = r#"(define (f) : i64 (file-exists? "input.tl"))"#;
         assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_cpuid_yields_tuple() {
+        let src = "(define (main) : i32 (tuple-ref (cpuid 0 0) 0))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_cpuid_requires_i64_args() {
+        let src = r#"(define (main) : i32 (tuple-ref (cpuid "a" 0) 0))"#;
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_cpuid_arity_checked() {
+        let src = "(define (main) : i32 (tuple-ref (cpuid 0) 0))";
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_cpuid_builtin_can_be_shadowed() {
+        let src = r#"
+            (define (cpuid [a : i64] [b : i64]) : i64 (+ a b))
+            (define (main) : i64 (cpuid 1 2))
+        "#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_xgetbv_yields_i64() {
+        let src = "(define (main) : i64 (xgetbv 0))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_xgetbv_requires_i64_arg() {
+        let src = r#"(define (main) : i64 (xgetbv "x"))"#;
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_xgetbv_arity_checked() {
+        let src = "(define (main) : i64 (xgetbv))";
+        assert!(check(src).is_err());
+    }
+
+    #[test]
+    fn test_typecheck_xgetbv_builtin_can_be_shadowed() {
+        let src = r#"
+            (define (xgetbv [n : i64]) : i64 n)
+            (define (main) : i64 (xgetbv 0))
+        "#;
+        assert!(check(src).is_ok());
     }
 
     #[test]

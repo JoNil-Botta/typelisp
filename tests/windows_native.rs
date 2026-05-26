@@ -847,7 +847,7 @@ fn native_cases() -> Vec<Case> {
         case_with_args("argv", 7, "alpha\n", &["alpha", "beta"]),
         // refs #538: fixtures mirrored from tests/integration.rs so the Windows
         // native suite tracks the Linux integration suite. Exit codes/deps match
-        // the corresponding `Case` in integration.rs. (`with_region_*` stay
+        // the corresponding `Case` in integration.rs. (`with_arena_*` stay
         // Linux-only by design — region reclaim is linux-x86_64 System V only.)
         case("comptime_scalar", 3, ""),
         case("f32_scalar", 42, ""),

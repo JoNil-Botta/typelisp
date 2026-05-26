@@ -103,7 +103,7 @@ fn describe_expr(expr: &Expr) -> &'static str {
         Expr::Foreach { .. } => "foreach",
         Expr::SpmdReduce { .. } => "spmd-reduce",
         Expr::StructGet { .. } => "struct-get",
-        Expr::WithRegion { .. } => "with-region",
+        Expr::WithRegion { .. } => "with-arena",
     }
 }
 

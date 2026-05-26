@@ -100,6 +100,7 @@ io.tl
 env.tl
 fs.tl
 hash.tl
+hashmap.tl
 json.tl
 msvc.tl
 process.tl
@@ -131,6 +132,7 @@ stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef
 stdlib/tests/env_api.tl|42|-|-
 stdlib/tests/fs_api.tl|42|-|-
 stdlib/tests/hash_api.tl|42|-|-
+stdlib/tests/hashmap_api.tl|42|-|-
 stdlib/tests/process_api.tl|42|-|-
 stdlib/tests/process_runtime.tl|42|-|-
 stdlib/tests/random_api.tl|42|-|-

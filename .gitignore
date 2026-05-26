@@ -27,9 +27,17 @@ target_ra
 /target
 
 # Self-host build artifacts
-selfhost/*.o
-selfhost/*.s
 selfhost/compiler_backend_runtime_fixture
+
+# Native build artifacts
+*.exe
+*.obj
+*.o
+*.s
+!tests/golden/*.s
+
+# Downloaded stage0 compiler cache
+/tools/stage0/
 
 # Claude Code agent workspace
 .claude/

@@ -188,7 +188,7 @@
   "__tl_return_type")
 
 (define (tc-unsafe-marker-name) : String
-  "__tl_unsafe_context")
+  " __tl_unsafe_context")
 
 (define (tc-enter-unsafe [env : TcTypeEnv]) : TcTypeEnv
   (tc-bind env (tc-unsafe-marker-name) (AstTyUnit)))
@@ -452,7 +452,23 @@
                                               (tc-bind
                                                 (tc-bind
                                                   (tc-bind
-                                                    e19
+                                                    (tc-bind
+                                                      (tc-bind
+                                                        (tc-bind
+                                                          e19
+                                                          "file-read-chunk-status"
+                                                          (tc-fn2
+                                                            (AstTyI64)
+                                                            (AstTyI64)
+                                                            (AstTyI64)))
+                                                        "file-read-chunk-bytes"
+                                                        (tc-fn1
+                                                          (AstTyI64)
+                                                          (AstTyString)))
+                                                      "file-read-chunk-eof?"
+                                                      (tc-fn1
+                                                        (AstTyI64)
+                                                        (AstTyBool)))
                                                     "cpuid"
                                                     (tc-fn2
                                                       (AstTyI64)
@@ -1839,79 +1855,39 @@
         (ErrTcType "typecheck: bit-not expects integer"))]))
 
 (define (tc-region-arg-builtin-name? [name : String]) : bool
-  (if (string-eq name "print-string")
-    true
-    (if (string-eq name "print-str")
-      true
-      (if (string-eq name "print-error")
-        true
-        (if (string-eq name "string-length")
-          true
-          (if (string-eq name "length")
-            true
-            (if (string-eq name "string-eq")
-              true
-              (if (string-eq name "string=?")
-                true
-                (if (string-eq name "string->int")
-                  true
-                  (if (string-eq name "substring")
-                    true
-                    (if (string-eq name "string-slice")
-                      true
-                      (if (string-eq name "string-append")
-                        true
-                        (if (string-eq name "string-concat")
-                          true
-                          (if (string-eq name "read-file")
-                            true
-                            (if (string-eq name "read-file-status")
-                              true
-                              (if (string-eq name "write-file")
-                                true
-                                (if (string-eq name "write-file-status")
-                                  true
-                                  (if (string-eq name "append-file-status")
-                                    true
-                                    (if (string-eq name "file-exists?")
-                                      true
-                                      (if (string-eq name "file-exists-status")
-                                        true
-                                        (if (string-eq name "file-open-status")
-                                          true
-                                          (if (string-eq
-                                            name
-                                            "file-close-status")
-                                            true
-                                            (if (string-eq
-                                              name
-                                              "fs-mkdir-status")
-                                              true
-                                              (if (string-eq
-                                                name
-                                                "fs-remove-file-status")
-                                                true
-                                                (if (string-eq
-                                                  name
-                                                  "fs-remove-dir-status")
-                                                  true
-                                                  (if (string-eq
-                                                    name
-                                                    "fs-process-id")
-                                                    true
-                                                    (if (string-eq name "panic")
-                                                      true
-                                                      (if (string-eq
-                                                        name
-                                                        "error")
-                                                        true
-                                                        (if (string-eq
-                                                          name
-                                                          "env-var-exists?")
-                                                          true
-                                                          (string-eq
-                                                            name
-                                                            "env-var-value"))))))))))))))))))))))))))))))
+  (cond
+    [(string-eq name "print-string") true]
+    [(string-eq name "print-str") true]
+    [(string-eq name "print-error") true]
+    [(string-eq name "string-length") true]
+    [(string-eq name "length") true]
+    [(string-eq name "string-eq") true]
+    [(string-eq name "string=?") true]
+    [(string-eq name "string->int") true]
+    [(string-eq name "substring") true]
+    [(string-eq name "string-slice") true]
+    [(string-eq name "string-append") true]
+    [(string-eq name "string-concat") true]
+    [(string-eq name "read-file") true]
+    [(string-eq name "read-file-status") true]
+    [(string-eq name "write-file") true]
+    [(string-eq name "write-file-status") true]
+    [(string-eq name "append-file-status") true]
+    [(string-eq name "file-exists?") true]
+    [(string-eq name "file-exists-status") true]
+    [(string-eq name "file-open-status") true]
+    [(string-eq name "file-close-status") true]
+    [(string-eq name "file-read-chunk-status") true]
+    [(string-eq name "file-read-chunk-bytes") true]
+    [(string-eq name "file-read-chunk-eof?") true]
+    [(string-eq name "fs-mkdir-status") true]
+    [(string-eq name "fs-remove-file-status") true]
+    [(string-eq name "fs-remove-dir-status") true]
+    [(string-eq name "fs-process-id") true]
+    [(string-eq name "panic") true]
+    [(string-eq name "error") true]
+    [(string-eq name "env-var-exists?") true]
+    [else (string-eq name "env-var-value")]))
 
 (define (tc-default-builtin-unshadowed-scan? [env : TcTypeEnv] [name : String]) : bool
   (match env
@@ -5566,6 +5542,10 @@
 (define (compiler-typecheck-raw-pointer-safe-read-source) : String
   "(define (main [p : (Ptr i64)]) : i64 (ptr-read p))")
 
+(define (compiler-typecheck-raw-pointer-safe-marker-shadow-source) : String
+  "(define (main [p : (Ptr i64)]) : i64
+  (let [__tl_unsafe_context : unit unit] (ptr-read p)))")
+
 (define (compiler-typecheck-raw-pointer-write-const-source) : String
   "(define (main [p : (Ptr i64)]) : unit (unsafe (ptr-write! p 1)))")
 
@@ -5592,23 +5572,27 @@
           "typecheck: ptr-read requires unsafe context")
         (and
           (compiler-typecheck-error-ok?
-            (compiler-typecheck-raw-pointer-write-const-source)
-            "typecheck: ptr-write! requires a MutPtr pointer operand")
+            (compiler-typecheck-raw-pointer-safe-marker-shadow-source)
+            "typecheck: ptr-read requires unsafe context")
           (and
             (compiler-typecheck-error-ok?
-              (compiler-typecheck-raw-pointer-write-mismatch-source)
-              "typecheck: ptr-write! value type mismatch")
+              (compiler-typecheck-raw-pointer-write-const-source)
+              "typecheck: ptr-write! requires a MutPtr pointer operand")
             (and
               (compiler-typecheck-error-ok?
-                (compiler-typecheck-raw-pointer-offset-bad-source)
-                "typecheck: ptr-offset requires an integer offset")
+                (compiler-typecheck-raw-pointer-write-mismatch-source)
+                "typecheck: ptr-write! value type mismatch")
               (and
                 (compiler-typecheck-error-ok?
-                  (compiler-typecheck-raw-pointer-cast-bad-target-source)
-                  "typecheck: ptr-cast target must be a raw pointer type")
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-raw-pointer-int-to-ptr-bad-source)
-                  "typecheck: int->ptr requires an integer operand")))))))))
+                  (compiler-typecheck-raw-pointer-offset-bad-source)
+                  "typecheck: ptr-offset requires an integer offset")
+                (and
+                  (compiler-typecheck-error-ok?
+                    (compiler-typecheck-raw-pointer-cast-bad-target-source)
+                    "typecheck: ptr-cast target must be a raw pointer type")
+                  (compiler-typecheck-error-ok?
+                    (compiler-typecheck-raw-pointer-int-to-ptr-bad-source)
+                    "typecheck: int->ptr requires an integer operand"))))))))))
 
 (define (compiler-typecheck-raw-pointer-tests-ok?) : bool
   (and
@@ -6020,46 +6004,76 @@
 ;; primitives accept, plus wrong-argument, wrong-arity, and result-type-mismatch
 ;; rejections. Migrated from src/typechecker.rs read-file/write-file coverage.
 (define (compiler-typecheck-io-builtin-tests-ok?) : bool
-  (and
-    (compiler-typecheck-ok? "(define (f [p : String]) : String (read-file p))")
-    (and
-      (compiler-typecheck-ok?
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-typecheck-ok?
+        "(define (f [p : String]) : String (read-file p))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
         "(define (f [p : String] [c : String]) : unit (write-file p c))")
-      (and
-        (compiler-typecheck-ok?
-          "(define (f [p : String] [c : String]) : i64 (append-file-status p c))")
-        (and
-          (compiler-typecheck-ok?
-            "(define (f [p : String]) : bool (file-exists? p))")
-          (and
-            (compiler-typecheck-ok?
-              "(define (f [p : String]) : i64 (file-open-status p 0))")
-            (and
-              (compiler-typecheck-ok?
-                "(define (f [h : i64]) : i64 (file-close-status h))")
-              (and
-                (compiler-typecheck-error-ok?
-                  "(define (f [c : String]) : unit (write-file 5 c))"
-                  "typecheck: argument type mismatch")
-                (and
-                  (compiler-typecheck-error-ok?
-                    "(define (f [p : String]) : unit (write-file p))"
-                    "typecheck: arity mismatch")
-                  (and
-                    (compiler-typecheck-error-ok?
-                      "(define (f [p : i64]) : String (read-file p))"
-                      "typecheck: argument type mismatch")
-                    (and
-                      (compiler-typecheck-error-ok?
-                        "(define (f [p : String]) : i64 (file-open-status p \"r\"))"
-                        "typecheck: argument type mismatch")
-                      (and
-                        (compiler-typecheck-error-ok?
-                          "(define (f) : i64 (file-close-status \"h\"))"
-                          "typecheck: argument type mismatch")
-                        (compiler-typecheck-error-ok?
-                          "(define (f [p : String] [c : String]) : i64 (write-file p c))"
-                          "typecheck: return type mismatch")))))))))))))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f [p : String] [c : String]) : i64 (append-file-status p c))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f [p : String]) : bool (file-exists? p))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f [p : String]) : i64 (file-open-status p 0))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f [h : i64]) : i64 (file-close-status h))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f [h : i64] [n : i64]) : i64 (file-read-chunk-status h n))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f [h : i64]) : String (file-read-chunk-bytes h))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f [h : i64]) : bool (file-read-chunk-eof? h))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f [c : String]) : unit (write-file 5 c))"
+        "typecheck: argument type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f [p : String]) : unit (write-file p))"
+        "typecheck: arity mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f [p : i64]) : String (read-file p))"
+        "typecheck: argument type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f [p : String]) : i64 (file-open-status p \"r\"))"
+        "typecheck: argument type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : i64 (file-close-status \"h\"))"
+        "typecheck: argument type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f [p : String] [c : String]) : i64 (write-file p c))"
+        "typecheck: return type mismatch")
+        unit
+        (set! ok false))
+      ok)))
 
 ;; Raw-pointer null construction / check (#1054).
 (define (compiler-typecheck-ptr-null-ok-source) : String

@@ -61,6 +61,3 @@ tests/tl_reader_compile.rs
 tests/tl_repl_compile.rs
 tests/tl_text_buf_compile.rs
 tests/windows_native.rs
-tools/work-queue-chooser/Cargo.lock
-tools/work-queue-chooser/Cargo.toml
-tools/work-queue-chooser/src/main.rs

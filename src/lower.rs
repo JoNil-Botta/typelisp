@@ -20,6 +20,9 @@ const APPEND_FILE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_append_file_status";
 const FILE_EXISTS_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists_status";
 const FILE_OPEN_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_open_status";
 const FILE_CLOSE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_close_status";
+const FILE_READ_CHUNK_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_read_chunk_status";
+const FILE_READ_CHUNK_BYTES_RUNTIME_SYMBOL: &str = ".L_tl_file_read_chunk_bytes";
+const FILE_READ_CHUNK_EOF_RUNTIME_SYMBOL: &str = ".L_tl_file_read_chunk_eof";
 const FS_MKDIR_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_fs_mkdir_status";
 const FS_REMOVE_FILE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_fs_remove_file_status";
 const FS_REMOVE_DIR_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_fs_remove_dir_status";
@@ -4194,6 +4197,68 @@ impl FnLowerer {
             return Value::Var(dst);
         }
 
+        // `(file-read-chunk-status handle-id count)` performs one host read into
+        // a runtime-owned per-handle last-read slot. The stdlib wrapper fetches
+        // the stored chunk/eof fields only after this returns success.
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "file-read-chunk-status"
+            && args.len() == 2
+            && !self.has_local_value(name)
+            && !self.function_types.contains_key(name)
+        {
+            let handle = self.lower_expr_as(&args[0], &Type::I64);
+            let count = self.lower_expr_as(&args[1], &Type::I64);
+            let handle_val = self.cast_value(handle, Type::I64);
+            let count_val = self.cast_value(count, Type::I64);
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: FILE_READ_CHUNK_STATUS_RUNTIME_SYMBOL.to_string(),
+                args: vec![handle_val, count_val],
+                ty: Type::I64,
+            });
+            self.record_local(dst, Type::I64);
+            return Value::Var(dst);
+        }
+
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "file-read-chunk-bytes"
+            && args.len() == 1
+            && !self.has_local_value(name)
+            && !self.function_types.contains_key(name)
+        {
+            let handle = self.lower_expr_as(&args[0], &Type::I64);
+            let handle_val = self.cast_value(handle, Type::I64);
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: FILE_READ_CHUNK_BYTES_RUNTIME_SYMBOL.to_string(),
+                args: vec![handle_val],
+                ty: Type::String,
+            });
+            self.record_local(dst, Type::String);
+            return Value::Var(dst);
+        }
+
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "file-read-chunk-eof?"
+            && args.len() == 1
+            && !self.has_local_value(name)
+            && !self.function_types.contains_key(name)
+        {
+            let handle = self.lower_expr_as(&args[0], &Type::I64);
+            let handle_val = self.cast_value(handle, Type::I64);
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: FILE_READ_CHUNK_EOF_RUNTIME_SYMBOL.to_string(),
+                args: vec![handle_val],
+                ty: Type::Bool,
+            });
+            self.record_local(dst, Type::Bool);
+            return Value::Var(dst);
+        }
+
         if let ast::Expr::Var(name) = func.unspan()
             && (name == "fs-mkdir-status"
                 || name == "fs-remove-file-status"
@@ -8073,6 +8138,9 @@ mod tests {
             (define (e) : i64 (file-exists-status "input.txt"))
             (define (o) : i64 (file-open-status "input.txt" 0))
             (define (c) : i64 (file-close-status 1))
+            (define (rs) : i64 (file-read-chunk-status 1 4))
+            (define (rb) : String (file-read-chunk-bytes 1))
+            (define (re) : bool (file-read-chunk-eof? 1))
         "#,
         )
         .unwrap();
@@ -8091,6 +8159,7 @@ mod tests {
             (FILE_EXISTS_STATUS_RUNTIME_SYMBOL, 2),
             (FILE_OPEN_STATUS_RUNTIME_SYMBOL, 3),
             (FILE_CLOSE_STATUS_RUNTIME_SYMBOL, 1),
+            (FILE_READ_CHUNK_STATUS_RUNTIME_SYMBOL, 2),
         ] {
             let call = instrs.iter().find_map(|i| match i {
                 Instruction::Call { func, args, ty, .. } if func == symbol => Some((args, ty)),
@@ -8099,6 +8168,19 @@ mod tests {
             let (args, ty) = call.unwrap_or_else(|| panic!("missing call to {symbol}"));
             assert_eq!(args.len(), expected_args, "{symbol} argument count");
             assert_eq!(*ty, Type::I64, "{symbol} returns an i64 status");
+        }
+
+        for (symbol, ty) in [
+            (FILE_READ_CHUNK_BYTES_RUNTIME_SYMBOL, Type::String),
+            (FILE_READ_CHUNK_EOF_RUNTIME_SYMBOL, Type::Bool),
+        ] {
+            let call = instrs.iter().find_map(|i| match i {
+                Instruction::Call { func, args, ty, .. } if func == symbol => Some((args, ty)),
+                _ => None,
+            });
+            let (args, actual_ty) = call.unwrap_or_else(|| panic!("missing call to {symbol}"));
+            assert_eq!(args.len(), 1, "{symbol} argument count");
+            assert_eq!(*actual_ty, ty, "{symbol} return type");
         }
     }
 
@@ -8175,7 +8257,15 @@ mod tests {
             r#"
             (define (file-open-status [n : i64]) : i64 n)
             (define (file-close-status) : i64 3)
-            (define (main) : i64 (+ (file-open-status 7) (file-close-status)))
+            (define (file-read-chunk-status [n : i64]) : i64 n)
+            (define (file-read-chunk-bytes) : i64 5)
+            (define (file-read-chunk-eof? [n : i64]) : i64 n)
+            (define (main) : i64
+              (+ (file-open-status 7)
+                (+ (file-close-status)
+                  (+ (file-read-chunk-status 8)
+                    (+ (file-read-chunk-bytes)
+                       (file-read-chunk-eof? 9))))))
         "#,
         )
         .unwrap();
@@ -8204,6 +8294,24 @@ mod tests {
             "expected ordinary call to user-defined file-close-status"
         );
         assert!(
+            main_instrs.iter().any(
+                |i| matches!(i, Instruction::Call { func, .. } if func == "file-read-chunk-status")
+            ),
+            "expected ordinary call to user-defined file-read-chunk-status"
+        );
+        assert!(
+            main_instrs.iter().any(
+                |i| matches!(i, Instruction::Call { func, .. } if func == "file-read-chunk-bytes")
+            ),
+            "expected ordinary call to user-defined file-read-chunk-bytes"
+        );
+        assert!(
+            main_instrs.iter().any(
+                |i| matches!(i, Instruction::Call { func, .. } if func == "file-read-chunk-eof?")
+            ),
+            "expected ordinary call to user-defined file-read-chunk-eof?"
+        );
+        assert!(
             !main_instrs.iter().any(
                 |i| matches!(i, Instruction::Call { func, .. } if func == FILE_OPEN_STATUS_RUNTIME_SYMBOL)
             ),
@@ -8214,6 +8322,24 @@ mod tests {
                 |i| matches!(i, Instruction::Call { func, .. } if func == FILE_CLOSE_STATUS_RUNTIME_SYMBOL)
             ),
             "user-defined file-close-status must not lower to the builtin runtime"
+        );
+        assert!(
+            !main_instrs.iter().any(
+                |i| matches!(i, Instruction::Call { func, .. } if func == FILE_READ_CHUNK_STATUS_RUNTIME_SYMBOL)
+            ),
+            "user-defined file-read-chunk-status must not lower to the builtin runtime"
+        );
+        assert!(
+            !main_instrs.iter().any(
+                |i| matches!(i, Instruction::Call { func, .. } if func == FILE_READ_CHUNK_BYTES_RUNTIME_SYMBOL)
+            ),
+            "user-defined file-read-chunk-bytes must not lower to the builtin runtime"
+        );
+        assert!(
+            !main_instrs.iter().any(
+                |i| matches!(i, Instruction::Call { func, .. } if func == FILE_READ_CHUNK_EOF_RUNTIME_SYMBOL)
+            ),
+            "user-defined file-read-chunk-eof? must not lower to the builtin runtime"
         );
     }
 

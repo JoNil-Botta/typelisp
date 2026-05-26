@@ -1551,6 +1551,9 @@ track (#809/#897/#911/#912) and the safe reference/ownership track (#182).
 | `file-exists-status` | `String → i64` | Return 0 when a path exists, otherwise a positive host status code such as not-found |
 | `file-open-status` | `String i64 → i64` | Open a runtime-managed file-handle slot; return a positive handle id on success or a negative host status code |
 | `file-close-status` | `i64 → i64` | Close a runtime-managed file-handle slot; return 0 on success or a positive host status code |
+| `file-read-chunk-status` | `i64 i64 → i64` | Read once from a runtime-managed handle into the per-handle last-read slot; return 0 on success or a positive host status code |
+| `file-read-chunk-bytes` | `i64 → String` | Return the bytes stored by the last successful `file-read-chunk-status` call for a handle |
+| `file-read-chunk-eof?` | `i64 → bool` | Return the sticky EOF state stored by the last successful `file-read-chunk-status` call for a handle |
 | `read-stdin-line` | `→ String` | Read one stdin line without trailing newline; blank line returns `""` and does not set EOF |
 | `read-stdin-bytes` | `i64 → String` | Read up to `n` stdin bytes; negative counts panic, short reads occur only at EOF |
 | `stdin-eof?` | `→ bool` | Report whether the most recent stdin read hit EOF before a full line/requested byte count |
@@ -1627,8 +1630,8 @@ They are not implemented by a separate C runtime.
 ### 6.4 Stdlib file I/O handles (v1)
 
 This section specifies the v1 source-level file-handle API for `stdlib/io.tl`.
-Open/close support is implemented by #1056; streaming reads (#1057) and
-streaming writes/flush (#1058) land incrementally. The handle API reuses the
+Open/close support is implemented by #1056; streaming reads are implemented by
+#1057, while streaming writes/flush (#1058) land incrementally. The handle API reuses the
 existing `IoError` model already in `stdlib/io.tl` (§9 catalogs the variants);
 it does not introduce a new error vocabulary.
 
@@ -1835,7 +1838,7 @@ values from escaping until explicit lifetime signatures exist.
 | Category | Members | Arena behavior |
 |----------|---------|----------------|
 | Non-allocating inspection | `length`/`array-length` on arrays, `length`/`string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string->int`, stdlib string predicates such as `string-contains` | Reads caller-provided handles and returns scalars. |
-| Returns active-arena owned data | `make-array`, `arg`, `read-file`, `read-stdin-line`, `read-stdin-bytes`, `string-append`/`string-concat`, `substring`/`string-slice`, `int->string`, stdlib trimming/replacement helpers when they build a new string | Fresh storage is allocated in the active arena and cannot escape a scoped arena. |
+| Returns active-arena owned data | `make-array`, `arg`, `read-file`, `file-read-chunk`, `read-stdin-line`, `read-stdin-bytes`, `string-append`/`string-concat`, `substring`/`string-slice`, `int->string`, stdlib trimming/replacement helpers when they build a new string | Fresh storage is allocated in the active arena and cannot escape a scoped arena. |
 | Returns caller-provided data | `stdlib/string.tl` `string-replace` when no match is found; `stdlib/io.tl` `read-file-or` when the path is missing | The current type system cannot express this borrowed/caller-owned distinction, so calls inside a scoped arena are still treated conservatively as arena-tagged aggregate results. |
 | Mutates caller-provided storage | `array-set!` | Mutates the array buffer named by the caller; it does not allocate. Region checks reject storing shorter-lived aggregate handles into longer-lived containers. |
 | Host/runtime IO | `print*`, `panic`/`error`, `flush-stdout`, `write-file`, `file-exists?`, stdlib IO helpers | Performs target IO; any temporary strings used by the helper allocate in the active arena. |
@@ -1987,8 +1990,8 @@ not the future safe reference/borrow model (#182), not a replacement for
   `substring`/`string-slice`, `string->int`, `int->string`,
   `print-string`/`print-str`, `print-error`.
 - Bootstrap I/O helpers: `arg-count`, `arg`, `read-file`, `write-file`,
-  `file-exists?`, `read-stdin-line`, `read-stdin-bytes`, `stdin-eof?`,
-  `flush-stdout`.
+  `file-exists?`, `file-open`, `file-close`, `file-read-chunk`,
+  `read-stdin-line`, `read-stdin-bytes`, `stdin-eof?`, `flush-stdout`.
 - Low-level extern-only allocator region helpers: `tl_region_mark`,
   `tl_region_reset`.
 - `extern` declarations.

@@ -21,7 +21,7 @@ RETIRED="$WORKDIR/retired.txt"
 
 is_exception_path() {
     case "$1" in
-        benchmarks/* | tools/vs-code-extension/*) return 0 ;;
+        benchmarks/* | tools/vs-code-extension/* | scripts/fetch-stage0.ps1) return 0 ;;
         *) return 1 ;;
     esac
 }

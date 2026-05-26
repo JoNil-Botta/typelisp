@@ -3,19 +3,17 @@
 ;;;; Reads the combined `{"prs":[...],"issues":[...]}` JSON from stdin, classifies
 ;;;; each entry, skips PRs whose checks are still pending/running, weights the
 ;;;; rest (PR review = 30, ready-for-implementation = 10, research/triage = 1,
-;;;; +50 for a p0 label, +3 for a p1 label), makes a seeded weighted pick, and
-;;;; prints one action line:
+;;;; +50 for a p0 label, +3 for a p1 label), makes a system-seeded weighted
+;;;; pick, and prints one action line:
 ;;;;
 ;;;;   review pr #N: Title
 ;;;;   implement issue #N: Title
 ;;;;   research/triage issue #N: Title
 ;;;;
-;;;; Unlike the Rust tool (non-deterministic `rand::thread_rng`), the selection is
-;;;; deterministic from a seed: pass it as the first argument (e.g. a `$RANDOM`
-;;;; value) so repeated invocations vary. With no argument a fixed fallback seed
-;;;; is used. JSON parsing uses `stdlib/json.tl`; weighting uses `stdlib/random.tl`.
+;;;; Selection uses host entropy through `stdlib/random.tl`; JSON parsing uses
+;;;; `stdlib/json.tl`.
 ;;;;
-;;;; Usage: `typelisp run tools/work-queue-chooser/chooser.tl --stdlib-root stdlib -- <seed>`
+;;;; Usage: `typelisp run tools/work-queue-chooser/chooser.tl --stdlib-root stdlib`
 (import "stdlib/json.tl")
 
 (import "stdlib/random.tl")
@@ -45,9 +43,6 @@
 
 (define p1-priority-bonus : i64
   3)
-
-(define fallback-seed : i64
-  2463534242)
 
 ;;; A classified work-queue candidate carrying its display fields and weight.
 (defstruct Candidate
@@ -329,14 +324,6 @@
         (int->string (struct-get cand number))
         (string-append ": " (struct-get cand title))))))
 
-;;; The seed to use: first argument when present, otherwise system entropy.
-(define (chooser-seed) : i64
-  (if (> (arg-count) 1)
-    (string->int (arg 1))
-    (match (random-system-seed)
-      [(OkSystemSeed seed) seed]
-      [(ErrSystemSeed _) fallback-seed])))
-
 ;;; Choose one candidate from the input JSON, returning an error message on
 ;;; invalid input or an empty candidate set.
 (define (choose-candidate [text : String]) : ChooserResult
@@ -348,12 +335,20 @@
         [cands : CandList (build-candidates root)]
         (if (= (cand-count cands) 0)
           (ChooserErr "Error: no eligible candidates were provided")
-          (match (random-weighted-index
-            (random-seed (chooser-seed))
-            (cand-weights cands))
-            [(ErrRandomWeightedIndex message)
-              (ChooserErr (string-append "Error: " message))]
-            [(OkRandomWeightedIndex _ index) (ChooserOk (cand-nth cands index))])))]))
+          (match (random-system-seed)
+            [(ErrSystemSeed err)
+              (ChooserErr
+                (match err
+                  [(RandomSystemSeedUnavailable message)
+                    (string-append "Error: " message)]))]
+            [(OkSystemSeed seed)
+              (match (random-weighted-index
+                (random-seed seed)
+                (cand-weights cands))
+                [(ErrRandomWeightedIndex message)
+                  (ChooserErr (string-append "Error: " message))]
+                [(OkRandomWeightedIndex _ index)
+                  (ChooserOk (cand-nth cands index))])])))]))
 
 (define (main) : i64
   (match (choose-candidate (read-all-stdin))

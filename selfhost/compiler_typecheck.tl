@@ -3428,9 +3428,10 @@
     [(AstMatchArmCons arm rest)
       (match (tc-match-arm-type ctx env scrut-ty arm)
         [(OkTcType got)
-          (if (tc-type-eq got want)
-            (tc-match-rest-types ctx env scrut-ty rest want)
-            (ErrTcType "typecheck: match arms must agree"))]
+          (match (tc-merge-branch-type want got)
+            [(OkTcType merged)
+              (tc-match-rest-types ctx env scrut-ty rest merged)]
+            [(ErrTcType _) (ErrTcType "typecheck: match arms must agree")])]
         [(ErrTcType message) (ErrTcType message)])]))
 
 (define (tc-check-match-arm-types
@@ -5120,6 +5121,12 @@
 (define (compiler-typecheck-match-ok-wildcard-source) : String
   "(define (main) : i64 (match 1 [_ 0]))")
 
+;; A diverging arm (panic : never) must unify with a value arm rather than
+;; being reported as a disagreement; mirrors never-in-if branch handling.
+(define (compiler-typecheck-match-ok-never-arm-source) : String
+  "(defenum E (A) (B))
+(define (main [e : E]) : i64 (match e [(A) 1] [(B) (panic \"no\")]))")
+
 (define (compiler-typecheck-match-tests-ok?) : bool
   (and
     (compiler-typecheck-error-ok?
@@ -5133,7 +5140,11 @@
         (compiler-typecheck-ok? (compiler-typecheck-match-ok-payload-source))
         (and
           (compiler-typecheck-ok? (compiler-typecheck-match-ok-bool-source))
-          (compiler-typecheck-ok? (compiler-typecheck-match-ok-wildcard-source)))))))
+          (and
+            (compiler-typecheck-ok?
+              (compiler-typecheck-match-ok-wildcard-source))
+            (compiler-typecheck-ok?
+              (compiler-typecheck-match-ok-never-arm-source))))))))
 
 (define (compiler-typecheck-string-builtin-ok-length-source) : String
   "(define (main) : i64 (string-length \"hi\"))")

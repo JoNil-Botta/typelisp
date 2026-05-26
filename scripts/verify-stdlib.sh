@@ -108,6 +108,7 @@ random.tl
 string.tl
 test.tl
 text_buf.tl
+vector.tl
 windows_sdk.tl
 windows_setup.tl
 EOF
@@ -137,6 +138,7 @@ stdlib/tests/process_api.tl|42|-|-
 stdlib/tests/process_runtime.tl|42|-|-
 stdlib/tests/random_api.tl|42|-|-
 stdlib/tests/text_buf_api.tl|42|-|-
+stdlib/tests/vector_api.tl|42|-|-
 stdlib/tests/visual_studio_api.tl|42|-|-
 stdlib/tests/test_assert_success.tl|42|-|-
 stdlib/tests/test_assert_failure.tl|134|-|literal:stdlib test failure message

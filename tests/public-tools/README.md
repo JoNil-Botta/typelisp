@@ -48,5 +48,5 @@ cargo build --release
 TYPELISP_BIN=./target/release/typelisp ./scripts/verify-public-tools.sh
 ```
 
-The REPL and LSP fixtures are exercised by the runner embedded in
+The REPL and LSP fixtures are exercised by `run-corpus.sh`, which is called by
 `verify-public-tools.sh`.

@@ -52,6 +52,7 @@
     bool
     bool
     bool
+    bool
     bool))
 
 ;; Backend code-generation target (#646). Linux/System V and Windows x64 are
@@ -2317,6 +2318,7 @@
           _
           _
           _
+          _
           _)
         (if (or arg-count arg)
           "    movq %rcx, .L_tl_argc(%rip)
@@ -2906,7 +2908,8 @@
         flush-stdout
         region-mark
         region-reset
-        random-system-seed)
+        random-system-seed
+        windows-setup-instances)
       (if (string-eq name "tl_alloc")
         alloc
         (if (string-eq name "tl_region_mark")
@@ -2977,7 +2980,11 @@
                                                           name
                                                           "tl_random_system_seed")
                                                           random-system-seed
-                                                          false))))))))))))))))))))))))))]))
+                                                          (if (string-eq
+                                                            name
+                                                            "tl_windows_setup_instances")
+                                                            windows-setup-instances
+                                                            false)))))))))))))))))))))))))))]))
 
 (define (compiler-backend-runtime-plan-for
   [functions : CompilerIrFunctionList]
@@ -3009,6 +3016,10 @@
       (compiler-backend-function-list-defines?
         functions
         "tl_random_system_seed")]
+    [defines-windows-setup-instances : bool
+      (compiler-backend-function-list-defines?
+        functions
+        "tl_windows_setup_instances")]
     [extern-alloc : bool
       (compiler-backend-extern-list-references? externs "tl_alloc")]
     [extern-oob : bool
@@ -3071,6 +3082,10 @@
       (compiler-backend-extern-list-references? externs "tl_region_reset")]
     [extern-random-system-seed : bool
       (compiler-backend-extern-list-references? externs "tl_random_system_seed")]
+    [extern-windows-setup-instances : bool
+      (compiler-backend-extern-list-references?
+        externs
+        "tl_windows_setup_instances")]
     [calls-alloc : bool
       (compiler-backend-function-list-calls? functions "tl_alloc")]
     [calls-oob : bool
@@ -3129,6 +3144,10 @@
       (compiler-backend-function-list-calls? functions "tl_region_reset")]
     [calls-random-system-seed : bool
       (compiler-backend-function-list-calls? functions "tl_random_system_seed")]
+    [calls-windows-setup-instances : bool
+      (compiler-backend-function-list-calls?
+        functions
+        "tl_windows_setup_instances")]
     (let
       [needs-oob : bool (and (not defines-oob) (or extern-oob calls-oob))]
       [needs-substring : bool
@@ -3184,6 +3203,10 @@
         (and
           (not defines-random-system-seed)
           (or extern-random-system-seed calls-random-system-seed))]
+      [needs-windows-setup-instances : bool
+        (and
+          (not defines-windows-setup-instances)
+          (or extern-windows-setup-instances calls-windows-setup-instances))]
       [direct-alloc : bool
         (and (not defines-alloc) (or extern-alloc calls-alloc))]
       (let
@@ -3208,7 +3231,9 @@
               needs-process-output
               (or
                 needs-read-line
-                (or needs-read-bytes needs-random-system-seed))))]
+                (or
+                  needs-read-bytes
+                  (or needs-random-system-seed needs-windows-setup-instances)))))]
         (OkBackendRuntimePlan
           (BackendRuntimePlan
             needs-alloc
@@ -3232,7 +3257,8 @@
             needs-flush-stdout
             needs-region-mark
             needs-region-reset
-            needs-random-system-seed))))))
+            needs-random-system-seed
+            needs-windows-setup-instances))))))
 
 (define (compiler-backend-runtime-plan [program : CompilerIrProgram]) : ResultBackendRuntimePlan
   (match program
@@ -3435,6 +3461,20 @@ tl_current_arena:
 "
     ""))
 
+(define (compiler-backend-runtime-windows-setup-instances-data
+  [windows-setup-instances : bool]) : String
+  (if windows-setup-instances
+    "    .section .rodata
+.L_tl_windows_setup_unsupported_msg:
+    .ascii \"windows setup: SetupConfiguration is only supported on windows-x86_64 targets\"
+    .set .L_tl_windows_setup_unsupported_msg_len, . - .L_tl_windows_setup_unsupported_msg
+.L_tl_windows_setup_unavailable_msg:
+    .ascii \"windows setup: SetupConfiguration COM server is unavailable\"
+    .set .L_tl_windows_setup_unavailable_msg_len, . - .L_tl_windows_setup_unavailable_msg
+
+"
+    ""))
+
 (define (compiler-backend-runtime-data-for-target
   [target : CompilerBackendTarget]
   [plan : CompilerBackendRuntimePlan]) : String
@@ -3461,7 +3501,8 @@ tl_current_arena:
         flush-stdout
         region-mark
         region-reset
-        random-system-seed)
+        random-system-seed
+        windows-setup-instances)
       (string-append
         (if alloc
           (compiler-backend-runtime-alloc-data-for-target target)
@@ -3497,8 +3538,11 @@ tl_current_arena:
                           (compiler-backend-runtime-flush-stdout-data
                             target
                             flush-stdout)
-                          (compiler-backend-runtime-random-system-seed-data
-                            random-system-seed)))))))))))]))
+                          (string-append
+                            (compiler-backend-runtime-random-system-seed-data
+                              random-system-seed)
+                            (compiler-backend-runtime-windows-setup-instances-data
+                              windows-setup-instances))))))))))))]))
 
 (define (compiler-backend-runtime-alloc-functions) : String
   "    .globl tl_alloc
@@ -6335,6 +6379,72 @@ tl_random_system_seed:
 
 ")
 
+(define (compiler-backend-runtime-windows-setup-instances-functions
+  [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    "    .globl tl_windows_setup_instances
+tl_windows_setup_instances:
+    push %rbp
+    mov %rsp, %rbp
+    push %r12
+    push %r13
+    leaq .L_tl_windows_setup_unavailable_msg(%rip), %r12
+    movq $.L_tl_windows_setup_unavailable_msg_len, %r13
+    movq $16, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %r12, 0(%rax)
+    movq %r13, 8(%rax)
+    movq %rax, %r12
+    movq $16, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq $1, 0(%rax)
+    movq %r12, 8(%rax)
+    movq %rax, %r12
+    movq $16, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq $1, 0(%rax)
+    movq %r12, 8(%rax)
+    pop %r13
+    pop %r12
+    pop %rbp
+    ret
+
+"
+    "    .globl tl_windows_setup_instances
+tl_windows_setup_instances:
+    push %rbp
+    mov %rsp, %rbp
+    push %r12
+    push %r13
+    leaq .L_tl_windows_setup_unsupported_msg(%rip), %r12
+    movq $.L_tl_windows_setup_unsupported_msg_len, %r13
+    movq $16, %rdi
+    call tl_alloc
+    movq %r12, 0(%rax)
+    movq %r13, 8(%rax)
+    movq %rax, %r12
+    movq $16, %rdi
+    call tl_alloc
+    movq $0, 0(%rax)
+    movq %r12, 8(%rax)
+    movq %rax, %r12
+    movq $16, %rdi
+    call tl_alloc
+    movq $1, 0(%rax)
+    movq %r12, 8(%rax)
+    pop %r13
+    pop %r12
+    pop %rbp
+    ret
+
+"))
+
 (define (compiler-backend-runtime-functions [plan : CompilerBackendRuntimePlan]) : String
   (compiler-backend-runtime-functions-for-target (BackendTargetLinux) plan))
 
@@ -6374,7 +6484,8 @@ tl_random_system_seed:
         flush-stdout
         region-mark
         region-reset
-        random-system-seed)
+        random-system-seed
+        windows-setup-instances)
       (let
         [alloc-asm : String
           (if alloc
@@ -6528,6 +6639,12 @@ tl_random_system_seed:
               (compiler-backend-runtime-windows-random-system-seed-functions)
               (compiler-backend-runtime-random-system-seed-functions))
             "")]
+        [windows-setup-instances-asm : String
+          (if windows-setup-instances
+            (compiler-backend-runtime-windows-setup-instances-functions target)
+            "")]
+        [random-and-windows-asm : String
+          (string-append random-system-seed-asm windows-setup-instances-asm)]
         (string-append
           alloc-asm
           (string-append
@@ -6578,7 +6695,7 @@ tl_random_system_seed:
                                                         stdin-eof-asm
                                                         (string-append
                                                           flush-stdout-asm
-                                                          random-system-seed-asm))))))))))))))))))))))))))]))
+                                                          random-and-windows-asm))))))))))))))))))))))))))]))
 
 ;; Argument register for call arg `idx` under the target's calling convention.
 ;; System V (Linux) uses rdi/rsi/rdx/rcx/r8/r9 via `compiler-backend-arg-reg`;
@@ -6688,6 +6805,7 @@ tl_random_system_seed:
             _
             _
             _
+            _
             _)
           (compiler-backend-entry (or arg-count arg) process-output)])]
     [(BackendTargetWindows) ""]))
@@ -6722,7 +6840,8 @@ tl_random_system_seed:
         flush-stdout
         region-mark
         region-reset
-        random-system-seed)
+        random-system-seed
+        windows-setup-instances)
       (not
         (or
           (backend-or8
@@ -6750,7 +6869,11 @@ tl_random_system_seed:
                 stdin-eof
                 (or
                   flush-stdout
-                  (or region-mark (or region-reset random-system-seed))))))))]))
+                  (backend-or4
+                    region-mark
+                    region-reset
+                    random-system-seed
+                    windows-setup-instances)))))))]))
 
 (define (compiler-backend-target-runtime-ok?
   [target : CompilerBackendTarget]
@@ -6779,6 +6902,7 @@ tl_random_system_seed:
           _
           region-mark
           region-reset
+          _
           _)
         (not (or region-mark region-reset))])
     true))
@@ -8273,6 +8397,7 @@ tl_random_system_seed:
     CompilerRegVarTypeNil
     (AstTyI64)
     (BackendRuntimePlan
+      false
       false
       false
       false

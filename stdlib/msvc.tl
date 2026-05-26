@@ -5,7 +5,7 @@
 ;;;; `PATH` and reading the `PATH`, `LIB`, and `INCLUDE` overrides needed to
 ;;;; invoke it. Locating the newest Visual Studio toolset through the
 ;;;; SetupConfiguration enumerator is reported as a structured unavailable
-;;;; diagnostic until that runtime hook (#1015) lands.
+;;;; diagnostic until MSVC tool selection consumes that runtime surface (#855).
 ;;;;
 ;;;; Usage: `(import "stdlib/msvc.tl")`
 ;;;;
@@ -113,13 +113,13 @@
     [(EnvNoString)
       (ErrMsvcTool
         (MsvcMissingEnvironment
-          "msvc: LIB is not set; run from a Developer Command Prompt (toolset enumeration is tracked by #1015)"))]
+          "msvc: LIB is not set; run from a Developer Command Prompt (toolset selection is tracked by #855)"))]
     [(EnvSomeString lib)
       (match (env-get "INCLUDE")
         [(EnvNoString)
           (ErrMsvcTool
             (MsvcMissingEnvironment
-              "msvc: INCLUDE is not set; run from a Developer Command Prompt (toolset enumeration is tracked by #1015)"))]
+              "msvc: INCLUDE is not set; run from a Developer Command Prompt (toolset selection is tracked by #855)"))]
         [(EnvSomeString include)
           (OkMsvcTool
             (MsvcTool executable (msvc-env-or-empty "PATH") lib include))])]))
@@ -133,19 +133,19 @@
         (MsvcToolNotFound
           (string-append
             (string-append "msvc: could not find " tool)
-            " on PATH; run from a Developer Command Prompt or install Visual Studio Build Tools (newest-toolset enumeration is tracked by #1015)")))]))
+            " on PATH; run from a Developer Command Prompt or install Visual Studio Build Tools (newest-toolset selection is tracked by #855)")))]))
 
-;;; Report that SetupConfiguration-based toolset enumeration is not yet wired.
+;;; Report that SetupConfiguration-based toolset selection is not yet wired.
 (define (msvc-find-tool-from-setup [target : String] [tool : String]) : ResultMsvcTool
   (ErrMsvcTool
     (MsvcSetupUnavailable
-      "msvc: Visual Studio SetupConfiguration enumeration is not implemented yet (#1015)")))
+      "msvc: Visual Studio SetupConfiguration tool selection is not implemented yet (#855)")))
 
 ;;; Find an MSVC tool such as `link.exe` and its command environment.
 ;;;
 ;;; The v1 slice resolves the tool from an already-configured Developer Command
 ;;; Prompt environment. When no such environment is present the caller should
-;;; fall back to `msvc-find-tool-from-setup`, which is stubbed until #1015.
+;;; fall back to `msvc-find-tool-from-setup`, which is tracked by #855.
 (define (msvc-find-tool [target : String] [tool : String]) : ResultMsvcTool
   (if (not (msvc-host-windows?))
     (ErrMsvcTool

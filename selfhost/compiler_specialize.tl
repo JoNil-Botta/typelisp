@@ -1018,6 +1018,11 @@
         [(OkSpecExprList rewritten state2)
           (OkSpecExpr (AstExprBegin rewritten) state2)]
         [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
+    [(AstExprUnsafe exprs)
+      (match (spec-rewrite-expr-list exprs templates state)
+        [(OkSpecExprList rewritten state2)
+          (OkSpecExpr (AstExprUnsafe rewritten) state2)]
+        [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
     [(AstExprSet name value)
       (match (spec-rewrite-expr value templates state)
         [(OkSpecExpr rewritten state2)
@@ -1234,6 +1239,11 @@
     [(AstExprBegin exprs)
       (match (spec-substitute-values-expr-list exprs subs)
         [(OkSpecSubExprList rewritten) (OkSpecSubExpr (AstExprBegin rewritten))]
+        [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
+    [(AstExprUnsafe exprs)
+      (match (spec-substitute-values-expr-list exprs subs)
+        [(OkSpecSubExprList rewritten)
+          (OkSpecSubExpr (AstExprUnsafe rewritten))]
         [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
     [(AstExprSet name value)
       (match (spec-value-subst-lookup subs name)
@@ -1571,6 +1581,11 @@
     [(AstExprBegin exprs)
       (match (spec-substitute-types-expr-list exprs subs)
         [(OkSpecSubExprList rewritten) (OkSpecSubExpr (AstExprBegin rewritten))]
+        [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
+    [(AstExprUnsafe exprs)
+      (match (spec-substitute-types-expr-list exprs subs)
+        [(OkSpecSubExprList rewritten)
+          (OkSpecSubExpr (AstExprUnsafe rewritten))]
         [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
     [(AstExprSet name value)
       (match (spec-type-subst-lookup subs name)

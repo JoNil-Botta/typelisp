@@ -94,6 +94,7 @@
     [(AstExprStringRef _ _) "string-ref"]
     [(AstExprWhile _ _) "while"]
     [(AstExprBegin _) "begin"]
+    [(AstExprUnsafe _) "unsafe"]
     [(AstExprSet _ _) "set!"]
     [(AstExprAnn _ _) "type annotation"]
     [(AstExprCast _ _) "cast"]
@@ -376,6 +377,7 @@
       (ctfe-eval-if cond then-branch else-branch env fuel)]
     [(AstExprLet bindings body) (ctfe-eval-let bindings body env fuel)]
     [(AstExprBegin exprs) (ctfe-eval-begin exprs env fuel)]
+    [(AstExprUnsafe exprs) (ctfe-eval-begin exprs env fuel)]
     [_
       (ErrCtfe
         (ctfe-diagnostic-at-expr
@@ -542,6 +544,10 @@
     [(AstExprBegin a-exprs)
       (match b
         [(AstExprBegin b-exprs) (ctfe-expr-list-eq a-exprs b-exprs)]
+        [_ false])]
+    [(AstExprUnsafe a-exprs)
+      (match b
+        [(AstExprUnsafe b-exprs) (ctfe-expr-list-eq a-exprs b-exprs)]
         [_ false])]
     [(AstExprAnn a-inner a-ty)
       (match b

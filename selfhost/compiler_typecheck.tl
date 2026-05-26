@@ -996,6 +996,7 @@
     [(AstExprStringRef str index) (tc-source-expr-pair-policy-ok ctx str index)]
     [(AstExprWhile cond body) (tc-source-expr-pair-policy-ok ctx cond body)]
     [(AstExprBegin exprs) (tc-source-expr-list-policy-ok ctx exprs)]
+    [(AstExprUnsafe exprs) (tc-source-expr-list-policy-ok ctx exprs)]
     [(AstExprSet _ value) (tc-source-expr-policy-ok ctx value)]
     [(AstExprAnn inner ty)
       (match (tc-source-expr-policy-ok ctx inner)
@@ -2504,6 +2505,7 @@
                 [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
         [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
     [(AstExprBegin exprs) (tc-spmd-begin-list ctx env spmd-env exprs)]
+    [(AstExprUnsafe exprs) (tc-spmd-begin-list ctx env spmd-env exprs)]
     [(AstExprSet name value)
       (match (tc-spmd-expr ctx env spmd-env value)
         [(OkTcSpmdExprInfo value-info)
@@ -2752,6 +2754,7 @@
         (tc-expr-uses-free-name? cond name bound)
         (tc-expr-uses-free-name? body name bound))]
     [(AstExprBegin exprs) (tc-expr-list-uses-free-name? exprs name bound)]
+    [(AstExprUnsafe exprs) (tc-expr-list-uses-free-name? exprs name bound)]
     [(AstExprSet var-name value)
       (or
         (and
@@ -3874,6 +3877,9 @@
             [(ErrTcUnit message) (ErrTcType message)])]
         [(ErrTcType message) (ErrTcType message)])]
     [(AstExprBegin exprs) (tc-begin-list ctx env exprs)]
+    ;; `(unsafe ...)` types like `begin` in v1; the unsafe-context flag for
+    ;; raw-pointer ops is added with their checks (#955).
+    [(AstExprUnsafe exprs) (tc-begin-list ctx env exprs)]
     [(AstExprIf cond then-branch else-branch)
       (match (tc-expr ctx env cond)
         [(OkTcType cond-ty)
@@ -5315,8 +5321,26 @@
                 "(define (f [p : String] [c : String]) : i64 (write-file p c))"
                 "typecheck: return type mismatch"))))))))
 
+;; Unsafe blocks (#1053): parse + typecheck like `begin`; empty `(unsafe)`
+;; rejects at parse.
+(define (compiler-typecheck-unsafe-ok-source) : String
+  "(define (main) : i64 (unsafe 1 2 42))")
+
+(define (compiler-typecheck-unsafe-empty-source) : String
+  "(define (main) : i64 (unsafe))")
+
+(define (compiler-typecheck-unsafe-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-unsafe-ok-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-unsafe-empty-source)
+      "parse: unsafe requires a non-empty body")))
+
 (define (compiler-typecheck-self-test) : i64
   (begin
+    (if (compiler-typecheck-unsafe-tests-ok?)
+      unit
+      (panic "typecheck: unsafe block tests failed"))
     (if (compiler-typecheck-statement-tests-ok?)
       unit
       (panic "typecheck: statement/control-flow tests failed"))

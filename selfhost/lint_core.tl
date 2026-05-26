@@ -143,6 +143,7 @@
     [(AstExprWhile cond body)
       (lint-walk-expr body threshold (lint-walk-expr cond threshold acc))]
     [(AstExprBegin exprs) (lint-walk-expr-list exprs threshold acc)]
+    [(AstExprUnsafe exprs) (lint-walk-expr-list exprs threshold acc)]
     [(AstExprSet _ value) (lint-walk-expr value threshold acc)]
     [(AstExprAnn inner _) (lint-walk-expr inner threshold acc)]
     [(AstExprCast inner _) (lint-walk-expr inner threshold acc)]

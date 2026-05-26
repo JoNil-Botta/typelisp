@@ -545,6 +545,8 @@
         (front-cat3 ", body: " (front-expr-render body) " }"))]
     [(AstExprBegin exprs)
       (front-cat3 "Begin([" (front-expr-list-render exprs) "])")]
+    [(AstExprUnsafe exprs)
+      (front-cat3 "Unsafe([" (front-expr-list-render exprs) "])")]
     [(AstExprSet name value)
       (front-cat3
         "Set(\""

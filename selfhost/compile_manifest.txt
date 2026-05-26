@@ -385,6 +385,20 @@ contains|doc-html: item anchor missing
 contains|No documented declarations.
 end
 
+case|selfhost_doc_md|selfhost/doc_md.tl|assembly|skip|direct
+contains|_tl_md_render_inline:
+contains|_tl_md_render_link:
+contains|_tl_md_find_char:
+contains|_tl_compiler_doc_md_self_test:
+contains|<code>
+contains|<em>
+end
+
+case|selfhost_doc_md_smoke|selfhost/doc_md_smoke.tl|assembly|exactly-one|direct
+contains|_tl_compiler_doc_md_self_test:
+contains|_tl_md_render_inline:
+end
+
 case|selfhost_doc_html_smoke|selfhost/doc_html_smoke.tl|assembly|exactly-one|direct
 contains|_tl_doc_html_smoke:
 contains|_tl_doc_html_render_module_page:

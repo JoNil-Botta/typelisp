@@ -155,13 +155,11 @@
 
 ;;; Create a unique temporary directory for tool artifacts.
 ;;;
-;;; The directory is created below `$TMPDIR` on Linux, or `/tmp` when `TMPDIR` is
-;;; missing. Windows returns `IoUnsupported` until Windows filesystem primitives
-;;; are implemented for this stdlib slice.
+;;; The directory is created below `$TMPDIR` on Linux (or `/tmp` when `TMPDIR` is
+;;; missing), and below `%TEMP%`/`%TMP%` (or `.`) on Windows. The unique name is
+;;; seeded by the process id (`GetCurrentProcessId` on Windows, `getpid` on
+;;; Linux) and an attempt counter, retrying on collision.
 (define (try-create-temp-dir [prefix : String]) : ResultIoString
-  (if (fs-windows?)
-    (ErrIoString
-      (IoUnsupported "fs: temporary directories are not implemented on Windows"))
-    (if (io-empty-path? prefix)
-      (ErrIoString (IoInvalidPath prefix))
-      (fs-create-temp-dir-loop (fs-temp-root) prefix (fs-process-id) 0))))
+  (if (io-empty-path? prefix)
+    (ErrIoString (IoInvalidPath prefix))
+    (fs-create-temp-dir-loop (fs-temp-root) prefix (fs-process-id) 0)))

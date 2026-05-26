@@ -2544,6 +2544,7 @@ impl X86_64Backend {
         if self.needs_fs_runtime {
             externs.insert("_mkdir");
             externs.insert("_errno");
+            externs.insert("GetCurrentProcessId");
         }
         if self.needs_env_var_exists_runtime || self.needs_env_var_value_runtime {
             externs.insert("getenv");
@@ -5109,8 +5110,17 @@ impl X86_64Backend {
                 self.emit("    ret");
                 self.emit("");
             }
+            // Real process id via GetCurrentProcessId (kernel32) so temp-dir
+            // names are unique across processes (#850). `emit_call` reserves the
+            // 32-byte shadow space; after `push %rbp` rsp is 16-aligned, so the
+            // call is ABI-correct. The DWORD result is in eax; `movl %eax, %eax`
+            // zero-extends it into rax.
             self.emit(&format!("{}:", FS_PROCESS_ID_RUNTIME_SYMBOL));
-            self.emit("    xorq %rax, %rax");
+            self.emit("    push %rbp");
+            self.emit("    mov %rsp, %rbp");
+            self.emit_call("GetCurrentProcessId");
+            self.emit("    movl %eax, %eax");
+            self.emit("    pop %rbp");
             self.emit("    ret");
             self.emit("");
             return;

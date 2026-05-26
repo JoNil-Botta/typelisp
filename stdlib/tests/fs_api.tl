@@ -58,6 +58,40 @@
         (fs-path-join "left/" "/right")
         "left/right"
         "path join avoids duplicate separator")
+      ;; #822: pure path-string helpers (separator-agnostic; `/` cases are
+      ;; stable on both Linux and Windows).
+      (assert-string-eq
+        (fs-dirname "src/app/main.tl")
+        "src/app"
+        "dirname strips final component")
+      (assert-string-eq
+        (fs-dirname "main.tl")
+        "."
+        "dirname of bare name is dot")
+      (assert-string-eq
+        (fs-basename "src/app/main.tl")
+        "main.tl"
+        "basename is final component")
+      (assert-string-eq
+        (fs-basename "main.tl")
+        "main.tl"
+        "basename of bare name is itself")
+      (assert-string-eq
+        (fs-extension "src/main.tl")
+        "tl"
+        "extension after last dot")
+      (assert-string-eq
+        (fs-extension "archive.tar.gz")
+        "gz"
+        "extension uses last dot")
+      (assert-string-eq
+        (fs-extension "Makefile")
+        ""
+        "no dot means no extension")
+      (assert-string-eq
+        (fs-extension ".gitignore")
+        ""
+        "leading-dot name has no extension")
       (if (fs-windows?)
         (begin
           (assert-created-temp-dir)

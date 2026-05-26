@@ -673,21 +673,19 @@
   (ast-binop-from-tag (compiler-parse-dispatch-tag dispatch name)))
 
 (define (ast-unop-tag? [tag : i64]) : bool
-  (if (= tag (compiler-parse-tag-un-not))
-    true
-    (if (= tag (compiler-parse-tag-un-neg))
-      true
-      (= tag (compiler-parse-tag-un-bit-not)))))
+  (cond
+    [(= tag (compiler-parse-tag-un-not)) true]
+    [(= tag (compiler-parse-tag-un-neg)) true]
+    [else (= tag (compiler-parse-tag-un-bit-not))]))
 
 (define (ast-unop? [dispatch : SymI64Env] [name : String]) : bool
   (ast-unop-tag? (compiler-parse-dispatch-tag dispatch name)))
 
 (define (ast-unop-from-tag [tag : i64]) : AstUnOp
-  (if (= tag (compiler-parse-tag-un-not))
-    (AstUnNot)
-    (if (= tag (compiler-parse-tag-un-neg))
-      (AstUnNeg)
-      (AstUnBitNot))))
+  (cond
+    [(= tag (compiler-parse-tag-un-not)) (AstUnNot)]
+    [(= tag (compiler-parse-tag-un-neg)) (AstUnNeg)]
+    [else (AstUnBitNot)]))
 
 (define (ast-unop-from-name [dispatch : SymI64Env] [name : String]) : AstUnOp
   (ast-unop-from-tag (compiler-parse-dispatch-tag dispatch name)))

@@ -2,9 +2,9 @@
 ;;
 ;; This pass mirrors the Rust backend's planning shape without changing
 ;; assembly emission. It computes inspectable live intervals, ineligible vars,
-;; and register/spill homes for scalar IR values. The first selfhost pool is a
-;; conservative System V integer subset: %rsp/%rbp are never allocatable, and
-;; the current emitter's hard scratch registers remain reserved.
+;; and register/spill homes for scalar IR values. The selfhost pool keeps
+;; %rsp/%rbp and the emitter's hard scratch registers reserved, and only admits
+;; caller-saved registers for values that cannot be clobbered by call emission.
 (import "compiler_liveness.tl")
 
 (defenum CompilerRegStringList
@@ -87,7 +87,11 @@
       "%r13"
       (CompilerRegStringCons
         "%r14"
-        (CompilerRegStringCons "%r15" CompilerRegStringNil)))))
+        (CompilerRegStringCons
+          "%r15"
+          (CompilerRegStringCons
+            "%r8"
+            (CompilerRegStringCons "%r9" CompilerRegStringNil)))))))
 
 (define (compiler-reg-sysv-caller-saved-integer-registers) : CompilerRegStringList
   (CompilerRegStringCons
@@ -474,6 +478,31 @@
             liveness
             (compiler-reg-call-live-instrs instrs liveness label 0 set))])]))
 
+(define (compiler-reg-call-arg-vars-instrs
+  [instrs : CompilerIrInstrList]
+  [set : CompilerLiveI64Set]) : CompilerLiveI64Set
+  (match instrs
+    [(IrInstrNil) set]
+    [(IrInstrCons instr rest)
+      (compiler-reg-call-arg-vars-instrs
+        rest
+        (match instr
+          [(IrInstrCall _ _ args _)
+            (compiler-live-set-union set (compiler-live-value-list-vars args))]
+          [_ set]))]))
+
+(define (compiler-reg-call-arg-vars-blocks
+  [blocks : CompilerIrBlockList]
+  [set : CompilerLiveI64Set]) : CompilerLiveI64Set
+  (match blocks
+    [(IrBlockNil) set]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (compiler-reg-call-arg-vars-blocks
+            rest
+            (compiler-reg-call-arg-vars-instrs instrs set))])]))
+
 (define (compiler-reg-ineligible-vars
   [func : CompilerIrFunction]
   [liveness : CompilerFunctionLiveness]
@@ -487,7 +516,9 @@
           blocks
           (compiler-reg-ineligible-params
             params
-            (compiler-reg-ineligible-non-scalars types CompilerLiveI64Nil))))]))
+            (compiler-reg-call-arg-vars-blocks
+              blocks
+              (compiler-reg-ineligible-non-scalars types CompilerLiveI64Nil)))))]))
 
 (define (compiler-reg-interval-before?
   [left : CompilerRegInterval]
@@ -853,7 +884,7 @@
     "overlap"
     IrParamNil
     (AstTyUnit)
-    5
+    7
     (IrBlockCons
       (IrBlock
         "entry"
@@ -868,22 +899,44 @@
                 (IrInstrCons
                   (IrInstrMov 4 (IrValueI64 4) (compiler-reg-i64-ty))
                   (IrInstrCons
-                    (IrInstrStore "g0" (IrValueVar 0) (compiler-reg-i64-ty))
+                    (IrInstrMov 5 (IrValueI64 5) (compiler-reg-i64-ty))
                     (IrInstrCons
-                      (IrInstrStore "g1" (IrValueVar 1) (compiler-reg-i64-ty))
+                      (IrInstrMov 6 (IrValueI64 6) (compiler-reg-i64-ty))
                       (IrInstrCons
-                        (IrInstrStore "g2" (IrValueVar 2) (compiler-reg-i64-ty))
+                        (IrInstrStore "g0" (IrValueVar 0) (compiler-reg-i64-ty))
                         (IrInstrCons
                           (IrInstrStore
-                            "g3"
-                            (IrValueVar 3)
+                            "g1"
+                            (IrValueVar 1)
                             (compiler-reg-i64-ty))
                           (IrInstrCons
                             (IrInstrStore
-                              "g4"
-                              (IrValueVar 4)
+                              "g2"
+                              (IrValueVar 2)
                               (compiler-reg-i64-ty))
-                            (IrInstrCons (IrInstrReturn IrNoValue) IrInstrNil))))))))))))
+                            (IrInstrCons
+                              (IrInstrStore
+                                "g3"
+                                (IrValueVar 3)
+                                (compiler-reg-i64-ty))
+                              (IrInstrCons
+                                (IrInstrStore
+                                  "g4"
+                                  (IrValueVar 4)
+                                  (compiler-reg-i64-ty))
+                                (IrInstrCons
+                                  (IrInstrStore
+                                    "g5"
+                                    (IrValueVar 5)
+                                    (compiler-reg-i64-ty))
+                                  (IrInstrCons
+                                    (IrInstrStore
+                                      "g6"
+                                      (IrValueVar 6)
+                                      (compiler-reg-i64-ty))
+                                    (IrInstrCons
+                                      (IrInstrReturn IrNoValue)
+                                      IrInstrNil))))))))))))))))
       IrBlockNil)))
 
 (define (compiler-reg-call-live-function) : CompilerIrFunction
@@ -904,6 +957,34 @@
               (IrInstrCons
                 (IrInstrReturn (IrSomeValue (IrValueVar 2)))
                 IrInstrNil)))))
+      IrBlockNil)))
+
+(define (compiler-reg-call-arg-function) : CompilerIrFunction
+  (IrFunction
+    "call_arg"
+    IrParamNil
+    (AstTyUnit)
+    4
+    (IrBlockCons
+      (IrBlock
+        "entry"
+        (IrInstrCons
+          (IrInstrMov 0 (IrValueI64 1) (compiler-reg-i64-ty))
+          (IrInstrCons
+            (IrInstrMov 1 (IrValueI64 2) (compiler-reg-i64-ty))
+            (IrInstrCons
+              (IrInstrCall
+                2
+                "use_args"
+                (IrValueCons
+                  (IrValueVar 0)
+                  (IrValueCons (IrValueVar 1) IrValueNil))
+                (AstTyUnit))
+              (IrInstrCons
+                (IrInstrMov 3 (IrValueI64 3) (compiler-reg-i64-ty))
+                (IrInstrCons
+                  (IrInstrReturn (IrSomeValue (IrValueVar 3)))
+                  IrInstrNil))))))
       IrBlockNil)))
 
 (define (compiler-reg-ineligible-function) : CompilerIrFunction
@@ -949,12 +1030,20 @@
   (match (compiler-reg-plan-function (compiler-reg-overlap-function))
     [(CompilerRegPlan assignments _ _)
       (and
-        (= (compiler-reg-assignment-count assignments) 5)
+        (= (compiler-reg-assignment-count assignments) 7)
         (and
           (= (compiler-reg-spill-count assignments) 1)
-          (compiler-reg-location-spill-offset?
-            (compiler-reg-assignment-lookup assignments 4)
-            (compiler-reg-stack-slot-offset 4))))]))
+          (and
+            (compiler-reg-location-register?
+              (compiler-reg-assignment-lookup assignments 4)
+              "%r8")
+            (and
+              (compiler-reg-location-register?
+                (compiler-reg-assignment-lookup assignments 5)
+                "%r9")
+              (compiler-reg-location-spill-offset?
+                (compiler-reg-assignment-lookup assignments 6)
+                (compiler-reg-stack-slot-offset 6))))))]))
 
 (define (compiler-reg-call-live-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-call-live-function))
@@ -968,6 +1057,21 @@
             (compiler-reg-location-register?
               (compiler-reg-assignment-lookup assignments 2)
               "%r12"))))]))
+
+(define (compiler-reg-call-arg-ok?) : bool
+  (match (compiler-reg-plan-function (compiler-reg-call-arg-function))
+    [(CompilerRegPlan assignments ineligible _)
+      (and
+        (compiler-live-set-contains? ineligible 0)
+        (and
+          (compiler-live-set-contains? ineligible 1)
+          (and
+            (compiler-reg-unassigned? assignments 0)
+            (and
+              (compiler-reg-unassigned? assignments 1)
+              (compiler-reg-location-register?
+                (compiler-reg-assignment-lookup assignments 3)
+                "%r12")))))]))
 
 (define (compiler-reg-ineligible-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-ineligible-function))
@@ -1018,11 +1122,19 @@
           (compiler-reg-string-list-contains? win-callees "%rdi")
           (and
             (not (compiler-reg-string-list-contains? win-callers "%rdi"))
-            (not
-              (=
-                (compiler-reg-string-list-count
-                  (compiler-reg-sysv-integer-registers))
-                (compiler-reg-string-list-count win-callees)))))))))
+            (and
+              (not
+                (=
+                  (compiler-reg-string-list-count
+                    (compiler-reg-sysv-integer-registers))
+                  (compiler-reg-string-list-count win-callees)))
+              (and
+                (compiler-reg-string-list-contains?
+                  (compiler-reg-sysv-integer-registers)
+                  "%r8")
+                (compiler-reg-string-list-contains?
+                  (compiler-reg-sysv-integer-registers)
+                  "%r9")))))))))
 
 (define (compiler-regalloc-self-test) : i64
   (if (and
@@ -1031,7 +1143,9 @@
       (compiler-reg-overlap-spill-ok?)
       (and
         (compiler-reg-call-live-ok?)
-        (and (compiler-reg-ineligible-ok?) (compiler-reg-target-clobbers-ok?)))))
+        (and
+          (compiler-reg-call-arg-ok?)
+          (and (compiler-reg-ineligible-ok?) (compiler-reg-target-clobbers-ok?))))))
     42
     (begin
       (panic "regalloc: smoke mismatch")

@@ -2729,17 +2729,13 @@
             (opt-dce-instrs
               (opt-collect-instrs-uses (OptUsedNil) cleaned)
               cleaned)]
-          (if (opt-used-contains used 1)
-            (if (not (opt-used-contains used 0))
-              (if (= (compiler-ir-instr-list-count instrs) 3)
-                (if (= (compiler-ir-instr-list-count cleaned) 2)
-                  (if (= (compiler-ir-instr-list-count again) 2)
-                    42
-                    4)
-                  3)
-                2)
-              1)
-            0))))))
+          (cond
+            [(not (opt-used-contains used 1)) 0]
+            [(opt-used-contains used 0) 1]
+            [(not (= (compiler-ir-instr-list-count instrs) 3)) 2]
+            [(not (= (compiler-ir-instr-list-count cleaned) 2)) 3]
+            [(not (= (compiler-ir-instr-list-count again) 2)) 4]
+            [else 42]))))))
 
 ;; Builds `[Mov v0=4096 (an address), Load v1 = *v0, Return v1]`. `v0` feeds a
 ;; `Load`, so DCE must treat it as used and keep it; without collecting the
@@ -3437,14 +3433,10 @@
               (let
                 [again-program : CompilerIrProgram
                   (optimize-program optimized-program)]
-                (if (= (compiler-ir-instr-list-count once-instrs) 4)
-                  (if (= (opt-count-arith-instrs once-instrs) 3)
-                    (if (= (compiler-ir-instr-list-count fixed-instrs) 3)
-                      (if (= (opt-count-arith-instrs fixed-instrs) 2)
-                        (if (opt-program-eq optimized-program again-program)
-                          42
-                          5)
-                        4)
-                      3)
-                    2)
-                  1)))))))))
+                (cond
+                  [(not (= (compiler-ir-instr-list-count once-instrs) 4)) 1]
+                  [(not (= (opt-count-arith-instrs once-instrs) 3)) 2]
+                  [(not (= (compiler-ir-instr-list-count fixed-instrs) 3)) 3]
+                  [(not (= (opt-count-arith-instrs fixed-instrs) 2)) 4]
+                  [(not (opt-program-eq optimized-program again-program)) 5]
+                  [else 42])))))))))

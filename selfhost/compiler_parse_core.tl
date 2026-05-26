@@ -2885,6 +2885,51 @@
               "(define (main) : i64 (with-arena r))"
               "parse: with-arena 'r' requires a non-empty body")))))))
 
+;; REPL-item parsing (#1072 / #1041): `parse-ast-repl-source` accepts a single
+;; top-level declaration, a parenthesized expression, or a bare expression, and
+;; rejects trailing tokens and a malformed expression. Mirrors the Rust
+;; parser's `parse_repl_item` tests.
+(define (compiler-parse-repl-decl-ok? [src : String]) : bool
+  (match (parse-ast-repl-source src)
+    [(OkAstReplItem item)
+      (match item
+        [(AstReplDecl _) true]
+        [(AstReplExpr _) false])]
+    [(ErrAstReplItem _) false]))
+
+(define (compiler-parse-repl-expr-ok? [src : String]) : bool
+  (match (parse-ast-repl-source src)
+    [(OkAstReplItem item)
+      (match item
+        [(AstReplExpr _) true]
+        [(AstReplDecl _) false])]
+    [(ErrAstReplItem _) false]))
+
+(define (compiler-parse-repl-error-ok? [src : String] [expected : String]) : bool
+  (match (parse-ast-repl-source src)
+    [(OkAstReplItem _) false]
+    [(ErrAstReplItem message) (string-eq message expected)]))
+
+(define (compiler-parse-repl-tests-ok?) : bool
+  (and
+    ;; declaration item
+    (compiler-parse-repl-decl-ok? "(define x : i64 42)")
+    (and
+      ;; parenthesized expression item
+      (compiler-parse-repl-expr-ok? "(+ 1 2)")
+      (and
+        ;; bare expression item
+        (compiler-parse-repl-expr-ok? "42")
+        (and
+          ;; trailing tokens after a complete item are rejected
+          (compiler-parse-repl-error-ok?
+            "42 43"
+            "parse: trailing tokens after REPL input")
+          ;; a malformed expression item surfaces the expression diagnostic
+          (compiler-parse-repl-error-ok?
+            "(+ 1)"
+            "parse: malformed binary expression"))))))
+
 (define (compiler-parse-smoke) : i64
   (match (parse-ast-source (compiler-parse-smoke-source))
     [(OkAstProgram program)
@@ -2935,7 +2980,9 @@
                         (compiler-parse-operator-tests-ok?)
                         (and
                           (compiler-parse-type-literal-tests-ok?)
-                          (compiler-parse-region-tests-ok?))))))))))
+                          (and
+                            (compiler-parse-region-tests-ok?)
+                            (compiler-parse-repl-tests-ok?)))))))))))
           42
           (begin
             (panic "parse: error-path self-tests failed")

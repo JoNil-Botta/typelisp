@@ -7730,16 +7730,24 @@ tl_string_concat:
       "backend: f64 values are not supported yet"
       21
       7)
-    (compiler-backend-instr-diagnostic-case-ok?
-      (IrInstrBinOp
-        1
-        (IrBinMod)
-        (IrValueF64 "1.0")
-        (IrValueF64 "2.0")
-        (AstTyF64))
-      "backend: unsupported f64 binary op"
-      34
-      9)))
+    (and
+      (compiler-backend-instr-diagnostic-case-ok?
+        (IrInstrBinOp
+          1
+          (IrBinMod)
+          (IrValueF64 "1.0")
+          (IrValueF64 "2.0")
+          (AstTyF64))
+        "backend: unsupported f64 binary op"
+        34
+        9)
+      ;; #1044: an f64 unary op other than negation is rejected (mirrors the
+      ;; f64-binary-op reject; only IrUnNeg has an f64 lowering).
+      (compiler-backend-instr-diagnostic-case-ok?
+        (IrInstrUnOp 2 (IrUnNot) (IrValueF64 "1.0") (AstTyF64))
+        "backend: unsupported f64 unary op"
+        40
+        11))))
 
 (define (compiler-backend-optimizer-rewrite-diagnostic-ok?) : bool
   (let

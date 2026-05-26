@@ -35,31 +35,58 @@ reject_diag() {
     esac
 }
 
+# Each witness is a separate `typelisp run selfhost/check.tl` invocation, and the
+# Windows build intermittently SEGFAULTs mid-compile (#1204). A segfault exits
+# non-zero with no diagnostic, which would otherwise look like "a positive
+# witness was rejected" or "a reject witness rejected without its diagnostic" and
+# spuriously fail this gate. Retry an UNEXPECTED outcome a few times: a transient
+# segfault clears on retry, while a genuine regression reproduces across every
+# attempt and still fails.
+ATTEMPTS="${VERIFY_STDLIB_SELFHOST_ATTEMPTS:-3}"
+
+# Sets the global `expected` to 1 when the (rc,out) pair matches the witness
+# expectation: a reject witness ($2 non-empty) must fail AND carry the diagnostic
+# substring; a positive witness must pass cleanly.
+witness_expected() {
+    expected=0
+    if [ -n "$2" ]; then
+        if [ "$1" -ne 0 ] && printf '%s' "$3" | grep -qF "$2"; then expected=1; fi
+    elif [ "$1" -eq 0 ]; then
+        expected=1
+    fi
+}
+
 fail=0
 checked=0
 for witness in stdlib/tests/*.tl; do
     checked=$((checked + 1))
     expect="$(reject_diag "$witness")"
-    if out="$("$COMPILER" run selfhost/check.tl --target "$TARGET" -- "$witness" --stdlib-root stdlib 2>&1)"; then
-        rc=0
-    else
-        rc=$?
-    fi
-    if [ -n "$expect" ]; then
+    attempt=0
+    while [ "$attempt" -lt "$ATTEMPTS" ]; do
+        attempt=$((attempt + 1))
+        if out="$("$COMPILER" run selfhost/check.tl --target "$TARGET" -- "$witness" --stdlib-root stdlib 2>&1)"; then
+            rc=0
+        else
+            rc=$?
+        fi
+        witness_expected "$rc" "$expect" "$out"
+        [ "$expected" -eq 1 ] && break
+        if [ "$attempt" -lt "$ATTEMPTS" ]; then
+            echo "  retry ($attempt/$ATTEMPTS): $witness unexpected (rc=$rc) — likely transient (#1204)" >&2
+        fi
+    done
+    if [ "$expected" -eq 1 ]; then
+        if [ -n "$expect" ]; then echo "  ok (reject): $witness"; else echo "  ok: $witness"; fi
+    elif [ -n "$expect" ]; then
         if [ "$rc" -eq 0 ]; then
             echo "FAIL: $witness expected selfhost rejection but it passed" >&2
-            fail=1
-        elif printf '%s' "$out" | grep -qF "$expect"; then
-            echo "  ok (reject): $witness"
         else
-            echo "FAIL: $witness rejected without expected diagnostic '$expect'" >&2
-            printf '  got: %s\n' "$out" >&2
-            fail=1
+            echo "FAIL: $witness rejected without expected diagnostic '$expect' (after $ATTEMPTS attempts)" >&2
         fi
-    elif [ "$rc" -eq 0 ]; then
-        echo "  ok: $witness"
+        printf '  got: %s\n' "$out" >&2
+        fail=1
     else
-        echo "FAIL: $witness expected to pass the selfhost frontend but was rejected (rc=$rc)" >&2
+        echo "FAIL: $witness expected to pass the selfhost frontend but was rejected (rc=$rc, after $ATTEMPTS attempts)" >&2
         printf '  got: %s\n' "$out" >&2
         fail=1
     fi

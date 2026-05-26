@@ -41,3 +41,15 @@ run_with_retry() {
     done
     return "$_rwr_rc"
 }
+
+# is_crash_code CODE
+#   True when CODE is a crash/signal exit — the shape of the #1204 segfault as
+#   reported by bash/MSYS (128 + signal): SIGILL=132, SIGABRT=134, SIGSEGV=139.
+#   Use this to retry ONLY transient crashes in scripts whose cases may
+#   legitimately exit non-zero (so retry-on-any-non-zero would be wrong).
+is_crash_code() {
+    case "$1" in
+        132 | 134 | 139) return 0 ;;
+        *) return 1 ;;
+    esac
+}

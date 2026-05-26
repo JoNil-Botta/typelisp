@@ -95,4 +95,90 @@
       (begin
         (assert-true (not (pop-ok? pe)) "empty pop not ok")
         (assert-i64-eq (pop-value-or pe -1) -1 "empty pop value fallback")))
+    ;; --- from-array / to-array round-trip ---
+    (let
+      [src : (Array i64) (make-array i64 3)]
+      [unit-begin : unit
+        (begin
+          (array-set! src 0 5)
+          (array-set! src 1 7)
+          (array-set! src 2 9))]
+      [v5 : I64Vec (i64-vec-from-array src 3)]
+      (begin
+        (assert-i64-eq (i64-vec-len v5) 3 "from-array len")
+        (assert-i64-eq (i64-vec-get v5 0 -1) 5 "from-array 0")
+        (assert-i64-eq (i64-vec-get v5 1 -1) 7 "from-array 1")
+        (assert-i64-eq (i64-vec-get v5 2 -1) 9 "from-array 2")
+        ;; from-array with count 0 yields empty vector (capacity 1)
+        (let
+          [v0 : I64Vec (i64-vec-from-array src 0)]
+          (begin
+            (assert-true (i64-vec-is-empty? v0) "from-array count 0 empty")
+            (assert-i64-eq (i64-vec-capacity v0) 1 "from-array count 0 cap 1")))
+        ;; to-array snapshot preserves live prefix exactly
+        (let
+          [dst : (Array i64) (i64-vec-to-array v5)]
+          (begin
+            (assert-i64-eq (array-length dst) 3 "to-array len")
+            (assert-i64-eq (array-ref dst 0) 5 "to-array 0")
+            (assert-i64-eq (array-ref dst 1) 7 "to-array 1")
+            (assert-i64-eq (array-ref dst 2) 9 "to-array 2")))))
+    ;; --- extend in order ---
+    (let
+      [src : (Array i64) (make-array i64 3)]
+      [unit-begin : unit
+        (begin
+          (array-set! src 0 1)
+          (array-set! src 1 2)
+          (array-set! src 2 3))]
+      [base : I64Vec (i64-vec-push (i64-vec-new) 0)]
+      [extended : I64Vec (i64-vec-extend base src 3)]
+      (begin
+        (assert-i64-eq (i64-vec-len extended) 4 "extend len")
+        (assert-i64-eq (i64-vec-get extended 0 -1) 0 "extend order 0")
+        (assert-i64-eq (i64-vec-get extended 1 -1) 1 "extend order 1")
+        (assert-i64-eq (i64-vec-get extended 2 -1) 2 "extend order 2")
+        (assert-i64-eq (i64-vec-get extended 3 -1) 3 "extend order 3")
+        ;; extend with count 0 is identity
+        (let
+          [same : I64Vec (i64-vec-extend extended src 0)]
+          (assert-i64-eq (i64-vec-len same) 4 "extend count 0 identity"))))
+    ;; --- reverse! ---
+    (let
+      [v6 : I64Vec (i64-vec-new)]
+      [v6p : I64Vec (i64-vec-push (i64-vec-push (i64-vec-push v6 1) 2) 3)]
+      [r6 : I64Vec (i64-vec-reverse! v6p)]
+      (begin
+        (assert-i64-eq (i64-vec-get r6 0 -1) 3 "reverse 3-element 0")
+        (assert-i64-eq (i64-vec-get r6 1 -1) 2 "reverse 3-element 1")
+        (assert-i64-eq (i64-vec-get r6 2 -1) 1 "reverse 3-element 2")))
+    ;; reverse! on empty / single is identity
+    (let
+      [ve : I64Vec (i64-vec-reverse! (i64-vec-new))]
+      (begin
+        (assert-true (i64-vec-is-empty? ve) "reverse empty stays empty")
+        (let
+          [vs : I64Vec (i64-vec-reverse! (i64-vec-push (i64-vec-new) 42))]
+          (assert-i64-eq (i64-vec-get vs 0 -1) 42 "reverse single stays single"))))
+    ;; reverse! on two elements swaps
+    (let
+      [v2 : I64Vec (i64-vec-push (i64-vec-push (i64-vec-new) 7) 8)]
+      [r2 : I64Vec (i64-vec-reverse! v2)]
+      (begin
+        (assert-i64-eq (i64-vec-get r2 0 -1) 8 "reverse 2-element 0")
+        (assert-i64-eq (i64-vec-get r2 1 -1) 7 "reverse 2-element 1")))
+    ;; --- sum ---
+    (assert-i64-eq (i64-vec-sum (i64-vec-new)) 0 "sum empty")
+    (let
+      [v7 : I64Vec (i64-vec-push (i64-vec-push (i64-vec-new) 10) 20)]
+      (assert-i64-eq (i64-vec-sum v7) 30 "sum two elements"))
+    ;; --- contains? ---
+    (let
+      [v8 : I64Vec (i64-vec-new)]
+      [v8p : I64Vec (i64-vec-push (i64-vec-push v8 5) 9)]
+      (begin
+        (assert-true (i64-vec-contains? v8p 5) "contains first")
+        (assert-true (i64-vec-contains? v8p 9) "contains last")
+        (assert-true (not (i64-vec-contains? v8p 7)) "does not contain missing")))
+    (assert-true (not (i64-vec-contains? (i64-vec-new) 0)) "empty does not contain")
     42))

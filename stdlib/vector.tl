@@ -101,9 +101,91 @@
       (array-set! dst index (array-ref src index))
       (i64-vec-copy-range dst src (+ index 1) count))))
 
-;;; Return a copy of `v` whose backing array is twice as large, preserving the
-;;; live prefix. Capacity is always positive (see `i64-vec-with-capacity`), so
-;;; doubling strictly grows the array.
+;;; Build a vector from the live prefix `[0, count)` of an existing array,
+;;; copying into a fresh backing array.
+(define (i64-vec-from-array [src : (Array i64)] [count : i64]) : I64Vec
+  (let
+    [cap : i64 (if (< count 1) 1 count)]
+    [slots : (Array i64) (make-array i64 cap)]
+    (begin
+      (i64-vec-copy-range slots src 0 count)
+      (I64Vec slots count))))
+
+;;; Return a fresh `(Array i64)` containing exactly the live elements.
+(define (i64-vec-to-array [v : I64Vec]) : (Array i64)
+  (let
+    [n : i64 (i64-vec-len v)]
+    [dst : (Array i64) (make-array i64 n)]
+    (begin
+      (i64-vec-copy-range dst (i64-vec-slots v) 0 n)
+      dst)))
+
+;;; Push the first `count` elements of `src` in order; grows as needed.
+;;; Returns the threaded vector.
+(define (i64-vec-extend [v : I64Vec] [src : (Array i64)] [count : i64]) : I64Vec
+  (i64-vec-extend-aux v src 0 count))
+
+;;; Internal helper: push `src[i]` up to `limit`.
+(define (i64-vec-extend-aux
+  [v : I64Vec]
+  [src : (Array i64)]
+  [i : i64]
+  [limit : i64]) : I64Vec
+  (if (>= i limit)
+    v
+    (i64-vec-extend-aux
+      (i64-vec-push v (array-ref src i))
+      src
+      (+ i 1)
+      limit)))
+
+;;; Reverse the live prefix in place; return the same vector.
+(define (i64-vec-reverse! [v : I64Vec]) : I64Vec
+  (i64-vec-reverse-swap! v 0 (- (i64-vec-len v) 1)))
+
+;;; Swap elements at `lo` and `hi` within the backing array, then recurse
+;;; inward until the pointers cross. Internal helper for `i64-vec-reverse!`.
+(define (i64-vec-reverse-swap!
+  [v : I64Vec]
+  [lo : i64]
+  [hi : i64]) : I64Vec
+  (if (>= lo hi)
+    v
+    (let
+      [slots : (Array i64) (i64-vec-slots v)]
+      [tmp : i64 (array-ref slots lo)]
+      (begin
+        (array-set! slots lo (array-ref slots hi))
+        (array-set! slots hi tmp)
+        (i64-vec-reverse-swap! v (+ lo 1) (- hi 1))))))
+
+;;; Sum of all live elements; 0 for an empty vector.
+(define (i64-vec-sum [v : I64Vec]) : i64
+  (i64-vec-sum-from v 0 0))
+
+;;; Accumulate sum starting from `acc` at offset `index`; internal helper.
+(define (i64-vec-sum-from
+  [v : I64Vec]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (i64-vec-len v))
+    acc
+    (i64-vec-sum-from v (+ index 1) (+ acc (i64-vec-get v index 0)))))
+
+;;; True when `target` appears among the live elements.
+(define (i64-vec-contains? [v : I64Vec] [target : i64]) : bool
+  (i64-vec-contains-from? v 0 target))
+
+;;; Scan from `index` for `target`; internal helper.
+(define (i64-vec-contains-from?
+  [v : I64Vec]
+  [index : i64]
+  [target : i64]) : bool
+  (if (>= index (i64-vec-len v))
+    false
+    (if (= (i64-vec-get v index 0) target)
+      true
+      (i64-vec-contains-from? v (+ index 1) target))))
 (define (i64-vec-grow [v : I64Vec]) : I64Vec
   (let
     [n : i64 (i64-vec-len v)]

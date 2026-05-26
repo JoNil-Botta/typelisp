@@ -2756,6 +2756,30 @@
             "(define (main) : i64 (type i64 bool))"
             "parse: type expects exactly one type"))))))
 
+;; region parsing (#1073 / #1041): `(with-arena <ident> body+)` accepts (basic,
+;; multi-expression body, nested region) and rejects missing binder,
+;; non-identifier binder, and empty body. Parse-shape + parser-owned diagnostics
+;; only; region typing/lowering live in their own tests.
+(define (compiler-parse-region-tests-ok?) : bool
+  (and
+    (compiler-parse-ok? "(define (main) : i64 (with-arena r 0))")
+    (and
+      (compiler-parse-ok? "(define (main) : i64 (with-arena r 1 2 0))")
+      (and
+        (compiler-parse-ok?
+          "(define (main) : i64 (with-arena r (with-arena s 0)))")
+        (and
+          (compiler-parse-error-ok?
+            "(define (main) : i64 (with-arena))"
+            "parse: with-arena requires a region name before its body")
+          (and
+            (compiler-parse-error-ok?
+              "(define (main) : i64 (with-arena 5 0))"
+              "parse: with-arena region name must be an identifier")
+            (compiler-parse-error-ok?
+              "(define (main) : i64 (with-arena r))"
+              "parse: with-arena 'r' requires a non-empty body")))))))
+
 (define (compiler-parse-smoke) : i64
   (match (parse-ast-source (compiler-parse-smoke-source))
     [(OkAstProgram program)
@@ -2800,7 +2824,9 @@
                   (compiler-parse-pattern-tests-ok?)
                   (and
                     (compiler-parse-operator-tests-ok?)
-                    (compiler-parse-type-literal-tests-ok?)))))))
+                    (and
+                      (compiler-parse-type-literal-tests-ok?)
+                      (compiler-parse-region-tests-ok?))))))))
           42
           (begin
             (panic "parse: error-path self-tests failed")

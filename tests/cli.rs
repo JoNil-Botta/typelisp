@@ -1678,14 +1678,51 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
         "invalid target should not write assembly"
     );
 
-    let unsupported = driver_output(&driver_bin, &[source_arg, "--emit-ir"]);
-    assert!(!unsupported.status.success());
-    assert_eq!(stdout(&unsupported), "");
+    let explicit_ir = dir.join("custom-output.ir");
+    let explicit_ir_arg = explicit_ir.to_str().expect("explicit ir path is utf-8");
+    let emit_ir = driver_output(
+        &driver_bin,
+        &[source_arg, "--emit-ir", "-o", explicit_ir_arg],
+    );
     assert!(
-        stderr(&unsupported)
-            .contains("compile: --emit-ir is not supported by the selfhost compile driver yet"),
-        "stderr:\n{}",
-        stderr(&unsupported)
+        emit_ir.status.success(),
+        "selfhost compile --emit-ir failed\nstdout:\n{}\nstderr:\n{}",
+        stdout(&emit_ir),
+        stderr(&emit_ir)
+    );
+    assert_eq!(stdout(&emit_ir), "");
+    assert_eq!(stderr(&emit_ir), "");
+    let explicit_ir_text = fs::read_to_string(&explicit_ir).expect("read explicit ir summary");
+    for needle in [
+        "typelisp-ir-summary v1\n",
+        "functions 1\n",
+        "instructions ",
+        "score ",
+    ] {
+        assert!(
+            explicit_ir_text.contains(needle),
+            "IR summary missing {needle:?}:\n{explicit_ir_text}",
+        );
+    }
+
+    let default_ir = driver_output(&driver_bin, &[source_arg, "--emit-ir"]);
+    assert!(
+        default_ir.status.success(),
+        "selfhost compile default --emit-ir failed\nstdout:\n{}\nstderr:\n{}",
+        stdout(&default_ir),
+        stderr(&default_ir)
+    );
+    assert_eq!(stdout(&default_ir), "");
+    assert_eq!(stderr(&default_ir), "");
+    let default_ir_path = source.with_extension("ir");
+    assert!(
+        default_ir_path.is_file(),
+        "default --emit-ir output was not written"
+    );
+    let default_ir_text = fs::read_to_string(&default_ir_path).expect("read default ir summary");
+    assert!(
+        default_ir_text.contains("typelisp-ir-summary v1\n"),
+        "default IR summary:\n{default_ir_text}"
     );
 
     let bad_source = dir.join("bad.tl");

@@ -2657,6 +2657,26 @@
                           "(import)"
                           "parse: malformed import")))))))))))))
 
+;; enum/struct expression coverage (#1073): defenum empty rejection,
+;; defstruct mixed field types, empty struct rejection, struct-get, and
+;; struct construction-as-call.
+(define (compiler-parse-enum-struct-tests-ok?) : bool
+  (and
+    (compiler-parse-error-ok? "(defenum Empty)" "parse: malformed defenum")
+    (and
+      (compiler-parse-ok? "(defstruct Point (x i64) (y i64))")
+      (and
+        (compiler-parse-ok? "(defstruct Mixed (a i64) (b bool) (c f64))")
+        (and
+          (compiler-parse-error-ok?
+            "(defstruct Empty)"
+            "parse: defstruct needs at least one field")
+          (and
+            (compiler-parse-ok?
+              "(define (f [p : Point]) : i64 (struct-get p x))")
+            (compiler-parse-ok? "(define (f) : Point (Point 1 2))")))))))
+
+;
 ;; let-binding parsing (#1072 / #1041): accept untyped, multi-binding, and
 ;; legacy-parenthesized binding forms; reject an empty binding list. Completes
 ;; the let family alongside the existing flat-let accept and let error tests.
@@ -2719,6 +2739,25 @@
                 "(define (main) : i64 (match 1 [() 0]))"
                 "parse: expected pattern"))))))))
 
+;; pattern literals (#1073): string literal arms, nested string payload,
+;; char literal in pattern, named char literal in value position.
+(define (compiler-parse-pattern-string-char-tests-ok?) : bool
+  (and
+    ;; string literal arms
+    (compiler-parse-ok?
+      "(define (f [s : String]) : i64 (match s [\"if\" 10] [\"let\" 20] [_ 0]))")
+    (and
+      ;; nested string payload
+      (compiler-parse-ok?
+        "(defenum Token (TIdent String))\n(define (f [t : Token]) : i64 (match t [(TIdent \"if\") 1] [_ 0]))")
+      (and
+        ;; char literal in pattern (named space + literal char)
+        (compiler-parse-ok?
+          "(define (f [c : char]) : i64 (match c [#\\space 1] [#a' 2] [_ 0]))")
+        ;; named char literal in value position
+        (compiler-parse-ok? "(define (f) : char #\\newline)")))))
+
+;
 ;; operator parsing (#1073 / #1041): accept unary (not/neg/bit-not), binary
 ;; arithmetic/comparison, and bitwise/shift/logical operator forms; reject
 ;; parser-owned malformed unary/binary operator expressions. Parse-shape only;
@@ -2824,10 +2863,14 @@
                 (and
                   (compiler-parse-pattern-tests-ok?)
                   (and
-                    (compiler-parse-operator-tests-ok?)
+                    (compiler-parse-pattern-string-char-tests-ok?)
                     (and
-                      (compiler-parse-type-literal-tests-ok?)
-                      (compiler-parse-region-tests-ok?))))))))
+                      (compiler-parse-enum-struct-tests-ok?)
+                      (and
+                        (compiler-parse-operator-tests-ok?)
+                        (and
+                          (compiler-parse-type-literal-tests-ok?)
+                          (compiler-parse-region-tests-ok?))))))))))
           42
           (begin
             (panic "parse: error-path self-tests failed")

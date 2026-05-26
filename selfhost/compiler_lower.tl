@@ -5977,6 +5977,29 @@
                     "(define (main) : i64 (comptime (if (= 5 5) 42 0)))"
                     42))))))))))
 
+;; `size-of`/`align-of` comptime layout queries (#989 slice 1): a scalar type
+;; folds to its byte size / alignment (equal for primitives) inside `(comptime …)`.
+(define (compiler-lower-layout-query-fold-tests-ok?) : bool
+  (and
+    (compiler-lower-comptime-fold-ok?
+      "(define (main) : i64 (comptime (size-of (type i64))))"
+      8)
+    (and
+      (compiler-lower-comptime-fold-ok?
+        "(define (main) : i64 (comptime (align-of (type i64))))"
+        8)
+      (and
+        (compiler-lower-comptime-fold-ok?
+          "(define (main) : i64 (comptime (size-of (type i32))))"
+          4)
+        (and
+          (compiler-lower-comptime-fold-ok?
+            "(define (main) : i64 (comptime (size-of (type bool))))"
+            1)
+          (compiler-lower-comptime-fold-ok?
+            "(define (main) : i64 (comptime (size-of (type char))))"
+            1))))))
+
 ;; `and`/`or` short-circuit lowering (#1132 / #1165): `(and a b)` and `(or a b)`
 ;; desugar to a conditional branch, so a function whose body is a bare `and`/`or`
 ;; of two boolean params must emit at least one branch and NO eager binop (the
@@ -6099,7 +6122,9 @@
                                                         (compiler-lower-comptime-f64-source)
                                                         "comptime: f64 compile-time evaluation not yet supported (#735)")
                                                       (and
-                                                        (compiler-lower-comptime-op-fold-tests-ok?)
+                                                        (and
+                                                          (compiler-lower-comptime-op-fold-tests-ok?)
+                                                          (compiler-lower-layout-query-fold-tests-ok?))
                                                         (and
                                                           (compiler-lower-foreach-tests-ok?)
                                                           (compiler-lower-spmd-reduce-tests-ok?)))))))))))))))))))))))))))))

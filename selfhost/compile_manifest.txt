@@ -563,7 +563,7 @@ contains|1.5
 end
 
 case|selfhost_lsp_frame|selfhost/lsp_frame.tl|assembly|skip|direct
-requires-stage0-symbol|file-open-status
+requires-stage0-symbol|file-open-status,append-file-status
 contains|_tl_lsp_frame_parse_content_length:
 contains|_tl_lsp_frame_read_message:
 contains|_tl_lsp_handle_message:
@@ -602,7 +602,7 @@ contains|reader: unterminated list (missing ')')
 end
 
 case|selfhost_repl|selfhost/repl.tl|assembly|exactly-one|direct
-requires-stage0-symbol|file-open-status
+requires-stage0-symbol|file-open-status,append-file-status
 contains|_tl_repl_loop:
 contains|_tl_repl_handle_input:
 contains|tl> 

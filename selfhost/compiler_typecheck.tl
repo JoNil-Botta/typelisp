@@ -2028,6 +2028,27 @@
         (ErrTcType "typecheck: arity mismatch")
         (tc-call-expr ctx env func args))]))
 
+;; `size-of`/`align-of` (#989) are comptime-only layout queries: a single type
+;; argument, result `i64`. Typed here (intercepting before normal call resolution
+;; so `size-of` isn't looked up as a function); CTFE computes the value when the
+;; query is folded inside `(comptime ...)`. Slice 1 supports scalar types; struct
+;; layout + `offset-of` are slice 2.
+(define (tc-layout-query-call [name : String] [args : AstExprList]) : ResultTcType
+  (match args
+    [(AstExprCons _ rest)
+      (match rest
+        [(AstExprNil) (OkTcType (AstTyI64))]
+        [_
+          (ErrTcType
+            (string-append
+              "typecheck: "
+              (string-append name " expects exactly one type argument")))])]
+    [_
+      (ErrTcType
+        (string-append
+          "typecheck: "
+          (string-append name " expects exactly one type argument")))]))
+
 (define (tc-call-or-array-length
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -2035,13 +2056,17 @@
   [args : AstExprList]) : ResultTcType
   (match (ast-expr-unspan func)
     [(AstExprVar name)
-      (if (or (string-eq name "array-length") (string-eq name "length"))
-        (tc-array-length-call ctx env name func args)
-        (if (and
-          (or (string-eq name "string-ref") (string-eq name "char-at"))
-          (not (tc-name-bound? env name)))
-          (tc-string-ref-call ctx env args)
-          (tc-call-expr ctx env func args)))]
+      (if (and
+        (or (string-eq name "size-of") (string-eq name "align-of"))
+        (not (tc-name-bound? env name)))
+        (tc-layout-query-call name args)
+        (if (or (string-eq name "array-length") (string-eq name "length"))
+          (tc-array-length-call ctx env name func args)
+          (if (and
+            (or (string-eq name "string-ref") (string-eq name "char-at"))
+            (not (tc-name-bound? env name)))
+            (tc-string-ref-call ctx env args)
+            (tc-call-expr ctx env func args))))]
     [_ (tc-call-expr ctx env func args)]))
 
 (define (tc-let-bindings
@@ -5336,6 +5361,19 @@
       (compiler-typecheck-unsafe-empty-source)
       "parse: unsafe requires a non-empty body")))
 
+;; `size-of`/`align-of` comptime layout queries (#989 slice 1): accepted with a
+;; single type argument (result `i64`), rejected with wrong arity.
+(define (compiler-typecheck-layout-query-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      "(define (f) : i64 (comptime (size-of (type i64))))")
+    (and
+      (compiler-typecheck-ok?
+        "(define (f) : i64 (comptime (align-of (type bool))))")
+      (compiler-typecheck-error-ok?
+        "(define (f) : i64 (comptime (size-of (type i64) (type bool))))"
+        "size-of expects exactly one type argument"))))
+
 (define (compiler-typecheck-self-test) : i64
   (begin
     (if (compiler-typecheck-unsafe-tests-ok?)
@@ -5398,7 +5436,9 @@
                                         (compiler-typecheck-cast-tests-ok?)
                                         (and
                                           (compiler-typecheck-comptime-tests-ok?)
-                                          (compiler-typecheck-io-builtin-tests-ok?))))))))))))))))))
+                                          (and
+                                            (compiler-typecheck-io-builtin-tests-ok?)
+                                            (compiler-typecheck-layout-query-tests-ok?)))))))))))))))))))
           42
           (begin
             (panic "typecheck: smoke score mismatch")

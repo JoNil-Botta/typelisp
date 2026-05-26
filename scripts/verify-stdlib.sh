@@ -132,7 +132,7 @@ stdlib/tests/io_edges.tl|42|-|-
 stdlib/tests/io_stdio_lines.tl|42|host-line:stdout-line|host-line:stderr-line|printf:alpha\n\nomega
 stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef
 stdlib/tests/env_api.tl|42|-|-
-stdlib/tests/cpu_api.tl|42|-|-
+stdlib/tests/cpu_api.tl|42|-|-|-|requires-stage0-symbol:cpuid
 stdlib/tests/fs_api.tl|42|-|-
 stdlib/tests/hash_api.tl|42|-|-
 stdlib/tests/hashmap_api.tl|42|-|-

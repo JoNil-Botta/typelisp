@@ -8,6 +8,12 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
+# Retry transient Windows crashes (#1204): `is_crash_code` lets the run_* helpers
+# retry only a segfault-class exit (132/134/139), since public-tool cases may
+# legitimately exit non-zero (so retry-on-any-non-zero would be wrong here).
+. "$ROOT/scripts/lib-retry.sh"
+PUBLIC_TOOLS_ATTEMPTS="${VERIFY_PUBLIC_TOOLS_ATTEMPTS:-3}"
+
 HOST_OS=linux
 case "$(uname -s)" in
     Linux*) HOST_OS=linux ;;
@@ -53,10 +59,19 @@ run_cmd() {
     shift
     out="$WORKDIR/$case_name.out"
     err="$WORKDIR/$case_name.err"
-    set +e
-    "$@" > "$out" 2> "$err"
-    code=$?
-    set -e
+    _rc_attempt=0
+    while :; do
+        _rc_attempt=$((_rc_attempt + 1))
+        set +e
+        "$@" > "$out" 2> "$err"
+        code=$?
+        set -e
+        if is_crash_code "$code" && [ "$_rc_attempt" -lt "$PUBLIC_TOOLS_ATTEMPTS" ]; then
+            echo "  retry ($_rc_attempt): '$case_name' crash exit $code — likely transient (#1204)" >&2
+        else
+            break
+        fi
+    done
 }
 
 run_cmd_cwd() {
@@ -65,10 +80,19 @@ run_cmd_cwd() {
     shift 2
     out="$WORKDIR/$case_name.out"
     err="$WORKDIR/$case_name.err"
-    set +e
-    (cd "$cwd" && "$@") > "$out" 2> "$err"
-    code=$?
-    set -e
+    _rc_attempt=0
+    while :; do
+        _rc_attempt=$((_rc_attempt + 1))
+        set +e
+        (cd "$cwd" && "$@") > "$out" 2> "$err"
+        code=$?
+        set -e
+        if is_crash_code "$code" && [ "$_rc_attempt" -lt "$PUBLIC_TOOLS_ATTEMPTS" ]; then
+            echo "  retry ($_rc_attempt): '$case_name' crash exit $code — likely transient (#1204)" >&2
+        else
+            break
+        fi
+    done
 }
 
 run_stdin() {
@@ -77,10 +101,19 @@ run_stdin() {
     shift 2
     out="$WORKDIR/$case_name.out"
     err="$WORKDIR/$case_name.err"
-    set +e
-    "$@" < "$input_file" > "$out" 2> "$err"
-    code=$?
-    set -e
+    _rc_attempt=0
+    while :; do
+        _rc_attempt=$((_rc_attempt + 1))
+        set +e
+        "$@" < "$input_file" > "$out" 2> "$err"
+        code=$?
+        set -e
+        if is_crash_code "$code" && [ "$_rc_attempt" -lt "$PUBLIC_TOOLS_ATTEMPTS" ]; then
+            echo "  retry ($_rc_attempt): '$case_name' crash exit $code — likely transient (#1204)" >&2
+        else
+            break
+        fi
+    done
 }
 
 assert_code() {

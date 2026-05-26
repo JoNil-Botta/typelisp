@@ -625,41 +625,25 @@
     [(NoneI64) (compiler-parse-tag-unknown)]))
 
 (define (ast-binop-tag? [tag : i64]) : bool
-  (if (= tag (compiler-parse-tag-bin-add))
-    true
-    (if (= tag (compiler-parse-tag-bin-sub))
-      true
-      (if (= tag (compiler-parse-tag-bin-mul))
-        true
-        (if (= tag (compiler-parse-tag-bin-div))
-          true
-          (if (= tag (compiler-parse-tag-bin-mod))
-            true
-            (if (= tag (compiler-parse-tag-bin-eq))
-              true
-              (if (= tag (compiler-parse-tag-bin-ne))
-                true
-                (if (= tag (compiler-parse-tag-bin-lt))
-                  true
-                  (if (= tag (compiler-parse-tag-bin-le))
-                    true
-                    (if (= tag (compiler-parse-tag-bin-gt))
-                      true
-                      (if (= tag (compiler-parse-tag-bin-ge))
-                        true
-                        (if (= tag (compiler-parse-tag-bin-and))
-                          true
-                          (if (= tag (compiler-parse-tag-bin-or))
-                            true
-                            (if (= tag (compiler-parse-tag-bin-bit-and))
-                              true
-                              (if (= tag (compiler-parse-tag-bin-bit-or))
-                                true
-                                (if (= tag (compiler-parse-tag-bin-bit-xor))
-                                  true
-                                  (if (= tag (compiler-parse-tag-bin-shl))
-                                    true
-                                    (= tag (compiler-parse-tag-bin-shr))))))))))))))))))))
+  (cond
+    [(= tag (compiler-parse-tag-bin-add)) true]
+    [(= tag (compiler-parse-tag-bin-sub)) true]
+    [(= tag (compiler-parse-tag-bin-mul)) true]
+    [(= tag (compiler-parse-tag-bin-div)) true]
+    [(= tag (compiler-parse-tag-bin-mod)) true]
+    [(= tag (compiler-parse-tag-bin-eq)) true]
+    [(= tag (compiler-parse-tag-bin-ne)) true]
+    [(= tag (compiler-parse-tag-bin-lt)) true]
+    [(= tag (compiler-parse-tag-bin-le)) true]
+    [(= tag (compiler-parse-tag-bin-gt)) true]
+    [(= tag (compiler-parse-tag-bin-ge)) true]
+    [(= tag (compiler-parse-tag-bin-and)) true]
+    [(= tag (compiler-parse-tag-bin-or)) true]
+    [(= tag (compiler-parse-tag-bin-bit-and)) true]
+    [(= tag (compiler-parse-tag-bin-bit-or)) true]
+    [(= tag (compiler-parse-tag-bin-bit-xor)) true]
+    [(= tag (compiler-parse-tag-bin-shl)) true]
+    [else (= tag (compiler-parse-tag-bin-shr))]))
 
 (define (ast-binop? [dispatch : SymI64Env] [name : String]) : bool
   (ast-binop-tag? (compiler-parse-dispatch-tag dispatch name)))

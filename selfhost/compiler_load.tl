@@ -1176,6 +1176,136 @@
               "(module foo)"
               "expected `package` form, got `module`")))))))
 
+;;; --- pkg:<alias>/... import resolution (#834, slice 2) ----------------------
+;;; Resolve a `pkg:<alias>/<rest>` import against a parsed manifest's dependency
+;;; list, relative to the manifest directory: `<manifest-dir>/<dep-path>/<rest>`,
+;;; normalized. Rejects a missing alias, an empty/`/`-less spec, and a `rest`
+;;; that escapes the dependency root via `..`. (Loader-chain integration — wiring
+;;; this into the import resolver + drivers — is the next slice.)
+;;; Result of resolving a `pkg:` import: the resolved path or a diagnostic.
+(defenum ResultPkgResolve
+  (OkPkgResolve String)
+  (ErrPkgResolve String))
+
+;;; True when an import path is a package import (`pkg:<alias>/...`).
+(define (compiler-load-pkg-import? [path : String]) : bool
+  (compiler-load-string-prefix-at? path "pkg:" 0))
+
+;;; Index of the first '/' in `s` at or after `i`, or -1 if none.
+(define (compiler-load-slash-index-from [s : String] [i : i64] [n : i64]) : i64
+  (if (>= i n)
+    -1
+    (if (= (string-ref s i) #/')
+      i
+      (compiler-load-slash-index-from s (+ i 1) n))))
+
+;;; True when a (normalized) relative path escapes its base via a leading `..`.
+(define (compiler-load-path-escapes? [path : String]) : bool
+  (if (compiler-load-string-prefix-at? path ".." 0)
+    (if (= (string-length path) 2)
+      true
+      (= (string-ref path 2) #/'))
+    false))
+
+;;; Look up a dependency's root path by import alias.
+(define (compiler-load-pkg-dep-lookup
+  [deps : CompilerPkgDepList]
+  [target-alias : String]) : CompilerLoadMaybePath
+  (match deps
+    [(CompilerPkgDepNil) (CompilerLoadNoPath)]
+    [(CompilerPkgDepCons dep rest)
+      (if (string-eq (struct-get dep alias) target-alias)
+        (CompilerLoadSomePath (struct-get dep path))
+        (compiler-load-pkg-dep-lookup rest target-alias))]))
+
+;;; Resolve `pkg:<alias>/<rest>` against `deps`, relative to `manifest-dir`.
+(define (compiler-load-resolve-pkg-import
+  [import-path : String]
+  [manifest-dir : String]
+  [deps : CompilerPkgDepList]) : ResultPkgResolve
+  (let
+    [body : String (substring import-path 4 (- (string-length import-path) 4))]
+    [slash : i64 (compiler-load-slash-index-from body 0 (string-length body))]
+    (if (< slash 0)
+      (ErrPkgResolve
+        (string-append
+          "compiler-load: pkg import missing '/' after alias: "
+          import-path))
+      (let
+        [alias : String (substring body 0 slash)]
+        [rest : String
+          (substring body (+ slash 1) (- (string-length body) (+ slash 1)))]
+        (if (= (string-length alias) 0)
+          (ErrPkgResolve
+            (string-append
+              "compiler-load: pkg import has empty alias: "
+              import-path))
+          (match (compiler-load-pkg-dep-lookup deps alias)
+            [(CompilerLoadNoPath)
+              (ErrPkgResolve
+                (string-append
+                  "compiler-load: unknown package alias '"
+                  (string-append alias (string-append "': " import-path))))]
+            [(CompilerLoadSomePath dep-path)
+              (let
+                [norm-rest : String (compiler-load-normalize-path rest)]
+                (if (compiler-load-path-escapes? norm-rest)
+                  (ErrPkgResolve
+                    (string-append
+                      "compiler-load: pkg import escapes package root: "
+                      import-path))
+                  (OkPkgResolve
+                    (compiler-load-normalize-path
+                      (compiler-load-join-root-path
+                        (compiler-load-join-root-path manifest-dir dep-path)
+                        norm-rest)))))]))))))
+
+;;; Self-test fixture: `math` -> sibling dir, `util` -> vendored subdir.
+(define (compiler-load-pkg-resolve-deps) : CompilerPkgDepList
+  (CompilerPkgDepCons
+    (CompilerPkgDep "math" "../math")
+    (CompilerPkgDepCons
+      (CompilerPkgDep "util" "vendor/util")
+      (CompilerPkgDepNil))))
+
+;;; True when resolving `import-path` yields exactly `expected`.
+(define (compiler-load-pkg-resolves? [import-path : String] [expected : String]) : bool
+  (match (compiler-load-resolve-pkg-import
+    import-path
+    "proj"
+    (compiler-load-pkg-resolve-deps))
+    [(OkPkgResolve p) (string-eq p expected)]
+    [(ErrPkgResolve _) false]))
+
+;;; True when resolving `import-path` fails with exactly `expected`.
+(define (compiler-load-pkg-resolve-rejects?
+  [import-path : String]
+  [expected : String]) : bool
+  (match (compiler-load-resolve-pkg-import
+    import-path
+    "proj"
+    (compiler-load-pkg-resolve-deps))
+    [(ErrPkgResolve m) (string-eq m expected)]
+    [(OkPkgResolve _) false]))
+
+;;; Aggregate pkg-import resolution self-test (#834).
+(define (compiler-load-pkg-resolve-ok?) : bool
+  (and
+    (compiler-load-pkg-resolves? "pkg:math/src/add.tl" "math/src/add.tl")
+    (and
+      (compiler-load-pkg-resolves? "pkg:util/lib.tl" "proj/vendor/util/lib.tl")
+      (and
+        (compiler-load-pkg-resolve-rejects?
+          "pkg:nope/x.tl"
+          "compiler-load: unknown package alias 'nope': pkg:nope/x.tl")
+        (and
+          (compiler-load-pkg-resolve-rejects?
+            "pkg:math"
+            "compiler-load: pkg import missing '/' after alias: pkg:math")
+          (compiler-load-pkg-resolve-rejects?
+            "pkg:math/../../etc.tl"
+            "compiler-load: pkg import escapes package root: pkg:math/../../etc.tl"))))))
+
 (define (compiler-load-self-test) : i64
   (if (compiler-load-normalize-ok?)
     (if (compiler-load-source-provenance-ok?)
@@ -1193,7 +1323,12 @@
                             (if (compiler-load-stdlib-searched-root-ok?)
                               (if (compiler-load-stdlib-unresolved-ok?)
                                 (if (compiler-load-pkg-manifest-ok?)
-                                  42
+                                  (if (compiler-load-pkg-resolve-ok?)
+                                    42
+                                    (begin
+                                      (panic
+                                        "compiler-load: pkg resolve smoke mismatch")
+                                      0))
                                   (begin
                                     (panic
                                       "compiler-load: pkg manifest smoke mismatch")

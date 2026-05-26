@@ -20,11 +20,24 @@
     [(OkIoBool exists) (assert-bool-eq exists expected message)]
     [(ErrIoBool error) (panic (string-append message (io-error-message error)))]))
 
-(define (assert-unsupported-temp-dir) : unit
-  (match (try-create-temp-dir "typelisp fs test")
-    [(ErrIoString error)
-      (assert-true (io-error-unsupported? error) "temp dir unsupported")]
-    [(OkIoString _) (panic "temp dir unexpectedly succeeded")]))
+;; Windows supports temp-dir creation (mkdir + GetCurrentProcessId, #850) but
+;; not yet removal/cleanup (remove-file/remove-dir are unsupported stubs), so the
+;; Windows arm asserts a successful, unique, existing create rather than the full
+;; Linux create/write/remove lifecycle.
+(define (assert-created-temp-dir) : unit
+  (let
+    [dir-a : String
+      (expect-ok-string
+        (try-create-temp-dir "typelisp fs test")
+        "create temp dir a: ")]
+    [dir-b : String
+      (expect-ok-string
+        (try-create-temp-dir "typelisp fs test")
+        "create temp dir b: ")]
+    (begin
+      (assert-true (not (string-eq dir-a dir-b)) "temp directories are unique")
+      (assert-exists dir-a true "temp dir a exists")
+      (assert-exists dir-b true "temp dir b exists"))))
 
 (define (assert-invalid-temp-dir) : unit
   (match (try-create-temp-dir "")
@@ -47,7 +60,7 @@
         "path join avoids duplicate separator")
       (if (fs-windows?)
         (begin
-          (assert-unsupported-temp-dir)
+          (assert-created-temp-dir)
           42)
         (let
           [dir-a : String

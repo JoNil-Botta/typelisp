@@ -484,7 +484,6 @@
 ;; Macro transformers need to build and pattern-match AST nodes at comptime.
 ;; These constructors / inspectors cover the forms needed by v1 macros
 ;; (and, or, when, unless, cond): literals, variables, if, and call.
-
 ;; EQ -------------------------------------------------------------------------
 (define (ctfe-literal-eq [a : AstLiteral] [b : AstLiteral]) : bool
   (match a
@@ -519,7 +518,8 @@
     [(AstExprBinary a-op a-l a-r)
       (match b
         [(AstExprBinary b-op b-l b-r)
-          (and (ctfe-binop-eq a-op b-op)
+          (and
+            (ctfe-binop-eq a-op b-op)
             (and (ctfe-expr-eq a-l b-l) (ctfe-expr-eq a-r b-r)))]
         [_ false])]
     [(AstExprUnary a-op a-in)
@@ -530,7 +530,8 @@
     [(AstExprIf a-c a-t a-e)
       (match b
         [(AstExprIf b-c b-t b-e)
-          (and (ctfe-expr-eq a-c b-c)
+          (and
+            (ctfe-expr-eq a-c b-c)
             (and (ctfe-expr-eq a-t b-t) (ctfe-expr-eq a-e b-e)))]
         [_ false])]
     [(AstExprCall a-fun a-args)
@@ -547,8 +548,7 @@
         [(AstExprAnn b-inner b-ty)
           (and (ctfe-expr-eq a-inner b-inner) (ctfe-type-eq a-ty b-ty))]
         [_ false])]
-    [(AstExprSpanned a-inner _)
-      (ctfe-expr-eq a-inner b)]
+    [(AstExprSpanned a-inner _) (ctfe-expr-eq a-inner b)]
     [_ false]))
 
 (define (ctfe-expr-list-eq [a : AstExprList] [b : AstExprList]) : bool
@@ -565,30 +565,93 @@
 
 (define (ctfe-binop-eq [a : AstBinOp] [b : AstBinOp]) : bool
   (match a
-    [(AstBinAdd) (match b [(AstBinAdd) true] [_ false])]
-    [(AstBinSub) (match b [(AstBinSub) true] [_ false])]
-    [(AstBinMul) (match b [(AstBinMul) true] [_ false])]
-    [(AstBinDiv) (match b [(AstBinDiv) true] [_ false])]
-    [(AstBinMod) (match b [(AstBinMod) true] [_ false])]
-    [(AstBinEq) (match b [(AstBinEq) true] [_ false])]
-    [(AstBinNe) (match b [(AstBinNe) true] [_ false])]
-    [(AstBinLt) (match b [(AstBinLt) true] [_ false])]
-    [(AstBinLe) (match b [(AstBinLe) true] [_ false])]
-    [(AstBinGt) (match b [(AstBinGt) true] [_ false])]
-    [(AstBinGe) (match b [(AstBinGe) true] [_ false])]
-    [(AstBinAnd) (match b [(AstBinAnd) true] [_ false])]
-    [(AstBinOr) (match b [(AstBinOr) true] [_ false])]
-    [(AstBinBitAnd) (match b [(AstBinBitAnd) true] [_ false])]
-    [(AstBinBitOr) (match b [(AstBinBitOr) true] [_ false])]
-    [(AstBinBitXor) (match b [(AstBinBitXor) true] [_ false])]
-    [(AstBinShl) (match b [(AstBinShl) true] [_ false])]
-    [(AstBinShr) (match b [(AstBinShr) true] [_ false])]))
+    [(AstBinAdd)
+      (match b
+        [(AstBinAdd) true]
+        [_ false])]
+    [(AstBinSub)
+      (match b
+        [(AstBinSub) true]
+        [_ false])]
+    [(AstBinMul)
+      (match b
+        [(AstBinMul) true]
+        [_ false])]
+    [(AstBinDiv)
+      (match b
+        [(AstBinDiv) true]
+        [_ false])]
+    [(AstBinMod)
+      (match b
+        [(AstBinMod) true]
+        [_ false])]
+    [(AstBinEq)
+      (match b
+        [(AstBinEq) true]
+        [_ false])]
+    [(AstBinNe)
+      (match b
+        [(AstBinNe) true]
+        [_ false])]
+    [(AstBinLt)
+      (match b
+        [(AstBinLt) true]
+        [_ false])]
+    [(AstBinLe)
+      (match b
+        [(AstBinLe) true]
+        [_ false])]
+    [(AstBinGt)
+      (match b
+        [(AstBinGt) true]
+        [_ false])]
+    [(AstBinGe)
+      (match b
+        [(AstBinGe) true]
+        [_ false])]
+    [(AstBinAnd)
+      (match b
+        [(AstBinAnd) true]
+        [_ false])]
+    [(AstBinOr)
+      (match b
+        [(AstBinOr) true]
+        [_ false])]
+    [(AstBinBitAnd)
+      (match b
+        [(AstBinBitAnd) true]
+        [_ false])]
+    [(AstBinBitOr)
+      (match b
+        [(AstBinBitOr) true]
+        [_ false])]
+    [(AstBinBitXor)
+      (match b
+        [(AstBinBitXor) true]
+        [_ false])]
+    [(AstBinShl)
+      (match b
+        [(AstBinShl) true]
+        [_ false])]
+    [(AstBinShr)
+      (match b
+        [(AstBinShr) true]
+        [_ false])]))
 
 (define (ctfe-unop-eq [a : AstUnOp] [b : AstUnOp]) : bool
   (match a
-    [(AstUnNeg) (match b [(AstUnNeg) true] [_ false])]
-    [(AstUnNot) (match b [(AstUnNot) true] [_ false])]
-    [(AstUnBitNot) (match b [(AstUnBitNot) true] [_ false])]))
+    [(AstUnNeg)
+      (match b
+        [(AstUnNeg) true]
+        [_ false])]
+    [(AstUnNot)
+      (match b
+        [(AstUnNot) true]
+        [_ false])]
+    [(AstUnBitNot)
+      (match b
+        [(AstUnBitNot) true]
+        [_ false])]))
 
 ;; CONSTRUCTORS ----------------------------------------------------------------
 (define (ctfe-expr-literal [lit : AstLiteral]) : AstExpr
@@ -600,7 +663,10 @@
 (define (ctfe-expr-var [name : String]) : AstExpr
   (AstExprVar name))
 
-(define (ctfe-expr-if [cond : AstExpr] [then-branch : AstExpr] [else-branch : AstExpr]) : AstExpr
+(define (ctfe-expr-if
+  [cond : AstExpr]
+  [then-branch : AstExpr]
+  [else-branch : AstExpr]) : AstExpr
   (AstExprIf cond then-branch else-branch))
 
 (define (ctfe-expr-call [func : AstExpr] [args : AstExprList]) : AstExpr
@@ -947,11 +1013,11 @@
             (not (ctfe-expr-list-empty? lst1))
             (and
               (ctfe-expr-eq (ctfe-expr-list-head lst1) a)
-              (ctfe-expr-eq
-                (ctfe-expr-list-head (ctfe-expr-list-tail lst1))
-                b))))))))
+              (ctfe-expr-eq (ctfe-expr-list-head (ctfe-expr-list-tail lst1)) b))))))))
 
-(define (compiler-ctfe-expr-list-fold-sketch-ok?) : bool
+(define (compiler-ctfe-expr-list-fold-sketch-ok?)
+  :
+  bool
   ;; Simulate the core list-recursion a macro transformer does: build a
   ;; right-leaning `if` chain from a list of conditions and a final else.
   (let
@@ -961,13 +1027,13 @@
     [conds : AstExprList
       (ctfe-expr-list-cons cond1 (ctfe-expr-list-singleton cond2))]
     ;; fold helper: single cond -> (if cond true else)
-    [folded1 : AstExpr
-      (ctfe-expr-if cond2 (ctfe-expr-bool true) else-expr)]
+    [folded1 : AstExpr (ctfe-expr-if cond2 (ctfe-expr-bool true) else-expr)]
     ;; next: (if cond1 true (if cond2 true else))
-    [folded2 : AstExpr
-      (ctfe-expr-if cond1 (ctfe-expr-bool true) folded1)]
+    [folded2 : AstExpr (ctfe-expr-if cond1 (ctfe-expr-bool true) folded1)]
     [expected : AstExpr
-      (ctfe-expr-if cond1 (ctfe-expr-bool true)
+      (ctfe-expr-if
+        cond1
+        (ctfe-expr-bool true)
         (ctfe-expr-if cond2 (ctfe-expr-bool true) else-expr))]
     (ctfe-expr-eq folded2 expected)))
 

@@ -2662,7 +2662,9 @@
 ;; struct construction-as-call.
 (define (compiler-parse-enum-struct-tests-ok?) : bool
   (and
-    (compiler-parse-error-ok? "(defenum Empty)" "parse: malformed defenum")
+    (compiler-parse-error-ok?
+      "(defenum Empty)"
+      "parse: defenum needs at least one variant")
     (and
       (compiler-parse-ok? "(defstruct Point (x i64) (y i64))")
       (and
@@ -2753,9 +2755,9 @@
       (and
         ;; char literal in pattern (named space + literal char)
         (compiler-parse-ok?
-          "(define (f [c : char]) : i64 (match c [#\\space 1] [#a' 2] [_ 0]))")
+          "(define (f [c : char]) : i64 (match c [#\\space' 1] [#a' 2] [_ 0]))")
         ;; named char literal in value position
-        (compiler-parse-ok? "(define (f) : char #\\newline)")))))
+        (compiler-parse-ok? "(define (f) : char #\\newline')")))))
 
 ;
 ;; operator parsing (#1073 / #1041): accept unary (not/neg/bit-not), binary

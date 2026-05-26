@@ -70,6 +70,48 @@
     [(StringI64MapRemoveOk m) m]
     [(StringI64MapRemoveMissing m) m]))
 
+;; Iteration entry extractors (concrete returns, no panic in a match arm).
+(define (entry-none? [e : StringI64MapEntry]) : bool
+  (match e
+    [(StringI64MapEntryNone) true]
+    [(StringI64MapEntrySome _ _) false]))
+
+(define (entry-value-or [e : StringI64MapEntry] [fallback : i64]) : i64
+  (match e
+    [(StringI64MapEntrySome _ v) v]
+    [(StringI64MapEntryNone) fallback]))
+
+;; Iteration walkers (deterministic bucket order, #829). No first-class
+;; functions yet, so each walk is its own tail-recursive helper started at
+;; `(string-i64-map-next-occupied m 0)` and advanced with the cursor.
+;; Number of live entries the cursor visits (should equal the map's len).
+(define (iter-count [m : StringI64Map] [i : i64] [acc : i64]) : i64
+  (if (>= i (string-i64-map-capacity m))
+    acc
+    (iter-count m (string-i64-map-next-occupied m (+ i 1)) (+ acc 1))))
+
+;; Sum of every live value, visiting entries once in bucket order.
+(define (iter-sum-values [m : StringI64Map] [i : i64] [acc : i64]) : i64
+  (if (>= i (string-i64-map-capacity m))
+    acc
+    (iter-sum-values
+      m
+      (string-i64-map-next-occupied m (+ i 1))
+      (match (string-i64-map-entry-at m i)
+        [(StringI64MapEntrySome _ v) (+ acc v)]
+        [(StringI64MapEntryNone) acc]))))
+
+;; True when the cursor visits strictly increasing indices: bucket order is
+;; deterministic and monotonic, so each next index exceeds the current one.
+(define (iter-monotonic? [m : StringI64Map] [i : i64]) : bool
+  (if (>= i (string-i64-map-capacity m))
+    true
+    (let
+      [nxt : i64 (string-i64-map-next-occupied m (+ i 1))]
+      (if (> nxt i)
+        (iter-monotonic? m nxt)
+        false))))
+
 (define (main) : i64
   (begin
     ;; --- bucket-index math + wraparound ---
@@ -396,4 +438,75 @@
               (lookup-value-or (string-i64-map-get t5 "y") -1)
               -1
               "removed y absent after resize")))))
+    ;; --- deterministic bucket-order iteration (#829) ---
+    ;; empty map: the cursor starts at the capacity; count and sum are zero.
+    (let
+      [e0 : StringI64Map (string-i64-map-with-capacity 8)]
+      (begin
+        (assert-i64-eq
+          (string-i64-map-next-occupied e0 0)
+          8
+          "empty map cursor starts at capacity")
+        (assert-i64-eq
+          (iter-count e0 (string-i64-map-next-occupied e0 0) 0)
+          0
+          "empty map iterates zero entries")
+        (assert-i64-eq
+          (iter-sum-values e0 (string-i64-map-next-occupied e0 0) 0)
+          0
+          "empty map sum is zero")))
+    ;; non-empty map: the cursor visits exactly `len` entries, sums every value
+    ;; once, and walks strictly increasing (deterministic bucket) indices.
+    (let
+      [i0 : StringI64Map (string-i64-map-with-capacity 8)]
+      [i1 : StringI64Map (string-i64-map-put i0 "a" 1)]
+      [i2 : StringI64Map (string-i64-map-put i1 "b" 2)]
+      [i3 : StringI64Map (string-i64-map-put i2 "c" 4)]
+      [i4 : StringI64Map (string-i64-map-put i3 "d" 8)]
+      (begin
+        (assert-i64-eq
+          (string-i64-map-len i4)
+          4
+          "iteration map has four entries")
+        (assert-i64-eq
+          (iter-count i4 (string-i64-map-next-occupied i4 0) 0)
+          4
+          "cursor visits exactly len entries")
+        (assert-i64-eq
+          (iter-sum-values i4 (string-i64-map-next-occupied i4 0) 0)
+          15
+          "cursor sums every value once (1+2+4+8)")
+        (assert-true
+          (iter-monotonic? i4 (string-i64-map-next-occupied i4 0))
+          "cursor visits strictly increasing indices")
+        ;; a removed key is skipped: its tombstone is not iterated.
+        (let
+          [i5 : StringI64Map (remove-result-map (string-i64-map-remove i4 "b"))]
+          (begin
+            (assert-i64-eq (string-i64-map-len i5) 3 "len 3 after removing b")
+            (assert-i64-eq
+              (iter-count i5 (string-i64-map-next-occupied i5 0) 0)
+              3
+              "cursor skips the tombstone (count 3)")
+            (assert-i64-eq
+              (iter-sum-values i5 (string-i64-map-next-occupied i5 0) 0)
+              13
+              "cursor sum excludes the removed value (1+4+8)")))))
+    ;; entry-at: out-of-range -> None, the only occupied slot -> Some value.
+    (let
+      [b0 : StringI64Map (string-i64-map-with-capacity 4)]
+      [b1 : StringI64Map (string-i64-map-put b0 "only" 7)]
+      (begin
+        (assert-true
+          (entry-none? (string-i64-map-entry-at b1 -1))
+          "entry-at negative index is None")
+        (assert-true
+          (entry-none? (string-i64-map-entry-at b1 4))
+          "entry-at out-of-range index is None")
+        (assert-i64-eq
+          (entry-value-or
+            (string-i64-map-entry-at b1 (string-i64-map-next-occupied b1 0))
+            -1)
+          7
+          "entry-at the only occupied slot is Some 7")))
     42))

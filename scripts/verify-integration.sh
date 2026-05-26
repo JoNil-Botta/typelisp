@@ -63,6 +63,18 @@ build_with_retry() {
     done
 }
 
+# Run a `$COMPILER run <fixture.tl> …` emit step, retrying ONLY a transient
+# #1204 crash (these fixtures emit assembly deterministically, so a retry safely
+# re-emits) and aborting on a real non-crash failure or exhausted retries — the
+# same fail-fast behavior the bare `set -e` invocations had before guarding.
+run_fixture_with_retry() {
+    build_with_retry "$@"
+    if [ "$build_rc" -ne 0 ]; then
+        echo "FAIL: fixture run '$*' exited $build_rc" >&2
+        exit 1
+    fi
+}
+
 if [ "$HOST_OS" = linux ]; then
     command -v as >/dev/null 2>&1 || {
         echo "missing assembler: as" >&2
@@ -407,7 +419,7 @@ run_linux_backend_fixtures() {
     _runtime_bin="$_runtime_dir/runtime_helpers"
 
     echo "[backend-runtime] emit -> assemble -> link -> run"
-    "$COMPILER" run selfhost/compiler_backend_runtime_fixture.tl -- "$_runtime_asm"
+    run_fixture_with_retry "$COMPILER" run selfhost/compiler_backend_runtime_fixture.tl -- "$_runtime_asm"
     for _snippet in \
         ".globl tl_alloc" \
         "tl_alloc:" \
@@ -460,7 +472,7 @@ run_linux_backend_fixtures() {
     _stack_bin="$_stack_dir/stack_args"
 
     echo "[backend-stack-args] emit -> assemble -> link -> run"
-    "$COMPILER" run selfhost/compiler_backend_stack_args_fixture.tl -- "$_stack_asm" linux-x86_64
+    run_fixture_with_retry "$COMPILER" run selfhost/compiler_backend_stack_args_fixture.tl -- "$_stack_asm" linux-x86_64
     for _snippet in \
         "subq \$16, %rsp" \
         "movq %r11, 0(%rsp)" \
@@ -516,7 +528,7 @@ run_windows_backend_fixtures() {
     _runtime_code="$_runtime_dir/runtime.exit"
 
     echo "[windows-backend-runtime] emit -> assemble -> link -> run"
-    "$COMPILER" run selfhost/compiler_backend_runtime_fixture.tl \
+    run_fixture_with_retry "$COMPILER" run selfhost/compiler_backend_runtime_fixture.tl \
         --target windows-x86_64 -- "$_runtime_asm" windows-x86_64
     for _snippet in \
         ".globl main" \
@@ -728,7 +740,7 @@ EOF
     rm -f "$_primitive_output"
 
     echo "[windows-driver-primitives] emit -> assemble -> link -> run"
-    "$COMPILER" run selfhost/compiler_backend_runtime_fixture.tl \
+    run_fixture_with_retry "$COMPILER" run selfhost/compiler_backend_runtime_fixture.tl \
         --target windows-x86_64 -- "$_primitive_asm" windows-driver-primitives
     for _snippet in \
         ".globl main" \

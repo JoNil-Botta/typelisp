@@ -3655,8 +3655,7 @@
 
 ;; spmd-reduce operator/type rules (#1011, SPEC 5.15): the init/value/result type
 ;; must be in the operator's supported set -- `sum` over i32/i64/f64, `min`/`max`
-;; over i32/i64, `all`/`any` over bool. (Effect/purity rules for the varying
-;; value expression are a separate slice.)
+;; over i32/i64, `all`/`any` over bool.
 (define (tc-reduce-op-type-ok? [op : AstReduceOp] [ty : AstType]) : bool
   (match op
     [(AstReduceSum)
@@ -3692,6 +3691,86 @@
     [(AstReduceMax) "typecheck: spmd-reduce max requires an i32 or i64 type"]
     [(AstReduceAll) "typecheck: spmd-reduce all requires a bool type"]
     [(AstReduceAny) "typecheck: spmd-reduce any requires a bool type"]))
+
+;; spmd-reduce purity/effect rules (#1011, SPEC.md §5.16): mirror the Rust
+;; typechecker's `check_spmd_reduce_value`. The first reduction slice accepts a
+;; narrow, clearly-pure surface and rejects everything else with a focused
+;; diagnostic rather than guessing at varying/uniform semantics not yet
+;; implemented: the varying index, uniform variables, and literals;
+;; arithmetic/comparison/boolean operators over those; `ann`/`cast` wrappers;
+;; dynamic-array reads whose index is not itself another array read (direct,
+;; non-gather indexing only); and local `let` bindings whose initializers obey
+;; the same rules. Writes (`set!`, `array-set!`), function calls, nested
+;; `foreach`/`spmd-reduce`, varying control flow (`if`/`while`/`match`),
+;; sequencing, and aggregate constructors are rejected. The `in-index` flag is
+;; set while walking an array-read index so a nested read (a gather) is
+;; rejected. Uniformity of `start`/`end`/`init` is enforced by scoping: they are
+;; typed outside the lane context, so referencing the index is an unbound error.
+(define (tc-spmd-value-pure [expr : AstExpr]) : ResultTcUnit
+  (tc-spmd-value-pure-at expr false))
+
+(define (tc-spmd-value-pure-at [expr : AstExpr] [in-index : bool]) : ResultTcUnit
+  (match expr
+    [(AstExprSpanned inner _) (tc-spmd-value-pure-at inner in-index)]
+    [(AstExprLiteral _) OkTcUnit]
+    [(AstExprVar _) OkTcUnit]
+    [(AstExprBinary _ left right)
+      (match (tc-spmd-value-pure-at left in-index)
+        [(OkTcUnit) (tc-spmd-value-pure-at right in-index)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprUnary _ inner) (tc-spmd-value-pure-at inner in-index)]
+    [(AstExprAnn inner _) (tc-spmd-value-pure-at inner in-index)]
+    [(AstExprCast inner _) (tc-spmd-value-pure-at inner in-index)]
+    [(AstExprLet bindings body)
+      (match (tc-spmd-value-let-bindings-pure-at bindings in-index)
+        [(OkTcUnit) (tc-spmd-value-pure-at body in-index)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprArrayRef array index)
+      (if in-index
+        (ErrTcUnit
+          "indirect array indexing is not allowed inside a spmd-reduce value expression; gather/scatter is deferred in the first slice (SPEC.md §5.16)")
+        (match (tc-spmd-value-pure-at array false)
+          [(OkTcUnit) (tc-spmd-value-pure-at index true)]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]
+    [(AstExprSet _ _)
+      (ErrTcUnit
+        "`set!` is not allowed inside a spmd-reduce value expression; reductions must use the explicit accumulator, not outer mutation (SPEC.md §5.16)")]
+    [(AstExprArraySet _ _ _)
+      (ErrTcUnit
+        "`array-set!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md §5.16)")]
+    [(AstExprCall _ _)
+      (ErrTcUnit
+        "function calls are not allowed inside a spmd-reduce value expression; side-effecting builtins and user calls with varying arguments are deferred in the first slice (SPEC.md §5.16)")]
+    [(AstExprForeach _ _ _ _ _)
+      (ErrTcUnit
+        "a nested foreach is not allowed inside a spmd-reduce value expression (SPEC.md §5.16)")]
+    [(AstExprSpmdReduce _ _ _ _ _ _ _)
+      (ErrTcUnit
+        "a nested spmd-reduce is not allowed inside a spmd-reduce value expression (SPEC.md §5.16)")]
+    [(AstExprIf _ _ _)
+      (ErrTcUnit
+        "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md §5.16)")]
+    [(AstExprWhile _ _)
+      (ErrTcUnit
+        "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md §5.16)")]
+    [(AstExprMatch _ _)
+      (ErrTcUnit
+        "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md §5.16)")]
+    [_
+      (ErrTcUnit
+        "this expression is not allowed inside a spmd-reduce value expression; the first slice allows only the varying index, uniform variables, literals, arithmetic/comparison/boolean operators, dynamic-array reads, and local let bindings (SPEC.md §5.16)")]))
+
+(define (tc-spmd-value-let-bindings-pure-at
+  [bindings : AstLetBindingList]
+  [in-index : bool]) : ResultTcUnit
+  (match bindings
+    [(AstLetBindingNil) OkTcUnit]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding _ _ init)
+          (match (tc-spmd-value-pure-at init in-index)
+            [(OkTcUnit) (tc-spmd-value-let-bindings-pure-at rest in-index)]
+            [(ErrTcUnit message) (ErrTcUnit message)])])]))
 
 (define (tc-expr [ctx : TcContext] [env : TcTypeEnv] [expr : AstExpr]) : ResultTcType
   (match expr
@@ -4006,23 +4085,26 @@
                     (if (tc-integer-type? end-ty)
                       (match (tc-expr ctx env init)
                         [(OkTcType init-ty)
-                          (let
-                            [value-env : TcTypeEnv
-                              (tc-bind env index resolved-index-ty)]
-                            (match (tc-expr ctx value-env value)
-                              [(OkTcType value-ty)
-                                (match (tc-expect
-                                  value-ty
-                                  init-ty
-                                  "typecheck: spmd-reduce init and value type mismatch")
-                                  [(OkTcUnit)
-                                    (if (tc-reduce-op-type-ok?
-                                      op
-                                      (tc-resolve-type ctx init-ty))
-                                      (OkTcType init-ty)
-                                      (ErrTcType (tc-reduce-op-type-msg op)))]
-                                  [(ErrTcUnit message) (ErrTcType message)])]
-                              [(ErrTcType message) (ErrTcType message)]))]
+                          (if (tc-reduce-op-type-ok?
+                            op
+                            (tc-resolve-type ctx init-ty))
+                            (match (tc-spmd-value-pure value)
+                              [(OkTcUnit)
+                                (let
+                                  [value-env : TcTypeEnv
+                                    (tc-bind env index resolved-index-ty)]
+                                  (match (tc-expr ctx value-env value)
+                                    [(OkTcType value-ty)
+                                      (match (tc-expect
+                                        value-ty
+                                        init-ty
+                                        "typecheck: spmd-reduce init and value type mismatch")
+                                        [(OkTcUnit) (OkTcType init-ty)]
+                                        [(ErrTcUnit message)
+                                          (ErrTcType message)])]
+                                    [(ErrTcType message) (ErrTcType message)]))]
+                              [(ErrTcUnit message) (ErrTcType message)])
+                            (ErrTcType (tc-reduce-op-type-msg op)))]
                         [(ErrTcType message) (ErrTcType message)])
                       (ErrTcType
                         "typecheck: spmd-reduce end expression must be integer"))]
@@ -5247,6 +5329,31 @@
           "(define (main [bs : (Array bool)] [n : i64]) : bool (spmd-reduce sum ([i : i64 0 n]) true (array-ref bs i)))"
           "typecheck: spmd-reduce sum requires an i32, i64, or f64 type")))))
 
+;; spmd-reduce purity rules (#1011, SPEC.md §5.16): the per-lane value
+;; expression accepts pure arithmetic over dynamic-array reads and the varying
+;; index, but rejects writes (`array-set!`), function calls (also covers
+;; `print*`/`panic`/file I/O and varying-argument user calls), varying control
+;; flow (`if`/`while`/`match`), and indirect/gather array indexing.
+(define (compiler-typecheck-spmd-reduce-purity-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (+ (array-ref xs i) 1)))")
+    (and
+      (compiler-typecheck-error-ok?
+        "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-set! xs i 1)))"
+        "`array-set!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md §5.16)")
+      (and
+        (compiler-typecheck-error-ok?
+          "(define (helper [x : i64]) : i64 x) (define (main [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (helper i)))"
+          "function calls are not allowed inside a spmd-reduce value expression; side-effecting builtins and user calls with varying arguments are deferred in the first slice (SPEC.md §5.16)")
+        (and
+          (compiler-typecheck-error-ok?
+            "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (if (< (array-ref xs i) 0) 0 1)))"
+            "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md §5.16)")
+          (compiler-typecheck-error-ok?
+            "(define (main [xs : (Array i64)] [ys : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs (array-ref ys i))))"
+            "indirect array indexing is not allowed inside a spmd-reduce value expression; gather/scatter is deferred in the first slice (SPEC.md §5.16)"))))))
+
 ;; array-builtin signature rules (#1042): make-array length, array-ref array/index
 ;; types, and array-set! value-type agreement, with valid accepts.
 (define (compiler-typecheck-array-builtin-tests-ok?) : bool
@@ -5353,6 +5460,9 @@
     (if (compiler-typecheck-spmd-reduce-op-tests-ok?)
       unit
       (panic "typecheck: spmd-reduce operator/type tests failed"))
+    (if (compiler-typecheck-spmd-reduce-purity-tests-ok?)
+      unit
+      (panic "typecheck: spmd-reduce purity tests failed"))
     (if (compiler-typecheck-array-builtin-tests-ok?)
       unit
       (panic "typecheck: array-builtin signature tests failed"))

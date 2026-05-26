@@ -359,8 +359,10 @@ TypeLisp*:
 Compiler self-test and smoke-driver conventions are documented in
 [`selfhost/TESTING.md`](selfhost/TESTING.md).
 Published stage0 compilers for local bootstrap checks can be fetched with
-[`scripts/fetch-stage0.sh`](scripts/fetch-stage0.sh). To run the same no-Rust
-stage0 verification gate used by CI, run
+[`scripts/fetch-stage0.sh`](scripts/fetch-stage0.sh), or
+[`scripts/fetch-stage0.ps1`](scripts/fetch-stage0.ps1) from PowerShell. Both
+default to `target/stage0/`. To run the same no-Rust stage0 verification gate
+used by CI, run
 `scripts/verify-no-rust-stage0.sh`; it fetches `stage0-latest` when
 `TYPELISP_BIN` is unset and prevents accidental Cargo fallback.
 

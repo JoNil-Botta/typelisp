@@ -5259,6 +5259,30 @@
             "(define (f [a : (Array i64)]) : unit (array-set! a 0 true))"
             "typecheck: array-set! value type mismatch"))))))
 
+;; comptime typecheck rules (#1042): a `(comptime ...)` form is typed by its
+;; inner expression and flows that type to the use site (so an `i64` body is an
+;; `i64`, a `bool` comparison is a `bool`, and a `let`/`if` body keeps its type);
+;; `comptime` cannot reference a runtime variable, and a comptime result that
+;; disagrees with the surrounding type is rejected like any other mismatch.
+(define (compiler-typecheck-comptime-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? "(define (main) : i64 (comptime (+ 1 2)))")
+    (and
+      (compiler-typecheck-ok? "(define (main) : bool (comptime (< 1 2)))")
+      (and
+        (compiler-typecheck-ok?
+          "(define (main) : i64 (comptime (let [a : i64 1] (if (< a 2) a 0))))")
+        (and
+          (compiler-typecheck-ok?
+            "(define (main) : i64 (+ (comptime (* 6 7)) 0))")
+          (and
+            (compiler-typecheck-error-ok?
+              "(define (f [x : i64]) : i64 (comptime x))"
+              "compile-time evaluation cannot reference runtime variable 'x'")
+            (compiler-typecheck-error-ok?
+              "(define (main) : i64 (comptime (< 1 2)))"
+              "typecheck: return type mismatch")))))))
+
 (define (compiler-typecheck-self-test) : i64
   (begin
     (if (compiler-typecheck-statement-tests-ok?)
@@ -5314,7 +5338,9 @@
                                     (compiler-typecheck-string-builtin-tests-ok?)
                                     (and
                                       (compiler-typecheck-lambda-tests-ok?)
-                                      (compiler-typecheck-cast-tests-ok?))))))))))))))))
+                                      (and
+                                        (compiler-typecheck-cast-tests-ok?)
+                                        (compiler-typecheck-comptime-tests-ok?)))))))))))))))))
           42
           (begin
             (panic "typecheck: smoke score mismatch")

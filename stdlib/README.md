@@ -40,6 +40,10 @@ installed-root discovery, namespace isolation, or an implicit prelude.
 - `windows_setup.tl`: Visual Studio / Build Tools SetupConfiguration discovery
   data model and structured runtime result API. Import it with
   `(import "stdlib/windows_setup.tl")`.
+- `msvc.tl`: MSVC tool discovery (`link.exe` + `PATH`/`LIB`/`INCLUDE` command
+  environment) from a configured Developer Command Prompt; the newest-toolset
+  SetupConfiguration fallback is stubbed until #1015. Import it with
+  `(import "stdlib/msvc.tl")`.
 
 ## Arena Allocation Policy
 
@@ -128,6 +132,7 @@ Stdlib modules are imported explicitly:
 (import "stdlib/hash.tl")
 (import "stdlib/io.tl")
 (import "stdlib/json.tl")
+(import "stdlib/msvc.tl")
 (import "stdlib/process.tl")
 (import "stdlib/random.tl")
 (import "stdlib/string.tl")

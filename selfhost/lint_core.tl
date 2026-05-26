@@ -12,11 +12,13 @@
 ;;;; (driver: `selfhost/lint_smoke.tl`).
 (import "compiler_ast_types.tl")
 
-;;; A single lint finding: a human-readable message plus the ladder depth that
-;;; triggered it.
+;;; A single lint finding: a human-readable message, the ladder depth that
+;;; triggered it, and the source span of the flagged node (the `lint-no-span`
+;;; sentinel when the node carried no location, e.g. a synthesized expression).
 (defstruct LintFinding
   (message String)
-  (depth i64))
+  (depth i64)
+  (span AstSourceSpan))
 
 ;;; Immutable list of findings.
 (defenum LintFindingList
@@ -43,11 +45,19 @@
     [(AstExprIf _ _ else-branch) (+ 1 (lint-ladder-length else-branch))]
     [_ 0]))
 
-;;; Build the nested-`if`-ladder finding for a ladder of `depth` arms.
-(define (lint-ladder-finding [depth : i64]) : LintFinding
+;;; Sentinel span for a finding whose AST node carried no source location (a
+;;; synthesized or in-memory expression). Parsed ladders carry the span from
+;;; their `AstExprSpanned` wrapper instead.
+(define (lint-no-span) : AstSourceSpan
+  (AstSourceSpan 0 0 0 0))
+
+;;; Build the nested-`if`-ladder finding for a ladder of `depth` arms whose head
+;;; is at `span`.
+(define (lint-ladder-finding [depth : i64] [span : AstSourceSpan]) : LintFinding
   (LintFinding
     "nested if-ladder: chain of if/else-if; prefer cond (value/guard ladders) or match (variant dispatch)"
-    depth))
+    depth
+    span))
 
 ;;; Walk every expression in `exprs`, accumulating findings.
 (define (lint-walk-expr-list
@@ -109,14 +119,45 @@
           (lint-walk-expr cond threshold acc)))]
     [_ (lint-walk-expr expr threshold acc)]))
 
+;;; Walk an `if`-headed expression whose source span is `span` (`lint-no-span`
+;;; when unspanned): a maximal ladder of length >= `threshold` flags ONCE at
+;;; `span` and then descends the else-chain via `lint-walk-ladder` (so inner
+;;; rungs are not re-flagged); otherwise ordinary recursion into cond/then/else.
+(define (lint-walk-if
+  [cond : AstExpr]
+  [then-branch : AstExpr]
+  [else-branch : AstExpr]
+  [span : AstSourceSpan]
+  [threshold : i64]
+  [acc : LintFindingList]) : LintFindingList
+  (let
+    [ladder : i64 (+ 1 (lint-ladder-length else-branch))]
+    (if (>= ladder threshold)
+      (lint-walk-ladder
+        (AstExprIf cond then-branch else-branch)
+        threshold
+        (LintFindingCons (lint-ladder-finding ladder span) acc))
+      (lint-walk-expr
+        else-branch
+        threshold
+        (lint-walk-expr
+          then-branch
+          threshold
+          (lint-walk-expr cond threshold acc))))))
+
 ;;; Walk `expr`, flagging each maximal nested-`if` ladder of length >=
-;;; `threshold` exactly once and recursing into all sub-expressions.
+;;; `threshold` exactly once and recursing into all sub-expressions. A ladder
+;;; head's finding span comes from the enclosing `AstExprSpanned` wrapper.
 (define (lint-walk-expr
   [expr : AstExpr]
   [threshold : i64]
   [acc : LintFindingList]) : LintFindingList
   (match expr
-    [(AstExprSpanned inner _) (lint-walk-expr inner threshold acc)]
+    [(AstExprSpanned inner span)
+      (match inner
+        [(AstExprIf cond then-branch else-branch)
+          (lint-walk-if cond then-branch else-branch span threshold acc)]
+        [_ (lint-walk-expr inner threshold acc)])]
     [(AstExprLiteral _) acc]
     [(AstExprVar _) acc]
     [(AstExprTypeLiteral _) acc]
@@ -126,25 +167,9 @@
     [(AstExprCall func args)
       (lint-walk-expr-list args threshold (lint-walk-expr func threshold acc))]
     [(AstExprIf cond then-branch else-branch)
-      (let
-        [ladder : i64 (+ 1 (lint-ladder-length else-branch))]
-        (if (>= ladder threshold)
-          ;; Maximal ladder head: emit ONE finding, then descend the whole
-          ;; else-chain via lint-walk-ladder so inner rungs are not re-flagged
-          ;; (a length-L ladder yields exactly one finding, not L-threshold+1).
-          (lint-walk-ladder
-            expr
-            threshold
-            (LintFindingCons (lint-ladder-finding ladder) acc))
-          ;; Below threshold: ordinary recursion (no rung downstream can reach
-          ;; the threshold either, so the else-chain is walked normally).
-          (lint-walk-expr
-            else-branch
-            threshold
-            (lint-walk-expr
-              then-branch
-              threshold
-              (lint-walk-expr cond threshold acc)))))]
+      ;; A directly-reached (unspanned) `if`: no wrapper span, so the finding
+      ;; gets the sentinel. Maximal-ladder dedup lives in lint-walk-if.
+      (lint-walk-if cond then-branch else-branch (lint-no-span) threshold acc)]
     [(AstExprLet bindings body)
       (lint-walk-expr
         body
@@ -247,6 +272,7 @@
           (AstLetBinding "y" (AstNoType) ladder3)
           (AstLetBindingNil))
         vx)]
+    [spanned : AstExpr (AstExprSpanned ladder3 (AstSourceSpan 7 3 9 4))]
     (begin
       ;; ladder length math
       (if (= (lint-ladder-length ladder3) 3)
@@ -315,4 +341,19 @@
         1)
         unit
         (panic "lint: a 4-deep ladder at threshold 3 should be flagged once"))
+      ;; a spanned ladder head carries its wrapper's source span in the finding
+      ;; (real parsed `if`s are `AstExprSpanned`-wrapped; the driver reports it).
+      (match (lint-walk-expr
+        spanned
+        (lint-default-ladder-threshold)
+        (LintFindingNil))
+        [(LintFindingCons finding _)
+          (let
+            [fspan : AstSourceSpan (struct-get finding span)]
+            (if (= (struct-get fspan start-line) 7)
+              unit
+              (panic
+                "lint: spanned ladder finding should carry its head start-line")))]
+        [(LintFindingNil)
+          (panic "lint: spanned ladder should produce a finding")])
       42)))

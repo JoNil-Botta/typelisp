@@ -376,6 +376,12 @@
 (define (compiler-parse-tag-expr-try) : i64
   251)
 
+(define (compiler-parse-tag-expr-ptr-null) : i64
+  252)
+
+(define (compiler-parse-tag-expr-ptr-null-check) : i64
+  253)
+
 (define (compiler-parse-tag-lit-true) : i64
   300)
 
@@ -560,6 +566,12 @@
         out
         (sym-i64-bind out "type" (compiler-parse-tag-expr-type-literal)))
       (set! out (sym-i64-bind out "try" (compiler-parse-tag-expr-try)))
+      (set!
+        out
+        (sym-i64-bind out "ptr-null" (compiler-parse-tag-expr-ptr-null)))
+      (set!
+        out
+        (sym-i64-bind out "ptr-null?" (compiler-parse-tag-expr-ptr-null-check)))
       out)))
 
 (define (compiler-parse-dispatch-patterns [e : SymI64Env]) : SymI64Env
@@ -1482,6 +1494,29 @@
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: try expects exactly one expression")]))
 
+;; `(ptr-null : T)` - a colon followed by a pointer type, no leading expression.
+;; The parser accepts any type here; the typechecker rejects non-pointer `T`.
+(define (parse-ast-ptr-null [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSCons colon (SpSCons ty (SpSNil _) _) _)
+      (if (sexpr-colon? (spanned-sexpr-form colon))
+        (match (parse-ast-type dispatch (spanned-sexpr-form ty))
+          [(OkAstType parsed-ty) (OkAstExpr (AstExprPtrNull parsed-ty))]
+          [(ErrAstType message) (ErrAstExpr message)])
+        (ErrAstExpr "parse: expected ':' in ptr-null"))]
+    [_
+      (ErrAstExpr
+        "parse: ptr-null expects (ptr-null : T) with a pointer type T")]))
+
+;; `(ptr-null? p)` - a single pointer operand.
+(define (parse-ast-ptr-null-check [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSCons expr (SpSNil _) _)
+      (match (parse-ast-expr dispatch expr)
+        [(OkAstExpr parsed-expr) (OkAstExpr (AstExprPtrNullCheck parsed-expr))]
+        [(ErrAstExpr message) (ErrAstExpr message)])]
+    [_ (ErrAstExpr "parse: ptr-null? expects exactly one expression")]))
+
 (define (parse-ast-with-region [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
     [(SpSNil _)
@@ -1673,13 +1708,25 @@
                                               (parse-ast-try dispatch rest)
                                               (if (=
                                                 tag
-                                                (compiler-parse-tag-decl-comptime-decl))
-                                                (ErrAstExpr
-                                                  "parse: comptime-decl is only valid as a top-level declaration")
-                                                (parse-ast-call
+                                                (compiler-parse-tag-expr-ptr-null))
+                                                (parse-ast-ptr-null
                                                   dispatch
-                                                  head
-                                                  rest)))))))))))))))))))))))))
+                                                  rest)
+                                                (if (=
+                                                  tag
+                                                  (compiler-parse-tag-expr-ptr-null-check))
+                                                  (parse-ast-ptr-null-check
+                                                    dispatch
+                                                    rest)
+                                                  (if (=
+                                                    tag
+                                                    (compiler-parse-tag-decl-comptime-decl))
+                                                    (ErrAstExpr
+                                                      "parse: comptime-decl is only valid as a top-level declaration")
+                                                    (parse-ast-call
+                                                      dispatch
+                                                      head
+                                                      rest)))))))))))))))))))))))))))
 
 (define (parse-ast-list-expr
   [dispatch : SymI64Env]

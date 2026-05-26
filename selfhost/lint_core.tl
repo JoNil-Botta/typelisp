@@ -167,7 +167,9 @@
     [(AstExprStructGet receiver _) (lint-walk-expr receiver threshold acc)]
     [(AstExprWithRegion _ body) (lint-walk-expr-list body threshold acc)]
     [(AstExprComptime inner) (lint-walk-expr inner threshold acc)]
-    [(AstExprTry inner) (lint-walk-expr inner threshold acc)]))
+    [(AstExprTry inner) (lint-walk-expr inner threshold acc)]
+    [(AstExprPtrNull _) acc]
+    [(AstExprPtrNullCheck inner) (lint-walk-expr inner threshold acc)]))
 
 ;;; Walk the body expression(s) carried by a declaration, if any.
 (define (lint-walk-decl

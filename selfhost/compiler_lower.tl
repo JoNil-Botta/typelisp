@@ -1880,6 +1880,22 @@
             (string-append
               (tc-type-render (tc-resolve-type ctx ty))
               " is compile-time only"))))]
+    ;; `(ptr-null : T)` is a pointer-sized zero (pointer ABI size is 8);
+    ;; `(ptr-null? p)` is `p == 0` producing a `bool`. No new IR/asm needed.
+    [(AstExprPtrNull _) (lower-materialize state (IrValueI64 0) expr-ty)]
+    [(AstExprPtrNullCheck inner)
+      (match (lower-expr ctx state env type-env inner)
+        [(OkLowerExpr lowered)
+          (match lowered
+            [(LowerExpr inner-state inner-value _)
+              (OkLowerExpr
+                (lower-emit-binop
+                  inner-state
+                  IrBinEq
+                  inner-value
+                  (IrValueI64 0)
+                  (AstTyBool)))])]
+        [(ErrLowerExpr diag) (ErrLowerExpr diag)])]
     [_
       (ErrLowerExpr
         (lower-diagnostic-at-expr origin "lower: unsupported expression"))]))

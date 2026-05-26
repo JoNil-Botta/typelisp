@@ -7,7 +7,8 @@ use std::process;
 const REVIEW_WEIGHT: u32 = 30;
 const IMPLEMENT_WEIGHT: u32 = 10;
 const RESEARCH_WEIGHT: u32 = 1;
-const PRIORITY_BONUS: u32 = 3;
+const P0_PRIORITY_BONUS: u32 = 50;
+const P1_PRIORITY_BONUS: u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -41,10 +42,14 @@ struct Candidate {
 }
 
 impl Candidate {
-    fn priority(&self) -> bool {
-        self.labels
-            .iter()
-            .any(|label| label == "p0" || label == "p1")
+    fn priority_bonus(&self) -> u32 {
+        if has_label(&self.labels, "p0") {
+            P0_PRIORITY_BONUS
+        } else if has_label(&self.labels, "p1") {
+            P1_PRIORITY_BONUS
+        } else {
+            0
+        }
     }
 
     fn github_kind(&self) -> &'static str {
@@ -170,11 +175,7 @@ fn candidate_weight(candidate: &Candidate) -> u32 {
         Kind::Ready => IMPLEMENT_WEIGHT,
         Kind::Triage => RESEARCH_WEIGHT,
     };
-    base + if candidate.priority() {
-        PRIORITY_BONUS
-    } else {
-        0
-    }
+    base + candidate.priority_bonus()
 }
 
 fn weighted_index(weights: &[u32]) -> Result<WeightedIndex<u32>, String> {
@@ -231,5 +232,37 @@ fn main() {
     if let Err(err) = run() {
         eprintln!("Error: {}", err);
         process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn candidate_with_labels(kind: Kind, labels: &[&str]) -> Candidate {
+        Candidate {
+            kind,
+            number: 1,
+            labels: labels.iter().map(|label| label.to_string()).collect(),
+            title: "test".to_string(),
+        }
+    }
+
+    #[test]
+    fn p0_label_adds_large_priority_bonus() {
+        let candidate = candidate_with_labels(Kind::Ready, &["p0"]);
+        assert_eq!(candidate_weight(&candidate), IMPLEMENT_WEIGHT + 50);
+    }
+
+    #[test]
+    fn p1_label_keeps_small_priority_bonus() {
+        let candidate = candidate_with_labels(Kind::Ready, &["p1"]);
+        assert_eq!(candidate_weight(&candidate), IMPLEMENT_WEIGHT + 3);
+    }
+
+    #[test]
+    fn p0_wins_when_both_priority_labels_are_present() {
+        let candidate = candidate_with_labels(Kind::Ready, &["p1", "p0"]);
+        assert_eq!(candidate_weight(&candidate), IMPLEMENT_WEIGHT + 50);
     }
 }

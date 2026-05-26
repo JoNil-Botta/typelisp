@@ -43,13 +43,21 @@ run_with_retry() {
 }
 
 # is_crash_code CODE
-#   True when CODE is a crash/signal exit — the shape of the #1204 segfault as
-#   reported by bash/MSYS (128 + signal): SIGILL=132, SIGABRT=134, SIGSEGV=139.
+#   True when CODE is a crash/signal exit — the shape of the #1204 segfault.
+#   As reported by bash/MSYS (128 + signal): SIGILL=132, SIGABRT=134,
+#   SIGSEGV=139. On Windows a native-exe crash is captured by PowerShell as the
+#   raw NTSTATUS exit code (e.g. verify-integration.sh's run_windows_program
+#   records the program's ExitCode), so the crash surfaces as 0xC0000005 access
+#   violation (-1073741819, or 3221225477 unsigned) or 0xC000001D illegal
+#   instruction (-1073741795, or 3221225501 unsigned) rather than a 128+signal
+#   value.
 #   Use this to retry ONLY transient crashes in scripts whose cases may
 #   legitimately exit non-zero (so retry-on-any-non-zero would be wrong).
 is_crash_code() {
     case "$1" in
         132 | 134 | 139) return 0 ;;
+        -1073741819 | 3221225477) return 0 ;;
+        -1073741795 | 3221225501) return 0 ;;
         *) return 1 ;;
     esac
 }

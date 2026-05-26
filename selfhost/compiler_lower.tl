@@ -1797,6 +1797,7 @@
           (lower-expr ctx binding-state body-env body-type-env body)]
         [(ErrLowerEnv message) (ErrLowerExpr message)])]
     [(AstExprBegin exprs) (lower-begin ctx state env type-env exprs)]
+    [(AstExprUnsafe exprs) (lower-begin ctx state env type-env exprs)]
     [(AstExprSet name value)
       (match (lower-expr ctx state env type-env value)
         [(OkLowerExpr lowered)

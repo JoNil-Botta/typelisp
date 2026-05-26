@@ -40,6 +40,37 @@ When a PR changes Rust-owned files such as `src/**/*.rs`, `tests/**/*.rs`,
 `Selfhost-Guardrail:` line with either the paired `selfhost/...` or `stdlib/...`
 path, or the temporary bootstrap/migration reason and issue link.
 
+## Implementation Languages Rule
+
+**Implementation, tooling, tests, and build logic must be written in `sh`
+(POSIX shell) or `typelisp` (`.tl`) only.** Rust, C, Python, PowerShell, and any
+other programming language are not permitted for those purposes. This formalizes
+the self-hosted, no-Rust direction
+([#795](https://github.com/JoNil-Botta/typelisp/issues/795)) as an explicit,
+enforceable rule (see
+[#1171](https://github.com/JoNil-Botta/typelisp/issues/1171)).
+
+Permitted **non-code** (config/markup/data, not implementation languages):
+GitHub Actions YAML, JSON / `.manifest` / `.expected` / `.in` / `.contains` test
+fixtures, Markdown docs, and `.gitignore` / `.gitattributes`. Generated
+artifacts (e.g. `.s`, `.o`) should not be committed.
+
+Path exceptions:
+
+- **`benchmarks/**`** — comparison baselines may be C (and other languages); the
+  benchmark harness exists to compare TypeLisp *against* clang-compiled C.
+- **`tools/vs-code-extension/**`** — editor-API client code.
+
+Enforcement is staged (warn-then-enforce, like the lint gate
+[#1164](https://github.com/JoNil-Botta/typelisp/issues/1164)): the rule cannot
+hard-fail while the Rust stage0 and the remaining non-conforming tooling still
+exist. Rust is retired through the no-Rust cutover (#795, tracked under
+[#666](https://github.com/JoNil-Botta/typelisp/issues/666)); the C `cpuid` probe
+through [#1168](https://github.com/JoNil-Botta/typelisp/issues/1168); and the
+`tests/public-tools/` Python through #1171's migration step. A CI allowlist gate
+honoring the two path exceptions starts warn-only/baselined and flips to
+enforcing as each migration completes.
+
 ## No Syntax Aliases Rule
 
 **When you change language syntax, do not add an alias or a second parser path

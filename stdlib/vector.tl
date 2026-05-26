@@ -105,7 +105,10 @@
 ;;; copying into a fresh backing array.
 (define (i64-vec-from-array [src : (Array i64)] [count : i64]) : I64Vec
   (let
-    [cap : i64 (if (< count 1) 1 count)]
+    [cap : i64
+      (if (< count 1)
+        1
+        count)]
     [slots : (Array i64) (make-array i64 cap)]
     (begin
       (i64-vec-copy-range slots src 0 count)
@@ -133,11 +136,7 @@
   [limit : i64]) : I64Vec
   (if (>= i limit)
     v
-    (i64-vec-extend-aux
-      (i64-vec-push v (array-ref src i))
-      src
-      (+ i 1)
-      limit)))
+    (i64-vec-extend-aux (i64-vec-push v (array-ref src i)) src (+ i 1) limit)))
 
 ;;; Reverse the live prefix in place; return the same vector.
 (define (i64-vec-reverse! [v : I64Vec]) : I64Vec
@@ -145,10 +144,7 @@
 
 ;;; Swap elements at `lo` and `hi` within the backing array, then recurse
 ;;; inward until the pointers cross. Internal helper for `i64-vec-reverse!`.
-(define (i64-vec-reverse-swap!
-  [v : I64Vec]
-  [lo : i64]
-  [hi : i64]) : I64Vec
+(define (i64-vec-reverse-swap! [v : I64Vec] [lo : i64] [hi : i64]) : I64Vec
   (if (>= lo hi)
     v
     (let
@@ -164,10 +160,7 @@
   (i64-vec-sum-from v 0 0))
 
 ;;; Accumulate sum starting from `acc` at offset `index`; internal helper.
-(define (i64-vec-sum-from
-  [v : I64Vec]
-  [index : i64]
-  [acc : i64]) : i64
+(define (i64-vec-sum-from [v : I64Vec] [index : i64] [acc : i64]) : i64
   (if (>= index (i64-vec-len v))
     acc
     (i64-vec-sum-from v (+ index 1) (+ acc (i64-vec-get v index 0)))))
@@ -177,15 +170,13 @@
   (i64-vec-contains-from? v 0 target))
 
 ;;; Scan from `index` for `target`; internal helper.
-(define (i64-vec-contains-from?
-  [v : I64Vec]
-  [index : i64]
-  [target : i64]) : bool
+(define (i64-vec-contains-from? [v : I64Vec] [index : i64] [target : i64]) : bool
   (if (>= index (i64-vec-len v))
     false
     (if (= (i64-vec-get v index 0) target)
       true
       (i64-vec-contains-from? v (+ index 1) target))))
+
 (define (i64-vec-grow [v : I64Vec]) : I64Vec
   (let
     [n : i64 (i64-vec-len v)]

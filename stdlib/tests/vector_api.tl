@@ -180,5 +180,7 @@
         (assert-true (i64-vec-contains? v8p 5) "contains first")
         (assert-true (i64-vec-contains? v8p 9) "contains last")
         (assert-true (not (i64-vec-contains? v8p 7)) "does not contain missing")))
-    (assert-true (not (i64-vec-contains? (i64-vec-new) 0)) "empty does not contain")
+    (assert-true
+      (not (i64-vec-contains? (i64-vec-new) 0))
+      "empty does not contain")
     42))

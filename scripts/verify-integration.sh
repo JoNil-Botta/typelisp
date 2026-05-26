@@ -161,13 +161,6 @@ deps_or_empty() {
     esac
 }
 
-is_stage0_compiler() {
-    case "$COMPILER" in
-        *target/stage0/* | *target\\stage0\\*) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
 requires_symbol_from_deps() {
     for _dep in $(deps_or_empty "$1"); do
         case "$_dep" in
@@ -244,12 +237,12 @@ validate_manifest() {
         esac
 
         _fields=$(printf '%s\n' "$_line" | awk -F'|' '{ print NF }')
-        if [ "$_fields" -ne 6 ]; then
-            echo "manifest line $_line_no must have 6 fields: $_line" >&2
+        if [ "$_fields" -ne 6 ] && [ "$_fields" -ne 7 ]; then
+            echo "manifest line $_line_no must have 6 fields, or 7 with an extra staged-marker field: $_line" >&2
             exit 1
         fi
 
-        IFS='|' read -r _name _source _want _stdout_spec _runtime_args _deps <<EOF
+        IFS='|' read -r _name _source _want _stdout_spec _runtime_args _deps _extra <<EOF
 $_line
 EOF
 
@@ -278,6 +271,17 @@ EOF
                 exit 1
                 ;;
         esac
+        case "${_extra:-}" in
+            "" | requires-stage0-symbol:?*) ;;
+            requires-stage0-symbol:)
+                echo "manifest line $_line_no has empty staged symbol for $_name" >&2
+                exit 1
+                ;;
+            *)
+                echo "manifest line $_line_no has invalid extra field for $_name: $_extra" >&2
+                exit 1
+                ;;
+        esac
 
         _source_path="$ROOT/$_source"
         if [ ! -f "$_source_path" ]; then
@@ -295,6 +299,10 @@ EOF
         _source_dir=$(dirname -- "$_source_path")
         for _dep in $(deps_or_empty "$_deps"); do
             case "$_dep" in
+                requires-stage0-symbol:)
+                    echo "manifest line $_line_no has empty staged symbol for $_name" >&2
+                    exit 1
+                    ;;
                 requires-stage0-symbol:*) continue ;;
             esac
             case "$_dep" in
@@ -430,6 +438,39 @@ assert_file_text() {
         echo "FAIL: $_label expected file text '$_want', got '$_actual'" >&2
         exit 1
     fi
+}
+
+show_stream_if_nonempty() {
+    _label=$1
+    _file=$2
+    if [ -s "$_file" ]; then
+        echo "$_label:" >&2
+        sed 's/^/  /' "$_file" >&2 || true
+    fi
+}
+
+show_build_streams() {
+    _stdout=$1
+    _stderr=$2
+    show_stream_if_nonempty stdout "$_stdout"
+    show_stream_if_nonempty stderr "$_stderr"
+}
+
+# A staged-primitive integration case may be skipped only when a build/link
+# failure mentions the not-yet-published runtime symbol. Once stage0-latest
+# catches up, the case builds and runs normally with a drop-marker notice.
+integration_should_skip_staged() {
+    _symbols=$1
+    shift
+    [ -n "$_symbols" ] || return 1
+    for _symbol in $(printf '%s\n' "$_symbols" | tr ',' ' '); do
+        [ -n "$_symbol" ] || continue
+        for _file in "$@"; do
+            [ -f "$_file" ] || continue
+            grep -qF "$_symbol" "$_file" && return 0
+        done
+    done
+    return 1
 }
 
 run_linux_backend_fixtures() {
@@ -827,9 +868,15 @@ failed=0
 ran=0
 skipped=0
 
-while IFS='|' read -r name source want stdout_spec runtime_args deps || [ -n "$name" ]; do
+while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ -n "$name" ]; do
     case "$name" in
         "" | \#*) continue ;;
+    esac
+
+    requires_symbol=
+    case "${extra:-}" in
+        "") ;;
+        requires-stage0-symbol:*) requires_symbol=${extra#requires-stage0-symbol:} ;;
     esac
 
     source_path="$ROOT/$source"
@@ -839,11 +886,8 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps || [ -n "$n
     work_src="$case_dir/$name.tl"
     cp "$source_path" "$work_src"
 
-    requires_symbol=$(requires_symbol_from_deps "$deps")
-    if [ -n "$requires_symbol" ] && is_stage0_compiler; then
-        echo "[$name] SKIP (awaiting stage0 republish of '$requires_symbol')"
-        skipped=$((skipped + 1))
-        continue
+    if [ -z "$requires_symbol" ]; then
+        requires_symbol=$(requires_symbol_from_deps "$deps")
     fi
 
     for dep in $(deps_or_empty "$deps"); do
@@ -863,12 +907,21 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps || [ -n "$n
     stderr_cmp="$case_dir/$name.stderr.cmp"
     expected_stdout="$case_dir/$name.expected.stdout"
     code_file="$case_dir/$name.exit"
+    build_stdout="$case_dir/$name.build.stdout"
+    build_stderr="$case_dir/$name.build.stderr"
 
     echo "[$name] build -> run ($HOST_OS)"
     if [ "$HOST_OS" = windows ]; then
-        build_with_retry "$COMPILER" build "$work_src" -o "$bin.exe" --target windows-x86_64
+        build_with_retry "$COMPILER" build "$work_src" -o "$bin.exe" --target windows-x86_64 \
+            > "$build_stdout" 2> "$build_stderr"
         if [ "$build_rc" -ne 0 ]; then
+            if integration_should_skip_staged "$requires_symbol" "$build_stdout" "$build_stderr"; then
+                echo "[integration] SKIP $name (awaiting stage0 republish of '$requires_symbol')"
+                skipped=$((skipped + 1))
+                continue
+            fi
             echo "FAIL: $name build failed" >&2
+            show_build_streams "$build_stdout" "$build_stderr"
             failed=$((failed + 1))
             ran=$((ran + 1))
             continue
@@ -885,20 +938,39 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps || [ -n "$n
             continue
         fi
     else
-        if ! "$COMPILER" compile "$work_src" -o "$asm"; then
+        if ! "$COMPILER" compile "$work_src" -o "$asm" > "$build_stdout" 2> "$build_stderr"; then
+            if integration_should_skip_staged "$requires_symbol" "$build_stdout" "$build_stderr"; then
+                echo "[integration] SKIP $name (awaiting stage0 republish of '$requires_symbol')"
+                skipped=$((skipped + 1))
+                continue
+            fi
             echo "FAIL: $name compile failed" >&2
+            show_build_streams "$build_stdout" "$build_stderr"
             failed=$((failed + 1))
             ran=$((ran + 1))
             continue
         fi
-        if ! as "$asm" -o "$obj"; then
+        if ! as "$asm" -o "$obj" >> "$build_stdout" 2>> "$build_stderr"; then
+            if integration_should_skip_staged "$requires_symbol" "$build_stdout" "$build_stderr"; then
+                echo "[integration] SKIP $name (awaiting stage0 republish of '$requires_symbol')"
+                skipped=$((skipped + 1))
+                continue
+            fi
             echo "FAIL: $name assemble failed" >&2
+            show_build_streams "$build_stdout" "$build_stderr"
             failed=$((failed + 1))
             ran=$((ran + 1))
             continue
         fi
-        if ! ld "$obj" -o "$bin" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc; then
+        if ! ld "$obj" -o "$bin" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
+            >> "$build_stdout" 2>> "$build_stderr"; then
+            if integration_should_skip_staged "$requires_symbol" "$build_stdout" "$build_stderr"; then
+                echo "[integration] SKIP $name (awaiting stage0 republish of '$requires_symbol')"
+                skipped=$((skipped + 1))
+                continue
+            fi
             echo "FAIL: $name link failed" >&2
+            show_build_streams "$build_stdout" "$build_stderr"
             failed=$((failed + 1))
             ran=$((ran + 1))
             continue
@@ -909,6 +981,10 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps || [ -n "$n
         "$bin" $(deps_or_empty "$runtime_args") > "$stdout" 2> "$stderr"
         got=$?
         set -e
+    fi
+
+    if [ -n "$requires_symbol" ]; then
+        echo "[integration] NOTE: $name built with the current compiler; once the published stage0 provides '$requires_symbol', drop the requires-stage0-symbol marker" >&2
     fi
 
     write_expected_stream "$stdout_spec" "$expected_stdout"
@@ -945,6 +1021,10 @@ done < "$NORMALIZED_MANIFEST"
 if [ "$failed" -gt 0 ]; then
     echo "$failed integration case(s) failed out of $ran" >&2
     exit 1
+fi
+
+if [ "$skipped" -gt 0 ]; then
+    echo "integration verification: $skipped case(s) skipped (staged primitive awaiting stage0 republish)"
 fi
 
 if [ "$HOST_OS" = linux ]; then

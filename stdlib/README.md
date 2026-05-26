@@ -54,6 +54,8 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   plus conversion/iteration helpers `-from-array` / `-to-array` / `-extend` /
   `-reverse!` / `-sum` / `-contains?` (#1212). Import it with
   `(import "stdlib/vector.tl")`.
+- `windows_registry.tl`: narrow Windows Kits registry lookup used by SDK
+  discovery. Import it with `(import "stdlib/windows_registry.tl")`.
 - `windows_sdk.tl`: structured Windows SDK layout discovery helpers for future
   MSVC toolchain setup. Import it with `(import "stdlib/windows_sdk.tl")`.
 - `windows_setup.tl`: Visual Studio / Build Tools SetupConfiguration discovery
@@ -107,7 +109,8 @@ returned caller-owned values.
 | `random-*` helpers | Construct deterministic RNG state, draw/result aggregates, and weight-list cons nodes in the active arena. Draws are deterministic from caller-provided seeds and do not read host entropy. `random-system-seed` reads host entropy through the backend, normalizes the returned seed, and returns a `ResultSystemSeed` aggregate in the active arena; `random-from-system` constructs and returns a new `RandomState` aggregate in the active arena. |
 | `assert-*` helpers in `test.tl` | Non-allocating checks on success; failures call `panic` with the caller-provided message. |
 | `text-buf-*` helpers in `text_buf.tl` | Buffer chunks and rendered strings allocate in the active arena. Append helpers avoid concatenating the accumulated prefix until `text-buf-render`; `text-buf-clear`/`text-buf-reset` return a fresh empty immutable buffer value. |
-| `windows-sdk-*` helpers | SDK layout structs/errors allocate in the active arena. Environment discovery reads `WindowsSdkDir` / `WindowsSDKVersion`, constructs include/lib/bin path strings, and validates required directories with `try-file-exists?`. Registry probing currently returns a structured unavailable diagnostic until the narrow registry runtime primitive lands. |
+| `windows-registry-*` helpers | The SDK registry probe allocates returned root/version strings and result aggregates in the active arena. It reads only `HKLM\\SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots`, the `KitsRoot10` string value, and version subkeys; unsupported hosts and registry failures return structured errors. |
+| `windows-sdk-*` helpers | SDK layout structs/errors allocate in the active arena. Environment discovery reads `WindowsSdkDir` / `WindowsSDKVersion`, constructs include/lib/bin path strings, and validates required directories with `try-file-exists?`. Registry discovery uses the narrow `windows-registry-sdk-install` probe, then validates the same include/lib/bin layout before returning it. |
 | `windows-setup-*` helpers | Construct and inspect Visual Studio setup metadata aggregates in the active arena. `windows-setup-instances` returns structured errors through the runtime hook on current targets; future successful enumeration results will allocate returned strings and list nodes in the active arena. |
 
 The recoverable I/O API maps the runtime's integer status codes into the public

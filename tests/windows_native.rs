@@ -244,6 +244,8 @@ fn selfhost_backend_windows_runtime_helpers_emit_assemble_link_and_run() {
         .arg("msvcrt.lib")
         .arg("legacy_stdio_definitions.lib")
         .arg("advapi32.lib")
+        .arg("ole32.lib")
+        .arg("oleaut32.lib")
         .status()
         .expect("link selfhost Windows runtime helper output");
     assert!(

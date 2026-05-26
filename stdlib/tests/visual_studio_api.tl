@@ -1,5 +1,7 @@
 (import "stdlib/windows_setup.tl")
 
+(import "stdlib/env.tl")
+
 (import "stdlib/test.tl")
 
 (define (assert-windows-setup-unsupported
@@ -17,6 +19,24 @@
   [expected : String]
   [message : String]) : unit
   (assert-string-eq (windows-setup-error-message error) expected message))
+
+(define (assert-windows-setup-runtime-result
+  [result : ResultWindowsSetupInstances]) : unit
+  (if (string-eq (env-path-list-separator) ";")
+    (match result
+      [(OkWindowsSetupInstances instances)
+        (assert-true
+          (>= (windows-setup-instance-list-count instances) 0)
+          "windows setup enumeration returned a list")]
+      [(ErrWindowsSetupInstances error)
+        (assert-true
+          (if (windows-setup-error-unavailable? error)
+            true
+            (windows-setup-error-query-failed? error))
+          (windows-setup-error-message error))])
+    (assert-windows-setup-unsupported
+      result
+      "windows setup: unsupported on this target")))
 
 (define (main) : i64
   (let
@@ -93,7 +113,5 @@
       (assert-true
         (windows-setup-error-query-failed? (WindowsSetupQueryFailed "failed"))
         "windows setup query failed predicate")
-      (assert-windows-setup-unsupported
-        (windows-setup-instances)
-        "windows setup: SetupConfiguration enumeration is not implemented")
+      (assert-windows-setup-runtime-result (windows-setup-instances))
       42)))

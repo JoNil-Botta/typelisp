@@ -2,8 +2,8 @@
 ;;;;
 ;;;; Defines the TypeLisp stdlib data model for enumerating Visual Studio /
 ;;;; Build Tools instances through the Windows SetupConfiguration API. The
-;;;; backend runtime hook currently returns a structured unsupported diagnostic
-;;;; until the Windows COM enumerator is wired in.
+;;;; backend runtime hook performs a narrow COM enumeration on Windows and
+;;;; returns a structured unsupported diagnostic on other targets.
 ;;;;
 ;;;; Usage: `(import "stdlib/windows_setup.tl")`
 ;;;;

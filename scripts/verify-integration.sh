@@ -532,7 +532,7 @@ assemble_link_windows() {
         exit 1
     }
     lld-link -NOLOGO "$(cygpath -aw "$_obj")" "-OUT:$(cygpath -aw "$_bin")" -SUBSYSTEM:CONSOLE \
-        msvcrt.lib legacy_stdio_definitions.lib advapi32.lib || {
+        msvcrt.lib legacy_stdio_definitions.lib advapi32.lib ole32.lib oleaut32.lib || {
         echo "FAIL: $_label link failed" >&2
         exit 1
     }

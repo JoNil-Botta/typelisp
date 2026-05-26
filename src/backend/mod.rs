@@ -50,7 +50,13 @@ const SYSV_FLOAT_ARG_REGS: [&str; 8] = [
 const WIN64_INTEGER_ARG_REGS: [&str; 4] = ["%rcx", "%rdx", "%r8", "%r9"];
 const WIN64_FLOAT_ARG_REGS: [&str; 4] = ["%xmm0", "%xmm1", "%xmm2", "%xmm3"];
 const LINUX_LINK_LIBS: [&str; 1] = ["-lc"];
-const WINDOWS_LINK_LIBS: [&str; 3] = ["msvcrt.lib", "legacy_stdio_definitions.lib", "advapi32.lib"];
+const WINDOWS_LINK_LIBS: [&str; 5] = [
+    "msvcrt.lib",
+    "legacy_stdio_definitions.lib",
+    "advapi32.lib",
+    "ole32.lib",
+    "oleaut32.lib",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendArch {
@@ -492,8 +498,8 @@ pub struct X86_64Backend {
     /// structured unsupported result for this slice.
     needs_process_output_runtime: bool,
     /// Whether the program references stdlib/windows_setup.tl's backend
-    /// SetupConfiguration hook. Current targets return a structured unsupported
-    /// result until the Windows COM enumerator lands.
+    /// SetupConfiguration hook. Windows emits a narrow COM enumerator; other
+    /// targets return a structured unsupported result.
     needs_windows_setup_instances_runtime: bool,
     /// Whether the program references stdin helpers. The read helpers allocate
     /// heap Strings and update a backend-owned EOF flag; `stdin-eof?` reads that
@@ -2589,6 +2595,21 @@ impl X86_64Backend {
         if self.needs_random_system_seed_runtime {
             externs.insert("SystemFunction036");
         }
+        if self.needs_windows_setup_instances_runtime {
+            for symbol in [
+                "CoCreateInstance",
+                "CoInitializeEx",
+                "CoUninitialize",
+                "SafeArrayDestroy",
+                "SafeArrayGetElement",
+                "SafeArrayGetLBound",
+                "SafeArrayGetUBound",
+                "SysFreeString",
+                "SysStringLen",
+            ] {
+                externs.insert(symbol);
+            }
+        }
         if self.needs_process_output_runtime {
             for symbol in [
                 "_close",
@@ -4122,14 +4143,40 @@ impl X86_64Backend {
     }
 
     fn generate_windows_setup_instances_runtime_data(&mut self) {
-        self.emit("    .section .rodata");
-        self.emit(".L_tl_windows_setup_unsupported_msg:");
-        self.emit(
-            "    .ascii \"windows setup: SetupConfiguration enumeration is not implemented\"",
-        );
-        self.emit(
+        self.emit_many(&[
+            "    .section .rodata",
+            ".L_tl_windows_setup_unsupported_msg:",
+            "    .ascii \"windows setup: unsupported on this target\"",
             "    .set .L_tl_windows_setup_unsupported_msg_len, . - .L_tl_windows_setup_unsupported_msg",
-        );
+            ".L_tl_windows_setup_unavailable_msg:",
+            "    .ascii \"windows setup: SetupConfiguration is unavailable\"",
+            "    .set .L_tl_windows_setup_unavailable_msg_len, . - .L_tl_windows_setup_unavailable_msg",
+            ".L_tl_windows_setup_query_failed_msg:",
+            "    .ascii \"windows setup: SetupConfiguration query failed\"",
+            "    .set .L_tl_windows_setup_query_failed_msg_len, . - .L_tl_windows_setup_query_failed_msg",
+            ".L_tl_windows_setup_empty_string:",
+            "    .set .L_tl_windows_setup_empty_string_len, 0",
+        ]);
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.emit_many(&[
+                "    .balign 8",
+                ".L_tl_windows_setup_clsid_setup_configuration:",
+                "    .long 0x177f0c4a",
+                "    .short 0x1cd3",
+                "    .short 0x4de7",
+                "    .byte 0xa3, 0x2c, 0x71, 0xdb, 0xbb, 0x9f, 0xa3, 0x6d",
+                ".L_tl_windows_setup_iid_setup_configuration2:",
+                "    .long 0x26aab78c",
+                "    .short 0x4a60",
+                "    .short 0x49d6",
+                "    .byte 0xaf, 0x3b, 0x3c, 0x35, 0xbc, 0x93, 0x36, 0x5d",
+                ".L_tl_windows_setup_iid_setup_instance2:",
+                "    .long 0x89143c9a",
+                "    .short 0x05af",
+                "    .short 0x49b0",
+                "    .byte 0xb7, 0x17, 0x72, 0xe2, 0x18, 0xa2, 0x18, 0x5c",
+            ]);
+        }
         self.emit("");
     }
 
@@ -6853,8 +6900,22 @@ impl X86_64Backend {
     }
 
     fn generate_windows_setup_instances_runtime_functions(&mut self) {
+        if !self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.generate_windows_setup_instances_unsupported_runtime_function();
+            return;
+        }
+
+        self.generate_windows_setup_instances_com_runtime_function();
+        self.generate_windows_setup_instances_com_helpers();
+    }
+
+    fn generate_windows_setup_instances_unsupported_runtime_function(&mut self) {
         let arg0 = self.target.calling_convention().integer_arg_regs[0];
 
+        self.emit(&format!(
+            "    .globl {}",
+            WINDOWS_SETUP_INSTANCES_RUNTIME_SYMBOL
+        ));
         self.emit(&format!("{}:", WINDOWS_SETUP_INSTANCES_RUNTIME_SYMBOL));
         self.emit("    push %rbp");
         self.emit("    mov %rsp, %rbp");
@@ -6882,6 +6943,694 @@ impl X86_64Backend {
         self.emit("    pop %rbp");
         self.emit("    ret");
         self.emit("");
+    }
+
+    fn generate_windows_setup_instances_com_runtime_function(&mut self) {
+        self.emit(&format!(
+            "    .globl {}",
+            WINDOWS_SETUP_INSTANCES_RUNTIME_SYMBOL
+        ));
+        self.emit(&format!("{}:", WINDOWS_SETUP_INSTANCES_RUNTIME_SYMBOL));
+        self.emit_many(&[
+            "    push %rbp",
+            "    mov %rsp, %rbp",
+            "    push %rbx",
+            "    push %r12",
+            "    push %r13",
+            "    push %r14",
+            "    push %r15",
+            "    sub $184, %rsp",
+            "    movq $0, -48(%rbp)",
+            "    movq $0, -56(%rbp)",
+            "    movq $0, -80(%rbp)",
+            "    movq $0, -88(%rbp)",
+            "    movq $0, -96(%rbp)",
+            "    movq $0, -104(%rbp)",
+            "    xorq %rcx, %rcx",
+            "    xorl %edx, %edx",
+        ]);
+        self.emit_call("CoInitializeEx");
+        self.emit_many(&[
+            "    testl %eax, %eax",
+            "    jns .L_tl_windows_setup_coinitialized",
+            "    cmpl $-2147417850, %eax",
+            "    je .L_tl_windows_setup_coinit_changed_mode",
+            "    jmp .L_tl_windows_setup_query_failed",
+            ".L_tl_windows_setup_coinitialized:",
+            "    movq $1, -88(%rbp)",
+            ".L_tl_windows_setup_coinit_changed_mode:",
+            "    leaq .L_tl_windows_setup_clsid_setup_configuration(%rip), %rcx",
+            "    xorq %rdx, %rdx",
+            "    movl $1, %r8d",
+            "    leaq .L_tl_windows_setup_iid_setup_configuration2(%rip), %r9",
+            "    sub $48, %rsp",
+            "    leaq -48(%rbp), %rax",
+            "    movq %rax, 32(%rsp)",
+            "    call CoCreateInstance",
+            "    add $48, %rsp",
+            "    testl %eax, %eax",
+            "    js .L_tl_windows_setup_unavailable",
+            "    movq -48(%rbp), %rbx",
+            "    testq %rbx, %rbx",
+            "    jz .L_tl_windows_setup_unavailable",
+            "    movq (%rbx), %rax",
+            "    movq %rbx, %rcx",
+            "    leaq -56(%rbp), %rdx",
+            "    sub $32, %rsp",
+            "    call *48(%rax)",
+            "    add $32, %rsp",
+            "    testl %eax, %eax",
+            "    js .L_tl_windows_setup_query_failed",
+            "    movq -56(%rbp), %rbx",
+            "    testq %rbx, %rbx",
+            "    jz .L_tl_windows_setup_query_failed",
+            "    movq $8, %rcx",
+        ]);
+        self.emit_call("tl_alloc");
+        self.emit_many(&[
+            "    movq $0, 0(%rax)",
+            "    movq %rax, -80(%rbp)",
+            ".L_tl_windows_setup_next_instance:",
+            "    movq $0, -96(%rbp)",
+            "    movq $0, -104(%rbp)",
+            "    movq -56(%rbp), %rbx",
+            "    movq (%rbx), %rax",
+            "    movq %rbx, %rcx",
+            "    movq $1, %rdx",
+            "    leaq -96(%rbp), %r8",
+            "    leaq -104(%rbp), %r9",
+            "    sub $32, %rsp",
+            "    call *24(%rax)",
+            "    add $32, %rsp",
+            "    cmpl $1, %eax",
+            "    je .L_tl_windows_setup_success",
+            "    testl %eax, %eax",
+            "    js .L_tl_windows_setup_query_failed",
+            "    cmpl $0, -104(%rbp)",
+            "    je .L_tl_windows_setup_success",
+            "    movq -96(%rbp), %rcx",
+            "    testq %rcx, %rcx",
+            "    jz .L_tl_windows_setup_query_failed",
+            "    movq -80(%rbp), %rdx",
+        ]);
+        self.emit_call(".L_tl_windows_setup_instance_cons");
+        self.emit_many(&[
+            "    testq %rax, %rax",
+            "    jz .L_tl_windows_setup_query_failed",
+            "    movq %rax, -80(%rbp)",
+            "    movq -96(%rbp), %rcx",
+        ]);
+        self.emit_call(".L_tl_windows_setup_release");
+        self.emit_many(&[
+            "    movq $0, -96(%rbp)",
+            "    jmp .L_tl_windows_setup_next_instance",
+            ".L_tl_windows_setup_success:",
+            "    call .L_tl_windows_setup_cleanup",
+            "    movq -80(%rbp), %r12",
+            "    movq $16, %rcx",
+        ]);
+        self.emit_call("tl_alloc");
+        self.emit_many(&[
+            "    movq $0, 0(%rax)",
+            "    movq %r12, 8(%rax)",
+            "    jmp .L_tl_windows_setup_epilogue",
+            ".L_tl_windows_setup_unavailable:",
+            "    call .L_tl_windows_setup_cleanup",
+            "    movq $1, %rcx",
+            "    leaq .L_tl_windows_setup_unavailable_msg(%rip), %rdx",
+            "    movq $.L_tl_windows_setup_unavailable_msg_len, %r8",
+        ]);
+        self.emit_call(".L_tl_windows_setup_error_result");
+        self.emit_many(&[
+            "    jmp .L_tl_windows_setup_epilogue",
+            ".L_tl_windows_setup_query_failed:",
+            "    call .L_tl_windows_setup_cleanup",
+            "    movq $2, %rcx",
+            "    leaq .L_tl_windows_setup_query_failed_msg(%rip), %rdx",
+            "    movq $.L_tl_windows_setup_query_failed_msg_len, %r8",
+        ]);
+        self.emit_call(".L_tl_windows_setup_error_result");
+        self.emit_many(&[
+            ".L_tl_windows_setup_epilogue:",
+            "    add $184, %rsp",
+            "    pop %r15",
+            "    pop %r14",
+            "    pop %r13",
+            "    pop %r12",
+            "    pop %rbx",
+            "    pop %rbp",
+            "    ret",
+            "",
+            ".L_tl_windows_setup_cleanup:",
+            "    sub $8, %rsp",
+            "    movq -96(%rbp), %rcx",
+        ]);
+        self.emit_call(".L_tl_windows_setup_release");
+        self.emit_many(&["    movq $0, -96(%rbp)", "    movq -56(%rbp), %rcx"]);
+        self.emit_call(".L_tl_windows_setup_release");
+        self.emit_many(&["    movq $0, -56(%rbp)", "    movq -48(%rbp), %rcx"]);
+        self.emit_call(".L_tl_windows_setup_release");
+        self.emit_many(&[
+            "    movq $0, -48(%rbp)",
+            "    cmpq $0, -88(%rbp)",
+            "    je .L_tl_windows_setup_cleanup_done",
+        ]);
+        self.emit_call("CoUninitialize");
+        self.emit_many(&[
+            "    movq $0, -88(%rbp)",
+            ".L_tl_windows_setup_cleanup_done:",
+            "    add $8, %rsp",
+            "    ret",
+            "",
+        ]);
+    }
+
+    fn generate_windows_setup_instances_com_helpers(&mut self) {
+        self.emit_many(&[
+            ".L_tl_windows_setup_release:",
+            "    push %rbp",
+            "    mov %rsp, %rbp",
+            "    testq %rcx, %rcx",
+            "    jz .L_tl_windows_setup_release_done",
+            "    movq (%rcx), %rax",
+            "    sub $32, %rsp",
+            "    call *16(%rax)",
+            "    add $32, %rsp",
+            ".L_tl_windows_setup_release_done:",
+            "    pop %rbp",
+            "    ret",
+            "",
+            ".L_tl_windows_setup_error_result:",
+            "    push %rbp",
+            "    mov %rsp, %rbp",
+            "    push %rbx",
+            "    push %r12",
+            "    push %r13",
+            "    push %r14",
+            "    movq %rcx, %rbx",
+            "    movq %rdx, %r12",
+            "    movq %r8, %r13",
+            "    movq $16, %rcx",
+        ]);
+        self.emit_call("tl_alloc");
+        self.emit_many(&[
+            "    movq %r12, 0(%rax)",
+            "    movq %r13, 8(%rax)",
+            "    movq %rax, %r14",
+            "    movq $16, %rcx",
+        ]);
+        self.emit_call("tl_alloc");
+        self.emit_many(&[
+            "    movq %rbx, 0(%rax)",
+            "    movq %r14, 8(%rax)",
+            "    movq %rax, %r14",
+            "    movq $16, %rcx",
+        ]);
+        self.emit_call("tl_alloc");
+        self.emit_many(&[
+            "    movq $1, 0(%rax)",
+            "    movq %r14, 8(%rax)",
+            "    pop %r14",
+            "    pop %r13",
+            "    pop %r12",
+            "    pop %rbx",
+            "    pop %rbp",
+            "    ret",
+            "",
+            ".L_tl_windows_setup_make_empty_string:",
+            "    push %rbp",
+            "    mov %rsp, %rbp",
+            "    movq $16, %rcx",
+        ]);
+        self.emit_call("tl_alloc");
+        self.emit_many(&[
+            "    leaq .L_tl_windows_setup_empty_string(%rip), %rdx",
+            "    movq %rdx, 0(%rax)",
+            "    movq $0, 8(%rax)",
+            "    pop %rbp",
+            "    ret",
+            "",
+            ".L_tl_windows_setup_string_list_nil:",
+            "    push %rbp",
+            "    mov %rsp, %rbp",
+            "    movq $8, %rcx",
+        ]);
+        self.emit_call("tl_alloc");
+        self.emit_many(&[
+            "    movq $0, 0(%rax)",
+            "    pop %rbp",
+            "    ret",
+            "",
+            ".L_tl_windows_setup_bstr_to_string:",
+            "    push %rbp",
+            "    mov %rsp, %rbp",
+            "    push %rbx",
+            "    push %r12",
+            "    push %r13",
+            "    push %r14",
+            "    push %r15",
+            "    sub $8, %rsp",
+            "    testq %rcx, %rcx",
+            "    jz .L_tl_windows_setup_bstr_empty_no_free",
+            "    movq %rcx, %rbx",
+        ]);
+        self.emit_call("SysStringLen");
+        self.emit_many(&[
+            "    movl %eax, %r12d",
+            "    testq %r12, %r12",
+            "    jnz .L_tl_windows_setup_bstr_nonempty",
+            "    movq %rbx, %rcx",
+        ]);
+        self.emit_call("SysFreeString");
+        self.emit_many(&["    jmp .L_tl_windows_setup_bstr_empty_no_free"]);
+        self.emit_many(&[
+            ".L_tl_windows_setup_bstr_nonempty:",
+            "    leaq (%r12,%r12,2), %rcx",
+        ]);
+        self.emit_call("tl_alloc");
+        self.emit_many(&[
+            "    movq %rax, %r13",
+            "    xorq %r14, %r14",
+            "    xorq %r15, %r15",
+            ".L_tl_windows_setup_utf16_loop:",
+            "    cmpq %r12, %r14",
+            "    jge .L_tl_windows_setup_utf16_done",
+            "    movzwl (%rbx,%r14,2), %eax",
+            "    incq %r14",
+            "    cmpl $0xd800, %eax",
+            "    jb .L_tl_windows_setup_utf8_encode",
+            "    cmpl $0xdbff, %eax",
+            "    ja .L_tl_windows_setup_utf8_encode",
+            "    cmpq %r12, %r14",
+            "    jge .L_tl_windows_setup_utf8_encode",
+            "    movzwl (%rbx,%r14,2), %r8d",
+            "    cmpl $0xdc00, %r8d",
+            "    jb .L_tl_windows_setup_utf8_encode",
+            "    cmpl $0xdfff, %r8d",
+            "    ja .L_tl_windows_setup_utf8_encode",
+            "    subl $0xd800, %eax",
+            "    shll $10, %eax",
+            "    subl $0xdc00, %r8d",
+            "    addl %r8d, %eax",
+            "    addl $0x10000, %eax",
+            "    incq %r14",
+            ".L_tl_windows_setup_utf8_encode:",
+            "    cmpl $0x7f, %eax",
+            "    ja .L_tl_windows_setup_utf8_two_or_more",
+            "    movb %al, 0(%r13,%r15)",
+            "    incq %r15",
+            "    jmp .L_tl_windows_setup_utf16_loop",
+            ".L_tl_windows_setup_utf8_two_or_more:",
+            "    cmpl $0x7ff, %eax",
+            "    ja .L_tl_windows_setup_utf8_three_or_more",
+            "    movl %eax, %r8d",
+            "    shrl $6, %r8d",
+            "    orl $0xc0, %r8d",
+            "    movb %r8b, 0(%r13,%r15)",
+            "    movl %eax, %r8d",
+            "    andl $0x3f, %r8d",
+            "    orl $0x80, %r8d",
+            "    movb %r8b, 1(%r13,%r15)",
+            "    addq $2, %r15",
+            "    jmp .L_tl_windows_setup_utf16_loop",
+            ".L_tl_windows_setup_utf8_three_or_more:",
+            "    cmpl $0xffff, %eax",
+            "    ja .L_tl_windows_setup_utf8_four",
+            "    movl %eax, %r8d",
+            "    shrl $12, %r8d",
+            "    orl $0xe0, %r8d",
+            "    movb %r8b, 0(%r13,%r15)",
+            "    movl %eax, %r8d",
+            "    shrl $6, %r8d",
+            "    andl $0x3f, %r8d",
+            "    orl $0x80, %r8d",
+            "    movb %r8b, 1(%r13,%r15)",
+            "    movl %eax, %r8d",
+            "    andl $0x3f, %r8d",
+            "    orl $0x80, %r8d",
+            "    movb %r8b, 2(%r13,%r15)",
+            "    addq $3, %r15",
+            "    jmp .L_tl_windows_setup_utf16_loop",
+            ".L_tl_windows_setup_utf8_four:",
+            "    movl %eax, %r8d",
+            "    shrl $18, %r8d",
+            "    orl $0xf0, %r8d",
+            "    movb %r8b, 0(%r13,%r15)",
+            "    movl %eax, %r8d",
+            "    shrl $12, %r8d",
+            "    andl $0x3f, %r8d",
+            "    orl $0x80, %r8d",
+            "    movb %r8b, 1(%r13,%r15)",
+            "    movl %eax, %r8d",
+            "    shrl $6, %r8d",
+            "    andl $0x3f, %r8d",
+            "    orl $0x80, %r8d",
+            "    movb %r8b, 2(%r13,%r15)",
+            "    movl %eax, %r8d",
+            "    andl $0x3f, %r8d",
+            "    orl $0x80, %r8d",
+            "    movb %r8b, 3(%r13,%r15)",
+            "    addq $4, %r15",
+            "    jmp .L_tl_windows_setup_utf16_loop",
+            ".L_tl_windows_setup_utf16_done:",
+            "    movq %rbx, %rcx",
+        ]);
+        self.emit_call("SysFreeString");
+        self.emit_many(&["    movq $16, %rcx"]);
+        self.emit_call("tl_alloc");
+        self.emit_many(&[
+            "    movq %r13, 0(%rax)",
+            "    movq %r15, 8(%rax)",
+            "    jmp .L_tl_windows_setup_bstr_epilogue",
+            ".L_tl_windows_setup_bstr_empty_no_free:",
+        ]);
+        self.emit_call(".L_tl_windows_setup_make_empty_string");
+        self.emit_many(&[
+            ".L_tl_windows_setup_bstr_epilogue:",
+            "    add $8, %rsp",
+            "    pop %r15",
+            "    pop %r14",
+            "    pop %r13",
+            "    pop %r12",
+            "    pop %rbx",
+            "    pop %rbp",
+            "    ret",
+            "",
+        ]);
+        self.generate_windows_setup_instances_package_helpers();
+        self.generate_windows_setup_instances_instance_helper();
+    }
+
+    fn generate_windows_setup_instances_package_helpers(&mut self) {
+        self.emit_many(&[
+            ".L_tl_windows_setup_package_id_string:",
+            "    push %rbp",
+            "    mov %rsp, %rbp",
+            "    push %rbx",
+            "    push %r12",
+            "    sub $16, %rsp",
+            "    movq %rcx, %rbx",
+            "    movq $0, -24(%rbp)",
+            "    testq %rbx, %rbx",
+            "    jz .L_tl_windows_setup_package_id_fail",
+            "    movq (%rbx), %rax",
+            "    movq %rbx, %rcx",
+            "    leaq -24(%rbp), %rdx",
+            "    sub $32, %rsp",
+            "    call *24(%rax)",
+            "    add $32, %rsp",
+            "    testl %eax, %eax",
+            "    js .L_tl_windows_setup_package_id_fail",
+            "    movq -24(%rbp), %rcx",
+        ]);
+        self.emit_call(".L_tl_windows_setup_bstr_to_string");
+        self.emit_many(&["    movq %rax, %r12", "    movq %rbx, %rcx"]);
+        self.emit_call(".L_tl_windows_setup_release");
+        self.emit_many(&[
+            "    movq %r12, %rax",
+            "    jmp .L_tl_windows_setup_package_id_epilogue",
+            ".L_tl_windows_setup_package_id_fail:",
+            "    movq %rbx, %rcx",
+        ]);
+        self.emit_call(".L_tl_windows_setup_release");
+        self.emit_many(&[
+            "    xorq %rax, %rax",
+            ".L_tl_windows_setup_package_id_epilogue:",
+            "    add $16, %rsp",
+            "    pop %r12",
+            "    pop %rbx",
+            "    pop %rbp",
+            "    ret",
+            "",
+            ".L_tl_windows_setup_package_id_list:",
+            "    push %rbp",
+            "    mov %rsp, %rbp",
+            "    push %rbx",
+            "    push %r12",
+            "    push %r13",
+            "    push %r14",
+            "    push %r15",
+            "    sub $72, %rsp",
+            "    movq %rcx, %rbx",
+            "    movq $0, -64(%rbp)",
+            "    movq $0, -72(%rbp)",
+            "    movq $0, -80(%rbp)",
+            "    movq $0, -88(%rbp)",
+            "    testq %rbx, %rbx",
+            "    jz .L_tl_windows_setup_package_list_fail",
+        ]);
+        self.emit_call(".L_tl_windows_setup_string_list_nil");
+        self.emit_many(&[
+            "    movq %rax, %r12",
+            "    movq %rbx, %rcx",
+            "    movl $1, %edx",
+            "    leaq -64(%rbp), %r8",
+        ]);
+        self.emit_call("SafeArrayGetLBound");
+        self.emit_many(&[
+            "    testl %eax, %eax",
+            "    js .L_tl_windows_setup_package_list_fail",
+            "    movq %rbx, %rcx",
+            "    movl $1, %edx",
+            "    leaq -72(%rbp), %r8",
+        ]);
+        self.emit_call("SafeArrayGetUBound");
+        self.emit_many(&[
+            "    testl %eax, %eax",
+            "    js .L_tl_windows_setup_package_list_fail",
+            "    movslq -72(%rbp), %r13",
+            "    movslq -64(%rbp), %r14",
+            "    cmpq %r14, %r13",
+            "    jl .L_tl_windows_setup_package_list_done",
+            ".L_tl_windows_setup_package_list_loop:",
+            "    movl %r13d, -80(%rbp)",
+            "    movq $0, -88(%rbp)",
+            "    movq %rbx, %rcx",
+            "    leaq -80(%rbp), %rdx",
+            "    leaq -88(%rbp), %r8",
+        ]);
+        self.emit_call("SafeArrayGetElement");
+        self.emit_many(&[
+            "    testl %eax, %eax",
+            "    js .L_tl_windows_setup_package_list_fail",
+            "    movq -88(%rbp), %rcx",
+            "    testq %rcx, %rcx",
+            "    jz .L_tl_windows_setup_package_list_advance",
+        ]);
+        self.emit_call(".L_tl_windows_setup_package_id_string");
+        self.emit_many(&[
+            "    movq $0, -88(%rbp)",
+            "    testq %rax, %rax",
+            "    jz .L_tl_windows_setup_package_list_fail",
+            "    movq %rax, %r15",
+            "    movq $24, %rcx",
+        ]);
+        self.emit_call("tl_alloc");
+        self.emit_many(&[
+            "    movq $1, 0(%rax)",
+            "    movq %r15, 8(%rax)",
+            "    movq %r12, 16(%rax)",
+            "    movq %rax, %r12",
+            ".L_tl_windows_setup_package_list_advance:",
+            "    decq %r13",
+            "    cmpq %r14, %r13",
+            "    jge .L_tl_windows_setup_package_list_loop",
+            ".L_tl_windows_setup_package_list_done:",
+            "    movq %rbx, %rcx",
+        ]);
+        self.emit_call("SafeArrayDestroy");
+        self.emit_many(&[
+            "    movq %r12, %rax",
+            "    jmp .L_tl_windows_setup_package_list_epilogue",
+            ".L_tl_windows_setup_package_list_fail:",
+            "    movq -88(%rbp), %rcx",
+        ]);
+        self.emit_call(".L_tl_windows_setup_release");
+        self.emit_many(&[
+            "    movq %rbx, %rcx",
+            "    testq %rcx, %rcx",
+            "    jz .L_tl_windows_setup_package_list_fail_no_destroy",
+        ]);
+        self.emit_call("SafeArrayDestroy");
+        self.emit_many(&[
+            ".L_tl_windows_setup_package_list_fail_no_destroy:",
+            "    xorq %rax, %rax",
+            ".L_tl_windows_setup_package_list_epilogue:",
+            "    add $72, %rsp",
+            "    pop %r15",
+            "    pop %r14",
+            "    pop %r13",
+            "    pop %r12",
+            "    pop %rbx",
+            "    pop %rbp",
+            "    ret",
+            "",
+        ]);
+    }
+
+    fn generate_windows_setup_instances_instance_helper(&mut self) {
+        self.emit_many(&[
+            ".L_tl_windows_setup_instance_cons:",
+            "    push %rbp",
+            "    mov %rsp, %rbp",
+            "    push %rbx",
+            "    push %r12",
+            "    push %r13",
+            "    push %r14",
+            "    push %r15",
+            "    sub $104, %rsp",
+            "    movq %rcx, %rbx",
+            "    movq %rdx, -48(%rbp)",
+            "    movq $0, -56(%rbp)",
+            "    movq $0, -64(%rbp)",
+            "    movq $0, -72(%rbp)",
+            "    movq $0, -80(%rbp)",
+            "    movq $0, -88(%rbp)",
+            "    movq $0, -96(%rbp)",
+            "    movq $0, -104(%rbp)",
+            "    movq (%rbx), %rax",
+            "    movq %rbx, %rcx",
+            "    leaq -64(%rbp), %rdx",
+            "    sub $32, %rsp",
+            "    call *48(%rax)",
+            "    add $32, %rsp",
+            "    testl %eax, %eax",
+            "    js .L_tl_windows_setup_instance_fail",
+            "    movq -64(%rbp), %rcx",
+        ]);
+        self.emit_call(".L_tl_windows_setup_bstr_to_string");
+        self.emit_many(&[
+            "    movq %rax, -72(%rbp)",
+            "    movq (%rbx), %rax",
+            "    movq %rbx, %rcx",
+            "    leaq -64(%rbp), %rdx",
+            "    sub $32, %rsp",
+            "    call *56(%rax)",
+            "    add $32, %rsp",
+            "    testl %eax, %eax",
+            "    js .L_tl_windows_setup_instance_fail",
+            "    movq -64(%rbp), %rcx",
+        ]);
+        self.emit_call(".L_tl_windows_setup_bstr_to_string");
+        self.emit_many(&[
+            "    movq %rax, -80(%rbp)",
+            "    movq (%rbx), %rax",
+            "    movq %rbx, %rcx",
+            "    xorl %edx, %edx",
+            "    leaq -64(%rbp), %r8",
+            "    sub $32, %rsp",
+            "    call *64(%rax)",
+            "    add $32, %rsp",
+            "    testl %eax, %eax",
+            "    js .L_tl_windows_setup_instance_fail",
+            "    movq -64(%rbp), %rcx",
+        ]);
+        self.emit_call(".L_tl_windows_setup_bstr_to_string");
+        self.emit_many(&[
+            "    movq %rax, -88(%rbp)",
+            "    movq (%rbx), %rax",
+            "    movq %rbx, %rcx",
+            "    leaq .L_tl_windows_setup_iid_setup_instance2(%rip), %rdx",
+            "    leaq -56(%rbp), %r8",
+            "    sub $32, %rsp",
+            "    call *0(%rax)",
+            "    add $32, %rsp",
+            "    testl %eax, %eax",
+            "    js .L_tl_windows_setup_instance_fail",
+            "    movq -56(%rbp), %r12",
+            "    testq %r12, %r12",
+            "    jz .L_tl_windows_setup_instance_fail",
+            "    movq (%r12), %rax",
+            "    movq %r12, %rcx",
+            "    leaq -64(%rbp), %rdx",
+            "    sub $32, %rsp",
+            "    call *104(%rax)",
+            "    add $32, %rsp",
+            "    testl %eax, %eax",
+            "    js .L_tl_windows_setup_instance_fail",
+            "    movq -64(%rbp), %rcx",
+            "    testq %rcx, %rcx",
+            "    jz .L_tl_windows_setup_instance_empty_product",
+        ]);
+        self.emit_call(".L_tl_windows_setup_package_id_string");
+        self.emit_many(&[
+            "    testq %rax, %rax",
+            "    jz .L_tl_windows_setup_instance_fail",
+            "    movq %rax, -96(%rbp)",
+            "    jmp .L_tl_windows_setup_instance_product_done",
+            ".L_tl_windows_setup_instance_empty_product:",
+        ]);
+        self.emit_call(".L_tl_windows_setup_make_empty_string");
+        self.emit_many(&[
+            "    movq %rax, -96(%rbp)",
+            ".L_tl_windows_setup_instance_product_done:",
+            "    movq (%r12), %rax",
+            "    movq %r12, %rcx",
+            "    leaq -64(%rbp), %rdx",
+            "    sub $32, %rsp",
+            "    call *96(%rax)",
+            "    add $32, %rsp",
+            "    testl %eax, %eax",
+            "    js .L_tl_windows_setup_instance_fail",
+            "    movq -64(%rbp), %rcx",
+            "    testq %rcx, %rcx",
+            "    jz .L_tl_windows_setup_instance_empty_packages",
+        ]);
+        self.emit_call(".L_tl_windows_setup_package_id_list");
+        self.emit_many(&[
+            "    testq %rax, %rax",
+            "    jz .L_tl_windows_setup_instance_fail",
+            "    movq %rax, -104(%rbp)",
+            "    jmp .L_tl_windows_setup_instance_packages_done",
+            ".L_tl_windows_setup_instance_empty_packages:",
+        ]);
+        self.emit_call(".L_tl_windows_setup_string_list_nil");
+        self.emit_many(&[
+            "    movq %rax, -104(%rbp)",
+            ".L_tl_windows_setup_instance_packages_done:",
+            "    movq -56(%rbp), %rcx",
+        ]);
+        self.emit_call(".L_tl_windows_setup_release");
+        self.emit_many(&["    movq $0, -56(%rbp)", "    movq $40, %rcx"]);
+        self.emit_call("tl_alloc");
+        self.emit_many(&[
+            "    movq -72(%rbp), %rdx",
+            "    movq %rdx, 0(%rax)",
+            "    movq -80(%rbp), %rdx",
+            "    movq %rdx, 8(%rax)",
+            "    movq -88(%rbp), %rdx",
+            "    movq %rdx, 16(%rax)",
+            "    movq -96(%rbp), %rdx",
+            "    movq %rdx, 24(%rax)",
+            "    movq -104(%rbp), %rdx",
+            "    movq %rdx, 32(%rax)",
+            "    movq %rax, %r15",
+            "    movq $24, %rcx",
+        ]);
+        self.emit_call("tl_alloc");
+        self.emit_many(&[
+            "    movq $1, 0(%rax)",
+            "    movq %r15, 8(%rax)",
+            "    movq -48(%rbp), %rdx",
+            "    movq %rdx, 16(%rax)",
+            "    jmp .L_tl_windows_setup_instance_epilogue",
+            ".L_tl_windows_setup_instance_fail:",
+            "    movq -56(%rbp), %rcx",
+        ]);
+        self.emit_call(".L_tl_windows_setup_release");
+        self.emit_many(&[
+            "    xorq %rax, %rax",
+            ".L_tl_windows_setup_instance_epilogue:",
+            "    add $104, %rsp",
+            "    pop %r15",
+            "    pop %r14",
+            "    pop %r13",
+            "    pop %r12",
+            "    pop %rbx",
+            "    pop %rbp",
+            "    ret",
+            "",
+        ]);
     }
 
     fn generate_windows_process_close_temp_files_runtime_function(&mut self) {
@@ -10436,7 +11185,13 @@ mod tests {
         assert_eq!(toolchain.dynamic_linker, None);
         assert_eq!(
             toolchain.libraries,
-            &["msvcrt.lib", "legacy_stdio_definitions.lib", "advapi32.lib"]
+            &[
+                "msvcrt.lib",
+                "legacy_stdio_definitions.lib",
+                "advapi32.lib",
+                "ole32.lib",
+                "oleaut32.lib"
+            ]
         );
     }
 
@@ -15270,7 +16025,12 @@ mod tests {
 
         assert!(asm.contains("tl_windows_setup_instances:"), "asm:\n{}", asm);
         assert!(
-            asm.contains("windows setup: SetupConfiguration enumeration is not implemented"),
+            asm.contains("windows setup: unsupported on this target"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("    .extern CoCreateInstance"),
             "asm:\n{}",
             asm
         );
@@ -15288,7 +16048,7 @@ mod tests {
     }
 
     #[test]
-    fn test_windows_target_windows_setup_instances_extern_emits_unsupported_runtime() {
+    fn test_windows_target_windows_setup_instances_extern_emits_com_runtime() {
         let asm = compile_ok_for_target(
             r#"
             (extern tl_windows_setup_instances : (-> i64))
@@ -15299,7 +16059,12 @@ mod tests {
 
         assert!(asm.contains("tl_windows_setup_instances:"), "asm:\n{}", asm);
         assert!(
-            asm.contains("windows setup: SetupConfiguration enumeration is not implemented"),
+            asm.contains("windows setup: SetupConfiguration is unavailable"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("windows setup: SetupConfiguration query failed"),
             "asm:\n{}",
             asm
         );
@@ -15315,6 +16080,38 @@ mod tests {
         );
         assert!(!asm.contains("    syscall"), "asm:\n{}", asm);
         assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        for symbol in [
+            "CoCreateInstance",
+            "CoInitializeEx",
+            "CoUninitialize",
+            "SafeArrayDestroy",
+            "SafeArrayGetElement",
+            "SafeArrayGetLBound",
+            "SafeArrayGetUBound",
+            "SysFreeString",
+            "SysStringLen",
+        ] {
+            assert!(
+                asm.contains(&format!("    .extern {}", symbol)),
+                "missing extern {symbol}; asm:\n{}",
+                asm
+            );
+        }
+        for snippet in [
+            "    call CoInitializeEx",
+            "    call CoCreateInstance",
+            "    call CoUninitialize",
+            "    call SysStringLen",
+            "    call SysFreeString",
+            "    call SafeArrayGetElement",
+            ".L_tl_windows_setup_clsid_setup_configuration:",
+            ".L_tl_windows_setup_iid_setup_configuration2:",
+            ".L_tl_windows_setup_iid_setup_instance2:",
+            ".L_tl_windows_setup_instance_cons:",
+            ".L_tl_windows_setup_package_id_list:",
+        ] {
+            assert!(asm.contains(snippet), "missing {snippet}; asm:\n{}", asm);
+        }
     }
 
     #[test]

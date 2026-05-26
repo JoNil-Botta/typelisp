@@ -1,6 +1,6 @@
 ;; stdlib_io.tl - integration smoke for stdlib/io.tl helpers (#702).
-;; Exercises recoverable Result-style helpers plus read-file-or, append-file
-;; (read-modify-write), and file-nonempty? end-to-end, returning 42 only when
+;; Exercises recoverable Result-style helpers plus read-file-or, append-file,
+;; and file-nonempty? end-to-end, returning 42 only when
 ;; every helper behaves as expected. Scratch files live under the gitignored
 ;; target/ directory (the program runs with the repo root as its working
 ;; directory).

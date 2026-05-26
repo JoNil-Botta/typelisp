@@ -76,6 +76,14 @@
   (OkAstLetBindingList AstLetBindingList)
   (ErrAstLetBindingList String))
 
+(defenum ResultAstResourceBinding
+  (OkAstResourceBinding AstResourceBinding)
+  (ErrAstResourceBinding String))
+
+(defenum ResultAstResourceBindingList
+  (OkAstResourceBindingList AstResourceBindingList)
+  (ErrAstResourceBindingList String))
+
 (defenum ResultAstLetParts
   (OkAstLetParts AstLetBindingList AstExpr)
   (ErrAstLetParts String))
@@ -385,23 +393,26 @@
 (define (compiler-parse-tag-expr-ptr-null-check) : i64
   253)
 
-(define (compiler-parse-tag-expr-ptr-read) : i64
+(define (compiler-parse-tag-expr-with-resource) : i64
   255)
 
-(define (compiler-parse-tag-expr-ptr-write) : i64
+(define (compiler-parse-tag-expr-ptr-read) : i64
   256)
 
-(define (compiler-parse-tag-expr-ptr-offset) : i64
+(define (compiler-parse-tag-expr-ptr-write) : i64
   257)
 
-(define (compiler-parse-tag-expr-ptr-cast) : i64
+(define (compiler-parse-tag-expr-ptr-offset) : i64
   258)
 
-(define (compiler-parse-tag-expr-ptr-to-int) : i64
+(define (compiler-parse-tag-expr-ptr-cast) : i64
   259)
 
-(define (compiler-parse-tag-expr-int-to-ptr) : i64
+(define (compiler-parse-tag-expr-ptr-to-int) : i64
   260)
+
+(define (compiler-parse-tag-expr-int-to-ptr) : i64
+  261)
 
 (define (compiler-parse-tag-lit-true) : i64
   300)
@@ -612,6 +623,9 @@
       (set!
         out
         (sym-i64-bind out "int->ptr" (compiler-parse-tag-expr-int-to-ptr)))
+      (set!
+        out
+        (sym-i64-bind out "with" (compiler-parse-tag-expr-with-resource)))
       out)))
 
 (define (compiler-parse-dispatch-patterns [e : SymI64Env]) : SymI64Env
@@ -1619,6 +1633,86 @@
       (ErrAstExpr "parse: with-arena region name must be an identifier")]
     [_ (ErrAstExpr "parse: malformed with-arena")]))
 
+(define (parse-ast-resource-binding-items
+  [dispatch : SymI64Env]
+  [items : SpannedSexpr]) : ResultAstResourceBinding
+  (match items
+    [(SpSCons (SpSSym name _) rest _)
+      (match rest
+        [(SpSNil _)
+          (ErrAstResourceBinding "parse: with binding is missing initializer")]
+        [(SpSCons init tail _)
+          (match tail
+            [(SpSNil _)
+              (ErrAstResourceBinding
+                "parse: with binding is missing cleanup function")]
+            [(SpSCons cleanup extra _)
+              (match extra
+                [(SpSNil _)
+                  (match (parse-ast-expr dispatch init)
+                    [(OkAstExpr parsed-init)
+                      (match (parse-ast-expr dispatch cleanup)
+                        [(OkAstExpr parsed-cleanup)
+                          (OkAstResourceBinding
+                            (AstResourceBinding name parsed-init parsed-cleanup))]
+                        [(ErrAstExpr message) (ErrAstResourceBinding message)])]
+                    [(ErrAstExpr message) (ErrAstResourceBinding message)])]
+                [_
+                  (ErrAstResourceBinding
+                    "parse: with binding has too many fields")])]
+            [_ (ErrAstResourceBinding "parse: malformed with binding")])]
+        [_ (ErrAstResourceBinding "parse: malformed with binding")])]
+    [(SpSCons _ _ _)
+      (ErrAstResourceBinding "parse: with binding name must be an identifier")]
+    [_ (ErrAstResourceBinding "parse: malformed with binding")]))
+
+(define (parse-ast-resource-binding
+  [dispatch : SymI64Env]
+  [binding : SpannedSexpr]) : ResultAstResourceBinding
+  (match binding
+    [(SpSBracketList items _) (parse-ast-resource-binding-items dispatch items)]
+    [_ (ErrAstResourceBinding "parse: with binding must use bracket syntax")]))
+
+(define (parse-ast-resource-binding-list
+  [dispatch : SymI64Env]
+  [bindings : SpannedSexpr]) : ResultAstResourceBindingList
+  (match bindings
+    [(SpSNil _) (OkAstResourceBindingList AstResourceBindingNil)]
+    [(SpSCons head rest _)
+      (match (parse-ast-resource-binding dispatch head)
+        [(OkAstResourceBinding parsed-head)
+          (match (parse-ast-resource-binding-list dispatch rest)
+            [(OkAstResourceBindingList parsed-rest)
+              (OkAstResourceBindingList
+                (AstResourceBindingCons parsed-head parsed-rest))]
+            [(ErrAstResourceBindingList message)
+              (ErrAstResourceBindingList message)])]
+        [(ErrAstResourceBinding message) (ErrAstResourceBindingList message)])]
+    [_ (ErrAstResourceBindingList "parse: malformed with binding list")]))
+
+(define (parse-ast-with-resource [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSNil _)
+      (ErrAstExpr "parse: with requires a binding list before its body")]
+    [(SpSCons bindings body _)
+      (match bindings
+        [(SpSNil _)
+          (ErrAstExpr "parse: with requires a non-empty binding list")]
+        [(SpSCons _ _ _)
+          (match body
+            [(SpSNil _) (ErrAstExpr "parse: with requires a non-empty body")]
+            [_
+              (match (parse-ast-resource-binding-list dispatch bindings)
+                [(OkAstResourceBindingList parsed-bindings)
+                  (match (parse-ast-expr-list dispatch body)
+                    [(OkAstExprList parsed-body)
+                      (OkAstExpr
+                        (AstExprWithResource parsed-bindings parsed-body))]
+                    [(ErrAstExprList message) (ErrAstExpr message)])]
+                [(ErrAstResourceBindingList message) (ErrAstExpr message)])])]
+        [_ (ErrAstExpr "parse: malformed with binding list")])]
+    [_ (ErrAstExpr "parse: malformed with")]))
+
 (define (parse-ast-match-arm [dispatch : SymI64Env] [s : SpannedSexpr]) : ResultAstMatchArm
   (match s
     [(SpSBracketList items _) (parse-ast-match-arm dispatch items)]
@@ -1802,29 +1896,35 @@
                                                 rest)
                                               (if (=
                                                 tag
-                                                (compiler-parse-tag-expr-try))
-                                                (parse-ast-try dispatch rest)
+                                                (compiler-parse-tag-expr-with-resource))
+                                                (parse-ast-with-resource
+                                                  dispatch
+                                                  rest)
                                                 (if (=
                                                   tag
-                                                  (compiler-parse-tag-expr-ptr-null))
-                                                  (parse-ast-ptr-null
-                                                    dispatch
-                                                    rest)
+                                                  (compiler-parse-tag-expr-try))
+                                                  (parse-ast-try dispatch rest)
                                                   (if (=
                                                     tag
-                                                    (compiler-parse-tag-expr-ptr-null-check))
-                                                    (parse-ast-ptr-null-check
+                                                    (compiler-parse-tag-expr-ptr-null))
+                                                    (parse-ast-ptr-null
                                                       dispatch
                                                       rest)
                                                     (if (=
                                                       tag
-                                                      (compiler-parse-tag-decl-comptime-decl))
-                                                      (ErrAstExpr
-                                                        "parse: comptime-decl is only valid as a top-level declaration")
-                                                      (parse-ast-call
+                                                      (compiler-parse-tag-expr-ptr-null-check))
+                                                      (parse-ast-ptr-null-check
                                                         dispatch
-                                                        head
-                                                        rest))))))))))))))))))))))))))))
+                                                        rest)
+                                                      (if (=
+                                                        tag
+                                                        (compiler-parse-tag-decl-comptime-decl))
+                                                        (ErrAstExpr
+                                                          "parse: comptime-decl is only valid as a top-level declaration")
+                                                        (parse-ast-call
+                                                          dispatch
+                                                          head
+                                                          rest)))))))))))))))))))))))))))))
 
 (define (parse-ast-list-expr
   [dispatch : SymI64Env]
@@ -2229,6 +2329,18 @@
     [(AstDeclNil) 0]
     [(AstDeclCons decl rest)
       (+ (ast-decl-tag decl) (ast-decl-list-tag-sum rest))]))
+
+(define (compiler-parse-expr-list-count [exprs : AstExprList]) : i64
+  (match exprs
+    [(AstExprNil) 0]
+    [(AstExprCons _ rest) (+ 1 (compiler-parse-expr-list-count rest))]))
+
+(define (compiler-parse-resource-binding-count
+  [bindings : AstResourceBindingList]) : i64
+  (match bindings
+    [(AstResourceBindingNil) 0]
+    [(AstResourceBindingCons _ rest)
+      (+ 1 (compiler-parse-resource-binding-count rest))]))
 
 (define (ast-first-import-ok? [decls : AstDeclList]) : bool
   (match decls
@@ -3016,6 +3128,83 @@
               "(define (main) : i64 (with-arena r))"
               "parse: with-arena 'r' requires a non-empty body")))))))
 
+(define (compiler-parse-resource-with-source) : String
+  "(define (main) : i64
+  (with ([h (open-handle) close-handle]
+         [tmp (open-temp) close-temp])
+    (use h)
+    (with ([inner (open-inner tmp) close-inner])
+      42)))")
+
+(define (compiler-parse-resource-with-shape-ok?) : bool
+  (match (parse-ast-source (compiler-parse-resource-with-source))
+    [(OkAstProgram (AstProgram decls))
+      (match decls
+        [(AstDeclCons (AstDeclDefFn _ _ _ body) AstDeclNil)
+          (match (ast-expr-unspan body)
+            [(AstExprWithResource bindings body-exprs)
+              (and
+                (= (compiler-parse-resource-binding-count bindings) 2)
+                (and
+                  (= (compiler-parse-expr-list-count body-exprs) 2)
+                  (match body-exprs
+                    [(AstExprCons _ (AstExprCons nested AstExprNil))
+                      (match (ast-expr-unspan nested)
+                        [(AstExprWithResource nested-bindings nested-body)
+                          (and
+                            (=
+                              (compiler-parse-resource-binding-count
+                                nested-bindings)
+                              1)
+                            (= (compiler-parse-expr-list-count nested-body) 1))]
+                        [_ false])]
+                    [_ false])))]
+            [_ false])]
+        [_ false])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-parse-resource-with-tests-ok?) : bool
+  (and
+    (compiler-parse-resource-with-shape-ok?)
+    (and
+      (compiler-parse-ok?
+        "(define (main) : i64 (with ([h (open-handle) close-handle]) 42))")
+      (and
+        (compiler-parse-error-ok?
+          "(define (main) : i64 (with))"
+          "parse: with requires a binding list before its body")
+        (and
+          (compiler-parse-error-ok?
+            "(define (main) : i64 (with () 42))"
+            "parse: with requires a non-empty binding list")
+          (and
+            (compiler-parse-error-ok?
+              "(define (main) : i64 (with ([1 (open) close]) 42))"
+              "parse: with binding name must be an identifier")
+            (and
+              (compiler-parse-error-ok?
+                "(define (main) : i64 (with ([h]) 42))"
+                "parse: with binding is missing initializer")
+              (and
+                (compiler-parse-error-ok?
+                  "(define (main) : i64 (with ([h (open)]) 42))"
+                  "parse: with binding is missing cleanup function")
+                (and
+                  (compiler-parse-error-ok?
+                    "(define (main) : i64 (with ([h (open) close extra]) 42))"
+                    "parse: with binding has too many fields")
+                  (and
+                    (compiler-parse-error-ok?
+                      "(define (main) : i64 (with ([h (open) close])))"
+                      "parse: with requires a non-empty body")
+                    (and
+                      (compiler-parse-error-ok?
+                        "(define (main) : i64 (with [h (open) close] 42))"
+                        "parse: malformed with binding list")
+                      (compiler-parse-error-ok?
+                        "(define (main) : i64 (with ((h (open) close)) 42))"
+                        "parse: with binding must use bracket syntax"))))))))))))
+
 ;; REPL-item parsing (#1072 / #1041): `parse-ast-repl-source` accepts a single
 ;; top-level declaration, a parenthesized expression, or a bare expression, and
 ;; rejects trailing tokens and a malformed expression. Mirrors the Rust
@@ -3120,7 +3309,9 @@
                                   (compiler-parse-raw-pointer-ok?)
                                   (and
                                     (compiler-parse-raw-pointer-ops-ok?)
-                                    (compiler-parse-reference-ok?))))))))))))))))
+                                    (and
+                                      (compiler-parse-reference-ok?)
+                                      (compiler-parse-resource-with-shape-ok?)))))))))))))))))
         (if (and
           (compiler-parse-error-tests-ok?)
           (and
@@ -3143,7 +3334,9 @@
                             (compiler-parse-region-tests-ok?)
                             (and
                               (compiler-parse-repl-tests-ok?)
-                              (compiler-parse-comptime-param-tests-ok?))))))))))))
+                              (and
+                                (compiler-parse-comptime-param-tests-ok?)
+                                (compiler-parse-resource-with-tests-ok?)))))))))))))
           42
           (begin
             (panic "parse: error-path self-tests failed")

@@ -1,17 +1,18 @@
 ;; compile.tl - Command-shaped selfhost compile driver (#565).
 ;;
 ;; Wraps compiler_driver.tl's input/output API with the first selfhost compile
-;; CLI slice: `<file.tl> [-o <file>] [--target <target>]
+;; CLI slice: `<file.tl> [-o <file>] [--emit-ir] [--target <target>]
 ;; [--opt-level <0|1|2|3>] [--backend-mode scalar] [--stdlib-root <dir>...]`.
 ;; `--backend-mode scalar` is accepted (the selfhost backend's native mode);
-;; `avx2`/`avx512` and `--emit-ir` remain Rust-driver-only for now and are
-;; rejected explicitly.
+;; `avx2`/`avx512` remain Rust-driver-only for now and are rejected explicitly.
+;; `--emit-ir` writes a deterministic TypeLisp-owned IR summary.
 (import "compiler_driver_core.tl")
 
 (defenum CompileCliConfig
   (CompileCliConfig
     String
     String
+    bool
     bool
     CompilerBackendTarget
     CompilerLoadRootList
@@ -34,7 +35,9 @@
 (define (compile-cli-flag? [value : String]) : bool
   (and (> (string-length value) 0) (= (string-ref value 0) #-')))
 
-(define (compile-cli-default-output [input-path : String]) : String
+(define (compile-cli-default-output-with-extension
+  [input-path : String]
+  [extension : String]) : String
   (let
     [n : i64 (string-length input-path)]
     [i : i64 0]
@@ -53,8 +56,14 @@
               (set! last-sep last-sep))
             (set! i (+ i 1)))))
       (if (> last-dot last-sep)
-        (string-append (substring input-path 0 last-dot) ".s")
-        (string-append input-path ".s")))))
+        (string-append (substring input-path 0 last-dot) extension)
+        (string-append input-path extension)))))
+
+(define (compile-cli-default-output [input-path : String]) : String
+  (compile-cli-default-output-with-extension input-path ".s"))
+
+(define (compile-cli-default-ir-output [input-path : String]) : String
+  (compile-cli-default-output-with-extension input-path ".ir"))
 
 (define (compile-cli-unknown-target [value : String]) : String
   (compile-cli-cat3
@@ -70,12 +79,6 @@
       (string-eq value "windows_x86_64"))
       (OkCompileCliTarget (BackendTargetWindows))
       (ErrCompileCliTarget (compile-cli-unknown-target value)))))
-
-(define (compile-cli-unsupported-flag [flag : String]) : String
-  (compile-cli-cat3
-    "compile: "
-    flag
-    " is not supported by the selfhost compile driver yet; use Rust typelisp compile"))
 
 (define (compile-cli-invalid-opt-level [value : String]) : String
   (compile-cli-cat3
@@ -124,13 +127,17 @@
   [has-target : bool]
   [target : CompilerBackendTarget]
   [stdlib-roots : CompilerLoadRootList]
+  [emit-ir : bool]
   [has-opt-level : bool]
   [opt-level : i64]) : ResultCompileCliConfig
   (if (>= idx count)
     (OkCompileCliConfig
       (CompileCliConfig
         input-path
-        output-path
+        (if (and emit-ir (not has-output))
+          (compile-cli-default-ir-output input-path)
+          output-path)
+        emit-ir
         has-target
         target
         stdlib-roots
@@ -151,6 +158,7 @@
               has-target
               target
               stdlib-roots
+              emit-ir
               has-opt-level
               opt-level)))
         (if (string-eq current "--stdlib-root")
@@ -165,6 +173,7 @@
               has-target
               target
               (compile-cli-root-list-append stdlib-roots (arg (+ idx 1)))
+              emit-ir
               has-opt-level
               opt-level))
           (if (string-eq current "--target")
@@ -184,6 +193,7 @@
                       true
                       parsed-target
                       stdlib-roots
+                      emit-ir
                       has-opt-level
                       opt-level)]
                   [(ErrCompileCliTarget message) (ErrCompileCliConfig message)])))
@@ -206,6 +216,7 @@
                           has-target
                           target
                           stdlib-roots
+                          emit-ir
                           true
                           parsed-level)]
                       [(ErrCompilerOptimizeLevel)
@@ -226,12 +237,24 @@
                         has-target
                         target
                         stdlib-roots
+                        emit-ir
                         has-opt-level
                         opt-level)]
                     [(ErrCompileCliBackendMode message)
                       (ErrCompileCliConfig message)]))
                 (if (string-eq current "--emit-ir")
-                  (ErrCompileCliConfig (compile-cli-unsupported-flag current))
+                  (compile-cli-parse-options
+                    (+ idx 1)
+                    count
+                    input-path
+                    output-path
+                    has-output
+                    has-target
+                    target
+                    stdlib-roots
+                    true
+                    has-opt-level
+                    opt-level)
                   (if (compile-cli-flag? current)
                     (ErrCompileCliConfig
                       (string-append "compile: unknown flag " current))
@@ -255,6 +278,7 @@
           (BackendTargetLinux)
           CompilerLoadRootNil
           false
+          false
           (compiler-optimize-default-level))))))
 
 (define (main) : i64
@@ -264,22 +288,30 @@
         [(CompileCliConfig
             input-path
             output-path
+            emit-ir
             has-target
             target
             stdlib-roots
             opt-level)
-          (if has-target
-            (compiler-driver-compile-file-for-target-with-roots-and-level
-              input-path
-              output-path
-              target
-              stdlib-roots
-              opt-level)
-            (compiler-driver-compile-file-with-roots-and-level
-              input-path
-              output-path
-              stdlib-roots
-              opt-level))])]
+          (if emit-ir
+            (compiler-driver-write-result
+              (compiler-driver-emit-ir-summary-file-with-roots-and-level
+                input-path
+                stdlib-roots
+                opt-level)
+              output-path)
+            (if has-target
+              (compiler-driver-compile-file-for-target-with-roots-and-level
+                input-path
+                output-path
+                target
+                stdlib-roots
+                opt-level)
+              (compiler-driver-compile-file-with-roots-and-level
+                input-path
+                output-path
+                stdlib-roots
+                opt-level)))])]
     [(ErrCompileCliConfig message)
       (begin
         (print-error message)

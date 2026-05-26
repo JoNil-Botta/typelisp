@@ -471,6 +471,27 @@
           [(AstExprNil) ""]
           [_ (string-append ", " (front-expr-list-render rest))]))]))
 
+(define (front-resource-binding-render [binding : AstResourceBinding]) : String
+  (match binding
+    [(AstResourceBinding name init cleanup)
+      (front-cat3
+        "ResourceBinding { name: \""
+        name
+        (front-cat3
+          "\", init: "
+          (front-expr-render init)
+          (front-cat3 ", cleanup: " (front-expr-render cleanup) " }")))]))
+
+(define (front-resource-binding-list-render [bindings : AstResourceBindingList]) : String
+  (match bindings
+    [(AstResourceBindingNil) ""]
+    [(AstResourceBindingCons head rest)
+      (string-append
+        (front-resource-binding-render head)
+        (match rest
+          [(AstResourceBindingNil) ""]
+          [_ (string-append ", " (front-resource-binding-list-render rest))]))]))
+
 (define (front-expr-render [expr : AstExpr]) : String
   (match (ast-expr-unspan expr)
     [(AstExprSpanned inner _) (front-expr-render inner)]
@@ -608,6 +629,11 @@
         "WithRegion { region: \""
         region
         (front-cat3 "\", body: [" (front-expr-list-render body) "] }"))]
+    [(AstExprWithResource bindings body)
+      (front-cat3
+        "WithResource { bindings: ["
+        (front-resource-binding-list-render bindings)
+        (front-cat3 "], body: [" (front-expr-list-render body) "] }"))]
     [(AstExprTypeLiteral ty)
       (front-cat3 "TypeLiteral { ty: " (front-type-render ty) " }")]
     [(AstExprComptime inner)

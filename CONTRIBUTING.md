@@ -63,13 +63,14 @@ Path exceptions:
 
 Enforcement is staged (warn-then-enforce, like the lint gate
 [#1164](https://github.com/JoNil-Botta/typelisp/issues/1164)): the rule cannot
-hard-fail while the Rust stage0 and the remaining non-conforming tooling still
-exist. Rust is retired through the no-Rust cutover (#795, tracked under
+hard-fail while the Rust stage0 still exists. Rust is retired through the
+no-Rust cutover (#795, tracked under
 [#666](https://github.com/JoNil-Botta/typelisp/issues/666)); the C `cpuid` probe
-through [#1168](https://github.com/JoNil-Botta/typelisp/issues/1168); and the
-`tests/public-tools/` Python through #1171's migration step. A CI allowlist gate
-honoring the two path exceptions starts warn-only/baselined and flips to
-enforcing as each migration completes.
+through [#1168](https://github.com/JoNil-Botta/typelisp/issues/1168). The
+`tests/public-tools/` Python runner was migrated by #1171. The
+`scripts/check-implementation-languages.sh` CI allowlist gate honors the two
+path exceptions, keeps the current Rust stage0 baselined, and fails on new
+unbaselined forbidden-language files.
 
 ## No Syntax Aliases Rule
 

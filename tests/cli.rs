@@ -1678,14 +1678,51 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
         "invalid target should not write assembly"
     );
 
-    let unsupported = driver_output(&driver_bin, &[source_arg, "--emit-ir"]);
-    assert!(!unsupported.status.success());
-    assert_eq!(stdout(&unsupported), "");
+    let explicit_ir = dir.join("custom-output.ir");
+    let explicit_ir_arg = explicit_ir.to_str().expect("explicit ir path is utf-8");
+    let emit_ir = driver_output(
+        &driver_bin,
+        &[source_arg, "--emit-ir", "-o", explicit_ir_arg],
+    );
     assert!(
-        stderr(&unsupported)
-            .contains("compile: --emit-ir is not supported by the selfhost compile driver yet"),
-        "stderr:\n{}",
-        stderr(&unsupported)
+        emit_ir.status.success(),
+        "selfhost compile --emit-ir failed\nstdout:\n{}\nstderr:\n{}",
+        stdout(&emit_ir),
+        stderr(&emit_ir)
+    );
+    assert_eq!(stdout(&emit_ir), "");
+    assert_eq!(stderr(&emit_ir), "");
+    let explicit_ir_text = fs::read_to_string(&explicit_ir).expect("read explicit ir summary");
+    for needle in [
+        "typelisp-ir-summary v1\n",
+        "functions 1\n",
+        "instructions ",
+        "score ",
+    ] {
+        assert!(
+            explicit_ir_text.contains(needle),
+            "IR summary missing {needle:?}:\n{explicit_ir_text}",
+        );
+    }
+
+    let default_ir = driver_output(&driver_bin, &[source_arg, "--emit-ir"]);
+    assert!(
+        default_ir.status.success(),
+        "selfhost compile default --emit-ir failed\nstdout:\n{}\nstderr:\n{}",
+        stdout(&default_ir),
+        stderr(&default_ir)
+    );
+    assert_eq!(stdout(&default_ir), "");
+    assert_eq!(stderr(&default_ir), "");
+    let default_ir_path = source.with_extension("ir");
+    assert!(
+        default_ir_path.is_file(),
+        "default --emit-ir output was not written"
+    );
+    let default_ir_text = fs::read_to_string(&default_ir_path).expect("read default ir summary");
+    assert!(
+        default_ir_text.contains("typelisp-ir-summary v1\n"),
+        "default IR summary:\n{default_ir_text}"
     );
 
     let bad_source = dir.join("bad.tl");
@@ -2063,6 +2100,51 @@ fn selfhost_build_run_planners_emit_host_action_plans() {
     );
 }
 
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[test]
+fn selfhost_build_run_planners_default_to_host_target() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let expected_target = if cfg!(target_os = "windows") {
+        "windows-x86_64"
+    } else {
+        "linux-x86_64"
+    };
+
+    let build_driver = manifest_dir.join("selfhost").join("build.tl");
+    let build_driver_arg = build_driver.to_str().expect("build driver path is utf-8");
+    let build_plan = typelisp(&["run", build_driver_arg, "--", "main.tl"]);
+    assert!(
+        build_plan.status.success(),
+        "selfhost build planner default-target probe failed\nstdout:\n{}\nstderr:\n{}",
+        stdout(&build_plan),
+        stderr(&build_plan)
+    );
+    assert_eq!(stderr(&build_plan), "");
+    let build_stdout = stdout(&build_plan).replace("\r\n", "\n");
+    assert!(
+        build_stdout.contains(&format!("target {expected_target}\n")),
+        "build planner should default to host target {expected_target}\nstdout:\n{}",
+        stdout(&build_plan)
+    );
+
+    let run_driver = manifest_dir.join("selfhost").join("run.tl");
+    let run_driver_arg = run_driver.to_str().expect("run driver path is utf-8");
+    let run_plan = typelisp(&["run", run_driver_arg, "--", "main.tl"]);
+    assert!(
+        run_plan.status.success(),
+        "selfhost run planner default-target probe failed\nstdout:\n{}\nstderr:\n{}",
+        stdout(&run_plan),
+        stderr(&run_plan)
+    );
+    assert_eq!(stderr(&run_plan), "");
+    let run_stdout = stdout(&run_plan).replace("\r\n", "\n");
+    assert!(
+        run_stdout.contains(&format!("target {expected_target}\n")),
+        "run planner should default to host target {expected_target}\nstdout:\n{}",
+        stdout(&run_plan)
+    );
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn run_accepts_backend_mode_flag_with_avx512() {
@@ -2099,13 +2181,7 @@ fn run_forwards_child_output_and_status() {
     )
     .expect("write source");
     let source_arg = source.to_str().expect("source path is utf-8");
-    let mut args = vec!["run", source_arg];
-    if cfg!(target_os = "windows") {
-        args.push("--target");
-        args.push("windows-x86_64");
-    }
-
-    let output = typelisp(&args);
+    let output = typelisp(&["run", source_arg]);
 
     assert_eq!(
         output.status.code(),
@@ -2131,14 +2207,8 @@ fn run_stdlib_env_fixture_reads_host_environment() {
     } else {
         ":"
     };
-    let mut args = vec!["run", source_arg, "--stdlib-root", stdlib_arg];
-    if cfg!(target_os = "windows") {
-        args.push("--target");
-        args.push("windows-x86_64");
-    }
-
     let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .args(args)
+        .args(["run", source_arg, "--stdlib-root", stdlib_arg])
         .env("TYPELISP_STDLIB_TEST_EMPTY", "")
         .env("TYPELISP_STDLIB_TEST_VALUE", "env-value-854")
         .env(
@@ -2173,13 +2243,7 @@ fn run_forwards_stdin_to_child() {
     )
     .expect("write source");
     let source_arg = source.to_str().expect("source path is utf-8");
-    let mut args = vec!["run", source_arg];
-    if cfg!(target_os = "windows") {
-        args.push("--target");
-        args.push("windows-x86_64");
-    }
-
-    let output = typelisp_with_stdin(&args, "hello from stdin\n");
+    let output = typelisp_with_stdin(&["run", source_arg], "hello from stdin\n");
 
     assert_eq!(
         output.status.code(),
@@ -2505,6 +2569,50 @@ fn build_source_reports_missing_assembler_with_target_and_tool() {
         stderr(&output).contains(expected),
         "stderr:\n{}",
         stderr(&output)
+    );
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[test]
+fn build_source_default_target_matches_host() {
+    let dir = fixture_dir("build-source-default-host-target");
+    let source = write_main_source(&dir);
+    let source_arg = source.to_str().expect("source path is utf-8");
+    let bin_path = if cfg!(target_os = "windows") {
+        source.with_extension("exe")
+    } else {
+        source.with_extension("")
+    };
+
+    let output = typelisp(&["build", source_arg]);
+
+    assert!(
+        output.status.success(),
+        "source build failed\nstdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert!(
+        stdout(&output).contains(&format!("Generated: {}", bin_path.display())),
+        "source build stdout should name host executable\nstdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert!(
+        bin_path.exists(),
+        "source build did not write host executable: {}",
+        bin_path.display()
+    );
+
+    let run = Command::new(&bin_path)
+        .output()
+        .expect("run default-target build output");
+    assert_eq!(
+        run.status.code(),
+        Some(42),
+        "default-target build output exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
     );
 }
 

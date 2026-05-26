@@ -2951,29 +2951,33 @@
                                             provides-write-file
                                             (if (string-eq
                                               name
-                                              ".L_tl_file_exists_status")
-                                              provides-file-exists
+                                              ".L_tl_append_file_status")
+                                              provides-write-file
                                               (if (string-eq
                                                 name
-                                                ".L_tl_read_stdin_line")
-                                                read-line
+                                                ".L_tl_file_exists_status")
+                                                provides-file-exists
                                                 (if (string-eq
                                                   name
-                                                  ".L_tl_read_stdin_bytes")
-                                                  read-bytes
+                                                  ".L_tl_read_stdin_line")
+                                                  read-line
                                                   (if (string-eq
                                                     name
-                                                    ".L_tl_stdin_eof")
-                                                    stdin-eof
+                                                    ".L_tl_read_stdin_bytes")
+                                                    read-bytes
                                                     (if (string-eq
                                                       name
-                                                      ".L_tl_flush_stdout")
-                                                      flush-stdout
+                                                      ".L_tl_stdin_eof")
+                                                      stdin-eof
                                                       (if (string-eq
                                                         name
-                                                        "tl_random_system_seed")
-                                                        random-system-seed
-                                                        false)))))))))))))))))))))))))]))
+                                                        ".L_tl_flush_stdout")
+                                                        flush-stdout
+                                                        (if (string-eq
+                                                          name
+                                                          "tl_random_system_seed")
+                                                          random-system-seed
+                                                          false))))))))))))))))))))))))))]))
 
 (define (compiler-backend-runtime-plan-for
   [functions : CompilerIrFunctionList]
@@ -3041,6 +3045,10 @@
       (compiler-backend-extern-list-references?
         externs
         ".L_tl_write_file_status")]
+    [extern-append-file-status : bool
+      (compiler-backend-extern-list-references?
+        externs
+        ".L_tl_append_file_status")]
     [extern-file-exists-status : bool
       (compiler-backend-extern-list-references?
         externs
@@ -3097,6 +3105,10 @@
       (compiler-backend-function-list-calls?
         functions
         ".L_tl_write_file_status")]
+    [calls-append-file-status : bool
+      (compiler-backend-function-list-calls?
+        functions
+        ".L_tl_append_file_status")]
     [calls-file-exists-status : bool
       (compiler-backend-function-list-calls?
         functions
@@ -3145,7 +3157,9 @@
       [needs-write-file : bool
         (or
           (or extern-write-file calls-write-file)
-          (or extern-write-file-status calls-write-file-status))]
+          (or
+            (or extern-write-file-status calls-write-file-status)
+            (or extern-append-file-status calls-append-file-status)))]
       [needs-file-exists : bool
         (or
           (or extern-file-exists calls-file-exists)
@@ -4170,6 +4184,96 @@ tl_print_err:
 
 ")
 
+(define (compiler-backend-runtime-append-file-status-functions) : String
+  ".L_tl_append_file_status:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    sub $8, %rsp
+    movq %rdi, %rbx
+    movq %rsi, %r12
+    movq %rdx, %r13
+    movq %rcx, %r14
+    cmpq $0, %r12
+    jl .L_tl_append_file_status_invalid
+    cmpq $0, %r14
+    jl .L_tl_append_file_status_invalid
+    movq %r12, %rdi
+    addq $1, %rdi
+    js .L_tl_append_file_status_invalid
+    call tl_alloc
+    movq %rax, %r15
+    xorq %rcx, %rcx
+.L_tl_append_file_status_path_copy_loop:
+    cmpq %r12, %rcx
+    jge .L_tl_append_file_status_path_copy_done
+    movzbl (%rbx,%rcx), %edx
+    movb %dl, (%r15,%rcx)
+    incq %rcx
+    jmp .L_tl_append_file_status_path_copy_loop
+.L_tl_append_file_status_path_copy_done:
+    movb $0, (%r15,%r12)
+    movq $257, %rax
+    movq $-100, %rdi
+    movq %r15, %rsi
+    movq $1089, %rdx
+    movq $438, %r10
+    syscall
+    testq %rax, %rax
+    js .L_tl_append_file_status_error_from_rax
+    movq %rax, %r15
+    movq $1, %rax
+    movq %r15, %rdi
+    movq %r13, %rsi
+    movq %r14, %rdx
+    syscall
+    testq %rax, %rax
+    js .L_tl_append_file_status_close_error_from_rax
+    cmpq %r14, %rax
+    jne .L_tl_append_file_status_short_write
+    movq $3, %rax
+    movq %r15, %rdi
+    syscall
+    testq %rax, %rax
+    js .L_tl_append_file_status_error_from_rax
+    xorq %rax, %rax
+    jmp .L_tl_append_file_status_return
+.L_tl_append_file_status_short_write:
+    movq $5, %r12
+    movq $3, %rax
+    movq %r15, %rdi
+    syscall
+    movq %r12, %rax
+    jmp .L_tl_append_file_status_return
+.L_tl_append_file_status_close_error_from_rax:
+    negq %rax
+    movq %rax, %r12
+    movq $3, %rax
+    movq %r15, %rdi
+    syscall
+    movq %r12, %rax
+    jmp .L_tl_append_file_status_return
+.L_tl_append_file_status_error_from_rax:
+    negq %rax
+    jmp .L_tl_append_file_status_return
+.L_tl_append_file_status_invalid:
+    movq $22, %rax
+.L_tl_append_file_status_return:
+    add $8, %rsp
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+")
+
 (define (compiler-backend-runtime-file-exists-status-functions) : String
   ".L_tl_file_exists_status:
     push %rbp
@@ -4641,6 +4745,115 @@ tl_print_err:
 .L_tl_write_file_status_win_invalid:
     movq $22, %rax
 .L_tl_write_file_status_win_return:
+    add $8, %rsp
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+")
+
+(define (compiler-backend-runtime-windows-append-file-status-functions) : String
+  ".L_tl_append_file_status:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    sub $8, %rsp
+    movq %rcx, %rbx
+    movq %rdx, %r12
+    movq %r8, %r13
+    movq %r9, %r14
+    cmpq $0, %r12
+    jl .L_tl_append_file_status_win_invalid
+    cmpq $0, %r14
+    jl .L_tl_append_file_status_win_invalid
+    movq %r12, %rcx
+    addq $1, %rcx
+    js .L_tl_append_file_status_win_invalid
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %rax, %r15
+    xorq %r10, %r10
+.L_tl_append_file_status_win_path_copy_loop:
+    cmpq %r12, %r10
+    jge .L_tl_append_file_status_win_path_copy_done
+    movzbl (%rbx,%r10), %edx
+    movb %dl, (%r15,%r10)
+    incq %r10
+    jmp .L_tl_append_file_status_win_path_copy_loop
+.L_tl_append_file_status_win_path_copy_done:
+    movb $0, (%r15,%r12)
+    movq %r15, %rcx
+    movq $0x8109, %rdx
+    movq $0x180, %r8
+    sub $32, %rsp
+    call _open
+    add $32, %rsp
+    testl %eax, %eax
+    js .L_tl_append_file_status_win_errno
+    movslq %eax, %r15
+    movq %r15, %rcx
+    movq %r13, %rdx
+    movq %r14, %r8
+    sub $32, %rsp
+    call _write
+    add $32, %rsp
+    testl %eax, %eax
+    js .L_tl_append_file_status_win_close_errno
+    movslq %eax, %rax
+    cmpq %r14, %rax
+    jne .L_tl_append_file_status_win_short_write
+    movq %r15, %rcx
+    sub $32, %rsp
+    call _close
+    add $32, %rsp
+    testl %eax, %eax
+    js .L_tl_append_file_status_win_errno
+    xorq %rax, %rax
+    jmp .L_tl_append_file_status_win_return
+.L_tl_append_file_status_win_short_write:
+    movq $5, %r12
+    movq %r15, %rcx
+    sub $32, %rsp
+    call _close
+    add $32, %rsp
+    movq %r12, %rax
+    jmp .L_tl_append_file_status_win_return
+.L_tl_append_file_status_win_close_errno:
+    sub $32, %rsp
+    call _errno
+    add $32, %rsp
+    movslq (%rax), %r12
+    testq %r12, %r12
+    jne .L_tl_append_file_status_win_close_saved
+    movq $1, %r12
+.L_tl_append_file_status_win_close_saved:
+    movq %r15, %rcx
+    sub $32, %rsp
+    call _close
+    add $32, %rsp
+    movq %r12, %rax
+    jmp .L_tl_append_file_status_win_return
+.L_tl_append_file_status_win_errno:
+    sub $32, %rsp
+    call _errno
+    add $32, %rsp
+    movslq (%rax), %rax
+    testq %rax, %rax
+    jne .L_tl_append_file_status_win_return
+    movq $1, %rax
+    jmp .L_tl_append_file_status_win_return
+.L_tl_append_file_status_win_invalid:
+    movq $22, %rax
+.L_tl_append_file_status_win_return:
     add $8, %rsp
     pop %r15
     pop %r14
@@ -6253,6 +6466,12 @@ tl_random_system_seed:
               (compiler-backend-runtime-windows-write-file-status-functions)
               (compiler-backend-runtime-write-file-status-functions))
             "")]
+        [append-file-status-asm : String
+          (if write-file
+            (if (compiler-backend-target-windows? target)
+              (compiler-backend-runtime-windows-append-file-status-functions)
+              (compiler-backend-runtime-append-file-status-functions))
+            "")]
         [file-exists-asm : String
           (if file-exists
             (if (compiler-backend-target-windows? target)
@@ -6344,20 +6563,22 @@ tl_random_system_seed:
                                         (string-append
                                           write-file-status-asm
                                           (string-append
-                                            file-exists-asm
+                                            append-file-status-asm
                                             (string-append
-                                              file-exists-status-asm
+                                              file-exists-asm
                                               (string-append
-                                                process-output-asm
+                                                file-exists-status-asm
                                                 (string-append
-                                                  read-line-asm
+                                                  process-output-asm
                                                   (string-append
-                                                    read-bytes-asm
+                                                    read-line-asm
                                                     (string-append
-                                                      stdin-eof-asm
+                                                      read-bytes-asm
                                                       (string-append
-                                                        flush-stdout-asm
-                                                        random-system-seed-asm)))))))))))))))))))))))))]))
+                                                        stdin-eof-asm
+                                                        (string-append
+                                                          flush-stdout-asm
+                                                          random-system-seed-asm))))))))))))))))))))))))))]))
 
 ;; Argument register for call arg `idx` under the target's calling convention.
 ;; System V (Linux) uses rdi/rsi/rdx/rcx/r8/r9 via `compiler-backend-arg-reg`;
@@ -8241,6 +8462,20 @@ tl_random_system_seed:
                   (compiler-backend-string-contains? asm "tl_alloc:\n")))))))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-append-file-status-ok?) : bool
+  (match (compiler-backend-emit-source
+    "(define (main) : i64 (append-file-status \"out.txt\" \"x\"))")
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm ".L_tl_append_file_status:\n")
+        (and
+          (compiler-backend-string-contains? asm "    movq $1089, %rdx\n")
+          (not
+            (compiler-backend-string-contains?
+              asm
+              ".extern .L_tl_append_file_status\n"))))]
+    [(ErrCompilerBackend _) false]))
+
 ;; A refutable literal payload match (#651) lowers to a payload comparison that
 ;; branches to the next arm; confirm the resulting CFG reaches valid assembly.
 (define (compiler-backend-literal-payload-source) : String
@@ -8443,10 +8678,12 @@ tl_random_system_seed:
                                         (and
                                           (compiler-backend-windows-process-output-ok?)
                                           (and
-                                            (compiler-backend-user-helper-name-ok?)
+                                            (compiler-backend-append-file-status-ok?)
                                             (and
-                                              (compiler-backend-runtime-coexist-ok?)
-                                              (compiler-backend-module-symbol-ok?)))))))))))))))))))))))
+                                              (compiler-backend-user-helper-name-ok?)
+                                              (and
+                                                (compiler-backend-runtime-coexist-ok?)
+                                                (compiler-backend-module-symbol-ok?))))))))))))))))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

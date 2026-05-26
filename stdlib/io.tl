@@ -5,7 +5,8 @@
 ;;;;
 ;;;; Primitives required from the compiler/runtime: `read-file`, `write-file`,
 ;;;; `file-exists?`, `read-file-status`, `write-file-status`,
-;;;; `file-exists-status`, `file-open-status`, `file-close-status`,
+;;;; `append-file-status`, `file-exists-status`, `file-open-status`,
+;;;; `file-close-status`,
 ;;;; `read-stdin-line`, `read-stdin-bytes`, `stdin-eof?`, `print-string`,
 ;;;; `print-error`, `flush-stdout`, `int->string`, `string-append`, and
 ;;;; `string-length`.
@@ -259,18 +260,17 @@
 
 ;;; Append `contents` to `path`, returning a structured result.
 ;;;
-;;; This helper is non-atomic and rewrites the whole file. It can recover from
-;;; missing reads by creating the file.
+;;; The runtime opens the path in host append mode where available, preserving
+;;; existing contents and creating the file when missing. Empty paths return
+;;; `IoInvalidPath`.
 (define (try-append-file [path : String] [contents : String]) : ResultIoUnit
   (if (io-empty-path? path)
     (ErrIoUnit (IoInvalidPath path))
-    (match (try-read-file path)
-      [(OkIoString existing)
-        (try-write-file path (string-append existing contents))]
-      [(ErrIoString error)
-        (if (io-error-not-found? error)
-          (try-write-file path contents)
-          (ErrIoUnit error))])))
+    (let
+      [status : i64 (append-file-status path contents)]
+      (if (= status io-status-ok)
+        OkIoUnit
+        (ErrIoUnit (io-error-from-status path status))))))
 
 ;;; Read the contents of `path` if it exists, otherwise return `fallback`.
 ;;;
@@ -283,8 +283,8 @@
 
 ;;; Append `contents` to the file at `path`, creating it when absent.
 ;;;
-;;; Implemented as a read-modify-write because there is no append primitive, so
-;;; it is not atomic and rewrites the whole file.
+;;; Uses the runtime append-status primitive: non-truncating, create-if-missing,
+;;; and best-effort host append semantics.
 (define (append-file [path : String] [contents : String]) : unit
   (match (try-append-file path contents)
     [(OkIoUnit) unit]

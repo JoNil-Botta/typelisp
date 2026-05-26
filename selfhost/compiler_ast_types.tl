@@ -135,6 +135,13 @@
   (AstLetBindingNil)
   (AstLetBindingCons AstLetBinding AstLetBindingList))
 
+(defenum AstResourceBinding
+  (AstResourceBinding String AstExpr AstExpr))
+
+(defenum AstResourceBindingList
+  (AstResourceBindingNil)
+  (AstResourceBindingCons AstResourceBinding AstResourceBindingList))
+
 (defenum AstMatchArm
   (AstMatchArm AstPattern AstExpr))
 
@@ -173,6 +180,7 @@
   (AstExprSpmdReduce AstReduceOp String AstType AstExpr AstExpr AstExpr AstExpr)
   (AstExprStructGet AstExpr String)
   (AstExprWithRegion String AstExprList)
+  (AstExprWithResource AstResourceBindingList AstExprList)
   ;; Compile-time-only type value literal: `(type T)`.
   (AstExprTypeLiteral AstType)
   ;; Reserved compile-time evaluation form `(comptime expr)` (#718). Parsed and
@@ -301,12 +309,13 @@
     [(AstExprTry _) 29]
     [(AstExprPtrNull _) 30]
     [(AstExprPtrNullCheck _) 31]
-    [(AstExprPtrRead _) 33]
-    [(AstExprPtrWrite _ _) 34]
-    [(AstExprPtrOffset _ _) 35]
-    [(AstExprPtrCast _ _) 36]
-    [(AstExprPtrToInt _) 37]
-    [(AstExprIntToPtr _ _) 38]))
+    [(AstExprWithResource _ _) 33]
+    [(AstExprPtrRead _) 34]
+    [(AstExprPtrWrite _ _) 35]
+    [(AstExprPtrOffset _ _) 36]
+    [(AstExprPtrCast _ _) 37]
+    [(AstExprPtrToInt _) 38]
+    [(AstExprIntToPtr _ _) 39]))
 
 (define (ast-expr-unspan [expr : AstExpr]) : AstExpr
   (match expr

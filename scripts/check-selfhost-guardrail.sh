@@ -54,35 +54,6 @@ echo "selfhost guardrail: Rust-owned source/test changes detected:"
 sed 's/^/  - /' "$RUST_OWNED"
 
 PR_BODY=${SELFHOST_GUARDRAIL_PR_BODY:-}
-PR_BODY_FILE=${SELFHOST_GUARDRAIL_PR_BODY_FILE:-${GITHUB_EVENT_PATH:-}}
-
-if [ -z "$PR_BODY" ] && [ -n "$PR_BODY_FILE" ] && [ -f "$PR_BODY_FILE" ]; then
-    if command -v python3 >/dev/null 2>&1; then
-        PR_BODY=$(python3 - "$PR_BODY_FILE" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as fh:
-    event = json.load(fh)
-
-body = (event.get("pull_request") or {}).get("body") or ""
-print(body)
-PY
-)
-    elif command -v python >/dev/null 2>&1; then
-        PR_BODY=$(python - "$PR_BODY_FILE" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1]) as fh:
-    event = json.load(fh)
-
-body = (event.get("pull_request") or {}).get("body") or ""
-print(body)
-PY
-)
-    fi
-fi
 
 GUARDRAIL=$(
     printf '%s\n' "$PR_BODY" |

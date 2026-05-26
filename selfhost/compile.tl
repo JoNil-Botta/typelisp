@@ -2,9 +2,10 @@
 ;;
 ;; Wraps compiler_driver.tl's input/output API with the first selfhost compile
 ;; CLI slice: `<file.tl> [-o <file>] [--target <target>]
-;; [--opt-level <0|1|2|3>] [--stdlib-root <dir>...]`.
-;; Backend-mode and IR flags remain Rust-driver-only for now and are rejected
-;; explicitly.
+;; [--opt-level <0|1|2|3>] [--backend-mode scalar] [--stdlib-root <dir>...]`.
+;; `--backend-mode scalar` is accepted (the selfhost backend's native mode);
+;; `avx2`/`avx512` and `--emit-ir` remain Rust-driver-only for now and are
+;; rejected explicitly.
 (import "compiler_driver_core.tl")
 
 (defenum CompileCliConfig
@@ -81,6 +82,30 @@
     "compile: invalid --opt-level "
     value
     "; expected 0, 1, 2, or 3"))
+
+;; `--backend-mode` parity with Rust (which accepts scalar/avx2/avx512). The
+;; selfhost backend is scalar-only, so `scalar` is its native mode and is
+;; accepted as a no-op; `avx2`/`avx512` are valid modes that still need the Rust
+;; driver until selfhost SIMD lands (#1014); anything else is an unknown mode
+;; (message matches the Rust driver).
+(defenum ResultCompileCliBackendMode
+  (OkCompileCliBackendMode)
+  (ErrCompileCliBackendMode String))
+
+(define (compile-cli-backend-mode [value : String]) : ResultCompileCliBackendMode
+  (if (string-eq value "scalar")
+    (OkCompileCliBackendMode)
+    (if (or (string-eq value "avx2") (string-eq value "avx512"))
+      (ErrCompileCliBackendMode
+        (compile-cli-cat3
+          "compile: --backend-mode "
+          value
+          " requires the Rust compile driver until selfhost SIMD support (#1014)"))
+      (ErrCompileCliBackendMode
+        (compile-cli-cat3
+          "Error: unknown backend mode '"
+          value
+          "'. Expected scalar, avx2, or avx512")))))
 
 (define (compile-cli-root-list-append
   [roots : CompilerLoadRootList]
@@ -190,7 +215,21 @@
                 (if (>= (+ idx 1) count)
                   (ErrCompileCliConfig
                     "compile: --backend-mode requires a value")
-                  (ErrCompileCliConfig (compile-cli-unsupported-flag current)))
+                  (match (compile-cli-backend-mode (arg (+ idx 1)))
+                    [(OkCompileCliBackendMode)
+                      (compile-cli-parse-options
+                        (+ idx 2)
+                        count
+                        input-path
+                        output-path
+                        has-output
+                        has-target
+                        target
+                        stdlib-roots
+                        has-opt-level
+                        opt-level)]
+                    [(ErrCompileCliBackendMode message)
+                      (ErrCompileCliConfig message)]))
                 (if (string-eq current "--emit-ir")
                   (ErrCompileCliConfig (compile-cli-unsupported-flag current))
                   (if (compile-cli-flag? current)

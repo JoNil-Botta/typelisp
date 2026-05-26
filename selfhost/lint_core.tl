@@ -84,6 +84,24 @@
             threshold
             (lint-walk-expr init threshold acc))])]))
 
+;;; Walk each resource initializer and cleanup expression in `bindings`.
+(define (lint-walk-resource-bindings
+  [bindings : AstResourceBindingList]
+  [threshold : i64]
+  [acc : LintFindingList]) : LintFindingList
+  (match bindings
+    [(AstResourceBindingNil) acc]
+    [(AstResourceBindingCons binding rest)
+      (match binding
+        [(AstResourceBinding _ init cleanup)
+          (lint-walk-resource-bindings
+            rest
+            threshold
+            (lint-walk-expr
+              cleanup
+              threshold
+              (lint-walk-expr init threshold acc)))])]))
+
 ;;; Walk each match-arm body in `arms`.
 (define (lint-walk-match-arms
   [arms : AstMatchArmList]
@@ -216,6 +234,11 @@
           (lint-walk-expr end threshold (lint-walk-expr start threshold acc))))]
     [(AstExprStructGet receiver _) (lint-walk-expr receiver threshold acc)]
     [(AstExprWithRegion _ body) (lint-walk-expr-list body threshold acc)]
+    [(AstExprWithResource bindings body)
+      (lint-walk-expr-list
+        body
+        threshold
+        (lint-walk-resource-bindings bindings threshold acc))]
     [(AstExprComptime inner) (lint-walk-expr inner threshold acc)]
     [(AstExprTry inner) (lint-walk-expr inner threshold acc)]
     [(AstExprPtrNull _) acc]

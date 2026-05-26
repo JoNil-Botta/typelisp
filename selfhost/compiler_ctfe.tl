@@ -177,6 +177,7 @@
     [(AstExprSpmdReduce _ _ _ _ _ _ _) "spmd-reduce"]
     [(AstExprStructGet _ _) "struct-get"]
     [(AstExprWithRegion _ _) "with-arena"]
+    [(AstExprWithResource _ _) "with"]
     [(AstExprTypeLiteral _) "type literal"]
     [(AstExprComptime _) "comptime"]
     [(AstExprTry _) "try"]

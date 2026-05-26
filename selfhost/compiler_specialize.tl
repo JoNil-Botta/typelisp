@@ -1105,6 +1105,8 @@
         [(OkSpecExprList rewritten state2)
           (OkSpecExpr (AstExprWithRegion region rewritten) state2)]
         [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
+    [(AstExprWithResource bindings body)
+      (OkSpecExpr (AstExprWithResource bindings body) state)]
     [(AstExprComptime inner)
       (match (spec-rewrite-expr inner templates state)
         [(OkSpecExpr rewritten state2)
@@ -1334,6 +1336,8 @@
         [(OkSpecSubExprList rewritten)
           (OkSpecSubExpr (AstExprWithRegion region rewritten))]
         [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
+    [(AstExprWithResource bindings body)
+      (OkSpecSubExpr (AstExprWithResource bindings body))]
     [(AstExprComptime inner)
       (match (spec-substitute-values-expr inner subs)
         [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprComptime rewritten))]
@@ -1631,6 +1635,8 @@
         [(OkSpecSubExprList rewritten)
           (OkSpecSubExpr (AstExprWithRegion region rewritten))]
         [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
+    [(AstExprWithResource bindings body)
+      (OkSpecSubExpr (AstExprWithResource bindings body))]
     [(AstExprComptime inner)
       (match (spec-substitute-types-expr inner subs)
         [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprComptime rewritten))]

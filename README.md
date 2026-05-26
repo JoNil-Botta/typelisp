@@ -300,31 +300,37 @@ Array and string indexing is bounds-checked at runtime.
 
 ### Memory and aliasing
 
-TypeLisp does not currently have source-level references, borrowing, ownership
-transfer, destructors, `free`, or a garbage collector. Aggregate values such as
-`String`, dynamic arrays, structs, and enums are implemented as pointer-sized
-handles in the IR/ABI, but those handles are not checked language references.
-The v1 raw pointer design is now specified as explicit unsafe syntax:
+TypeLisp does not currently have source-level borrow expressions, destructors,
+`free`, or a garbage collector. `SPEC.md` now defines v1 move-only aggregate
+handle semantics for the selfhost checker: scalars, raw pointers, and
+non-capturing function values are copyable, while `String`, arrays, tuples,
+structs, enums, and capturing closures move in by-value positions. The current
+Rust-stage compiler may still accept aggregate copies until that checker lands.
+Aggregate values are implemented as pointer-sized handles in the IR/ABI, but
+those handles are not checked language references. The v1 raw pointer design is
+now specified as explicit unsafe syntax:
 `(Ptr T)`/`(MutPtr T)` are nullable, copyable pointer-sized values, and
 dereference/write/offset/cast operations require `(unsafe ...)`. That surface is
 for FFI/runtime work and is not implemented yet; it is not the future safe
 reference/borrow model.
 
-`String` values are immutable at the source level. Dynamic arrays are shared
-mutable buffers: copying or passing an `(Array T)` value aliases the same
-storage, so `array-set!` through one handle is visible through another. Struct
-and enum values are pointer-shaped internally; structs are read-only today
-because `struct-set!` is not implemented. Heap allocation uses a
-backend-emitted `tl_alloc` bump allocator and allocations live until process
-exit. See [SPEC.md §7](SPEC.md) for the precise current model.
+`String` values are immutable at the source level. Dynamic arrays are mutable
+buffers reached through a live owner handle; `array-set!` is a temporary
+borrow-like compatibility operation until mutable references land. Struct and
+enum values are pointer-shaped internally; structs are read-only today because
+`struct-set!` is not implemented. Heap allocation uses a backend-emitted
+`tl_alloc` bump allocator and allocations live until process exit. See
+[SPEC.md](SPEC.md) sections 4.6.2 and 7 for the precise current and specified
+model.
 
 The v1 reclamation direction keeps the program-lifetime arena as the default
 allocation target and does not add general per-object `free` or GC yet.
 `String` buffers, dynamic array storage, returned enum/struct storage, and
 self-hosted data structures all remain heap allocations in the active arena.
 General `free` is deferred until ownership, borrowing, and reference semantics
-are designed, because current aggregate handles can be copied freely. A tracing
-GC is also larger than the next step.
+are enforced, because arbitrary object reclamation before move/borrow checking
+would make double-free and use-after-free errors expressible. A tracing GC is
+also larger than the next step.
 
 The first safe reclamation surface is `(with-arena r body ...)` — a
 lexically scoped arena with **static escape checking**. The arena model uses

@@ -134,8 +134,9 @@ implementation lands incrementally:
 
 - **#1056** — implemented: opaque `FileHandle`, the `OpenMode` enum
   (`OpenRead`, `OpenWriteTruncate`, `OpenWriteAppend`), `file-open` returning
-  `ResultIoFile`, and `file-close`. v1 requires explicit close; there is no
-  implicit drop until #805.
+  `ResultIoFile`, and `file-close`. v1 requires explicit close; move-only
+  aggregate semantics are specified in `SPEC.md`, but implicit drop/close still
+  waits for scoped cleanup support.
 - **#1057** — implemented: `file-read-chunk` returning `ResultIoRead` / `FileRead` (a
   `String` payload plus a sticky EOF flag, mirroring `StdinRead`). Chunk bytes
   allocate in the active arena and stay `String`-typed until #807 adds a

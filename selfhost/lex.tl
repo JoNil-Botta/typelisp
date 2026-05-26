@@ -309,17 +309,13 @@
 
 ;; Map a multi-letter `#\name'` character literal to its character payload.
 (define (named-char-result [name : String]) : ResultLexChar
-  (if (string-eq name "space")
-    (OkLexChar #\space')
-    (if (string-eq name "newline")
-      (OkLexChar #\newline')
-      (if (string-eq name "tab")
-        (OkLexChar #\tab')
-        (if (string-eq name "return")
-          (OkLexChar #\return')
-          (if (string-eq name "nul")
-            (OkLexChar #\nul')
-            (ErrLexChar "lexer: unknown named character literal")))))))
+  (cond
+    [(string-eq name "space") (OkLexChar #\space')]
+    [(string-eq name "newline") (OkLexChar #\newline')]
+    [(string-eq name "tab") (OkLexChar #\tab')]
+    [(string-eq name "return") (OkLexChar #\return')]
+    [(string-eq name "nul") (OkLexChar #\nul')]
+    [else (ErrLexChar "lexer: unknown named character literal")]))
 
 (define (named-char [name : String]) : char
   (match (named-char-result name)
@@ -332,15 +328,12 @@
 ;; Map single-character escapes after `#\`; unknown escapes read as the literal
 ;; character, matching stage0 (`#\a'` is `a`).
 (define (escaped-char [c : char]) : char
-  (if (= c #n')
-    #\newline'
-    (if (= c #t')
-      #\tab'
-      (if (= c #r')
-        #\return'
-        (if (= c #0')
-          #\nul'
-          c)))))
+  (cond
+    [(= c #n') #\newline']
+    [(= c #t') #\tab']
+    [(= c #r') #\return']
+    [(= c #0') #\nul']
+    [else c]))
 
 ;; Character payload for a literal beginning at `i`, where `src[i]` is `#`.
 (define (char-literal-value-result [src : String] [i : i64] [n : i64]) : ResultLexChar

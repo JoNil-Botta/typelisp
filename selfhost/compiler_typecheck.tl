@@ -962,6 +962,22 @@
                 [(ErrTcUnit message) (ErrTcUnit message)])]
             [(ErrTcUnit message) (ErrTcUnit message)])])]))
 
+(define (tc-source-resource-binding-list-policy-ok
+  [ctx : TcContext]
+  [bindings : AstResourceBindingList]) : ResultTcUnit
+  (match bindings
+    [(AstResourceBindingNil) OkTcUnit]
+    [(AstResourceBindingCons binding rest)
+      (match binding
+        [(AstResourceBinding _ init cleanup)
+          (match (tc-source-expr-policy-ok ctx init)
+            [(OkTcUnit)
+              (match (tc-source-expr-policy-ok ctx cleanup)
+                [(OkTcUnit)
+                  (tc-source-resource-binding-list-policy-ok ctx rest)]
+                [(ErrTcUnit message) (ErrTcUnit message)])]
+            [(ErrTcUnit message) (ErrTcUnit message)])])]))
+
 (define (tc-source-expr-list-policy-ok [ctx : TcContext] [exprs : AstExprList]) : ResultTcUnit
   (match exprs
     [(AstExprNil) OkTcUnit]
@@ -1052,6 +1068,10 @@
         [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstExprStructGet receiver _) (tc-source-expr-policy-ok ctx receiver)]
     [(AstExprWithRegion _ body) (tc-source-expr-list-policy-ok ctx body)]
+    [(AstExprWithResource bindings body)
+      (match (tc-source-resource-binding-list-policy-ok ctx bindings)
+        [(OkTcUnit) (tc-source-expr-list-policy-ok ctx body)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstExprComptime inner) (tc-source-expr-policy-ok ctx inner)]
     [(AstExprTry inner) (tc-source-expr-policy-ok ctx inner)]
     [(AstExprPtrNullCheck inner) (tc-source-expr-policy-ok ctx inner)]
@@ -2650,6 +2670,9 @@
         [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
     [(AstExprWithRegion region body)
       (tc-spmd-begin-list ctx (tc-push-region env region) spmd-env body)]
+    [(AstExprWithResource _ _)
+      (ErrTcSpmdExprInfo
+        "typecheck: resource with is not implemented yet (#907)")]
     [(AstExprComptime inner)
       (match (tc-spmd-expr ctx env spmd-env inner)
         [(OkTcSpmdExprInfo info)
@@ -2720,6 +2743,18 @@
             rest
             (tc-string-list-add bound name))])]))
 
+(define (tc-resource-binding-list-add-bound-names
+  [bindings : AstResourceBindingList]
+  [bound : TcStringList]) : TcStringList
+  (match bindings
+    [(AstResourceBindingNil) bound]
+    [(AstResourceBindingCons binding rest)
+      (match binding
+        [(AstResourceBinding name _ _)
+          (tc-resource-binding-list-add-bound-names
+            rest
+            (tc-string-list-add bound name))])]))
+
 (define (tc-expr-list-uses-free-name?
   [exprs : AstExprList]
   [name : String]
@@ -2746,6 +2781,24 @@
               rest
               name
               (tc-string-list-add bound bind-name)))])]))
+
+(define (tc-resource-binding-list-uses-free-name?
+  [bindings : AstResourceBindingList]
+  [name : String]
+  [bound : TcStringList]) : bool
+  (match bindings
+    [(AstResourceBindingNil) false]
+    [(AstResourceBindingCons binding rest)
+      (match binding
+        [(AstResourceBinding bind-name init cleanup)
+          (or
+            (tc-expr-uses-free-name? init name bound)
+            (or
+              (tc-expr-uses-free-name? cleanup name bound)
+              (tc-resource-binding-list-uses-free-name?
+                rest
+                name
+                (tc-string-list-add bound bind-name))))])]))
 
 (define (tc-match-arms-use-free-name?
   [arms : AstMatchArmList]
@@ -2856,6 +2909,13 @@
     [(AstExprStructGet receiver _)
       (tc-expr-uses-free-name? receiver name bound)]
     [(AstExprWithRegion _ body) (tc-expr-list-uses-free-name? body name bound)]
+    [(AstExprWithResource bindings body)
+      (or
+        (tc-resource-binding-list-uses-free-name? bindings name bound)
+        (tc-expr-list-uses-free-name?
+          body
+          name
+          (tc-resource-binding-list-add-bound-names bindings bound)))]
     [(AstExprTypeLiteral _) false]
     [(AstExprComptime inner) (tc-expr-uses-free-name? inner name bound)]
     [(AstExprTry inner) (tc-expr-uses-free-name? inner name bound)]
@@ -4212,6 +4272,8 @@
                   (string-append region "'")))
               (OkTcType body-ty))]
           [(ErrTcType message) (ErrTcType message)]))]
+    [(AstExprWithResource _ _)
+      (ErrTcType "typecheck: resource with is not implemented yet (#907)")]
     [(AstExprComptime inner)
       (match (compiler-ctfe-eval inner (ctfe-env-empty) (ctfe-fuel-limit))
         [(OkCtfe value _)

@@ -16,6 +16,8 @@ fn compile_selfhost_source(source_file: &str, work_name: &str, asm_file: &str) -
         .arg(&source_path)
         .arg("-o")
         .arg(&asm_path)
+        .arg("--stdlib-root")
+        .arg(manifest_dir.join("stdlib"))
         .output()
         .expect("run typelisp compile");
 

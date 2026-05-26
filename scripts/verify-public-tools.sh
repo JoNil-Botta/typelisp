@@ -681,49 +681,50 @@ assert_contains "$out" "from-plan"
 if [ "$HOST_OS" = linux ]; then
     SELFHOST_PLANNER_DIR="$WORKDIR/selfhost-planners"
     mkdir -p "$SELFHOST_PLANNER_DIR/with space" "$SELFHOST_PLANNER_DIR/stdlib one"
-    run_cmd selfhost-build-planner-build "$COMPILER" build selfhost/build.tl -o "$SELFHOST_PLANNER_DIR/build-planner"
+    run_cmd selfhost-build-tool-build "$COMPILER" build selfhost/build.tl --stdlib-root "$ROOT/stdlib" -o "$SELFHOST_PLANNER_DIR/build-tool"
     assert_success
     assert_contains "$out" "Generated:"
-    run_cmd selfhost-run-planner-build "$COMPILER" build selfhost/run.tl -o "$SELFHOST_PLANNER_DIR/run-planner"
+    run_cmd selfhost-run-tool-build "$COMPILER" build selfhost/run.tl --stdlib-root "$ROOT/stdlib" -o "$SELFHOST_PLANNER_DIR/run-tool"
     assert_success
     assert_contains "$out" "Generated:"
 
     PLANNER_SOURCE="$SELFHOST_PLANNER_DIR/with space/main file.tl"
     PLANNER_OUTPUT="$SELFHOST_PLANNER_DIR/with space/the program"
-    : > "$PLANNER_SOURCE"
-    run_cmd selfhost-build-plan "$SELFHOST_PLANNER_DIR/build-planner" "$PLANNER_SOURCE" -o "$PLANNER_OUTPUT" --target windows-x86_64 --backend-mode avx2 --stdlib-root "$SELFHOST_PLANNER_DIR/stdlib one" --stdlib-root "stdlib:two"
+    cat > "$PLANNER_SOURCE" <<'EOF'
+(define (main) : i64 23)
+EOF
+    run_cmd selfhost-build-tool "$SELFHOST_PLANNER_DIR/build-tool" --direct "$PLANNER_SOURCE" -o "$PLANNER_OUTPUT" --target linux-x86_64 --backend-mode avx2
     assert_success
     assert_stderr_empty
-    assert_contains "$out" "action build-source"
-    assert_contains "$out" "source $(host_netstring "$PLANNER_SOURCE")"
-    assert_contains "$out" "output $(host_netstring "$PLANNER_OUTPUT")"
-    assert_contains "$out" "target windows-x86_64"
-    assert_contains "$out" "backend-mode avx2"
-    assert_contains "$out" "stdlib-root $(host_netstring "$SELFHOST_PLANNER_DIR/stdlib one")"
-    assert_contains "$out" "stdlib-root $(host_netstring "stdlib:two")"
-
-    run_cmd selfhost-run-plan "$SELFHOST_PLANNER_DIR/run-planner" "$PLANNER_SOURCE" --target linux-x86_64 --backend-mode avx512 --stdlib-root "$SELFHOST_PLANNER_DIR/stdlib one" -- "arg with spaces" "colon:arg"
-    assert_success
+    assert_contains "$out" "Generated: $PLANNER_OUTPUT"
+    [ -f "$PLANNER_OUTPUT" ] || fail "selfhost build tool did not write executable"
+    run_cmd selfhost-build-tool-output "$PLANNER_OUTPUT"
+    assert_code 23
     assert_stderr_empty
-    assert_contains "$out" "action run-source"
-    assert_contains "$out" "source $(host_netstring "$PLANNER_SOURCE")"
-    assert_contains "$out" "target linux-x86_64"
-    assert_contains "$out" "backend-mode avx512"
-    assert_contains "$out" "stdlib-root $(host_netstring "$SELFHOST_PLANNER_DIR/stdlib one")"
-    assert_contains "$out" "runtime-arg $(host_netstring "arg with spaces")"
-    assert_contains "$out" "runtime-arg $(host_netstring "colon:arg")"
 
-    run_cmd selfhost-build-plan-package-rejected "$SELFHOST_PLANNER_DIR/build-planner" --manifest-path typelisp.pkg
+    PLANNER_RUN_SOURCE="$SELFHOST_PLANNER_DIR/with space/run file.tl"
+    cat > "$PLANNER_RUN_SOURCE" <<'EOF'
+(define (main) : i64
+  (begin
+    (print-string (arg 1))
+    (if (string-eq (arg 2) "colon:arg") 13 2)))
+EOF
+    run_cmd selfhost-run-tool "$SELFHOST_PLANNER_DIR/run-tool" --direct "$PLANNER_RUN_SOURCE" --target linux-x86_64 --backend-mode avx512 --stdlib-root "$ROOT/stdlib" -- "arg with spaces" "colon:arg"
+    assert_code 13
+    assert_stderr_empty
+    assert_contains "$out" "arg with spaces"
+
+    run_cmd selfhost-build-tool-package-rejected "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path typelisp.pkg
     assert_failure
     assert_stdout_empty
     assert_contains "$err" "--manifest-path is handled by Rust typelisp build"
 
-    run_cmd selfhost-run-plan-missing-target "$SELFHOST_PLANNER_DIR/run-planner" "$PLANNER_SOURCE" --target
+    run_cmd selfhost-run-tool-missing-target "$SELFHOST_PLANNER_DIR/run-tool" --direct "$PLANNER_SOURCE" --target
     assert_failure
     assert_stdout_empty
     assert_contains "$err" "run: --target requires a value"
 else
-    echo "[public-tools] skipping selfhost build/run planner executables on $HOST_OS"
+    echo "[public-tools] skipping selfhost build/run tool executables on $HOST_OS"
 fi
 
 echo "[public-tools] backend diagnostics"

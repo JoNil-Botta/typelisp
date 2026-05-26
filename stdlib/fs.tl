@@ -12,11 +12,11 @@
 ;;;; (import "stdlib/fs.tl")
 ;;;; (define joined : String (fs-path-join "target" "tool-output.s"))
 ;;;; ```
-(import "stdlib/env.tl")
+(import "env.tl")
 
-(import "stdlib/io.tl")
+(import "io.tl")
 
-(import "stdlib/string.tl")
+(import "string.tl")
 
 ;;; Common host status code for attempting to create an already-existing path.
 (define fs-status-already-exists : i64

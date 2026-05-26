@@ -1955,130 +1955,166 @@ fn selfhost_test_planner_threads_opt_level_into_harness_compile() {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn selfhost_build_run_planners_emit_host_action_plans() {
+fn selfhost_build_run_tools_execute_source_files() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let dir = fixture_dir("selfhost-build-run-planners");
+    let stdlib_root = manifest_dir.join("stdlib");
+    let stdlib_arg = stdlib_root.to_str().expect("stdlib path is utf-8");
 
     let build_driver = manifest_dir.join("selfhost").join("build.tl");
-    let build_bin = dir.join("selfhost-build-planner");
+    let build_bin = dir.join("selfhost-build-tool");
     let build_driver_arg = build_driver.to_str().expect("build driver path is utf-8");
-    let build_bin_arg = build_bin
-        .to_str()
-        .expect("build planner output path is utf-8");
-    let build = typelisp(&["build", build_driver_arg, "-o", build_bin_arg]);
+    let build_bin_arg = build_bin.to_str().expect("build tool output path is utf-8");
+    let build = typelisp(&[
+        "build",
+        build_driver_arg,
+        "--stdlib-root",
+        stdlib_arg,
+        "-o",
+        build_bin_arg,
+    ]);
     assert!(
         build.status.success(),
-        "selfhost build planner build failed\nstdout:\n{}\nstderr:\n{}",
+        "selfhost build tool build failed\nstdout:\n{}\nstderr:\n{}",
         stdout(&build),
         stderr(&build)
     );
 
     let run_driver = manifest_dir.join("selfhost").join("run.tl");
-    let run_bin = dir.join("selfhost-run-planner");
+    let run_bin = dir.join("selfhost-run-tool");
     let run_driver_arg = run_driver.to_str().expect("run driver path is utf-8");
-    let run_bin_arg = run_bin.to_str().expect("run planner output path is utf-8");
-    let build_run = typelisp(&["build", run_driver_arg, "-o", run_bin_arg]);
+    let run_bin_arg = run_bin.to_str().expect("run tool output path is utf-8");
+    let build_run = typelisp(&[
+        "build",
+        run_driver_arg,
+        "--stdlib-root",
+        stdlib_arg,
+        "-o",
+        run_bin_arg,
+    ]);
     assert!(
         build_run.status.success(),
-        "selfhost run planner build failed\nstdout:\n{}\nstderr:\n{}",
+        "selfhost run tool build failed\nstdout:\n{}\nstderr:\n{}",
         stdout(&build_run),
         stderr(&build_run)
     );
 
     let spaced = dir.join("with space");
-    fs::create_dir_all(&spaced).expect("create spaced planner fixture dir");
+    fs::create_dir_all(&spaced).expect("create spaced selfhost tool fixture dir");
     let source = spaced.join("main file.tl");
+    fs::write(&source, "(define (main) : i64 23)\n").expect("write build tool source");
     let output_path = spaced.join("the program");
-    let stdlib_one = spaced.join("stdlib one");
     let source_arg = source.to_str().expect("source path is utf-8");
     let output_arg = output_path.to_str().expect("output path is utf-8");
-    let stdlib_one_arg = stdlib_one.to_str().expect("stdlib path is utf-8");
-    let stdlib_two_arg = "stdlib:two";
 
-    let build_plan = Command::new(&build_bin)
+    let build_output = Command::new(&build_bin)
+        .arg("--direct")
         .arg(source_arg)
         .arg("-o")
         .arg(output_arg)
         .arg("--target")
-        .arg("windows-x86_64")
+        .arg("linux-x86_64")
         .arg("--backend-mode")
         .arg("avx2")
-        .arg("--stdlib-root")
-        .arg(stdlib_one_arg)
-        .arg("--stdlib-root")
-        .arg(stdlib_two_arg)
         .output()
-        .expect("run selfhost build planner");
+        .expect("run selfhost build tool");
     assert!(
-        build_plan.status.success(),
-        "selfhost build planner failed\nstdout:\n{}\nstderr:\n{}",
-        stdout(&build_plan),
-        stderr(&build_plan)
+        build_output.status.success(),
+        "selfhost build tool failed\nstdout:\n{}\nstderr:\n{}",
+        stdout(&build_output),
+        stderr(&build_output)
     );
-    assert_eq!(stderr(&build_plan), "");
+    assert_eq!(stderr(&build_output), "");
+    assert!(
+        stdout(&build_output).contains(&format!("Generated: {}", output_path.display())),
+        "stdout:\n{}",
+        stdout(&build_output)
+    );
+    assert!(
+        output_path.exists(),
+        "selfhost build tool did not write output"
+    );
+    let built = Command::new(&output_path)
+        .output()
+        .expect("run selfhost-built output");
     assert_eq!(
-        stdout(&build_plan),
-        format!(
-            "typelisp-host-plan v1\n\
-             action build-source\n\
-             source {}\n\
-             output {}\n\
-             target windows-x86_64\n\
-             backend-mode avx2\n\
-             stdlib-root {}\n\
-             stdlib-root {}\n\
-             end\n",
-            host_netstring(source_arg),
-            host_netstring(output_arg),
-            host_netstring(stdlib_one_arg),
-            host_netstring(stdlib_two_arg),
-        )
+        built.status.code(),
+        Some(23),
+        "built output exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&built.stdout),
+        String::from_utf8_lossy(&built.stderr)
     );
 
-    let run_plan = Command::new(&run_bin)
-        .arg(source_arg)
+    let run_source = spaced.join("run file.tl");
+    fs::write(
+        &run_source,
+        r#"(define (main) : i64
+  (begin
+    (print-string (arg 1))
+    (if (string-eq (arg 2) "colon:arg") 13 2)))
+"#,
+    )
+    .expect("write run tool source");
+    let run_source_arg = run_source.to_str().expect("run source path is utf-8");
+    let run_output = Command::new(&run_bin)
+        .arg("--direct")
+        .arg(run_source_arg)
         .arg("--target")
         .arg("linux-x86_64")
         .arg("--backend-mode")
         .arg("avx512")
         .arg("--stdlib-root")
-        .arg(stdlib_one_arg)
+        .arg(stdlib_arg)
         .arg("--")
         .arg("arg with spaces")
         .arg("colon:arg")
         .output()
-        .expect("run selfhost run planner");
-    assert!(
-        run_plan.status.success(),
-        "selfhost run planner failed\nstdout:\n{}\nstderr:\n{}",
-        stdout(&run_plan),
-        stderr(&run_plan)
-    );
-    assert_eq!(stderr(&run_plan), "");
+        .expect("run selfhost run tool");
     assert_eq!(
-        stdout(&run_plan),
-        format!(
-            "typelisp-host-plan v1\n\
-             action run-source\n\
-             source {}\n\
-             target linux-x86_64\n\
-             backend-mode avx512\n\
-             stdlib-root {}\n\
-             runtime-arg {}\n\
-             runtime-arg {}\n\
-             end\n",
-            host_netstring(source_arg),
-            host_netstring(stdlib_one_arg),
-            host_netstring("arg with spaces"),
-            host_netstring("colon:arg"),
-        )
+        run_output.status.code(),
+        Some(13),
+        "selfhost run tool exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        stdout(&run_output),
+        stderr(&run_output)
+    );
+    assert_eq!(stdout(&run_output), "arg with spaces");
+    assert_eq!(stderr(&run_output), "");
+
+    let env_source = spaced.join("env run file.tl");
+    fs::write(
+        &env_source,
+        r#"(import "stdlib/process.tl")
+
+(define (main) : i64
+  (if (string-eq (arg 1) "env-ok") 31 2))
+"#,
+    )
+    .expect("write env stdlib run source");
+    let env_source_arg = env_source.to_str().expect("env source path is utf-8");
+    let env_run_output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(env_source_arg)
+        .arg("--target")
+        .arg("linux-x86_64")
+        .arg("--")
+        .arg("env-ok")
+        .env("TYPELISP_STDLIB_ROOT", &stdlib_root)
+        .output()
+        .expect("run top-level typelisp run with env stdlib root");
+    assert_eq!(
+        env_run_output.status.code(),
+        Some(31),
+        "top-level run did not keep env stdlib root before runtime args\nstdout:\n{}\nstderr:\n{}",
+        stdout(&env_run_output),
+        stderr(&env_run_output)
     );
 
     let package_build = Command::new(&build_bin)
+        .arg("--direct")
         .arg("--manifest-path")
         .arg("typelisp.pkg")
         .output()
-        .expect("run selfhost build planner package rejection");
+        .expect("run selfhost build tool package rejection");
     assert!(!package_build.status.success());
     assert_eq!(stdout(&package_build), "");
     assert!(
@@ -2088,10 +2124,11 @@ fn selfhost_build_run_planners_emit_host_action_plans() {
     );
 
     let missing_target = Command::new(&run_bin)
+        .arg("--direct")
         .arg(source_arg)
         .arg("--target")
         .output()
-        .expect("run selfhost run planner target failure");
+        .expect("run selfhost run tool target failure");
     assert!(!missing_target.status.success());
     assert_eq!(stdout(&missing_target), "");
     assert!(
@@ -2105,6 +2142,8 @@ fn selfhost_build_run_planners_emit_host_action_plans() {
 #[test]
 fn selfhost_build_run_planners_default_to_host_target() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let stdlib_root = manifest_dir.join("stdlib");
+    let stdlib_arg = stdlib_root.to_str().expect("stdlib path is utf-8");
     let expected_target = if cfg!(target_os = "windows") {
         "windows-x86_64"
     } else {
@@ -2113,7 +2152,15 @@ fn selfhost_build_run_planners_default_to_host_target() {
 
     let build_driver = manifest_dir.join("selfhost").join("build.tl");
     let build_driver_arg = build_driver.to_str().expect("build driver path is utf-8");
-    let build_plan = typelisp(&["run", build_driver_arg, "--", "main.tl"]);
+    let build_plan = typelisp(&[
+        "run",
+        build_driver_arg,
+        "--stdlib-root",
+        stdlib_arg,
+        "--",
+        "--host-plan",
+        "main.tl",
+    ]);
     assert!(
         build_plan.status.success(),
         "selfhost build planner default-target probe failed\nstdout:\n{}\nstderr:\n{}",
@@ -2130,7 +2177,15 @@ fn selfhost_build_run_planners_default_to_host_target() {
 
     let run_driver = manifest_dir.join("selfhost").join("run.tl");
     let run_driver_arg = run_driver.to_str().expect("run driver path is utf-8");
-    let run_plan = typelisp(&["run", run_driver_arg, "--", "main.tl"]);
+    let run_plan = typelisp(&[
+        "run",
+        run_driver_arg,
+        "--stdlib-root",
+        stdlib_arg,
+        "--",
+        "--host-plan",
+        "main.tl",
+    ]);
     assert!(
         run_plan.status.success(),
         "selfhost run planner default-target probe failed\nstdout:\n{}\nstderr:\n{}",

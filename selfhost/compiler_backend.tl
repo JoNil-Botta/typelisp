@@ -73,6 +73,9 @@
     bool
     bool
     bool
+    bool
+    bool
+    bool
     bool))
 
 ;; Backend code-generation target (#646). Linux/System V and Windows x64 are
@@ -498,6 +501,11 @@
     "main"
     (string-append "_tl_" (compiler-backend-asm-safe-symbol name))))
 
+(define (compiler-backend-runtime-user-symbol? [name : String]) : bool
+  (or
+    (string-eq name "env-var-exists?")
+    (or (string-eq name "env-var-value") (string-eq name "env-path-separator"))))
+
 (define (compiler-backend-call-symbol
   [name : String]
   [plan : CompilerBackendRuntimePlan]
@@ -506,7 +514,9 @@
   (if (and
     (compiler-backend-plan-provides? plan name)
     (not (compiler-backend-function-list-defines? functions name)))
-    name
+    (if (compiler-backend-runtime-user-symbol? name)
+      (compiler-backend-user-symbol name)
+      name)
     (if (compiler-backend-extern-list-references? externs name)
       (compiler-backend-asm-safe-symbol name)
       (compiler-backend-user-symbol name))))
@@ -2528,6 +2538,9 @@
           _
           _
           _
+          _
+          _
+          _
           _)
         (if (or arg-count arg)
           "    movq %rcx, .L_tl_argc(%rip)
@@ -3097,6 +3110,49 @@
   [enabled : bool]) : bool
   (and (string-eq name candidate) enabled))
 
+(define (compiler-backend-plan-provides-tail?
+  [name : String]
+  [read-bytes : bool]
+  [stdin-eof : bool]
+  [flush-stdout : bool]
+  [random-system-seed : bool]
+  [windows-setup-instances : bool]
+  [env-var-exists : bool]
+  [env-var-value : bool]
+  [env-path-separator : bool]) : bool
+  (or
+    (backend-or4
+      (compiler-backend-provides-runtime-name?
+        name
+        ".L_tl_read_stdin_bytes"
+        read-bytes)
+      (compiler-backend-provides-runtime-name? name ".L_tl_stdin_eof" stdin-eof)
+      (compiler-backend-provides-runtime-name?
+        name
+        ".L_tl_flush_stdout"
+        flush-stdout)
+      (compiler-backend-provides-runtime-name?
+        name
+        "tl_random_system_seed"
+        random-system-seed))
+    (backend-or4
+      (compiler-backend-provides-runtime-name?
+        name
+        "tl_windows_setup_instances"
+        windows-setup-instances)
+      (compiler-backend-provides-runtime-name?
+        name
+        "env-var-exists?"
+        env-var-exists)
+      (compiler-backend-provides-runtime-name?
+        name
+        "env-var-value"
+        env-var-value)
+      (compiler-backend-provides-runtime-name?
+        name
+        "env-path-separator"
+        env-path-separator))))
+
 (define (compiler-backend-plan-provides?
   [plan : CompilerBackendRuntimePlan]
   [name : String]) : bool
@@ -3125,7 +3181,10 @@
         region-mark
         region-reset
         random-system-seed
-        windows-setup-instances)
+        windows-setup-instances
+        provides-env-var-exists
+        provides-env-var-value
+        provides-env-path-separator)
       (or
         (backend-or8
           (compiler-backend-provides-runtime-name? name "tl_alloc" alloc)
@@ -3227,28 +3286,16 @@
                 name
                 ".L_tl_read_stdin_line"
                 read-line)
-              (or
-                (backend-or4
-                  (compiler-backend-provides-runtime-name?
-                    name
-                    ".L_tl_read_stdin_bytes"
-                    read-bytes)
-                  (compiler-backend-provides-runtime-name?
-                    name
-                    ".L_tl_stdin_eof"
-                    stdin-eof)
-                  (compiler-backend-provides-runtime-name?
-                    name
-                    ".L_tl_flush_stdout"
-                    flush-stdout)
-                  (compiler-backend-provides-runtime-name?
-                    name
-                    "tl_random_system_seed"
-                    random-system-seed))
-                (compiler-backend-provides-runtime-name?
-                  name
-                  "tl_windows_setup_instances"
-                  windows-setup-instances))))))]))
+              (compiler-backend-plan-provides-tail?
+                name
+                read-bytes
+                stdin-eof
+                flush-stdout
+                random-system-seed
+                windows-setup-instances
+                provides-env-var-exists
+                provides-env-var-value
+                provides-env-path-separator)))))]))
 
 (define (compiler-backend-runtime-plan-for
   [functions : CompilerIrFunctionList]
@@ -3284,6 +3331,12 @@
       (compiler-backend-function-list-defines?
         functions
         "tl_windows_setup_instances")]
+    [defines-env-var-exists : bool
+      (compiler-backend-function-list-defines? functions "env-var-exists?")]
+    [defines-env-var-value : bool
+      (compiler-backend-function-list-defines? functions "env-var-value")]
+    [defines-env-path-separator : bool
+      (compiler-backend-function-list-defines? functions "env-path-separator")]
     [extern-alloc : bool
       (compiler-backend-extern-list-references? externs "tl_alloc")]
     [extern-oob : bool
@@ -3362,6 +3415,12 @@
       (compiler-backend-extern-list-references?
         externs
         "tl_windows_setup_instances")]
+    [extern-env-var-exists : bool
+      (compiler-backend-extern-list-references? externs "env-var-exists?")]
+    [extern-env-var-value : bool
+      (compiler-backend-extern-list-references? externs "env-var-value")]
+    [extern-env-path-separator : bool
+      (compiler-backend-extern-list-references? externs "env-path-separator")]
     [calls-alloc : bool
       (compiler-backend-function-list-calls? functions "tl_alloc")]
     [calls-oob : bool
@@ -3436,6 +3495,12 @@
       (compiler-backend-function-list-calls?
         functions
         "tl_windows_setup_instances")]
+    [calls-env-var-exists : bool
+      (compiler-backend-function-list-calls? functions "env-var-exists?")]
+    [calls-env-var-value : bool
+      (compiler-backend-function-list-calls? functions "env-var-value")]
+    [calls-env-path-separator : bool
+      (compiler-backend-function-list-calls? functions "env-path-separator")]
     (let
       [needs-oob : bool (and (not defines-oob) (or extern-oob calls-oob))]
       [needs-substring : bool
@@ -3503,6 +3568,18 @@
         (and
           (not defines-windows-setup-instances)
           (or extern-windows-setup-instances calls-windows-setup-instances))]
+      [needs-env-var-exists : bool
+        (and
+          (not defines-env-var-exists)
+          (or extern-env-var-exists calls-env-var-exists))]
+      [needs-env-var-value : bool
+        (and
+          (not defines-env-var-value)
+          (or extern-env-var-value calls-env-var-value))]
+      [needs-env-path-separator : bool
+        (and
+          (not defines-env-path-separator)
+          (or extern-env-path-separator calls-env-path-separator))]
       [direct-alloc : bool
         (and (not defines-alloc) (or extern-alloc calls-alloc))]
       (let
@@ -3531,7 +3608,11 @@
                   needs-read-line
                   (or
                     needs-read-bytes
-                    (or needs-random-system-seed needs-windows-setup-instances))))))]
+                    (or
+                      needs-random-system-seed
+                      (or
+                        needs-windows-setup-instances
+                        (or needs-env-var-value needs-env-path-separator))))))))]
         (OkBackendRuntimePlan
           (BackendRuntimePlan
             needs-alloc
@@ -3557,7 +3638,10 @@
             needs-region-mark
             needs-region-reset
             needs-random-system-seed
-            needs-windows-setup-instances))))))
+            needs-windows-setup-instances
+            needs-env-var-exists
+            needs-env-var-value
+            needs-env-path-separator))))))
 
 (define (compiler-backend-runtime-plan [program : CompilerIrProgram]) : ResultBackendRuntimePlan
   (match program
@@ -3726,6 +3810,18 @@ tl_current_arena:
 "
     ""))
 
+(define (compiler-backend-runtime-env-data
+  [target : CompilerBackendTarget]
+  [env-data : bool]) : String
+  (if (and env-data (not (compiler-backend-target-windows? target)))
+    "    .data
+    .balign 8
+.L_tl_envp:
+    .quad 0
+
+"
+    ""))
+
 (define (compiler-backend-runtime-data [plan : CompilerBackendRuntimePlan]) : String
   (compiler-backend-runtime-data-for-target (BackendTargetLinux) plan))
 
@@ -3746,14 +3842,7 @@ tl_current_arena:
   [process-output : bool]) : String
   (if process-output
     (string-append
-      (if (compiler-backend-target-windows? target)
-        ""
-        "    .data
-    .balign 8
-.L_tl_envp:
-    .quad 0
-
-")
+      ""
       "    .section .rodata
 .L_tl_process_unsupported_msg:
     .ascii \"process: runtime execution is not supported on this target\"
@@ -3830,7 +3919,10 @@ tl_current_arena:
         region-mark
         region-reset
         random-system-seed
-        windows-setup-instances)
+        windows-setup-instances
+        env-var-exists
+        env-var-value
+        _)
       (string-append
         (if alloc
           (compiler-backend-runtime-alloc-data-for-target target)
@@ -3858,23 +3950,27 @@ tl_current_arena:
                         target
                         file-read-chunk)
                       (string-append
-                        (compiler-backend-runtime-process-output-data
+                        (compiler-backend-runtime-env-data
                           target
-                          process-output)
+                          (or process-output (or env-var-exists env-var-value)))
                         (string-append
-                          (compiler-backend-runtime-stdio-data
-                            read-line
-                            read-bytes
-                            stdin-eof)
+                          (compiler-backend-runtime-process-output-data
+                            target
+                            process-output)
                           (string-append
-                            (compiler-backend-runtime-flush-stdout-data
-                              target
-                              flush-stdout)
+                            (compiler-backend-runtime-stdio-data
+                              read-line
+                              read-bytes
+                              stdin-eof)
                             (string-append
-                              (compiler-backend-runtime-random-system-seed-data
-                                random-system-seed)
-                              (compiler-backend-runtime-windows-setup-instances-data
-                                windows-setup-instances)))))))))))))]))
+                              (compiler-backend-runtime-flush-stdout-data
+                                target
+                                flush-stdout)
+                              (string-append
+                                (compiler-backend-runtime-random-system-seed-data
+                                  random-system-seed)
+                                (compiler-backend-runtime-windows-setup-instances-data
+                                  windows-setup-instances))))))))))))))]))
 
 (define (compiler-backend-runtime-alloc-functions) : String
   "    .globl tl_alloc
@@ -4156,6 +4252,152 @@ tl_print_err:
     leaq .L_tl_arg_oob_msg(%rip), %rdi
     movq $.L_tl_arg_oob_msg_len, %rsi
     call .L_tl_abort
+
+")
+
+(define (compiler-backend-runtime-env-var-exists-functions) : String
+  "    .globl _tl_env_var_exists_question
+_tl_env_var_exists_question:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    movq 0(%rdi), %rbx
+    movq 8(%rdi), %r12
+    cmpq $0, %r12
+    jl .L_tl_env_var_exists_false
+    movq .L_tl_envp(%rip), %r13
+.L_tl_env_var_exists_next:
+    movq (%r13), %r14
+    testq %r14, %r14
+    jz .L_tl_env_var_exists_false
+    xorq %r15, %r15
+.L_tl_env_var_exists_name_loop:
+    cmpq %r12, %r15
+    jge .L_tl_env_var_exists_name_done
+    movzbl (%rbx,%r15), %eax
+    cmpb %al, (%r14,%r15)
+    jne .L_tl_env_var_exists_advance
+    incq %r15
+    jmp .L_tl_env_var_exists_name_loop
+.L_tl_env_var_exists_name_done:
+    cmpb $61, (%r14,%r12)
+    je .L_tl_env_var_exists_true
+.L_tl_env_var_exists_advance:
+    addq $8, %r13
+    jmp .L_tl_env_var_exists_next
+.L_tl_env_var_exists_true:
+    movq $1, %rax
+    jmp .L_tl_env_var_exists_return
+.L_tl_env_var_exists_false:
+    xorq %rax, %rax
+.L_tl_env_var_exists_return:
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+")
+
+(define (compiler-backend-runtime-env-var-value-functions) : String
+  "    .globl _tl_env_var_value
+_tl_env_var_value:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    sub $8, %rsp
+    movq 0(%rdi), %rbx
+    movq 8(%rdi), %r12
+    cmpq $0, %r12
+    jl .L_tl_env_var_value_empty
+    movq .L_tl_envp(%rip), %r13
+.L_tl_env_var_value_next:
+    movq (%r13), %r14
+    testq %r14, %r14
+    jz .L_tl_env_var_value_empty
+    xorq %r15, %r15
+.L_tl_env_var_value_name_loop:
+    cmpq %r12, %r15
+    jge .L_tl_env_var_value_name_done
+    movzbl (%rbx,%r15), %eax
+    cmpb %al, (%r14,%r15)
+    jne .L_tl_env_var_value_advance
+    incq %r15
+    jmp .L_tl_env_var_value_name_loop
+.L_tl_env_var_value_name_done:
+    cmpb $61, (%r14,%r12)
+    je .L_tl_env_var_value_found
+.L_tl_env_var_value_advance:
+    addq $8, %r13
+    jmp .L_tl_env_var_value_next
+.L_tl_env_var_value_found:
+    leaq 1(%r14,%r12), %rbx
+    xorq %r12, %r12
+.L_tl_env_var_value_len_loop:
+    cmpb $0, (%rbx,%r12)
+    je .L_tl_env_var_value_len_done
+    incq %r12
+    jmp .L_tl_env_var_value_len_loop
+.L_tl_env_var_value_len_done:
+    movq %r12, %rdi
+    call tl_alloc
+    movq %rax, %r13
+    xorq %rcx, %rcx
+.L_tl_env_var_value_copy_loop:
+    cmpq %r12, %rcx
+    jge .L_tl_env_var_value_fat
+    movzbl (%rbx,%rcx), %edx
+    movb %dl, (%r13,%rcx)
+    incq %rcx
+    jmp .L_tl_env_var_value_copy_loop
+.L_tl_env_var_value_empty:
+    xorq %r12, %r12
+    xorq %r13, %r13
+.L_tl_env_var_value_fat:
+    movq $16, %rdi
+    call tl_alloc
+    movq %r13, 0(%rax)
+    movq %r12, 8(%rax)
+    add $8, %rsp
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+")
+
+(define (compiler-backend-runtime-env-path-separator-functions) : String
+  "    .globl _tl_env_path_separator
+_tl_env_path_separator:
+    push %rbp
+    mov %rsp, %rbp
+    push %r12
+    sub $8, %rsp
+    movq $1, %rdi
+    call tl_alloc
+    movq %rax, %r12
+    movb $58, (%r12)
+    movq $16, %rdi
+    call tl_alloc
+    movq %r12, 0(%rax)
+    movq $1, 8(%rax)
+    add $8, %rsp
+    pop %r12
+    pop %rbp
+    ret
 
 ")
 
@@ -6997,7 +7239,10 @@ tl_windows_setup_instances:
         region-mark
         region-reset
         random-system-seed
-        windows-setup-instances)
+        windows-setup-instances
+        env-var-exists
+        env-var-value
+        env-path-separator)
       (let
         [alloc-asm : String
           (if alloc
@@ -7161,6 +7406,21 @@ tl_windows_setup_instances:
             "")]
         [random-and-windows-asm : String
           (string-append random-system-seed-asm windows-setup-instances-asm)]
+        [env-var-exists-asm : String
+          (compiler-backend-runtime-linux-only
+            target
+            env-var-exists
+            (compiler-backend-runtime-env-var-exists-functions))]
+        [env-var-value-asm : String
+          (compiler-backend-runtime-linux-only
+            target
+            env-var-value
+            (compiler-backend-runtime-env-var-value-functions))]
+        [env-path-separator-asm : String
+          (compiler-backend-runtime-linux-only
+            target
+            env-path-separator
+            (compiler-backend-runtime-env-path-separator-functions))]
         (string-append
           alloc-asm
           (string-append
@@ -7213,7 +7473,11 @@ tl_windows_setup_instances:
                                                           stdin-eof-asm
                                                           (string-append
                                                             flush-stdout-asm
-                                                            random-and-windows-asm)))))))))))))))))))))))))))]))
+                                                            (backend-cat4
+                                                              random-and-windows-asm
+                                                              env-var-exists-asm
+                                                              env-var-value-asm
+                                                              env-path-separator-asm))))))))))))))))))))))))))))]))
 
 ;; Argument register for call arg `idx` under the target's calling convention.
 ;; System V (Linux) uses rdi/rsi/rdx/rcx/r8/r9 via `compiler-backend-arg-reg`;
@@ -7325,8 +7589,13 @@ tl_windows_setup_instances:
             _
             _
             _
+            _
+            env-var-exists
+            env-var-value
             _)
-          (compiler-backend-entry (or arg-count arg) process-output)])]
+          (compiler-backend-entry
+            (or arg-count arg)
+            (or process-output (or env-var-exists env-var-value)))])]
     [(BackendTargetWindows) ""]))
 
 (define (compiler-backend-target-windows? [target : CompilerBackendTarget]) : bool
@@ -7361,7 +7630,10 @@ tl_windows_setup_instances:
         region-mark
         region-reset
         random-system-seed
-        windows-setup-instances)
+        windows-setup-instances
+        env-var-exists
+        env-var-value
+        env-path-separator)
       (not
         (or
           (backend-or8
@@ -7386,16 +7658,16 @@ tl_windows_setup_instances:
             (or
               process-output
               (or
-                read-bytes
-                (or
+                (backend-or8
+                  read-bytes
                   stdin-eof
-                  (or
-                    flush-stdout
-                    (backend-or4
-                      region-mark
-                      region-reset
-                      random-system-seed
-                      windows-setup-instances))))))))]))
+                  flush-stdout
+                  region-mark
+                  region-reset
+                  random-system-seed
+                  windows-setup-instances
+                  env-var-exists)
+                (backend-or4 env-var-value env-path-separator false false))))))]))
 
 (define (compiler-backend-target-runtime-ok?
   [target : CompilerBackendTarget]
@@ -7426,8 +7698,16 @@ tl_windows_setup_instances:
           region-mark
           region-reset
           _
-          _)
-        (not (or region-mark region-reset))])
+          _
+          env-var-exists
+          env-var-value
+          env-path-separator)
+        (not
+          (or
+            region-mark
+            (or
+              region-reset
+              (or env-var-exists (or env-var-value env-path-separator)))))])
     true))
 
 (define (compiler-backend-runtime-externs-for-target
@@ -9119,6 +9399,9 @@ tl_windows_setup_instances:
       false
       false
       false
+      false
+      false
+      false
       false)
     IrFunctionNil
     IrExternNil
@@ -9296,6 +9579,44 @@ tl_windows_setup_instances:
                 (and
                   (not (compiler-backend-string-contains? asm ".L_tl_envp:\n"))
                   (compiler-backend-string-contains? asm "tl_alloc:\n")))))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-env-runtime-source) : String
+  "(define (main) : i64
+  (if (env-var-exists? \"TYPELISP_TEST_ENV\")
+    (string-length (env-var-value \"TYPELISP_TEST_ENV\"))
+    (string-length (env-path-separator))))")
+
+(define (compiler-backend-env-runtime-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-env-runtime-source))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "_tl_env_var_exists_question:\n")
+        (and
+          (compiler-backend-string-contains?
+            asm
+            "    call _tl_env_var_exists_question\n")
+          (and
+            (compiler-backend-string-contains? asm "_tl_env_var_value:\n")
+            (and
+              (compiler-backend-string-contains?
+                asm
+                "    call _tl_env_var_value\n")
+              (and
+                (compiler-backend-string-contains?
+                  asm
+                  "_tl_env_path_separator:\n")
+                (and
+                  (compiler-backend-string-contains?
+                    asm
+                    "    call _tl_env_path_separator\n")
+                  (and
+                    (compiler-backend-string-contains? asm ".L_tl_envp:\n")
+                    (and
+                      (compiler-backend-string-contains?
+                        asm
+                        "    movq %rax, .L_tl_envp(%rip)\n")
+                      (compiler-backend-string-contains? asm "tl_alloc:\n")))))))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-append-file-status-ok?) : bool
@@ -9546,8 +9867,10 @@ tl_windows_setup_instances:
         (and
           (compiler-backend-user-helper-name-ok?)
           (and
-            (compiler-backend-runtime-coexist-ok?)
-            (compiler-backend-module-symbol-ok?))))))
+            (compiler-backend-env-runtime-ok?)
+            (and
+              (compiler-backend-runtime-coexist-ok?)
+              (compiler-backend-module-symbol-ok?)))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

@@ -25,6 +25,9 @@ const APPEND_FILE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_append_file_status";
 const FILE_EXISTS_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists_status";
 const FILE_OPEN_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_open_status";
 const FILE_CLOSE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_close_status";
+const FILE_READ_CHUNK_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_read_chunk_status";
+const FILE_READ_CHUNK_BYTES_RUNTIME_SYMBOL: &str = ".L_tl_file_read_chunk_bytes";
+const FILE_READ_CHUNK_EOF_RUNTIME_SYMBOL: &str = ".L_tl_file_read_chunk_eof";
 const FS_MKDIR_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_fs_mkdir_status";
 const FS_REMOVE_FILE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_fs_remove_file_status";
 const FS_REMOVE_DIR_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_fs_remove_dir_status";
@@ -2135,7 +2138,7 @@ impl X86_64Backend {
             || self.needs_write_file_runtime
             || self.needs_append_file_runtime
             || self.needs_file_exists_runtime
-            || (self.needs_file_handle_runtime && !runtime_policy.emits_windows_runtime_helpers)
+            || self.needs_file_handle_runtime
             || self.needs_cpuid_runtime
             || self.needs_fs_runtime
             || (self.needs_env_var_exists_runtime && runtime_policy.emits_windows_runtime_helpers)
@@ -2286,6 +2289,11 @@ impl X86_64Backend {
                 || (self.needs_file_exists_runtime && symbol == FILE_EXISTS_STATUS_RUNTIME_SYMBOL)
                 || (self.needs_file_handle_runtime && symbol == FILE_OPEN_STATUS_RUNTIME_SYMBOL)
                 || (self.needs_file_handle_runtime && symbol == FILE_CLOSE_STATUS_RUNTIME_SYMBOL)
+                || (self.needs_file_handle_runtime
+                    && symbol == FILE_READ_CHUNK_STATUS_RUNTIME_SYMBOL)
+                || (self.needs_file_handle_runtime
+                    && symbol == FILE_READ_CHUNK_BYTES_RUNTIME_SYMBOL)
+                || (self.needs_file_handle_runtime && symbol == FILE_READ_CHUNK_EOF_RUNTIME_SYMBOL)
                 || (self.needs_cpuid_runtime && symbol == CPUID_RUNTIME_SYMBOL)
                 || (self.needs_xgetbv_runtime && symbol == XGETBV_RUNTIME_SYMBOL)
                 || (self.needs_fs_runtime && symbol == FS_MKDIR_STATUS_RUNTIME_SYMBOL)
@@ -3066,6 +3074,9 @@ impl X86_64Backend {
         [
             FILE_OPEN_STATUS_RUNTIME_SYMBOL,
             FILE_CLOSE_STATUS_RUNTIME_SYMBOL,
+            FILE_READ_CHUNK_STATUS_RUNTIME_SYMBOL,
+            FILE_READ_CHUNK_BYTES_RUNTIME_SYMBOL,
+            FILE_READ_CHUNK_EOF_RUNTIME_SYMBOL,
         ]
         .iter()
         .any(|symbol| Self::needs_private_call_runtime(program, symbol))
@@ -4128,6 +4139,14 @@ impl X86_64Backend {
         self.emit(".L_tl_file_handle_modes:");
         self.emit("    .zero 8192");
         self.emit(".L_tl_file_handle_states:");
+        self.emit("    .zero 8192");
+        self.emit(".L_tl_file_handle_eofs:");
+        self.emit("    .zero 8192");
+        self.emit(".L_tl_file_handle_last_ptrs:");
+        self.emit("    .zero 8192");
+        self.emit(".L_tl_file_handle_last_lens:");
+        self.emit("    .zero 8192");
+        self.emit(".L_tl_file_handle_last_eofs:");
         self.emit("    .zero 8192");
         self.emit("");
     }
@@ -5260,6 +5279,9 @@ impl X86_64Backend {
 
         self.generate_file_open_status_runtime_function();
         self.generate_file_close_status_runtime_function();
+        self.generate_file_read_chunk_status_runtime_function();
+        self.generate_file_read_chunk_bytes_runtime_function();
+        self.generate_file_read_chunk_eof_runtime_function();
     }
 
     fn generate_file_open_status_runtime_function(&mut self) {
@@ -5327,6 +5349,14 @@ impl X86_64Backend {
         self.emit("    movq %r14, (%rcx,%rax,8)");
         self.emit("    leaq .L_tl_file_handle_states(%rip), %rcx");
         self.emit("    movq $1, (%rcx,%rax,8)");
+        self.emit("    leaq .L_tl_file_handle_eofs(%rip), %rcx");
+        self.emit("    movq $0, (%rcx,%rax,8)");
+        self.emit("    leaq .L_tl_file_handle_last_ptrs(%rip), %rcx");
+        self.emit("    movq $0, (%rcx,%rax,8)");
+        self.emit("    leaq .L_tl_file_handle_last_lens(%rip), %rcx");
+        self.emit("    movq $0, (%rcx,%rax,8)");
+        self.emit("    leaq .L_tl_file_handle_last_eofs(%rip), %rcx");
+        self.emit("    movq $0, (%rcx,%rax,8)");
         self.emit("    leaq 1(%rax), %rcx");
         self.emit("    movq %rcx, .L_tl_file_handle_next(%rip)");
         self.emit("    jmp .L_tl_file_open_status_return");
@@ -5386,6 +5416,147 @@ impl X86_64Backend {
         self.emit("");
     }
 
+    fn generate_file_read_chunk_status_runtime_function(&mut self) {
+        self.emit(&format!("{}:", FILE_READ_CHUNK_STATUS_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    push %r15");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq %rdi, %rbx");
+        self.emit("    movq %rsi, %r12");
+        self.emit("    cmpq $0, %r12");
+        self.emit("    jl .L_tl_file_read_chunk_status_invalid");
+        self.emit("    cmpq $1, %rbx");
+        self.emit("    jl .L_tl_file_read_chunk_status_unsupported");
+        self.emit("    cmpq $1024, %rbx");
+        self.emit("    jge .L_tl_file_read_chunk_status_unsupported");
+        self.emit("    leaq .L_tl_file_handle_states(%rip), %rcx");
+        self.emit("    movq (%rcx,%rbx,8), %rax");
+        self.emit("    cmpq $1, %rax");
+        self.emit("    jne .L_tl_file_read_chunk_status_unsupported");
+        self.emit("    leaq .L_tl_file_handle_modes(%rip), %rcx");
+        self.emit("    movq (%rcx,%rbx,8), %rax");
+        self.emit("    cmpq $0, %rax");
+        self.emit("    jne .L_tl_file_read_chunk_status_unsupported");
+        self.emit("    movq %r12, %rdi");
+        self.emit("    cmpq $0, %rdi");
+        self.emit("    jg .L_tl_file_read_chunk_status_alloc_ready");
+        self.emit("    movq $1, %rdi");
+        self.emit(".L_tl_file_read_chunk_status_alloc_ready:");
+        self.emit("    call tl_alloc");
+        self.emit("    movq %rax, %r14");
+        self.emit("    testq %r12, %r12");
+        self.emit("    jz .L_tl_file_read_chunk_status_zero");
+        self.emit("    leaq .L_tl_file_handle_fds(%rip), %rcx");
+        self.emit("    movq (%rcx,%rbx,8), %rdi");
+        self.emit("    movq %r14, %rsi");
+        self.emit("    movq %r12, %rdx");
+        self.emit("    xorq %rax, %rax");
+        self.emit("    syscall");
+        self.emit("    testq %rax, %rax");
+        self.emit("    js .L_tl_file_read_chunk_status_error_from_rax");
+        self.emit("    movq %rax, %r15");
+        self.emit("    leaq .L_tl_file_handle_last_ptrs(%rip), %rcx");
+        self.emit("    movq %r14, (%rcx,%rbx,8)");
+        self.emit("    leaq .L_tl_file_handle_last_lens(%rip), %rcx");
+        self.emit("    movq %r15, (%rcx,%rbx,8)");
+        self.emit("    testq %r15, %r15");
+        self.emit("    jz .L_tl_file_read_chunk_status_eof");
+        self.emit("    leaq .L_tl_file_handle_eofs(%rip), %rcx");
+        self.emit("    movq (%rcx,%rbx,8), %rax");
+        self.emit("    leaq .L_tl_file_handle_last_eofs(%rip), %rcx");
+        self.emit("    movq %rax, (%rcx,%rbx,8)");
+        self.emit("    xorq %rax, %rax");
+        self.emit("    jmp .L_tl_file_read_chunk_status_return");
+        self.emit(".L_tl_file_read_chunk_status_zero:");
+        self.emit("    leaq .L_tl_file_handle_last_ptrs(%rip), %rcx");
+        self.emit("    movq %r14, (%rcx,%rbx,8)");
+        self.emit("    leaq .L_tl_file_handle_last_lens(%rip), %rcx");
+        self.emit("    movq $0, (%rcx,%rbx,8)");
+        self.emit("    leaq .L_tl_file_handle_eofs(%rip), %rcx");
+        self.emit("    movq (%rcx,%rbx,8), %rax");
+        self.emit("    leaq .L_tl_file_handle_last_eofs(%rip), %rcx");
+        self.emit("    movq %rax, (%rcx,%rbx,8)");
+        self.emit("    xorq %rax, %rax");
+        self.emit("    jmp .L_tl_file_read_chunk_status_return");
+        self.emit(".L_tl_file_read_chunk_status_eof:");
+        self.emit("    leaq .L_tl_file_handle_eofs(%rip), %rcx");
+        self.emit("    movq $1, (%rcx,%rbx,8)");
+        self.emit("    leaq .L_tl_file_handle_last_eofs(%rip), %rcx");
+        self.emit("    movq $1, (%rcx,%rbx,8)");
+        self.emit("    xorq %rax, %rax");
+        self.emit("    jmp .L_tl_file_read_chunk_status_return");
+        self.emit(".L_tl_file_read_chunk_status_error_from_rax:");
+        self.emit("    negq %rax");
+        self.emit("    jmp .L_tl_file_read_chunk_status_return");
+        self.emit(".L_tl_file_read_chunk_status_invalid:");
+        self.emit("    movq $22, %rax");
+        self.emit("    jmp .L_tl_file_read_chunk_status_return");
+        self.emit(".L_tl_file_read_chunk_status_unsupported:");
+        self.emit("    movq $38, %rax");
+        self.emit(".L_tl_file_read_chunk_status_return:");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r15");
+        self.emit("    pop %r14");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_file_read_chunk_bytes_runtime_function(&mut self) {
+        self.emit(&format!("{}:", FILE_READ_CHUNK_BYTES_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq %rdi, %rbx");
+        self.emit("    xorq %r12, %r12");
+        self.emit("    xorq %r13, %r13");
+        self.emit("    cmpq $1, %rbx");
+        self.emit("    jl .L_tl_file_read_chunk_bytes_alloc");
+        self.emit("    cmpq $1024, %rbx");
+        self.emit("    jge .L_tl_file_read_chunk_bytes_alloc");
+        self.emit("    leaq .L_tl_file_handle_last_ptrs(%rip), %rcx");
+        self.emit("    movq (%rcx,%rbx,8), %r12");
+        self.emit("    leaq .L_tl_file_handle_last_lens(%rip), %rcx");
+        self.emit("    movq (%rcx,%rbx,8), %r13");
+        self.emit(".L_tl_file_read_chunk_bytes_alloc:");
+        self.emit("    movq $16, %rdi");
+        self.emit("    call tl_alloc");
+        self.emit("    movq %r12, 0(%rax)");
+        self.emit("    movq %r13, 8(%rax)");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_file_read_chunk_eof_runtime_function(&mut self) {
+        self.emit(&format!("{}:", FILE_READ_CHUNK_EOF_RUNTIME_SYMBOL));
+        self.emit("    movq $1, %rax");
+        self.emit("    cmpq $1, %rdi");
+        self.emit("    jl .L_tl_file_read_chunk_eof_return");
+        self.emit("    cmpq $1024, %rdi");
+        self.emit("    jge .L_tl_file_read_chunk_eof_return");
+        self.emit("    leaq .L_tl_file_handle_last_eofs(%rip), %rcx");
+        self.emit("    movq (%rcx,%rdi,8), %rax");
+        self.emit(".L_tl_file_read_chunk_eof_return:");
+        self.emit("    ret");
+        self.emit("");
+    }
+
     fn generate_windows_file_handle_runtime_functions(&mut self) {
         self.emit(&format!("{}:", FILE_OPEN_STATUS_RUNTIME_SYMBOL));
         self.emit("    movq $-38, %rax");
@@ -5393,6 +5564,31 @@ impl X86_64Backend {
         self.emit("");
         self.emit(&format!("{}:", FILE_CLOSE_STATUS_RUNTIME_SYMBOL));
         self.emit("    movq $38, %rax");
+        self.emit("    ret");
+        self.emit("");
+        self.emit(&format!("{}:", FILE_READ_CHUNK_STATUS_RUNTIME_SYMBOL));
+        self.emit("    movq $38, %rax");
+        self.emit("    ret");
+        self.emit("");
+        self.emit(&format!("{}:", FILE_READ_CHUNK_BYTES_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %r12");
+        self.emit("    sub $40, %rsp");
+        self.emit("    movq $1, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rax, %r12");
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %r12, 0(%rax)");
+        self.emit("    movq $0, 8(%rax)");
+        self.emit("    add $40, %rsp");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+        self.emit(&format!("{}:", FILE_READ_CHUNK_EOF_RUNTIME_SYMBOL));
+        self.emit("    movq $1, %rax");
         self.emit("    ret");
         self.emit("");
     }
@@ -10615,6 +10811,12 @@ impl X86_64Backend {
             FILE_OPEN_STATUS_RUNTIME_SYMBOL.into()
         } else if name == FILE_CLOSE_STATUS_RUNTIME_SYMBOL && self.needs_file_handle_runtime {
             FILE_CLOSE_STATUS_RUNTIME_SYMBOL.into()
+        } else if name == FILE_READ_CHUNK_STATUS_RUNTIME_SYMBOL && self.needs_file_handle_runtime {
+            FILE_READ_CHUNK_STATUS_RUNTIME_SYMBOL.into()
+        } else if name == FILE_READ_CHUNK_BYTES_RUNTIME_SYMBOL && self.needs_file_handle_runtime {
+            FILE_READ_CHUNK_BYTES_RUNTIME_SYMBOL.into()
+        } else if name == FILE_READ_CHUNK_EOF_RUNTIME_SYMBOL && self.needs_file_handle_runtime {
+            FILE_READ_CHUNK_EOF_RUNTIME_SYMBOL.into()
         } else if name == CPUID_RUNTIME_SYMBOL && self.needs_cpuid_runtime {
             CPUID_RUNTIME_SYMBOL.into()
         } else if name == XGETBV_RUNTIME_SYMBOL && self.needs_xgetbv_runtime {
@@ -16146,7 +16348,11 @@ mod tests {
             r#"
             (define (main) : i64
               (let [handle : i64 (file-open-status "input.txt" 0)]
-                (+ handle (file-close-status handle))))
+                (+ handle
+                  (+ (file-read-chunk-status handle 4)
+                    (+ (string-length (file-read-chunk-bytes handle))
+                      (+ (if (file-read-chunk-eof? handle) 1 0)
+                         (file-close-status handle)))))))
             "#,
         );
 
@@ -16157,6 +16363,13 @@ mod tests {
             ".L_tl_file_handle_fds:",
             ".L_tl_file_handle_modes:",
             ".L_tl_file_handle_states:",
+            ".L_tl_file_handle_eofs:",
+            ".L_tl_file_handle_last_ptrs:",
+            ".L_tl_file_handle_last_lens:",
+            ".L_tl_file_handle_last_eofs:",
+            ".L_tl_file_read_chunk_status:",
+            ".L_tl_file_read_chunk_bytes:",
+            ".L_tl_file_read_chunk_eof:",
         ] {
             assert!(asm.contains(symbol), "asm:\n{}", asm);
         }
@@ -16167,6 +16380,21 @@ mod tests {
         );
         assert!(
             asm.contains("    call .L_tl_file_close_status"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("    call .L_tl_file_read_chunk_status"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("    call .L_tl_file_read_chunk_bytes"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("    call .L_tl_file_read_chunk_eof"),
             "asm:\n{}",
             asm
         );
@@ -16185,12 +16413,42 @@ mod tests {
             asm
         );
         assert!(
+            !asm.contains("_tl_.L_tl_file_read_chunk_status"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("_tl_.L_tl_file_read_chunk_bytes"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("_tl_.L_tl_file_read_chunk_eof"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
             !asm.contains("    .extern .L_tl_file_open_status"),
             "asm:\n{}",
             asm
         );
         assert!(
             !asm.contains("    .extern .L_tl_file_close_status"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("    .extern .L_tl_file_read_chunk_status"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("    .extern .L_tl_file_read_chunk_bytes"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("    .extern .L_tl_file_read_chunk_eof"),
             "asm:\n{}",
             asm
         );
@@ -16201,13 +16459,28 @@ mod tests {
         let asm = compile_ok_for_target(
             r#"
             (define (main) : i64
-              (+ (file-open-status "input.txt" 0) (file-close-status 1)))
+              (+ (file-open-status "input.txt" 0)
+                (+ (file-close-status 1)
+                  (+ (file-read-chunk-status 1 4)
+                    (+ (string-length (file-read-chunk-bytes 1))
+                       (if (file-read-chunk-eof? 1) 1 0))))))
             "#,
             BackendTarget::windows_x86_64(),
         );
 
         assert!(asm.contains(".L_tl_file_open_status:"), "asm:\n{}", asm);
         assert!(asm.contains(".L_tl_file_close_status:"), "asm:\n{}", asm);
+        assert!(
+            asm.contains(".L_tl_file_read_chunk_status:"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains(".L_tl_file_read_chunk_bytes:"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(asm.contains(".L_tl_file_read_chunk_eof:"), "asm:\n{}", asm);
         assert!(asm.contains("    movq $-38, %rax"), "asm:\n{}", asm);
         assert!(asm.contains("    movq $38, %rax"), "asm:\n{}", asm);
         assert!(
@@ -16230,6 +16503,21 @@ mod tests {
             "asm:\n{}",
             asm
         );
+        assert!(
+            !asm.contains("    .extern .L_tl_file_read_chunk_status"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("    .extern .L_tl_file_read_chunk_bytes"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("    .extern .L_tl_file_read_chunk_eof"),
+            "asm:\n{}",
+            asm
+        );
     }
 
     #[test]
@@ -16238,12 +16526,27 @@ mod tests {
             r#"
             (define (file-open-status [n : i64]) : i64 (+ n 1))
             (define (file-close-status) : i64 3)
-            (define (main) : i64 (+ (file-open-status 41) (file-close-status)))
+            (define (file-read-chunk-status [n : i64]) : i64 n)
+            (define (file-read-chunk-bytes) : i64 5)
+            (define (file-read-chunk-eof? [n : i64]) : i64 n)
+            (define (main) : i64
+              (+ (file-open-status 41)
+                (+ (file-close-status)
+                  (+ (file-read-chunk-status 7)
+                    (+ (file-read-chunk-bytes)
+                       (file-read-chunk-eof? 8))))))
             "#,
         );
 
         assert!(asm.contains("_tl_file_open_status:"), "asm:\n{}", asm);
         assert!(asm.contains("_tl_file_close_status:"), "asm:\n{}", asm);
+        assert!(asm.contains("_tl_file_read_chunk_status:"), "asm:\n{}", asm);
+        assert!(asm.contains("_tl_file_read_chunk_bytes:"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("_tl_file_read_chunk_eof_question:"),
+            "asm:\n{}",
+            asm
+        );
         assert!(
             asm.contains("    call _tl_file_open_status"),
             "asm:\n{}",
@@ -16254,8 +16557,28 @@ mod tests {
             "asm:\n{}",
             asm
         );
+        assert!(
+            asm.contains("    call _tl_file_read_chunk_status"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("    call _tl_file_read_chunk_bytes"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("    call _tl_file_read_chunk_eof_question"),
+            "asm:\n{}",
+            asm
+        );
         assert!(!asm.contains(".L_tl_file_open_status:"), "asm:\n{}", asm);
         assert!(!asm.contains(".L_tl_file_close_status:"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains(".L_tl_file_read_chunk_status:"),
+            "asm:\n{}",
+            asm
+        );
     }
 
     #[test]

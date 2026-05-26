@@ -49,6 +49,34 @@
     [(OkIoFile _) (panic (string-append message "open unexpectedly succeeded"))]
     [(ErrIoFile error) (assert-true (io-error-not-found? error) message)]))
 
+(define (assert-read-ok
+  [result : ResultIoRead]
+  [expected-bytes : String]
+  [expected-eof : bool]
+  [message : String]) : unit
+  (match result
+    [(OkIoRead read)
+      (begin
+        (assert-string-eq
+          (file-read-bytes read)
+          expected-bytes
+          (string-append message " bytes"))
+        (assert-bool-eq
+          (file-read-eof? read)
+          expected-eof
+          (string-append message " eof")))]
+    [(ErrIoRead error) (panic (string-append message (io-error-message error)))]))
+
+(define (assert-read-unsupported [result : ResultIoRead] [message : String]) : unit
+  (match result
+    [(OkIoRead _) (panic (string-append message "read unexpectedly succeeded"))]
+    [(ErrIoRead error) (assert-true (io-error-unsupported? error) message)]))
+
+(define (assert-read-invalid [result : ResultIoRead] [message : String]) : unit
+  (match result
+    [(OkIoRead _) (panic (string-append message "read unexpectedly succeeded"))]
+    [(ErrIoRead error) (assert-true (io-error-invalid-path? error) message)]))
+
 (define (assert-file-contents
   [path : String]
   [expected : String]
@@ -71,14 +99,53 @@
     [read-handle : FileHandle
       (begin
         (assert-ok-unit
-          (try-write-file handle-read-file "alpha")
+          (try-write-file handle-read-file "abcdef")
           "seed read handle file: ")
         (expect-open-ok (file-open handle-read-file OpenRead) "open read: "))]
     (begin
+      (assert-read-invalid
+        (file-read-chunk read-handle -1)
+        "negative read count returns invalid path")
+      (assert-read-ok
+        (file-read-chunk read-handle 0)
+        ""
+        false
+        "zero read keeps current eof")
+      (assert-read-ok
+        (file-read-chunk read-handle 2)
+        "ab"
+        false
+        "first fixed chunk")
+      (assert-read-ok
+        (file-read-chunk read-handle 3)
+        "cde"
+        false
+        "second fixed chunk")
+      (assert-read-ok
+        (file-read-chunk read-handle 10)
+        "f"
+        false
+        "short read before eof")
+      (assert-read-ok
+        (file-read-chunk read-handle 10)
+        ""
+        true
+        "empty read observes eof")
+      (assert-read-ok
+        (file-read-chunk read-handle 10)
+        ""
+        true
+        "eof remains sticky")
       (assert-ok-unit (file-close read-handle) "close read handle: ")
+      (assert-read-unsupported
+        (file-read-chunk read-handle 1)
+        "read after close returns unsupported")
       (assert-close-unsupported
         (file-close read-handle)
         "double close returns unsupported")
+      (assert-read-unsupported
+        (file-read-chunk (FileHandle 999) 1)
+        "invalid read handle returns unsupported")
       (assert-close-unsupported
         (file-close (FileHandle 999))
         "invalid handle returns unsupported")
@@ -95,6 +162,9 @@
             (file-open handle-truncate-file OpenWriteTruncate)
             "open truncate: ")]
         (begin
+          (assert-read-unsupported
+            (file-read-chunk truncate-handle 1)
+            "write-only handle read returns unsupported")
           (assert-ok-unit
             (file-close truncate-handle)
             "close truncate handle: ")
@@ -131,8 +201,12 @@
 (define (main) : i64
   (begin
     (if (fs-windows?)
-      (assert-open-unsupported
-        (file-open handle-read-file OpenRead)
-        "windows file handles are unsupported")
+      (begin
+        (assert-open-unsupported
+          (file-open handle-read-file OpenRead)
+          "windows file handles are unsupported")
+        (assert-read-unsupported
+          (file-read-chunk (FileHandle 1) 1)
+          "windows file reads are unsupported"))
       (exercise-linux-file-handles))
     42))

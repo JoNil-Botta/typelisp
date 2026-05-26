@@ -2,6 +2,22 @@
 
 (import "stdlib/test.tl")
 
+(define (assert-system-seed-ok [result : ResultSystemSeed]) : unit
+  (match result
+    [(OkSystemSeed seed)
+      (begin
+        (assert-true (> seed 0) "system seed positive")
+        (assert-true (< seed (random-modulus)) "system seed normalized"))]
+    [(ErrSystemSeed _) (panic "system seed should succeed on Linux")]))
+
+(define (assert-system-seed-error [result : ResultSystemSeed]) : unit
+  (match result
+    [(OkSystemSeed _) (panic "expected system seed error")]
+    [(ErrSystemSeed err)
+      (match err
+        [(RandomSystemSeedUnavailable message)
+          (assert-true (> (string-length message) 0) "error message non-empty")])]))
+
 (define (assert-random-bounded-ok
   [result : RandomBoundedResult]
   [want-state : i64]
@@ -127,4 +143,17 @@
       33614
       3
       "weighted index reaches later positive bucket")
+    (assert-system-seed-ok (random-system-seed))
+    (assert-system-seed-ok (random-system-seed))
+    (assert-system-seed-error
+      (ErrSystemSeed (RandomSystemSeedUnavailable "entropy unavailable")))
+    (let
+      [state1 : RandomState (random-from-system)]
+      (begin
+        (assert-true
+          (> (random-state-seed state1) 0)
+          "random-from-system seed positive")
+        (assert-true
+          (< (random-state-seed state1) (random-modulus))
+          "random-from-system seed normalized")))
     42))

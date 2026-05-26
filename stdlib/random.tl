@@ -45,6 +45,15 @@
   (OkRandomBounded RandomState i64)
   (ErrRandomBounded String))
 
+;;; Error enumeration for system entropy failures.
+(defenum RandomSystemSeedError
+  (RandomSystemSeedUnavailable String))
+
+;;; Result of reading OS entropy for a seed.
+(defenum ResultSystemSeed
+  (OkSystemSeed i64)
+  (ErrSystemSeed RandomSystemSeedError))
+
 ;;; Linear list of non-negative weights.
 (defenum RandomWeightList
   (RandomWeightNil)
@@ -181,3 +190,23 @@
               next-state
               (random-weighted-index-scan weights target 0))]
           [(ErrRandomBounded message) (ErrRandomWeightedIndex message)]))]))
+
+;;; Backend runtime hook: read host entropy and return a structured result.
+(extern tl_random_system_seed : (-> ResultSystemSeed))
+
+;;; Return a system-provided random seed, or a diagnostic when entropy is
+;;; unavailable. The seed is normalized to the valid MINSTD range.
+(define (random-system-seed) : ResultSystemSeed
+  (match (tl_random_system_seed)
+    [(OkSystemSeed seed) (OkSystemSeed (random-normalize-seed-value seed))]
+    [(ErrSystemSeed err) (ErrSystemSeed err)]))
+
+;;; Build a `RandomState` directly from host entropy, or panic when entropy is
+;;; unavailable. This is a convenience wrapper over `random-system-seed`.
+(define (random-from-system) : RandomState
+  (match (random-system-seed)
+    [(OkSystemSeed seed) (random-seed seed)]
+    [(ErrSystemSeed err)
+      (panic
+        (match err
+          [(RandomSystemSeedUnavailable message) message]))]))

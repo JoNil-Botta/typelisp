@@ -35,6 +35,7 @@ const READ_STDIN_LINE_RUNTIME_SYMBOL: &str = ".L_tl_read_stdin_line";
 const READ_STDIN_BYTES_RUNTIME_SYMBOL: &str = ".L_tl_read_stdin_bytes";
 const STDIN_EOF_RUNTIME_SYMBOL: &str = ".L_tl_stdin_eof";
 const FLUSH_STDOUT_RUNTIME_SYMBOL: &str = ".L_tl_flush_stdout";
+const RANDOM_SYSTEM_SEED_RUNTIME_SYMBOL: &str = "tl_random_system_seed";
 const REGION_MARK_RUNTIME_SYMBOL: &str = "tl_region_mark";
 const REGION_RESET_RUNTIME_SYMBOL: &str = "tl_region_reset";
 const CPUID_RUNTIME_SYMBOL: &str = "tl_cpuid";
@@ -47,7 +48,7 @@ const SYSV_FLOAT_ARG_REGS: [&str; 8] = [
 const WIN64_INTEGER_ARG_REGS: [&str; 4] = ["%rcx", "%rdx", "%r8", "%r9"];
 const WIN64_FLOAT_ARG_REGS: [&str; 4] = ["%xmm0", "%xmm1", "%xmm2", "%xmm3"];
 const LINUX_LINK_LIBS: [&str; 1] = ["-lc"];
-const WINDOWS_LINK_LIBS: [&str; 2] = ["msvcrt.lib", "legacy_stdio_definitions.lib"];
+const WINDOWS_LINK_LIBS: [&str; 3] = ["msvcrt.lib", "legacy_stdio_definitions.lib", "advapi32.lib"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendArch {
@@ -496,6 +497,7 @@ pub struct X86_64Backend {
     needs_read_stdin_bytes_runtime: bool,
     needs_stdin_eof_runtime: bool,
     needs_flush_stdout_runtime: bool,
+    needs_random_system_seed_runtime: bool,
     return_ty: Type,
     /// VarIds that are function parameters of the function currently being
     /// generated. Their `Alloc` instructions are no-ops because the parameter
@@ -2013,6 +2015,7 @@ impl X86_64Backend {
             needs_read_stdin_bytes_runtime: false,
             needs_stdin_eof_runtime: false,
             needs_flush_stdout_runtime: false,
+            needs_random_system_seed_runtime: false,
             return_ty: Type::Unit,
             param_vars: HashSet::new(),
             current_fn: String::new(),
@@ -2085,6 +2088,7 @@ impl X86_64Backend {
         self.needs_read_stdin_bytes_runtime = Self::needs_read_stdin_bytes_runtime(program);
         self.needs_stdin_eof_runtime = Self::needs_stdin_eof_runtime(program);
         self.needs_flush_stdout_runtime = Self::needs_flush_stdout_runtime(program);
+        self.needs_random_system_seed_runtime = Self::needs_random_system_seed_runtime(program);
         let runtime_policy = self.target.runtime_policy();
         let windows_flush_can_abort =
             self.needs_flush_stdout_runtime && runtime_policy.emits_windows_runtime_helpers;
@@ -2116,7 +2120,8 @@ impl X86_64Backend {
             || self.needs_process_output_runtime
             || self.needs_windows_setup_instances_runtime
             || self.needs_read_stdin_line_runtime
-            || self.needs_read_stdin_bytes_runtime;
+            || self.needs_read_stdin_bytes_runtime
+            || self.needs_random_system_seed_runtime;
         let needs_print_runtime = !self.runtime_print_names.is_empty();
         let needs_argv_data = self.needs_arg_count_runtime || self.needs_arg_runtime;
         let needs_env_data = !runtime_policy.emits_windows_runtime_helpers
@@ -2203,6 +2208,9 @@ impl X86_64Backend {
         if self.needs_windows_setup_instances_runtime {
             self.generate_windows_setup_instances_runtime_data();
         }
+        if self.needs_random_system_seed_runtime {
+            self.generate_random_system_seed_runtime_data();
+        }
         self.generate_closure_descriptor_data();
 
         self.emit("    .text");
@@ -2259,7 +2267,9 @@ impl X86_64Backend {
                 || (self.needs_read_stdin_bytes_runtime
                     && symbol == READ_STDIN_BYTES_RUNTIME_SYMBOL)
                 || (self.needs_stdin_eof_runtime && symbol == STDIN_EOF_RUNTIME_SYMBOL)
-                || (self.needs_flush_stdout_runtime && symbol == FLUSH_STDOUT_RUNTIME_SYMBOL);
+                || (self.needs_flush_stdout_runtime && symbol == FLUSH_STDOUT_RUNTIME_SYMBOL)
+                || (self.needs_random_system_seed_runtime
+                    && symbol == RANDOM_SYSTEM_SEED_RUNTIME_SYMBOL);
             if !defined_inline {
                 self.emit(&format!("    .extern {}", symbol));
             }
@@ -2370,6 +2380,9 @@ impl X86_64Backend {
         }
         if self.needs_flush_stdout_runtime {
             self.generate_flush_stdout_runtime_functions();
+        }
+        if self.needs_random_system_seed_runtime {
+            self.generate_random_system_seed_runtime_functions();
         }
 
         self.generate_closure_entry_adapters();
@@ -2555,6 +2568,9 @@ impl X86_64Backend {
         }
         if self.needs_flush_stdout_runtime {
             externs.insert("fflush");
+        }
+        if self.needs_random_system_seed_runtime {
+            externs.insert("SystemFunction036");
         }
         if self.needs_process_output_runtime {
             for symbol in [
@@ -3015,6 +3031,10 @@ impl X86_64Backend {
 
     fn needs_windows_setup_instances_runtime(program: &Program) -> bool {
         Self::needs_named_runtime(program, WINDOWS_SETUP_INSTANCES_RUNTIME_SYMBOL)
+    }
+
+    fn needs_random_system_seed_runtime(program: &Program) -> bool {
+        Self::needs_named_runtime(program, RANDOM_SYSTEM_SEED_RUNTIME_SYMBOL)
     }
 
     fn needs_private_call_runtime(program: &Program, symbol: &str) -> bool {
@@ -4063,6 +4083,16 @@ impl X86_64Backend {
         );
         self.emit(
             "    .set .L_tl_windows_setup_unsupported_msg_len, . - .L_tl_windows_setup_unsupported_msg",
+        );
+        self.emit("");
+    }
+
+    fn generate_random_system_seed_runtime_data(&mut self) {
+        self.emit("    .section .rodata");
+        self.emit(".L_tl_random_system_seed_err_msg:");
+        self.emit("    .ascii \"random: system entropy unavailable\"");
+        self.emit(
+            "    .set .L_tl_random_system_seed_err_msg_len, . - .L_tl_random_system_seed_err_msg",
         );
         self.emit("");
     }
@@ -7131,6 +7161,134 @@ impl X86_64Backend {
         self.emit("");
     }
 
+    fn generate_random_system_seed_runtime_functions(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.generate_windows_random_system_seed_runtime_functions();
+            return;
+        }
+
+        // Linux: syscall getrandom(2) (#318) into an 8-byte buffer, returning
+        // ResultSystemSeed: OkSystemSeed i64 on success, ErrSystemSeed with
+        // RandomSystemSeedUnavailable String on failure.
+        self.emit(&format!("{}:", RANDOM_SYSTEM_SEED_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    movq %rsp, %rbp");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    sub $16, %rsp");
+        // getrandom(buf, 8, 0)
+        self.emit("    leaq (%rsp), %rdi");
+        self.emit("    movq $8, %rsi");
+        self.emit("    xorq %rdx, %rdx");
+        self.emit("    movq $318, %rax");
+        self.emit("    syscall");
+        self.emit("    testq %rax, %rax");
+        self.emit("    js .L_tl_random_system_seed_err");
+        self.emit("    cmpq $8, %rax");
+        self.emit("    jne .L_tl_random_system_seed_err");
+        self.emit("    movq (%rsp), %r12");
+        // allocate OkSystemSeed result (tag 0, payload i64 inline)
+        self.emit("    movq $16, %rdi");
+        self.emit("    call tl_alloc");
+        self.emit("    movq $0, 0(%rax)");
+        self.emit("    movq %r12, 8(%rax)");
+        self.emit("    add $16, %rsp");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        // Error path: allocate error message, wrap in nested enums, return.
+        self.emit(".L_tl_random_system_seed_err:");
+        self.emit("    leaq .L_tl_random_system_seed_err_msg(%rip), %r12");
+        self.emit("    movq $.L_tl_random_system_seed_err_msg_len, %r13");
+        // allocate String {ptr, len}
+        self.emit("    movq $16, %rdi");
+        self.emit("    call tl_alloc");
+        self.emit("    movq %r12, 0(%rax)");
+        self.emit("    movq %r13, 8(%rax)");
+        self.emit("    movq %rax, %r12");
+        // allocate RandomSystemSeedUnavailable variant (tag 0 + String ptr)
+        self.emit("    movq $16, %rdi");
+        self.emit("    call tl_alloc");
+        self.emit("    movq $0, 0(%rax)");
+        self.emit("    movq %r12, 8(%rax)");
+        self.emit("    movq %rax, %r12");
+        // allocate ErrSystemSeed variant (tag 1 + RandomSystemSeedError ptr)
+        self.emit("    movq $16, %rdi");
+        self.emit("    call tl_alloc");
+        self.emit("    movq $1, 0(%rax)");
+        self.emit("    movq %r12, 8(%rax)");
+        self.emit("    movq %rax, %r12");
+        // allocate ResultSystemSeed (tag 1 + ErrSystemSeed ptr)
+        self.emit("    movq $16, %rdi");
+        self.emit("    call tl_alloc");
+        self.emit("    movq $1, 0(%rax)");
+        self.emit("    movq %r12, 8(%rax)");
+        self.emit("    add $16, %rsp");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_windows_random_system_seed_runtime_functions(&mut self) {
+        // Windows: use RtlGenRandom/SystemFunction036 to fill an 8-byte buffer
+        // and return ResultSystemSeed. On failure, return the same
+        // structured error path as Linux.
+        self.emit(&format!("{}:", RANDOM_SYSTEM_SEED_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    sub $16, %rsp");
+        self.emit("    leaq (%rsp), %rcx");
+        self.emit("    movl $8, %edx");
+        self.emit_call("SystemFunction036");
+        self.emit("    testb %al, %al");
+        self.emit("    jz .L_tl_random_system_seed_err");
+        self.emit("    movq (%rsp), %r12");
+        // allocate OkSystemSeed result
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq $0, 0(%rax)");
+        self.emit("    movq %r12, 8(%rax)");
+        self.emit("    add $16, %rsp");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        // reuse Linux error labels; runtime strings are target-independent
+        self.emit(".L_tl_random_system_seed_err:");
+        self.emit("    leaq .L_tl_random_system_seed_err_msg(%rip), %r12");
+        self.emit("    movq $.L_tl_random_system_seed_err_msg_len, %r13");
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %r12, 0(%rax)");
+        self.emit("    movq %r13, 8(%rax)");
+        self.emit("    movq %rax, %r12");
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq $0, 0(%rax)");
+        self.emit("    movq %r12, 8(%rax)");
+        self.emit("    movq %rax, %r12");
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq $1, 0(%rax)");
+        self.emit("    movq %r12, 8(%rax)");
+        self.emit("    movq %rax, %r12");
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq $1, 0(%rax)");
+        self.emit("    movq %r12, 8(%rax)");
+        self.emit("    add $16, %rsp");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
     fn generate_windows_read_stdin_line_runtime_functions(&mut self) {
         self.emit(&format!("{}:", READ_STDIN_LINE_RUNTIME_SYMBOL));
         self.emit("    push %rbp");
@@ -9782,6 +9940,9 @@ impl X86_64Backend {
             STDIN_EOF_RUNTIME_SYMBOL.into()
         } else if name == FLUSH_STDOUT_RUNTIME_SYMBOL && self.needs_flush_stdout_runtime {
             FLUSH_STDOUT_RUNTIME_SYMBOL.into()
+        } else if name == RANDOM_SYSTEM_SEED_RUNTIME_SYMBOL && self.needs_random_system_seed_runtime
+        {
+            RANDOM_SYSTEM_SEED_RUNTIME_SYMBOL.into()
         } else if self.extern_names.contains(name) {
             Self::extern_symbol(name)
         } else {
@@ -10080,7 +10241,7 @@ mod tests {
         assert_eq!(toolchain.dynamic_linker, None);
         assert_eq!(
             toolchain.libraries,
-            &["msvcrt.lib", "legacy_stdio_definitions.lib"]
+            &["msvcrt.lib", "legacy_stdio_definitions.lib", "advapi32.lib"]
         );
     }
 
@@ -14958,6 +15119,62 @@ mod tests {
             asm
         );
         assert!(!asm.contains("    syscall"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_random_system_seed_emits_runtime_and_string_data() {
+        let asm = compile_ok(
+            r#"
+            (extern tl_random_system_seed : (-> i64))
+            (define (main) : i64 (tl_random_system_seed))
+            "#,
+        );
+
+        assert!(asm.contains("tl_random_system_seed:"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("    .extern tl_random_system_seed"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(!asm.contains("_tl_tl_random_system_seed"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("random: system entropy unavailable"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_windows_target_random_system_seed_emits_runtime() {
+        let asm = compile_ok_for_target(
+            r#"
+            (extern tl_random_system_seed : (-> i64))
+            (define (main) : i64 (tl_random_system_seed))
+            "#,
+            BackendTarget::windows_x86_64(),
+        );
+
+        assert!(asm.contains("tl_random_system_seed:"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains("    .extern tl_random_system_seed"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(!asm.contains("_tl_tl_random_system_seed"), "asm:\n{}", asm);
+        assert!(!asm.contains("    syscall"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("    .extern SystemFunction036"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(asm.contains("    call SystemFunction036"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("random: system entropy unavailable"),
+            "asm:\n{}",
+            asm
+        );
         assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
     }
 

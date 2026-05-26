@@ -631,3 +631,15 @@ contains|_tl_compiler_lint_self_test:
 contains|_tl_lint_walk_expr:
 contains|_tl_lint_ladder_length:
 end
+
+decision|selfhost/lint_driver_core.tl|selfhost lint driver logic (#1163): arg parsing, finding rendering (path:line:col), file/source linting, and the driver self-test; main-less, imported by selfhost/lint.tl and selfhost/lint_driver_smoke.tl and exercised through the selfhost_lint and selfhost_lint_driver_smoke cases; has no main to compile directly
+
+case|selfhost_lint|selfhost/lint.tl|assembly|exactly-one|direct
+contains|_tl_selfhost_lint_file:
+contains|_tl_selfhost_lint_render_finding:
+end
+
+case|selfhost_lint_driver_smoke|selfhost/lint_driver_smoke.tl|assembly|exactly-one|direct
+contains|_tl_compiler_lint_driver_self_test:
+contains|_tl_selfhost_lint_source_with_roots:
+end

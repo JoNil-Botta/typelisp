@@ -1855,6 +1855,16 @@
                     (string-append
                       (tc-type-render (tc-resolve-type ctx ty))
                       " is compile-time only"))))]
+            [(CtfeExpr _)
+              (ErrLowerExpr
+                (lower-diagnostic-at-expr
+                  origin
+                  "Expr value is compile-time only"))]
+            [(CtfeExprList _)
+              (ErrLowerExpr
+                (lower-diagnostic-at-expr
+                  origin
+                  "ExprList value is compile-time only"))]
             [_
               (lower-materialize
                 state

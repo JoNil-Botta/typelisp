@@ -4067,7 +4067,11 @@
                   "type value "
                   (string-append
                     (tc-type-render (tc-resolve-type ctx ty))
-                    " is compile-time only")))])]
+                    " is compile-time only")))]
+            [(CtfeExpr _)
+              (ErrTcType "Expr value is compile-time only (#1135)")]
+            [(CtfeExprList _)
+              (ErrTcType "ExprList value is compile-time only (#1135)")])]
         [(ErrCtfe diag) (ErrTcType (compiler-diagnostic-message diag))])]
     [(AstExprTry inner) (tc-try-expr ctx env inner)]
     [_ (ErrTcType "typecheck: unsupported expression")]))

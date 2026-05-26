@@ -16,38 +16,76 @@ fn fixture_dir(name: &str) -> PathBuf {
     dir
 }
 
+/// True when `code` is a #1204 crash/abort exit, mirroring `is_crash_code` in
+/// `scripts/lib-retry.sh`: the bash/MSYS 128+signal codes (132 SIGILL / 134
+/// SIGABRT / 139 SIGSEGV) and the raw Windows NTSTATUS exits that `std` reports
+/// for a native crash (0xC0000005 access violation = -1073741819, 0xC000001D
+/// illegal instruction = -1073741795).
+fn is_crash_code(code: Option<i32>) -> bool {
+    matches!(
+        code,
+        Some(132) | Some(134) | Some(139) | Some(-1073741819) | Some(-1073741795)
+    )
+}
+
+/// Run `make` up to `CLI_TEST_ATTEMPTS` times (default 3), retrying ONLY when
+/// the process exited with a #1204 crash code. A normal exit — zero or a
+/// genuine non-zero — returns immediately, so error/assertion tests still fail.
+/// This is the `tests/cli.rs` analogue of the shell `run_with_retry`/`run_cmd`
+/// crash guards (#1222/#1231/#1239/#1242).
+fn run_with_crash_retry(mut make: impl FnMut() -> Output) -> Output {
+    let attempts = std::env::var("CLI_TEST_ATTEMPTS")
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(3)
+        .max(1);
+    let mut output = make();
+    let mut attempt = 1;
+    while attempt < attempts && is_crash_code(output.status.code()) {
+        attempt += 1;
+        output = make();
+    }
+    output
+}
+
 fn typelisp(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .args(args)
-        .output()
-        .expect("run typelisp CLI")
+    run_with_crash_retry(|| {
+        Command::new(env!("CARGO_BIN_EXE_typelisp"))
+            .args(args)
+            .output()
+            .expect("run typelisp CLI")
+    })
 }
 
 fn typelisp_with_stdin(args: &[&str], stdin: &str) -> Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn typelisp CLI");
+    run_with_crash_retry(|| {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn typelisp CLI");
 
-    child
-        .stdin
-        .as_mut()
-        .expect("stdin is piped")
-        .write_all(stdin.as_bytes())
-        .expect("write CLI stdin");
+        child
+            .stdin
+            .as_mut()
+            .expect("stdin is piped")
+            .write_all(stdin.as_bytes())
+            .expect("write CLI stdin");
 
-    child.wait_with_output().expect("wait for typelisp CLI")
+        child.wait_with_output().expect("wait for typelisp CLI")
+    })
 }
 
 fn typelisp_with_path(args: &[&str], path: &std::path::Path) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .args(args)
-        .env("PATH", path)
-        .output()
-        .expect("run typelisp CLI")
+    run_with_crash_retry(|| {
+        Command::new(env!("CARGO_BIN_EXE_typelisp"))
+            .args(args)
+            .env("PATH", path)
+            .output()
+            .expect("run typelisp CLI")
+    })
 }
 
 fn lsp_frame(payload: &str) -> String {

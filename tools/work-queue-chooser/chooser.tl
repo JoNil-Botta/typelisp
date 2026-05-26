@@ -1,9 +1,10 @@
 ;;;; work-queue-chooser/chooser.tl - TypeLisp port of the Rust work-queue chooser (#794).
 ;;;;
 ;;;; Reads the combined `{"prs":[...],"issues":[...]}` JSON from stdin, classifies
-;;;; each entry, weights it (PR review = 30, ready-for-implementation = 10,
-;;;; research/triage = 1, +50 for a p0 label, +3 for a p1 label), makes a seeded
-;;;; weighted pick, and prints one action line:
+;;;; each entry, skips PRs whose checks are still pending/running, weights the
+;;;; rest (PR review = 30, ready-for-implementation = 10, research/triage = 1,
+;;;; +50 for a p0 label, +3 for a p1 label), makes a seeded weighted pick, and
+;;;; prints one action line:
 ;;;;
 ;;;;   review pr #N: Title
 ;;;;   implement issue #N: Title
@@ -59,6 +60,10 @@
 (defenum CandList
   (CandNil)
   (CandCons Candidate CandList))
+
+(defenum ChooserResult
+  (ChooserOk Candidate)
+  (ChooserErr String))
 
 ;;; Read all of stdin into a single String by repeated bounded reads until EOF.
 (define (read-all-stdin-acc [acc : String]) : String
@@ -125,6 +130,48 @@
     (json-field-string item "title")
     review-weight))
 
+;;; Return true when a check run status is terminal; conclusions may pass/fail.
+(define (pr-check-status-complete? [status : String]) : bool
+  (string-eq status "COMPLETED"))
+
+;;; Return true when a legacy status context state is terminal.
+(define (pr-check-state-complete? [state : String]) : bool
+  (or
+    (string-eq state "SUCCESS")
+    (or (string-eq state "FAILURE") (string-eq state "ERROR"))))
+
+;;; Return true when a rollup entry is complete. Unknown entries do not block so
+;;; a missing check shape is treated like no checks rather than a pending check.
+(define (pr-check-entry-complete? [entry : Json]) : bool
+  (let
+    [status : String (json-field-string entry "status")]
+    (if (> (string-length status) 0)
+      (pr-check-status-complete? status)
+      (let
+        [state : String (json-field-string entry "state")]
+        (if (> (string-length state) 0)
+          (pr-check-state-complete? state)
+          true)))))
+
+;;; Return true when every check rollup entry has reached a terminal state.
+(define (pr-check-list-complete? [checks : JsonList]) : bool
+  (match checks
+    [(JsonListNil) true]
+    [(JsonListCons head rest)
+      (if (pr-check-entry-complete? head)
+        (pr-check-list-complete? rest)
+        false)]))
+
+;;; Missing or empty `statusCheckRollup` means the PR has no checks and remains
+;;; eligible. Only explicitly pending/running entries are skipped.
+(define (pr-checks-complete? [item : Json]) : bool
+  (match (json-object-get item "statusCheckRollup")
+    [(JsonFound found)
+      (match found
+        [(JsonArray entries) (pr-check-list-complete? entries)]
+        [_ true])]
+    [(JsonMissing) true]))
+
 ;;; Build an issue candidate, classifying ready-for-implementation vs triage and
 ;;; adding the priority bonus.
 (define (issue-candidate [item : Json]) : Candidate
@@ -149,7 +196,11 @@
   (match items
     [(JsonListNil) (CandNil)]
     [(JsonListCons head rest)
-      (CandCons (pr-candidate head) (pr-candidates rest))]))
+      (let
+        [tail : CandList (pr-candidates rest)]
+        (if (pr-checks-complete? head)
+          (CandCons (pr-candidate head) tail)
+          tail))]))
 
 ;;; Map a JSON array of issue objects to candidates, preserving source order.
 (define (issue-candidates [items : JsonList]) : CandList
@@ -203,6 +254,57 @@
     [(CandNil) 0]
     [(CandCons _ rest) (+ 1 (cand-count rest))]))
 
+(test
+  chooser-skips-incomplete-pr-checks
+  (match (json-parse
+    "{\"prs\":[{\"number\":1,\"title\":\"Draft without checks\",\"isDraft\":true},{\"number\":2,\"title\":\"Empty checks\",\"statusCheckRollup\":[]},{\"number\":3,\"title\":\"Completed checks\",\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"COMPLETED\",\"conclusion\":\"FAILURE\"}]},{\"number\":4,\"title\":\"Running checks\",\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]},{\"number\":5,\"title\":\"Pending status\",\"statusCheckRollup\":[{\"__typename\":\"StatusContext\",\"state\":\"PENDING\"}]},{\"number\":6,\"title\":\"Failed status\",\"statusCheckRollup\":[{\"__typename\":\"StatusContext\",\"state\":\"FAILURE\"}]}],\"issues\":[{\"number\":7,\"title\":\"Fallback issue\",\"labels\":[]}]}")
+    [(OkJson root)
+      (let
+        [cands : CandList (build-candidates root)]
+        (begin
+          (if (= (cand-count cands) 5)
+            unit
+            (panic "expected only complete/no-check PRs plus issue"))
+          (if (= (struct-get (cand-nth cands 0) number) 1)
+            unit
+            (panic "draft no-check PR should remain eligible"))
+          (if (= (struct-get (cand-nth cands 1) number) 2)
+            unit
+            (panic "empty check rollup should remain eligible"))
+          (if (= (struct-get (cand-nth cands 2) number) 3)
+            unit
+            (panic "completed check run should remain eligible"))
+          (if (= (struct-get (cand-nth cands 3) number) 6)
+            unit
+            (panic "terminal legacy status should remain eligible"))
+          (if (= (struct-get (cand-nth cands 4) number) 7)
+            unit
+            (panic "issue should remain after skipped PRs"))))]
+    [(ErrJson _) (panic "test JSON should parse")]))
+
+(test
+  chooser-p0-label-takes-precedence-over-p1
+  (match (json-parse
+    "{\"prs\":[],\"issues\":[{\"number\":10,\"title\":\"Both priorities\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p1\"},{\"name\":\"p0\"}]},{\"number\":11,\"title\":\"P1 only\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p1\"}]}]}")
+    [(OkJson root)
+      (let
+        [cands : CandList (build-candidates root)]
+        (begin
+          (if (= (cand-count cands) 2)
+            unit
+            (panic "expected two issue candidates"))
+          (if (=
+            (struct-get (cand-nth cands 0) weight)
+            (+ implement-weight p0-priority-bonus))
+            unit
+            (panic "issue with p0 and p1 should use p0 priority"))
+          (if (=
+            (struct-get (cand-nth cands 1) weight)
+            (+ implement-weight p1-priority-bonus))
+            unit
+            (panic "issue with only p1 should use p1 priority"))))]
+    [(ErrJson _) (panic "test JSON should parse")]))
+
 ;;; The action verb for a candidate kind.
 (define (action-name [kind : i64]) : String
   (if (= kind kind-pr)
@@ -235,33 +337,32 @@
       [(OkSystemSeed seed) seed]
       [(ErrSystemSeed _) fallback-seed])))
 
-;;; Print the chosen candidate's action line; print an error and return 1 on
-;;; failure, 0 on success.
-(define (run-chooser [text : String]) : i64
+;;; Choose one candidate from the input JSON, returning an error message on
+;;; invalid input or an empty candidate set.
+(define (choose-candidate [text : String]) : ChooserResult
   (match (json-parse text)
     [(ErrJson message)
-      (begin
-        (print-error (string-append "Error: invalid JSON: " message))
-        1)]
+      (ChooserErr (string-append "Error: invalid JSON: " message))]
     [(OkJson root)
       (let
         [cands : CandList (build-candidates root)]
         (if (= (cand-count cands) 0)
-          (begin
-            (print-error "Error: no eligible candidates were provided")
-            1)
+          (ChooserErr "Error: no eligible candidates were provided")
           (match (random-weighted-index
             (random-seed (chooser-seed))
             (cand-weights cands))
             [(ErrRandomWeightedIndex message)
-              (begin
-                (print-error (string-append "Error: " message))
-                1)]
-            [(OkRandomWeightedIndex _ index)
-              (begin
-                (print-string (candidate-line (cand-nth cands index)))
-                (print-newline)
-                0)])))]))
+              (ChooserErr (string-append "Error: " message))]
+            [(OkRandomWeightedIndex _ index) (ChooserOk (cand-nth cands index))])))]))
 
 (define (main) : i64
-  (run-chooser (read-all-stdin)))
+  (match (choose-candidate (read-all-stdin))
+    [(ChooserErr message)
+      (begin
+        (print-error message)
+        1)]
+    [(ChooserOk cand)
+      (begin
+        (print-string (candidate-line cand))
+        (print-newline)
+        0)]))

@@ -96,6 +96,7 @@ returned caller-owned values.
 | `try-file-exists?` | Returns `OkIoBool` for existing or expected missing paths; empty paths and hard probe failures return `ErrIoBool`. |
 | `try-append-file` | Appends through the recoverable runtime status helper. It preserves existing contents, creates missing files, does not allocate a concatenated temporary string, and uses best-effort host append semantics rather than truncating or rewriting the whole file. |
 | `file-open`, `file-close` | `file-open` returns `ResultIoFile` with an opaque runtime-managed `FileHandle` for `OpenRead`, `OpenWriteTruncate`, and `OpenWriteAppend`. The Linux runtime copies the path into active-arena storage for the host syscall and tracks handle state in a process-global table; Windows currently returns `IoUnsupported`. `file-close` releases a valid handle and returns `IoUnsupported` for invalid or already-closed handles. |
+| `file-read-chunk`, `file-read-bytes`, `file-read-eof?` | `file-read-chunk` reads up to the requested byte count from a read-mode `FileHandle` and returns `ResultIoRead` with active-arena `String` bytes plus the sticky EOF flag. Negative counts return `IoInvalidPath`; closed, invalid, write-only, and unsupported handles return `IoUnsupported`. The accessors are non-allocating field reads on `FileRead`. |
 | `read-file-or` | Convenience wrapper over `try-read-file`; returns the caller-provided `fallback` for every structured error. |
 | `append-file` | Panic-on-error convenience wrapper over `try-append-file`; preserves existing contents and creates missing files through host append mode. |
 | `file-nonempty?` | Convenience wrapper over `try-read-file`; allocates a temporary active-arena `String` through `read-file` only when the path exists. |
@@ -132,7 +133,7 @@ implementation lands incrementally:
   (`OpenRead`, `OpenWriteTruncate`, `OpenWriteAppend`), `file-open` returning
   `ResultIoFile`, and `file-close`. v1 requires explicit close; there is no
   implicit drop until #805.
-- **#1057** — `file-read-chunk` returning `ResultIoRead` / `FileRead` (a
+- **#1057** — implemented: `file-read-chunk` returning `ResultIoRead` / `FileRead` (a
   `String` payload plus a sticky EOF flag, mirroring `StdinRead`). Chunk bytes
   allocate in the active arena and stay `String`-typed until #807 adds a
   byte-slice split.

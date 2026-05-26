@@ -105,7 +105,9 @@
     [(AstExprWithRegion _ _) "with-arena"]
     [(AstExprTypeLiteral _) "type literal"]
     [(AstExprComptime _) "comptime"]
-    [(AstExprTry _) "try"]))
+    [(AstExprTry _) "try"]
+    [(AstExprPtrNull _) "ptr-null"]
+    [(AstExprPtrNullCheck _) "ptr-null?"]))
 
 (define (ctfe-value-type-name [value : CompilerCtfeValue]) : String
   (match value

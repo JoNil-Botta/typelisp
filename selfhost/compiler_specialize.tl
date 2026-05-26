@@ -1114,6 +1114,12 @@
       (match (spec-rewrite-expr inner templates state)
         [(OkSpecExpr rewritten state2)
           (OkSpecExpr (AstExprTry rewritten) state2)]
+        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprPtrNull ty) (OkSpecExpr (AstExprPtrNull ty) state)]
+    [(AstExprPtrNullCheck inner)
+      (match (spec-rewrite-expr inner templates state)
+        [(OkSpecExpr rewritten state2)
+          (OkSpecExpr (AstExprPtrNullCheck rewritten) state2)]
         [(ErrSpecExpr diag) (ErrSpecExpr diag)])]))
 
 (define (spec-substitute-values-expr [expr : AstExpr] [subs : SpecValueSubst]) : ResultSpecSubExpr
@@ -1335,6 +1341,12 @@
     [(AstExprTry inner)
       (match (spec-substitute-values-expr inner subs)
         [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprTry rewritten))]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprPtrNull ty) (OkSpecSubExpr (AstExprPtrNull ty))]
+    [(AstExprPtrNullCheck inner)
+      (match (spec-substitute-values-expr inner subs)
+        [(OkSpecSubExpr rewritten)
+          (OkSpecSubExpr (AstExprPtrNullCheck rewritten))]
         [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]))
 
 (define (spec-substitute-values-expr-list
@@ -1626,6 +1638,13 @@
     [(AstExprTry inner)
       (match (spec-substitute-types-expr inner subs)
         [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprTry rewritten))]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprPtrNull ty)
+      (OkSpecSubExpr (AstExprPtrNull (spec-substitute-type ty subs)))]
+    [(AstExprPtrNullCheck inner)
+      (match (spec-substitute-types-expr inner subs)
+        [(OkSpecSubExpr rewritten)
+          (OkSpecSubExpr (AstExprPtrNullCheck rewritten))]
         [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]))
 
 (define (spec-substitute-types-expr-list

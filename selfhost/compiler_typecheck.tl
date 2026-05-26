@@ -1043,6 +1043,7 @@
     [(AstExprWithRegion _ body) (tc-source-expr-list-policy-ok ctx body)]
     [(AstExprComptime inner) (tc-source-expr-policy-ok ctx inner)]
     [(AstExprTry inner) (tc-source-expr-policy-ok ctx inner)]
+    [(AstExprPtrNullCheck inner) (tc-source-expr-policy-ok ctx inner)]
     [_ OkTcUnit]))
 
 (define (tc-source-decl-policy-ok [ctx : TcContext] [decl : AstDecl]) : ResultTcUnit
@@ -2645,6 +2646,14 @@
           (match info
             [(TcSpmdExprInfo _ class next-spmd-env)
               (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprPtrNull _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
+    [(AstExprPtrNullCheck inner)
+      (match (tc-spmd-expr ctx env spmd-env inner)
+        [(OkTcSpmdExprInfo info)
+          (match info
+            [(TcSpmdExprInfo _ class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
         [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]))
 
 (define (tc-param-list-add-bound-names
@@ -2832,7 +2841,9 @@
     [(AstExprWithRegion _ body) (tc-expr-list-uses-free-name? body name bound)]
     [(AstExprTypeLiteral _) false]
     [(AstExprComptime inner) (tc-expr-uses-free-name? inner name bound)]
-    [(AstExprTry inner) (tc-expr-uses-free-name? inner name bound)]))
+    [(AstExprTry inner) (tc-expr-uses-free-name? inner name bound)]
+    [(AstExprPtrNull _) false]
+    [(AstExprPtrNullCheck inner) (tc-expr-uses-free-name? inner name bound)]))
 
 (define (tc-check-lambda-region-captures-scan
   [env : TcTypeEnv]
@@ -4204,6 +4215,24 @@
               (ErrTcType "ExprList value is compile-time only (#1135)")])]
         [(ErrCtfe diag) (ErrTcType (compiler-diagnostic-message diag))])]
     [(AstExprTry inner) (tc-try-expr ctx env inner)]
+    [(AstExprPtrNull ty)
+      (let
+        [resolved : AstType (tc-resolve-type ctx ty)]
+        (match resolved
+          [(AstTyPtr _) (OkTcType resolved)]
+          [(AstTyMutPtr _) (OkTcType resolved)]
+          [_
+            (ErrTcType
+              "typecheck: ptr-null requires a pointer type, e.g. (ptr-null : (Ptr i64))")]))]
+    [(AstExprPtrNullCheck inner)
+      (match (tc-expr ctx env inner)
+        [(OkTcType inner-ty)
+          (match (tc-type-strip-region inner-ty)
+            [(AstTyPtr _) (OkTcType (AstTyBool))]
+            [(AstTyMutPtr _) (OkTcType (AstTyBool))]
+            [_
+              (ErrTcType "typecheck: ptr-null? requires a raw pointer operand")])]
+        [(ErrTcType message) (ErrTcType message)])]
     [_ (ErrTcType "typecheck: unsupported expression")]))
 
 (define (tc-summary-add-decl
@@ -5471,6 +5500,32 @@
                 "(define (f [p : String] [c : String]) : i64 (write-file p c))"
                 "typecheck: return type mismatch"))))))))
 
+;; Raw-pointer null construction / check (#1054).
+(define (compiler-typecheck-ptr-null-ok-source) : String
+  "(define (main) : i64 (if (ptr-null? (ptr-null : (Ptr i64))) 1 0))")
+
+(define (compiler-typecheck-ptr-null-mut-source) : String
+  "(define (main) : i64 (if (ptr-null? (ptr-null : (MutPtr i64))) 1 0))")
+
+(define (compiler-typecheck-ptr-null-bad-type-source) : String
+  "(define (main) : i64 (if (ptr-null? (ptr-null : i64)) 1 0))")
+
+(define (compiler-typecheck-ptr-null-check-bad-source) : String
+  "(define (main) : i64 (if (ptr-null? 5) 1 0))")
+
+(define (compiler-typecheck-ptr-null-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-ptr-null-ok-source))
+    (and
+      (compiler-typecheck-ok? (compiler-typecheck-ptr-null-mut-source))
+      (and
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-ptr-null-bad-type-source)
+          "typecheck: ptr-null requires a pointer type, e.g. (ptr-null : (Ptr i64))")
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-ptr-null-check-bad-source)
+          "typecheck: ptr-null? requires a raw pointer operand")))))
+
 ;; Unsafe blocks (#1053): parse + typecheck like `begin`; empty `(unsafe)`
 ;; rejects at parse.
 (define (compiler-typecheck-unsafe-ok-source) : String
@@ -5501,6 +5556,9 @@
 
 (define (compiler-typecheck-self-test) : i64
   (begin
+    (if (compiler-typecheck-ptr-null-tests-ok?)
+      unit
+      (panic "typecheck: ptr-null construction/check tests failed"))
     (if (compiler-typecheck-unsafe-tests-ok?)
       unit
       (panic "typecheck: unsafe block tests failed"))

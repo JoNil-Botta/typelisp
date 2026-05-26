@@ -181,7 +181,12 @@
   ;; Narrow Result-like propagation form `(try expr)` (#903). The temporary
   ;; convention recognizes concrete enums with one `Ok*` and one `Err*`
   ;; variant, each carrying exactly one payload.
-  (AstExprTry AstExpr))
+  (AstExprTry AstExpr)
+  ;; Null raw-pointer construction `(ptr-null : T)` where `T` is `(Ptr U)` or
+  ;; `(MutPtr U)` (#1054). Lowers to a pointer-sized zero; type is `T`.
+  (AstExprPtrNull AstType)
+  ;; Null check `(ptr-null? p)` on a raw pointer (#1054). Result is `bool`.
+  (AstExprPtrNullCheck AstExpr))
 
 (defenum AstExprList
   (AstExprNil)
@@ -285,7 +290,9 @@
     [(AstExprTypeLiteral _) 26]
     [(AstExprComptime _) 27]
     [(AstExprSpmdReduce _ _ _ _ _ _ _) 28]
-    [(AstExprTry _) 29]))
+    [(AstExprTry _) 29]
+    [(AstExprPtrNull _) 30]
+    [(AstExprPtrNullCheck _) 31]))
 
 (define (ast-expr-unspan [expr : AstExpr]) : AstExpr
   (match expr

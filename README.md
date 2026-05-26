@@ -429,14 +429,15 @@ can run locally. Windows native builds use the Windows x64 ABI, a CRT-linked
 runtime helper policy, and the `clang` + `lld-link` toolchain.
 
 The selfhost source-file build/run host-action planners (`selfhost/build.tl`,
-`selfhost/run.tl`) accept `--opt-level 0|1|2|3`. When omitted, the optimizer
-runs, matching the prior default; `--opt-level 0` builds without the IR
-optimizer (faster compiles, larger/slower code) while `1|2|3` run it. Higher
-levels may spend more compile time but must preserve program semantics — the
-exit/output of a program never depends on the level. The finer numeric meanings
-and a canonical default are reserved for the optimizer-policy work split from
-\#939, and `--opt-level` on Rust-owned package builds is tracked separately (it
-is not accepted by `typelisp build <pkg>` in this slice).
+`selfhost/run.tl`) and the Rust-owned package build (`typelisp build
+[--manifest-path <typelisp.pkg>]`) accept `--opt-level 0|1|2|3`. When omitted,
+the optimizer runs, matching the prior default; `--opt-level 0` builds without
+the IR optimizer (faster compiles, larger/slower code) while `1|2|3` run it.
+Higher levels may spend more compile time but must preserve program semantics —
+the exit/output of a program never depends on the level. The package-build flag
+reports the same missing/duplicate/invalid diagnostics as the source path and
+defaults to the optimizer-running level. The finer numeric meanings and a
+canonical default are reserved for the optimizer-policy work split from \#939.
 
 ## Status
 

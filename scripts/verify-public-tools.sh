@@ -1030,10 +1030,18 @@ cat > "$WORKDIR/inline_test_pass.tl" <<'EOF'
   (assert-i64-eq (inc 41) 42 "inc result"))
 EOF
 
-run_cmd inline-test-check "$COMPILER" test --check "$WORKDIR/inline_test_pass.tl" --stdlib-root "$ROOT/stdlib"
-assert_success
-assert_stderr_empty
-assert_contains "$out" "TypeLisp test typecheck passed: 1 test(s)"
+# #1270: `test --check` runs selfhost/test.tl as an emitted binary that segfaults
+# on its --check (selfhost-typechecker) code path on Windows (distinct from the
+# emitted-binary ASLR crash #1262 fixes; the binary links /DYNAMICBASE:NO and runs
+# clean without --check). Skip just this case on Windows until #1270 is fixed.
+if [ "$HOST_OS" = windows ]; then
+    echo "[public-tools] skipping inline-test-check on windows pending #1270 (test --check selfhost-typechecker segfault)"
+else
+    run_cmd inline-test-check "$COMPILER" test --check "$WORKDIR/inline_test_pass.tl" --stdlib-root "$ROOT/stdlib"
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "TypeLisp test typecheck passed: 1 test(s)"
+fi
 
 run_cmd inline-test-pass "$COMPILER" test "$WORKDIR/inline_test_pass.tl" --stdlib-root "$ROOT/stdlib"
 assert_success

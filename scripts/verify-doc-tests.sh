@@ -83,7 +83,10 @@ while IFS= read -r source; do
     stderr="$WORKDIR/$case_name.stderr"
 
     echo "[doc-tests] $source"
-    if ! run_with_retry "$stdout" "$stderr" "${VERIFY_DOC_TESTS_ATTEMPTS:-3}" \
+    # Default 6 (not 3): some stdlib doc-tests (text_buf.tl, hash.tl) hit the
+    # #1204 Windows segfault often enough that 3 attempts can all crash
+    # (observed on PR #1225), so the crash-retry needs more headroom.
+    if ! run_with_retry "$stdout" "$stderr" "${VERIFY_DOC_TESTS_ATTEMPTS:-6}" \
         "$COMPILER" doc --test "$source" --stdlib-root "$ROOT/stdlib"; then
         echo "doc test verification failed for $source (after retries)" >&2
         echo "stdout:" >&2

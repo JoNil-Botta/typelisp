@@ -14,9 +14,11 @@ set -eu
 #   ISAS=$(sh scripts/detect-simd-isa.sh)
 #   printf '%s\n' "$ISAS" | grep -qx avx512f && run_avx512_checks
 #
-# Linux reads /proc/cpuinfo (no build). Windows (Git Bash/MSYS/Cygwin) builds a
-# tiny cpuid probe with the toolchain the harness already requires (clang;
-# override with $CC) and caches it under $TMPDIR. Unknown hosts print nothing.
+# Linux reads /proc/cpuinfo (no build). Windows (Git Bash/MSYS/Cygwin) builds
+# and runs the TypeLisp cpuid detector (scripts/detect_simd_isa.tl, built on
+# stdlib/cpu.tl) with the harness's typelisp ($TYPELISP_BIN, else
+# target/release/typelisp.exe) and caches it under $TMPDIR -- no C component
+# remains in the repo (refs #1168). Unknown hosts print nothing.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
@@ -27,12 +29,25 @@ case "$(uname -s)" in
         if grep -qw avx512f /proc/cpuinfo 2>/dev/null; then echo avx512f; fi
         ;;
     MINGW* | MSYS* | CYGWIN*)
-        PROBE_SRC="$ROOT/scripts/simd_cpuid_probe.c"
+        # No /proc/cpuinfo here: build and run the TypeLisp cpuid detector.
+        if [ -n "${TYPELISP_BIN:-}" ]; then
+            COMPILER=$TYPELISP_BIN
+        else
+            COMPILER="$ROOT/target/release/typelisp.exe"
+        fi
+        PROBE_SRC="$ROOT/scripts/detect_simd_isa.tl"
         PROBE_EXE="${TMPDIR:-/tmp}/tl-simd-cpuid-probe.exe"
-        CC=${CC:-clang}
-        if [ ! -x "$PROBE_EXE" ] || [ "$PROBE_SRC" -nt "$PROBE_EXE" ]; then
-            if ! "$CC" -O1 "$PROBE_SRC" -o "$PROBE_EXE" >/dev/null 2>&1; then
-                echo "detect-simd-isa: failed to build cpuid probe with '$CC'" >&2
+        if [ ! -x "$PROBE_EXE" ] \
+            || [ "$PROBE_SRC" -nt "$PROBE_EXE" ] \
+            || [ "$ROOT/stdlib/cpu.tl" -nt "$PROBE_EXE" ]; then
+            # Build from a temp copy so the compiler's .s/.obj intermediates land
+            # beside the copy in TMPDIR rather than polluting the repo tree; the
+            # stdlib import still resolves through --stdlib-root.
+            PROBE_TMP="${TMPDIR:-/tmp}/tl-simd-detect.tl"
+            cp "$PROBE_SRC" "$PROBE_TMP"
+            if ! "$COMPILER" build "$PROBE_TMP" -o "$PROBE_EXE" \
+                --target windows-x86_64 --stdlib-root "$ROOT/stdlib" >/dev/null 2>&1; then
+                echo "detect-simd-isa: failed to build TypeLisp cpuid detector with '$COMPILER'" >&2
                 exit 1
             fi
         fi

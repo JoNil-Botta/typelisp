@@ -17,6 +17,12 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   `(import "stdlib/io.tl")`.
 - `env.tl`: recoverable environment variable lookup and PATH-style list
   helpers. Import it with `(import "stdlib/env.tl")`.
+- `cpu.tl`: host CPU SIMD ISA detection via the `cpuid`/`xgetbv` primitives
+  (#1167). `cpu-runs-avx2?` / `cpu-runs-avx512f?` report an ISA as runnable only
+  when both the CPUID feature bit and OS XSAVE state (XCR0) are present, plus the
+  underlying `cpu-osxsave?` / `cpu-xcr0` / `cpu-max-leaf` / `cpu-has-avx2?` /
+  `cpu-has-avx512f?` accessors. Backs `scripts/detect_simd_isa.tl`, which
+  replaced the C cpuid probe (#1168). Import it with `(import "stdlib/cpu.tl")`.
 - `fs.tl`: minimal recoverable filesystem helpers for tool artifact paths,
   temporary directories, and cleanup. Import it with `(import "stdlib/fs.tl")`.
 - `hash.tl`: deterministic, non-cryptographic hash and key equality helpers for

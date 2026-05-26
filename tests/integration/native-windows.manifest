@@ -1,6 +1,7 @@
-# name|source|exit|stdout|args|deps
+# name|source|exit|stdout|args|deps[|extra]
 # Windows omits the with_arena_* Linux SysV fixtures; the runner validates that
 # those are the only integration sources missing from this manifest.
+# extra may be requires-stage0-symbol:<name> for staged backend primitives.
 aggregate_globals|tests/integration/aggregate_globals.tl|42|-|-|-
 argv|tests/integration/argv.tl|7|alpha\n|alpha beta|-
 arithmetic|tests/integration/arithmetic.tl|47|-|-|-

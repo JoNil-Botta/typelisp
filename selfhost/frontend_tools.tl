@@ -545,6 +545,8 @@
         (front-cat3 ", body: " (front-expr-render body) " }"))]
     [(AstExprBegin exprs)
       (front-cat3 "Begin([" (front-expr-list-render exprs) "])")]
+    [(AstExprUnsafe exprs)
+      (front-cat3 "Unsafe([" (front-expr-list-render exprs) "])")]
     [(AstExprSet name value)
       (front-cat3
         "Set(\""
@@ -611,7 +613,11 @@
     [(AstExprComptime inner)
       (front-cat3 "Comptime { expr: " (front-expr-render inner) " }")]
     [(AstExprTry inner)
-      (front-cat3 "Try { expr: " (front-expr-render inner) " }")]))
+      (front-cat3 "Try { expr: " (front-expr-render inner) " }")]
+    [(AstExprPtrNull ty)
+      (front-cat3 "PtrNull { ty: " (front-type-render ty) " }")]
+    [(AstExprPtrNullCheck inner)
+      (front-cat3 "PtrNullCheck { expr: " (front-expr-render inner) " }")]))
 
 (define (front-maybe-module-render [name : AstMaybeModuleName]) : String
   (match name

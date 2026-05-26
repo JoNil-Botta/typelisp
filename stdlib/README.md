@@ -17,6 +17,12 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   `(import "stdlib/io.tl")`.
 - `env.tl`: recoverable environment variable lookup and PATH-style list
   helpers. Import it with `(import "stdlib/env.tl")`.
+- `cpu.tl`: host CPU SIMD ISA detection via the `cpuid`/`xgetbv` primitives
+  (#1167). `cpu-runs-avx2?` / `cpu-runs-avx512f?` report an ISA as runnable only
+  when both the CPUID feature bit and OS XSAVE state (XCR0) are present, plus the
+  underlying `cpu-osxsave?` / `cpu-xcr0` / `cpu-max-leaf` / `cpu-has-avx2?` /
+  `cpu-has-avx512f?` accessors. Backs `scripts/detect_simd_isa.tl`, which
+  replaced the C cpuid probe (#1168). Import it with `(import "stdlib/cpu.tl")`.
 - `fs.tl`: minimal recoverable filesystem helpers for tool artifact paths,
   temporary directories, and cleanup. Import it with `(import "stdlib/fs.tl")`.
 - `hash.tl`: deterministic, non-cryptographic hash and key equality helpers for
@@ -95,7 +101,7 @@ returned caller-owned values.
 | `stdin-at-eof?`, `stdin-read-text`, `stdin-read-eof?`, `stdout-write`, `stderr-write`, `stdout-flush` | Non-allocating wrappers/accessors around runtime stdio primitives and `StdinRead` values. |
 | `stdout-write-line`, `stderr-write-line` | Allocate a newline-appended active-arena `String` via `string-append`, then write it to the target stream. |
 | `env-get`, `env-path-list`, `env-path-split`, `env-path-join` | Environment values and split/join results allocate fresh active-arena Strings/lists when runtime values are read or string pieces are created; missing variables return explicit `EnvNo*` options. |
-| `fs-path-join`, `try-mkdir`, `try-remove-file`, `try-remove-dir`, `try-create-temp-dir` | Path joins allocate active-arena Strings when a separator is inserted or duplicate separator is removed. Recoverable filesystem helpers map runtime status codes into `IoError`; `try-mkdir` works on Linux and Windows. Linux temp directories are created under `$TMPDIR` or `/tmp` with process-id and retry suffixes. Windows temp creation returns `IoUnsupported` until process-id and cleanup primitives are implemented there. |
+| `fs-path-join`, `fs-dirname`, `fs-basename`, `fs-extension`, `try-mkdir`, `try-remove-file`, `try-remove-dir`, `try-create-temp-dir` | Path joins allocate active-arena Strings when a separator is inserted or duplicate separator is removed. `fs-dirname`/`fs-basename`/`fs-extension` are pure separator-agnostic string helpers (no allocation beyond the returned substring; `fs-extension` operates on the basename and treats a leading-dot name as extensionless). Recoverable filesystem helpers map runtime status codes into `IoError`; `try-mkdir` works on Linux and Windows. Linux temp directories are created under `$TMPDIR` or `/tmp` with process-id and retry suffixes. Windows temp creation returns `IoUnsupported` until process-id and cleanup primitives are implemented there. |
 | `hash-*` helpers | Deterministic, non-cryptographic hash and key equality helpers are non-allocating. Hashes are stable bucket hints only; collection users must still compare colliding candidate keys with the matching equality predicate. |
 | `process-*` helpers | Construct process command/output/error aggregates in the active arena. Ordered argv append helpers allocate list nodes; validators inspect executable/env/cwd metadata and reject invalid env names. On Linux, `process-run` and `process-output` execute directly through the backend runtime, preserving inherited environment entries, replacing entries named by env overrides, honoring cwd, and feeding string stdin. Unsupported targets return structured errors. |
 | `random-*` helpers | Construct deterministic RNG state, draw/result aggregates, and weight-list cons nodes in the active arena. Draws are deterministic from caller-provided seeds and do not read host entropy. `random-system-seed` returns a backend-provided value with no allocation; `random-from-system` constructs and returns a new `RandomState` aggregate in the active arena. |

@@ -316,6 +316,9 @@
 (define (compiler-parse-tag-expr-begin) : i64
   204)
 
+(define (compiler-parse-tag-expr-unsafe) : i64
+  254)
+
 (define (compiler-parse-tag-expr-set) : i64
   205)
 
@@ -375,6 +378,12 @@
 
 (define (compiler-parse-tag-expr-try) : i64
   251)
+
+(define (compiler-parse-tag-expr-ptr-null) : i64
+  252)
+
+(define (compiler-parse-tag-expr-ptr-null-check) : i64
+  253)
 
 (define (compiler-parse-tag-lit-true) : i64
   300)
@@ -523,6 +532,7 @@
       (set! out (sym-i64-bind out "lambda" (compiler-parse-tag-expr-lambda)))
       (set! out (sym-i64-bind out "while" (compiler-parse-tag-expr-while)))
       (set! out (sym-i64-bind out "begin" (compiler-parse-tag-expr-begin)))
+      (set! out (sym-i64-bind out "unsafe" (compiler-parse-tag-expr-unsafe)))
       (set! out (sym-i64-bind out "set!" (compiler-parse-tag-expr-set)))
       (set! out (sym-i64-bind out "ann" (compiler-parse-tag-expr-ann)))
       (set! out (sym-i64-bind out "cast" (compiler-parse-tag-expr-cast)))
@@ -560,6 +570,12 @@
         out
         (sym-i64-bind out "type" (compiler-parse-tag-expr-type-literal)))
       (set! out (sym-i64-bind out "try" (compiler-parse-tag-expr-try)))
+      (set!
+        out
+        (sym-i64-bind out "ptr-null" (compiler-parse-tag-expr-ptr-null)))
+      (set!
+        out
+        (sym-i64-bind out "ptr-null?" (compiler-parse-tag-expr-ptr-null-check)))
       out)))
 
 (define (compiler-parse-dispatch-patterns [e : SymI64Env]) : SymI64Env
@@ -609,41 +625,25 @@
     [(NoneI64) (compiler-parse-tag-unknown)]))
 
 (define (ast-binop-tag? [tag : i64]) : bool
-  (if (= tag (compiler-parse-tag-bin-add))
-    true
-    (if (= tag (compiler-parse-tag-bin-sub))
-      true
-      (if (= tag (compiler-parse-tag-bin-mul))
-        true
-        (if (= tag (compiler-parse-tag-bin-div))
-          true
-          (if (= tag (compiler-parse-tag-bin-mod))
-            true
-            (if (= tag (compiler-parse-tag-bin-eq))
-              true
-              (if (= tag (compiler-parse-tag-bin-ne))
-                true
-                (if (= tag (compiler-parse-tag-bin-lt))
-                  true
-                  (if (= tag (compiler-parse-tag-bin-le))
-                    true
-                    (if (= tag (compiler-parse-tag-bin-gt))
-                      true
-                      (if (= tag (compiler-parse-tag-bin-ge))
-                        true
-                        (if (= tag (compiler-parse-tag-bin-and))
-                          true
-                          (if (= tag (compiler-parse-tag-bin-or))
-                            true
-                            (if (= tag (compiler-parse-tag-bin-bit-and))
-                              true
-                              (if (= tag (compiler-parse-tag-bin-bit-or))
-                                true
-                                (if (= tag (compiler-parse-tag-bin-bit-xor))
-                                  true
-                                  (if (= tag (compiler-parse-tag-bin-shl))
-                                    true
-                                    (= tag (compiler-parse-tag-bin-shr))))))))))))))))))))
+  (cond
+    [(= tag (compiler-parse-tag-bin-add)) true]
+    [(= tag (compiler-parse-tag-bin-sub)) true]
+    [(= tag (compiler-parse-tag-bin-mul)) true]
+    [(= tag (compiler-parse-tag-bin-div)) true]
+    [(= tag (compiler-parse-tag-bin-mod)) true]
+    [(= tag (compiler-parse-tag-bin-eq)) true]
+    [(= tag (compiler-parse-tag-bin-ne)) true]
+    [(= tag (compiler-parse-tag-bin-lt)) true]
+    [(= tag (compiler-parse-tag-bin-le)) true]
+    [(= tag (compiler-parse-tag-bin-gt)) true]
+    [(= tag (compiler-parse-tag-bin-ge)) true]
+    [(= tag (compiler-parse-tag-bin-and)) true]
+    [(= tag (compiler-parse-tag-bin-or)) true]
+    [(= tag (compiler-parse-tag-bin-bit-and)) true]
+    [(= tag (compiler-parse-tag-bin-bit-or)) true]
+    [(= tag (compiler-parse-tag-bin-bit-xor)) true]
+    [(= tag (compiler-parse-tag-bin-shl)) true]
+    [else (= tag (compiler-parse-tag-bin-shr))]))
 
 (define (ast-binop? [dispatch : SymI64Env] [name : String]) : bool
   (ast-binop-tag? (compiler-parse-dispatch-tag dispatch name)))
@@ -1482,6 +1482,29 @@
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: try expects exactly one expression")]))
 
+;; `(ptr-null : T)` - a colon followed by a pointer type, no leading expression.
+;; The parser accepts any type here; the typechecker rejects non-pointer `T`.
+(define (parse-ast-ptr-null [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSCons colon (SpSCons ty (SpSNil _) _) _)
+      (if (sexpr-colon? (spanned-sexpr-form colon))
+        (match (parse-ast-type dispatch (spanned-sexpr-form ty))
+          [(OkAstType parsed-ty) (OkAstExpr (AstExprPtrNull parsed-ty))]
+          [(ErrAstType message) (ErrAstExpr message)])
+        (ErrAstExpr "parse: expected ':' in ptr-null"))]
+    [_
+      (ErrAstExpr
+        "parse: ptr-null expects (ptr-null : T) with a pointer type T")]))
+
+;; `(ptr-null? p)` - a single pointer operand.
+(define (parse-ast-ptr-null-check [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSCons expr (SpSNil _) _)
+      (match (parse-ast-expr dispatch expr)
+        [(OkAstExpr parsed-expr) (OkAstExpr (AstExprPtrNullCheck parsed-expr))]
+        [(ErrAstExpr message) (ErrAstExpr message)])]
+    [_ (ErrAstExpr "parse: ptr-null? expects exactly one expression")]))
+
 (define (parse-ast-with-region [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
     [(SpSNil _)
@@ -1598,6 +1621,17 @@
     [(OkAstExprList exprs) (OkAstExpr (AstExprBegin exprs))]
     [(ErrAstExprList message) (ErrAstExpr message)]))
 
+;; `(unsafe expr+)` parses like `begin` but requires a non-empty body. v1 has
+;; the same behavior as `begin`; it marks an unsafe context for later raw-pointer
+;; ops (#955).
+(define (parse-ast-unsafe [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSNil _) (ErrAstExpr "parse: unsafe requires a non-empty body")]
+    [_
+      (match (parse-ast-expr-list dispatch rest)
+        [(OkAstExprList exprs) (OkAstExpr (AstExprUnsafe exprs))]
+        [(ErrAstExprList message) (ErrAstExpr message)])]))
+
 (define (parse-ast-tuple [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-expr-list dispatch rest)
     [(OkAstExprList exprs) (OkAstExpr (AstExprTuple exprs))]
@@ -1623,63 +1657,79 @@
           (parse-ast-while dispatch rest)
           (if (= tag (compiler-parse-tag-expr-begin))
             (parse-ast-begin dispatch rest)
-            (if (= tag (compiler-parse-tag-expr-set))
-              (parse-ast-set dispatch rest)
-              (if (= tag (compiler-parse-tag-expr-ann))
-                (parse-ast-ann-like dispatch false rest)
-                (if (= tag (compiler-parse-tag-expr-cast))
-                  (parse-ast-ann-like dispatch true rest)
-                  (if (= tag (compiler-parse-tag-expr-tuple))
-                    (parse-ast-tuple dispatch rest)
-                    (if (= tag (compiler-parse-tag-expr-tuple-ref))
-                      (parse-ast-tuple-ref dispatch rest)
-                      (if (= tag (compiler-parse-tag-expr-array))
-                        (parse-ast-array dispatch rest)
-                        (if (= tag (compiler-parse-tag-expr-make-array))
-                          (parse-ast-make-array dispatch rest)
-                          (if (= tag (compiler-parse-tag-expr-array-ref))
-                            (parse-ast-array-ref-like dispatch false rest)
-                            (if (= tag (compiler-parse-tag-expr-array-set))
-                              (parse-ast-array-set dispatch rest)
-                              (if (= tag (compiler-parse-tag-expr-match))
-                                (parse-ast-match dispatch rest)
-                                (if (= tag (compiler-parse-tag-expr-foreach))
-                                  (parse-ast-foreach dispatch rest)
-                                  (if (=
-                                    tag
-                                    (compiler-parse-tag-expr-spmd-reduce))
-                                    (parse-ast-spmd-reduce dispatch rest)
+            (if (= tag (compiler-parse-tag-expr-unsafe))
+              (parse-ast-unsafe dispatch rest)
+              (if (= tag (compiler-parse-tag-expr-set))
+                (parse-ast-set dispatch rest)
+                (if (= tag (compiler-parse-tag-expr-ann))
+                  (parse-ast-ann-like dispatch false rest)
+                  (if (= tag (compiler-parse-tag-expr-cast))
+                    (parse-ast-ann-like dispatch true rest)
+                    (if (= tag (compiler-parse-tag-expr-tuple))
+                      (parse-ast-tuple dispatch rest)
+                      (if (= tag (compiler-parse-tag-expr-tuple-ref))
+                        (parse-ast-tuple-ref dispatch rest)
+                        (if (= tag (compiler-parse-tag-expr-array))
+                          (parse-ast-array dispatch rest)
+                          (if (= tag (compiler-parse-tag-expr-make-array))
+                            (parse-ast-make-array dispatch rest)
+                            (if (= tag (compiler-parse-tag-expr-array-ref))
+                              (parse-ast-array-ref-like dispatch false rest)
+                              (if (= tag (compiler-parse-tag-expr-array-set))
+                                (parse-ast-array-set dispatch rest)
+                                (if (= tag (compiler-parse-tag-expr-match))
+                                  (parse-ast-match dispatch rest)
+                                  (if (= tag (compiler-parse-tag-expr-foreach))
+                                    (parse-ast-foreach dispatch rest)
                                     (if (=
                                       tag
-                                      (compiler-parse-tag-expr-struct-get))
-                                      (parse-ast-struct-get dispatch rest)
+                                      (compiler-parse-tag-expr-spmd-reduce))
+                                      (parse-ast-spmd-reduce dispatch rest)
                                       (if (=
                                         tag
-                                        (compiler-parse-tag-expr-comptime))
-                                        (parse-ast-comptime dispatch rest)
+                                        (compiler-parse-tag-expr-struct-get))
+                                        (parse-ast-struct-get dispatch rest)
                                         (if (=
                                           tag
-                                          (compiler-parse-tag-expr-type-literal))
-                                          (parse-ast-type-literal dispatch rest)
+                                          (compiler-parse-tag-expr-comptime))
+                                          (parse-ast-comptime dispatch rest)
                                           (if (=
                                             tag
-                                            (compiler-parse-tag-expr-with-region))
-                                            (parse-ast-with-region
+                                            (compiler-parse-tag-expr-type-literal))
+                                            (parse-ast-type-literal
                                               dispatch
                                               rest)
                                             (if (=
                                               tag
-                                              (compiler-parse-tag-expr-try))
-                                              (parse-ast-try dispatch rest)
+                                              (compiler-parse-tag-expr-with-region))
+                                              (parse-ast-with-region
+                                                dispatch
+                                                rest)
                                               (if (=
                                                 tag
-                                                (compiler-parse-tag-decl-comptime-decl))
-                                                (ErrAstExpr
-                                                  "parse: comptime-decl is only valid as a top-level declaration")
-                                                (parse-ast-call
-                                                  dispatch
-                                                  head
-                                                  rest)))))))))))))))))))))))))
+                                                (compiler-parse-tag-expr-try))
+                                                (parse-ast-try dispatch rest)
+                                                (if (=
+                                                  tag
+                                                  (compiler-parse-tag-expr-ptr-null))
+                                                  (parse-ast-ptr-null
+                                                    dispatch
+                                                    rest)
+                                                  (if (=
+                                                    tag
+                                                    (compiler-parse-tag-expr-ptr-null-check))
+                                                    (parse-ast-ptr-null-check
+                                                      dispatch
+                                                      rest)
+                                                    (if (=
+                                                      tag
+                                                      (compiler-parse-tag-decl-comptime-decl))
+                                                      (ErrAstExpr
+                                                        "parse: comptime-decl is only valid as a top-level declaration")
+                                                      (parse-ast-call
+                                                        dispatch
+                                                        head
+                                                        rest))))))))))))))))))))))))))))
 
 (define (parse-ast-list-expr
   [dispatch : SymI64Env]
@@ -2654,6 +2704,28 @@
                           "(import)"
                           "parse: malformed import")))))))))))))
 
+;; enum/struct expression coverage (#1073): defenum empty rejection,
+;; defstruct mixed field types, empty struct rejection, struct-get, and
+;; struct construction-as-call.
+(define (compiler-parse-enum-struct-tests-ok?) : bool
+  (and
+    (compiler-parse-error-ok?
+      "(defenum Empty)"
+      "parse: defenum needs at least one variant")
+    (and
+      (compiler-parse-ok? "(defstruct Point (x i64) (y i64))")
+      (and
+        (compiler-parse-ok? "(defstruct Mixed (a i64) (b bool) (c f64))")
+        (and
+          (compiler-parse-error-ok?
+            "(defstruct Empty)"
+            "parse: defstruct needs at least one field")
+          (and
+            (compiler-parse-ok?
+              "(define (f [p : Point]) : i64 (struct-get p x))")
+            (compiler-parse-ok? "(define (f) : Point (Point 1 2))")))))))
+
+;
 ;; let-binding parsing (#1072 / #1041): accept untyped, multi-binding, and
 ;; legacy-parenthesized binding forms; reject an empty binding list. Completes
 ;; the let family alongside the existing flat-let accept and let error tests.
@@ -2677,20 +2749,36 @@
       (compiler-parse-ok?
         "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))")
       (and
-        (compiler-parse-error-ok?
-          "(define (main) : i64 (begin (foreach ([i i64 0 3 4]) unit) 0))"
-          "parse: expected ':' in foreach")
+        ;; #1073: an empty range, a non-i64 index type, and expression
+        ;; start/end bounds all parse (range semantics are checked later).
+        (compiler-parse-ok?
+          "(define (main) : i64 (begin (foreach ([i : i64 5 5]) unit) 0))")
         (and
-          (compiler-parse-error-ok?
-            "(define (main) : i64 (begin (foreach ([i : i64 0]) unit) 0))"
-            "parse: malformed foreach binding")
+          (compiler-parse-ok?
+            "(define (main) : i64 (begin (foreach ([i : u32 0 3]) unit) 0))")
           (and
-            (compiler-parse-error-ok?
-              "(define (main) : i64 (begin (foreach) 0))"
-              "parse: malformed foreach")
-            (compiler-parse-error-ok?
-              "(define (main) : i64 (spmd-reduce sum))"
-              "parse: malformed spmd-reduce")))))))
+            (compiler-parse-ok?
+              "(define (main [n : i64]) : i64 (begin (foreach ([i : i64 (+ 0 1) (* n 2)]) unit) 0))")
+            (and
+              ;; #1073: an unknown reduce operator is rejected by the parser.
+              (compiler-parse-error-ok?
+                "(define (main [n : i64]) : i64 (spmd-reduce bogus ([i : i64 0 n]) 0 i))"
+                "parse: unsupported spmd-reduce operator `bogus`; expected one of sum, min, max, all, any")
+              (and
+                (compiler-parse-error-ok?
+                  "(define (main) : i64 (begin (foreach ([i i64 0 3 4]) unit) 0))"
+                  "parse: expected ':' in foreach")
+                (and
+                  (compiler-parse-error-ok?
+                    "(define (main) : i64 (begin (foreach ([i : i64 0]) unit) 0))"
+                    "parse: malformed foreach binding")
+                  (and
+                    (compiler-parse-error-ok?
+                      "(define (main) : i64 (begin (foreach) 0))"
+                      "parse: malformed foreach")
+                    (compiler-parse-error-ok?
+                      "(define (main) : i64 (spmd-reduce sum))"
+                      "parse: malformed spmd-reduce")))))))))))
 
 (define (compiler-parse-pattern-tests-ok?) : bool
   (and
@@ -2716,6 +2804,25 @@
                 "(define (main) : i64 (match 1 [() 0]))"
                 "parse: expected pattern"))))))))
 
+;; pattern literals (#1073): string literal arms, nested string payload,
+;; char literal in pattern, named char literal in value position.
+(define (compiler-parse-pattern-string-char-tests-ok?) : bool
+  (and
+    ;; string literal arms
+    (compiler-parse-ok?
+      "(define (f [s : String]) : i64 (match s [\"if\" 10] [\"let\" 20] [_ 0]))")
+    (and
+      ;; nested string payload
+      (compiler-parse-ok?
+        "(defenum Token (TIdent String))\n(define (f [t : Token]) : i64 (match t [(TIdent \"if\") 1] [_ 0]))")
+      (and
+        ;; char literal in pattern (named space + literal char)
+        (compiler-parse-ok?
+          "(define (f [c : char]) : i64 (match c [#\\space' 1] [#a' 2] [_ 0]))")
+        ;; named char literal in value position
+        (compiler-parse-ok? "(define (f) : char #\\newline')")))))
+
+;
 ;; operator parsing (#1073 / #1041): accept unary (not/neg/bit-not), binary
 ;; arithmetic/comparison, and bitwise/shift/logical operator forms; reject
 ;; parser-owned malformed unary/binary operator expressions. Parse-shape only;
@@ -2778,6 +2885,51 @@
               "(define (main) : i64 (with-arena r))"
               "parse: with-arena 'r' requires a non-empty body")))))))
 
+;; REPL-item parsing (#1072 / #1041): `parse-ast-repl-source` accepts a single
+;; top-level declaration, a parenthesized expression, or a bare expression, and
+;; rejects trailing tokens and a malformed expression. Mirrors the Rust
+;; parser's `parse_repl_item` tests.
+(define (compiler-parse-repl-decl-ok? [src : String]) : bool
+  (match (parse-ast-repl-source src)
+    [(OkAstReplItem item)
+      (match item
+        [(AstReplDecl _) true]
+        [(AstReplExpr _) false])]
+    [(ErrAstReplItem _) false]))
+
+(define (compiler-parse-repl-expr-ok? [src : String]) : bool
+  (match (parse-ast-repl-source src)
+    [(OkAstReplItem item)
+      (match item
+        [(AstReplExpr _) true]
+        [(AstReplDecl _) false])]
+    [(ErrAstReplItem _) false]))
+
+(define (compiler-parse-repl-error-ok? [src : String] [expected : String]) : bool
+  (match (parse-ast-repl-source src)
+    [(OkAstReplItem _) false]
+    [(ErrAstReplItem message) (string-eq message expected)]))
+
+(define (compiler-parse-repl-tests-ok?) : bool
+  (and
+    ;; declaration item
+    (compiler-parse-repl-decl-ok? "(define x : i64 42)")
+    (and
+      ;; parenthesized expression item
+      (compiler-parse-repl-expr-ok? "(+ 1 2)")
+      (and
+        ;; bare expression item
+        (compiler-parse-repl-expr-ok? "42")
+        (and
+          ;; trailing tokens after a complete item are rejected
+          (compiler-parse-repl-error-ok?
+            "42 43"
+            "parse: trailing tokens after REPL input")
+          ;; a malformed expression item surfaces the expression diagnostic
+          (compiler-parse-repl-error-ok?
+            "(+ 1)"
+            "parse: malformed binary expression"))))))
+
 (define (compiler-parse-smoke) : i64
   (match (parse-ast-source (compiler-parse-smoke-source))
     [(OkAstProgram program)
@@ -2821,10 +2973,16 @@
                 (and
                   (compiler-parse-pattern-tests-ok?)
                   (and
-                    (compiler-parse-operator-tests-ok?)
+                    (compiler-parse-pattern-string-char-tests-ok?)
                     (and
-                      (compiler-parse-type-literal-tests-ok?)
-                      (compiler-parse-region-tests-ok?))))))))
+                      (compiler-parse-enum-struct-tests-ok?)
+                      (and
+                        (compiler-parse-operator-tests-ok?)
+                        (and
+                          (compiler-parse-type-literal-tests-ok?)
+                          (and
+                            (compiler-parse-region-tests-ok?)
+                            (compiler-parse-repl-tests-ok?)))))))))))
           42
           (begin
             (panic "parse: error-path self-tests failed")

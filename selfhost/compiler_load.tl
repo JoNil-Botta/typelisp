@@ -213,21 +213,23 @@
   [importer-path : String]
   [import-path : String]
   [stdlib-roots : CompilerLoadRootList]) : String
-  (let
-    [primary : String
-      (compiler-load-join-import-path importer-path import-path)]
-    (if (file-exists? primary)
-      primary
-      (if (compiler-load-stdlib-import? import-path)
-        (match (compiler-load-resolve-stdlib-root
-          (compiler-load-stdlib-suffix import-path)
-          stdlib-roots)
-          [(CompilerLoadSomePath root-path) root-path]
-          [(CompilerLoadNoPath)
-            (if (file-exists? import-path)
-              import-path
-              primary)])
-        primary))))
+  (if (compiler-load-pkg-import? import-path)
+    (compiler-load-resolve-pkg-import-from-disk importer-path import-path)
+    (let
+      [primary : String
+        (compiler-load-join-import-path importer-path import-path)]
+      (if (file-exists? primary)
+        primary
+        (if (compiler-load-stdlib-import? import-path)
+          (match (compiler-load-resolve-stdlib-root
+            (compiler-load-stdlib-suffix import-path)
+            stdlib-roots)
+            [(CompilerLoadSomePath root-path) root-path]
+            [(CompilerLoadNoPath)
+              (if (file-exists? import-path)
+                import-path
+                primary)])
+          primary)))))
 
 (define (compiler-load-decl-list-append
   [left : AstDeclList]
@@ -1176,74 +1178,326 @@
               "(module foo)"
               "expected `package` form, got `module`")))))))
 
+;;; --- pkg:<alias>/... import resolution (#834, slice 2) ----------------------
+;;; Resolve a `pkg:<alias>/<rest>` import against a parsed manifest's dependency
+;;; list, relative to the manifest directory: `<manifest-dir>/<dep-path>/<rest>`,
+;;; normalized. Rejects a missing alias, an empty/`/`-less spec, and a `rest`
+;;; that escapes the dependency root via `..`. (Loader-chain integration — wiring
+;;; this into the import resolver + drivers — is the next slice.)
+;;; Result of resolving a `pkg:` import: the resolved path or a diagnostic.
+(defenum ResultPkgResolve
+  (OkPkgResolve String)
+  (ErrPkgResolve String))
+
+;;; True when an import path is a package import (`pkg:<alias>/...`).
+(define (compiler-load-pkg-import? [path : String]) : bool
+  (compiler-load-string-prefix-at? path "pkg:" 0))
+
+;;; Index of the first '/' in `s` at or after `i`, or -1 if none.
+(define (compiler-load-slash-index-from [s : String] [i : i64] [n : i64]) : i64
+  (if (>= i n)
+    -1
+    (if (= (string-ref s i) #/')
+      i
+      (compiler-load-slash-index-from s (+ i 1) n))))
+
+;;; True when a (normalized) relative path escapes its base via a leading `..`.
+(define (compiler-load-path-escapes? [path : String]) : bool
+  (if (compiler-load-string-prefix-at? path ".." 0)
+    (if (= (string-length path) 2)
+      true
+      (= (string-ref path 2) #/'))
+    false))
+
+;;; Look up a dependency's root path by import alias.
+(define (compiler-load-pkg-dep-lookup
+  [deps : CompilerPkgDepList]
+  [target-alias : String]) : CompilerLoadMaybePath
+  (match deps
+    [(CompilerPkgDepNil) (CompilerLoadNoPath)]
+    [(CompilerPkgDepCons dep rest)
+      (if (string-eq (struct-get dep alias) target-alias)
+        (CompilerLoadSomePath (struct-get dep path))
+        (compiler-load-pkg-dep-lookup rest target-alias))]))
+
+;;; Resolve `pkg:<alias>/<rest>` against `deps`, relative to `manifest-dir`.
+(define (compiler-load-resolve-pkg-import
+  [import-path : String]
+  [manifest-dir : String]
+  [deps : CompilerPkgDepList]) : ResultPkgResolve
+  (let
+    [body : String (substring import-path 4 (- (string-length import-path) 4))]
+    [slash : i64 (compiler-load-slash-index-from body 0 (string-length body))]
+    (if (< slash 0)
+      (ErrPkgResolve
+        (string-append
+          "compiler-load: pkg import missing '/' after alias: "
+          import-path))
+      (let
+        [alias : String (substring body 0 slash)]
+        [rest : String
+          (substring body (+ slash 1) (- (string-length body) (+ slash 1)))]
+        (if (= (string-length alias) 0)
+          (ErrPkgResolve
+            (string-append
+              "compiler-load: pkg import has empty alias: "
+              import-path))
+          (match (compiler-load-pkg-dep-lookup deps alias)
+            [(CompilerLoadNoPath)
+              (ErrPkgResolve
+                (string-append
+                  "compiler-load: unknown package alias '"
+                  (string-append alias (string-append "': " import-path))))]
+            [(CompilerLoadSomePath dep-path)
+              (let
+                [norm-rest : String (compiler-load-normalize-path rest)]
+                (if (compiler-load-path-escapes? norm-rest)
+                  (ErrPkgResolve
+                    (string-append
+                      "compiler-load: pkg import escapes package root: "
+                      import-path))
+                  (OkPkgResolve
+                    (compiler-load-normalize-path
+                      (compiler-load-join-root-path
+                        (compiler-load-join-root-path manifest-dir dep-path)
+                        norm-rest)))))]))))))
+
+;;; Parent directory of a directory path, or no-path at the top. `dirname`
+;;; returns a path *including* its trailing separator, so a trailing separator
+;;; is stripped first to make the walk-up progress (e.g. `src/` -> ``, the cwd).
+(define (compiler-load-parent-dir [dir : String]) : CompilerLoadMaybePath
+  (let
+    [n : i64 (string-length dir)]
+    (if (= n 0)
+      (CompilerLoadNoPath)
+      (let
+        [trimmed : String
+          (if (compiler-load-path-separator? (string-ref dir (- n 1)))
+            (substring dir 0 (- n 1))
+            dir)]
+        (let
+          [parent : String (compiler-load-dirname trimmed)]
+          (if (string-eq parent dir)
+            (CompilerLoadNoPath)
+            (CompilerLoadSomePath parent)))))))
+
+;;; Walk up from `dir` looking for a `typelisp.pkg` manifest, mirroring the Rust
+;;; `discover_manifest` (src/package.rs). `fuel` bounds the climb.
+(define (compiler-load-discover-manifest-up [dir : String] [fuel : i64]) : CompilerLoadMaybePath
+  (if (<= fuel 0)
+    (CompilerLoadNoPath)
+    (let
+      [candidate : String (string-append dir "typelisp.pkg")]
+      (if (file-exists? candidate)
+        (CompilerLoadSomePath candidate)
+        (match (compiler-load-parent-dir dir)
+          [(CompilerLoadNoPath) (CompilerLoadNoPath)]
+          [(CompilerLoadSomePath parent)
+            (compiler-load-discover-manifest-up parent (- fuel 1))])))))
+
+;;; Discover the nearest `typelisp.pkg` at or above the importer's directory.
+(define (compiler-load-discover-manifest [start-path : String]) : CompilerLoadMaybePath
+  (compiler-load-discover-manifest-up (compiler-load-dirname start-path) 256))
+
+;;; Resolve a `pkg:<alias>/...` import by discovering and parsing the nearest
+;;; `typelisp.pkg` relative to the importer, then resolving against its deps.
+;;; On any failure (no manifest, parse error, unknown alias, escape) the raw
+;;; import path is returned so the loader reports a normal "cannot load" error.
+(define (compiler-load-resolve-pkg-import-from-disk
+  [importer-path : String]
+  [import-path : String]) : String
+  (match (compiler-load-discover-manifest importer-path)
+    [(CompilerLoadNoPath) import-path]
+    [(CompilerLoadSomePath manifest-path)
+      (match (compiler-load-parse-manifest (read-file manifest-path))
+        [(ErrCompilerPkgManifest _) import-path]
+        [(OkCompilerPkgManifest manifest)
+          (match (compiler-load-resolve-pkg-import
+            import-path
+            (compiler-load-dirname manifest-path)
+            (struct-get manifest deps))
+            [(OkPkgResolve resolved) resolved]
+            [(ErrPkgResolve _) import-path])])]))
+
+;;; Self-test fixture: `math` -> sibling dir, `util` -> vendored subdir.
+(define (compiler-load-pkg-resolve-deps) : CompilerPkgDepList
+  (CompilerPkgDepCons
+    (CompilerPkgDep "math" "../math")
+    (CompilerPkgDepCons
+      (CompilerPkgDep "util" "vendor/util")
+      (CompilerPkgDepNil))))
+
+;;; True when resolving `import-path` yields exactly `expected`.
+(define (compiler-load-pkg-resolves? [import-path : String] [expected : String]) : bool
+  (match (compiler-load-resolve-pkg-import
+    import-path
+    "proj"
+    (compiler-load-pkg-resolve-deps))
+    [(OkPkgResolve p) (string-eq p expected)]
+    [(ErrPkgResolve _) false]))
+
+;;; True when resolving `import-path` fails with exactly `expected`.
+(define (compiler-load-pkg-resolve-rejects?
+  [import-path : String]
+  [expected : String]) : bool
+  (match (compiler-load-resolve-pkg-import
+    import-path
+    "proj"
+    (compiler-load-pkg-resolve-deps))
+    [(ErrPkgResolve m) (string-eq m expected)]
+    [(OkPkgResolve _) false]))
+
+;;; Aggregate pkg-import resolution self-test (#834).
+(define (compiler-load-pkg-resolve-ok?) : bool
+  (and
+    (compiler-load-pkg-resolves? "pkg:math/src/add.tl" "math/src/add.tl")
+    (and
+      (compiler-load-pkg-resolves? "pkg:util/lib.tl" "proj/vendor/util/lib.tl")
+      (and
+        (compiler-load-pkg-resolve-rejects?
+          "pkg:nope/x.tl"
+          "compiler-load: unknown package alias 'nope': pkg:nope/x.tl")
+        (and
+          (compiler-load-pkg-resolve-rejects?
+            "pkg:math"
+            "compiler-load: pkg import missing '/' after alias: pkg:math")
+          (compiler-load-pkg-resolve-rejects?
+            "pkg:math/../../etc.tl"
+            "compiler-load: pkg import escapes package root: pkg:math/../../etc.tl"))))))
+
+;;; True when `parent-dir dir` yields exactly `expected`.
+(define (compiler-load-pkg-parent-dir-is? [dir : String] [expected : String]) : bool
+  (match (compiler-load-parent-dir dir)
+    [(CompilerLoadSomePath p) (string-eq p expected)]
+    [(CompilerLoadNoPath) false]))
+
+;;; True when `parent-dir dir` reports no parent (top of the climb).
+(define (compiler-load-pkg-parent-dir-none? [dir : String]) : bool
+  (match (compiler-load-parent-dir dir)
+    [(CompilerLoadNoPath) true]
+    [(CompilerLoadSomePath _) false]))
+
+;;; The manifest-discovery walk-up steps one directory at a time, descending to
+;;; the cwd (``) before stopping (#834).
+(define (compiler-load-pkg-parent-dir-ok?) : bool
+  (and
+    (compiler-load-pkg-parent-dir-is? "a/b/" "a/")
+    (and
+      (compiler-load-pkg-parent-dir-is? "a/b/c/" "a/b/")
+      (and
+        (compiler-load-pkg-parent-dir-is? "a/" "")
+        (compiler-load-pkg-parent-dir-none? "")))))
+
+;; relative-resolution variants (#1074): importer-relative join, parent-directory
+;; (`..`) resolution end-to-end (join then normalize), and absolute-path
+;; preservation (Unix-rooted and Windows-drive imports ignore the importer dir).
+;; Pure path-string logic; complements `compiler-load-normalize-ok?` which covers
+;; bare `.`/`..`/separator normalization without the importer-relative join.
+(define (compiler-load-relative-resolution-ok?) : bool
+  (and
+    ;; importer-relative: import resolves against the importer's directory
+    (string-eq
+      (compiler-load-join-import-path "src/app/main.tl" "util.tl")
+      "src/app/util.tl")
+    (and
+      ;; parent-directory (`..`) resolution end-to-end (join then normalize)
+      (string-eq
+        (compiler-load-normalize-path
+          (compiler-load-join-import-path "src/app/main.tl" "../lib/helper.tl"))
+        "src/lib/helper.tl")
+      (and
+        ;; absolute Unix-rooted import is preserved as-is (importer dir ignored)
+        (string-eq
+          (compiler-load-join-import-path "src/app/main.tl" "/opt/dep.tl")
+          "/opt/dep.tl")
+        ;; absolute Windows-drive import is preserved as-is
+        (string-eq
+          (compiler-load-join-import-path "src/app/main.tl" "C:/dep.tl")
+          "C:/dep.tl")))))
+
 (define (compiler-load-self-test) : i64
   (if (compiler-load-normalize-ok?)
-    (if (compiler-load-source-provenance-ok?)
-      (if (compiler-load-expected-module-conflict-ok?)
-        (if (compiler-load-duplicate-module-ok?)
-          (if (compiler-load-seen-module-ok?)
-            (if (compiler-load-file-import-dedup-cycle-ok?)
-              (if (compiler-load-file-fallback-path-dedup-ok?)
-                (if (compiler-load-diamond-import-ok?)
-                  (if (compiler-load-transitive-import-ok?)
-                    (if (compiler-load-missing-import-ok?)
-                      (if (compiler-load-imported-parse-error-path-ok?)
-                        (if (compiler-load-imported-duplicate-module-path-ok?)
-                          (if (compiler-load-stdlib-root-fallback-ok?)
-                            (if (compiler-load-stdlib-searched-root-ok?)
-                              (if (compiler-load-stdlib-unresolved-ok?)
-                                (if (compiler-load-pkg-manifest-ok?)
-                                  42
+    (if (compiler-load-relative-resolution-ok?)
+      (if (compiler-load-source-provenance-ok?)
+        (if (compiler-load-expected-module-conflict-ok?)
+          (if (compiler-load-duplicate-module-ok?)
+            (if (compiler-load-seen-module-ok?)
+              (if (compiler-load-file-import-dedup-cycle-ok?)
+                (if (compiler-load-file-fallback-path-dedup-ok?)
+                  (if (compiler-load-diamond-import-ok?)
+                    (if (compiler-load-transitive-import-ok?)
+                      (if (compiler-load-missing-import-ok?)
+                        (if (compiler-load-imported-parse-error-path-ok?)
+                          (if (compiler-load-imported-duplicate-module-path-ok?)
+                            (if (compiler-load-stdlib-root-fallback-ok?)
+                              (if (compiler-load-stdlib-searched-root-ok?)
+                                (if (compiler-load-stdlib-unresolved-ok?)
+                                  (if (compiler-load-pkg-manifest-ok?)
+                                    (if (compiler-load-pkg-resolve-ok?)
+                                      (if (compiler-load-pkg-parent-dir-ok?)
+                                        42
+                                        (begin
+                                          (panic
+                                            "compiler-load: pkg parent-dir smoke mismatch")
+                                          0))
+                                      (begin
+                                        (panic
+                                          "compiler-load: pkg resolve smoke mismatch")
+                                        0))
+                                    (begin
+                                      (panic
+                                        "compiler-load: pkg manifest smoke mismatch")
+                                      0))
                                   (begin
                                     (panic
-                                      "compiler-load: pkg manifest smoke mismatch")
+                                      "compiler-load: stdlib unresolved smoke mismatch")
                                     0))
                                 (begin
                                   (panic
-                                    "compiler-load: stdlib unresolved smoke mismatch")
+                                    "compiler-load: stdlib searched root smoke mismatch")
                                   0))
                               (begin
                                 (panic
-                                  "compiler-load: stdlib searched root smoke mismatch")
+                                  "compiler-load: stdlib root fallback smoke mismatch")
                                 0))
                             (begin
                               (panic
-                                "compiler-load: stdlib root fallback smoke mismatch")
+                                "compiler-load: imported duplicate module path smoke mismatch")
                               0))
                           (begin
                             (panic
-                              "compiler-load: imported duplicate module path smoke mismatch")
+                              "compiler-load: imported parse error path smoke mismatch")
                             0))
                         (begin
-                          (panic
-                            "compiler-load: imported parse error path smoke mismatch")
+                          (panic "compiler-load: missing import smoke mismatch")
                           0))
                       (begin
-                        (panic "compiler-load: missing import smoke mismatch")
+                        (panic
+                          "compiler-load: transitive import smoke mismatch")
                         0))
                     (begin
-                      (panic "compiler-load: transitive import smoke mismatch")
+                      (panic "compiler-load: diamond import smoke mismatch")
                       0))
                   (begin
-                    (panic "compiler-load: diamond import smoke mismatch")
+                    (panic "compiler-load: fallback path dedup smoke mismatch")
                     0))
                 (begin
-                  (panic "compiler-load: fallback path dedup smoke mismatch")
+                  (panic "compiler-load: import dedup/cycle smoke mismatch")
                   0))
               (begin
-                (panic "compiler-load: import dedup/cycle smoke mismatch")
+                (panic "compiler-load: seen module smoke mismatch")
                 0))
             (begin
-              (panic "compiler-load: seen module smoke mismatch")
+              (panic "compiler-load: duplicate module smoke mismatch")
               0))
           (begin
-            (panic "compiler-load: duplicate module smoke mismatch")
+            (panic "compiler-load: expected module smoke mismatch")
             0))
         (begin
-          (panic "compiler-load: expected module smoke mismatch")
+          (panic "compiler-load: source provenance smoke mismatch")
           0))
       (begin
-        (panic "compiler-load: source provenance smoke mismatch")
+        (panic "compiler-load: relative resolution smoke mismatch")
         0))
     (begin
       (panic "compiler-load: normalize smoke mismatch")

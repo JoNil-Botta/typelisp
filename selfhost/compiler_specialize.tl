@@ -1018,6 +1018,11 @@
         [(OkSpecExprList rewritten state2)
           (OkSpecExpr (AstExprBegin rewritten) state2)]
         [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
+    [(AstExprUnsafe exprs)
+      (match (spec-rewrite-expr-list exprs templates state)
+        [(OkSpecExprList rewritten state2)
+          (OkSpecExpr (AstExprUnsafe rewritten) state2)]
+        [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
     [(AstExprSet name value)
       (match (spec-rewrite-expr value templates state)
         [(OkSpecExpr rewritten state2)
@@ -1109,6 +1114,12 @@
       (match (spec-rewrite-expr inner templates state)
         [(OkSpecExpr rewritten state2)
           (OkSpecExpr (AstExprTry rewritten) state2)]
+        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprPtrNull ty) (OkSpecExpr (AstExprPtrNull ty) state)]
+    [(AstExprPtrNullCheck inner)
+      (match (spec-rewrite-expr inner templates state)
+        [(OkSpecExpr rewritten state2)
+          (OkSpecExpr (AstExprPtrNullCheck rewritten) state2)]
         [(ErrSpecExpr diag) (ErrSpecExpr diag)])]))
 
 (define (spec-substitute-values-expr [expr : AstExpr] [subs : SpecValueSubst]) : ResultSpecSubExpr
@@ -1235,6 +1246,11 @@
       (match (spec-substitute-values-expr-list exprs subs)
         [(OkSpecSubExprList rewritten) (OkSpecSubExpr (AstExprBegin rewritten))]
         [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
+    [(AstExprUnsafe exprs)
+      (match (spec-substitute-values-expr-list exprs subs)
+        [(OkSpecSubExprList rewritten)
+          (OkSpecSubExpr (AstExprUnsafe rewritten))]
+        [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
     [(AstExprSet name value)
       (match (spec-value-subst-lookup subs name)
         [(SpecSomeString _)
@@ -1325,6 +1341,12 @@
     [(AstExprTry inner)
       (match (spec-substitute-values-expr inner subs)
         [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprTry rewritten))]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprPtrNull ty) (OkSpecSubExpr (AstExprPtrNull ty))]
+    [(AstExprPtrNullCheck inner)
+      (match (spec-substitute-values-expr inner subs)
+        [(OkSpecSubExpr rewritten)
+          (OkSpecSubExpr (AstExprPtrNullCheck rewritten))]
         [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]))
 
 (define (spec-substitute-values-expr-list
@@ -1572,6 +1594,11 @@
       (match (spec-substitute-types-expr-list exprs subs)
         [(OkSpecSubExprList rewritten) (OkSpecSubExpr (AstExprBegin rewritten))]
         [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
+    [(AstExprUnsafe exprs)
+      (match (spec-substitute-types-expr-list exprs subs)
+        [(OkSpecSubExprList rewritten)
+          (OkSpecSubExpr (AstExprUnsafe rewritten))]
+        [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
     [(AstExprSet name value)
       (match (spec-type-subst-lookup subs name)
         [(SpecSomeString _)
@@ -1611,6 +1638,13 @@
     [(AstExprTry inner)
       (match (spec-substitute-types-expr inner subs)
         [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprTry rewritten))]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprPtrNull ty)
+      (OkSpecSubExpr (AstExprPtrNull (spec-substitute-type ty subs)))]
+    [(AstExprPtrNullCheck inner)
+      (match (spec-substitute-types-expr inner subs)
+        [(OkSpecSubExpr rewritten)
+          (OkSpecSubExpr (AstExprPtrNullCheck rewritten))]
         [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]))
 
 (define (spec-substitute-types-expr-list
@@ -1832,13 +1866,187 @@
           (spec-substitute-type (AstTyMutPtr (AstTyVar "T")) subs)
           (AstTyMutPtr (AstTyI64)))))))
 
+;;; Deterministic specialized name + stable specialization key (#1043, mirrors
+;;; src/specialize.rs deterministic-names / stable-keys coverage). The mangling
+;;; is a pure function of the template name and comptime argument values, so
+;;; identical args produce identical names, distinct type args never collide,
+;;; multi-value ordering is stable, and negative scalars encode without a `-`.
+(define (compiler-specialize-name-key-ok?) : bool
+  (let
+    [vals-i64 : SpecValueList
+      (SpecValueCons (CtfeType (AstTyI64)) (SpecValueNil))]
+    [vals-bool : SpecValueList
+      (SpecValueCons (CtfeType (AstTyBool)) (SpecValueNil))]
+    [vals-multi : SpecValueList
+      (SpecValueCons
+        (CtfeType (AstTyI64))
+        (SpecValueCons (CtfeI64 5) (SpecValueNil)))]
+    (and
+      (string-eq
+        (spec-specialized-name "alloc" vals-i64)
+        "__tl_specialized_alloc_type_i64_none")
+      (and
+        (string-eq
+          (spec-specialized-name "alloc" vals-i64)
+          (spec-specialized-name "alloc" vals-i64))
+        (and
+          (string-eq
+            (spec-specialization-key "alloc" vals-i64)
+            "alloc:type_i64_none")
+          (and
+            (not
+              (string-eq
+                (spec-specialized-name "alloc" vals-i64)
+                (spec-specialized-name "alloc" vals-bool)))
+            (and
+              (string-eq
+                (spec-specialized-name "pair" vals-multi)
+                "__tl_specialized_pair_type_i64_i64_5_none")
+              (string-eq (spec-value-key (CtfeI64 (- 0 3))) "i64_m3"))))))))
+
+;;; Count function declarations named `name` in `decls` (specialized decls are
+;;; emitted as ordinary `AstDeclDefFn`s, so reuse means a count of exactly 1).
+(define (compiler-specialize-decl-list-count-defs
+  [decls : AstDeclList]
+  [name : String]) : i64
+  (match decls
+    [(AstDeclNil) 0]
+    [(AstDeclCons decl rest)
+      (match decl
+        [(AstDeclDefFn fn-name _ _ _)
+          (if (string-eq fn-name name)
+            (+ 1 (compiler-specialize-decl-list-count-defs rest name))
+            (compiler-specialize-decl-list-count-defs rest name))]
+        [_ (compiler-specialize-decl-list-count-defs rest name)])]))
+
+;;; Two call sites that request the SAME specialization (`alloc` at `type i64`)
+;;; must share one generated decl via the specialization cache, not emit two.
+(define (compiler-specialize-reuse-source) : String
+  "(define (alloc [comptime T : type] [n : i64]) : (Array i64)
+  (make-array T n))
+(define (main) : (Array i64)
+  (begin (alloc (type i64) 4) (alloc (type i64) 8)))")
+
+;;; Specialization reuse (#1043, mirrors src/specialize.rs reuse coverage): two
+;;; identical `alloc (type i64)` requests collapse to a single shared
+;;; `__tl_specialized_alloc_type_i64_none` decl (the cache dedups by key) and the
+;;; `alloc` template is removed.
+(define (compiler-specialize-reuse-ok?) : bool
+  (match (parse-ast-source (compiler-specialize-reuse-source))
+    [(OkAstProgram program)
+      (match (compiler-specialize-program program)
+        [(OkSpecProgram specialized)
+          (match specialized
+            [(AstProgram decls)
+              (and
+                (not (compiler-specialize-decl-list-defines? decls "alloc"))
+                (=
+                  (compiler-specialize-decl-list-count-defs
+                    decls
+                    "__tl_specialized_alloc_type_i64_none")
+                  1))])]
+        [(ErrSpecProgram _) false])]
+    [(ErrAstProgram _) false]))
+
+;;; Type substitution (#1043, mirrors src/specialize.rs substitution coverage):
+;;; `spec-substitute-type` replaces a mapped type variable with its bound type,
+;;; recurses through compound types (Ptr/DynArray/function), and leaves an
+;;; unmapped variable unchanged (the SpecNoString lookup branch). Complements
+;;; the single MutPtr case embedded in `compiler-specialize-raw-pointer-type-ok?`.
+(define (compiler-specialize-subst-ok?) : bool
+  (let
+    [subs : SpecTypeSubst (SpecTypeSubstCons "T" (AstTyI64) SpecTypeSubstNil)]
+    (and
+      (string-eq
+        (spec-type-key (spec-substitute-type (AstTyVar "T") subs))
+        "i64")
+      (and
+        (string-eq
+          (spec-type-key (spec-substitute-type (AstTyPtr (AstTyVar "T")) subs))
+          "ptr_i64")
+        (and
+          (string-eq
+            (spec-type-key
+              (spec-substitute-type (AstTyDynArray (AstTyVar "T")) subs))
+            "dynarray_i64")
+          (and
+            (string-eq
+              (spec-type-key
+                (spec-substitute-type
+                  (AstTyFunc
+                    (AstTypeCons (AstTyVar "T") AstTypeNil)
+                    (AstTyVar "T"))
+                  subs))
+              "fn_i64_nil_to_i64")
+            (string-eq
+              (spec-type-key (spec-substitute-type (AstTyVar "U") subs))
+              "var_U")))))))
+
+;;; Value (comptime-argument) substitution (#1043, mirrors src/specialize.rs
+;;; substitution coverage): `spec-substitute-values-expr` replaces a variable
+;;; bound to a comptime value with that value's literal, leaves unmapped
+;;; variables and literals unchanged, and recurses through compound expressions.
+(define (compiler-specialize-value-subst-ok?) : bool
+  (let
+    [subs : SpecValueSubst
+      (SpecValueSubstCons "x" (CtfeI64 5) SpecValueSubstNil)]
+    (and
+      ;; mapped variable x -> integer literal 5
+      (match (spec-substitute-values-expr (AstExprVar "x") subs)
+        [(OkSpecSubExpr e)
+          (match e
+            [(AstExprLiteral lit)
+              (match lit
+                [(AstLitInt n) (= n 5)]
+                [_ false])]
+            [_ false])]
+        [(ErrSpecSubExpr _) false])
+      (and
+        ;; unmapped variable y -> unchanged
+        (match (spec-substitute-values-expr (AstExprVar "y") subs)
+          [(OkSpecSubExpr e)
+            (match e
+              [(AstExprVar name) (string-eq name "y")]
+              [_ false])]
+          [(ErrSpecSubExpr _) false])
+        ;; recursion through `if`: x in the condition becomes 5, unmapped y stays
+        (match (spec-substitute-values-expr
+          (AstExprIf
+            (AstExprVar "x")
+            (AstExprLiteral (AstLitInt 1))
+            (AstExprVar "y"))
+          subs)
+          [(OkSpecSubExpr e)
+            (match e
+              [(AstExprIf cond _ else-branch)
+                (and
+                  (match cond
+                    [(AstExprLiteral lit)
+                      (match lit
+                        [(AstLitInt n) (= n 5)]
+                        [_ false])]
+                    [_ false])
+                  (match else-branch
+                    [(AstExprVar name) (string-eq name "y")]
+                    [_ false]))]
+              [_ false])]
+          [(ErrSpecSubExpr _) false])))))
+
 (define (compiler-specialize-self-test) : i64
   (if (compiler-specialize-type-param-ok?)
     (if (compiler-specialize-runtime-type-use-rejected?)
       (if (compiler-specialize-template-shadow-ok?)
         (if (compiler-specialize-type-shadow-ok?)
           (if (compiler-specialize-raw-pointer-type-ok?)
-            1
+            (if (compiler-specialize-name-key-ok?)
+              (if (compiler-specialize-reuse-ok?)
+                (if (compiler-specialize-subst-ok?)
+                  (if (compiler-specialize-value-subst-ok?)
+                    1
+                    0)
+                  0)
+                0)
+              0)
             0)
           0)
         0)

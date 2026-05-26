@@ -419,7 +419,25 @@
                                           (let
                                             [e20 : TcTypeEnv
                                               (tc-bind
-                                                e19
+                                                (tc-bind
+                                                  (tc-bind
+                                                    e19
+                                                    "cpuid"
+                                                    (tc-fn2
+                                                      (AstTyI64)
+                                                      (AstTyI64)
+                                                      (AstTyTuple
+                                                        (AstTypeCons
+                                                          (AstTyI32)
+                                                          (AstTypeCons
+                                                            (AstTyI32)
+                                                            (AstTypeCons
+                                                              (AstTyI32)
+                                                              (AstTypeCons
+                                                                (AstTyI32)
+                                                                (AstTypeNil))))))))
+                                                  "xgetbv"
+                                                  (tc-fn1 (AstTyI64) (AstTyI64)))
                                                 "substring"
                                                 (tc-fn3
                                                   (AstTyString)
@@ -996,6 +1014,7 @@
     [(AstExprStringRef str index) (tc-source-expr-pair-policy-ok ctx str index)]
     [(AstExprWhile cond body) (tc-source-expr-pair-policy-ok ctx cond body)]
     [(AstExprBegin exprs) (tc-source-expr-list-policy-ok ctx exprs)]
+    [(AstExprUnsafe exprs) (tc-source-expr-list-policy-ok ctx exprs)]
     [(AstExprSet _ value) (tc-source-expr-policy-ok ctx value)]
     [(AstExprAnn inner ty)
       (match (tc-source-expr-policy-ok ctx inner)
@@ -1024,6 +1043,7 @@
     [(AstExprWithRegion _ body) (tc-source-expr-list-policy-ok ctx body)]
     [(AstExprComptime inner) (tc-source-expr-policy-ok ctx inner)]
     [(AstExprTry inner) (tc-source-expr-policy-ok ctx inner)]
+    [(AstExprPtrNullCheck inner) (tc-source-expr-policy-ok ctx inner)]
     [_ OkTcUnit]))
 
 (define (tc-source-decl-policy-ok [ctx : TcContext] [decl : AstDecl]) : ResultTcUnit
@@ -2027,6 +2047,27 @@
         (ErrTcType "typecheck: arity mismatch")
         (tc-call-expr ctx env func args))]))
 
+;; `size-of`/`align-of` (#989) are comptime-only layout queries: a single type
+;; argument, result `i64`. Typed here (intercepting before normal call resolution
+;; so `size-of` isn't looked up as a function); CTFE computes the value when the
+;; query is folded inside `(comptime ...)`. Slice 1 supports scalar types; struct
+;; layout + `offset-of` are slice 2.
+(define (tc-layout-query-call [name : String] [args : AstExprList]) : ResultTcType
+  (match args
+    [(AstExprCons _ rest)
+      (match rest
+        [(AstExprNil) (OkTcType (AstTyI64))]
+        [_
+          (ErrTcType
+            (string-append
+              "typecheck: "
+              (string-append name " expects exactly one type argument")))])]
+    [_
+      (ErrTcType
+        (string-append
+          "typecheck: "
+          (string-append name " expects exactly one type argument")))]))
+
 (define (tc-call-or-array-length
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -2034,13 +2075,17 @@
   [args : AstExprList]) : ResultTcType
   (match (ast-expr-unspan func)
     [(AstExprVar name)
-      (if (or (string-eq name "array-length") (string-eq name "length"))
-        (tc-array-length-call ctx env name func args)
-        (if (and
-          (or (string-eq name "string-ref") (string-eq name "char-at"))
-          (not (tc-name-bound? env name)))
-          (tc-string-ref-call ctx env args)
-          (tc-call-expr ctx env func args)))]
+      (if (and
+        (or (string-eq name "size-of") (string-eq name "align-of"))
+        (not (tc-name-bound? env name)))
+        (tc-layout-query-call name args)
+        (if (or (string-eq name "array-length") (string-eq name "length"))
+          (tc-array-length-call ctx env name func args)
+          (if (and
+            (or (string-eq name "string-ref") (string-eq name "char-at"))
+            (not (tc-name-bound? env name)))
+            (tc-string-ref-call ctx env args)
+            (tc-call-expr ctx env func args))))]
     [_ (tc-call-expr ctx env func args)]))
 
 (define (tc-let-bindings
@@ -2504,6 +2549,7 @@
                 [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
         [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
     [(AstExprBegin exprs) (tc-spmd-begin-list ctx env spmd-env exprs)]
+    [(AstExprUnsafe exprs) (tc-spmd-begin-list ctx env spmd-env exprs)]
     [(AstExprSet name value)
       (match (tc-spmd-expr ctx env spmd-env value)
         [(OkTcSpmdExprInfo value-info)
@@ -2595,6 +2641,14 @@
               (tc-spmd-finish expr-ty class next-spmd-env)])]
         [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
     [(AstExprTry inner)
+      (match (tc-spmd-expr ctx env spmd-env inner)
+        [(OkTcSpmdExprInfo info)
+          (match info
+            [(TcSpmdExprInfo _ class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprPtrNull _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
+    [(AstExprPtrNullCheck inner)
       (match (tc-spmd-expr ctx env spmd-env inner)
         [(OkTcSpmdExprInfo info)
           (match info
@@ -2752,6 +2806,7 @@
         (tc-expr-uses-free-name? cond name bound)
         (tc-expr-uses-free-name? body name bound))]
     [(AstExprBegin exprs) (tc-expr-list-uses-free-name? exprs name bound)]
+    [(AstExprUnsafe exprs) (tc-expr-list-uses-free-name? exprs name bound)]
     [(AstExprSet var-name value)
       (or
         (and
@@ -2786,7 +2841,9 @@
     [(AstExprWithRegion _ body) (tc-expr-list-uses-free-name? body name bound)]
     [(AstExprTypeLiteral _) false]
     [(AstExprComptime inner) (tc-expr-uses-free-name? inner name bound)]
-    [(AstExprTry inner) (tc-expr-uses-free-name? inner name bound)]))
+    [(AstExprTry inner) (tc-expr-uses-free-name? inner name bound)]
+    [(AstExprPtrNull _) false]
+    [(AstExprPtrNullCheck inner) (tc-expr-uses-free-name? inner name bound)]))
 
 (define (tc-check-lambda-region-captures-scan
   [env : TcTypeEnv]
@@ -3652,8 +3709,7 @@
 
 ;; spmd-reduce operator/type rules (#1011, SPEC 5.15): the init/value/result type
 ;; must be in the operator's supported set -- `sum` over i32/i64/f64, `min`/`max`
-;; over i32/i64, `all`/`any` over bool. (Effect/purity rules for the varying
-;; value expression are a separate slice.)
+;; over i32/i64, `all`/`any` over bool.
 (define (tc-reduce-op-type-ok? [op : AstReduceOp] [ty : AstType]) : bool
   (match op
     [(AstReduceSum)
@@ -3689,6 +3745,86 @@
     [(AstReduceMax) "typecheck: spmd-reduce max requires an i32 or i64 type"]
     [(AstReduceAll) "typecheck: spmd-reduce all requires a bool type"]
     [(AstReduceAny) "typecheck: spmd-reduce any requires a bool type"]))
+
+;; spmd-reduce purity/effect rules (#1011, SPEC.md §5.16): mirror the Rust
+;; typechecker's `check_spmd_reduce_value`. The first reduction slice accepts a
+;; narrow, clearly-pure surface and rejects everything else with a focused
+;; diagnostic rather than guessing at varying/uniform semantics not yet
+;; implemented: the varying index, uniform variables, and literals;
+;; arithmetic/comparison/boolean operators over those; `ann`/`cast` wrappers;
+;; dynamic-array reads whose index is not itself another array read (direct,
+;; non-gather indexing only); and local `let` bindings whose initializers obey
+;; the same rules. Writes (`set!`, `array-set!`), function calls, nested
+;; `foreach`/`spmd-reduce`, varying control flow (`if`/`while`/`match`),
+;; sequencing, and aggregate constructors are rejected. The `in-index` flag is
+;; set while walking an array-read index so a nested read (a gather) is
+;; rejected. Uniformity of `start`/`end`/`init` is enforced by scoping: they are
+;; typed outside the lane context, so referencing the index is an unbound error.
+(define (tc-spmd-value-pure [expr : AstExpr]) : ResultTcUnit
+  (tc-spmd-value-pure-at expr false))
+
+(define (tc-spmd-value-pure-at [expr : AstExpr] [in-index : bool]) : ResultTcUnit
+  (match expr
+    [(AstExprSpanned inner _) (tc-spmd-value-pure-at inner in-index)]
+    [(AstExprLiteral _) OkTcUnit]
+    [(AstExprVar _) OkTcUnit]
+    [(AstExprBinary _ left right)
+      (match (tc-spmd-value-pure-at left in-index)
+        [(OkTcUnit) (tc-spmd-value-pure-at right in-index)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprUnary _ inner) (tc-spmd-value-pure-at inner in-index)]
+    [(AstExprAnn inner _) (tc-spmd-value-pure-at inner in-index)]
+    [(AstExprCast inner _) (tc-spmd-value-pure-at inner in-index)]
+    [(AstExprLet bindings body)
+      (match (tc-spmd-value-let-bindings-pure-at bindings in-index)
+        [(OkTcUnit) (tc-spmd-value-pure-at body in-index)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprArrayRef array index)
+      (if in-index
+        (ErrTcUnit
+          "indirect array indexing is not allowed inside a spmd-reduce value expression; gather/scatter is deferred in the first slice (SPEC.md §5.16)")
+        (match (tc-spmd-value-pure-at array false)
+          [(OkTcUnit) (tc-spmd-value-pure-at index true)]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]
+    [(AstExprSet _ _)
+      (ErrTcUnit
+        "`set!` is not allowed inside a spmd-reduce value expression; reductions must use the explicit accumulator, not outer mutation (SPEC.md §5.16)")]
+    [(AstExprArraySet _ _ _)
+      (ErrTcUnit
+        "`array-set!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md §5.16)")]
+    [(AstExprCall _ _)
+      (ErrTcUnit
+        "function calls are not allowed inside a spmd-reduce value expression; side-effecting builtins and user calls with varying arguments are deferred in the first slice (SPEC.md §5.16)")]
+    [(AstExprForeach _ _ _ _ _)
+      (ErrTcUnit
+        "a nested foreach is not allowed inside a spmd-reduce value expression (SPEC.md §5.16)")]
+    [(AstExprSpmdReduce _ _ _ _ _ _ _)
+      (ErrTcUnit
+        "a nested spmd-reduce is not allowed inside a spmd-reduce value expression (SPEC.md §5.16)")]
+    [(AstExprIf _ _ _)
+      (ErrTcUnit
+        "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md §5.16)")]
+    [(AstExprWhile _ _)
+      (ErrTcUnit
+        "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md §5.16)")]
+    [(AstExprMatch _ _)
+      (ErrTcUnit
+        "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md §5.16)")]
+    [_
+      (ErrTcUnit
+        "this expression is not allowed inside a spmd-reduce value expression; the first slice allows only the varying index, uniform variables, literals, arithmetic/comparison/boolean operators, dynamic-array reads, and local let bindings (SPEC.md §5.16)")]))
+
+(define (tc-spmd-value-let-bindings-pure-at
+  [bindings : AstLetBindingList]
+  [in-index : bool]) : ResultTcUnit
+  (match bindings
+    [(AstLetBindingNil) OkTcUnit]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding _ _ init)
+          (match (tc-spmd-value-pure-at init in-index)
+            [(OkTcUnit) (tc-spmd-value-let-bindings-pure-at rest in-index)]
+            [(ErrTcUnit message) (ErrTcUnit message)])])]))
 
 (define (tc-expr [ctx : TcContext] [env : TcTypeEnv] [expr : AstExpr]) : ResultTcType
   (match expr
@@ -3874,6 +4010,9 @@
             [(ErrTcUnit message) (ErrTcType message)])]
         [(ErrTcType message) (ErrTcType message)])]
     [(AstExprBegin exprs) (tc-begin-list ctx env exprs)]
+    ;; `(unsafe ...)` types like `begin` in v1; the unsafe-context flag for
+    ;; raw-pointer ops is added with their checks (#955).
+    [(AstExprUnsafe exprs) (tc-begin-list ctx env exprs)]
     [(AstExprIf cond then-branch else-branch)
       (match (tc-expr ctx env cond)
         [(OkTcType cond-ty)
@@ -4000,23 +4139,26 @@
                     (if (tc-integer-type? end-ty)
                       (match (tc-expr ctx env init)
                         [(OkTcType init-ty)
-                          (let
-                            [value-env : TcTypeEnv
-                              (tc-bind env index resolved-index-ty)]
-                            (match (tc-expr ctx value-env value)
-                              [(OkTcType value-ty)
-                                (match (tc-expect
-                                  value-ty
-                                  init-ty
-                                  "typecheck: spmd-reduce init and value type mismatch")
-                                  [(OkTcUnit)
-                                    (if (tc-reduce-op-type-ok?
-                                      op
-                                      (tc-resolve-type ctx init-ty))
-                                      (OkTcType init-ty)
-                                      (ErrTcType (tc-reduce-op-type-msg op)))]
-                                  [(ErrTcUnit message) (ErrTcType message)])]
-                              [(ErrTcType message) (ErrTcType message)]))]
+                          (if (tc-reduce-op-type-ok?
+                            op
+                            (tc-resolve-type ctx init-ty))
+                            (match (tc-spmd-value-pure value)
+                              [(OkTcUnit)
+                                (let
+                                  [value-env : TcTypeEnv
+                                    (tc-bind env index resolved-index-ty)]
+                                  (match (tc-expr ctx value-env value)
+                                    [(OkTcType value-ty)
+                                      (match (tc-expect
+                                        value-ty
+                                        init-ty
+                                        "typecheck: spmd-reduce init and value type mismatch")
+                                        [(OkTcUnit) (OkTcType init-ty)]
+                                        [(ErrTcUnit message)
+                                          (ErrTcType message)])]
+                                    [(ErrTcType message) (ErrTcType message)]))]
+                              [(ErrTcUnit message) (ErrTcType message)])
+                            (ErrTcType (tc-reduce-op-type-msg op)))]
                         [(ErrTcType message) (ErrTcType message)])
                       (ErrTcType
                         "typecheck: spmd-reduce end expression must be integer"))]
@@ -4073,6 +4215,24 @@
               (ErrTcType "ExprList value is compile-time only (#1135)")])]
         [(ErrCtfe diag) (ErrTcType (compiler-diagnostic-message diag))])]
     [(AstExprTry inner) (tc-try-expr ctx env inner)]
+    [(AstExprPtrNull ty)
+      (let
+        [resolved : AstType (tc-resolve-type ctx ty)]
+        (match resolved
+          [(AstTyPtr _) (OkTcType resolved)]
+          [(AstTyMutPtr _) (OkTcType resolved)]
+          [_
+            (ErrTcType
+              "typecheck: ptr-null requires a pointer type, e.g. (ptr-null : (Ptr i64))")]))]
+    [(AstExprPtrNullCheck inner)
+      (match (tc-expr ctx env inner)
+        [(OkTcType inner-ty)
+          (match (tc-type-strip-region inner-ty)
+            [(AstTyPtr _) (OkTcType (AstTyBool))]
+            [(AstTyMutPtr _) (OkTcType (AstTyBool))]
+            [_
+              (ErrTcType "typecheck: ptr-null? requires a raw pointer operand")])]
+        [(ErrTcType message) (ErrTcType message)])]
     [_ (ErrTcType "typecheck: unsupported expression")]))
 
 (define (tc-summary-add-decl
@@ -5241,6 +5401,31 @@
           "(define (main [bs : (Array bool)] [n : i64]) : bool (spmd-reduce sum ([i : i64 0 n]) true (array-ref bs i)))"
           "typecheck: spmd-reduce sum requires an i32, i64, or f64 type")))))
 
+;; spmd-reduce purity rules (#1011, SPEC.md §5.16): the per-lane value
+;; expression accepts pure arithmetic over dynamic-array reads and the varying
+;; index, but rejects writes (`array-set!`), function calls (also covers
+;; `print*`/`panic`/file I/O and varying-argument user calls), varying control
+;; flow (`if`/`while`/`match`), and indirect/gather array indexing.
+(define (compiler-typecheck-spmd-reduce-purity-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (+ (array-ref xs i) 1)))")
+    (and
+      (compiler-typecheck-error-ok?
+        "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-set! xs i 1)))"
+        "`array-set!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md §5.16)")
+      (and
+        (compiler-typecheck-error-ok?
+          "(define (helper [x : i64]) : i64 x) (define (main [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (helper i)))"
+          "function calls are not allowed inside a spmd-reduce value expression; side-effecting builtins and user calls with varying arguments are deferred in the first slice (SPEC.md §5.16)")
+        (and
+          (compiler-typecheck-error-ok?
+            "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (if (< (array-ref xs i) 0) 0 1)))"
+            "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md §5.16)")
+          (compiler-typecheck-error-ok?
+            "(define (main [xs : (Array i64)] [ys : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs (array-ref ys i))))"
+            "indirect array indexing is not allowed inside a spmd-reduce value expression; gather/scatter is deferred in the first slice (SPEC.md §5.16)"))))))
+
 ;; array-builtin signature rules (#1042): make-array length, array-ref array/index
 ;; types, and array-set! value-type agreement, with valid accepts.
 (define (compiler-typecheck-array-builtin-tests-ok?) : bool
@@ -5315,8 +5500,68 @@
                 "(define (f [p : String] [c : String]) : i64 (write-file p c))"
                 "typecheck: return type mismatch"))))))))
 
+;; Raw-pointer null construction / check (#1054).
+(define (compiler-typecheck-ptr-null-ok-source) : String
+  "(define (main) : i64 (if (ptr-null? (ptr-null : (Ptr i64))) 1 0))")
+
+(define (compiler-typecheck-ptr-null-mut-source) : String
+  "(define (main) : i64 (if (ptr-null? (ptr-null : (MutPtr i64))) 1 0))")
+
+(define (compiler-typecheck-ptr-null-bad-type-source) : String
+  "(define (main) : i64 (if (ptr-null? (ptr-null : i64)) 1 0))")
+
+(define (compiler-typecheck-ptr-null-check-bad-source) : String
+  "(define (main) : i64 (if (ptr-null? 5) 1 0))")
+
+(define (compiler-typecheck-ptr-null-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-ptr-null-ok-source))
+    (and
+      (compiler-typecheck-ok? (compiler-typecheck-ptr-null-mut-source))
+      (and
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-ptr-null-bad-type-source)
+          "typecheck: ptr-null requires a pointer type, e.g. (ptr-null : (Ptr i64))")
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-ptr-null-check-bad-source)
+          "typecheck: ptr-null? requires a raw pointer operand")))))
+
+;; Unsafe blocks (#1053): parse + typecheck like `begin`; empty `(unsafe)`
+;; rejects at parse.
+(define (compiler-typecheck-unsafe-ok-source) : String
+  "(define (main) : i64 (unsafe 1 2 42))")
+
+(define (compiler-typecheck-unsafe-empty-source) : String
+  "(define (main) : i64 (unsafe))")
+
+(define (compiler-typecheck-unsafe-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-unsafe-ok-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-unsafe-empty-source)
+      "parse: unsafe requires a non-empty body")))
+
+;; `size-of`/`align-of` comptime layout queries (#989 slice 1): accepted with a
+;; single type argument (result `i64`), rejected with wrong arity.
+(define (compiler-typecheck-layout-query-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      "(define (f) : i64 (comptime (size-of (type i64))))")
+    (and
+      (compiler-typecheck-ok?
+        "(define (f) : i64 (comptime (align-of (type bool))))")
+      (compiler-typecheck-error-ok?
+        "(define (f) : i64 (comptime (size-of (type i64) (type bool))))"
+        "size-of expects exactly one type argument"))))
+
 (define (compiler-typecheck-self-test) : i64
   (begin
+    (if (compiler-typecheck-ptr-null-tests-ok?)
+      unit
+      (panic "typecheck: ptr-null construction/check tests failed"))
+    (if (compiler-typecheck-unsafe-tests-ok?)
+      unit
+      (panic "typecheck: unsafe block tests failed"))
     (if (compiler-typecheck-statement-tests-ok?)
       unit
       (panic "typecheck: statement/control-flow tests failed"))
@@ -5329,6 +5574,9 @@
     (if (compiler-typecheck-spmd-reduce-op-tests-ok?)
       unit
       (panic "typecheck: spmd-reduce operator/type tests failed"))
+    (if (compiler-typecheck-spmd-reduce-purity-tests-ok?)
+      unit
+      (panic "typecheck: spmd-reduce purity tests failed"))
     (if (compiler-typecheck-array-builtin-tests-ok?)
       unit
       (panic "typecheck: array-builtin signature tests failed"))
@@ -5374,7 +5622,9 @@
                                         (compiler-typecheck-cast-tests-ok?)
                                         (and
                                           (compiler-typecheck-comptime-tests-ok?)
-                                          (compiler-typecheck-io-builtin-tests-ok?))))))))))))))))))
+                                          (and
+                                            (compiler-typecheck-io-builtin-tests-ok?)
+                                            (compiler-typecheck-layout-query-tests-ok?)))))))))))))))))))
           42
           (begin
             (panic "typecheck: smoke score mismatch")

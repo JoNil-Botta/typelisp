@@ -72,6 +72,68 @@
           (string-append left right)
           (string-append (string-append left (fs-path-separator)) right))))))
 
+;;; Index of the last path separator in `path`, or `-1` when there is none.
+(define (fs-last-separator-index [path : String]) : i64
+  (let
+    [n : i64 (string-length path)]
+    [i : i64 0]
+    [last : i64 -1]
+    (begin
+      (while (< i n)
+        (begin
+          (if (fs-path-separator? (string-ref path i))
+            (set! last i)
+            (set! last last))
+          (set! i (+ i 1))))
+      last)))
+
+;;; Directory portion of `path`, without a trailing separator.
+;;;
+;;; Returns `"."` when `path` has no separator, and the host separator when the
+;;; only separator is the leading one (a root child such as `/main.tl`).
+(define (fs-dirname [path : String]) : String
+  (let
+    [last : i64 (fs-last-separator-index path)]
+    (if (< last 0)
+      "."
+      (if (= last 0)
+        (fs-path-separator)
+        (substring path 0 last)))))
+
+;;; Final component of `path` (the part after the last separator).
+;;;
+;;; Returns `path` unchanged when there is no separator, and `""` when `path`
+;;; ends with a separator.
+(define (fs-basename [path : String]) : String
+  (let
+    [n : i64 (string-length path)]
+    [last : i64 (fs-last-separator-index path)]
+    (if (< last 0)
+      path
+      (substring path (+ last 1) (- n (+ last 1))))))
+
+;;; Extension of `path` without the leading dot (e.g. `"tl"` for `main.tl`).
+;;;
+;;; Operates on the basename, so directory dots do not count. Returns `""` when
+;;; the basename has no dot or is a dotfile (a leading-dot name like
+;;; `.gitignore`, which has no extension).
+(define (fs-extension [path : String]) : String
+  (let
+    [base : String (fs-basename path)]
+    [bn : i64 (string-length base)]
+    [i : i64 0]
+    [dot : i64 -1]
+    (begin
+      (while (< i bn)
+        (begin
+          (if (char-eq (string-ref base i) #.')
+            (set! dot i)
+            (set! dot dot))
+          (set! i (+ i 1))))
+      (if (<= dot 0)
+        ""
+        (substring base (+ dot 1) (- bn (+ dot 1)))))))
+
 ;;; Convert a runtime filesystem status into a structured `ResultIoUnit`.
 (define (fs-status-result [path : String] [status : i64]) : ResultIoUnit
   (if (= status io-status-ok)
@@ -155,13 +217,11 @@
 
 ;;; Create a unique temporary directory for tool artifacts.
 ;;;
-;;; The directory is created below `$TMPDIR` on Linux, or `/tmp` when `TMPDIR` is
-;;; missing. Windows returns `IoUnsupported` until Windows filesystem primitives
-;;; are implemented for this stdlib slice.
+;;; The directory is created below `$TMPDIR` on Linux (or `/tmp` when `TMPDIR` is
+;;; missing), and below `%TEMP%`/`%TMP%` (or `.`) on Windows. The unique name is
+;;; seeded by the process id (`GetCurrentProcessId` on Windows, `getpid` on
+;;; Linux) and an attempt counter, retrying on collision.
 (define (try-create-temp-dir [prefix : String]) : ResultIoString
-  (if (fs-windows?)
-    (ErrIoString
-      (IoUnsupported "fs: temporary directories are not implemented on Windows"))
-    (if (io-empty-path? prefix)
-      (ErrIoString (IoInvalidPath prefix))
-      (fs-create-temp-dir-loop (fs-temp-root) prefix (fs-process-id) 0))))
+  (if (io-empty-path? prefix)
+    (ErrIoString (IoInvalidPath prefix))
+    (fs-create-temp-dir-loop (fs-temp-root) prefix (fs-process-id) 0)))

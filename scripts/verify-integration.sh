@@ -35,6 +35,46 @@ if [ ! -x "$COMPILER" ]; then
     exit 1
 fi
 
+# Retry transient Windows crashes (#1204): the typelisp build and the
+# native/selfhost programs run on Windows intermittently SEGFAULT with no useful
+# output. `is_crash_code` (132/134/139) lets us retry ONLY those transient
+# crashes, never a genuine non-zero exit (so an expected failure still fails).
+. "$ROOT/scripts/lib-retry.sh"
+# Default 6 (not 3): large corpus binaries like compiler_lower_smoke hit the
+# #1204 Windows segfault at a high enough rate that 3 attempts can all crash
+# (observed 3/3 on PR #1225), so the crash-only retry needs more headroom.
+INTEGRATION_ATTEMPTS="${VERIFY_INTEGRATION_ATTEMPTS:-6}"
+
+# Run a `typelisp build`/`compile` invocation, retrying a transient #1204 crash.
+# Output flows to the caller's streams; sets `build_rc` to the final exit code.
+build_with_retry() {
+    _bwr_attempt=0
+    while :; do
+        _bwr_attempt=$((_bwr_attempt + 1))
+        set +e
+        "$@"
+        build_rc=$?
+        set -e
+        if is_crash_code "$build_rc" && [ "$_bwr_attempt" -lt "$INTEGRATION_ATTEMPTS" ]; then
+            echo "  retry ($_bwr_attempt/$INTEGRATION_ATTEMPTS): build crash exit $build_rc — likely transient (#1204)" >&2
+        else
+            break
+        fi
+    done
+}
+
+# Run a `$COMPILER run <fixture.tl> …` emit step, retrying ONLY a transient
+# #1204 crash (these fixtures emit assembly deterministically, so a retry safely
+# re-emits) and aborting on a real non-crash failure or exhausted retries — the
+# same fail-fast behavior the bare `set -e` invocations had before guarding.
+run_fixture_with_retry() {
+    build_with_retry "$@"
+    if [ "$build_rc" -ne 0 ]; then
+        echo "FAIL: fixture run '$*' exited $build_rc" >&2
+        exit 1
+    fi
+}
+
 if [ "$HOST_OS" = linux ]; then
     command -v as >/dev/null 2>&1 || {
         echo "missing assembler: as" >&2
@@ -314,10 +354,20 @@ run_windows_program() {
     _code=$(cygpath -aw "$4")
     shift 4
 
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PS_RUNNER_WIN" \
-        "$_exe" "$_stdout" "$_stderr" "$_code" "$@"
-
-    got=$(tr -d '\r\n' < "$_code_posix")
+    # Retry only a transient #1204 crash exit (132/134/139); a genuine
+    # crash-expecting case re-runs harmlessly and still returns the same code.
+    _rwp_attempt=0
+    while :; do
+        _rwp_attempt=$((_rwp_attempt + 1))
+        powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PS_RUNNER_WIN" \
+            "$_exe" "$_stdout" "$_stderr" "$_code" "$@"
+        got=$(tr -d '\r\n' < "$_code_posix")
+        if is_crash_code "$got" && [ "$_rwp_attempt" -lt "$INTEGRATION_ATTEMPTS" ]; then
+            echo "  retry ($_rwp_attempt/$INTEGRATION_ATTEMPTS): '$_exe' crash exit $got — likely transient (#1204)" >&2
+        else
+            break
+        fi
+    done
 }
 
 assert_contains() {
@@ -369,7 +419,7 @@ run_linux_backend_fixtures() {
     _runtime_bin="$_runtime_dir/runtime_helpers"
 
     echo "[backend-runtime] emit -> assemble -> link -> run"
-    "$COMPILER" run selfhost/compiler_backend_runtime_fixture.tl -- "$_runtime_asm"
+    run_fixture_with_retry "$COMPILER" run selfhost/compiler_backend_runtime_fixture.tl -- "$_runtime_asm"
     for _snippet in \
         ".globl tl_alloc" \
         "tl_alloc:" \
@@ -422,7 +472,7 @@ run_linux_backend_fixtures() {
     _stack_bin="$_stack_dir/stack_args"
 
     echo "[backend-stack-args] emit -> assemble -> link -> run"
-    "$COMPILER" run selfhost/compiler_backend_stack_args_fixture.tl -- "$_stack_asm" linux-x86_64
+    run_fixture_with_retry "$COMPILER" run selfhost/compiler_backend_stack_args_fixture.tl -- "$_stack_asm" linux-x86_64
     for _snippet in \
         "subq \$16, %rsp" \
         "movq %r11, 0(%rsp)" \
@@ -478,7 +528,7 @@ run_windows_backend_fixtures() {
     _runtime_code="$_runtime_dir/runtime.exit"
 
     echo "[windows-backend-runtime] emit -> assemble -> link -> run"
-    "$COMPILER" run selfhost/compiler_backend_runtime_fixture.tl \
+    run_fixture_with_retry "$COMPILER" run selfhost/compiler_backend_runtime_fixture.tl \
         --target windows-x86_64 -- "$_runtime_asm" windows-x86_64
     for _snippet in \
         ".globl main" \
@@ -585,7 +635,11 @@ run_windows_backend_fixtures() {
     _driver_code="$_driver_dir/run.exit"
 
     echo "[windows-selfhost-compile-driver] build -> exercise"
-    "$COMPILER" build selfhost/compile.tl -o "$_driver_bin" --target windows-x86_64
+    build_with_retry "$COMPILER" build selfhost/compile.tl -o "$_driver_bin" --target windows-x86_64
+    if [ "$build_rc" -ne 0 ]; then
+        echo "FAIL: windows-selfhost-compile-driver build failed (exit $build_rc)" >&2
+        exit 1
+    fi
     printf '%s\n' '(define (main) : i64 42)' > "$_driver_source"
     run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" \
         "$(cygpath -aw "$_driver_source")" -o "$(cygpath -aw "$_driver_asm")"
@@ -686,7 +740,7 @@ EOF
     rm -f "$_primitive_output"
 
     echo "[windows-driver-primitives] emit -> assemble -> link -> run"
-    "$COMPILER" run selfhost/compiler_backend_runtime_fixture.tl \
+    run_fixture_with_retry "$COMPILER" run selfhost/compiler_backend_runtime_fixture.tl \
         --target windows-x86_64 -- "$_primitive_asm" windows-driver-primitives
     for _snippet in \
         ".globl main" \
@@ -777,7 +831,8 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps || [ -n "$n
 
     echo "[$name] build -> run ($HOST_OS)"
     if [ "$HOST_OS" = windows ]; then
-        if ! "$COMPILER" build "$work_src" -o "$bin.exe" --target windows-x86_64; then
+        build_with_retry "$COMPILER" build "$work_src" -o "$bin.exe" --target windows-x86_64
+        if [ "$build_rc" -ne 0 ]; then
             echo "FAIL: $name build failed" >&2
             failed=$((failed + 1))
             ran=$((ran + 1))

@@ -1797,6 +1797,7 @@
           (lower-expr ctx binding-state body-env body-type-env body)]
         [(ErrLowerEnv message) (ErrLowerExpr message)])]
     [(AstExprBegin exprs) (lower-begin ctx state env type-env exprs)]
+    [(AstExprUnsafe exprs) (lower-begin ctx state env type-env exprs)]
     [(AstExprSet name value)
       (match (lower-expr ctx state env type-env value)
         [(OkLowerExpr lowered)
@@ -1907,6 +1908,22 @@
             (string-append
               (tc-type-render (tc-resolve-type ctx ty))
               " is compile-time only"))))]
+    ;; `(ptr-null : T)` is a pointer-sized zero (pointer ABI size is 8);
+    ;; `(ptr-null? p)` is `p == 0` producing a `bool`. No new IR/asm needed.
+    [(AstExprPtrNull _) (lower-materialize state (IrValueI64 0) expr-ty)]
+    [(AstExprPtrNullCheck inner)
+      (match (lower-expr ctx state env type-env inner)
+        [(OkLowerExpr lowered)
+          (match lowered
+            [(LowerExpr inner-state inner-value _)
+              (OkLowerExpr
+                (lower-emit-binop
+                  inner-state
+                  IrBinEq
+                  inner-value
+                  (IrValueI64 0)
+                  (AstTyBool)))])]
+        [(ErrLowerExpr diag) (ErrLowerExpr diag)])]
     [_
       (ErrLowerExpr
         (lower-diagnostic-at-expr origin "lower: unsupported expression"))]))
@@ -5976,6 +5993,29 @@
                     "(define (main) : i64 (comptime (if (= 5 5) 42 0)))"
                     42))))))))))
 
+;; `size-of`/`align-of` comptime layout queries (#989 slice 1): a scalar type
+;; folds to its byte size / alignment (equal for primitives) inside `(comptime …)`.
+(define (compiler-lower-layout-query-fold-tests-ok?) : bool
+  (and
+    (compiler-lower-comptime-fold-ok?
+      "(define (main) : i64 (comptime (size-of (type i64))))"
+      8)
+    (and
+      (compiler-lower-comptime-fold-ok?
+        "(define (main) : i64 (comptime (align-of (type i64))))"
+        8)
+      (and
+        (compiler-lower-comptime-fold-ok?
+          "(define (main) : i64 (comptime (size-of (type i32))))"
+          4)
+        (and
+          (compiler-lower-comptime-fold-ok?
+            "(define (main) : i64 (comptime (size-of (type bool))))"
+            1)
+          (compiler-lower-comptime-fold-ok?
+            "(define (main) : i64 (comptime (size-of (type char))))"
+            1))))))
+
 ;; `and`/`or` short-circuit lowering (#1132 / #1165): `(and a b)` and `(or a b)`
 ;; desugar to a conditional branch, so a function whose body is a bare `and`/`or`
 ;; of two boolean params must emit at least one branch and NO eager binop (the
@@ -6098,7 +6138,9 @@
                                                         (compiler-lower-comptime-f64-source)
                                                         "comptime: f64 compile-time evaluation not yet supported (#735)")
                                                       (and
-                                                        (compiler-lower-comptime-op-fold-tests-ok?)
+                                                        (and
+                                                          (compiler-lower-comptime-op-fold-tests-ok?)
+                                                          (compiler-lower-layout-query-fold-tests-ok?))
                                                         (and
                                                           (compiler-lower-foreach-tests-ok?)
                                                           (compiler-lower-spmd-reduce-tests-ok?)))))))))))))))))))))))))))))

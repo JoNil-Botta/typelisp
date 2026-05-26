@@ -2695,21 +2695,15 @@
     (let
       [neg : CompilerIrInstrList
         (opt-strength-instrs (OptConstNil) (opt-strength-negative-instrs))]
-      (if (= (opt-count-arith-instrs pos) 0)
-        (if (= (opt-sum-mov-var-src pos) 49)
-          (if (= (opt-count-mov-i64-value pos 0) 2)
-            (if (= (opt-count-mov-bool-value pos false) 2)
-              (if (= (opt-count-mov-bool-value pos true) 2)
-                (if (= (opt-mov-dst-type-tag pos 10) (ast-type-tag (AstTyU8)))
-                  (if (= (opt-count-arith-instrs neg) 5)
-                    42
-                    7)
-                  6)
-                5)
-              4)
-            3)
-          2)
-        1))))
+      (cond
+        [(not (= (opt-count-arith-instrs pos) 0)) 1]
+        [(not (= (opt-sum-mov-var-src pos) 49)) 2]
+        [(not (= (opt-count-mov-i64-value pos 0) 2)) 3]
+        [(not (= (opt-count-mov-bool-value pos false) 2)) 4]
+        [(not (= (opt-count-mov-bool-value pos true) 2)) 5]
+        [(not (= (opt-mov-dst-type-tag pos 10) (ast-type-tag (AstTyU8)))) 6]
+        [(not (= (opt-count-arith-instrs neg) 5)) 7]
+        [else 42]))))
 
 ;; Builds `[Mov v0=99 (unused), Call v1 = noop(), Return v1]`. `v0` is a dead
 ;; pure temporary; `v1` is produced by a side-effecting call and used by the
@@ -2735,17 +2729,13 @@
             (opt-dce-instrs
               (opt-collect-instrs-uses (OptUsedNil) cleaned)
               cleaned)]
-          (if (opt-used-contains used 1)
-            (if (not (opt-used-contains used 0))
-              (if (= (compiler-ir-instr-list-count instrs) 3)
-                (if (= (compiler-ir-instr-list-count cleaned) 2)
-                  (if (= (compiler-ir-instr-list-count again) 2)
-                    42
-                    4)
-                  3)
-                2)
-              1)
-            0))))))
+          (cond
+            [(not (opt-used-contains used 1)) 0]
+            [(opt-used-contains used 0) 1]
+            [(not (= (compiler-ir-instr-list-count instrs) 3)) 2]
+            [(not (= (compiler-ir-instr-list-count cleaned) 2)) 3]
+            [(not (= (compiler-ir-instr-list-count again) 2)) 4]
+            [else 42]))))))
 
 ;; Builds `[Mov v0=4096 (an address), Load v1 = *v0, Return v1]`. `v0` feeds a
 ;; `Load`, so DCE must treat it as used and keep it; without collecting the
@@ -2919,19 +2909,14 @@
             (let
               [f64 : CompilerIrInstrList
                 (opt-copy-instrs (OptCopyNil) (opt-copy-f64-instrs))]
-              (if (= (opt-copy-binop-lhs-var pos 2) 0)
-                (if (= (opt-copy-binop-lhs-var src-redef 2) 1)
-                  (if (= (opt-copy-binop-lhs-var dst-redef 2) 1)
-                    (if (= (opt-copy-binop-lhs-var cse 4) 2)
-                      (if (= (compiler-ir-instr-list-count cse-dce) 3)
-                        (if (= (opt-copy-binop-lhs-var f64 2) 1)
-                          42
-                          6)
-                        5)
-                      4)
-                    3)
-                  2)
-                1))))))))
+              (cond
+                [(not (= (opt-copy-binop-lhs-var pos 2) 0)) 1]
+                [(not (= (opt-copy-binop-lhs-var src-redef 2) 1)) 2]
+                [(not (= (opt-copy-binop-lhs-var dst-redef 2) 1)) 3]
+                [(not (= (opt-copy-binop-lhs-var cse 4) 2)) 4]
+                [(not (= (compiler-ir-instr-list-count cse-dce) 3)) 5]
+                [(not (= (opt-copy-binop-lhs-var f64 2) 1)) 6]
+                [else 42]))))))))
 
 ;; Count explicit trapping bounds checks after the dedicated bounds pass.
 (define (opt-count-bounds-instrs [instrs : CompilerIrInstrList]) : i64
@@ -3048,23 +3033,16 @@
         (opt-bounds-dce-instrs))]
     [cross : CompilerIrBlockList
       (optimize-block-list (opt-bounds-cross-blocks))]
-    (if (= (opt-count-bounds-instrs duplicate) 1)
-      (if (= (opt-count-bounds-instrs different) 2)
-        (if (= (opt-count-bounds-instrs redef) 2)
-          (if (= (opt-count-bounds-instrs call) 2)
-            (if (= (opt-count-bounds-instrs branch) 2)
-              (if (= (opt-count-bounds-instrs copy) 1)
-                (if (= (compiler-ir-instr-list-count dce) 3)
-                  (if (= (opt-count-bounds-blocks cross) 2)
-                    42
-                    8)
-                  7)
-                6)
-              5)
-            4)
-          3)
-        2)
-      1)))
+    (cond
+      [(not (= (opt-count-bounds-instrs duplicate) 1)) 1]
+      [(not (= (opt-count-bounds-instrs different) 2)) 2]
+      [(not (= (opt-count-bounds-instrs redef) 2)) 3]
+      [(not (= (opt-count-bounds-instrs call) 2)) 4]
+      [(not (= (opt-count-bounds-instrs branch) 2)) 5]
+      [(not (= (opt-count-bounds-instrs copy) 1)) 6]
+      [(not (= (compiler-ir-instr-list-count dce) 3)) 7]
+      [(not (= (opt-count-bounds-blocks cross) 2)) 8]
+      [else 42])))
 
 ;; Copy propagation can expose a repeated expression only after CSE has already
 ;; run for that iteration. A second pass then CSEs `v3` to `v2`; copy propagation
@@ -3455,14 +3433,10 @@
               (let
                 [again-program : CompilerIrProgram
                   (optimize-program optimized-program)]
-                (if (= (compiler-ir-instr-list-count once-instrs) 4)
-                  (if (= (opt-count-arith-instrs once-instrs) 3)
-                    (if (= (compiler-ir-instr-list-count fixed-instrs) 3)
-                      (if (= (opt-count-arith-instrs fixed-instrs) 2)
-                        (if (opt-program-eq optimized-program again-program)
-                          42
-                          5)
-                        4)
-                      3)
-                    2)
-                  1)))))))))
+                (cond
+                  [(not (= (compiler-ir-instr-list-count once-instrs) 4)) 1]
+                  [(not (= (opt-count-arith-instrs once-instrs) 3)) 2]
+                  [(not (= (compiler-ir-instr-list-count fixed-instrs) 3)) 3]
+                  [(not (= (opt-count-arith-instrs fixed-instrs) 2)) 4]
+                  [(not (opt-program-eq optimized-program again-program)) 5]
+                  [else 42])))))))))

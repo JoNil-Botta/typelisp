@@ -318,6 +318,16 @@ fn assemble_and_link(
                 .arg(obj_path)
                 .arg(format!("/OUT:{}", bin_path.display()))
                 .arg("/SUBSYSTEM:CONSOLE")
+                // Disable ASLR (#1204). The emitted image carries only a stub
+                // .reloc section, so when Windows relocates the load base its
+                // absolute references resolve to wrong addresses and the process
+                // intermittently segfaults (0xC0000005). Empirically the crash
+                // rate on large selfhost binaries is ~50-60% with ASLR on and
+                // exactly 0% with /DYNAMICBASE:NO (a fixed preferred base), and
+                // running under a debugger — which disables ASLR — never crashes.
+                // These are toolchain-emitted compute binaries, so a fixed base
+                // is an acceptable trade until base relocations are emitted fully.
+                .arg("/DYNAMICBASE:NO")
                 .arg(format!("/STACK:{WINDOWS_EXECUTABLE_STACK_SIZE}"));
         }
     }

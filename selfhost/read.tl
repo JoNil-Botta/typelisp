@@ -162,52 +162,52 @@
       [span : SourceSpan (spanned-token-span st)]
       (let
         [t : i64 (token-tag tok)]
-        (if (= t (tag-int))
-          (let
-            [v : i64 (token-int tok)]
-            (begin
-              (advance cur)
-              (OkSpannedSexpr (SpSInt v span))))
-          (if (= t (tag-float))
+        (cond
+          [(= t (tag-int))
+            (let
+              [v : i64 (token-int tok)]
+              (begin
+                (advance cur)
+                (OkSpannedSexpr (SpSInt v span))))]
+          [(= t (tag-float))
             (let
               [s : String (token-float tok)]
               (begin
                 (advance cur)
-                (OkSpannedSexpr (SpSFloat s span))))
-            (if (= t (tag-sym))
-              (let
-                [s : String (token-sym tok)]
-                (begin
-                  (advance cur)
-                  (OkSpannedSexpr (SpSSym s span))))
-              (if (= t (tag-str))
-                (let
-                  [s : String (token-str tok)]
-                  (begin
-                    (advance cur)
-                    (OkSpannedSexpr (SpSStr s span))))
-                (if (= t (tag-char))
-                  (let
-                    [c : char (token-char tok)]
-                    (begin
-                      (advance cur)
-                      (OkSpannedSexpr (SpSChar c span))))
-                  (if (= t (tag-lparen))
-                    (begin
-                      (advance cur)
-                      (read-list-spanned-result toks cur span))
-                    (if (= t (tag-lbracket))
-                      (begin
-                        (advance cur)
-                        (read-bracket-list-spanned-result toks cur span))
-                      (if (= t (tag-rparen))
-                        (ErrSpannedSexpr
-                          (SourceError "reader: unexpected ')'" span))
-                        (if (= t (tag-rbracket))
-                          (ErrSpannedSexpr
-                            (SourceError "reader: unexpected ']'" span))
-                          (ErrSpannedSexpr
-                            (SourceError "reader: unexpected end of input" span)))))))))))))))
+                (OkSpannedSexpr (SpSFloat s span))))]
+          [(= t (tag-sym))
+            (let
+              [s : String (token-sym tok)]
+              (begin
+                (advance cur)
+                (OkSpannedSexpr (SpSSym s span))))]
+          [(= t (tag-str))
+            (let
+              [s : String (token-str tok)]
+              (begin
+                (advance cur)
+                (OkSpannedSexpr (SpSStr s span))))]
+          [(= t (tag-char))
+            (let
+              [c : char (token-char tok)]
+              (begin
+                (advance cur)
+                (OkSpannedSexpr (SpSChar c span))))]
+          [(= t (tag-lparen))
+            (begin
+              (advance cur)
+              (read-list-spanned-result toks cur span))]
+          [(= t (tag-lbracket))
+            (begin
+              (advance cur)
+              (read-bracket-list-spanned-result toks cur span))]
+          [(= t (tag-rparen))
+            (ErrSpannedSexpr (SourceError "reader: unexpected ')'" span))]
+          [(= t (tag-rbracket))
+            (ErrSpannedSexpr (SourceError "reader: unexpected ']'" span))]
+          [else
+            (ErrSpannedSexpr
+              (SourceError "reader: unexpected end of input" span))])))))
 
 (define (read-list-spanned-items-result
   [toks : (Array SpannedToken)]
@@ -271,59 +271,58 @@
 (define (read-form-result [toks : (Array Token)] [cur : (Array i64)]) : ResultSexpr
   (let
     [t : i64 (peek-tag toks cur)]
-    (if (= t (tag-int))
-      ;; An integer atom: project the literal out of the TInt and consume it.
-      (let
-        [v : i64 (token-int (peek-tok toks cur))]
-        (begin
-          (advance cur)
-          (OkSexpr (SInt v))))
-      (if (= t (tag-float))
+    (cond
+      [(= t (tag-int))
+        ;; An integer atom: project the literal out of the TInt and consume it.
+        (let
+          [v : i64 (token-int (peek-tok toks cur))]
+          (begin
+            (advance cur)
+            (OkSexpr (SInt v))))]
+      [(= t (tag-float))
         ;; A float atom: carry the lexeme text through the reader.
         (let
           [s : String (token-float (peek-tok toks cur))]
           (begin
             (advance cur)
-            (OkSexpr (SFloat s))))
-        (if (= t (tag-sym))
-          ;; A symbol atom: project the lexeme out of the TSym and consume it.
-          (let
-            [s : String (token-sym (peek-tok toks cur))]
-            (begin
-              (advance cur)
-              (OkSexpr (SSym s))))
-          (if (= t (tag-str))
-            ;; A string-literal atom: project the inner text out of the TStr
-            ;; (via the imported `token-str` accessor, #128) and consume it.
-            ;; `SStr` keeps it distinct from a same-character `SSym`.
-            (let
-              [s : String (token-str (peek-tok toks cur))]
-              (begin
-                (advance cur)
-                (OkSexpr (SStr s))))
-            (if (= t (tag-char))
-              ;; A character-literal atom: project the char out of the
-              ;; TChar token (via imported `token-char`) and consume it.
-              (let
-                [c : char (token-char (peek-tok toks cur))]
-                (begin
-                  (advance cur)
-                  (OkSexpr (SChar c))))
-              (if (= t (tag-lparen))
-                ;; A list: consume '(' and read forms until the matching ')'.
-                (begin
-                  (advance cur)
-                  (read-list-result toks cur))
-                (if (= t (tag-lbracket))
-                  (begin
-                    (advance cur)
-                    (read-bracket-list-result toks cur))
-                  (if (= t (tag-rparen))
-                    (ErrSexpr "reader: unexpected ')'")
-                    (if (= t (tag-rbracket))
-                      (ErrSexpr "reader: unexpected ']'")
-                      ;; tag-end (or anything else): premature end of stream.
-                      (ErrSexpr "reader: unexpected end of input"))))))))))))
+            (OkSexpr (SFloat s))))]
+      [(= t (tag-sym))
+        ;; A symbol atom: project the lexeme out of the TSym and consume it.
+        (let
+          [s : String (token-sym (peek-tok toks cur))]
+          (begin
+            (advance cur)
+            (OkSexpr (SSym s))))]
+      [(= t (tag-str))
+        ;; A string-literal atom: project the inner text out of the TStr
+        ;; (via the imported `token-str` accessor, #128) and consume it.
+        ;; `SStr` keeps it distinct from a same-character `SSym`.
+        (let
+          [s : String (token-str (peek-tok toks cur))]
+          (begin
+            (advance cur)
+            (OkSexpr (SStr s))))]
+      [(= t (tag-char))
+        ;; A character-literal atom: project the char out of the
+        ;; TChar token (via imported `token-char`) and consume it.
+        (let
+          [c : char (token-char (peek-tok toks cur))]
+          (begin
+            (advance cur)
+            (OkSexpr (SChar c))))]
+      [(= t (tag-lparen))
+        ;; A list: consume '(' and read forms until the matching ')'.
+        (begin
+          (advance cur)
+          (read-list-result toks cur))]
+      [(= t (tag-lbracket))
+        (begin
+          (advance cur)
+          (read-bracket-list-result toks cur))]
+      [(= t (tag-rparen)) (ErrSexpr "reader: unexpected ')'")]
+      [(= t (tag-rbracket)) (ErrSexpr "reader: unexpected ']'")]
+      ;; tag-end (or anything else): premature end of stream.
+      [else (ErrSexpr "reader: unexpected end of input")])))
 
 ;; read-list: the cursor is positioned just AFTER an opening '('. Read forms
 ;; until the matching ')', returning the proper list `(SCons f1 (SCons f2 ...

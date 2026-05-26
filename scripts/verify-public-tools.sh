@@ -12,7 +12,11 @@ cd "$ROOT"
 # retry only a segfault-class exit (132/134/139), since public-tool cases may
 # legitimately exit non-zero (so retry-on-any-non-zero would be wrong here).
 . "$ROOT/scripts/lib-retry.sh"
-PUBLIC_TOOLS_ATTEMPTS="${VERIFY_PUBLIC_TOOLS_ATTEMPTS:-3}"
+# Default 6 (not 3): this gate runs many CLI invocations, so the #1204 Windows
+# segfault can exhaust 3 attempts on one of them (observed on PR #1249:
+# inline-test-fail crashed 134/134/segfault); more headroom keeps the
+# crash-only retry effective.
+PUBLIC_TOOLS_ATTEMPTS="${VERIFY_PUBLIC_TOOLS_ATTEMPTS:-6}"
 
 HOST_OS=linux
 case "$(uname -s)" in

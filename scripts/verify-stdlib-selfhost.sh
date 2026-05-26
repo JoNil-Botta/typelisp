@@ -42,7 +42,10 @@ reject_diag() {
 # spuriously fail this gate. Retry an UNEXPECTED outcome a few times: a transient
 # segfault clears on retry, while a genuine regression reproduces across every
 # attempt and still fails.
-ATTEMPTS="${VERIFY_STDLIB_SELFHOST_ATTEMPTS:-3}"
+# Default 6 (not 3): this gate makes ~23 separate check.tl invocations, so the
+# #1204 Windows segfault can exhaust 3 attempts on one of them (observed on PR
+# #1246); more headroom keeps the crash-only retry effective.
+ATTEMPTS="${VERIFY_STDLIB_SELFHOST_ATTEMPTS:-6}"
 
 # Sets the global `expected` to 1 when the (rc,out) pair matches the witness
 # expectation: a reject witness ($2 non-empty) must fail AND carry the diagnostic

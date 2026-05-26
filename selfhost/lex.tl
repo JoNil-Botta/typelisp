@@ -216,17 +216,13 @@
 (define (string-escape-piece [src : String] [idx : i64]) : String
   (let
     [c : char (string-ref src idx)]
-    (if (= c #n')
-      "\n"
-      (if (= c #t')
-        "\t"
-        (if (= c #r')
-          "\r"
-          (if (= c #\\')
-            "\\"
-            (if (= c #"')
-              "\""
-              (substring src idx 1))))))))
+    (cond
+      [(= c #n') "\n"]
+      [(= c #t') "\t"]
+      [(= c #r') "\r"]
+      [(= c #\\') "\\"]
+      [(= c #"') "\""]
+      [else (substring src idx 1)])))
 
 (define (unescape-string-literal [src : String] [start : i64] [end : i64]) : String
   (let
@@ -485,91 +481,85 @@
       (while (< i n)
         (let
           [c : char (string-ref src i)]
-          (if (is-space c)
-            (set! i (+ i 1))
-            (if (= c #(')
+          (cond
+            [(is-space c) (set! i (+ i 1))]
+            [(= c #(')
               (begin
                 (array-set! starts count i)
                 (array-set! toks count TLParen)
                 (set! count (+ count 1))
-                (set! i (+ i 1)))
-              (if (= c #[')
-                (begin
-                  (array-set! starts count i)
-                  (array-set! toks count TLBracket)
-                  (set! count (+ count 1))
-                  (set! i (+ i 1)))
-                (if (= c #)')
+                (set! i (+ i 1)))]
+            [(= c #[')
+              (begin
+                (array-set! starts count i)
+                (array-set! toks count TLBracket)
+                (set! count (+ count 1))
+                (set! i (+ i 1)))]
+            [(= c #)')
+              (begin
+                (array-set! starts count i)
+                (array-set! toks count TRParen)
+                (set! count (+ count 1))
+                (set! i (+ i 1)))]
+            [(= c #]')
+              (begin
+                (array-set! starts count i)
+                (array-set! toks count TRBracket)
+                (set! count (+ count 1))
+                (set! i (+ i 1)))]
+            [(= c #"')
+              ; '"' - a string literal
+              (let
+                [start : i64 (+ i 1)]
+                (let
+                  [end : i64 (scan-str-end src start n)]
                   (begin
                     (array-set! starts count i)
-                    (array-set! toks count TRParen)
+                    (array-set!
+                      toks
+                      count
+                      (TStr (unescape-string-literal src start end)))
                     (set! count (+ count 1))
-                    (set! i (+ i 1)))
-                  (if (= c #]')
-                    (begin
-                      (array-set! starts count i)
-                      (array-set! toks count TRBracket)
-                      (set! count (+ count 1))
-                      (set! i (+ i 1)))
-                    (if (= c #"')
-                      ; '"' - a string literal
-                      (let
-                        [start : i64 (+ i 1)]
-                        (let
-                          [end : i64 (scan-str-end src start n)]
-                          (begin
-                            (array-set! starts count i)
-                            (array-set!
-                              toks
-                              count
-                              (TStr (unescape-string-literal src start end)))
-                            (set! count (+ count 1))
-                            (set! i (+ end 1)))))
-                      (if (= c #;')
-                        ; ';' - a line comment
-                        (set! i (scan-comment-end src (+ i 1) n))
-                        (if (= c ##')
-                          ; '#' - a char literal
-                          (let
-                            [value : char (char-literal-value src i n)]
-                            (let
-                              [end : i64 (char-literal-end src i n)]
-                              (begin
-                                (array-set! starts count i)
-                                (array-set! toks count (TChar value))
-                                (set! count (+ count 1))
-                                (set! i end))))
-                          (if (or (is-digit c) (negative-number-start? src i n))
-                            (let
-                              [end : i64 (scan-number-end src i n)]
-                              (begin
-                                (array-set! starts count i)
-                                (if (number-float? src i n)
-                                  (array-set!
-                                    toks
-                                    count
-                                    (TFloat (substring src i (- end i))))
-                                  (array-set!
-                                    toks
-                                    count
-                                    (TInt
-                                      (string->int (substring src i (- end i))))))
-                                (set! count (+ count 1))
-                                (set! i end)))
-                            (if (is-symbol-char c)
-                              (let
-                                [end : i64 (scan-symbol-end src i n)]
-                                (begin
-                                  (array-set! starts count i)
-                                  (array-set!
-                                    toks
-                                    count
-                                    (TSym (substring src i (- end i))))
-                                  (set! count (+ count 1))
-                                  (set! i end)))
-                              (begin
-                                (panic "lexer: unexpected character")
-                                (set! i (+ i 1)))))))))))))))
+                    (set! i (+ end 1)))))]
+            [(= c #;')
+              ; ';' - a line comment
+              (set! i (scan-comment-end src (+ i 1) n))]
+            [(= c ##')
+              ; '#' - a char literal
+              (let
+                [value : char (char-literal-value src i n)]
+                (let
+                  [end : i64 (char-literal-end src i n)]
+                  (begin
+                    (array-set! starts count i)
+                    (array-set! toks count (TChar value))
+                    (set! count (+ count 1))
+                    (set! i end))))]
+            [(or (is-digit c) (negative-number-start? src i n))
+              (let
+                [end : i64 (scan-number-end src i n)]
+                (begin
+                  (array-set! starts count i)
+                  (if (number-float? src i n)
+                    (array-set! toks count (TFloat (substring src i (- end i))))
+                    (array-set!
+                      toks
+                      count
+                      (TInt (string->int (substring src i (- end i))))))
+                  (set! count (+ count 1))
+                  (set! i end)))]
+            [(is-symbol-char c)
+              (let
+                [end : i64 (scan-symbol-end src i n)]
+                (begin
+                  (array-set! starts count i)
+                  (array-set! toks count (TSym (substring src i (- end i))))
+                  (set! count (+ count 1))
+                  (set! i end)))]
+            [else
+              (begin
+                (panic "lexer: unexpected character")
+                (set! i (+ i 1)))])))
       (array-set! starts count n)
       (array-set! toks count TEnd)
       count)))

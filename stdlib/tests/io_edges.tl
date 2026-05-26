@@ -52,6 +52,11 @@
     [(OkIoUnit) (panic "try-write-file unexpectedly succeeded")]
     [(ErrIoUnit _) unit]))
 
+(define (expect-try-append-error [path : String]) : unit
+  (match (try-append-file path "bad")
+    [(OkIoUnit) (panic "try-append-file unexpectedly succeeded")]
+    [(ErrIoUnit _) unit]))
+
 (define (expect-invalid-path [error : IoError]) : unit
   (begin
     (assert-true (io-error-invalid-path? error) "invalid path error kind")
@@ -72,8 +77,12 @@
     (match (try-write-file "" "bad")
       [(OkIoUnit) (panic "empty path write should fail")]
       [(ErrIoUnit error) (expect-invalid-path error)])
+    (match (try-append-file "" "bad")
+      [(OkIoUnit) (panic "empty path append should fail")]
+      [(ErrIoUnit error) (expect-invalid-path error)])
     (expect-try-read-error io-directory-path)
     (expect-try-write-error io-missing-parent-file)
+    (expect-try-append-error io-missing-parent-file)
     (assert-string-eq
       (read-file-or io-missing-file "fallback")
       "fallback"

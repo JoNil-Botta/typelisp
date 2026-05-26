@@ -16,7 +16,10 @@ const WRITE_FILE_RUNTIME_SYMBOL: &str = ".L_tl_write_file";
 const FILE_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists";
 const READ_FILE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_read_file_status";
 const WRITE_FILE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_write_file_status";
+const APPEND_FILE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_append_file_status";
 const FILE_EXISTS_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists_status";
+const FILE_OPEN_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_open_status";
+const FILE_CLOSE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_close_status";
 const FS_MKDIR_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_fs_mkdir_status";
 const FS_REMOVE_FILE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_fs_remove_file_status";
 const FS_REMOVE_DIR_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_fs_remove_dir_status";
@@ -4076,6 +4079,34 @@ impl FnLowerer {
             return Value::Var(dst);
         }
 
+        // `(append-file-status path contents)` appends without truncating and
+        // returns 0 on success or a positive target error code.
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "append-file-status"
+            && args.len() == 2
+            && !self.has_local_value(name)
+            && !self.function_types.contains_key(name)
+        {
+            let path = self.lower_expr_as(&args[0], &Type::String);
+            let contents = self.lower_expr_as(&args[1], &Type::String);
+            let (path_ptr, path_len) = self.load_string_fields(&path);
+            let (contents_ptr, contents_len) = self.load_string_fields(&contents);
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: APPEND_FILE_STATUS_RUNTIME_SYMBOL.to_string(),
+                args: vec![
+                    Value::Var(path_ptr),
+                    Value::Var(path_len),
+                    Value::Var(contents_ptr),
+                    Value::Var(contents_len),
+                ],
+                ty: Type::I64,
+            });
+            self.record_local(dst, Type::I64);
+            return Value::Var(dst);
+        }
+
         // `(file-exists? path)` probes a path through the same NUL-terminated
         // path-copy convention as the whole-file helpers, returning a bool.
         if let ast::Expr::Var(name) = func.unspan()
@@ -4112,6 +4143,51 @@ impl FnLowerer {
                 dst: Some(dst),
                 func: FILE_EXISTS_STATUS_RUNTIME_SYMBOL.to_string(),
                 args: vec![Value::Var(ptr), Value::Var(len)],
+                ty: Type::I64,
+            });
+            self.record_local(dst, Type::I64);
+            return Value::Var(dst);
+        }
+
+        // `(file-open-status path mode-code)` returns a positive handle id on
+        // success, or a negative errno-style status on failure. The stdlib
+        // wrapper maps this into ResultIoFile.
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "file-open-status"
+            && args.len() == 2
+            && !self.has_local_value(name)
+            && !self.function_types.contains_key(name)
+        {
+            let path = self.lower_expr_as(&args[0], &Type::String);
+            let mode = self.lower_expr_as(&args[1], &Type::I64);
+            let mode_val = self.cast_value(mode, Type::I64);
+            let (ptr, len) = self.load_string_fields(&path);
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: FILE_OPEN_STATUS_RUNTIME_SYMBOL.to_string(),
+                args: vec![Value::Var(ptr), Value::Var(len), mode_val],
+                ty: Type::I64,
+            });
+            self.record_local(dst, Type::I64);
+            return Value::Var(dst);
+        }
+
+        // `(file-close-status handle-id)` closes a runtime-managed file handle
+        // slot and returns 0 or a positive errno-style status.
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "file-close-status"
+            && args.len() == 1
+            && !self.has_local_value(name)
+            && !self.function_types.contains_key(name)
+        {
+            let handle = self.lower_expr_as(&args[0], &Type::I64);
+            let handle_val = self.cast_value(handle, Type::I64);
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: FILE_CLOSE_STATUS_RUNTIME_SYMBOL.to_string(),
+                args: vec![handle_val],
                 ty: Type::I64,
             });
             self.record_local(dst, Type::I64);
@@ -7993,7 +8069,10 @@ mod tests {
             r#"
             (define (r) : i64 (read-file-status "input.txt"))
             (define (w) : i64 (write-file-status "output.txt" "hello"))
+            (define (a) : i64 (append-file-status "output.txt" "there"))
             (define (e) : i64 (file-exists-status "input.txt"))
+            (define (o) : i64 (file-open-status "input.txt" 0))
+            (define (c) : i64 (file-close-status 1))
         "#,
         )
         .unwrap();
@@ -8008,7 +8087,10 @@ mod tests {
         for (symbol, expected_args) in [
             (READ_FILE_STATUS_RUNTIME_SYMBOL, 2),
             (WRITE_FILE_STATUS_RUNTIME_SYMBOL, 4),
+            (APPEND_FILE_STATUS_RUNTIME_SYMBOL, 4),
             (FILE_EXISTS_STATUS_RUNTIME_SYMBOL, 2),
+            (FILE_OPEN_STATUS_RUNTIME_SYMBOL, 3),
+            (FILE_CLOSE_STATUS_RUNTIME_SYMBOL, 1),
         ] {
             let call = instrs.iter().find_map(|i| match i {
                 Instruction::Call { func, args, ty, .. } if func == symbol => Some((args, ty)),
@@ -8018,6 +8100,41 @@ mod tests {
             assert_eq!(args.len(), expected_args, "{symbol} argument count");
             assert_eq!(*ty, Type::I64, "{symbol} returns an i64 status");
         }
+    }
+
+    #[test]
+    fn test_lower_user_defined_append_file_status_shadows_builtin() {
+        let prog = parse(
+            r#"
+            (define (append-file-status [n : i64]) : i64 n)
+            (define (main) : i64 (append-file-status 7))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let main = ir
+            .functions
+            .iter()
+            .position(|func| func.name == "main")
+            .unwrap();
+        let main_instrs: Vec<&Instruction> = ir.functions[main]
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .collect();
+
+        assert!(
+            main_instrs.iter().any(
+                |i| matches!(i, Instruction::Call { func, .. } if func == "append-file-status")
+            ),
+            "expected ordinary call to user-defined append-file-status"
+        );
+        assert!(
+            !main_instrs.iter().any(
+                |i| matches!(i, Instruction::Call { func, .. } if func == APPEND_FILE_STATUS_RUNTIME_SYMBOL)
+            ),
+            "user-defined append-file-status must not lower to the builtin runtime"
+        );
     }
 
     #[test]
@@ -8049,6 +8166,54 @@ mod tests {
                 |i| matches!(i, Instruction::Call { func, .. } if func == FILE_EXISTS_RUNTIME_SYMBOL)
             ),
             "user-defined file-exists? must not lower to the builtin runtime"
+        );
+    }
+
+    #[test]
+    fn test_lower_user_defined_file_handle_status_helpers_shadow_builtins() {
+        let prog = parse(
+            r#"
+            (define (file-open-status [n : i64]) : i64 n)
+            (define (file-close-status) : i64 3)
+            (define (main) : i64 (+ (file-open-status 7) (file-close-status)))
+        "#,
+        )
+        .unwrap();
+        let ir = lower_program(&prog);
+        let main = ir
+            .functions
+            .iter()
+            .position(|func| func.name == "main")
+            .unwrap();
+        let main_instrs: Vec<&Instruction> = ir.functions[main]
+            .blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter())
+            .collect();
+
+        assert!(
+            main_instrs
+                .iter()
+                .any(|i| matches!(i, Instruction::Call { func, .. } if func == "file-open-status")),
+            "expected ordinary call to user-defined file-open-status"
+        );
+        assert!(
+            main_instrs.iter().any(
+                |i| matches!(i, Instruction::Call { func, .. } if func == "file-close-status")
+            ),
+            "expected ordinary call to user-defined file-close-status"
+        );
+        assert!(
+            !main_instrs.iter().any(
+                |i| matches!(i, Instruction::Call { func, .. } if func == FILE_OPEN_STATUS_RUNTIME_SYMBOL)
+            ),
+            "user-defined file-open-status must not lower to the builtin runtime"
+        );
+        assert!(
+            !main_instrs.iter().any(
+                |i| matches!(i, Instruction::Call { func, .. } if func == FILE_CLOSE_STATUS_RUNTIME_SYMBOL)
+            ),
+            "user-defined file-close-status must not lower to the builtin runtime"
         );
     }
 

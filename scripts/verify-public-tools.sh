@@ -1183,8 +1183,8 @@ ERR_NORMALIZED="$WORKDIR/missing_dep_err_normalized.tmp"
 tr '\\' '/' < "$err" > "$ERR_NORMALIZED"
 assert_contains "$ERR_NORMALIZED" "vendor/math/src/missing.tl"
 
-echo "[public-tools] REPL/LSP corpus via run-corpus.py"
-TYPELISP_BIN="$COMPILER" python3 "$ROOT/tests/public-tools/run-corpus.py"
+echo "[public-tools] REPL/LSP corpus via run-corpus.sh"
+TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh"
 
 echo "[public-tools] LSP (legacy inline checks)"
 frame_append() {

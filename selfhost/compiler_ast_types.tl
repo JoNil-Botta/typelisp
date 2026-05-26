@@ -161,6 +161,10 @@
   (AstExprStringRef AstExpr AstExpr)
   (AstExprWhile AstExpr AstExpr)
   (AstExprBegin AstExprList)
+  ;; `(unsafe expr+)` (#1053): a `begin`-like block that additionally marks an
+  ;; unsafe context (v1 has the same runtime/type behavior as `begin`; the
+  ;; unsafe-context flag is consumed by later raw-pointer ops, #955).
+  (AstExprUnsafe AstExprList)
   (AstExprSet String AstExpr)
   (AstExprAnn AstExpr AstType)
   (AstExprCast AstExpr AstType)
@@ -275,6 +279,7 @@
     [(AstExprStringRef _ _) 16]
     [(AstExprWhile _ _) 17]
     [(AstExprBegin _) 18]
+    [(AstExprUnsafe _) 32]
     [(AstExprSet _ _) 19]
     [(AstExprAnn _ _) 20]
     [(AstExprCast _ _) 21]

@@ -316,6 +316,9 @@
 (define (compiler-parse-tag-expr-begin) : i64
   204)
 
+(define (compiler-parse-tag-expr-unsafe) : i64
+  254)
+
 (define (compiler-parse-tag-expr-set) : i64
   205)
 
@@ -529,6 +532,7 @@
       (set! out (sym-i64-bind out "lambda" (compiler-parse-tag-expr-lambda)))
       (set! out (sym-i64-bind out "while" (compiler-parse-tag-expr-while)))
       (set! out (sym-i64-bind out "begin" (compiler-parse-tag-expr-begin)))
+      (set! out (sym-i64-bind out "unsafe" (compiler-parse-tag-expr-unsafe)))
       (set! out (sym-i64-bind out "set!" (compiler-parse-tag-expr-set)))
       (set! out (sym-i64-bind out "ann" (compiler-parse-tag-expr-ann)))
       (set! out (sym-i64-bind out "cast" (compiler-parse-tag-expr-cast)))
@@ -1633,6 +1637,17 @@
     [(OkAstExprList exprs) (OkAstExpr (AstExprBegin exprs))]
     [(ErrAstExprList message) (ErrAstExpr message)]))
 
+;; `(unsafe expr+)` parses like `begin` but requires a non-empty body. v1 has
+;; the same behavior as `begin`; it marks an unsafe context for later raw-pointer
+;; ops (#955).
+(define (parse-ast-unsafe [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSNil _) (ErrAstExpr "parse: unsafe requires a non-empty body")]
+    [_
+      (match (parse-ast-expr-list dispatch rest)
+        [(OkAstExprList exprs) (OkAstExpr (AstExprUnsafe exprs))]
+        [(ErrAstExprList message) (ErrAstExpr message)])]))
+
 (define (parse-ast-tuple [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-expr-list dispatch rest)
     [(OkAstExprList exprs) (OkAstExpr (AstExprTuple exprs))]
@@ -1658,75 +1673,79 @@
           (parse-ast-while dispatch rest)
           (if (= tag (compiler-parse-tag-expr-begin))
             (parse-ast-begin dispatch rest)
-            (if (= tag (compiler-parse-tag-expr-set))
-              (parse-ast-set dispatch rest)
-              (if (= tag (compiler-parse-tag-expr-ann))
-                (parse-ast-ann-like dispatch false rest)
-                (if (= tag (compiler-parse-tag-expr-cast))
-                  (parse-ast-ann-like dispatch true rest)
-                  (if (= tag (compiler-parse-tag-expr-tuple))
-                    (parse-ast-tuple dispatch rest)
-                    (if (= tag (compiler-parse-tag-expr-tuple-ref))
-                      (parse-ast-tuple-ref dispatch rest)
-                      (if (= tag (compiler-parse-tag-expr-array))
-                        (parse-ast-array dispatch rest)
-                        (if (= tag (compiler-parse-tag-expr-make-array))
-                          (parse-ast-make-array dispatch rest)
-                          (if (= tag (compiler-parse-tag-expr-array-ref))
-                            (parse-ast-array-ref-like dispatch false rest)
-                            (if (= tag (compiler-parse-tag-expr-array-set))
-                              (parse-ast-array-set dispatch rest)
-                              (if (= tag (compiler-parse-tag-expr-match))
-                                (parse-ast-match dispatch rest)
-                                (if (= tag (compiler-parse-tag-expr-foreach))
-                                  (parse-ast-foreach dispatch rest)
-                                  (if (=
-                                    tag
-                                    (compiler-parse-tag-expr-spmd-reduce))
-                                    (parse-ast-spmd-reduce dispatch rest)
+            (if (= tag (compiler-parse-tag-expr-unsafe))
+              (parse-ast-unsafe dispatch rest)
+              (if (= tag (compiler-parse-tag-expr-set))
+                (parse-ast-set dispatch rest)
+                (if (= tag (compiler-parse-tag-expr-ann))
+                  (parse-ast-ann-like dispatch false rest)
+                  (if (= tag (compiler-parse-tag-expr-cast))
+                    (parse-ast-ann-like dispatch true rest)
+                    (if (= tag (compiler-parse-tag-expr-tuple))
+                      (parse-ast-tuple dispatch rest)
+                      (if (= tag (compiler-parse-tag-expr-tuple-ref))
+                        (parse-ast-tuple-ref dispatch rest)
+                        (if (= tag (compiler-parse-tag-expr-array))
+                          (parse-ast-array dispatch rest)
+                          (if (= tag (compiler-parse-tag-expr-make-array))
+                            (parse-ast-make-array dispatch rest)
+                            (if (= tag (compiler-parse-tag-expr-array-ref))
+                              (parse-ast-array-ref-like dispatch false rest)
+                              (if (= tag (compiler-parse-tag-expr-array-set))
+                                (parse-ast-array-set dispatch rest)
+                                (if (= tag (compiler-parse-tag-expr-match))
+                                  (parse-ast-match dispatch rest)
+                                  (if (= tag (compiler-parse-tag-expr-foreach))
+                                    (parse-ast-foreach dispatch rest)
                                     (if (=
                                       tag
-                                      (compiler-parse-tag-expr-struct-get))
-                                      (parse-ast-struct-get dispatch rest)
+                                      (compiler-parse-tag-expr-spmd-reduce))
+                                      (parse-ast-spmd-reduce dispatch rest)
                                       (if (=
                                         tag
-                                        (compiler-parse-tag-expr-comptime))
-                                        (parse-ast-comptime dispatch rest)
+                                        (compiler-parse-tag-expr-struct-get))
+                                        (parse-ast-struct-get dispatch rest)
                                         (if (=
                                           tag
-                                          (compiler-parse-tag-expr-type-literal))
-                                          (parse-ast-type-literal dispatch rest)
+                                          (compiler-parse-tag-expr-comptime))
+                                          (parse-ast-comptime dispatch rest)
                                           (if (=
                                             tag
-                                            (compiler-parse-tag-expr-with-region))
-                                            (parse-ast-with-region
+                                            (compiler-parse-tag-expr-type-literal))
+                                            (parse-ast-type-literal
                                               dispatch
                                               rest)
                                             (if (=
                                               tag
-                                              (compiler-parse-tag-expr-try))
-                                              (parse-ast-try dispatch rest)
+                                              (compiler-parse-tag-expr-with-region))
+                                              (parse-ast-with-region
+                                                dispatch
+                                                rest)
                                               (if (=
                                                 tag
-                                                (compiler-parse-tag-expr-ptr-null))
-                                                (parse-ast-ptr-null
-                                                  dispatch
-                                                  rest)
+                                                (compiler-parse-tag-expr-try))
+                                                (parse-ast-try dispatch rest)
                                                 (if (=
                                                   tag
-                                                  (compiler-parse-tag-expr-ptr-null-check))
-                                                  (parse-ast-ptr-null-check
+                                                  (compiler-parse-tag-expr-ptr-null))
+                                                  (parse-ast-ptr-null
                                                     dispatch
                                                     rest)
                                                   (if (=
                                                     tag
-                                                    (compiler-parse-tag-decl-comptime-decl))
-                                                    (ErrAstExpr
-                                                      "parse: comptime-decl is only valid as a top-level declaration")
-                                                    (parse-ast-call
+                                                    (compiler-parse-tag-expr-ptr-null-check))
+                                                    (parse-ast-ptr-null-check
                                                       dispatch
-                                                      head
-                                                      rest)))))))))))))))))))))))))))
+                                                      rest)
+                                                    (if (=
+                                                      tag
+                                                      (compiler-parse-tag-decl-comptime-decl))
+                                                      (ErrAstExpr
+                                                        "parse: comptime-decl is only valid as a top-level declaration")
+                                                      (parse-ast-call
+                                                        dispatch
+                                                        head
+                                                        rest))))))))))))))))))))))))))))
 
 (define (parse-ast-list-expr
   [dispatch : SymI64Env]

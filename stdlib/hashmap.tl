@@ -271,3 +271,84 @@
               (+ (string-i64-map-deleted map) 1))))]
       [(StringI64MapProbeAbsent _) (StringI64MapRemoveMissing map)]
       [(StringI64MapProbeFull) (StringI64MapRemoveMissing map)])))
+
+;;; Re-insert every live (occupied) entry of `src` slots `[index, count)` into
+;;; the fresh `dst` table (`dst-capacity` empty slots), dropping tombstones.
+;;; `dst-capacity` must hold every live entry, so the probe never returns `Full`.
+(define (string-i64-map-rehash-from
+  [src : (Array StringI64MapSlot)]
+  [dst : (Array StringI64MapSlot)]
+  [dst-capacity : i64]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (match (array-ref src index)
+        [(StringI64MapOccupied key value hash)
+          (match (string-i64-map-probe dst dst-capacity key hash)
+            [(StringI64MapProbeAbsent slot)
+              (array-set! dst slot (StringI64MapOccupied key value hash))]
+            [(StringI64MapProbeFound slot)
+              (array-set! dst slot (StringI64MapOccupied key value hash))]
+            [(StringI64MapProbeFull) unit])]
+        [(StringI64MapEmpty) unit]
+        [(StringI64MapTombstone) unit])
+      (string-i64-map-rehash-from src dst dst-capacity (+ index 1) count))))
+
+;;; Rebuild `map` as a fresh `new-capacity`-slot table holding only its live
+;;; entries (tombstones dropped, so the deleted count resets to 0). The backing
+;;; array is newly allocated; the old one is reclaimed when the arena resets.
+;;; `new-capacity` must be at least the live `len`.
+(define (string-i64-map-resized [map : StringI64Map] [new-capacity : i64]) : StringI64Map
+  (let
+    [src : (Array StringI64MapSlot) (string-i64-map-slots map)]
+    [old-capacity : i64 (string-i64-map-capacity map)]
+    [dst : (Array StringI64MapSlot) (make-array StringI64MapSlot new-capacity)]
+    (begin
+      (string-i64-map-fill-empty dst 0 new-capacity)
+      (string-i64-map-rehash-from src dst new-capacity 0 old-capacity)
+      (StringI64Map dst (string-i64-map-len map) 0))))
+
+;;; Next capacity when growing: double, with a small floor so a tiny or empty
+;;; table grows to a useful size in one step.
+(define (string-i64-map-grow-capacity [capacity : i64]) : i64
+  (if (< capacity 4)
+    8
+    (* capacity 2)))
+
+;;; Grow `map` to the next capacity, rehashing its live entries.
+(define (string-i64-map-grow [map : StringI64Map]) : StringI64Map
+  (string-i64-map-resized
+    map
+    (string-i64-map-grow-capacity (string-i64-map-capacity map))))
+
+;;; True when the table has reached the 3/4 load threshold, counting both live
+;;; entries and tombstones (both consume probe positions). A non-positive
+;;; capacity always needs to grow before it can hold anything.
+(define (string-i64-map-needs-grow? [map : StringI64Map]) : bool
+  (let
+    [capacity : i64 (string-i64-map-capacity map)]
+    [used : i64 (+ (string-i64-map-len map) (string-i64-map-deleted map))]
+    (if (<= capacity 0)
+      true
+      (>= (* used 4) (* capacity 3)))))
+
+;;; Insert or update `key` -> `value`, growing (rehashing) the table first when
+;;; it has reached the load threshold so insertion never fails. Returns the
+;;; updated map directly. Use this instead of `string-i64-map-insert` when the
+;;; map should grow on demand rather than report `Full`.
+(define (string-i64-map-put [map : StringI64Map] [key : String] [value : i64]) : StringI64Map
+  (let
+    [grown : StringI64Map
+      (if (string-i64-map-needs-grow? map)
+        (string-i64-map-grow map)
+        map)]
+    (match (string-i64-map-insert grown key value)
+      [(StringI64MapInsertOk updated) updated]
+      [(StringI64MapInsertFull full)
+        ;; `needs-grow?` keeps a positive-capacity table below full; a leftover
+        ;; `Full` (e.g. a capacity-0 seed) is handled by one more grow + retry.
+        (match (string-i64-map-insert (string-i64-map-grow full) key value)
+          [(StringI64MapInsertOk u) u]
+          [(StringI64MapInsertFull u) u])])))

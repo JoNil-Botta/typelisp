@@ -1737,31 +1737,58 @@
                       expr-ty))])])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
     [(AstExprBinary op left right)
-      (match (lower-expr ctx state env type-env left)
-        [(OkLowerExpr left-lowered)
-          (match left-lowered
-            [(LowerExpr left-state left-value _)
-              (match (lower-expr ctx left-state env type-env right)
-                [(OkLowerExpr right-lowered)
-                  (match right-lowered
-                    [(LowerExpr right-state right-value _)
-                      (match (lower-state-alloc-var right-state)
-                        [(LowerAlloc allocated var-id)
-                          (OkLowerExpr
-                            (LowerExpr
-                              (lower-state-emit-at-expr
-                                allocated
-                                (IrInstrBinOp
-                                  var-id
-                                  (lower-binop op)
-                                  left-value
-                                  right-value
-                                  expr-ty)
-                                origin)
-                              (IrValueVar var-id)
-                              expr-ty))])])]
-                [(ErrLowerExpr message) (ErrLowerExpr message)])])]
-        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+      ;; `and`/`or` short-circuit: desugar to a conditional branch so the right
+      ;; operand is evaluated only when the left does not already decide the
+      ;; result, matching the Rust lowerer in `src/lower.rs` (#1132 / #1165):
+      ;; `(and a b)` -> `(if a b false)`, `(or a b)` -> `(if a true b)`. Every
+      ;; other binop evaluates both operands eagerly into an `IrInstrBinOp`.
+      (match op
+        [(AstBinAnd)
+          (lower-if
+            ctx
+            state
+            env
+            type-env
+            left
+            right
+            (AstExprLiteral (AstLitBool false))
+            expr-ty)]
+        [(AstBinOr)
+          (lower-if
+            ctx
+            state
+            env
+            type-env
+            left
+            (AstExprLiteral (AstLitBool true))
+            right
+            expr-ty)]
+        [_
+          (match (lower-expr ctx state env type-env left)
+            [(OkLowerExpr left-lowered)
+              (match left-lowered
+                [(LowerExpr left-state left-value _)
+                  (match (lower-expr ctx left-state env type-env right)
+                    [(OkLowerExpr right-lowered)
+                      (match right-lowered
+                        [(LowerExpr right-state right-value _)
+                          (match (lower-state-alloc-var right-state)
+                            [(LowerAlloc allocated var-id)
+                              (OkLowerExpr
+                                (LowerExpr
+                                  (lower-state-emit-at-expr
+                                    allocated
+                                    (IrInstrBinOp
+                                      var-id
+                                      (lower-binop op)
+                                      left-value
+                                      right-value
+                                      expr-ty)
+                                    origin)
+                                  (IrValueVar var-id)
+                                  expr-ty))])])]
+                    [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+            [(ErrLowerExpr message) (ErrLowerExpr message)])])]
     [(AstExprCall func args)
       (lower-call ctx state env type-env func args expr-ty origin)]
     [(AstExprLet bindings body)
@@ -1770,6 +1797,7 @@
           (lower-expr ctx binding-state body-env body-type-env body)]
         [(ErrLowerEnv message) (ErrLowerExpr message)])]
     [(AstExprBegin exprs) (lower-begin ctx state env type-env exprs)]
+    [(AstExprUnsafe exprs) (lower-begin ctx state env type-env exprs)]
     [(AstExprSet name value)
       (match (lower-expr ctx state env type-env value)
         [(OkLowerExpr lowered)
@@ -5965,11 +5993,40 @@
                     "(define (main) : i64 (comptime (if (= 5 5) 42 0)))"
                     42))))))))))
 
+;; `and`/`or` short-circuit lowering (#1132 / #1165): `(and a b)` and `(or a b)`
+;; desugar to a conditional branch, so a function whose body is a bare `and`/`or`
+;; of two boolean params must emit at least one branch and NO eager binop (the
+;; old `IrBinAnd`/`IrBinOr` path would have produced one binop and no branch).
+(define (compiler-lower-and-short-circuit-source) : String
+  "(define (f [a : bool] [b : bool]) : bool (and a b))")
+
+(define (compiler-lower-or-short-circuit-source) : String
+  "(define (f [a : bool] [b : bool]) : bool (or a b))")
+
+(define (compiler-lower-short-circuit-branch? [src : String]) : bool
+  (match (lower-compiler-source src)
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (> (lower-test-function-branch-count functions "f") 0)
+            (= (lower-test-function-binop-count functions "f") 0))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-and-or-short-circuit-shape-ok?) : bool
+  (and
+    (compiler-lower-short-circuit-branch?
+      (compiler-lower-and-short-circuit-source))
+    (compiler-lower-short-circuit-branch?
+      (compiler-lower-or-short-circuit-source))))
+
 (define (compiler-lower-self-test) : i64
   (if (and
     (and
-      (compiler-lower-ok-summary? (compiler-lower-smoke-source))
-      (compiler-lower-spans-ok? (compiler-lower-smoke-source)))
+      (compiler-lower-and-or-short-circuit-shape-ok?)
+      (and
+        (compiler-lower-ok-summary? (compiler-lower-smoke-source))
+        (compiler-lower-spans-ok? (compiler-lower-smoke-source))))
     (and
       (compiler-lower-ok? (compiler-lower-match-source))
       (and

@@ -16,38 +16,91 @@ fn fixture_dir(name: &str) -> PathBuf {
     dir
 }
 
+// The selfhost programs these tests spawn (the selfhost LSP frame tool and the
+// selfhost compile driver) intermittently SEGFAULT on Windows CI with no useful
+// output (#1204). `is_crash_exit` recognizes ONLY a transient crash exit so the
+// run helpers can retry it without masking a genuine non-zero exit; mirrors
+// `scripts/lib-retry.sh`'s `is_crash_code` (incl. the #1242 Windows NTSTATUS
+// values, which `ExitStatus::code()` returns in their signed i32 form).
+fn is_crash_exit(status: &std::process::ExitStatus) -> bool {
+    match status.code() {
+        // Windows NTSTATUS: 0xC0000005 access violation, 0xC000001D illegal instruction.
+        Some(-1073741819) | Some(-1073741795) => true,
+        // bash/MSYS 128+signal form, if it surfaces that way.
+        Some(132) | Some(134) | Some(139) => true,
+        _ => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::ExitStatusExt;
+                // SIGILL=4, SIGABRT=6, SIGSEGV=11.
+                matches!(status.signal(), Some(4) | Some(6) | Some(11))
+            }
+            #[cfg(not(unix))]
+            {
+                false
+            }
+        }
+    }
+}
+
+// Run a subprocess closure, retrying ONLY a transient #1204 crash exit. Attempts
+// default to 3, overridable via $CLI_TEST_ATTEMPTS.
+fn run_with_crash_retry<F: FnMut() -> Output>(mut run: F) -> Output {
+    let attempts: u32 = std::env::var("CLI_TEST_ATTEMPTS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3);
+    let mut out = run();
+    let mut attempt = 1;
+    while attempt < attempts && is_crash_exit(&out.status) {
+        eprintln!(
+            "  retry ({attempt}/{attempts}): crash exit {:?} — likely transient (#1204)",
+            out.status.code()
+        );
+        out = run();
+        attempt += 1;
+    }
+    out
+}
+
 fn typelisp(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .args(args)
-        .output()
-        .expect("run typelisp CLI")
+    run_with_crash_retry(|| {
+        Command::new(env!("CARGO_BIN_EXE_typelisp"))
+            .args(args)
+            .output()
+            .expect("run typelisp CLI")
+    })
 }
 
 fn typelisp_with_stdin(args: &[&str], stdin: &str) -> Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn typelisp CLI");
+    run_with_crash_retry(|| {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn typelisp CLI");
 
-    child
-        .stdin
-        .as_mut()
-        .expect("stdin is piped")
-        .write_all(stdin.as_bytes())
-        .expect("write CLI stdin");
+        child
+            .stdin
+            .as_mut()
+            .expect("stdin is piped")
+            .write_all(stdin.as_bytes())
+            .expect("write CLI stdin");
 
-    child.wait_with_output().expect("wait for typelisp CLI")
+        child.wait_with_output().expect("wait for typelisp CLI")
+    })
 }
 
 fn typelisp_with_path(args: &[&str], path: &std::path::Path) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .args(args)
-        .env("PATH", path)
-        .output()
-        .expect("run typelisp CLI")
+    run_with_crash_retry(|| {
+        Command::new(env!("CARGO_BIN_EXE_typelisp"))
+            .args(args)
+            .env("PATH", path)
+            .output()
+            .expect("run typelisp CLI")
+    })
 }
 
 fn lsp_frame(payload: &str) -> String {
@@ -3097,7 +3150,7 @@ fn run_selfhost_repl(name: &str, stdin: &str) -> Output {
     if cfg!(target_os = "windows") {
         build.arg("--target").arg("windows-x86_64");
     }
-    let build_output = build.output().expect("build selfhost repl");
+    let build_output = run_with_crash_retry(|| build.output().expect("build selfhost repl"));
     assert!(
         build_output.status.success(),
         "selfhost repl build failed\nstdout:\n{}\nstderr:\n{}",
@@ -3105,21 +3158,23 @@ fn run_selfhost_repl(name: &str, stdin: &str) -> Output {
         String::from_utf8_lossy(&build_output.stderr)
     );
 
-    let mut child = Command::new(&exe)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn selfhost repl");
+    run_with_crash_retry(|| {
+        let mut child = Command::new(&exe)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn selfhost repl");
 
-    child
-        .stdin
-        .as_mut()
-        .expect("stdin is piped")
-        .write_all(stdin.as_bytes())
-        .expect("write selfhost repl stdin");
+        child
+            .stdin
+            .as_mut()
+            .expect("stdin is piped")
+            .write_all(stdin.as_bytes())
+            .expect("write selfhost repl stdin");
 
-    child.wait_with_output().expect("wait for selfhost repl")
+        child.wait_with_output().expect("wait for selfhost repl")
+    })
 }
 
 #[test]

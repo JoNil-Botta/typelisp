@@ -213,21 +213,23 @@
   [importer-path : String]
   [import-path : String]
   [stdlib-roots : CompilerLoadRootList]) : String
-  (let
-    [primary : String
-      (compiler-load-join-import-path importer-path import-path)]
-    (if (file-exists? primary)
-      primary
-      (if (compiler-load-stdlib-import? import-path)
-        (match (compiler-load-resolve-stdlib-root
-          (compiler-load-stdlib-suffix import-path)
-          stdlib-roots)
-          [(CompilerLoadSomePath root-path) root-path]
-          [(CompilerLoadNoPath)
-            (if (file-exists? import-path)
-              import-path
-              primary)])
-        primary))))
+  (if (compiler-load-pkg-import? import-path)
+    (compiler-load-resolve-pkg-import-from-disk importer-path import-path)
+    (let
+      [primary : String
+        (compiler-load-join-import-path importer-path import-path)]
+      (if (file-exists? primary)
+        primary
+        (if (compiler-load-stdlib-import? import-path)
+          (match (compiler-load-resolve-stdlib-root
+            (compiler-load-stdlib-suffix import-path)
+            stdlib-roots)
+            [(CompilerLoadSomePath root-path) root-path]
+            [(CompilerLoadNoPath)
+              (if (file-exists? import-path)
+                import-path
+                primary)])
+          primary)))))
 
 (define (compiler-load-decl-list-append
   [left : AstDeclList]
@@ -1260,6 +1262,63 @@
                         (compiler-load-join-root-path manifest-dir dep-path)
                         norm-rest)))))]))))))
 
+;;; Parent directory of a directory path, or no-path at the top. `dirname`
+;;; returns a path *including* its trailing separator, so a trailing separator
+;;; is stripped first to make the walk-up progress (e.g. `src/` -> ``, the cwd).
+(define (compiler-load-parent-dir [dir : String]) : CompilerLoadMaybePath
+  (let
+    [n : i64 (string-length dir)]
+    (if (= n 0)
+      (CompilerLoadNoPath)
+      (let
+        [trimmed : String
+          (if (compiler-load-path-separator? (string-ref dir (- n 1)))
+            (substring dir 0 (- n 1))
+            dir)]
+        (let
+          [parent : String (compiler-load-dirname trimmed)]
+          (if (string-eq parent dir)
+            (CompilerLoadNoPath)
+            (CompilerLoadSomePath parent)))))))
+
+;;; Walk up from `dir` looking for a `typelisp.pkg` manifest, mirroring the Rust
+;;; `discover_manifest` (src/package.rs). `fuel` bounds the climb.
+(define (compiler-load-discover-manifest-up [dir : String] [fuel : i64]) : CompilerLoadMaybePath
+  (if (<= fuel 0)
+    (CompilerLoadNoPath)
+    (let
+      [candidate : String (string-append dir "typelisp.pkg")]
+      (if (file-exists? candidate)
+        (CompilerLoadSomePath candidate)
+        (match (compiler-load-parent-dir dir)
+          [(CompilerLoadNoPath) (CompilerLoadNoPath)]
+          [(CompilerLoadSomePath parent)
+            (compiler-load-discover-manifest-up parent (- fuel 1))])))))
+
+;;; Discover the nearest `typelisp.pkg` at or above the importer's directory.
+(define (compiler-load-discover-manifest [start-path : String]) : CompilerLoadMaybePath
+  (compiler-load-discover-manifest-up (compiler-load-dirname start-path) 256))
+
+;;; Resolve a `pkg:<alias>/...` import by discovering and parsing the nearest
+;;; `typelisp.pkg` relative to the importer, then resolving against its deps.
+;;; On any failure (no manifest, parse error, unknown alias, escape) the raw
+;;; import path is returned so the loader reports a normal "cannot load" error.
+(define (compiler-load-resolve-pkg-import-from-disk
+  [importer-path : String]
+  [import-path : String]) : String
+  (match (compiler-load-discover-manifest importer-path)
+    [(CompilerLoadNoPath) import-path]
+    [(CompilerLoadSomePath manifest-path)
+      (match (compiler-load-parse-manifest (read-file manifest-path))
+        [(ErrCompilerPkgManifest _) import-path]
+        [(OkCompilerPkgManifest manifest)
+          (match (compiler-load-resolve-pkg-import
+            import-path
+            (compiler-load-dirname manifest-path)
+            (struct-get manifest deps))
+            [(OkPkgResolve resolved) resolved]
+            [(ErrPkgResolve _) import-path])])]))
+
 ;;; Self-test fixture: `math` -> sibling dir, `util` -> vendored subdir.
 (define (compiler-load-pkg-resolve-deps) : CompilerPkgDepList
   (CompilerPkgDepCons
@@ -1306,6 +1365,29 @@
             "pkg:math/../../etc.tl"
             "compiler-load: pkg import escapes package root: pkg:math/../../etc.tl"))))))
 
+;;; True when `parent-dir dir` yields exactly `expected`.
+(define (compiler-load-pkg-parent-dir-is? [dir : String] [expected : String]) : bool
+  (match (compiler-load-parent-dir dir)
+    [(CompilerLoadSomePath p) (string-eq p expected)]
+    [(CompilerLoadNoPath) false]))
+
+;;; True when `parent-dir dir` reports no parent (top of the climb).
+(define (compiler-load-pkg-parent-dir-none? [dir : String]) : bool
+  (match (compiler-load-parent-dir dir)
+    [(CompilerLoadNoPath) true]
+    [(CompilerLoadSomePath _) false]))
+
+;;; The manifest-discovery walk-up steps one directory at a time, descending to
+;;; the cwd (``) before stopping (#834).
+(define (compiler-load-pkg-parent-dir-ok?) : bool
+  (and
+    (compiler-load-pkg-parent-dir-is? "a/b/" "a/")
+    (and
+      (compiler-load-pkg-parent-dir-is? "a/b/c/" "a/b/")
+      (and
+        (compiler-load-pkg-parent-dir-is? "a/" "")
+        (compiler-load-pkg-parent-dir-none? "")))))
+
 (define (compiler-load-self-test) : i64
   (if (compiler-load-normalize-ok?)
     (if (compiler-load-source-provenance-ok?)
@@ -1324,7 +1406,12 @@
                               (if (compiler-load-stdlib-unresolved-ok?)
                                 (if (compiler-load-pkg-manifest-ok?)
                                   (if (compiler-load-pkg-resolve-ok?)
-                                    42
+                                    (if (compiler-load-pkg-parent-dir-ok?)
+                                      42
+                                      (begin
+                                        (panic
+                                          "compiler-load: pkg parent-dir smoke mismatch")
+                                        0))
                                     (begin
                                       (panic
                                         "compiler-load: pkg resolve smoke mismatch")

@@ -457,16 +457,18 @@ fn selfhost_backend_windows_driver_primitives_emit_assemble_link_and_run() {
     fs::write(&input_path, "41").expect("write Windows driver primitive input");
     let _ = fs::remove_file(&output_path);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .arg("run")
-        .arg(&fixture_path)
-        .arg("--target")
-        .arg("windows-x86_64")
-        .arg("--")
-        .arg(&asm_path)
-        .arg("windows-driver-primitives")
-        .output()
-        .expect("run selfhost backend driver primitive fixture for Windows target");
+    let output = run_native_with_crash_retry(|| {
+        Command::new(env!("CARGO_BIN_EXE_typelisp"))
+            .arg("run")
+            .arg(&fixture_path)
+            .arg("--target")
+            .arg("windows-x86_64")
+            .arg("--")
+            .arg(&asm_path)
+            .arg("windows-driver-primitives")
+            .output()
+            .expect("run selfhost backend driver primitive fixture for Windows target")
+    });
     assert_eq!(
         output.status.code(),
         Some(0),

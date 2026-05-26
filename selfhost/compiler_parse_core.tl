@@ -2754,6 +2754,19 @@
             "(define (main) : i64 (type i64 bool))"
             "parse: type expects exactly one type"))))))
 
+;; region / scoped-arena parse-error rules (#1073 / #1041): malformed
+;; `(with-arena ...)` forms — a missing region name and a non-identifier region
+;; name. The accept path (with-arena parsing to the `AstExprWithRegion` form) is
+;; covered by `compiler-parse-arena-ok?` / `compiler-parse-region-ok?`.
+(define (compiler-parse-region-error-tests-ok?) : bool
+  (and
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (with-arena))"
+      "parse: with-arena requires a region name before its body")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (with-arena 5 unit))"
+      "parse: with-arena region name must be an identifier")))
+
 (define (compiler-parse-smoke) : i64
   (match (parse-ast-source (compiler-parse-smoke-source))
     [(OkAstProgram program)
@@ -2798,7 +2811,9 @@
                   (compiler-parse-pattern-tests-ok?)
                   (and
                     (compiler-parse-operator-tests-ok?)
-                    (compiler-parse-type-literal-tests-ok?)))))))
+                    (and
+                      (compiler-parse-type-literal-tests-ok?)
+                      (compiler-parse-region-error-tests-ok?))))))))
           42
           (begin
             (panic "parse: error-path self-tests failed")

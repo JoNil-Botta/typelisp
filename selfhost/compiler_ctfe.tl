@@ -380,6 +380,7 @@
     [(AstExprLet bindings body) (ctfe-eval-let bindings body env fuel)]
     [(AstExprBegin exprs) (ctfe-eval-begin exprs env fuel)]
     [(AstExprUnsafe exprs) (ctfe-eval-begin exprs env fuel)]
+    [(AstExprCall func args) (ctfe-eval-call func args expr env fuel)]
     [_
       (ErrCtfe
         (ctfe-diagnostic-at-expr
@@ -389,6 +390,98 @@
             (string-append
               (ctfe-describe-expr expr)
               "' is not supported in compile-time evaluation"))))]))
+
+;; Byte size of a scalar type, or -1 for a non-scalar (struct/array/pointer/name)
+;; type. For these primitive scalars alignment equals size, so `size-of` and
+;; `align-of` share this. Layout queries over `repr c` structs are #989 slice 2.
+(define (ctfe-scalar-size [ty : AstType]) : i64
+  (match ty
+    [(AstTyI64) 8]
+    [(AstTyU64) 8]
+    [(AstTyF64) 8]
+    [(AstTyI32) 4]
+    [(AstTyU32) 4]
+    [(AstTyF32) 4]
+    [(AstTyI16) 2]
+    [(AstTyU16) 2]
+    [(AstTyI8) 1]
+    [(AstTyU8) 1]
+    [(AstTyBool) 1]
+    [(AstTyChar) 1]
+    [(AstTyUnit) 0]
+    [_ -1]))
+
+;; Evaluate `(size-of (type T))` / `(align-of (type T))` to an `i64` in comptime
+;; (#989 slice 1: scalar types). The argument is a `(type T)` literal evaluated
+;; to a `CtfeType`; a non-scalar type yields a source-located "not yet supported"
+;; diagnostic (repr-c struct layout + `offset-of` are slice 2).
+(define (ctfe-eval-layout-query
+  [name : String]
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons arg rest)
+      (match rest
+        [(AstExprNil)
+          (match (compiler-ctfe-eval arg env fuel)
+            [(ErrCtfe d) (ErrCtfe d)]
+            [(OkCtfe value arg-fuel)
+              (match value
+                [(CtfeType ty)
+                  (let
+                    [sz : i64 (ctfe-scalar-size ty)]
+                    (if (< sz 0)
+                      (ErrCtfe
+                        (ctfe-diagnostic-at-expr
+                          expr
+                          (string-append
+                            name
+                            " of a non-scalar type is not yet supported in comptime (repr-c struct layout is #989 slice 2)")))
+                      (OkCtfe (CtfeI64 sz) arg-fuel)))]
+                [_
+                  (ErrCtfe
+                    (ctfe-diagnostic-at-expr
+                      expr
+                      (string-append name " expects a type argument")))])])]
+        [_
+          (ErrCtfe
+            (ctfe-diagnostic-at-expr
+              expr
+              (string-append name " expects exactly one type argument")))])]
+    [_
+      (ErrCtfe
+        (ctfe-diagnostic-at-expr
+          expr
+          (string-append name " expects exactly one type argument")))]))
+
+;; Dispatch a comptime call: `size-of`/`align-of` layout queries (#989) are the
+;; only supported call forms; everything else is rejected.
+(define (ctfe-eval-call
+  [func : AstExpr]
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match func
+    [(AstExprSpanned inner _) (ctfe-eval-call inner args expr env fuel)]
+    [(AstExprVar name)
+      (if (or (string-eq name "size-of") (string-eq name "align-of"))
+        (ctfe-eval-layout-query name args expr env fuel)
+        (ctfe-unsupported-form expr))]
+    [_ (ctfe-unsupported-form expr)]))
+
+;; Shared "unsupported compile-time form" diagnostic for ordinary calls.
+(define (ctfe-unsupported-form [expr : AstExpr]) : ResultCtfe
+  (ErrCtfe
+    (ctfe-diagnostic-at-expr
+      expr
+      (string-append
+        "'"
+        (string-append
+          (ctfe-describe-expr expr)
+          "' is not supported in compile-time evaluation")))))
 
 (define (ctfe-eval-var
   [name : String]

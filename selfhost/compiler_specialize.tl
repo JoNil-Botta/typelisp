@@ -1948,6 +1948,40 @@
         [(ErrSpecProgram _) false])]
     [(ErrAstProgram _) false]))
 
+;;; Type substitution (#1043, mirrors src/specialize.rs substitution coverage):
+;;; `spec-substitute-type` replaces a mapped type variable with its bound type,
+;;; recurses through compound types (Ptr/DynArray/function), and leaves an
+;;; unmapped variable unchanged (the SpecNoString lookup branch). Complements
+;;; the single MutPtr case embedded in `compiler-specialize-raw-pointer-type-ok?`.
+(define (compiler-specialize-subst-ok?) : bool
+  (let
+    [subs : SpecTypeSubst (SpecTypeSubstCons "T" (AstTyI64) SpecTypeSubstNil)]
+    (and
+      (string-eq
+        (spec-type-key (spec-substitute-type (AstTyVar "T") subs))
+        "i64")
+      (and
+        (string-eq
+          (spec-type-key (spec-substitute-type (AstTyPtr (AstTyVar "T")) subs))
+          "ptr_i64")
+        (and
+          (string-eq
+            (spec-type-key
+              (spec-substitute-type (AstTyDynArray (AstTyVar "T")) subs))
+            "dynarray_i64")
+          (and
+            (string-eq
+              (spec-type-key
+                (spec-substitute-type
+                  (AstTyFunc
+                    (AstTypeCons (AstTyVar "T") AstTypeNil)
+                    (AstTyVar "T"))
+                  subs))
+              "fn_i64_nil_to_i64")
+            (string-eq
+              (spec-type-key (spec-substitute-type (AstTyVar "U") subs))
+              "var_U")))))))
+
 (define (compiler-specialize-self-test) : i64
   (if (compiler-specialize-type-param-ok?)
     (if (compiler-specialize-runtime-type-use-rejected?)
@@ -1956,7 +1990,9 @@
           (if (compiler-specialize-raw-pointer-type-ok?)
             (if (compiler-specialize-name-key-ok?)
               (if (compiler-specialize-reuse-ok?)
-                1
+                (if (compiler-specialize-subst-ok?)
+                  1
+                  0)
                 0)
               0)
             0)

@@ -352,3 +352,78 @@
         (match (string-i64-map-insert (string-i64-map-grow full) key value)
           [(StringI64MapInsertOk u) u]
           [(StringI64MapInsertFull u) u])])))
+
+;;; A single iteration step: an occupied entry (its key and value) or none.
+;;; `string-i64-map-entry-at` returns `None` for an empty slot, a tombstone, or
+;;; an out-of-range index, and `Some` for a live entry.
+(defenum StringI64MapEntry
+  (StringI64MapEntryNone)
+  (StringI64MapEntrySome String i64))
+
+;;; Scan `slots` from `index` forward for the first occupied slot, returning its
+;;; index or `capacity` when none remains. Bounded by `capacity` (the array
+;;; length), so it always terminates.
+(define (string-i64-map-next-occupied-from
+  [slots : (Array StringI64MapSlot)]
+  [index : i64]
+  [capacity : i64]) : i64
+  (if (>= index capacity)
+    capacity
+    (match (array-ref slots index)
+      [(StringI64MapOccupied _ _ _) index]
+      [(StringI64MapEmpty)
+        (string-i64-map-next-occupied-from slots (+ index 1) capacity)]
+      [(StringI64MapTombstone)
+        (string-i64-map-next-occupied-from slots (+ index 1) capacity)])))
+
+;;; Iteration cursor: the index of the first occupied slot at or after `from`
+;;; (in ascending bucket order), or the capacity when no live entry remains.
+;;; A negative `from` is clamped to 0.
+;;;
+;;; v1 iterates in *bucket order* — ascending slot index, skipping empty and
+;;; tombstone slots. This order is deterministic for a fixed table state but is
+;;; NOT insertion order, and it can change across a resize/rehash (#827). Walk
+;;; live entries by starting at `(string-i64-map-next-occupied map 0)` and
+;;; advancing with `(string-i64-map-next-occupied map (+ index 1))` until the
+;;; cursor reaches the capacity, reading each entry with
+;;; `string-i64-map-entry-at`. Do not insert into or remove from the map during
+;;; a walk: a resize rebuilds the slot array and invalidates live indices.
+;;; (Borrow-rule enforcement of this is revisited under #806.)
+;;;
+;;; ```typelisp
+;;; (import "stdlib/hashmap.tl")
+;;; (define (sum-values [m : StringI64Map] [i : i64] [acc : i64]) : i64
+;;;   (if (>= i (string-i64-map-capacity m))
+;;;     acc
+;;;     (sum-values
+;;;       m
+;;;       (string-i64-map-next-occupied m (+ i 1))
+;;;       (match (string-i64-map-entry-at m i)
+;;;         [(StringI64MapEntrySome _ v) (+ acc v)]
+;;;         [(StringI64MapEntryNone) acc]))))
+;;; (define (main) : i64
+;;;   (let
+;;;     [m : StringI64Map (string-i64-map-put (string-i64-map-with-capacity 8) "k" 42)]
+;;;     (sum-values m (string-i64-map-next-occupied m 0) 0)))
+;;; ```
+(define (string-i64-map-next-occupied [map : StringI64Map] [from : i64]) : i64
+  (string-i64-map-next-occupied-from
+    (string-i64-map-slots map)
+    (if (< from 0)
+      0
+      from)
+    (string-i64-map-capacity map)))
+
+;;; The live entry at `index`, or `None` for an empty slot, a tombstone, or an
+;;; index outside `[0, capacity)`. Pair with `string-i64-map-next-occupied` to
+;;; walk the map in bucket order. The key is handed back by value; v1 does not
+;;; yet enforce that the borrow outlives the map (revisited under #806).
+(define (string-i64-map-entry-at [map : StringI64Map] [index : i64]) : StringI64MapEntry
+  (if (if (< index 0)
+    true
+    (>= index (string-i64-map-capacity map)))
+    (StringI64MapEntryNone)
+    (match (array-ref (string-i64-map-slots map) index)
+      [(StringI64MapOccupied key value _) (StringI64MapEntrySome key value)]
+      [(StringI64MapEmpty) (StringI64MapEntryNone)]
+      [(StringI64MapTombstone) (StringI64MapEntryNone)])))

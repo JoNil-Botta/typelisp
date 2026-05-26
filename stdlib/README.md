@@ -42,8 +42,10 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   construction. Import it with `(import "stdlib/text_buf.tl")`.
 - `vector.tl`: growable `i64` vector (collections v1, #835) over `(Array i64)`:
   `i64-vec-with-capacity` / `-new` / `-push` / `-pop` / `-get` / `-last` /
-  `-set!` / `-len` / `-capacity`, with doubling growth and bounds-checked reads.
-  Import it with `(import "stdlib/vector.tl")`.
+  `-set!` / `-len` / `-capacity`, with doubling growth and bounds-checked reads,
+  plus conversion/iteration helpers `-from-array` / `-to-array` / `-extend` /
+  `-reverse!` / `-sum` / `-contains?` (#1212). Import it with
+  `(import "stdlib/vector.tl")`.
 - `windows_sdk.tl`: structured Windows SDK layout discovery helpers for future
   MSVC toolchain setup. Import it with `(import "stdlib/windows_sdk.tl")`.
 - `windows_setup.tl`: Visual Studio / Build Tools SetupConfiguration discovery

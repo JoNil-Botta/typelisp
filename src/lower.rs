@@ -65,7 +65,7 @@ pub fn lower_program_with_spans_for_mode(prog: &ast::Program, mode: LowerMode) -
 
 /// Like `lower_program_with_spans_for_mode`, but tells the lowerer whether the
 /// target supports the `tl_region_mark`/`tl_region_reset` runtime helpers.
-/// `(with-region ...)` only lowers to mark/reset when they are available;
+/// `(with-arena ...)` only lowers to mark/reset when they are available;
 /// otherwise it falls back to running the body in the process-lifetime arena
 /// with no reset (SPEC §7.6).
 /// Replace each `(comptime-decl <template>)` wrapper with its bare inner
@@ -3687,7 +3687,7 @@ impl FnLowerer {
         last
     }
 
-    /// Lower `(with-region r body...)` (#550). On a target that provides the
+    /// Lower `(with-arena r body...)` (#550). On a target that provides the
     /// region runtime helpers, take a mark at entry, run the body in the active
     /// arena, then reset to the mark on scope exit so the body's allocations are
     /// reclaimed; the body's value — kept region-free by the escape checker
@@ -6445,7 +6445,7 @@ mod tests {
         let prog = parse(
             r#"
             (define (main) : i64
-              (with-region r
+              (with-arena r
                 (let ([s : String (string-append "a" "b")])
                   (string-length s))))
         "#,
@@ -6478,13 +6478,13 @@ mod tests {
 
     #[test]
     fn test_lower_with_region_no_reset_without_region_runtime() {
-        // On a target without the region helpers, with-region runs the body in
+        // On a target without the region helpers, with-arena runs the body in
         // the process-lifetime arena with no mark/reset (SPEC §7.6), so the
         // program stays portable instead of referencing unsupported helpers.
         let prog = parse(
             r#"
             (define (main) : i64
-              (with-region r
+              (with-arena r
                 (let ([s : String (string-append "a" "b")])
                   (string-length s))))
         "#,

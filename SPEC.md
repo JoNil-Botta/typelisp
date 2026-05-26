@@ -344,14 +344,14 @@ Until that path is complete, write explicit monomorphic declarations such as
 
 ### 3.9 Region-tagged types (v1)
 
-A value allocated inside a `(with-region r ...)` scope carries a **region tag**
+A value allocated inside a `(with-arena r ...)` scope carries a **region tag**
 in its type, written `(in r T)` where `r` is the region name and `T` is the
 underlying heap-allocated type. Region tags are a compile-time-only
 annotation; they do not change ABI representation, runtime size, or data
 layout. The tag exists solely to enable static escape checking.
 
 `(with-arena r ...)` is the migration spelling for this form and is accepted as
-an exact alias of `(with-region r ...)` (#801): it produces the same scoped
+an exact alias of `(with-arena r ...)` (#801): it produces the same scoped
 arena, the same `(in r T)` region tags, the same default-arena shadowing, and
 the same escape checking and `tl_region_mark` / `tl_region_reset` lowering.
 Allocations inside the body target the scoped arena, which shadows the
@@ -371,7 +371,7 @@ A region-tagged type `(in r T)` is a **subtype** of the plain type `T` for
 operations that do not escape the region: field access, `array-ref`,
 `array-set!`, `match` arms, `print-string`, and function calls whose parameter
 types accept `T`. It is **not** a subtype where the value would leave the
-region's scope: as the result of the `with-region` form, stored into an outer
+region's scope: as the result of the `with-arena` form, stored into an outer
 `let` or global, captured by an escaping closure, or returned from an enclosing
 function.
 
@@ -396,7 +396,7 @@ The selfhost compiler accepts written lifetime-bearing reference type forms:
 - `(&mut arena T)` is a mutable reference type to `T` tied to lifetime/arena
   name `arena`.
 - The lifetime name is a bare identifier. It matches the current
-  `(with-region arena ...)` binder shape and the planned `(with-arena arena ...)`
+  `(with-arena arena ...)` binder shape and the planned `(with-arena arena ...)`
   spelling.
 - This slice only defines syntax and type representation. Borrow expressions,
   mutable exclusivity, returned-reference lifetime checks, and borrowed `str`
@@ -1258,16 +1258,16 @@ Negative examples for later parser/typechecker tests:
 
 ---
 
-### 5.16 `(with-region ident body ...)` — scoped region
+### 5.16 `(with-arena ident body ...)` — scoped region
 
 Introduces a temporary allocation region named `ident` whose lifetime is
 the lexical scope of the form's body. The body is a non-empty expression
 sequence; the last expression is the result. Subregions are expressed by
-nesting `with-region` forms.
+nesting `with-arena` forms.
 
-```lisp test=check name=with-region-basic
+```lisp test=check name=with-arena-basic
 (define (main) : i64
-  (with-region r
+  (with-arena r
     (let
       [s : String (int->string 42)]
       (begin
@@ -1279,7 +1279,7 @@ nesting `with-region` forms.
 `(in r T)` (see §3.9). The typechecker rejects any attempt to let a
 region-tagged value escape its scope:
 
-- As the result of the `with-region` form (`(with-region r (make-array i64 5))`).
+- As the result of the `with-arena` form (`(with-arena r (make-array i64 5))`).
 - Stored into an outer `let`, `set!`, or global binding.
 - Captured by a lambda whose closure outlives the region.
 - Returned from an enclosing function.
@@ -1290,13 +1290,13 @@ region-tagged value escape its scope:
 an inner region may not escape to the outer region, and a value from an outer
 region may be used inside an inner region (it does not gain the inner tag).
 
-**Lowering contract:** Each `with-region` lowers to a `tl_region_mark` at
+**Lowering contract:** Each `with-arena` lowers to a `tl_region_mark` at
 entry, the body with all region-allocating operations implicitly targeting the
 active region, and a `tl_region_reset` at exit that restores the mark. Because
 the body result must be region-free, the reset is safe: no live handle refers
 to storage allocated after the mark.
 
-**Non-Linux targets:** `with-region` remains a typechecked scope. On targets
+**Non-Linux targets:** `with-arena` remains a typechecked scope. On targets
 where `tl_region_mark` / `tl_region_reset` are unavailable the runtime does
 not perform a reset; the semantics match minus reclamation. The form still
 prevents escapes, so programs compile and run identically, but allocations
@@ -1342,8 +1342,8 @@ types, invalid field names, and use outside a compile-time-required context.
 
 The `(with ...)` form is reserved for explicit scoped cleanup of non-memory
 resources such as file descriptors, process handles, temporary files, locks,
-and mapped files. It is separate from `(with-region ...)`: `with` calls cleanup
-functions for resource values, while `with-region` resets arena allocation for
+and mapped files. It is separate from `(with-arena ...)`: `with` calls cleanup
+functions for resource values, while `with-arena` resets arena allocation for
 memory owned by a lexical region.
 
 Each binding has the form `[name init-expr cleanup-fn]`.
@@ -1787,18 +1787,18 @@ but it is larger than the immediate need for long-running tools.
 The first reclamation mechanism is explicit region reset at tool-owned phase
 boundaries (#418, #419). TypeLisp provides two surfaces for this:
 
-#### Source-level scoped region (v1) — `with-region`
+#### Source-level scoped region (v1) — `with-arena`
 
-The `(with-region ident body ...)` form (§5.16) gives programs a lexically
+The `(with-arena ident body ...)` form (§5.16) gives programs a lexically
 scoped, type-safe region. The typechecker ensures no region-tagged value
 escapes the body, so the lowering can safely insert `tl_region_mark` at entry
 and `tl_region_reset` at exit without risk of use-after-free. This is the
 preferred v1 surface for long-running tools that want deterministic, safe
 reclamation between phases.
 
-```lisp test=check name=with-region-example
+```lisp test=check name=with-arena-example
 (define (process-phase [input : String]) : i64
-  (with-region phase
+  (with-arena phase
     (let
       [buf : (Array i64) (make-array i64 100)]
       (begin
@@ -1806,21 +1806,21 @@ reclamation between phases.
         (array-ref buf 0)))))
 ```
 
-Allocation sites inside a `with-region` scope target the active region:
+Allocation sites inside a `with-arena` scope target the active region:
 - String operations that create fresh storage (`substring`, `string-append`,
   `string-concat`, `read-file`, `int->string`, `arg`), `make-array`, and
   returned aggregate storage from calls inside the region.
 - The body result must be region-free (scalars, or aggregates allocated *before*
-  the `with-region`).
+  the `with-arena`).
 
 The arena-model terminology calls the default allocation target the
-program-lifetime arena and calls each nested `with-region` body a scoped arena.
-The current source spelling remains `(with-region ...)`; issue #801 tracks the
+program-lifetime arena and calls each nested `with-arena` body a scoped arena.
+The current source spelling remains `(with-arena ...)`; issue #801 tracks the
 planned `(with-arena ...)` spelling/alias. Unless a function explicitly says
 otherwise, allocation always uses the active arena: the innermost scoped arena,
 or the default program-lifetime arena when no scoped arena is active.
 Until the spelling migration lands, executable stdlib policy tests use
-`with-region` to verify the same active-arena semantics.
+`with-arena` to verify the same active-arena semantics.
 
 #### Standard library and builtin allocation policy
 
@@ -1840,16 +1840,16 @@ values from escaping until explicit lifetime signatures exist.
 
 No current stdlib function returns a borrow-typed `str`, because owned
 `String`/borrowed `str` is still tracked by #807. No current stdlib function
-manually resets arenas; safe scoped cleanup is owned by `with-region`/the
+manually resets arenas; safe scoped cleanup is owned by `with-arena`/the
 future `with-arena` form, while raw `tl_region_mark` and `tl_region_reset`
 remain low-level unsafe-by-convention helpers.
 
-Nested `with-region` forms create independent subregions whose values do not
+Nested `with-arena` forms create independent subregions whose values do not
 mix. Inner-region values cannot escape to the outer region; outer-region values
 can be used inside the inner region without restriction (they carry the outer
 tag, not the inner one).
 
-On non-Linux targets `with-region` still type-checks and scopes but does not
+On non-Linux targets `with-arena` still type-checks and scopes but does not
 reclaim, matching the semantic contract minus the reset.
 
 #### Scoped non-memory resources (reserved) - `with`
@@ -1862,7 +1862,7 @@ destructors or automatic `drop`.
 
 This keeps resource lifetime policy independent from arena lifetime policy:
 files, process handles, locks, mapped files, and temporary paths use `with`;
-heap allocation reclamation uses `with-region` or the low-level unsafe region
+heap allocation reclamation uses `with-arena` or the low-level unsafe region
 helpers below. Cleanup-owning aggregates (section 4.6.1) use the same `with`
 owner scope plus a declared aggregate cleanup function for the field cleanup
 plan. Compiler support is tracked by #907, with move-only enforcement tracked
@@ -1892,7 +1892,7 @@ phase-local results. It is not a safe arbitrary source-level `free`
 replacement.
 
 Once `(unsafe ...)` lands, direct calls to these raw reset helpers should be
-wrapped in an unsafe context. The safe `with-region` surface remains preferred.
+wrapped in an unsafe context. The safe `with-arena` surface remains preferred.
 
 ### 7.4 Raw pointers and unsafe memory access (v1 design)
 
@@ -1909,7 +1909,7 @@ valid for the requested type.
 - `ptr-read`, `ptr-write!`, `ptr-offset`, `ptr-cast`, `ptr->int`, and
   `int->ptr` require `(unsafe ...)` because the typechecker cannot prove their
   memory or ABI preconditions.
-- A raw pointer into memory reclaimed by `with-region`/`tl_region_reset` becomes
+- A raw pointer into memory reclaimed by `with-arena`/`tl_region_reset` becomes
   invalid when that region is reset. The typechecker does not track this for raw
   pointers.
 - Extern functions may return or accept raw pointers. The ABI contract is
@@ -1919,7 +1919,7 @@ valid for the requested type.
 
 Raw pointers are for FFI and carefully isolated low-level runtime code. They are
 not the future safe reference/borrow model (#182), not a replacement for
-`with-region`, and not a general manual memory management feature.
+`with-arena`, and not a general manual memory management feature.
 
 ### 7.5 Globals
 
@@ -2482,7 +2482,7 @@ expr          ::= literal
                 | "(" "foreach" foreach-clause expr ")"
                 | "(" "spmd-reduce" reduce-op foreach-clause expr expr ")"
                 | "(" "lambda" "(" param* ")" [":" type] expr ")"
-                | "(" "with-region" ident expr+ ")"
+                | "(" "with-arena" ident expr+ ")"
                 | "(" "with" "(" resource-binding* ")" expr+ ")"
                 | "(" "unsafe" expr+ ")"       ; specified, not implemented
                 | "(" "ptr-null" ":" ptr-type ")"      ; specified, not implemented

@@ -2103,7 +2103,7 @@ impl TypeChecker {
                 if last_ty.contains_region(region) {
                     return Err(TypeError::at(
                         format!(
-                            "region-tagged value of type {} cannot escape with-region '{}'",
+                            "region-tagged value of type {} cannot escape with-arena '{}'",
                             last_ty, region
                         ),
                         span,
@@ -4565,7 +4565,7 @@ mod tests {
     fn test_typecheck_with_region_builtin_handle_used_inside_scope() {
         let src = r#"
             (define (main) : i64
-              (with-region r
+              (with-arena r
                 (let ([s : String (int->string 41)])
                   (+ (string-length s) 1))))
         "#;
@@ -4577,14 +4577,13 @@ mod tests {
         let err = check(
             r#"
             (define (main) : String
-              (with-region r (int->string 41)))
+              (with-arena r (int->string 41)))
         "#,
         )
         .unwrap_err();
 
         assert!(
-            err.msg.contains("region-tagged value")
-                && err.msg.contains("cannot escape with-region"),
+            err.msg.contains("region-tagged value") && err.msg.contains("cannot escape with-arena"),
             "got: {}",
             err.msg
         );
@@ -4596,7 +4595,7 @@ mod tests {
             r#"
             (define (sink [s : String]) : i64 (string-length s))
             (define (main) : i64
-              (with-region r
+              (with-arena r
                 (let ([s : String (int->string 41)])
                   (sink s))))
         "#,
@@ -4616,7 +4615,7 @@ mod tests {
             r#"
             (define (sink [s : String]) : i64 0)
             (define (main) : i64
-              (with-region r
+              (with-arena r
                 (let ([s : String (int->string 41)]
                       [string-length : (-> String i64) sink])
                   (string-length s))))
@@ -4636,15 +4635,15 @@ mod tests {
         let err = check(
             r#"
             (define (main) : i64
-              (with-region outer
-                (let ([s : String (with-region inner (int->string 1))])
+              (with-arena outer
+                (let ([s : String (with-arena inner (int->string 1))])
                   (string-length s))))
         "#,
         )
         .unwrap_err();
 
         assert!(
-            err.msg.contains("cannot escape with-region 'inner'"),
+            err.msg.contains("cannot escape with-arena 'inner'"),
             "got: {}",
             err.msg
         );
@@ -4654,9 +4653,9 @@ mod tests {
     fn test_typecheck_outer_region_value_can_be_used_inside_inner_region() {
         let src = r#"
             (define (main) : i64
-              (with-region outer
+              (with-arena outer
                 (let ([s : String (int->string 41)])
-                  (with-region inner (string-length s)))))
+                  (with-arena inner (string-length s)))))
         "#;
         assert!(check(src).is_ok());
     }
@@ -4666,7 +4665,7 @@ mod tests {
         let err = check(
             r#"
             (define (main) : i64
-              (with-region r
+              (with-arena r
                 (let ([s : String (int->string 1)]
                       [f : (-> i64) (lambda () : i64 (string-length s))])
                   (f))))
@@ -4686,7 +4685,7 @@ mod tests {
     fn test_typecheck_region_dynamic_array_can_be_used_inside_scope() {
         let src = r#"
             (define (main) : i64
-              (with-region r
+              (with-arena r
                 (let ([a : (Array i64) (make-array i64 2)])
                   (begin
                     (array-set! a 0 42)
@@ -4701,7 +4700,7 @@ mod tests {
             r#"
             (defstruct Boxed (value String))
             (define (main) : String
-              (with-region r
+              (with-arena r
                 (let ([boxed : Boxed (Boxed (int->string 1))])
                   (struct-get boxed value))))
         "#,
@@ -4709,7 +4708,7 @@ mod tests {
         .unwrap_err();
 
         assert!(
-            err.msg.contains("cannot escape with-region 'r'"),
+            err.msg.contains("cannot escape with-arena 'r'"),
             "got: {}",
             err.msg
         );
@@ -4720,7 +4719,7 @@ mod tests {
         let src = r#"
             (defenum MaybeString (SomeString String) (NoString))
             (define (main) : i64
-              (with-region r
+              (with-arena r
                 (let ([value : MaybeString (SomeString (int->string 1))])
                   (match value
                     [(SomeString s) (string-length s)]

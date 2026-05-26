@@ -1,4 +1,4 @@
-; (with-region ...) takes a mark at entry and resets it at scope exit (#550),
+; (with-arena ...) takes a mark at entry and resets it at scope exit (#550),
 ; so a loop that allocates inside the region each iteration reuses the arena
 ; rather than growing it without bound. Every region body here returns a
 ; region-free scalar (a length), so the reset is safe.
@@ -11,7 +11,7 @@
       (- n 1)
       (+
         acc
-        (with-region
+        (with-arena
           r
           (let
             [s : String (string-append "ab" "cd")]
@@ -20,13 +20,13 @@
 ; Nested regions: the inner region resets before the outer one. Both bodies
 ; yield scalars.
 (define (nested) : i64
-  (with-region
+  (with-arena
     outer
     (let
       [a : String (string-append "x" "y")]
       (+
         (string-length a)
-        (with-region
+        (with-arena
           inner
           (let
             [b : String (string-append "p" "q")]

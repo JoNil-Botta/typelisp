@@ -114,7 +114,7 @@ fn compiler_parse_core_tl_compiles_to_assembly() {
         "parse: malformed foreach",
         "parse: cond requires final else arm",
         "parse: cond else arm must be final",
-        "parse: with-region 'r' requires a non-empty body",
+        "parse: with-arena 'r' requires a non-empty body",
         "parse: region name must be an identifier",
         "parse: compiler AST smoke score mismatch",
         // Error-path self-test diagnostics (#655).
@@ -133,7 +133,7 @@ fn compiler_parse_core_tl_compiles_to_assembly() {
         "(define (main [argc : i64] [name : String]) : i64",
         "(define (main) : i64 (+ 1 (* 2 3)))",
         "(define (main) : f64 1.5)",
-        "(with-region r \\\"x\\\")",
+        "(with-arena r \\\"x\\\")",
         "(try (read))",
         "(define (main) : (in r String)",
         "(define)",

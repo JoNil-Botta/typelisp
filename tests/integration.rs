@@ -233,13 +233,13 @@ fn type_lisp_programs_compile_link_and_run() {
             deps: &[],
         },
         Case {
-            name: "with_region_loop",
+            name: "with_arena_loop",
             exit_code: 42,
             stdout: "",
             deps: &[],
         },
         Case {
-            name: "with_region_builtin_alloc",
+            name: "with_arena_builtin_alloc",
             exit_code: 2,
             stdout: "",
             deps: &[],

@@ -147,14 +147,14 @@ EOF
 #   fixture-path|expected-status|expected-stderr-snippet
 #
 # Use these for stdlib fixtures that only need the typechecker, including
-# platform-independent with-region policy tests. The expected status is `fail`
+# platform-independent with-arena policy tests. The expected status is `fail`
 # or `pass`; failure rows must include a diagnostic substring that should
 # appear on stderr. Pass rows may use "-" for the diagnostic field.
 stdlib_check_manifest() {
     cat <<'EOF'
 stdlib/tests/arena_policy.tl|pass|-
-stdlib/tests/arena_policy_escape_string.tl|fail|cannot escape with-region 'inner'
-stdlib/tests/arena_policy_escape_text_buf.tl|fail|cannot escape with-region 'inner'
+stdlib/tests/arena_policy_escape_string.tl|fail|cannot escape with-arena 'inner'
+stdlib/tests/arena_policy_escape_text_buf.tl|fail|cannot escape with-arena 'inner'
 EOF
 }
 

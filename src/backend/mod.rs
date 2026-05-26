@@ -139,7 +139,7 @@ impl BackendTarget {
 
     /// Whether this target provides the `tl_region_mark`/`tl_region_reset`
     /// runtime helpers. They exist only for linux-x86_64 System V today, so on
-    /// other targets `(with-region ...)` lowers without a reset (SPEC §7.6).
+    /// other targets `(with-arena ...)` lowers without a reset (SPEC §7.6).
     pub const fn supports_region_runtime(self) -> bool {
         matches!(
             (self.arch, self.os, self.abi),

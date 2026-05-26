@@ -1,5 +1,5 @@
 (define (main) : i64
-  (with-region
+  (with-arena
     r
     (let
       [s : String (int->string 41)]

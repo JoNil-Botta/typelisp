@@ -4,12 +4,12 @@
 
 (import "stdlib/test.tl")
 
-; Current source uses with-region; #801 will expose the same active-arena
+; Current source uses with-arena; #801 will expose the same active-arena
 ; semantics under the with-arena spelling.
 (define (main) : i64
   (let
     [program-buf : TextBuf (text-buf-append (text-buf-empty) "scoped")]
-    (with-region
+    (with-arena
       outer
       (let
         [outer-trimmed : String (string-trim "  outer  ")]
@@ -17,7 +17,7 @@
           (assert-true
             (string-eq outer-trimmed "outer")
             "outer stdlib string allocation")
-          (with-region
+          (with-arena
             inner
             (let
               [inner-replaced : String (string-replace "alpha" "ph" "ren")]

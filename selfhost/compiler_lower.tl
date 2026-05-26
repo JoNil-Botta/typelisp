@@ -1837,7 +1837,7 @@
       (lower-array-ref ctx state env type-env arr index)]
     [(AstExprArraySet arr index value)
       (lower-array-set ctx state env type-env arr index value)]
-    [(AstExprWithRegion _ body) (lower-with-region ctx state env type-env body)]
+    [(AstExprWithRegion _ body) (lower-with-arena ctx state env type-env body)]
     [(AstExprTry inner) (lower-try ctx state env type-env inner origin)]
     ;; `(comptime expr)` folds to a literal via the scalar CTFE evaluator (#719).
     ;; Successful folds reuse the ordinary literal path; CTFE rejections (free
@@ -3548,7 +3548,7 @@
                   (lower-begin ctx next-state env type-env rest)])]
             [(ErrLowerExpr message) (ErrLowerExpr message)])])]))
 
-(define (lower-with-region
+(define (lower-with-arena
   [ctx : TcContext]
   [state : LowerState]
   [env : SymI64Env]
@@ -5782,7 +5782,7 @@
 
 (define (compiler-lower-region-source) : String
   "(define (main) : i64
-  (with-region r
+  (with-arena r
     (let
       [s : String (int->string 41)]
       (string-length s))))")

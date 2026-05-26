@@ -373,28 +373,28 @@ assert_not_contains "$err" "backend:"
 
 cat > "$CLI_MATRIX/region-builtin-escape.tl" <<'EOF'
 (define (main) : String
-  (with-region r (int->string 41)))
+  (with-arena r (int->string 41)))
 EOF
 run_cmd check-region-builtin-escape "$COMPILER" check "$CLI_MATRIX/region-builtin-escape.tl"
 assert_failure
 assert_stdout_empty
 assert_contains "$err" "region-tagged value"
-assert_contains "$err" "cannot escape with-region"
+assert_contains "$err" "cannot escape with-arena"
 assert_contains "$err" "error[E0200]"
 
 cat > "$CLI_MATRIX/stdlib-region-escape.tl" <<'EOF'
 (import "stdlib/string.tl")
 
 (define (main) : String
-  (with-region outer
-    (with-region inner
+  (with-arena outer
+    (with-arena inner
       (string-trim "  scoped  "))))
 EOF
 run_cmd check-stdlib-region-escape "$COMPILER" check "$CLI_MATRIX/stdlib-region-escape.tl" --stdlib-root "$ROOT/stdlib"
 assert_failure
 assert_stdout_empty
 assert_contains "$err" "region-tagged value"
-assert_contains "$err" "cannot escape with-region 'inner'"
+assert_contains "$err" "cannot escape with-arena 'inner'"
 assert_contains "$err" "error[E0200]"
 
 cat > "$CLI_MATRIX/text-buf-region-scalar.tl" <<'EOF'
@@ -402,7 +402,7 @@ cat > "$CLI_MATRIX/text-buf-region-scalar.tl" <<'EOF'
 
 (define (main) : i64
   (let ([buf : TextBuf (text-buf-append (text-buf-empty) "scoped")])
-    (with-region inner
+    (with-arena inner
       (string-length (text-buf-render buf)))))
 EOF
 run_cmd check-text-buf-region-scalar "$COMPILER" check "$CLI_MATRIX/text-buf-region-scalar.tl" --stdlib-root "$ROOT/stdlib"
@@ -415,15 +415,15 @@ cat > "$CLI_MATRIX/text-buf-region-escape.tl" <<'EOF'
 
 (define (main) : String
   (let ([buf : TextBuf (text-buf-append (text-buf-empty) "scoped")])
-    (with-region outer
-      (with-region inner
+    (with-arena outer
+      (with-arena inner
         (text-buf-render buf)))))
 EOF
 run_cmd check-text-buf-region-escape "$COMPILER" check "$CLI_MATRIX/text-buf-region-escape.tl" --stdlib-root "$ROOT/stdlib"
 assert_failure
 assert_stdout_empty
 assert_contains "$err" "region-tagged value"
-assert_contains "$err" "cannot escape with-region 'inner'"
+assert_contains "$err" "cannot escape with-arena 'inner'"
 assert_contains "$err" "error[E0200]"
 
 cat > "$CLI_MATRIX/unsupported-float-cast.tl" <<'EOF'

@@ -1015,7 +1015,7 @@ fn parse_renders_newer_selfhost_ast_forms() {
          (define (main [n : i64] [xs : (Array i64)]) : i64\n\
            (begin\n\
              (comptime (type (Array i64 4)))\n\
-             (with-region r (int->string 41))\n\
+             (with-arena r (int->string 41))\n\
              (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i))))\n",
     )
     .expect("write source");
@@ -1457,7 +1457,7 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
     let region_asm = dir.join("region-ok.s");
     fs::write(
         &region_source,
-        "(define (main) : i64\n  (with-region r\n    (let ([s : String (int->string 41)])\n      (string-length s))))\n",
+        "(define (main) : i64\n  (with-arena r\n    (let ([s : String (int->string 41)])\n      (string-length s))))\n",
     )
     .expect("write region source");
     let region_source_arg = region_source.to_str().expect("region source path is utf-8");
@@ -1666,7 +1666,7 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
     let bad_region_asm = dir.join("region-bad.s");
     fs::write(
         &bad_region_source,
-        "(define (main) : String\n  (with-region r (int->string 41)))\n",
+        "(define (main) : String\n  (with-arena r (int->string 41)))\n",
     )
     .expect("write bad region source");
     let bad_region_source_arg = bad_region_source
@@ -1683,7 +1683,7 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
     assert_eq!(stdout(&bad_region), "");
     assert!(
         stderr(&bad_region).contains("region-tagged value")
-            && stderr(&bad_region).contains("cannot escape with-region"),
+            && stderr(&bad_region).contains("cannot escape with-arena"),
         "stderr:\n{}",
         stderr(&bad_region)
     );
@@ -2275,7 +2275,7 @@ fn check_rejects_region_allocating_builtin_escape() {
     fs::write(
         &source,
         r#"(define (main) : String
-  (with-region r (int->string 41)))
+  (with-arena r (int->string 41)))
 "#,
     )
     .expect("write source");
@@ -2287,7 +2287,7 @@ fn check_rejects_region_allocating_builtin_escape() {
     assert_eq!(stdout(&output), "");
     let stderr = stderr(&output);
     assert!(
-        stderr.contains("region-tagged value") && stderr.contains("cannot escape with-region"),
+        stderr.contains("region-tagged value") && stderr.contains("cannot escape with-arena"),
         "stderr:\n{}",
         stderr
     );
@@ -2303,8 +2303,8 @@ fn check_rejects_stdlib_allocating_result_escape_from_nested_region() {
         r#"(import "stdlib/string.tl")
 
 (define (main) : String
-  (with-region outer
-    (with-region inner
+  (with-arena outer
+    (with-arena inner
       (string-trim "  scoped  "))))
 "#,
     )
@@ -2321,7 +2321,7 @@ fn check_rejects_stdlib_allocating_result_escape_from_nested_region() {
     let stderr = stderr(&output);
     assert!(
         stderr.contains("region-tagged value")
-            && stderr.contains("cannot escape with-region 'inner'"),
+            && stderr.contains("cannot escape with-arena 'inner'"),
         "stderr:\n{}",
         stderr
     );
@@ -2338,7 +2338,7 @@ fn check_accepts_stdlib_text_buf_render_used_inside_region() {
 
 (define (main) : i64
   (let ([buf : TextBuf (text-buf-append (text-buf-empty) "scoped")])
-    (with-region inner
+    (with-arena inner
       (string-length (text-buf-render buf)))))
 "#,
     )
@@ -2370,8 +2370,8 @@ fn check_rejects_stdlib_text_buf_render_escape_from_nested_region() {
 
 (define (main) : String
   (let ([buf : TextBuf (text-buf-append (text-buf-empty) "scoped")])
-    (with-region outer
-      (with-region inner
+    (with-arena outer
+      (with-arena inner
         (text-buf-render buf)))))
 "#,
     )
@@ -2388,7 +2388,7 @@ fn check_rejects_stdlib_text_buf_render_escape_from_nested_region() {
     let stderr = stderr(&output);
     assert!(
         stderr.contains("region-tagged value")
-            && stderr.contains("cannot escape with-region 'inner'"),
+            && stderr.contains("cannot escape with-arena 'inner'"),
         "stderr:\n{}",
         stderr
     );

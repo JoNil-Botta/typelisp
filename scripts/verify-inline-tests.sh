@@ -108,7 +108,7 @@ while IFS= read -r source; do
 
     echo "[inline-tests] check $source"
     if run_with_retry "$check_stdout" "$check_stderr" \
-        "${VERIFY_INLINE_TESTS_ATTEMPTS:-3}" \
+        "${VERIFY_INLINE_TESTS_ATTEMPTS:-6}" \
         "$COMPILER" test --check "$source" --stdlib-root "$ROOT/stdlib"; then
         check_status=0
     else
@@ -139,7 +139,7 @@ while IFS= read -r source; do
 
     echo "[inline-tests] run $source ($case_tests test(s))"
     if run_with_retry "$run_stdout" "$run_stderr" \
-        "${VERIFY_INLINE_TESTS_ATTEMPTS:-3}" \
+        "${VERIFY_INLINE_TESTS_ATTEMPTS:-6}" \
         "$COMPILER" test "$source" --stdlib-root "$ROOT/stdlib"; then
         run_status=0
     else

@@ -1866,13 +1866,53 @@
           (spec-substitute-type (AstTyMutPtr (AstTyVar "T")) subs)
           (AstTyMutPtr (AstTyI64)))))))
 
+;;; Deterministic specialized name + stable specialization key (#1043, mirrors
+;;; src/specialize.rs deterministic-names / stable-keys coverage). The mangling
+;;; is a pure function of the template name and comptime argument values, so
+;;; identical args produce identical names, distinct type args never collide,
+;;; multi-value ordering is stable, and negative scalars encode without a `-`.
+(define (compiler-specialize-name-key-ok?) : bool
+  (let
+    [vals-i64 : SpecValueList
+      (SpecValueCons (CtfeType (AstTyI64)) (SpecValueNil))]
+    [vals-bool : SpecValueList
+      (SpecValueCons (CtfeType (AstTyBool)) (SpecValueNil))]
+    [vals-multi : SpecValueList
+      (SpecValueCons
+        (CtfeType (AstTyI64))
+        (SpecValueCons (CtfeI64 5) (SpecValueNil)))]
+    (and
+      (string-eq
+        (spec-specialized-name "alloc" vals-i64)
+        "__tl_specialized_alloc_type_i64_none")
+      (and
+        (string-eq
+          (spec-specialized-name "alloc" vals-i64)
+          (spec-specialized-name "alloc" vals-i64))
+        (and
+          (string-eq
+            (spec-specialization-key "alloc" vals-i64)
+            "alloc:type_i64_none")
+          (and
+            (not
+              (string-eq
+                (spec-specialized-name "alloc" vals-i64)
+                (spec-specialized-name "alloc" vals-bool)))
+            (and
+              (string-eq
+                (spec-specialized-name "pair" vals-multi)
+                "__tl_specialized_pair_type_i64_i64_5_none")
+              (string-eq (spec-value-key (CtfeI64 (- 0 3))) "i64_m3"))))))))
+
 (define (compiler-specialize-self-test) : i64
   (if (compiler-specialize-type-param-ok?)
     (if (compiler-specialize-runtime-type-use-rejected?)
       (if (compiler-specialize-template-shadow-ok?)
         (if (compiler-specialize-type-shadow-ok?)
           (if (compiler-specialize-raw-pointer-type-ok?)
-            1
+            (if (compiler-specialize-name-key-ok?)
+              1
+              0)
             0)
           0)
         0)

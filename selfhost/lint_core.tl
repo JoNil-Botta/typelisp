@@ -89,10 +89,28 @@
             threshold
             (lint-walk-expr body threshold acc))])]))
 
-;;; Walk `expr`, flagging every nested-`if` ladder of length >= `threshold` and
-;;; recursing into all sub-expressions. Because a ladder's length strictly
-;;; decreases toward its tail, only the ladder head reaches the threshold, so a
-;;; ladder is reported once.
+;;; Descend an if/else-`if` ladder whose head has already been flagged: walk
+;;; each rung's condition and then-branch as fresh sub-walks (so a ladder nested
+;;; inside one of those still flags), but follow the else-chain here WITHOUT
+;;; re-flagging the inner `if`s, and walk the final non-`if` else normally.
+(define (lint-walk-ladder
+  [expr : AstExpr]
+  [threshold : i64]
+  [acc : LintFindingList]) : LintFindingList
+  (match expr
+    [(AstExprSpanned inner _) (lint-walk-ladder inner threshold acc)]
+    [(AstExprIf cond then-branch else-branch)
+      (lint-walk-ladder
+        else-branch
+        threshold
+        (lint-walk-expr
+          then-branch
+          threshold
+          (lint-walk-expr cond threshold acc)))]
+    [_ (lint-walk-expr expr threshold acc)]))
+
+;;; Walk `expr`, flagging each maximal nested-`if` ladder of length >=
+;;; `threshold` exactly once and recursing into all sub-expressions.
 (define (lint-walk-expr
   [expr : AstExpr]
   [threshold : i64]
@@ -110,17 +128,23 @@
     [(AstExprIf cond then-branch else-branch)
       (let
         [ladder : i64 (+ 1 (lint-ladder-length else-branch))]
-        [acc1 : LintFindingList
-          (if (>= ladder threshold)
-            (LintFindingCons (lint-ladder-finding ladder) acc)
-            acc)]
-        (lint-walk-expr
-          else-branch
-          threshold
-          (lint-walk-expr
-            then-branch
+        (if (>= ladder threshold)
+          ;; Maximal ladder head: emit ONE finding, then descend the whole
+          ;; else-chain via lint-walk-ladder so inner rungs are not re-flagged
+          ;; (a length-L ladder yields exactly one finding, not L-threshold+1).
+          (lint-walk-ladder
+            expr
             threshold
-            (lint-walk-expr cond threshold acc1))))]
+            (LintFindingCons (lint-ladder-finding ladder) acc))
+          ;; Below threshold: ordinary recursion (no rung downstream can reach
+          ;; the threshold either, so the else-chain is walked normally).
+          (lint-walk-expr
+            else-branch
+            threshold
+            (lint-walk-expr
+              then-branch
+              threshold
+              (lint-walk-expr cond threshold acc)))))]
     [(AstExprLet bindings body)
       (lint-walk-expr
         body
@@ -209,6 +233,11 @@
     [ladder3 : AstExpr
       (AstExprIf vx one (AstExprIf vx one (AstExprIf vx one one)))]
     [ladder2 : AstExpr (AstExprIf vx one (AstExprIf vx one one))]
+    [ladder4 : AstExpr
+      (AstExprIf
+        vx
+        one
+        (AstExprIf vx one (AstExprIf vx one (AstExprIf vx one one))))]
     [nested : AstExpr (AstExprBegin (AstExprCons ladder3 (AstExprNil)))]
     [in-let : AstExpr
       (AstExprLet
@@ -273,4 +302,15 @@
         1)
         unit
         (panic "lint: ladder in a let binding should be found"))
+      ;; a ladder LONGER than the threshold is reported ONCE, not once per
+      ;; over-threshold rung (maximal-ladder dedup, #1163).
+      (if (=
+        (lint-finding-list-count
+          (lint-walk-expr
+            ladder4
+            (lint-default-ladder-threshold)
+            (LintFindingNil)))
+        1)
+        unit
+        (panic "lint: a 4-deep ladder at threshold 3 should be flagged once"))
       42)))

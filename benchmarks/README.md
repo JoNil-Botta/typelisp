@@ -25,6 +25,8 @@ that contains both `bench.tl` and `baseline.c`.
 | Name | Workload |
 |------|----------|
 | `arith_loop` | Scalar LCG recurrence over wrapping 64-bit arithmetic. |
+| `array_sum` | `(Array i64)` fill + repeated sum, with the accumulator stored back per round to defeat loop-invariant folding (refs #1098). |
+| `string_scan` | Polynomial rolling hash (`acc = acc * 131 + byte`) over a fixed ASCII string scanned many rounds, carrying the hash across rounds (refs #1098). |
 | `optimization` | Optimizer-sensitive scalar loop. |
 | `spmd_map` | Data-parallel elementwise map (`out[i] = a[i] + b[i] + r`) via `foreach`, establishing the SPMD/SIMD-vs-clang baseline (refs #1125). |
 | `spmd_zip` | Data-parallel three-input fused multiply-add (`out[i] = a[i] * b[i] + c[i] + r`) via `foreach` (refs #1125). |

@@ -2,8 +2,8 @@
 ;;;;
 ;;;; Reads the combined `{"prs":[...],"issues":[...]}` JSON from stdin, classifies
 ;;;; each entry, weights it (PR review = 30, ready-for-implementation = 10,
-;;;; research/triage = 1, +3 for a p0/p1 label), makes a seeded weighted pick, and
-;;;; prints one action line:
+;;;; research/triage = 1, +50 for a p0 label, +3 for a p1 label), makes a seeded
+;;;; weighted pick, and prints one action line:
 ;;;;
 ;;;;   review pr #N: Title
 ;;;;   implement issue #N: Title
@@ -39,7 +39,10 @@
 (define research-weight : i64
   1)
 
-(define priority-bonus : i64
+(define p0-priority-bonus : i64
+  50)
+
+(define p1-priority-bonus : i64
   3)
 
 (define fallback-seed : i64
@@ -106,11 +109,13 @@
         [_ (JsonListNil)])]
     [(JsonMissing) (JsonListNil)]))
 
-;;; A label list carries a priority label when it has p0 or p1.
-(define (label-list-priority? [labels : JsonList]) : bool
+;;; Return the priority bonus for a label list. p0 takes precedence over p1.
+(define (label-list-priority-bonus [labels : JsonList]) : i64
   (if (label-list-has? labels "p0")
-    true
-    (label-list-has? labels "p1")))
+    p0-priority-bonus
+    (if (label-list-has? labels "p1")
+      p1-priority-bonus
+      0)))
 
 ;;; Build a PR candidate (kind = review, no labels considered).
 (define (pr-candidate [item : Json]) : Candidate
@@ -126,10 +131,7 @@
   (let
     [labels : JsonList (issue-label-list item)]
     [ready : bool (label-list-has? labels "ready-for-implementation")]
-    [bonus : i64
-      (if (label-list-priority? labels)
-        priority-bonus
-        0)]
+    [bonus : i64 (label-list-priority-bonus labels)]
     (if ready
       (Candidate
         kind-ready

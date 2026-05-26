@@ -617,7 +617,31 @@
     [(AstExprPtrNull ty)
       (front-cat3 "PtrNull { ty: " (front-type-render ty) " }")]
     [(AstExprPtrNullCheck inner)
-      (front-cat3 "PtrNullCheck { expr: " (front-expr-render inner) " }")]))
+      (front-cat3 "PtrNullCheck { expr: " (front-expr-render inner) " }")]
+    [(AstExprPtrRead ptr)
+      (front-cat3 "PtrRead { ptr: " (front-expr-render ptr) " }")]
+    [(AstExprPtrWrite ptr value)
+      (front-cat3
+        "PtrWrite { ptr: "
+        (front-expr-render ptr)
+        (front-cat3 ", value: " (front-expr-render value) " }"))]
+    [(AstExprPtrOffset ptr offset)
+      (front-cat3
+        "PtrOffset { ptr: "
+        (front-expr-render ptr)
+        (front-cat3 ", offset: " (front-expr-render offset) " }"))]
+    [(AstExprPtrCast ptr ty)
+      (front-cat3
+        "PtrCast { ptr: "
+        (front-expr-render ptr)
+        (front-cat3 ", ty: " (front-type-render ty) " }"))]
+    [(AstExprPtrToInt ptr)
+      (front-cat3 "PtrToInt { ptr: " (front-expr-render ptr) " }")]
+    [(AstExprIntToPtr value ty)
+      (front-cat3
+        "IntToPtr { value: "
+        (front-expr-render value)
+        (front-cat3 ", ty: " (front-type-render ty) " }"))]))
 
 (define (front-maybe-module-render [name : AstMaybeModuleName]) : String
   (match name

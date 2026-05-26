@@ -1801,7 +1801,8 @@
           (lower-expr ctx binding-state body-env body-type-env body)]
         [(ErrLowerEnv message) (ErrLowerExpr message)])]
     [(AstExprBegin exprs) (lower-begin ctx state env type-env exprs)]
-    [(AstExprUnsafe exprs) (lower-begin ctx state env type-env exprs)]
+    [(AstExprUnsafe exprs)
+      (lower-begin ctx state env (tc-enter-unsafe type-env) exprs)]
     [(AstExprSet name value)
       (match (lower-expr ctx state env type-env value)
         [(OkLowerExpr lowered)
@@ -1927,6 +1928,122 @@
                   inner-value
                   (IrValueI64 0)
                   (AstTyBool)))])]
+        [(ErrLowerExpr diag) (ErrLowerExpr diag)])]
+    [(AstExprPtrRead ptr)
+      (match (lower-expr ctx state env type-env ptr)
+        [(OkLowerExpr lowered)
+          (match lowered
+            [(LowerExpr ptr-state ptr-value _)
+              (match (lower-state-alloc-var ptr-state)
+                [(LowerAlloc allocated var-id)
+                  (OkLowerExpr
+                    (LowerExpr
+                      (lower-state-emit-at-expr
+                        allocated
+                        (IrInstrLoad var-id ptr-value expr-ty)
+                        origin)
+                      (IrValueVar var-id)
+                      expr-ty))])])]
+        [(ErrLowerExpr diag) (ErrLowerExpr diag)])]
+    [(AstExprPtrWrite ptr value)
+      (match (lower-expr ctx state env type-env ptr)
+        [(OkLowerExpr ptr-lowered)
+          (match ptr-lowered
+            [(LowerExpr ptr-state ptr-value ptr-ty)
+              (match (lower-state-alloc-var ptr-state)
+                [(LowerAlloc ptr-allocated ptr-var)
+                  (let
+                    [ptr-home-state : LowerState
+                      (lower-state-emit
+                        ptr-allocated
+                        (IrInstrMov ptr-var ptr-value ptr-ty))]
+                    (match (lower-expr ctx ptr-home-state env type-env value)
+                      [(OkLowerExpr value-lowered)
+                        (match value-lowered
+                          [(LowerExpr value-state value-ir value-ty)
+                            (OkLowerExpr
+                              (LowerExpr
+                                (lower-state-emit-at-expr
+                                  value-state
+                                  (IrInstrStorePtr
+                                    (IrValueVar ptr-var)
+                                    value-ir
+                                    value-ty)
+                                  origin)
+                                IrValueUnit
+                                expr-ty))])]
+                      [(ErrLowerExpr diag) (ErrLowerExpr diag)]))])])]
+        [(ErrLowerExpr diag) (ErrLowerExpr diag)])]
+    [(AstExprPtrOffset ptr offset)
+      (match (lower-expr ctx state env type-env ptr)
+        [(OkLowerExpr ptr-lowered)
+          (match ptr-lowered
+            [(LowerExpr ptr-state ptr-value ptr-ty)
+              (match (lower-expr ctx ptr-state env type-env offset)
+                [(OkLowerExpr offset-lowered)
+                  (match offset-lowered
+                    [(LowerExpr offset-state offset-value _)
+                      (match (tc-type-strip-region (tc-resolve-type ctx ptr-ty))
+                        [(AstTyPtr elem-ty)
+                          (match (lower-state-alloc-var offset-state)
+                            [(LowerAlloc allocated var-id)
+                              (OkLowerExpr
+                                (LowerExpr
+                                  (lower-state-emit-at-expr
+                                    allocated
+                                    (IrInstrGep
+                                      var-id
+                                      ptr-value
+                                      offset-value
+                                      elem-ty)
+                                    origin)
+                                  (IrValueVar var-id)
+                                  expr-ty))])]
+                        [(AstTyMutPtr elem-ty)
+                          (match (lower-state-alloc-var offset-state)
+                            [(LowerAlloc allocated var-id)
+                              (OkLowerExpr
+                                (LowerExpr
+                                  (lower-state-emit-at-expr
+                                    allocated
+                                    (IrInstrGep
+                                      var-id
+                                      ptr-value
+                                      offset-value
+                                      elem-ty)
+                                    origin)
+                                  (IrValueVar var-id)
+                                  expr-ty))])]
+                        [_
+                          (ErrLowerExpr
+                            (lower-diagnostic-at-expr
+                              origin
+                              "lower: ptr-offset requires raw pointer"))])])]
+                [(ErrLowerExpr diag) (ErrLowerExpr diag)])])]
+        [(ErrLowerExpr diag) (ErrLowerExpr diag)])]
+    [(AstExprPtrCast ptr _)
+      (match (lower-expr ctx state env type-env ptr)
+        [(OkLowerExpr lowered)
+          (match lowered
+            [(LowerExpr ptr-state ptr-value ptr-ty)
+              (OkLowerExpr
+                (lower-cast-value ptr-state ptr-value ptr-ty expr-ty))])]
+        [(ErrLowerExpr diag) (ErrLowerExpr diag)])]
+    [(AstExprPtrToInt ptr)
+      (match (lower-expr ctx state env type-env ptr)
+        [(OkLowerExpr lowered)
+          (match lowered
+            [(LowerExpr ptr-state ptr-value ptr-ty)
+              (OkLowerExpr
+                (lower-cast-value ptr-state ptr-value ptr-ty expr-ty))])]
+        [(ErrLowerExpr diag) (ErrLowerExpr diag)])]
+    [(AstExprIntToPtr value _)
+      (match (lower-expr ctx state env type-env value)
+        [(OkLowerExpr lowered)
+          (match lowered
+            [(LowerExpr value-state value-ir value-ty)
+              (OkLowerExpr
+                (lower-cast-value value-state value-ir value-ty expr-ty))])]
         [(ErrLowerExpr diag) (ErrLowerExpr diag)])]
     [_
       (ErrLowerExpr
@@ -5230,6 +5347,16 @@
     [handle : i64 (file-open-status \"input.txt\" 0)]
     (+ handle (file-close-status handle))))")
 
+(define (compiler-lower-raw-pointer-ops-source) : String
+  "(extern raw-make : (-> (MutPtr i64)))
+(define (main [n : u64]) : u64
+  (let
+    [p : (MutPtr i64) (raw-make)]
+    (unsafe
+      (ptr-write! p 41)
+      (ptr-read p)
+      (ptr->int (ptr-offset (ptr-cast (int->ptr n : (MutPtr i64)) : (Ptr i64)) 2)))))")
+
 (define (compiler-lower-aggregate-source) : String
   "(defstruct Point (x i64) (y i64))
 (defenum Shape (Nothing) (Circle i64) (Pair Point))
@@ -6239,55 +6366,58 @@
                               (compiler-lower-file-handle-status-source))
                             (and
                               (compiler-lower-ok?
-                                (compiler-lower-aggregate-source))
+                                (compiler-lower-raw-pointer-ops-source))
                               (and
                                 (compiler-lower-ok?
-                                  (compiler-lower-comptime-decl-source))
+                                  (compiler-lower-aggregate-source))
                                 (and
-                                  (compiler-lower-module-symbols-ok?)
+                                  (compiler-lower-ok?
+                                    (compiler-lower-comptime-decl-source))
                                   (and
-                                    (compiler-lower-module-qualified-ok?)
+                                    (compiler-lower-module-symbols-ok?)
                                     (and
-                                      (compiler-lower-module-specialize-ok?)
+                                      (compiler-lower-module-qualified-ok?)
                                       (and
-                                        (compiler-lower-region-shape-ok?)
+                                        (compiler-lower-module-specialize-ok?)
                                         (and
-                                          (compiler-lower-repr-c-shape-ok?)
+                                          (compiler-lower-region-shape-ok?)
                                           (and
-                                            (compiler-lower-error-ok?
-                                              (compiler-typecheck-branch-mismatch-source)
-                                              "typecheck: if branches must match")
+                                            (compiler-lower-repr-c-shape-ok?)
                                             (and
                                               (compiler-lower-error-ok?
-                                                (compiler-lower-unsupported-source)
-                                                "lower: unsupported expression")
+                                                (compiler-typecheck-branch-mismatch-source)
+                                                "typecheck: if branches must match")
                                               (and
-                                                (compiler-lower-comptime-fold-ok?
-                                                  (compiler-lower-comptime-arith-source)
-                                                  3)
+                                                (compiler-lower-error-ok?
+                                                  (compiler-lower-unsupported-source)
+                                                  "lower: unsupported expression")
                                                 (and
                                                   (compiler-lower-comptime-fold-ok?
-                                                    (compiler-lower-comptime-if-source)
-                                                    42)
+                                                    (compiler-lower-comptime-arith-source)
+                                                    3)
                                                   (and
                                                     (compiler-lower-comptime-fold-ok?
-                                                      (compiler-lower-comptime-let-source)
+                                                      (compiler-lower-comptime-if-source)
                                                       42)
                                                     (and
-                                                      (compiler-lower-error-ok?
-                                                        (compiler-lower-comptime-runtime-var-source)
-                                                        "compile-time evaluation cannot reference runtime variable 'x'")
+                                                      (compiler-lower-comptime-fold-ok?
+                                                        (compiler-lower-comptime-let-source)
+                                                        42)
                                                       (and
                                                         (compiler-lower-error-ok?
-                                                          (compiler-lower-comptime-f64-source)
-                                                          "comptime: f64 compile-time evaluation not yet supported (#735)")
+                                                          (compiler-lower-comptime-runtime-var-source)
+                                                          "compile-time evaluation cannot reference runtime variable 'x'")
                                                         (and
+                                                          (compiler-lower-error-ok?
+                                                            (compiler-lower-comptime-f64-source)
+                                                            "comptime: f64 compile-time evaluation not yet supported (#735)")
                                                           (and
-                                                            (compiler-lower-comptime-op-fold-tests-ok?)
-                                                            (compiler-lower-layout-query-fold-tests-ok?))
-                                                          (and
-                                                            (compiler-lower-foreach-tests-ok?)
-                                                            (compiler-lower-spmd-reduce-tests-ok?))))))))))))))))))))))))))))))
+                                                            (and
+                                                              (compiler-lower-comptime-op-fold-tests-ok?)
+                                                              (compiler-lower-layout-query-fold-tests-ok?))
+                                                            (and
+                                                              (compiler-lower-foreach-tests-ok?)
+                                                              (compiler-lower-spmd-reduce-tests-ok?)))))))))))))))))))))))))))))))
     42
     (begin
       (panic "lower: smoke score mismatch")

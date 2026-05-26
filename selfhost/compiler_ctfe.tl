@@ -107,7 +107,13 @@
     [(AstExprComptime _) "comptime"]
     [(AstExprTry _) "try"]
     [(AstExprPtrNull _) "ptr-null"]
-    [(AstExprPtrNullCheck _) "ptr-null?"]))
+    [(AstExprPtrNullCheck _) "ptr-null?"]
+    [(AstExprPtrRead _) "ptr-read"]
+    [(AstExprPtrWrite _ _) "ptr-write!"]
+    [(AstExprPtrOffset _ _) "ptr-offset"]
+    [(AstExprPtrCast _ _) "ptr-cast"]
+    [(AstExprPtrToInt _) "ptr->int"]
+    [(AstExprIntToPtr _ _) "int->ptr"]))
 
 (define (ctfe-value-type-name [value : CompilerCtfeValue]) : String
   (match value
@@ -648,6 +654,34 @@
       (match b
         [(AstExprAnn b-inner b-ty)
           (and (ctfe-expr-eq a-inner b-inner) (ctfe-type-eq a-ty b-ty))]
+        [_ false])]
+    [(AstExprPtrRead a-ptr)
+      (match b
+        [(AstExprPtrRead b-ptr) (ctfe-expr-eq a-ptr b-ptr)]
+        [_ false])]
+    [(AstExprPtrWrite a-ptr a-value)
+      (match b
+        [(AstExprPtrWrite b-ptr b-value)
+          (and (ctfe-expr-eq a-ptr b-ptr) (ctfe-expr-eq a-value b-value))]
+        [_ false])]
+    [(AstExprPtrOffset a-ptr a-offset)
+      (match b
+        [(AstExprPtrOffset b-ptr b-offset)
+          (and (ctfe-expr-eq a-ptr b-ptr) (ctfe-expr-eq a-offset b-offset))]
+        [_ false])]
+    [(AstExprPtrCast a-ptr a-ty)
+      (match b
+        [(AstExprPtrCast b-ptr b-ty)
+          (and (ctfe-expr-eq a-ptr b-ptr) (ctfe-type-eq a-ty b-ty))]
+        [_ false])]
+    [(AstExprPtrToInt a-ptr)
+      (match b
+        [(AstExprPtrToInt b-ptr) (ctfe-expr-eq a-ptr b-ptr)]
+        [_ false])]
+    [(AstExprIntToPtr a-value a-ty)
+      (match b
+        [(AstExprIntToPtr b-value b-ty)
+          (and (ctfe-expr-eq a-value b-value) (ctfe-type-eq a-ty b-ty))]
         [_ false])]
     [(AstExprSpanned a-inner _) (ctfe-expr-eq a-inner b)]
     [_ false]))

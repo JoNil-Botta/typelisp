@@ -40,7 +40,10 @@ fi
 # output. `is_crash_code` (132/134/139) lets us retry ONLY those transient
 # crashes, never a genuine non-zero exit (so an expected failure still fails).
 . "$ROOT/scripts/lib-retry.sh"
-INTEGRATION_ATTEMPTS="${VERIFY_INTEGRATION_ATTEMPTS:-3}"
+# Default 6 (not 3): large corpus binaries like compiler_lower_smoke hit the
+# #1204 Windows segfault at a high enough rate that 3 attempts can all crash
+# (observed 3/3 on PR #1225), so the crash-only retry needs more headroom.
+INTEGRATION_ATTEMPTS="${VERIFY_INTEGRATION_ATTEMPTS:-6}"
 
 # Run a `typelisp build`/`compile` invocation, retrying a transient #1204 crash.
 # Output flows to the caller's streams; sets `build_rc` to the final exit code.

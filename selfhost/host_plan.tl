@@ -28,6 +28,11 @@
       (string-eq value "linux_x86_64")
       (or (string-eq value "windows-x86_64") (string-eq value "windows_x86_64")))))
 
+(define (host-plan-default-target) : String
+  (if (string-eq (env-path-separator) ";")
+    "windows-x86_64"
+    "linux-x86_64"))
+
 (define (host-plan-backend-mode-valid? [value : String]) : bool
   (or
     (string-eq value "scalar")

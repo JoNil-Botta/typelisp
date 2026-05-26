@@ -6,14 +6,22 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
 
 jobs:
+  # TypeLisp-owned gates must stay cross-platform. Individual scripts may skip
+  # explicitly documented Linux-only or Windows-blocked coverage, but CI should
+  # keep both OS entries wired by default.
   no-rust-stage0:
     name: No-Rust Stage0 Verification (linux)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -23,6 +31,7 @@ jobs:
   no-rust-stage0-windows:
     name: No-Rust Stage0 Verification (windows-latest)
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -36,11 +45,13 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Fetch PR base
+        if: github.event_name == 'pull_request'
+        run: git fetch --no-tags --depth=1 origin "${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
 
       - name: Check implementation language allowlist
         run: scripts/check-implementation-languages.sh
@@ -49,9 +60,14 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           SELFHOST_GUARDRAIL_PR_BODY: ${{ github.event.pull_request.body }}
-        run: |
-          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
-          SELFHOST_GUARDRAIL_BASE="origin/${{ github.base_ref }}" scripts/check-selfhost-guardrail.sh
+        run: SELFHOST_GUARDRAIL_BASE="origin/${{ github.base_ref }}" scripts/check-selfhost-guardrail.sh
+
+      - name: Check Rust test coverage map
+        if: github.event_name == 'pull_request'
+        run: RUST_TEST_COVERAGE_BASE="origin/${{ github.base_ref }}" scripts/check-rust-test-coverage-map.sh
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo dependencies
         uses: actions/cache@v4
@@ -121,6 +137,7 @@ jobs:
   test-windows:
     name: Test (windows-latest)
     runs-on: windows-latest
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
 
@@ -211,7 +228,7 @@ jobs:
   integration:
     name: Integration Tests
     runs-on: ubuntu-latest
-    needs: test
+    timeout-minutes: 20
     # Temporary Rust-built release integration coverage until #795. The
     # no-rust-stage0 job above is the required artifact-based gate.
     steps:
@@ -290,3 +307,90 @@ jobs:
 
       - name: Run bootstrap smoke check
         run: TYPELISP_BIN=./target/release/typelisp ./scripts/check-bootstrap-smoke.sh
+
+  integration-windows:
+    name: Integration Tests (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 25
+    # Keep release-built TypeLisp verification paired with the Linux integration
+    # job. Scripts that are still Linux-only skip themselves with an explicit
+    # message until their Windows path lands.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Test CLI commands
+        run: |
+          mkdir -p test_programs
+          echo '(define x : i64 42)' > test_programs/basic.tl
+          ./target/release/typelisp.exe tokenize test_programs/basic.tl
+          ./target/release/typelisp.exe parse test_programs/basic.tl
+          ./target/release/typelisp.exe check test_programs/basic.tl
+
+      - name: Test type checker
+        run: |
+          cat > test_programs/factorial.tl << 'EOF'
+          (define (factorial [n : i64]) : i64
+            (if (= n 0)
+                1
+                (* n (factorial (- n 1)))))
+          EOF
+          ./target/release/typelisp.exe check test_programs/factorial.tl
+
+      - name: Test type error detection
+        run: |
+          cat > test_programs/bad.tl << 'EOF'
+          (define (bad [a : i64] [b : bool]) : i64 (+ a b))
+          EOF
+          if ./target/release/typelisp.exe check test_programs/bad.tl; then
+            echo "Expected type error but got success"
+            exit 1
+          fi
+          echo "Correctly detected type error"
+
+      - name: Verify integration corpus
+        run: TYPELISP_BIN=./target/release/typelisp.exe ./scripts/verify-integration.sh
+
+      - name: Verify selfhost native generated programs
+        run: TYPELISP_BIN=./target/release/typelisp.exe ./scripts/verify-selfhost-native.sh
+
+      - name: Compile and verify all examples
+        run: TYPELISP_BIN=./target/release/typelisp.exe ./scripts/verify-examples.sh
+
+      - name: Verify stdlib modules
+        run: TYPELISP_BIN=./target/release/typelisp.exe ./scripts/verify-stdlib.sh
+
+      - name: Verify stdlib documentation
+        run: TYPELISP_BIN=./target/release/typelisp.exe ./scripts/verify-stdlib-docs.sh
+
+      - name: Verify TypeLisp doctests
+        run: TYPELISP_BIN=./target/release/typelisp.exe ./scripts/verify-doc-tests.sh
+
+      - name: Verify inline TypeLisp tests
+        run: TYPELISP_BIN=./target/release/typelisp.exe ./scripts/verify-inline-tests.sh
+
+      - name: Check TypeLisp source formatting
+        run: TYPELISP_BIN=./target/release/typelisp.exe ./scripts/check-tl-format.sh
+
+      - name: Run selfhost verification
+        run: TYPELISP_BIN=./target/release/typelisp.exe ./scripts/verify-selfhost.sh
+
+      - name: Run bootstrap smoke check
+        run: TYPELISP_BIN=./target/release/typelisp.exe ./scripts/check-bootstrap-smoke.sh

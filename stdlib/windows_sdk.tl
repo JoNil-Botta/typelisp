@@ -3,9 +3,8 @@
 ;;;; This module models the Windows SDK include/lib/bin layout needed by the
 ;;;; future MSVC linker environment. The first slice honors `WindowsSdkDir` and
 ;;;; `WindowsSDKVersion` environment overrides and validates the resulting
-;;;; filesystem layout before any registry probing. Registry-backed discovery is
-;;;; reported as a structured unavailable diagnostic until the narrow registry
-;;;; runtime primitive lands.
+;;;; filesystem layout before registry probing. Registry-backed discovery uses
+;;;; the narrow `stdlib/windows_registry.tl` SDK install probe.
 ;;;;
 ;;;; Usage: `(import "stdlib/windows_sdk.tl")`
 ;;;;
@@ -18,6 +17,8 @@
 (import "stdlib/io.tl")
 
 (import "stdlib/string.tl")
+
+(import "stdlib/windows_registry.tl")
 
 ;;; Concrete Windows SDK paths needed by an x64 MSVC link environment.
 (defstruct WindowsSdkLayout
@@ -242,11 +243,30 @@
         [(EnvSomeString version)
           (windows-sdk-layout-from-root-version-checked root version)])]))
 
-;;; Report that registry-backed SDK discovery is not implemented in this slice.
+;;; Validate a root/version pair found in the registry.
+(define (windows-sdk-layout-from-registry-root-version-checked
+  [root : String]
+  [version : String]) : ResultWindowsSdkLayout
+  (if (string-eq root "")
+    (ErrWindowsSdkLayout
+      (WindowsSdkRegistryUnavailable
+        "windows-sdk: registry KitsRoot10 is empty"))
+    (if (string-eq version "")
+      (ErrWindowsSdkLayout
+        (WindowsSdkRegistryUnavailable
+          "windows-sdk: registry SDK version is empty"))
+      (windows-sdk-layout-from-root-version-checked root version))))
+
+;;; Discover and validate an SDK layout from the Windows registry.
 (define (windows-sdk-discover-from-registry) : ResultWindowsSdkLayout
-  (ErrWindowsSdkLayout
-    (WindowsSdkRegistryUnavailable
-      "windows-sdk: registry-backed SDK discovery is not implemented yet")))
+  (match (windows-registry-sdk-install)
+    [(OkWindowsRegistrySdkInstall install)
+      (windows-sdk-layout-from-registry-root-version-checked
+        (windows-registry-sdk-root install)
+        (windows-registry-sdk-version install))]
+    [(ErrWindowsRegistrySdkInstall error)
+      (ErrWindowsSdkLayout
+        (WindowsSdkRegistryUnavailable (windows-registry-error-message error)))]))
 
 ;;; Discover the Windows SDK using environment overrides before registry probing.
 (define (windows-sdk-discover) : ResultWindowsSdkLayout

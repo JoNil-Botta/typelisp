@@ -60,6 +60,16 @@
     [(StringI64MapInsertOk m) m]
     [(StringI64MapInsertFull m) m]))
 
+(define (remove-ok? [r : StringI64MapRemoveResult]) : bool
+  (match r
+    [(StringI64MapRemoveOk _) true]
+    [(StringI64MapRemoveMissing _) false]))
+
+(define (remove-result-map [r : StringI64MapRemoveResult]) : StringI64Map
+  (match r
+    [(StringI64MapRemoveOk m) m]
+    [(StringI64MapRemoveMissing m) m]))
+
 (define (main) : i64
   (begin
     ;; --- bucket-index math + wraparound ---
@@ -236,4 +246,63 @@
                 (assert-false
                   (insert-ok? (string-i64-map-insert s1 "second" 8))
                   "capacity-1 second insert is full")))))))
+    ;; --- removal + tombstone accounting (#829) ---
+    (let
+      [r0 : StringI64Map (string-i64-map-with-capacity 8)]
+      [r1 : StringI64Map (insert-result-map (string-i64-map-insert r0 "k1" 10))]
+      [r2 : StringI64Map (insert-result-map (string-i64-map-insert r1 "k2" 20))]
+      (begin
+        (assert-i64-eq (string-i64-map-len r2) 2 "removal: two inserts len 2")
+        (assert-i64-eq
+          (string-i64-map-deleted r2)
+          0
+          "removal: no tombstones yet")
+        ;; remove-miss: absent key leaves the map unchanged and untouched.
+        (let
+          [miss : StringI64MapRemoveResult (string-i64-map-remove r2 "absent")]
+          (begin
+            (assert-false (remove-ok? miss) "remove-miss is not ok")
+            (assert-i64-eq
+              (string-i64-map-len (remove-result-map miss))
+              2
+              "remove-miss keeps len")
+            (assert-i64-eq
+              (string-i64-map-deleted (remove-result-map miss))
+              0
+              "remove-miss adds no tombstone")))
+        ;; remove-hit: k1 becomes a tombstone; len-1, deleted+1, k2 survives.
+        (let
+          [hit : StringI64MapRemoveResult (string-i64-map-remove r2 "k1")]
+          (begin
+            (assert-true (remove-ok? hit) "remove-hit is ok")
+            (let
+              [r3 : StringI64Map (remove-result-map hit)]
+              (begin
+                (assert-i64-eq (string-i64-map-len r3) 1 "remove-hit len 1")
+                (assert-i64-eq
+                  (string-i64-map-deleted r3)
+                  1
+                  "remove-hit deleted 1")
+                (assert-i64-eq
+                  (lookup-value-or (string-i64-map-get r3 "k1") -1)
+                  -1
+                  "k1 missing after remove")
+                (assert-true
+                  (string-i64-map-contains? r3 "k2")
+                  "k2 survives k1 removal")
+                ;; reinsert after delete reuses the tombstone: len back to 2,
+                ;; deleted back to 0, new value visible.
+                (let
+                  [r4 : StringI64Map
+                    (insert-result-map (string-i64-map-insert r3 "k1" 111))]
+                  (begin
+                    (assert-i64-eq (string-i64-map-len r4) 2 "reinsert len 2")
+                    (assert-i64-eq
+                      (string-i64-map-deleted r4)
+                      0
+                      "reinsert reuses tombstone (deleted 0)")
+                    (assert-i64-eq
+                      (lookup-value-or (string-i64-map-get r4 "k1") -1)
+                      111
+                      "k1 reinserted value")))))))))
     42))

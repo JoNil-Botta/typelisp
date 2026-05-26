@@ -141,6 +141,13 @@
   (StringI64MapInsertOk StringI64Map)
   (StringI64MapInsertFull StringI64Map))
 
+;;; Result of a removal: the updated map (a live slot becomes a tombstone in
+;;; place, so callers thread the returned map forward) when the key was present,
+;;; or `Missing` with the map unchanged when it was not.
+(defenum StringI64MapRemoveResult
+  (StringI64MapRemoveOk StringI64Map)
+  (StringI64MapRemoveMissing StringI64Map))
+
 ;;; The map's backing slot array.
 (define (string-i64-map-slots [map : StringI64Map]) : (Array StringI64MapSlot)
   (struct-get map slots))
@@ -152,6 +159,12 @@
 ;;; Number of slots in the backing table.
 (define (string-i64-map-capacity [map : StringI64Map]) : i64
   (array-length (struct-get map slots)))
+
+;;; Number of tombstone (deleted) slots awaiting reuse. Live entries plus
+;;; tombstones never exceed the capacity; this count feeds resize thresholds
+;;; (#827).
+(define (string-i64-map-deleted [map : StringI64Map]) : i64
+  (struct-get map deleted))
 
 ;;; Set slots `[index, count)` of `slots` to `StringI64MapEmpty`.
 (define (string-i64-map-fill-empty
@@ -196,10 +209,17 @@
     [(StringI64MapFound _) true]
     [(StringI64MapMissing) false]))
 
+;;; True when `slot` is a reusable tombstone.
+(define (string-i64-map-slot-tombstone? [slot : StringI64MapSlot]) : bool
+  (match slot
+    [(StringI64MapTombstone) true]
+    [(StringI64MapEmpty) false]
+    [(StringI64MapOccupied _ _ _) false]))
+
 ;;; Insert or update `key` -> `value`, mutating the backing slot array and
 ;;; returning the updated map. Updating an existing key leaves `len` unchanged;
-;;; inserting a new key increments it. `Full` when a fixed-capacity table cannot
-;;; place a new key. (Removal/tombstone reuse accounting is #829.)
+;;; inserting a new key increments it; reusing a tombstone slot also decrements
+;;; the deleted count. `Full` when a fixed-capacity table cannot place a new key.
 (define (string-i64-map-insert
   [map : StringI64Map]
   [key : String]
@@ -213,11 +233,41 @@
           (array-set! slots index (StringI64MapOccupied key value hash))
           (StringI64MapInsertOk map))]
       [(StringI64MapProbeAbsent index)
+        (let
+          [reused-tombstone : bool
+            (string-i64-map-slot-tombstone? (array-ref slots index))]
+          (begin
+            (array-set! slots index (StringI64MapOccupied key value hash))
+            (StringI64MapInsertOk
+              (StringI64Map
+                slots
+                (+ (string-i64-map-len map) 1)
+                (if reused-tombstone
+                  (- (string-i64-map-deleted map) 1)
+                  (string-i64-map-deleted map))))))]
+      [(StringI64MapProbeFull) (StringI64MapInsertFull map)])))
+
+;;; Remove `key`, replacing its live slot with a tombstone (so probing past it
+;;; still finds later collided keys) and returning the updated map with `len`
+;;; decremented and the deleted count incremented. Returns `Missing` with the
+;;; map unchanged when the key is absent. A later insert can reuse the
+;;; tombstone. The backing array is mutated in place, so thread the result
+;;; forward.
+(define (string-i64-map-remove [map : StringI64Map] [key : String]) : StringI64MapRemoveResult
+  (let
+    [slots : (Array StringI64MapSlot) (string-i64-map-slots map)]
+    (match (string-i64-map-probe
+      slots
+      (string-i64-map-capacity map)
+      key
+      (hash-string key))
+      [(StringI64MapProbeFound index)
         (begin
-          (array-set! slots index (StringI64MapOccupied key value hash))
-          (StringI64MapInsertOk
+          (array-set! slots index (StringI64MapTombstone))
+          (StringI64MapRemoveOk
             (StringI64Map
               slots
-              (+ (string-i64-map-len map) 1)
-              (struct-get map deleted))))]
-      [(StringI64MapProbeFull) (StringI64MapInsertFull map)])))
+              (- (string-i64-map-len map) 1)
+              (+ (string-i64-map-deleted map) 1))))]
+      [(StringI64MapProbeAbsent _) (StringI64MapRemoveMissing map)]
+      [(StringI64MapProbeFull) (StringI64MapRemoveMissing map)])))

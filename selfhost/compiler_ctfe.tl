@@ -2,10 +2,10 @@
 ;; expression-position `(comptime expr)` (#719, scalar subset).
 ;;
 ;; Ports the scalar slice of the Rust reference `src/ctfe.rs`. Supported
-;; compile-time value types are i64, bool, char, unit, and type values. f64 compile-time
-;; evaluation is intentionally out of scope here (the selfhost compiler stores
-;; floats as opaque text with no arithmetic primitives) and is rejected with a
-;; diagnostic citing #735.
+;; compile-time value types are i64, bool, char, unit, type values, and
+;; Expr / list aggregates (#1137). f64 compile-time evaluation is intentionally
+;; out of scope here (the selfhost compiler stores floats as opaque text with
+;; no arithmetic primitives) and is rejected with a diagnostic citing #735.
 ;;
 ;; Evaluation is purely functional: the environment is an immutable cons list
 ;; threaded through recursion, and the step budget ("fuel") is threaded through
@@ -14,13 +14,16 @@
 
 (import "compiler_diagnostic.tl")
 
-;; A compile-time scalar value.
+;; A compile-time value. Scalar subset from #719; Expr / ExprList aggregates
+;; from #1137 for macro transformers.
 (defenum CompilerCtfeValue
   (CtfeI64 i64)
   (CtfeBool bool)
   (CtfeChar char)
   (CtfeUnit)
-  (CtfeType AstType))
+  (CtfeType AstType)
+  (CtfeExpr AstExpr)
+  (CtfeExprList AstExprList))
 
 ;; Immutable name -> value environment. Newest binding sits at the front so
 ;; lookup finds the most recent shadowing binding first.
@@ -109,7 +112,9 @@
     [(CtfeBool _) "bool"]
     [(CtfeChar _) "char"]
     [(CtfeUnit) "unit"]
-    [(CtfeType _) "type"]))
+    [(CtfeType _) "type"]
+    [(CtfeExpr _) "expr"]
+    [(CtfeExprList _) "expr-list"]))
 
 ;; Promote a char to its i64 code point so the i64 comparison primitives drive
 ;; char ordering/equality, matching Rust's code-point comparison.
@@ -282,6 +287,38 @@
           (ErrCtfe
             (ctfe-diagnostic-at-expr
               expr
+              "binary operation in comptime requires matching operand types"))])]
+    [(CtfeExpr a)
+      (match rv
+        [(CtfeExpr b)
+          (match op
+            [(AstBinEq) (OkCtfe (CtfeBool (ctfe-expr-eq a b)) fuel)]
+            [(AstBinNe) (OkCtfe (CtfeBool (not (ctfe-expr-eq a b))) fuel)]
+            [_
+              (ErrCtfe
+                (ctfe-diagnostic-at-expr
+                  expr
+                  "this operation is not supported on expr in compile-time evaluation"))])]
+        [_
+          (ErrCtfe
+            (ctfe-diagnostic-at-expr
+              expr
+              "binary operation in comptime requires matching operand types"))])]
+    [(CtfeExprList a)
+      (match rv
+        [(CtfeExprList b)
+          (match op
+            [(AstBinEq) (OkCtfe (CtfeBool (ctfe-expr-list-eq a b)) fuel)]
+            [(AstBinNe) (OkCtfe (CtfeBool (not (ctfe-expr-list-eq a b))) fuel)]
+            [_
+              (ErrCtfe
+                (ctfe-diagnostic-at-expr
+                  expr
+                  "this operation is not supported on expr-list in compile-time evaluation"))])]
+        [_
+          (ErrCtfe
+            (ctfe-diagnostic-at-expr
+              expr
               "binary operation in comptime requires matching operand types"))])]))
 
 ;; --- unary operators --------------------------------------------------------
@@ -443,16 +480,302 @@
             [_ (ctfe-eval-begin rest env head-fuel)])]
         [(ErrCtfe diag) (ErrCtfe diag)])]))
 
+;; --- expr constructors and inspectors (#1137) --------------------------------
+;; Macro transformers need to build and pattern-match AST nodes at comptime.
+;; These constructors / inspectors cover the forms needed by v1 macros
+;; (and, or, when, unless, cond): literals, variables, if, and call.
+;; EQ -------------------------------------------------------------------------
+(define (ctfe-literal-eq [a : AstLiteral] [b : AstLiteral]) : bool
+  (match a
+    [(AstLitInt a-n)
+      (match b
+        [(AstLitInt b-n) (= a-n b-n)]
+        [_ false])]
+    [(AstLitBool a-b)
+      (match b
+        [(AstLitBool b-b) (= a-b b-b)]
+        [_ false])]
+    [(AstLitChar a-c)
+      (match b
+        [(AstLitChar b-c) (= a-c b-c)]
+        [_ false])]
+    [(AstLitUnit)
+      (match b
+        [(AstLitUnit) true]
+        [_ false])]
+    [_ false]))
+
+(define (ctfe-expr-eq [a : AstExpr] [b : AstExpr]) : bool
+  (match a
+    [(AstExprLiteral a-lit)
+      (match b
+        [(AstExprLiteral b-lit) (ctfe-literal-eq a-lit b-lit)]
+        [_ false])]
+    [(AstExprVar a-name)
+      (match b
+        [(AstExprVar b-name) (string-eq a-name b-name)]
+        [_ false])]
+    [(AstExprBinary a-op a-l a-r)
+      (match b
+        [(AstExprBinary b-op b-l b-r)
+          (and
+            (ctfe-binop-eq a-op b-op)
+            (and (ctfe-expr-eq a-l b-l) (ctfe-expr-eq a-r b-r)))]
+        [_ false])]
+    [(AstExprUnary a-op a-in)
+      (match b
+        [(AstExprUnary b-op b-in)
+          (and (ctfe-unop-eq a-op b-op) (ctfe-expr-eq a-in b-in))]
+        [_ false])]
+    [(AstExprIf a-c a-t a-e)
+      (match b
+        [(AstExprIf b-c b-t b-e)
+          (and
+            (ctfe-expr-eq a-c b-c)
+            (and (ctfe-expr-eq a-t b-t) (ctfe-expr-eq a-e b-e)))]
+        [_ false])]
+    [(AstExprCall a-fun a-args)
+      (match b
+        [(AstExprCall b-fun b-args)
+          (and (ctfe-expr-eq a-fun b-fun) (ctfe-expr-list-eq a-args b-args))]
+        [_ false])]
+    [(AstExprBegin a-exprs)
+      (match b
+        [(AstExprBegin b-exprs) (ctfe-expr-list-eq a-exprs b-exprs)]
+        [_ false])]
+    [(AstExprAnn a-inner a-ty)
+      (match b
+        [(AstExprAnn b-inner b-ty)
+          (and (ctfe-expr-eq a-inner b-inner) (ctfe-type-eq a-ty b-ty))]
+        [_ false])]
+    [(AstExprSpanned a-inner _) (ctfe-expr-eq a-inner b)]
+    [_ false]))
+
+(define (ctfe-expr-list-eq [a : AstExprList] [b : AstExprList]) : bool
+  (match a
+    [(AstExprNil)
+      (match b
+        [(AstExprNil) true]
+        [_ false])]
+    [(AstExprCons a-head a-tail)
+      (match b
+        [(AstExprCons b-head b-tail)
+          (and (ctfe-expr-eq a-head b-head) (ctfe-expr-list-eq a-tail b-tail))]
+        [_ false])]))
+
+(define (ctfe-binop-eq [a : AstBinOp] [b : AstBinOp]) : bool
+  (match a
+    [(AstBinAdd)
+      (match b
+        [(AstBinAdd) true]
+        [_ false])]
+    [(AstBinSub)
+      (match b
+        [(AstBinSub) true]
+        [_ false])]
+    [(AstBinMul)
+      (match b
+        [(AstBinMul) true]
+        [_ false])]
+    [(AstBinDiv)
+      (match b
+        [(AstBinDiv) true]
+        [_ false])]
+    [(AstBinMod)
+      (match b
+        [(AstBinMod) true]
+        [_ false])]
+    [(AstBinEq)
+      (match b
+        [(AstBinEq) true]
+        [_ false])]
+    [(AstBinNe)
+      (match b
+        [(AstBinNe) true]
+        [_ false])]
+    [(AstBinLt)
+      (match b
+        [(AstBinLt) true]
+        [_ false])]
+    [(AstBinLe)
+      (match b
+        [(AstBinLe) true]
+        [_ false])]
+    [(AstBinGt)
+      (match b
+        [(AstBinGt) true]
+        [_ false])]
+    [(AstBinGe)
+      (match b
+        [(AstBinGe) true]
+        [_ false])]
+    [(AstBinAnd)
+      (match b
+        [(AstBinAnd) true]
+        [_ false])]
+    [(AstBinOr)
+      (match b
+        [(AstBinOr) true]
+        [_ false])]
+    [(AstBinBitAnd)
+      (match b
+        [(AstBinBitAnd) true]
+        [_ false])]
+    [(AstBinBitOr)
+      (match b
+        [(AstBinBitOr) true]
+        [_ false])]
+    [(AstBinBitXor)
+      (match b
+        [(AstBinBitXor) true]
+        [_ false])]
+    [(AstBinShl)
+      (match b
+        [(AstBinShl) true]
+        [_ false])]
+    [(AstBinShr)
+      (match b
+        [(AstBinShr) true]
+        [_ false])]))
+
+(define (ctfe-unop-eq [a : AstUnOp] [b : AstUnOp]) : bool
+  (match a
+    [(AstUnNeg)
+      (match b
+        [(AstUnNeg) true]
+        [_ false])]
+    [(AstUnNot)
+      (match b
+        [(AstUnNot) true]
+        [_ false])]
+    [(AstUnBitNot)
+      (match b
+        [(AstUnBitNot) true]
+        [_ false])]))
+
+;; CONSTRUCTORS ----------------------------------------------------------------
+(define (ctfe-expr-literal [lit : AstLiteral]) : AstExpr
+  (AstExprLiteral lit))
+
+(define (ctfe-expr-bool [b : bool]) : AstExpr
+  (AstExprLiteral (AstLitBool b)))
+
+(define (ctfe-expr-var [name : String]) : AstExpr
+  (AstExprVar name))
+
+(define (ctfe-expr-if
+  [cond : AstExpr]
+  [then-branch : AstExpr]
+  [else-branch : AstExpr]) : AstExpr
+  (AstExprIf cond then-branch else-branch))
+
+(define (ctfe-expr-call [func : AstExpr] [args : AstExprList]) : AstExpr
+  (AstExprCall func args))
+
+(define (ctfe-expr-begin [exprs : AstExprList]) : AstExpr
+  (AstExprBegin exprs))
+
+;; LIST UTILITIES --------------------------------------------------------------
+(define (ctfe-expr-list-empty) : AstExprList
+  AstExprNil)
+
+(define (ctfe-expr-list-singleton [e : AstExpr]) : AstExprList
+  (AstExprCons e AstExprNil))
+
+(define (ctfe-expr-list-cons [head : AstExpr] [tail : AstExprList]) : AstExprList
+  (AstExprCons head tail))
+
+(define (ctfe-expr-list-length [lst : AstExprList]) : i64
+  (match lst
+    [(AstExprNil) 0]
+    [(AstExprCons _ rest) (+ 1 (ctfe-expr-list-length rest))]))
+
+(define (ctfe-expr-list-empty? [lst : AstExprList]) : bool
+  (match lst
+    [(AstExprNil) true]
+    [_ false]))
+
+;; INSPECTORS (predicates) -----------------------------------------------------
+(define (ctfe-expr-literal? [e : AstExpr]) : bool
+  (match e
+    [(AstExprLiteral _) true]
+    [_ false]))
+
+(define (ctfe-expr-var? [e : AstExpr]) : bool
+  (match e
+    [(AstExprVar _) true]
+    [_ false]))
+
+(define (ctfe-expr-if? [e : AstExpr]) : bool
+  (match e
+    [(AstExprIf _ _ _) true]
+    [_ false]))
+
+(define (ctfe-expr-call? [e : AstExpr]) : bool
+  (match e
+    [(AstExprCall _ _) true]
+    [_ false]))
+
+;; INSPECTORS (extractors) -----------------------------------------------------
+(define (ctfe-expr-literal-value [e : AstExpr]) : AstLiteral
+  (match e
+    [(AstExprLiteral lit) lit]
+    [_ (AstLitUnit)]))
+
+(define (ctfe-expr-var-name [e : AstExpr]) : String
+  (match e
+    [(AstExprVar name) name]
+    [_ ""]))
+
+(define (ctfe-expr-if-cond [e : AstExpr]) : AstExpr
+  (match e
+    [(AstExprIf c _ _) c]
+    [_ (AstExprLiteral (AstLitUnit))]))
+
+(define (ctfe-expr-if-then [e : AstExpr]) : AstExpr
+  (match e
+    [(AstExprIf _ t _) t]
+    [_ (AstExprLiteral (AstLitUnit))]))
+
+(define (ctfe-expr-if-else [e : AstExpr]) : AstExpr
+  (match e
+    [(AstExprIf _ _ e) e]
+    [_ (AstExprLiteral (AstLitUnit))]))
+
+(define (ctfe-expr-call-func [e : AstExpr]) : AstExpr
+  (match e
+    [(AstExprCall f _) f]
+    [_ (AstExprLiteral (AstLitUnit))]))
+
+(define (ctfe-expr-call-args [e : AstExpr]) : AstExprList
+  (match e
+    [(AstExprCall _ args) args]
+    [_ AstExprNil]))
+
+(define (ctfe-expr-list-head [lst : AstExprList]) : AstExpr
+  (match lst
+    [(AstExprCons head _) head]
+    [_ (AstExprLiteral (AstLitUnit))]))
+
+(define (ctfe-expr-list-tail [lst : AstExprList]) : AstExprList
+  (match lst
+    [(AstExprCons _ tail) tail]
+    [_ AstExprNil]))
+
 ;; --- folding ----------------------------------------------------------------
 ;; Convert a folded compile-time value into the AST literal that lowering then
-;; materializes through the ordinary literal path.
+;; materializes through the ordinary literal path. Expr / ExprList values are
+;; compile-time only and have no runtime literal form; this is used for scalar
+;; value lowering.
 (define (ctfe-value-to-literal [value : CompilerCtfeValue]) : AstLiteral
   (match value
     [(CtfeI64 n) (AstLitInt n)]
     [(CtfeBool b) (AstLitBool b)]
     [(CtfeChar c) (AstLitChar c)]
     [(CtfeUnit) (AstLitUnit)]
-    [(CtfeType _) (AstLitUnit)]))
+    [(CtfeType _) (AstLitUnit)]
+    [(CtfeExpr _) (AstLitUnit)]
+    [(CtfeExprList _) (AstLitUnit)]))
 
 (define (ctfe-type-list-eq [a : AstTypeList] [b : AstTypeList]) : bool
   (match a
@@ -650,11 +973,81 @@
         [_ false])]
     [(ErrCtfe _) false]))
 
+;; --- self-tests (#1137 additions) -------------------------------------------
+;; Basic round-trip: build an `if` expression from bool literal constructors,
+;; compare it structurally, extract its parts, and verify list ops.
+(define (compiler-ctfe-expr-eq-ok?) : bool
+  (let
+    [true-lit : AstExpr (ctfe-expr-bool true)]
+    [false-lit : AstExpr (ctfe-expr-bool false)]
+    [var-x : AstExpr (ctfe-expr-var "x")]
+    [if1 : AstExpr (ctfe-expr-if var-x true-lit false-lit)]
+    [if2 : AstExpr (ctfe-expr-if var-x true-lit false-lit)]
+    [if3 : AstExpr (ctfe-expr-if true-lit var-x false-lit)]
+    (and
+      (ctfe-expr-eq if1 if2)
+      (and
+        (not (ctfe-expr-eq if1 if3))
+        (and
+          (ctfe-expr-if? if1)
+          (and
+            (ctfe-expr-eq (ctfe-expr-if-cond if1) var-x)
+            (and
+              (ctfe-expr-eq (ctfe-expr-if-then if1) true-lit)
+              (ctfe-expr-eq (ctfe-expr-if-else if1) false-lit))))))))
+
+(define (compiler-ctfe-expr-list-ok?) : bool
+  (let
+    [a : AstExpr (ctfe-expr-bool true)]
+    [b : AstExpr (ctfe-expr-bool false)]
+    [lst1 : AstExprList (ctfe-expr-list-cons a (ctfe-expr-list-singleton b))]
+    [lst2 : AstExprList (ctfe-expr-list-cons a (ctfe-expr-list-singleton b))]
+    [lst3 : AstExprList (ctfe-expr-list-singleton a)]
+    (and
+      (ctfe-expr-list-eq lst1 lst2)
+      (and
+        (not (ctfe-expr-list-eq lst1 lst3))
+        (and
+          (= (ctfe-expr-list-length lst1) 2)
+          (and
+            (not (ctfe-expr-list-empty? lst1))
+            (and
+              (ctfe-expr-eq (ctfe-expr-list-head lst1) a)
+              (ctfe-expr-eq (ctfe-expr-list-head (ctfe-expr-list-tail lst1)) b))))))))
+
+(define (compiler-ctfe-expr-list-fold-sketch-ok?)
+  :
+  bool
+  ;; Simulate the core list-recursion a macro transformer does: build a
+  ;; right-leaning `if` chain from a list of conditions and a final else.
+  (let
+    [cond1 : AstExpr (ctfe-expr-var "a")]
+    [cond2 : AstExpr (ctfe-expr-var "b")]
+    [else-expr : AstExpr (ctfe-expr-bool false)]
+    [conds : AstExprList
+      (ctfe-expr-list-cons cond1 (ctfe-expr-list-singleton cond2))]
+    ;; fold helper: single cond -> (if cond true else)
+    [folded1 : AstExpr (ctfe-expr-if cond2 (ctfe-expr-bool true) else-expr)]
+    ;; next: (if cond1 true (if cond2 true else))
+    [folded2 : AstExpr (ctfe-expr-if cond1 (ctfe-expr-bool true) folded1)]
+    [expected : AstExpr
+      (ctfe-expr-if
+        cond1
+        (ctfe-expr-bool true)
+        (ctfe-expr-if cond2 (ctfe-expr-bool true) else-expr))]
+    (ctfe-expr-eq folded2 expected)))
+
 (define (compiler-ctfe-self-test) : i64
   (if (compiler-ctfe-type-literal-ok?)
     (if (compiler-ctfe-type-comparison-ok?)
       (if (compiler-ctfe-raw-pointer-type-comparison-ok?)
-        42
+        (if (compiler-ctfe-expr-eq-ok?)
+          (if (compiler-ctfe-expr-list-ok?)
+            (if (compiler-ctfe-expr-list-fold-sketch-ok?)
+              42
+              1)
+            1)
+          1)
         1)
       1)
     1))

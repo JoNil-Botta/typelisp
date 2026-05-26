@@ -303,7 +303,9 @@
         "bool_0")]
     [(CtfeChar c) (string-append "char_" (int->string (cast c : i64)))]
     [(CtfeUnit) "unit"]
-    [(CtfeType ty) (string-append "type_" (spec-type-key ty))]))
+    [(CtfeType ty) (string-append "type_" (spec-type-key ty))]
+    [(CtfeExpr _) "expr"]
+    [(CtfeExprList _) "expr-list"]))
 
 (define (spec-values-key [values : SpecValueList]) : String
   (match values
@@ -329,7 +331,9 @@
     [(CtfeBool _) (ctfe-type-eq ty (AstTyBool))]
     [(CtfeChar _) (ctfe-type-eq ty (AstTyChar))]
     [(CtfeUnit) (ctfe-type-eq ty (AstTyUnit))]
-    [(CtfeType _) false]))
+    [(CtfeType _) false]
+    [(CtfeExpr _) false]
+    [(CtfeExprList _) false]))
 
 (define (spec-value-type-label [value : CompilerCtfeValue]) : String
   (match value
@@ -337,7 +341,9 @@
     [(CtfeBool _) "bool"]
     [(CtfeChar _) "char"]
     [(CtfeUnit) "unit"]
-    [(CtfeType _) "type"]))
+    [(CtfeType _) "type"]
+    [(CtfeExpr _) "expr"]
+    [(CtfeExprList _) "expr-list"]))
 
 (define (spec-type-subst-lookup [subs : SpecTypeSubst] [name : String]) : SpecMaybeString
   (match subs
@@ -537,7 +543,17 @@
           origin
           (string-append
             "cannot substitute compile-time type value "
-            (string-append (spec-type-key ty) " into runtime expression"))))]))
+            (string-append (spec-type-key ty) " into runtime expression"))))]
+    [(CtfeExpr _)
+      (ErrSpecSubExpr
+        (spec-diagnostic-at-expr
+          origin
+          "cannot substitute compile-time Expr value into runtime expression"))]
+    [(CtfeExprList _)
+      (ErrSpecSubExpr
+        (spec-diagnostic-at-expr
+          origin
+          "cannot substitute compile-time ExprList value into runtime expression"))]))
 
 (define (spec-expr-var-name [expr : AstExpr]) : SpecMaybeString
   (match (ast-expr-unspan expr)

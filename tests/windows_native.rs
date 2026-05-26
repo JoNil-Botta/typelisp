@@ -12,6 +12,46 @@ struct Case {
     args: &'static [&'static str],
 }
 
+/// Windows exit codes that indicate a process crash rather than a clean failure.
+/// 0xC0000005 (access violation, -1073741819) and 0xC000001D (illegal
+/// instruction, -1073741795) are the #1204 intermittent native-segfault codes;
+/// 132/134/139 cover the bash/MSYS 128+signal convention. Mirrors the crash-only
+/// retry guard added for `tests/cli.rs` (#1248) and the `verify-*.sh` gates (#1247).
+fn is_crash_code(code: Option<i32>) -> bool {
+    matches!(
+        code,
+        Some(132) | Some(134) | Some(139) | Some(-1073741819) | Some(-1073741795)
+    )
+}
+
+/// Re-run a native-binary spawn while it exits with a crash code, up to
+/// `WINDOWS_NATIVE_TEST_ATTEMPTS` times (default 6, matching #1247). Only crashes
+/// are retried; a clean non-crash exit (including a real test failure) is returned
+/// immediately so genuine regressions still fail fast. Mitigates the #1204 Windows
+/// segfault flake on the large selfhost smokes.
+fn run_native_with_crash_retry(
+    mut make: impl FnMut() -> std::process::Output,
+) -> std::process::Output {
+    let attempts = std::env::var("WINDOWS_NATIVE_TEST_ATTEMPTS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|count| *count >= 1)
+        .unwrap_or(6);
+    let mut output = make();
+    let mut attempt = 1;
+    while attempt < attempts && is_crash_code(output.status.code()) {
+        eprintln!(
+            "windows_native: retrying after crash exit {:?} (attempt {}/{})",
+            output.status.code(),
+            attempt + 1,
+            attempts
+        );
+        output = make();
+        attempt += 1;
+    }
+    output
+}
+
 const TL_EMIT_PROGRAM_ASM: &str = concat!(
     "    .text\n",
     "    .globl main\n",
@@ -208,9 +248,11 @@ fn selfhost_backend_windows_runtime_helpers_emit_assemble_link_and_run() {
         "linking selfhost Windows runtime helper output failed"
     );
 
-    let output = Command::new(&bin_path)
-        .output()
-        .expect("run selfhost Windows runtime helper binary");
+    let output = run_native_with_crash_retry(|| {
+        Command::new(&bin_path)
+            .output()
+            .expect("run selfhost Windows runtime helper binary")
+    });
     assert_eq!(
         output.status.code(),
         Some(42),
@@ -514,11 +556,13 @@ fn selfhost_backend_windows_driver_primitives_emit_assemble_link_and_run() {
         "linking selfhost Windows driver primitive output failed"
     );
 
-    let output = Command::new(&bin_path)
-        .arg(&input_path)
-        .arg(&output_path)
-        .output()
-        .expect("run selfhost Windows driver primitive binary");
+    let output = run_native_with_crash_retry(|| {
+        Command::new(&bin_path)
+            .arg(&input_path)
+            .arg(&output_path)
+            .output()
+            .expect("run selfhost Windows driver primitive binary")
+    });
     assert_eq!(
         output.status.code(),
         Some(42),
@@ -938,14 +982,16 @@ fn run_case(case: &Case) {
     let source_dir = source_path.parent().expect("case source path has parent");
     copy_case_deps(&manifest_dir, source_dir, &work_dir, case.deps);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .arg("run")
-        .arg(&work_path)
-        .arg("--target")
-        .arg("windows-x86_64")
-        .args(case.args)
-        .output()
-        .expect("run typelisp Windows native case");
+    let output = run_native_with_crash_retry(|| {
+        Command::new(env!("CARGO_BIN_EXE_typelisp"))
+            .arg("run")
+            .arg(&work_path)
+            .arg("--target")
+            .arg("windows-x86_64")
+            .args(case.args)
+            .output()
+            .expect("run typelisp Windows native case")
+    });
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);

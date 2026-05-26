@@ -24,8 +24,9 @@ installed-root discovery, namespace isolation, or an implicit prelude.
 - `hashmap.tl`: fixed-capacity, open-addressed `String -> i64` map — the
   linear-probing core with full-table detection (#825) plus the v1 map API
   (`string-i64-map-with-capacity` / `-insert` / `-get` / `-contains?` / `-len`,
-  copied-value lookup; #826). Resize (#827) and removal (#829) are follow-ups.
-  Import it with `(import "stdlib/hashmap.tl")`.
+  copied-value lookup; #826) and tombstone-based removal (`-remove` / `-deleted`,
+  with reinsert reusing tombstones; #829). Resize/rehash (#827) and deterministic
+  iteration are follow-ups. Import it with `(import "stdlib/hashmap.tl")`.
 - `json.tl`: JSON value parser and serializer for tool protocols and data
   exchange. Import it with `(import "stdlib/json.tl")`.
 - `process.tl`: process command/output/error data model for selfhost tools.

@@ -118,57 +118,40 @@
     [(NoneI64) (parse-tag-call)]))
 
 (define (parse-op-tag [tag : i64]) : BinOp
-  (if (= tag (parse-tag-add))
-    (OpAdd)
-    (if (= tag (parse-tag-sub))
-      (OpSub)
-      (if (= tag (parse-tag-mul))
-        (OpMul)
-        (if (= tag (parse-tag-lt))
-          (OpLt)
-          (if (= tag (parse-tag-eq))
-            (OpEq)
-            (if (= tag (parse-tag-le))
-              (OpLe)
-              (if (= tag (parse-tag-gt))
-                (OpGt)
-                (if (= tag (parse-tag-ge))
-                  (OpGe)
-                  (if (= tag (parse-tag-ne))
-                    (OpNe)
-                    (if (= tag (parse-tag-and))
-                      (OpAnd)
-                      (if (= tag (parse-tag-or))
-                        (OpOr)
-                        (begin
-                          (panic "parse: unknown operator")
-                          (OpAdd))))))))))))))
+  (cond
+    [(= tag (parse-tag-add)) (OpAdd)]
+    [(= tag (parse-tag-sub)) (OpSub)]
+    [(= tag (parse-tag-mul)) (OpMul)]
+    [(= tag (parse-tag-lt)) (OpLt)]
+    [(= tag (parse-tag-eq)) (OpEq)]
+    [(= tag (parse-tag-le)) (OpLe)]
+    [(= tag (parse-tag-gt)) (OpGt)]
+    [(= tag (parse-tag-ge)) (OpGe)]
+    [(= tag (parse-tag-ne)) (OpNe)]
+    [(= tag (parse-tag-and)) (OpAnd)]
+    [(= tag (parse-tag-or)) (OpOr)]
+    [else
+      (begin
+        (panic "parse: unknown operator")
+        (OpAdd))]))
 
 (define (parse-op [op : String]) : BinOp
   (parse-op-tag (parse-dispatch-tag (parse-dispatch-env) op)))
 
 (define (is-binary-tag [tag : i64]) : bool
-  (if (= tag (parse-tag-add))
-    true
-    (if (= tag (parse-tag-sub))
-      true
-      (if (= tag (parse-tag-mul))
-        true
-        (if (= tag (parse-tag-lt))
-          true
-          (if (= tag (parse-tag-eq))
-            true
-            (if (= tag (parse-tag-le))
-              true
-              (if (= tag (parse-tag-gt))
-                true
-                (if (= tag (parse-tag-ge))
-                  true
-                  (if (= tag (parse-tag-ne))
-                    true
-                    (if (= tag (parse-tag-and))
-                      true
-                      (= tag (parse-tag-or)))))))))))))
+  (cond
+    [(= tag (parse-tag-add)) true]
+    [(= tag (parse-tag-sub)) true]
+    [(= tag (parse-tag-mul)) true]
+    [(= tag (parse-tag-lt)) true]
+    [(= tag (parse-tag-eq)) true]
+    [(= tag (parse-tag-le)) true]
+    [(= tag (parse-tag-gt)) true]
+    [(= tag (parse-tag-ge)) true]
+    [(= tag (parse-tag-ne)) true]
+    [(= tag (parse-tag-and)) true]
+    [(= tag (parse-tag-or)) true]
+    [else false]))
 
 (define (is-binary-op [op : String]) : bool
   (is-binary-tag (parse-dispatch-tag (parse-dispatch-env) op)))

@@ -1875,7 +1875,7 @@
     ;; Successful folds reuse the ordinary literal path; CTFE rejections (free
     ;; runtime vars, unsupported forms, f64 -> #735) surface as lower errors.
     [(AstExprComptime inner)
-      (match (compiler-ctfe-eval inner (ctfe-env-empty) (ctfe-fuel-limit))
+      (match (compiler-ctfe-eval inner (tc-ctfe-env ctx) (ctfe-fuel-limit))
         [(OkCtfe value _)
           (match value
             [(CtfeType ty)
@@ -3140,26 +3140,33 @@
       ;; recover their String byte-index builtin here unless shadowed (#677).
       (if (and
         (lower-builtin-call-available? ctx env name)
-        (or (string-eq name "string-ref") (string-eq name "char-at")))
-        (lower-string-ref-call
-          ctx
-          state
-          env
-          type-env
-          name
-          args
-          result-ty
-          origin)
+        (tc-layout-query-name? name))
+        (ErrLowerExpr
+          (lower-diagnostic-at-expr
+            origin
+            (string-append
+              "lower: "
+              (string-append
+                name
+                " is compile-time only; wrap it in (comptime ...)"))))
         (if (and
           (lower-builtin-call-available? ctx env name)
-          (or
-            (string-eq name "array-length")
-            (or (string-eq name "length") (string-eq name "string-length"))))
-          (lower-array-length ctx state env type-env name args result-ty origin)
+          (or (string-eq name "string-ref") (string-eq name "char-at")))
+          (lower-string-ref-call
+            ctx
+            state
+            env
+            type-env
+            name
+            args
+            result-ty
+            origin)
           (if (and
             (lower-builtin-call-available? ctx env name)
-            (lower-string-runtime-builtin? name))
-            (lower-string-runtime-call
+            (or
+              (string-eq name "array-length")
+              (or (string-eq name "length") (string-eq name "string-length"))))
+            (lower-array-length
               ctx
               state
               env
@@ -3170,37 +3177,49 @@
               origin)
             (if (and
               (lower-builtin-call-available? ctx env name)
-              (lower-stdio-builtin? name))
-              (lower-direct-call
+              (lower-string-runtime-builtin? name))
+              (lower-string-runtime-call
                 ctx
                 state
                 env
                 type-env
-                (lower-stdio-runtime-name name)
+                name
                 args
                 result-ty
                 origin)
               (if (and
                 (lower-builtin-call-available? ctx env name)
-                (lower-bootstrap-runtime-builtin? name))
-                (lower-bootstrap-runtime-call
+                (lower-stdio-builtin? name))
+                (lower-direct-call
                   ctx
                   state
                   env
                   type-env
-                  name
+                  (lower-stdio-runtime-name name)
                   args
                   result-ty
                   origin)
-                (lower-call-non-builtin
-                  ctx
-                  state
-                  env
-                  type-env
-                  name
-                  args
-                  result-ty
-                  origin))))))]
+                (if (and
+                  (lower-builtin-call-available? ctx env name)
+                  (lower-bootstrap-runtime-builtin? name))
+                  (lower-bootstrap-runtime-call
+                    ctx
+                    state
+                    env
+                    type-env
+                    name
+                    args
+                    result-ty
+                    origin)
+                  (lower-call-non-builtin
+                    ctx
+                    state
+                    env
+                    type-env
+                    name
+                    args
+                    result-ty
+                    origin)))))))]
     [_
       (ErrLowerExpr
         (lower-diagnostic-at-expr func "lower: only direct calls are supported"))]))
@@ -6153,9 +6172,29 @@
           (compiler-lower-comptime-fold-ok?
             "(define (main) : i64 (comptime (size-of (type bool))))"
             1)
-          (compiler-lower-comptime-fold-ok?
-            "(define (main) : i64 (comptime (size-of (type char))))"
-            1))))))
+          (and
+            (compiler-lower-comptime-fold-ok?
+              "(define (main) : i64 (comptime (size-of (type char))))"
+              1)
+            (and
+              (compiler-lower-comptime-fold-ok?
+                "(defstruct Inner
+  (:repr c)
+  (x i32))
+(defstruct Outer
+  (:repr c)
+  (tag u8)
+  (inner Inner)
+  (tail i64))
+(define (main) : i64
+  (comptime (+ (size-of (type Outer))
+    (+ (align-of (type Outer))
+      (+ (offset-of (type Outer) inner)
+        (+ (offset-of (type Outer) tail) 6))))))"
+                42)
+              (compiler-lower-error-ok?
+                "(define (main) : i64 (size-of (type i64)))"
+                "typecheck: size-of is compile-time only; wrap it in (comptime ...)"))))))))
 
 ;; `and`/`or` short-circuit lowering (#1132 / #1165): `(and a b)` and `(or a b)`
 ;; desugar to a conditional branch, so a function whose body is a bare `and`/`or`

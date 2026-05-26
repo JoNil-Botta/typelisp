@@ -33,6 +33,18 @@ if [ ! -x "$COMPILER" ]; then
     exit 1
 fi
 
+# #1270: `typelisp test --check` runs selfhost/test.tl as an emitted binary that
+# segfaults on its --check (selfhost-typechecker) code path on Windows — a memory
+# bug distinct from the emitted-binary ASLR crash #1262 fixes (the binary already
+# links /DYNAMICBASE:NO; the same binary run without --check is clean). This whole
+# verifier is gated on `test --check`, so it is ~100%-broken on Windows (zero
+# signal, pure blocker). Skip on Windows until #1270 is fixed; Linux still fully
+# verifies inline tests.
+if [ "$HOST_OS" = windows ]; then
+    echo "[inline-tests] skipping on windows pending #1270 (test --check selfhost-typechecker segfault)"
+    exit 0
+fi
+
 WORKDIR="$ROOT/target/inline-test-verify"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"

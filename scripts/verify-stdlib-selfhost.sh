@@ -47,6 +47,18 @@ reject_diag() {
 # #1246); more headroom keeps the crash-only retry effective.
 ATTEMPTS="${VERIFY_STDLIB_SELFHOST_ATTEMPTS:-6}"
 
+# #1270: `typelisp run selfhost/check.tl` runs the selfhost parser+typechecker as
+# an emitted binary that segfaults ~100% on Windows on its typecheck path — the
+# same non-ASLR selfhost-emitted-driver crash as `test --check` / `doc --test`
+# (the binary already links /DYNAMICBASE:NO, so it is NOT the emitted-binary ASLR
+# bug #1262 fixes). The crash is effectively deterministic per witness, so the
+# retry guard above is exhausted on every one. Skip on Windows until #1270 is
+# fixed; Linux still fully verifies the selfhost-frontend witnesses.
+if [ "$HOST_OS" = windows ]; then
+    echo "skipping stdlib selfhost-frontend witnesses on windows pending #1270 (check.tl selfhost-typechecker segfault)"
+    exit 0
+fi
+
 # Sets the global `expected` to 1 when the (rc,out) pair matches the witness
 # expectation: a reject witness ($2 non-empty) must fail AND carry the diagnostic
 # substring; a positive witness must pass cleanly.

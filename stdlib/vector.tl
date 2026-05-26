@@ -23,7 +23,6 @@
 ;;;;     [v : I64Vec (i64-vec-push (i64-vec-push (i64-vec-new) 10) 32)]
 ;;;;     (+ (i64-vec-get v 0 0) (i64-vec-get v 1 0))))
 ;;;; ```
-
 ;;; A growable `i64` sequence: the backing array and the number of live
 ;;; elements stored in its prefix `[0, len)`. Capacity is `(array-length slots)`.
 (defstruct I64Vec
@@ -56,7 +55,10 @@
 ;;; capacity is clamped to 1 so the backing array can always grow by doubling.
 (define (i64-vec-with-capacity [capacity : i64]) : I64Vec
   (let
-    [cap : i64 (if (< capacity 1) 1 capacity)]
+    [cap : i64
+      (if (< capacity 1)
+        1
+        capacity)]
     (I64Vec (make-array i64 cap) 0)))
 
 ;;; Create an empty vector with a small default capacity.

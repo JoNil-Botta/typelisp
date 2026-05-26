@@ -39,7 +39,8 @@
     (assert-true (>= (i64-vec-capacity (i64-vec-new)) 1) "new has capacity")
     ;; --- push within capacity: no growth ---
     (let
-      [v2 : I64Vec (i64-vec-push (i64-vec-push (i64-vec-with-capacity 2) 10) 20)]
+      [v2 : I64Vec
+        (i64-vec-push (i64-vec-push (i64-vec-with-capacity 2) 10) 20)]
       (begin
         (assert-i64-eq (i64-vec-len v2) 2 "two pushes -> len 2")
         (assert-i64-eq (i64-vec-capacity v2) 2 "still capacity 2")
@@ -67,18 +68,27 @@
                 (assert-i64-eq (i64-vec-len v4) 3 "set! keeps len")
                 ;; out-of-range set! is a no-op
                 (i64-vec-set! v4 5 7)
-                (assert-i64-eq (i64-vec-get v4 5 -1) -1 "set! out of range no-op")
+                (assert-i64-eq
+                  (i64-vec-get v4 5 -1)
+                  -1
+                  "set! out of range no-op")
                 ;; --- pop: last element + shrunk vector ---
                 (let
                   [popped : I64VecPop (i64-vec-pop v4)]
                   (begin
                     (assert-true (pop-ok? popped) "pop ok")
-                    (assert-i64-eq (pop-value-or popped -1) 30 "pop value -> 30")
+                    (assert-i64-eq
+                      (pop-value-or popped -1)
+                      30
+                      "pop value -> 30")
                     (let
                       [rest : I64Vec (pop-vec-or popped v4)]
                       (begin
                         (assert-i64-eq (i64-vec-len rest) 2 "pop shrinks len")
-                        (assert-i64-eq (i64-vec-last rest -1) 99 "rest last -> 99")))))))))))
+                        (assert-i64-eq
+                          (i64-vec-last rest -1)
+                          99
+                          "rest last -> 99")))))))))))
     ;; --- pop on an empty vector is Empty ---
     (let
       [pe : I64VecPop (i64-vec-pop (i64-vec-with-capacity 1))]

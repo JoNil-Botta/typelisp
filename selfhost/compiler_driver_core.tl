@@ -95,6 +95,73 @@
         [(ErrCompilerLower diag) (ErrCompilerDriver diag)])]
     [(ErrCompilerLoadWithPaths diag) (ErrCompilerDriver diag)]))
 
+(define (compiler-driver-ir-summary-line [name : String] [value : i64]) : String
+  (string-append
+    name
+    (string-append " " (string-append (int->string value) "\n"))))
+
+(define (compiler-driver-ir-summary-render [summary : CompilerIrSummary]) : String
+  (string-append
+    "typelisp-ir-summary v1\n"
+    (string-append
+      (compiler-driver-ir-summary-line
+        "globals"
+        (compiler-ir-summary-globals summary))
+      (string-append
+        (compiler-driver-ir-summary-line
+          "functions"
+          (compiler-ir-summary-functions summary))
+        (string-append
+          (compiler-driver-ir-summary-line
+            "externs"
+            (compiler-ir-summary-externs summary))
+          (string-append
+            (compiler-driver-ir-summary-line
+              "blocks"
+              (compiler-ir-summary-blocks summary))
+            (string-append
+              (compiler-driver-ir-summary-line
+                "instructions"
+                (compiler-ir-summary-instructions summary))
+              (string-append
+                (compiler-driver-ir-summary-line
+                  "vars"
+                  (compiler-ir-summary-vars summary))
+                (compiler-driver-ir-summary-line
+                  "score"
+                  (compiler-ir-summary-score summary))))))))))
+
+(define (compiler-driver-emit-ir-summary-lowered-with-level
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]
+  [opt-level : i64]) : ResultCompilerDriver
+  (match (optimize-program-with-spans-and-level program spans opt-level)
+    [(CompilerOptimizedProgram optimized _)
+      (OkCompilerDriver
+        (compiler-driver-ir-summary-render
+          (compiler-ir-program-summary optimized)))]))
+
+(define (compiler-driver-emit-ir-summary-file-with-roots-and-level
+  [input-path : String]
+  [stdlib-roots : CompilerLoadRootList]
+  [opt-level : i64]) : ResultCompilerDriver
+  (match (compiler-load-file-with-paths-and-roots
+    input-path
+    (sym-i64-empty)
+    stdlib-roots)
+    [(OkCompilerLoadWithPaths decls paths _ _)
+      (match (lower-compiler-program-with-decl-paths
+        input-path
+        (AstProgram decls)
+        paths)
+        [(OkCompilerLower program spans)
+          (compiler-driver-emit-ir-summary-lowered-with-level
+            program
+            spans
+            opt-level)]
+        [(ErrCompilerLower diag) (ErrCompilerDriver diag)])]
+    [(ErrCompilerLoadWithPaths diag) (ErrCompilerDriver diag)]))
+
 (define (compiler-driver-emit-file [input-path : String]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target input-path (BackendTargetLinux) false))
 

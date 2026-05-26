@@ -62,7 +62,7 @@ Keep smoke drivers for existing compiler-module self-tests until those modules
 are intentionally migrated.
 
 [`../scripts/verify-inline-tests.sh`](../scripts/verify-inline-tests.sh)
-auto-discovers top-level inline tests under `selfhost/`, `stdlib/`,
+auto-discovers top-level inline tests under `selfhost/`, `stdlib/`, `tools/`,
 `tests/integration/`, `tests/inline/`, and `examples/`. It runs
 `typelisp test --check` first, then `typelisp test`, so malformed, untyped,
 unbuildable, and failing inline tests all fail CI without a hand-maintained
@@ -249,7 +249,7 @@ automatically adds doctest coverage.
 
 `scripts/verify-inline-tests.sh` discovers `.tl` files with top-level
 `(test ...)` items under `selfhost/`, `stdlib/`, `tests/integration/`,
-`tests/inline/`, and `examples/`. For each discovered file it type-checks and
+`tools/`, `tests/inline/`, and `examples/`. For each discovered file it type-checks and
 then runs the generated inline-test harness with `--stdlib-root`, reporting the
 source path and test-runner output in CI logs. This gate is separate from
 doctests, manifest corpora, and smoke drivers so source-owned checks can be

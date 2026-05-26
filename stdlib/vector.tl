@@ -177,6 +177,9 @@
       true
       (i64-vec-contains-from? v (+ index 1) target))))
 
+;;; Return a copy of `v` whose backing array is twice as large, preserving the
+;;; live prefix. Capacity is always positive (see `i64-vec-with-capacity`), so
+;;; doubling strictly grows the array.
 (define (i64-vec-grow [v : I64Vec]) : I64Vec
   (let
     [n : i64 (i64-vec-len v)]

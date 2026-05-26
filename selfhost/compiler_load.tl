@@ -932,6 +932,250 @@
           "compiler-load: cannot read import target/stdlib/cl_sur_missing.tl")]
       [(OkCompilerLoadWithPaths _ _ _ _) false])))
 
+;;; --- typelisp.pkg manifest parser (#834, slice 1) ---------------------------
+;;; Parse a `typelisp.pkg` manifest, an S-expression of the form
+;;;   (package (name "...") (version "...") (entry "...")
+;;;            (dependencies (alias "path") ...))
+;;; into a structured value, mirroring `src/package.rs::parse_manifest`'s field
+;;; set and diagnostics. Reuses the selfhost reader (`lex` + `read-result`, both
+;;; already reachable here via compiler_parse_core -> read.tl) instead of a
+;;; bespoke manifest tokenizer. `pkg:<alias>/...` resolution + loader
+;;; integration are slice 2; this slice is the parser + diagnostics.
+;;; A parsed dependency: an import alias and its package-root path.
+(defstruct CompilerPkgDep
+  (alias String)
+  (path String))
+
+;;; Alias->path dependency list from a parsed manifest.
+(defenum CompilerPkgDepList
+  (CompilerPkgDepNil)
+  (CompilerPkgDepCons CompilerPkgDep CompilerPkgDepList))
+
+;;; A parsed `typelisp.pkg` manifest.
+(defstruct CompilerPkgManifest
+  (name String)
+  (version String)
+  (entry String)
+  (deps CompilerPkgDepList))
+
+;;; Parse result: the manifest or a diagnostic.
+(defenum ResultCompilerPkgManifest
+  (OkCompilerPkgManifest CompilerPkgManifest)
+  (ErrCompilerPkgManifest String))
+
+;;; Internal: a single extracted string field value, or a diagnostic.
+(defenum ResultPkgString
+  (OkPkgString String)
+  (ErrPkgString String))
+
+;;; Internal: a parsed dependency list, or a diagnostic.
+(defenum ResultCompilerPkgDepList
+  (OkCompilerPkgDepList CompilerPkgDepList)
+  (ErrCompilerPkgDepList String))
+
+;;; Count the dependencies in a parsed list.
+(define (compiler-pkg-dep-list-count [deps : CompilerPkgDepList]) : i64
+  (match deps
+    [(CompilerPkgDepNil) 0]
+    [(CompilerPkgDepCons _ rest) (+ 1 (compiler-pkg-dep-list-count rest))]))
+
+;;; Extract a single `"value"` from a field tail `("value")`.
+(define (compiler-load-manifest-string-value [ftail : Sexpr] [fname : String]) : ResultPkgString
+  (match ftail
+    [(SCons vhead vrest)
+      (match vhead
+        [(SStr val)
+          (match vrest
+            [(SNil) (OkPkgString val)]
+            [_
+              (ErrPkgString
+                (string-append
+                  "manifest field `"
+                  (string-append fname "` takes a single string value")))])]
+        [_
+          (ErrPkgString
+            (string-append
+              "manifest field `"
+              (string-append fname "` must have a string value")))])]
+    [_
+      (ErrPkgString
+        (string-append
+          "manifest field `"
+          (string-append fname "` must have a string value")))]))
+
+;;; Parse the `(alias "path") ...` entries of a `(dependencies ...)` field.
+(define (compiler-load-manifest-parse-deps [entries : Sexpr]) : ResultCompilerPkgDepList
+  (match entries
+    [(SNil) (OkCompilerPkgDepList (CompilerPkgDepNil))]
+    [(SCons entry rest)
+      (match entry
+        [(SCons ehead etail)
+          (match ehead
+            [(SSym alias)
+              (match (compiler-load-manifest-string-value etail alias)
+                [(ErrPkgString m) (ErrCompilerPkgDepList m)]
+                [(OkPkgString path)
+                  (match (compiler-load-manifest-parse-deps rest)
+                    [(ErrCompilerPkgDepList m) (ErrCompilerPkgDepList m)]
+                    [(OkCompilerPkgDepList tail-deps)
+                      (OkCompilerPkgDepList
+                        (CompilerPkgDepCons
+                          (CompilerPkgDep alias path)
+                          tail-deps))])])]
+            [_
+              (ErrCompilerPkgDepList
+                "dependency entries must start with an alias name")])]
+        [_
+          (ErrCompilerPkgDepList
+            "dependency entries must be lists like `(alias \"path\")`")])]
+    [_
+      (ErrCompilerPkgDepList
+        "`dependencies` must be a list of `(alias \"path\")` entries")]))
+
+;;; Walk the package fields, accumulating name/version/entry/deps, then check
+;;; the three required string fields are present.
+(define (compiler-load-manifest-fields
+  [fields : Sexpr]
+  [name : String]
+  [version : String]
+  [entry : String]
+  [deps : CompilerPkgDepList]) : ResultCompilerPkgManifest
+  (match fields
+    [(SNil)
+      (if (string-eq name "")
+        (ErrCompilerPkgManifest "manifest missing required field `name`")
+        (if (string-eq version "")
+          (ErrCompilerPkgManifest "manifest missing required field `version`")
+          (if (string-eq entry "")
+            (ErrCompilerPkgManifest "manifest missing required field `entry`")
+            (OkCompilerPkgManifest
+              (CompilerPkgManifest name version entry deps)))))]
+    [(SCons field rest)
+      (match field
+        [(SCons fhead ftail)
+          (match fhead
+            [(SSym fname)
+              (if (string-eq fname "dependencies")
+                (match (compiler-load-manifest-parse-deps ftail)
+                  [(ErrCompilerPkgDepList m) (ErrCompilerPkgManifest m)]
+                  [(OkCompilerPkgDepList parsed-deps)
+                    (compiler-load-manifest-fields
+                      rest
+                      name
+                      version
+                      entry
+                      parsed-deps)])
+                (if (string-eq fname "name")
+                  (match (compiler-load-manifest-string-value ftail fname)
+                    [(ErrPkgString m) (ErrCompilerPkgManifest m)]
+                    [(OkPkgString val)
+                      (compiler-load-manifest-fields
+                        rest
+                        val
+                        version
+                        entry
+                        deps)])
+                  (if (string-eq fname "version")
+                    (match (compiler-load-manifest-string-value ftail fname)
+                      [(ErrPkgString m) (ErrCompilerPkgManifest m)]
+                      [(OkPkgString val)
+                        (compiler-load-manifest-fields rest name val entry deps)])
+                    (if (string-eq fname "entry")
+                      (match (compiler-load-manifest-string-value ftail fname)
+                        [(ErrPkgString m) (ErrCompilerPkgManifest m)]
+                        [(OkPkgString val)
+                          (compiler-load-manifest-fields
+                            rest
+                            name
+                            version
+                            val
+                            deps)])
+                      (ErrCompilerPkgManifest
+                        (string-append
+                          "unknown manifest field `"
+                          (string-append fname "`")))))))]
+            [_
+              (ErrCompilerPkgManifest
+                "package fields must start with a field name")])]
+        [_
+          (ErrCompilerPkgManifest
+            "package fields must be lists like `(name \"...\")`")])]
+    [_
+      (ErrCompilerPkgManifest
+        "package fields must be lists like `(name \"...\")`")]))
+
+;;; Parse the top-level `(package ...)` form.
+(define (compiler-load-manifest-from-form [form : Sexpr]) : ResultCompilerPkgManifest
+  (match form
+    [(SCons head rest)
+      (match head
+        [(SSym s)
+          (if (string-eq s "package")
+            (compiler-load-manifest-fields rest "" "" "" (CompilerPkgDepNil))
+            (ErrCompilerPkgManifest
+              (string-append
+                "expected `package` form, got `"
+                (string-append s "`"))))]
+        [_ (ErrCompilerPkgManifest "manifest must start with `package`")])]
+    [_ (ErrCompilerPkgManifest "manifest must be a `(package ...)` form")]))
+
+;;; Parse a `typelisp.pkg` manifest source string into a structured manifest.
+(define (compiler-load-parse-manifest [source : String]) : ResultCompilerPkgManifest
+  (match (read-result (lex source))
+    [(ErrSexpr msg) (ErrCompilerPkgManifest (string-append "manifest: " msg))]
+    [(OkSexpr form) (compiler-load-manifest-from-form form)]))
+
+;;; Self-test: a full manifest parses with the expected fields + dependency
+;;; count.
+(define (compiler-load-manifest-valid-full-ok?) : bool
+  (match (compiler-load-parse-manifest
+    "(package (name \"demo\") (version \"0.1.0\") (entry \"src/main.tl\") (dependencies (math \"../math\") (util \"../util\")))")
+    [(OkCompilerPkgManifest m)
+      (and
+        (string-eq (struct-get m name) "demo")
+        (and
+          (string-eq (struct-get m version) "0.1.0")
+          (and
+            (string-eq (struct-get m entry) "src/main.tl")
+            (= (compiler-pkg-dep-list-count (struct-get m deps)) 2))))]
+    [(ErrCompilerPkgManifest _) false]))
+
+;;; Self-test: a manifest without a `dependencies` field parses with no deps.
+(define (compiler-load-manifest-valid-nodeps-ok?) : bool
+  (match (compiler-load-parse-manifest
+    "(package (name \"x\") (version \"1\") (entry \"e.tl\"))")
+    [(OkCompilerPkgManifest m)
+      (= (compiler-pkg-dep-list-count (struct-get m deps)) 0)]
+    [(ErrCompilerPkgManifest _) false]))
+
+;;; True when parsing `source` fails with exactly the `expected` diagnostic.
+(define (compiler-load-manifest-rejects? [source : String] [expected : String]) : bool
+  (match (compiler-load-parse-manifest source)
+    [(ErrCompilerPkgManifest m) (string-eq m expected)]
+    [(OkCompilerPkgManifest _) false]))
+
+;;; Aggregate manifest-parser self-test (#834).
+(define (compiler-load-pkg-manifest-ok?) : bool
+  (and
+    (compiler-load-manifest-valid-full-ok?)
+    (and
+      (compiler-load-manifest-valid-nodeps-ok?)
+      (and
+        (compiler-load-manifest-rejects?
+          "(package (version \"1\") (entry \"e.tl\"))"
+          "manifest missing required field `name`")
+        (and
+          (compiler-load-manifest-rejects?
+            "(package (name \"x\") (entry \"e.tl\"))"
+            "manifest missing required field `version`")
+          (and
+            (compiler-load-manifest-rejects?
+              "(package (name \"x\") (version \"1\"))"
+              "manifest missing required field `entry`")
+            (compiler-load-manifest-rejects?
+              "(module foo)"
+              "expected `package` form, got `module`")))))))
+
 (define (compiler-load-self-test) : i64
   (if (compiler-load-normalize-ok?)
     (if (compiler-load-source-provenance-ok?)
@@ -948,7 +1192,12 @@
                           (if (compiler-load-stdlib-root-fallback-ok?)
                             (if (compiler-load-stdlib-searched-root-ok?)
                               (if (compiler-load-stdlib-unresolved-ok?)
-                                42
+                                (if (compiler-load-pkg-manifest-ok?)
+                                  42
+                                  (begin
+                                    (panic
+                                      "compiler-load: pkg manifest smoke mismatch")
+                                    0))
                                 (begin
                                   (panic
                                     "compiler-load: stdlib unresolved smoke mismatch")

@@ -162,52 +162,52 @@
       [span : SourceSpan (spanned-token-span st)]
       (let
         [t : i64 (token-tag tok)]
-        (if (= t (tag-int))
-          (let
-            [v : i64 (token-int tok)]
-            (begin
-              (advance cur)
-              (OkSpannedSexpr (SpSInt v span))))
-          (if (= t (tag-float))
+        (cond
+          [(= t (tag-int))
+            (let
+              [v : i64 (token-int tok)]
+              (begin
+                (advance cur)
+                (OkSpannedSexpr (SpSInt v span))))]
+          [(= t (tag-float))
             (let
               [s : String (token-float tok)]
               (begin
                 (advance cur)
-                (OkSpannedSexpr (SpSFloat s span))))
-            (if (= t (tag-sym))
-              (let
-                [s : String (token-sym tok)]
-                (begin
-                  (advance cur)
-                  (OkSpannedSexpr (SpSSym s span))))
-              (if (= t (tag-str))
-                (let
-                  [s : String (token-str tok)]
-                  (begin
-                    (advance cur)
-                    (OkSpannedSexpr (SpSStr s span))))
-                (if (= t (tag-char))
-                  (let
-                    [c : char (token-char tok)]
-                    (begin
-                      (advance cur)
-                      (OkSpannedSexpr (SpSChar c span))))
-                  (if (= t (tag-lparen))
-                    (begin
-                      (advance cur)
-                      (read-list-spanned-result toks cur span))
-                    (if (= t (tag-lbracket))
-                      (begin
-                        (advance cur)
-                        (read-bracket-list-spanned-result toks cur span))
-                      (if (= t (tag-rparen))
-                        (ErrSpannedSexpr
-                          (SourceError "reader: unexpected ')'" span))
-                        (if (= t (tag-rbracket))
-                          (ErrSpannedSexpr
-                            (SourceError "reader: unexpected ']'" span))
-                          (ErrSpannedSexpr
-                            (SourceError "reader: unexpected end of input" span)))))))))))))))
+                (OkSpannedSexpr (SpSFloat s span))))]
+          [(= t (tag-sym))
+            (let
+              [s : String (token-sym tok)]
+              (begin
+                (advance cur)
+                (OkSpannedSexpr (SpSSym s span))))]
+          [(= t (tag-str))
+            (let
+              [s : String (token-str tok)]
+              (begin
+                (advance cur)
+                (OkSpannedSexpr (SpSStr s span))))]
+          [(= t (tag-char))
+            (let
+              [c : char (token-char tok)]
+              (begin
+                (advance cur)
+                (OkSpannedSexpr (SpSChar c span))))]
+          [(= t (tag-lparen))
+            (begin
+              (advance cur)
+              (read-list-spanned-result toks cur span))]
+          [(= t (tag-lbracket))
+            (begin
+              (advance cur)
+              (read-bracket-list-spanned-result toks cur span))]
+          [(= t (tag-rparen))
+            (ErrSpannedSexpr (SourceError "reader: unexpected ')'" span))]
+          [(= t (tag-rbracket))
+            (ErrSpannedSexpr (SourceError "reader: unexpected ']'" span))]
+          [else
+            (ErrSpannedSexpr
+              (SourceError "reader: unexpected end of input" span))])))))
 
 (define (read-list-spanned-items-result
   [toks : (Array SpannedToken)]

@@ -79,14 +79,20 @@ fn lower_mode_for_backend(mode: BackendMode) -> LowerMode {
     }
 }
 
-fn optimized_ir_or_exit(loaded: &LoadedProgram, target: BackendTarget) -> LoweredProgram {
+fn optimized_ir_or_exit(
+    loaded: &LoadedProgram,
+    target: BackendTarget,
+    opt_level: native::OptLevel,
+) -> LoweredProgram {
     typecheck_or_exit(&loaded.program, &loaded.sources);
     let mut lowered = lower_program_with_spans_for_target(
         &loaded.program,
         lower_mode_for_backend(target.mode),
         target.supports_region_runtime(),
     );
-    Optimizer::optimize(&mut lowered.program);
+    if opt_level.runs_optimizer() {
+        Optimizer::optimize(&mut lowered.program);
+    }
     lowered
 }
 
@@ -172,7 +178,7 @@ fn print_usage() {
         "    typelisp build <file.tl> [-o <exe>] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...]"
     );
     eprintln!(
-        "    typelisp build [--manifest-path <typelisp.pkg>] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...]"
+        "    typelisp build [--manifest-path <typelisp.pkg>] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...]"
     );
     eprintln!("    typelisp fmt [--check] <file.tl>... [--stdlib-root <dir>...]");
     eprintln!(
@@ -200,6 +206,9 @@ fn print_usage() {
     eprintln!("Options for build:");
     eprintln!("    -o <exe>                       Source build executable output path");
     eprintln!("    --manifest-path <file>         Defaults to nearest typelisp.pkg upward");
+    eprintln!(
+        "    --opt-level <0|1|2|3>          Package-build optimizer level (default 2; 0 skips it)"
+    );
     eprintln!("Options for fmt:");
     eprintln!(
         "    --check                        Report files that would change without writing them"
@@ -801,6 +810,7 @@ enum BuildRequest {
         manifest_path: Option<PathBuf>,
         options: LoadOptions,
         target: BackendTarget,
+        opt_level: native::OptLevel,
     },
 }
 
@@ -810,9 +820,27 @@ fn parse_build_options(args: &[String], mut i: usize) -> BuildRequest {
     let mut manifest_path = None;
     let mut stdlib_roots = Vec::new();
     let mut target = BackendTarget::default();
+    let mut opt_level: Option<native::OptLevel> = None;
 
     while i < args.len() {
-        if args[i] == "--manifest-path" {
+        if args[i] == "--opt-level" {
+            if i + 1 >= args.len() {
+                missing_option_value("--opt-level");
+            }
+            if opt_level.is_some() {
+                eprintln!("Error: --opt-level was provided more than once");
+                std::process::exit(1);
+            }
+            let text = &args[i + 1];
+            match text.parse::<u8>().ok().and_then(native::OptLevel::from_u8) {
+                Some(level) => opt_level = Some(level),
+                None => {
+                    eprintln!("Error: unknown opt level '{text}'; expected 0, 1, 2, or 3");
+                    std::process::exit(1);
+                }
+            }
+            i += 2;
+        } else if args[i] == "--manifest-path" {
             if i + 1 >= args.len() {
                 missing_option_value("--manifest-path");
             }
@@ -884,6 +912,7 @@ fn parse_build_options(args: &[String], mut i: usize) -> BuildRequest {
             manifest_path,
             options,
             target,
+            opt_level: opt_level.unwrap_or(native::OptLevel::DEFAULT),
         }
     }
 }
@@ -895,7 +924,7 @@ fn build_args_have_manifest_path(args: &[String], start: usize) -> bool {
 fn build_args_have_source_file(args: &[String], mut i: usize) -> bool {
     while i < args.len() {
         match args[i].as_str() {
-            "-o" | "--target" | "--backend-mode" | "--stdlib-root" => {
+            "-o" | "--target" | "--backend-mode" | "--stdlib-root" | "--opt-level" => {
                 i += 2;
             }
             flag if flag.starts_with('-') => {
@@ -1095,7 +1124,7 @@ fn run_cli() {
 
             let options = load_options_with_env_stdlib_root(stdlib_roots);
             let loaded = load_or_exit(&file, &options);
-            let lowered = optimized_ir_or_exit(&loaded, target);
+            let lowered = optimized_ir_or_exit(&loaded, target, native::OptLevel::DEFAULT);
 
             if emit_ir {
                 let ir_text = format!("{:#?}", lowered.program);
@@ -1130,6 +1159,7 @@ fn run_cli() {
                         manifest_path,
                         mut options,
                         target,
+                        opt_level,
                     } => {
                         let manifest_path = match manifest_path {
                             Some(path) => path,
@@ -1144,7 +1174,7 @@ fn run_cli() {
                         let manifest = package_or_exit(load_manifest(&manifest_path));
                         options.package_roots = manifest.dependencies.clone();
                         let loaded = load_or_exit(&manifest.entry_path(), &options);
-                        let lowered = optimized_ir_or_exit(&loaded, target);
+                        let lowered = optimized_ir_or_exit(&loaded, target, opt_level);
                         let asm = assembly_or_exit(&lowered, &loaded.sources, target);
                         let output_path = manifest.output_asm_path();
                         if let Some(parent) = output_path.parent() {

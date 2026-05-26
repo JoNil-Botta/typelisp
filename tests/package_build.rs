@@ -310,3 +310,186 @@ fn package_build_reports_missing_dependency_file() {
         stderr
     );
 }
+
+/// Writes a package whose `main` is a constant-foldable multiply (`(* 6 7)`).
+/// At the default opt level the IR optimizer folds it to a constant `mov`;
+/// at `--opt-level 0` the optimizer is skipped, so the emitted assembly still
+/// contains the `imul`. That difference makes opt-level forwarding observable.
+fn write_foldable_package(root: &Path, package_name: &str) {
+    fs::create_dir_all(root.join("src")).expect("create package src dir");
+    fs::write(
+        root.join("typelisp.pkg"),
+        format!(
+            r#"(package
+  (name "{}")
+  (version "0.1.0")
+  (entry "src/main.tl"))
+"#,
+            package_name
+        ),
+    )
+    .expect("write package manifest");
+    fs::write(
+        root.join("src").join("main.tl"),
+        "(define (main) : i64 (* 6 7))\n",
+    )
+    .expect("write package main");
+}
+
+#[test]
+fn package_build_opt_level_zero_skips_optimizer() {
+    let root = fresh_work_dir("opt-level-zero");
+    write_foldable_package(&root, "opt_zero_pkg");
+    let manifest = root.join("typelisp.pkg");
+    let asm_path = expected_asm_path(&root, "opt_zero_pkg");
+
+    // Default build optimizes: `(* 6 7)` folds to a constant, no `imul`.
+    let default_build = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("build")
+        .arg("--manifest-path")
+        .arg(&manifest)
+        .output()
+        .expect("run default package build");
+    assert!(
+        default_build.status.success(),
+        "default package build failed\nstderr:\n{}",
+        String::from_utf8_lossy(&default_build.stderr)
+    );
+    let default_asm = fs::read_to_string(&asm_path).expect("read default package assembly");
+    assert!(
+        !default_asm.contains("imul"),
+        "default (optimized) build should fold the multiply away\n{}",
+        default_asm
+    );
+
+    // `--opt-level 0` skips the optimizer, so the multiply survives as `imul`.
+    let o0_build = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("build")
+        .arg("--manifest-path")
+        .arg(&manifest)
+        .arg("--opt-level")
+        .arg("0")
+        .output()
+        .expect("run --opt-level 0 package build");
+    assert!(
+        o0_build.status.success(),
+        "--opt-level 0 package build failed\nstderr:\n{}",
+        String::from_utf8_lossy(&o0_build.stderr)
+    );
+    let o0_asm = fs::read_to_string(&asm_path).expect("read --opt-level 0 package assembly");
+    assert!(
+        o0_asm.contains("imul"),
+        "--opt-level 0 build should keep the unoptimized multiply\n{}",
+        o0_asm
+    );
+}
+
+#[test]
+fn package_build_accepts_explicit_default_opt_level() {
+    let root = fresh_work_dir("opt-level-two");
+    write_foldable_package(&root, "opt_two_pkg");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("build")
+        .arg("--manifest-path")
+        .arg(root.join("typelisp.pkg"))
+        .arg("--opt-level")
+        .arg("2")
+        .output()
+        .expect("run --opt-level 2 package build");
+
+    assert!(
+        output.status.success(),
+        "--opt-level 2 package build failed\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let asm =
+        fs::read_to_string(expected_asm_path(&root, "opt_two_pkg")).expect("read package assembly");
+    assert!(
+        !asm.contains("imul"),
+        "--opt-level 2 should optimize like the default\n{}",
+        asm
+    );
+}
+
+#[test]
+fn package_build_rejects_invalid_opt_level() {
+    let root = fresh_work_dir("opt-level-invalid");
+    write_foldable_package(&root, "opt_invalid_pkg");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("build")
+        .arg("--manifest-path")
+        .arg(root.join("typelisp.pkg"))
+        .arg("--opt-level")
+        .arg("9")
+        .output()
+        .expect("run invalid --opt-level package build");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "invalid --opt-level unexpectedly succeeded\nstderr:\n{}",
+        stderr
+    );
+    assert!(
+        stderr.contains("unknown opt level '9'; expected 0, 1, 2, or 3"),
+        "stderr missing invalid opt-level diagnostic\nstderr:\n{}",
+        stderr
+    );
+}
+
+#[test]
+fn package_build_rejects_duplicate_opt_level() {
+    let root = fresh_work_dir("opt-level-duplicate");
+    write_foldable_package(&root, "opt_dup_pkg");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("build")
+        .arg("--manifest-path")
+        .arg(root.join("typelisp.pkg"))
+        .arg("--opt-level")
+        .arg("1")
+        .arg("--opt-level")
+        .arg("2")
+        .output()
+        .expect("run duplicate --opt-level package build");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "duplicate --opt-level unexpectedly succeeded\nstderr:\n{}",
+        stderr
+    );
+    assert!(
+        stderr.contains("--opt-level was provided more than once"),
+        "stderr missing duplicate opt-level diagnostic\nstderr:\n{}",
+        stderr
+    );
+}
+
+#[test]
+fn package_build_rejects_missing_opt_level_value() {
+    let root = fresh_work_dir("opt-level-missing");
+    write_foldable_package(&root, "opt_missing_pkg");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("build")
+        .arg("--manifest-path")
+        .arg(root.join("typelisp.pkg"))
+        .arg("--opt-level")
+        .output()
+        .expect("run missing --opt-level value package build");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "missing --opt-level value unexpectedly succeeded\nstderr:\n{}",
+        stderr
+    );
+    assert!(
+        stderr.contains("--opt-level requires a value"),
+        "stderr missing missing-value diagnostic\nstderr:\n{}",
+        stderr
+    );
+}

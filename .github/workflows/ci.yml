@@ -77,6 +77,9 @@ jobs:
       - name: Verify selfhost compile manifest with Rust-built compiler
         run: TYPELISP_BIN=target/debug/typelisp scripts/verify-selfhost-compile-manifest.sh
 
+      - name: Verify stdlib witnesses through the selfhost frontend
+        run: TYPELISP_BIN=target/debug/typelisp scripts/verify-stdlib-selfhost.sh
+
       - name: Verify docs site (build + validate, no publish)
         run: TYPELISP_BIN=target/debug/typelisp scripts/verify-doc-site.sh
 
@@ -143,6 +146,10 @@ jobs:
       - name: Verify selfhost compile manifest with Rust-built compiler
         shell: bash
         run: TYPELISP_BIN=target/debug/typelisp.exe scripts/verify-selfhost-compile-manifest.sh
+
+      - name: Verify stdlib witnesses through the selfhost frontend
+        shell: bash
+        run: TYPELISP_BIN=target/debug/typelisp.exe scripts/verify-stdlib-selfhost.sh
 
       - name: Verify native integration corpus with Rust-built compiler (windows-x86_64)
         shell: bash

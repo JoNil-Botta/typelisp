@@ -3750,15 +3750,90 @@
                             [(ErrLowerExpr message) (ErrLowerExpr message)]))])]
                   [(ErrLowerExpr message) (ErrLowerExpr message)]))])])]))
 
-;; Scalar `spmd-reduce` lowering (#1013). v1 lowers the `sum` reduction by
-;; desugaring to an accumulator loop and reusing the let/foreach/set lowering:
-;;   (spmd-reduce sum ([i : ty start end]) init value)
-;;     === (let [acc init]
-;;           (begin (foreach ([i : ty start end]) (set! acc (+ acc value))) acc))
-;; `acc` uses a lexer-impossible name so it cannot collide with a user binding,
-;; and `value` appears once so it is evaluated exactly once per iteration. The
-;; ordered left-to-right fold matches the spec reference semantics for both
-;; integer (wrapping `+`) and f64 sums. min/max/all/any are follow-ups.
+;; Per-iteration accumulator update for an associative binop fold
+;; (`sum`/`all`/`any`): `(set! acc (<op> acc value))`. `value` appears once so it
+;; is evaluated exactly once per iteration.
+(define (spmd-reduce-acc-binop-update [op : AstBinOp] [value : AstExpr]) : AstExpr
+  (AstExprSet
+    "0spmd-reduce-acc"
+    (AstExprBinary op (AstExprVar "0spmd-reduce-acc") value)))
+
+;; Per-iteration accumulator update for a select fold (`min`/`max`): bind `value`
+;; once into a temp, then keep it when `(<cmp> val acc)` holds, else keep `acc`.
+;; The temp keeps `value` to a single evaluation even though the select names it
+;; twice.
+(define (spmd-reduce-acc-select-update [cmp : AstBinOp] [value : AstExpr]) : AstExpr
+  (AstExprLet
+    (AstLetBindingCons
+      (AstLetBinding "0spmd-reduce-val" (AstNoType) value)
+      (AstLetBindingNil))
+    (AstExprSet
+      "0spmd-reduce-acc"
+      (AstExprIf
+        (AstExprBinary
+          cmp
+          (AstExprVar "0spmd-reduce-val")
+          (AstExprVar "0spmd-reduce-acc"))
+        (AstExprVar "0spmd-reduce-val")
+        (AstExprVar "0spmd-reduce-acc")))))
+
+;; Scalar `spmd-reduce` loop scaffold (#1013): desugar to an accumulator loop and
+;; reuse the let/while/set lowering. `acc`/`end`/index are bound once before the
+;; loop (so `init`/`end`/`start` evaluate exactly once); an empty range returns
+;; `init` without evaluating `acc-update`. `acc`/`end`/temp use lexer-impossible
+;; names so they cannot collide with a user binding. The ordered left-to-right
+;; fold matches the spec reference semantics.
+;;   (spmd-reduce <op> ([i : ty start end]) init value)
+;;     === (let [acc init] [end' end] [i start]
+;;           (begin (while (< i end') (begin <acc-update> (set! i (+ i 1)))) acc))
+(define (lower-spmd-reduce-scaffold
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [index-ty : AstType]
+  [start : AstExpr]
+  [end : AstExpr]
+  [init : AstExpr]
+  [acc-update : AstExpr]) : ResultLowerExpr
+  (lower-expr
+    ctx
+    state
+    env
+    type-env
+    (AstExprLet
+      (AstLetBindingCons
+        (AstLetBinding "0spmd-reduce-acc" (AstNoType) init)
+        (AstLetBindingCons
+          (AstLetBinding "0spmd-reduce-end" (AstNoType) end)
+          (AstLetBindingCons
+            (AstLetBinding index (AstSomeType index-ty) start)
+            (AstLetBindingNil))))
+      (AstExprBegin
+        (AstExprCons
+          (AstExprWhile
+            (AstExprBinary
+              (AstBinLt)
+              (AstExprVar index)
+              (AstExprVar "0spmd-reduce-end"))
+            (AstExprBegin
+              (AstExprCons
+                acc-update
+                (AstExprCons
+                  (AstExprSet
+                    index
+                    (AstExprBinary
+                      (AstBinAdd)
+                      (AstExprVar index)
+                      (AstExprLiteral (AstLitInt 1))))
+                  (AstExprNil)))))
+          (AstExprCons (AstExprVar "0spmd-reduce-acc") (AstExprNil)))))))
+
+;; Scalar lowering for all reduction ops (#1013): `sum` (wrapping `+`, also f64
+;; ordered add), `all`/`any` (boolean `and`/`or`), and `min`/`max` (ordered
+;; select). Each supplies its per-iteration accumulator update to the shared
+;; loop scaffold.
 (define (lower-spmd-reduce
   [ctx : TcContext]
   [state : LowerState]
@@ -3771,61 +3846,22 @@
   [end : AstExpr]
   [init : AstExpr]
   [value : AstExpr]) : ResultLowerExpr
-  (match op
-    [(AstReduceSum)
-      (lower-expr
-        ctx
-        state
-        env
-        type-env
-        (AstExprLet
-          (AstLetBindingCons
-            (AstLetBinding "0spmd-reduce-acc" (AstNoType) init)
-            (AstLetBindingCons
-              (AstLetBinding "0spmd-reduce-end" (AstNoType) end)
-              (AstLetBindingCons
-                (AstLetBinding index (AstSomeType index-ty) start)
-                (AstLetBindingNil))))
-          (AstExprBegin
-            (AstExprCons
-              (AstExprWhile
-                (AstExprBinary
-                  (AstBinLt)
-                  (AstExprVar index)
-                  (AstExprVar "0spmd-reduce-end"))
-                (AstExprBegin
-                  (AstExprCons
-                    (AstExprSet
-                      "0spmd-reduce-acc"
-                      (AstExprBinary
-                        (AstBinAdd)
-                        (AstExprVar "0spmd-reduce-acc")
-                        value))
-                    (AstExprCons
-                      (AstExprSet
-                        index
-                        (AstExprBinary
-                          (AstBinAdd)
-                          (AstExprVar index)
-                          (AstExprLiteral (AstLitInt 1))))
-                      (AstExprNil)))))
-              (AstExprCons (AstExprVar "0spmd-reduce-acc") (AstExprNil))))))]
-    [(AstReduceMin)
-      (ErrLowerExpr
-        (lower-diagnostic
-          "lower: spmd-reduce min not yet lowered (scalar sum only; #1013)"))]
-    [(AstReduceMax)
-      (ErrLowerExpr
-        (lower-diagnostic
-          "lower: spmd-reduce max not yet lowered (scalar sum only; #1013)"))]
-    [(AstReduceAll)
-      (ErrLowerExpr
-        (lower-diagnostic
-          "lower: spmd-reduce all not yet lowered (scalar sum only; #1013)"))]
-    [(AstReduceAny)
-      (ErrLowerExpr
-        (lower-diagnostic
-          "lower: spmd-reduce any not yet lowered (scalar sum only; #1013)"))]))
+  (lower-spmd-reduce-scaffold
+    ctx
+    state
+    env
+    type-env
+    index
+    index-ty
+    start
+    end
+    init
+    (match op
+      [(AstReduceSum) (spmd-reduce-acc-binop-update (AstBinAdd) value)]
+      [(AstReduceAll) (spmd-reduce-acc-binop-update (AstBinAnd) value)]
+      [(AstReduceAny) (spmd-reduce-acc-binop-update (AstBinOr) value)]
+      [(AstReduceMin) (spmd-reduce-acc-select-update (AstBinLt) value)]
+      [(AstReduceMax) (spmd-reduce-acc-select-update (AstBinGt) value)])))
 
 ;; Scalar `foreach` lowering (#1012). `(foreach ([i : ty start end]) body)`
 ;; lowers to the half-open reference loop `i = start; while (i < end) { body;
@@ -5851,9 +5887,17 @@
       (and
         (compiler-lower-foreach-shape-ok?
           "(define (main [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 i))")
-        (compiler-lower-error-ok?
-          "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
-          "lower: spmd-reduce min not yet lowered (scalar sum only; #1013)")))))
+        (and
+          (compiler-lower-ok?
+            "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))")
+          (and
+            (compiler-lower-ok?
+              "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))")
+            (and
+              (compiler-lower-ok?
+                "(define (f [xs : (Array bool)] [n : i64]) : bool (spmd-reduce all ([i : i64 0 n]) true (array-ref xs i)))")
+              (compiler-lower-ok?
+                "(define (f [xs : (Array bool)] [n : i64]) : bool (spmd-reduce any ([i : i64 0 n]) false (array-ref xs i)))"))))))))
 
 ;; Comptime folding of the remaining scalar operators: each `(comptime ...)`
 ;; must collapse to a single constant `mov` with no residual runtime binop,

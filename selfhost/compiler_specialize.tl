@@ -1904,6 +1904,50 @@
                 "__tl_specialized_pair_type_i64_i64_5_none")
               (string-eq (spec-value-key (CtfeI64 (- 0 3))) "i64_m3"))))))))
 
+;;; Count function declarations named `name` in `decls` (specialized decls are
+;;; emitted as ordinary `AstDeclDefFn`s, so reuse means a count of exactly 1).
+(define (compiler-specialize-decl-list-count-defs
+  [decls : AstDeclList]
+  [name : String]) : i64
+  (match decls
+    [(AstDeclNil) 0]
+    [(AstDeclCons decl rest)
+      (match decl
+        [(AstDeclDefFn fn-name _ _ _)
+          (if (string-eq fn-name name)
+            (+ 1 (compiler-specialize-decl-list-count-defs rest name))
+            (compiler-specialize-decl-list-count-defs rest name))]
+        [_ (compiler-specialize-decl-list-count-defs rest name)])]))
+
+;;; Two call sites that request the SAME specialization (`alloc` at `type i64`)
+;;; must share one generated decl via the specialization cache, not emit two.
+(define (compiler-specialize-reuse-source) : String
+  "(define (alloc [comptime T : type] [n : i64]) : (Array i64)
+  (make-array T n))
+(define (main) : (Array i64)
+  (begin (alloc (type i64) 4) (alloc (type i64) 8)))")
+
+;;; Specialization reuse (#1043, mirrors src/specialize.rs reuse coverage): two
+;;; identical `alloc (type i64)` requests collapse to a single shared
+;;; `__tl_specialized_alloc_type_i64_none` decl (the cache dedups by key) and the
+;;; `alloc` template is removed.
+(define (compiler-specialize-reuse-ok?) : bool
+  (match (parse-ast-source (compiler-specialize-reuse-source))
+    [(OkAstProgram program)
+      (match (compiler-specialize-program program)
+        [(OkSpecProgram specialized)
+          (match specialized
+            [(AstProgram decls)
+              (and
+                (not (compiler-specialize-decl-list-defines? decls "alloc"))
+                (=
+                  (compiler-specialize-decl-list-count-defs
+                    decls
+                    "__tl_specialized_alloc_type_i64_none")
+                  1))])]
+        [(ErrSpecProgram _) false])]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-specialize-self-test) : i64
   (if (compiler-specialize-type-param-ok?)
     (if (compiler-specialize-runtime-type-use-rejected?)
@@ -1911,7 +1955,9 @@
         (if (compiler-specialize-type-shadow-ok?)
           (if (compiler-specialize-raw-pointer-type-ok?)
             (if (compiler-specialize-name-key-ok?)
-              1
+              (if (compiler-specialize-reuse-ok?)
+                1
+                0)
               0)
             0)
           0)

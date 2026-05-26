@@ -619,3 +619,11 @@ contains|_tl_token_tag:
 contains|_tl_token_sym:
 contains|_tl_source_error_message:
 end
+
+decision|selfhost/lint_core.tl|lint rule engine (nested-if-ladder rule, #1163); imported by selfhost/lint_smoke.tl and exercised through the selfhost_lint_smoke case; has no main to compile directly
+
+case|selfhost_lint_smoke|selfhost/lint_smoke.tl|assembly|exactly-one|direct
+contains|_tl_compiler_lint_self_test:
+contains|_tl_lint_walk_expr:
+contains|_tl_lint_ladder_length:
+end

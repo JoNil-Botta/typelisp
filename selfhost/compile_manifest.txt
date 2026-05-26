@@ -4,6 +4,7 @@
 #   case|id|source|assembly|main-policy|direct
 #   case|id|source|assembly|main-policy|stage
 #   copy|source|staged-name
+#   requires-stage0-symbol|symbol
 #   contains|assembly text
 #   not-contains|assembly text
 #   count-at-least|assembly text|minimum-count
@@ -117,6 +118,7 @@ contains|_tl_compiler_driver_compile_file_with_roots_and_level:
 contains|_tl_compiler_driver_compile_file_for_target:
 contains|_tl_compiler_driver_compile_file_for_target_with_roots:
 contains|_tl_compiler_driver_compile_file_for_target_with_roots_and_level:
+contains|_tl_compiler_driver_emit_ir_summary_file_with_roots_and_level:
 contains|_tl_compiler_backend_emit_program_with_spans_for_target:
 contains|compile: expected source path
 contains|compile: --target requires a value
@@ -128,6 +130,7 @@ contains|requires the Rust compile driver until selfhost SIMD support
 contains|Expected scalar, avx2, or avx512
 contains|Error: unknown target '
 contains|--emit-ir
+contains|typelisp-ir-summary v1
 end
 
 case|selfhost_compile_smoke|selfhost/compile_smoke.tl|assembly|exactly-one|direct
@@ -222,6 +225,8 @@ contains|_tl_compiler_driver_compile_file_for_target:
 contains|_tl_compiler_driver_emit_file:
 contains|_tl_compiler_driver_emit_file_with_target_roots_and_level:
 contains|_tl_compiler_driver_emit_file_for_target:
+contains|_tl_compiler_driver_emit_ir_summary_file_with_roots_and_level:
+contains|_tl_compiler_driver_ir_summary_render:
 contains|_tl_compiler_backend_emit_program_with_spans_for_target:
 contains|_tl_compiler_backend_emit_source:
 end
@@ -558,6 +563,7 @@ contains|1.5
 end
 
 case|selfhost_lsp_frame|selfhost/lsp_frame.tl|assembly|skip|direct
+requires-stage0-symbol|file-read-chunk-status,append-file-status
 contains|_tl_lsp_frame_parse_content_length:
 contains|_tl_lsp_frame_read_message:
 contains|_tl_lsp_handle_message:
@@ -596,6 +602,7 @@ contains|reader: unterminated list (missing ')')
 end
 
 case|selfhost_repl|selfhost/repl.tl|assembly|exactly-one|direct
+requires-stage0-symbol|file-read-chunk-status,append-file-status
 contains|_tl_repl_loop:
 contains|_tl_repl_handle_input:
 contains|tl> 

@@ -5,7 +5,10 @@
 ;;;;
 ;;;; Primitives required from the compiler/runtime: `read-file`, `write-file`,
 ;;;; `file-exists?`, `read-file-status`, `write-file-status`,
-;;;; `file-exists-status`, `read-stdin-line`, `read-stdin-bytes`,
+;;;; `append-file-status`, `file-exists-status`, `file-open-status`,
+;;;; `file-close-status`, `file-read-chunk-status`,
+;;;; `file-read-chunk-bytes`, `file-read-chunk-eof?`,
+;;;; `read-stdin-line`, `read-stdin-bytes`,
 ;;;; `stdin-eof?`, `print-string`, `print-error`, `flush-stdout`,
 ;;;; `int->string`, `string-append`, and `string-length`.
 ;;;;
@@ -49,6 +52,37 @@
 (defenum ResultIoBool
   (OkIoBool bool)
   (ErrIoBool IoError))
+
+;;; Opaque runtime-managed file handle id.
+;;;
+;;; v1 handles must be closed explicitly with `file-close`; there is no implicit
+;;; drop until move-only/drop semantics land.
+(defstruct FileHandle
+  (id i64))
+
+;;; File open mode for v1 streaming handles.
+(defenum OpenMode
+  (OpenRead)
+  (OpenWriteTruncate)
+  (OpenWriteAppend))
+
+;;; Result type for file-handle opening.
+(defenum ResultIoFile
+  (OkIoFile FileHandle)
+  (ErrIoFile IoError))
+
+;;; Streaming file read chunk backed by active-arena owned bytes.
+;;;
+;;; `bytes` currently uses `String` as a byte container until #807 splits text
+;;; strings from binary byte slices.
+(defstruct FileRead
+  (bytes String)
+  (eof bool))
+
+;;; Result type for streaming file reads.
+(defenum ResultIoRead
+  (OkIoRead FileRead)
+  (ErrIoRead IoError))
 
 ;;; Stdin read result containing the bytes/text read plus the post-read EOF flag.
 ;;;
@@ -161,6 +195,78 @@
                   (IoUnknown path)
                   (IoSystemCode code path))))))))))
 
+;;; Convert an open mode into the runtime helper's compact mode code.
+(define (open-mode-code [mode : OpenMode]) : i64
+  (match mode
+    [(OpenRead) 0]
+    [(OpenWriteTruncate) 1]
+    [(OpenWriteAppend) 2]))
+
+;;; Diagnostic payload for invalid or already-closed file handles.
+(define (file-handle-invalid-message) : String
+  "file handle is closed or invalid")
+
+;;; Diagnostic payload for invalid streaming reads.
+(define (file-read-unsupported-message) : String
+  "file handle is closed, invalid, or not open for reading")
+
+;;; Diagnostic payload for invalid streaming read counts.
+(define (file-read-invalid-count-message) : String
+  "file-read-chunk count must be non-negative")
+
+;;; Open `path` in `mode`, returning a runtime-managed file handle.
+;;;
+;;; The returned handle must be passed to `file-close`. Empty paths return
+;;; `IoInvalidPath`; unsupported targets and mode/host failures are reported as
+;;; structured `IoError` values.
+(define (file-open [path : String] [mode : OpenMode]) : ResultIoFile
+  (if (io-empty-path? path)
+    (ErrIoFile (IoInvalidPath path))
+    (let
+      [raw : i64 (file-open-status path (open-mode-code mode))]
+      (if (< raw 0)
+        (ErrIoFile (io-error-from-status path (- 0 raw)))
+        (OkIoFile (FileHandle raw))))))
+
+;;; Close a runtime-managed file handle.
+;;;
+;;; Closing a valid handle returns `OkIoUnit`. Closing an invalid or already
+;;; closed handle returns `ErrIoUnit (IoUnsupported ...)` and never panics.
+(define (file-close [handle : FileHandle]) : ResultIoUnit
+  (let
+    [status : i64 (file-close-status (struct-get handle id))]
+    (if (= status io-status-ok)
+      OkIoUnit
+      (if (= status io-status-unsupported)
+        (ErrIoUnit (IoUnsupported (file-handle-invalid-message)))
+        (ErrIoUnit (io-error-from-status "file-close" status))))))
+
+;;; Return the bytes captured by a streaming file read.
+(define (file-read-bytes [read : FileRead]) : String
+  (struct-get read bytes))
+
+;;; Return true when a streaming file read observed EOF after the read.
+(define (file-read-eof? [read : FileRead]) : bool
+  (struct-get read eof))
+
+;;; Read up to `count` bytes from a runtime-managed read-mode file handle.
+;;;
+;;; The returned bytes are represented as `String` until #807 adds a distinct
+;;; byte-string/slice type. A short read does not imply EOF; EOF becomes true
+;;; only after the runtime receives a zero-byte host read.
+(define (file-read-chunk [handle : FileHandle] [count : i64]) : ResultIoRead
+  (if (< count 0)
+    (ErrIoRead (IoInvalidPath (file-read-invalid-count-message)))
+    (let
+      [raw : i64 (struct-get handle id)]
+      [status : i64 (file-read-chunk-status raw count)]
+      (if (= status io-status-ok)
+        (OkIoRead
+          (FileRead (file-read-chunk-bytes raw) (file-read-chunk-eof? raw)))
+        (if (= status io-status-unsupported)
+          (ErrIoRead (IoUnsupported (file-read-unsupported-message)))
+          (ErrIoRead (io-error-from-status "file-read-chunk" status)))))))
+
 ;;; Read `path` and return either its contents or a structured I/O error.
 ;;;
 ;;; Missing paths return `IoNotFound`. Empty paths return `IoInvalidPath`.
@@ -202,18 +308,17 @@
 
 ;;; Append `contents` to `path`, returning a structured result.
 ;;;
-;;; This helper is non-atomic and rewrites the whole file. It can recover from
-;;; missing reads by creating the file.
+;;; The runtime opens the path in host append mode where available, preserving
+;;; existing contents and creating the file when missing. Empty paths return
+;;; `IoInvalidPath`.
 (define (try-append-file [path : String] [contents : String]) : ResultIoUnit
   (if (io-empty-path? path)
     (ErrIoUnit (IoInvalidPath path))
-    (match (try-read-file path)
-      [(OkIoString existing)
-        (try-write-file path (string-append existing contents))]
-      [(ErrIoString error)
-        (if (io-error-not-found? error)
-          (try-write-file path contents)
-          (ErrIoUnit error))])))
+    (let
+      [status : i64 (append-file-status path contents)]
+      (if (= status io-status-ok)
+        OkIoUnit
+        (ErrIoUnit (io-error-from-status path status))))))
 
 ;;; Read the contents of `path` if it exists, otherwise return `fallback`.
 ;;;
@@ -226,8 +331,8 @@
 
 ;;; Append `contents` to the file at `path`, creating it when absent.
 ;;;
-;;; Implemented as a read-modify-write because there is no append primitive, so
-;;; it is not atomic and rewrites the whole file.
+;;; Uses the runtime append-status primitive: non-truncating, create-if-missing,
+;;; and best-effort host append semantics.
 (define (append-file [path : String] [contents : String]) : unit
   (match (try-append-file path contents)
     [(OkIoUnit) unit]

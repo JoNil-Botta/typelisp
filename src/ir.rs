@@ -16,7 +16,13 @@ pub const WRITE_FILE_RUNTIME_SYMBOL: &str = ".L_tl_write_file";
 pub const FILE_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists";
 pub const READ_FILE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_read_file_status";
 pub const WRITE_FILE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_write_file_status";
+pub const APPEND_FILE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_append_file_status";
 pub const FILE_EXISTS_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists_status";
+pub const FILE_OPEN_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_open_status";
+pub const FILE_CLOSE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_close_status";
+pub const FILE_READ_CHUNK_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_read_chunk_status";
+pub const FILE_READ_CHUNK_BYTES_RUNTIME_SYMBOL: &str = ".L_tl_file_read_chunk_bytes";
+pub const FILE_READ_CHUNK_EOF_RUNTIME_SYMBOL: &str = ".L_tl_file_read_chunk_eof";
 pub const READ_STDIN_LINE_RUNTIME_SYMBOL: &str = ".L_tl_read_stdin_line";
 pub const READ_STDIN_BYTES_RUNTIME_SYMBOL: &str = ".L_tl_read_stdin_bytes";
 pub const STDIN_EOF_RUNTIME_SYMBOL: &str = ".L_tl_stdin_eof";
@@ -372,7 +378,13 @@ pub fn classify_direct_call_effect(func: &str) -> IrEffect {
         | FILE_EXISTS_RUNTIME_SYMBOL
         | READ_FILE_STATUS_RUNTIME_SYMBOL
         | WRITE_FILE_STATUS_RUNTIME_SYMBOL
+        | APPEND_FILE_STATUS_RUNTIME_SYMBOL
         | FILE_EXISTS_STATUS_RUNTIME_SYMBOL
+        | FILE_OPEN_STATUS_RUNTIME_SYMBOL
+        | FILE_CLOSE_STATUS_RUNTIME_SYMBOL
+        | FILE_READ_CHUNK_STATUS_RUNTIME_SYMBOL
+        | FILE_READ_CHUNK_BYTES_RUNTIME_SYMBOL
+        | FILE_READ_CHUNK_EOF_RUNTIME_SYMBOL
         | READ_STDIN_LINE_RUNTIME_SYMBOL
         | READ_STDIN_BYTES_RUNTIME_SYMBOL => IrEffect::Unknown,
         STDIN_EOF_RUNTIME_SYMBOL => IrEffect::MemoryRead,
@@ -1277,7 +1289,13 @@ mod tests {
             FILE_EXISTS_RUNTIME_SYMBOL,
             READ_FILE_STATUS_RUNTIME_SYMBOL,
             WRITE_FILE_STATUS_RUNTIME_SYMBOL,
+            APPEND_FILE_STATUS_RUNTIME_SYMBOL,
             FILE_EXISTS_STATUS_RUNTIME_SYMBOL,
+            FILE_OPEN_STATUS_RUNTIME_SYMBOL,
+            FILE_CLOSE_STATUS_RUNTIME_SYMBOL,
+            FILE_READ_CHUNK_STATUS_RUNTIME_SYMBOL,
+            FILE_READ_CHUNK_BYTES_RUNTIME_SYMBOL,
+            FILE_READ_CHUNK_EOF_RUNTIME_SYMBOL,
             READ_STDIN_LINE_RUNTIME_SYMBOL,
             READ_STDIN_BYTES_RUNTIME_SYMBOL,
             "user_or_extern_call",

@@ -1547,7 +1547,13 @@ track (#809/#897/#911/#912) and the safe reference/ownership track (#182).
 | `file-exists?` | `String → bool` | Return true when a filesystem path exists; panics on unexpected syscall/path errors |
 | `read-file-status` | `String → i64` | Return 0 when `read-file` should succeed, otherwise a positive host status code |
 | `write-file-status` | `String String → i64` | Write whole file contents and return 0 on success or a positive host status code |
+| `append-file-status` | `String String → i64` | Append contents without truncating, create the file when missing, and return 0 on success or a positive host status code |
 | `file-exists-status` | `String → i64` | Return 0 when a path exists, otherwise a positive host status code such as not-found |
+| `file-open-status` | `String i64 → i64` | Open a runtime-managed file-handle slot; return a positive handle id on success or a negative host status code |
+| `file-close-status` | `i64 → i64` | Close a runtime-managed file-handle slot; return 0 on success or a positive host status code |
+| `file-read-chunk-status` | `i64 i64 → i64` | Read once from a runtime-managed handle into the per-handle last-read slot; return 0 on success or a positive host status code |
+| `file-read-chunk-bytes` | `i64 → String` | Return the bytes stored by the last successful `file-read-chunk-status` call for a handle |
+| `file-read-chunk-eof?` | `i64 → bool` | Return the sticky EOF state stored by the last successful `file-read-chunk-status` call for a handle |
 | `read-stdin-line` | `→ String` | Read one stdin line without trailing newline; blank line returns `""` and does not set EOF |
 | `read-stdin-bytes` | `i64 → String` | Read up to `n` stdin bytes; negative counts panic, short reads occur only at EOF |
 | `stdin-eof?` | `→ bool` | Report whether the most recent stdin read hit EOF before a full line/requested byte count |
@@ -1606,6 +1612,8 @@ They are not implemented by a separate C runtime.
 | `.L_tl_arg` | Return copied argv entry |
 | `.L_tl_read_file` | Read whole file |
 | `.L_tl_write_file` | Write whole file |
+| `.L_tl_file_open_status` | Open a runtime-managed file-handle slot |
+| `.L_tl_file_close_status` | Close a runtime-managed file-handle slot |
 | `.L_tl_abort` | Print and abort (used by `panic`/`error`) |
 | `tl_oob_abort` | Bounds-check trap |
 
@@ -1619,24 +1627,22 @@ They are not implemented by a separate C runtime.
 | `char-at` | `string-ref` |
 | `print-str` | `print-string` |
 
-### 6.4 Stdlib file I/O handles (v1 design; implementation pending)
+### 6.4 Stdlib file I/O handles (v1)
 
 This section specifies the v1 source-level file-handle API for `stdlib/io.tl`.
-It defines the public surface — handle type, open modes, streaming reads,
-streaming writes, close, and platform policy — without committing the
-runtime/backend implementation, which lands incrementally through #1056
-(open/close), #1057 (streaming reads), and #1058 (streaming writes/flush). The
-handle API reuses the existing `IoError` model already in `stdlib/io.tl` (§9
-catalogs the variants); it does not introduce a new error vocabulary.
+Open/close support is implemented by #1056; streaming reads are implemented by
+#1057, while streaming writes/flush (#1058) land incrementally. The handle API reuses the
+existing `IoError` model already in `stdlib/io.tl` (§9 catalogs the variants);
+it does not introduce a new error vocabulary.
 
 **Handle type.** A file handle is an opaque value `FileHandle`. Source-level
 TypeLisp v1 treats it as opaque: programs obtain it from `file-open`, pass it to
-read/write/close helpers, and never inspect its representation. Internally a
-handle carries the host descriptor (a Linux file descriptor or a Windows
-`HANDLE`) plus the open mode it was created with; these fields are not part of
-the public contract and may change. A handle is a copyable value in v1 — there
-is no move-only ownership or implicit close yet; move-only handles and automatic
-close wait on #805.
+read/write/close helpers, and never inspect its representation. Internally the
+handle carries an id into a runtime-managed table that stores the host
+descriptor, open mode, and open/closed state; these fields are not part of the
+public contract and may change. A handle is a copyable value in v1 — there is no
+move-only ownership or implicit close yet; move-only handles and automatic close
+wait on #805.
 
 **Open modes.** `file-open` takes a path and an `OpenMode`:
 
@@ -1711,10 +1717,9 @@ same as `read-file` and `StdinRead`.
 **Streaming writes / append (#1058).** Streaming writes are specified by #1058
 and reuse `ResultIoUnit`. `OpenWriteAppend` defines append semantics:
 create-if-missing, never truncate, and — where the host supports an append open
-mode (Linux `O_APPEND`) — each write lands at the current end of file. Once
-#1058 lands, this supersedes the current non-atomic read-modify-write
-`try-append-file`; the whole-file helper stays available for source
-compatibility.
+mode (Linux `O_APPEND`) — each write lands at the current end of file. This
+matches the whole-file `try-append-file` helper, which uses the recoverable
+`append-file-status` runtime primitive instead of read-modify-write.
 
 **Platform policy.** Linux is the reference target and must implement all three
 modes plus streaming reads and writes. On Windows, the handle API either works
@@ -1723,10 +1728,10 @@ result for any mode or operation not yet implemented there, following the same
 pattern as the Windows `try-create-temp-dir` behavior. No operation panics for an
 unsupported platform; callers always receive an `IoError`.
 
-**Scope.** This is a written API/spec only. It adds no Rust-only IO
-infrastructure and no runtime/backend code; the concrete `FileHandle`
-representation, runtime status primitives, and stdlib functions land through
-#1056, #1057, and #1058.
+**Scope.** The #1056 open/close subset is implemented for the stdlib API and
+Rust stage0 backend, with Windows returning structured `IoUnsupported` results
+until native handle support lands. Streaming reads and writes remain specified
+follow-ups through #1057 and #1058.
 
 ---
 
@@ -1833,7 +1838,7 @@ values from escaping until explicit lifetime signatures exist.
 | Category | Members | Arena behavior |
 |----------|---------|----------------|
 | Non-allocating inspection | `length`/`array-length` on arrays, `length`/`string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string->int`, stdlib string predicates such as `string-contains` | Reads caller-provided handles and returns scalars. |
-| Returns active-arena owned data | `make-array`, `arg`, `read-file`, `read-stdin-line`, `read-stdin-bytes`, `string-append`/`string-concat`, `substring`/`string-slice`, `int->string`, stdlib trimming/replacement helpers when they build a new string | Fresh storage is allocated in the active arena and cannot escape a scoped arena. |
+| Returns active-arena owned data | `make-array`, `arg`, `read-file`, `file-read-chunk`, `read-stdin-line`, `read-stdin-bytes`, `string-append`/`string-concat`, `substring`/`string-slice`, `int->string`, stdlib trimming/replacement helpers when they build a new string | Fresh storage is allocated in the active arena and cannot escape a scoped arena. |
 | Returns caller-provided data | `stdlib/string.tl` `string-replace` when no match is found; `stdlib/io.tl` `read-file-or` when the path is missing | The current type system cannot express this borrowed/caller-owned distinction, so calls inside a scoped arena are still treated conservatively as arena-tagged aggregate results. |
 | Mutates caller-provided storage | `array-set!` | Mutates the array buffer named by the caller; it does not allocate. Region checks reject storing shorter-lived aggregate handles into longer-lived containers. |
 | Host/runtime IO | `print*`, `panic`/`error`, `flush-stdout`, `write-file`, `file-exists?`, stdlib IO helpers | Performs target IO; any temporary strings used by the helper allocate in the active arena. |
@@ -1985,8 +1990,8 @@ not the future safe reference/borrow model (#182), not a replacement for
   `substring`/`string-slice`, `string->int`, `int->string`,
   `print-string`/`print-str`, `print-error`.
 - Bootstrap I/O helpers: `arg-count`, `arg`, `read-file`, `write-file`,
-  `file-exists?`, `read-stdin-line`, `read-stdin-bytes`, `stdin-eof?`,
-  `flush-stdout`.
+  `file-exists?`, `file-open`, `file-close`, `file-read-chunk`,
+  `read-stdin-line`, `read-stdin-bytes`, `stdin-eof?`, `flush-stdout`.
 - Low-level extern-only allocator region helpers: `tl_region_mark`,
   `tl_region_reset`.
 - `extern` declarations.

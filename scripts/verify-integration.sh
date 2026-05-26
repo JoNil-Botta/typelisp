@@ -161,6 +161,17 @@ deps_or_empty() {
     esac
 }
 
+requires_symbol_from_deps() {
+    for _dep in $(deps_or_empty "$1"); do
+        case "$_dep" in
+            requires-stage0-symbol:*)
+                printf '%s\n' "${_dep#requires-stage0-symbol:}"
+                return
+                ;;
+        esac
+    done
+}
+
 dep_source_path() {
     _dep=$1
     _source_dir=$2
@@ -287,6 +298,13 @@ EOF
 
         _source_dir=$(dirname -- "$_source_path")
         for _dep in $(deps_or_empty "$_deps"); do
+            case "$_dep" in
+                requires-stage0-symbol:)
+                    echo "manifest line $_line_no has empty staged symbol for $_name" >&2
+                    exit 1
+                    ;;
+                requires-stage0-symbol:*) continue ;;
+            esac
             case "$_dep" in
                 /* | *..*)
                     echo "manifest line $_line_no has unsafe dependency path: $_dep" >&2
@@ -442,12 +460,15 @@ show_build_streams() {
 # failure mentions the not-yet-published runtime symbol. Once stage0-latest
 # catches up, the case builds and runs normally with a drop-marker notice.
 integration_should_skip_staged() {
-    _symbol=$1
+    _symbols=$1
     shift
-    [ -n "$_symbol" ] || return 1
-    for _file in "$@"; do
-        [ -f "$_file" ] || continue
-        grep -qF "$_symbol" "$_file" && return 0
+    [ -n "$_symbols" ] || return 1
+    for _symbol in $(printf '%s\n' "$_symbols" | tr ',' ' '); do
+        [ -n "$_symbol" ] || continue
+        for _file in "$@"; do
+            [ -f "$_file" ] || continue
+            grep -qF "$_symbol" "$_file" && return 0
+        done
     done
     return 1
 }
@@ -865,7 +886,14 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
     work_src="$case_dir/$name.tl"
     cp "$source_path" "$work_src"
 
+    if [ -z "$requires_symbol" ]; then
+        requires_symbol=$(requires_symbol_from_deps "$deps")
+    fi
+
     for dep in $(deps_or_empty "$deps"); do
+        case "$dep" in
+            requires-stage0-symbol:*) continue ;;
+        esac
         copy_dep "$dep" "$source_dir" "$case_dir"
     done
 
@@ -1006,3 +1034,6 @@ else
 fi
 
 echo "All $ran integration case(s) passed for $HOST_OS."
+if [ "$skipped" -ne 0 ]; then
+    echo "$skipped integration case(s) skipped (staged primitive awaiting stage0 republish)."
+fi

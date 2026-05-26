@@ -370,17 +370,23 @@
                                           (tc-bind
                                             (tc-bind
                                               (tc-bind
-                                                e17
-                                                "read-file-status"
-                                                (tc-fn1
+                                                (tc-bind
+                                                  e17
+                                                  "read-file-status"
+                                                  (tc-fn1
+                                                    (AstTyString)
+                                                    (AstTyI64)))
+                                                "write-file"
+                                                (tc-fn2
                                                   (AstTyString)
-                                                  (AstTyI64)))
-                                              "write-file"
+                                                  (AstTyString)
+                                                  (AstTyUnit)))
+                                              "write-file-status"
                                               (tc-fn2
                                                 (AstTyString)
                                                 (AstTyString)
-                                                (AstTyUnit)))
-                                            "write-file-status"
+                                                (AstTyI64)))
+                                            "append-file-status"
                                             (tc-fn2
                                               (AstTyString)
                                               (AstTyString)
@@ -393,14 +399,25 @@
                                                   (tc-bind
                                                     (tc-bind
                                                       (tc-bind
-                                                        e18
-                                                        "file-exists?"
-                                                        (tc-fn1
+                                                        (tc-bind
+                                                          (tc-bind
+                                                            e18
+                                                            "file-exists?"
+                                                            (tc-fn1
+                                                              (AstTyString)
+                                                              (AstTyBool)))
+                                                          "file-exists-status"
+                                                          (tc-fn1
+                                                            (AstTyString)
+                                                            (AstTyI64)))
+                                                        "file-open-status"
+                                                        (tc-fn2
                                                           (AstTyString)
-                                                          (AstTyBool)))
-                                                      "file-exists-status"
+                                                          (AstTyI64)
+                                                          (AstTyI64)))
+                                                      "file-close-status"
                                                       (tc-fn1
-                                                        (AstTyString)
+                                                        (AstTyI64)
                                                         (AstTyI64)))
                                                     "fs-mkdir-status"
                                                     (tc-fn1
@@ -421,7 +438,23 @@
                                               (tc-bind
                                                 (tc-bind
                                                   (tc-bind
-                                                    e19
+                                                    (tc-bind
+                                                      (tc-bind
+                                                        (tc-bind
+                                                          e19
+                                                          "file-read-chunk-status"
+                                                          (tc-fn2
+                                                            (AstTyI64)
+                                                            (AstTyI64)
+                                                            (AstTyI64)))
+                                                        "file-read-chunk-bytes"
+                                                        (tc-fn1
+                                                          (AstTyI64)
+                                                          (AstTyString)))
+                                                      "file-read-chunk-eof?"
+                                                      (tc-fn1
+                                                        (AstTyI64)
+                                                        (AstTyBool)))
                                                     "cpuid"
                                                     (tc-fn2
                                                       (AstTyI64)
@@ -951,6 +984,22 @@
                 [(ErrTcUnit message) (ErrTcUnit message)])]
             [(ErrTcUnit message) (ErrTcUnit message)])])]))
 
+(define (tc-source-resource-binding-list-policy-ok
+  [ctx : TcContext]
+  [bindings : AstResourceBindingList]) : ResultTcUnit
+  (match bindings
+    [(AstResourceBindingNil) OkTcUnit]
+    [(AstResourceBindingCons binding rest)
+      (match binding
+        [(AstResourceBinding _ init cleanup)
+          (match (tc-source-expr-policy-ok ctx init)
+            [(OkTcUnit)
+              (match (tc-source-expr-policy-ok ctx cleanup)
+                [(OkTcUnit)
+                  (tc-source-resource-binding-list-policy-ok ctx rest)]
+                [(ErrTcUnit message) (ErrTcUnit message)])]
+            [(ErrTcUnit message) (ErrTcUnit message)])])]))
+
 (define (tc-source-expr-list-policy-ok [ctx : TcContext] [exprs : AstExprList]) : ResultTcUnit
   (match exprs
     [(AstExprNil) OkTcUnit]
@@ -1041,6 +1090,10 @@
         [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstExprStructGet receiver _) (tc-source-expr-policy-ok ctx receiver)]
     [(AstExprWithRegion _ body) (tc-source-expr-list-policy-ok ctx body)]
+    [(AstExprWithResource bindings body)
+      (match (tc-source-resource-binding-list-policy-ok ctx bindings)
+        [(OkTcUnit) (tc-source-expr-list-policy-ok ctx body)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstExprComptime inner) (tc-source-expr-policy-ok ctx inner)]
     [(AstExprTry inner) (tc-source-expr-policy-ok ctx inner)]
     [(AstExprPtrNullCheck inner) (tc-source-expr-policy-ok ctx inner)]
@@ -1750,65 +1803,39 @@
         (ErrTcType "typecheck: bit-not expects integer"))]))
 
 (define (tc-region-arg-builtin-name? [name : String]) : bool
-  (if (string-eq name "print-string")
-    true
-    (if (string-eq name "print-str")
-      true
-      (if (string-eq name "print-error")
-        true
-        (if (string-eq name "string-length")
-          true
-          (if (string-eq name "length")
-            true
-            (if (string-eq name "string-eq")
-              true
-              (if (string-eq name "string=?")
-                true
-                (if (string-eq name "string->int")
-                  true
-                  (if (string-eq name "substring")
-                    true
-                    (if (string-eq name "string-slice")
-                      true
-                      (if (string-eq name "string-append")
-                        true
-                        (if (string-eq name "string-concat")
-                          true
-                          (if (string-eq name "read-file")
-                            true
-                            (if (string-eq name "read-file-status")
-                              true
-                              (if (string-eq name "write-file")
-                                true
-                                (if (string-eq name "write-file-status")
-                                  true
-                                  (if (string-eq name "file-exists?")
-                                    true
-                                    (if (string-eq name "file-exists-status")
-                                      true
-                                      (if (string-eq name "fs-mkdir-status")
-                                        true
-                                        (if (string-eq
-                                          name
-                                          "fs-remove-file-status")
-                                          true
-                                          (if (string-eq
-                                            name
-                                            "fs-remove-dir-status")
-                                            true
-                                            (if (string-eq name "fs-process-id")
-                                              true
-                                              (if (string-eq name "panic")
-                                                true
-                                                (if (string-eq name "error")
-                                                  true
-                                                  (if (string-eq
-                                                    name
-                                                    "env-var-exists?")
-                                                    true
-                                                    (string-eq
-                                                      name
-                                                      "env-var-value")))))))))))))))))))))))))))
+  (cond
+    [(string-eq name "print-string") true]
+    [(string-eq name "print-str") true]
+    [(string-eq name "print-error") true]
+    [(string-eq name "string-length") true]
+    [(string-eq name "length") true]
+    [(string-eq name "string-eq") true]
+    [(string-eq name "string=?") true]
+    [(string-eq name "string->int") true]
+    [(string-eq name "substring") true]
+    [(string-eq name "string-slice") true]
+    [(string-eq name "string-append") true]
+    [(string-eq name "string-concat") true]
+    [(string-eq name "read-file") true]
+    [(string-eq name "read-file-status") true]
+    [(string-eq name "write-file") true]
+    [(string-eq name "write-file-status") true]
+    [(string-eq name "append-file-status") true]
+    [(string-eq name "file-exists?") true]
+    [(string-eq name "file-exists-status") true]
+    [(string-eq name "file-open-status") true]
+    [(string-eq name "file-close-status") true]
+    [(string-eq name "file-read-chunk-status") true]
+    [(string-eq name "file-read-chunk-bytes") true]
+    [(string-eq name "file-read-chunk-eof?") true]
+    [(string-eq name "fs-mkdir-status") true]
+    [(string-eq name "fs-remove-file-status") true]
+    [(string-eq name "fs-remove-dir-status") true]
+    [(string-eq name "fs-process-id") true]
+    [(string-eq name "panic") true]
+    [(string-eq name "error") true]
+    [(string-eq name "env-var-exists?") true]
+    [else (string-eq name "env-var-value")]))
 
 (define (tc-default-builtin-unshadowed-scan? [env : TcTypeEnv] [name : String]) : bool
   (match env
@@ -2047,16 +2074,29 @@
         (ErrTcType "typecheck: arity mismatch")
         (tc-call-expr ctx env func args))]))
 
-;; `size-of`/`align-of` (#989) are comptime-only layout queries: a single type
-;; argument, result `i64`. Typed here (intercepting before normal call resolution
-;; so `size-of` isn't looked up as a function); CTFE computes the value when the
-;; query is folded inside `(comptime ...)`. Slice 1 supports scalar types; struct
-;; layout + `offset-of` are slice 2.
-(define (tc-layout-query-call [name : String] [args : AstExprList]) : ResultTcType
+(define (tc-layout-query-name? [name : String]) : bool
+  (if (string-eq name "size-of")
+    true
+    (if (string-eq name "align-of")
+      true
+      (string-eq name "offset-of"))))
+
+;; Layout queries are CTFE-only. Inside `(comptime ...)` the typechecker gets the
+;; folded value from `compiler-ctfe-eval`; if an unshadowed query reaches normal
+;; expression typing, it is a runtime use and must be rejected.
+(define (tc-one-arg-layout-query-runtime-call
+  [name : String]
+  [args : AstExprList]) : ResultTcType
   (match args
     [(AstExprCons _ rest)
       (match rest
-        [(AstExprNil) (OkTcType (AstTyI64))]
+        [(AstExprNil)
+          (ErrTcType
+            (string-append
+              "typecheck: "
+              (string-append
+                name
+                " is compile-time only; wrap it in (comptime ...)")))]
         [_
           (ErrTcType
             (string-append
@@ -2068,6 +2108,30 @@
           "typecheck: "
           (string-append name " expects exactly one type argument")))]))
 
+(define (tc-offset-layout-query-runtime-call [args : AstExprList]) : ResultTcType
+  (match args
+    [(AstExprCons _ tail)
+      (match tail
+        [(AstExprCons _ rest)
+          (match rest
+            [(AstExprNil)
+              (ErrTcType
+                "typecheck: offset-of is compile-time only; wrap it in (comptime ...)")]
+            [_
+              (ErrTcType
+                "typecheck: offset-of expects exactly one type argument and one field name")])]
+        [_
+          (ErrTcType
+            "typecheck: offset-of expects exactly one type argument and one field name")])]
+    [_
+      (ErrTcType
+        "typecheck: offset-of expects exactly one type argument and one field name")]))
+
+(define (tc-layout-query-runtime-call [name : String] [args : AstExprList]) : ResultTcType
+  (if (string-eq name "offset-of")
+    (tc-offset-layout-query-runtime-call args)
+    (tc-one-arg-layout-query-runtime-call name args)))
+
 (define (tc-call-or-array-length
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -2075,10 +2139,8 @@
   [args : AstExprList]) : ResultTcType
   (match (ast-expr-unspan func)
     [(AstExprVar name)
-      (if (and
-        (or (string-eq name "size-of") (string-eq name "align-of"))
-        (not (tc-name-bound? env name)))
-        (tc-layout-query-call name args)
+      (if (and (tc-layout-query-name? name) (not (tc-name-bound? env name)))
+        (tc-layout-query-runtime-call name args)
         (if (or (string-eq name "array-length") (string-eq name "length"))
           (tc-array-length-call ctx env name func args)
           (if (and
@@ -2633,6 +2695,9 @@
         [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
     [(AstExprWithRegion region body)
       (tc-spmd-begin-list ctx (tc-push-region env region) spmd-env body)]
+    [(AstExprWithResource _ _)
+      (ErrTcSpmdExprInfo
+        "typecheck: resource with is not implemented yet (#907)")]
     [(AstExprComptime inner)
       (match (tc-spmd-expr ctx env spmd-env inner)
         [(OkTcSpmdExprInfo info)
@@ -2703,6 +2768,18 @@
             rest
             (tc-string-list-add bound name))])]))
 
+(define (tc-resource-binding-list-add-bound-names
+  [bindings : AstResourceBindingList]
+  [bound : TcStringList]) : TcStringList
+  (match bindings
+    [(AstResourceBindingNil) bound]
+    [(AstResourceBindingCons binding rest)
+      (match binding
+        [(AstResourceBinding name _ _)
+          (tc-resource-binding-list-add-bound-names
+            rest
+            (tc-string-list-add bound name))])]))
+
 (define (tc-expr-list-uses-free-name?
   [exprs : AstExprList]
   [name : String]
@@ -2729,6 +2806,24 @@
               rest
               name
               (tc-string-list-add bound bind-name)))])]))
+
+(define (tc-resource-binding-list-uses-free-name?
+  [bindings : AstResourceBindingList]
+  [name : String]
+  [bound : TcStringList]) : bool
+  (match bindings
+    [(AstResourceBindingNil) false]
+    [(AstResourceBindingCons binding rest)
+      (match binding
+        [(AstResourceBinding bind-name init cleanup)
+          (or
+            (tc-expr-uses-free-name? init name bound)
+            (or
+              (tc-expr-uses-free-name? cleanup name bound)
+              (tc-resource-binding-list-uses-free-name?
+                rest
+                name
+                (tc-string-list-add bound bind-name))))])]))
 
 (define (tc-match-arms-use-free-name?
   [arms : AstMatchArmList]
@@ -2839,6 +2934,13 @@
     [(AstExprStructGet receiver _)
       (tc-expr-uses-free-name? receiver name bound)]
     [(AstExprWithRegion _ body) (tc-expr-list-uses-free-name? body name bound)]
+    [(AstExprWithResource bindings body)
+      (or
+        (tc-resource-binding-list-uses-free-name? bindings name bound)
+        (tc-expr-list-uses-free-name?
+          body
+          name
+          (tc-resource-binding-list-add-bound-names bindings bound)))]
     [(AstExprTypeLiteral _) false]
     [(AstExprComptime inner) (tc-expr-uses-free-name? inner name bound)]
     [(AstExprTry inner) (tc-expr-uses-free-name? inner name bound)]
@@ -3124,6 +3226,121 @@
 
 (define (tc-repr-c-struct-layout [ctx : TcContext] [struct-name : String]) : ResultTcReprCLayout
   (tc-repr-c-struct-layout-with-seen ctx struct-name TcStringNil))
+
+(define (tc-ctfe-layout-fields [fields : TcReprCFieldLayoutList]) : CtfeLayoutFieldList
+  (match fields
+    [(TcReprCFieldLayoutNil) CtfeLayoutFieldNil]
+    [(TcReprCFieldLayoutCons field rest)
+      (match field
+        [(TcReprCFieldLayout name _ offset)
+          (CtfeLayoutFieldCons
+            (CtfeLayoutField name offset)
+            (tc-ctfe-layout-fields rest))])]))
+
+(define (tc-ctfe-struct-layout-info
+  [ctx : TcContext]
+  [struct-name : String]
+  [repr : AstStructRepr]) : CtfeLayoutInfo
+  (if (ast-struct-repr-c? repr)
+    (match (tc-repr-c-struct-layout ctx struct-name)
+      [(OkTcReprCLayout layout)
+        (CtfeLayoutInfo
+          struct-name
+          true
+          (tc-repr-c-layout-size layout)
+          (tc-repr-c-layout-align layout)
+          (tc-ctfe-layout-fields (tc-repr-c-layout-fields layout)))]
+      [(ErrTcReprCLayout _)
+        (CtfeLayoutInfo struct-name true 8 8 CtfeLayoutFieldNil)])
+    (CtfeLayoutInfo struct-name false 8 8 CtfeLayoutFieldNil)))
+
+(define (tc-ctfe-type-layout-info [type-name : String]) : CtfeLayoutInfo
+  (CtfeLayoutInfo type-name false 8 8 CtfeLayoutFieldNil))
+
+(define (tc-ctfe-layout-add-alias
+  [layouts : CtfeLayoutInfoList]
+  [info : CtfeLayoutInfo]
+  [alias : String]) : CtfeLayoutInfoList
+  (match info
+    [(CtfeLayoutInfo _ repr-c? size align fields)
+      (ctfe-layout-info-list-add-if-missing
+        layouts
+        (CtfeLayoutInfo alias repr-c? size align fields))]))
+
+(define (tc-ctfe-layout-add-names
+  [layouts : CtfeLayoutInfoList]
+  [info : CtfeLayoutInfo]
+  [name : String]
+  [module : String]) : CtfeLayoutInfoList
+  (let
+    [with-key : CtfeLayoutInfoList
+      (ctfe-layout-info-list-add-if-missing layouts info)]
+    (if (= (string-length module) 0)
+      with-key
+      (tc-ctfe-layout-add-alias with-key info name))))
+
+(define (tc-ctfe-layouts-from-decls
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [module : String]
+  [layouts : CtfeLayoutInfoList]) : CtfeLayoutInfoList
+  (match decls
+    [(AstDeclNil) layouts]
+    [(AstDeclCons decl rest)
+      (match decl
+        [(AstDeclModule next-module)
+          (tc-ctfe-layouts-from-decls ctx rest next-module layouts)]
+        [(AstDeclDefStruct name repr _)
+          (let
+            [key : String (compiler-symbol-module-key module name)]
+            [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key repr)]
+            (tc-ctfe-layouts-from-decls
+              ctx
+              rest
+              module
+              (tc-ctfe-layout-add-names layouts info name module)))]
+        [(AstDeclDefEnum name _)
+          (let
+            [key : String (compiler-symbol-module-key module name)]
+            [info : CtfeLayoutInfo (tc-ctfe-type-layout-info key)]
+            (tc-ctfe-layouts-from-decls
+              ctx
+              rest
+              module
+              (tc-ctfe-layout-add-names layouts info name module)))]
+        [(AstDeclComptimeDecl template)
+          (match template
+            [(AstDeclDefStruct name repr _)
+              (let
+                [key : String (compiler-symbol-module-key module name)]
+                [info : CtfeLayoutInfo
+                  (tc-ctfe-struct-layout-info ctx key repr)]
+                (tc-ctfe-layouts-from-decls
+                  ctx
+                  rest
+                  module
+                  (tc-ctfe-layout-add-names layouts info name module)))]
+            [(AstDeclDefEnum name _)
+              (let
+                [key : String (compiler-symbol-module-key module name)]
+                [info : CtfeLayoutInfo (tc-ctfe-type-layout-info key)]
+                (tc-ctfe-layouts-from-decls
+                  ctx
+                  rest
+                  module
+                  (tc-ctfe-layout-add-names layouts info name module)))]
+            [_ (tc-ctfe-layouts-from-decls ctx rest module layouts)])]
+        [_ (tc-ctfe-layouts-from-decls ctx rest module layouts)])]))
+
+(define (tc-ctfe-layouts [ctx : TcContext]) : CtfeLayoutInfoList
+  (match ctx
+    [(TcContext program _ _)
+      (match program
+        [(AstProgram decls)
+          (tc-ctfe-layouts-from-decls ctx decls "" CtfeLayoutInfoNil)])]))
+
+(define (tc-ctfe-env [ctx : TcContext]) : CtfeEnv
+  (ctfe-env-with-layouts (tc-ctfe-layouts ctx)))
 
 (define (tc-string-prefix? [text : String] [prefix : String]) : bool
   (let
@@ -4195,8 +4412,10 @@
                   (string-append region "'")))
               (OkTcType body-ty))]
           [(ErrTcType message) (ErrTcType message)]))]
+    [(AstExprWithResource _ _)
+      (ErrTcType "typecheck: resource with is not implemented yet (#907)")]
     [(AstExprComptime inner)
-      (match (compiler-ctfe-eval inner (ctfe-env-empty) (ctfe-fuel-limit))
+      (match (compiler-ctfe-eval inner (tc-ctfe-env ctx) (ctfe-fuel-limit))
         [(OkCtfe value _)
           (match value
             [(CtfeI64 _) (OkTcType (AstTyI64))]
@@ -5471,34 +5690,80 @@
               "(define (main) : i64 (comptime (< 1 2)))"
               "typecheck: return type mismatch")))))))
 
-;; IO-builtin signature rules (#1042): `read-file` (String -> String),
-;; `write-file` (String String -> unit), and `file-exists?` (String -> bool)
-;; accepts, plus non-String-argument, wrong-arity, and result-type-mismatch
+;; IO-builtin signature rules (#1042): whole-file helpers and file-handle status
+;; primitives accept, plus wrong-argument, wrong-arity, and result-type-mismatch
 ;; rejections. Migrated from src/typechecker.rs read-file/write-file coverage.
 (define (compiler-typecheck-io-builtin-tests-ok?) : bool
-  (and
-    (compiler-typecheck-ok? "(define (f [p : String]) : String (read-file p))")
-    (and
-      (compiler-typecheck-ok?
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-typecheck-ok?
+        "(define (f [p : String]) : String (read-file p))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
         "(define (f [p : String] [c : String]) : unit (write-file p c))")
-      (and
-        (compiler-typecheck-ok?
-          "(define (f [p : String]) : bool (file-exists? p))")
-        (and
-          (compiler-typecheck-error-ok?
-            "(define (f [c : String]) : unit (write-file 5 c))"
-            "typecheck: argument type mismatch")
-          (and
-            (compiler-typecheck-error-ok?
-              "(define (f [p : String]) : unit (write-file p))"
-              "typecheck: arity mismatch")
-            (and
-              (compiler-typecheck-error-ok?
-                "(define (f [p : i64]) : String (read-file p))"
-                "typecheck: argument type mismatch")
-              (compiler-typecheck-error-ok?
-                "(define (f [p : String] [c : String]) : i64 (write-file p c))"
-                "typecheck: return type mismatch"))))))))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f [p : String] [c : String]) : i64 (append-file-status p c))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f [p : String]) : bool (file-exists? p))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f [p : String]) : i64 (file-open-status p 0))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f [h : i64]) : i64 (file-close-status h))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f [h : i64] [n : i64]) : i64 (file-read-chunk-status h n))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f [h : i64]) : String (file-read-chunk-bytes h))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f [h : i64]) : bool (file-read-chunk-eof? h))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f [c : String]) : unit (write-file 5 c))"
+        "typecheck: argument type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f [p : String]) : unit (write-file p))"
+        "typecheck: arity mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f [p : i64]) : String (read-file p))"
+        "typecheck: argument type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f [p : String]) : i64 (file-open-status p \"r\"))"
+        "typecheck: argument type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : i64 (file-close-status \"h\"))"
+        "typecheck: argument type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f [p : String] [c : String]) : i64 (write-file p c))"
+        "typecheck: return type mismatch")
+        unit
+        (set! ok false))
+      ok)))
 
 ;; Raw-pointer null construction / check (#1054).
 (define (compiler-typecheck-ptr-null-ok-source) : String
@@ -5541,8 +5806,8 @@
       (compiler-typecheck-unsafe-empty-source)
       "parse: unsafe requires a non-empty body")))
 
-;; `size-of`/`align-of` comptime layout queries (#989 slice 1): accepted with a
-;; single type argument (result `i64`), rejected with wrong arity.
+;; CTFE layout queries (#989): folded calls produce `i64`, runtime calls are
+;; rejected, and `offset-of` is restricted to repr-c structs and known fields.
 (define (compiler-typecheck-layout-query-tests-ok?) : bool
   (and
     (compiler-typecheck-ok?
@@ -5550,9 +5815,38 @@
     (and
       (compiler-typecheck-ok?
         "(define (f) : i64 (comptime (align-of (type bool))))")
-      (compiler-typecheck-error-ok?
-        "(define (f) : i64 (comptime (size-of (type i64) (type bool))))"
-        "size-of expects exactly one type argument"))))
+      (and
+        (compiler-typecheck-ok?
+          "(defstruct Inner
+  (:repr c)
+  (x i32))
+(defstruct Outer
+  (:repr c)
+  (tag u8)
+  (inner Inner)
+  (tail i64))
+(define (f) : i64
+  (comptime (+ (size-of (type Outer)) (offset-of (type Outer) tail))))")
+        (and
+          (compiler-typecheck-error-ok?
+            "(define (f) : i64 (comptime (size-of (type i64) (type bool))))"
+            "size-of expects exactly one type argument")
+          (and
+            (compiler-typecheck-error-ok?
+              "(define (f) : i64 (size-of (type i64)))"
+              "typecheck: size-of is compile-time only; wrap it in (comptime ...)")
+            (and
+              (compiler-typecheck-error-ok?
+                "(defstruct Box (x i64))
+(define (f) : i64 (comptime (offset-of (type Box) x)))"
+                "offset-of requires repr c struct type")
+              (compiler-typecheck-error-ok?
+                "(defstruct Packet
+  (:repr c)
+  (tag u8)
+  (count i64))
+(define (f) : i64 (comptime (offset-of (type Packet) missing)))"
+                "offset-of unknown field missing"))))))))
 
 (define (compiler-typecheck-self-test) : i64
   (begin

@@ -137,7 +137,15 @@
       [source : String (arg 1)]
       (if (host-plan-flag? source)
         (ErrRunPlanConfig "run: expected source path before flags")
-        (run-plan-parse-options 2 count source "linux-x86_64" "scalar" "" "" "")))))
+        (run-plan-parse-options
+          2
+          count
+          source
+          (host-plan-default-target)
+          "scalar"
+          ""
+          ""
+          "")))))
 
 (define (run-plan-render [config : RunPlanConfig]) : String
   (match config

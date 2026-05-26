@@ -12,8 +12,9 @@ installed-root discovery, namespace isolation, or an implicit prelude.
 
 ## Current Modules
 
-- `io.tl`: file I/O helpers, stdio wrappers, and monomorphic Result-style I/O
-  error APIs built on compiler/runtime primitives. Import it with
+- `io.tl`: file I/O helpers, explicit file-handle open/close wrappers, stdio
+  wrappers, and monomorphic Result-style I/O error APIs built on
+  compiler/runtime primitives. Import it with
   `(import "stdlib/io.tl")`.
 - `env.tl`: recoverable environment variable lookup and PATH-style list
   helpers. Import it with `(import "stdlib/env.tl")`.
@@ -93,9 +94,11 @@ returned caller-owned values.
 | `try-read-file` | Performs host/runtime file inspection; returns `OkIoString` with fresh active-arena `String` storage from `read-file` when the path is readable, or `ErrIoString` for empty paths, expected absence, permission failures, interrupted reads, and target status-code failures. |
 | `try-write-file` | Writes through the recoverable runtime status helper; returns `OkIoUnit` on success or `ErrIoUnit` for empty paths, missing parents, permission failures, interrupted writes, and target status-code failures. |
 | `try-file-exists?` | Returns `OkIoBool` for existing or expected missing paths; empty paths and hard probe failures return `ErrIoBool`. |
-| `try-append-file` | Performs read-modify-write through `try-read-file`, `string-append`, and `try-write-file`. It creates missing files, allocates temporary active-arena strings, and remains non-atomic. |
+| `try-append-file` | Appends through the recoverable runtime status helper. It preserves existing contents, creates missing files, does not allocate a concatenated temporary string, and uses best-effort host append semantics rather than truncating or rewriting the whole file. |
+| `file-open`, `file-close` | `file-open` returns `ResultIoFile` with an opaque runtime-managed `FileHandle` for `OpenRead`, `OpenWriteTruncate`, and `OpenWriteAppend`. The Linux runtime copies the path into active-arena storage for the host syscall and tracks handle state in a process-global table; Windows currently returns `IoUnsupported`. `file-close` releases a valid handle and returns `IoUnsupported` for invalid or already-closed handles. |
+| `file-read-chunk`, `file-read-bytes`, `file-read-eof?` | `file-read-chunk` reads up to the requested byte count from a read-mode `FileHandle` and returns `ResultIoRead` with active-arena `String` bytes plus the sticky EOF flag. Negative counts return `IoInvalidPath`; closed, invalid, write-only, and unsupported handles return `IoUnsupported`. The accessors are non-allocating field reads on `FileRead`. |
 | `read-file-or` | Convenience wrapper over `try-read-file`; returns the caller-provided `fallback` for every structured error. |
-| `append-file` | Panic-on-error convenience wrapper over `try-append-file`. It allocates temporary active-arena strings and rewrites the whole file. |
+| `append-file` | Panic-on-error convenience wrapper over `try-append-file`; preserves existing contents and creates missing files through host append mode. |
 | `file-nonempty?` | Convenience wrapper over `try-read-file`; allocates a temporary active-arena `String` through `read-file` only when the path exists. |
 | `stdin-read-line`, `stdin-read-bytes` | Return `StdinRead` aggregates containing a runtime-allocated active-arena `String` plus the post-read sticky EOF state. Byte reads still use `String` storage until #807 adds byte-slice/string separation. |
 | `stdin-at-eof?`, `stdin-read-text`, `stdin-read-eof?`, `stdout-write`, `stderr-write`, `stdout-flush` | Non-allocating wrappers/accessors around runtime stdio primitives and `StdinRead` values. |
@@ -120,22 +123,22 @@ caller-provided buffer in place, or manually calls `tl_region_mark` /
 `tl_region_reset`. Those policies should remain explicit when borrowed strings,
 mutable buffers, and unsafe reset APIs are added.
 
-### Planned file-handle API (v1, #1036)
+### File-handle API (v1, #1036)
 
 `SPEC.md` §6.4 specifies the v1 file-handle surface that extends these
 whole-file helpers with explicit open/close and streaming I/O. The
 implementation lands incrementally:
 
-- **#1056** — opaque `FileHandle`, the `OpenMode` enum (`OpenRead`,
-  `OpenWriteTruncate`, `OpenWriteAppend`), `file-open` returning `ResultIoFile`,
-  and `file-close`. v1 requires explicit close; there is no implicit drop until
-  #805.
-- **#1057** — `file-read-chunk` returning `ResultIoRead` / `FileRead` (a
+- **#1056** — implemented: opaque `FileHandle`, the `OpenMode` enum
+  (`OpenRead`, `OpenWriteTruncate`, `OpenWriteAppend`), `file-open` returning
+  `ResultIoFile`, and `file-close`. v1 requires explicit close; there is no
+  implicit drop until #805.
+- **#1057** — implemented: `file-read-chunk` returning `ResultIoRead` / `FileRead` (a
   `String` payload plus a sticky EOF flag, mirroring `StdinRead`). Chunk bytes
   allocate in the active arena and stay `String`-typed until #807 adds a
   byte-slice split.
-- **#1058** — streaming writes and flush, plus atomic `OpenWriteAppend`
-  semantics that supersede the non-atomic `try-append-file` read-modify-write.
+- **#1058** — streaming writes and flush, plus `OpenWriteAppend` handle
+  semantics that match the non-truncating `try-append-file` append primitive.
 
 All handle helpers reuse the existing `IoError` model; mode violations, closed
 or invalid handles, and unsupported Windows operations return structured

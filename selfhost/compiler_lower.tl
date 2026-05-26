@@ -1455,35 +1455,28 @@
         (string-eq name "string-concat")))))
 
 (define (lower-bootstrap-runtime-builtin? [name : String]) : bool
-  (if (string-eq name "string-eq")
-    true
-    (if (string-eq name "string=?")
-      true
-      (if (string-eq name "string->int")
-        true
-        (if (string-eq name "int->string")
-          true
-          (if (string-eq name "arg-count")
-            true
-            (if (string-eq name "arg")
-              true
-              (if (string-eq name "read-file")
-                true
-                (if (string-eq name "read-file-status")
-                  true
-                  (if (string-eq name "write-file")
-                    true
-                    (if (string-eq name "write-file-status")
-                      true
-                      (if (string-eq name "file-exists?")
-                        true
-                        (if (string-eq name "file-exists-status")
-                          true
-                          (if (string-eq name "panic")
-                            true
-                            (if (string-eq name "error")
-                              true
-                              (string-eq name "print-error"))))))))))))))))
+  (cond
+    [(string-eq name "string-eq") true]
+    [(string-eq name "string=?") true]
+    [(string-eq name "string->int") true]
+    [(string-eq name "int->string") true]
+    [(string-eq name "arg-count") true]
+    [(string-eq name "arg") true]
+    [(string-eq name "read-file") true]
+    [(string-eq name "read-file-status") true]
+    [(string-eq name "write-file") true]
+    [(string-eq name "write-file-status") true]
+    [(string-eq name "append-file-status") true]
+    [(string-eq name "file-exists?") true]
+    [(string-eq name "file-exists-status") true]
+    [(string-eq name "file-open-status") true]
+    [(string-eq name "file-close-status") true]
+    [(string-eq name "file-read-chunk-status") true]
+    [(string-eq name "file-read-chunk-bytes") true]
+    [(string-eq name "file-read-chunk-eof?") true]
+    [(string-eq name "panic") true]
+    [(string-eq name "error") true]
+    [else (string-eq name "print-error")]))
 
 (define (lower-stdio-runtime-name [name : String]) : String
   (if (string-eq name "read-stdin-line")
@@ -1866,12 +1859,17 @@
     [(AstExprArraySet arr index value)
       (lower-array-set ctx state env type-env arr index value)]
     [(AstExprWithRegion _ body) (lower-with-arena ctx state env type-env body)]
+    [(AstExprWithResource _ _)
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr
+          origin
+          "lower: resource with is not implemented yet (#907)"))]
     [(AstExprTry inner) (lower-try ctx state env type-env inner origin)]
     ;; `(comptime expr)` folds to a literal via the scalar CTFE evaluator (#719).
     ;; Successful folds reuse the ordinary literal path; CTFE rejections (free
     ;; runtime vars, unsupported forms, f64 -> #735) surface as lower errors.
     [(AstExprComptime inner)
-      (match (compiler-ctfe-eval inner (ctfe-env-empty) (ctfe-fuel-limit))
+      (match (compiler-ctfe-eval inner (tc-ctfe-env ctx) (ctfe-fuel-limit))
         [(OkCtfe value _)
           (match value
             [(CtfeType ty)
@@ -2652,6 +2650,180 @@
         result-ty
         origin)]))
 
+(define (lower-file-open-status-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons path (AstExprCons mode (AstExprNil)))
+      (match (lower-expr ctx state env type-env path)
+        [(OkLowerExpr lowered-path)
+          (match lowered-path
+            [(LowerExpr path-state path-value _)
+              (match (lower-expr ctx path-state env type-env mode)
+                [(OkLowerExpr lowered-mode)
+                  (match lowered-mode
+                    [(LowerExpr mode-state mode-value mode-ty)
+                      (match (lower-cast-value
+                        mode-state
+                        mode-value
+                        mode-ty
+                        (AstTyI64))
+                        [(LowerExpr cast-state cast-value _)
+                          (match (lower-string-fields cast-state path-value)
+                            [(LowerStringFields fields-state ptr len)
+                              (lower-runtime-call-values
+                                fields-state
+                                ".L_tl_file_open_status"
+                                (IrValueCons
+                                  ptr
+                                  (IrValueCons
+                                    len
+                                    (IrValueCons cast-value IrValueNil)))
+                                result-ty)])])])]
+                [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [_
+      (lower-direct-call
+        ctx
+        state
+        env
+        type-env
+        "file-open-status"
+        args
+        result-ty
+        origin)]))
+
+(define (lower-file-close-status-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons handle (AstExprNil))
+      (match (lower-expr ctx state env type-env handle)
+        [(OkLowerExpr lowered-handle)
+          (match lowered-handle
+            [(LowerExpr handle-state handle-value handle-ty)
+              (match (lower-cast-value
+                handle-state
+                handle-value
+                handle-ty
+                (AstTyI64))
+                [(LowerExpr cast-state cast-value _)
+                  (lower-runtime-call-values
+                    cast-state
+                    ".L_tl_file_close_status"
+                    (IrValueCons cast-value IrValueNil)
+                    result-ty)])])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [_
+      (lower-direct-call
+        ctx
+        state
+        env
+        type-env
+        "file-close-status"
+        args
+        result-ty
+        origin)]))
+
+(define (lower-file-read-chunk-status-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons handle (AstExprCons count (AstExprNil)))
+      (match (lower-expr ctx state env type-env handle)
+        [(OkLowerExpr lowered-handle)
+          (match lowered-handle
+            [(LowerExpr handle-state handle-value handle-ty)
+              (match (lower-cast-value
+                handle-state
+                handle-value
+                handle-ty
+                (AstTyI64))
+                [(LowerExpr handle-cast-state handle-cast-value _)
+                  (match (lower-expr ctx handle-cast-state env type-env count)
+                    [(OkLowerExpr lowered-count)
+                      (match lowered-count
+                        [(LowerExpr count-state count-value count-ty)
+                          (match (lower-cast-value
+                            count-state
+                            count-value
+                            count-ty
+                            (AstTyI64))
+                            [(LowerExpr cast-state count-cast-value _)
+                              (lower-runtime-call-values
+                                cast-state
+                                ".L_tl_file_read_chunk_status"
+                                (IrValueCons
+                                  handle-cast-value
+                                  (IrValueCons count-cast-value IrValueNil))
+                                result-ty)])])]
+                    [(ErrLowerExpr message) (ErrLowerExpr message)])])])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [_
+      (lower-direct-call
+        ctx
+        state
+        env
+        type-env
+        "file-read-chunk-status"
+        args
+        result-ty
+        origin)]))
+
+(define (lower-file-read-chunk-field-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [fallback-name : String]
+  [runtime-name : String]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons handle (AstExprNil))
+      (match (lower-expr ctx state env type-env handle)
+        [(OkLowerExpr lowered-handle)
+          (match lowered-handle
+            [(LowerExpr handle-state handle-value handle-ty)
+              (match (lower-cast-value
+                handle-state
+                handle-value
+                handle-ty
+                (AstTyI64))
+                [(LowerExpr cast-state cast-value _)
+                  (lower-runtime-call-values
+                    cast-state
+                    runtime-name
+                    (IrValueCons cast-value IrValueNil)
+                    result-ty)])])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [_
+      (lower-direct-call
+        ctx
+        state
+        env
+        type-env
+        fallback-name
+        args
+        result-ty
+        origin)]))
+
 (define (lower-message-runtime-call
   [ctx : TcContext]
   [state : LowerState]
@@ -2838,6 +3010,57 @@
         result-ty
         origin)]))
 
+(define (lower-append-file-status-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons path (AstExprCons contents (AstExprNil)))
+      (match (lower-expr ctx state env type-env path)
+        [(OkLowerExpr lowered-path)
+          (match lowered-path
+            [(LowerExpr path-state path-value _)
+              (match (lower-expr ctx path-state env type-env contents)
+                [(OkLowerExpr lowered-contents)
+                  (match lowered-contents
+                    [(LowerExpr contents-state contents-value _)
+                      (match (lower-string-fields contents-state path-value)
+                        [(LowerStringFields path-fields-state path-ptr path-len)
+                          (match (lower-string-fields
+                            path-fields-state
+                            contents-value)
+                            [(LowerStringFields
+                                done-fields-state
+                                contents-ptr
+                                contents-len)
+                              (lower-runtime-call-values
+                                done-fields-state
+                                ".L_tl_append_file_status"
+                                (IrValueCons
+                                  path-ptr
+                                  (IrValueCons
+                                    path-len
+                                    (IrValueCons
+                                      contents-ptr
+                                      (IrValueCons contents-len IrValueNil))))
+                                result-ty)])])])]
+                [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [_
+      (lower-direct-call
+        ctx
+        state
+        env
+        type-env
+        "append-file-status"
+        args
+        result-ty
+        origin)]))
+
 (define (lower-bootstrap-runtime-call
   [ctx : TcContext]
   [state : LowerState]
@@ -2847,95 +3070,118 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (if (or (string-eq name "string-eq") (string-eq name "string=?"))
-    (lower-string-eq-call ctx state env type-env args result-ty origin)
-    (if (string-eq name "string->int")
-      (lower-string-to-int-call ctx state env type-env args result-ty origin)
-      (if (string-eq name "int->string")
-        (lower-int-to-string-call ctx state env type-env args result-ty origin)
-        (if (string-eq name "arg-count")
-          (lower-arg-count-call ctx state env type-env args result-ty origin)
-          (if (string-eq name "arg")
-            (lower-arg-call ctx state env type-env args result-ty origin)
-            (if (string-eq name "read-file")
-              (lower-read-file-call
-                ctx
-                state
-                env
-                type-env
-                args
-                result-ty
-                origin)
-              (if (string-eq name "read-file-status")
-                (lower-read-file-status-call
-                  ctx
-                  state
-                  env
-                  type-env
-                  args
-                  result-ty
-                  origin)
-                (if (string-eq name "write-file")
-                  (lower-write-file-call
-                    ctx
-                    state
-                    env
-                    type-env
-                    args
-                    result-ty
-                    origin)
-                  (if (string-eq name "write-file-status")
-                    (lower-write-file-status-call
-                      ctx
-                      state
-                      env
-                      type-env
-                      args
-                      result-ty
-                      origin)
-                    (if (string-eq name "file-exists?")
-                      (lower-file-exists-call
-                        ctx
-                        state
-                        env
-                        type-env
-                        args
-                        result-ty
-                        origin)
-                      (if (string-eq name "file-exists-status")
-                        (lower-file-exists-status-call
-                          ctx
-                          state
-                          env
-                          type-env
-                          args
-                          result-ty
-                          origin)
-                        (if (or
-                          (string-eq name "panic")
-                          (string-eq name "error"))
-                          (lower-message-runtime-call
-                            ctx
-                            state
-                            env
-                            type-env
-                            args
-                            name
-                            ".L_tl_abort"
-                            result-ty
-                            "lower: panic requires String"
-                            origin)
-                          (lower-message-runtime-call
-                            ctx
-                            state
-                            env
-                            type-env
-                            args
-                            "print-error"
-                            "tl_print_err"
-                            result-ty
-                            "lower: print-error requires String"
-                            origin))))))))))))))
+  (cond
+    [(or (string-eq name "string-eq") (string-eq name "string=?"))
+      (lower-string-eq-call ctx state env type-env args result-ty origin)]
+    [(string-eq name "string->int")
+      (lower-string-to-int-call ctx state env type-env args result-ty origin)]
+    [(string-eq name "int->string")
+      (lower-int-to-string-call ctx state env type-env args result-ty origin)]
+    [(string-eq name "arg-count")
+      (lower-arg-count-call ctx state env type-env args result-ty origin)]
+    [(string-eq name "arg")
+      (lower-arg-call ctx state env type-env args result-ty origin)]
+    [(string-eq name "read-file")
+      (lower-read-file-call ctx state env type-env args result-ty origin)]
+    [(string-eq name "read-file-status")
+      (lower-read-file-status-call ctx state env type-env args result-ty origin)]
+    [(string-eq name "write-file")
+      (lower-write-file-call ctx state env type-env args result-ty origin)]
+    [(string-eq name "write-file-status")
+      (lower-write-file-status-call
+        ctx
+        state
+        env
+        type-env
+        args
+        result-ty
+        origin)]
+    [(string-eq name "append-file-status")
+      (lower-append-file-status-call
+        ctx
+        state
+        env
+        type-env
+        args
+        result-ty
+        origin)]
+    [(string-eq name "file-exists?")
+      (lower-file-exists-call ctx state env type-env args result-ty origin)]
+    [(string-eq name "file-exists-status")
+      (lower-file-exists-status-call
+        ctx
+        state
+        env
+        type-env
+        args
+        result-ty
+        origin)]
+    [(string-eq name "file-open-status")
+      (lower-file-open-status-call ctx state env type-env args result-ty origin)]
+    [(string-eq name "file-close-status")
+      (lower-file-close-status-call
+        ctx
+        state
+        env
+        type-env
+        args
+        result-ty
+        origin)]
+    [(string-eq name "file-read-chunk-status")
+      (lower-file-read-chunk-status-call
+        ctx
+        state
+        env
+        type-env
+        args
+        result-ty
+        origin)]
+    [(string-eq name "file-read-chunk-bytes")
+      (lower-file-read-chunk-field-call
+        ctx
+        state
+        env
+        type-env
+        args
+        "file-read-chunk-bytes"
+        ".L_tl_file_read_chunk_bytes"
+        result-ty
+        origin)]
+    [(string-eq name "file-read-chunk-eof?")
+      (lower-file-read-chunk-field-call
+        ctx
+        state
+        env
+        type-env
+        args
+        "file-read-chunk-eof?"
+        ".L_tl_file_read_chunk_eof"
+        result-ty
+        origin)]
+    [(or (string-eq name "panic") (string-eq name "error"))
+      (lower-message-runtime-call
+        ctx
+        state
+        env
+        type-env
+        args
+        name
+        ".L_tl_abort"
+        result-ty
+        "lower: panic requires String"
+        origin)]
+    [else
+      (lower-message-runtime-call
+        ctx
+        state
+        env
+        type-env
+        args
+        "print-error"
+        "tl_print_err"
+        result-ty
+        "lower: print-error requires String"
+        origin)]))
 
 ;; Lower an unshadowed `(string-ref s i)` / `(char-at s i)` builtin call to the
 ;; bounds-checked String byte index. Since #677 the parser emits these names as
@@ -3033,26 +3279,33 @@
       ;; recover their String byte-index builtin here unless shadowed (#677).
       (if (and
         (lower-builtin-call-available? ctx env name)
-        (or (string-eq name "string-ref") (string-eq name "char-at")))
-        (lower-string-ref-call
-          ctx
-          state
-          env
-          type-env
-          name
-          args
-          result-ty
-          origin)
+        (tc-layout-query-name? name))
+        (ErrLowerExpr
+          (lower-diagnostic-at-expr
+            origin
+            (string-append
+              "lower: "
+              (string-append
+                name
+                " is compile-time only; wrap it in (comptime ...)"))))
         (if (and
           (lower-builtin-call-available? ctx env name)
-          (or
-            (string-eq name "array-length")
-            (or (string-eq name "length") (string-eq name "string-length"))))
-          (lower-array-length ctx state env type-env name args result-ty origin)
+          (or (string-eq name "string-ref") (string-eq name "char-at")))
+          (lower-string-ref-call
+            ctx
+            state
+            env
+            type-env
+            name
+            args
+            result-ty
+            origin)
           (if (and
             (lower-builtin-call-available? ctx env name)
-            (lower-string-runtime-builtin? name))
-            (lower-string-runtime-call
+            (or
+              (string-eq name "array-length")
+              (or (string-eq name "length") (string-eq name "string-length"))))
+            (lower-array-length
               ctx
               state
               env
@@ -3063,37 +3316,49 @@
               origin)
             (if (and
               (lower-builtin-call-available? ctx env name)
-              (lower-stdio-builtin? name))
-              (lower-direct-call
+              (lower-string-runtime-builtin? name))
+              (lower-string-runtime-call
                 ctx
                 state
                 env
                 type-env
-                (lower-stdio-runtime-name name)
+                name
                 args
                 result-ty
                 origin)
               (if (and
                 (lower-builtin-call-available? ctx env name)
-                (lower-bootstrap-runtime-builtin? name))
-                (lower-bootstrap-runtime-call
+                (lower-stdio-builtin? name))
+                (lower-direct-call
                   ctx
                   state
                   env
                   type-env
-                  name
+                  (lower-stdio-runtime-name name)
                   args
                   result-ty
                   origin)
-                (lower-call-non-builtin
-                  ctx
-                  state
-                  env
-                  type-env
-                  name
-                  args
-                  result-ty
-                  origin))))))]
+                (if (and
+                  (lower-builtin-call-available? ctx env name)
+                  (lower-bootstrap-runtime-builtin? name))
+                  (lower-bootstrap-runtime-call
+                    ctx
+                    state
+                    env
+                    type-env
+                    name
+                    args
+                    result-ty
+                    origin)
+                  (lower-call-non-builtin
+                    ctx
+                    state
+                    env
+                    type-env
+                    name
+                    args
+                    result-ty
+                    origin)))))))]
     [_
       (ErrLowerExpr
         (lower-diagnostic-at-expr func "lower: only direct calls are supported"))]))
@@ -5117,6 +5382,17 @@
         (string-length (read-stdin-line))
         (string-length (read-stdin-bytes 3)))))")
 
+(define (compiler-lower-file-handle-status-source) : String
+  "(define (main) : i64
+  (let
+    [handle : i64 (file-open-status \"input.txt\" 0)]
+    (+ handle
+      (+ (append-file-status \"input.txt\" \"x\")
+        (+ (file-read-chunk-status handle 4)
+          (+ (string-length (file-read-chunk-bytes handle))
+            (+ (if (file-read-chunk-eof? handle) 1 0)
+               (file-close-status handle))))))))")
+
 (define (compiler-lower-aggregate-source) : String
   "(defstruct Point (x i64) (y i64))
 (defenum Shape (Nothing) (Circle i64) (Pair Point))
@@ -5870,6 +6146,95 @@
                       0))))))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-file-handle-status-shape-ok? [src : String]) : bool
+  (match (lower-compiler-source src)
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (let
+            [ok : bool true]
+            (begin
+              (if (=
+                (lower-test-functions-call-count
+                  functions
+                  ".L_tl_file_open_status")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  functions
+                  ".L_tl_file_close_status")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  functions
+                  ".L_tl_append_file_status")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  functions
+                  ".L_tl_file_read_chunk_status")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  functions
+                  ".L_tl_file_read_chunk_bytes")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  functions
+                  ".L_tl_file_read_chunk_eof")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "file-open-status")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "file-close-status")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "append-file-status")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  functions
+                  "file-read-chunk-status")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  functions
+                  "file-read-chunk-bytes")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  functions
+                  "file-read-chunk-eof?")
+                0)
+                unit
+                (set! ok false))
+              ok))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-region-source) : String
   "(define (main) : i64
   (with-arena r
@@ -6012,9 +6377,29 @@
           (compiler-lower-comptime-fold-ok?
             "(define (main) : i64 (comptime (size-of (type bool))))"
             1)
-          (compiler-lower-comptime-fold-ok?
-            "(define (main) : i64 (comptime (size-of (type char))))"
-            1))))))
+          (and
+            (compiler-lower-comptime-fold-ok?
+              "(define (main) : i64 (comptime (size-of (type char))))"
+              1)
+            (and
+              (compiler-lower-comptime-fold-ok?
+                "(defstruct Inner
+  (:repr c)
+  (x i32))
+(defstruct Outer
+  (:repr c)
+  (tag u8)
+  (inner Inner)
+  (tail i64))
+(define (main) : i64
+  (comptime (+ (size-of (type Outer))
+    (+ (align-of (type Outer))
+      (+ (offset-of (type Outer) inner)
+        (+ (offset-of (type Outer) tail) 6))))))"
+                42)
+              (compiler-lower-error-ok?
+                "(define (main) : i64 (size-of (type i64)))"
+                "typecheck: size-of is compile-time only; wrap it in (comptime ...)"))))))))
 
 ;; `and`/`or` short-circuit lowering (#1132 / #1165): `(and a b)` and `(or a b)`
 ;; desugar to a conditional branch, so a function whose body is a bare `and`/`or`
@@ -6043,107 +6428,197 @@
     (compiler-lower-short-circuit-branch?
       (compiler-lower-or-short-circuit-source))))
 
+(define (compiler-lower-string-length-ok?) : bool
+  (match (parse-ast-source (compiler-lower-string-length-source))
+    [(OkAstProgram program)
+      (match (lower-compiler-program program)
+        [(OkCompilerLower _ _) true]
+        [(ErrCompilerLower _) false])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-lower-string-runtime-ok?) : bool
+  (match (parse-ast-source (compiler-lower-string-runtime-source))
+    [(OkAstProgram program)
+      (match (lower-compiler-program program)
+        [(OkCompilerLower _ _) true]
+        [(ErrCompilerLower _) false])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-lower-stdio-ok?) : bool
+  (match (parse-ast-source (compiler-lower-stdio-source))
+    [(OkAstProgram program)
+      (match (lower-compiler-program program)
+        [(OkCompilerLower _ _) true]
+        [(ErrCompilerLower _) false])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-lower-runtime-helper-tests-ok?) : bool
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-lower-string-length-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-string-runtime-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-string-runtime-shape-ok?
+        (compiler-lower-string-runtime-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-string-shadow-shape-ok?
+        (compiler-lower-string-shadow-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-stdio-ok?)
+        unit
+        (set! ok false))
+      ok)))
+
+(define (compiler-lower-front-half-tests-ok?) : bool
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-lower-and-or-short-circuit-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-ok-summary? (compiler-lower-smoke-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-spans-ok? (compiler-lower-smoke-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-ok? (compiler-lower-match-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-match-phi-shape-ok? (compiler-lower-match-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-ok? (compiler-lower-enum-match-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-ok? (compiler-lower-enum-literal-payload-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-ok? (compiler-lower-enum-nested-payload-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-ok? (compiler-lower-result-try-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-error-ok?
+        (compiler-lower-enum-string-literal-payload-source)
+        "lower: unsupported enum payload literal pattern type")
+        unit
+        (set! ok false))
+      ok)))
+
+(define (compiler-lower-middle-tests-ok?) : bool
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-lower-enum-match-shape-ok?
+        (compiler-lower-enum-match-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-result-try-shape-ok?
+        (compiler-lower-result-try-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-ok? (compiler-lower-array-length-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-array-access-shape-ok?
+        (compiler-lower-array-access-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-make-array-shape-ok?
+        (compiler-lower-make-array-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-runtime-helper-tests-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-ok? (compiler-lower-aggregate-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-ok? (compiler-lower-comptime-decl-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-module-symbols-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-module-qualified-ok?)
+        unit
+        (set! ok false))
+      ok)))
+
+(define (compiler-lower-back-half-tests-ok?) : bool
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-lower-module-specialize-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-region-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-repr-c-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-error-ok?
+        (compiler-typecheck-branch-mismatch-source)
+        "typecheck: if branches must match")
+        unit
+        (set! ok false))
+      (if (compiler-lower-error-ok?
+        (compiler-lower-unsupported-source)
+        "lower: unsupported expression")
+        unit
+        (set! ok false))
+      (if (compiler-lower-comptime-fold-ok?
+        (compiler-lower-comptime-arith-source)
+        3)
+        unit
+        (set! ok false))
+      (if (compiler-lower-comptime-fold-ok?
+        (compiler-lower-comptime-if-source)
+        42)
+        unit
+        (set! ok false))
+      (if (compiler-lower-comptime-fold-ok?
+        (compiler-lower-comptime-let-source)
+        42)
+        unit
+        (set! ok false))
+      (if (compiler-lower-error-ok?
+        (compiler-lower-comptime-runtime-var-source)
+        "compile-time evaluation cannot reference runtime variable 'x'")
+        unit
+        (set! ok false))
+      (if (compiler-lower-error-ok?
+        (compiler-lower-comptime-f64-source)
+        "comptime: f64 compile-time evaluation not yet supported (#735)")
+        unit
+        (set! ok false))
+      (if (compiler-lower-comptime-op-fold-tests-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-layout-query-fold-tests-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-foreach-tests-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-spmd-reduce-tests-ok?)
+        unit
+        (set! ok false))
+      ok)))
+
 (define (compiler-lower-self-test) : i64
   (if (and
-    (and
-      (compiler-lower-and-or-short-circuit-shape-ok?)
-      (and
-        (compiler-lower-ok-summary? (compiler-lower-smoke-source))
-        (compiler-lower-spans-ok? (compiler-lower-smoke-source))))
-    (and
-      (compiler-lower-ok? (compiler-lower-match-source))
-      (and
-        (compiler-lower-match-phi-shape-ok? (compiler-lower-match-source))
-        (and
-          (and
-            (and
-              (compiler-lower-ok? (compiler-lower-enum-match-source))
-              (and
-                (compiler-lower-ok?
-                  (compiler-lower-enum-literal-payload-source))
-                (compiler-lower-ok? (compiler-lower-enum-nested-payload-source))))
-            (and
-              (compiler-lower-ok? (compiler-lower-result-try-source))
-              (compiler-lower-error-ok?
-                (compiler-lower-enum-string-literal-payload-source)
-                "lower: unsupported enum payload literal pattern type")))
-          (and
-            (compiler-lower-enum-match-shape-ok?
-              (compiler-lower-enum-match-source))
-            (and
-              (compiler-lower-result-try-shape-ok?
-                (compiler-lower-result-try-source))
-              (and
-                (and
-                  (compiler-lower-ok? (compiler-lower-array-length-source))
-                  (and
-                    (compiler-lower-array-access-shape-ok?
-                      (compiler-lower-array-access-source))
-                    (compiler-lower-make-array-shape-ok?
-                      (compiler-lower-make-array-source))))
-                (and
-                  (compiler-lower-ok? (compiler-lower-string-length-source))
-                  (and
-                    (compiler-lower-ok? (compiler-lower-string-runtime-source))
-                    (and
-                      (compiler-lower-string-runtime-shape-ok?
-                        (compiler-lower-string-runtime-source))
-                      (and
-                        (compiler-lower-string-shadow-shape-ok?
-                          (compiler-lower-string-shadow-source))
-                        (and
-                          (compiler-lower-ok? (compiler-lower-stdio-source))
-                          (and
-                            (compiler-lower-ok?
-                              (compiler-lower-aggregate-source))
-                            (and
-                              (compiler-lower-ok?
-                                (compiler-lower-comptime-decl-source))
-                              (and
-                                (compiler-lower-module-symbols-ok?)
-                                (and
-                                  (compiler-lower-module-qualified-ok?)
-                                  (and
-                                    (compiler-lower-module-specialize-ok?)
-                                    (and
-                                      (compiler-lower-region-shape-ok?)
-                                      (and
-                                        (compiler-lower-repr-c-shape-ok?)
-                                        (and
-                                          (compiler-lower-error-ok?
-                                            (compiler-typecheck-branch-mismatch-source)
-                                            "typecheck: if branches must match")
-                                          (and
-                                            (compiler-lower-error-ok?
-                                              (compiler-lower-unsupported-source)
-                                              "lower: unsupported expression")
-                                            (and
-                                              (compiler-lower-comptime-fold-ok?
-                                                (compiler-lower-comptime-arith-source)
-                                                3)
-                                              (and
-                                                (compiler-lower-comptime-fold-ok?
-                                                  (compiler-lower-comptime-if-source)
-                                                  42)
-                                                (and
-                                                  (compiler-lower-comptime-fold-ok?
-                                                    (compiler-lower-comptime-let-source)
-                                                    42)
-                                                  (and
-                                                    (compiler-lower-error-ok?
-                                                      (compiler-lower-comptime-runtime-var-source)
-                                                      "compile-time evaluation cannot reference runtime variable 'x'")
-                                                    (and
-                                                      (compiler-lower-error-ok?
-                                                        (compiler-lower-comptime-f64-source)
-                                                        "comptime: f64 compile-time evaluation not yet supported (#735)")
-                                                      (and
-                                                        (and
-                                                          (compiler-lower-comptime-op-fold-tests-ok?)
-                                                          (compiler-lower-layout-query-fold-tests-ok?))
-                                                        (and
-                                                          (compiler-lower-foreach-tests-ok?)
-                                                          (compiler-lower-spmd-reduce-tests-ok?)))))))))))))))))))))))))))))
+    (compiler-lower-front-half-tests-ok?)
+    (and (compiler-lower-middle-tests-ok?) (compiler-lower-back-half-tests-ok?)))
     42
     (begin
       (panic "lower: smoke score mismatch")

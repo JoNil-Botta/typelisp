@@ -167,7 +167,7 @@
     false
     ""
     false
-    "linux-x86_64"
+    (host-plan-default-target)
     "scalar"
     ""
     ""))

@@ -62,7 +62,7 @@ Keep smoke drivers for existing compiler-module self-tests until those modules
 are intentionally migrated.
 
 [`../scripts/verify-inline-tests.sh`](../scripts/verify-inline-tests.sh)
-auto-discovers top-level inline tests under `selfhost/`, `stdlib/`,
+auto-discovers top-level inline tests under `selfhost/`, `stdlib/`, `tools/`,
 `tests/integration/`, `tests/inline/`, and `examples/`. It runs
 `typelisp test --check` first, then `typelisp test`, so malformed, untyped,
 unbuildable, and failing inline tests all fail CI without a hand-maintained
@@ -158,6 +158,8 @@ the no-Rust gate skips it (only there — the Rust-built `Test` job still runs i
 - `scripts/verify-integration.sh`: add an optional seventh manifest field to
   the native integration row, e.g.
   `foo_runtime|tests/integration/foo_runtime.tl|42|-|-|-|requires-stage0-symbol:tl_foo`.
+  Use a comma-separated marker when one row may fail on any of several staged
+  symbols.
 
 A marked test is skipped **only** when its build fails and `<name>` appears in the
 build/typecheck output (the undefined-symbol signal); any other build failure
@@ -254,7 +256,7 @@ automatically adds doctest coverage.
 
 `scripts/verify-inline-tests.sh` discovers `.tl` files with top-level
 `(test ...)` items under `selfhost/`, `stdlib/`, `tests/integration/`,
-`tests/inline/`, and `examples/`. For each discovered file it type-checks and
+`tools/`, `tests/inline/`, and `examples/`. For each discovered file it type-checks and
 then runs the generated inline-test harness with `--stdlib-root`, reporting the
 source path and test-runner output in CI logs. This gate is separate from
 doctests, manifest corpora, and smoke drivers so source-owned checks can be

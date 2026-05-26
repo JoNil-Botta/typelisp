@@ -826,6 +826,55 @@
         "compiler-load: cannot read import src/no_such_module_xyz.tl")]
     [(OkCompilerLoad _ _) false]))
 
+;; A parse error inside an imported file surfaces a diagnostic whose path is the
+;; imported file (not the importer), preserving imported-file provenance (#1074).
+(define (compiler-load-imported-parse-error-path-ok?) : bool
+  (begin
+    (write-file
+      "target/cl_ipe_dep.tl"
+      "(module ipe.dep)
+(define broken : i64 )")
+    (write-file
+      "target/cl_ipe_entry.tl"
+      "(module ipe.entry)
+(import \"cl_ipe_dep.tl\" module ipe.dep as dep)
+(define (main) : i64 0)")
+    (match (compiler-load-file-with-paths
+      "target/cl_ipe_entry.tl"
+      (sym-i64-empty))
+      [(ErrCompilerLoadWithPaths diag)
+        (and
+          (string-eq (compiler-diagnostic-path diag) "target/cl_ipe_dep.tl")
+          (string-eq
+            (compiler-diagnostic-message diag)
+            "parse: malformed value definition"))]
+      [(OkCompilerLoadWithPaths _ _ _ _) false])))
+
+;; A duplicate `(module ...)` declaration inside an imported file surfaces a
+;; diagnostic whose path is the imported file, not the importer (#1074).
+(define (compiler-load-imported-duplicate-module-path-ok?) : bool
+  (begin
+    (write-file
+      "target/cl_idm_dep.tl"
+      "(module idm.depa)
+(module idm.depb)
+(define v : i64 1)")
+    (write-file
+      "target/cl_idm_entry.tl"
+      "(module idm.entry)
+(import \"cl_idm_dep.tl\" module idm.depa as dep)
+(define (main) : i64 0)")
+    (match (compiler-load-file-with-paths
+      "target/cl_idm_entry.tl"
+      (sym-i64-empty))
+      [(ErrCompilerLoadWithPaths diag)
+        (and
+          (string-eq (compiler-diagnostic-path diag) "target/cl_idm_dep.tl")
+          (string-eq
+            (compiler-diagnostic-message diag)
+            "compiler-load: duplicate module declaration"))]
+      [(OkCompilerLoadWithPaths _ _ _ _) false])))
+
 (define (compiler-load-self-test) : i64
   (if (compiler-load-normalize-ok?)
     (if (compiler-load-source-provenance-ok?)
@@ -837,7 +886,17 @@
                 (if (compiler-load-diamond-import-ok?)
                   (if (compiler-load-transitive-import-ok?)
                     (if (compiler-load-missing-import-ok?)
-                      42
+                      (if (compiler-load-imported-parse-error-path-ok?)
+                        (if (compiler-load-imported-duplicate-module-path-ok?)
+                          42
+                          (begin
+                            (panic
+                              "compiler-load: imported duplicate module path smoke mismatch")
+                            0))
+                        (begin
+                          (panic
+                            "compiler-load: imported parse error path smoke mismatch")
+                          0))
                       (begin
                         (panic "compiler-load: missing import smoke mismatch")
                         0))

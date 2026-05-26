@@ -29,7 +29,7 @@ usage: scripts/run-optimization-benchmarks.sh [options]
 
 Options:
   --runs N          Runtime repetitions per case (default: TYPELISP_BENCH_RUNS or 3)
-  --filter NAME    Run one manifest case by name
+  --filter NAME    Run manifest cases whose names match NAME or start with NAME
   --clang-opt OPT  clang optimization flag (default: TYPELISP_BENCH_CLANG_OPT or -O3)
   --selfhost       Compile TypeLisp cases through selfhost/compiler_driver.tl (default)
   --rust-stage0    Compile TypeLisp cases through typelisp compile
@@ -328,8 +328,11 @@ EOF
             fail "invalid category for $_name: $_category"
             ;;
     esac
-    if [ -n "$FILTER" ] && [ "$FILTER" != "$_name" ]; then
-        continue
+    if [ -n "$FILTER" ]; then
+        case "$_name" in
+            "$FILTER" | "$FILTER"*) ;;
+            *) continue ;;
+        esac
     fi
 
     matched=$((matched + 1))

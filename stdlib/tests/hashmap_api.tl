@@ -44,6 +44,22 @@
 (define (new-slots [n : i64]) : (Array StringI64MapSlot)
   (fill-empty (make-array StringI64MapSlot n) n))
 
+;; Lookup/insert-result extractors (concrete returns, no panic in a match arm).
+(define (lookup-value-or [l : StringI64MapLookup] [fallback : i64]) : i64
+  (match l
+    [(StringI64MapFound v) v]
+    [(StringI64MapMissing) fallback]))
+
+(define (insert-ok? [r : StringI64MapInsertResult]) : bool
+  (match r
+    [(StringI64MapInsertOk _) true]
+    [(StringI64MapInsertFull _) false]))
+
+(define (insert-result-map [r : StringI64MapInsertResult]) : StringI64Map
+  (match r
+    [(StringI64MapInsertOk m) m]
+    [(StringI64MapInsertFull m) m]))
+
 (define (main) : i64
   (begin
     ;; --- bucket-index math + wraparound ---
@@ -159,4 +175,65 @@
           (probe-index-or (string-i64-map-probe fulltomb 2 "k" 4) -1)
           1
           "absent at the tombstone slot")))
+    ;; --- map API (#826): with-capacity / insert / get / contains? / len ---
+    (let
+      [m0 : StringI64Map (string-i64-map-with-capacity 8)]
+      (begin
+        (assert-i64-eq (string-i64-map-len m0) 0 "fresh map len 0")
+        (assert-false (string-i64-map-contains? m0 "x") "fresh map has no key")
+        (let
+          [m1 : StringI64Map
+            (insert-result-map (string-i64-map-insert m0 "alpha" 11))]
+          [m2 : StringI64Map
+            (insert-result-map (string-i64-map-insert m1 "beta" 22))]
+          [m3 : StringI64Map
+            (insert-result-map (string-i64-map-insert m2 "gamma" 33))]
+          (begin
+            (assert-i64-eq (string-i64-map-len m3) 3 "len after three inserts")
+            (assert-i64-eq
+              (lookup-value-or (string-i64-map-get m3 "alpha") -1)
+              11
+              "get alpha")
+            (assert-i64-eq
+              (lookup-value-or (string-i64-map-get m3 "beta") -1)
+              22
+              "get beta")
+            (assert-i64-eq
+              (lookup-value-or (string-i64-map-get m3 "gamma") -1)
+              33
+              "get gamma")
+            (assert-true (string-i64-map-contains? m3 "beta") "contains beta")
+            (assert-false
+              (string-i64-map-contains? m3 "missing")
+              "missing key absent")
+            (assert-i64-eq
+              (lookup-value-or (string-i64-map-get m3 "missing") -1)
+              -1
+              "get missing -> fallback")
+            ;; updating an existing key keeps len and changes the value
+            (let
+              [m4 : StringI64Map
+                (insert-result-map (string-i64-map-insert m3 "alpha" 99))]
+              (begin
+                (assert-i64-eq
+                  (string-i64-map-len m4)
+                  3
+                  "len unchanged on update")
+                (assert-i64-eq
+                  (lookup-value-or (string-i64-map-get m4 "alpha") -1)
+                  99
+                  "alpha updated to 99")))
+            ;; a fixed capacity-1 table is full for a second distinct key
+            (let
+              [s0 : StringI64Map (string-i64-map-with-capacity 1)]
+              [s1 : StringI64Map
+                (insert-result-map (string-i64-map-insert s0 "only" 7))]
+              (begin
+                (assert-i64-eq
+                  (lookup-value-or (string-i64-map-get s1 "only") -1)
+                  7
+                  "capacity-1 get only")
+                (assert-false
+                  (insert-ok? (string-i64-map-insert s1 "second" 8))
+                  "capacity-1 second insert is full")))))))
     42))

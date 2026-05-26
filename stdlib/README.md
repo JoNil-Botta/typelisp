@@ -21,10 +21,11 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   temporary directories, and cleanup. Import it with `(import "stdlib/fs.tl")`.
 - `hash.tl`: deterministic, non-cryptographic hash and key equality helpers for
   future collections. Import it with `(import "stdlib/hash.tl")`.
-- `hashmap.tl`: open-addressed `String -> i64` hashmap probing core — slot type,
-  bucket-index math, and linear-probing walk with full-table detection (#825).
-  Insert/lookup APIs build on it (#826). Import it with
-  `(import "stdlib/hashmap.tl")`.
+- `hashmap.tl`: fixed-capacity, open-addressed `String -> i64` map — the
+  linear-probing core with full-table detection (#825) plus the v1 map API
+  (`string-i64-map-with-capacity` / `-insert` / `-get` / `-contains?` / `-len`,
+  copied-value lookup; #826). Resize (#827) and removal (#829) are follow-ups.
+  Import it with `(import "stdlib/hashmap.tl")`.
 - `json.tl`: JSON value parser and serializer for tool protocols and data
   exchange. Import it with `(import "stdlib/json.tl")`.
 - `process.tl`: process command/output/error data model for selfhost tools.

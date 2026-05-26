@@ -875,6 +875,63 @@
             "compiler-load: duplicate module declaration"))]
       [(OkCompilerLoadWithPaths _ _ _ _) false])))
 
+;; A `stdlib/<x>` import whose importer-relative path is absent resolves through
+;; a configured `--stdlib-root` (root fallback) (#1074).
+(define (compiler-load-stdlib-root-fallback-ok?) : bool
+  (begin
+    (write-file "target/cl_srf_mod.tl" "(module srf.mod)
+(define v : i64 1)")
+    (write-file
+      "target/cl_srf_entry.tl"
+      "(module srf.entry)
+(import \"stdlib/cl_srf_mod.tl\" module srf.mod as m)
+(define (main) : i64 0)")
+    (match (compiler-load-file-with-paths-and-roots
+      "target/cl_srf_entry.tl"
+      (sym-i64-empty)
+      (CompilerLoadRootCons "target" CompilerLoadRootNil))
+      [(OkCompilerLoadWithPaths _ _ _ seen) (sym-i64-contains seen "srf.mod")]
+      [(ErrCompilerLoadWithPaths _) false])))
+
+;; `--stdlib-root` resolution searches roots in order; the first existing
+;; candidate wins, so a missing leading root is skipped (#1074).
+(define (compiler-load-stdlib-searched-root-ok?) : bool
+  (begin
+    (write-file "target/cl_ssr_mod.tl" "(module ssr.mod)
+(define v : i64 1)")
+    (write-file
+      "target/cl_ssr_entry.tl"
+      "(module ssr.entry)
+(import \"stdlib/cl_ssr_mod.tl\" module ssr.mod as m)
+(define (main) : i64 0)")
+    (match (compiler-load-file-with-paths-and-roots
+      "target/cl_ssr_entry.tl"
+      (sym-i64-empty)
+      (CompilerLoadRootCons
+        "target/cl_ssr_absent_root"
+        (CompilerLoadRootCons "target" CompilerLoadRootNil)))
+      [(OkCompilerLoadWithPaths _ _ _ seen) (sym-i64-contains seen "ssr.mod")]
+      [(ErrCompilerLoadWithPaths _) false])))
+
+;; A `stdlib/<x>` import found in no configured root reports a cannot-read
+;; diagnostic naming the importer-relative candidate path (#1074).
+(define (compiler-load-stdlib-unresolved-ok?) : bool
+  (begin
+    (write-file
+      "target/cl_sur_entry.tl"
+      "(module sur.entry)
+(import \"stdlib/cl_sur_missing.tl\" module sur.mod as m)
+(define (main) : i64 0)")
+    (match (compiler-load-file-with-paths-and-roots
+      "target/cl_sur_entry.tl"
+      (sym-i64-empty)
+      (CompilerLoadRootCons "target" CompilerLoadRootNil))
+      [(ErrCompilerLoadWithPaths diag)
+        (string-eq
+          (compiler-diagnostic-message diag)
+          "compiler-load: cannot read import target/stdlib/cl_sur_missing.tl")]
+      [(OkCompilerLoadWithPaths _ _ _ _) false])))
+
 (define (compiler-load-self-test) : i64
   (if (compiler-load-normalize-ok?)
     (if (compiler-load-source-provenance-ok?)
@@ -888,7 +945,22 @@
                     (if (compiler-load-missing-import-ok?)
                       (if (compiler-load-imported-parse-error-path-ok?)
                         (if (compiler-load-imported-duplicate-module-path-ok?)
-                          42
+                          (if (compiler-load-stdlib-root-fallback-ok?)
+                            (if (compiler-load-stdlib-searched-root-ok?)
+                              (if (compiler-load-stdlib-unresolved-ok?)
+                                42
+                                (begin
+                                  (panic
+                                    "compiler-load: stdlib unresolved smoke mismatch")
+                                  0))
+                              (begin
+                                (panic
+                                  "compiler-load: stdlib searched root smoke mismatch")
+                                0))
+                            (begin
+                              (panic
+                                "compiler-load: stdlib root fallback smoke mismatch")
+                              0))
                           (begin
                             (panic
                               "compiler-load: imported duplicate module path smoke mismatch")

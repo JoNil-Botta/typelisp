@@ -39,10 +39,7 @@ git ls-files --others --exclude-standard >> "$CHANGED"
 sort -u "$CHANGED" > "$WORKDIR/changed-files.sorted"
 mv "$WORKDIR/changed-files.sorted" "$CHANGED"
 
-# tools/work-queue-chooser is repo tooling for the work queue, not part of the
-# Rust->TypeLisp selfhost migration the guardrail polices, so exclude it.
 grep -E '^(src|tests|tools)/.*\.rs$|^Cargo\.(toml|lock)$' "$CHANGED" \
-    | grep -vE '^tools/work-queue-chooser/' \
     > "$RUST_OWNED" || true
 
 if [ ! -s "$RUST_OWNED" ]; then

@@ -1,10 +1,10 @@
-;;;; work-queue-chooser/chooser.tl - TypeLisp port of the Rust work-queue chooser (#794).
+;;;; work-queue-chooser/chooser.tl - TypeLisp work-queue chooser (#794).
 ;;;;
 ;;;; Reads the combined `{"prs":[...],"issues":[...]}` JSON from stdin, classifies
 ;;;; each entry, skips PRs whose checks are still pending/running, weights the
 ;;;; rest (PR review = 30, ready-for-implementation = 10, research/triage = 1,
-;;;; +50 for a p0 label, +3 for a p1 label), makes a system-seeded weighted
-;;;; pick, and prints one action line:
+;;;; +50 for a p0 label, +3 for a p1 label), uses system entropy to make a
+;;;; weighted pick, and prints one action line:
 ;;;;
 ;;;;   review pr #N: Title
 ;;;;   implement issue #N: Title

@@ -305,4 +305,95 @@
                       (lookup-value-or (string-i64-map-get r4 "k1") -1)
                       111
                       "k1 reinserted value")))))))))
+    ;; --- resize / rehash (#827) ---
+    ;; needs-grow? threshold: a fresh capacity-4 table is below the 3/4 load.
+    (assert-false
+      (string-i64-map-needs-grow? (string-i64-map-with-capacity 4))
+      "fresh cap-4 below load threshold")
+    (assert-true
+      (string-i64-map-needs-grow? (string-i64-map-with-capacity 0))
+      "zero-capacity always needs grow")
+    ;; string-i64-map-put auto-grows past the fixed capacity and preserves every
+    ;; entry across the rehash (collision preservation + lookup after rehash).
+    (let
+      [g0 : StringI64Map (string-i64-map-with-capacity 4)]
+      [g1 : StringI64Map (string-i64-map-put g0 "a" 1)]
+      [g2 : StringI64Map (string-i64-map-put g1 "b" 2)]
+      [g3 : StringI64Map (string-i64-map-put g2 "c" 3)]
+      [g4 : StringI64Map (string-i64-map-put g3 "d" 4)]
+      [g5 : StringI64Map (string-i64-map-put g4 "e" 5)]
+      [g6 : StringI64Map (string-i64-map-put g5 "f" 6)]
+      (begin
+        (assert-i64-eq (string-i64-map-len g6) 6 "put six -> len 6")
+        (assert-true
+          (> (string-i64-map-capacity g6) 4)
+          "table grew past the seed capacity")
+        (assert-i64-eq
+          (string-i64-map-deleted g6)
+          0
+          "grown table has no tombstones")
+        (assert-i64-eq
+          (lookup-value-or (string-i64-map-get g6 "a") -1)
+          1
+          "get a after grow")
+        (assert-i64-eq
+          (lookup-value-or (string-i64-map-get g6 "c") -1)
+          3
+          "get c after grow")
+        (assert-i64-eq
+          (lookup-value-or (string-i64-map-get g6 "f") -1)
+          6
+          "get f after grow")
+        (assert-i64-eq
+          (lookup-value-or (string-i64-map-get g6 "missing") -1)
+          -1
+          "absent key after grow")
+        ;; overwrite across resize: updating an existing key keeps len.
+        (let
+          [g7 : StringI64Map (string-i64-map-put g6 "a" 99)]
+          (begin
+            (assert-i64-eq
+              (string-i64-map-len g7)
+              6
+              "update keeps len after grow")
+            (assert-i64-eq
+              (lookup-value-or (string-i64-map-get g7 "a") -1)
+              99
+              "a updated to 99 after grow")))))
+    ;; resized drops tombstones: insert 3, remove 1 (deleted=1), resize to 16.
+    (let
+      [t0 : StringI64Map (string-i64-map-with-capacity 8)]
+      [t1 : StringI64Map (insert-result-map (string-i64-map-insert t0 "x" 10))]
+      [t2 : StringI64Map (insert-result-map (string-i64-map-insert t1 "y" 20))]
+      [t3 : StringI64Map (insert-result-map (string-i64-map-insert t2 "z" 30))]
+      [t4 : StringI64Map (remove-result-map (string-i64-map-remove t3 "y"))]
+      (begin
+        (assert-i64-eq
+          (string-i64-map-deleted t4)
+          1
+          "one tombstone before resize")
+        (let
+          [t5 : StringI64Map (string-i64-map-resized t4 16)]
+          (begin
+            (assert-i64-eq
+              (string-i64-map-capacity t5)
+              16
+              "resized capacity 16")
+            (assert-i64-eq (string-i64-map-len t5) 2 "resized len 2")
+            (assert-i64-eq
+              (string-i64-map-deleted t5)
+              0
+              "resize drops tombstones")
+            (assert-i64-eq
+              (lookup-value-or (string-i64-map-get t5 "x") -1)
+              10
+              "x survives resize")
+            (assert-i64-eq
+              (lookup-value-or (string-i64-map-get t5 "z") -1)
+              30
+              "z survives resize")
+            (assert-i64-eq
+              (lookup-value-or (string-i64-map-get t5 "y") -1)
+              -1
+              "removed y absent after resize")))))
     42))

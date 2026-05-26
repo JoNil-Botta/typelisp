@@ -5286,6 +5286,35 @@
               "(define (main) : i64 (comptime (< 1 2)))"
               "typecheck: return type mismatch")))))))
 
+;; IO-builtin signature rules (#1042): `read-file` (String -> String),
+;; `write-file` (String String -> unit), and `file-exists?` (String -> bool)
+;; accepts, plus non-String-argument, wrong-arity, and result-type-mismatch
+;; rejections. Migrated from src/typechecker.rs read-file/write-file coverage.
+(define (compiler-typecheck-io-builtin-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? "(define (f [p : String]) : String (read-file p))")
+    (and
+      (compiler-typecheck-ok?
+        "(define (f [p : String] [c : String]) : unit (write-file p c))")
+      (and
+        (compiler-typecheck-ok?
+          "(define (f [p : String]) : bool (file-exists? p))")
+        (and
+          (compiler-typecheck-error-ok?
+            "(define (f [c : String]) : unit (write-file 5 c))"
+            "typecheck: argument type mismatch")
+          (and
+            (compiler-typecheck-error-ok?
+              "(define (f [p : String]) : unit (write-file p))"
+              "typecheck: arity mismatch")
+            (and
+              (compiler-typecheck-error-ok?
+                "(define (f [p : i64]) : String (read-file p))"
+                "typecheck: argument type mismatch")
+              (compiler-typecheck-error-ok?
+                "(define (f [p : String] [c : String]) : i64 (write-file p c))"
+                "typecheck: return type mismatch"))))))))
+
 (define (compiler-typecheck-self-test) : i64
   (begin
     (if (compiler-typecheck-statement-tests-ok?)
@@ -5343,7 +5372,9 @@
                                       (compiler-typecheck-lambda-tests-ok?)
                                       (and
                                         (compiler-typecheck-cast-tests-ok?)
-                                        (compiler-typecheck-comptime-tests-ok?)))))))))))))))))
+                                        (and
+                                          (compiler-typecheck-comptime-tests-ok?)
+                                          (compiler-typecheck-io-builtin-tests-ok?))))))))))))))))))
           42
           (begin
             (panic "typecheck: smoke score mismatch")

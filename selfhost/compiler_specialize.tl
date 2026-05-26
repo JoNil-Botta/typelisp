@@ -1982,6 +1982,56 @@
               (spec-type-key (spec-substitute-type (AstTyVar "U") subs))
               "var_U")))))))
 
+;;; Value (comptime-argument) substitution (#1043, mirrors src/specialize.rs
+;;; substitution coverage): `spec-substitute-values-expr` replaces a variable
+;;; bound to a comptime value with that value's literal, leaves unmapped
+;;; variables and literals unchanged, and recurses through compound expressions.
+(define (compiler-specialize-value-subst-ok?) : bool
+  (let
+    [subs : SpecValueSubst
+      (SpecValueSubstCons "x" (CtfeI64 5) SpecValueSubstNil)]
+    (and
+      ;; mapped variable x -> integer literal 5
+      (match (spec-substitute-values-expr (AstExprVar "x") subs)
+        [(OkSpecSubExpr e)
+          (match e
+            [(AstExprLiteral lit)
+              (match lit
+                [(AstLitInt n) (= n 5)]
+                [_ false])]
+            [_ false])]
+        [(ErrSpecSubExpr _) false])
+      (and
+        ;; unmapped variable y -> unchanged
+        (match (spec-substitute-values-expr (AstExprVar "y") subs)
+          [(OkSpecSubExpr e)
+            (match e
+              [(AstExprVar name) (string-eq name "y")]
+              [_ false])]
+          [(ErrSpecSubExpr _) false])
+        ;; recursion through `if`: x in the condition becomes 5, unmapped y stays
+        (match (spec-substitute-values-expr
+          (AstExprIf
+            (AstExprVar "x")
+            (AstExprLiteral (AstLitInt 1))
+            (AstExprVar "y"))
+          subs)
+          [(OkSpecSubExpr e)
+            (match e
+              [(AstExprIf cond _ else-branch)
+                (and
+                  (match cond
+                    [(AstExprLiteral lit)
+                      (match lit
+                        [(AstLitInt n) (= n 5)]
+                        [_ false])]
+                    [_ false])
+                  (match else-branch
+                    [(AstExprVar name) (string-eq name "y")]
+                    [_ false]))]
+              [_ false])]
+          [(ErrSpecSubExpr _) false])))))
+
 (define (compiler-specialize-self-test) : i64
   (if (compiler-specialize-type-param-ok?)
     (if (compiler-specialize-runtime-type-use-rejected?)
@@ -1991,7 +2041,9 @@
             (if (compiler-specialize-name-key-ok?)
               (if (compiler-specialize-reuse-ok?)
                 (if (compiler-specialize-subst-ok?)
-                  1
+                  (if (compiler-specialize-value-subst-ok?)
+                    1
+                    0)
                   0)
                 0)
               0)

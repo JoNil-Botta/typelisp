@@ -8127,6 +8127,17 @@ tl_random_system_seed:
       (string-eq (compiler-diagnostic-message message) want)]
     [(OkCompilerBackend _) false]))
 
+(define (compiler-backend-source-contains? [src : String] [needle : String]) : bool
+  (match (compiler-backend-emit-source src)
+    [(OkCompilerBackend asm) (compiler-backend-string-contains? asm needle)]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-source-not-contains? [src : String] [needle : String]) : bool
+  (match (compiler-backend-emit-source src)
+    [(OkCompilerBackend asm)
+      (not (compiler-backend-string-contains? asm needle))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-test-span [line : i64] [col : i64]) : AstSourceSpan
   (AstSourceSpan line col line col))
 
@@ -8532,6 +8543,48 @@ tl_random_system_seed:
                   (compiler-backend-string-contains? asm "    setb %al\n")))))))]
     [(ErrCompilerBackend _) false]))
 
+;; Backend-owned replacement for the Rust bool logic codegen checks (#1044):
+;; `and`/`or` arrive from the lowerer as branches, not eager bytewise ops, and
+;; bool equality still uses the comparison/setcc path.
+(define (compiler-backend-bool-and-source) : String
+  "(define (f [a : bool] [b : bool]) : bool (and a b))")
+
+(define (compiler-backend-bool-or-source) : String
+  "(define (f [a : bool] [b : bool]) : bool (or a b))")
+
+(define (compiler-backend-bool-eq-source) : String
+  "(define (f [a : bool] [b : bool]) : bool (= a b))")
+
+(define (compiler-backend-todo-marker) : String
+  (string-append "# " "TODO"))
+
+(define (compiler-backend-bool-control-flow-ok?) : bool
+  (backend-and8
+    (compiler-backend-source-contains?
+      (compiler-backend-bool-and-source)
+      "    jne ")
+    (compiler-backend-source-not-contains?
+      (compiler-backend-bool-and-source)
+      "    andb ")
+    (compiler-backend-source-contains?
+      (compiler-backend-bool-or-source)
+      "    jne ")
+    (compiler-backend-source-not-contains?
+      (compiler-backend-bool-or-source)
+      "    orb ")
+    (compiler-backend-source-contains?
+      (compiler-backend-bool-eq-source)
+      "    sete %al\n")
+    (compiler-backend-source-not-contains?
+      (compiler-backend-bool-and-source)
+      (compiler-backend-todo-marker))
+    (compiler-backend-source-not-contains?
+      (compiler-backend-bool-or-source)
+      (compiler-backend-todo-marker))
+    (compiler-backend-source-not-contains?
+      (compiler-backend-bool-eq-source)
+      (compiler-backend-todo-marker))))
+
 ;; #750: a SysV call with seven integer args no longer rejects as "too many
 ;; call args". The 7th arg spills: 16-byte call space is reserved, the spilled
 ;; value is staged through %r11 and stored at 0(%rsp), and `add8` reads its
@@ -8662,28 +8715,30 @@ tl_random_system_seed:
                         (and
                           (compiler-backend-f64-ok?)
                           (and
-                            (compiler-backend-stack-args-ok?)
+                            (compiler-backend-bool-control-flow-ok?)
                             (and
-                              (compiler-backend-instr-diagnostics-ok?)
+                              (compiler-backend-stack-args-ok?)
                               (and
-                                (compiler-backend-optimizer-rewrite-diagnostic-ok?)
+                                (compiler-backend-instr-diagnostics-ok?)
                                 (and
-                                  (compiler-backend-runtime-helper-asm-ok?)
+                                  (compiler-backend-optimizer-rewrite-diagnostic-ok?)
                                   (and
-                                    (compiler-backend-alloc-runtime-arena-ok?)
+                                    (compiler-backend-runtime-helper-asm-ok?)
                                     (and
-                                      (compiler-backend-region-ok?)
+                                      (compiler-backend-alloc-runtime-arena-ok?)
                                       (and
-                                        (compiler-backend-process-output-ok?)
+                                        (compiler-backend-region-ok?)
                                         (and
-                                          (compiler-backend-windows-process-output-ok?)
+                                          (compiler-backend-process-output-ok?)
                                           (and
-                                            (compiler-backend-append-file-status-ok?)
+                                            (compiler-backend-windows-process-output-ok?)
                                             (and
-                                              (compiler-backend-user-helper-name-ok?)
+                                              (compiler-backend-append-file-status-ok?)
                                               (and
-                                                (compiler-backend-runtime-coexist-ok?)
-                                                (compiler-backend-module-symbol-ok?))))))))))))))))))))))))
+                                                (compiler-backend-user-helper-name-ok?)
+                                                (and
+                                                  (compiler-backend-runtime-coexist-ok?)
+                                                  (compiler-backend-module-symbol-ok?)))))))))))))))))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

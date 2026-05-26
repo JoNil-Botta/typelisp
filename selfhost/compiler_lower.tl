@@ -844,19 +844,30 @@
             (+ src-offset chunk)
             (- size chunk))]))))
 
+(define (lower-raw-pointer-ir-type [ty : AstType]) : AstType
+  (match (tc-type-strip-region ty)
+    [(AstTyPtr _) (AstTyU64)]
+    [(AstTyMutPtr _) (AstTyU64)]
+    [_ ty]))
+
 (define (lower-cast-value
   [state : LowerState]
   [value : CompilerIrValue]
   [from-ty : AstType]
   [to-ty : AstType]) : LowerExpr
-  (if (tc-type-eq from-ty to-ty)
-    (LowerExpr state value to-ty)
-    (match (lower-state-alloc-var state)
-      [(LowerAlloc allocated var-id)
-        (LowerExpr
-          (lower-state-emit allocated (IrInstrCast var-id value from-ty to-ty))
-          (IrValueVar var-id)
-          to-ty)])))
+  (let
+    [ir-from-ty : AstType (lower-raw-pointer-ir-type from-ty)]
+    [ir-to-ty : AstType (lower-raw-pointer-ir-type to-ty)]
+    (if (or (tc-type-eq from-ty to-ty) (tc-type-eq ir-from-ty ir-to-ty))
+      (LowerExpr state value to-ty)
+      (match (lower-state-alloc-var state)
+        [(LowerAlloc allocated var-id)
+          (LowerExpr
+            (lower-state-emit
+              allocated
+              (IrInstrCast var-id value ir-from-ty ir-to-ty))
+            (IrValueVar var-id)
+            to-ty)]))))
 
 (define (lower-oob-abort [state : LowerState]) : LowerState
   (match (lower-state-alloc-var state)
@@ -1922,7 +1933,13 @@
               " is compile-time only"))))]
     ;; `(ptr-null : T)` is a pointer-sized zero (pointer ABI size is 8);
     ;; `(ptr-null? p)` is `p == 0` producing a `bool`. No new IR/asm needed.
-    [(AstExprPtrNull _) (lower-materialize state (IrValueI64 0) expr-ty)]
+    [(AstExprPtrNull _)
+      (match (lower-materialize state (IrValueI64 0) (AstTyU64))
+        [(OkLowerExpr lowered)
+          (match lowered
+            [(LowerExpr null-state null-value _)
+              (OkLowerExpr (LowerExpr null-state null-value expr-ty))])]
+        [(ErrLowerExpr diag) (ErrLowerExpr diag)])]
     [(AstExprPtrNullCheck inner)
       (match (lower-expr ctx state env type-env inner)
         [(OkLowerExpr lowered)
@@ -1963,7 +1980,10 @@
                     [ptr-home-state : LowerState
                       (lower-state-emit
                         ptr-allocated
-                        (IrInstrMov ptr-var ptr-value ptr-ty))]
+                        (IrInstrMov
+                          ptr-var
+                          ptr-value
+                          (lower-raw-pointer-ir-type ptr-ty)))]
                     (match (lower-expr ctx ptr-home-state env type-env value)
                       [(OkLowerExpr value-lowered)
                         (match value-lowered
@@ -6433,62 +6453,68 @@
     (compiler-lower-short-circuit-branch?
       (compiler-lower-or-short-circuit-source))))
 
+(define (compiler-lower-raw-pointer-ops-ok?) : bool
+  (compiler-lower-ok? (compiler-lower-raw-pointer-ops-source)))
+
 (define (compiler-lower-self-test) : i64
-  (if (and
-    (and
-      (compiler-lower-and-or-short-circuit-shape-ok?)
+  (if (not (compiler-lower-raw-pointer-ops-ok?))
+    (begin
+      (panic "lower: raw pointer ops smoke mismatch")
+      0)
+    (if (and
       (and
-        (compiler-lower-ok-summary? (compiler-lower-smoke-source))
-        (compiler-lower-spans-ok? (compiler-lower-smoke-source))))
-    (and
-      (compiler-lower-ok? (compiler-lower-match-source))
-      (and
-        (compiler-lower-match-phi-shape-ok? (compiler-lower-match-source))
+        (compiler-lower-and-or-short-circuit-shape-ok?)
         (and
+          (compiler-lower-ok-summary? (compiler-lower-smoke-source))
+          (compiler-lower-spans-ok? (compiler-lower-smoke-source))))
+      (and
+        (compiler-lower-ok? (compiler-lower-match-source))
+        (and
+          (compiler-lower-match-phi-shape-ok? (compiler-lower-match-source))
           (and
             (and
-              (compiler-lower-ok? (compiler-lower-enum-match-source))
               (and
-                (compiler-lower-ok?
-                  (compiler-lower-enum-literal-payload-source))
-                (compiler-lower-ok? (compiler-lower-enum-nested-payload-source))))
-            (and
-              (compiler-lower-ok? (compiler-lower-result-try-source))
-              (compiler-lower-error-ok?
-                (compiler-lower-enum-string-literal-payload-source)
-                "lower: unsupported enum payload literal pattern type")))
-          (and
-            (compiler-lower-enum-match-shape-ok?
-              (compiler-lower-enum-match-source))
-            (and
-              (compiler-lower-result-try-shape-ok?
-                (compiler-lower-result-try-source))
+                (compiler-lower-ok? (compiler-lower-enum-match-source))
+                (and
+                  (compiler-lower-ok?
+                    (compiler-lower-enum-literal-payload-source))
+                  (compiler-lower-ok?
+                    (compiler-lower-enum-nested-payload-source))))
               (and
+                (compiler-lower-ok? (compiler-lower-result-try-source))
+                (compiler-lower-error-ok?
+                  (compiler-lower-enum-string-literal-payload-source)
+                  "lower: unsupported enum payload literal pattern type")))
+            (and
+              (compiler-lower-enum-match-shape-ok?
+                (compiler-lower-enum-match-source))
+              (and
+                (compiler-lower-result-try-shape-ok?
+                  (compiler-lower-result-try-source))
                 (and
-                  (compiler-lower-ok? (compiler-lower-array-length-source))
                   (and
-                    (compiler-lower-array-access-shape-ok?
-                      (compiler-lower-array-access-source))
-                    (compiler-lower-make-array-shape-ok?
-                      (compiler-lower-make-array-source))))
-                (and
-                  (compiler-lower-ok? (compiler-lower-string-length-source))
-                  (and
-                    (compiler-lower-ok? (compiler-lower-string-runtime-source))
+                    (compiler-lower-ok? (compiler-lower-array-length-source))
                     (and
-                      (compiler-lower-string-runtime-shape-ok?
+                      (compiler-lower-array-access-shape-ok?
+                        (compiler-lower-array-access-source))
+                      (compiler-lower-make-array-shape-ok?
+                        (compiler-lower-make-array-source))))
+                  (and
+                    (compiler-lower-ok? (compiler-lower-string-length-source))
+                    (and
+                      (compiler-lower-ok?
                         (compiler-lower-string-runtime-source))
                       (and
-                        (compiler-lower-string-shadow-shape-ok?
-                          (compiler-lower-string-shadow-source))
+                        (compiler-lower-string-runtime-shape-ok?
+                          (compiler-lower-string-runtime-source))
                         (and
-                          (compiler-lower-ok? (compiler-lower-stdio-source))
+                          (compiler-lower-string-shadow-shape-ok?
+                            (compiler-lower-string-shadow-source))
                           (and
-                            (compiler-lower-file-handle-status-shape-ok?
-                              (compiler-lower-file-handle-status-source))
+                            (compiler-lower-ok? (compiler-lower-stdio-source))
                             (and
-                              (compiler-lower-ok?
-                                (compiler-lower-raw-pointer-ops-source))
+                              (compiler-lower-file-handle-status-shape-ok?
+                                (compiler-lower-file-handle-status-source))
                               (and
                                 (compiler-lower-ok?
                                   (compiler-lower-aggregate-source))
@@ -6539,8 +6565,8 @@
                                                               (compiler-lower-layout-query-fold-tests-ok?))
                                                             (and
                                                               (compiler-lower-foreach-tests-ok?)
-                                                              (compiler-lower-spmd-reduce-tests-ok?)))))))))))))))))))))))))))))))
-    42
-    (begin
-      (panic "lower: smoke score mismatch")
-      0)))
+                                                              (compiler-lower-spmd-reduce-tests-ok?))))))))))))))))))))))))))))))
+      42
+      (begin
+        (panic "lower: smoke score mismatch")
+        0))))

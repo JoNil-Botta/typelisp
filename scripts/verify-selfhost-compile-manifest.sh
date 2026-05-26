@@ -93,6 +93,16 @@ count_at_least() {
     fi
 }
 
+staged_symbol_matches() {
+    symbols=$1
+    err_path=$2
+    [ -n "$symbols" ] || return 1
+    for symbol in $(printf '%s\n' "$symbols" | tr ',' ' '); do
+        grep -qF "$symbol" "$err_path" && return 0
+    done
+    return 1
+}
+
 main_label_count() {
     awk 'BEGIN { count = 0 } /^main:$/ { count += 1 } END { print count }' "$asm_path"
 }
@@ -118,7 +128,7 @@ ensure_compiled() {
     code=$?
     set -e
     if [ "$code" -ne 0 ]; then
-        if [ -n "$case_requires_symbol" ] && grep -qF "$case_requires_symbol" "$err_path"; then
+        if staged_symbol_matches "$case_requires_symbol" "$err_path"; then
             echo "[selfhost-compile] SKIP $case_id (awaiting stage0 republish of '$case_requires_symbol')"
             skipped=$((skipped + 1))
             compiled=2

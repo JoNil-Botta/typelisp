@@ -1547,6 +1547,7 @@ track (#809/#897/#911/#912) and the safe reference/ownership track (#182).
 | `file-exists?` | `String → bool` | Return true when a filesystem path exists; panics on unexpected syscall/path errors |
 | `read-file-status` | `String → i64` | Return 0 when `read-file` should succeed, otherwise a positive host status code |
 | `write-file-status` | `String String → i64` | Write whole file contents and return 0 on success or a positive host status code |
+| `append-file-status` | `String String → i64` | Append contents without truncating, create the file when missing, and return 0 on success or a positive host status code |
 | `file-exists-status` | `String → i64` | Return 0 when a path exists, otherwise a positive host status code such as not-found |
 | `file-open-status` | `String i64 → i64` | Open a runtime-managed file-handle slot; return a positive handle id on success or a negative host status code |
 | `file-close-status` | `i64 → i64` | Close a runtime-managed file-handle slot; return 0 on success or a positive host status code |
@@ -1713,10 +1714,9 @@ same as `read-file` and `StdinRead`.
 **Streaming writes / append (#1058).** Streaming writes are specified by #1058
 and reuse `ResultIoUnit`. `OpenWriteAppend` defines append semantics:
 create-if-missing, never truncate, and — where the host supports an append open
-mode (Linux `O_APPEND`) — each write lands at the current end of file. Once
-#1058 lands, this supersedes the current non-atomic read-modify-write
-`try-append-file`; the whole-file helper stays available for source
-compatibility.
+mode (Linux `O_APPEND`) — each write lands at the current end of file. This
+matches the whole-file `try-append-file` helper, which uses the recoverable
+`append-file-status` runtime primitive instead of read-modify-write.
 
 **Platform policy.** Linux is the reference target and must implement all three
 modes plus streaming reads and writes. On Windows, the handle API either works

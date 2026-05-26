@@ -204,6 +204,10 @@ impl TypeChecker {
             "write-file-status".into(),
             Type::Func(vec![Type::String, Type::String], Box::new(Type::I64)),
         );
+        globals.insert(
+            "append-file-status".into(),
+            Type::Func(vec![Type::String, Type::String], Box::new(Type::I64)),
+        );
         // `(file-exists? path)` -> whether the path names an existing entry.
         // Missing paths return false; unexpected syscall/path failures keep the
         // v1 file-I/O panic-on-error convention.
@@ -439,6 +443,7 @@ impl TypeChecker {
                     | "read-file-status"
                     | "write-file"
                     | "write-file-status"
+                    | "append-file-status"
                     | "file-exists?"
                     | "file-exists-status"
                     | "file-open-status"
@@ -5670,6 +5675,15 @@ mod tests {
     }
 
     #[test]
+    fn test_typecheck_append_file_status_has_expected_type() {
+        assert!(check(r#"(define (f) : i64 (append-file-status "out.tl" "x"))"#).is_ok());
+        assert!(check(r#"(define (f) : i64 (append-file-status 42 "x"))"#).is_err());
+        assert!(check(r#"(define (f) : i64 (append-file-status "out.tl" 7))"#).is_err());
+        assert!(check(r#"(define (f) : i64 (append-file-status "out.tl"))"#).is_err());
+        assert!(check(r#"(define (f) : unit (append-file-status "out.tl" "x"))"#).is_err());
+    }
+
+    #[test]
     fn test_typecheck_cpuid_yields_tuple() {
         let src = "(define (main) : i32 (tuple-ref (cpuid 0 0) 0))";
         assert!(check(src).is_ok());
@@ -5738,6 +5752,15 @@ mod tests {
             (define (file-open-status [n : i64]) : i64 n)
             (define (file-close-status) : i64 3)
             (define (main) : i64 (+ (file-open-status 7) (file-close-status)))
+        "#;
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_append_file_status_builtin_can_be_shadowed() {
+        let src = r#"
+            (define (append-file-status [n : i64]) : i64 n)
+            (define (main) : i64 (append-file-status 7))
         "#;
         assert!(check(src).is_ok());
     }

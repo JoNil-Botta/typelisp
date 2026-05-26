@@ -370,17 +370,23 @@
                                           (tc-bind
                                             (tc-bind
                                               (tc-bind
-                                                e17
-                                                "read-file-status"
-                                                (tc-fn1
+                                                (tc-bind
+                                                  e17
+                                                  "read-file-status"
+                                                  (tc-fn1
+                                                    (AstTyString)
+                                                    (AstTyI64)))
+                                                "write-file"
+                                                (tc-fn2
                                                   (AstTyString)
-                                                  (AstTyI64)))
-                                              "write-file"
+                                                  (AstTyString)
+                                                  (AstTyUnit)))
+                                              "write-file-status"
                                               (tc-fn2
                                                 (AstTyString)
                                                 (AstTyString)
-                                                (AstTyUnit)))
-                                            "write-file-status"
+                                                (AstTyI64)))
+                                            "append-file-status"
                                             (tc-fn2
                                               (AstTyString)
                                               (AstTyString)
@@ -1793,39 +1799,47 @@
                                 true
                                 (if (string-eq name "write-file-status")
                                   true
-                                  (if (string-eq name "file-exists?")
+                                  (if (string-eq name "append-file-status")
                                     true
-                                    (if (string-eq name "file-exists-status")
+                                    (if (string-eq name "file-exists?")
                                       true
-                                      (if (string-eq name "file-open-status")
+                                      (if (string-eq name "file-exists-status")
                                         true
-                                        (if (string-eq name "file-close-status")
+                                        (if (string-eq name "file-open-status")
                                           true
-                                          (if (string-eq name "fs-mkdir-status")
+                                          (if (string-eq
+                                            name
+                                            "file-close-status")
                                             true
                                             (if (string-eq
                                               name
-                                              "fs-remove-file-status")
+                                              "fs-mkdir-status")
                                               true
                                               (if (string-eq
                                                 name
-                                                "fs-remove-dir-status")
+                                                "fs-remove-file-status")
                                                 true
                                                 (if (string-eq
                                                   name
-                                                  "fs-process-id")
+                                                  "fs-remove-dir-status")
                                                   true
-                                                  (if (string-eq name "panic")
+                                                  (if (string-eq
+                                                    name
+                                                    "fs-process-id")
                                                     true
-                                                    (if (string-eq name "error")
+                                                    (if (string-eq name "panic")
                                                       true
                                                       (if (string-eq
                                                         name
-                                                        "env-var-exists?")
+                                                        "error")
                                                         true
-                                                        (string-eq
+                                                        (if (string-eq
                                                           name
-                                                          "env-var-value")))))))))))))))))))))))))))))
+                                                          "env-var-exists?")
+                                                          true
+                                                          (string-eq
+                                                            name
+                                                            "env-var-value"))))))))))))))))))))))))))))))
 
 (define (tc-default-builtin-unshadowed-scan? [env : TcTypeEnv] [name : String]) : bool
   (match env
@@ -5499,36 +5513,39 @@
         "(define (f [p : String] [c : String]) : unit (write-file p c))")
       (and
         (compiler-typecheck-ok?
-          "(define (f [p : String]) : bool (file-exists? p))")
+          "(define (f [p : String] [c : String]) : i64 (append-file-status p c))")
         (and
           (compiler-typecheck-ok?
-            "(define (f [p : String]) : i64 (file-open-status p 0))")
+            "(define (f [p : String]) : bool (file-exists? p))")
           (and
             (compiler-typecheck-ok?
-              "(define (f [h : i64]) : i64 (file-close-status h))")
+              "(define (f [p : String]) : i64 (file-open-status p 0))")
             (and
-              (compiler-typecheck-error-ok?
-                "(define (f [c : String]) : unit (write-file 5 c))"
-                "typecheck: argument type mismatch")
+              (compiler-typecheck-ok?
+                "(define (f [h : i64]) : i64 (file-close-status h))")
               (and
                 (compiler-typecheck-error-ok?
-                  "(define (f [p : String]) : unit (write-file p))"
-                  "typecheck: arity mismatch")
+                  "(define (f [c : String]) : unit (write-file 5 c))"
+                  "typecheck: argument type mismatch")
                 (and
                   (compiler-typecheck-error-ok?
-                    "(define (f [p : i64]) : String (read-file p))"
-                    "typecheck: argument type mismatch")
+                    "(define (f [p : String]) : unit (write-file p))"
+                    "typecheck: arity mismatch")
                   (and
                     (compiler-typecheck-error-ok?
-                      "(define (f [p : String]) : i64 (file-open-status p \"r\"))"
+                      "(define (f [p : i64]) : String (read-file p))"
                       "typecheck: argument type mismatch")
                     (and
                       (compiler-typecheck-error-ok?
-                        "(define (f) : i64 (file-close-status \"h\"))"
+                        "(define (f [p : String]) : i64 (file-open-status p \"r\"))"
                         "typecheck: argument type mismatch")
-                      (compiler-typecheck-error-ok?
-                        "(define (f [p : String] [c : String]) : i64 (write-file p c))"
-                        "typecheck: return type mismatch"))))))))))))
+                      (and
+                        (compiler-typecheck-error-ok?
+                          "(define (f) : i64 (file-close-status \"h\"))"
+                          "typecheck: argument type mismatch")
+                        (compiler-typecheck-error-ok?
+                          "(define (f [p : String] [c : String]) : i64 (write-file p c))"
+                          "typecheck: return type mismatch")))))))))))))
 
 ;; Raw-pointer null construction / check (#1054).
 (define (compiler-typecheck-ptr-null-ok-source) : String

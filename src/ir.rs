@@ -16,6 +16,7 @@ pub const WRITE_FILE_RUNTIME_SYMBOL: &str = ".L_tl_write_file";
 pub const FILE_EXISTS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists";
 pub const READ_FILE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_read_file_status";
 pub const WRITE_FILE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_write_file_status";
+pub const APPEND_FILE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_append_file_status";
 pub const FILE_EXISTS_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists_status";
 pub const FILE_OPEN_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_open_status";
 pub const FILE_CLOSE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_close_status";
@@ -374,6 +375,7 @@ pub fn classify_direct_call_effect(func: &str) -> IrEffect {
         | FILE_EXISTS_RUNTIME_SYMBOL
         | READ_FILE_STATUS_RUNTIME_SYMBOL
         | WRITE_FILE_STATUS_RUNTIME_SYMBOL
+        | APPEND_FILE_STATUS_RUNTIME_SYMBOL
         | FILE_EXISTS_STATUS_RUNTIME_SYMBOL
         | FILE_OPEN_STATUS_RUNTIME_SYMBOL
         | FILE_CLOSE_STATUS_RUNTIME_SYMBOL
@@ -1281,6 +1283,7 @@ mod tests {
             FILE_EXISTS_RUNTIME_SYMBOL,
             READ_FILE_STATUS_RUNTIME_SYMBOL,
             WRITE_FILE_STATUS_RUNTIME_SYMBOL,
+            APPEND_FILE_STATUS_RUNTIME_SYMBOL,
             FILE_EXISTS_STATUS_RUNTIME_SYMBOL,
             FILE_OPEN_STATUS_RUNTIME_SYMBOL,
             FILE_CLOSE_STATUS_RUNTIME_SYMBOL,

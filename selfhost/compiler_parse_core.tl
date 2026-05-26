@@ -2930,6 +2930,32 @@
             "(+ 1)"
             "parse: malformed binary expression"))))))
 
+;; comptime function-parameter parsing (#1072 / #1041): `[comptime n : i64]`
+;; and the type-valued `[comptime T : type]` parse as top-level function
+;; parameters marked comptime; a comptime parameter on a lambda is rejected
+;; (comptime params are top-level-only). Mirrors the Rust parser's
+;; test_parse_comptime_function_param / _type_valued_comptime_param /
+;; _comptime_lambda_param_rejected.
+(define (compiler-parse-first-fn-has-comptime-param? [src : String]) : bool
+  (match (parse-ast-source src)
+    [(OkAstProgram (AstProgram decls))
+      (match decls
+        [(AstDeclCons (AstDeclDefFn _ params _ _) _)
+          (ast-param-list-has-comptime? params)]
+        [_ false])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-parse-comptime-param-tests-ok?) : bool
+  (and
+    (compiler-parse-first-fn-has-comptime-param?
+      "(define (scale [comptime n : i64] [x : i64]) : i64 (* n x))")
+    (and
+      (compiler-parse-first-fn-has-comptime-param?
+        "(define (alloc [comptime T : type] [n : i64]) : (Array i64) (make-array T n))")
+      (compiler-parse-error-ok?
+        "(define (main) : i64 ((lambda ([comptime n : i64]) n) 1))"
+        "comptime parameters are only supported on top-level function definitions"))))
+
 (define (compiler-parse-smoke) : i64
   (match (parse-ast-source (compiler-parse-smoke-source))
     [(OkAstProgram program)
@@ -2982,7 +3008,9 @@
                           (compiler-parse-type-literal-tests-ok?)
                           (and
                             (compiler-parse-region-tests-ok?)
-                            (compiler-parse-repl-tests-ok?)))))))))))
+                            (and
+                              (compiler-parse-repl-tests-ok?)
+                              (compiler-parse-comptime-param-tests-ok?))))))))))))
           42
           (begin
             (panic "parse: error-path self-tests failed")

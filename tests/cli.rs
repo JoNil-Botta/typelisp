@@ -63,6 +63,21 @@ fn run_with_crash_retry<F: FnMut() -> Output>(mut run: F) -> Output {
     out
 }
 
+// Run the selfhost compile/test driver binary with `args`, retrying transient
+// #1204 crashes via `run_with_crash_retry`. Covers the inline driver-run sites
+// that #1250 deferred (#1248). Failure-asserting callers are safe: a normal
+// non-zero exit is not a crash code, so it returns immediately. Linux-only,
+// matching the `#[cfg(target_os = "linux")]` selfhost-driver tests that call it.
+#[cfg(target_os = "linux")]
+fn driver_output(driver_bin: &std::path::Path, args: &[&str]) -> Output {
+    run_with_crash_retry(|| {
+        Command::new(driver_bin)
+            .args(args)
+            .output()
+            .expect("run selfhost compile driver")
+    })
+}
+
 fn typelisp(args: &[&str]) -> Output {
     run_with_crash_retry(|| {
         Command::new(env!("CARGO_BIN_EXE_typelisp"))
@@ -1346,10 +1361,7 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
     let source_arg = source.to_str().expect("source path is utf-8");
     let explicit_asm_arg = explicit_asm.to_str().expect("explicit asm path is utf-8");
 
-    let explicit = Command::new(&driver_bin)
-        .args([source_arg, "-o", explicit_asm_arg])
-        .output()
-        .expect("run selfhost compile driver with -o");
+    let explicit = driver_output(&driver_bin, &[source_arg, "-o", explicit_asm_arg]);
     assert!(
         explicit.status.success(),
         "selfhost compile -o failed\nstdout:\n{}\nstderr:\n{}",
@@ -1387,16 +1399,16 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
     let stdlib_source_arg = stdlib_source.to_str().expect("stdlib source path is utf-8");
     let stdlib_asm_arg = stdlib_asm.to_str().expect("stdlib asm path is utf-8");
     let stdlib_root_arg = stdlib_root.to_str().expect("stdlib root path is utf-8");
-    let stdlib_compile = Command::new(&driver_bin)
-        .args([
+    let stdlib_compile = driver_output(
+        &driver_bin,
+        &[
             stdlib_source_arg,
             "--stdlib-root",
             stdlib_root_arg,
             "-o",
             stdlib_asm_arg,
-        ])
-        .output()
-        .expect("run selfhost compile driver with stdlib-root");
+        ],
+    );
     assert!(
         stdlib_compile.status.success(),
         "selfhost compile stdlib-root failed\nstdout:\n{}\nstderr:\n{}",
@@ -1416,16 +1428,16 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
     let explicit_linux_asm_arg = explicit_linux_asm
         .to_str()
         .expect("explicit linux asm path is utf-8");
-    let explicit_linux = Command::new(&driver_bin)
-        .args([
+    let explicit_linux = driver_output(
+        &driver_bin,
+        &[
             source_arg,
             "--target",
             "linux-x86_64",
             "-o",
             explicit_linux_asm_arg,
-        ])
-        .output()
-        .expect("run selfhost compile driver with explicit Linux target");
+        ],
+    );
     assert!(
         explicit_linux.status.success(),
         "selfhost compile explicit Linux target failed\nstdout:\n{}\nstderr:\n{}",
@@ -1443,16 +1455,16 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
 
     let windows_asm = dir.join("windows.s");
     let windows_asm_arg = windows_asm.to_str().expect("windows asm path is utf-8");
-    let windows = Command::new(&driver_bin)
-        .args([
+    let windows = driver_output(
+        &driver_bin,
+        &[
             source_arg,
             "--target",
             "windows-x86_64",
             "-o",
             windows_asm_arg,
-        ])
-        .output()
-        .expect("run selfhost compile driver with Windows target");
+        ],
+    );
     assert!(
         windows.status.success(),
         "selfhost compile Windows target failed\nstdout:\n{}\nstderr:\n{}",
@@ -1488,10 +1500,10 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
     let comptime_type_asm_arg = comptime_type_asm
         .to_str()
         .expect("comptime type asm path is utf-8");
-    let comptime_type = Command::new(&driver_bin)
-        .args([comptime_type_source_arg, "-o", comptime_type_asm_arg])
-        .output()
-        .expect("run selfhost compile driver on comptime type source");
+    let comptime_type = driver_output(
+        &driver_bin,
+        &[comptime_type_source_arg, "-o", comptime_type_asm_arg],
+    );
     assert!(
         comptime_type.status.success(),
         "selfhost compile comptime type source failed\nstdout:\n{}\nstderr:\n{}",
@@ -1515,10 +1527,7 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
     .expect("write region source");
     let region_source_arg = region_source.to_str().expect("region source path is utf-8");
     let region_asm_arg = region_asm.to_str().expect("region asm path is utf-8");
-    let region_ok = Command::new(&driver_bin)
-        .args([region_source_arg, "-o", region_asm_arg])
-        .output()
-        .expect("run selfhost compile driver on region source");
+    let region_ok = driver_output(&driver_bin, &[region_source_arg, "-o", region_asm_arg]);
     assert!(
         region_ok.status.success(),
         "selfhost compile region source failed\nstdout:\n{}\nstderr:\n{}",
@@ -1543,10 +1552,7 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
     let default_source_arg = default_source
         .to_str()
         .expect("default source path is utf-8");
-    let default = Command::new(&driver_bin)
-        .arg(default_source_arg)
-        .output()
-        .expect("run selfhost compile driver with default output");
+    let default = driver_output(&driver_bin, &[default_source_arg]);
     assert!(
         default.status.success(),
         "selfhost compile default output failed\nstdout:\n{}\nstderr:\n{}",
@@ -1567,10 +1573,7 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
     let opt_default_asm_arg = opt_default_asm
         .to_str()
         .expect("opt default asm path is utf-8");
-    let opt_default = Command::new(&driver_bin)
-        .args([opt_source_arg, "-o", opt_default_asm_arg])
-        .output()
-        .expect("run selfhost compile driver with default opt level");
+    let opt_default = driver_output(&driver_bin, &[opt_source_arg, "-o", opt_default_asm_arg]);
     assert!(
         opt_default.status.success(),
         "selfhost compile default opt level failed\nstdout:\n{}\nstderr:\n{}",
@@ -1583,10 +1586,10 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
     for level in ["0", "1", "2", "3"] {
         let asm_path = dir.join(format!("opt-level-{level}.s"));
         let asm_arg = asm_path.to_str().expect("opt-level asm path is utf-8");
-        let output = Command::new(&driver_bin)
-            .args([opt_source_arg, "--opt-level", level, "-o", asm_arg])
-            .output()
-            .expect("run selfhost compile driver with opt level");
+        let output = driver_output(
+            &driver_bin,
+            &[opt_source_arg, "--opt-level", level, "-o", asm_arg],
+        );
         assert!(
             output.status.success(),
             "selfhost compile --opt-level {level} failed\nstdout:\n{}\nstderr:\n{}",
@@ -1617,10 +1620,7 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
         "opt-level 3 is currently documented as level-2 equivalent"
     );
 
-    let missing_opt = Command::new(&driver_bin)
-        .args([opt_source_arg, "--opt-level"])
-        .output()
-        .expect("run selfhost compile driver with missing opt level");
+    let missing_opt = driver_output(&driver_bin, &[opt_source_arg, "--opt-level"]);
     assert!(!missing_opt.status.success());
     assert_eq!(stdout(&missing_opt), "");
     assert!(
@@ -1629,10 +1629,10 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
         stderr(&missing_opt)
     );
 
-    let duplicate_opt = Command::new(&driver_bin)
-        .args([opt_source_arg, "--opt-level", "1", "--opt-level", "2"])
-        .output()
-        .expect("run selfhost compile driver with duplicate opt level");
+    let duplicate_opt = driver_output(
+        &driver_bin,
+        &[opt_source_arg, "--opt-level", "1", "--opt-level", "2"],
+    );
     assert!(!duplicate_opt.status.success());
     assert_eq!(stdout(&duplicate_opt), "");
     assert!(
@@ -1641,10 +1641,7 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
         stderr(&duplicate_opt)
     );
 
-    let invalid_opt = Command::new(&driver_bin)
-        .args([opt_source_arg, "--opt-level", "4"])
-        .output()
-        .expect("run selfhost compile driver with invalid opt level");
+    let invalid_opt = driver_output(&driver_bin, &[opt_source_arg, "--opt-level", "4"]);
     assert!(!invalid_opt.status.success());
     assert_eq!(stdout(&invalid_opt), "");
     assert!(
@@ -1657,16 +1654,16 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
     let bad_target_asm_arg = bad_target_asm
         .to_str()
         .expect("bad target asm path is utf-8");
-    let bad_target = Command::new(&driver_bin)
-        .args([
+    let bad_target = driver_output(
+        &driver_bin,
+        &[
             source_arg,
             "--target",
             "plan9-x86_64",
             "-o",
             bad_target_asm_arg,
-        ])
-        .output()
-        .expect("run selfhost compile driver with invalid target");
+        ],
+    );
     assert!(!bad_target.status.success());
     assert_eq!(stdout(&bad_target), "");
     assert!(
@@ -1681,10 +1678,7 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
         "invalid target should not write assembly"
     );
 
-    let unsupported = Command::new(&driver_bin)
-        .args([source_arg, "--emit-ir"])
-        .output()
-        .expect("run selfhost compile driver with unsupported flag");
+    let unsupported = driver_output(&driver_bin, &[source_arg, "--emit-ir"]);
     assert!(!unsupported.status.success());
     assert_eq!(stdout(&unsupported), "");
     assert!(
@@ -1699,10 +1693,7 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
     fs::write(&bad_source, "(define (main) : i64 true)\n").expect("write bad source");
     let bad_source_arg = bad_source.to_str().expect("bad source path is utf-8");
     let bad_asm_arg = bad_asm.to_str().expect("bad asm path is utf-8");
-    let failure = Command::new(&driver_bin)
-        .args([bad_source_arg, "-o", bad_asm_arg])
-        .output()
-        .expect("run selfhost compile driver on invalid source");
+    let failure = driver_output(&driver_bin, &[bad_source_arg, "-o", bad_asm_arg]);
     assert!(!failure.status.success());
     assert_eq!(stdout(&failure), "");
     assert!(
@@ -1728,10 +1719,10 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
     let bad_region_asm_arg = bad_region_asm
         .to_str()
         .expect("bad region asm path is utf-8");
-    let bad_region = Command::new(&driver_bin)
-        .args([bad_region_source_arg, "-o", bad_region_asm_arg])
-        .output()
-        .expect("run selfhost compile driver on bad region source");
+    let bad_region = driver_output(
+        &driver_bin,
+        &[bad_region_source_arg, "-o", bad_region_asm_arg],
+    );
     assert!(!bad_region.status.success());
     assert_eq!(stdout(&bad_region), "");
     assert!(
@@ -1756,10 +1747,7 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
         .to_str()
         .expect("lowerer-error source path is utf-8");
     let lower_asm_arg = lower_asm.to_str().expect("lowerer-error asm path is utf-8");
-    let lower_failure = Command::new(&driver_bin)
-        .args([lower_source_arg, "-o", lower_asm_arg])
-        .output()
-        .expect("run selfhost compile driver on lowerer-error source");
+    let lower_failure = driver_output(&driver_bin, &[lower_source_arg, "-o", lower_asm_arg]);
     assert!(!lower_failure.status.success());
     assert_eq!(stdout(&lower_failure), "");
     let expected = format!(
@@ -1783,10 +1771,10 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
         .to_str()
         .expect("malformed source path is utf-8");
     let malformed_asm_arg = malformed_asm.to_str().expect("malformed asm path is utf-8");
-    let parse_failure = Command::new(&driver_bin)
-        .args([malformed_source_arg, "-o", malformed_asm_arg])
-        .output()
-        .expect("run selfhost compile driver on malformed source");
+    let parse_failure = driver_output(
+        &driver_bin,
+        &[malformed_source_arg, "-o", malformed_asm_arg],
+    );
     assert!(!parse_failure.status.success());
     assert_eq!(stdout(&parse_failure), "");
     let expected = format!("{}:1:1: reader: unexpected ')'", malformed_source.display());
@@ -1828,10 +1816,7 @@ fn selfhost_test_planner_threads_opt_level_into_harness_compile() {
     let source_arg = source.to_str().expect("source path is utf-8");
     let scratch_asm = PathBuf::from(format!("{source_arg}.test.s"));
 
-    let default = Command::new(&driver_bin)
-        .arg(source_arg)
-        .output()
-        .expect("run selfhost test planner with default opt level");
+    let default = driver_output(&driver_bin, &[source_arg]);
     assert!(
         default.status.success(),
         "selfhost test default opt level failed\nstdout:\n{}\nstderr:\n{}",
@@ -1850,10 +1835,7 @@ fn selfhost_test_planner_threads_opt_level_into_harness_compile() {
     let mut opt_level_texts = Vec::new();
     for level in ["0", "1", "2", "3"] {
         let _ = fs::remove_file(&scratch_asm);
-        let output = Command::new(&driver_bin)
-            .args([source_arg, "--opt-level", level])
-            .output()
-            .expect("run selfhost test planner with opt level");
+        let output = driver_output(&driver_bin, &[source_arg, "--opt-level", level]);
         assert!(
             output.status.success(),
             "selfhost test --opt-level {level} failed\nstdout:\n{}\nstderr:\n{}",
@@ -1893,10 +1875,7 @@ fn selfhost_test_planner_threads_opt_level_into_harness_compile() {
         "test opt-level 3 is currently documented as level-2 equivalent"
     );
 
-    let check = Command::new(&driver_bin)
-        .args([source_arg, "--check", "--opt-level", "3"])
-        .output()
-        .expect("run selfhost test planner --check with opt level");
+    let check = driver_output(&driver_bin, &[source_arg, "--check", "--opt-level", "3"]);
     assert!(
         check.status.success(),
         "selfhost test --check --opt-level failed\nstdout:\n{}\nstderr:\n{}",
@@ -1905,10 +1884,7 @@ fn selfhost_test_planner_threads_opt_level_into_harness_compile() {
     );
     assert!(stdout(&check).contains("TypeLisp test typecheck passed: 1 test(s)"));
 
-    let missing_opt = Command::new(&driver_bin)
-        .args([source_arg, "--opt-level"])
-        .output()
-        .expect("run selfhost test planner with missing opt level");
+    let missing_opt = driver_output(&driver_bin, &[source_arg, "--opt-level"]);
     assert!(!missing_opt.status.success());
     assert_eq!(stdout(&missing_opt), "");
     assert!(
@@ -1917,10 +1893,10 @@ fn selfhost_test_planner_threads_opt_level_into_harness_compile() {
         stderr(&missing_opt)
     );
 
-    let duplicate_opt = Command::new(&driver_bin)
-        .args([source_arg, "--opt-level", "1", "--opt-level", "2"])
-        .output()
-        .expect("run selfhost test planner with duplicate opt level");
+    let duplicate_opt = driver_output(
+        &driver_bin,
+        &[source_arg, "--opt-level", "1", "--opt-level", "2"],
+    );
     assert!(!duplicate_opt.status.success());
     assert_eq!(stdout(&duplicate_opt), "");
     assert!(
@@ -1929,10 +1905,7 @@ fn selfhost_test_planner_threads_opt_level_into_harness_compile() {
         stderr(&duplicate_opt)
     );
 
-    let invalid_opt = Command::new(&driver_bin)
-        .args([source_arg, "--opt-level", "4"])
-        .output()
-        .expect("run selfhost test planner with invalid opt level");
+    let invalid_opt = driver_output(&driver_bin, &[source_arg, "--opt-level", "4"]);
     assert!(!invalid_opt.status.success());
     assert_eq!(stdout(&invalid_opt), "");
     assert!(

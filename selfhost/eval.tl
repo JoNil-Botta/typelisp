@@ -1350,37 +1350,35 @@
 ;; 1 (true) / 0 (false) integer-truth convention. An operator that passed
 ;; `is-builtin-op` but is unmatched here is a programmer error - abort.
 (define (eval-builtin [name : String] [a : i64] [b : i64]) : i64
-  (if (string-eq name "+")
-    (+ a b)
-    (if (string-eq name "-")
-      (- a b)
-      (if (string-eq name "*")
-        (* a b)
-        (if (string-eq name "/")
-          (/ a b)
-          (if (string-eq name "=")
-            (if (= a b)
-              1
-              0)
-            (if (string-eq name "<")
-              (if (< a b)
-                1
-                0)
-              (if (string-eq name ">")
-                (if (> a b)
-                  1
-                  0)
-                (if (string-eq name "<=")
-                  (if (<= a b)
-                    1
-                    0)
-                  (if (string-eq name ">=")
-                    (if (>= a b)
-                      1
-                      0)
-                    (begin
-                      (panic "eval: unknown operator")
-                      0)))))))))))
+  (cond
+    [(string-eq name "+") (+ a b)]
+    [(string-eq name "-") (- a b)]
+    [(string-eq name "*") (* a b)]
+    [(string-eq name "/") (/ a b)]
+    [(string-eq name "=")
+      (if (= a b)
+        1
+        0)]
+    [(string-eq name "<")
+      (if (< a b)
+        1
+        0)]
+    [(string-eq name ">")
+      (if (> a b)
+        1
+        0)]
+    [(string-eq name "<=")
+      (if (<= a b)
+        1
+        0)]
+    [(string-eq name ">=")
+      (if (>= a b)
+        1
+        0)]
+    [else
+      (begin
+        (panic "eval: unknown operator")
+        0)]))
 
 ;; --------------------------------------------------------------------------
 ;; Recoverable evaluator path (#445).

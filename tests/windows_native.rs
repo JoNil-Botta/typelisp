@@ -183,6 +183,7 @@ fn selfhost_backend_windows_runtime_helpers_emit_assemble_link_and_run() {
         "    movq %rcx, %rbx\n",
         "    movq %r12, %rcx\n",
         "    movq %rcx, %r10\n",
+        "    call SystemFunction036\n",
     ] {
         assert!(
             asm.contains(snippet),
@@ -214,6 +215,7 @@ fn selfhost_backend_windows_runtime_helpers_emit_assemble_link_and_run() {
         ".extern .L_tl_stdin_eof\n",
         ".extern .L_tl_flush_stdout\n",
         ".extern tl_process_output\n",
+        ".extern tl_random_system_seed\n",
     ] {
         assert!(
             !asm.contains(helper),
@@ -241,6 +243,7 @@ fn selfhost_backend_windows_runtime_helpers_emit_assemble_link_and_run() {
         .arg("/SUBSYSTEM:CONSOLE")
         .arg("msvcrt.lib")
         .arg("legacy_stdio_definitions.lib")
+        .arg("advapi32.lib")
         .status()
         .expect("link selfhost Windows runtime helper output");
     assert!(

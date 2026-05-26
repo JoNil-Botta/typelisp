@@ -511,7 +511,7 @@ assemble_link_windows() {
         exit 1
     }
     lld-link -NOLOGO "$(cygpath -aw "$_obj")" "-OUT:$(cygpath -aw "$_bin")" -SUBSYSTEM:CONSOLE \
-        msvcrt.lib legacy_stdio_definitions.lib || {
+        msvcrt.lib legacy_stdio_definitions.lib advapi32.lib || {
         echo "FAIL: $_label link failed" >&2
         exit 1
     }
@@ -571,6 +571,7 @@ run_windows_backend_fixtures() {
         ".extern _lseeki64" \
         ".extern _close" \
         ".extern _access" \
+        ".extern SystemFunction036" \
         "call malloc" \
         "call _write" \
         "call _read" \
@@ -579,6 +580,7 @@ run_windows_backend_fixtures() {
         "call _lseeki64" \
         "call _close" \
         "call _access" \
+        "call SystemFunction036" \
         "call .L_tl_abort" \
         "movq \$0x8000, %rdx" \
         "movq \$0x8301, %rdx" \
@@ -610,7 +612,8 @@ run_windows_backend_fixtures() {
         ".extern .L_tl_read_stdin_line" \
         ".extern .L_tl_read_stdin_bytes" \
         ".extern .L_tl_stdin_eof" \
-        ".extern .L_tl_flush_stdout"
+        ".extern .L_tl_flush_stdout" \
+        ".extern tl_random_system_seed"
     do
         assert_not_contains "$_runtime_asm" "$_snippet" windows-backend-runtime
     done

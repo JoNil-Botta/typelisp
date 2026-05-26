@@ -51,6 +51,7 @@
     bool
     bool
     bool
+    bool
     bool))
 
 ;; Backend code-generation target (#646). Linux/System V and Windows x64 are
@@ -2294,7 +2295,29 @@
   [plan : CompilerBackendRuntimePlan]) : String
   (if (and (compiler-backend-target-windows? target) (string-eq name "main"))
     (match plan
-      [(BackendRuntimePlan _ _ _ _ _ _ _ _ _ arg-count arg _ _ _ _ _ _ _ _ _ _)
+      [(BackendRuntimePlan
+          _
+          _
+          _
+          _
+          _
+          _
+          _
+          _
+          _
+          arg-count
+          arg
+          _
+          _
+          _
+          _
+          _
+          _
+          _
+          _
+          _
+          _
+          _)
         (if (or arg-count arg)
           "    movq %rcx, .L_tl_argc(%rip)
     movq %rdx, .L_tl_argv(%rip)
@@ -2882,7 +2905,8 @@
         stdin-eof
         flush-stdout
         region-mark
-        region-reset)
+        region-reset
+        random-system-seed)
       (if (string-eq name "tl_alloc")
         alloc
         (if (string-eq name "tl_region_mark")
@@ -2945,7 +2969,11 @@
                                                       name
                                                       ".L_tl_flush_stdout")
                                                       flush-stdout
-                                                      false))))))))))))))))))))))))]))
+                                                      (if (string-eq
+                                                        name
+                                                        "tl_random_system_seed")
+                                                        random-system-seed
+                                                        false)))))))))))))))))))))))))]))
 
 (define (compiler-backend-runtime-plan-for
   [functions : CompilerIrFunctionList]
@@ -2973,6 +3001,10 @@
       (compiler-backend-function-list-defines? functions "tl_region_reset")]
     [defines-process-output : bool
       (compiler-backend-function-list-defines? functions "tl_process_output")]
+    [defines-random-system-seed : bool
+      (compiler-backend-function-list-defines?
+        functions
+        "tl_random_system_seed")]
     [extern-alloc : bool
       (compiler-backend-extern-list-references? externs "tl_alloc")]
     [extern-oob : bool
@@ -3029,6 +3061,8 @@
       (compiler-backend-extern-list-references? externs "tl_region_mark")]
     [extern-region-reset : bool
       (compiler-backend-extern-list-references? externs "tl_region_reset")]
+    [extern-random-system-seed : bool
+      (compiler-backend-extern-list-references? externs "tl_random_system_seed")]
     [calls-alloc : bool
       (compiler-backend-function-list-calls? functions "tl_alloc")]
     [calls-oob : bool
@@ -3081,6 +3115,8 @@
       (compiler-backend-function-list-calls? functions "tl_region_mark")]
     [calls-region-reset : bool
       (compiler-backend-function-list-calls? functions "tl_region_reset")]
+    [calls-random-system-seed : bool
+      (compiler-backend-function-list-calls? functions "tl_random_system_seed")]
     (let
       [needs-oob : bool (and (not defines-oob) (or extern-oob calls-oob))]
       [needs-substring : bool
@@ -3130,6 +3166,10 @@
         (and
           (not defines-region-reset)
           (or extern-region-reset calls-region-reset))]
+      [needs-random-system-seed : bool
+        (and
+          (not defines-random-system-seed)
+          (or extern-random-system-seed calls-random-system-seed))]
       [direct-alloc : bool
         (and (not defines-alloc) (or extern-alloc calls-alloc))]
       (let
@@ -3150,7 +3190,11 @@
               needs-read-file
               needs-write-file
               needs-file-exists)
-            (or needs-process-output (or needs-read-line needs-read-bytes)))]
+            (or
+              needs-process-output
+              (or
+                needs-read-line
+                (or needs-read-bytes needs-random-system-seed))))]
         (OkBackendRuntimePlan
           (BackendRuntimePlan
             needs-alloc
@@ -3173,7 +3217,8 @@
             needs-stdin-eof
             needs-flush-stdout
             needs-region-mark
-            needs-region-reset))))))
+            needs-region-reset
+            needs-random-system-seed))))))
 
 (define (compiler-backend-runtime-plan [program : CompilerIrProgram]) : ResultBackendRuntimePlan
   (match program
@@ -3365,6 +3410,17 @@ tl_current_arena:
 ")
     ""))
 
+(define (compiler-backend-runtime-random-system-seed-data
+  [random-system-seed : bool]) : String
+  (if random-system-seed
+    "    .section .rodata
+.L_tl_random_system_seed_err_msg:
+    .ascii \"random: system entropy unavailable\"
+    .set .L_tl_random_system_seed_err_msg_len, . - .L_tl_random_system_seed_err_msg
+
+"
+    ""))
+
 (define (compiler-backend-runtime-data-for-target
   [target : CompilerBackendTarget]
   [plan : CompilerBackendRuntimePlan]) : String
@@ -3390,7 +3446,8 @@ tl_current_arena:
         stdin-eof
         flush-stdout
         region-mark
-        region-reset)
+        region-reset
+        random-system-seed)
       (string-append
         (if alloc
           (compiler-backend-runtime-alloc-data-for-target target)
@@ -3422,9 +3479,12 @@ tl_current_arena:
                           read-line
                           read-bytes
                           stdin-eof)
-                        (compiler-backend-runtime-flush-stdout-data
-                          target
-                          flush-stdout))))))))))]))
+                        (string-append
+                          (compiler-backend-runtime-flush-stdout-data
+                            target
+                            flush-stdout)
+                          (compiler-backend-runtime-random-system-seed-data
+                            random-system-seed)))))))))))]))
 
 (define (compiler-backend-runtime-alloc-functions) : String
   "    .globl tl_alloc
@@ -5940,6 +6000,128 @@ tl_string_concat:
 
 ")
 
+(define (compiler-backend-runtime-random-system-seed-functions) : String
+  "    .globl tl_random_system_seed
+tl_random_system_seed:
+    push %rbp
+    movq %rsp, %rbp
+    push %r12
+    push %r13
+    sub $16, %rsp
+    leaq (%rsp), %rdi
+    movq $8, %rsi
+    xorq %rdx, %rdx
+    movq $318, %rax
+    syscall
+    testq %rax, %rax
+    js .L_tl_random_system_seed_err
+    cmpq $8, %rax
+    jne .L_tl_random_system_seed_err
+    movq (%rsp), %r12
+    movq $16, %rdi
+    call tl_alloc
+    movq $0, 0(%rax)
+    movq %r12, 8(%rax)
+    add $16, %rsp
+    pop %r13
+    pop %r12
+    pop %rbp
+    ret
+.L_tl_random_system_seed_err:
+    leaq .L_tl_random_system_seed_err_msg(%rip), %r12
+    movq $.L_tl_random_system_seed_err_msg_len, %r13
+    movq $16, %rdi
+    call tl_alloc
+    movq %r12, 0(%rax)
+    movq %r13, 8(%rax)
+    movq %rax, %r12
+    movq $16, %rdi
+    call tl_alloc
+    movq $0, 0(%rax)
+    movq %r12, 8(%rax)
+    movq %rax, %r12
+    movq $16, %rdi
+    call tl_alloc
+    movq $1, 0(%rax)
+    movq %r12, 8(%rax)
+    movq %rax, %r12
+    movq $16, %rdi
+    call tl_alloc
+    movq $1, 0(%rax)
+    movq %r12, 8(%rax)
+    add $16, %rsp
+    pop %r13
+    pop %r12
+    pop %rbp
+    ret
+
+")
+
+(define (compiler-backend-runtime-windows-random-system-seed-functions) : String
+  "    .globl tl_random_system_seed
+tl_random_system_seed:
+    push %rbp
+    mov %rsp, %rbp
+    push %r12
+    push %r13
+    sub $16, %rsp
+    leaq (%rsp), %rcx
+    movl $8, %edx
+    sub $32, %rsp
+    call SystemFunction036
+    add $32, %rsp
+    testb %al, %al
+    jz .L_tl_random_system_seed_err
+    movq (%rsp), %r12
+    movq $16, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq $0, 0(%rax)
+    movq %r12, 8(%rax)
+    add $16, %rsp
+    pop %r13
+    pop %r12
+    pop %rbp
+    ret
+.L_tl_random_system_seed_err:
+    leaq .L_tl_random_system_seed_err_msg(%rip), %r12
+    movq $.L_tl_random_system_seed_err_msg_len, %r13
+    movq $16, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %r12, 0(%rax)
+    movq %r13, 8(%rax)
+    movq %rax, %r12
+    movq $16, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq $0, 0(%rax)
+    movq %r12, 8(%rax)
+    movq %rax, %r12
+    movq $16, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq $1, 0(%rax)
+    movq %r12, 8(%rax)
+    movq %rax, %r12
+    movq $16, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq $1, 0(%rax)
+    movq %r12, 8(%rax)
+    add $16, %rsp
+    pop %r13
+    pop %r12
+    pop %rbp
+    ret
+
+")
+
 (define (compiler-backend-runtime-functions [plan : CompilerBackendRuntimePlan]) : String
   (compiler-backend-runtime-functions-for-target (BackendTargetLinux) plan))
 
@@ -5978,7 +6160,8 @@ tl_string_concat:
         stdin-eof
         flush-stdout
         region-mark
-        region-reset)
+        region-reset
+        random-system-seed)
       (let
         [alloc-asm : String
           (if alloc
@@ -6120,6 +6303,12 @@ tl_string_concat:
             target
             region-reset
             (compiler-backend-runtime-region-reset-functions))]
+        [random-system-seed-asm : String
+          (if random-system-seed
+            (if (compiler-backend-target-windows? target)
+              (compiler-backend-runtime-windows-random-system-seed-functions)
+              (compiler-backend-runtime-random-system-seed-functions))
+            "")]
         (string-append
           alloc-asm
           (string-append
@@ -6166,7 +6355,9 @@ tl_string_concat:
                                                     read-bytes-asm
                                                     (string-append
                                                       stdin-eof-asm
-                                                      flush-stdout-asm))))))))))))))))))))))))]))
+                                                      (string-append
+                                                        flush-stdout-asm
+                                                        random-system-seed-asm)))))))))))))))))))))))))]))
 
 ;; Argument register for call arg `idx` under the target's calling convention.
 ;; System V (Linux) uses rdi/rsi/rdx/rcx/r8/r9 via `compiler-backend-arg-reg`;
@@ -6275,6 +6466,7 @@ tl_string_concat:
             _
             _
             _
+            _
             _)
           (compiler-backend-entry (or arg-count arg) process-output)])]
     [(BackendTargetWindows) ""]))
@@ -6308,7 +6500,8 @@ tl_string_concat:
         stdin-eof
         flush-stdout
         region-mark
-        region-reset)
+        region-reset
+        random-system-seed)
       (not
         (or
           (backend-or8
@@ -6332,7 +6525,11 @@ tl_string_concat:
               read-line)
             (or
               read-bytes
-              (or stdin-eof (or flush-stdout (or region-mark region-reset)))))))]))
+              (or
+                stdin-eof
+                (or
+                  flush-stdout
+                  (or region-mark (or region-reset random-system-seed))))))))]))
 
 (define (compiler-backend-target-runtime-ok?
   [target : CompilerBackendTarget]
@@ -6360,7 +6557,8 @@ tl_string_concat:
           _
           _
           region-mark
-          region-reset)
+          region-reset
+          _)
         (not (or region-mark region-reset))])
     true))
 
@@ -6370,7 +6568,8 @@ tl_string_concat:
   (if (and
     (compiler-backend-target-windows? target)
     (not (compiler-backend-runtime-plan-empty? plan)))
-    "    .extern malloc
+    (string-append
+      "    .extern malloc
     .extern _write
     .extern exit
     .extern _read
@@ -6381,6 +6580,10 @@ tl_string_concat:
     .extern _access
     .extern _errno
 "
+      (if (compiler-backend-plan-provides? plan "tl_random_system_seed")
+        "    .extern SystemFunction036
+"
+        ""))
     ""))
 
 ;; Emit a full program for `target`. Windows x64 has ABI-correct user function
@@ -6594,7 +6797,9 @@ tl_string_concat:
                                 (AstTyFunc
                                   (AstTypeCons (AstTyI64) AstTypeNil)
                                   (AstTyI64)))
-                              IrExternNil)))))))))))))))
+                              (IrExternCons
+                                (IrExtern "tl_random_system_seed" (AstTyI64))
+                                IrExternNil))))))))))))))))
 
 (define (compiler-backend-runtime-helper-program) : CompilerIrProgram
   (IrProgram
@@ -6604,7 +6809,7 @@ tl_string_concat:
         "main"
         IrParamNil
         (AstTyI64)
-        7
+        8
         (IrBlockCons
           (IrBlock
             "entry"
@@ -6657,8 +6862,14 @@ tl_string_concat:
                             IrValueNil
                             (AstTyUnit))
                           (IrInstrCons
-                            (IrInstrReturn (IrSomeValue (IrValueI64 42)))
-                            IrInstrNil)))))))))
+                            (IrInstrCall
+                              7
+                              "tl_random_system_seed"
+                              IrValueNil
+                              (AstTyI64))
+                            (IrInstrCons
+                              (IrInstrReturn (IrSomeValue (IrValueI64 42)))
+                              IrInstrNil))))))))))
           IrBlockNil))
       IrFunctionNil)
     (compiler-backend-runtime-helper-externs)))
@@ -6720,6 +6931,12 @@ tl_string_concat:
                 ".L_tl_process_exec_marker:")
               (compiler-backend-string-contains? asm ".L_tl_envp:\n"))
             (compiler-backend-string-contains? asm "process: spawn failed"))]
+        [random-labels : bool
+          (and
+            (compiler-backend-string-contains? asm "tl_random_system_seed:\n")
+            (compiler-backend-string-contains?
+              asm
+              "random: system entropy unavailable"))]
         [no-externs : bool
           (and
             (backend-and8
@@ -6785,10 +7002,15 @@ tl_string_concat:
                   (compiler-backend-string-contains?
                     asm
                     ".extern .L_tl_file_exists\n"))
-                (not
-                  (compiler-backend-string-contains?
-                    asm
-                    ".extern tl_process_output\n")))))]
+                (and
+                  (not
+                    (compiler-backend-string-contains?
+                      asm
+                      ".extern tl_process_output\n"))
+                  (not
+                    (compiler-backend-string-contains?
+                      asm
+                      ".extern tl_random_system_seed\n"))))))]
         (and
           base-labels
           (and
@@ -6804,12 +7026,14 @@ tl_string_concat:
                     (and
                       no-externs
                       (and
-                        (compiler-backend-string-contains?
-                          asm
-                          "    call tl_alloc\n")
-                        (compiler-backend-string-contains?
-                          asm
-                          ".L_tl_stdin_eof_flag:\n"))))))))))]
+                        random-labels
+                        (and
+                          (compiler-backend-string-contains?
+                            asm
+                            "    call tl_alloc\n")
+                          (compiler-backend-string-contains?
+                            asm
+                            ".L_tl_stdin_eof_flag:\n")))))))))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-windows-driver-runtime-source) : String
@@ -7817,6 +8041,7 @@ tl_string_concat:
     CompilerRegVarTypeNil
     (AstTyI64)
     (BackendRuntimePlan
+      false
       false
       false
       false

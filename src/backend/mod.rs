@@ -48,7 +48,7 @@ const SYSV_FLOAT_ARG_REGS: [&str; 8] = [
 const WIN64_INTEGER_ARG_REGS: [&str; 4] = ["%rcx", "%rdx", "%r8", "%r9"];
 const WIN64_FLOAT_ARG_REGS: [&str; 4] = ["%xmm0", "%xmm1", "%xmm2", "%xmm3"];
 const LINUX_LINK_LIBS: [&str; 1] = ["-lc"];
-const WINDOWS_LINK_LIBS: [&str; 2] = ["msvcrt.lib", "legacy_stdio_definitions.lib"];
+const WINDOWS_LINK_LIBS: [&str; 3] = ["msvcrt.lib", "legacy_stdio_definitions.lib", "advapi32.lib"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendArch {
@@ -2568,6 +2568,9 @@ impl X86_64Backend {
         }
         if self.needs_flush_stdout_runtime {
             externs.insert("fflush");
+        }
+        if self.needs_random_system_seed_runtime {
+            externs.insert("SystemFunction036");
         }
         if self.needs_process_output_runtime {
             for symbol in [
@@ -7170,11 +7173,11 @@ impl X86_64Backend {
         self.emit(&format!("{}:", RANDOM_SYSTEM_SEED_RUNTIME_SYMBOL));
         self.emit("    push %rbp");
         self.emit("    movq %rsp, %rbp");
-        self.emit("    push %rbx");
         self.emit("    push %r12");
+        self.emit("    push %r13");
         self.emit("    sub $16, %rsp");
         // getrandom(buf, 8, 0)
-        self.emit("    leaq -8(%rbp), %rdi");
+        self.emit("    leaq (%rsp), %rdi");
         self.emit("    movq $8, %rsi");
         self.emit("    xorq %rdx, %rdx");
         self.emit("    movq $318, %rax");
@@ -7183,15 +7186,15 @@ impl X86_64Backend {
         self.emit("    js .L_tl_random_system_seed_err");
         self.emit("    cmpq $8, %rax");
         self.emit("    jne .L_tl_random_system_seed_err");
-        self.emit("    movq -8(%rbp), %r12");
+        self.emit("    movq (%rsp), %r12");
         // allocate OkSystemSeed result (tag 0, payload i64 inline)
         self.emit("    movq $16, %rdi");
         self.emit("    call tl_alloc");
         self.emit("    movq $0, 0(%rax)");
         self.emit("    movq %r12, 8(%rax)");
         self.emit("    add $16, %rsp");
+        self.emit("    pop %r13");
         self.emit("    pop %r12");
-        self.emit("    pop %rbx");
         self.emit("    pop %rbp");
         self.emit("    ret");
         // Error path: allocate error message, wrap in nested enums, return.
@@ -7222,45 +7225,37 @@ impl X86_64Backend {
         self.emit("    movq $1, 0(%rax)");
         self.emit("    movq %r12, 8(%rax)");
         self.emit("    add $16, %rsp");
+        self.emit("    pop %r13");
         self.emit("    pop %r12");
-        self.emit("    pop %rbx");
         self.emit("    pop %rbp");
         self.emit("    ret");
         self.emit("");
     }
 
     fn generate_windows_random_system_seed_runtime_functions(&mut self) {
-        // Windows: use MSVCRT _rand_s to fill two unsigned ints, combine into
-        // i64, and return ResultSystemSeed. On failure, return the same
+        // Windows: use RtlGenRandom/SystemFunction036 to fill an 8-byte buffer
+        // and return ResultSystemSeed. On failure, return the same
         // structured error path as Linux.
         self.emit(&format!("{}:", RANDOM_SYSTEM_SEED_RUNTIME_SYMBOL));
         self.emit("    push %rbp");
         self.emit("    mov %rsp, %rbp");
-        self.emit("    push %rbx");
         self.emit("    push %r12");
-        self.emit("    sub $8, %rsp");
-        // first _rand_s call -> lower 4 bytes
-        self.emit("    leaq -4(%rbp), %rcx");
-        self.emit_call("_rand_s");
-        self.emit("    testl %eax, %eax");
-        self.emit("    jne .L_tl_random_system_seed_err");
-        self.emit("    movl -4(%rbp), %r12d");
-        // second _rand_s call -> upper 4 bytes
-        self.emit("    leaq -8(%rbp), %rcx");
-        self.emit_call("_rand_s");
-        self.emit("    testl %eax, %eax");
-        self.emit("    jne .L_tl_random_system_seed_err");
-        self.emit("    movl -8(%rbp), %ebx");
-        self.emit("    shlq $32, %rbx");
-        self.emit("    orq %rbx, %r12");
+        self.emit("    push %r13");
+        self.emit("    sub $16, %rsp");
+        self.emit("    leaq (%rsp), %rcx");
+        self.emit("    movl $8, %edx");
+        self.emit_call("SystemFunction036");
+        self.emit("    testb %al, %al");
+        self.emit("    jz .L_tl_random_system_seed_err");
+        self.emit("    movq (%rsp), %r12");
         // allocate OkSystemSeed result
         self.emit("    movq $16, %rcx");
         self.emit_call("tl_alloc");
         self.emit("    movq $0, 0(%rax)");
         self.emit("    movq %r12, 8(%rax)");
-        self.emit("    add $8, %rsp");
+        self.emit("    add $16, %rsp");
+        self.emit("    pop %r13");
         self.emit("    pop %r12");
-        self.emit("    pop %rbx");
         self.emit("    pop %rbp");
         self.emit("    ret");
         // reuse Linux error labels; runtime strings are target-independent
@@ -7286,9 +7281,9 @@ impl X86_64Backend {
         self.emit_call("tl_alloc");
         self.emit("    movq $1, 0(%rax)");
         self.emit("    movq %r12, 8(%rax)");
-        self.emit("    add $8, %rsp");
+        self.emit("    add $16, %rsp");
+        self.emit("    pop %r13");
         self.emit("    pop %r12");
-        self.emit("    pop %rbx");
         self.emit("    pop %rbp");
         self.emit("    ret");
         self.emit("");
@@ -10246,7 +10241,7 @@ mod tests {
         assert_eq!(toolchain.dynamic_linker, None);
         assert_eq!(
             toolchain.libraries,
-            &["msvcrt.lib", "legacy_stdio_definitions.lib"]
+            &["msvcrt.lib", "legacy_stdio_definitions.lib", "advapi32.lib"]
         );
     }
 
@@ -15169,6 +15164,12 @@ mod tests {
         );
         assert!(!asm.contains("_tl_tl_random_system_seed"), "asm:\n{}", asm);
         assert!(!asm.contains("    syscall"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("    .extern SystemFunction036"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(asm.contains("    call SystemFunction036"), "asm:\n{}", asm);
         assert!(
             asm.contains("random: system entropy unavailable"),
             "asm:\n{}",

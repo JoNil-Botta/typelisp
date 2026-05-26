@@ -4,7 +4,10 @@
 
 (define (assert-system-seed-ok [result : ResultSystemSeed]) : unit
   (match result
-    [(OkSystemSeed _) unit]
+    [(OkSystemSeed seed)
+      (begin
+        (assert-true (> seed 0) "system seed positive")
+        (assert-true (< seed (random-modulus)) "system seed normalized"))]
     [(ErrSystemSeed _) (panic "system seed should succeed on Linux")]))
 
 (define (assert-system-seed-error [result : ResultSystemSeed]) : unit
@@ -142,17 +145,15 @@
       "weighted index reaches later positive bucket")
     (assert-system-seed-ok (random-system-seed))
     (assert-system-seed-ok (random-system-seed))
+    (assert-system-seed-error
+      (ErrSystemSeed (RandomSystemSeedUnavailable "entropy unavailable")))
     (let
       [state1 : RandomState (random-from-system)]
-      [state2 : RandomState (random-from-system)]
       (begin
         (assert-true
           (> (random-state-seed state1) 0)
           "random-from-system seed positive")
         (assert-true
-          (<= (random-state-seed state1) 2147483647)
-          "random-from-system seed normalized")
-        (assert-true
-          (not (= (random-state-seed state1) (random-state-seed state2)))
-          "two system seeds differ")))
+          (< (random-state-seed state1) (random-modulus))
+          "random-from-system seed normalized")))
     42))

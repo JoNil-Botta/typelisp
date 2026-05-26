@@ -197,7 +197,9 @@
 ;;; Return a system-provided random seed, or a diagnostic when entropy is
 ;;; unavailable. The seed is normalized to the valid MINSTD range.
 (define (random-system-seed) : ResultSystemSeed
-  (tl_random_system_seed))
+  (match (tl_random_system_seed)
+    [(OkSystemSeed seed) (OkSystemSeed (random-normalize-seed-value seed))]
+    [(ErrSystemSeed err) (ErrSystemSeed err)]))
 
 ;;; Build a `RandomState` directly from host entropy, or panic when entropy is
 ;;; unavailable. This is a convenience wrapper over `random-system-seed`.

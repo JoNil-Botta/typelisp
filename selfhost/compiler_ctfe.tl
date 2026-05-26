@@ -25,20 +25,94 @@
   (CtfeExpr AstExpr)
   (CtfeExprList AstExprList))
 
-;; Immutable name -> value environment. Newest binding sits at the front so
-;; lookup finds the most recent shadowing binding first.
+;; CTFE-owned type layout metadata. The typechecker/lowerer build this from
+;; their `TcContext` without making CTFE import typecheck.
+(defenum CtfeLayoutField
+  (CtfeLayoutField String i64))
+
+(defenum CtfeLayoutFieldList
+  (CtfeLayoutFieldNil)
+  (CtfeLayoutFieldCons CtfeLayoutField CtfeLayoutFieldList))
+
+(defenum CtfeLayoutInfo
+  (CtfeLayoutInfo String bool i64 i64 CtfeLayoutFieldList))
+
+(defenum CtfeLayoutInfoList
+  (CtfeLayoutInfoNil)
+  (CtfeLayoutInfoCons CtfeLayoutInfo CtfeLayoutInfoList))
+
+(defenum CtfeMaybeLayoutInfo
+  (CtfeNoLayoutInfo)
+  (CtfeSomeLayoutInfo CtfeLayoutInfo))
+
+(defenum CtfeMaybeFieldName
+  (CtfeNoFieldName)
+  (CtfeSomeFieldName String))
+
+;; Immutable name -> value environment plus immutable type layout table. Newest
+;; value binding sits at the front so lookup finds the most recent shadowing
+;; binding first; layout metadata lives at the root and is shared by extensions.
 (defenum CtfeEnv
-  (CtfeEnvNil)
+  (CtfeEnvNil CtfeLayoutInfoList)
   (CtfeEnvCons String CompilerCtfeValue CtfeEnv))
 
 (define (ctfe-env-empty) : CtfeEnv
-  CtfeEnvNil)
+  (CtfeEnvNil CtfeLayoutInfoNil))
+
+(define (ctfe-env-with-layouts [layouts : CtfeLayoutInfoList]) : CtfeEnv
+  (CtfeEnvNil layouts))
 
 (define (ctfe-env-extend
   [env : CtfeEnv]
   [name : String]
   [value : CompilerCtfeValue]) : CtfeEnv
   (CtfeEnvCons name value env))
+
+(define (ctfe-layout-info-name [info : CtfeLayoutInfo]) : String
+  (match info
+    [(CtfeLayoutInfo name _ _ _ _) name]))
+
+(define (ctfe-layout-info-list-contains
+  [layouts : CtfeLayoutInfoList]
+  [name : String]) : bool
+  (match layouts
+    [(CtfeLayoutInfoNil) false]
+    [(CtfeLayoutInfoCons info rest)
+      (if (string-eq (ctfe-layout-info-name info) name)
+        true
+        (ctfe-layout-info-list-contains rest name))]))
+
+(define (ctfe-layout-info-list-add-if-missing
+  [layouts : CtfeLayoutInfoList]
+  [info : CtfeLayoutInfo]) : CtfeLayoutInfoList
+  (if (ctfe-layout-info-list-contains layouts (ctfe-layout-info-name info))
+    layouts
+    (CtfeLayoutInfoCons info layouts)))
+
+(define (ctfe-layout-info-lookup [layouts : CtfeLayoutInfoList] [name : String]) : CtfeMaybeLayoutInfo
+  (match layouts
+    [(CtfeLayoutInfoNil) (CtfeNoLayoutInfo)]
+    [(CtfeLayoutInfoCons info rest)
+      (if (string-eq (ctfe-layout-info-name info) name)
+        (CtfeSomeLayoutInfo info)
+        (ctfe-layout-info-lookup rest name))]))
+
+(define (ctfe-layout-field-offset
+  [fields : CtfeLayoutFieldList]
+  [name : String]) : i64
+  (match fields
+    [(CtfeLayoutFieldNil) -1]
+    [(CtfeLayoutFieldCons field rest)
+      (match field
+        [(CtfeLayoutField field-name offset)
+          (if (string-eq field-name name)
+            offset
+            (ctfe-layout-field-offset rest name))])]))
+
+(define (ctfe-env-layouts [env : CtfeEnv]) : CtfeLayoutInfoList
+  (match env
+    [(CtfeEnvNil layouts) layouts]
+    [(CtfeEnvCons _ _ rest) (ctfe-env-layouts rest)]))
 
 ;; Lookup result for an environment probe.
 (defenum CtfeMaybeValue
@@ -47,7 +121,7 @@
 
 (define (ctfe-env-lookup [env : CtfeEnv] [name : String]) : CtfeMaybeValue
   (match env
-    [(CtfeEnvNil) (CtfeNoValue)]
+    [(CtfeEnvNil _) (CtfeNoValue)]
     [(CtfeEnvCons key value rest)
       (if (string-eq key name)
         (CtfeSomeValue value)
@@ -391,10 +465,11 @@
               (ctfe-describe-expr expr)
               "' is not supported in compile-time evaluation"))))]))
 
-;; Byte size of a scalar type, or -1 for a non-scalar (struct/array/pointer/name)
-;; type. For these primitive scalars alignment equals size, so `size-of` and
-;; `align-of` share this. Layout queries over `repr c` structs are #989 slice 2.
-(define (ctfe-scalar-size [ty : AstType]) : i64
+;; Type size / alignment in bytes for CTFE layout queries. Builtins mirror the
+;; lowerer ABI; user-defined names come from the layout table carried in `env`.
+;; Unresolved type variables without a table entry return -1 so callers can
+;; produce a source-located diagnostic instead of inventing runtime metadata.
+(define (ctfe-type-size [layouts : CtfeLayoutInfoList] [ty : AstType]) : i64
   (match ty
     [(AstTyI64) 8]
     [(AstTyU64) 8]
@@ -409,13 +484,86 @@
     [(AstTyBool) 1]
     [(AstTyChar) 1]
     [(AstTyUnit) 0]
-    [_ -1]))
+    [(AstTyNever) 0]
+    [(AstTyFunc _ _) 8]
+    [(AstTyTuple _) 8]
+    [(AstTyArray elem count)
+      (let
+        [elem-size : i64 (ctfe-type-size layouts elem)]
+        (if (< elem-size 0)
+          -1
+          (* elem-size count)))]
+    [(AstTyDynArray _) 8]
+    [(AstTyPtr _) 8]
+    [(AstTyMutPtr _) 8]
+    [(AstTyRef _ _) 8]
+    [(AstTyMutRef _ _) 8]
+    [(AstTyRegion _ inner) (ctfe-type-size layouts inner)]
+    [(AstTyEnum _) 8]
+    [(AstTyStruct name)
+      (match (ctfe-layout-info-lookup layouts name)
+        [(CtfeSomeLayoutInfo info)
+          (match info
+            [(CtfeLayoutInfo _ _ size _ _) size])]
+        [(CtfeNoLayoutInfo) 8])]
+    [(AstTyString) 8]
+    [(AstTyVar name)
+      (match (ctfe-layout-info-lookup layouts name)
+        [(CtfeSomeLayoutInfo info)
+          (match info
+            [(CtfeLayoutInfo _ _ size _ _) size])]
+        [(CtfeNoLayoutInfo) -1])]))
 
-;; Evaluate `(size-of (type T))` / `(align-of (type T))` to an `i64` in comptime
-;; (#989 slice 1: scalar types). The argument is a `(type T)` literal evaluated
-;; to a `CtfeType`; a non-scalar type yields a source-located "not yet supported"
-;; diagnostic (repr-c struct layout + `offset-of` are slice 2).
-(define (ctfe-eval-layout-query
+(define (ctfe-type-align [layouts : CtfeLayoutInfoList] [ty : AstType]) : i64
+  (match ty
+    [(AstTyI64) 8]
+    [(AstTyU64) 8]
+    [(AstTyF64) 8]
+    [(AstTyI32) 4]
+    [(AstTyU32) 4]
+    [(AstTyF32) 4]
+    [(AstTyI16) 2]
+    [(AstTyU16) 2]
+    [(AstTyI8) 1]
+    [(AstTyU8) 1]
+    [(AstTyBool) 1]
+    [(AstTyChar) 1]
+    [(AstTyUnit) 1]
+    [(AstTyNever) 1]
+    [(AstTyFunc _ _) 8]
+    [(AstTyTuple _) 8]
+    [(AstTyArray elem _) (ctfe-type-align layouts elem)]
+    [(AstTyDynArray _) 8]
+    [(AstTyPtr _) 8]
+    [(AstTyMutPtr _) 8]
+    [(AstTyRef _ _) 8]
+    [(AstTyMutRef _ _) 8]
+    [(AstTyRegion _ inner) (ctfe-type-align layouts inner)]
+    [(AstTyEnum _) 8]
+    [(AstTyStruct name)
+      (match (ctfe-layout-info-lookup layouts name)
+        [(CtfeSomeLayoutInfo info)
+          (match info
+            [(CtfeLayoutInfo _ _ _ align _) align])]
+        [(CtfeNoLayoutInfo) 8])]
+    [(AstTyString) 8]
+    [(AstTyVar name)
+      (match (ctfe-layout-info-lookup layouts name)
+        [(CtfeSomeLayoutInfo info)
+          (match info
+            [(CtfeLayoutInfo _ _ _ align _) align])]
+        [(CtfeNoLayoutInfo) -1])]))
+
+(define (ctfe-layout-query-value
+  [name : String]
+  [layouts : CtfeLayoutInfoList]
+  [ty : AstType]) : i64
+  (if (string-eq name "size-of")
+    (ctfe-type-size layouts ty)
+    (ctfe-type-align layouts ty)))
+
+;; Evaluate `(size-of (type T))` / `(align-of (type T))` to an `i64` in comptime.
+(define (ctfe-eval-size-align-query
   [name : String]
   [args : AstExprList]
   [expr : AstExpr]
@@ -431,15 +579,14 @@
               (match value
                 [(CtfeType ty)
                   (let
-                    [sz : i64 (ctfe-scalar-size ty)]
-                    (if (< sz 0)
+                    [answer : i64
+                      (ctfe-layout-query-value name (ctfe-env-layouts env) ty)]
+                    (if (< answer 0)
                       (ErrCtfe
                         (ctfe-diagnostic-at-expr
                           expr
-                          (string-append
-                            name
-                            " of a non-scalar type is not yet supported in comptime (repr-c struct layout is #989 slice 2)")))
-                      (OkCtfe (CtfeI64 sz) arg-fuel)))]
+                          (string-append name " expects a known type argument")))
+                      (OkCtfe (CtfeI64 answer) arg-fuel)))]
                 [_
                   (ErrCtfe
                     (ctfe-diagnostic-at-expr
@@ -456,8 +603,107 @@
           expr
           (string-append name " expects exactly one type argument")))]))
 
-;; Dispatch a comptime call: `size-of`/`align-of` layout queries (#989) are the
-;; only supported call forms; everything else is rejected.
+(define (ctfe-offset-field-name [expr : AstExpr]) : CtfeMaybeFieldName
+  (match expr
+    [(AstExprSpanned inner _) (ctfe-offset-field-name inner)]
+    [(AstExprVar name) (CtfeSomeFieldName name)]
+    [_ (CtfeNoFieldName)]))
+
+(define (ctfe-layout-info-for-type
+  [layouts : CtfeLayoutInfoList]
+  [ty : AstType]) : CtfeMaybeLayoutInfo
+  (match ty
+    [(AstTyStruct name) (ctfe-layout-info-lookup layouts name)]
+    [(AstTyVar name) (ctfe-layout-info-lookup layouts name)]
+    [(AstTyRegion _ inner) (ctfe-layout-info-for-type layouts inner)]
+    [_ (CtfeNoLayoutInfo)]))
+
+;; Evaluate `(offset-of (type ReprCStruct) field)` to the field byte offset.
+;; The field name is intentionally syntactic: a bare variable names the field
+;; and is not resolved as a runtime/comptime variable.
+(define (ctfe-eval-offset-from-layout
+  [field-name : String]
+  [info : CtfeLayoutInfo]
+  [expr : AstExpr]
+  [fuel : i64]) : ResultCtfe
+  (match info
+    [(CtfeLayoutInfo _ repr-c? _ _ fields)
+      (if repr-c?
+        (let
+          [offset : i64 (ctfe-layout-field-offset fields field-name)]
+          (if (< offset 0)
+            (ErrCtfe
+              (ctfe-diagnostic-at-expr
+                expr
+                (string-append "offset-of unknown field " field-name)))
+            (OkCtfe (CtfeI64 offset) fuel)))
+        (ErrCtfe
+          (ctfe-diagnostic-at-expr expr "offset-of requires repr c struct type")))]))
+
+(define (ctfe-eval-offset-from-type
+  [ty : AstType]
+  [field-name : String]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match (ctfe-layout-info-for-type (ctfe-env-layouts env) ty)
+    [(CtfeSomeLayoutInfo info)
+      (ctfe-eval-offset-from-layout field-name info expr fuel)]
+    [(CtfeNoLayoutInfo)
+      (ErrCtfe
+        (ctfe-diagnostic-at-expr expr "offset-of requires repr c struct type"))]))
+
+(define (ctfe-eval-offset-value
+  [value : CompilerCtfeValue]
+  [field-arg : AstExpr]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match value
+    [(CtfeType ty)
+      (match (ctfe-offset-field-name field-arg)
+        [(CtfeSomeFieldName field-name)
+          (ctfe-eval-offset-from-type ty field-name expr env fuel)]
+        [(CtfeNoFieldName)
+          (ErrCtfe
+            (ctfe-diagnostic-at-expr expr "offset-of expects a field name"))])]
+    [_
+      (ErrCtfe
+        (ctfe-diagnostic-at-expr expr "offset-of expects a type argument"))]))
+
+(define (ctfe-eval-offset-query
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons type-arg tail)
+      (match tail
+        [(AstExprCons field-arg rest)
+          (match rest
+            [(AstExprNil)
+              (match (compiler-ctfe-eval type-arg env fuel)
+                [(ErrCtfe d) (ErrCtfe d)]
+                [(OkCtfe value arg-fuel)
+                  (ctfe-eval-offset-value value field-arg expr env arg-fuel)])]
+            [_
+              (ErrCtfe
+                (ctfe-diagnostic-at-expr
+                  expr
+                  "offset-of expects exactly one type argument and one field name"))])]
+        [_
+          (ErrCtfe
+            (ctfe-diagnostic-at-expr
+              expr
+              "offset-of expects exactly one type argument and one field name"))])]
+    [_
+      (ErrCtfe
+        (ctfe-diagnostic-at-expr
+          expr
+          "offset-of expects exactly one type argument and one field name"))]))
+
+;; Dispatch a comptime call: layout queries (#989) are the only supported call
+;; forms; everything else is rejected.
 (define (ctfe-eval-call
   [func : AstExpr]
   [args : AstExprList]
@@ -468,8 +714,10 @@
     [(AstExprSpanned inner _) (ctfe-eval-call inner args expr env fuel)]
     [(AstExprVar name)
       (if (or (string-eq name "size-of") (string-eq name "align-of"))
-        (ctfe-eval-layout-query name args expr env fuel)
-        (ctfe-unsupported-form expr))]
+        (ctfe-eval-size-align-query name args expr env fuel)
+        (if (string-eq name "offset-of")
+          (ctfe-eval-offset-query args expr env fuel)
+          (ctfe-unsupported-form expr)))]
     [_ (ctfe-unsupported-form expr)]))
 
 ;; Shared "unsupported compile-time form" diagnostic for ordinary calls.
@@ -1074,6 +1322,84 @@
         [_ false])]
     [(ErrCtfe _) false]))
 
+(define (compiler-ctfe-call1 [name : String] [arg : AstExpr]) : AstExpr
+  (AstExprCall (AstExprVar name) (AstExprCons arg AstExprNil)))
+
+(define (compiler-ctfe-call2 [name : String] [a : AstExpr] [b : AstExpr]) : AstExpr
+  (AstExprCall (AstExprVar name) (AstExprCons a (AstExprCons b AstExprNil))))
+
+(define (compiler-ctfe-eval-i64-ok?
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [want : i64]) : bool
+  (match (compiler-ctfe-eval expr env (ctfe-fuel-limit))
+    [(OkCtfe value _)
+      (match value
+        [(CtfeI64 actual) (= actual want)]
+        [_ false])]
+    [(ErrCtfe _) false]))
+
+(define (compiler-ctfe-eval-error-ok?
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [want : String]) : bool
+  (match (compiler-ctfe-eval expr env (ctfe-fuel-limit))
+    [(ErrCtfe diag) (string-eq (compiler-diagnostic-message diag) want)]
+    [(OkCtfe _ _) false]))
+
+(define (compiler-ctfe-layout-query-ok?) : bool
+  (let
+    [packet-ty : AstExpr (AstExprTypeLiteral (AstTyVar "Packet"))]
+    [box-ty : AstExpr (AstExprTypeLiteral (AstTyVar "Box"))]
+    [env : CtfeEnv
+      (ctfe-env-with-layouts
+        (CtfeLayoutInfoCons
+          (CtfeLayoutInfo
+            "Packet"
+            true
+            16
+            8
+            (CtfeLayoutFieldCons
+              (CtfeLayoutField "tag" 0)
+              (CtfeLayoutFieldCons
+                (CtfeLayoutField "count" 8)
+                CtfeLayoutFieldNil)))
+          (CtfeLayoutInfoCons
+            (CtfeLayoutInfo "Box" false 8 8 CtfeLayoutFieldNil)
+            CtfeLayoutInfoNil)))]
+    (and
+      (compiler-ctfe-eval-i64-ok?
+        (compiler-ctfe-call1 "size-of" packet-ty)
+        env
+        16)
+      (and
+        (compiler-ctfe-eval-i64-ok?
+          (compiler-ctfe-call1 "align-of" packet-ty)
+          env
+          8)
+        (and
+          (compiler-ctfe-eval-i64-ok?
+            (compiler-ctfe-call2 "offset-of" packet-ty (AstExprVar "count"))
+            env
+            8)
+          (and
+            (compiler-ctfe-eval-i64-ok?
+              (compiler-ctfe-call1 "size-of" box-ty)
+              env
+              8)
+            (and
+              (compiler-ctfe-eval-error-ok?
+                (compiler-ctfe-call2 "offset-of" box-ty (AstExprVar "x"))
+                env
+                "offset-of requires repr c struct type")
+              (compiler-ctfe-eval-error-ok?
+                (compiler-ctfe-call2
+                  "offset-of"
+                  packet-ty
+                  (AstExprVar "missing"))
+                env
+                "offset-of unknown field missing"))))))))
+
 ;; --- self-tests (#1137 additions) -------------------------------------------
 ;; Basic round-trip: build an `if` expression from bool literal constructors,
 ;; compare it structurally, extract its parts, and verify list ops.
@@ -1142,10 +1468,12 @@
   (if (compiler-ctfe-type-literal-ok?)
     (if (compiler-ctfe-type-comparison-ok?)
       (if (compiler-ctfe-raw-pointer-type-comparison-ok?)
-        (if (compiler-ctfe-expr-eq-ok?)
-          (if (compiler-ctfe-expr-list-ok?)
-            (if (compiler-ctfe-expr-list-fold-sketch-ok?)
-              42
+        (if (compiler-ctfe-layout-query-ok?)
+          (if (compiler-ctfe-expr-eq-ok?)
+            (if (compiler-ctfe-expr-list-ok?)
+              (if (compiler-ctfe-expr-list-fold-sketch-ok?)
+                42
+                1)
               1)
             1)
           1)

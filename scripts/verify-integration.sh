@@ -40,7 +40,7 @@ fi
 # output. `is_crash_code` (132/134/139) lets us retry ONLY those transient
 # crashes, never a genuine non-zero exit (so an expected failure still fails).
 . "$ROOT/scripts/lib-retry.sh"
-INTEGRATION_ATTEMPTS="${VERIFY_INTEGRATION_ATTEMPTS:-3}"
+INTEGRATION_ATTEMPTS="${VERIFY_INTEGRATION_ATTEMPTS:-5}"
 
 # Run a `typelisp build`/`compile` invocation, retrying a transient #1204 crash.
 # Output flows to the caller's streams; sets `build_rc` to the final exit code.

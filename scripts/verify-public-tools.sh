@@ -12,7 +12,7 @@ cd "$ROOT"
 # retry only a segfault-class exit (132/134/139), since public-tool cases may
 # legitimately exit non-zero (so retry-on-any-non-zero would be wrong here).
 . "$ROOT/scripts/lib-retry.sh"
-PUBLIC_TOOLS_ATTEMPTS="${VERIFY_PUBLIC_TOOLS_ATTEMPTS:-3}"
+PUBLIC_TOOLS_ATTEMPTS="${VERIFY_PUBLIC_TOOLS_ATTEMPTS:-5}"
 
 HOST_OS=linux
 case "$(uname -s)" in

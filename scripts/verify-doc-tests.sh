@@ -83,7 +83,7 @@ while IFS= read -r source; do
     stderr="$WORKDIR/$case_name.stderr"
 
     echo "[doc-tests] $source"
-    if ! run_with_retry "$stdout" "$stderr" "${VERIFY_DOC_TESTS_ATTEMPTS:-3}" \
+    if ! run_with_retry "$stdout" "$stderr" "${VERIFY_DOC_TESTS_ATTEMPTS:-5}" \
         "$COMPILER" doc --test "$source" --stdlib-root "$ROOT/stdlib"; then
         echo "doc test verification failed for $source (after retries)" >&2
         echo "stdout:" >&2

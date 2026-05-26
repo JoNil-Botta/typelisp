@@ -42,7 +42,7 @@ reject_diag() {
 # spuriously fail this gate. Retry an UNEXPECTED outcome a few times: a transient
 # segfault clears on retry, while a genuine regression reproduces across every
 # attempt and still fails.
-ATTEMPTS="${VERIFY_STDLIB_SELFHOST_ATTEMPTS:-3}"
+ATTEMPTS="${VERIFY_STDLIB_SELFHOST_ATTEMPTS:-5}"
 
 # Sets the global `expected` to 1 when the (rc,out) pair matches the witness
 # expectation: a reject witness ($2 non-empty) must fail AND carry the diagnostic

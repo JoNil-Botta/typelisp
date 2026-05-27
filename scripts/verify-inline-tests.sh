@@ -86,9 +86,9 @@ show_streams() {
 
 # Extract a staged-primitive directive `;; requires-stage0-symbol: <name>` from a
 # source file (first match), else empty. Such a file is skipped on the no-Rust
-# gate when the fetched compiler does not yet provide <name> (#1114): introduce
-# the primitive + a marked test in one PR, merge, let the published stage0
-# republish, then drop the marker.
+# gate only when build/check output mentions the symbol. The marker name is
+# historical; use it for primitives the current no-Rust compiler path cannot yet
+# emit.
 staged_symbol_for() {
     sed -n 's/^;;[[:space:]]*requires-stage0-symbol:[[:space:]]*\([^[:space:]][^[:space:]]*\).*/\1/p' "$1" | head -n 1
 }
@@ -128,7 +128,7 @@ while IFS= read -r source; do
     fi
     if [ "$check_status" -ne 0 ]; then
         if [ -n "$requires_symbol" ] && grep -qF "$requires_symbol" "$check_stderr"; then
-            echo "[inline-tests] SKIP $source (awaiting stage0 republish of '$requires_symbol')"
+            echo "[inline-tests] SKIP $source (awaiting no-Rust compiler support for '$requires_symbol')"
             skipped=$((skipped + 1))
             continue
         fi
@@ -159,7 +159,7 @@ while IFS= read -r source; do
     fi
     if [ "$run_status" -ne 0 ]; then
         if [ -n "$requires_symbol" ] && grep -qF "$requires_symbol" "$run_stderr"; then
-            echo "[inline-tests] SKIP $source (awaiting stage0 republish of '$requires_symbol')"
+            echo "[inline-tests] SKIP $source (awaiting no-Rust compiler support for '$requires_symbol')"
             skipped=$((skipped + 1))
             continue
         fi
@@ -178,7 +178,7 @@ while IFS= read -r source; do
 done < "$DISCOVERED"
 
 if [ "$skipped" -gt 0 ]; then
-    echo "inline test verification: $skipped file(s) skipped (staged primitive awaiting stage0 republish)"
+    echo "inline test verification: $skipped file(s) skipped (staged primitive awaiting no-Rust compiler support)"
 fi
 
 echo "inline test verification passed for $test_count test(s) in $file_count file(s)"

@@ -364,13 +364,20 @@ TypeLisp*:
 
 Compiler self-test and smoke-driver conventions are documented in
 [`selfhost/TESTING.md`](selfhost/TESTING.md).
-Published stage0 compilers for local bootstrap checks can be fetched with
+Published stage0 compilers for local no-Rust checks can be fetched with
 [`scripts/fetch-stage0.sh`](scripts/fetch-stage0.sh), or
 [`scripts/fetch-stage0.ps1`](scripts/fetch-stage0.ps1) from PowerShell. Both
 default to `target/stage0/`. To run the same no-Rust stage0 verification gate
 used by CI, run
 `scripts/verify-no-rust-stage0.sh`; it fetches `stage0-latest` when
-`TYPELISP_BIN` is unset and prevents accidental Cargo fallback.
+`TYPELISP_BIN` is unset and prevents accidental Cargo fallback. On Linux, that
+wrapper uses the published compiler only as the bootstrap seed, checks the
+stage0-to-stage1 bootstrap, then runs deterministic assembly through the freshly
+bootstrapped stage1 compiler. Full public CLI gates still use the seed compiler
+until the selfhost compiler grows a no-Rust host-action wrapper. On Windows, the
+host-supported gates still run against the published stage0 compiler until
+native stage1 bootstrap/link support lands. The full
+stage2/stage3 fixpoint remains available through `scripts/check-bootstrap-fixpoint.sh`.
 
 Smaller runnable examples, including `calc.tl`, remain in [`examples/`](examples).
 

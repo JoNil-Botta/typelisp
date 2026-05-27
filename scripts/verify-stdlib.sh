@@ -79,8 +79,8 @@ stdlib_build_run() {
 }
 
 # A staged-primitive row may be skipped ONLY on the no-Rust gate, ONLY when the
-# build failed because the fetched compiler does not yet provide the named
-# runtime symbol/name (it appears as undefined/unbound in the build output).
+# build failed because the current no-Rust compiler path does not yet provide the
+# named runtime symbol/name (it appears as undefined/unbound in the build output).
 # Any other build failure still fails the gate. Returns 0 = skip.
 stdlib_should_skip_staged() {
     _symbols=$1
@@ -423,7 +423,7 @@ while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do
 
     if [ "$build_status" -ne 0 ]; then
         if stdlib_should_skip_staged "$requires_symbol" "$stem.build.err"; then
-            echo "[stdlib] SKIP $fixture (awaiting stage0 republish of '$requires_symbol')"
+            echo "[stdlib] SKIP $fixture (awaiting no-Rust compiler support for '$requires_symbol')"
             skipped=$((skipped + 1))
             continue
         fi
@@ -433,7 +433,7 @@ while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do
     fi
 
     if [ -n "$requires_symbol" ]; then
-        echo "[stdlib] NOTE: $fixture built with the current compiler; once the published stage0 provides '$requires_symbol', drop the requires-stage0-symbol marker" >&2
+        echo "[stdlib] NOTE: $fixture built with the current compiler; once the no-Rust compiler path provides '$requires_symbol', drop the requires-stage0-symbol marker" >&2
     fi
 
     if [ "$got" -ne "$want" ]; then
@@ -533,7 +533,7 @@ done < "$CHECK_MANIFEST"
 module_count=$(wc -l < "$EXPECTED" | tr -d ' ')
 
 if [ "$skipped" -gt 0 ]; then
-    echo "stdlib verification: $skipped runnable fixture(s) skipped (staged primitive awaiting stage0 republish)"
+    echo "stdlib verification: $skipped runnable fixture(s) skipped (staged primitive awaiting no-Rust compiler support)"
 fi
 
 echo "stdlib verification passed for $module_count module(s), $passed runnable fixture(s), $checked check fixture(s)"

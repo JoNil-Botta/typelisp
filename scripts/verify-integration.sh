@@ -457,8 +457,9 @@ show_build_streams() {
 }
 
 # A staged-primitive integration case may be skipped only when a build/link
-# failure mentions the not-yet-published runtime symbol. Once stage0-latest
-# catches up, the case builds and runs normally with a drop-marker notice.
+# failure mentions the staged runtime symbol. Once the no-Rust compiler path
+# provides the symbol, the case builds and runs normally with a drop-marker
+# notice.
 integration_should_skip_staged() {
     _symbols=$1
     shift
@@ -916,7 +917,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
             > "$build_stdout" 2> "$build_stderr"
         if [ "$build_rc" -ne 0 ]; then
             if integration_should_skip_staged "$requires_symbol" "$build_stdout" "$build_stderr"; then
-                echo "[integration] SKIP $name (awaiting stage0 republish of '$requires_symbol')"
+                echo "[integration] SKIP $name (awaiting no-Rust compiler support for '$requires_symbol')"
                 skipped=$((skipped + 1))
                 continue
             fi
@@ -940,7 +941,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
     else
         if ! "$COMPILER" compile "$work_src" -o "$asm" > "$build_stdout" 2> "$build_stderr"; then
             if integration_should_skip_staged "$requires_symbol" "$build_stdout" "$build_stderr"; then
-                echo "[integration] SKIP $name (awaiting stage0 republish of '$requires_symbol')"
+                echo "[integration] SKIP $name (awaiting no-Rust compiler support for '$requires_symbol')"
                 skipped=$((skipped + 1))
                 continue
             fi
@@ -952,7 +953,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         fi
         if ! as "$asm" -o "$obj" >> "$build_stdout" 2>> "$build_stderr"; then
             if integration_should_skip_staged "$requires_symbol" "$build_stdout" "$build_stderr"; then
-                echo "[integration] SKIP $name (awaiting stage0 republish of '$requires_symbol')"
+                echo "[integration] SKIP $name (awaiting no-Rust compiler support for '$requires_symbol')"
                 skipped=$((skipped + 1))
                 continue
             fi
@@ -965,7 +966,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         if ! ld "$obj" -o "$bin" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
             >> "$build_stdout" 2>> "$build_stderr"; then
             if integration_should_skip_staged "$requires_symbol" "$build_stdout" "$build_stderr"; then
-                echo "[integration] SKIP $name (awaiting stage0 republish of '$requires_symbol')"
+                echo "[integration] SKIP $name (awaiting no-Rust compiler support for '$requires_symbol')"
                 skipped=$((skipped + 1))
                 continue
             fi
@@ -984,7 +985,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
     fi
 
     if [ -n "$requires_symbol" ]; then
-        echo "[integration] NOTE: $name built with the current compiler; once the published stage0 provides '$requires_symbol', drop the requires-stage0-symbol marker" >&2
+        echo "[integration] NOTE: $name built with the current compiler; once the no-Rust compiler path provides '$requires_symbol', drop the requires-stage0-symbol marker" >&2
     fi
 
     write_expected_stream "$stdout_spec" "$expected_stdout"
@@ -1024,7 +1025,7 @@ if [ "$failed" -gt 0 ]; then
 fi
 
 if [ "$skipped" -gt 0 ]; then
-    echo "integration verification: $skipped case(s) skipped (staged primitive awaiting stage0 republish)"
+    echo "integration verification: $skipped case(s) skipped (staged primitive awaiting no-Rust compiler support)"
 fi
 
 if [ "$HOST_OS" = linux ]; then
@@ -1035,5 +1036,5 @@ fi
 
 echo "All $ran integration case(s) passed for $HOST_OS."
 if [ "$skipped" -ne 0 ]; then
-    echo "$skipped integration case(s) skipped (staged primitive awaiting stage0 republish)."
+    echo "$skipped integration case(s) skipped (staged primitive awaiting no-Rust compiler support)."
 fi

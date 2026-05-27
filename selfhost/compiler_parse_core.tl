@@ -52,6 +52,18 @@
   (OkAstStructDefParts AstStructRepr AstFieldDefList)
   (ErrAstStructDefParts String))
 
+(defenum ResultAstExternAbi
+  (OkAstExternAbi AstExternAbi)
+  (ErrAstExternAbi String))
+
+(defenum ResultAstExternSymbol
+  (OkAstExternSymbol String)
+  (ErrAstExternSymbol String))
+
+(defenum ResultAstExternParts
+  (OkAstExternParts AstExternMetadata AstType)
+  (ErrAstExternParts String))
+
 (defenum ResultAstVariantDef
   (OkAstVariantDef AstVariantDef)
   (ErrAstVariantDef String))
@@ -2047,14 +2059,87 @@
       (parse-ast-define-fn dispatch name params after-header)]
     [_ (ErrAstDecl "parse: malformed define")]))
 
+(define (parse-ast-extern-abi-tail [tail : Sexpr]) : ResultAstExternAbi
+  (match tail
+    [(SCons (SSym name) (SNil))
+      (if (string-eq name "c")
+        (OkAstExternAbi (AstExternAbiC))
+        (ErrAstExternAbi (string-append "parse: unknown extern ABI " name)))]
+    [_ (ErrAstExternAbi "parse: malformed extern :abi metadata")]))
+
+(define (parse-ast-extern-symbol-tail [tail : Sexpr]) : ResultAstExternSymbol
+  (match tail
+    [(SCons (SStr symbol) (SNil))
+      (if (> (string-length symbol) 0)
+        (OkAstExternSymbol symbol)
+        (ErrAstExternSymbol "parse: extern :symbol must not be empty"))]
+    [_ (ErrAstExternSymbol "parse: malformed extern :symbol metadata")]))
+
+(define (parse-ast-extern-items
+  [dispatch : SymI64Env]
+  [items : SpannedSexpr]
+  [abi : AstExternAbi]
+  [symbol : String]
+  [seen-abi : bool]
+  [seen-symbol : bool]) : ResultAstExternParts
+  (match items
+    [(SpSCons head tail _)
+      (if (sexpr-colon? (spanned-sexpr-form head))
+        (match tail
+          [(SpSCons ty (SpSNil _) _)
+            (match (parse-ast-type dispatch (spanned-sexpr-form ty))
+              [(OkAstType parsed-ty)
+                (OkAstExternParts (AstExternMetadata abi symbol) parsed-ty)]
+              [(ErrAstType message) (ErrAstExternParts message)])]
+          [_ (ErrAstExternParts "parse: malformed extern")])
+        (match (spanned-sexpr-form head)
+          [(SCons (SSym key) after-key)
+            (if (string-eq key ":abi")
+              (if seen-abi
+                (ErrAstExternParts "parse: duplicate extern :abi metadata")
+                (match (parse-ast-extern-abi-tail after-key)
+                  [(OkAstExternAbi parsed-abi)
+                    (parse-ast-extern-items
+                      dispatch
+                      tail
+                      parsed-abi
+                      symbol
+                      true
+                      seen-symbol)]
+                  [(ErrAstExternAbi message) (ErrAstExternParts message)]))
+              (if (string-eq key ":symbol")
+                (if seen-symbol
+                  (ErrAstExternParts "parse: duplicate extern :symbol metadata")
+                  (match (parse-ast-extern-symbol-tail after-key)
+                    [(OkAstExternSymbol parsed-symbol)
+                      (parse-ast-extern-items
+                        dispatch
+                        tail
+                        abi
+                        parsed-symbol
+                        seen-abi
+                        true)]
+                    [(ErrAstExternSymbol message) (ErrAstExternParts message)]))
+                (if (compiler-parse-metadata-key? key)
+                  (ErrAstExternParts
+                    (string-append "parse: unknown extern metadata " key))
+                  (ErrAstExternParts "parse: expected ':' in extern"))))]
+          [_ (ErrAstExternParts "parse: expected ':' in extern")]))]
+    [_ (ErrAstExternParts "parse: malformed extern")]))
+
 (define (parse-ast-extern [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
-    [(SpSCons (SpSSym name _) (SpSCons colon (SpSCons ty (SpSNil _) _) _) _)
-      (if (sexpr-colon? (spanned-sexpr-form colon))
-        (match (parse-ast-type dispatch (spanned-sexpr-form ty))
-          [(OkAstType parsed-ty) (OkAstDecl (AstDeclExtern name parsed-ty))]
-          [(ErrAstType message) (ErrAstDecl message)])
-        (ErrAstDecl "parse: expected ':' in extern"))]
+    [(SpSCons (SpSSym name _) after-name _)
+      (match (parse-ast-extern-items
+        dispatch
+        after-name
+        (AstExternAbiC)
+        name
+        false
+        false)
+        [(OkAstExternParts metadata parsed-ty)
+          (OkAstDecl (AstDeclExtern name metadata parsed-ty))]
+        [(ErrAstExternParts message) (ErrAstDecl message)])]
     [_ (ErrAstDecl "parse: malformed extern")]))
 
 (define (parse-ast-defenum [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstDecl
@@ -2543,6 +2628,9 @@
 (define (compiler-parse-raw-pointer-source) : String
   "(extern raw-map : (-> (Ptr i64) (MutPtr (Ptr u8))))")
 
+(define (compiler-parse-extern-metadata-source) : String
+  "(extern local-call (:abi c) (:symbol \"foreign_exact\") : (-> i64 i64))")
+
 (define (compiler-parse-raw-pointer-ops-source) : String
   "(define (main [p : (MutPtr i64)] [n : u64]) : u64
   (unsafe
@@ -2553,7 +2641,7 @@
   (match (parse-ast-source (compiler-parse-raw-pointer-source))
     [(OkAstProgram (AstProgram decls))
       (match decls
-        [(AstDeclCons (AstDeclExtern name ty) AstDeclNil)
+        [(AstDeclCons (AstDeclExtern name _ ty) AstDeclNil)
           (and
             (string-eq name "raw-map")
             (match ty
@@ -2565,6 +2653,29 @@
                       [_ false])]
                   [_ false])]
               [_ false]))]
+        [_ false])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-parse-extern-metadata-ok?) : bool
+  (match (parse-ast-source (compiler-parse-extern-metadata-source))
+    [(OkAstProgram (AstProgram decls))
+      (match decls
+        [(AstDeclCons (AstDeclExtern name metadata ty) AstDeclNil)
+          (and
+            (string-eq name "local-call")
+            (and
+              (string-eq (ast-extern-metadata-symbol metadata) "foreign_exact")
+              (and
+                (ast-extern-abi-c? (ast-extern-metadata-abi metadata))
+                (match ty
+                  [(AstTyFunc args ret)
+                    (match args
+                      [(AstTypeCons (AstTyI64) AstTypeNil)
+                        (match ret
+                          [(AstTyI64) true]
+                          [_ false])]
+                      [_ false])]
+                  [_ false]))))]
         [_ false])]
     [(ErrAstProgram _) false]))
 
@@ -2821,6 +2932,23 @@
               "(define (main [p : (Ptr i64)]) : (Ptr u8) (ptr-cast p (Ptr u8)))"
               "parse: pointer cast expects (form expr : pointer-type)")))))))
 
+(define (compiler-parse-extern-metadata-error-tests-ok?) : bool
+  (and
+    (compiler-parse-error-ok?
+      "(extern f (:abi stdcall) : (-> i64))"
+      "parse: unknown extern ABI stdcall")
+    (and
+      (compiler-parse-error-ok?
+        "(extern f (:symbol bad) : (-> i64))"
+        "parse: malformed extern :symbol metadata")
+      (and
+        (compiler-parse-error-ok?
+          "(extern f (:abi c) (:abi c) : (-> i64))"
+          "parse: duplicate extern :abi metadata")
+        (compiler-parse-error-ok?
+          "(extern f (:link \"x\") : (-> i64))"
+          "parse: unknown extern metadata :link")))))
+
 (define (compiler-parse-reference-error-tests-ok?) : bool
   (and
     (compiler-parse-error-ok?
@@ -2900,7 +3028,9 @@
                   (compiler-parse-abstraction-policy-tests-ok?)
                   (and
                     (compiler-parse-raw-pointer-error-tests-ok?)
-                    (compiler-parse-reference-error-tests-ok?)))))))))))
+                    (and
+                      (compiler-parse-extern-metadata-error-tests-ok?)
+                      (compiler-parse-reference-error-tests-ok?))))))))))))
 
 ;; Top-level declaration parsing (#1072 / #1041): accept value/function `define`,
 ;; `extern`, `defenum`, `defstruct`, and `import`; reject malformed forms with
@@ -3308,10 +3438,12 @@
                                 (and
                                   (compiler-parse-raw-pointer-ok?)
                                   (and
-                                    (compiler-parse-raw-pointer-ops-ok?)
+                                    (compiler-parse-extern-metadata-ok?)
                                     (and
-                                      (compiler-parse-reference-ok?)
-                                      (compiler-parse-resource-with-shape-ok?)))))))))))))))))
+                                      (compiler-parse-raw-pointer-ops-ok?)
+                                      (and
+                                        (compiler-parse-reference-ok?)
+                                        (compiler-parse-resource-with-shape-ok?))))))))))))))))))
         (if (and
           (compiler-parse-error-tests-ok?)
           (and

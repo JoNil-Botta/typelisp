@@ -1139,7 +1139,7 @@
             [(OkTcUnit) (tc-source-expr-policy-ok ctx body)]
             [(ErrTcUnit message) (ErrTcUnit message)])]
         [(ErrTcUnit message) (ErrTcUnit message)])]
-    [(AstDeclExtern _ ty) (tc-source-type-policy-ok ctx ty)]
+    [(AstDeclExtern _ _ ty) (tc-source-type-policy-ok ctx ty)]
     [(AstDeclDefEnum _ variants)
       (tc-source-variant-list-policy-ok ctx variants)]
     [(AstDeclDefStruct name repr fields)
@@ -1634,7 +1634,7 @@
     [(AstDeclDefFn _ params ret _)
       (OkTcType
         (AstTyFunc (tc-param-type-list ctx params) (tc-resolve-type ctx ret)))]
-    [(AstDeclExtern _ ty) (OkTcType (tc-resolve-type ctx ty))]
+    [(AstDeclExtern _ _ ty) (OkTcType (tc-resolve-type ctx ty))]
     [_ (ErrTcType "typecheck: declaration has no value type")]))
 
 (define (tc-field-type-list [ctx : TcContext] [fields : AstFieldDefList]) : AstTypeList
@@ -1727,7 +1727,7 @@
                 (tc-bind-module-name env module name ty)
                 module)]
             [(ErrTcType message) (ErrTcEnv message)])]
-        [(AstDeclExtern name _)
+        [(AstDeclExtern name _ _)
           (match (tc-top-decl-type ctx decl)
             [(OkTcType ty)
               (tc-build-top-env-list-in-module
@@ -4697,6 +4697,63 @@
     [(AstExprIntToPtr value target) (tc-int-to-ptr-expr ctx env value target)]
     [_ (ErrTcType "typecheck: unsupported expression")]))
 
+(define (tc-extern-abi-value-type-ok? [ty : AstType]) : bool
+  (match (tc-type-without-regions ty)
+    [(AstTyI64) true]
+    [(AstTyI32) true]
+    [(AstTyI16) true]
+    [(AstTyI8) true]
+    [(AstTyU64) true]
+    [(AstTyU32) true]
+    [(AstTyU16) true]
+    [(AstTyU8) true]
+    [(AstTyF64) true]
+    [(AstTyBool) true]
+    [(AstTyChar) true]
+    [(AstTyUnit) true]
+    [(AstTyFunc _ _) true]
+    [(AstTyPtr _) true]
+    [(AstTyMutPtr _) true]
+    [(AstTyString) true]
+    [(AstTyDynArray _) true]
+    [(AstTyEnum _) true]
+    [(AstTyStruct _) true]
+    [_ false]))
+
+(define (tc-extern-abi-unsupported-message [position : String] [ty : AstType]) : String
+  (string-append
+    "typecheck: extern ABI c does not support "
+    (string-append position (string-append " type " (tc-type-render ty)))))
+
+(define (tc-check-extern-arg-abi [args : AstTypeList]) : ResultTcUnit
+  (match args
+    [(AstTypeNil) OkTcUnit]
+    [(AstTypeCons head rest)
+      (if (tc-extern-abi-value-type-ok? head)
+        (tc-check-extern-arg-abi rest)
+        (ErrTcUnit (tc-extern-abi-unsupported-message "parameter" head)))]))
+
+(define (tc-check-extern-c-abi [ty : AstType]) : ResultTcUnit
+  (match ty
+    [(AstTyFunc args ret)
+      (match (tc-check-extern-arg-abi args)
+        [(OkTcUnit)
+          (if (tc-extern-abi-value-type-ok? ret)
+            OkTcUnit
+            (ErrTcUnit (tc-extern-abi-unsupported-message "return" ret)))]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [_ (ErrTcUnit "typecheck: extern must have function type")]))
+
+(define (tc-check-extern-decl
+  [ctx : TcContext]
+  [metadata : AstExternMetadata]
+  [ty : AstType]) : ResultTcUnit
+  (match metadata
+    [(AstExternMetadata abi _)
+      (if (ast-extern-abi-c? abi)
+        (tc-check-extern-c-abi (tc-resolve-type ctx ty))
+        (ErrTcUnit "typecheck: unsupported extern ABI"))]))
+
 (define (tc-summary-add-decl
   [summary : CompilerTypecheckSummary]
   [decl : AstDecl]) : CompilerTypecheckSummary
@@ -4707,7 +4764,7 @@
           (CompilerTypecheckSummary (+ values 1) functions externs)]
         [(AstDeclDefFn _ _ _ _)
           (CompilerTypecheckSummary values (+ functions 1) externs)]
-        [(AstDeclExtern _ _)
+        [(AstDeclExtern _ _ _)
           (CompilerTypecheckSummary values functions (+ externs 1))]
         [_ summary])]))
 
@@ -4744,10 +4801,7 @@
               [(OkTcUnit) OkTcUnit]
               [(ErrTcUnit message) (ErrTcUnit message)])]
           [(ErrTcType message) (ErrTcUnit message)]))]
-    [(AstDeclExtern _ ty)
-      (match (tc-resolve-type ctx ty)
-        [(AstTyFunc _ _) OkTcUnit]
-        [_ (ErrTcUnit "typecheck: extern must have function type")])]
+    [(AstDeclExtern _ metadata ty) (tc-check-extern-decl ctx metadata ty)]
     [_ OkTcUnit]))
 
 (define (tc-check-decls
@@ -5599,6 +5653,36 @@
     (compiler-typecheck-ok? (compiler-typecheck-raw-pointer-source))
     (compiler-typecheck-raw-pointer-render-ok?)))
 
+(define (compiler-typecheck-extern-abi-source) : String
+  "(defenum ResultI64 (OkI64 i64))
+(defstruct Box (value i64))
+(extern foreign-callback (:abi c) (:symbol \"foreign_callback\") : (-> (Ptr i64) (-> i64 i64) ResultI64))
+(extern foreign-box (:abi c) (:symbol \"foreign_box\") : (-> Box unit))")
+
+(define (compiler-typecheck-extern-abi-tuple-source) : String
+  "(extern bad (:abi c) (:symbol \"bad_tuple\") : (-> (Tuple i64 i64) i64))")
+
+(define (compiler-typecheck-extern-abi-array-source) : String
+  "(extern bad (:abi c) (:symbol \"bad_array\") : (-> (Array i64 2) i64))")
+
+(define (compiler-typecheck-extern-abi-f32-source) : String
+  "(extern bad (:abi c) (:symbol \"bad_f32\") : (-> f32 i64))")
+
+(define (compiler-typecheck-extern-abi-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-extern-abi-source))
+    (and
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-extern-abi-tuple-source)
+        "typecheck: extern ABI c does not support parameter type (Tuple i64 i64)")
+      (and
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-extern-abi-array-source)
+          "typecheck: extern ABI c does not support parameter type (Array i64 2)")
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-extern-abi-f32-source)
+          "typecheck: extern ABI c does not support parameter type f32")))))
+
 (define (compiler-typecheck-reference-source) : String
   "(define (use-string [s : (& r String)]) : i64
   (string-length s))")
@@ -6232,6 +6316,9 @@
     (if (compiler-typecheck-raw-pointer-tests-ok?)
       unit
       (panic "typecheck: raw pointer type tests failed"))
+    (if (compiler-typecheck-extern-abi-tests-ok?)
+      unit
+      (panic "typecheck: extern ABI signature tests failed"))
     (if (compiler-typecheck-reference-tests-ok?)
       unit
       (panic "typecheck: reference tests failed"))

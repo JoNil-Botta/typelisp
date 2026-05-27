@@ -234,7 +234,7 @@
         (compiler-symbol-make-handle
           (compiler-symbol-kind-function-define)
           index))]
-    [(AstDeclExtern name _)
+    [(AstDeclExtern name _ _)
       (compiler-symbols-add-value
         symbols
         name

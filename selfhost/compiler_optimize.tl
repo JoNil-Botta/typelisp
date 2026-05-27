@@ -1352,10 +1352,14 @@
 
 (define (opt-extern-eq [a : CompilerIrExtern] [b : CompilerIrExtern]) : bool
   (match a
-    [(IrExtern aname aty)
+    [(IrExtern aname aty aabi asymbol)
       (match b
-        [(IrExtern bname bty)
-          (and (string-eq aname bname) (opt-type-eq aty bty))])]))
+        [(IrExtern bname bty babi bsymbol)
+          (and
+            (string-eq aname bname)
+            (and
+              (opt-type-eq aty bty)
+              (and (ast-extern-abi-eq? aabi babi) (string-eq asymbol bsymbol))))])]))
 
 (define (opt-extern-list-eq
   [a : CompilerIrExternList]

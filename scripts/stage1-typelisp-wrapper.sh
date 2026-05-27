@@ -23,7 +23,7 @@ usage() {
 usage: typelisp <command> [args...]
 
 stage1 wrapper commands:
-  compile, check, build, run, test
+  compile, check, build, run, test, fmt
   debug check, debug host-action
 EOF
 }
@@ -33,6 +33,25 @@ test_usage() {
 Usage:
     typelisp test [--check] <file.tl> [--target <target>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...]
 EOF
+}
+
+fmt_usage() {
+    cat >&2 <<'EOF'
+Usage:
+    typelisp fmt [--check] <file.tl>... [--stdlib-root <dir>...]
+EOF
+}
+
+fmt_missing_file_argument() {
+    echo "Error: missing file argument" >&2
+    fmt_usage
+    exit 1
+}
+
+fmt_unknown_flag() {
+    echo "Error: unknown fmt flag: $1" >&2
+    fmt_usage
+    exit 1
 }
 
 require_stage1() {
@@ -184,6 +203,9 @@ compile_source_to_exe() {
     opt_level=$5
     roots_file=$6
     workdir=$7
+
+    require_stage1
+    require_linux_host_action
 
     case "$target" in
         linux-x86_64 | linux_x86_64) ;;
@@ -632,6 +654,67 @@ test_command() {
     fi
 }
 
+fmt_command() {
+    workdir=${TMPDIR:-/tmp}/typelisp-stage1-fmt-$$
+    rm -rf "$workdir"
+    mkdir -p "$workdir"
+    roots="$workdir/stdlib.roots"
+    files="$workdir/files.args"
+    runtime_args="$workdir/runtime.args"
+    : > "$roots"
+    : > "$files"
+
+    check=0
+    saw_file=0
+
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            help)
+                if [ "$saw_file" -eq 0 ]; then
+                    fmt_usage
+                    return 0
+                fi
+                append_file_line "$files" "$1"
+                saw_file=1
+                ;;
+            --help | -h)
+                if [ "$saw_file" -eq 0 ]; then
+                    fmt_usage
+                    return 0
+                fi
+                fmt_unknown_flag "$1"
+                ;;
+            --check)
+                check=1
+                ;;
+            --stdlib-root)
+                shift
+                [ "$#" -gt 0 ] || fail "Error: --stdlib-root requires a value"
+                append_file_line "$roots" "$1"
+                ;;
+            -*)
+                fmt_unknown_flag "$1"
+                ;;
+            *)
+                append_file_line "$files" "$1"
+                saw_file=1
+                ;;
+        esac
+        shift || break
+    done
+
+    [ "$saw_file" -ne 0 ] || fmt_missing_file_argument
+
+    : > "$runtime_args"
+    if [ "$check" -eq 1 ]; then
+        append_file_line "$runtime_args" "--check"
+    fi
+    cat "$files" >> "$runtime_args"
+
+    bin=$(compile_source_to_exe "$ROOT/selfhost/format.tl" "$workdir/format-bin" linux-x86_64 scalar "" "$roots" "$workdir")
+    run_executable_with_args "$bin" "$runtime_args"
+}
+
 debug_command() {
     [ "$#" -gt 0 ] || fail "Error: missing debug subcommand"
     case "$1" in
@@ -667,7 +750,8 @@ case "$command" in
     build) build_command "$@" ;;
     run) run_command "$@" ;;
     test) test_command "$@" ;;
-    fmt | lint | doc | tokenize | parse)
+    fmt) fmt_command "$@" ;;
+    lint | doc | tokenize | parse)
         fail "stage1 wrapper does not support '$command' yet; use the seed compiler for this gate"
         ;;
     debug) debug_command "$@" ;;

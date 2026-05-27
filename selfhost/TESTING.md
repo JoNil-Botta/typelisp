@@ -147,9 +147,10 @@ when `TYPELISP_BIN` is unset keep that path as a local fallback only until #795
 removes the Rust-owned stage0 dependency.
 
 The current stage1 wrapper implements the source-file `compile`, `build`, `run`,
-and private `debug host-action` path directly enough for the Linux capability
-smoke and deterministic assembly gate. Seed-only public-tool exceptions remain:
-`fmt`, `doc`, `lint`, non-check `test`, package `build`, REPL/LSP, and full
+`fmt`, and private `debug host-action` path directly enough for the Linux
+capability smoke and deterministic assembly gate. Seed-only public-tool
+exceptions remain:
+`doc`, `lint`, non-check `test`, package `build`, REPL/LSP, and full
 manifest/doc/integration gates still need either stage1-safe driver linking or
 dedicated wrapper routing before they can move off the seed compiler.
 

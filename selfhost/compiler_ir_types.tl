@@ -259,6 +259,343 @@
         IrEffectControlFlow
         IrEffectUnknown))))
 
+(define (compiler-ir-cat3 [a : String] [b : String] [c : String]) : String
+  (string-append a (string-append b c)))
+
+(define (compiler-ir-cat4 [a : String] [b : String] [c : String] [d : String]) : String
+  (string-append a (string-append b (string-append c d))))
+
+(define (compiler-ir-cat5
+  [a : String]
+  [b : String]
+  [c : String]
+  [d : String]
+  [e : String]) : String
+  (string-append a (string-append b (string-append c (string-append d e)))))
+
+(define (compiler-ir-display-var-render [id : i64]) : String
+  (string-append "%" (int->string id)))
+
+(define (compiler-ir-display-type-list-render-prefixed [types : AstTypeList]) : String
+  (match types
+    [(AstTypeNil) ""]
+    [(AstTypeCons head rest)
+      (compiler-ir-cat3
+        " "
+        (compiler-ir-display-type-render head)
+        (compiler-ir-display-type-list-render-prefixed rest))]))
+
+(define (compiler-ir-display-type-render [ty : AstType]) : String
+  (match ty
+    [(AstTyI64) "i64"]
+    [(AstTyI32) "i32"]
+    [(AstTyI16) "i16"]
+    [(AstTyI8) "i8"]
+    [(AstTyU64) "u64"]
+    [(AstTyU32) "u32"]
+    [(AstTyU16) "u16"]
+    [(AstTyU8) "u8"]
+    [(AstTyF64) "f64"]
+    [(AstTyF32) "f32"]
+    [(AstTyBool) "bool"]
+    [(AstTyChar) "char"]
+    [(AstTyString) "String"]
+    [(AstTyUnit) "unit"]
+    [(AstTyNever) "never"]
+    [(AstTyFunc args ret)
+      (compiler-ir-cat4
+        "(->"
+        (compiler-ir-display-type-list-render-prefixed args)
+        " "
+        (compiler-ir-cat3 (compiler-ir-display-type-render ret) ")" ""))]
+    [(AstTyTuple elems)
+      (compiler-ir-cat3
+        "(Tuple"
+        (compiler-ir-display-type-list-render-prefixed elems)
+        ")")]
+    [(AstTyArray elem len)
+      (compiler-ir-cat5
+        "(Array "
+        (compiler-ir-display-type-render elem)
+        " "
+        (int->string len)
+        ")")]
+    [(AstTyDynArray elem)
+      (compiler-ir-cat3 "(Array " (compiler-ir-display-type-render elem) ")")]
+    [(AstTyRegion region inner)
+      (compiler-ir-cat5
+        "(in "
+        region
+        " "
+        (compiler-ir-display-type-render inner)
+        ")")]
+    [(AstTyRef region inner)
+      (compiler-ir-cat5
+        "(& "
+        region
+        " "
+        (compiler-ir-display-type-render inner)
+        ")")]
+    [(AstTyMutRef region inner)
+      (compiler-ir-cat5
+        "(&mut "
+        region
+        " "
+        (compiler-ir-display-type-render inner)
+        ")")]
+    [(AstTyEnum name) name]
+    [(AstTyStruct name) name]
+    [(AstTyVar name) (compiler-ir-cat3 "'" name "'")]
+    [(AstTyPtr inner)
+      (compiler-ir-cat3 "(Ptr " (compiler-ir-display-type-render inner) ")")]
+    [(AstTyMutPtr inner)
+      (compiler-ir-cat3 "(MutPtr " (compiler-ir-display-type-render inner) ")")]))
+
+(define (compiler-ir-display-vector-type-render [elem : AstType] [lanes : i64]) : String
+  (compiler-ir-cat5
+    "(Vector "
+    (compiler-ir-display-type-render elem)
+    " "
+    (int->string lanes)
+    ")"))
+
+(define (compiler-ir-display-mask-type-render [lanes : i64]) : String
+  (compiler-ir-cat3 "(Mask " (int->string lanes) ")"))
+
+(define (compiler-ir-display-lanes-type-render [lanes : i64] [ty : AstType]) : String
+  (compiler-ir-cat3
+    (int->string lanes)
+    " x "
+    (compiler-ir-display-type-render ty)))
+
+(define (compiler-ir-display-binop-render [op : CompilerIrBinOp]) : String
+  (match op
+    [(IrBinAdd) "add"]
+    [(IrBinSub) "sub"]
+    [(IrBinMul) "mul"]
+    [(IrBinDiv) "div"]
+    [(IrBinMod) "mod"]
+    [(IrBinEq) "eq"]
+    [(IrBinNe) "ne"]
+    [(IrBinLt) "lt"]
+    [(IrBinLe) "le"]
+    [(IrBinGt) "gt"]
+    [(IrBinGe) "ge"]
+    [(IrBinAnd) "and"]
+    [(IrBinOr) "or"]
+    [(IrBinBitAnd) "bitand"]
+    [(IrBinBitOr) "bitor"]
+    [(IrBinBitXor) "bitxor"]
+    [(IrBinShl) "shl"]
+    [(IrBinShr) "shr"]))
+
+(define (compiler-ir-display-mask-binop-render [op : CompilerIrMaskBinOp]) : String
+  (match op
+    [(IrMaskAnd) "mask_and"]
+    [(IrMaskOr) "mask_or"]))
+
+(define (compiler-ir-display-vector-reduce-op-render
+  [op : CompilerIrVectorReduceOp]) : String
+  (match op
+    [(IrVectorReduceSum) "sum"]
+    [(IrVectorReduceMin) "min"]
+    [(IrVectorReduceMax) "max"]))
+
+(define (compiler-ir-display-mask-reduce-op-render
+  [op : CompilerIrMaskReduceOp]) : String
+  (match op
+    [(IrMaskReduceAll) "all"]
+    [(IrMaskReduceAny) "any"]))
+
+(define (compiler-ir-display-value-render [value : CompilerIrValue]) : String
+  (match value
+    [(IrValueVar id) (compiler-ir-display-var-render id)]
+    [(IrValueGlobal name) (string-append "@" name)]
+    [(IrValueI64 value) (int->string value)]
+    [(IrValueF64 value) value]
+    [(IrValueBool value)
+      (if value
+        "true"
+        "false")]
+    [(IrValueChar _) "<char>"]
+    [(IrValueString value) (compiler-ir-cat3 "\"" value "\"")]
+    [(IrValueUnit) "unit"]))
+
+(define (compiler-ir-display-instr-render [instr : CompilerIrInstr]) : String
+  (match instr
+    [(IrInstrLaneId dst lanes ty)
+      (compiler-ir-cat5
+        "  "
+        (compiler-ir-display-var-render dst)
+        " = lane_id "
+        (int->string lanes)
+        (compiler-ir-cat3 " x " (compiler-ir-display-type-render ty) ""))]
+    [(IrInstrSplat dst value lanes ty)
+      (compiler-ir-cat5
+        "  "
+        (compiler-ir-display-var-render dst)
+        " = splat "
+        (compiler-ir-display-value-render value)
+        (compiler-ir-cat3
+          " : "
+          (compiler-ir-display-lanes-type-render lanes ty)
+          ""))]
+    [(IrInstrVectorBinOp dst op lhs rhs lanes elem-ty)
+      (compiler-ir-cat5
+        "  "
+        (compiler-ir-display-var-render dst)
+        " = vector_"
+        (compiler-ir-display-binop-render op)
+        (compiler-ir-cat5
+          " "
+          (compiler-ir-display-value-render lhs)
+          ", "
+          (compiler-ir-display-value-render rhs)
+          (compiler-ir-cat3
+            " : "
+            (compiler-ir-display-lanes-type-render lanes elem-ty)
+            "")))]
+    [(IrInstrVectorReduce dst op src lanes elem-ty)
+      (compiler-ir-cat5
+        "  "
+        (compiler-ir-display-var-render dst)
+        " = vector_reduce_"
+        (compiler-ir-display-vector-reduce-op-render op)
+        (compiler-ir-cat3
+          " "
+          (compiler-ir-display-value-render src)
+          (compiler-ir-cat3
+            " : "
+            (compiler-ir-display-lanes-type-render lanes elem-ty)
+            "")))]
+    [(IrInstrVectorCompare dst op lhs rhs lanes elem-ty)
+      (compiler-ir-cat5
+        "  "
+        (compiler-ir-display-var-render dst)
+        " = vector_cmp_"
+        (compiler-ir-display-binop-render op)
+        (compiler-ir-cat5
+          " "
+          (compiler-ir-display-value-render lhs)
+          ", "
+          (compiler-ir-display-value-render rhs)
+          (compiler-ir-cat3
+            " : "
+            (compiler-ir-display-lanes-type-render lanes elem-ty)
+            "")))]
+    [(IrInstrMaskBinOp dst op lhs rhs lanes)
+      (compiler-ir-cat5
+        "  "
+        (compiler-ir-display-var-render dst)
+        " = "
+        (compiler-ir-display-mask-binop-render op)
+        (compiler-ir-cat5
+          " "
+          (compiler-ir-display-value-render lhs)
+          ", "
+          (compiler-ir-display-value-render rhs)
+          (compiler-ir-cat3 " : " (int->string lanes) "")))]
+    [(IrInstrMaskNot dst src lanes)
+      (compiler-ir-cat5
+        "  "
+        (compiler-ir-display-var-render dst)
+        " = mask_not "
+        (compiler-ir-display-value-render src)
+        (compiler-ir-cat3 " : " (int->string lanes) ""))]
+    [(IrInstrMaskReduce dst op src lanes)
+      (compiler-ir-cat5
+        "  "
+        (compiler-ir-display-var-render dst)
+        " = mask_reduce_"
+        (compiler-ir-display-mask-reduce-op-render op)
+        (compiler-ir-cat3
+          " "
+          (compiler-ir-display-value-render src)
+          (compiler-ir-cat3 " : " (int->string lanes) "")))]
+    [(IrInstrSelect dst mask on-true on-false lanes ty)
+      (compiler-ir-cat5
+        "  "
+        (compiler-ir-display-var-render dst)
+        " = select "
+        (compiler-ir-display-value-render mask)
+        (compiler-ir-cat5
+          ", "
+          (compiler-ir-display-value-render on-true)
+          ", "
+          (compiler-ir-display-value-render on-false)
+          (compiler-ir-cat3
+            " : "
+            (compiler-ir-display-lanes-type-render lanes ty)
+            "")))]
+    [(IrInstrVectorLoad dst base index lanes elem-ty)
+      (compiler-ir-cat5
+        "  "
+        (compiler-ir-display-var-render dst)
+        " = vector_load "
+        (compiler-ir-display-value-render base)
+        (compiler-ir-cat5
+          ", "
+          (compiler-ir-display-value-render index)
+          " : "
+          (compiler-ir-display-lanes-type-render lanes elem-ty)
+          ""))]
+    [(IrInstrVectorStore base index value lanes elem-ty)
+      (compiler-ir-cat5
+        "  vector_store "
+        (compiler-ir-display-value-render base)
+        ", "
+        (compiler-ir-display-value-render index)
+        (compiler-ir-cat5
+          ", "
+          (compiler-ir-display-value-render value)
+          " : "
+          (compiler-ir-display-lanes-type-render lanes elem-ty)
+          ""))]
+    [(IrInstrPredicatedStore base index value mask lanes elem-ty)
+      (compiler-ir-cat5
+        "  predicated_store "
+        (compiler-ir-display-value-render base)
+        ", "
+        (compiler-ir-display-value-render index)
+        (compiler-ir-cat4
+          ", "
+          (compiler-ir-display-value-render value)
+          ", "
+          (compiler-ir-cat5
+            (compiler-ir-display-value-render mask)
+            " : "
+            (compiler-ir-display-lanes-type-render lanes elem-ty)
+            ""
+            "")))]
+    [(IrInstrPredicatedLoad dst base index mask lanes elem-ty)
+      (compiler-ir-cat5
+        "  "
+        (compiler-ir-display-var-render dst)
+        " = predicated_load "
+        (compiler-ir-display-value-render base)
+        (compiler-ir-cat5
+          ", "
+          (compiler-ir-display-value-render index)
+          ", "
+          (compiler-ir-display-value-render mask)
+          (compiler-ir-cat3
+            " : "
+            (compiler-ir-display-lanes-type-render lanes elem-ty)
+            "")))]
+    [(IrInstrTailMask dst index len lanes)
+      (compiler-ir-cat5
+        "  "
+        (compiler-ir-display-var-render dst)
+        " = tail_mask "
+        (compiler-ir-display-value-render index)
+        (compiler-ir-cat5
+          ", "
+          (compiler-ir-display-value-render len)
+          " : "
+          (int->string lanes)
+          ""))]
+    [_ "  <ir-instr>"]))
+
 (define (compiler-ir-instr-effect [instr : CompilerIrInstr]) : CompilerIrEffect
   (match instr
     [(IrInstrMov _ _ _) IrEffectPure]
@@ -956,6 +1293,155 @@
                                 (AstTyI64))
                               IrEffectMemoryWrite)))))))))))))))
 
+(define (compiler-ir-display-instr-render-is?
+  [instr : CompilerIrInstr]
+  [expected : String]) : bool
+  (string-eq (compiler-ir-display-instr-render instr) expected))
+
+(define (compiler-ir-vector-mask-type-render-ok?) : bool
+  (and
+    (string-eq
+      (compiler-ir-display-vector-type-render (AstTyI32) 8)
+      "(Vector i32 8)")
+    (string-eq (compiler-ir-display-mask-type-render 8) "(Mask 8)")))
+
+(define (compiler-ir-vector-mask-reduce-render-ok?) : bool
+  (and
+    (string-eq
+      (compiler-ir-display-vector-reduce-op-render (IrVectorReduceSum))
+      "sum")
+    (and
+      (string-eq
+        (compiler-ir-display-vector-reduce-op-render (IrVectorReduceMin))
+        "min")
+      (and
+        (string-eq
+          (compiler-ir-display-vector-reduce-op-render (IrVectorReduceMax))
+          "max")
+        (and
+          (string-eq
+            (compiler-ir-display-mask-reduce-op-render (IrMaskReduceAll))
+            "all")
+          (string-eq
+            (compiler-ir-display-mask-reduce-op-render (IrMaskReduceAny))
+            "any"))))))
+
+(define (compiler-ir-vector-mask-instr-render-ok?) : bool
+  (and
+    (compiler-ir-display-instr-render-is?
+      (IrInstrLaneId 0 4 (AstTyI64))
+      "  %0 = lane_id 4 x i64")
+    (and
+      (compiler-ir-display-instr-render-is?
+        (IrInstrSplat 1 (IrValueI64 7) 4 (AstTyI64))
+        "  %1 = splat 7 : 4 x i64")
+      (and
+        (compiler-ir-display-instr-render-is?
+          (IrInstrVectorBinOp
+            2
+            (IrBinAdd)
+            (IrValueVar 0)
+            (IrValueVar 1)
+            4
+            (AstTyI64))
+          "  %2 = vector_add %0, %1 : 4 x i64")
+        (and
+          (compiler-ir-display-instr-render-is?
+            (IrInstrVectorReduce
+              8
+              (IrVectorReduceSum)
+              (IrValueVar 2)
+              4
+              (AstTyI64))
+            "  %8 = vector_reduce_sum %2 : 4 x i64")
+          (and
+            (compiler-ir-display-instr-render-is?
+              (IrInstrVectorCompare
+                3
+                (IrBinLt)
+                (IrValueVar 0)
+                (IrValueVar 1)
+                4
+                (AstTyI64))
+              "  %3 = vector_cmp_lt %0, %1 : 4 x i64")
+            (and
+              (compiler-ir-display-instr-render-is?
+                (IrInstrMaskBinOp 4 (IrMaskOr) (IrValueVar 3) (IrValueVar 3) 4)
+                "  %4 = mask_or %3, %3 : 4")
+              (and
+                (compiler-ir-display-instr-render-is?
+                  (IrInstrMaskNot 5 (IrValueVar 4) 4)
+                  "  %5 = mask_not %4 : 4")
+                (and
+                  (compiler-ir-display-instr-render-is?
+                    (IrInstrMaskReduce 9 (IrMaskReduceAny) (IrValueVar 5) 4)
+                    "  %9 = mask_reduce_any %5 : 4")
+                  (and
+                    (compiler-ir-display-instr-render-is?
+                      (IrInstrSelect
+                        6
+                        (IrValueVar 5)
+                        (IrValueVar 2)
+                        (IrValueVar 1)
+                        4
+                        (AstTyI64))
+                      "  %6 = select %5, %2, %1 : 4 x i64")
+                    (and
+                      (compiler-ir-display-instr-render-is?
+                        (IrInstrVectorLoad
+                          7
+                          (IrValueVar 10)
+                          (IrValueVar 11)
+                          4
+                          (AstTyI64))
+                        "  %7 = vector_load %10, %11 : 4 x i64")
+                      (and
+                        (compiler-ir-display-instr-render-is?
+                          (IrInstrVectorStore
+                            (IrValueVar 12)
+                            (IrValueVar 11)
+                            (IrValueVar 6)
+                            4
+                            (AstTyI64))
+                          "  vector_store %12, %11, %6 : 4 x i64")
+                        (and
+                          (compiler-ir-display-instr-render-is?
+                            (IrInstrPredicatedStore
+                              (IrValueVar 12)
+                              (IrValueVar 11)
+                              (IrValueVar 6)
+                              (IrValueVar 5)
+                              4
+                              (AstTyI64))
+                            "  predicated_store %12, %11, %6, %5 : 4 x i64")
+                          (compiler-ir-display-instr-render-is?
+                            (IrInstrPredicatedLoad
+                              10
+                              (IrValueVar 12)
+                              (IrValueVar 11)
+                              (IrValueVar 5)
+                              4
+                              (AstTyI64))
+                            "  %10 = predicated_load %12, %11, %5 : 4 x i64"))))))))))))))
+
+(define (compiler-ir-tail-mask-render-ok?) : bool
+  (and
+    (compiler-ir-display-instr-render-is?
+      (IrInstrTailMask 9 (IrValueVar 1) (IrValueVar 2) 8)
+      "  %9 = tail_mask %1, %2 : 8")
+    (compiler-ir-effect-is?
+      (IrInstrTailMask 9 (IrValueVar 1) (IrValueVar 2) 8)
+      IrEffectPure)))
+
+(define (compiler-ir-vector-mask-display-ok?) : bool
+  (and
+    (compiler-ir-vector-mask-type-render-ok?)
+    (and
+      (compiler-ir-vector-mask-reduce-render-ok?)
+      (and
+        (compiler-ir-vector-mask-instr-render-ok?)
+        (compiler-ir-tail-mask-render-ok?)))))
+
 (define (compiler-ir-runtime-effects-ok?) : bool
   (and
     (compiler-ir-effect-eq?
@@ -1015,7 +1501,9 @@
     (if (compiler-ir-vector-mask-effects-ok?)
       (if (compiler-ir-runtime-effects-ok?)
         (if (compiler-ir-effect-predicates-ok?)
-          42
+          (if (compiler-ir-vector-mask-display-ok?)
+            42
+            1)
           1)
         1)
       1)

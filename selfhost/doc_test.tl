@@ -1670,23 +1670,37 @@
 ")
 
 (define (doc-test-runnable-source) : String
-  ";# Runnable docs
-;# ```typelisp run
-;# ;; doctest-exit: 0
-;# ;; doctest-stdout: literal:hello\\n
-;# ;; doctest-stderr: literal:error\\tline\\r
-;# (import \"stdlib/io.tl\")
-;# (define (main) : i64
-;#   (begin
-;#     (stdout-write \"hello\\n\")
-;#     (stderr-write \"error\\tline\\r\")
-;#     0))
-;# ```
-;# ```tl run
-;# ;; doctest-exit: 42
-;# (define (main) : i64 42)
-;# ```
-")
+  (string-append
+    ";# Runnable docs\n"
+    (string-append
+      ";# ```typelisp run\n"
+      (string-append
+        ";# ;; doctest-exit: 0\n"
+        (string-append
+          ";# ;; doctest-stdout: literal:hello\\n\n"
+          (string-append
+            ";# ;; doctest-stderr: literal:error\\tline\\r\n"
+            (string-append
+              ";# (import \"stdlib/io.tl\")\n"
+              (string-append
+                ";# (define (main) : i64\n"
+                (string-append
+                  ";#   (begin\n"
+                  (string-append
+                    ";#     (stdout-write \"hello\\n\")\n"
+                    (string-append
+                      ";#     (stderr-write \"error\\tline\\r\")\n"
+                      (string-append
+                        ";#     0))\n"
+                        (string-append
+                          ";# ```\n"
+                          (string-append
+                            ";# ```tl run\n"
+                            (string-append
+                              ";# ;; doctest-exit: 42\n"
+                              (string-append
+                                ";# (define (main) : i64 42)\n"
+                                ";# ```\n"))))))))))))))))
 
 (define (doc-test-runnable-malformed-source) : String
   ";# ```typelisp run expect-error

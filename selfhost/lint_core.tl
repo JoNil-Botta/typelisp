@@ -265,7 +265,7 @@
     [(AstDeclModule _) acc]
     [(AstDeclExtern _ _) acc]
     [(AstDeclDefEnum _ _) acc]
-    [(AstDeclDefStruct _ _ _) acc]
+    [(AstDeclDefStruct _ _ _ _) acc]
     [(AstDeclImport _) acc]))
 
 ;;; Walk every declaration body in `decls`.

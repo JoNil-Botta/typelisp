@@ -629,17 +629,26 @@
   [total : i64]) : unit
   (let
     [k : i64 0]
+    [pos : i64 0]
+    [line : i64 1]
+    [col : i64 1]
     (while (< k total)
       (begin
         (let
           [at : i64 (array-ref starts k)]
-          (array-set!
-            stoks
-            k
-            (SpannedToken
-              (array-ref toks k)
-              (index-line src at)
-              (index-col src at))))
+          (begin
+            (while (< pos at)
+              (begin
+                (if (= (string-ref src pos) #\newline')
+                  (begin
+                    (set! line (+ line 1))
+                    (set! col 1))
+                  (set! col (+ col 1)))
+                (set! pos (+ pos 1))))
+            (array-set!
+              stoks
+              k
+              (SpannedToken (array-ref toks k) line col))))
         (set! k (+ k 1))))))
 
 (define (source-error-at [src : String] [idx : i64] [message : String]) : SourceError

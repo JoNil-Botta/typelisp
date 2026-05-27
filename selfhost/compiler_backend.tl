@@ -48,6 +48,10 @@
   (CompilerBackendNoI64)
   (CompilerBackendSomeI64 i64))
 
+(defenum CompilerBackendMaybeLabel
+  (CompilerBackendNoLabel)
+  (CompilerBackendSomeLabel String))
+
 (defenum ResultCompilerBackend
   (OkCompilerBackend String)
   (ErrCompilerBackend CompilerDiagnostic))
@@ -1274,6 +1278,13 @@
 (define (compiler-backend-jump-label [function : String] [label : String]) : String
   (backend-cat4 "    jmp " (compiler-backend-asm-label function label) "\n" ""))
 
+(define (compiler-backend-jump-target-is-fallthrough?
+  [target : String]
+  [fallthrough : CompilerBackendMaybeLabel]) : bool
+  (match fallthrough
+    [(CompilerBackendSomeLabel label) (string-eq target label)]
+    [(CompilerBackendNoLabel) false]))
+
 (define (compiler-backend-emit-branch
   [assignments : CompilerRegAssignmentList]
   [function : String]
@@ -2235,6 +2246,7 @@
   [source-function : String]
   [blocks : CompilerIrBlockList]
   [current-label : String]
+  [fallthrough : CompilerBackendMaybeLabel]
   [instr : CompilerIrInstr]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
@@ -2439,11 +2451,15 @@
             (OkCompilerBackend
               (string-append
                 copies
-                (backend-cat4
-                  "    jmp "
-                  (compiler-backend-asm-label function target)
-                  "\n"
-                  "")))]
+                (if (compiler-backend-jump-target-is-fallthrough?
+                  target
+                  fallthrough)
+                  ""
+                  (backend-cat4
+                    "    jmp "
+                    (compiler-backend-asm-label function target)
+                    "\n"
+                    ""))))]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
@@ -2472,6 +2488,7 @@
   [source-function : String]
   [blocks : CompilerIrBlockList]
   [current-label : String]
+  [fallthrough : CompilerBackendMaybeLabel]
   [instrs : CompilerIrInstrList]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
@@ -2491,6 +2508,9 @@
         source-function
         blocks
         current-label
+        (match rest
+          [(IrInstrNil) fallthrough]
+          [_ (CompilerBackendNoLabel)])
         instr
         assignments
         vars
@@ -2508,6 +2528,7 @@
             source-function
             blocks
             current-label
+            fallthrough
             rest
             assignments
             vars
@@ -2529,6 +2550,7 @@
   [source-function : String]
   [blocks : CompilerIrBlockList]
   [block : CompilerIrBlock]
+  [fallthrough : CompilerBackendMaybeLabel]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [types : CompilerRegVarTypeList]
@@ -2546,6 +2568,7 @@
         source-function
         blocks
         label
+        fallthrough
         instrs
         assignments
         vars
@@ -2564,6 +2587,14 @@
               body
               ""))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
+
+(define (compiler-backend-next-block-label
+  [blocks : CompilerIrBlockList]) : CompilerBackendMaybeLabel
+  (match blocks
+    [(IrBlockNil) (CompilerBackendNoLabel)]
+    [(IrBlockCons block _)
+      (match block
+        [(IrBlock label _) (CompilerBackendSomeLabel label)])]))
 
 (define (compiler-backend-emit-blocks
   [target : CompilerBackendTarget]
@@ -2589,6 +2620,7 @@
         source-function
         all-blocks
         block
+        (compiler-backend-next-block-label rest)
         assignments
         vars
         types
@@ -10136,7 +10168,43 @@ tl_windows_setup_instances:
 (define (compiler-backend-peephole-ok?) : bool
   (and
     (compiler-backend-peephole-register-moves-ok?)
-    (compiler-backend-peephole-asm-ok?)))
+    (and
+      (compiler-backend-peephole-asm-ok?)
+      (compiler-backend-fallthrough-jump-ok?))))
+
+(define (compiler-backend-fallthrough-program) : CompilerIrProgram
+  (IrProgram
+    IrGlobalNil
+    (IrFunctionCons
+      (IrFunction
+        "main"
+        IrParamNil
+        (AstTyI64)
+        0
+        (IrBlockCons
+          (IrBlock
+            "entry"
+            (IrInstrCons (IrInstrJump "done") IrInstrNil))
+          (IrBlockCons
+            (IrBlock
+              "done"
+              (IrInstrCons
+                (IrInstrReturn (IrSomeValue (IrValueI64 7)))
+                IrInstrNil))
+            IrBlockNil)))
+      IrFunctionNil)
+    IrExternNil))
+
+(define (compiler-backend-fallthrough-jump-ok?) : bool
+  (match (compiler-backend-emit-program (compiler-backend-fallthrough-program))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm ".Lmain_done:\n")
+        (not
+          (compiler-backend-string-contains?
+            asm
+            "    jmp .Lmain_done\n")))]
+    [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-phi-same-home-assignments) : CompilerRegAssignmentList
   (CompilerRegAssignmentCons
@@ -10598,6 +10666,7 @@ tl_windows_setup_instances:
     "test"
     IrBlockNil
     "entry"
+    (CompilerBackendNoLabel)
     instr
     CompilerRegAssignmentNil
     8

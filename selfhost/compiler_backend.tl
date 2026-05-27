@@ -945,6 +945,35 @@
   [reg : String]) : String
   (backend-cat5 "    movsd " reg ", " addr "\n"))
 
+(define (compiler-backend-store-immediate-mnemonic [ty : AstType]) : String
+  (let
+    [size : i64 (compiler-backend-type-size ty)]
+    (if (= size 8)
+      "movq"
+      (if (= size 4)
+        "movl"
+        (if (= size 2)
+          "movw"
+          (if (= size 1)
+            "movb"
+            ""))))))
+
+(define (compiler-backend-emit-store-immediate-to-memory
+  [value : CompilerIrValue]
+  [addr : String]
+  [ty : AstType]) : CompilerBackendMaybeAsm
+  (if (compiler-backend-f64-type? ty)
+    (CompilerBackendNoAsm)
+    (match (compiler-backend-immediate-operand value)
+      [(CompilerBackendSomeImmediate imm)
+        (let
+          [mnemonic : String (compiler-backend-store-immediate-mnemonic ty)]
+          (if (string-eq mnemonic "")
+            (CompilerBackendNoAsm)
+            (CompilerBackendSomeAsm
+              (backend-cat5 "    " mnemonic " " imm (backend-cat3 ", " addr "\n")))))]
+      [(CompilerBackendNoImmediate) (CompilerBackendNoAsm)])))
+
 (define (compiler-backend-emit-store-typed-var-with-plan
   [assignments : CompilerRegAssignmentList]
   [var-id : i64]
@@ -1554,20 +1583,24 @@
   [ty : AstType]) : ResultCompilerBackend
   (match (compiler-backend-emit-load-value-with-plan assignments dst "%r10")
     [(OkCompilerBackend ptr-asm)
-      (match (compiler-backend-emit-load-typed-value-with-plan
-        assignments
-        src
-        ty)
-        [(OkCompilerBackend src-asm)
-          (OkCompilerBackend
-            (string-append
-              ptr-asm
-              (string-append
-                src-asm
-                (if (compiler-backend-f64-type? ty)
-                  (compiler-backend-emit-store-xmm-to-memory "(%r10)" "%xmm0")
-                  (compiler-backend-emit-store-rax-to-memory "(%r10)" ty)))))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+      (match (compiler-backend-emit-store-immediate-to-memory src "(%r10)" ty)
+        [(CompilerBackendSomeAsm store-asm)
+          (OkCompilerBackend (string-append ptr-asm store-asm))]
+        [(CompilerBackendNoAsm)
+          (match (compiler-backend-emit-load-typed-value-with-plan
+            assignments
+            src
+            ty)
+            [(OkCompilerBackend src-asm)
+              (OkCompilerBackend
+                (string-append
+                  ptr-asm
+                  (string-append
+                    src-asm
+                    (if (compiler-backend-f64-type? ty)
+                      (compiler-backend-emit-store-xmm-to-memory "(%r10)" "%xmm0")
+                      (compiler-backend-emit-store-rax-to-memory "(%r10)" ty)))))]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
     [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
 
 (define (compiler-backend-emit-cast
@@ -9892,11 +9925,11 @@ tl_windows_setup_instances:
           (and
             (compiler-backend-string-contains?
               asm
-              "    xorq %rax, %rax\n    movq %rax, (%r10)\n")
+              "    movq $0, (%r10)\n")
           (and
             (compiler-backend-string-contains?
               asm
-              "    movq $1, %rax\n    movq %rax, (%r10)\n")
+              "    movq $1, (%r10)\n")
             (and
               (compiler-backend-string-contains?
                 asm
@@ -10835,7 +10868,7 @@ tl_windows_setup_instances:
           (and
             (compiler-backend-instr-contains?
               (IrInstrStorePtr (IrValueVar 1) (IrValueI64 7) (AstTyI32))
-              "    movl %eax, (%r10)\n")
+              "    movl $7, (%r10)\n")
             (and
               (compiler-backend-instr-contains?
                 (IrInstrCast 6 (IrValueVar 5) (AstTyI8) (AstTyI64))

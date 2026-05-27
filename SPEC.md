@@ -691,8 +691,8 @@ Cleanup-required values are values that must be passed to a cleanup function
 exactly once before their owner scope exits. Ordinary aggregates do not own
 those values: a `defstruct` without cleanup metadata and every v1 `defenum`
 payload must reject cleanup-required fields, cleanup-owning aggregate fields,
-and cleanup-owning payloads. This prevents an aggregate handle copy from
-silently duplicating cleanup responsibility.
+and cleanup-owning payloads. This prevents ordinary aggregate construction from
+silently hiding cleanup responsibility in a value with no cleanup plan.
 
 A cleanup-owning struct opts in with type-level `(:cleanup cleanup-fn)`
 metadata immediately after the struct name and before all fields. The metadata
@@ -858,6 +858,200 @@ reject it until enum payload ownership is implemented. Ordinary enum payloads
 must reject cleanup-required and cleanup-owning types. A future cleanup-owning
 enum must clean only the active variant payload, in reverse payload declaration
 order, using field-style `(:cleanup ...)` and `(:owned)` payload metadata.
+
+#### 4.6.2 Move-only aggregate handle semantics (specified, pending implementation)
+
+The v1 source semantics make aggregate handles move-only. The current Rust
+compiler may still accept copies until the selfhost move checker lands, but
+new source and selfhost implementation work must follow this contract.
+
+**Copyable v1 types.** A use of a copyable value duplicates the value and leaves
+the source initialized. Copyable types are:
+
+- Scalar primitives: all integer widths, `f64`, backend-accepted `f32`
+  positions, `bool`, `char`, and `unit`.
+- The compiler-internal `never` type, which has no runtime value to move.
+- Raw pointers `(Ptr T)` and `(MutPtr T)` once implemented; copying a pointer
+  copies only the address and carries no ownership guarantee.
+- Named top-level function values and non-capturing function pointers.
+
+Safe reference values and their copy/aliasing rules are specified by the borrow
+checker slices (#1033-#1035 and #806), not by this section.
+
+**Move-only v1 types.** A by-value use of a move-only value transfers ownership
+and marks the source place moved. Move-only types are:
+
+- `String`.
+- Dynamic arrays `(Array T)`.
+- Fixed arrays `(Array T N)`.
+- Tuples `(Tuple ...)`.
+- Default-layout structs and enums.
+- Cleanup-owning structs from section 4.6.1.
+- Capturing closure values. A closure that captures only copyable values may be
+  implemented as copyable later, but the first v1 checker should treat
+  capturing closures conservatively as move-only unless it can prove all
+  captures are copyable.
+
+A region wrapper `(in r T)` preserves the copy/move class of `T`; the region tag
+only constrains where the value may escape. Type aliases, once added, also
+preserve the aliased type's class.
+
+**Move sites.** The checker must treat these by-value positions as moves for
+move-only values and as copies for copyable values:
+
+- `let` initialization. `(let [b a] body)` moves `a` into `b` when `a` is
+  move-only; `a` is unusable afterward.
+- A variable or place used as a by-value expression result, including a block's
+  final expression.
+- Function-call arguments whose parameter type is not a reference type. Arguments
+  are evaluated left-to-right; earlier moves are visible while checking later
+  arguments and the remaining expression.
+- Function returns. Returning a move-only local or parameter moves it to the
+  caller. Returning from a `with` owner scope is still rejected when it would
+  bypass required cleanup.
+- `set!` right-hand sides. Assigning a move-only value into a definitely moved
+  or definitely uninitialized local moves the value into that slot. Assigning
+  over an initialized move-only slot is rejected in v1 because there is no
+  implicit drop, destructor, or replacement cleanup yet. Move-only globals are
+  rejected.
+- Tuple, fixed-array, struct, and enum constructors. Constructor arguments are
+  consumed by value unless their expression is copyable or explicitly borrowed
+  by a future reference form.
+- `array-set!` value arguments. A move-only element value would be consumed by
+  the store, but v1 rejects arrays of move-only elements and stores of move-only
+  elements until unique mutable access and element replacement cleanup are
+  specified (#806/#1049).
+- `match` scrutinees. Matching a move-only enum consumes the whole enum value.
+  Payload bindings then own the active payload values for that arm.
+- Closure capture. Capturing a move-only local by value moves it into the
+  closure environment at closure creation time; the local cannot be used after
+  the lambda literal. Capturing by reference is deferred to the borrow checker.
+
+**Non-consuming use sites.** A non-consuming use may inspect a move-only value
+without moving it. In v1 these are limited to:
+
+- Future immutable borrow expressions and reference parameters once the borrow
+  syntax/provenance/escape slices land (#1033-#1035).
+- Compatibility inspection builtins whose current signatures are not yet
+  reference-typed: `length`/`string-length`, `string-ref`/`char-at`,
+  `string-eq`/`string=?`, `string->int`, `print-string`/`print-str`,
+  `print-error`, dynamic-array `length`/`array-length`, `array-ref` when the
+  element type is copyable, `struct-get` when the selected field type is
+  copyable, and stdlib predicates that only inspect their aggregate argument.
+- `array-set!` on the array receiver itself while the mutable-reference model is
+  pending. This compatibility rule mutates the array storage but does not move
+  the array handle.
+
+Ordinary user-defined function parameters are by-value unless their type is a
+future reference type. Passing a `String`, array, tuple, struct, enum, or
+capturing closure to such a parameter consumes the argument.
+
+**Whole-place and path moves.** The v1 checker accepts only whole-place moves:
+locals, parameters, and whole constructor temporaries. Moving out of a
+field, tuple element, fixed-array element, dynamic-array element, or nested path
+is rejected until path tracking and reinitialization are implemented (#1049).
+`struct-get`, `tuple-ref`, and `array-ref` may copy out only copyable fields or
+elements. They may not move out a move-only field or element. A consuming
+`match` is the enum exception: it moves the whole scrutinee first, then binds
+payload values owned by the selected arm.
+
+**Diagnostics.** Move checking must produce source-located diagnostics for:
+
+- Use after move, naming the moved local or path and the move site when known.
+- Moving from an uninitialized or already-moved slot.
+- Assigning over an initialized move-only slot.
+- Moving out of an unsupported path such as a field, tuple element, or array
+  element.
+- Storing, capturing, or returning a move-only value where the destination would
+  outlive the owner scope.
+
+Move-while-borrowed and assignment-while-borrowed diagnostics are reserved for
+the borrow checker implementation (#806/#1034/#1035/#1049). String `str`
+borrowing and owned/borrowed text distinctions are deferred to #807.
+
+```lisp test=check name=move-copyable-scalar-reuse
+(define (copyable-scalar [x : i64]) : i64
+  (let [y x]
+    (+ x y)))
+```
+
+```lisp test=ignore name=move-reject-aggregate-reuse reason="negative example for future move-only aggregate checks"
+(define (bad-string-reuse [s : String]) : i64
+  (let [taken s]
+    (length s)))
+```
+
+The `let` binding moves `s` into `taken`; the later `length` inspection is a
+use-after-move even though `length` itself is non-consuming.
+
+```lisp test=ignore name=move-reject-consumed-function-arg reason="negative example for future move-only call argument checks"
+(define (take-string [s : String]) : i64
+  (length s))
+
+(define (bad-call-reuse [s : String]) : i64
+  (begin
+    (take-string s)
+    (length s)))
+```
+
+The call to `take-string` consumes `s` because ordinary parameters are
+by-value; the later read is rejected.
+
+```lisp test=check name=move-copyable-struct-field-projection
+(defstruct Counter
+  (label String)
+  (count i64))
+
+(define (counter-count [c : Counter]) : i64
+  (struct-get c count))
+```
+
+Reading the `i64` field is non-consuming because the projected field is
+copyable. Moving the `String` field out directly is not allowed:
+
+```lisp test=ignore name=move-reject-struct-field-move reason="negative example for future path-move checks"
+(defstruct Counter
+  (label String)
+  (count i64))
+
+(define (bad-counter-label [c : Counter]) : String
+  (struct-get c label))
+```
+
+```lisp test=check name=move-match-payload-consumes-scrutinee
+(defenum MaybeName
+  (NoName)
+  (SomeName String))
+
+(define (name-score [s : String]) : i64
+  (length s))
+
+(define (score [m : MaybeName]) : i64
+  (match m
+    [(SomeName s) (name-score s)]
+    [NoName 0]))
+```
+
+The `match` consumes `m`; the `SomeName` arm owns `s` and can pass it to
+`name-score`.
+
+```lisp test=ignore name=move-reject-match-scrutinee-reuse reason="negative example for future match move checks"
+(defenum MaybeName
+  (NoName)
+  (SomeName String))
+
+(define (bad-match-reuse [m : MaybeName]) : i64
+  (begin
+    (match m
+      [(SomeName s) (length s)]
+      [NoName 0])
+    (match m
+      [(SomeName s) (length s)]
+      [NoName 0])))
+```
+
+The first `match` moves `m`, so the second `match` is rejected as a
+use-after-move.
 
 ---
 
@@ -1640,9 +1834,12 @@ TypeLisp v1 treats it as opaque: programs obtain it from `file-open`, pass it to
 read/write/close helpers, and never inspect its representation. Internally the
 handle carries an id into a runtime-managed table that stores the host
 descriptor, open mode, and open/closed state; these fields are not part of the
-public contract and may change. A handle is a copyable value in v1 — there is no
-move-only ownership or implicit close yet; move-only handles and automatic close
-wait on #805.
+public contract and may change. A handle is an aggregate value and follows the
+move-only source contract in section 4.6.2 once that checker lands. Until then,
+implementations may represent it as a copyable numeric handle internally, but
+source code should treat each successful `FileHandle` as a single owner that is
+closed exactly once. There is no implicit close yet; scoped cleanup waits on
+#805.
 
 **Open modes.** `file-open` takes a path and an `OpenMode`:
 
@@ -1669,8 +1866,10 @@ no destructor, drop glue, or implicit close — a handle that is never closed
 leaks its host descriptor for the life of the process, matching TypeLisp's
 current no-reclamation memory direction (§7.3). Use-after-close (any read or
 write on a closed handle) and double-close return a structured `IoUnsupported`
-error; they never panic and never touch a host descriptor. Automatic close on
-scope exit and move-only handles are deferred to #805.
+error for stale handles that reach the runtime; they never panic and never touch
+a host descriptor. Once move checking is enforced, ordinary source-level double
+close through the same variable is rejected earlier as use-after-move. Automatic
+close on scope exit is still deferred to scoped cleanup work.
 
 **Streaming reads (#1057).** `file-read-chunk` reads up to a requested byte count
 from a read-mode handle:
@@ -1739,10 +1938,12 @@ follow-ups through #1057 and #1058.
 
 TypeLisp currently has syntax/type-model support for written reference types
 (`(& arena T)` and `(&mut arena T)`), but no source-level borrow expressions,
-move-only ownership, implicit destructor, `drop`, `free`, or garbage-collector
-model. The implementation uses pointer-sized handles for several aggregate
-values, but those handles are not checked references in the source language.
-Full ownership/borrowing work is a separate design track. The reserved
+implicit destructor, `drop`, `free`, or garbage-collector model. Section 4.6.2
+specifies move-only aggregate handle ownership for v1 source semantics, but the
+current Rust compiler may still accept aggregate copies until the selfhost move
+checker lands. The implementation uses pointer-sized handles for several
+aggregate values, but those handles are not checked references in the source
+language. Full ownership/borrowing work is a separate design track. The reserved
 `(with ...)`
 form (§5.18) is explicit non-memory resource cleanup; it is not a general
 object destructor or heap reclamation mechanism. Raw pointers are the explicit
@@ -1777,12 +1978,12 @@ values; returned enum and struct storage; and self-hosted data structures built
 from those primitives. Future closures are expected to allocate in the same
 heap until a more precise model exists.
 
-General per-object `free`, implicit destructors, move-only ownership, and
-borrowed references are not part of this v1 policy. Aggregate handles are
-freely copied today, and dynamic arrays are shared mutable buffers, so adding
-arbitrary `free` before ownership/reference semantics would make double-free
-and use-after-free errors expressible. Ownership, borrowing, and reference work
-is a separate design track (#25, #182).
+General per-object `free`, implicit destructors, and borrowed references are not
+part of this v1 policy. Aggregate handles are represented as pointer-shaped
+runtime values, and dynamic arrays are shared mutable buffers, so adding
+arbitrary `free` before move checking and borrow semantics are enforced would
+make double-free and use-after-free errors expressible. Ownership, borrowing,
+and reference work is a separate design track (#25, #182).
 
 A tracing garbage collector is also not the first reclamation step. It would
 need object metadata, root discovery or stack maps, runtime scanning policy, and
@@ -1933,29 +2134,34 @@ not the future safe reference/borrow model (#182), not a replacement for
 - String literal bytes are stored in `.rodata`; a `String` value points to
   inline `{ptr,len}` storage whose `ptr` field points into `.rodata`.
 
-### 7.6 Aggregate handles and aliasing
+### 7.6 Aggregate handles, moves, and aliasing
 
-- Passing or assigning an aggregate value copies the value handle, not the
-  pointed-to storage. This applies to `String`, dynamic-array, enum, and struct
-  values in the current IR/ABI.
+- The IR/ABI may represent `String`, dynamic-array, tuple, struct, enum, and
+  closure values as pointer-sized handles. Bit-copying such a handle aliases the
+  same backing storage, but source-level v1 treats aggregate by-value use as a
+  move under section 4.6.2 rather than as a user-visible copy operation.
+- Non-consuming inspection builtins are borrow-like compatibility operations
+  until reference-typed parameters land. They can read an aggregate handle
+  without moving it, but ordinary user-defined function parameters remain
+  by-value and therefore consume aggregate arguments.
 - `String` values are immutable at the source level. String literals may share
   `.rodata`; `substring`, `string-slice`, `string-append`, `string-concat`,
   `read-file`, `arg`, and `int->string` return fresh heap-allocated string
   storage. There is no source operation that mutates a string's bytes.
-- Dynamic arrays are shared mutable heap buffers. Copying or passing an
-  `(Array T)` value aliases the same `{ptr,len}` record and element buffer, so
-  `array-set!` through one handle is observable through another.
+- Dynamic arrays are mutable heap buffers. `array-set!` mutates the buffer named
+  by the live owner handle under the temporary compatibility rule in section
+  4.6.2. Explicit shared mutable aliases require future reference/borrow
+  semantics rather than copying the array handle.
 - Struct and enum values are pointer-sized aggregate handles internally.
   Structs are read-only at the source level today because `struct-set!` is not
-  implemented. Enum payloads are read by `match`; there is no enum mutation
-  operation.
-- Function calls pass aggregate handles by value. Returning an aggregate may
-  heap-promote storage that would otherwise be frame-local; this is storage
-  placement for safety, not ownership transfer or borrow checking for ordinary
-  aggregates. Cleanup-owning aggregates are the move-only exception specified
-  in section 4.6.1 and cannot use this copyable handle rule.
+  implemented. Enum payloads are consumed by a by-value `match`; borrowing a
+  scrutinee for non-consuming pattern inspection is deferred to the borrow
+  checker.
+- Returning an aggregate may heap-promote storage that would otherwise be
+  frame-local. This is storage placement for safety; ownership transfer is still
+  governed by the source-level move rules.
 
-```lisp test=run name=dynamic-array-aliasing exit=42 stdout=""
+```lisp test=ignore name=dynamic-array-aliasing reason="current Rust-stage aliasing behavior; future move checker rejects copied array handles"
 (define (main) : i64
   (let
     [a : (Array i64) (make-array i64 1)]
@@ -2021,6 +2227,7 @@ not the future safe reference/borrow model (#182), not a replacement for
 | Raw pointer types and `(unsafe ...)` | Specified for v1; parser/typechecker/lowering/backend implementation pending (#809/#896) |
 | Raw pointer dereference/write/offset/cast | Specified unsafe operations; implementation pending (#809/#897/#911/#912) |
 | Garbage collection / general `free` | Not implemented; allocation is process-lifetime by default with unsafe explicit region reset for tool-owned phase boundaries |
+| Move-only aggregate handle checking | Specified for v1 source semantics; selfhost checker implementation pending (#1048/#1049) |
 | `(with ...)` scoped non-memory resource cleanup | Specified and reserved; parser/typechecker/lowering support pending |
 | Cleanup-owning aggregate declarations | Specified for structs and reserved for enums; parser/typechecker/lowering support pending |
 | SPMD / SIMD `foreach` | Scalar reference lowering implemented; AVX2 supports a first contiguous map/zip subset |

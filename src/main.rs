@@ -181,6 +181,7 @@ fn print_usage() {
         "    typelisp build [--manifest-path <typelisp.pkg>] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...]"
     );
     eprintln!("    typelisp fmt [--check] <file.tl>... [--stdlib-root <dir>...]");
+    eprintln!("    typelisp lint <file.tl> [--stdlib-root <dir>...]");
     eprintln!(
         "    typelisp test [--check] <file.tl> [--target <target>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...]"
     );
@@ -239,6 +240,11 @@ fn print_doc_usage() {
 fn print_fmt_usage() {
     eprintln!("Usage:");
     eprintln!("    typelisp fmt [--check] <file.tl>... [--stdlib-root <dir>...]");
+}
+
+fn print_lint_usage() {
+    eprintln!("Usage:");
+    eprintln!("    typelisp lint <file.tl> [--stdlib-root <dir>...]");
 }
 
 fn print_test_usage() {
@@ -620,6 +626,47 @@ fn run_fmt_command(args: &[String]) {
         &runtime_args,
         native::host_target(),
     ));
+    write_stream_or_exit(io::stdout(), &output.stdout, "stdout");
+    write_stream_or_exit(io::stderr(), &output.stderr, "stderr");
+    if !output.status.success() {
+        std::process::exit(output.status.code().unwrap_or(1));
+    }
+}
+
+fn lint_runtime_args(args: &[String]) -> Vec<String> {
+    let mut runtime_args = args[2..].to_vec();
+    if let Some(root) = env::var_os(TYPELISP_STDLIB_ROOT_ENV)
+        && !root.is_empty()
+    {
+        runtime_args.push("--stdlib-root".to_string());
+        runtime_args.push(PathBuf::from(root).display().to_string());
+    }
+    runtime_args
+}
+
+fn run_lint_command(args: &[String]) {
+    if args.len() < 3 {
+        eprintln!("Error: missing file argument");
+        print_lint_usage();
+        std::process::exit(1);
+    }
+    if matches!(args[2].as_str(), "help" | "--help" | "-h") {
+        print_lint_usage();
+        return;
+    }
+
+    let driver = find_selfhost_file("selfhost/lint.tl").unwrap_or_else(|| {
+        eprintln!("Error: could not find selfhost/lint.tl in the repo or near the executable");
+        std::process::exit(1);
+    });
+    let runtime_args = lint_runtime_args(args);
+    let output = native_or_exit(native::run_source_file_in_temp_dir(
+        &driver,
+        &LoadOptions::default(),
+        runtime_args.as_slice(),
+        native::host_target(),
+    ));
+
     write_stream_or_exit(io::stdout(), &output.stdout, "stdout");
     write_stream_or_exit(io::stderr(), &output.stderr, "stderr");
     if !output.status.success() {
@@ -1119,6 +1166,9 @@ fn run_cli() {
         }
         "fmt" => {
             run_fmt_command(&args);
+        }
+        "lint" => {
+            run_lint_command(&args);
         }
         "test" => {
             run_test_command(&args);

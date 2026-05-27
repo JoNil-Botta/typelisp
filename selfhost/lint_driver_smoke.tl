@@ -3,4 +3,8 @@
 (import "lint_driver_core.tl")
 
 (define (main) : i64
-  (compiler-lint-driver-self-test))
+  (begin
+    ;; The imported driver core defines printing helpers; keep the print-string
+    ;; runtime linked even when this smoke only exercises the pure source path.
+    (print-string "")
+    (compiler-lint-driver-self-test)))

@@ -821,11 +821,29 @@
             (if (= size 2)
               "%r14w"
               "%r14b"))
-          (if (= size 4)
-            "%r15d"
-            (if (= size 2)
-              "%r15w"
-              "%r15b")))))))
+          (if (string-eq reg "%r15")
+            (if (= size 4)
+              "%r15d"
+              (if (= size 2)
+                "%r15w"
+                "%r15b"))
+            (if (string-eq reg "%r8")
+              (if (= size 4)
+                "%r8d"
+                (if (= size 2)
+                  "%r8w"
+                  "%r8b"))
+              (if (string-eq reg "%r9")
+                (if (= size 4)
+                  "%r9d"
+                  (if (= size 2)
+                    "%r9w"
+                    "%r9b"))
+                (if (= size 4)
+                  "%r15d"
+                  (if (= size 2)
+                    "%r15w"
+                    "%r15b"))))))))))
 
 (define (compiler-backend-emit-load-register [reg : String] [ty : AstType]) : String
   (let
@@ -8753,6 +8771,61 @@ tl_windows_setup_instances:
                     "    leaq .L_tl_str_6869(%rip), %rax\n")))))))]
     [(ErrCompilerBackend _) false]))
 
+;; Backend-owned replacement for the string runtime helper emission tests
+;; (#1044): source-level string builtins lower to direct calls, and the backend
+;; emits each helper body instead of leaving an extern placeholder.
+(define (compiler-backend-string-runtime-source) : String
+  "(define (parse-and-render [s : String]) : i64
+  (+
+    (string->int s)
+    (+
+      (string-length (int->string 42))
+      (+
+        (string-length (substring s 0 1))
+        (string-length (string-concat s \"!\"))))))
+(define (main) : i64 (parse-and-render \"42\"))")
+
+(define (compiler-backend-string-runtime-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-string-runtime-source))
+    [(OkCompilerBackend asm)
+      (and
+        (backend-and8
+          (compiler-backend-string-contains? asm ".globl tl_string_to_int\n")
+          (compiler-backend-string-contains? asm "tl_string_to_int:\n")
+          (compiler-backend-string-contains? asm "    call tl_string_to_int\n")
+          (compiler-backend-string-contains? asm ".globl tl_int_to_string\n")
+          (compiler-backend-string-contains? asm "tl_int_to_string:\n")
+          (compiler-backend-string-contains? asm "    call tl_int_to_string\n")
+          (compiler-backend-string-contains? asm ".globl tl_substring\n")
+          (compiler-backend-string-contains? asm "    call tl_substring\n"))
+        (and
+          (backend-and8
+            (compiler-backend-string-contains? asm "tl_substring:\n")
+            (compiler-backend-string-contains? asm ".globl tl_string_concat\n")
+            (compiler-backend-string-contains? asm "tl_string_concat:\n")
+            (compiler-backend-string-contains?
+              asm
+              "    call tl_string_concat\n")
+            (not
+              (compiler-backend-string-contains?
+                asm
+                ".extern tl_string_to_int\n"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                ".extern tl_int_to_string\n"))
+            (not
+              (compiler-backend-string-contains? asm ".extern tl_substring\n"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                ".extern tl_string_concat\n")))
+          (not
+            (compiler-backend-string-contains?
+              asm
+              (compiler-backend-todo-marker)))))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-aggregate-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-aggregate-source))
     [(OkCompilerBackend asm)
@@ -8845,6 +8918,33 @@ tl_windows_setup_instances:
       (CompilerRegAssignmentCons
         (CompilerRegAssignment 2 (CompilerRegRegister "%r13"))
         CompilerRegAssignmentNil))))
+
+(define (compiler-backend-expanded-scalar-assignments) : CompilerRegAssignmentList
+  (CompilerRegAssignmentCons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%r8"))
+    (CompilerRegAssignmentCons
+      (CompilerRegAssignment 1 (CompilerRegRegister "%r9"))
+      CompilerRegAssignmentNil)))
+
+(define (compiler-backend-expanded-scalar-regs-ok?) : bool
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-backend-expanded-scalar-assignments)]
+    (and
+      (string-eq
+        (compiler-backend-emit-load-var-with-plan assignments 0 "%rax")
+        "    movq %r8, %rax\n")
+      (and
+        (string-eq
+          (compiler-backend-emit-store-var-with-plan assignments 1 "%rax")
+          "    movq %rax, %r9\n")
+        (and
+          (string-eq
+            (compiler-backend-emit-load-register "%r8" (AstTyU32))
+            "    movl %r8d, %eax\n")
+          (and
+            (not (compiler-backend-plan-uses-callee-regs? assignments))
+            (= (compiler-backend-frame-slots 2 assignments) 2)))))))
 
 (define (compiler-backend-peephole-register-moves-ok?) : bool
   (let
@@ -9867,10 +9967,14 @@ tl_windows_setup_instances:
         (and
           (compiler-backend-user-helper-name-ok?)
           (and
-            (compiler-backend-env-runtime-ok?)
+            (compiler-backend-string-runtime-ok?)
             (and
-              (compiler-backend-runtime-coexist-ok?)
-              (compiler-backend-module-symbol-ok?)))))))
+              (compiler-backend-env-runtime-ok?)
+              (and
+                (compiler-backend-expanded-scalar-regs-ok?)
+                (and
+                  (compiler-backend-runtime-coexist-ok?)
+                  (compiler-backend-module-symbol-ok?)))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

@@ -12,6 +12,43 @@ This document specifies the TypeLisp language as implemented today. It is the gr
 
 TypeLisp is a statically typed Lisp/Scheme dialect that compiles to native x86_64 assembly. Every expression has a known type at compile time. There is no runtime type tagging, no garbage collector, and no interpreter.
 
+### Safe code: no undefined behavior
+
+Safe TypeLisp programs do not have undefined behavior. A conforming compiler
+and runtime must handle every accepted safe-code operation with exactly one of
+these outcomes:
+
+- **Static reject:** the program is rejected before lowering/code generation.
+- **Deterministic runtime trap:** the program aborts through a documented
+  runtime trap path instead of continuing with an invalid value or invalid
+  memory access.
+- **Defined result:** the operation produces the specified value, including
+  specified wrapping behavior where the language says arithmetic wraps.
+
+Safe code is source outside an `(unsafe ...)` context and outside helpers
+documented as unsafe by convention. An unsafe context does not disable ordinary
+type checking; it only moves responsibility for raw-pointer, foreign-ABI, and
+manual resource-reset invariants to the programmer. Optimizations may rely on
+the static type, move, borrow, and region facts below, but must not reinterpret
+accepted safe code as having behavior outside this table.
+
+| Safety area | Safe-code outcome | Binding rule and owner |
+|-------------|-------------------|------------------------|
+| Integer `+`, `-`, `*`, and `neg` overflow | Defined wrap | Wrap modulo 2^N for the result type width; signed results interpret the wrapped bits as two's-complement values. See section 5.4 and #1101. |
+| Integer `/` and `%` invalid operands | Deterministic runtime trap | Divisor zero and signed minimum divided/remaindered by `-1` trap through the integer division/remainder abort path. See section 5.4 and #1101. |
+| Integer shift counts | Deterministic runtime trap | `shl`/`shr` trap when the count is negative or not less than the left operand's bit width. See section 5.4. |
+| Supported integer/`char` casts | Defined result | Integer/integer and integer/`char` casts use the defined truncation, sign-extension, and zero-extension rules. See section 3.8 and #1101. |
+| Unsupported casts | Static reject | Unsupported cast families, including floating-point casts until they are specified, are rejected before lowering. See section 3.8 and #1101. |
+| Array, string, slice, and generated collection bounds | Deterministic runtime trap | Out-of-bounds indexing, invalid slice ranges, negative dynamic-array lengths, and allocation byte-count overflow trap through the bounds-check abort path. SPMD inactive tail lanes do not perform bounds checks or memory accesses. See sections 5.15 and 6.1. |
+| Initialized-before-use and no use-after-move | Static reject | Safe code cannot read an uninitialized place or a place whose move-only value has been moved. Move-only aggregate semantics are specified in section 4.6.2 and #1046; enforcement is tracked by #1048 and #805. |
+| Borrow/reference validity and arena escape | Static reject | Safe references and region-tagged aggregate handles cannot outlive their lifetime/arena, be returned or stored into a longer-lived slot, or be captured by an escaping closure. Current region-tagged escape checks are in sections 3.9, 5.16, and 7.3; immutable borrow rules are owned by #1033/#1034/#1035. |
+| Mutation through shared references | Static reject | Safe code cannot write through an immutable/shared reference. Mutable-reference writes require exclusive access; that checker work is owned by #806. Current aggregate-handle mutation is governed by the move-only and aliasing rules in sections 4.6.2 and 7.6. |
+| SPMD safe-code data-race freedom | Static reject | Safe `foreach`/SPMD code rejects varying calls, unsupported varying control flow, unsafe shared mutation, and reduction shapes that cannot be proven race-free by the SPMD rules. See section 5.15 and #937/#1012. |
+| Invalid enum/struct states | Static reject | Safe code constructs enums and structs only through their checked constructors and pattern forms. Arbitrary bit construction, invalid variants, invalid field layouts, packed-field access, and recursive-by-value `repr c` states are rejected. See sections 3.5, 4.6, and 5.13. |
+| Raw pointer dereference/write/arithmetic/casts, foreign ABI assumptions, and manual arena reset | Static reject | Safe code may pass, return, compare, and null-test raw pointer values as specified, but dereference, write, offset, pointer/integer cast, foreign ABI invariants beyond the declared signature, and low-level manual region reset require `(unsafe ...)` or an unsafe-by-convention helper. See sections 3.4, 5.19, 7.3, and 7.4; design/implementation owners are #954, #809, #812, #1052, #1054, and #1055. |
+| Invalid comptime-to-runtime values | Static reject | Comptime generation and reflection cannot smuggle invalid runtime values, invalid types, or unstable compiler-internal identities into safe runtime code. Runtime observation of comptime-only metadata is rejected. See sections 3.7 and 5.17; reflection surface owner is #970. |
+| Valid comptime-generated runtime values | Defined result | Accepted generated declarations and values have ordinary valid runtime representations and follow the same safe-code contract as hand-written declarations. See sections 3.7 and 5.17; reflection surface owner is #970. |
+
 ### Compilation pipeline
 
 ```
@@ -320,7 +357,9 @@ Reusable abstractions should be built by compile-time code that inspects type
 values and emits concrete `defstruct`, `defenum`, `define`, and related
 implementation declarations. The current implementation path is tracked by
 #893 (concrete type and implementation bundles), #913 (type reflection
-primitives), and #483 (stable generated functions/type constructors).
+primitives), and #902 (generated concrete Option/Result families). Historical
+generic/type-constructor work in #483 is superseded by this comptime-generation
+chain.
 
 Until that path is complete, write explicit monomorphic declarations such as
 `MaybeI64`, `ResultStringI64`, or domain-specific structs/enums.
@@ -1653,7 +1692,125 @@ not perform a reset; the semantics match minus reclamation. The form still
 prevents escapes, so programs compile and run identically, but allocations
 accumulate in the process-lifetime arena instead of being reclaimed.
 
-### 5.17 Layout queries (specified, selfhost pending)
+### 5.17 Comptime type reflection (specified, selfhost pending)
+
+Type reflection is the compile-time-only surface that lets generators inspect
+TypeLisp types and emit concrete declarations instead of using source-level
+generics or traits. Reflection is intentionally a comptime metadata API, not a
+runtime type-object API.
+
+All reflection primitives take `type-expr` operands that must evaluate at
+compile time to a type value, usually `(type T)` or a `[comptime T : type]`
+parameter. Reflection primitives are valid only in compile-time-required
+contexts: explicit `(comptime ...)` folds, comptime parameter evaluation, and
+generated declaration evaluation. Any direct runtime use must be rejected before
+lowering. A generator that wants a runtime literal derived from reflection must
+emit that literal into generated source; the reflection metadata itself never
+becomes a runtime value.
+
+Reflection returns CTFE metadata values. `i64` metadata is an integer in the
+comptime evaluator. `type` metadata is a type value. `String` metadata is a
+compiler-owned comptime string. These strings may be compared and used to build
+generated identifiers in comptime code, but they must not be lowered as heap
+`String` values. V1 does not expose list metadata values; indexed primitives are
+used instead.
+
+V1 primitive names and signatures are fixed as follows:
+
+| Primitive | Result | Notes |
+| --- | --- | --- |
+| `(type-kind type-expr)` | `String` | One of the fixed kind strings below. |
+| `(type-key type-expr)` | `String` | Opaque deterministic key for generated declarations. |
+| `(type-nominal-module type-expr)` | `String` | Canonical module identity for a struct/enum type. |
+| `(type-nominal-name type-expr)` | `String` | Unqualified nominal type name for a struct/enum type. |
+| `(struct-field-count type-expr)` | `i64` | Requires a struct type. |
+| `(struct-field-name type-expr index-expr)` | `String` | Zero-based field name. |
+| `(struct-field-type type-expr index-expr)` | `type` | Zero-based field type. |
+| `(enum-variant-count type-expr)` | `i64` | Requires an enum type. |
+| `(enum-variant-name type-expr index-expr)` | `String` | Zero-based variant constructor name. |
+| `(enum-variant-payload-count type-expr index-expr)` | `i64` | Number of payload fields for that variant. |
+| `(enum-variant-payload-type type-expr variant-index-expr payload-index-expr)` | `type` | Zero-based payload type. |
+| `(array-element-type type-expr)` | `type` | Requires fixed or dynamic array. |
+| `(array-length type-expr)` | `i64` | Requires fixed array. Dynamic arrays reject this. |
+| `(array-dynamic? type-expr)` | `bool` | True for `(Array T)`, false for `(Array T n)`. |
+| `(function-param-count type-expr)` | `i64` | Requires function type. |
+| `(function-param-type type-expr index-expr)` | `type` | Zero-based parameter type. |
+| `(function-return-type type-expr)` | `type` | Function return type. |
+
+`index-expr`, `variant-index-expr`, and `payload-index-expr` must evaluate to
+`i64` in the same comptime context. Out-of-range indices, wrong arity,
+non-type operands, and kind mismatches are compile-time diagnostics. The
+diagnostic should name the primitive and the expected kind, for example
+`struct-field-type requires struct type`.
+
+`type-kind` returns one of these lowercase stable strings:
+
+- Builtins: `i64`, `i32`, `i16`, `i8`, `u64`, `u32`, `u16`, `u8`, `f64`,
+  `f32`, `bool`, `char`, `string`, `unit`, `never`.
+- Shapes: `array`, `dyn-array`, `function`, `tuple`, `struct`, `enum`.
+- Reserved/partial shapes: `str`, `ptr`, `mut-ptr`, `ref`, `mut-ref`,
+  `region`, `type-var`.
+
+V1 reflection may classify reserved/partial shapes with `type-kind` and
+`type-key`, but detailed pointer/reference/region reflection is deferred to the
+raw-pointer and reference owning issues. Tuple element introspection is also
+deferred; tuple types can be keyed and classified but are not a generator target
+for v1.
+
+Nominal identity is two-part:
+
+- `type-nominal-module` returns the canonical module identity defined by the
+  module-identity work (#951/#952), not a source import spelling.
+- `type-nominal-name` returns the declared or generated type name in that
+  module's type namespace.
+
+Both primitives reject non-nominal types. Generated nominal declarations from
+#893 use their generated declaration identity as the nominal name component, so
+reflection and generated declaration reuse share the same identity source.
+
+`type-key` is a compiler-owned ASCII string. It is stable across compiler runs
+for the same canonical type graph and is suitable as an input to generated
+declaration keys; it is not a display format and programs must not parse it.
+The key is built from tagged, length-prefixed components so module names, type
+names, and recursive subkeys cannot collide. Conceptually, the rules are:
+
+- Builtins key by their stable lowercase kind string.
+- Fixed arrays key as `(array length element-key)`.
+- Dynamic arrays key as `(dyn-array element-key)`.
+- Functions key as `(function param-count param-key... return-key)`.
+- Nominal structs/enums key as `(nominal kind module-identity type-name)`.
+- Pointer/reference/region keys, once detailed reflection lands, must include
+  mutability and the referenced/pointee type key; reference keys must also
+  include the canonical region identity.
+
+The implementation must resolve aliases before keying, preserve nominal
+struct/enum identity rather than structuralizing it, and use the same key rules
+when composing #893 generated declaration identities. Display names derived from
+keys may use a readable mangling, but the key itself remains opaque.
+
+Intended generator uses:
+
+- Concrete collection families key their element type with `type-key` and emit
+  names such as `Vec_I64` or `Map_String_I64` from that key.
+- Concrete `Option*` / `Result*` families key payload and error types with the
+  same rules as section 9.
+- Serializer, equality, hashing, and debug-print helpers can iterate
+  `struct-field-*` and `enum-variant-*` metadata to emit direct field/variant
+  code for one nominal type.
+- Function adapters can inspect `function-param-*` / `function-return-type` to
+  generate arity-specific wrappers without runtime type objects.
+
+V1 exclusions:
+
+- Layout size, alignment, and field offset queries stay in the layout-query
+  surface below (#912) and are not aliases for reflection primitives.
+- Raw pointer, reference, and region details beyond kind/key are deferred to
+  their owning issues.
+- Runtime type IDs, runtime reflection, trait/interface lookup, method tables,
+  and type-erased dispatch are not part of this surface.
+- Reflection metadata strings are not runtime `String` allocation hooks.
+
+### 5.18 Layout queries (specified, selfhost pending)
 
 The selfhost FFI layout surface reserves three comptime-only query forms:
 
@@ -1689,7 +1846,7 @@ types, invalid field names, and use outside a compile-time-required context.
 
 ---
 
-### 5.18 `(with ([name init cleanup] ...) body ...)` - scoped resource cleanup
+### 5.19 `(with ([name init cleanup] ...) body ...)` - scoped resource cleanup
 
 The `(with ...)` form is reserved for explicit scoped cleanup of non-memory
 resources such as file descriptors, process handles, temporary files, locks,
@@ -1835,7 +1992,7 @@ only owns the bound value and invokes one cleanup function per binding.
 
 ---
 
-### 5.19 `(unsafe body ...)` and raw pointer operations (v1 design; implementation pending)
+### 5.20 `(unsafe body ...)` and raw pointer operations (v1 design; implementation pending)
 
 `unsafe` is the v1 source marker for operations whose safety cannot be proven by
 the TypeLisp typechecker. It is specified before implementation (#809/#896).
@@ -2104,7 +2261,7 @@ implementation uses pointer-sized handles for several aggregate values, but
 those handles are not checked references in the source language. Full
 ownership/borrowing work is a separate design track. The reserved
 `(with ...)`
-form (§5.18) is explicit non-memory resource cleanup; it is not a general
+form (§5.19) is explicit non-memory resource cleanup; it is not a general
 object destructor or heap reclamation mechanism. Raw pointers are the explicit
 low-level exception: their v1 syntax is specified, but they carry no safety
 guarantees and are not implemented yet (#809/#896).
@@ -2219,7 +2376,7 @@ reclaim, matching the semantic contract minus the reset.
 
 #### Scoped non-memory resources (reserved) - `with`
 
-The reserved `(with ([name init cleanup] ...) body ...)` form (§5.18) is the
+The reserved `(with ([name init cleanup] ...) body ...)` form (§5.19) is the
 source surface for deterministic cleanup of non-memory resources. It does not
 select an allocation arena and does not reset heap storage. Cleanup is explicit
 in the binding and must return `unit`; TypeLisp still has no implicit

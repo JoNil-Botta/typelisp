@@ -214,6 +214,7 @@
     [(AstExprSet _ value) (lint-walk-expr value threshold acc)]
     [(AstExprAnn inner _) (lint-walk-expr inner threshold acc)]
     [(AstExprCast inner _) (lint-walk-expr inner threshold acc)]
+    [(AstExprBorrow _ place) (lint-walk-expr place threshold acc)]
     [(AstExprMatch scrutinee arms)
       (lint-walk-match-arms
         arms

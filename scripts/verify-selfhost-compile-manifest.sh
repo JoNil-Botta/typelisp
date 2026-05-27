@@ -129,7 +129,7 @@ ensure_compiled() {
     set -e
     if [ "$code" -ne 0 ]; then
         if staged_symbol_matches "$case_requires_symbol" "$err_path"; then
-            echo "[selfhost-compile] SKIP $case_id (awaiting stage0 republish of '$case_requires_symbol')"
+            echo "[selfhost-compile] SKIP $case_id (awaiting no-Rust compiler support for '$case_requires_symbol')"
             skipped=$((skipped + 1))
             compiled=2
             return
@@ -246,5 +246,5 @@ fi
 
 echo "selfhost compile manifest passed: $case_count case(s)"
 if [ "$skipped" -ne 0 ]; then
-    echo "selfhost compile manifest: $skipped case(s) skipped (staged primitive awaiting stage0 republish)"
+    echo "selfhost compile manifest: $skipped case(s) skipped (staged primitive awaiting no-Rust compiler support)"
 fi

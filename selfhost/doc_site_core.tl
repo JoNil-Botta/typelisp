@@ -150,6 +150,20 @@ main {
   margin: 0 auto;
   padding: 1.5rem clamp(1rem, 4vw, 3rem) 3rem;
 }
+.tl-doc-shell {
+  display: grid;
+  grid-template-columns: minmax(12rem, 16rem) minmax(0, 1fr);
+  gap: 1.5rem;
+  max-width: 92rem;
+  margin: 0 auto;
+  padding: 1.5rem clamp(1rem, 4vw, 3rem) 3rem;
+}
+.tl-doc-shell main {
+  min-width: 0;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
 a {
   color: #075985;
 }
@@ -166,7 +180,8 @@ pre {
 }
 .tl-doc-site-nav,
 .tl-doc-module-nav,
-.tl-doc-item-nav {
+.tl-doc-item-nav,
+.tl-doc-stdlib-sidebar {
   background: #ffffff;
   border: 1px solid #d9e2ec;
   border-radius: 6px;
@@ -174,9 +189,40 @@ pre {
 }
 .tl-doc-site-nav ul,
 .tl-doc-module-nav ul,
-.tl-doc-item-nav ul {
+.tl-doc-item-nav ul,
+.tl-doc-stdlib-sidebar ul {
   margin: 0;
   padding-left: 1.25rem;
+}
+.tl-doc-stdlib-sidebar {
+  position: sticky;
+  top: 1rem;
+  align-self: start;
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+}
+.tl-doc-stdlib-tree {
+  list-style: none;
+  padding-left: 0 !important;
+}
+.tl-doc-stdlib-tree ul {
+  margin-top: 0.5rem;
+}
+.tl-doc-tree-root,
+.tl-doc-tree-link {
+  display: block;
+  border-radius: 4px;
+  padding: 0.25rem 0.4rem;
+  text-decoration: none;
+}
+.tl-doc-tree-root {
+  font-weight: 700;
+}
+.tl-doc-tree-link.is-current,
+.tl-doc-tree-root.is-current {
+  background: #e0f2fe;
+  color: #0c4a6e;
+  font-weight: 700;
 }
 .tl-doc-module,
 .tl-doc-item {
@@ -195,6 +241,16 @@ pre {
 }
 .tl-doc-empty {
   color: #6b7280;
+}
+@media (max-width: 760px) {
+  .tl-doc-shell {
+    display: block;
+  }
+  .tl-doc-stdlib-sidebar {
+    position: static;
+    max-height: 16rem;
+    margin-bottom: 1rem;
+  }
 }")
 
 (define (doc-site-index-entry [module : DocSiteModule]) : String
@@ -213,13 +269,116 @@ pre {
         (doc-site-index-entry module)
         (doc-site-index-entries rest))]))
 
-(define (doc-site-render-index [modules : DocSiteModuleList]) : String
+(define (doc-site-module-label [module : DocSiteModule]) : String
+  (let
+    [source : String (doc-site-module-source module)]
+    (let
+      [i : i64 0]
+      [n : i64 (string-length source)]
+      [start : i64 0]
+      [end : i64 (string-length source)]
+      (begin
+        (while (< i n)
+          (begin
+            (if (doc-site-path-separator? (string-ref source i))
+              (begin
+                (set! start (+ i 1))
+                (set! end n))
+              unit)
+            (if (= (string-ref source i) #.')
+              (set! end i)
+              unit)
+            (set! i (+ i 1))))
+        (substring source start (- end start))))))
+
+(define (doc-site-sidebar-link-open [href : String] [current : String]) : String
+  (if (string-eq href current)
+    (doc-html-cat3
+      "<a class=\"tl-doc-tree-link is-current\" aria-current=\"page\" href=\""
+      (doc-html-escape href)
+      "\">")
+    (doc-html-cat3
+      "<a class=\"tl-doc-tree-link\" href=\""
+      (doc-html-escape href)
+      "\">")))
+
+(define (doc-site-sidebar-root-link [current : String]) : String
+  (if (string-eq current "stdlib.html")
+    "<a class=\"tl-doc-tree-root is-current\" aria-current=\"page\" href=\"stdlib.html\">stdlib</a>\n"
+    "<a class=\"tl-doc-tree-root\" href=\"stdlib.html\">stdlib</a>\n"))
+
+(define (doc-site-sidebar-entry [module : DocSiteModule] [current : String]) : String
   (doc-html-cat5
-    (doc-html-page-open "TypeLisp API")
-    (doc-html-header "TypeLisp API" "stdlib static site")
-    "<main>\n<nav class=\"tl-doc-site-nav\" aria-label=\"Stdlib modules\">\n<h2>Stdlib modules</h2>\n<ul>\n"
-    (doc-site-index-entries modules)
-    "</ul>\n</nav>\n</main>\n</body>\n</html>\n"))
+    "<li>"
+    (doc-site-sidebar-link-open (doc-site-module-output module) current)
+    "<code>"
+    (doc-html-escape (doc-site-module-label module))
+    "</code></a></li>\n"))
+
+(define (doc-site-sidebar-entries
+  [modules : DocSiteModuleList]
+  [current : String]) : String
+  (match modules
+    [(DocSiteModuleNil) ""]
+    [(DocSiteModuleCons module rest)
+      (string-append
+        (doc-site-sidebar-entry module current)
+        (doc-site-sidebar-entries rest current))]))
+
+(define (doc-site-stdlib-sidebar
+  [modules : DocSiteModuleList]
+  [current : String]) : String
+  (doc-html-cat5
+    "<nav class=\"tl-doc-stdlib-sidebar\" aria-label=\"Stdlib module tree\">\n<ul class=\"tl-doc-stdlib-tree\">\n<li>"
+    (doc-site-sidebar-root-link current)
+    "<ul>\n"
+    (doc-site-sidebar-entries modules current)
+    "</ul>\n</li>\n</ul>\n</nav>\n"))
+
+(define (doc-site-render-page
+  [title : String]
+  [subtitle : String]
+  [modules : DocSiteModuleList]
+  [current : String]
+  [body : String]) : String
+  (doc-html-cat5
+    (doc-html-page-open title)
+    (doc-html-header "TypeLisp API" subtitle)
+    "<div class=\"tl-doc-shell\">\n"
+    (doc-site-stdlib-sidebar modules current)
+    (doc-html-cat5
+      "<main class=\"tl-doc-content\">\n"
+      body
+      "</main>\n</div>\n"
+      (doc-html-page-close)
+      "")))
+
+(define (doc-site-render-index [modules : DocSiteModuleList] [current : String]) : String
+  (doc-site-render-page
+    "TypeLisp API"
+    "stdlib static site"
+    modules
+    current
+    (doc-html-cat5
+      "<nav class=\"tl-doc-site-nav\" aria-label=\"Stdlib modules\">\n<h2>Stdlib modules</h2>\n<ul>\n"
+      (doc-site-index-entries modules)
+      "</ul>\n</nav>\n"
+      ""
+      "")))
+
+(define (doc-site-render-module-page
+  [modules : DocSiteModuleList]
+  [module : DocSiteModule]
+  [docs : DocExtraction]) : String
+  (let
+    [source : String (doc-site-module-source module)]
+    [title : String (doc-html-cat3 "TypeLisp API: " source "")]
+    (doc-site-render-page
+      title
+      source
+      modules
+      (doc-site-module-output module)
+      (doc-html-module-section (DocModule source docs)))))
 
 (define (doc-site-read-module-docs [source : String]) : DocExtraction
   (let
@@ -251,23 +410,27 @@ pre {
 
 (define (doc-site-write-module-page
   [output-dir : String]
+  [modules : DocSiteModuleList]
   [module : DocSiteModule]) : unit
   (let
     [source : String (doc-site-module-source module)]
     [output : String
       (doc-site-path-join output-dir (doc-site-module-output module))]
     [docs : DocExtraction (doc-site-read-module-docs source)]
-    (doc-site-write-file output (doc-html-render-module-page source docs))))
+    (doc-site-write-file
+      output
+      (doc-site-render-module-page modules module docs))))
 
 (define (doc-site-write-module-pages
   [output-dir : String]
-  [modules : DocSiteModuleList]) : unit
-  (match modules
+  [modules : DocSiteModuleList]
+  [remaining : DocSiteModuleList]) : unit
+  (match remaining
     [(DocSiteModuleNil) unit]
     [(DocSiteModuleCons module rest)
       (begin
-        (doc-site-write-module-page output-dir module)
-        (doc-site-write-module-pages output-dir rest))]))
+        (doc-site-write-module-page output-dir modules module)
+        (doc-site-write-module-pages output-dir modules rest))]))
 
 (define (doc-site-build [output-dir : String]) : i64
   (let
@@ -280,11 +443,11 @@ pre {
         (doc-site-css))
       (doc-site-write-file
         (doc-site-path-join output-dir "index.html")
-        (doc-site-render-index modules))
+        (doc-site-render-index modules "index.html"))
       (doc-site-write-file
         (doc-site-path-join output-dir "stdlib.html")
-        (doc-site-render-index modules))
-      (doc-site-write-module-pages output-dir modules)
+        (doc-site-render-index modules "stdlib.html"))
+      (doc-site-write-module-pages output-dir modules modules)
       0)))
 
 (define (doc-site-smoke-source) : String
@@ -315,14 +478,16 @@ pre {
 (define (doc-site-smoke) : i64
   (let
     [modules : DocSiteModuleList (doc-site-smoke-modules)]
-    [index : String (doc-site-render-index modules)]
+    [index : String (doc-site-render-index modules "index.html")]
     [page : String
-      (doc-html-render-module-page
-        "stdlib/smoke<&>.tl"
+      (doc-site-render-module-page
+        modules
+        (DocSiteModule "stdlib/smoke<&>.tl" "stdlib-smoke.html")
         (doc-extract-source (doc-site-smoke-source)))]
     [second-page : String
-      (doc-html-render-module-page
-        "stdlib/second.tl"
+      (doc-site-render-module-page
+        modules
+        (DocSiteModule "stdlib/second.tl" "stdlib-second.html")
         (doc-extract-source (doc-site-second-smoke-source)))]
     (begin
       (doc-html-require-contains
@@ -331,8 +496,20 @@ pre {
         "doc-site: site nav missing")
       (doc-html-require-contains
         index
+        "<nav class=\"tl-doc-stdlib-sidebar\" aria-label=\"Stdlib module tree\">"
+        "doc-site: sidebar missing")
+      (doc-html-require-contains
+        index
+        "href=\"stdlib.html\">stdlib</a>"
+        "doc-site: sidebar root missing")
+      (doc-html-require-contains
+        index
         "href=\"stdlib-smoke.html\""
         "doc-site: module link missing")
+      (doc-html-require-contains
+        index
+        "<code>second</code>"
+        "doc-site: sidebar module label missing")
       (doc-html-require-contains
         index
         "stdlib/smoke&lt;&amp;&gt;.tl"
@@ -341,6 +518,14 @@ pre {
         page
         "<title>TypeLisp API: stdlib/smoke&lt;&amp;&gt;.tl</title>"
         "doc-site: module title missing")
+      (doc-html-require-contains
+        page
+        "class=\"tl-doc-tree-link is-current\" aria-current=\"page\" href=\"stdlib-smoke.html\""
+        "doc-site: current sidebar link missing")
+      (doc-html-require-contains
+        page
+        "<code>smoke&lt;&amp;&gt;</code>"
+        "doc-site: sidebar current label escaping missing")
       (doc-html-require-contains
         page
         "id=\"tl-stdlib-47smoke-60-38-62-46tl\""
@@ -357,6 +542,10 @@ pre {
         second-page
         "Second smoke module docs."
         "doc-site: second page missing")
+      (doc-html-require-contains
+        second-page
+        "class=\"tl-doc-tree-link is-current\" aria-current=\"page\" href=\"stdlib-second.html\""
+        "doc-site: second current sidebar link missing")
       (doc-html-require-contains
         (doc-site-css)
         ".tl-doc-header"

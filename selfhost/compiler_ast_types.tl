@@ -91,6 +91,10 @@
   (AstNoType)
   (AstSomeType AstType))
 
+(defenum AstBorrowLifetime
+  (AstBorrowLifetimeInferred)
+  (AstBorrowLifetimeNamed String))
+
 (defenum AstParam
   (AstParam String AstType bool))
 
@@ -190,6 +194,7 @@
   (AstExprSet String AstExpr)
   (AstExprAnn AstExpr AstType)
   (AstExprCast AstExpr AstType)
+  (AstExprBorrow AstBorrowLifetime AstExpr)
   (AstExprMatch AstExpr AstMatchArmList)
   (AstExprForeach String AstType AstExpr AstExpr AstExpr)
   (AstExprSpmdReduce AstReduceOp String AstType AstExpr AstExpr AstExpr AstExpr)
@@ -314,6 +319,7 @@
     [(AstExprSet _ _) 19]
     [(AstExprAnn _ _) 20]
     [(AstExprCast _ _) 21]
+    [(AstExprBorrow _ _) 40]
     [(AstExprMatch _ _) 22]
     [(AstExprForeach _ _ _ _ _) 23]
     [(AstExprStructGet _ _) 24]

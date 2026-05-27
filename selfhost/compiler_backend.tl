@@ -73,6 +73,7 @@
     bool
     bool
     bool
+    bool
     bool))
 
 ;; Backend code-generation target (#646). Linux/System V and Windows x64 are
@@ -168,6 +169,13 @@
   (compiler-diagnostic-with-message
     instr-diag
     (compiler-diagnostic-message diag)))
+
+(define (compiler-backend-vector-mask-unimplemented
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (ErrCompilerBackend
+    (compiler-diagnostic-with-message
+      instr-diag
+      "backend: vector/mask IR emission is not implemented")))
 
 (define (compiler-backend-round-up-16 [n : i64]) : i64
   (if (= n 0)
@@ -342,7 +350,7 @@
         [(CompilerRegRegister home)
           (if (string-eq home reg)
             ""
-            (backend-cat5 "    movq " home ", " reg "\n"))]
+            (backend-cat5 "    movsd " home ", " reg "\n"))]
         [(CompilerRegSpill offset)
           (backend-cat5
             "    movsd "
@@ -363,7 +371,7 @@
         [(CompilerRegRegister home)
           (if (string-eq home reg)
             ""
-            (backend-cat5 "    movq " reg ", " home "\n"))]
+            (backend-cat5 "    movsd " reg ", " home "\n"))]
         [(CompilerRegSpill offset)
           (backend-cat5
             "    movsd "
@@ -2158,6 +2166,34 @@
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(IrInstrLaneId _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrSplat _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrVectorBinOp _ _ _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrVectorReduce _ _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrVectorCompare _ _ _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrMaskBinOp _ _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrMaskNot _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrMaskReduce _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrSelect _ _ _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrVectorLoad _ _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrVectorStore _ _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrPredicatedStore _ _ _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrPredicatedLoad _ _ _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrTailMask _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
       [(IrInstrCall dst name args ty)
         (let
           [param-types : AstTypeList
@@ -2555,6 +2591,7 @@
           _
           _
           _
+          _
           _)
         (if (or arg-count arg)
           "    movq %rcx, .L_tl_argc(%rip)
@@ -2767,6 +2804,60 @@
         length)]
     [(IrInstrCast _ src _ _)
       (compiler-backend-collect-value-string strings src)]
+    [(IrInstrSplat _ value _ _)
+      (compiler-backend-collect-value-string strings value)]
+    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
+      (compiler-backend-collect-value-string
+        (compiler-backend-collect-value-string strings lhs)
+        rhs)]
+    [(IrInstrVectorReduce _ _ src _ _)
+      (compiler-backend-collect-value-string strings src)]
+    [(IrInstrVectorCompare _ _ lhs rhs _ _)
+      (compiler-backend-collect-value-string
+        (compiler-backend-collect-value-string strings lhs)
+        rhs)]
+    [(IrInstrMaskBinOp _ _ lhs rhs _)
+      (compiler-backend-collect-value-string
+        (compiler-backend-collect-value-string strings lhs)
+        rhs)]
+    [(IrInstrMaskNot _ src _)
+      (compiler-backend-collect-value-string strings src)]
+    [(IrInstrMaskReduce _ _ src _)
+      (compiler-backend-collect-value-string strings src)]
+    [(IrInstrSelect _ mask on-true on-false _ _)
+      (compiler-backend-collect-value-string
+        (compiler-backend-collect-value-string
+          (compiler-backend-collect-value-string strings mask)
+          on-true)
+        on-false)]
+    [(IrInstrVectorLoad _ base index _ _)
+      (compiler-backend-collect-value-string
+        (compiler-backend-collect-value-string strings base)
+        index)]
+    [(IrInstrVectorStore base index value _ _)
+      (compiler-backend-collect-value-string
+        (compiler-backend-collect-value-string
+          (compiler-backend-collect-value-string strings base)
+          index)
+        value)]
+    [(IrInstrPredicatedStore base index value mask _ _)
+      (compiler-backend-collect-value-string
+        (compiler-backend-collect-value-string
+          (compiler-backend-collect-value-string
+            (compiler-backend-collect-value-string strings base)
+            index)
+          value)
+        mask)]
+    [(IrInstrPredicatedLoad _ base index mask _ _)
+      (compiler-backend-collect-value-string
+        (compiler-backend-collect-value-string
+          (compiler-backend-collect-value-string strings base)
+          index)
+        mask)]
+    [(IrInstrTailMask _ index length _)
+      (compiler-backend-collect-value-string
+        (compiler-backend-collect-value-string strings index)
+        length)]
     [_ strings]))
 
 (define (compiler-backend-collect-instr-list-strings
@@ -2884,6 +2975,59 @@
         (compiler-backend-collect-value-f64 floats index)
         length)]
     [(IrInstrCast _ src _ _) (compiler-backend-collect-value-f64 floats src)]
+    [(IrInstrSplat _ value _ _)
+      (compiler-backend-collect-value-f64 floats value)]
+    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
+      (compiler-backend-collect-value-f64
+        (compiler-backend-collect-value-f64 floats lhs)
+        rhs)]
+    [(IrInstrVectorReduce _ _ src _ _)
+      (compiler-backend-collect-value-f64 floats src)]
+    [(IrInstrVectorCompare _ _ lhs rhs _ _)
+      (compiler-backend-collect-value-f64
+        (compiler-backend-collect-value-f64 floats lhs)
+        rhs)]
+    [(IrInstrMaskBinOp _ _ lhs rhs _)
+      (compiler-backend-collect-value-f64
+        (compiler-backend-collect-value-f64 floats lhs)
+        rhs)]
+    [(IrInstrMaskNot _ src _) (compiler-backend-collect-value-f64 floats src)]
+    [(IrInstrMaskReduce _ _ src _)
+      (compiler-backend-collect-value-f64 floats src)]
+    [(IrInstrSelect _ mask on-true on-false _ _)
+      (compiler-backend-collect-value-f64
+        (compiler-backend-collect-value-f64
+          (compiler-backend-collect-value-f64 floats mask)
+          on-true)
+        on-false)]
+    [(IrInstrVectorLoad _ base index _ _)
+      (compiler-backend-collect-value-f64
+        (compiler-backend-collect-value-f64 floats base)
+        index)]
+    [(IrInstrVectorStore base index value _ _)
+      (compiler-backend-collect-value-f64
+        (compiler-backend-collect-value-f64
+          (compiler-backend-collect-value-f64 floats base)
+          index)
+        value)]
+    [(IrInstrPredicatedStore base index value mask _ _)
+      (compiler-backend-collect-value-f64
+        (compiler-backend-collect-value-f64
+          (compiler-backend-collect-value-f64
+            (compiler-backend-collect-value-f64 floats base)
+            index)
+          value)
+        mask)]
+    [(IrInstrPredicatedLoad _ base index mask _ _)
+      (compiler-backend-collect-value-f64
+        (compiler-backend-collect-value-f64
+          (compiler-backend-collect-value-f64 floats base)
+          index)
+        mask)]
+    [(IrInstrTailMask _ index length _)
+      (compiler-backend-collect-value-f64
+        (compiler-backend-collect-value-f64 floats index)
+        length)]
     [_ floats]))
 
 (define (compiler-backend-collect-instr-list-f64s
@@ -3155,6 +3299,7 @@
         provides-read-file
         provides-write-file
         provides-file-exists
+        provides-file-handle
         provides-file-read-chunk
         provides-process-output
         read-line
@@ -3251,43 +3396,53 @@
                 provides-file-exists)
               (compiler-backend-provides-runtime-name?
                 name
+                ".L_tl_file_open_status"
+                provides-file-handle)
+              (compiler-backend-provides-runtime-name?
+                name
+                ".L_tl_file_close_status"
+                provides-file-handle)
+              (compiler-backend-provides-runtime-name?
+                name
                 ".L_tl_file_read_chunk_status"
-                provides-file-read-chunk)
-              (compiler-backend-provides-runtime-name?
-                name
-                ".L_tl_file_read_chunk_bytes"
-                provides-file-read-chunk)
-              (compiler-backend-provides-runtime-name?
-                name
-                ".L_tl_file_read_chunk_eof"
                 provides-file-read-chunk))
             (or
               (compiler-backend-provides-runtime-name?
                 name
-                ".L_tl_read_stdin_line"
-                read-line)
+                ".L_tl_file_read_chunk_bytes"
+                provides-file-read-chunk)
               (or
-                (backend-or4
-                  (compiler-backend-provides-runtime-name?
-                    name
-                    ".L_tl_read_stdin_bytes"
-                    read-bytes)
-                  (compiler-backend-provides-runtime-name?
-                    name
-                    ".L_tl_stdin_eof"
-                    stdin-eof)
-                  (compiler-backend-provides-runtime-name?
-                    name
-                    ".L_tl_flush_stdout"
-                    flush-stdout)
-                  (compiler-backend-provides-runtime-name?
-                    name
-                    "tl_random_system_seed"
-                    random-system-seed))
                 (compiler-backend-provides-runtime-name?
                   name
-                  "tl_windows_setup_instances"
-                  windows-setup-instances))))))]))
+                  ".L_tl_file_read_chunk_eof"
+                  provides-file-read-chunk)
+                (or
+                  (compiler-backend-provides-runtime-name?
+                    name
+                    ".L_tl_read_stdin_line"
+                    read-line)
+                  (or
+                    (backend-or4
+                      (compiler-backend-provides-runtime-name?
+                        name
+                        ".L_tl_read_stdin_bytes"
+                        read-bytes)
+                      (compiler-backend-provides-runtime-name?
+                        name
+                        ".L_tl_stdin_eof"
+                        stdin-eof)
+                      (compiler-backend-provides-runtime-name?
+                        name
+                        ".L_tl_flush_stdout"
+                        flush-stdout)
+                      (compiler-backend-provides-runtime-name?
+                        name
+                        "tl_random_system_seed"
+                        random-system-seed))
+                    (compiler-backend-provides-runtime-name?
+                      name
+                      "tl_windows_setup_instances"
+                      windows-setup-instances))))))))]))
 
 (define (compiler-backend-runtime-plan-for
   [functions : CompilerIrFunctionList]
@@ -3367,6 +3522,14 @@
       (compiler-backend-extern-list-references?
         externs
         ".L_tl_file_exists_status")]
+    [extern-file-open-status : bool
+      (compiler-backend-extern-list-references?
+        externs
+        ".L_tl_file_open_status")]
+    [extern-file-close-status : bool
+      (compiler-backend-extern-list-references?
+        externs
+        ".L_tl_file_close_status")]
     [extern-file-read-chunk-status : bool
       (compiler-backend-extern-list-references?
         externs
@@ -3443,6 +3606,12 @@
       (compiler-backend-function-list-calls?
         functions
         ".L_tl_file_exists_status")]
+    [calls-file-open-status : bool
+      (compiler-backend-function-list-calls? functions ".L_tl_file_open_status")]
+    [calls-file-close-status : bool
+      (compiler-backend-function-list-calls?
+        functions
+        ".L_tl_file_close_status")]
     [calls-file-read-chunk-status : bool
       (compiler-backend-function-list-calls?
         functions
@@ -3510,6 +3679,10 @@
         (or
           (or extern-file-exists calls-file-exists)
           (or extern-file-exists-status calls-file-exists-status))]
+      [needs-file-handle : bool
+        (or
+          (or extern-file-open-status calls-file-open-status)
+          (or extern-file-close-status calls-file-close-status))]
       [needs-file-read-chunk : bool
         (or
           (or extern-file-read-chunk-status calls-file-read-chunk-status)
@@ -3563,14 +3736,18 @@
               needs-write-file
               needs-file-exists)
             (or
-              needs-file-read-chunk
+              needs-file-handle
               (or
-                needs-process-output
+                needs-file-read-chunk
                 (or
-                  needs-read-line
+                  needs-process-output
                   (or
-                    needs-read-bytes
-                    (or needs-random-system-seed needs-windows-setup-instances))))))]
+                    needs-read-line
+                    (or
+                      needs-read-bytes
+                      (or
+                        needs-random-system-seed
+                        needs-windows-setup-instances)))))))]
         (OkBackendRuntimePlan
           (BackendRuntimePlan
             needs-alloc
@@ -3587,6 +3764,7 @@
             needs-read-file
             needs-write-file
             needs-file-exists
+            needs-file-handle
             needs-file-read-chunk
             needs-process-output
             needs-read-line
@@ -3739,10 +3917,13 @@ tl_current_arena:
 "
     ""))
 
-(define (compiler-backend-runtime-file-read-chunk-data
+(define (compiler-backend-runtime-file-handle-data
   [target : CompilerBackendTarget]
+  [file-handle : bool]
   [file-read-chunk : bool]) : String
-  (if (and file-read-chunk (not (compiler-backend-target-windows? target)))
+  (if (and
+    (or file-handle file-read-chunk)
+    (not (compiler-backend-target-windows? target)))
     "    .data
     .balign 8
 .L_tl_file_handle_next:
@@ -3766,6 +3947,11 @@ tl_current_arena:
 
 "
     ""))
+
+(define (compiler-backend-runtime-file-read-chunk-data
+  [target : CompilerBackendTarget]
+  [file-read-chunk : bool]) : String
+  (compiler-backend-runtime-file-handle-data target false file-read-chunk))
 
 (define (compiler-backend-runtime-data [plan : CompilerBackendRuntimePlan]) : String
   (compiler-backend-runtime-data-for-target (BackendTargetLinux) plan))
@@ -3862,6 +4048,7 @@ tl_current_arena:
         read-file
         write-file
         file-exists
+        file-handle
         file-read-chunk
         process-output
         read-line
@@ -3895,8 +4082,9 @@ tl_current_arena:
                   (string-append
                     (compiler-backend-runtime-file-exists-data file-exists)
                     (string-append
-                      (compiler-backend-runtime-file-read-chunk-data
+                      (compiler-backend-runtime-file-handle-data
                         target
+                        file-handle
                         file-read-chunk)
                       (string-append
                         (compiler-backend-runtime-process-output-data
@@ -4737,6 +4925,157 @@ tl_print_err:
     ret
 
 ")
+
+(define (compiler-backend-runtime-file-open-status-functions) : String
+  ".L_tl_file_open_status:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    sub $8, %rsp
+    movq %rdi, %rbx
+    movq %rsi, %r12
+    movq %rdx, %r14
+    cmpq $0, %r12
+    jle .L_tl_file_open_status_invalid
+    movq %r12, %rdi
+    addq $1, %rdi
+    js .L_tl_file_open_status_invalid
+    call tl_alloc
+    movq %rax, %r13
+    xorq %rcx, %rcx
+.L_tl_file_open_status_path_copy_loop:
+    cmpq %r12, %rcx
+    jge .L_tl_file_open_status_path_copy_done
+    movzbl (%rbx,%rcx), %edx
+    movb %dl, (%r13,%rcx)
+    incq %rcx
+    jmp .L_tl_file_open_status_path_copy_loop
+.L_tl_file_open_status_path_copy_done:
+    movb $0, (%r13,%r12)
+    cmpq $0, %r14
+    je .L_tl_file_open_status_mode_read
+    cmpq $1, %r14
+    je .L_tl_file_open_status_mode_truncate
+    cmpq $2, %r14
+    je .L_tl_file_open_status_mode_append
+    jmp .L_tl_file_open_status_invalid
+.L_tl_file_open_status_mode_read:
+    xorq %rdx, %rdx
+    xorq %r10, %r10
+    jmp .L_tl_file_open_status_open
+.L_tl_file_open_status_mode_truncate:
+    movq $577, %rdx
+    movq $438, %r10
+    jmp .L_tl_file_open_status_open
+.L_tl_file_open_status_mode_append:
+    movq $1089, %rdx
+    movq $438, %r10
+.L_tl_file_open_status_open:
+    movq $257, %rax
+    movq $-100, %rdi
+    movq %r13, %rsi
+    syscall
+    testq %rax, %rax
+    js .L_tl_file_open_status_return
+    movq %rax, %r15
+    movq .L_tl_file_handle_next(%rip), %rax
+    cmpq $1024, %rax
+    jge .L_tl_file_open_status_table_full
+    leaq .L_tl_file_handle_fds(%rip), %rcx
+    movq %r15, (%rcx,%rax,8)
+    leaq .L_tl_file_handle_modes(%rip), %rcx
+    movq %r14, (%rcx,%rax,8)
+    leaq .L_tl_file_handle_states(%rip), %rcx
+    movq $1, (%rcx,%rax,8)
+    leaq .L_tl_file_handle_eofs(%rip), %rcx
+    movq $0, (%rcx,%rax,8)
+    leaq .L_tl_file_handle_last_ptrs(%rip), %rcx
+    movq $0, (%rcx,%rax,8)
+    leaq .L_tl_file_handle_last_lens(%rip), %rcx
+    movq $0, (%rcx,%rax,8)
+    leaq .L_tl_file_handle_last_eofs(%rip), %rcx
+    movq $0, (%rcx,%rax,8)
+    leaq 1(%rax), %rcx
+    movq %rcx, .L_tl_file_handle_next(%rip)
+    jmp .L_tl_file_open_status_return
+.L_tl_file_open_status_table_full:
+    movq $3, %rax
+    movq %r15, %rdi
+    syscall
+    movq $-38, %rax
+    jmp .L_tl_file_open_status_return
+.L_tl_file_open_status_invalid:
+    movq $-22, %rax
+.L_tl_file_open_status_return:
+    add $8, %rsp
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+")
+
+(define (compiler-backend-runtime-file-close-status-functions) : String
+  ".L_tl_file_close_status:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    movq %rdi, %rbx
+    cmpq $1, %rbx
+    jl .L_tl_file_close_status_unsupported
+    cmpq $1024, %rbx
+    jge .L_tl_file_close_status_unsupported
+    leaq .L_tl_file_handle_states(%rip), %rcx
+    movq (%rcx,%rbx,8), %rax
+    cmpq $1, %rax
+    jne .L_tl_file_close_status_unsupported
+    leaq .L_tl_file_handle_fds(%rip), %rcx
+    movq (%rcx,%rbx,8), %rdi
+    movq $3, %rax
+    syscall
+    testq %rax, %rax
+    js .L_tl_file_close_status_error_from_rax
+    leaq .L_tl_file_handle_states(%rip), %rcx
+    movq $2, (%rcx,%rbx,8)
+    xorq %rax, %rax
+    jmp .L_tl_file_close_status_return
+.L_tl_file_close_status_error_from_rax:
+    negq %rax
+    jmp .L_tl_file_close_status_return
+.L_tl_file_close_status_unsupported:
+    movq $38, %rax
+.L_tl_file_close_status_return:
+    pop %rbx
+    pop %rbp
+    ret
+
+")
+
+(define (compiler-backend-runtime-windows-file-handle-functions) : String
+  ".L_tl_file_open_status:
+    movq $-38, %rax
+    ret
+
+.L_tl_file_close_status:
+    movq $38, %rax
+    ret
+
+")
+
+(define (compiler-backend-runtime-file-handle-functions
+  [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    (compiler-backend-runtime-windows-file-handle-functions)
+    (string-append
+      (compiler-backend-runtime-file-open-status-functions)
+      (compiler-backend-runtime-file-close-status-functions))))
 
 (define (compiler-backend-runtime-file-read-chunk-status-functions) : String
   ".L_tl_file_read_chunk_status:
@@ -5650,9 +5989,21 @@ tl_print_err:
 tl_string_eq:
     cmpq %rcx, %rsi
     jne .L_tl_string_eq_false
-.L_tl_string_eq_loop:
-    testq %rsi, %rsi
+    movq %rsi, %r8
+    shrq $3, %r8
+    jz .L_tl_string_eq_tail
+.L_tl_string_eq_word_loop:
+    movq (%rdi), %rax
+    cmpq (%rdx), %rax
+    jne .L_tl_string_eq_false
+    addq $8, %rdi
+    addq $8, %rdx
+    decq %r8
+    jne .L_tl_string_eq_word_loop
+.L_tl_string_eq_tail:
+    andq $7, %rsi
     jz .L_tl_string_eq_true
+.L_tl_string_eq_tail_loop:
     movzbl (%rdi), %eax
     movzbl (%rdx), %r8d
     cmpb %r8b, %al
@@ -5660,7 +6011,7 @@ tl_string_eq:
     incq %rdi
     incq %rdx
     decq %rsi
-    jmp .L_tl_string_eq_loop
+    jne .L_tl_string_eq_tail_loop
 .L_tl_string_eq_true:
     movq $1, %rax
     ret
@@ -5707,9 +6058,21 @@ tl_string_to_int:
 tl_string_eq:
     cmpq %r9, %rdx
     jne .L_tl_string_eq_false
-.L_tl_string_eq_loop:
-    testq %rdx, %rdx
+    movq %rdx, %r10
+    shrq $3, %r10
+    jz .L_tl_string_eq_tail
+.L_tl_string_eq_word_loop:
+    movq (%rcx), %rax
+    cmpq (%r8), %rax
+    jne .L_tl_string_eq_false
+    addq $8, %rcx
+    addq $8, %r8
+    decq %r10
+    jne .L_tl_string_eq_word_loop
+.L_tl_string_eq_tail:
+    andq $7, %rdx
     jz .L_tl_string_eq_true
+.L_tl_string_eq_tail_loop:
     movzbl (%rcx), %eax
     movzbl (%r8), %r10d
     cmpb %r10b, %al
@@ -5717,7 +6080,7 @@ tl_string_eq:
     incq %rcx
     incq %r8
     decq %rdx
-    jmp .L_tl_string_eq_loop
+    jne .L_tl_string_eq_tail_loop
 .L_tl_string_eq_true:
     movq $1, %rax
     ret
@@ -5915,15 +6278,10 @@ tl_substring:
     movq %r12, %rdi
     call tl_alloc
     movq %rax, %r13
-    movq $0, %rcx
-.L_tl_substring_copy_loop:
-    cmpq %r12, %rcx
-    jge .L_tl_substring_copy_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r13,%rcx)
-    incq %rcx
-    jmp .L_tl_substring_copy_loop
-.L_tl_substring_copy_done:
+    movq %r12, %rcx
+    movq %rbx, %rsi
+    movq %r13, %rdi
+    rep movsb
     movq $16, %rdi
     call tl_alloc
     movq %r13, 0(%rax)
@@ -5945,6 +6303,8 @@ tl_substring:
     push %rbx
     push %r12
     push %r13
+    push %rsi
+    push %rdi
     sub $8, %rsp
     movq %rcx, %rbx
     addq %rdx, %rbx
@@ -5954,15 +6314,10 @@ tl_substring:
     call tl_alloc
     add $32, %rsp
     movq %rax, %r13
-    movq $0, %rcx
-.L_tl_substring_copy_loop:
-    cmpq %r12, %rcx
-    jge .L_tl_substring_copy_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r13,%rcx)
-    incq %rcx
-    jmp .L_tl_substring_copy_loop
-.L_tl_substring_copy_done:
+    movq %r12, %rcx
+    movq %rbx, %rsi
+    movq %r13, %rdi
+    rep movsb
     movq $16, %rcx
     sub $32, %rsp
     call tl_alloc
@@ -5970,6 +6325,8 @@ tl_substring:
     movq %r13, 0(%rax)
     movq %r12, 8(%rax)
     add $8, %rsp
+    pop %rdi
+    pop %rsi
     pop %r13
     pop %r12
     pop %rbx
@@ -5997,26 +6354,15 @@ tl_string_concat:
     addq %r14, %rdi
     call tl_alloc
     movq %rax, %r15
-    movq $0, %rcx
-.L_tl_string_concat_copy_a:
-    cmpq %r12, %rcx
-    jge .L_tl_string_concat_copy_a_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r15,%rcx)
-    incq %rcx
-    jmp .L_tl_string_concat_copy_a
-.L_tl_string_concat_copy_a_done:
-    movq $0, %rcx
-.L_tl_string_concat_copy_b:
-    cmpq %r14, %rcx
-    jge .L_tl_string_concat_copy_b_done
-    movzbl (%r13,%rcx), %edx
-    movq %r12, %rax
-    addq %rcx, %rax
-    movb %dl, (%r15,%rax)
-    incq %rcx
-    jmp .L_tl_string_concat_copy_b
-.L_tl_string_concat_copy_b_done:
+    movq %r12, %rcx
+    movq %rbx, %rsi
+    movq %r15, %rdi
+    rep movsb
+    movq %r14, %rcx
+    movq %r13, %rsi
+    movq %r15, %rdi
+    addq %r12, %rdi
+    rep movsb
     movq $16, %rdi
     call tl_alloc
     movq %r15, 0(%rax)
@@ -6044,6 +6390,8 @@ tl_string_concat:
     push %r13
     push %r14
     push %r15
+    push %rsi
+    push %rdi
     sub $8, %rsp
     movq %rcx, %rbx
     movq %rdx, %r12
@@ -6055,26 +6403,15 @@ tl_string_concat:
     call tl_alloc
     add $32, %rsp
     movq %rax, %r15
-    movq $0, %rcx
-.L_tl_string_concat_copy_a:
-    cmpq %r12, %rcx
-    jge .L_tl_string_concat_copy_a_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r15,%rcx)
-    incq %rcx
-    jmp .L_tl_string_concat_copy_a
-.L_tl_string_concat_copy_a_done:
-    movq $0, %rcx
-.L_tl_string_concat_copy_b:
-    cmpq %r14, %rcx
-    jge .L_tl_string_concat_copy_b_done
-    movzbl (%r13,%rcx), %edx
-    movq %r12, %rax
-    addq %rcx, %rax
-    movb %dl, (%r15,%rax)
-    incq %rcx
-    jmp .L_tl_string_concat_copy_b
-.L_tl_string_concat_copy_b_done:
+    movq %r12, %rcx
+    movq %rbx, %rsi
+    movq %r15, %rdi
+    rep movsb
+    movq %r14, %rcx
+    movq %r13, %rsi
+    movq %r15, %rdi
+    addq %r12, %rdi
+    rep movsb
     movq $16, %rcx
     sub $32, %rsp
     call tl_alloc
@@ -6084,6 +6421,8 @@ tl_string_concat:
     addq %r14, %rdx
     movq %rdx, 8(%rax)
     add $8, %rsp
+    pop %rdi
+    pop %rsi
     pop %r15
     pop %r14
     pop %r13
@@ -7029,6 +7368,7 @@ tl_windows_setup_instances:
         read-file
         write-file
         file-exists
+        file-handle
         file-read-chunk
         process-output
         read-line
@@ -7148,6 +7488,10 @@ tl_windows_setup_instances:
               (compiler-backend-runtime-windows-file-exists-status-functions)
               (compiler-backend-runtime-file-exists-status-functions))
             "")]
+        [file-handle-asm : String
+          (if file-handle
+            (compiler-backend-runtime-file-handle-functions target)
+            "")]
         [file-read-chunk-asm : String
           (if file-read-chunk
             (compiler-backend-runtime-file-read-chunk-functions target)
@@ -7243,18 +7587,20 @@ tl_windows_setup_instances:
                                               (string-append
                                                 file-exists-status-asm
                                                 (string-append
-                                                  file-read-chunk-asm
+                                                  file-handle-asm
                                                   (string-append
-                                                    process-output-asm
+                                                    file-read-chunk-asm
                                                     (string-append
-                                                      read-line-asm
+                                                      process-output-asm
                                                       (string-append
-                                                        read-bytes-asm
+                                                        read-line-asm
                                                         (string-append
-                                                          stdin-eof-asm
+                                                          read-bytes-asm
                                                           (string-append
-                                                            flush-stdout-asm
-                                                            random-and-windows-asm)))))))))))))))))))))))))))]))
+                                                            stdin-eof-asm
+                                                            (string-append
+                                                              flush-stdout-asm
+                                                              random-and-windows-asm))))))))))))))))))))))))))))]))
 
 ;; Argument register for call arg `idx` under the target's calling convention.
 ;; System V (Linux) uses rdi/rsi/rdx/rcx/r8/r9 via `compiler-backend-arg-reg`;
@@ -7358,6 +7704,7 @@ tl_windows_setup_instances:
             _
             _
             _
+            _
             process-output
             _
             _
@@ -7393,6 +7740,7 @@ tl_windows_setup_instances:
         read-file
         write-file
         file-exists
+        file-handle
         file-read-chunk
         process-output
         read-line
@@ -7422,21 +7770,23 @@ tl_windows_setup_instances:
               read-file
               write-file
               file-exists
-              file-read-chunk
+              file-handle
               read-line)
             (or
-              process-output
+              file-read-chunk
               (or
-                read-bytes
+                process-output
                 (or
-                  stdin-eof
+                  read-bytes
                   (or
-                    flush-stdout
-                    (backend-or4
-                      region-mark
-                      region-reset
-                      random-system-seed
-                      windows-setup-instances))))))))]))
+                    stdin-eof
+                    (or
+                      flush-stdout
+                      (backend-or4
+                        region-mark
+                        region-reset
+                        random-system-seed
+                        windows-setup-instances)))))))))]))
 
 (define (compiler-backend-target-runtime-ok?
   [target : CompilerBackendTarget]
@@ -7444,6 +7794,7 @@ tl_windows_setup_instances:
   (if (compiler-backend-target-windows? target)
     (match plan
       [(BackendRuntimePlan
+          _
           _
           _
           _
@@ -7708,27 +8059,35 @@ tl_windows_setup_instances:
                               (AstTyBool))
                             (IrExternCons
                               (compiler-ir-extern-default
-                                ".L_tl_file_read_chunk_status"
+                                ".L_tl_file_open_status"
                                 (AstTyI64))
                               (IrExternCons
                                 (compiler-ir-extern-default
-                                  ".L_tl_file_read_chunk_bytes"
-                                  (AstTyString))
+                                  ".L_tl_file_close_status"
+                                  (AstTyI64))
                                 (IrExternCons
                                   (compiler-ir-extern-default
-                                    ".L_tl_file_read_chunk_eof"
-                                    (AstTyBool))
+                                    ".L_tl_file_read_chunk_status"
+                                    (AstTyI64))
                                   (IrExternCons
                                     (compiler-ir-extern-default
-                                      "tl_process_output"
-                                      (AstTyFunc
-                                        (AstTypeCons (AstTyI64) AstTypeNil)
-                                        (AstTyI64)))
+                                      ".L_tl_file_read_chunk_bytes"
+                                      (AstTyString))
                                     (IrExternCons
                                       (compiler-ir-extern-default
-                                        "tl_random_system_seed"
-                                        (AstTyI64))
-                                      IrExternNil)))))))))))))))))))
+                                        ".L_tl_file_read_chunk_eof"
+                                        (AstTyBool))
+                                      (IrExternCons
+                                        (compiler-ir-extern-default
+                                          "tl_process_output"
+                                          (AstTyFunc
+                                            (AstTypeCons (AstTyI64) AstTypeNil)
+                                            (AstTyI64)))
+                                        (IrExternCons
+                                          (compiler-ir-extern-default
+                                            "tl_random_system_seed"
+                                            (AstTyI64))
+                                          IrExternNil)))))))))))))))))))))
 
 (define (compiler-backend-runtime-helper-program) : CompilerIrProgram
   (IrProgram
@@ -7738,7 +8097,7 @@ tl_windows_setup_instances:
         "main"
         IrParamNil
         (AstTyI64)
-        11
+        13
         (IrBlockCons
           (IrBlock
             "entry"
@@ -7799,27 +8158,43 @@ tl_windows_setup_instances:
                             (IrInstrCons
                               (IrInstrCall
                                 8
-                                ".L_tl_file_read_chunk_status"
+                                ".L_tl_file_open_status"
                                 (IrValueCons
-                                  (IrValueI64 1)
-                                  (IrValueCons (IrValueI64 4) IrValueNil))
+                                  (IrValueI64 0)
+                                  (IrValueCons
+                                    (IrValueI64 0)
+                                    (IrValueCons (IrValueI64 0) IrValueNil)))
                                 (AstTyI64))
                               (IrInstrCons
                                 (IrInstrCall
                                   9
-                                  ".L_tl_file_read_chunk_bytes"
+                                  ".L_tl_file_close_status"
                                   (IrValueCons (IrValueI64 1) IrValueNil)
-                                  (AstTyString))
+                                  (AstTyI64))
                                 (IrInstrCons
                                   (IrInstrCall
                                     10
-                                    ".L_tl_file_read_chunk_eof"
-                                    (IrValueCons (IrValueI64 1) IrValueNil)
-                                    (AstTyBool))
+                                    ".L_tl_file_read_chunk_status"
+                                    (IrValueCons
+                                      (IrValueI64 1)
+                                      (IrValueCons (IrValueI64 4) IrValueNil))
+                                    (AstTyI64))
                                   (IrInstrCons
-                                    (IrInstrReturn
-                                      (IrSomeValue (IrValueI64 42)))
-                                    IrInstrNil)))))))))))))
+                                    (IrInstrCall
+                                      11
+                                      ".L_tl_file_read_chunk_bytes"
+                                      (IrValueCons (IrValueI64 1) IrValueNil)
+                                      (AstTyString))
+                                    (IrInstrCons
+                                      (IrInstrCall
+                                        12
+                                        ".L_tl_file_read_chunk_eof"
+                                        (IrValueCons (IrValueI64 1) IrValueNil)
+                                        (AstTyBool))
+                                      (IrInstrCons
+                                        (IrInstrReturn
+                                          (IrSomeValue (IrValueI64 42)))
+                                        IrInstrNil)))))))))))))))
           IrBlockNil))
       IrFunctionNil)
     (compiler-backend-runtime-helper-externs)))
@@ -7847,6 +8222,33 @@ tl_windows_setup_instances:
             (compiler-backend-string-contains? asm "tl_string_eq:\n")
             (compiler-backend-string-contains? asm ".globl tl_string_to_int\n")
             (compiler-backend-string-contains? asm "tl_string_to_int:\n"))]
+        [string-eq-word-path : bool
+          (backend-and4
+            (compiler-backend-string-contains?
+              asm
+              ".L_tl_string_eq_word_loop:\n")
+            (compiler-backend-string-contains? asm "    shrq $3, %r8\n")
+            (compiler-backend-string-contains? asm "    cmpq (%rdx), %rax\n")
+            (compiler-backend-string-contains?
+              asm
+              ".L_tl_string_eq_tail_loop:\n"))]
+        [string-copy-helpers : bool
+          (and
+            (compiler-backend-string-contains? asm "    rep movsb\n")
+            (and
+              (not
+                (compiler-backend-string-contains?
+                  asm
+                  ".L_tl_substring_copy_loop:\n"))
+              (and
+                (not
+                  (compiler-backend-string-contains?
+                    asm
+                    ".L_tl_string_concat_copy_a:\n"))
+                (not
+                  (compiler-backend-string-contains?
+                    asm
+                    ".L_tl_string_concat_copy_b:\n")))))]
         [driver-labels : bool
           (backend-and8
             (compiler-backend-string-contains? asm ".globl tl_int_to_string\n")
@@ -7863,7 +8265,7 @@ tl_windows_setup_instances:
             (compiler-backend-string-contains? asm ".L_tl_abort:\n")
             (compiler-backend-string-contains? asm ".L_tl_argc:\n")
             (compiler-backend-string-contains? asm ".L_tl_argv:\n"))]
-        [file-read-chunk-labels : bool
+        [file-handle-labels : bool
           (and
             (backend-and8
               (compiler-backend-string-contains?
@@ -7891,14 +8293,22 @@ tl_windows_setup_instances:
             (and
               (compiler-backend-string-contains?
                 asm
-                ".L_tl_file_read_chunk_status:\n")
-              (and
-                (compiler-backend-string-contains?
-                  asm
-                  ".L_tl_file_read_chunk_bytes:\n")
-                (compiler-backend-string-contains?
-                  asm
-                  ".L_tl_file_read_chunk_eof:\n"))))]
+                ".L_tl_file_open_status:\n")
+              (compiler-backend-string-contains?
+                asm
+                ".L_tl_file_close_status:\n")))]
+        [file-read-chunk-labels : bool
+          (and
+            (compiler-backend-string-contains?
+              asm
+              ".L_tl_file_read_chunk_status:\n")
+            (and
+              (compiler-backend-string-contains?
+                asm
+                ".L_tl_file_read_chunk_bytes:\n")
+              (compiler-backend-string-contains?
+                asm
+                ".L_tl_file_read_chunk_eof:\n")))]
         [stdio-labels : bool
           (backend-and4
             (compiler-backend-string-contains? asm ".L_tl_read_stdin_line:\n")
@@ -7938,6 +8348,16 @@ tl_windows_setup_instances:
                 (compiler-backend-string-contains?
                   asm
                   ".extern .L_tl_file_read_chunk_eof\n"))))]
+        [file-handle-no-externs : bool
+          (and
+            (not
+              (compiler-backend-string-contains?
+                asm
+                ".extern .L_tl_file_open_status\n"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                ".extern .L_tl_file_close_status\n")))]
         [no-externs : bool
           (and
             (backend-and8
@@ -8013,32 +8433,60 @@ tl_windows_setup_instances:
                       asm
                       ".extern tl_random_system_seed\n"))))))]
         (and
-          base-labels
-          (and
+          (backend-and8
+            base-labels
             string-labels
-            (and
-              driver-labels
-              (and
-                file-labels
-                (and
-                  file-read-chunk-labels
-                  (and
-                    stdio-labels
-                    (and
-                      process-labels
-                      (and
-                        no-externs
-                        (and
-                          file-read-chunk-no-externs
-                          (and
-                            random-labels
-                            (and
-                              (compiler-backend-string-contains?
-                                asm
-                                "    call tl_alloc\n")
-                              (compiler-backend-string-contains?
-                                asm
-                                ".L_tl_stdin_eof_flag:\n")))))))))))))]
+            string-eq-word-path
+            string-copy-helpers
+            driver-labels
+            file-labels
+            file-handle-labels
+            file-read-chunk-labels)
+          (backend-and8
+            stdio-labels
+            process-labels
+            no-externs
+            file-handle-no-externs
+            file-read-chunk-no-externs
+            random-labels
+            (compiler-backend-string-contains? asm "    call tl_alloc\n")
+            (compiler-backend-string-contains? asm ".L_tl_stdin_eof_flag:\n"))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-file-handle-open-close-runtime-ok?) : bool
+  (match (compiler-backend-emit-source
+    "(define (main) : i64
+  (let [handle : i64 (file-open-status \"input.txt\" 0)]
+    (+ handle (file-close-status handle))))")
+    [(OkCompilerBackend asm)
+      (and
+        (backend-and8
+          (compiler-backend-string-contains? asm ".L_tl_file_open_status:\n")
+          (compiler-backend-string-contains? asm ".L_tl_file_close_status:\n")
+          (compiler-backend-string-contains? asm ".L_tl_file_handle_next:\n")
+          (compiler-backend-string-contains? asm ".L_tl_file_handle_fds:\n")
+          (compiler-backend-string-contains? asm ".L_tl_file_handle_states:\n")
+          (compiler-backend-string-contains? asm "    call tl_alloc\n")
+          (compiler-backend-string-contains?
+            asm
+            "    call .L_tl_file_open_status\n")
+          (compiler-backend-string-contains?
+            asm
+            "    call .L_tl_file_close_status\n"))
+        (and
+          (not
+            (compiler-backend-string-contains?
+              asm
+              ".L_tl_file_read_chunk_status:\n"))
+          (and
+            (not
+              (compiler-backend-string-contains?
+                asm
+                ".extern .L_tl_file_open_status\n"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                ".extern .L_tl_file_close_status\n")))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-windows-driver-runtime-source) : String
@@ -8489,6 +8937,13 @@ tl_windows_setup_instances:
 (define (main) : i64
   (calc 10 5))")
 
+(define (compiler-backend-regalloc-f64-source) : String
+  "(define (main) : f64
+  (let
+    [a : f64 1.5]
+    [b : f64 2.5]
+    (+ a b)))")
+
 (define (compiler-backend-asm-ok? [asm : String]) : bool
   (and
     (compiler-backend-string-contains? asm ".data\n")
@@ -8690,11 +9145,36 @@ tl_windows_setup_instances:
                         "    movq %rsi, %r12\n")))))))))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-regalloc-f64-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-regalloc-f64-source))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "main:\n")
+        (and
+          (compiler-backend-string-contains? asm "    movsd %xmm0, %xmm2\n")
+          (and
+            (compiler-backend-string-contains? asm "    movsd %xmm0, %xmm3\n")
+            (and
+              (compiler-backend-string-contains? asm "    movsd %xmm2, %xmm0\n")
+              (and
+                (compiler-backend-string-contains?
+                  asm
+                  "    movsd %xmm3, %xmm1\n")
+                (and
+                  (compiler-backend-string-contains?
+                    asm
+                    "    addsd %xmm1, %xmm0\n")
+                  (not
+                    (compiler-backend-string-contains?
+                      asm
+                      "    movsd %xmm0, -8(%rbp)\n"))))))))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-peephole-assignments) : CompilerRegAssignmentList
   (CompilerRegAssignmentCons
     (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
     (CompilerRegAssignmentCons
-      (CompilerRegAssignment 1 (CompilerRegRegister "%xmm0"))
+      (CompilerRegAssignment 1 (CompilerRegRegister "%xmm2"))
       (CompilerRegAssignmentCons
         (CompilerRegAssignment 2 (CompilerRegRegister "%r13"))
         CompilerRegAssignmentNil))))
@@ -8741,13 +9221,13 @@ tl_windows_setup_instances:
         (and
           (string-eq
             (compiler-backend-emit-load-f64-var-with-plan assignments 1 "%xmm0")
-            "")
+            "    movsd %xmm2, %xmm0\n")
           (string-eq
             (compiler-backend-emit-store-f64-var-with-plan
               assignments
               1
               "%xmm0")
-            ""))))))
+            "    movsd %xmm0, %xmm2\n"))))))
 
 (define (compiler-backend-peephole-asm-ok?) : bool
   (let
@@ -9066,34 +9546,46 @@ tl_windows_setup_instances:
                                         (and
                                           (compiler-backend-string-contains?
                                             asm
-                                            ".L_tl_file_read_chunk_status:\n")
+                                            ".L_tl_file_open_status:\n")
                                           (and
                                             (compiler-backend-string-contains?
                                               asm
-                                              ".L_tl_file_read_chunk_bytes:\n")
+                                              ".L_tl_file_close_status:\n")
                                             (and
                                               (compiler-backend-string-contains?
                                                 asm
-                                                ".L_tl_file_read_chunk_eof:\n")
+                                                "    movq $-38, %rax\n")
                                               (and
-                                                (not
-                                                  (compiler-backend-string-contains?
-                                                    asm
-                                                    ".L_tl_file_handle_next:\n"))
+                                                (compiler-backend-string-contains?
+                                                  asm
+                                                  ".L_tl_file_read_chunk_status:\n")
                                                 (and
                                                   (compiler-backend-string-contains?
                                                     asm
-                                                    "    movq %rcx, .L_tl_argc(%rip)\n")
+                                                    ".L_tl_file_read_chunk_bytes:\n")
                                                   (and
                                                     (compiler-backend-string-contains?
                                                       asm
-                                                      "    .extern malloc\n")
+                                                      ".L_tl_file_read_chunk_eof:\n")
                                                     (and
                                                       (not
                                                         (compiler-backend-string-contains?
                                                           asm
-                                                          "syscall\n"))
-                                                      (compiler-backend-windows-driver-runtime-ok?)))))))))))))))))))))))))]
+                                                          ".L_tl_file_handle_next:\n"))
+                                                      (and
+                                                        (compiler-backend-string-contains?
+                                                          asm
+                                                          "    movq %rcx, .L_tl_argc(%rip)\n")
+                                                        (and
+                                                          (compiler-backend-string-contains?
+                                                            asm
+                                                            "    .extern malloc\n")
+                                                          (and
+                                                            (not
+                                                              (compiler-backend-string-contains?
+                                                                asm
+                                                                "syscall\n"))
+                                                            (compiler-backend-windows-driver-runtime-ok?))))))))))))))))))))))))))))]
     [(ErrCompilerBackend message) false]))
 
 (define (compiler-backend-deterministic-ok? [src : String]) : bool
@@ -9182,11 +9674,17 @@ tl_windows_setup_instances:
         9)
       ;; #1044: an f64 unary op other than negation is rejected (mirrors the
       ;; f64-binary-op reject; only IrUnNeg has an f64 lowering).
-      (compiler-backend-instr-diagnostic-case-ok?
-        (IrInstrUnOp 2 (IrUnNot) (IrValueF64 "1.0") (AstTyF64))
-        "backend: unsupported f64 unary op"
-        40
-        11))))
+      (and
+        (compiler-backend-instr-diagnostic-case-ok?
+          (IrInstrUnOp 2 (IrUnNot) (IrValueF64 "1.0") (AstTyF64))
+          "backend: unsupported f64 unary op"
+          40
+          11)
+        (compiler-backend-instr-diagnostic-case-ok?
+          (IrInstrLaneId 3 4 (AstTyI64))
+          "backend: vector/mask IR emission is not implemented"
+          44
+          13)))))
 
 (define (compiler-backend-optimizer-rewrite-diagnostic-ok?) : bool
   (let
@@ -9256,6 +9754,7 @@ tl_windows_setup_instances:
     CompilerRegVarTypeNil
     (AstTyI64)
     (BackendRuntimePlan
+      false
       false
       false
       false
@@ -9706,14 +10205,18 @@ tl_windows_setup_instances:
         (and
           (compiler-backend-user-helper-name-ok?)
           (and
-            (compiler-backend-string-runtime-ok?)
+            (compiler-backend-file-handle-open-close-runtime-ok?)
             (and
-              (compiler-backend-expanded-scalar-regs-ok?)
-              (and
+              (compiler-backend-string-runtime-ok?)
+              (backend-and8
+                (compiler-backend-expanded-scalar-regs-ok?)
+                (compiler-backend-regalloc-f64-ok?)
                 (compiler-backend-runtime-coexist-ok?)
-                (and
-                  (compiler-backend-module-symbol-ok?)
-                  (compiler-backend-extern-metadata-symbol-ok?)))))))))
+                (compiler-backend-module-symbol-ok?)
+                (compiler-backend-extern-metadata-symbol-ok?)
+                true
+                true
+                true)))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

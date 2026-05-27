@@ -172,6 +172,7 @@
     [(AstExprSet _ _) "set!"]
     [(AstExprAnn _ _) "type annotation"]
     [(AstExprCast _ _) "cast"]
+    [(AstExprBorrow _ _) "borrow"]
     [(AstExprMatch _ _) "match"]
     [(AstExprForeach _ _ _ _ _) "foreach"]
     [(AstExprSpmdReduce _ _ _ _ _ _ _) "spmd-reduce"]
@@ -857,6 +858,19 @@
         [_ false])]
     [_ false]))
 
+(define (ctfe-borrow-lifetime-eq
+  [a : AstBorrowLifetime]
+  [b : AstBorrowLifetime]) : bool
+  (match a
+    [(AstBorrowLifetimeInferred)
+      (match b
+        [(AstBorrowLifetimeInferred) true]
+        [_ false])]
+    [(AstBorrowLifetimeNamed a-name)
+      (match b
+        [(AstBorrowLifetimeNamed b-name) (string-eq a-name b-name)]
+        [_ false])]))
+
 (define (ctfe-expr-eq [a : AstExpr] [b : AstExpr]) : bool
   (match a
     [(AstExprLiteral a-lit)
@@ -903,6 +917,13 @@
       (match b
         [(AstExprAnn b-inner b-ty)
           (and (ctfe-expr-eq a-inner b-inner) (ctfe-type-eq a-ty b-ty))]
+        [_ false])]
+    [(AstExprBorrow a-life a-place)
+      (match b
+        [(AstExprBorrow b-life b-place)
+          (and
+            (ctfe-borrow-lifetime-eq a-life b-life)
+            (ctfe-expr-eq a-place b-place))]
         [_ false])]
     [(AstExprPtrRead a-ptr)
       (match b

@@ -27,7 +27,7 @@ Language direction:
 - Use Zig-style comptime as the abstraction mechanism. TypeLisp should not grow
   source-level generics, traits, interfaces, or `impl` syntax; comptime code
   should generate concrete types, functions, and implementation bundles instead.
-  See #893, #913, and #970.
+  See #893, #913, #970, and #902.
 - Move toward C3-style modules where module identity participates in name
   resolution and prefixes TypeLisp linker symbols; see #950, #952, and #953.
 - Use an arena-based memory model with a default program-lifetime arena and
@@ -124,7 +124,7 @@ Name              ; a defenum / defstruct nominal type
 
 `f32` is in the type system but rejected by backend validation today.
 Raw pointer types `(Ptr T)` and `(MutPtr T)` plus `(unsafe ...)` are specified
-for the v1 FFI surface in [SPEC.md §3.4](SPEC.md) and §5.19, but implementation
+for the v1 FFI surface in [SPEC.md §3.4](SPEC.md) and §5.20, but implementation
 is still pending.
 
 ### Abstraction policy
@@ -138,7 +138,8 @@ monomorphic declarations such as `MaybeI64` or domain-specific `Result*` enums;
 the selfhost compiler already uses `(try expr)` as the Lisp-shaped propagation
 form for compatible concrete Result-like enums.
 
-The comptime implementation path is tracked by #893, #913, and #483.
+The comptime implementation path is tracked by #893, #913, #970, and #902;
+historical generic/type-constructor work in #483 is superseded by that chain.
 
 ### Top-level forms
 
@@ -372,13 +373,21 @@ TypeLisp*:
 
 Compiler self-test and smoke-driver conventions are documented in
 [`selfhost/TESTING.md`](selfhost/TESTING.md).
-Published stage0 compilers for local bootstrap checks can be fetched with
+Published stage0 compilers for local no-Rust checks can be fetched with
 [`scripts/fetch-stage0.sh`](scripts/fetch-stage0.sh), or
 [`scripts/fetch-stage0.ps1`](scripts/fetch-stage0.ps1) from PowerShell. Both
 default to `target/stage0/`. To run the same no-Rust stage0 verification gate
 used by CI, run
 `scripts/verify-no-rust-stage0.sh`; it fetches `stage0-latest` when
-`TYPELISP_BIN` is unset and prevents accidental Cargo fallback.
+`TYPELISP_BIN` is unset and prevents accidental Cargo fallback. On Linux, that
+wrapper uses the published compiler only as the bootstrap seed, checks the
+stage0-to-stage1 bootstrap, then runs deterministic assembly through the freshly
+bootstrapped stage1 compiler via a no-Rust CLI wrapper. That wrapper also smokes
+the stage1 `build`, `run`, and private `debug host-action` path on Linux. Full
+public CLI gates still use the seed compiler until every public-tool exception is
+ported to the wrapper. On Windows, the host-supported gates still run against the
+published stage0 compiler until native stage1 bootstrap/link support lands. The
+full stage2/stage3 fixpoint remains available through `scripts/check-bootstrap-fixpoint.sh`.
 
 Smaller runnable examples, including `calc.tl`, remain in [`examples/`](examples).
 

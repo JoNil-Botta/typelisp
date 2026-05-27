@@ -693,6 +693,18 @@
             (opt-const-bind env dst folded ty)
             (IrInstrMov dst folded ty))]
         [(IrNoValue) (OptInstrResult (opt-const-unbind env dst) instr)])]
+    [(IrInstrLaneId dst _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrSplat dst _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrVectorBinOp dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrVectorReduce dst _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrVectorCompare dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrMaskBinOp dst _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrMaskNot dst _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrMaskReduce dst _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrSelect dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrVectorLoad dst _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrPredicatedLoad dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrTailMask dst _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrCall dst name args ty) (opt-invalidate-def env dst instr)]
     [(IrInstrPhi dst inputs ty) (opt-invalidate-def env dst instr)]
     [_ (OptInstrResult env instr)]))
@@ -737,6 +749,18 @@
               (IrInstrMov dst replacement ty)))]
         [(IrNoValue) (OptInstrResult (opt-const-unbind env dst) instr)])]
     [(IrInstrUnOp dst op v ty) (opt-invalidate-def env dst instr)]
+    [(IrInstrLaneId dst _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrSplat dst _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrVectorBinOp dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrVectorReduce dst _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrVectorCompare dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrMaskBinOp dst _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrMaskNot dst _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrMaskReduce dst _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrSelect dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrVectorLoad dst _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrPredicatedLoad dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrTailMask dst _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrCall dst name args ty) (opt-invalidate-def env dst instr)]
     [(IrInstrPhi dst inputs ty) (opt-invalidate-def env dst instr)]
     [_ (OptInstrResult env instr)]))
@@ -818,6 +842,38 @@
     [(IrInstrBoundsCheck index length _)
       (opt-collect-value-uses (opt-collect-value-uses set index) length)]
     [(IrInstrCast _ src _ _) (opt-collect-value-uses set src)]
+    [(IrInstrSplat _ value _ _) (opt-collect-value-uses set value)]
+    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
+      (opt-collect-value-uses (opt-collect-value-uses set lhs) rhs)]
+    [(IrInstrVectorReduce _ _ src _ _) (opt-collect-value-uses set src)]
+    [(IrInstrVectorCompare _ _ lhs rhs _ _)
+      (opt-collect-value-uses (opt-collect-value-uses set lhs) rhs)]
+    [(IrInstrMaskBinOp _ _ lhs rhs _)
+      (opt-collect-value-uses (opt-collect-value-uses set lhs) rhs)]
+    [(IrInstrMaskNot _ src _) (opt-collect-value-uses set src)]
+    [(IrInstrMaskReduce _ _ src _) (opt-collect-value-uses set src)]
+    [(IrInstrSelect _ mask on-true on-false _ _)
+      (opt-collect-value-uses
+        (opt-collect-value-uses (opt-collect-value-uses set mask) on-true)
+        on-false)]
+    [(IrInstrVectorLoad _ base index _ _)
+      (opt-collect-value-uses (opt-collect-value-uses set base) index)]
+    [(IrInstrVectorStore base index value _ _)
+      (opt-collect-value-uses
+        (opt-collect-value-uses (opt-collect-value-uses set base) index)
+        value)]
+    [(IrInstrPredicatedStore base index value mask _ _)
+      (opt-collect-value-uses
+        (opt-collect-value-uses
+          (opt-collect-value-uses (opt-collect-value-uses set base) index)
+          value)
+        mask)]
+    [(IrInstrPredicatedLoad _ base index mask _ _)
+      (opt-collect-value-uses
+        (opt-collect-value-uses (opt-collect-value-uses set base) index)
+        mask)]
+    [(IrInstrTailMask _ index length _)
+      (opt-collect-value-uses (opt-collect-value-uses set index) length)]
     [(IrInstrBranch cond _ _) (opt-collect-value-uses set cond)]
     [(IrInstrReturn maybe)
       (match maybe
@@ -853,6 +909,16 @@
     [(IrInstrBinOp dst _ _ _ _) (not (opt-used-contains set dst))]
     [(IrInstrUnOp dst _ _ _) (not (opt-used-contains set dst))]
     [(IrInstrPhi dst _ _) (not (opt-used-contains set dst))]
+    [(IrInstrLaneId dst _ _) (not (opt-used-contains set dst))]
+    [(IrInstrSplat dst _ _ _) (not (opt-used-contains set dst))]
+    [(IrInstrVectorBinOp dst _ _ _ _ _) (not (opt-used-contains set dst))]
+    [(IrInstrVectorReduce dst _ _ _ _) (not (opt-used-contains set dst))]
+    [(IrInstrVectorCompare dst _ _ _ _ _) (not (opt-used-contains set dst))]
+    [(IrInstrMaskBinOp dst _ _ _ _) (not (opt-used-contains set dst))]
+    [(IrInstrMaskNot dst _ _) (not (opt-used-contains set dst))]
+    [(IrInstrMaskReduce dst _ _ _) (not (opt-used-contains set dst))]
+    [(IrInstrSelect dst _ _ _ _ _) (not (opt-used-contains set dst))]
+    [(IrInstrTailMask dst _ _ _) (not (opt-used-contains set dst))]
     [_ false]))
 
 (define (opt-dce-instrs [set : OptUsedSet] [instrs : CompilerIrInstrList]) : CompilerIrInstrList
@@ -927,6 +993,35 @@
 
 (define (opt-unop-eq [a : CompilerIrUnOp] [b : CompilerIrUnOp]) : bool
   (= (opt-unop-tag a) (opt-unop-tag b)))
+
+(define (opt-mask-binop-tag [op : CompilerIrMaskBinOp]) : i64
+  (match op
+    [(IrMaskAnd) 0]
+    [(IrMaskOr) 1]))
+
+(define (opt-mask-binop-eq [a : CompilerIrMaskBinOp] [b : CompilerIrMaskBinOp]) : bool
+  (= (opt-mask-binop-tag a) (opt-mask-binop-tag b)))
+
+(define (opt-vector-reduce-tag [op : CompilerIrVectorReduceOp]) : i64
+  (match op
+    [(IrVectorReduceSum) 0]
+    [(IrVectorReduceMin) 1]
+    [(IrVectorReduceMax) 2]))
+
+(define (opt-vector-reduce-eq
+  [a : CompilerIrVectorReduceOp]
+  [b : CompilerIrVectorReduceOp]) : bool
+  (= (opt-vector-reduce-tag a) (opt-vector-reduce-tag b)))
+
+(define (opt-mask-reduce-tag [op : CompilerIrMaskReduceOp]) : i64
+  (match op
+    [(IrMaskReduceAll) 0]
+    [(IrMaskReduceAny) 1]))
+
+(define (opt-mask-reduce-eq
+  [a : CompilerIrMaskReduceOp]
+  [b : CompilerIrMaskReduceOp]) : bool
+  (= (opt-mask-reduce-tag a) (opt-mask-reduce-tag b)))
 
 (define (opt-value-eq [a : CompilerIrValue] [b : CompilerIrValue]) : bool
   (match a
@@ -1204,6 +1299,152 @@
               (opt-unop-eq aop bop)
               (and (opt-value-eq av bv) (opt-type-eq aty bty))))]
         [_ false])]
+    [(IrInstrLaneId ad alanes aty)
+      (match b
+        [(IrInstrLaneId bd blanes bty)
+          (and (= ad bd) (and (= alanes blanes) (opt-type-eq aty bty)))]
+        [_ false])]
+    [(IrInstrSplat ad av alanes aty)
+      (match b
+        [(IrInstrSplat bd bv blanes bty)
+          (and
+            (= ad bd)
+            (and
+              (opt-value-eq av bv)
+              (and (= alanes blanes) (opt-type-eq aty bty))))]
+        [_ false])]
+    [(IrInstrVectorBinOp ad aop al ar alanes aty)
+      (match b
+        [(IrInstrVectorBinOp bd bop bl br blanes bty)
+          (and
+            (= ad bd)
+            (and
+              (opt-binop-eq aop bop)
+              (and
+                (opt-value-eq al bl)
+                (and
+                  (opt-value-eq ar br)
+                  (and (= alanes blanes) (opt-type-eq aty bty))))))]
+        [_ false])]
+    [(IrInstrVectorReduce ad aop av alanes aty)
+      (match b
+        [(IrInstrVectorReduce bd bop bv blanes bty)
+          (and
+            (= ad bd)
+            (and
+              (opt-vector-reduce-eq aop bop)
+              (and
+                (opt-value-eq av bv)
+                (and (= alanes blanes) (opt-type-eq aty bty)))))]
+        [_ false])]
+    [(IrInstrVectorCompare ad aop al ar alanes aty)
+      (match b
+        [(IrInstrVectorCompare bd bop bl br blanes bty)
+          (and
+            (= ad bd)
+            (and
+              (opt-binop-eq aop bop)
+              (and
+                (opt-value-eq al bl)
+                (and
+                  (opt-value-eq ar br)
+                  (and (= alanes blanes) (opt-type-eq aty bty))))))]
+        [_ false])]
+    [(IrInstrMaskBinOp ad aop al ar alanes)
+      (match b
+        [(IrInstrMaskBinOp bd bop bl br blanes)
+          (and
+            (= ad bd)
+            (and
+              (opt-mask-binop-eq aop bop)
+              (and
+                (opt-value-eq al bl)
+                (and (opt-value-eq ar br) (= alanes blanes)))))]
+        [_ false])]
+    [(IrInstrMaskNot ad av alanes)
+      (match b
+        [(IrInstrMaskNot bd bv blanes)
+          (and (= ad bd) (and (opt-value-eq av bv) (= alanes blanes)))]
+        [_ false])]
+    [(IrInstrMaskReduce ad aop av alanes)
+      (match b
+        [(IrInstrMaskReduce bd bop bv blanes)
+          (and
+            (= ad bd)
+            (and
+              (opt-mask-reduce-eq aop bop)
+              (and (opt-value-eq av bv) (= alanes blanes))))]
+        [_ false])]
+    [(IrInstrSelect ad amask at af alanes aty)
+      (match b
+        [(IrInstrSelect bd bmask bt bf blanes bty)
+          (and
+            (= ad bd)
+            (and
+              (opt-value-eq amask bmask)
+              (and
+                (opt-value-eq at bt)
+                (and
+                  (opt-value-eq af bf)
+                  (and (= alanes blanes) (opt-type-eq aty bty))))))]
+        [_ false])]
+    [(IrInstrVectorLoad ad abase aindex alanes aty)
+      (match b
+        [(IrInstrVectorLoad bd bbase bindex blanes bty)
+          (and
+            (= ad bd)
+            (and
+              (opt-value-eq abase bbase)
+              (and
+                (opt-value-eq aindex bindex)
+                (and (= alanes blanes) (opt-type-eq aty bty)))))]
+        [_ false])]
+    [(IrInstrVectorStore abase aindex av alanes aty)
+      (match b
+        [(IrInstrVectorStore bbase bindex bv blanes bty)
+          (and
+            (opt-value-eq abase bbase)
+            (and
+              (opt-value-eq aindex bindex)
+              (and
+                (opt-value-eq av bv)
+                (and (= alanes blanes) (opt-type-eq aty bty)))))]
+        [_ false])]
+    [(IrInstrPredicatedStore abase aindex av amask alanes aty)
+      (match b
+        [(IrInstrPredicatedStore bbase bindex bv bmask blanes bty)
+          (and
+            (opt-value-eq abase bbase)
+            (and
+              (opt-value-eq aindex bindex)
+              (and
+                (opt-value-eq av bv)
+                (and
+                  (opt-value-eq amask bmask)
+                  (and (= alanes blanes) (opt-type-eq aty bty))))))]
+        [_ false])]
+    [(IrInstrPredicatedLoad ad abase aindex amask alanes aty)
+      (match b
+        [(IrInstrPredicatedLoad bd bbase bindex bmask blanes bty)
+          (and
+            (= ad bd)
+            (and
+              (opt-value-eq abase bbase)
+              (and
+                (opt-value-eq aindex bindex)
+                (and
+                  (opt-value-eq amask bmask)
+                  (and (= alanes blanes) (opt-type-eq aty bty))))))]
+        [_ false])]
+    [(IrInstrTailMask ad aindex alength alanes)
+      (match b
+        [(IrInstrTailMask bd bindex blength blanes)
+          (and
+            (= ad bd)
+            (and
+              (opt-value-eq aindex bindex)
+              (and (opt-value-eq alength blength) (= alanes blanes))))]
+        [_ false])]
     [(IrInstrCall ad aname aargs aty)
       (match b
         [(IrInstrCall bd bname bargs bty)
@@ -1468,10 +1709,36 @@
       (OptCseResult (opt-expr-invalidate-var table dst) instr)]
     [(IrInstrPhi dst _ _)
       (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrLaneId dst _ _)
+      (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrSplat dst _ _ _)
+      (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrVectorBinOp dst _ _ _ _ _)
+      (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrVectorReduce dst _ _ _ _)
+      (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrVectorCompare dst _ _ _ _ _)
+      (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrMaskBinOp dst _ _ _ _)
+      (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrMaskNot dst _ _)
+      (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrMaskReduce dst _ _ _)
+      (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrSelect dst _ _ _ _ _)
+      (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrVectorLoad dst _ _ _ _)
+      (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrPredicatedLoad dst _ _ _ _ _)
+      (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrTailMask dst _ _ _)
+      (OptCseResult (opt-expr-invalidate-var table dst) instr)]
     ;; Calls, stores, and control flow clear all available expressions.
     [(IrInstrCall _ _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrStore _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrStorePtr _ _ _) (OptCseResult (OptExprNil) instr)]
+    [(IrInstrVectorStore _ _ _ _ _) (OptCseResult (OptExprNil) instr)]
+    [(IrInstrPredicatedStore _ _ _ _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrBoundsCheck _ _ _) (OptCseResult table instr)]
     [(IrInstrJump _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrBranch _ _ _) (OptCseResult (OptExprNil) instr)]
@@ -1579,6 +1846,81 @@
     [(IrInstrBinOp dst op l r ty)
       (IrInstrBinOp dst op (opt-copy-resolve env l) (opt-copy-resolve env r) ty)]
     [(IrInstrUnOp dst op v ty) (IrInstrUnOp dst op (opt-copy-resolve env v) ty)]
+    [(IrInstrSplat dst value lanes ty)
+      (IrInstrSplat dst (opt-copy-resolve env value) lanes ty)]
+    [(IrInstrVectorBinOp dst op l r lanes ty)
+      (IrInstrVectorBinOp
+        dst
+        op
+        (opt-copy-resolve env l)
+        (opt-copy-resolve env r)
+        lanes
+        ty)]
+    [(IrInstrVectorReduce dst op src lanes ty)
+      (IrInstrVectorReduce dst op (opt-copy-resolve env src) lanes ty)]
+    [(IrInstrVectorCompare dst op l r lanes ty)
+      (IrInstrVectorCompare
+        dst
+        op
+        (opt-copy-resolve env l)
+        (opt-copy-resolve env r)
+        lanes
+        ty)]
+    [(IrInstrMaskBinOp dst op l r lanes)
+      (IrInstrMaskBinOp
+        dst
+        op
+        (opt-copy-resolve env l)
+        (opt-copy-resolve env r)
+        lanes)]
+    [(IrInstrMaskNot dst src lanes)
+      (IrInstrMaskNot dst (opt-copy-resolve env src) lanes)]
+    [(IrInstrMaskReduce dst op src lanes)
+      (IrInstrMaskReduce dst op (opt-copy-resolve env src) lanes)]
+    [(IrInstrSelect dst mask on-true on-false lanes ty)
+      (IrInstrSelect
+        dst
+        (opt-copy-resolve env mask)
+        (opt-copy-resolve env on-true)
+        (opt-copy-resolve env on-false)
+        lanes
+        ty)]
+    [(IrInstrVectorLoad dst base index lanes ty)
+      (IrInstrVectorLoad
+        dst
+        (opt-copy-resolve env base)
+        (opt-copy-resolve env index)
+        lanes
+        ty)]
+    [(IrInstrVectorStore base index value lanes ty)
+      (IrInstrVectorStore
+        (opt-copy-resolve env base)
+        (opt-copy-resolve env index)
+        (opt-copy-resolve env value)
+        lanes
+        ty)]
+    [(IrInstrPredicatedStore base index value mask lanes ty)
+      (IrInstrPredicatedStore
+        (opt-copy-resolve env base)
+        (opt-copy-resolve env index)
+        (opt-copy-resolve env value)
+        (opt-copy-resolve env mask)
+        lanes
+        ty)]
+    [(IrInstrPredicatedLoad dst base index mask lanes ty)
+      (IrInstrPredicatedLoad
+        dst
+        (opt-copy-resolve env base)
+        (opt-copy-resolve env index)
+        (opt-copy-resolve env mask)
+        lanes
+        ty)]
+    [(IrInstrTailMask dst index length lanes)
+      (IrInstrTailMask
+        dst
+        (opt-copy-resolve env index)
+        (opt-copy-resolve env length)
+        lanes)]
     [(IrInstrCall dst name args ty)
       (IrInstrCall dst name (opt-copy-subst-value-list env args) ty)]
     [(IrInstrStore name value ty)
@@ -1600,6 +1942,7 @@
     ;; `IrInstrAlloc`/`IrInstrJump` have no value operands; `IrInstrPhi` inputs
     ;; belong to predecessor edges and are not block-local copies.
     [(IrInstrAlloc _ _) instr]
+    [(IrInstrLaneId _ _ _) instr]
     [(IrInstrJump _) instr]
     [(IrInstrPhi _ _ _) instr]))
 
@@ -1622,6 +1965,18 @@
     [(IrInstrCast dst _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrBinOp dst _ _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrUnOp dst _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrLaneId dst _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrSplat dst _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrVectorBinOp dst _ _ _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrVectorReduce dst _ _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrVectorCompare dst _ _ _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrMaskBinOp dst _ _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrMaskNot dst _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrMaskReduce dst _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrSelect dst _ _ _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrVectorLoad dst _ _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrPredicatedLoad dst _ _ _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrTailMask dst _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrCall dst _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrPhi dst _ _) (opt-copy-invalidate-var env dst)]
     [_ env]))
@@ -1711,9 +2066,24 @@
     [(IrInstrCast dst _ _ _) (opt-bounds-invalidate-var facts dst)]
     [(IrInstrBinOp dst _ _ _ _) (opt-bounds-invalidate-var facts dst)]
     [(IrInstrUnOp dst _ _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrLaneId dst _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrSplat dst _ _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrVectorBinOp dst _ _ _ _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrVectorReduce dst _ _ _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrVectorCompare dst _ _ _ _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrMaskBinOp dst _ _ _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrMaskNot dst _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrMaskReduce dst _ _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrSelect dst _ _ _ _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrVectorLoad dst _ _ _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrPredicatedLoad dst _ _ _ _ _)
+      (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrTailMask dst _ _ _) (opt-bounds-invalidate-var facts dst)]
     [(IrInstrCall _ _ _ _) (OptBoundsNil)]
     [(IrInstrStore _ _ _) (OptBoundsNil)]
     [(IrInstrStorePtr _ _ _) (OptBoundsNil)]
+    [(IrInstrVectorStore _ _ _ _ _) (OptBoundsNil)]
+    [(IrInstrPredicatedStore _ _ _ _ _ _) (OptBoundsNil)]
     [(IrInstrJump _) (OptBoundsNil)]
     [(IrInstrBranch _ _ _) (OptBoundsNil)]
     [(IrInstrReturn _) (OptBoundsNil)]
@@ -1760,6 +2130,833 @@
   (if (opt-label-contains set label)
     set
     (OptLabelCons label set)))
+
+(define (opt-label-count [set : OptLabelSet]) : i64
+  (match set
+    [(OptLabelNil) 0]
+    [(OptLabelCons _ rest) (+ 1 (opt-label-count rest))]))
+
+(define (opt-label-subset? [a : OptLabelSet] [b : OptLabelSet]) : bool
+  (match a
+    [(OptLabelNil) true]
+    [(OptLabelCons label rest)
+      (and (opt-label-contains b label) (opt-label-subset? rest b))]))
+
+(define (opt-label-set-eq? [a : OptLabelSet] [b : OptLabelSet]) : bool
+  (and (opt-label-subset? a b) (opt-label-subset? b a)))
+
+(define (opt-label-intersection [a : OptLabelSet] [b : OptLabelSet]) : OptLabelSet
+  (match a
+    [(OptLabelNil) (OptLabelNil)]
+    [(OptLabelCons label rest)
+      (let
+        [tail : OptLabelSet (opt-label-intersection rest b)]
+        (if (opt-label-contains b label)
+          (opt-label-add tail label)
+          tail))]))
+
+(defenum OptMaybeBlock
+  (OptNoBlock)
+  (OptSomeBlock CompilerIrBlock))
+
+(define (opt-cfg-find-block [blocks : CompilerIrBlockList] [label : String]) : OptMaybeBlock
+  (match blocks
+    [(IrBlockNil) (OptNoBlock)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock block-label _)
+          (if (string-eq block-label label)
+            (OptSomeBlock block)
+            (opt-cfg-find-block rest label))])]))
+
+(define (opt-cfg-block-exists? [blocks : CompilerIrBlockList] [label : String]) : bool
+  (match (opt-cfg-find-block blocks label)
+    [(OptSomeBlock _) true]
+    [(OptNoBlock) false]))
+
+(define (opt-cfg-entry-label [blocks : CompilerIrBlockList]) : String
+  (match blocks
+    [(IrBlockNil) ""]
+    [(IrBlockCons block _)
+      (match block
+        [(IrBlock label _) label])]))
+
+(define (opt-cfg-block-labels [blocks : CompilerIrBlockList]) : OptLabelSet
+  (match blocks
+    [(IrBlockNil) (OptLabelNil)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label _) (opt-label-add (opt-cfg-block-labels rest) label)])]))
+
+(define (opt-cfg-block-labels-unique-from?
+  [blocks : CompilerIrBlockList]
+  [seen : OptLabelSet]) : bool
+  (match blocks
+    [(IrBlockNil) true]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label _)
+          (if (opt-label-contains seen label)
+            false
+            (opt-cfg-block-labels-unique-from? rest (opt-label-add seen label)))])]))
+
+(define (opt-cfg-block-labels-unique? [blocks : CompilerIrBlockList]) : bool
+  (opt-cfg-block-labels-unique-from? blocks (OptLabelNil)))
+
+(define (opt-cfg-successor-targets-known? [blocks : CompilerIrBlockList]) : bool
+  (let
+    [labels : OptLabelSet (opt-cfg-block-labels blocks)]
+    (opt-cfg-successor-targets-known-in-blocks? blocks labels)))
+
+(define (opt-cfg-successor-targets-known-in-blocks?
+  [blocks : CompilerIrBlockList]
+  [labels : OptLabelSet]) : bool
+  (match blocks
+    [(IrBlockNil) true]
+    [(IrBlockCons block rest)
+      (and
+        (opt-label-subset? (opt-cfg-block-successors block) labels)
+        (opt-cfg-successor-targets-known-in-blocks? rest labels))]))
+
+(define (opt-cfg-predecessors [blocks : CompilerIrBlockList] [label : String]) : OptLabelSet
+  (match blocks
+    [(IrBlockNil) (OptLabelNil)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock block-label _)
+          (let
+            [tail : OptLabelSet (opt-cfg-predecessors rest label)]
+            (if (opt-label-contains (opt-cfg-block-successors block) label)
+              (opt-label-add tail block-label)
+              tail))])]))
+
+(define (opt-cfg-filter-blocks-by-labels
+  [labels : OptLabelSet]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) (IrBlockNil)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label _)
+          (if (opt-label-contains labels label)
+            (IrBlockCons block (opt-cfg-filter-blocks-by-labels labels rest))
+            (opt-cfg-filter-blocks-by-labels labels rest))])]))
+
+(define (opt-cfg-reachable-block-order [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (opt-cfg-filter-blocks-by-labels (opt-cfg-reachable-blocks blocks) blocks))
+
+(defenum OptDomEntry
+  (OptDomEntry String OptLabelSet))
+
+(defenum OptDomTable
+  (OptDomNil)
+  (OptDomCons OptDomEntry OptDomTable))
+
+(define (opt-dom-table-lookup [table : OptDomTable] [label : String]) : OptLabelSet
+  (match table
+    [(OptDomNil) (OptLabelNil)]
+    [(OptDomCons entry rest)
+      (match entry
+        [(OptDomEntry entry-label labels)
+          (if (string-eq entry-label label)
+            labels
+            (opt-dom-table-lookup rest label))])]))
+
+(define (opt-dom-entry-eq? [a : OptDomEntry] [b : OptDomEntry]) : bool
+  (match a
+    [(OptDomEntry a-label a-labels)
+      (match b
+        [(OptDomEntry b-label b-labels)
+          (and
+            (string-eq a-label b-label)
+            (opt-label-set-eq? a-labels b-labels))])]))
+
+(define (opt-dom-table-eq? [a : OptDomTable] [b : OptDomTable]) : bool
+  (match a
+    [(OptDomNil)
+      (match b
+        [(OptDomNil) true]
+        [_ false])]
+    [(OptDomCons a-entry a-rest)
+      (match b
+        [(OptDomCons b-entry b-rest)
+          (and
+            (opt-dom-entry-eq? a-entry b-entry)
+            (opt-dom-table-eq? a-rest b-rest))]
+        [_ false])]))
+
+(define (opt-dom-intersect-preds-rest
+  [table : OptDomTable]
+  [preds : OptLabelSet]
+  [current : OptLabelSet]) : OptLabelSet
+  (match preds
+    [(OptLabelNil) current]
+    [(OptLabelCons pred rest)
+      (opt-dom-intersect-preds-rest
+        table
+        rest
+        (opt-label-intersection current (opt-dom-table-lookup table pred)))]))
+
+(define (opt-dom-intersect-preds [table : OptDomTable] [preds : OptLabelSet]) : OptLabelSet
+  (match preds
+    [(OptLabelNil) (OptLabelNil)]
+    [(OptLabelCons pred rest)
+      (opt-dom-intersect-preds-rest
+        table
+        rest
+        (opt-dom-table-lookup table pred))]))
+
+(define (opt-cfg-dominators-initial
+  [blocks : CompilerIrBlockList]
+  [reachable : OptLabelSet]
+  [entry-label : String]
+  [all-reachable : OptLabelSet]) : OptDomTable
+  (match blocks
+    [(IrBlockNil) (OptDomNil)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label _)
+          (if (opt-label-contains reachable label)
+            (OptDomCons
+              (OptDomEntry
+                label
+                (if (string-eq label entry-label)
+                  (opt-label-add (OptLabelNil) label)
+                  all-reachable))
+              (opt-cfg-dominators-initial
+                rest
+                reachable
+                entry-label
+                all-reachable))
+            (opt-cfg-dominators-initial
+              rest
+              reachable
+              entry-label
+              all-reachable))])]))
+
+(define (opt-cfg-dominators-step-entry
+  [blocks : CompilerIrBlockList]
+  [reachable : OptLabelSet]
+  [entry-label : String]
+  [old : OptDomTable]
+  [entry : OptDomEntry]) : OptDomEntry
+  (match entry
+    [(OptDomEntry label _)
+      (if (string-eq label entry-label)
+        (OptDomEntry label (opt-label-add (OptLabelNil) label))
+        (let
+          [preds : OptLabelSet
+            (opt-label-intersection
+              (opt-cfg-predecessors blocks label)
+              reachable)]
+          (OptDomEntry
+            label
+            (opt-label-add (opt-dom-intersect-preds old preds) label))))]))
+
+(define (opt-cfg-dominators-step
+  [blocks : CompilerIrBlockList]
+  [reachable : OptLabelSet]
+  [entry-label : String]
+  [old : OptDomTable]
+  [remaining : OptDomTable]) : OptDomTable
+  (match remaining
+    [(OptDomNil) (OptDomNil)]
+    [(OptDomCons entry rest)
+      (OptDomCons
+        (opt-cfg-dominators-step-entry blocks reachable entry-label old entry)
+        (opt-cfg-dominators-step blocks reachable entry-label old rest))]))
+
+(define (opt-cfg-dominators-fixed
+  [blocks : CompilerIrBlockList]
+  [reachable : OptLabelSet]
+  [entry-label : String]
+  [table : OptDomTable]
+  [remaining : i64]) : OptDomTable
+  (if (<= remaining 0)
+    table
+    (let
+      [next : OptDomTable
+        (opt-cfg-dominators-step blocks reachable entry-label table table)]
+      (if (opt-dom-table-eq? table next)
+        next
+        (opt-cfg-dominators-fixed
+          blocks
+          reachable
+          entry-label
+          next
+          (- remaining 1))))))
+
+(define (opt-cfg-dominators [blocks : CompilerIrBlockList]) : OptDomTable
+  (let
+    [reachable : OptLabelSet (opt-cfg-reachable-blocks blocks)]
+    [entry-label : String (opt-cfg-entry-label blocks)]
+    [initial : OptDomTable
+      (opt-cfg-dominators-initial blocks reachable entry-label reachable)]
+    (opt-cfg-dominators-fixed
+      blocks
+      reachable
+      entry-label
+      initial
+      (+ (compiler-ir-block-list-count blocks) 1))))
+
+(define (opt-dom-dominates?
+  [table : OptDomTable]
+  [dominator : String]
+  [label : String]) : bool
+  (opt-label-contains (opt-dom-table-lookup table label) dominator))
+
+(define (opt-dom-strict-dominates?
+  [table : OptDomTable]
+  [dominator : String]
+  [label : String]) : bool
+  (and
+    (not (string-eq dominator label))
+    (opt-dom-dominates? table dominator label)))
+
+(define (opt-cfg-frontier-has-pred?
+  [doms : OptDomTable]
+  [label : String]
+  [preds : OptLabelSet]) : bool
+  (match preds
+    [(OptLabelNil) false]
+    [(OptLabelCons pred rest)
+      (if (opt-dom-dominates? doms label pred)
+        true
+        (opt-cfg-frontier-has-pred? doms label rest))]))
+
+(define (opt-cfg-dominance-frontier-blocks
+  [all-blocks : CompilerIrBlockList]
+  [remaining : CompilerIrBlockList]
+  [reachable : OptLabelSet]
+  [doms : OptDomTable]
+  [label : String]) : OptLabelSet
+  (match remaining
+    [(IrBlockNil) (OptLabelNil)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock block-label _)
+          (let
+            [tail : OptLabelSet
+              (opt-cfg-dominance-frontier-blocks
+                all-blocks
+                rest
+                reachable
+                doms
+                label)]
+            (if (and
+              (opt-label-contains reachable block-label)
+              (and
+                (opt-cfg-frontier-has-pred?
+                  doms
+                  label
+                  (opt-label-intersection
+                    (opt-cfg-predecessors all-blocks block-label)
+                    reachable))
+                (not (opt-dom-strict-dominates? doms label block-label))))
+              (opt-label-add tail block-label)
+              tail))])]))
+
+(define (opt-cfg-dominance-frontier
+  [blocks : CompilerIrBlockList]
+  [label : String]) : OptLabelSet
+  (let
+    [reachable : OptLabelSet (opt-cfg-reachable-blocks blocks)]
+    [doms : OptDomTable (opt-cfg-dominators blocks)]
+    (opt-cfg-dominance-frontier-blocks blocks blocks reachable doms label)))
+
+(defenum ResultCompilerOptimizeVerify
+  (OkCompilerOptimizeVerify)
+  (ErrCompilerOptimizeVerify String))
+
+(define (opt-verify-ok? [result : ResultCompilerOptimizeVerify]) : bool
+  (match result
+    [(OkCompilerOptimizeVerify) true]
+    [(ErrCompilerOptimizeVerify _) false]))
+
+(define (opt-verify-error-ok?
+  [result : ResultCompilerOptimizeVerify]
+  [want : String]) : bool
+  (match result
+    [(ErrCompilerOptimizeVerify message) (string-eq message want)]
+    [(OkCompilerOptimizeVerify) false]))
+
+(defenum OptVarDef
+  (OptVarDef i64 String i64))
+
+(defenum OptVarDefList
+  (OptVarDefNil)
+  (OptVarDefCons OptVarDef OptVarDefList))
+
+(defenum OptMaybeVarDef
+  (OptNoVarDef)
+  (OptSomeVarDef OptVarDef))
+
+(defenum OptVarSetResult
+  (OptVarSetOk OptUsedSet)
+  (OptVarSetErr))
+
+(define (opt-var-set-add-unique [set : OptUsedSet] [var : i64]) : OptVarSetResult
+  (if (opt-used-contains set var)
+    (OptVarSetErr)
+    (OptVarSetOk (opt-used-add set var))))
+
+(define (opt-instr-def-var [instr : CompilerIrInstr]) : OptMaybeI64
+  (match instr
+    [(IrInstrMov dst _ _) (OptSomeI64 dst)]
+    [(IrInstrAlloc dst _) (OptSomeI64 dst)]
+    [(IrInstrAddrOf dst _) (OptSomeI64 dst)]
+    [(IrInstrGep dst _ _ _) (OptSomeI64 dst)]
+    [(IrInstrLoad dst _ _) (OptSomeI64 dst)]
+    [(IrInstrCast dst _ _ _) (OptSomeI64 dst)]
+    [(IrInstrBinOp dst _ _ _ _) (OptSomeI64 dst)]
+    [(IrInstrUnOp dst _ _ _) (OptSomeI64 dst)]
+    [(IrInstrLaneId dst _ _) (OptSomeI64 dst)]
+    [(IrInstrSplat dst _ _ _) (OptSomeI64 dst)]
+    [(IrInstrVectorBinOp dst _ _ _ _ _) (OptSomeI64 dst)]
+    [(IrInstrVectorReduce dst _ _ _ _) (OptSomeI64 dst)]
+    [(IrInstrVectorCompare dst _ _ _ _ _) (OptSomeI64 dst)]
+    [(IrInstrMaskBinOp dst _ _ _ _) (OptSomeI64 dst)]
+    [(IrInstrMaskNot dst _ _) (OptSomeI64 dst)]
+    [(IrInstrMaskReduce dst _ _ _) (OptSomeI64 dst)]
+    [(IrInstrSelect dst _ _ _ _ _) (OptSomeI64 dst)]
+    [(IrInstrVectorLoad dst _ _ _ _) (OptSomeI64 dst)]
+    [(IrInstrPredicatedLoad dst _ _ _ _ _) (OptSomeI64 dst)]
+    [(IrInstrTailMask dst _ _ _) (OptSomeI64 dst)]
+    [(IrInstrCall dst _ _ _) (OptSomeI64 dst)]
+    [(IrInstrPhi dst _ _) (OptSomeI64 dst)]
+    [_ (OptNoI64)]))
+
+(define (opt-instr-def-position [instr : CompilerIrInstr] [pos : i64]) : i64
+  (match instr
+    [(IrInstrPhi _ _ _) 0]
+    [_ pos]))
+
+(define (opt-verify-param-def-set
+  [params : CompilerIrParamList]
+  [set : OptUsedSet]) : OptVarSetResult
+  (match params
+    [(IrParamNil) (OptVarSetOk set)]
+    [(IrParamCons param rest)
+      (match param
+        [(IrParam _ _ var)
+          (match (opt-var-set-add-unique set var)
+            [(OptVarSetOk next) (opt-verify-param-def-set rest next)]
+            [(OptVarSetErr) (OptVarSetErr)])])]))
+
+(define (opt-verify-instr-def-set
+  [instrs : CompilerIrInstrList]
+  [set : OptUsedSet]) : OptVarSetResult
+  (match instrs
+    [(IrInstrNil) (OptVarSetOk set)]
+    [(IrInstrCons instr rest)
+      (match (opt-instr-def-var instr)
+        [(OptSomeI64 var)
+          (match (opt-var-set-add-unique set var)
+            [(OptVarSetOk next) (opt-verify-instr-def-set rest next)]
+            [(OptVarSetErr) (OptVarSetErr)])]
+        [(OptNoI64) (opt-verify-instr-def-set rest set)])]))
+
+(define (opt-verify-block-def-set
+  [blocks : CompilerIrBlockList]
+  [set : OptUsedSet]) : OptVarSetResult
+  (match blocks
+    [(IrBlockNil) (OptVarSetOk set)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (match (opt-verify-instr-def-set instrs set)
+            [(OptVarSetOk next) (opt-verify-block-def-set rest next)]
+            [(OptVarSetErr) (OptVarSetErr)])])]))
+
+(define (opt-verify-single-defs?
+  [params : CompilerIrParamList]
+  [blocks : CompilerIrBlockList]) : bool
+  (match (opt-verify-param-def-set params (OptUsedNil))
+    [(OptVarSetErr) false]
+    [(OptVarSetOk param-set)
+      (match (opt-verify-block-def-set blocks param-set)
+        [(OptVarSetOk _) true]
+        [(OptVarSetErr) false])]))
+
+(define (opt-var-defs-from-params
+  [params : CompilerIrParamList]
+  [entry-label : String]
+  [defs : OptVarDefList]) : OptVarDefList
+  (match params
+    [(IrParamNil) defs]
+    [(IrParamCons param rest)
+      (match param
+        [(IrParam _ _ var)
+          (opt-var-defs-from-params
+            rest
+            entry-label
+            (OptVarDefCons (OptVarDef var entry-label 0) defs))])]))
+
+(define (opt-var-defs-from-instrs
+  [instrs : CompilerIrInstrList]
+  [block-label : String]
+  [pos : i64]
+  [defs : OptVarDefList]) : OptVarDefList
+  (match instrs
+    [(IrInstrNil) defs]
+    [(IrInstrCons instr rest)
+      (match (opt-instr-def-var instr)
+        [(OptSomeI64 var)
+          (opt-var-defs-from-instrs
+            rest
+            block-label
+            (+ pos 1)
+            (OptVarDefCons
+              (OptVarDef var block-label (opt-instr-def-position instr pos))
+              defs))]
+        [(OptNoI64) (opt-var-defs-from-instrs rest block-label (+ pos 1) defs)])]))
+
+(define (opt-var-defs-from-blocks
+  [blocks : CompilerIrBlockList]
+  [defs : OptVarDefList]) : OptVarDefList
+  (match blocks
+    [(IrBlockNil) defs]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (opt-var-defs-from-blocks
+            rest
+            (opt-var-defs-from-instrs instrs label 1 defs))])]))
+
+(define (opt-var-defs-from-function
+  [params : CompilerIrParamList]
+  [blocks : CompilerIrBlockList]) : OptVarDefList
+  (opt-var-defs-from-blocks
+    blocks
+    (opt-var-defs-from-params
+      params
+      (opt-cfg-entry-label blocks)
+      (OptVarDefNil))))
+
+(define (opt-var-def-lookup [defs : OptVarDefList] [var : i64]) : OptMaybeVarDef
+  (match defs
+    [(OptVarDefNil) (OptNoVarDef)]
+    [(OptVarDefCons def rest)
+      (match def
+        [(OptVarDef def-var _ _)
+          (if (= def-var var)
+            (OptSomeVarDef def)
+            (opt-var-def-lookup rest var))])]))
+
+(define (opt-verify-var-use
+  [defs : OptVarDefList]
+  [doms : OptDomTable]
+  [var : i64]
+  [use-block : String]
+  [use-pos : i64]) : ResultCompilerOptimizeVerify
+  (match (opt-var-def-lookup defs var)
+    [(OptNoVarDef)
+      (ErrCompilerOptimizeVerify "optimizer verify: use before definition")]
+    [(OptSomeVarDef def)
+      (match def
+        [(OptVarDef _ def-block def-pos)
+          (if (not (opt-dom-dominates? doms def-block use-block))
+            (ErrCompilerOptimizeVerify
+              "optimizer verify: use is not dominated by definition")
+            (if (and (string-eq def-block use-block) (>= def-pos use-pos))
+              (ErrCompilerOptimizeVerify
+                "optimizer verify: use before definition")
+              (OkCompilerOptimizeVerify)))])]))
+
+(define (opt-verify-var-use-on-edge
+  [defs : OptVarDefList]
+  [doms : OptDomTable]
+  [var : i64]
+  [pred-label : String]) : ResultCompilerOptimizeVerify
+  (match (opt-var-def-lookup defs var)
+    [(OptNoVarDef)
+      (ErrCompilerOptimizeVerify "optimizer verify: use before definition")]
+    [(OptSomeVarDef def)
+      (match def
+        [(OptVarDef _ def-block _)
+          (if (opt-dom-dominates? doms def-block pred-label)
+            (OkCompilerOptimizeVerify)
+            (ErrCompilerOptimizeVerify
+              "optimizer verify: use is not dominated by definition"))])]))
+
+(define (opt-verify-value-use
+  [defs : OptVarDefList]
+  [doms : OptDomTable]
+  [value : CompilerIrValue]
+  [use-block : String]
+  [use-pos : i64]) : ResultCompilerOptimizeVerify
+  (match value
+    [(IrValueVar var) (opt-verify-var-use defs doms var use-block use-pos)]
+    [_ (OkCompilerOptimizeVerify)]))
+
+(define (opt-verify-value-list-uses
+  [defs : OptVarDefList]
+  [doms : OptDomTable]
+  [values : CompilerIrValueList]
+  [use-block : String]
+  [use-pos : i64]) : ResultCompilerOptimizeVerify
+  (match values
+    [(IrValueNil) (OkCompilerOptimizeVerify)]
+    [(IrValueCons value rest)
+      (match (opt-verify-value-use defs doms value use-block use-pos)
+        [(OkCompilerOptimizeVerify)
+          (opt-verify-value-list-uses defs doms rest use-block use-pos)]
+        [(ErrCompilerOptimizeVerify message)
+          (ErrCompilerOptimizeVerify message)])]))
+
+(define (opt-verify-maybe-value-use
+  [defs : OptVarDefList]
+  [doms : OptDomTable]
+  [value : CompilerIrMaybeValue]
+  [use-block : String]
+  [use-pos : i64]) : ResultCompilerOptimizeVerify
+  (match value
+    [(IrNoValue) (OkCompilerOptimizeVerify)]
+    [(IrSomeValue inner)
+      (opt-verify-value-use defs doms inner use-block use-pos)]))
+
+(define (opt-verify-phi-input-uses
+  [defs : OptVarDefList]
+  [doms : OptDomTable]
+  [inputs : CompilerIrPhiInputList]) : ResultCompilerOptimizeVerify
+  (match inputs
+    [(IrPhiInputNil) (OkCompilerOptimizeVerify)]
+    [(IrPhiInputCons input rest)
+      (match input
+        [(IrPhiInput value pred-label)
+          (match value
+            [(IrValueVar var)
+              (match (opt-verify-var-use-on-edge defs doms var pred-label)
+                [(OkCompilerOptimizeVerify)
+                  (opt-verify-phi-input-uses defs doms rest)]
+                [(ErrCompilerOptimizeVerify message)
+                  (ErrCompilerOptimizeVerify message)])]
+            [_ (opt-verify-phi-input-uses defs doms rest)])])]))
+
+(define (opt-verify-two
+  [a : ResultCompilerOptimizeVerify]
+  [b : ResultCompilerOptimizeVerify]) : ResultCompilerOptimizeVerify
+  (match a
+    [(OkCompilerOptimizeVerify) b]
+    [(ErrCompilerOptimizeVerify message) (ErrCompilerOptimizeVerify message)]))
+
+(define (opt-verify-instr-uses
+  [defs : OptVarDefList]
+  [doms : OptDomTable]
+  [block-label : String]
+  [pos : i64]
+  [instr : CompilerIrInstr]) : ResultCompilerOptimizeVerify
+  (match instr
+    [(IrInstrMov _ src _) (opt-verify-value-use defs doms src block-label pos)]
+    [(IrInstrAddrOf _ src) (opt-verify-var-use defs doms src block-label pos)]
+    [(IrInstrGep _ base offset _)
+      (opt-verify-two
+        (opt-verify-value-use defs doms base block-label pos)
+        (opt-verify-value-use defs doms offset block-label pos))]
+    [(IrInstrLoad _ src _) (opt-verify-value-use defs doms src block-label pos)]
+    [(IrInstrStorePtr ptr value _)
+      (opt-verify-two
+        (opt-verify-value-use defs doms ptr block-label pos)
+        (opt-verify-value-use defs doms value block-label pos))]
+    [(IrInstrBoundsCheck index length _)
+      (opt-verify-two
+        (opt-verify-value-use defs doms index block-label pos)
+        (opt-verify-value-use defs doms length block-label pos))]
+    [(IrInstrCast _ src _ _)
+      (opt-verify-value-use defs doms src block-label pos)]
+    [(IrInstrBinOp _ _ lhs rhs _)
+      (opt-verify-two
+        (opt-verify-value-use defs doms lhs block-label pos)
+        (opt-verify-value-use defs doms rhs block-label pos))]
+    [(IrInstrUnOp _ _ src _)
+      (opt-verify-value-use defs doms src block-label pos)]
+    [(IrInstrSplat _ src _ _)
+      (opt-verify-value-use defs doms src block-label pos)]
+    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
+      (opt-verify-two
+        (opt-verify-value-use defs doms lhs block-label pos)
+        (opt-verify-value-use defs doms rhs block-label pos))]
+    [(IrInstrVectorReduce _ _ src _ _)
+      (opt-verify-value-use defs doms src block-label pos)]
+    [(IrInstrVectorCompare _ _ lhs rhs _ _)
+      (opt-verify-two
+        (opt-verify-value-use defs doms lhs block-label pos)
+        (opt-verify-value-use defs doms rhs block-label pos))]
+    [(IrInstrMaskBinOp _ _ lhs rhs _)
+      (opt-verify-two
+        (opt-verify-value-use defs doms lhs block-label pos)
+        (opt-verify-value-use defs doms rhs block-label pos))]
+    [(IrInstrMaskNot _ src _)
+      (opt-verify-value-use defs doms src block-label pos)]
+    [(IrInstrMaskReduce _ _ src _)
+      (opt-verify-value-use defs doms src block-label pos)]
+    [(IrInstrSelect _ mask on-true on-false _ _)
+      (opt-verify-two
+        (opt-verify-value-use defs doms mask block-label pos)
+        (opt-verify-two
+          (opt-verify-value-use defs doms on-true block-label pos)
+          (opt-verify-value-use defs doms on-false block-label pos)))]
+    [(IrInstrVectorLoad _ base index _ _)
+      (opt-verify-two
+        (opt-verify-value-use defs doms base block-label pos)
+        (opt-verify-value-use defs doms index block-label pos))]
+    [(IrInstrVectorStore base index value _ _)
+      (opt-verify-two
+        (opt-verify-value-use defs doms base block-label pos)
+        (opt-verify-two
+          (opt-verify-value-use defs doms index block-label pos)
+          (opt-verify-value-use defs doms value block-label pos)))]
+    [(IrInstrPredicatedStore base index value mask _ _)
+      (opt-verify-two
+        (opt-verify-value-use defs doms base block-label pos)
+        (opt-verify-two
+          (opt-verify-value-use defs doms index block-label pos)
+          (opt-verify-two
+            (opt-verify-value-use defs doms value block-label pos)
+            (opt-verify-value-use defs doms mask block-label pos))))]
+    [(IrInstrPredicatedLoad _ base index mask _ _)
+      (opt-verify-two
+        (opt-verify-value-use defs doms base block-label pos)
+        (opt-verify-two
+          (opt-verify-value-use defs doms index block-label pos)
+          (opt-verify-value-use defs doms mask block-label pos)))]
+    [(IrInstrTailMask _ index length _)
+      (opt-verify-two
+        (opt-verify-value-use defs doms index block-label pos)
+        (opt-verify-value-use defs doms length block-label pos))]
+    [(IrInstrCall _ _ args _)
+      (opt-verify-value-list-uses defs doms args block-label pos)]
+    [(IrInstrStore _ value _)
+      (opt-verify-value-use defs doms value block-label pos)]
+    [(IrInstrBranch cond _ _)
+      (opt-verify-value-use defs doms cond block-label pos)]
+    [(IrInstrReturn maybe)
+      (opt-verify-maybe-value-use defs doms maybe block-label pos)]
+    [(IrInstrPhi _ inputs _) (opt-verify-phi-input-uses defs doms inputs)]
+    [(IrInstrAlloc _ _) (OkCompilerOptimizeVerify)]
+    [(IrInstrLaneId _ _ _) (OkCompilerOptimizeVerify)]
+    [(IrInstrJump _) (OkCompilerOptimizeVerify)]))
+
+(define (opt-verify-instr-list-uses
+  [defs : OptVarDefList]
+  [doms : OptDomTable]
+  [block-label : String]
+  [instrs : CompilerIrInstrList]
+  [pos : i64]) : ResultCompilerOptimizeVerify
+  (match instrs
+    [(IrInstrNil) (OkCompilerOptimizeVerify)]
+    [(IrInstrCons instr rest)
+      (match (opt-verify-instr-uses defs doms block-label pos instr)
+        [(OkCompilerOptimizeVerify)
+          (opt-verify-instr-list-uses defs doms block-label rest (+ pos 1))]
+        [(ErrCompilerOptimizeVerify message)
+          (ErrCompilerOptimizeVerify message)])]))
+
+(define (opt-phi-input-labels [inputs : CompilerIrPhiInputList]) : OptLabelSet
+  (match inputs
+    [(IrPhiInputNil) (OptLabelNil)]
+    [(IrPhiInputCons input rest)
+      (match input
+        [(IrPhiInput _ label) (opt-label-add (opt-phi-input-labels rest) label)])]))
+
+(define (opt-phi-input-labels-unique-from?
+  [inputs : CompilerIrPhiInputList]
+  [seen : OptLabelSet]) : bool
+  (match inputs
+    [(IrPhiInputNil) true]
+    [(IrPhiInputCons input rest)
+      (match input
+        [(IrPhiInput _ label)
+          (if (opt-label-contains seen label)
+            false
+            (opt-phi-input-labels-unique-from? rest (opt-label-add seen label)))])]))
+
+(define (opt-phi-input-labels-match?
+  [inputs : CompilerIrPhiInputList]
+  [preds : OptLabelSet]) : bool
+  (and
+    (opt-phi-input-labels-unique-from? inputs (OptLabelNil))
+    (opt-label-set-eq? (opt-phi-input-labels inputs) preds)))
+
+(define (opt-verify-phi-predecessors-instrs
+  [blocks : CompilerIrBlockList]
+  [block-label : String]
+  [instrs : CompilerIrInstrList]) : ResultCompilerOptimizeVerify
+  (match instrs
+    [(IrInstrNil) (OkCompilerOptimizeVerify)]
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrPhi _ inputs _)
+          (if (opt-phi-input-labels-match?
+            inputs
+            (opt-cfg-predecessors blocks block-label))
+            (opt-verify-phi-predecessors-instrs blocks block-label rest)
+            (ErrCompilerOptimizeVerify
+              "optimizer verify: phi predecessor mismatch"))]
+        [_ (opt-verify-phi-predecessors-instrs blocks block-label rest)])]))
+
+(define (opt-verify-phi-predecessors-blocks
+  [blocks : CompilerIrBlockList]
+  [remaining : CompilerIrBlockList]) : ResultCompilerOptimizeVerify
+  (match remaining
+    [(IrBlockNil) (OkCompilerOptimizeVerify)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (match (opt-verify-phi-predecessors-instrs blocks label instrs)
+            [(OkCompilerOptimizeVerify)
+              (opt-verify-phi-predecessors-blocks blocks rest)]
+            [(ErrCompilerOptimizeVerify message)
+              (ErrCompilerOptimizeVerify message)])])]))
+
+(define (opt-verify-block-uses
+  [defs : OptVarDefList]
+  [doms : OptDomTable]
+  [blocks : CompilerIrBlockList]) : ResultCompilerOptimizeVerify
+  (match blocks
+    [(IrBlockNil) (OkCompilerOptimizeVerify)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (match (opt-verify-instr-list-uses defs doms label instrs 1)
+            [(OkCompilerOptimizeVerify) (opt-verify-block-uses defs doms rest)]
+            [(ErrCompilerOptimizeVerify message)
+              (ErrCompilerOptimizeVerify message)])])]))
+
+(define (opt-verify-function [func : CompilerIrFunction]) : ResultCompilerOptimizeVerify
+  (match func
+    [(IrFunction _ params _ _ blocks)
+      (cond
+        [(not (opt-cfg-block-labels-unique? blocks))
+          (ErrCompilerOptimizeVerify "optimizer verify: duplicate block label")]
+        [(not (opt-cfg-successor-targets-known? blocks))
+          (ErrCompilerOptimizeVerify
+            "optimizer verify: unknown successor label")]
+        [(not (opt-verify-single-defs? params blocks))
+          (ErrCompilerOptimizeVerify
+            "optimizer verify: duplicate var definition")]
+        [else
+          (let
+            [doms : OptDomTable (opt-cfg-dominators blocks)]
+            [defs : OptVarDefList (opt-var-defs-from-function params blocks)]
+            (match (opt-verify-phi-predecessors-blocks blocks blocks)
+              [(OkCompilerOptimizeVerify)
+                (opt-verify-block-uses defs doms blocks)]
+              [(ErrCompilerOptimizeVerify message)
+                (ErrCompilerOptimizeVerify message)]))])]))
+
+(define (opt-verify-function-list [functions : CompilerIrFunctionList]) : ResultCompilerOptimizeVerify
+  (match functions
+    [(IrFunctionNil) (OkCompilerOptimizeVerify)]
+    [(IrFunctionCons func rest)
+      (match (opt-verify-function func)
+        [(OkCompilerOptimizeVerify) (opt-verify-function-list rest)]
+        [(ErrCompilerOptimizeVerify message)
+          (ErrCompilerOptimizeVerify message)])]))
+
+(define (opt-verify-program [program : CompilerIrProgram]) : ResultCompilerOptimizeVerify
+  (match program
+    [(IrProgram _ functions _) (opt-verify-function-list functions)]))
 
 (define (opt-cfg-fold-branch [instr : CompilerIrInstr]) : CompilerIrInstr
   (match instr
@@ -2418,6 +3615,60 @@
         (IrInstrBinOp 1 (IrBinAdd) (IrValueVar 0) (IrValueI64 1) (AstTyI64))
         (IrInstrNil)))))
 
+(define (opt-vector-mask-test-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrMov 0 (IrValueI64 3) (AstTyI64))
+    (IrInstrCons
+      (IrInstrMov 1 (IrValueI64 4) (AstTyI64))
+      (IrInstrCons
+        (IrInstrSplat 2 (IrValueVar 0) 4 (AstTyI64))
+        (IrInstrCons
+          (IrInstrLaneId 3 4 (AstTyI64))
+          (IrInstrCons
+            (IrInstrTailMask 4 (IrValueVar 0) (IrValueVar 1) 4)
+            (IrInstrCons
+              (IrInstrVectorBinOp
+                5
+                (IrBinAdd)
+                (IrValueVar 2)
+                (IrValueVar 3)
+                4
+                (AstTyI64))
+              (IrInstrCons
+                (IrInstrSelect
+                  6
+                  (IrValueVar 4)
+                  (IrValueVar 5)
+                  (IrValueVar 2)
+                  4
+                  (AstTyI64))
+                (IrInstrCons
+                  (IrInstrPredicatedStore
+                    (IrValueVar 8)
+                    (IrValueVar 0)
+                    (IrValueVar 6)
+                    (IrValueVar 4)
+                    4
+                    (AstTyI64))
+                  IrInstrNil)))))))))
+
+(define (compiler-optimize-vector-mask-self-test) : i64
+  (let
+    [instrs : CompilerIrInstrList (opt-vector-mask-test-instrs)]
+    (let
+      [folded : CompilerIrInstrList (opt-fold-instrs (OptConstNil) instrs)]
+      (let
+        [dce : CompilerIrInstrList
+          (opt-dce-instrs (opt-collect-instrs-uses (OptUsedNil) instrs) instrs)]
+        (let
+          [bounds : CompilerIrInstrList
+            (opt-bounds-instrs (OptBoundsNil) instrs)]
+          (cond
+            [(not (opt-instr-list-eq folded instrs)) 1]
+            [(not (= (compiler-ir-instr-list-count dce) 8)) 2]
+            [(not (= (compiler-ir-instr-list-count bounds) 8)) 3]
+            [else 42]))))))
+
 ;; Returns 42 when folding turns the one arithmetic instruction into a `Mov`
 ;; literal whose value (20 + 22) is correct, and a later `Load` redefining a
 ;; formerly-constant var invalidates the stale fact before another arithmetic
@@ -2436,7 +3687,9 @@
                 [stale-optimized : CompilerIrInstrList
                   (opt-fold-instrs (OptConstNil) stale-instrs)]
                 (if (= (opt-count-arith-instrs stale-optimized) 1)
-                  42
+                  (if (= (compiler-optimize-vector-mask-self-test) 42)
+                    42
+                    5)
                   4)))
             3)
           2)
@@ -3362,6 +4615,302 @@
               (IrInstrReturn (IrSomeValue (IrValueI64 1)))
               (IrInstrNil))))
         (IrBlockNil)))))
+
+(define (opt-ssa-cond-params) : CompilerIrParamList
+  (IrParamCons (IrParam "cond" (AstTyBool) 0) (IrParamNil)))
+
+(define (opt-ssa-loop-params) : CompilerIrParamList
+  (IrParamCons
+    (IrParam "seed" (AstTyI64) 0)
+    (IrParamCons (IrParam "cond" (AstTyBool) 4) (IrParamNil))))
+
+(define (opt-ssa-diamond-blocks) : CompilerIrBlockList
+  (IrBlockCons
+    (IrBlock
+      "entry"
+      (IrInstrCons (IrInstrBranch (IrValueVar 0) "then" "else") (IrInstrNil)))
+    (IrBlockCons
+      (IrBlock
+        "then"
+        (IrInstrCons
+          (IrInstrMov 1 (IrValueI64 10) (AstTyI64))
+          (IrInstrCons (IrInstrJump "join") (IrInstrNil))))
+      (IrBlockCons
+        (IrBlock
+          "else"
+          (IrInstrCons
+            (IrInstrMov 2 (IrValueI64 20) (AstTyI64))
+            (IrInstrCons (IrInstrJump "join") (IrInstrNil))))
+        (IrBlockCons
+          (IrBlock
+            "join"
+            (IrInstrCons
+              (IrInstrPhi
+                3
+                (IrPhiInputCons
+                  (IrPhiInput (IrValueVar 1) "then")
+                  (IrPhiInputCons
+                    (IrPhiInput (IrValueVar 2) "else")
+                    (IrPhiInputNil)))
+                (AstTyI64))
+              (IrInstrCons
+                (IrInstrReturn (IrSomeValue (IrValueVar 3)))
+                (IrInstrNil))))
+          (IrBlockNil))))))
+
+(define (opt-ssa-diamond-function) : CompilerIrFunction
+  (IrFunction
+    "ssa_diamond"
+    (opt-ssa-cond-params)
+    (AstTyI64)
+    16
+    (opt-ssa-diamond-blocks)))
+
+(define (opt-ssa-loop-blocks) : CompilerIrBlockList
+  (IrBlockCons
+    (IrBlock "entry" (IrInstrCons (IrInstrJump "loop") (IrInstrNil)))
+    (IrBlockCons
+      (IrBlock
+        "loop"
+        (IrInstrCons
+          (IrInstrPhi
+            1
+            (IrPhiInputCons
+              (IrPhiInput (IrValueVar 0) "entry")
+              (IrPhiInputCons
+                (IrPhiInput (IrValueVar 2) "body")
+                (IrPhiInputNil)))
+            (AstTyI64))
+          (IrInstrCons
+            (IrInstrBranch (IrValueVar 4) "body" "exit")
+            (IrInstrNil))))
+      (IrBlockCons
+        (IrBlock
+          "body"
+          (IrInstrCons
+            (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 1) (IrValueI64 1) (AstTyI64))
+            (IrInstrCons (IrInstrJump "loop") (IrInstrNil))))
+        (IrBlockCons
+          (IrBlock
+            "exit"
+            (IrInstrCons
+              (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
+(define (opt-ssa-loop-function) : CompilerIrFunction
+  (IrFunction
+    "ssa_loop"
+    (opt-ssa-loop-params)
+    (AstTyI64)
+    16
+    (opt-ssa-loop-blocks)))
+
+(define (opt-ssa-unreachable-blocks) : CompilerIrBlockList
+  (IrBlockCons
+    (IrBlock
+      "entry"
+      (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueI64 1))) (IrInstrNil)))
+    (IrBlockCons
+      (IrBlock
+        "dead"
+        (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueI64 2))) (IrInstrNil)))
+      (IrBlockNil))))
+
+(define (opt-ssa-unreachable-function) : CompilerIrFunction
+  (IrFunction
+    "ssa_unreachable"
+    (IrParamNil)
+    (AstTyI64)
+    0
+    (opt-ssa-unreachable-blocks)))
+
+(define (opt-ssa-bad-phi-function) : CompilerIrFunction
+  (IrFunction
+    "ssa_bad_phi"
+    (opt-ssa-cond-params)
+    (AstTyI64)
+    16
+    (IrBlockCons
+      (IrBlock
+        "entry"
+        (IrInstrCons (IrInstrBranch (IrValueVar 0) "then" "else") (IrInstrNil)))
+      (IrBlockCons
+        (IrBlock
+          "then"
+          (IrInstrCons
+            (IrInstrMov 1 (IrValueI64 10) (AstTyI64))
+            (IrInstrCons (IrInstrJump "join") (IrInstrNil))))
+        (IrBlockCons
+          (IrBlock
+            "else"
+            (IrInstrCons
+              (IrInstrMov 2 (IrValueI64 20) (AstTyI64))
+              (IrInstrCons (IrInstrJump "join") (IrInstrNil))))
+          (IrBlockCons
+            (IrBlock
+              "join"
+              (IrInstrCons
+                (IrInstrPhi
+                  3
+                  (IrPhiInputCons
+                    (IrPhiInput (IrValueVar 1) "then")
+                    (IrPhiInputCons
+                      (IrPhiInput (IrValueVar 2) "ghost")
+                      (IrPhiInputNil)))
+                  (AstTyI64))
+                (IrInstrCons
+                  (IrInstrReturn (IrSomeValue (IrValueVar 3)))
+                  (IrInstrNil))))
+            (IrBlockNil)))))))
+
+(define (opt-ssa-duplicate-label-function) : CompilerIrFunction
+  (IrFunction
+    "ssa_duplicate_label"
+    (IrParamNil)
+    (AstTyI64)
+    0
+    (IrBlockCons
+      (IrBlock
+        "entry"
+        (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueI64 1))) (IrInstrNil)))
+      (IrBlockCons
+        (IrBlock
+          "entry"
+          (IrInstrCons
+            (IrInstrReturn (IrSomeValue (IrValueI64 2)))
+            (IrInstrNil)))
+        (IrBlockNil)))))
+
+(define (opt-ssa-unknown-successor-function) : CompilerIrFunction
+  (IrFunction
+    "ssa_unknown_successor"
+    (IrParamNil)
+    (AstTyI64)
+    0
+    (IrBlockCons
+      (IrBlock "entry" (IrInstrCons (IrInstrJump "missing") (IrInstrNil)))
+      (IrBlockNil))))
+
+(define (opt-ssa-duplicate-def-function) : CompilerIrFunction
+  (IrFunction
+    "ssa_duplicate_def"
+    (IrParamNil)
+    (AstTyI64)
+    0
+    (IrBlockCons
+      (IrBlock
+        "entry"
+        (IrInstrCons
+          (IrInstrMov 1 (IrValueI64 1) (AstTyI64))
+          (IrInstrCons
+            (IrInstrMov 1 (IrValueI64 2) (AstTyI64))
+            (IrInstrCons
+              (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+              (IrInstrNil)))))
+      (IrBlockNil))))
+
+(define (opt-ssa-use-before-def-function) : CompilerIrFunction
+  (IrFunction
+    "ssa_use_before_def"
+    (IrParamNil)
+    (AstTyI64)
+    0
+    (IrBlockCons
+      (IrBlock
+        "entry"
+        (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueVar 9))) (IrInstrNil)))
+      (IrBlockNil))))
+
+(define (opt-ssa-dominance-fail-function) : CompilerIrFunction
+  (IrFunction
+    "ssa_dominance_fail"
+    (opt-ssa-cond-params)
+    (AstTyI64)
+    16
+    (IrBlockCons
+      (IrBlock
+        "entry"
+        (IrInstrCons (IrInstrBranch (IrValueVar 0) "then" "else") (IrInstrNil)))
+      (IrBlockCons
+        (IrBlock
+          "then"
+          (IrInstrCons
+            (IrInstrMov 1 (IrValueI64 10) (AstTyI64))
+            (IrInstrCons (IrInstrJump "join") (IrInstrNil))))
+        (IrBlockCons
+          (IrBlock "else" (IrInstrCons (IrInstrJump "join") (IrInstrNil)))
+          (IrBlockCons
+            (IrBlock
+              "join"
+              (IrInstrCons
+                (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+                (IrInstrNil)))
+            (IrBlockNil)))))))
+
+(define (compiler-optimize-ssa-self-test) : i64
+  (let
+    [diamond-blocks : CompilerIrBlockList (opt-ssa-diamond-blocks)]
+    [diamond-doms : OptDomTable (opt-cfg-dominators diamond-blocks)]
+    [then-frontier : OptLabelSet
+      (opt-cfg-dominance-frontier diamond-blocks "then")]
+    [else-frontier : OptLabelSet
+      (opt-cfg-dominance-frontier diamond-blocks "else")]
+    [loop-blocks : CompilerIrBlockList (opt-ssa-loop-blocks)]
+    [loop-doms : OptDomTable (opt-cfg-dominators loop-blocks)]
+    [loop-frontier : OptLabelSet
+      (opt-cfg-dominance-frontier loop-blocks "loop")]
+    [unreachable-order : CompilerIrBlockList
+      (opt-cfg-reachable-block-order (opt-ssa-unreachable-blocks))]
+    (cond
+      [(not
+          (= (opt-label-count (opt-cfg-predecessors diamond-blocks "join")) 2))
+        1]
+      [(not (opt-dom-dominates? diamond-doms "entry" "join")) 2]
+      [(opt-dom-dominates? diamond-doms "then" "join") 3]
+      [(not (opt-label-contains then-frontier "join")) 4]
+      [(not (opt-label-contains else-frontier "join")) 5]
+      [(not (opt-dom-dominates? loop-doms "loop" "body")) 6]
+      [(not (opt-label-contains loop-frontier "loop")) 7]
+      [(not (= (compiler-ir-block-list-count unreachable-order) 1)) 8]
+      [(not (opt-block-list-has-label? unreachable-order "entry")) 9]
+      [(not (opt-verify-ok? (opt-verify-function (opt-ssa-diamond-function))))
+        10]
+      [(not (opt-verify-ok? (opt-verify-function (opt-ssa-loop-function)))) 11]
+      [(not
+          (opt-verify-ok? (opt-verify-function (opt-ssa-unreachable-function))))
+        12]
+      [(not
+          (opt-verify-error-ok?
+            (opt-verify-function (opt-ssa-duplicate-label-function))
+            "optimizer verify: duplicate block label"))
+        13]
+      [(not
+          (opt-verify-error-ok?
+            (opt-verify-function (opt-ssa-unknown-successor-function))
+            "optimizer verify: unknown successor label"))
+        14]
+      [(not
+          (opt-verify-error-ok?
+            (opt-verify-function (opt-ssa-bad-phi-function))
+            "optimizer verify: phi predecessor mismatch"))
+        15]
+      [(not
+          (opt-verify-error-ok?
+            (opt-verify-function (opt-ssa-duplicate-def-function))
+            "optimizer verify: duplicate var definition"))
+        16]
+      [(not
+          (opt-verify-error-ok?
+            (opt-verify-function (opt-ssa-use-before-def-function))
+            "optimizer verify: use before definition"))
+        17]
+      [(not
+          (opt-verify-error-ok?
+            (opt-verify-function (opt-ssa-dominance-fail-function))
+            "optimizer verify: use is not dominated by definition"))
+        18]
+      [else 42])))
 
 (define (compiler-optimize-cfg-self-test) : i64
   (let

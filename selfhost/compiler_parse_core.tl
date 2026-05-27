@@ -158,14 +158,14 @@
     [_ false]))
 
 (define (compiler-parse-abstraction-policy-message) : String
-  "parse: TypeLisp does not support source-level generics or traits; use comptime-decl and comptime-generated concrete declarations instead (#893/#913/#483)")
+  "parse: TypeLisp does not support source-level generics or traits; use comptime-decl and comptime-generated concrete declarations instead (#893/#913/#970/#902)")
 
 (define (compiler-parse-generic-type-policy-message [name : String]) : String
   (string-append
     "parse: unknown type constructor "
     (string-append
       name
-      "; TypeLisp has no source-level generic type constructors; use comptime-decl and comptime-generated concrete declarations instead (#893/#913/#483)")))
+      "; TypeLisp has no source-level generic type constructors; use comptime-decl and comptime-generated concrete declarations instead (#893/#913/#970/#902)")))
 
 (define (compiler-parse-policy-form? [name : String]) : bool
   (if (string-eq name "defgeneric")
@@ -1548,6 +1548,24 @@
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed array-set!")]))
 
+(define (parse-ast-borrow [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSCons place (SpSNil _) _)
+      (match (parse-ast-expr dispatch place)
+        [(OkAstExpr parsed-place)
+          (OkAstExpr (AstExprBorrow AstBorrowLifetimeInferred parsed-place))]
+        [(ErrAstExpr message) (ErrAstExpr message)])]
+    [(SpSCons lifetime (SpSCons place (SpSNil _) _) _)
+      (match lifetime
+        [(SpSSym name _)
+          (match (parse-ast-expr dispatch place)
+            [(OkAstExpr parsed-place)
+              (OkAstExpr
+                (AstExprBorrow (AstBorrowLifetimeNamed name) parsed-place))]
+            [(ErrAstExpr message) (ErrAstExpr message)])]
+        [_ (ErrAstExpr "parse: borrow lifetime must be an identifier")])]
+    [_ (ErrAstExpr "parse: borrow expects a place or lifetime and place")]))
+
 (define (parse-ast-struct-get [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
     [(SpSCons expr (SpSCons (SpSSym field _) (SpSNil _) _) _)
@@ -2084,7 +2102,12 @@
                             dispatch
                             (ast-binop-from-tag tag)
                             rest)
-                          (parse-ast-list-expr-tag dispatch tag head rest)))))))))))]
+                          (if (= tag (compiler-parse-tag-ty-ref))
+                            (parse-ast-borrow dispatch rest)
+                            (if (= tag (compiler-parse-tag-ty-mut-ref))
+                              (ErrAstExpr
+                                "parse: mutable borrow expressions are not implemented (#806)")
+                              (parse-ast-list-expr-tag dispatch tag head rest)))))))))))))]
     [_ (parse-ast-call dispatch head rest)]))
 
 (define (parse-ast-expr [dispatch : SymI64Env] [s : SpannedSexpr]) : ResultAstExpr
@@ -2823,6 +2846,43 @@
         [_ false])]
     [(ErrAstProgram _) false]))
 
+(define (compiler-parse-borrow-source) : String
+  "(define (main [x : i64]) : i64
+  (begin
+    (& x)
+    (& x x)
+    x))")
+
+(define (compiler-parse-borrow-ok?) : bool
+  (match (parse-ast-source (compiler-parse-borrow-source))
+    [(OkAstProgram (AstProgram decls))
+      (match decls
+        [(AstDeclCons (AstDeclDefFn _ _ _ body) AstDeclNil)
+          (match (ast-expr-unspan body)
+            [(AstExprBegin (AstExprCons first (AstExprCons second _)))
+              (match (ast-expr-unspan first)
+                [(AstExprBorrow AstBorrowLifetimeInferred first-place)
+                  (match (ast-expr-unspan first-place)
+                    [(AstExprVar first-name)
+                      (if (string-eq first-name "x")
+                        (match (ast-expr-unspan second)
+                          [(AstExprBorrow
+                              (AstBorrowLifetimeNamed lifetime)
+                              second-place)
+                            (match (ast-expr-unspan second-place)
+                              [(AstExprVar second-name)
+                                (and
+                                  (string-eq lifetime "x")
+                                  (string-eq second-name "x"))]
+                              [_ false])]
+                          [_ false])
+                        false)]
+                    [_ false])]
+                [_ false])]
+            [_ false])]
+        [_ false])]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-parse-try-source) : String
   "(defenum ResultI64 (OkI64 i64) (ErrI64 String))
 (define (read) : ResultI64 (OkI64 42))
@@ -3180,25 +3240,55 @@
           "parse: unknown extern metadata :link")))))
 
 (define (compiler-parse-reference-error-tests-ok?) : bool
-  (and
-    (compiler-parse-error-ok?
-      "(define (main [p : (&)]) : unit unit)"
-      "parse: & expects lifetime and exactly one type")
-    (and
-      (compiler-parse-error-ok?
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-parse-error-ok?
+        "(define (main [p : (&)]) : unit unit)"
+        "parse: & expects lifetime and exactly one type")
+        unit
+        (set! ok false))
+      (if (compiler-parse-error-ok?
         "(define (main [p : (& r)]) : unit unit)"
         "parse: & expects lifetime and exactly one type")
-      (and
-        (compiler-parse-error-ok?
-          "(define (main [p : (& 1 i64)]) : unit unit)"
-          "parse: reference lifetime must be an identifier")
-        (and
-          (compiler-parse-error-ok?
-            "(define (main [p : (& r i64 i64)]) : unit unit)"
-            "parse: & expects lifetime and exactly one type")
-          (compiler-parse-error-ok?
-            "(define (main [p : (&mut phase)]) : unit unit)"
-            "parse: &mut expects lifetime and exactly one type"))))))
+        unit
+        (set! ok false))
+      (if (compiler-parse-error-ok?
+        "(define (main [p : (& 1 i64)]) : unit unit)"
+        "parse: reference lifetime must be an identifier")
+        unit
+        (set! ok false))
+      (if (compiler-parse-error-ok?
+        "(define (main [p : (& r i64 i64)]) : unit unit)"
+        "parse: & expects lifetime and exactly one type")
+        unit
+        (set! ok false))
+      (if (compiler-parse-error-ok?
+        "(define (main [p : (&mut phase)]) : unit unit)"
+        "parse: &mut expects lifetime and exactly one type")
+        unit
+        (set! ok false))
+      (if (compiler-parse-error-ok?
+        "(define (main [x : i64]) : unit (&))"
+        "parse: borrow expects a place or lifetime and place")
+        unit
+        (set! ok false))
+      (if (compiler-parse-error-ok?
+        "(define (main [x : i64]) : unit (& x x x))"
+        "parse: borrow expects a place or lifetime and place")
+        unit
+        (set! ok false))
+      (if (compiler-parse-error-ok?
+        "(define (main [x : i64]) : unit (& 1 x))"
+        "parse: borrow lifetime must be an identifier")
+        unit
+        (set! ok false))
+      (if (compiler-parse-error-ok?
+        "(define (main [x : i64]) : unit (&mut x))"
+        "parse: mutable borrow expressions are not implemented (#806)")
+        unit
+        (set! ok false))
+      ok)))
 
 (define (compiler-parse-special-form-error-tests-ok?) : bool
   (and
@@ -3677,7 +3767,9 @@
                                         (compiler-parse-raw-pointer-ops-ok?)
                                         (and
                                           (compiler-parse-reference-ok?)
-                                          (compiler-parse-resource-with-shape-ok?)))))))))))))))))))
+                                          (and
+                                            (compiler-parse-borrow-ok?)
+                                            (compiler-parse-resource-with-shape-ok?))))))))))))))))))))
         (if (and
           (compiler-parse-error-tests-ok?)
           (and

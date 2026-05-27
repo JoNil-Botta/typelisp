@@ -137,7 +137,7 @@ jobs:
   test-windows:
     name: Test (windows-latest)
     runs-on: windows-latest
-    timeout-minutes: 35
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
 

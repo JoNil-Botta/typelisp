@@ -492,6 +492,12 @@ run_linux_backend_fixtures() {
         "tl_substring:" \
         ".globl tl_string_concat" \
         "tl_string_concat:" \
+        ".globl tl_string_eq" \
+        "tl_string_eq:" \
+        ".L_tl_string_eq_word_loop:" \
+        "shrq \$3, %r8" \
+        "cmpq (%rdx), %rax" \
+        ".L_tl_string_eq_tail_loop:" \
         ".L_tl_read_stdin_line:" \
         ".L_tl_read_stdin_bytes:" \
         ".L_tl_stdin_eof:" \
@@ -509,6 +515,7 @@ run_linux_backend_fixtures() {
         ".extern tl_oob_abort" \
         ".extern tl_substring" \
         ".extern tl_string_concat" \
+        ".extern tl_string_eq" \
         ".extern .L_tl_read_stdin_line" \
         ".extern .L_tl_read_stdin_bytes" \
         ".extern .L_tl_stdin_eof" \
@@ -607,6 +614,10 @@ run_windows_backend_fixtures() {
         "tl_string_concat:" \
         ".globl tl_string_eq" \
         "tl_string_eq:" \
+        ".L_tl_string_eq_word_loop:" \
+        "shrq \$3, %r10" \
+        "cmpq (%r8), %rax" \
+        ".L_tl_string_eq_tail_loop:" \
         ".globl tl_string_to_int" \
         "tl_string_to_int:" \
         ".globl tl_int_to_string" \

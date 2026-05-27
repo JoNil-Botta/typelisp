@@ -60,7 +60,7 @@ stdlib_text_buf|tests/integration/stdlib_text_buf.tl|42|-|-|stdlib/text_buf.tl
 stdlib_string|tests/integration/stdlib_string.tl|42|hello\174\nhello\174\nhello\174\nfound\n\174empty-left\n\174empty-right\n\174all-space\ncontains\nmissing\nhippo\nabx\n|-|stdlib/string.tl
 stdlib_test|tests/integration/stdlib_test.tl|42|-|-|stdlib/test.tl
 string_append|tests/integration/string_append.tl|0|[]\nright\nleft\nfoobar\nabcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\n|-|-
-string_eq|tests/integration/string_eq.tl|0|true\nfalse\nfalse\ntrue\n|-|-
+string_eq|tests/integration/string_eq.tl|0|true\ntrue\ntrue\nfalse\nfalse\ntrue\nfalse\n|-|-
 string_length|tests/integration/string_length.tl|5|-|-|-
 string_match|tests/integration/string_match.tl|42|-|-|-
 substring|tests/integration/substring.tl|55|-|-|-

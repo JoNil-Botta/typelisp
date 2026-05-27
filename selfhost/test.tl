@@ -474,6 +474,35 @@
         (print-error (compiler-diagnostic-render diag))
         1)]))
 
+(define (tltest-no-tests-check [decls : AstDeclList] [paths : AstDeclPathList]) : i64
+  (match (typecheck-compiler-program-with-paths (AstProgram decls) paths)
+    [(OkCompilerTypecheck _)
+      (begin
+        (print-string "TypeLisp test typecheck passed: 0 test(s)\n")
+        0)]
+    [(ErrCompilerTypecheck diag)
+      (begin
+        (print-error (compiler-diagnostic-render diag))
+        1)]))
+
+(define (tltest-no-tests-run
+  [source : String]
+  [target : String]
+  [mode : String]
+  [opt-level : i64])
+  :
+  i64
+  ;; With no inline tests there is no source harness to validate here. `test
+  ;; --check` owns source typechecking; run mode only needs the zero-test runner
+  ;; plan so the Rust host-action boundary can keep its normal contract.
+  (tltest-run-plan
+    source
+    (AstProgram (AstDeclCons (tltest-main-decl InlineTestNil 0) AstDeclNil))
+    (AstDeclPathCons source AstDeclPathNil)
+    target
+    mode
+    opt-level))
+
 (define (tltest-run-config [config : TestConfig]) : i64
   (match config
     [(TestConfig source target mode roots opt-level test-mode)
@@ -484,17 +513,22 @@
         [(OkCompilerLoadWithPaths decls paths _ _)
           (match (tltest-build-harness source decls paths)
             [(InlineHarness program harness-paths count)
-              (match test-mode
-                [(TestModeCheck)
-                  (tltest-check-only program harness-paths count)]
-                [(TestModeRun)
-                  (tltest-run-plan
-                    source
-                    program
-                    harness-paths
-                    target
-                    mode
-                    opt-level)])])]
+              (if (= count 0)
+                (match test-mode
+                  [(TestModeCheck) (tltest-no-tests-check decls paths)]
+                  [(TestModeRun)
+                    (tltest-no-tests-run source target mode opt-level)])
+                (match test-mode
+                  [(TestModeCheck)
+                    (tltest-check-only program harness-paths count)]
+                  [(TestModeRun)
+                    (tltest-run-plan
+                      source
+                      program
+                      harness-paths
+                      target
+                      mode
+                      opt-level)]))])]
         [(ErrCompilerLoadWithPaths diag)
           (begin
             (print-error (compiler-diagnostic-render diag))

@@ -93,7 +93,7 @@ run_gate() {
     "$@"
 }
 
-make_stage1_compile_wrapper() {
+make_stage1_cli_wrapper() {
     stage1_bin=$1
     wrapper_dir="$ROOT/target/no-rust-stage1-wrapper"
     wrapper="$wrapper_dir/typelisp"
@@ -102,13 +102,9 @@ make_stage1_compile_wrapper() {
     cat > "$wrapper" <<EOF
 #!/usr/bin/env sh
 set -eu
-STAGE1_BIN='$stage1_bin'
-if [ "\${1:-}" = compile ]; then
-    shift
-    exec "\$STAGE1_BIN" "\$@"
-fi
-echo "stage1 wrapper supports compile only; full CLI routing still requires the seed compiler" >&2
-exit 2
+TYPELISP_STAGE1_BIN='$stage1_bin'
+export TYPELISP_STAGE1_BIN
+exec '$ROOT/scripts/stage1-typelisp-wrapper.sh' "\$@"
 EOF
     chmod +x "$wrapper"
     printf '%s\n' "$wrapper"
@@ -140,9 +136,9 @@ if [ "$HOST_OS" = linux ]; then
         TYPELISP_BIN="$ROOT/target/bootstrap-fixpoint/stage1"
     fi
     ensure_executable "stage1" "$TYPELISP_BIN"
-    STAGE1_TYPELISP_BIN=$(make_stage1_compile_wrapper "$TYPELISP_BIN")
+    STAGE1_TYPELISP_BIN=$(make_stage1_cli_wrapper "$TYPELISP_BIN")
     echo
-    echo "[no-rust-stage0] stage1 compile wrapper=$STAGE1_TYPELISP_BIN"
+    echo "[no-rust-stage0] stage1 CLI wrapper=$STAGE1_TYPELISP_BIN"
 else
     TYPELISP_BIN=$SEED_TYPELISP_BIN
     echo "[no-rust-stage0] capability compiler=$TYPELISP_BIN"
@@ -155,6 +151,7 @@ run_gate "public tool surface" scripts/verify-public-tools.sh
 run_gate "repository doctests" scripts/verify-doc-tests.sh
 run_gate "inline TypeLisp tests" scripts/verify-inline-tests.sh
 if [ "$HOST_OS" = linux ]; then
+    run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 CLI host-action wrapper smoke" scripts/check-stage1-wrapper.sh
     run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 deterministic assembly" scripts/check-deterministic-asm.sh
 else
     run_gate "selfhost compile manifest" scripts/verify-selfhost-compile-manifest.sh

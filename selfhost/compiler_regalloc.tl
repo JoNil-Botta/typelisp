@@ -2,9 +2,10 @@
 ;;
 ;; This pass mirrors the Rust backend's planning shape without changing
 ;; assembly emission. It computes inspectable live intervals, ineligible vars,
-;; and register/spill homes for scalar IR values. The selfhost pool keeps
-;; %rsp/%rbp and the emitter's hard scratch registers reserved, and only admits
-;; caller-saved registers for values that cannot be clobbered by call emission.
+;; and register/spill homes for scalar IR values. The selfhost pools keep
+;; %rsp/%rbp and the emitter's hard scratch registers reserved, and only admit
+;; caller-saved integer/XMM registers for values that cannot be clobbered by
+;; call emission.
 (import "compiler_liveness.tl")
 
 (defenum CompilerRegStringList
@@ -164,6 +165,91 @@
               "%r14"
               (CompilerRegStringCons "%r15" CompilerRegStringNil))))))))
 
+;; Persistent f64 homes use XMM registers that are caller-saved on both SysV
+;; and Windows x64, avoid %xmm0/%xmm1 arithmetic scratch, avoid %xmm15 outgoing
+;; stack-argument scratch, and avoid Windows callee-saved XMM6-XMM15 until the
+;; backend has save/restore support for those registers.
+(define (compiler-reg-xmm-registers) : CompilerRegStringList
+  (CompilerRegStringCons
+    "%xmm2"
+    (CompilerRegStringCons
+      "%xmm3"
+      (CompilerRegStringCons
+        "%xmm4"
+        (CompilerRegStringCons "%xmm5" CompilerRegStringNil)))))
+
+(define (compiler-reg-sysv-caller-saved-xmm-registers) : CompilerRegStringList
+  (CompilerRegStringCons
+    "%xmm0"
+    (CompilerRegStringCons
+      "%xmm1"
+      (CompilerRegStringCons
+        "%xmm2"
+        (CompilerRegStringCons
+          "%xmm3"
+          (CompilerRegStringCons
+            "%xmm4"
+            (CompilerRegStringCons
+              "%xmm5"
+              (CompilerRegStringCons
+                "%xmm6"
+                (CompilerRegStringCons
+                  "%xmm7"
+                  (CompilerRegStringCons
+                    "%xmm8"
+                    (CompilerRegStringCons
+                      "%xmm9"
+                      (CompilerRegStringCons
+                        "%xmm10"
+                        (CompilerRegStringCons
+                          "%xmm11"
+                          (CompilerRegStringCons
+                            "%xmm12"
+                            (CompilerRegStringCons
+                              "%xmm13"
+                              (CompilerRegStringCons
+                                "%xmm14"
+                                (CompilerRegStringCons
+                                  "%xmm15"
+                                  CompilerRegStringNil)))))))))))))))))
+
+(define (compiler-reg-sysv-callee-saved-xmm-registers) : CompilerRegStringList
+  CompilerRegStringNil)
+
+(define (compiler-reg-win64-caller-saved-xmm-registers) : CompilerRegStringList
+  (CompilerRegStringCons
+    "%xmm0"
+    (CompilerRegStringCons
+      "%xmm1"
+      (CompilerRegStringCons
+        "%xmm2"
+        (CompilerRegStringCons
+          "%xmm3"
+          (CompilerRegStringCons
+            "%xmm4"
+            (CompilerRegStringCons "%xmm5" CompilerRegStringNil)))))))
+
+(define (compiler-reg-win64-callee-saved-xmm-registers) : CompilerRegStringList
+  (CompilerRegStringCons
+    "%xmm6"
+    (CompilerRegStringCons
+      "%xmm7"
+      (CompilerRegStringCons
+        "%xmm8"
+        (CompilerRegStringCons
+          "%xmm9"
+          (CompilerRegStringCons
+            "%xmm10"
+            (CompilerRegStringCons
+              "%xmm11"
+              (CompilerRegStringCons
+                "%xmm12"
+                (CompilerRegStringCons
+                  "%xmm13"
+                  (CompilerRegStringCons
+                    "%xmm14"
+                    (CompilerRegStringCons "%xmm15" CompilerRegStringNil)))))))))))
+
 (define (compiler-reg-string-list-count [regs : CompilerRegStringList]) : i64
   (match regs
     [(CompilerRegStringNil) 0]
@@ -179,6 +265,11 @@
         true
         (compiler-reg-string-list-contains? rest want))]))
 
+(define (compiler-reg-f64-type? [ty : AstType]) : bool
+  (match ty
+    [(AstTyF64) true]
+    [_ false]))
+
 (define (compiler-reg-scalar-type? [ty : AstType]) : bool
   (match ty
     [(AstTyI64) true]
@@ -189,6 +280,7 @@
     [(AstTyU32) true]
     [(AstTyU16) true]
     [(AstTyU8) true]
+    [(AstTyF64) true]
     [(AstTyBool) true]
     [(AstTyChar) true]
     [(AstTyFunc _ _) true]
@@ -251,6 +343,10 @@
     [(IrInstrCast dst _ _ to-ty) (compiler-reg-var-type-insert types dst to-ty)]
     [(IrInstrBinOp dst _ _ _ ty) (compiler-reg-var-type-insert types dst ty)]
     [(IrInstrUnOp dst _ _ ty) (compiler-reg-var-type-insert types dst ty)]
+    [(IrInstrVectorReduce dst _ _ _ elem-ty)
+      (compiler-reg-var-type-insert types dst elem-ty)]
+    [(IrInstrMaskReduce dst _ _ _)
+      (compiler-reg-var-type-insert types dst (AstTyBool))]
     [(IrInstrCall dst _ _ ty) (compiler-reg-var-type-insert types dst ty)]
     [(IrInstrPhi dst _ ty) (compiler-reg-var-type-insert types dst ty)]
     [_ types]))
@@ -509,6 +605,16 @@
     [(IrInstrAddrOf dst src)
       (compiler-live-set-insert (compiler-live-set-insert set dst) src)]
     [(IrInstrGep dst _ _ _) (compiler-live-set-insert set dst)]
+    [(IrInstrLaneId dst _ _) (compiler-live-set-insert set dst)]
+    [(IrInstrSplat dst _ _ _) (compiler-live-set-insert set dst)]
+    [(IrInstrVectorBinOp dst _ _ _ _ _) (compiler-live-set-insert set dst)]
+    [(IrInstrVectorCompare dst _ _ _ _ _) (compiler-live-set-insert set dst)]
+    [(IrInstrMaskBinOp dst _ _ _ _) (compiler-live-set-insert set dst)]
+    [(IrInstrMaskNot dst _ _) (compiler-live-set-insert set dst)]
+    [(IrInstrSelect dst _ _ _ _ _) (compiler-live-set-insert set dst)]
+    [(IrInstrVectorLoad dst _ _ _ _) (compiler-live-set-insert set dst)]
+    [(IrInstrPredicatedLoad dst _ _ _ _ _) (compiler-live-set-insert set dst)]
+    [(IrInstrTailMask dst _ _ _) (compiler-live-set-insert set dst)]
     [_ set]))
 
 (define (compiler-reg-ineligible-instrs
@@ -641,7 +747,8 @@
 (define (compiler-reg-candidates
   [intervals : CompilerRegIntervalList]
   [types : CompilerRegVarTypeList]
-  [ineligible : CompilerLiveI64Set]) : CompilerRegIntervalList
+  [ineligible : CompilerLiveI64Set]
+  [want-f64 : bool]) : CompilerRegIntervalList
   (match intervals
     [(CompilerRegIntervalNil) CompilerRegIntervalNil]
     [(CompilerRegIntervalCons interval rest)
@@ -649,12 +756,16 @@
         [(CompilerRegInterval var _ _)
           (let
             [tail : CompilerRegIntervalList
-              (compiler-reg-candidates rest types ineligible)]
+              (compiler-reg-candidates rest types ineligible want-f64)]
             (if (compiler-live-set-contains? ineligible var)
               tail
               (match (compiler-reg-var-type-lookup types var)
-                [(CompilerRegSomeType _)
-                  (compiler-reg-candidate-insert tail interval)]
+                [(CompilerRegSomeType ty)
+                  (if (if want-f64
+                    (compiler-reg-f64-type? ty)
+                    (not (compiler-reg-f64-type? ty)))
+                    (compiler-reg-candidate-insert tail interval)
+                    tail)]
                 [(CompilerRegNoType) tail])))])]))
 
 (define (compiler-reg-active-count [active : CompilerRegActiveList]) : i64
@@ -1097,15 +1208,24 @@
           [ineligible : CompilerLiveI64Set
             (compiler-reg-ineligible-vars func liveness types)]
           (match (compiler-reg-assign-candidates
-            (compiler-reg-candidates intervals types ineligible)
+            (compiler-reg-candidates intervals types ineligible false)
             (compiler-reg-sysv-integer-registers)
             CompilerRegActiveNil
             CompilerRegAssignmentNil
             (compiler-reg-function-moves func)
             intervals
             types)
-            [(CompilerRegAssignState _ assignments)
-              (CompilerRegPlan assignments ineligible intervals)]))))))
+            [(CompilerRegAssignState _ integer-assignments)
+              (match (compiler-reg-assign-candidates
+                (compiler-reg-candidates intervals types ineligible true)
+                (compiler-reg-xmm-registers)
+                CompilerRegActiveNil
+                integer-assignments
+                (compiler-reg-function-moves func)
+                intervals
+                types)
+                [(CompilerRegAssignState _ assignments)
+                  (CompilerRegPlan assignments ineligible intervals)])]))))))
 
 (define (compiler-reg-plan-assignments [plan : CompilerRegPlan]) : CompilerRegAssignmentList
   (match plan
@@ -1158,6 +1278,9 @@
 (define (compiler-reg-i64-ty) : AstType
   (AstTyI64))
 
+(define (compiler-reg-f64-ty) : AstType
+  (AstTyF64))
+
 (define (compiler-reg-reuse-function) : CompilerIrFunction
   (IrFunction
     "reuse"
@@ -1178,12 +1301,32 @@
                 IrInstrNil)))))
       IrBlockNil)))
 
+(define (compiler-reg-f64-reuse-function) : CompilerIrFunction
+  (IrFunction
+    "f64_reuse"
+    IrParamNil
+    (compiler-reg-f64-ty)
+    2
+    (IrBlockCons
+      (IrBlock
+        "entry"
+        (IrInstrCons
+          (IrInstrMov 0 (IrValueF64 "1.5") (compiler-reg-f64-ty))
+          (IrInstrCons
+            (IrInstrStore "g0" (IrValueVar 0) (compiler-reg-f64-ty))
+            (IrInstrCons
+              (IrInstrMov 1 (IrValueF64 "2.5") (compiler-reg-f64-ty))
+              (IrInstrCons
+                (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+                IrInstrNil)))))
+      IrBlockNil)))
+
 (define (compiler-reg-overlap-function) : CompilerIrFunction
   (IrFunction
     "overlap"
     IrParamNil
     (AstTyUnit)
-    7
+    8
     (IrBlockCons
       (IrBlock
         "entry"
@@ -1238,6 +1381,44 @@
                                       IrInstrNil))))))))))))))))
       IrBlockNil)))
 
+(define (compiler-reg-f64-overlap-function) : CompilerIrFunction
+  (IrFunction
+    "f64_overlap"
+    IrParamNil
+    (AstTyUnit)
+    5
+    (IrBlockCons
+      (IrBlock
+        "entry"
+        (IrInstrCons
+          (IrInstrMov 0 (IrValueF64 "0.5") (compiler-reg-f64-ty))
+          (IrInstrCons
+            (IrInstrMov 1 (IrValueF64 "1.5") (compiler-reg-f64-ty))
+            (IrInstrCons
+              (IrInstrMov 2 (IrValueF64 "2.5") (compiler-reg-f64-ty))
+              (IrInstrCons
+                (IrInstrMov 3 (IrValueF64 "3.5") (compiler-reg-f64-ty))
+                (IrInstrCons
+                  (IrInstrMov 4 (IrValueF64 "4.5") (compiler-reg-f64-ty))
+                  (IrInstrCons
+                    (IrInstrStore "g0" (IrValueVar 0) (compiler-reg-f64-ty))
+                    (IrInstrCons
+                      (IrInstrStore "g1" (IrValueVar 1) (compiler-reg-f64-ty))
+                      (IrInstrCons
+                        (IrInstrStore "g2" (IrValueVar 2) (compiler-reg-f64-ty))
+                        (IrInstrCons
+                          (IrInstrStore
+                            "g3"
+                            (IrValueVar 3)
+                            (compiler-reg-f64-ty))
+                          (IrInstrCons
+                            (IrInstrStore
+                              "g4"
+                              (IrValueVar 4)
+                              (compiler-reg-f64-ty))
+                            (IrInstrCons (IrInstrReturn IrNoValue) IrInstrNil))))))))))))
+      IrBlockNil)))
+
 (define (compiler-reg-call-live-function) : CompilerIrFunction
   (IrFunction
     "call_live"
@@ -1253,6 +1434,26 @@
             (IrInstrCall 1 "side_effect" IrValueNil (AstTyUnit))
             (IrInstrCons
               (IrInstrMov 2 (IrValueVar 0) (compiler-reg-i64-ty))
+              (IrInstrCons
+                (IrInstrReturn (IrSomeValue (IrValueVar 2)))
+                IrInstrNil)))))
+      IrBlockNil)))
+
+(define (compiler-reg-f64-call-live-function) : CompilerIrFunction
+  (IrFunction
+    "f64_call_live"
+    IrParamNil
+    (compiler-reg-f64-ty)
+    3
+    (IrBlockCons
+      (IrBlock
+        "entry"
+        (IrInstrCons
+          (IrInstrMov 0 (IrValueF64 "9.5") (compiler-reg-f64-ty))
+          (IrInstrCons
+            (IrInstrCall 1 "side_effect" IrValueNil (AstTyUnit))
+            (IrInstrCons
+              (IrInstrMov 2 (IrValueVar 0) (compiler-reg-f64-ty))
               (IrInstrCons
                 (IrInstrReturn (IrSomeValue (IrValueVar 2)))
                 IrInstrNil)))))
@@ -1286,6 +1487,30 @@
                   IrInstrNil))))))
       IrBlockNil)))
 
+(define (compiler-reg-f64-call-arg-function) : CompilerIrFunction
+  (IrFunction
+    "f64_call_arg"
+    IrParamNil
+    (compiler-reg-f64-ty)
+    3
+    (IrBlockCons
+      (IrBlock
+        "entry"
+        (IrInstrCons
+          (IrInstrMov 0 (IrValueF64 "1.5") (compiler-reg-f64-ty))
+          (IrInstrCons
+            (IrInstrCall
+              1
+              "takes_f64"
+              (IrValueCons (IrValueVar 0) IrValueNil)
+              (AstTyUnit))
+            (IrInstrCons
+              (IrInstrMov 2 (IrValueF64 "2.5") (compiler-reg-f64-ty))
+              (IrInstrCons
+                (IrInstrReturn (IrSomeValue (IrValueVar 2)))
+                IrInstrNil)))))
+      IrBlockNil)))
+
 (define (compiler-reg-ineligible-function) : CompilerIrFunction
   (IrFunction
     "ineligible"
@@ -1308,8 +1533,10 @@
                   (IrInstrCons
                     (IrInstrAddrOf 6 3)
                     (IrInstrCons
-                      (IrInstrReturn (IrSomeValue (IrValueVar 5)))
-                      IrInstrNil))))))))
+                      (IrInstrTailMask 7 (IrValueVar 5) (IrValueVar 5) 4)
+                      (IrInstrCons
+                        (IrInstrReturn (IrSomeValue (IrValueVar 5)))
+                        IrInstrNil)))))))))
       IrBlockNil)))
 
 (define (compiler-reg-move-chain-function) : CompilerIrFunction
@@ -1466,6 +1693,19 @@
             (compiler-reg-assignment-lookup assignments 1)
             "%r12")))]))
 
+(define (compiler-reg-f64-reuse-ok?) : bool
+  (match (compiler-reg-plan-function (compiler-reg-f64-reuse-function))
+    [(CompilerRegPlan assignments _ _)
+      (and
+        (= (compiler-reg-assignment-count assignments) 2)
+        (and
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 0)
+            "%xmm2")
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 1)
+            "%xmm2")))]))
+
 (define (compiler-reg-overlap-spill-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-overlap-function))
     [(CompilerRegPlan assignments _ _)
@@ -1485,6 +1725,33 @@
                 (compiler-reg-assignment-lookup assignments 6)
                 (compiler-reg-stack-slot-offset 6))))))]))
 
+(define (compiler-reg-f64-overlap-spill-ok?) : bool
+  (match (compiler-reg-plan-function (compiler-reg-f64-overlap-function))
+    [(CompilerRegPlan assignments _ _)
+      (and
+        (= (compiler-reg-assignment-count assignments) 5)
+        (and
+          (= (compiler-reg-spill-count assignments) 1)
+          (and
+            (compiler-reg-location-register?
+              (compiler-reg-assignment-lookup assignments 0)
+              "%xmm2")
+            (and
+              (compiler-reg-location-register?
+                (compiler-reg-assignment-lookup assignments 1)
+                "%xmm3")
+              (and
+                (compiler-reg-location-register?
+                  (compiler-reg-assignment-lookup assignments 2)
+                  "%xmm4")
+                (and
+                  (compiler-reg-location-register?
+                    (compiler-reg-assignment-lookup assignments 3)
+                    "%xmm5")
+                  (compiler-reg-location-spill-offset?
+                    (compiler-reg-assignment-lookup assignments 4)
+                    (compiler-reg-stack-slot-offset 4))))))))]))
+
 (define (compiler-reg-call-live-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-call-live-function))
     [(CompilerRegPlan assignments ineligible _)
@@ -1497,6 +1764,21 @@
             (compiler-reg-location-register?
               (compiler-reg-assignment-lookup assignments 2)
               "%r12"))))]))
+
+(define (compiler-reg-f64-call-live-ok?) : bool
+  (match (compiler-reg-plan-function (compiler-reg-f64-call-live-function))
+    [(CompilerRegPlan assignments ineligible _)
+      (and
+        (compiler-live-set-contains? ineligible 0)
+        (and
+          (compiler-live-set-contains? ineligible 1)
+          (and
+            (compiler-reg-unassigned? assignments 0)
+            (and
+              (compiler-reg-unassigned? assignments 1)
+              (compiler-reg-location-register?
+                (compiler-reg-assignment-lookup assignments 2)
+                "%xmm2")))))]))
 
 (define (compiler-reg-call-arg-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-call-arg-function))
@@ -1513,36 +1795,54 @@
                 (compiler-reg-assignment-lookup assignments 3)
                 "%r12")))))]))
 
-(define (compiler-reg-ineligible-ok?) : bool
-  (match (compiler-reg-plan-function (compiler-reg-ineligible-function))
+(define (compiler-reg-f64-call-arg-ok?) : bool
+  (match (compiler-reg-plan-function (compiler-reg-f64-call-arg-function))
     [(CompilerRegPlan assignments ineligible _)
       (and
         (compiler-live-set-contains? ineligible 0)
         (and
-          (compiler-live-set-contains? ineligible 1)
+          (compiler-reg-unassigned? assignments 0)
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 2)
+            "%xmm2")))]))
+
+(define (compiler-reg-ineligible-ok?) : bool
+  (match (compiler-reg-plan-function (compiler-reg-ineligible-function))
+    [(CompilerRegPlan assignments ineligible _)
+      (let
+        [marked : bool
           (and
-            (compiler-live-set-contains? ineligible 2)
+            (compiler-live-set-contains? ineligible 0)
             (and
-              (compiler-live-set-contains? ineligible 3)
+              (compiler-live-set-contains? ineligible 2)
               (and
-                (compiler-live-set-contains? ineligible 4)
+                (compiler-live-set-contains? ineligible 3)
                 (and
-                  (compiler-live-set-contains? ineligible 6)
+                  (compiler-live-set-contains? ineligible 4)
                   (and
-                    (compiler-reg-unassigned? assignments 0)
-                    (and
-                      (compiler-reg-unassigned? assignments 1)
-                      (and
-                        (compiler-reg-unassigned? assignments 2)
-                        (and
-                          (compiler-reg-unassigned? assignments 3)
-                          (and
-                            (compiler-reg-unassigned? assignments 4)
-                            (and
-                              (compiler-reg-unassigned? assignments 6)
-                              (compiler-reg-location-register?
-                                (compiler-reg-assignment-lookup assignments 5)
-                                "%r12")))))))))))))]))
+                    (compiler-live-set-contains? ineligible 6)
+                    (compiler-live-set-contains? ineligible 7))))))]
+        [unassigned : bool
+          (and
+            (compiler-reg-unassigned? assignments 0)
+            (and
+              (compiler-reg-unassigned? assignments 2)
+              (and
+                (compiler-reg-unassigned? assignments 3)
+                (and
+                  (compiler-reg-unassigned? assignments 4)
+                  (and
+                    (compiler-reg-unassigned? assignments 6)
+                    (compiler-reg-unassigned? assignments 7))))))]
+        [homes : bool
+          (and
+            (compiler-reg-location-register?
+              (compiler-reg-assignment-lookup assignments 1)
+              "%xmm2")
+            (compiler-reg-location-register?
+              (compiler-reg-assignment-lookup assignments 5)
+              "%r12"))]
+        (and marked (and unassigned homes)))]))
 
 (define (compiler-reg-same-location?
   [assignments : CompilerRegAssignmentList]
@@ -1635,18 +1935,73 @@
                   (compiler-reg-sysv-integer-registers)
                   "%r9")))))))))
 
+(define (compiler-reg-xmm-clobbers-ok?) : bool
+  (let
+    [pool : CompilerRegStringList (compiler-reg-xmm-registers)]
+    [sysv-callers : CompilerRegStringList
+      (compiler-reg-sysv-caller-saved-xmm-registers)]
+    [sysv-callees : CompilerRegStringList
+      (compiler-reg-sysv-callee-saved-xmm-registers)]
+    [win-callers : CompilerRegStringList
+      (compiler-reg-win64-caller-saved-xmm-registers)]
+    [win-callees : CompilerRegStringList
+      (compiler-reg-win64-callee-saved-xmm-registers)]
+    [pool-ok : bool
+      (and
+        (compiler-reg-string-list-contains? pool "%xmm2")
+        (and
+          (compiler-reg-string-list-contains? pool "%xmm5")
+          (and
+            (not (compiler-reg-string-list-contains? pool "%xmm0"))
+            (and
+              (not (compiler-reg-string-list-contains? pool "%xmm1"))
+              (and
+                (not (compiler-reg-string-list-contains? pool "%xmm6"))
+                (not (compiler-reg-string-list-contains? pool "%xmm15")))))))]
+    [sysv-ok : bool
+      (and
+        (compiler-reg-string-list-contains? sysv-callers "%xmm14")
+        (not (compiler-reg-string-list-contains? sysv-callees "%xmm14")))]
+    [win-ok : bool
+      (and
+        (compiler-reg-string-list-contains? win-callers "%xmm5")
+        (and
+          (not (compiler-reg-string-list-contains? win-callers "%xmm6"))
+          (compiler-reg-string-list-contains? win-callees "%xmm6")))]
+    [counts-ok : bool
+      (and
+        (= (compiler-reg-string-list-count sysv-callers) 16)
+        (and
+          (= (compiler-reg-string-list-count sysv-callees) 0)
+          (and
+            (= (compiler-reg-string-list-count win-callers) 6)
+            (= (compiler-reg-string-list-count win-callees) 10))))]
+    (and pool-ok (and sysv-ok (and win-ok counts-ok)))))
+
 (define (compiler-regalloc-self-test) : i64
   (if (and
     (compiler-reg-reuse-ok?)
     (and
-      (compiler-reg-overlap-spill-ok?)
+      (compiler-reg-f64-reuse-ok?)
       (and
-        (compiler-reg-call-live-ok?)
+        (compiler-reg-overlap-spill-ok?)
         (and
-          (compiler-reg-call-arg-ok?)
+          (compiler-reg-f64-overlap-spill-ok?)
           (and
-            (compiler-reg-ineligible-ok?)
-            (and (compiler-reg-target-clobbers-ok?) (compiler-reg-coalesce-ok?)))))))
+            (compiler-reg-call-live-ok?)
+            (and
+              (compiler-reg-f64-call-live-ok?)
+              (and
+                (compiler-reg-call-arg-ok?)
+                (and
+                  (compiler-reg-f64-call-arg-ok?)
+                  (and
+                    (compiler-reg-ineligible-ok?)
+                    (and
+                      (compiler-reg-target-clobbers-ok?)
+                      (and
+                        (compiler-reg-xmm-clobbers-ok?)
+                        (compiler-reg-coalesce-ok?))))))))))))
     42
     (begin
       (panic "regalloc: smoke mismatch")

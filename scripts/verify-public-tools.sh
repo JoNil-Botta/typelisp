@@ -1118,6 +1118,17 @@ assert_contains "$err" "inline failure message"
 assert_contains "$err" "typelisp test: test executable exited"
 [ ! -f "$WORKDIR/inline_test_fail.tl.test.s" ] || fail "failing typelisp test left scratch assembly behind"
 
+run_cmd inline-test-no-tests-check "$COMPILER" test --check "$ROOT/stdlib/windows_setup.tl" --stdlib-root "$ROOT/stdlib"
+assert_success
+assert_stderr_empty
+assert_contains "$out" "TypeLisp test typecheck passed: 0 test(s)"
+
+run_cmd inline-test-no-tests-run "$COMPILER" test "$ROOT/stdlib/windows_setup.tl" --stdlib-root "$ROOT/stdlib"
+assert_success
+assert_stdout_empty
+assert_contains "$err" "TypeLisp tests passed: 0 test(s)"
+[ ! -f "$ROOT/stdlib/windows_setup.tl.test.s" ] || fail "no-test typelisp test left scratch assembly behind"
+
 echo "[public-tools] package build"
 PKG="$WORKDIR/pkg"
 mkdir -p "$PKG/src" "$PKG/vendor/math/src"

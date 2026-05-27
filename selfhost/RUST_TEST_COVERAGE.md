@@ -85,6 +85,11 @@ Total inline Rust `#[test]` items under `src/`: 926.
   `scripts/verify-stdlib.sh`, including the Windows no-Rust stage0 path and the
   staged-symbol skip until stage0 republishes. Backend emit-shape parity remains
   with #1044/#1287 until `selfhost/compiler_backend.tl` owns this runtime helper.
+- #1355 moves backend checked integer execution behavior into checked-in
+  `tests/integration/*.tl` fixtures and `scripts/verify-integration.sh` manifest
+  cases: the no-Rust native path now runs division/remainder traps, signed
+  MIN / -1 traps, u16 division-by-zero, shift-count traps, and valid shift-bound
+  cases with expected native exits and stderr diagnostics.
 
 ## File Inventory
 

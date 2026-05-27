@@ -70,12 +70,11 @@ Total inline Rust `#[test]` items under `src/`: 926.
   stage0 bridge. The no-Rust replacement path is the paired
   `selfhost/compiler_typecheck.tl` IO-builtin self-test,
   `selfhost/compiler_lower.tl` file-handle status shape self-test, and the
-  manifest-backed `stdlib/tests/io_file_handle.tl` fixture. Backend runtime
-  selfhost parity for open/close remains covered by #1287 until
-  `selfhost/compiler_backend.tl` emits these helpers. #1325 adds the
-  selfhost-owned backend runtime path for the streaming read-chunk helpers,
-  including runtime-plan detection, extern suppression, Linux table/helper
-  labels, and Windows unsupported stubs.
+  manifest-backed `stdlib/tests/io_file_handle.tl` fixture. #1287 adds the
+  selfhost-owned backend runtime path for the open/close helpers, including
+  runtime-plan detection, extern suppression, Linux handle-table/helper labels,
+  and Windows unsupported stubs. #1325 adds the selfhost-owned backend runtime
+  path for the streaming read-chunk helpers with the same table/stub parity.
 
 ### 2026-05-27 Inline Additions
 

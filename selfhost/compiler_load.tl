@@ -25,6 +25,10 @@
   (CompilerLoadNoPath)
   (CompilerLoadSomePath String))
 
+(defenum ResultPkgResolve
+  (OkPkgResolve String)
+  (ErrPkgResolve String))
+
 (defenum CompilerLoadSegmentList
   (CompilerLoadSegmentNil)
   (CompilerLoadSegmentCons String CompilerLoadSegmentList))
@@ -213,23 +217,36 @@
   [importer-path : String]
   [import-path : String]
   [stdlib-roots : CompilerLoadRootList]) : String
+  (match (compiler-load-resolve-import-result-with-roots
+    importer-path
+    import-path
+    stdlib-roots)
+    [(OkPkgResolve resolved) resolved]
+    [(ErrPkgResolve _) import-path]))
+
+(define (compiler-load-resolve-import-result-with-roots
+  [importer-path : String]
+  [import-path : String]
+  [stdlib-roots : CompilerLoadRootList]) : ResultPkgResolve
   (if (compiler-load-pkg-import? import-path)
     (compiler-load-resolve-pkg-import-from-disk importer-path import-path)
     (let
       [primary : String
         (compiler-load-join-import-path importer-path import-path)]
-      (if (file-exists? primary)
-        primary
-        (if (compiler-load-stdlib-import? import-path)
-          (match (compiler-load-resolve-stdlib-root
-            (compiler-load-stdlib-suffix import-path)
-            stdlib-roots)
-            [(CompilerLoadSomePath root-path) root-path]
-            [(CompilerLoadNoPath)
-              (if (file-exists? import-path)
-                import-path
-                primary)])
-          primary)))))
+      [resolved : String
+        (if (file-exists? primary)
+          primary
+          (if (compiler-load-stdlib-import? import-path)
+            (match (compiler-load-resolve-stdlib-root
+              (compiler-load-stdlib-suffix import-path)
+              stdlib-roots)
+              [(CompilerLoadSomePath root-path) root-path]
+              [(CompilerLoadNoPath)
+                (if (file-exists? import-path)
+                  import-path
+                  primary)])
+            primary))]
+      (OkPkgResolve resolved))))
 
 (define (compiler-load-decl-list-append
   [left : AstDeclList]
@@ -334,45 +351,50 @@
     [(AstDeclCons decl rest)
       (match decl
         [(AstDeclImport (AstImportSpec import-path expected-module _))
-          (let
-            [resolved : String
-              (compiler-load-resolve-import-with-roots
-                importer-path
-                import-path
-                stdlib-roots)]
-            (match (compiler-load-file-with-paths-and-roots-expect
-              resolved
-              seen
-              stdlib-roots
-              expected-module)
-              [(OkCompilerLoadWithPaths
-                  imported-decls
-                  imported-paths
-                  imported-modules
-                  import-seen)
-                (match (compiler-load-decls-with-module-and-roots
-                  rest
-                  importer-path
-                  importer-module
-                  import-seen
-                  stdlib-roots)
-                  [(OkCompilerLoadWithPaths
-                      rest-decls
-                      rest-paths
-                      rest-modules
-                      rest-seen)
-                    (OkCompilerLoadWithPaths
-                      (compiler-load-decl-list-append imported-decls rest-decls)
-                      (compiler-load-decl-path-list-append
-                        imported-paths
-                        rest-paths)
-                      (compiler-load-decl-module-list-append
-                        imported-modules
-                        rest-modules)
-                      rest-seen)]
-                  [(ErrCompilerLoadWithPaths diag)
-                    (ErrCompilerLoadWithPaths diag)])]
-              [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))]
+          (match (compiler-load-resolve-import-result-with-roots
+            importer-path
+            import-path
+            stdlib-roots)
+            [(OkPkgResolve resolved)
+              (match (compiler-load-file-with-paths-and-roots-expect
+                resolved
+                seen
+                stdlib-roots
+                expected-module)
+                [(OkCompilerLoadWithPaths
+                    imported-decls
+                    imported-paths
+                    imported-modules
+                    import-seen)
+                  (match (compiler-load-decls-with-module-and-roots
+                    rest
+                    importer-path
+                    importer-module
+                    import-seen
+                    stdlib-roots)
+                    [(OkCompilerLoadWithPaths
+                        rest-decls
+                        rest-paths
+                        rest-modules
+                        rest-seen)
+                      (OkCompilerLoadWithPaths
+                        (compiler-load-decl-list-append
+                          imported-decls
+                          rest-decls)
+                        (compiler-load-decl-path-list-append
+                          imported-paths
+                          rest-paths)
+                        (compiler-load-decl-module-list-append
+                          imported-modules
+                          rest-modules)
+                        rest-seen)]
+                    [(ErrCompilerLoadWithPaths diag)
+                      (ErrCompilerLoadWithPaths diag)])]
+                [(ErrCompilerLoadWithPaths diag)
+                  (ErrCompilerLoadWithPaths diag)])]
+            [(ErrPkgResolve message)
+              (ErrCompilerLoadWithPaths
+                (compiler-diagnostic-at-start importer-path message))])]
         [_
           (match (compiler-load-decls-with-module-and-roots
             rest
@@ -1182,13 +1204,8 @@
 ;;; Resolve a `pkg:<alias>/<rest>` import against a parsed manifest's dependency
 ;;; list, relative to the manifest directory: `<manifest-dir>/<dep-path>/<rest>`,
 ;;; normalized. Rejects a missing alias, an empty/`/`-less spec, and a `rest`
-;;; that escapes the dependency root via `..`. (Loader-chain integration — wiring
-;;; this into the import resolver + drivers — is the next slice.)
-;;; Result of resolving a `pkg:` import: the resolved path or a diagnostic.
-(defenum ResultPkgResolve
-  (OkPkgResolve String)
-  (ErrPkgResolve String))
-
+;;; that escapes the dependency root via `..`, preserving those diagnostics when
+;;; the import resolver runs inside the selfhost driver.
 ;;; True when an import path is a package import (`pkg:<alias>/...`).
 (define (compiler-load-pkg-import? [path : String]) : bool
   (compiler-load-string-prefix-at? path "pkg:" 0))
@@ -1301,23 +1318,22 @@
 
 ;;; Resolve a `pkg:<alias>/...` import by discovering and parsing the nearest
 ;;; `typelisp.pkg` relative to the importer, then resolving against its deps.
-;;; On any failure (no manifest, parse error, unknown alias, escape) the raw
-;;; import path is returned so the loader reports a normal "cannot load" error.
+;;; Missing manifests and parse errors fall back to the raw import path so the
+;;; loader reports a normal "cannot read import" error. Syntactically valid
+;;; manifests preserve pkg-resolution diagnostics into the caller.
 (define (compiler-load-resolve-pkg-import-from-disk
   [importer-path : String]
-  [import-path : String]) : String
+  [import-path : String]) : ResultPkgResolve
   (match (compiler-load-discover-manifest importer-path)
-    [(CompilerLoadNoPath) import-path]
+    [(CompilerLoadNoPath) (OkPkgResolve import-path)]
     [(CompilerLoadSomePath manifest-path)
       (match (compiler-load-parse-manifest (read-file manifest-path))
-        [(ErrCompilerPkgManifest _) import-path]
+        [(ErrCompilerPkgManifest _) (OkPkgResolve import-path)]
         [(OkCompilerPkgManifest manifest)
-          (match (compiler-load-resolve-pkg-import
+          (compiler-load-resolve-pkg-import
             import-path
             (compiler-load-dirname manifest-path)
-            (struct-get manifest deps))
-            [(OkPkgResolve resolved) resolved]
-            [(ErrPkgResolve _) import-path])])]))
+            (struct-get manifest deps))])]))
 
 ;;; Self-test fixture: `math` -> sibling dir, `util` -> vendored subdir.
 (define (compiler-load-pkg-resolve-deps) : CompilerPkgDepList

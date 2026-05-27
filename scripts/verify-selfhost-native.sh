@@ -221,6 +221,32 @@ run_compiler_driver() {
     assert_empty "$_stderr" "$_label driver stderr"
 }
 
+run_compiler_driver_expect_error() {
+    _driver=$1
+    _label=$2
+    _source=$3
+    _asm=$4
+    _want=$5
+    _stdout="$WORKDIR/$_label.driver.stdout"
+    _stderr="$WORKDIR/$_label.driver.stderr"
+    rm -f "$_asm"
+
+    set +e
+    "$_driver" "$_source" "$_asm" > "$_stdout" 2> "$_stderr"
+    _got=$?
+    set -e
+    if [ "$_got" -eq 0 ]; then
+        echo "FAIL: $_label compiler driver unexpectedly succeeded" >&2
+        exit 1
+    fi
+    assert_empty "$_stdout" "$_label driver stdout"
+    assert_contains "$_stderr" "$_want" "$_label driver stderr"
+    if [ -e "$_asm" ]; then
+        echo "FAIL: $_label emitted assembly despite a diagnostic" >&2
+        exit 1
+    fi
+}
+
 build_selfhost_compiler_driver() {
     _bin=$1
     compile_selfhost_binary compiler-driver selfhost/compiler_driver.tl "$_bin"
@@ -288,6 +314,91 @@ EOF
         assert_contains "$_asm" "$_snippet" compiler-driver-import
     done
     assemble_link_run_asm compiler-driver-import "$_asm" 42 - - 1
+}
+
+verify_compiler_driver_pkg_import() {
+    _driver=$1
+    _dir="$WORKDIR/compiler-driver/pkg-import"
+    _pkg="$_dir/app"
+    mkdir -p "$_pkg/src" "$_pkg/vendor/math/src" "$_pkg/bad"
+    _asm="$_dir/pkg.s"
+    _again="$_dir/pkg-again.s"
+
+    cat > "$_pkg/typelisp.pkg" <<'EOF'
+(package
+  (name "selfhost_loader_pkg")
+  (version "0.1.0")
+  (entry "src/main.tl")
+  (dependencies
+    (math "vendor/math")))
+EOF
+    cat > "$_pkg/vendor/math/src/lib.tl" <<'EOF'
+(define (add-one [x : i64]) : i64 (+ x 1))
+EOF
+    cat > "$_pkg/vendor/math/src/dup.tl" <<'EOF'
+(define (dup) : i64 1)
+EOF
+    cat > "$_pkg/src/main.tl" <<'EOF'
+(import "pkg:math/src/lib.tl")
+(import "../vendor/math/src/lib.tl")
+(define (main) : i64 (add-one 41))
+EOF
+
+    echo "[selfhost-native] compiler_driver pkg import graph"
+    run_compiler_driver "$_driver" compiler-driver-pkg-import "$_pkg/src/main.tl" "$_asm"
+    run_compiler_driver "$_driver" compiler-driver-pkg-import-again "$_pkg/src/main.tl" "$_again"
+    assert_file_exact "$_again" "$_asm" compiler-driver-pkg-import-deterministic
+    assert_contains "$_asm" "add_one:" compiler-driver-pkg-import
+    assemble_link_run_asm compiler-driver-pkg-import "$_asm" 42 - - 1
+
+    cat > "$_pkg/bad/missing-alias.tl" <<'EOF'
+(import "pkg:nope/src/lib.tl")
+(define (main) : i64 0)
+EOF
+    run_compiler_driver_expect_error \
+        "$_driver" \
+        compiler-driver-pkg-missing-alias \
+        "$_pkg/bad/missing-alias.tl" \
+        "$_dir/missing-alias.s" \
+        "compiler-load: unknown package alias 'nope': pkg:nope/src/lib.tl"
+
+    cat > "$_pkg/bad/missing-dep.tl" <<'EOF'
+(import "pkg:math/src/missing.tl")
+(define (main) : i64 0)
+EOF
+    run_compiler_driver_expect_error \
+        "$_driver" \
+        compiler-driver-pkg-missing-dep \
+        "$_pkg/bad/missing-dep.tl" \
+        "$_dir/missing-dep.s" \
+        "compiler-load: cannot read import"
+    assert_contains \
+        "$WORKDIR/compiler-driver-pkg-missing-dep.driver.stderr" \
+        "vendor/math/src/missing.tl" \
+        compiler-driver-pkg-missing-dep
+
+    cat > "$_pkg/bad/escape.tl" <<'EOF'
+(import "pkg:math/../escape.tl")
+(define (main) : i64 0)
+EOF
+    run_compiler_driver_expect_error \
+        "$_driver" \
+        compiler-driver-pkg-parent-escape \
+        "$_pkg/bad/escape.tl" \
+        "$_dir/escape.s" \
+        "compiler-load: pkg import escapes package root: pkg:math/../escape.tl"
+
+    cat > "$_pkg/bad/duplicate.tl" <<'EOF'
+(import "pkg:math/src/dup.tl")
+(define (dup) : i64 2)
+(define (main) : i64 (dup))
+EOF
+    run_compiler_driver_expect_error \
+        "$_driver" \
+        compiler-driver-pkg-duplicate \
+        "$_pkg/bad/duplicate.tl" \
+        "$_dir/duplicate.s" \
+        "symbols: duplicate value declaration dup"
 }
 
 verify_compiler_driver_string_runtime() {
@@ -450,6 +561,7 @@ DRIVER="$WORKDIR/compiler-driver/compiler-driver"
 build_selfhost_compiler_driver "$DRIVER"
 verify_compiler_driver_stack_args "$DRIVER"
 verify_compiler_driver_import "$DRIVER"
+verify_compiler_driver_pkg_import "$DRIVER"
 verify_compiler_driver_string_runtime "$DRIVER"
 verify_compiler_driver_stdlib_json "$DRIVER"
 verify_compiler_driver_arrays_and_traps "$DRIVER"

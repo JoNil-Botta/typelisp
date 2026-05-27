@@ -17,6 +17,25 @@
   (OkBackendValue CompilerIrValue)
   (ErrBackendValue String))
 
+(defenum CompilerBackendPhiSource
+  (BackendPhiSourceValue CompilerIrValue)
+  (BackendPhiSourceTemp))
+
+(defenum CompilerBackendPhiCopy
+  (BackendPhiCopy i64 CompilerBackendPhiSource AstType))
+
+(defenum CompilerBackendPhiCopyList
+  (BackendPhiCopyNil)
+  (BackendPhiCopyCons CompilerBackendPhiCopy CompilerBackendPhiCopyList))
+
+(defenum CompilerBackendMaybePhiCopy
+  (BackendNoPhiCopy)
+  (BackendSomePhiCopy CompilerBackendPhiCopy))
+
+(defenum ResultBackendPhiCopies
+  (OkBackendPhiCopies CompilerBackendPhiCopyList)
+  (ErrBackendPhiCopies String))
+
 (defenum CompilerBackendMaybeImmediate
   (CompilerBackendNoImmediate)
   (CompilerBackendSomeImmediate String))
@@ -1715,58 +1734,246 @@
             (OkBackendValue value)
             (compiler-backend-phi-input-value rest from-label))])]))
 
-(define (compiler-backend-emit-phi-copy
+(define (compiler-backend-vars-same-home?
+  [assignments : CompilerRegAssignmentList]
+  [left : i64]
+  [right : i64]) : bool
+  (if (= left right)
+    true
+    (match (compiler-reg-assignment-lookup assignments left)
+      [(CompilerRegSomeLocation left-location)
+        (match (compiler-reg-assignment-lookup assignments right)
+          [(CompilerRegSomeLocation right-location)
+            (compiler-reg-location-eq? left-location right-location)]
+          [(CompilerRegNoLocation) false])]
+      [(CompilerRegNoLocation) false])))
+
+(define (compiler-backend-phi-same-home?
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
-  [inputs : CompilerIrPhiInputList]
-  [from-label : String]
-  [ty : AstType]) : ResultCompilerBackend
-  (match (compiler-backend-phi-input-value inputs from-label)
-    [(OkBackendValue value)
-      (match (compiler-backend-emit-load-typed-value-with-plan
-        assignments
-        value
-        ty)
-        [(OkCompilerBackend load)
-          (OkCompilerBackend
-            (string-append
-              load
-              (compiler-backend-emit-store-typed-var-with-plan
+  [value : CompilerIrValue]) : bool
+  (match value
+    [(IrValueVar src) (compiler-backend-vars-same-home? assignments src dst)]
+    [_ false]))
+
+(define (compiler-backend-phi-source-uses-home?
+  [assignments : CompilerRegAssignmentList]
+  [source : CompilerBackendPhiSource]
+  [dst : i64]) : bool
+  (match source
+    [(BackendPhiSourceValue value)
+      (match value
+        [(IrValueVar found)
+          (compiler-backend-vars-same-home? assignments found dst)]
+        [_ false])]
+    [(BackendPhiSourceTemp) false]))
+
+(define (compiler-backend-phi-copy-source-uses-home?
+  [assignments : CompilerRegAssignmentList]
+  [copy : CompilerBackendPhiCopy]
+  [dst : i64]) : bool
+  (match copy
+    [(BackendPhiCopy _ source _)
+      (compiler-backend-phi-source-uses-home? assignments source dst)]))
+
+(define (compiler-backend-phi-copy-list-source-uses-home?
+  [assignments : CompilerRegAssignmentList]
+  [copies : CompilerBackendPhiCopyList]
+  [dst : i64]) : bool
+  (match copies
+    [(BackendPhiCopyNil) false]
+    [(BackendPhiCopyCons copy rest)
+      (if (compiler-backend-phi-copy-source-uses-home? assignments copy dst)
+        true
+        (compiler-backend-phi-copy-list-source-uses-home? assignments rest dst))]))
+
+(define (compiler-backend-phi-copy-list-find-unblocked
+  [assignments : CompilerRegAssignmentList]
+  [remaining : CompilerBackendPhiCopyList]
+  [all : CompilerBackendPhiCopyList]) : CompilerBackendMaybePhiCopy
+  (match remaining
+    [(BackendPhiCopyNil) BackendNoPhiCopy]
+    [(BackendPhiCopyCons copy rest)
+      (match copy
+        [(BackendPhiCopy dst _ _)
+          (if (compiler-backend-phi-copy-list-source-uses-home?
+            assignments
+            all
+            dst)
+            (compiler-backend-phi-copy-list-find-unblocked assignments rest all)
+            (BackendSomePhiCopy copy))])]))
+
+(define (compiler-backend-phi-copy-list-remove-dst
+  [copies : CompilerBackendPhiCopyList]
+  [dst : i64]) : CompilerBackendPhiCopyList
+  (match copies
+    [(BackendPhiCopyNil) BackendPhiCopyNil]
+    [(BackendPhiCopyCons copy rest)
+      (match copy
+        [(BackendPhiCopy found-dst _ _)
+          (if (= found-dst dst)
+            (compiler-backend-phi-copy-list-remove-dst rest dst)
+            (BackendPhiCopyCons
+              copy
+              (compiler-backend-phi-copy-list-remove-dst rest dst)))])]))
+
+(define (compiler-backend-phi-source-replace-home
+  [assignments : CompilerRegAssignmentList]
+  [source : CompilerBackendPhiSource]
+  [dst : i64]) : CompilerBackendPhiSource
+  (match source
+    [(BackendPhiSourceValue value)
+      (match value
+        [(IrValueVar found)
+          (if (compiler-backend-vars-same-home? assignments found dst)
+            (BackendPhiSourceTemp)
+            source)]
+        [_ source])]
+    [(BackendPhiSourceTemp) source]))
+
+(define (compiler-backend-phi-copy-list-replace-source-home
+  [assignments : CompilerRegAssignmentList]
+  [copies : CompilerBackendPhiCopyList]
+  [dst-home-var : i64]) : CompilerBackendPhiCopyList
+  (match copies
+    [(BackendPhiCopyNil) BackendPhiCopyNil]
+    [(BackendPhiCopyCons copy rest)
+      (match copy
+        [(BackendPhiCopy dst source ty)
+          (BackendPhiCopyCons
+            (BackendPhiCopy
+              dst
+              (compiler-backend-phi-source-replace-home
                 assignments
-                dst
-                (if (compiler-backend-f64-type? ty)
-                  "%xmm0"
-                  "%rax")
-                ty)))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-    [(ErrBackendValue message)
-      (ErrCompilerBackend (compiler-diagnostic-at-start "" message))]))
+                source
+                dst-home-var)
+              ty)
+            (compiler-backend-phi-copy-list-replace-source-home
+              assignments
+              rest
+              dst-home-var))])]))
+
+(define (compiler-backend-emit-phi-source-to-var
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [source : CompilerBackendPhiSource]
+  [ty : AstType]) : ResultCompilerBackend
+  (match source
+    [(BackendPhiSourceTemp)
+      (OkCompilerBackend
+        (compiler-backend-emit-store-var-with-plan assignments dst "%r11"))]
+    [(BackendPhiSourceValue value)
+      (if (compiler-backend-phi-same-home? assignments dst value)
+        (OkCompilerBackend "")
+        (match (compiler-backend-emit-load-typed-value-with-plan
+          assignments
+          value
+          ty)
+          [(OkCompilerBackend load)
+            (OkCompilerBackend
+              (string-append
+                load
+                (compiler-backend-emit-store-typed-var-with-plan
+                  assignments
+                  dst
+                  (if (compiler-backend-f64-type? ty)
+                    "%xmm0"
+                    "%rax")
+                  ty)))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]))
+
+(define (compiler-backend-emit-phi-copy-item
+  [assignments : CompilerRegAssignmentList]
+  [copy : CompilerBackendPhiCopy]) : ResultCompilerBackend
+  (match copy
+    [(BackendPhiCopy dst source ty)
+      (compiler-backend-emit-phi-source-to-var assignments dst source ty)]))
+
+(define (compiler-backend-emit-phi-copy-list
+  [assignments : CompilerRegAssignmentList]
+  [copies : CompilerBackendPhiCopyList]) : ResultCompilerBackend
+  (match copies
+    [(BackendPhiCopyNil) (OkCompilerBackend "")]
+    [(BackendPhiCopyCons first _)
+      (match (compiler-backend-phi-copy-list-find-unblocked
+        assignments
+        copies
+        copies)
+        [(BackendSomePhiCopy copy)
+          (match copy
+            [(BackendPhiCopy dst _ _)
+              (match (compiler-backend-emit-phi-copy-item assignments copy)
+                [(OkCompilerBackend head)
+                  (match (compiler-backend-emit-phi-copy-list
+                    assignments
+                    (compiler-backend-phi-copy-list-remove-dst copies dst))
+                    [(OkCompilerBackend tail)
+                      (OkCompilerBackend (string-append head tail))]
+                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
+        [(BackendNoPhiCopy)
+          (match first
+            [(BackendPhiCopy dst source ty)
+              (let
+                [save : String
+                  (compiler-backend-emit-load-var-with-plan
+                    assignments
+                    dst
+                    "%r11")]
+                (match (compiler-backend-emit-phi-source-to-var
+                  assignments
+                  dst
+                  source
+                  ty)
+                  [(OkCompilerBackend head)
+                    (match (compiler-backend-emit-phi-copy-list
+                      assignments
+                      (compiler-backend-phi-copy-list-replace-source-home
+                        assignments
+                        (compiler-backend-phi-copy-list-remove-dst copies dst)
+                        dst))
+                      [(OkCompilerBackend tail)
+                        (OkCompilerBackend
+                          (string-append save (string-append head tail)))]
+                      [(ErrCompilerBackend message)
+                        (ErrCompilerBackend message)])]
+                  [(ErrCompilerBackend message) (ErrCompilerBackend message)]))])])]))
+
+(define (compiler-backend-leading-phi-copies
+  [assignments : CompilerRegAssignmentList]
+  [instrs : CompilerIrInstrList]
+  [from-label : String]) : ResultBackendPhiCopies
+  (match instrs
+    [(IrInstrNil) (OkBackendPhiCopies BackendPhiCopyNil)]
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrPhi dst inputs ty)
+          (match (compiler-backend-phi-input-value inputs from-label)
+            [(OkBackendValue value)
+              (match (compiler-backend-leading-phi-copies
+                assignments
+                rest
+                from-label)
+                [(OkBackendPhiCopies tail)
+                  (if (compiler-backend-phi-same-home? assignments dst value)
+                    (OkBackendPhiCopies tail)
+                    (OkBackendPhiCopies
+                      (BackendPhiCopyCons
+                        (BackendPhiCopy dst (BackendPhiSourceValue value) ty)
+                        tail)))]
+                [(ErrBackendPhiCopies message) (ErrBackendPhiCopies message)])]
+            [(ErrBackendValue message) (ErrBackendPhiCopies message)])]
+        [_ (OkBackendPhiCopies BackendPhiCopyNil)])]))
 
 (define (compiler-backend-emit-leading-phi-copies
   [assignments : CompilerRegAssignmentList]
   [instrs : CompilerIrInstrList]
   [from-label : String]) : ResultCompilerBackend
-  (match instrs
-    [(IrInstrNil) (OkCompilerBackend "")]
-    [(IrInstrCons instr rest)
-      (match instr
-        [(IrInstrPhi dst inputs ty)
-          (match (compiler-backend-emit-phi-copy
-            assignments
-            dst
-            inputs
-            from-label
-            ty)
-            [(OkCompilerBackend asm)
-              (match (compiler-backend-emit-leading-phi-copies
-                assignments
-                rest
-                from-label)
-                [(OkCompilerBackend tail)
-                  (OkCompilerBackend (string-append asm tail))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-        [_ (OkCompilerBackend "")])]))
+  (match (compiler-backend-leading-phi-copies assignments instrs from-label)
+    [(OkBackendPhiCopies copies)
+      (compiler-backend-emit-phi-copy-list assignments copies)]
+    [(ErrBackendPhiCopies message)
+      (ErrCompilerBackend (compiler-diagnostic-at-start "" message))]))
 
 (define (compiler-backend-emit-phi-edge-copies
   [assignments : CompilerRegAssignmentList]
@@ -7911,6 +8118,75 @@ tl_random_system_seed:
     (compiler-backend-peephole-register-moves-ok?)
     (compiler-backend-peephole-asm-ok?)))
 
+(define (compiler-backend-phi-same-home-assignments) : CompilerRegAssignmentList
+  (CompilerRegAssignmentCons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+    (CompilerRegAssignmentCons
+      (CompilerRegAssignment 1 (CompilerRegRegister "%r12"))
+      CompilerRegAssignmentNil)))
+
+(define (compiler-backend-phi-same-home-blocks) : CompilerIrBlockList
+  (IrBlockCons
+    (IrBlock
+      "join"
+      (IrInstrCons
+        (IrInstrPhi
+          1
+          (IrPhiInputCons (IrPhiInput (IrValueVar 0) "entry") IrPhiInputNil)
+          (AstTyI64))
+        IrInstrNil))
+    IrBlockNil))
+
+(define (compiler-backend-phi-cycle-blocks) : CompilerIrBlockList
+  (IrBlockCons
+    (IrBlock
+      "join"
+      (IrInstrCons
+        (IrInstrPhi
+          0
+          (IrPhiInputCons (IrPhiInput (IrValueVar 1) "back") IrPhiInputNil)
+          (AstTyI64))
+        (IrInstrCons
+          (IrInstrPhi
+            1
+            (IrPhiInputCons (IrPhiInput (IrValueVar 0) "back") IrPhiInputNil)
+            (AstTyI64))
+          IrInstrNil)))
+    IrBlockNil))
+
+(define (compiler-backend-phi-parallel-copy-ok?) : bool
+  (match (compiler-backend-emit-phi-edge-copies
+    (compiler-backend-phi-same-home-assignments)
+    (compiler-backend-phi-same-home-blocks)
+    "join"
+    "entry")
+    [(OkCompilerBackend same-home)
+      (match (compiler-backend-emit-phi-edge-copies
+        CompilerRegAssignmentNil
+        (compiler-backend-phi-cycle-blocks)
+        "join"
+        "back")
+        [(OkCompilerBackend cycle)
+          (and
+            (string-eq same-home "")
+            (and
+              (compiler-backend-string-contains?
+                cycle
+                "    movq -8(%rbp), %r11\n")
+              (and
+                (compiler-backend-string-contains?
+                  cycle
+                  "    movq -16(%rbp), %rax\n")
+                (and
+                  (compiler-backend-string-contains?
+                    cycle
+                    "    movq %rax, -8(%rbp)\n")
+                  (compiler-backend-string-contains?
+                    cycle
+                    "    movq %r11, -16(%rbp)\n")))))]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-reg-is? [r : ResultBackendReg] [name : String]) : bool
   (match r
     [(OkBackendReg reg) (string-eq reg name)]
@@ -8689,56 +8965,40 @@ tl_random_system_seed:
 
 (define (compiler-backend-self-test) : i64
   (if (and
-    (compiler-backend-target-model-ok? (compiler-backend-smoke-source))
-    (and
+    (backend-and8
+      (compiler-backend-target-model-ok? (compiler-backend-smoke-source))
       (compiler-backend-array-access-asm-ok?)
+      (compiler-backend-make-array-ok?)
+      (compiler-backend-source-ok? (compiler-backend-smoke-source))
+      (compiler-backend-deterministic-ok? (compiler-backend-smoke-source))
+      (compiler-backend-string-ok?)
+      (compiler-backend-memory-op-ok?)
+      (compiler-backend-aggregate-ok?))
+    (and
+      (backend-and8
+        (compiler-backend-literal-payload-ok?)
+        (compiler-backend-enum-match-ok?)
+        (compiler-backend-regalloc-ok?)
+        (compiler-backend-peephole-ok?)
+        (compiler-backend-phi-parallel-copy-ok?)
+        (compiler-backend-f64-ok?)
+        (compiler-backend-bool-control-flow-ok?)
+        (compiler-backend-stack-args-ok?))
       (and
-        (compiler-backend-make-array-ok?)
+        (backend-and8
+          (compiler-backend-instr-diagnostics-ok?)
+          (compiler-backend-optimizer-rewrite-diagnostic-ok?)
+          (compiler-backend-runtime-helper-asm-ok?)
+          (compiler-backend-alloc-runtime-arena-ok?)
+          (compiler-backend-region-ok?)
+          (compiler-backend-process-output-ok?)
+          (compiler-backend-windows-process-output-ok?)
+          (compiler-backend-append-file-status-ok?))
         (and
-          (compiler-backend-source-ok? (compiler-backend-smoke-source))
+          (compiler-backend-user-helper-name-ok?)
           (and
-            (compiler-backend-deterministic-ok? (compiler-backend-smoke-source))
-            (and
-              (compiler-backend-string-ok?)
-              (and
-                (compiler-backend-memory-op-ok?)
-                (and
-                  (and
-                    (compiler-backend-aggregate-ok?)
-                    (compiler-backend-literal-payload-ok?))
-                  (and
-                    (compiler-backend-enum-match-ok?)
-                    (and
-                      (compiler-backend-regalloc-ok?)
-                      (and
-                        (compiler-backend-peephole-ok?)
-                        (and
-                          (compiler-backend-f64-ok?)
-                          (and
-                            (compiler-backend-bool-control-flow-ok?)
-                            (and
-                              (compiler-backend-stack-args-ok?)
-                              (and
-                                (compiler-backend-instr-diagnostics-ok?)
-                                (and
-                                  (compiler-backend-optimizer-rewrite-diagnostic-ok?)
-                                  (and
-                                    (compiler-backend-runtime-helper-asm-ok?)
-                                    (and
-                                      (compiler-backend-alloc-runtime-arena-ok?)
-                                      (and
-                                        (compiler-backend-region-ok?)
-                                        (and
-                                          (compiler-backend-process-output-ok?)
-                                          (and
-                                            (compiler-backend-windows-process-output-ok?)
-                                            (and
-                                              (compiler-backend-append-file-status-ok?)
-                                              (and
-                                                (compiler-backend-user-helper-name-ok?)
-                                                (and
-                                                  (compiler-backend-runtime-coexist-ok?)
-                                                  (compiler-backend-module-symbol-ok?)))))))))))))))))))))))))
+            (compiler-backend-runtime-coexist-ok?)
+            (compiler-backend-module-symbol-ok?))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

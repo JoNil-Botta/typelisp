@@ -1072,7 +1072,9 @@ EOF
         [ "$DOC_GRAPH_LOCAL_LINE" -lt "$DOC_GRAPH_STDLIB_LINE" ] ||
         fail "doc module graph did not preserve loader source order"
 
-    run_cmd doc-generate-html "$COMPILER" run selfhost/doc.tl -- --html "$WORKDIR/doc_source.tl" "$WORKDIR/doc_source.html"
+    DOC_TOOL="$WORKDIR/selfhost-doc-tool"
+    build_linux_cli_tool selfhost-doc-tool selfhost/doc.tl "$DOC_TOOL"
+    run_cmd doc-generate-html "$DOC_TOOL" --html "$WORKDIR/doc_source.tl" "$WORKDIR/doc_source.html"
     assert_success
     assert_stdout_empty
     assert_stderr_empty

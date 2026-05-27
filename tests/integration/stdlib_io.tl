@@ -6,6 +6,15 @@
 ;; directory).
 (import "stdlib/io.tl")
 
+(define io-smoke-path : String
+  "target/stdlib_io_smoke_long_path_copy_helper_payload_alpha_beta_gamma_delta.txt")
+
+(define io-absent-path : String
+  "target/stdlib_io_absent_long_path_copy_helper_payload_alpha_beta_gamma_delta.txt")
+
+(define io-missing-parent-path : String
+  "target/stdlib_io_missing_parent_long_path_copy_helper_payload/out.txt")
+
 (define (read-result-score [result : ResultIoString]) : i64
   (match result
     [(OkIoString value)
@@ -35,37 +44,22 @@
 
 (define (main) : i64
   (begin
-    (write-file "target/stdlib_io_smoke.txt" "alpha")
-    (if (= (read-result-score (try-read-file "target/stdlib_io_smoke.txt")) 1)
-      (if (=
-        (read-result-score (try-read-file "target/stdlib_io_absent.txt"))
-        2)
+    (write-file io-smoke-path "alpha")
+    (if (= (read-result-score (try-read-file io-smoke-path)) 1)
+      (if (= (read-result-score (try-read-file io-absent-path)) 2)
         (if (= (write-result-score (try-write-file "" "bad")) 4)
           (if (=
-            (write-result-score
-              (try-write-file "target/stdlib_io_missing_parent/out.txt" "bad"))
+            (write-result-score (try-write-file io-missing-parent-path "bad"))
             5)
-            (if (=
-              (bool-result-score
-                (try-file-exists? "target/stdlib_io_smoke.txt"))
-              6)
-              (if (=
-                (bool-result-score
-                  (try-file-exists? "target/stdlib_io_absent.txt"))
-                7)
-                (if (string-eq
-                  (read-file-or "target/stdlib_io_smoke.txt" "MISS")
-                  "alpha")
-                  (if (string-eq
-                    (read-file-or "target/stdlib_io_absent.txt" "MISS")
-                    "MISS")
+            (if (= (bool-result-score (try-file-exists? io-smoke-path)) 6)
+              (if (= (bool-result-score (try-file-exists? io-absent-path)) 7)
+                (if (string-eq (read-file-or io-smoke-path "MISS") "alpha")
+                  (if (string-eq (read-file-or io-absent-path "MISS") "MISS")
                     (begin
-                      (append-file "target/stdlib_io_smoke.txt" "-beta")
-                      (if (string-eq
-                        (read-file "target/stdlib_io_smoke.txt")
-                        "alpha-beta")
-                        (if (file-nonempty? "target/stdlib_io_smoke.txt")
-                          (if (file-nonempty? "target/stdlib_io_absent.txt")
+                      (append-file io-smoke-path "-beta")
+                      (if (string-eq (read-file io-smoke-path) "alpha-beta")
+                        (if (file-nonempty? io-smoke-path)
+                          (if (file-nonempty? io-absent-path)
                             10
                             42)
                           20)

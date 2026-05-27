@@ -545,6 +545,11 @@ run_linux_backend_fixtures() {
     do
         assert_contains "$_runtime_asm" "$_snippet" backend-runtime
     done
+    _rep_movsb_count=$(grep -c -F "rep movsb" "$_runtime_asm" || true)
+    if [ "$_rep_movsb_count" -lt 11 ]; then
+        echo "FAIL: backend-runtime expected at least 11 rep movsb copies, got $_rep_movsb_count" >&2
+        exit 1
+    fi
     for _snippet in \
         ".extern tl_alloc" \
         ".extern tl_oob_abort" \
@@ -557,7 +562,9 @@ run_linux_backend_fixtures() {
         ".extern .L_tl_flush_stdout" \
         ".L_tl_substring_copy_loop:" \
         ".L_tl_string_concat_copy_a:" \
-        ".L_tl_string_concat_copy_b:"
+        ".L_tl_string_concat_copy_b:" \
+        "path_copy_loop:" \
+        "path_copy_done:"
     do
         assert_not_contains "$_runtime_asm" "$_snippet" backend-runtime
     done
@@ -706,6 +713,11 @@ run_windows_backend_fixtures() {
     do
         assert_contains "$_runtime_asm" "$_snippet" windows-backend-runtime
     done
+    _rep_movsb_count=$(grep -c -F "rep movsb" "$_runtime_asm" || true)
+    if [ "$_rep_movsb_count" -lt 10 ]; then
+        echo "FAIL: windows-backend-runtime expected at least 10 rep movsb copies, got $_rep_movsb_count" >&2
+        exit 1
+    fi
     for _snippet in \
         "syscall" \
         "_start:" \
@@ -731,7 +743,9 @@ run_windows_backend_fixtures() {
         ".extern tl_random_system_seed" \
         ".L_tl_substring_copy_loop:" \
         ".L_tl_string_concat_copy_a:" \
-        ".L_tl_string_concat_copy_b:"
+        ".L_tl_string_concat_copy_b:" \
+        "path_copy_loop:" \
+        "path_copy_done:"
     do
         assert_not_contains "$_runtime_asm" "$_snippet" windows-backend-runtime
     done

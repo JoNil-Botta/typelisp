@@ -70,19 +70,31 @@ has_public_docs_or_fences() {
     grep -Eq '^[[:space:]]*;;;|```[[:space:]]*(typelisp|tl)([[:space:]]|$)' "$1"
 }
 
+has_runnable_doctest() {
+    grep -Eq '```[[:space:]]*(typelisp|tl)[[:space:]]+run([[:space:]]|$)' "$1"
+}
+
 safe_name() {
     printf '%s' "$1" | sed 's#[/\\:]#_#g'
 }
 
+runnable_count=0
 while IFS= read -r source; do
     [ -n "$source" ] || continue
     if has_public_docs_or_fences "$source"; then
         printf '%s\n' "$source" >> "$DISCOVERED"
+        if has_runnable_doctest "$source"; then
+            runnable_count=$((runnable_count + 1))
+        fi
     fi
 done < "$CANDIDATES"
 
 if [ ! -s "$DISCOVERED" ]; then
     echo "doc test verification found no documented TypeLisp files" >&2
+    exit 1
+fi
+if [ "$runnable_count" -eq 0 ]; then
+    echo "doc test verification found no runnable doctest files" >&2
     exit 1
 fi
 
@@ -118,4 +130,4 @@ while IFS= read -r source; do
     fi
 done < "$DISCOVERED"
 
-echo "doc test verification passed for $count file(s)"
+echo "doc test verification passed for $count file(s), including $runnable_count runnable doctest file(s)"

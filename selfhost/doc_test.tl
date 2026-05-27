@@ -7,13 +7,15 @@
 ;; doc comment lines, ordinary comments are ignored, and unattached item docs are
 ;; dropped.
 ;;
-;; The runner (#724) checks each extracted example through the in-memory
-;; virtual-source loader/typechecker (`compiler-check-source`, #723): normal
-;; examples must check successfully, `expect-error` examples must fail, and a
-;; malformed fence (an extraction error) is itself a failure. Each failure
-;; records the source path, the fence's source line, the example index, and the
-;; rendered diagnostic when one is available.
+;; The runner (#724/#1322) checks extracted examples through the in-memory
+;; virtual-source loader/typechecker (`compiler-check-source`, #723), and runs
+;; `typelisp run` / `tl run` examples through the self-hosted no-Rust build/run
+;; path where the target supports process execution. Each failure records the
+;; source path, the fence's source line, the example index, and the rendered
+;; diagnostic when one is available.
 (import "compiler_check_core.tl")
+
+(import "build_run_core.tl")
 
 (defenum DocTestExpectation
   (DocTestExpectPass)
@@ -1081,6 +1083,388 @@
         " was expected to pass\n"
         (doc-test-public-diagnostic-render diag)))))
 
+(define (doc-test-runnable-supported?) : bool
+  (source-tool-target-supported? (source-tool-default-target)))
+
+(define (doc-test-runnable-unsupported-message
+  [index : i64]
+  [target : CompilerBackendTarget]) : String
+  (string-append
+    "doctest example "
+    (string-append
+      (int->string index)
+      (string-append
+        " is a runnable doctest, but runnable doctests are unsupported on target "
+        (source-tool-target-name target)))))
+
+(define (doc-test-runnable-compile-message [index : i64] [message : String]) : String
+  (string-append
+    "doctest example "
+    (string-append
+      (int->string index)
+      (string-append " runnable compile failed\n" message))))
+
+(define (doc-test-runnable-build-message [index : i64] [message : String]) : String
+  (string-append
+    "doctest example "
+    (string-append
+      (int->string index)
+      (string-append " runnable build failed\n" message))))
+
+(define (doc-test-runnable-exec-message [index : i64] [message : String]) : String
+  (string-append
+    "doctest example "
+    (string-append
+      (int->string index)
+      (string-append " runnable execution failed: " message))))
+
+(define (doc-test-output-comparison-message
+  [name : String]
+  [expected : String]
+  [actual : String]) : String
+  (string-append
+    "expected "
+    (string-append
+      name
+      (string-append
+        ":\n"
+        (string-append
+          expected
+          (string-append
+            "\nactual "
+            (string-append name (string-append ":\n" actual))))))))
+
+(define (doc-test-runnable-mismatch-message
+  [index : i64]
+  [expectation : DocTestExpectation]
+  [output : ProcessOutput]) : String
+  (let
+    [expected-exit : i64 (doc-test-expectation-run-exit expectation)]
+    [expected-stdout : String (doc-test-expectation-run-stdout expectation)]
+    [expected-stderr : String (doc-test-expectation-run-stderr expectation)]
+    [actual-exit : i64 (process-output-status output)]
+    [actual-stdout : String (process-output-stdout output)]
+    [actual-stderr : String (process-output-stderr output)]
+    (string-append
+      "doctest example "
+      (string-append
+        (int->string index)
+        (string-append
+          " runnable output mismatch\nexpected exit: "
+          (string-append
+            (int->string expected-exit)
+            (string-append
+              "\nactual exit: "
+              (string-append
+                (int->string actual-exit)
+                (string-append
+                  "\n"
+                  (string-append
+                    (doc-test-output-comparison-message
+                      "stdout"
+                      expected-stdout
+                      actual-stdout)
+                    (string-append
+                      "\n"
+                      (doc-test-output-comparison-message
+                        "stderr"
+                        expected-stderr
+                        actual-stderr))))))))))))
+
+(define (doc-test-runnable-output-matches?
+  [expectation : DocTestExpectation]
+  [output : ProcessOutput]) : bool
+  (if (=
+    (doc-test-expectation-run-exit expectation)
+    (process-output-status output))
+    (if (string-eq
+      (doc-test-expectation-run-stdout expectation)
+      (process-output-stdout output))
+      (string-eq
+        (doc-test-expectation-run-stderr expectation)
+        (process-output-stderr output))
+      false)
+    false))
+
+(define (doc-test-command-output-message
+  [role : String]
+  [target : CompilerBackendTarget]
+  [command : ProcessCommand]
+  [output : ProcessOutput]) : String
+  (string-append
+    "Error: "
+    (string-append
+      role
+      (string-append
+        " '"
+        (string-append
+          (process-command-executable command)
+          (string-append
+            "' failed for target "
+            (string-append
+              (source-tool-target-name target)
+              (string-append
+                " with status "
+                (string-append
+                  (int->string (process-output-status output))
+                  (string-append
+                    "\nstdout:\n"
+                    (string-append
+                      (process-output-stdout output)
+                      (string-append
+                        "\nstderr:\n"
+                        (process-output-stderr output)))))))))))))
+
+(define (doc-test-run-command-captured
+  [role : String]
+  [target : CompilerBackendTarget]
+  [command : ProcessCommand]) : SourceToolCommandStatus
+  (match (process-output command)
+    [(OkProcessOutput output)
+      (if (process-success? output)
+        SourceToolCommandOk
+        (SourceToolCommandErr
+          (doc-test-command-output-message role target command output)))]
+    [(ErrProcessOutput error)
+      (SourceToolCommandErr
+        (string-append
+          "Error: failed to run "
+          (string-append
+            role
+            (string-append
+              " '"
+              (string-append
+                (process-command-executable command)
+                (string-append
+                  "' for target "
+                  (string-append
+                    (source-tool-target-name target)
+                    (string-append ": " (process-error-message error)))))))))]))
+
+(define (doc-test-assemble-and-link-captured
+  [target : CompilerBackendTarget]
+  [asm-path : String]
+  [obj-path : String]
+  [bin-path : String]) : SourceToolCommandStatus
+  (match (doc-test-run-command-captured
+    "assembler"
+    target
+    (source-tool-assembler-command asm-path obj-path))
+    [(SourceToolCommandOk)
+      (doc-test-run-command-captured
+        "linker"
+        target
+        (source-tool-linker-command obj-path bin-path))]
+    [(SourceToolCommandErr message) (SourceToolCommandErr message)]))
+
+(define (doc-test-emit-runnable-assembly
+  [path : String]
+  [example : DocTestExample]
+  [stdlib-roots : CompilerLoadRootList]
+  [target : CompilerBackendTarget]) : ResultSourceToolString
+  (let
+    [index : i64 (doc-test-example-index example)]
+    [virtual-path : String (doc-test-example-virtual-path path index)]
+    [code : String (doc-test-example-code example)]
+    (match (compiler-load-source-with-paths-and-roots
+      virtual-path
+      code
+      (sym-i64-empty)
+      stdlib-roots)
+      [(OkCompilerLoadWithPaths decls paths _ _)
+        (match (lower-compiler-program-with-decl-paths
+          virtual-path
+          (AstProgram decls)
+          paths)
+          [(OkCompilerLower program spans)
+            (match (compiler-driver-emit-lowered-with-level
+              virtual-path
+              program
+              spans
+              target
+              true
+              (compiler-optimize-default-level))
+              [(OkCompilerDriver asm)
+                (OkSourceToolString (source-tool-augment-assembly asm))]
+              [(ErrCompilerDriver diag)
+                (ErrSourceToolString (compiler-diagnostic-render diag))])]
+          [(ErrCompilerLower diag)
+            (ErrSourceToolString (compiler-diagnostic-render diag))])]
+      [(ErrCompilerLoadWithPaths diag)
+        (ErrSourceToolString (compiler-diagnostic-render diag))])))
+
+(define (doc-test-runnable-failure
+  [path : String]
+  [source-line : i64]
+  [index : i64]
+  [message : String]) : DocTestMaybeFailure
+  (DocTestSomeFailure (DocTestRunFailure path source-line index message)))
+
+(define (doc-test-run-runnable-process-output
+  [path : String]
+  [source-line : i64]
+  [index : i64]
+  [expectation : DocTestExpectation]
+  [target : CompilerBackendTarget]
+  [temp-dir : String]
+  [asm-path : String]
+  [obj-path : String]
+  [bin-path : String]) : DocTestMaybeFailure
+  (match (source-tool-run-executable bin-path (process-args-empty))
+    [(OkProcessOutput output)
+      (begin
+        (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
+        (if (doc-test-runnable-output-matches? expectation output)
+          (DocTestNoFailure)
+          (doc-test-runnable-failure
+            path
+            source-line
+            index
+            (doc-test-runnable-mismatch-message index expectation output))))]
+    [(ErrProcessOutput error)
+      (begin
+        (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
+        (doc-test-runnable-failure
+          path
+          source-line
+          index
+          (doc-test-runnable-exec-message index (process-error-message error))))]))
+
+(define (doc-test-link-and-run-runnable
+  [path : String]
+  [source-line : i64]
+  [index : i64]
+  [expectation : DocTestExpectation]
+  [target : CompilerBackendTarget]
+  [temp-dir : String]
+  [asm-path : String]
+  [obj-path : String]
+  [bin-path : String]) : DocTestMaybeFailure
+  (match (doc-test-assemble-and-link-captured target asm-path obj-path bin-path)
+    [(SourceToolCommandErr message)
+      (begin
+        (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
+        (doc-test-runnable-failure
+          path
+          source-line
+          index
+          (doc-test-runnable-build-message index message)))]
+    [(SourceToolCommandOk)
+      (doc-test-run-runnable-process-output
+        path
+        source-line
+        index
+        expectation
+        target
+        temp-dir
+        asm-path
+        obj-path
+        bin-path)]))
+
+(define (doc-test-write-link-and-run-runnable
+  [path : String]
+  [source-line : i64]
+  [index : i64]
+  [expectation : DocTestExpectation]
+  [target : CompilerBackendTarget]
+  [temp-dir : String]
+  [asm-path : String]
+  [obj-path : String]
+  [bin-path : String]
+  [asm : String]) : DocTestMaybeFailure
+  (match (source-tool-write-file
+    asm-path
+    asm
+    "doctest: failed to write assembly artifact")
+    [(SourceToolCommandErr message)
+      (begin
+        (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
+        (doc-test-runnable-failure
+          path
+          source-line
+          index
+          (doc-test-runnable-build-message index message)))]
+    [(SourceToolCommandOk)
+      (doc-test-link-and-run-runnable
+        path
+        source-line
+        index
+        expectation
+        target
+        temp-dir
+        asm-path
+        obj-path
+        bin-path)]))
+
+(define (doc-test-run-runnable-output
+  [path : String]
+  [example : DocTestExample]
+  [stdlib-roots : CompilerLoadRootList]
+  [target : CompilerBackendTarget]
+  [temp-dir : String]) : DocTestMaybeFailure
+  (let
+    [index : i64 (doc-test-example-index example)]
+    [source-line : i64 (doc-test-example-source-line example)]
+    [expectation : DocTestExpectation (doc-test-example-expectation example)]
+    [virtual-path : String (doc-test-example-virtual-path path index)]
+    [asm-path : String (source-tool-asm-path temp-dir virtual-path)]
+    [obj-path : String (source-tool-obj-path temp-dir virtual-path target)]
+    [bin-path : String (source-tool-temp-bin-path temp-dir virtual-path target)]
+    (match (doc-test-emit-runnable-assembly path example stdlib-roots target)
+      [(ErrSourceToolString message)
+        (begin
+          (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
+          (doc-test-runnable-failure
+            path
+            source-line
+            index
+            (doc-test-runnable-compile-message index message)))]
+      [(OkSourceToolString asm)
+        (doc-test-write-link-and-run-runnable
+          path
+          source-line
+          index
+          expectation
+          target
+          temp-dir
+          asm-path
+          obj-path
+          bin-path
+          asm)])))
+
+(define (doc-test-run-runnable-example-with-roots
+  [path : String]
+  [example : DocTestExample]
+  [stdlib-roots : CompilerLoadRootList]) : DocTestMaybeFailure
+  (let
+    [index : i64 (doc-test-example-index example)]
+    [source-line : i64 (doc-test-example-source-line example)]
+    [target : CompilerBackendTarget (source-tool-default-target)]
+    (if (source-tool-target-supported? target)
+      (match (source-tool-create-temp-dir "typelisp-doctest")
+        [(OkSourceToolString temp-dir)
+          (doc-test-run-runnable-output
+            path
+            example
+            stdlib-roots
+            target
+            temp-dir)]
+        [(ErrSourceToolString message)
+          (DocTestSomeFailure
+            (DocTestRunFailure
+              path
+              source-line
+              index
+              (doc-test-runnable-build-message
+                index
+                (string-append "doctest: failed to create temp dir: " message))))])
+      (DocTestSomeFailure
+        (DocTestRunFailure
+          path
+          source-line
+          index
+          (doc-test-runnable-unsupported-message index target))))))
+
 ;; Check one extracted example through the virtual-source typechecker, comparing
 ;; the outcome against its expectation. Imports inside the example resolve
 ;; relative to a sibling of `path` (the doc'd source file), so examples may
@@ -1098,31 +1482,33 @@
   (let
     [index : i64 (doc-test-example-index example)]
     [source-line : i64 (doc-test-example-source-line example)]
-    [expect-error : bool
-      (doc-test-expectation-error? (doc-test-example-expectation example))]
+    [expectation : DocTestExpectation (doc-test-example-expectation example)]
+    [expect-error : bool (doc-test-expectation-error? expectation)]
     [code : String (doc-test-example-code example)]
-    (match (compiler-check-source-with-roots
-      (doc-test-example-virtual-path path index)
-      code
-      stdlib-roots)
-      [(OkCompilerCheck _)
-        (if expect-error
-          (DocTestSomeFailure
-            (DocTestRunFailure
-              path
-              source-line
-              index
-              (doc-test-unexpected-pass-message index)))
-          (DocTestNoFailure))]
-      [(ErrCompilerCheck diag)
-        (if expect-error
-          (DocTestNoFailure)
-          (DocTestSomeFailure
-            (DocTestRunFailure
-              path
-              source-line
-              index
-              (doc-test-unexpected-error-message index diag))))])))
+    (if (doc-test-expectation-run? expectation)
+      (doc-test-run-runnable-example-with-roots path example stdlib-roots)
+      (match (compiler-check-source-with-roots
+        (doc-test-example-virtual-path path index)
+        code
+        stdlib-roots)
+        [(OkCompilerCheck _)
+          (if expect-error
+            (DocTestSomeFailure
+              (DocTestRunFailure
+                path
+                source-line
+                index
+                (doc-test-unexpected-pass-message index)))
+            (DocTestNoFailure))]
+        [(ErrCompilerCheck diag)
+          (if expect-error
+            (DocTestNoFailure)
+            (DocTestSomeFailure
+              (DocTestRunFailure
+                path
+                source-line
+                index
+                (doc-test-unexpected-error-message index diag))))]))))
 
 (define (doc-test-run-examples
   [path : String]
@@ -1289,7 +1675,12 @@
 ;# ;; doctest-exit: 0
 ;# ;; doctest-stdout: literal:hello\\n
 ;# ;; doctest-stderr: literal:error\\tline\\r
-;# (define (main) : i64 0)
+;# (import \"stdlib/io.tl\")
+;# (define (main) : i64
+;#   (begin
+;#     (stdout-write \"hello\\n\")
+;#     (stderr-write \"error\\tline\\r\")
+;#     0))
 ;# ```
 ;# ```tl run
 ;# ;; doctest-exit: 42
@@ -1455,7 +1846,7 @@
                 (doc-test-runnable-example-ok?
                   second
                   2
-                  8
+                  13
                   42
                   ""
                   ""
@@ -1540,6 +1931,54 @@
 (define answer : i64 1)
 ")
 
+(define (doc-test-run-smoke-stdlib-roots) : CompilerLoadRootList
+  (CompilerLoadRootCons "stdlib" CompilerLoadRootNil))
+
+(define (doc-test-run-runnable-wrong-exit-source) : String
+  ";# ```typelisp run
+;# ;; doctest-exit: 0
+;# (define (main) : i64 7)
+;# ```
+")
+
+(define (doc-test-run-runnable-stdout-mismatch-source) : String
+  ";# ```typelisp run
+;# ;; doctest-exit: 0
+;# ;; doctest-stdout: literal:expected\\n
+;# (import \"stdlib/io.tl\")
+;# (define (main) : i64
+;#   (begin
+;#     (stdout-write \"actual\\n\")
+;#     0))
+;# ```
+")
+
+(define (doc-test-run-runnable-stderr-mismatch-source) : String
+  ";# ```typelisp run
+;# ;; doctest-exit: 0
+;# ;; doctest-stderr: literal:expected-error\\n
+;# (import \"stdlib/io.tl\")
+;# (define (main) : i64
+;#   (begin
+;#     (stderr-write \"actual-error\\n\")
+;#     0))
+;# ```
+")
+
+(define (doc-test-run-runnable-compile-failure-source) : String
+  ";# ```typelisp run
+;# ;; doctest-exit: 0
+;# (define (main) : i64 true)
+;# ```
+")
+
+(define (doc-test-run-runnable-missing-main-source) : String
+  ";# ```typelisp run
+;# ;; doctest-exit: 0
+;# (define answer : i64 1)
+;# ```
+")
+
 ;; The shared smoke source has one passing and one correctly-erroring
 ;; (`expect-error`) example, so it must run clean: two examples, no failures.
 (define (doc-test-run-smoke-pass-ok?) : bool
@@ -1602,13 +2041,100 @@
       (doc-test-run-report-ok? report)
       false)))
 
-(define (doc-test-run-smoke-runnable-parse-only-ok?) : bool
+(define (doc-test-run-smoke-runnable-unsupported-ok?) : bool
   (let
     [report : DocTestRunReport
-      (doc-test-run-source "docs/run.tl" (doc-test-runnable-source))]
+      (doc-test-run-source-with-roots
+        "docs/run.tl"
+        (doc-test-runnable-source)
+        (doc-test-run-smoke-stdlib-roots))]
+    (if (= (doc-test-run-report-count report) 2)
+      (match (doc-test-run-report-failures report)
+        [(DocTestRunFailureCons
+            first
+            (DocTestRunFailureCons second DocTestRunFailureNil))
+          (if (doc-test-string-contains?
+            (doc-test-run-failure-message first)
+            "unsupported")
+            (doc-test-string-contains?
+              (doc-test-run-failure-message second)
+              "unsupported")
+            false)]
+        [_ false])
+      false)))
+
+(define (doc-test-run-smoke-runnable-exec-pass-ok?) : bool
+  (let
+    [report : DocTestRunReport
+      (doc-test-run-source-with-roots
+        "docs/run.tl"
+        (doc-test-runnable-source)
+        (doc-test-run-smoke-stdlib-roots))]
     (if (= (doc-test-run-report-count report) 2)
       (doc-test-run-report-ok? report)
       false)))
+
+(define (doc-test-run-single-failure-message-contains?
+  [source : String]
+  [fragment : String]) : bool
+  (let
+    [report : DocTestRunReport
+      (doc-test-run-source-with-roots
+        "docs/run.tl"
+        source
+        (doc-test-run-smoke-stdlib-roots))]
+    (if (= (doc-test-run-report-count report) 1)
+      (match (doc-test-run-report-failures report)
+        [(DocTestRunFailureCons failure DocTestRunFailureNil)
+          (doc-test-string-contains?
+            (doc-test-run-failure-message failure)
+            fragment)]
+        [_ false])
+      false)))
+
+(define (doc-test-run-smoke-runnable-failures-ok?) : bool
+  (if (doc-test-run-single-failure-message-contains?
+    (doc-test-run-runnable-wrong-exit-source)
+    "expected exit: 0")
+    (if (doc-test-run-single-failure-message-contains?
+      (doc-test-run-runnable-wrong-exit-source)
+      "actual exit: 7")
+      (if (doc-test-run-single-failure-message-contains?
+        (doc-test-run-runnable-stdout-mismatch-source)
+        "expected stdout:")
+        (if (doc-test-run-single-failure-message-contains?
+          (doc-test-run-runnable-stdout-mismatch-source)
+          "actual\n")
+          (if (doc-test-run-single-failure-message-contains?
+            (doc-test-run-runnable-stderr-mismatch-source)
+            "expected stderr:")
+            (if (doc-test-run-single-failure-message-contains?
+              (doc-test-run-runnable-stderr-mismatch-source)
+              "actual-error\n")
+              (if (doc-test-run-single-failure-message-contains?
+                (doc-test-run-runnable-compile-failure-source)
+                "runnable compile failed")
+                (if (doc-test-run-single-failure-message-contains?
+                  (doc-test-run-runnable-missing-main-source)
+                  "runnable compile failed")
+                  true
+                  (doc-test-run-single-failure-message-contains?
+                    (doc-test-run-runnable-missing-main-source)
+                    "runnable build failed"))
+                false)
+              false)
+            false)
+          false)
+        false)
+      false)
+    false))
+
+(define (doc-test-run-smoke-runnable-ok?) : bool
+  (if (doc-test-runnable-supported?)
+    (if (doc-test-run-smoke-runnable-exec-pass-ok?)
+      (doc-test-run-smoke-runnable-failures-ok?)
+      false)
+    (doc-test-run-smoke-runnable-unsupported-ok?)))
 
 ;; The rendered failure carries the path, line, and message.
 (define (doc-test-run-smoke-render-ok?) : bool
@@ -1658,7 +2184,7 @@ typecheck: return type mismatch"))]
       (if (doc-test-run-smoke-unexpected-pass-ok?)
         (if (doc-test-run-smoke-malformed-ok?)
           (if (doc-test-run-smoke-empty-ok?)
-            (if (doc-test-run-smoke-runnable-parse-only-ok?)
+            (if (doc-test-run-smoke-runnable-ok?)
               (if (doc-test-run-smoke-render-ok?)
                 (if (doc-test-run-smoke-report-render-ok?)
                   42
@@ -1669,7 +2195,7 @@ typecheck: return type mismatch"))]
                   (panic "doc-test-run: render mismatch")
                   0))
               (begin
-                (panic "doc-test-run: runnable parse-only mismatch")
+                (panic "doc-test-run: runnable execution mismatch")
                 0))
             (begin
               (panic "doc-test-run: empty-source mismatch")

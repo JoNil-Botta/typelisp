@@ -219,9 +219,9 @@ jobs:
         shell: bash
         run: TYPELISP_BIN=${{ matrix.release_bin }} ./scripts/verify-stdlib-docs.sh
 
-      - name: Verify docs site (build + validate, no publish)
+      - name: Verify docs Pages build path (no publish)
         if: ${{ matrix.suite == 'rust' && matrix.os == 'ubuntu-latest' }}
-        run: TYPELISP_BIN=${{ matrix.release_bin }} scripts/verify-doc-site.sh
+        run: DOC_SITE_OUT=target/ci-docs-pages-site TYPELISP_BIN=${{ matrix.release_bin }} scripts/verify-doc-site.sh
 
       - name: Check TypeLisp source formatting
         if: ${{ matrix.suite == 'rust' }}

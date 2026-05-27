@@ -12,7 +12,9 @@ set -eu
 #
 # This is independent of `cargo test`: it drives the published/staged selfhost
 # compiler. CI runs it on pull requests and default-branch pushes WITHOUT
-# deploying; #874 consumes it as the gate before the Pages publish step.
+# deploying; #874 consumes it as the gate before the Pages publish step. Set
+# DOC_SITE_OUT to choose the generated-site directory and DOC_SITE_WORK to
+# choose the scratch directory for native builders, logs, and objects.
 #
 # Linux builds the native ELF site builder (GNU as/ld). Windows (Git Bash / MSYS
 # / Cygwin) builds a host-default native program. Set TYPELISP_BIN to a
@@ -46,14 +48,29 @@ fi
     exit 1
 }
 
-SITE="$ROOT/target/doc-site-verify"
-rm -rf "$SITE"
-mkdir -p "$SITE"
-
 fail() {
     echo "FAIL: $*" >&2
     exit 1
 }
+
+SITE=${DOC_SITE_OUT:-"$ROOT/target/doc-site-verify"}
+WORK=${DOC_SITE_WORK:-"$ROOT/target/doc-site-verify-work"}
+
+case "$SITE" in
+    "" | / | . | ./)
+        fail "unsafe docs-site output directory: $SITE"
+        ;;
+esac
+case "$WORK" in
+    "" | / | . | ./)
+        fail "unsafe docs-site work directory: $WORK"
+        ;;
+esac
+[ "$SITE" != "$ROOT" ] || fail "docs-site output directory must not be the repo root"
+[ "$WORK" != "$ROOT" ] || fail "docs-site work directory must not be the repo root"
+
+rm -rf "$SITE" "$WORK"
+mkdir -p "$SITE" "$WORK"
 
 compile_linux_binary() {
     _label=$1
@@ -61,8 +78,8 @@ compile_linux_binary() {
     _bin=$3
     _asm="$_bin.s"
     _obj="$_bin.o"
-    _out="$SITE/.$_label.compile.out"
-    _err="$SITE/.$_label.compile.err"
+    _out="$WORK/.$_label.compile.out"
+    _err="$WORK/.$_label.compile.err"
 
     if ! "$COMPILER" compile "$_source" --stdlib-root "$ROOT/stdlib" -o "$_asm" >"$_out" 2>"$_err"; then
         echo "$_label compile failed:" >&2
@@ -86,17 +103,17 @@ echo "[doc-site] building site via selfhost/doc_site.tl"
 if [ "$HOST_OS" = linux ]; then
     command -v as >/dev/null 2>&1 || fail "missing assembler: as"
     command -v ld >/dev/null 2>&1 || fail "missing linker: ld"
-    SITE_BUILDER="$SITE/.doc_site"
+    SITE_BUILDER="$WORK/.doc_site"
     compile_linux_binary doc-site selfhost/doc_site.tl "$SITE_BUILDER"
-    if ! "$SITE_BUILDER" "$SITE" >"$SITE/.build.out" 2>"$SITE/.build.err"; then
+    if ! "$SITE_BUILDER" "$SITE" >"$WORK/.build.out" 2>"$WORK/.build.err"; then
         echo "site builder failed:" >&2
-        sed 's/^/  /' "$SITE/.build.err" >&2 || true
+        sed 's/^/  /' "$WORK/.build.err" >&2 || true
         fail "selfhost/doc_site.tl did not build the site"
     fi
 else
-    if ! "$COMPILER" run selfhost/doc_site.tl -- "$SITE" >"$SITE/.build.out" 2>"$SITE/.build.err"; then
+    if ! "$COMPILER" run selfhost/doc_site.tl -- "$SITE" >"$WORK/.build.out" 2>"$WORK/.build.err"; then
         echo "site builder failed:" >&2
-        sed 's/^/  /' "$SITE/.build.err" >&2 || true
+        sed 's/^/  /' "$WORK/.build.err" >&2 || true
         fail "selfhost/doc_site.tl did not build the site"
     fi
 fi
@@ -104,16 +121,16 @@ fi
 echo "[doc-site] running selfhost/doc_site_smoke.tl"
 set +e
 if [ "$HOST_OS" = linux ]; then
-    SITE_SMOKE="$SITE/.doc_site_smoke"
+    SITE_SMOKE="$WORK/.doc_site_smoke"
     compile_linux_binary doc-site-smoke selfhost/doc_site_smoke.tl "$SITE_SMOKE"
-    "$SITE_SMOKE" >"$SITE/.smoke.out" 2>"$SITE/.smoke.err"
+    "$SITE_SMOKE" >"$WORK/.smoke.out" 2>"$WORK/.smoke.err"
 else
-    "$COMPILER" run selfhost/doc_site_smoke.tl -- >"$SITE/.smoke.out" 2>"$SITE/.smoke.err"
+    "$COMPILER" run selfhost/doc_site_smoke.tl -- >"$WORK/.smoke.out" 2>"$WORK/.smoke.err"
 fi
 smoke_code=$?
 set -e
 if [ "$smoke_code" -ne 42 ]; then
-    sed 's/^/  /' "$SITE/.smoke.err" >&2 || true
+    sed 's/^/  /' "$WORK/.smoke.err" >&2 || true
     fail "doc_site_smoke.tl returned $smoke_code (expected 42)"
 fi
 
@@ -121,6 +138,9 @@ fi
 for required in index.html stdlib.html typelisp-docs.css; do
     [ -f "$SITE/$required" ] || fail "missing required output: $required"
 done
+
+hidden_payload=$(find "$SITE" -mindepth 1 -maxdepth 1 -name '.*' | head -n 1)
+[ -z "$hidden_payload" ] || fail "docs-site output contains scratch artifact: $(basename "$hidden_payload")"
 
 stdlib_pages=$(find "$SITE" -maxdepth 1 -type f -name 'stdlib-*.html' | wc -l)
 [ "$stdlib_pages" -ge 1 ] || fail "no stdlib-*.html module pages were generated"

@@ -43,11 +43,8 @@ jobs:
       - name: Fetch published stage0 compiler
         run: scripts/fetch-stage0.sh
 
-      - name: Verify docs site (build + validate)
-        run: TYPELISP_BIN=target/stage0/typelisp scripts/verify-doc-site.sh
-
-      - name: Build docs site for publishing
-        run: target/stage0/typelisp run selfhost/doc_site.tl -- _site
+      - name: Build and verify docs site
+        run: DOC_SITE_OUT=_site TYPELISP_BIN=target/stage0/typelisp scripts/verify-doc-site.sh
 
       - name: Configure Pages
         uses: actions/configure-pages@v5

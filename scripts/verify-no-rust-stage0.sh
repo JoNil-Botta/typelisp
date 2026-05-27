@@ -177,6 +177,10 @@ run_gate "stdlib modules and fixtures" scripts/verify-stdlib.sh
 
 if [ "$HOST_OS" = linux ]; then
     run_gate "stdlib documentation" scripts/verify-stdlib-docs.sh
+    DOC_SITE_OUT="$ROOT/target/no-rust-docs-pages-site"
+    export DOC_SITE_OUT
+    run_gate "docs Pages build path" scripts/verify-doc-site.sh
+    unset DOC_SITE_OUT
     run_gate "selfhost native generated programs" scripts/verify-selfhost-native.sh
     run_gate "selfhost external compiler corpus" scripts/verify-selfhost.sh
 else

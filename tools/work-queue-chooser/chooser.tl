@@ -61,9 +61,14 @@
   (ChooserErr String))
 
 ;;; Read all of stdin into a single String by repeated bounded reads until EOF.
+;;; The queue snapshot can exceed 64 KiB once PR check rollups and issue labels
+;;; accumulate, so use a larger request size for ordinary chooser payloads.
+(define stdin-read-size : i64
+  1048576)
+
 (define (read-all-stdin-acc [acc : String]) : String
   (let
-    [chunk : String (read-stdin-bytes 65536)]
+    [chunk : String (read-stdin-bytes stdin-read-size)]
     (let
       [text : String (string-append acc chunk)]
       (if (stdin-eof?)
@@ -72,6 +77,52 @@
 
 (define (read-all-stdin) : String
   (read-all-stdin-acc ""))
+
+;;; PowerShell native pipelines on Windows can prefix stdin with a UTF-8 BOM, and
+;;; GitHub titles may include UTF-8 punctuation that the current byte-oriented
+;;; JSON parser cannot decode. The chooser only needs display text, so normalize
+;;; the queue snapshot to parser-safe ASCII while preserving JSON syntax.
+(define (chooser-char-code-at [text : String] [idx : i64]) : i64
+  (cast (string-ref text idx) : i64))
+
+(define (chooser-has-utf8-bom? [text : String]) : bool
+  (and
+    (>= (string-length text) 3)
+    (and
+      (= (chooser-char-code-at text 0) 239)
+      (and
+        (= (chooser-char-code-at text 1) 187)
+        (= (chooser-char-code-at text 2) 191)))))
+
+(define (chooser-strip-utf8-bom [text : String]) : String
+  (if (chooser-has-utf8-bom? text)
+    (substring text 3 (- (string-length text) 3))
+    text))
+
+(define (chooser-normalize-json-input [text : String]) : String
+  (let
+    [input : String (chooser-strip-utf8-bom text)]
+    [n : i64 (string-length input)]
+    [i : i64 0]
+    [segment-start : i64 0]
+    [out : String ""]
+    (begin
+      (while (< i n)
+        (let
+          [code : i64 (chooser-char-code-at input i)]
+          (if (> code 126)
+            (begin
+              (set!
+                out
+                (string-append
+                  (string-append
+                    out
+                    (substring input segment-start (- i segment-start)))
+                  "?"))
+              (set! i (+ i 1))
+              (set! segment-start i))
+            (set! i (+ i 1)))))
+      (string-append out (substring input segment-start (- n segment-start))))))
 
 ;;; Extract an i64 from a JSON number field, defaulting to 0 when absent/wrong.
 (define (json-field-number [item : Json] [field : String]) : i64
@@ -327,7 +378,7 @@
 ;;; Choose one candidate from the input JSON, returning an error message on
 ;;; invalid input or an empty candidate set.
 (define (choose-candidate [text : String]) : ChooserResult
-  (match (json-parse text)
+  (match (json-parse (chooser-normalize-json-input text))
     [(ErrJson message)
       (ChooserErr (string-append "Error: invalid JSON: " message))]
     [(OkJson root)

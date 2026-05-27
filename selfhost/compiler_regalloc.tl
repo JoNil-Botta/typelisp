@@ -94,16 +94,16 @@
 
 (define (compiler-reg-sysv-integer-registers) : CompilerRegStringList
   (CompilerRegStringCons
-    "%r12"
+    "%r8"
     (CompilerRegStringCons
-      "%r13"
+      "%r9"
       (CompilerRegStringCons
-        "%r14"
+        "%r12"
         (CompilerRegStringCons
-          "%r15"
+          "%r13"
           (CompilerRegStringCons
-            "%r8"
-            (CompilerRegStringCons "%r9" CompilerRegStringNil)))))))
+            "%r14"
+            (CompilerRegStringCons "%r15" CompilerRegStringNil)))))))
 
 (define (compiler-reg-sysv-caller-saved-integer-registers) : CompilerRegStringList
   (CompilerRegStringCons
@@ -1694,10 +1694,10 @@
         (and
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 0)
-            "%r12")
+            "%r8")
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 1)
-            "%r12")))]))
+            "%r8")))]))
 
 (define (compiler-reg-f64-reuse-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-f64-reuse-function))
@@ -1722,11 +1722,11 @@
           (and
             (compiler-reg-location-register?
               (compiler-reg-assignment-lookup assignments 4)
-              "%r8")
+              "%r14")
             (and
               (compiler-reg-location-register?
                 (compiler-reg-assignment-lookup assignments 5)
-                "%r9")
+                "%r15")
               (compiler-reg-location-spill-offset?
                 (compiler-reg-assignment-lookup assignments 6)
                 (compiler-reg-stack-slot-offset 6))))))]))
@@ -1769,7 +1769,7 @@
             (compiler-reg-unassigned? assignments 0)
             (compiler-reg-location-register?
               (compiler-reg-assignment-lookup assignments 2)
-              "%r12"))))]))
+              "%r8"))))]))
 
 (define (compiler-reg-f64-call-live-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-f64-call-live-function))
@@ -1799,7 +1799,7 @@
               (compiler-reg-unassigned? assignments 1)
               (compiler-reg-location-register?
                 (compiler-reg-assignment-lookup assignments 3)
-                "%r12")))))]))
+                "%r8")))))]))
 
 (define (compiler-reg-f64-call-arg-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-f64-call-arg-function))
@@ -1847,7 +1847,7 @@
               "%xmm2")
             (compiler-reg-location-register?
               (compiler-reg-assignment-lookup assignments 5)
-              "%r12"))]
+              "%r8"))]
         (and marked (and unassigned homes)))]))
 
 (define (compiler-reg-same-location?

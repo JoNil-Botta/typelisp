@@ -9673,6 +9673,25 @@ tl_windows_setup_instances:
 (define (main) : i64
   (calc 10 5))")
 
+(define (compiler-backend-callee-save-source) : String
+  "(define (heavy
+  [a : i64]
+  [b : i64]
+  [c : i64]
+  [d : i64]
+  [e : i64]
+  [f : i64]) : i64
+  (let
+    [v0 : i64 (+ a 1)]
+    [v1 : i64 (+ b 2)]
+    [v2 : i64 (+ c 3)]
+    [v3 : i64 (+ d 4)]
+    [v4 : i64 (+ e 5)]
+    [v5 : i64 (+ f 6)]
+    (+ v0 (+ v1 (+ v2 (+ v3 (+ v4 v5)))))))
+(define (main) : i64
+  (heavy 1 2 3 4 5 6))")
+
 (define (compiler-backend-regalloc-f64-source) : String
   "(define (main) : f64
   (let
@@ -9897,22 +9916,22 @@ tl_windows_setup_instances:
           (and
             (compiler-backend-string-contains? asm "    movq %rsi, -16(%rbp)\n")
             (and
-              (compiler-backend-string-contains? asm "    movq %r12, -")
+              (not (compiler-backend-string-contains? asm "    movq %r12, -"))
               (and
-                (compiler-backend-string-contains? asm "    movq %rax, %r12\n")
+                (compiler-backend-string-contains? asm "    movq %rax, %r8\n")
                 (and
                   (compiler-backend-string-contains?
                     asm
-                    "    movq %r12, %rax\n")
+                    "    movq %r8, %rax\n")
                   (and
                     (not
                       (compiler-backend-string-contains?
                         asm
-                        "    movq %rdi, %r12\n"))
+                        "    movq %rdi, %r8\n"))
                     (not
                       (compiler-backend-string-contains?
                         asm
-                        "    movq %rsi, %r12\n")))))))))]
+                        "    movq %rsi, %r8\n")))))))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-regalloc-f64-ok?) : bool
@@ -10305,7 +10324,7 @@ tl_windows_setup_instances:
 
 (define (compiler-backend-target-windows-callee-save-ok?) : bool
   (match (compiler-backend-emit-source-for-target
-    (compiler-backend-regalloc-source)
+    (compiler-backend-callee-save-source)
     (BackendTargetWindows))
     [(OkCompilerBackend asm)
       (and

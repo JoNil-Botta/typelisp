@@ -2240,7 +2240,10 @@ fn selfhost_build_run_tools_execute_source_files() {
         .join("typelisp")
         .join("selfhost_cli_pkg")
         .join("selfhost_cli_pkg.s");
-    assert!(package_asm.exists(), "selfhost package build did not write assembly");
+    assert!(
+        package_asm.exists(),
+        "selfhost package build did not write assembly"
+    );
     assert!(
         stdout(&package_build).contains("Generated:"),
         "stdout:\n{}",

@@ -11,7 +11,7 @@
 ;;;; (import "stdlib/env.tl")
 ;;;; (define fallback : EnvMaybeString (env-get "TYPELISP_DOC_TEST_MISSING_ENV"))
 ;;;; ```
-(import "stdlib/string.tl")
+(import "string.tl")
 
 ;;; Optional String result for environment lookups.
 (defenum EnvMaybeString

@@ -415,6 +415,7 @@ fn run_host_action_command() {
     }
 }
 
+#[cfg(not(target_os = "linux"))]
 fn add_env_stdlib_root_to_plan(plan: &mut host_action::HostActionPlan) {
     let env_root = match env::var_os(TYPELISP_STDLIB_ROOT_ENV) {
         Some(root) if !root.as_os_str().is_empty() => PathBuf::from(root),
@@ -431,25 +432,76 @@ fn add_env_stdlib_root_to_plan(plan: &mut host_action::HostActionPlan) {
     }
 }
 
-fn execute_selfhost_host_action_driver(
-    driver_relative: &str,
-    args: &[String],
-    command_name: &str,
-) -> host_action::HostActionOutcome {
-    let driver = find_selfhost_file(driver_relative).unwrap_or_else(|| {
+fn selfhost_driver_load_options() -> LoadOptions {
+    let mut stdlib_roots = Vec::new();
+    if let Some(stdlib_file) = find_selfhost_file("stdlib/process.tl")
+        && let Some(stdlib_root) = stdlib_file.parent()
+    {
+        stdlib_roots.push(stdlib_root.to_path_buf());
+    }
+    if let Some(root) = env::var_os(TYPELISP_STDLIB_ROOT_ENV)
+        && !root.is_empty()
+    {
+        stdlib_roots.push(PathBuf::from(root));
+    }
+    LoadOptions {
+        stdlib_roots,
+        ..LoadOptions::default()
+    }
+}
+
+fn selfhost_driver_path(driver_relative: &str) -> PathBuf {
+    find_selfhost_file(driver_relative).unwrap_or_else(|| {
         eprintln!(
             "Error: could not find {} in the repo or near the executable",
             driver_relative
         );
         std::process::exit(1);
-    });
+    })
+}
 
-    let output = native_or_exit(native::run_source_file_in_temp_dir(
+fn run_selfhost_driver(driver_relative: &str, args: &[String]) -> native::NativeRunOutput {
+    let driver = selfhost_driver_path(driver_relative);
+    native_or_exit(native::run_source_file_in_temp_dir(
         &driver,
-        &LoadOptions::default(),
+        &selfhost_driver_load_options(),
         args,
         native::host_target(),
-    ));
+    ))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn host_plan_driver_args(args: &[String]) -> Vec<String> {
+    let mut runtime_args = vec!["--host-plan".to_string()];
+    runtime_args.extend_from_slice(args);
+    runtime_args
+}
+
+#[cfg(target_os = "linux")]
+fn direct_driver_args(args: &[String]) -> Vec<String> {
+    let mut runtime_args = vec!["--direct".to_string()];
+    runtime_args.extend_from_slice(args);
+    if let Some(root) = env::var_os(TYPELISP_STDLIB_ROOT_ENV)
+        && !root.is_empty()
+    {
+        let insert_at = runtime_args
+            .iter()
+            .position(|arg| arg == "--")
+            .unwrap_or(runtime_args.len());
+        runtime_args.insert(insert_at, PathBuf::from(root).display().to_string());
+        runtime_args.insert(insert_at, "--stdlib-root".to_string());
+    }
+    runtime_args
+}
+
+#[cfg(not(target_os = "linux"))]
+fn execute_selfhost_host_action_driver(
+    driver_relative: &str,
+    args: &[String],
+    command_name: &str,
+) -> host_action::HostActionOutcome {
+    let runtime_args = host_plan_driver_args(args);
+    let output = run_selfhost_driver(driver_relative, &runtime_args);
 
     if !output.status.success() {
         write_stream_or_exit(io::stdout(), &output.stdout, "stdout");
@@ -484,6 +536,20 @@ fn execute_selfhost_host_action_driver(
     native_or_exit(host_action::execute_plan(&plan))
 }
 
+#[cfg(target_os = "linux")]
+fn execute_selfhost_tool_driver_and_exit(
+    driver_relative: &str,
+    args: &[String],
+    _command_name: &str,
+) -> ! {
+    let runtime_args = direct_driver_args(args);
+    let output = run_selfhost_driver(driver_relative, &runtime_args);
+    write_stream_or_exit(io::stdout(), &output.stdout, "stdout");
+    write_stream_or_exit(io::stderr(), &output.stderr, "stderr");
+    std::process::exit(output.status.code().unwrap_or(1));
+}
+
+#[cfg(not(target_os = "linux"))]
 fn finish_host_action_outcome(outcome: host_action::HostActionOutcome) {
     match outcome {
         host_action::HostActionOutcome::Built { output_path } => {
@@ -1190,9 +1256,19 @@ fn run_cli() {
         }
         "build" => {
             if build_should_use_selfhost_source_path(&args) {
-                let outcome =
-                    execute_selfhost_host_action_driver("selfhost/build.tl", &args[2..], "build");
-                finish_host_action_outcome(outcome);
+                #[cfg(target_os = "linux")]
+                {
+                    execute_selfhost_tool_driver_and_exit("selfhost/build.tl", &args[2..], "build");
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    let outcome = execute_selfhost_host_action_driver(
+                        "selfhost/build.tl",
+                        &args[2..],
+                        "build",
+                    );
+                    finish_host_action_outcome(outcome);
+                }
             } else {
                 match parse_build_options(&args, 2) {
                     BuildRequest::Source {
@@ -1243,8 +1319,16 @@ fn run_cli() {
                 print_usage();
                 std::process::exit(1);
             }
-            let outcome = execute_selfhost_host_action_driver("selfhost/run.tl", &args[2..], "run");
-            finish_host_action_outcome(outcome);
+            #[cfg(target_os = "linux")]
+            {
+                execute_selfhost_tool_driver_and_exit("selfhost/run.tl", &args[2..], "run");
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let outcome =
+                    execute_selfhost_host_action_driver("selfhost/run.tl", &args[2..], "run");
+                finish_host_action_outcome(outcome);
+            }
         }
         "help" | "--help" | "-h" => {
             print_usage();

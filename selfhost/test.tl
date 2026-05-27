@@ -497,6 +497,7 @@
       (tltest-reach-mark-expr-list
         body
         (tltest-reach-mark-resource-bindings bindings names))]
+    [(AstExprBorrow _ place) (tltest-reach-mark-expr place names)]
     [(AstExprTypeLiteral _) names]
     [(AstExprComptime inner) (tltest-reach-mark-expr inner names)]
     [(AstExprTry inner) (tltest-reach-mark-expr inner names)]

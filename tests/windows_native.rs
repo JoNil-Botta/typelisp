@@ -82,6 +82,7 @@ const TL_EMIT_PROGRAM_ASM: &str = concat!(
 );
 
 #[test]
+#[ignore = "covered by scripts/verify-integration.sh in CI; too slow for default Windows cargo test"]
 fn windows_target_compiles_links_and_runs_native_executables() {
     for case in native_cases() {
         run_case(&case);

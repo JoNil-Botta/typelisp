@@ -455,8 +455,8 @@ compile/build. `test` defaults to the host target so the generated executable
 can run locally. Windows native builds use the Windows x64 ABI, a CRT-linked
 runtime helper policy, and the `clang` + `lld-link` toolchain.
 
-The selfhost source-file build/run host-action planners (`selfhost/build.tl`,
-`selfhost/run.tl`) and the Rust-owned package build (`typelisp build
+The selfhost source-file build/run tools (`selfhost/build.tl --direct`,
+`selfhost/run.tl --direct`) and the Rust-owned package build (`typelisp build
 [--manifest-path <typelisp.pkg>]`) accept `--opt-level 0|1|2|3`. When omitted,
 the optimizer runs, matching the prior default; `--opt-level 0` builds without
 the IR optimizer (faster compiles, larger/slower code) while `1|2|3` run it.

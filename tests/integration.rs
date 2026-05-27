@@ -668,13 +668,16 @@ fn spmd_foreach_avx2_runs_when_host_supports_avx2() {
         let work_path = work_dir.join("spmd_foreach.tl");
         fs::copy(&source_path, &work_path).expect("copy spmd_foreach.tl to work dir");
 
-        let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-            .arg("run")
-            .arg(&work_path)
-            .arg("--backend-mode")
-            .arg("avx2")
+        let bin_path = work_dir.join("spmd_foreach_avx2");
+        compile_source_to_binary_with_args(
+            &work_path,
+            &bin_path,
+            "AVX2 SPMD fixture",
+            &["--backend-mode", "avx2"],
+        );
+        let output = Command::new(&bin_path)
             .output()
-            .expect("run typelisp AVX2 SPMD fixture");
+            .expect("run AVX2 SPMD fixture");
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -717,13 +720,16 @@ fn spmd_reduce_avx2_runs_when_host_supports_avx2() {
         let work_path = work_dir.join("spmd_reduce_scalar.tl");
         fs::copy(&source_path, &work_path).expect("copy spmd_reduce_scalar.tl to work dir");
 
-        let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-            .arg("run")
-            .arg(&work_path)
-            .arg("--backend-mode")
-            .arg("avx2")
+        let bin_path = work_dir.join("spmd_reduce_avx2");
+        compile_source_to_binary_with_args(
+            &work_path,
+            &bin_path,
+            "AVX2 SPMD reduction fixture",
+            &["--backend-mode", "avx2"],
+        );
+        let output = Command::new(&bin_path)
             .output()
-            .expect("run typelisp AVX2 SPMD reduction fixture");
+            .expect("run AVX2 SPMD reduction fixture");
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -768,13 +774,16 @@ fn spmd_foreach_avx512_runs_when_host_supports_avx512() {
         let work_path = work_dir.join("spmd_foreach.tl");
         fs::copy(&source_path, &work_path).expect("copy spmd_foreach.tl to work dir");
 
-        let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-            .arg("run")
-            .arg(&work_path)
-            .arg("--backend-mode")
-            .arg("avx512")
+        let bin_path = work_dir.join("spmd_foreach_avx512");
+        compile_source_to_binary_with_args(
+            &work_path,
+            &bin_path,
+            "AVX-512 SPMD fixture",
+            &["--backend-mode", "avx512"],
+        );
+        let output = Command::new(&bin_path)
             .output()
-            .expect("run typelisp AVX-512 SPMD fixture");
+            .expect("run AVX-512 SPMD fixture");
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1522,10 +1531,13 @@ fn selfhost_backend_stack_args_emit_assemble_link_and_run() {
     let obj_path = work_dir.join("stack_args.o");
     let bin_path = work_dir.join("stack_args");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .arg("run")
-        .arg(&fixture_work_path)
-        .arg("--")
+    let fixture_bin_path = work_dir.join("compiler_backend_stack_args_fixture");
+    compile_source_to_binary(
+        &fixture_work_path,
+        &fixture_bin_path,
+        "compiler_backend_stack_args_fixture",
+    );
+    let output = Command::new(&fixture_bin_path)
         .arg(&asm_path)
         .arg("linux-x86_64")
         .output()
@@ -1606,10 +1618,13 @@ fn selfhost_backend_runtime_helpers_emit_assemble_link_and_run() {
     let obj_path = work_dir.join("runtime_helpers.o");
     let bin_path = work_dir.join("runtime_helpers");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .arg("run")
-        .arg(&fixture_path)
-        .arg("--")
+    let fixture_bin_path = work_dir.join("compiler_backend_runtime_fixture");
+    compile_source_to_binary(
+        &fixture_path,
+        &fixture_bin_path,
+        "compiler_backend_runtime_fixture",
+    );
+    let output = Command::new(&fixture_bin_path)
         .arg(&asm_path)
         .output()
         .expect("run compiler_backend_runtime_fixture");
@@ -1895,19 +1910,7 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
     );
 
     let driver_bin = work_dir.join("compiler-driver");
-    let build = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .arg("build")
-        .arg(&work_path)
-        .arg("-o")
-        .arg(&driver_bin)
-        .output()
-        .expect("build compiler_driver.tl");
-    assert!(
-        build.status.success(),
-        "compiler_driver build failed\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
+    compile_source_to_binary(&work_path, &driver_bin, "compiler_driver.tl");
     assert!(
         driver_bin.exists(),
         "compiler_driver build did not write binary"
@@ -2502,19 +2505,7 @@ fn selfhost_check_driver_reports_success_and_errors() {
     );
 
     let driver_bin = work_dir.join("selfhost-check");
-    let build = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .arg("build")
-        .arg(&work_path)
-        .arg("-o")
-        .arg(&driver_bin)
-        .output()
-        .expect("build check.tl");
-    assert!(
-        build.status.success(),
-        "check.tl build failed\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
+    compile_source_to_binary(&work_path, &driver_bin, "check.tl");
 
     fs::write(work_dir.join("lib.tl"), "(define imported : i64 42)\n")
         .expect("write selfhost check import");
@@ -4632,6 +4623,8 @@ fn selfhost_doc_driver_writes_single_file_markdown() {
         &work_dir,
         SELFHOST_DOC_DRIVER_DEPS,
     );
+    let driver_bin = work_dir.join("doc-driver");
+    compile_source_to_binary(&driver_path, &driver_bin, "doc.tl");
 
     let input_path = work_dir.join("fixture.tl");
     fs::write(
@@ -4653,10 +4646,7 @@ fn selfhost_doc_driver_writes_single_file_markdown() {
     .expect("write doc driver input fixture");
     let output_path = work_dir.join("fixture.md");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .arg("run")
-        .arg(&driver_path)
-        .arg("--")
+    let output = Command::new(&driver_bin)
         .arg(&input_path)
         .arg(&output_path)
         .output()
@@ -4715,10 +4705,7 @@ fn selfhost_doc_driver_writes_single_file_markdown() {
         rendered
     );
 
-    let invalid = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .arg("run")
-        .arg(&driver_path)
-        .arg("--")
+    let invalid = Command::new(&driver_bin)
         .output()
         .expect("run selfhost doc driver without paths");
 
@@ -4760,6 +4747,8 @@ fn selfhost_doc_driver_writes_single_file_html() {
         &work_dir,
         SELFHOST_DOC_DRIVER_DEPS,
     );
+    let driver_bin = work_dir.join("doc-driver");
+    compile_source_to_binary(&driver_path, &driver_bin, "doc.tl");
 
     let input_path = work_dir.join("fixture.tl");
     fs::write(
@@ -4776,10 +4765,7 @@ fn selfhost_doc_driver_writes_single_file_html() {
     .expect("write doc driver HTML input fixture");
     let output_path = work_dir.join("fixture.html");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .arg("run")
-        .arg(&driver_path)
-        .arg("--")
+    let output = Command::new(&driver_bin)
         .arg("--html")
         .arg(&input_path)
         .arg(&output_path)
@@ -4839,6 +4825,8 @@ fn selfhost_doc_driver_writes_module_index_html() {
         &work_dir,
         SELFHOST_DOC_DRIVER_DEPS,
     );
+    let driver_bin = work_dir.join("doc-driver");
+    compile_source_to_binary(&driver_path, &driver_bin, "doc.tl");
 
     let first_path = work_dir.join("first.tl");
     fs::write(
@@ -4864,10 +4852,7 @@ fn selfhost_doc_driver_writes_module_index_html() {
     .expect("write second HTML module fixture");
     let output_path = work_dir.join("index.html");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .arg("run")
-        .arg(&driver_path)
-        .arg("--")
+    let output = Command::new(&driver_bin)
         .arg("--html")
         .arg(&first_path)
         .arg(&second_path)
@@ -4921,6 +4906,8 @@ fn selfhost_doc_driver_runs_doctests() {
         &work_dir,
         SELFHOST_DOC_DRIVER_DEPS,
     );
+    let driver_bin = work_dir.join("doc-driver");
+    compile_source_to_binary(&driver_path, &driver_bin, "doc.tl");
 
     let passing_path = work_dir.join("passing_docs.tl");
     fs::write(
@@ -4940,10 +4927,7 @@ fn selfhost_doc_driver_runs_doctests() {
     )
     .expect("write passing doctest fixture");
 
-    let pass = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .arg("run")
-        .arg(&driver_path)
-        .arg("--")
+    let pass = Command::new(&driver_bin)
         .arg("--test")
         .arg(&passing_path)
         .output()
@@ -4973,10 +4957,7 @@ fn selfhost_doc_driver_runs_doctests() {
     )
     .expect("write failing doctest fixture");
 
-    let fail = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .arg("run")
-        .arg(&driver_path)
-        .arg("--")
+    let fail = Command::new(&driver_bin)
         .arg("--test")
         .arg(&failing_path)
         .output()
@@ -5022,6 +5003,8 @@ fn selfhost_eval_reports_recoverable_errors() {
         &work_dir,
         &["read.tl", "lex.tl", "token.tl"],
     );
+    let driver_bin = work_dir.join("eval-driver");
+    compile_source_to_binary(&driver_path, &driver_bin, "eval.tl");
 
     for (name, source, expected_stderr) in [
         ("type_mismatch", r#"(+ "a" 1)"#, "type error: expected int"),
@@ -5032,10 +5015,7 @@ fn selfhost_eval_reports_recoverable_errors() {
             "eval: too few arguments in call",
         ),
     ] {
-        let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-            .arg("run")
-            .arg(&driver_path)
-            .arg("--")
+        let output = Command::new(&driver_bin)
             .arg(source)
             .output()
             .unwrap_or_else(|err| panic!("run selfhost eval error case {name}: {err}"));
@@ -5410,6 +5390,54 @@ fn copy_case_deps(manifest_dir: &Path, source_dir: &Path, work_dir: &Path, deps:
     }
 }
 
+fn compile_source_to_binary_with_args(
+    source: &Path,
+    bin_path: &Path,
+    context: &str,
+    extra_args: &[&str],
+) {
+    if let Some(parent) = bin_path.parent() {
+        fs::create_dir_all(parent).expect("create binary output dir");
+    }
+    let asm_path = bin_path.with_extension("s");
+    let obj_path = bin_path.with_extension("o");
+
+    let mut compile = Command::new(env!("CARGO_BIN_EXE_typelisp"));
+    compile.arg("compile").arg(source).arg("-o").arg(&asm_path);
+    compile.args(extra_args);
+    let output = compile.output().expect("run typelisp compile");
+    assert!(
+        output.status.success(),
+        "{} compile step failed\nstdout:\n{}\nstderr:\n{}",
+        context,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let status = Command::new("as")
+        .arg(&asm_path)
+        .arg("-o")
+        .arg(&obj_path)
+        .status()
+        .expect("run assembler");
+    assert!(status.success(), "{} assembly failed", context);
+
+    let status = Command::new("ld")
+        .arg(&obj_path)
+        .arg("-o")
+        .arg(bin_path)
+        .arg("-dynamic-linker")
+        .arg("/lib64/ld-linux-x86-64.so.2")
+        .arg("-lc")
+        .status()
+        .expect("run linker");
+    assert!(status.success(), "{} linking failed", context);
+}
+
+fn compile_source_to_binary(source: &Path, bin_path: &Path, context: &str) {
+    compile_source_to_binary_with_args(source, bin_path, context, &[]);
+}
+
 fn run_case_explicit_build(case: &Case) {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let source_path = source_path_for_case(&manifest_dir, case.name);
@@ -5505,11 +5533,11 @@ fn run_case(case: &Case) {
     let source_dir = source_path.parent().expect("case source path has parent");
     copy_case_deps(&manifest_dir, source_dir, &work_dir, case.deps);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .arg("run")
-        .arg(&work_path)
+    let bin_path = work_path.with_extension("");
+    compile_source_to_binary(&work_path, &bin_path, case.name);
+    let output = Command::new(&bin_path)
         .output()
-        .expect("run typelisp");
+        .expect("run compiled typelisp case");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -5539,11 +5567,11 @@ fn run_inline_source(work_name: &str, file_name: &str, source: &str) -> std::pro
     let work_path = work_dir.join(file_name);
     fs::write(&work_path, source).expect("write inline test source");
 
-    Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .arg("run")
-        .arg(&work_path)
+    let bin_path = work_path.with_extension("");
+    compile_source_to_binary(&work_path, &bin_path, work_name);
+    Command::new(&bin_path)
         .output()
-        .expect("run inline typelisp test")
+        .expect("run inline compiled typelisp test")
 }
 
 #[test]
@@ -5618,6 +5646,8 @@ fn source_file_build_respects_explicit_output_path() {
     let source = work_dir.join("main.tl");
     fs::write(&source, "(define (main) : i64 7)\n").expect("write source build output fixture");
     let bin_path = work_dir.join("nested").join("custom-app");
+    fs::create_dir_all(bin_path.parent().expect("custom output path has parent"))
+        .expect("create explicit output parent dir");
 
     let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
         .arg("build")

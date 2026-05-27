@@ -1523,10 +1523,13 @@ fn selfhost_backend_stack_args_emit_assemble_link_and_run() {
     let obj_path = work_dir.join("stack_args.o");
     let bin_path = work_dir.join("stack_args");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .arg("run")
-        .arg(&fixture_work_path)
-        .arg("--")
+    let fixture_bin_path = work_dir.join("compiler_backend_stack_args_fixture");
+    compile_source_to_binary(
+        &fixture_work_path,
+        &fixture_bin_path,
+        "compiler_backend_stack_args_fixture",
+    );
+    let output = Command::new(&fixture_bin_path)
         .arg(&asm_path)
         .arg("linux-x86_64")
         .output()
@@ -1607,10 +1610,13 @@ fn selfhost_backend_runtime_helpers_emit_assemble_link_and_run() {
     let obj_path = work_dir.join("runtime_helpers.o");
     let bin_path = work_dir.join("runtime_helpers");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .arg("run")
-        .arg(&fixture_path)
-        .arg("--")
+    let fixture_bin_path = work_dir.join("compiler_backend_runtime_fixture");
+    compile_source_to_binary(
+        &fixture_path,
+        &fixture_bin_path,
+        "compiler_backend_runtime_fixture",
+    );
+    let output = Command::new(&fixture_bin_path)
         .arg(&asm_path)
         .output()
         .expect("run compiler_backend_runtime_fixture");
@@ -1875,19 +1881,7 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
     );
 
     let driver_bin = work_dir.join("compiler-driver");
-    let build = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .arg("build")
-        .arg(&work_path)
-        .arg("-o")
-        .arg(&driver_bin)
-        .output()
-        .expect("build compiler_driver.tl");
-    assert!(
-        build.status.success(),
-        "compiler_driver build failed\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
+    compile_source_to_binary(&work_path, &driver_bin, "compiler_driver.tl");
     assert!(
         driver_bin.exists(),
         "compiler_driver build did not write binary"
@@ -2482,19 +2476,7 @@ fn selfhost_check_driver_reports_success_and_errors() {
     );
 
     let driver_bin = work_dir.join("selfhost-check");
-    let build = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .arg("build")
-        .arg(&work_path)
-        .arg("-o")
-        .arg(&driver_bin)
-        .output()
-        .expect("build check.tl");
-    assert!(
-        build.status.success(),
-        "check.tl build failed\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&build.stdout),
-        String::from_utf8_lossy(&build.stderr)
-    );
+    compile_source_to_binary(&work_path, &driver_bin, "check.tl");
 
     fs::write(work_dir.join("lib.tl"), "(define imported : i64 42)\n")
         .expect("write selfhost check import");
@@ -5390,6 +5372,48 @@ fn copy_case_deps(manifest_dir: &Path, source_dir: &Path, work_dir: &Path, deps:
     }
 }
 
+fn compile_source_to_binary(source: &Path, bin_path: &Path, context: &str) {
+    if let Some(parent) = bin_path.parent() {
+        fs::create_dir_all(parent).expect("create binary output dir");
+    }
+    let asm_path = bin_path.with_extension("s");
+    let obj_path = bin_path.with_extension("o");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("compile")
+        .arg(source)
+        .arg("-o")
+        .arg(&asm_path)
+        .output()
+        .expect("run typelisp compile");
+    assert!(
+        output.status.success(),
+        "{} compile step failed\nstdout:\n{}\nstderr:\n{}",
+        context,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let status = Command::new("as")
+        .arg(&asm_path)
+        .arg("-o")
+        .arg(&obj_path)
+        .status()
+        .expect("run assembler");
+    assert!(status.success(), "{} assembly failed", context);
+
+    let status = Command::new("ld")
+        .arg(&obj_path)
+        .arg("-o")
+        .arg(bin_path)
+        .arg("-dynamic-linker")
+        .arg("/lib64/ld-linux-x86-64.so.2")
+        .arg("-lc")
+        .status()
+        .expect("run linker");
+    assert!(status.success(), "{} linking failed", context);
+}
+
 fn run_case_explicit_build(case: &Case) {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let source_path = source_path_for_case(&manifest_dir, case.name);
@@ -5519,11 +5543,11 @@ fn run_inline_source(work_name: &str, file_name: &str, source: &str) -> std::pro
     let work_path = work_dir.join(file_name);
     fs::write(&work_path, source).expect("write inline test source");
 
-    Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .arg("run")
-        .arg(&work_path)
+    let bin_path = work_path.with_extension("");
+    compile_source_to_binary(&work_path, &bin_path, work_name);
+    Command::new(&bin_path)
         .output()
-        .expect("run inline typelisp test")
+        .expect("run inline compiled typelisp test")
 }
 
 #[test]

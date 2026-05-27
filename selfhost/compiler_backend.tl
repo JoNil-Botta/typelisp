@@ -10415,7 +10415,9 @@ tl_windows_setup_instances:
   (match (compiler-backend-emit-source (compiler-backend-scalar-wide-source))
     [(OkCompilerBackend asm)
       (backend-and8
-        (compiler-backend-string-contains? asm "    xorq %rbx, %rax\n")
+        (or
+          (compiler-backend-string-contains? asm "    xorq %rbx, %rax\n")
+          (compiler-backend-string-contains? asm "    xorq %rcx, %rax\n"))
         (compiler-backend-string-contains? asm "    shlq %cl, %rax\n")
         (compiler-backend-string-contains? asm "    sarq %cl, %rax\n")
         (not (compiler-backend-string-contains? asm "    orq "))

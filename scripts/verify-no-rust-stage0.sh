@@ -143,9 +143,24 @@ if [ "$HOST_OS" = linux ]; then
     ensure_executable "stage1" "$TYPELISP_BIN"
     STAGE1_TOOLS_DIR="$ROOT/target/no-rust-stage1-tools"
     STAGE1_TEST_BIN="$STAGE1_TOOLS_DIR/selfhost-test"
+    STAGE1_TEST_ASM="$STAGE1_TOOLS_DIR/selfhost-test.s"
+    STAGE1_TEST_OBJ="$STAGE1_TOOLS_DIR/selfhost-test.o"
     rm -rf "$STAGE1_TOOLS_DIR"
     mkdir -p "$STAGE1_TOOLS_DIR"
-    run_gate "build stage1 CLI test driver" "$SEED_TYPELISP_BIN" build "$ROOT/selfhost/test.tl" -o "$STAGE1_TEST_BIN"
+    # `selfhost/test.tl` is the largest stage1 CLI helper; compile+link it
+    # directly so this bootstrap gate stays below the selfhost build tool's
+    # transient memory ceiling while still avoiding cargo/rustc.
+    run_gate "compile stage1 CLI test driver" \
+        "$SEED_TYPELISP_BIN" compile "$ROOT/selfhost/test.tl" \
+        -o "$STAGE1_TEST_ASM" \
+        --target linux-x86_64 \
+        --backend-mode scalar \
+        --stdlib-root "$ROOT/stdlib"
+    run_gate "assemble stage1 CLI test driver" \
+        as "$STAGE1_TEST_ASM" -o "$STAGE1_TEST_OBJ"
+    run_gate "link stage1 CLI test driver" \
+        ld "$STAGE1_TEST_OBJ" -o "$STAGE1_TEST_BIN" \
+        -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc
     ensure_executable "stage1 test" "$STAGE1_TEST_BIN"
     STAGE1_TYPELISP_BIN=$(make_stage1_cli_wrapper "$TYPELISP_BIN" "$STAGE1_TEST_BIN")
     echo

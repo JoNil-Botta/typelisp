@@ -811,11 +811,29 @@
             (if (= size 2)
               "%r14w"
               "%r14b"))
-          (if (= size 4)
-            "%r15d"
-            (if (= size 2)
-              "%r15w"
-              "%r15b")))))))
+          (if (string-eq reg "%r15")
+            (if (= size 4)
+              "%r15d"
+              (if (= size 2)
+                "%r15w"
+                "%r15b"))
+            (if (string-eq reg "%r8")
+              (if (= size 4)
+                "%r8d"
+                (if (= size 2)
+                  "%r8w"
+                  "%r8b"))
+              (if (string-eq reg "%r9")
+                (if (= size 4)
+                  "%r9d"
+                  (if (= size 2)
+                    "%r9w"
+                    "%r9b"))
+                (if (= size 4)
+                  "%r15d"
+                  (if (= size 2)
+                    "%r15w"
+                    "%r15b"))))))))))
 
 (define (compiler-backend-emit-load-register [reg : String] [ty : AstType]) : String
   (let
@@ -8621,6 +8639,33 @@ tl_windows_setup_instances:
         (CompilerRegAssignment 2 (CompilerRegRegister "%r13"))
         CompilerRegAssignmentNil))))
 
+(define (compiler-backend-expanded-scalar-assignments) : CompilerRegAssignmentList
+  (CompilerRegAssignmentCons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%r8"))
+    (CompilerRegAssignmentCons
+      (CompilerRegAssignment 1 (CompilerRegRegister "%r9"))
+      CompilerRegAssignmentNil)))
+
+(define (compiler-backend-expanded-scalar-regs-ok?) : bool
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-backend-expanded-scalar-assignments)]
+    (and
+      (string-eq
+        (compiler-backend-emit-load-var-with-plan assignments 0 "%rax")
+        "    movq %r8, %rax\n")
+      (and
+        (string-eq
+          (compiler-backend-emit-store-var-with-plan assignments 1 "%rax")
+          "    movq %rax, %r9\n")
+        (and
+          (string-eq
+            (compiler-backend-emit-load-register "%r8" (AstTyU32))
+            "    movl %r8d, %eax\n")
+          (and
+            (not (compiler-backend-plan-uses-callee-regs? assignments))
+            (= (compiler-backend-frame-slots 2 assignments) 2)))))))
+
 (define (compiler-backend-peephole-register-moves-ok?) : bool
   (let
     [assignments : CompilerRegAssignmentList
@@ -9603,8 +9648,10 @@ tl_windows_setup_instances:
           (and
             (compiler-backend-string-runtime-ok?)
             (and
-              (compiler-backend-runtime-coexist-ok?)
-              (compiler-backend-module-symbol-ok?)))))))
+              (compiler-backend-expanded-scalar-regs-ok?)
+              (and
+                (compiler-backend-runtime-coexist-ok?)
+                (compiler-backend-module-symbol-ok?))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

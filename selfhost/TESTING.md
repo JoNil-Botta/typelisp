@@ -135,14 +135,23 @@ That wrapper fetches `stage0-latest` when `TYPELISP_BIN` is unset and treats it
 as the seed compiler. It installs failing `cargo` and `rustc` shims in `PATH` so
 the gate cannot silently fall back to Rust. On Linux it first runs
 the stage1-build path in `check-bootstrap-fixpoint.sh` with the seed compiler,
-then routes compile-only capability gates through the freshly bootstrapped
-stage1 compiler. Full public CLI gates still use the seed compiler until the
-selfhost compiler grows a no-Rust host-action wrapper. On Windows it exports the
-seed compiler directly until native stage1 bootstrap/link support lands. The
-full stage2/stage3 fixpoint remains available through
+then routes stage1 capability gates through `scripts/stage1-typelisp-wrapper.sh`.
+The wrapper gives the raw stage1 compiler the public `typelisp compile` shape
+and a no-Rust Linux host-action executor for source build/run and scratch
+assembly plans. Full public CLI gates still use the seed compiler until every
+public-tool exception is ported to the wrapper. On Windows it exports the seed
+compiler directly until native stage1 bootstrap/link support lands. The full
+stage2/stage3 fixpoint remains available through
 `check-bootstrap-fixpoint.sh`. The scripts that still run `cargo build --release`
 when `TYPELISP_BIN` is unset keep that path as a local fallback only until #795
 removes the Rust-owned stage0 dependency.
+
+The current stage1 wrapper implements the source-file `compile`, `build`, `run`,
+and private `debug host-action` path directly enough for the Linux capability
+smoke and deterministic assembly gate. Seed-only public-tool exceptions remain:
+`fmt`, `doc`, `lint`, non-check `test`, package `build`, REPL/LSP, and full
+manifest/doc/integration gates still need either stage1-safe driver linking or
+dedicated wrapper routing before they can move off the seed compiler.
 
 ### Staged backend primitives (#1114)
 
@@ -306,15 +315,15 @@ before uploading the artifact.
 
 Pull requests get Linux and Windows no-Rust coverage from
 `scripts/verify-no-rust-stage0.sh`. The Linux job first builds a fresh stage1
-compiler from published stage0, then runs the deterministic assembly check
-through a stage1 compile wrapper. Public tools, doctests, inline tests, selfhost
-compile manifests, TypeLisp source format, native integration manifests,
-examples, stdlib, stdlib docs, selfhost native generated programs, and the
-selfhost external compiler corpus continue to use the seed compiler until
-selfhost host-action routing and selfhost-specific manifest expectations can
-replace the Rust CLI boundary. The Windows job runs the host-supported gates
-against the published stage0 compiler and explicitly skips the Linux-only
-selfhost/docs checks until native stage1 bootstrap/link support lands.
+compiler from published stage0, then smoke-tests the stage1 CLI/host-action
+wrapper and runs deterministic assembly through that wrapper. Public tools,
+doctests, inline tests, selfhost compile manifests, TypeLisp source format,
+native integration manifests, examples, stdlib, stdlib docs, selfhost native
+generated programs, and the selfhost external compiler corpus continue to use
+the seed compiler until their remaining public-tool and manifest exceptions are
+ported to the wrapper. The Windows job runs the host-supported gates against the
+published stage0 compiler and explicitly skips the Linux-only selfhost/docs
+checks until native stage1 bootstrap/link support lands.
 
 The remaining Linux and Windows `cargo test`, `cargo fmt`, `cargo clippy`, and
 release integration jobs are temporary Rust reference coverage until #795.

@@ -59,11 +59,11 @@ stdlib_json|tests/integration/stdlib_json.tl|42|-|-|stdlib/json.tl stdlib/text_b
 stdlib_text_buf|tests/integration/stdlib_text_buf.tl|42|-|-|stdlib/text_buf.tl
 stdlib_string|tests/integration/stdlib_string.tl|42|hello\174\nhello\174\nhello\174\nfound\n\174empty-left\n\174empty-right\n\174all-space\ncontains\nmissing\nhippo\nabx\n|-|stdlib/string.tl
 stdlib_test|tests/integration/stdlib_test.tl|42|-|-|stdlib/test.tl
-string_append|tests/integration/string_append.tl|0|foobar\n|-|-
+string_append|tests/integration/string_append.tl|0|[]\nright\nleft\nfoobar\nabcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\n|-|-
 string_eq|tests/integration/string_eq.tl|0|true\ntrue\ntrue\nfalse\nfalse\ntrue\nfalse\n|-|-
 string_length|tests/integration/string_length.tl|5|-|-|-
 string_match|tests/integration/string_match.tl|42|-|-|-
-substring|tests/integration/substring.tl|33|-|-|-
+substring|tests/integration/substring.tl|55|-|-|-
 sym_i64_env|tests/integration/sym_i64_env.tl|0|PASS: empty-miss\nPASS: single-hit-contains\nPASS: single-hit-value\nPASS: single-miss\nPASS: shadow-newest\nPASS: outer-preserved-a\nPASS: outer-no-b\nPASS: inner-sees-a\nPASS: inner-sees-b\nPASS: substring-key-hit\nPASS: append-key-hit\nPASS: chain-x\nPASS: chain-y\nPASS: chain-z\nAll sym-i64-env tests passed.\n|-|sym_i64_env_core.tl
 tail_self_loop|tests/integration/tail_self_loop.tl|42|-|-|-
 text_buf|tests/integration/text_buf.tl|0|left-right\n|-|text_buf_core.tl

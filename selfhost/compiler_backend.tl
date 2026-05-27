@@ -811,11 +811,29 @@
             (if (= size 2)
               "%r14w"
               "%r14b"))
-          (if (= size 4)
-            "%r15d"
-            (if (= size 2)
-              "%r15w"
-              "%r15b")))))))
+          (if (string-eq reg "%r15")
+            (if (= size 4)
+              "%r15d"
+              (if (= size 2)
+                "%r15w"
+                "%r15b"))
+            (if (string-eq reg "%r8")
+              (if (= size 4)
+                "%r8d"
+                (if (= size 2)
+                  "%r8w"
+                  "%r8b"))
+              (if (string-eq reg "%r9")
+                (if (= size 4)
+                  "%r9d"
+                  (if (= size 2)
+                    "%r9w"
+                    "%r9b"))
+                (if (= size 4)
+                  "%r15d"
+                  (if (= size 2)
+                    "%r15w"
+                    "%r15b"))))))))))
 
 (define (compiler-backend-emit-load-register [reg : String] [ty : AstType]) : String
   (let
@@ -5898,15 +5916,10 @@ tl_substring:
     movq %r12, %rdi
     call tl_alloc
     movq %rax, %r13
-    movq $0, %rcx
-.L_tl_substring_copy_loop:
-    cmpq %r12, %rcx
-    jge .L_tl_substring_copy_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r13,%rcx)
-    incq %rcx
-    jmp .L_tl_substring_copy_loop
-.L_tl_substring_copy_done:
+    movq %r12, %rcx
+    movq %rbx, %rsi
+    movq %r13, %rdi
+    rep movsb
     movq $16, %rdi
     call tl_alloc
     movq %r13, 0(%rax)
@@ -5928,6 +5941,8 @@ tl_substring:
     push %rbx
     push %r12
     push %r13
+    push %rsi
+    push %rdi
     sub $8, %rsp
     movq %rcx, %rbx
     addq %rdx, %rbx
@@ -5937,15 +5952,10 @@ tl_substring:
     call tl_alloc
     add $32, %rsp
     movq %rax, %r13
-    movq $0, %rcx
-.L_tl_substring_copy_loop:
-    cmpq %r12, %rcx
-    jge .L_tl_substring_copy_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r13,%rcx)
-    incq %rcx
-    jmp .L_tl_substring_copy_loop
-.L_tl_substring_copy_done:
+    movq %r12, %rcx
+    movq %rbx, %rsi
+    movq %r13, %rdi
+    rep movsb
     movq $16, %rcx
     sub $32, %rsp
     call tl_alloc
@@ -5953,6 +5963,8 @@ tl_substring:
     movq %r13, 0(%rax)
     movq %r12, 8(%rax)
     add $8, %rsp
+    pop %rdi
+    pop %rsi
     pop %r13
     pop %r12
     pop %rbx
@@ -5980,26 +5992,15 @@ tl_string_concat:
     addq %r14, %rdi
     call tl_alloc
     movq %rax, %r15
-    movq $0, %rcx
-.L_tl_string_concat_copy_a:
-    cmpq %r12, %rcx
-    jge .L_tl_string_concat_copy_a_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r15,%rcx)
-    incq %rcx
-    jmp .L_tl_string_concat_copy_a
-.L_tl_string_concat_copy_a_done:
-    movq $0, %rcx
-.L_tl_string_concat_copy_b:
-    cmpq %r14, %rcx
-    jge .L_tl_string_concat_copy_b_done
-    movzbl (%r13,%rcx), %edx
-    movq %r12, %rax
-    addq %rcx, %rax
-    movb %dl, (%r15,%rax)
-    incq %rcx
-    jmp .L_tl_string_concat_copy_b
-.L_tl_string_concat_copy_b_done:
+    movq %r12, %rcx
+    movq %rbx, %rsi
+    movq %r15, %rdi
+    rep movsb
+    movq %r14, %rcx
+    movq %r13, %rsi
+    movq %r15, %rdi
+    addq %r12, %rdi
+    rep movsb
     movq $16, %rdi
     call tl_alloc
     movq %r15, 0(%rax)
@@ -6027,6 +6028,8 @@ tl_string_concat:
     push %r13
     push %r14
     push %r15
+    push %rsi
+    push %rdi
     sub $8, %rsp
     movq %rcx, %rbx
     movq %rdx, %r12
@@ -6038,26 +6041,15 @@ tl_string_concat:
     call tl_alloc
     add $32, %rsp
     movq %rax, %r15
-    movq $0, %rcx
-.L_tl_string_concat_copy_a:
-    cmpq %r12, %rcx
-    jge .L_tl_string_concat_copy_a_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r15,%rcx)
-    incq %rcx
-    jmp .L_tl_string_concat_copy_a
-.L_tl_string_concat_copy_a_done:
-    movq $0, %rcx
-.L_tl_string_concat_copy_b:
-    cmpq %r14, %rcx
-    jge .L_tl_string_concat_copy_b_done
-    movzbl (%r13,%rcx), %edx
-    movq %r12, %rax
-    addq %rcx, %rax
-    movb %dl, (%r15,%rax)
-    incq %rcx
-    jmp .L_tl_string_concat_copy_b
-.L_tl_string_concat_copy_b_done:
+    movq %r12, %rcx
+    movq %rbx, %rsi
+    movq %r15, %rdi
+    rep movsb
+    movq %r14, %rcx
+    movq %r13, %rsi
+    movq %r15, %rdi
+    addq %r12, %rdi
+    rep movsb
     movq $16, %rcx
     sub $32, %rsp
     call tl_alloc
@@ -6067,6 +6059,8 @@ tl_string_concat:
     addq %r14, %rdx
     movq %rdx, 8(%rax)
     add $8, %rsp
+    pop %rdi
+    pop %rsi
     pop %r15
     pop %r14
     pop %r13
@@ -7834,6 +7828,23 @@ tl_windows_setup_instances:
             (compiler-backend-string-contains?
               asm
               ".L_tl_string_eq_tail_loop:\n"))]
+        [string-copy-helpers : bool
+          (and
+            (compiler-backend-string-contains? asm "    rep movsb\n")
+            (and
+              (not
+                (compiler-backend-string-contains?
+                  asm
+                  ".L_tl_substring_copy_loop:\n"))
+              (and
+                (not
+                  (compiler-backend-string-contains?
+                    asm
+                    ".L_tl_string_concat_copy_a:\n"))
+                (not
+                  (compiler-backend-string-contains?
+                    asm
+                    ".L_tl_string_concat_copy_b:\n")))))]
         [driver-labels : bool
           (backend-and8
             (compiler-backend-string-contains? asm ".globl tl_int_to_string\n")
@@ -8006,28 +8017,30 @@ tl_windows_setup_instances:
             (and
               string-eq-word-path
               (and
-                driver-labels
+                string-copy-helpers
                 (and
-                  file-labels
+                  driver-labels
                   (and
-                    file-read-chunk-labels
+                    file-labels
                     (and
-                      stdio-labels
+                      file-read-chunk-labels
                       (and
-                        process-labels
+                        stdio-labels
                         (and
-                          no-externs
+                          process-labels
                           (and
-                            file-read-chunk-no-externs
+                            no-externs
                             (and
-                              random-labels
+                              file-read-chunk-no-externs
                               (and
-                                (compiler-backend-string-contains?
-                                  asm
-                                  "    call tl_alloc\n")
-                                (compiler-backend-string-contains?
-                                  asm
-                                  ".L_tl_stdin_eof_flag:\n"))))))))))))))]
+                                random-labels
+                                (and
+                                  (compiler-backend-string-contains?
+                                    asm
+                                    "    call tl_alloc\n")
+                                  (compiler-backend-string-contains?
+                                    asm
+                                    ".L_tl_stdin_eof_flag:\n")))))))))))))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-windows-driver-runtime-source) : String
@@ -8656,6 +8669,33 @@ tl_windows_setup_instances:
       (CompilerRegAssignmentCons
         (CompilerRegAssignment 2 (CompilerRegRegister "%r13"))
         CompilerRegAssignmentNil))))
+
+(define (compiler-backend-expanded-scalar-assignments) : CompilerRegAssignmentList
+  (CompilerRegAssignmentCons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%r8"))
+    (CompilerRegAssignmentCons
+      (CompilerRegAssignment 1 (CompilerRegRegister "%r9"))
+      CompilerRegAssignmentNil)))
+
+(define (compiler-backend-expanded-scalar-regs-ok?) : bool
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-backend-expanded-scalar-assignments)]
+    (and
+      (string-eq
+        (compiler-backend-emit-load-var-with-plan assignments 0 "%rax")
+        "    movq %r8, %rax\n")
+      (and
+        (string-eq
+          (compiler-backend-emit-store-var-with-plan assignments 1 "%rax")
+          "    movq %rax, %r9\n")
+        (and
+          (string-eq
+            (compiler-backend-emit-load-register "%r8" (AstTyU32))
+            "    movl %r8d, %eax\n")
+          (and
+            (not (compiler-backend-plan-uses-callee-regs? assignments))
+            (= (compiler-backend-frame-slots 2 assignments) 2)))))))
 
 (define (compiler-backend-peephole-register-moves-ok?) : bool
   (let
@@ -9639,8 +9679,10 @@ tl_windows_setup_instances:
           (and
             (compiler-backend-string-runtime-ok?)
             (and
-              (compiler-backend-runtime-coexist-ok?)
-              (compiler-backend-module-symbol-ok?)))))))
+              (compiler-backend-expanded-scalar-regs-ok?)
+              (and
+                (compiler-backend-runtime-coexist-ok?)
+                (compiler-backend-module-symbol-ok?))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

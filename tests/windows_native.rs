@@ -163,6 +163,7 @@ fn selfhost_backend_windows_runtime_helpers_emit_assemble_link_and_run() {
         "\n.L_tl_argv:\n",
         "    movq %rcx, .L_tl_argc(%rip)\n",
         "    movq %rdx, .L_tl_argv(%rip)\n",
+        "    rep movsb\n",
         "    .extern malloc\n",
         "    .extern _write\n",
         "    .extern exit\n",
@@ -199,6 +200,21 @@ fn selfhost_backend_windows_runtime_helpers_emit_assemble_link_and_run() {
     assert!(!asm.contains("    syscall"), "asm:\n{}", asm);
     assert!(!asm.contains("\n_start:"), "asm:\n{}", asm);
     assert!(!asm.contains("tl_current_arena:"), "asm:\n{}", asm);
+    assert!(
+        asm.matches("    rep movsb\n").count() >= 3,
+        "selfhost Windows runtime helper assembly should bulk-copy substring and concat payloads:\n{}",
+        asm
+    );
+    for old_loop in [
+        ".L_tl_substring_copy_loop:\n",
+        ".L_tl_string_concat_copy_a:\n",
+        ".L_tl_string_concat_copy_b:\n",
+    ] {
+        assert!(
+            !asm.contains(old_loop),
+            "selfhost Windows runtime helper assembly should not use byte copy loop {old_loop:?}:\n{asm}"
+        );
+    }
     for helper in [
         ".extern tl_alloc\n",
         ".extern tl_oob_abort\n",
@@ -664,8 +680,12 @@ fn native_cases() -> Vec<Case> {
             "true\ntrue\ntrue\nfalse\nfalse\ntrue\nfalse\n",
         ),
         case("string_match", 42, ""),
-        case("substring", 33, ""),
-        case("string_append", 0, "foobar\n"),
+        case("substring", 55, ""),
+        case(
+            "string_append",
+            0,
+            "[]\nright\nleft\nfoobar\nabcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\n",
+        ),
         case_with_deps("modules_main", 30, "", &["modules_helper.tl"]),
         case("enum_match", 42, ""),
         case("tuple_values", 42, ""),

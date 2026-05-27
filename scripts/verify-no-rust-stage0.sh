@@ -95,6 +95,7 @@ run_gate() {
 
 make_stage1_cli_wrapper() {
     stage1_bin=$1
+    stage1_test_bin=${2:-}
     wrapper_dir="$ROOT/target/no-rust-stage1-wrapper"
     wrapper="$wrapper_dir/typelisp"
     rm -rf "$wrapper_dir"
@@ -104,6 +105,10 @@ make_stage1_cli_wrapper() {
 set -eu
 TYPELISP_STAGE1_BIN='$stage1_bin'
 export TYPELISP_STAGE1_BIN
+TYPELISP_STAGE1_TEST_BIN='$stage1_test_bin'
+export TYPELISP_STAGE1_TEST_BIN
+TYPELISP_STAGE1_DRIVER_CACHE_DIR='$wrapper_dir/cache'
+export TYPELISP_STAGE1_DRIVER_CACHE_DIR
 exec '$ROOT/scripts/stage1-typelisp-wrapper.sh' "\$@"
 EOF
     chmod +x "$wrapper"
@@ -136,7 +141,13 @@ if [ "$HOST_OS" = linux ]; then
         TYPELISP_BIN="$ROOT/target/bootstrap-fixpoint/stage1"
     fi
     ensure_executable "stage1" "$TYPELISP_BIN"
-    STAGE1_TYPELISP_BIN=$(make_stage1_cli_wrapper "$TYPELISP_BIN")
+    STAGE1_TOOLS_DIR="$ROOT/target/no-rust-stage1-tools"
+    STAGE1_TEST_BIN="$STAGE1_TOOLS_DIR/selfhost-test"
+    rm -rf "$STAGE1_TOOLS_DIR"
+    mkdir -p "$STAGE1_TOOLS_DIR"
+    run_gate "build stage1 CLI test driver" "$SEED_TYPELISP_BIN" build "$ROOT/selfhost/test.tl" -o "$STAGE1_TEST_BIN"
+    ensure_executable "stage1 test" "$STAGE1_TEST_BIN"
+    STAGE1_TYPELISP_BIN=$(make_stage1_cli_wrapper "$TYPELISP_BIN" "$STAGE1_TEST_BIN")
     echo
     echo "[no-rust-stage0] stage1 CLI wrapper=$STAGE1_TYPELISP_BIN"
 else

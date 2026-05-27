@@ -6972,7 +6972,7 @@
 (define (f) : i64 (comptime (offset-of (type Packet) missing)))"
                 "offset-of unknown field missing"))))))))
 
-(define (compiler-typecheck-self-test) : i64
+(define (compiler-typecheck-self-test-basics) : unit
   (begin
     (if (compiler-typecheck-ptr-null-tests-ok?)
       unit
@@ -7010,6 +7010,10 @@
         (begin
           (panic (compiler-diagnostic-message diag))
           unit)])
+    unit))
+
+(define (compiler-typecheck-self-test-diagnostics) : unit
+  (begin
     (if (compiler-typecheck-error-ok?
       (compiler-typecheck-unbound-source)
       "typecheck: unbound name missing")
@@ -7025,6 +7029,10 @@
       "typecheck: if branches must match")
       unit
       (panic "typecheck: branch mismatch diagnostic test failed"))
+    unit))
+
+(define (compiler-typecheck-self-test-models) : unit
+  (begin
     (if (compiler-typecheck-aggregate-tests-ok?)
       unit
       (panic "typecheck: aggregate tests failed"))
@@ -7058,6 +7066,10 @@
     (if (compiler-typecheck-located-ok?)
       unit
       (panic "typecheck: located diagnostic test failed"))
+    unit))
+
+(define (compiler-typecheck-self-test-builtins) : unit
+  (begin
     (if (compiler-typecheck-string-builtin-tests-ok?)
       unit
       (panic "typecheck: string builtin tests failed"))
@@ -7077,7 +7089,15 @@
       unit
       (panic "typecheck: io builtin tests failed"))
     (if (compiler-typecheck-layout-query-tests-ok?)
-      42
+      unit
       (begin
         (panic "typecheck: layout query tests failed")
-        0))))
+        unit))))
+
+(define (compiler-typecheck-self-test) : i64
+  (begin
+    (compiler-typecheck-self-test-basics)
+    (compiler-typecheck-self-test-diagnostics)
+    (compiler-typecheck-self-test-models)
+    (compiler-typecheck-self-test-builtins)
+    42))

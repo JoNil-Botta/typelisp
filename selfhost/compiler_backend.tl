@@ -71,6 +71,7 @@
     bool
     bool
     bool
+    bool
     bool))
 
 ;; Backend code-generation target (#646). Linux/System V and Windows x64 are
@@ -2524,6 +2525,7 @@
           _
           _
           _
+          _
           _)
         (if (or arg-count arg)
           "    movq %rcx, .L_tl_argc(%rip)
@@ -3087,6 +3089,12 @@
             true
             (compiler-backend-function-list-calls? rest name))])]))
 
+(define (compiler-backend-provides-runtime-name?
+  [name : String]
+  [candidate : String]
+  [enabled : bool]) : bool
+  (and (string-eq name candidate) enabled))
+
 (define (compiler-backend-plan-provides?
   [plan : CompilerBackendRuntimePlan]
   [name : String]) : bool
@@ -3106,6 +3114,7 @@
         provides-read-file
         provides-write-file
         provides-file-exists
+        provides-file-read-chunk
         provides-process-output
         read-line
         read-bytes
@@ -3114,77 +3123,124 @@
         region-mark
         region-reset
         random-system-seed)
-      (if (string-eq name "tl_alloc")
-        alloc
-        (if (string-eq name "tl_region_mark")
-          region-mark
-          (if (string-eq name "tl_region_reset")
-            region-reset
-            (if (string-eq name "tl_oob_abort")
-              oob
-              (if (string-eq name "tl_substring")
-                substring
-                (if (string-eq name "tl_string_concat")
-                  concat
-                  (if (string-eq name "tl_string_eq")
-                    provides-string-eq
-                    (if (string-eq name "tl_string_to_int")
-                      provides-string-to-int
-                      (if (string-eq name "tl_int_to_string")
-                        provides-int-to-string
-                        (if (string-eq name ".L_tl_abort")
-                          provides-abort
-                          (if (string-eq name "tl_print_err")
-                            provides-print-err
-                            (if (string-eq name ".L_tl_arg_count")
-                              provides-arg-count
-                              (if (string-eq name ".L_tl_arg")
-                                provides-arg
-                                (if (string-eq name ".L_tl_read_file")
-                                  provides-read-file
-                                  (if (string-eq name ".L_tl_write_file")
-                                    provides-write-file
-                                    (if (string-eq name ".L_tl_file_exists")
-                                      provides-file-exists
-                                      (if (string-eq name "tl_process_output")
-                                        provides-process-output
-                                        (if (string-eq
-                                          name
-                                          ".L_tl_read_file_status")
-                                          provides-read-file
-                                          (if (string-eq
-                                            name
-                                            ".L_tl_write_file_status")
-                                            provides-write-file
-                                            (if (string-eq
-                                              name
-                                              ".L_tl_append_file_status")
-                                              provides-write-file
-                                              (if (string-eq
-                                                name
-                                                ".L_tl_file_exists_status")
-                                                provides-file-exists
-                                                (if (string-eq
-                                                  name
-                                                  ".L_tl_read_stdin_line")
-                                                  read-line
-                                                  (if (string-eq
-                                                    name
-                                                    ".L_tl_read_stdin_bytes")
-                                                    read-bytes
-                                                    (if (string-eq
-                                                      name
-                                                      ".L_tl_stdin_eof")
-                                                      stdin-eof
-                                                      (if (string-eq
-                                                        name
-                                                        ".L_tl_flush_stdout")
-                                                        flush-stdout
-                                                        (if (string-eq
-                                                          name
-                                                          "tl_random_system_seed")
-                                                          random-system-seed
-                                                          false))))))))))))))))))))))))))]))
+      (or
+        (backend-or8
+          (compiler-backend-provides-runtime-name? name "tl_alloc" alloc)
+          (compiler-backend-provides-runtime-name?
+            name
+            "tl_region_mark"
+            region-mark)
+          (compiler-backend-provides-runtime-name?
+            name
+            "tl_region_reset"
+            region-reset)
+          (compiler-backend-provides-runtime-name? name "tl_oob_abort" oob)
+          (compiler-backend-provides-runtime-name?
+            name
+            "tl_substring"
+            substring)
+          (compiler-backend-provides-runtime-name?
+            name
+            "tl_string_concat"
+            concat)
+          (compiler-backend-provides-runtime-name?
+            name
+            "tl_string_eq"
+            provides-string-eq)
+          (compiler-backend-provides-runtime-name?
+            name
+            "tl_string_to_int"
+            provides-string-to-int))
+        (or
+          (backend-or8
+            (compiler-backend-provides-runtime-name?
+              name
+              "tl_int_to_string"
+              provides-int-to-string)
+            (compiler-backend-provides-runtime-name?
+              name
+              ".L_tl_abort"
+              provides-abort)
+            (compiler-backend-provides-runtime-name?
+              name
+              "tl_print_err"
+              provides-print-err)
+            (compiler-backend-provides-runtime-name?
+              name
+              ".L_tl_arg_count"
+              provides-arg-count)
+            (compiler-backend-provides-runtime-name?
+              name
+              ".L_tl_arg"
+              provides-arg)
+            (compiler-backend-provides-runtime-name?
+              name
+              ".L_tl_read_file"
+              provides-read-file)
+            (compiler-backend-provides-runtime-name?
+              name
+              ".L_tl_write_file"
+              provides-write-file)
+            (compiler-backend-provides-runtime-name?
+              name
+              ".L_tl_file_exists"
+              provides-file-exists))
+          (or
+            (backend-or8
+              (compiler-backend-provides-runtime-name?
+                name
+                "tl_process_output"
+                provides-process-output)
+              (compiler-backend-provides-runtime-name?
+                name
+                ".L_tl_read_file_status"
+                provides-read-file)
+              (compiler-backend-provides-runtime-name?
+                name
+                ".L_tl_write_file_status"
+                provides-write-file)
+              (compiler-backend-provides-runtime-name?
+                name
+                ".L_tl_append_file_status"
+                provides-write-file)
+              (compiler-backend-provides-runtime-name?
+                name
+                ".L_tl_file_exists_status"
+                provides-file-exists)
+              (compiler-backend-provides-runtime-name?
+                name
+                ".L_tl_file_read_chunk_status"
+                provides-file-read-chunk)
+              (compiler-backend-provides-runtime-name?
+                name
+                ".L_tl_file_read_chunk_bytes"
+                provides-file-read-chunk)
+              (compiler-backend-provides-runtime-name?
+                name
+                ".L_tl_file_read_chunk_eof"
+                provides-file-read-chunk))
+            (or
+              (compiler-backend-provides-runtime-name?
+                name
+                ".L_tl_read_stdin_line"
+                read-line)
+              (backend-or4
+                (compiler-backend-provides-runtime-name?
+                  name
+                  ".L_tl_read_stdin_bytes"
+                  read-bytes)
+                (compiler-backend-provides-runtime-name?
+                  name
+                  ".L_tl_stdin_eof"
+                  stdin-eof)
+                (compiler-backend-provides-runtime-name?
+                  name
+                  ".L_tl_flush_stdout"
+                  flush-stdout)
+                (compiler-backend-provides-runtime-name?
+                  name
+                  "tl_random_system_seed"
+                  random-system-seed))))))]))
 
 (define (compiler-backend-runtime-plan-for
   [functions : CompilerIrFunctionList]
@@ -3260,6 +3316,18 @@
       (compiler-backend-extern-list-references?
         externs
         ".L_tl_file_exists_status")]
+    [extern-file-read-chunk-status : bool
+      (compiler-backend-extern-list-references?
+        externs
+        ".L_tl_file_read_chunk_status")]
+    [extern-file-read-chunk-bytes : bool
+      (compiler-backend-extern-list-references?
+        externs
+        ".L_tl_file_read_chunk_bytes")]
+    [extern-file-read-chunk-eof : bool
+      (compiler-backend-extern-list-references?
+        externs
+        ".L_tl_file_read_chunk_eof")]
     [extern-read-line : bool
       (compiler-backend-extern-list-references? externs ".L_tl_read_stdin_line")]
     [extern-read-bytes : bool
@@ -3320,6 +3388,18 @@
       (compiler-backend-function-list-calls?
         functions
         ".L_tl_file_exists_status")]
+    [calls-file-read-chunk-status : bool
+      (compiler-backend-function-list-calls?
+        functions
+        ".L_tl_file_read_chunk_status")]
+    [calls-file-read-chunk-bytes : bool
+      (compiler-backend-function-list-calls?
+        functions
+        ".L_tl_file_read_chunk_bytes")]
+    [calls-file-read-chunk-eof : bool
+      (compiler-backend-function-list-calls?
+        functions
+        ".L_tl_file_read_chunk_eof")]
     [calls-read-line : bool
       (compiler-backend-function-list-calls? functions ".L_tl_read_stdin_line")]
     [calls-read-bytes : bool
@@ -3371,6 +3451,14 @@
         (or
           (or extern-file-exists calls-file-exists)
           (or extern-file-exists-status calls-file-exists-status))]
+      [needs-file-read-chunk : bool
+        (or
+          (or extern-file-read-chunk-status calls-file-read-chunk-status)
+          (or
+            extern-file-read-chunk-bytes
+            (or
+              calls-file-read-chunk-bytes
+              (or extern-file-read-chunk-eof calls-file-read-chunk-eof))))]
       [needs-read-line : bool (or extern-read-line calls-read-line)]
       [needs-read-bytes : bool (or extern-read-bytes calls-read-bytes)]
       [needs-stdin-eof : bool (or extern-stdin-eof calls-stdin-eof)]
@@ -3412,10 +3500,12 @@
               needs-write-file
               needs-file-exists)
             (or
-              needs-process-output
+              needs-file-read-chunk
               (or
-                needs-read-line
-                (or needs-read-bytes needs-random-system-seed))))]
+                needs-process-output
+                (or
+                  needs-read-line
+                  (or needs-read-bytes needs-random-system-seed)))))]
         (OkBackendRuntimePlan
           (BackendRuntimePlan
             needs-alloc
@@ -3432,6 +3522,7 @@
             needs-read-file
             needs-write-file
             needs-file-exists
+            needs-file-read-chunk
             needs-process-output
             needs-read-line
             needs-read-bytes
@@ -3580,6 +3671,34 @@ tl_current_arena:
 "
     ""))
 
+(define (compiler-backend-runtime-file-read-chunk-data
+  [target : CompilerBackendTarget]
+  [file-read-chunk : bool]) : String
+  (if (and file-read-chunk (not (compiler-backend-target-windows? target)))
+    "    .data
+    .balign 8
+.L_tl_file_handle_next:
+    .quad 1
+    .section .bss
+    .balign 8
+.L_tl_file_handle_fds:
+    .zero 8192
+.L_tl_file_handle_modes:
+    .zero 8192
+.L_tl_file_handle_states:
+    .zero 8192
+.L_tl_file_handle_eofs:
+    .zero 8192
+.L_tl_file_handle_last_ptrs:
+    .zero 8192
+.L_tl_file_handle_last_lens:
+    .zero 8192
+.L_tl_file_handle_last_eofs:
+    .zero 8192
+
+"
+    ""))
+
 (define (compiler-backend-runtime-data [plan : CompilerBackendRuntimePlan]) : String
   (compiler-backend-runtime-data-for-target (BackendTargetLinux) plan))
 
@@ -3661,6 +3780,7 @@ tl_current_arena:
         read-file
         write-file
         file-exists
+        file-read-chunk
         process-output
         read-line
         read-bytes
@@ -3692,20 +3812,24 @@ tl_current_arena:
                   (string-append
                     (compiler-backend-runtime-file-exists-data file-exists)
                     (string-append
-                      (compiler-backend-runtime-process-output-data
+                      (compiler-backend-runtime-file-read-chunk-data
                         target
-                        process-output)
+                        file-read-chunk)
                       (string-append
-                        (compiler-backend-runtime-stdio-data
-                          read-line
-                          read-bytes
-                          stdin-eof)
+                        (compiler-backend-runtime-process-output-data
+                          target
+                          process-output)
                         (string-append
-                          (compiler-backend-runtime-flush-stdout-data
-                            target
-                            flush-stdout)
-                          (compiler-backend-runtime-random-system-seed-data
-                            random-system-seed)))))))))))]))
+                          (compiler-backend-runtime-stdio-data
+                            read-line
+                            read-bytes
+                            stdin-eof)
+                          (string-append
+                            (compiler-backend-runtime-flush-stdout-data
+                              target
+                              flush-stdout)
+                            (compiler-backend-runtime-random-system-seed-data
+                              random-system-seed))))))))))))]))
 
 (define (compiler-backend-runtime-alloc-functions) : String
   "    .globl tl_alloc
@@ -4527,6 +4651,185 @@ tl_print_err:
     ret
 
 ")
+
+(define (compiler-backend-runtime-file-read-chunk-status-functions) : String
+  ".L_tl_file_read_chunk_status:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    sub $8, %rsp
+    movq %rdi, %rbx
+    movq %rsi, %r12
+    cmpq $0, %r12
+    jl .L_tl_file_read_chunk_status_invalid
+    cmpq $1, %rbx
+    jl .L_tl_file_read_chunk_status_unsupported
+    cmpq $1024, %rbx
+    jge .L_tl_file_read_chunk_status_unsupported
+    leaq .L_tl_file_handle_states(%rip), %rcx
+    movq (%rcx,%rbx,8), %rax
+    cmpq $1, %rax
+    jne .L_tl_file_read_chunk_status_unsupported
+    leaq .L_tl_file_handle_modes(%rip), %rcx
+    movq (%rcx,%rbx,8), %rax
+    cmpq $0, %rax
+    jne .L_tl_file_read_chunk_status_unsupported
+    movq %r12, %rdi
+    cmpq $0, %rdi
+    jg .L_tl_file_read_chunk_status_alloc_ready
+    movq $1, %rdi
+.L_tl_file_read_chunk_status_alloc_ready:
+    call tl_alloc
+    movq %rax, %r14
+    testq %r12, %r12
+    jz .L_tl_file_read_chunk_status_zero
+    leaq .L_tl_file_handle_fds(%rip), %rcx
+    movq (%rcx,%rbx,8), %rdi
+    movq %r14, %rsi
+    movq %r12, %rdx
+    xorq %rax, %rax
+    syscall
+    testq %rax, %rax
+    js .L_tl_file_read_chunk_status_error_from_rax
+    movq %rax, %r15
+    leaq .L_tl_file_handle_last_ptrs(%rip), %rcx
+    movq %r14, (%rcx,%rbx,8)
+    leaq .L_tl_file_handle_last_lens(%rip), %rcx
+    movq %r15, (%rcx,%rbx,8)
+    testq %r15, %r15
+    jz .L_tl_file_read_chunk_status_eof
+    leaq .L_tl_file_handle_eofs(%rip), %rcx
+    movq (%rcx,%rbx,8), %rax
+    leaq .L_tl_file_handle_last_eofs(%rip), %rcx
+    movq %rax, (%rcx,%rbx,8)
+    xorq %rax, %rax
+    jmp .L_tl_file_read_chunk_status_return
+.L_tl_file_read_chunk_status_zero:
+    leaq .L_tl_file_handle_last_ptrs(%rip), %rcx
+    movq %r14, (%rcx,%rbx,8)
+    leaq .L_tl_file_handle_last_lens(%rip), %rcx
+    movq $0, (%rcx,%rbx,8)
+    leaq .L_tl_file_handle_eofs(%rip), %rcx
+    movq (%rcx,%rbx,8), %rax
+    leaq .L_tl_file_handle_last_eofs(%rip), %rcx
+    movq %rax, (%rcx,%rbx,8)
+    xorq %rax, %rax
+    jmp .L_tl_file_read_chunk_status_return
+.L_tl_file_read_chunk_status_eof:
+    leaq .L_tl_file_handle_eofs(%rip), %rcx
+    movq $1, (%rcx,%rbx,8)
+    leaq .L_tl_file_handle_last_eofs(%rip), %rcx
+    movq $1, (%rcx,%rbx,8)
+    xorq %rax, %rax
+    jmp .L_tl_file_read_chunk_status_return
+.L_tl_file_read_chunk_status_error_from_rax:
+    negq %rax
+    jmp .L_tl_file_read_chunk_status_return
+.L_tl_file_read_chunk_status_invalid:
+    movq $22, %rax
+    jmp .L_tl_file_read_chunk_status_return
+.L_tl_file_read_chunk_status_unsupported:
+    movq $38, %rax
+.L_tl_file_read_chunk_status_return:
+    add $8, %rsp
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+")
+
+(define (compiler-backend-runtime-file-read-chunk-bytes-functions) : String
+  ".L_tl_file_read_chunk_bytes:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    sub $8, %rsp
+    movq %rdi, %rbx
+    xorq %r12, %r12
+    xorq %r13, %r13
+    cmpq $1, %rbx
+    jl .L_tl_file_read_chunk_bytes_alloc
+    cmpq $1024, %rbx
+    jge .L_tl_file_read_chunk_bytes_alloc
+    leaq .L_tl_file_handle_last_ptrs(%rip), %rcx
+    movq (%rcx,%rbx,8), %r12
+    leaq .L_tl_file_handle_last_lens(%rip), %rcx
+    movq (%rcx,%rbx,8), %r13
+.L_tl_file_read_chunk_bytes_alloc:
+    movq $16, %rdi
+    call tl_alloc
+    movq %r12, 0(%rax)
+    movq %r13, 8(%rax)
+    add $8, %rsp
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+")
+
+(define (compiler-backend-runtime-file-read-chunk-eof-functions) : String
+  ".L_tl_file_read_chunk_eof:
+    movq $1, %rax
+    cmpq $1, %rdi
+    jl .L_tl_file_read_chunk_eof_return
+    cmpq $1024, %rdi
+    jge .L_tl_file_read_chunk_eof_return
+    leaq .L_tl_file_handle_last_eofs(%rip), %rcx
+    movq (%rcx,%rdi,8), %rax
+.L_tl_file_read_chunk_eof_return:
+    ret
+
+")
+
+(define (compiler-backend-runtime-windows-file-read-chunk-functions) : String
+  ".L_tl_file_read_chunk_status:
+    movq $38, %rax
+    ret
+
+.L_tl_file_read_chunk_bytes:
+    push %rbp
+    mov %rsp, %rbp
+    push %r12
+    sub $40, %rsp
+    movq $1, %rcx
+    call tl_alloc
+    movq %rax, %r12
+    movq $16, %rcx
+    call tl_alloc
+    movq %r12, 0(%rax)
+    movq $0, 8(%rax)
+    add $40, %rsp
+    pop %r12
+    pop %rbp
+    ret
+
+.L_tl_file_read_chunk_eof:
+    movq $1, %rax
+    ret
+
+")
+
+(define (compiler-backend-runtime-file-read-chunk-functions
+  [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    (compiler-backend-runtime-windows-file-read-chunk-functions)
+    (string-append
+      (compiler-backend-runtime-file-read-chunk-status-functions)
+      (string-append
+        (compiler-backend-runtime-file-read-chunk-bytes-functions)
+        (compiler-backend-runtime-file-read-chunk-eof-functions)))))
 
 (define (compiler-backend-runtime-windows-read-file-functions) : String
   ".L_tl_read_file:
@@ -6574,6 +6877,7 @@ tl_random_system_seed:
         read-file
         write-file
         file-exists
+        file-read-chunk
         process-output
         read-line
         read-bytes
@@ -6691,6 +6995,10 @@ tl_random_system_seed:
               (compiler-backend-runtime-windows-file-exists-status-functions)
               (compiler-backend-runtime-file-exists-status-functions))
             "")]
+        [file-read-chunk-asm : String
+          (if file-read-chunk
+            (compiler-backend-runtime-file-read-chunk-functions target)
+            "")]
         [process-output-asm : String
           (if process-output
             (if (compiler-backend-target-windows? target)
@@ -6776,16 +7084,18 @@ tl_random_system_seed:
                                               (string-append
                                                 file-exists-status-asm
                                                 (string-append
-                                                  process-output-asm
+                                                  file-read-chunk-asm
                                                   (string-append
-                                                    read-line-asm
+                                                    process-output-asm
                                                     (string-append
-                                                      read-bytes-asm
+                                                      read-line-asm
                                                       (string-append
-                                                        stdin-eof-asm
+                                                        read-bytes-asm
                                                         (string-append
-                                                          flush-stdout-asm
-                                                          random-system-seed-asm))))))))))))))))))))))))))]))
+                                                          stdin-eof-asm
+                                                          (string-append
+                                                            flush-stdout-asm
+                                                            random-system-seed-asm)))))))))))))))))))))))))))]))
 
 ;; Argument register for call arg `idx` under the target's calling convention.
 ;; System V (Linux) uses rdi/rsi/rdx/rcx/r8/r9 via `compiler-backend-arg-reg`;
@@ -6888,6 +7198,7 @@ tl_random_system_seed:
             _
             _
             _
+            _
             process-output
             _
             _
@@ -6922,6 +7233,7 @@ tl_random_system_seed:
         read-file
         write-file
         file-exists
+        file-read-chunk
         process-output
         read-line
         read-bytes
@@ -6949,15 +7261,17 @@ tl_random_system_seed:
               read-file
               write-file
               file-exists
-              process-output
+              file-read-chunk
               read-line)
             (or
-              read-bytes
+              process-output
               (or
-                stdin-eof
+                read-bytes
                 (or
-                  flush-stdout
-                  (or region-mark (or region-reset random-system-seed))))))))]))
+                  stdin-eof
+                  (or
+                    flush-stdout
+                    (or region-mark (or region-reset random-system-seed)))))))))]))
 
 (define (compiler-backend-target-runtime-ok?
   [target : CompilerBackendTarget]
@@ -6965,6 +7279,7 @@ tl_random_system_seed:
   (if (compiler-backend-target-windows? target)
     (match plan
       [(BackendRuntimePlan
+          _
           _
           _
           _
@@ -7221,13 +7536,27 @@ tl_random_system_seed:
                             (IrExtern ".L_tl_file_exists" (AstTyBool))
                             (IrExternCons
                               (IrExtern
-                                "tl_process_output"
-                                (AstTyFunc
-                                  (AstTypeCons (AstTyI64) AstTypeNil)
-                                  (AstTyI64)))
+                                ".L_tl_file_read_chunk_status"
+                                (AstTyI64))
                               (IrExternCons
-                                (IrExtern "tl_random_system_seed" (AstTyI64))
-                                IrExternNil))))))))))))))))
+                                (IrExtern
+                                  ".L_tl_file_read_chunk_bytes"
+                                  (AstTyString))
+                                (IrExternCons
+                                  (IrExtern
+                                    ".L_tl_file_read_chunk_eof"
+                                    (AstTyBool))
+                                  (IrExternCons
+                                    (IrExtern
+                                      "tl_process_output"
+                                      (AstTyFunc
+                                        (AstTypeCons (AstTyI64) AstTypeNil)
+                                        (AstTyI64)))
+                                    (IrExternCons
+                                      (IrExtern
+                                        "tl_random_system_seed"
+                                        (AstTyI64))
+                                      IrExternNil)))))))))))))))))))
 
 (define (compiler-backend-runtime-helper-program) : CompilerIrProgram
   (IrProgram
@@ -7237,7 +7566,7 @@ tl_random_system_seed:
         "main"
         IrParamNil
         (AstTyI64)
-        8
+        11
         (IrBlockCons
           (IrBlock
             "entry"
@@ -7296,8 +7625,29 @@ tl_random_system_seed:
                               IrValueNil
                               (AstTyI64))
                             (IrInstrCons
-                              (IrInstrReturn (IrSomeValue (IrValueI64 42)))
-                              IrInstrNil))))))))))
+                              (IrInstrCall
+                                8
+                                ".L_tl_file_read_chunk_status"
+                                (IrValueCons
+                                  (IrValueI64 1)
+                                  (IrValueCons (IrValueI64 4) IrValueNil))
+                                (AstTyI64))
+                              (IrInstrCons
+                                (IrInstrCall
+                                  9
+                                  ".L_tl_file_read_chunk_bytes"
+                                  (IrValueCons (IrValueI64 1) IrValueNil)
+                                  (AstTyString))
+                                (IrInstrCons
+                                  (IrInstrCall
+                                    10
+                                    ".L_tl_file_read_chunk_eof"
+                                    (IrValueCons (IrValueI64 1) IrValueNil)
+                                    (AstTyBool))
+                                  (IrInstrCons
+                                    (IrInstrReturn
+                                      (IrSomeValue (IrValueI64 42)))
+                                    IrInstrNil)))))))))))))
           IrBlockNil))
       IrFunctionNil)
     (compiler-backend-runtime-helper-externs)))
@@ -7341,6 +7691,42 @@ tl_random_system_seed:
             (compiler-backend-string-contains? asm ".L_tl_abort:\n")
             (compiler-backend-string-contains? asm ".L_tl_argc:\n")
             (compiler-backend-string-contains? asm ".L_tl_argv:\n"))]
+        [file-read-chunk-labels : bool
+          (and
+            (backend-and8
+              (compiler-backend-string-contains?
+                asm
+                ".L_tl_file_handle_next:\n")
+              (compiler-backend-string-contains? asm ".L_tl_file_handle_fds:\n")
+              (compiler-backend-string-contains?
+                asm
+                ".L_tl_file_handle_modes:\n")
+              (compiler-backend-string-contains?
+                asm
+                ".L_tl_file_handle_states:\n")
+              (compiler-backend-string-contains?
+                asm
+                ".L_tl_file_handle_eofs:\n")
+              (compiler-backend-string-contains?
+                asm
+                ".L_tl_file_handle_last_ptrs:\n")
+              (compiler-backend-string-contains?
+                asm
+                ".L_tl_file_handle_last_lens:\n")
+              (compiler-backend-string-contains?
+                asm
+                ".L_tl_file_handle_last_eofs:\n"))
+            (and
+              (compiler-backend-string-contains?
+                asm
+                ".L_tl_file_read_chunk_status:\n")
+              (and
+                (compiler-backend-string-contains?
+                  asm
+                  ".L_tl_file_read_chunk_bytes:\n")
+                (compiler-backend-string-contains?
+                  asm
+                  ".L_tl_file_read_chunk_eof:\n"))))]
         [stdio-labels : bool
           (backend-and4
             (compiler-backend-string-contains? asm ".L_tl_read_stdin_line:\n")
@@ -7365,6 +7751,21 @@ tl_random_system_seed:
             (compiler-backend-string-contains?
               asm
               "random: system entropy unavailable"))]
+        [file-read-chunk-no-externs : bool
+          (and
+            (not
+              (compiler-backend-string-contains?
+                asm
+                ".extern .L_tl_file_read_chunk_status\n"))
+            (and
+              (not
+                (compiler-backend-string-contains?
+                  asm
+                  ".extern .L_tl_file_read_chunk_bytes\n"))
+              (not
+                (compiler-backend-string-contains?
+                  asm
+                  ".extern .L_tl_file_read_chunk_eof\n"))))]
         [no-externs : bool
           (and
             (backend-and8
@@ -7448,20 +7849,24 @@ tl_random_system_seed:
               (and
                 file-labels
                 (and
-                  stdio-labels
+                  file-read-chunk-labels
                   (and
-                    process-labels
+                    stdio-labels
                     (and
-                      no-externs
+                      process-labels
                       (and
-                        random-labels
+                        no-externs
                         (and
-                          (compiler-backend-string-contains?
-                            asm
-                            "    call tl_alloc\n")
-                          (compiler-backend-string-contains?
-                            asm
-                            ".L_tl_stdin_eof_flag:\n")))))))))))]
+                          file-read-chunk-no-externs
+                          (and
+                            random-labels
+                            (and
+                              (compiler-backend-string-contains?
+                                asm
+                                "    call tl_alloc\n")
+                              (compiler-backend-string-contains?
+                                asm
+                                ".L_tl_stdin_eof_flag:\n")))))))))))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-windows-driver-runtime-source) : String
@@ -8376,17 +8781,34 @@ tl_random_system_seed:
                                         (and
                                           (compiler-backend-string-contains?
                                             asm
-                                            "    movq %rcx, .L_tl_argc(%rip)\n")
+                                            ".L_tl_file_read_chunk_status:\n")
                                           (and
                                             (compiler-backend-string-contains?
                                               asm
-                                              "    .extern malloc\n")
+                                              ".L_tl_file_read_chunk_bytes:\n")
                                             (and
-                                              (not
-                                                (compiler-backend-string-contains?
-                                                  asm
-                                                  "syscall\n"))
-                                              (compiler-backend-windows-driver-runtime-ok?)))))))))))))))))))))]
+                                              (compiler-backend-string-contains?
+                                                asm
+                                                ".L_tl_file_read_chunk_eof:\n")
+                                              (and
+                                                (not
+                                                  (compiler-backend-string-contains?
+                                                    asm
+                                                    ".L_tl_file_handle_next:\n"))
+                                                (and
+                                                  (compiler-backend-string-contains?
+                                                    asm
+                                                    "    movq %rcx, .L_tl_argc(%rip)\n")
+                                                  (and
+                                                    (compiler-backend-string-contains?
+                                                      asm
+                                                      "    .extern malloc\n")
+                                                    (and
+                                                      (not
+                                                        (compiler-backend-string-contains?
+                                                          asm
+                                                          "syscall\n"))
+                                                      (compiler-backend-windows-driver-runtime-ok?)))))))))))))))))))))))))]
     [(ErrCompilerBackend message) false]))
 
 (define (compiler-backend-deterministic-ok? [src : String]) : bool
@@ -8549,6 +8971,7 @@ tl_random_system_seed:
     CompilerRegVarTypeNil
     (AstTyI64)
     (BackendRuntimePlan
+      false
       false
       false
       false

@@ -71,8 +71,11 @@ Total inline Rust `#[test]` items under `src/`: 926.
   `selfhost/compiler_typecheck.tl` IO-builtin self-test,
   `selfhost/compiler_lower.tl` file-handle status shape self-test, and the
   manifest-backed `stdlib/tests/io_file_handle.tl` fixture. Backend runtime
-  selfhost parity remains covered by #1287 until `selfhost/compiler_backend.tl`
-  emits these helpers.
+  selfhost parity for open/close remains covered by #1287 until
+  `selfhost/compiler_backend.tl` emits these helpers. #1325 adds the
+  selfhost-owned backend runtime path for the streaming read-chunk helpers,
+  including runtime-plan detection, extern suppression, Linux table/helper
+  labels, and Windows unsupported stubs.
 
 ### 2026-05-27 Inline Additions
 

@@ -17,7 +17,12 @@
 
 (defenum DocTestExpectation
   (DocTestExpectPass)
-  (DocTestExpectError))
+  (DocTestExpectError)
+  (DocTestExpectRun i64 String String))
+
+(defenum DocTestFenceMode
+  (DocTestFenceCheck DocTestExpectation)
+  (DocTestFenceRun))
 
 (defenum DocTestLine
   (DocTestLine i64 String))
@@ -49,11 +54,26 @@
 
 (defenum DocTestFenceInfo
   (DocTestFenceIgnore)
-  (DocTestFenceTypeLisp DocTestExpectation)
+  (DocTestFenceTypeLisp DocTestFenceMode)
   (DocTestFenceMalformed DocTestError))
 
 (defenum DocTestCodeCollect
-  (DocTestCodeCollect DocTestLineList String bool))
+  (DocTestCodeCollect DocTestLineList String DocTestLineList bool))
+
+(defenum DocTestMaybeI64
+  (DocTestNoI64 String)
+  (DocTestSomeI64 i64))
+
+(defenum DocTestMaybeOutput
+  (DocTestNoOutput String)
+  (DocTestSomeOutput String))
+
+(defenum DocTestRunMetadata
+  (DocTestRunMetadata bool i64 bool String bool String DocTestErrorList))
+
+(defenum DocTestRunMetadataParse
+  (DocTestRunMetadataOk DocTestExpectation)
+  (DocTestRunMetadataErr DocTestErrorList))
 
 (defenum DocTestScanState
   (DocTestScanState DocTestExampleList DocTestErrorList i64))
@@ -101,7 +121,28 @@
 (define (doc-test-expectation-error? [expectation : DocTestExpectation]) : bool
   (match expectation
     [(DocTestExpectPass) false]
-    [(DocTestExpectError) true]))
+    [(DocTestExpectError) true]
+    [(DocTestExpectRun _ _ _) false]))
+
+(define (doc-test-expectation-run? [expectation : DocTestExpectation]) : bool
+  (match expectation
+    [(DocTestExpectRun _ _ _) true]
+    [_ false]))
+
+(define (doc-test-expectation-run-exit [expectation : DocTestExpectation]) : i64
+  (match expectation
+    [(DocTestExpectRun expected-exit _ _) expected-exit]
+    [_ -1]))
+
+(define (doc-test-expectation-run-stdout [expectation : DocTestExpectation]) : String
+  (match expectation
+    [(DocTestExpectRun _ expected-stdout _) expected-stdout]
+    [_ ""]))
+
+(define (doc-test-expectation-run-stderr [expectation : DocTestExpectation]) : String
+  (match expectation
+    [(DocTestExpectRun _ _ expected-stderr) expected-stderr]
+    [_ ""]))
 
 (define (doc-test-cat3 [a : String] [b : String] [c : String]) : String
   (string-append a (string-append b c)))
@@ -178,6 +219,121 @@
               (set! i (+ i 1)))
             (set! done true))))
       (substring text start (- n start)))))
+
+(define (doc-test-trim-right [text : String]) : String
+  (let
+    [end : i64 (string-length text)]
+    [keep : bool true]
+    (begin
+      (while keep
+        (if (> end 0)
+          (if (doc-test-inline-space? (string-ref text (- end 1)))
+            (set! end (- end 1))
+            (set! keep false))
+          (set! keep false)))
+      (substring text 0 end))))
+
+(define (doc-test-trim [text : String]) : String
+  (doc-test-trim-right (doc-test-trim-left text)))
+
+(define (doc-test-char-code [c : char]) : i64
+  (cast c : i64))
+
+(define (doc-test-decimal-digit-value [c : char]) : i64
+  (let
+    [code : i64 (doc-test-char-code c)]
+    (if (and (>= code 48) (<= code 57))
+      (- code 48)
+      -1)))
+
+(define (doc-test-parse-i64 [text : String]) : DocTestMaybeI64
+  (let
+    [trimmed : String (doc-test-trim text)]
+    (let
+      [n : i64 (string-length trimmed)]
+      (if (= n 0)
+        (DocTestNoI64 "expected integer")
+        (let
+          [i : i64 0]
+          [sign : i64 1]
+          [value : i64 0]
+          [ok : bool true]
+          (begin
+            (if (= (string-ref trimmed 0) #-')
+              (begin
+                (set! sign -1)
+                (set! i 1))
+              unit)
+            (if (= i n)
+              (set! ok false)
+              unit)
+            (while (and ok (< i n))
+              (let
+                [digit : i64
+                  (doc-test-decimal-digit-value (string-ref trimmed i))]
+                (if (< digit 0)
+                  (set! ok false)
+                  (begin
+                    (set! value (+ (* value 10) digit))
+                    (set! i (+ i 1))))))
+            (if ok
+              (DocTestSomeI64 (* sign value))
+              (DocTestNoI64 "expected integer"))))))))
+
+(define (doc-test-decode-output-literal [text : String]) : DocTestMaybeOutput
+  (let
+    [n : i64 (string-length text)]
+    [i : i64 0]
+    [out : String ""]
+    [message : String ""]
+    (begin
+      (while (and (= (string-length message) 0) (< i n))
+        (let
+          [c : char (string-ref text i)]
+          (if (= c #\\')
+            (if (>= (+ i 1) n)
+              (set! message "trailing escape in doctest output metadata")
+              (let
+                [esc : char (string-ref text (+ i 1))]
+                (if (= esc #n')
+                  (begin
+                    (set! out (string-append out "\n"))
+                    (set! i (+ i 2)))
+                  (if (= esc #t')
+                    (begin
+                      (set! out (string-append out "\t"))
+                      (set! i (+ i 2)))
+                    (if (= esc #r')
+                      (begin
+                        (set! out (string-append out "\r"))
+                        (set! i (+ i 2)))
+                      (if (= esc #\\')
+                        (begin
+                          (set! out (string-append out "\\"))
+                          (set! i (+ i 2)))
+                        (set!
+                          message
+                          (doc-test-cat3
+                            "unsupported doctest output escape `\\"
+                            (substring text (+ i 1) 1)
+                            "`"))))))))
+            (begin
+              (set! out (string-append out (substring text i 1)))
+              (set! i (+ i 1))))))
+      (if (= (string-length message) 0)
+        (DocTestSomeOutput out)
+        (DocTestNoOutput message)))))
+
+(define (doc-test-parse-output-spec [text : String]) : DocTestMaybeOutput
+  (let
+    [trimmed : String (doc-test-trim text)]
+    (if (string-eq trimmed "-")
+      (DocTestSomeOutput "")
+      (if (doc-test-string-prefix? trimmed "literal:")
+        (doc-test-decode-output-literal
+          (substring trimmed 8 (- (string-length trimmed) 8)))
+        (DocTestNoOutput
+          "doctest output metadata must be '-' or 'literal:<escaped text>'")))))
 
 (define (doc-test-string-blank? [text : String]) : bool
   (let
@@ -262,6 +418,16 @@
     [(DocTestErrorCons head rest)
       (DocTestErrorCons head (doc-test-error-list-append rest err))]))
 
+(define (doc-test-error-list-append-all
+  [errors : DocTestErrorList]
+  [more : DocTestErrorList]) : DocTestErrorList
+  (match more
+    [(DocTestErrorNil) errors]
+    [(DocTestErrorCons err rest)
+      (doc-test-error-list-append-all
+        (doc-test-error-list-append errors err)
+        rest)]))
+
 (define (doc-test-example-list-count [examples : DocTestExampleList]) : i64
   (match examples
     [(DocTestExampleNil) 0]
@@ -338,11 +504,11 @@
 (define (doc-test-parse-fence-options
   [text : String]
   [line-number : i64]
-  [expectation : DocTestExpectation]) : DocTestFenceInfo
+  [mode : DocTestFenceMode]) : DocTestFenceInfo
   (let
     [trimmed : String (doc-test-trim-left text)]
     (if (= (string-length trimmed) 0)
-      (DocTestFenceTypeLisp expectation)
+      (DocTestFenceTypeLisp mode)
       (let
         [end : i64 (doc-test-word-end trimmed 0)]
         (let
@@ -350,14 +516,38 @@
           [rest : String
             (substring trimmed end (- (string-length trimmed) end))]
           (if (string-eq option "expect-error")
-            (doc-test-parse-fence-options rest line-number (DocTestExpectError))
-            (DocTestFenceMalformed
-              (DocTestError
-                line-number
-                (doc-test-cat3
-                  "unsupported TypeLisp doctest option `"
-                  option
-                  "`")))))))))
+            (match mode
+              [(DocTestFenceRun)
+                (DocTestFenceMalformed
+                  (DocTestError
+                    line-number
+                    "TypeLisp doctest options `run` and `expect-error` cannot be combined"))]
+              [(DocTestFenceCheck _)
+                (doc-test-parse-fence-options
+                  rest
+                  line-number
+                  (DocTestFenceCheck (DocTestExpectError)))])
+            (if (string-eq option "run")
+              (match mode
+                [(DocTestFenceRun)
+                  (doc-test-parse-fence-options rest line-number mode)]
+                [(DocTestFenceCheck expectation)
+                  (if (doc-test-expectation-error? expectation)
+                    (DocTestFenceMalformed
+                      (DocTestError
+                        line-number
+                        "TypeLisp doctest options `run` and `expect-error` cannot be combined"))
+                    (doc-test-parse-fence-options
+                      rest
+                      line-number
+                      (DocTestFenceRun)))])
+              (DocTestFenceMalformed
+                (DocTestError
+                  line-number
+                  (doc-test-cat3
+                    "unsupported TypeLisp doctest option `"
+                    option
+                    "`"))))))))))
 
 (define (doc-test-parse-fence-info [info : String] [line-number : i64]) : DocTestFenceInfo
   (let
@@ -371,7 +561,10 @@
           [rest : String
             (substring trimmed end (- (string-length trimmed) end))]
           (if (or (string-eq language "typelisp") (string-eq language "tl"))
-            (doc-test-parse-fence-options rest line-number (DocTestExpectPass))
+            (doc-test-parse-fence-options
+              rest
+              line-number
+              (DocTestFenceCheck (DocTestExpectPass)))
             (DocTestFenceIgnore)))))))
 
 (define (doc-test-skip-ignored-fence [lines : DocTestLineList]) : DocTestLineList
@@ -384,25 +577,252 @@
         rest
         (doc-test-skip-ignored-fence rest))]))
 
-(define (doc-test-collect-code [lines : DocTestLineList] [code : String]) : DocTestCodeCollect
+(define (doc-test-collect-code-inner
+  [lines : DocTestLineList]
+  [code : String]
+  [collected : DocTestLineList]) : DocTestCodeCollect
   (match lines
-    [(DocTestLineNil) (DocTestCodeCollect DocTestLineNil code false)]
+    [(DocTestLineNil)
+      (DocTestCodeCollect
+        DocTestLineNil
+        code
+        (doc-test-line-list-reverse collected)
+        false)]
     [(DocTestLineCons line rest)
       (if (doc-test-string-prefix?
         (doc-test-trim-left (doc-test-line-text line))
         "```")
-        (DocTestCodeCollect rest code true)
-        (doc-test-collect-code
+        (DocTestCodeCollect
           rest
-          (string-append code (string-append (doc-test-line-text line) "\n"))))]))
+          code
+          (doc-test-line-list-reverse collected)
+          true)
+        (doc-test-collect-code-inner
+          rest
+          (string-append code (string-append (doc-test-line-text line) "\n"))
+          (DocTestLineCons line collected)))]))
+
+(define (doc-test-collect-code [lines : DocTestLineList]) : DocTestCodeCollect
+  (doc-test-collect-code-inner lines "" DocTestLineNil))
+
+(define (doc-test-metadata-value [line : DocTestLine] [prefix : String]) : DocTestMaybeString
+  (let
+    [trimmed : String (doc-test-trim-left (doc-test-line-text line))]
+    (if (doc-test-string-prefix? trimmed prefix)
+      (DocTestSomeString
+        (doc-test-trim
+          (substring
+            trimmed
+            (string-length prefix)
+            (- (string-length trimmed) (string-length prefix)))))
+      (DocTestNoString))))
+
+(define (doc-test-metadata-line? [line : DocTestLine]) : bool
+  (doc-test-string-prefix?
+    (doc-test-trim-left (doc-test-line-text line))
+    ";; doctest-"))
+
+(define (doc-test-run-metadata-append-error
+  [metadata : DocTestRunMetadata]
+  [err : DocTestError]) : DocTestRunMetadata
+  (match metadata
+    [(DocTestRunMetadata
+        has-exit
+        expected-exit
+        has-stdout
+        expected-stdout
+        has-stderr
+        expected-stderr
+        errors)
+      (DocTestRunMetadata
+        has-exit
+        expected-exit
+        has-stdout
+        expected-stdout
+        has-stderr
+        expected-stderr
+        (doc-test-error-list-append errors err))]))
+
+(define (doc-test-run-metadata-set-exit
+  [metadata : DocTestRunMetadata]
+  [line : DocTestLine]
+  [text : String]) : DocTestRunMetadata
+  (match metadata
+    [(DocTestRunMetadata
+        has-exit
+        expected-exit
+        has-stdout
+        expected-stdout
+        has-stderr
+        expected-stderr
+        errors)
+      (if has-exit
+        (doc-test-run-metadata-append-error
+          metadata
+          (DocTestError
+            (doc-test-line-number line)
+            "duplicate doctest-exit metadata"))
+        (match (doc-test-parse-i64 text)
+          [(DocTestSomeI64 parsed)
+            (DocTestRunMetadata
+              true
+              parsed
+              has-stdout
+              expected-stdout
+              has-stderr
+              expected-stderr
+              errors)]
+          [(DocTestNoI64 _)
+            (doc-test-run-metadata-append-error
+              (DocTestRunMetadata
+                true
+                expected-exit
+                has-stdout
+                expected-stdout
+                has-stderr
+                expected-stderr
+                errors)
+              (DocTestError
+                (doc-test-line-number line)
+                "doctest-exit metadata must be an integer"))]))]))
+
+(define (doc-test-run-metadata-set-stdout
+  [metadata : DocTestRunMetadata]
+  [line : DocTestLine]
+  [text : String]) : DocTestRunMetadata
+  (match metadata
+    [(DocTestRunMetadata
+        has-exit
+        expected-exit
+        has-stdout
+        expected-stdout
+        has-stderr
+        expected-stderr
+        errors)
+      (if has-stdout
+        (doc-test-run-metadata-append-error
+          metadata
+          (DocTestError
+            (doc-test-line-number line)
+            "duplicate doctest-stdout metadata"))
+        (match (doc-test-parse-output-spec text)
+          [(DocTestSomeOutput parsed)
+            (DocTestRunMetadata
+              has-exit
+              expected-exit
+              true
+              parsed
+              has-stderr
+              expected-stderr
+              errors)]
+          [(DocTestNoOutput message)
+            (doc-test-run-metadata-append-error
+              metadata
+              (DocTestError (doc-test-line-number line) message))]))]))
+
+(define (doc-test-run-metadata-set-stderr
+  [metadata : DocTestRunMetadata]
+  [line : DocTestLine]
+  [text : String]) : DocTestRunMetadata
+  (match metadata
+    [(DocTestRunMetadata
+        has-exit
+        expected-exit
+        has-stdout
+        expected-stdout
+        has-stderr
+        expected-stderr
+        errors)
+      (if has-stderr
+        (doc-test-run-metadata-append-error
+          metadata
+          (DocTestError
+            (doc-test-line-number line)
+            "duplicate doctest-stderr metadata"))
+        (match (doc-test-parse-output-spec text)
+          [(DocTestSomeOutput parsed)
+            (DocTestRunMetadata
+              has-exit
+              expected-exit
+              has-stdout
+              expected-stdout
+              true
+              parsed
+              errors)]
+          [(DocTestNoOutput message)
+            (doc-test-run-metadata-append-error
+              metadata
+              (DocTestError (doc-test-line-number line) message))]))]))
+
+(define (doc-test-run-metadata-parse-line
+  [metadata : DocTestRunMetadata]
+  [line : DocTestLine]) : DocTestRunMetadata
+  (match (doc-test-metadata-value line ";; doctest-exit:")
+    [(DocTestSomeString value)
+      (doc-test-run-metadata-set-exit metadata line value)]
+    [(DocTestNoString)
+      (match (doc-test-metadata-value line ";; doctest-stdout:")
+        [(DocTestSomeString value)
+          (doc-test-run-metadata-set-stdout metadata line value)]
+        [(DocTestNoString)
+          (match (doc-test-metadata-value line ";; doctest-stderr:")
+            [(DocTestSomeString value)
+              (doc-test-run-metadata-set-stderr metadata line value)]
+            [(DocTestNoString)
+              (if (doc-test-metadata-line? line)
+                (doc-test-run-metadata-append-error
+                  metadata
+                  (DocTestError
+                    (doc-test-line-number line)
+                    "unsupported runnable doctest metadata"))
+                metadata)])])]))
+
+(define (doc-test-run-metadata-parse-lines
+  [lines : DocTestLineList]
+  [metadata : DocTestRunMetadata]) : DocTestRunMetadata
+  (match lines
+    [(DocTestLineNil) metadata]
+    [(DocTestLineCons line rest)
+      (doc-test-run-metadata-parse-lines
+        rest
+        (doc-test-run-metadata-parse-line metadata line))]))
+
+(define (doc-test-parse-run-metadata
+  [source-line : i64]
+  [lines : DocTestLineList]) : DocTestRunMetadataParse
+  (match (doc-test-run-metadata-parse-lines
+    lines
+    (DocTestRunMetadata false 0 false "" false "" DocTestErrorNil))
+    [(DocTestRunMetadata
+        has-exit
+        expected-exit
+        _
+        expected-stdout
+        _
+        expected-stderr
+        errors)
+      (let
+        [all-errors : DocTestErrorList
+          (if has-exit
+            errors
+            (doc-test-error-list-append
+              errors
+              (DocTestError
+                source-line
+                "runnable TypeLisp doctest requires doctest-exit metadata")))]
+        (match all-errors
+          [(DocTestErrorNil)
+            (DocTestRunMetadataOk
+              (DocTestExpectRun expected-exit expected-stdout expected-stderr))]
+          [_ (DocTestRunMetadataErr all-errors)]))]))
 
 (define (doc-test-scan-type-lisp-fence
   [rest : DocTestLineList]
   [state : DocTestScanState]
   [source-line : i64]
-  [expectation : DocTestExpectation]) : DocTestScanState
-  (match (doc-test-collect-code rest "")
-    [(DocTestCodeCollect remaining code closed)
+  [mode : DocTestFenceMode]) : DocTestScanState
+  (match (doc-test-collect-code rest)
+    [(DocTestCodeCollect remaining code code-lines closed)
       (match state
         [(DocTestScanState examples errors next-index)
           (if closed
@@ -417,12 +837,34 @@
                   next-index))
               (doc-test-scan-doc-block
                 remaining
-                (DocTestScanState
-                  (doc-test-example-list-append
-                    examples
-                    (DocTestExample next-index source-line expectation code))
-                  errors
-                  (+ next-index 1))))
+                (match mode
+                  [(DocTestFenceCheck expectation)
+                    (DocTestScanState
+                      (doc-test-example-list-append
+                        examples
+                        (DocTestExample next-index source-line expectation code))
+                      errors
+                      (+ next-index 1))]
+                  [(DocTestFenceRun)
+                    (match (doc-test-parse-run-metadata source-line code-lines)
+                      [(DocTestRunMetadataOk expectation)
+                        (DocTestScanState
+                          (doc-test-example-list-append
+                            examples
+                            (DocTestExample
+                              next-index
+                              source-line
+                              expectation
+                              code))
+                          errors
+                          (+ next-index 1))]
+                      [(DocTestRunMetadataErr metadata-errors)
+                        (DocTestScanState
+                          examples
+                          (doc-test-error-list-append-all
+                            errors
+                            metadata-errors)
+                          next-index)])])))
             (DocTestScanState
               examples
               (doc-test-error-list-append
@@ -841,6 +1283,39 @@
 ;;;; (define (open) : i64 0)
 ")
 
+(define (doc-test-runnable-source) : String
+  ";# Runnable docs
+;# ```typelisp run
+;# ;; doctest-exit: 0
+;# ;; doctest-stdout: literal:hello\\n
+;# ;; doctest-stderr: literal:error\\tline\\r
+;# (define (main) : i64 0)
+;# ```
+;# ```tl run
+;# ;; doctest-exit: 42
+;# (define (main) : i64 42)
+;# ```
+")
+
+(define (doc-test-runnable-malformed-source) : String
+  ";# ```typelisp run expect-error
+;# ;; doctest-exit: 0
+;# ```
+;# ```typelisp expect-error run
+;# ;; doctest-exit: 0
+;# ```
+;# ```typelisp run
+;# ;; doctest-exit: nope
+;# ```
+;# ```typelisp run
+;# ;; doctest-exit: 0
+;# ;; doctest-stdout: nope
+;# ```
+;# ```typelisp run
+;# ;; doctest-stdout: -
+;# ```
+")
+
 (define (doc-test-example-ok?
   [example : DocTestExample]
   [index : i64]
@@ -858,6 +1333,46 @@
         false)
       false)
     false))
+
+(define (doc-test-runnable-example-ok?
+  [example : DocTestExample]
+  [index : i64]
+  [source-line : i64]
+  [expected-exit : i64]
+  [expected-stdout : String]
+  [expected-stderr : String]
+  [code-fragment : String]) : bool
+  (if (= (doc-test-example-index example) index)
+    (if (= (doc-test-example-source-line example) source-line)
+      (match (doc-test-example-expectation example)
+        [(DocTestExpectRun actual-exit actual-stdout actual-stderr)
+          (if (= actual-exit expected-exit)
+            (if (string-eq actual-stdout expected-stdout)
+              (if (string-eq actual-stderr expected-stderr)
+                (doc-test-string-contains?
+                  (doc-test-example-code example)
+                  code-fragment)
+                false)
+              false)
+            false)]
+        [_ false])
+      false)
+    false))
+
+(define (doc-test-error-list-has?
+  [errors : DocTestErrorList]
+  [line : i64]
+  [message-fragment : String]) : bool
+  (match errors
+    [(DocTestErrorNil) false]
+    [(DocTestErrorCons err rest)
+      (if (= (doc-test-error-line err) line)
+        (if (doc-test-string-contains?
+          (doc-test-error-message err)
+          message-fragment)
+          true
+          (doc-test-error-list-has? rest line message-fragment))
+        (doc-test-error-list-has? rest line message-fragment))]))
 
 (define (doc-test-smoke-examples-ok? [examples : DocTestExampleList]) : bool
   (match examples
@@ -920,6 +1435,53 @@
           false)
         false)]))
 
+(define (doc-test-runnable-smoke-ok?) : bool
+  (match (doc-test-extract-source (doc-test-runnable-source))
+    [(DocTestExtraction examples errors)
+      (if (= (doc-test-error-list-count errors) 0)
+        (if (= (doc-test-example-list-count examples) 2)
+          (match examples
+            [(DocTestExampleCons
+                first
+                (DocTestExampleCons second DocTestExampleNil))
+              (if (doc-test-runnable-example-ok?
+                first
+                1
+                2
+                0
+                "hello\n"
+                "error\tline\r"
+                "(define (main)")
+                (doc-test-runnable-example-ok?
+                  second
+                  2
+                  8
+                  42
+                  ""
+                  ""
+                  "(define (main)")
+                false)]
+            [_ false])
+          false)
+        false)]))
+
+(define (doc-test-runnable-malformed-smoke-ok?) : bool
+  (match (doc-test-extract-source (doc-test-runnable-malformed-source))
+    [(DocTestExtraction examples errors)
+      (if (= (doc-test-example-list-count examples) 0)
+        (if (= (doc-test-error-list-count errors) 5)
+          (if (doc-test-error-list-has? errors 1 "cannot be combined")
+            (if (doc-test-error-list-has? errors 4 "cannot be combined")
+              (if (doc-test-error-list-has? errors 8 "must be an integer")
+                (if (doc-test-error-list-has? errors 12 "output metadata")
+                  (doc-test-error-list-has? errors 14 "requires doctest-exit")
+                  false)
+                false)
+              false)
+            false)
+          false)
+        false)]))
+
 (define (doc-test-smoke) : i64
   (match (doc-test-extract-source (doc-test-smoke-source))
     [(DocTestExtraction examples errors)
@@ -929,7 +1491,15 @@
             (if (doc-test-ordinary-comments-ok?)
               (if (doc-test-legacy-item-smoke-ok?)
                 (if (doc-test-malformed-smoke-ok?)
-                  42
+                  (if (doc-test-runnable-smoke-ok?)
+                    (if (doc-test-runnable-malformed-smoke-ok?)
+                      42
+                      (begin
+                        (panic "doc-test: runnable malformed smoke mismatch")
+                        0))
+                    (begin
+                      (panic "doc-test: runnable smoke mismatch")
+                      0))
                   (begin
                     (panic "doc-test: malformed smoke mismatch")
                     0))
@@ -1032,6 +1602,14 @@
       (doc-test-run-report-ok? report)
       false)))
 
+(define (doc-test-run-smoke-runnable-parse-only-ok?) : bool
+  (let
+    [report : DocTestRunReport
+      (doc-test-run-source "docs/run.tl" (doc-test-runnable-source))]
+    (if (= (doc-test-run-report-count report) 2)
+      (doc-test-run-report-ok? report)
+      false)))
+
 ;; The rendered failure carries the path, line, and message.
 (define (doc-test-run-smoke-render-ok?) : bool
   (let
@@ -1080,14 +1658,18 @@ typecheck: return type mismatch"))]
       (if (doc-test-run-smoke-unexpected-pass-ok?)
         (if (doc-test-run-smoke-malformed-ok?)
           (if (doc-test-run-smoke-empty-ok?)
-            (if (doc-test-run-smoke-render-ok?)
-              (if (doc-test-run-smoke-report-render-ok?)
-                42
+            (if (doc-test-run-smoke-runnable-parse-only-ok?)
+              (if (doc-test-run-smoke-render-ok?)
+                (if (doc-test-run-smoke-report-render-ok?)
+                  42
+                  (begin
+                    (panic "doc-test-run: report render mismatch")
+                    0))
                 (begin
-                  (panic "doc-test-run: report render mismatch")
+                  (panic "doc-test-run: render mismatch")
                   0))
               (begin
-                (panic "doc-test-run: render mismatch")
+                (panic "doc-test-run: runnable parse-only mismatch")
                 0))
             (begin
               (panic "doc-test-run: empty-source mismatch")

@@ -96,9 +96,15 @@ info string starts with `typelisp` or `tl`, extracts them from `;#` module docs
 and attached `;:` item docs, and checks each example as a standalone TypeLisp
 source file. An example passes when it parses, resolves imports, and type-checks.
 Adding `expect-error` after the language tag inverts the expectation so the
-example must fail during loading, parsing, or type checking. Other fence
-languages are ignored; unknown TypeLisp fence options, empty TypeLisp examples,
-and unterminated TypeLisp fences are malformed doctests.
+example must fail during loading, parsing, or type checking. `run` is a reserved
+doctest option for runnable examples and is mutually exclusive with
+`expect-error`. A runnable fence must include `;; doctest-exit: <integer>` in
+the example body and may include `;; doctest-stdout: -` / `;; doctest-stderr: -`
+or `literal:<escaped text>` with `\n`, `\t`, `\r`, and `\\` escapes. Runnable
+metadata is parsed and retained by the selfhost doctest model; execution is a
+follow-up. Other fence languages are ignored; unknown TypeLisp fence options,
+empty TypeLisp examples, and unterminated TypeLisp fences are malformed
+doctests.
 
 The self-hosted Markdown generator driver is `selfhost/doc.tl`. In this slice it
 renders one input file to one output path via `typelisp run selfhost/doc.tl --

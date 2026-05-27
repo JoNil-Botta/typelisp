@@ -24,7 +24,7 @@ mod specialize;
 mod typechecker;
 mod types;
 
-use ast::Program;
+use ast::{Decl, Program};
 use backend::{BackendMode, BackendTarget, generate_assembly_with_spans_for_target};
 use diagnostic::format_diagnostic;
 use lower::{LowerMode, LoweredProgram, lower_program_with_spans_for_target};
@@ -678,6 +678,138 @@ fn test_args_are_check(args: &[String]) -> bool {
     args.iter().skip(2).any(|arg| arg == "--check")
 }
 
+struct TestRequest {
+    source: PathBuf,
+    options: LoadOptions,
+    check: bool,
+}
+
+fn parse_test_request(args: &[String]) -> TestRequest {
+    let mut source = None;
+    let mut stdlib_roots = Vec::new();
+    let mut check = false;
+    let mut has_opt_level = false;
+    let mut i = 2;
+
+    while i < args.len() {
+        match args[i].as_str() {
+            "--check" => {
+                check = true;
+                i += 1;
+            }
+            "--target" => {
+                if i + 1 >= args.len() {
+                    missing_option_value(&args[i]);
+                }
+                let value = &args[i + 1];
+                if BackendTarget::parse(value).is_none() {
+                    eprintln!("test: unknown target {}", value);
+                    std::process::exit(1);
+                }
+                i += 2;
+            }
+            "--backend-mode" => {
+                if i + 1 >= args.len() {
+                    missing_option_value("--backend-mode");
+                }
+                let value = &args[i + 1];
+                match BackendMode::parse(value) {
+                    Some(BackendMode::Scalar) => {}
+                    Some(_) => {
+                        eprintln!("test: backend mode {} is not implemented", value);
+                        std::process::exit(1);
+                    }
+                    None => {
+                        eprintln!("test: unknown backend mode {}", value);
+                        std::process::exit(1);
+                    }
+                }
+                i += 2;
+            }
+            "--opt-level" => {
+                if i + 1 >= args.len() {
+                    missing_option_value("--opt-level");
+                }
+                if has_opt_level {
+                    eprintln!("test: --opt-level was provided more than once");
+                    std::process::exit(1);
+                }
+                let value = &args[i + 1];
+                if value
+                    .parse::<u8>()
+                    .ok()
+                    .and_then(native::OptLevel::from_u8)
+                    .is_none()
+                {
+                    eprintln!(
+                        "test: invalid --opt-level {}; expected 0, 1, 2, or 3",
+                        value
+                    );
+                    std::process::exit(1);
+                }
+                has_opt_level = true;
+                i += 2;
+            }
+            "--stdlib-root" => {
+                if i + 1 >= args.len() {
+                    missing_option_value("--stdlib-root");
+                }
+                stdlib_roots.push(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
+            flag if flag.starts_with('-') => {
+                eprintln!("test: unknown flag {}", flag);
+                std::process::exit(1);
+            }
+            value => {
+                if source.is_some() {
+                    eprintln!("test: accepts only one source file");
+                    std::process::exit(1);
+                }
+                source = Some(PathBuf::from(value));
+                i += 1;
+            }
+        }
+    }
+
+    let Some(source) = source else {
+        eprintln!("test: expected source path");
+        std::process::exit(1);
+    };
+
+    TestRequest {
+        source,
+        options: load_options_with_env_stdlib_root(stdlib_roots),
+        check,
+    }
+}
+
+fn inline_test_count(program: &Program) -> usize {
+    program
+        .decls
+        .iter()
+        .filter(|decl| matches!(decl, Decl::Test { .. }))
+        .count()
+}
+
+fn try_run_zero_inline_test_fast_path(args: &[String]) -> bool {
+    let request = parse_test_request(args);
+    let loaded = load_or_exit(&request.source, &request.options);
+    if inline_test_count(&loaded.program) != 0 {
+        return false;
+    }
+
+    // Zero-test files do not need the selfhost harness; `--check` can reuse the
+    // same stable Rust typecheck path as the public `check` command.
+    if request.check {
+        typecheck_or_exit(&loaded.program, &loaded.sources);
+        println!("TypeLisp test typecheck passed: 0 test(s)");
+    } else {
+        eprintln!("TypeLisp tests passed: 0 test(s)");
+    }
+    true
+}
+
 fn test_args_have_target(args: &[String]) -> bool {
     args.iter().skip(2).any(|arg| arg == "--target")
 }
@@ -705,6 +837,9 @@ fn run_test_command(args: &[String]) {
     }
     if matches!(args[2].as_str(), "help" | "--help" | "-h") {
         print_test_usage();
+        return;
+    }
+    if try_run_zero_inline_test_fast_path(args) {
         return;
     }
 

@@ -1067,16 +1067,20 @@
       (CompilerBackendSomeAsm (backend-cat3 "    imulq " imm ", %rax\n"))]
     [(IrBinEq)
       (CompilerBackendSomeAsm
-        (backend-cat3
-          "    cmpq "
-          imm
-          ", %rax\n    sete %al\n    movzbq %al, %rax\n"))]
+        (if (string-eq imm "$0")
+          "    testq %rax, %rax\n    sete %al\n    movzbq %al, %rax\n"
+          (backend-cat3
+            "    cmpq "
+            imm
+            ", %rax\n    sete %al\n    movzbq %al, %rax\n")))]
     [(IrBinNe)
       (CompilerBackendSomeAsm
-        (backend-cat3
-          "    cmpq "
-          imm
-          ", %rax\n    setne %al\n    movzbq %al, %rax\n"))]
+        (if (string-eq imm "$0")
+          "    testq %rax, %rax\n    setne %al\n    movzbq %al, %rax\n"
+          (backend-cat3
+            "    cmpq "
+            imm
+            ", %rax\n    setne %al\n    movzbq %al, %rax\n")))]
     [(IrBinLt)
       (if (compiler-backend-unsigned-rel-ty? ty)
         (CompilerBackendSomeAsm
@@ -10205,7 +10209,9 @@ tl_windows_setup_instances:
         (compiler-backend-fallthrough-jump-ok?)
         (and
           (compiler-backend-branch-fallthrough-ok?)
-          (compiler-backend-zero-load-ok?))))))
+          (and
+            (compiler-backend-zero-load-ok?)
+            (compiler-backend-zero-compare-ok?)))))))
 
 (define (compiler-backend-fallthrough-program) : CompilerIrProgram
   (IrProgram
@@ -10287,6 +10293,23 @@ tl_windows_setup_instances:
     (IrValueI64 0)
     "%rax")
     [(OkCompilerBackend asm) (string-eq asm "    xorq %rax, %rax\n")]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-zero-compare-ok?) : bool
+  (match (compiler-backend-emit-binop
+    (CompilerRegVarTypeNil)
+    (compiler-backend-peephole-assignments)
+    2
+    (IrBinEq)
+    (IrValueVar 0)
+    (IrValueI64 0)
+    (AstTyI64))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains?
+          asm
+          "    testq %rax, %rax\n    sete %al\n")
+        (not (compiler-backend-string-contains? asm "    cmpq $0, %rax\n")))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-phi-same-home-assignments) : CompilerRegAssignmentList

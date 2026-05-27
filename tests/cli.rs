@@ -3548,6 +3548,10 @@ fn selfhost_repl_type_checks_without_running_code() {
 }
 
 #[test]
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "#1270: selfhost REPL typecheck segfaults on Windows"
+)]
 fn selfhost_repl_multiline_declaration_persists_for_later_declarations() {
     let input = "\
 (define (inc [x : i64]) : i64

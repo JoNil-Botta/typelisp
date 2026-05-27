@@ -349,7 +349,7 @@
         [(CompilerRegRegister home)
           (if (string-eq home reg)
             ""
-            (backend-cat5 "    movq " home ", " reg "\n"))]
+            (backend-cat5 "    movsd " home ", " reg "\n"))]
         [(CompilerRegSpill offset)
           (backend-cat5
             "    movsd "
@@ -370,7 +370,7 @@
         [(CompilerRegRegister home)
           (if (string-eq home reg)
             ""
-            (backend-cat5 "    movq " reg ", " home "\n"))]
+            (backend-cat5 "    movsd " reg ", " home "\n"))]
         [(CompilerRegSpill offset)
           (backend-cat5
             "    movsd "
@@ -8602,6 +8602,13 @@ tl_windows_setup_instances:
 (define (main) : i64
   (calc 10 5))")
 
+(define (compiler-backend-regalloc-f64-source) : String
+  "(define (main) : f64
+  (let
+    [a : f64 1.5]
+    [b : f64 2.5]
+    (+ a b)))")
+
 (define (compiler-backend-asm-ok? [asm : String]) : bool
   (and
     (compiler-backend-string-contains? asm ".data\n")
@@ -8803,11 +8810,36 @@ tl_windows_setup_instances:
                         "    movq %rsi, %r12\n")))))))))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-regalloc-f64-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-regalloc-f64-source))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "main:\n")
+        (and
+          (compiler-backend-string-contains? asm "    movsd %xmm0, %xmm2\n")
+          (and
+            (compiler-backend-string-contains? asm "    movsd %xmm0, %xmm3\n")
+            (and
+              (compiler-backend-string-contains? asm "    movsd %xmm2, %xmm0\n")
+              (and
+                (compiler-backend-string-contains?
+                  asm
+                  "    movsd %xmm3, %xmm1\n")
+                (and
+                  (compiler-backend-string-contains?
+                    asm
+                    "    addsd %xmm1, %xmm0\n")
+                  (not
+                    (compiler-backend-string-contains?
+                      asm
+                      "    movsd %xmm0, -8(%rbp)\n"))))))))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-peephole-assignments) : CompilerRegAssignmentList
   (CompilerRegAssignmentCons
     (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
     (CompilerRegAssignmentCons
-      (CompilerRegAssignment 1 (CompilerRegRegister "%xmm0"))
+      (CompilerRegAssignment 1 (CompilerRegRegister "%xmm2"))
       (CompilerRegAssignmentCons
         (CompilerRegAssignment 2 (CompilerRegRegister "%r13"))
         CompilerRegAssignmentNil))))
@@ -8854,13 +8886,13 @@ tl_windows_setup_instances:
         (and
           (string-eq
             (compiler-backend-emit-load-f64-var-with-plan assignments 1 "%xmm0")
-            "")
+            "    movsd %xmm2, %xmm0\n")
           (string-eq
             (compiler-backend-emit-store-f64-var-with-plan
               assignments
               1
               "%xmm0")
-            ""))))))
+            "    movsd %xmm0, %xmm2\n"))))))
 
 (define (compiler-backend-peephole-asm-ok?) : bool
   (let
@@ -9829,8 +9861,10 @@ tl_windows_setup_instances:
             (and
               (compiler-backend-expanded-scalar-regs-ok?)
               (and
-                (compiler-backend-runtime-coexist-ok?)
-                (compiler-backend-module-symbol-ok?))))))))
+                (compiler-backend-regalloc-f64-ok?)
+                (and
+                  (compiler-backend-runtime-coexist-ok?)
+                  (compiler-backend-module-symbol-ok?)))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

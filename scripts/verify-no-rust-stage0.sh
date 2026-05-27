@@ -163,6 +163,7 @@ if [ "$HOST_OS" = linux ]; then
     export TYPELISP_STAGE1_SKIP_TEST_SMOKE
     run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 CLI host-action wrapper smoke" scripts/check-stage1-wrapper.sh
     unset TYPELISP_STAGE1_SKIP_TEST_SMOKE
+    run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 stdlib selfhost verifier" scripts/verify-stdlib-selfhost.sh
     run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 deterministic assembly" scripts/check-deterministic-asm.sh
 else
     run_gate "selfhost compile manifest" scripts/verify-selfhost-compile-manifest.sh
@@ -186,6 +187,7 @@ if [ "$HOST_OS" = linux ]; then
 else
     echo
     echo "[no-rust-stage0] skipping Linux-only gates on Windows:"
+    echo "[no-rust-stage0]   stage1 stdlib selfhost verifier,"
     echo "[no-rust-stage0]   stdlib documentation, selfhost native generated programs,"
     echo "[no-rust-stage0]   selfhost external compiler corpus"
 fi

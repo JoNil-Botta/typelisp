@@ -4,8 +4,9 @@
 # (selfhost/check.tl: parse + typecheck via the selfhost parser/typechecker),
 # complementing scripts/verify-stdlib.sh which drives the same witnesses through
 # the Rust compiler. Part of #842 (prove stdlib modules with the selfhost
-# compiler). This slice covers the selfhost frontend (parse + typecheck);
-# selfhost compile+run of witnesses remains future work on #842.
+# compiler). This slice covers the selfhost frontend (parse + typecheck) and is
+# also run from the Linux no-Rust stage1 capability tier; selfhost compile+run
+# of witnesses remains future work on #842.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

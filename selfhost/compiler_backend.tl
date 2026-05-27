@@ -8473,6 +8473,61 @@ tl_windows_setup_instances:
                     "    leaq .L_tl_str_6869(%rip), %rax\n")))))))]
     [(ErrCompilerBackend _) false]))
 
+;; Backend-owned replacement for the string runtime helper emission tests
+;; (#1044): source-level string builtins lower to direct calls, and the backend
+;; emits each helper body instead of leaving an extern placeholder.
+(define (compiler-backend-string-runtime-source) : String
+  "(define (parse-and-render [s : String]) : i64
+  (+
+    (string->int s)
+    (+
+      (string-length (int->string 42))
+      (+
+        (string-length (substring s 0 1))
+        (string-length (string-concat s \"!\"))))))
+(define (main) : i64 (parse-and-render \"42\"))")
+
+(define (compiler-backend-string-runtime-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-string-runtime-source))
+    [(OkCompilerBackend asm)
+      (and
+        (backend-and8
+          (compiler-backend-string-contains? asm ".globl tl_string_to_int\n")
+          (compiler-backend-string-contains? asm "tl_string_to_int:\n")
+          (compiler-backend-string-contains? asm "    call tl_string_to_int\n")
+          (compiler-backend-string-contains? asm ".globl tl_int_to_string\n")
+          (compiler-backend-string-contains? asm "tl_int_to_string:\n")
+          (compiler-backend-string-contains? asm "    call tl_int_to_string\n")
+          (compiler-backend-string-contains? asm ".globl tl_substring\n")
+          (compiler-backend-string-contains? asm "    call tl_substring\n"))
+        (and
+          (backend-and8
+            (compiler-backend-string-contains? asm "tl_substring:\n")
+            (compiler-backend-string-contains? asm ".globl tl_string_concat\n")
+            (compiler-backend-string-contains? asm "tl_string_concat:\n")
+            (compiler-backend-string-contains?
+              asm
+              "    call tl_string_concat\n")
+            (not
+              (compiler-backend-string-contains?
+                asm
+                ".extern tl_string_to_int\n"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                ".extern tl_int_to_string\n"))
+            (not
+              (compiler-backend-string-contains? asm ".extern tl_substring\n"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                ".extern tl_string_concat\n")))
+          (not
+            (compiler-backend-string-contains?
+              asm
+              (compiler-backend-todo-marker)))))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-aggregate-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-aggregate-source))
     [(OkCompilerBackend asm)
@@ -9546,8 +9601,10 @@ tl_windows_setup_instances:
         (and
           (compiler-backend-user-helper-name-ok?)
           (and
-            (compiler-backend-runtime-coexist-ok?)
-            (compiler-backend-module-symbol-ok?))))))
+            (compiler-backend-string-runtime-ok?)
+            (and
+              (compiler-backend-runtime-coexist-ok?)
+              (compiler-backend-module-symbol-ok?)))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

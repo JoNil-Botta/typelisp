@@ -369,6 +369,7 @@
     [(AstExprMakeArray _ _) "make-array"]
     [(AstExprArrayRef _ _) "array-ref"]
     [(AstExprArraySet _ _ _) "array-set!"]
+    [(AstExprArrayPush _ _) "array-push!"]
     [(AstExprStringRef _ _) "string-ref"]
     [(AstExprWhile _ _) "while"]
     [(AstExprBegin _) "begin"]

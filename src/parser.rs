@@ -867,6 +867,14 @@ impl<'a> Parser<'a> {
                 let end = self.expect_rparen_span()?;
                 (Expr::ArraySet { expr, index, value }, end)
             }
+            Token::Ident(s) if s == "array-push!" => {
+                // (array-push! arr value)
+                self.advance()?;
+                let expr = Box::new(self.parse_expr()?);
+                let value = Box::new(self.parse_expr()?);
+                let end = self.expect_rparen_span()?;
+                (Expr::ArrayPush { expr, value }, end)
+            }
             // `string-ref`/`char-at` are NOT special-cased at parse time: the
             // parser cannot know whether a user `define` shadows the builtin, so
             // these names parse as ordinary `Expr::Call`s (head `Var("string-ref"
@@ -1400,6 +1408,23 @@ mod tests {
                 assert_eq!(comptime_params, &vec![0]);
             }
             other => panic!("expected DefFn, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_array_push_special_form() {
+        let prog = parse("(define (f [a : (Array i64)] [v : i64]) : unit (array-push! a v))")
+            .unwrap();
+        let body = match &prog.decls[0] {
+            Decl::DefFn { body, .. } => body.unspan(),
+            other => panic!("expected DefFn, got {:?}", other),
+        };
+        match body {
+            Expr::ArrayPush { expr, value } => {
+                assert!(matches!(expr.unspan(), Expr::Var(name) if name == "a"));
+                assert!(matches!(value.unspan(), Expr::Var(name) if name == "v"));
+            }
+            other => panic!("expected ArrayPush, got {:?}", other),
         }
     }
 

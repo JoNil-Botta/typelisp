@@ -1025,6 +1025,16 @@
                 [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
             [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
         [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprArrayPush array value)
+      (match (spec-rewrite-expr array templates state)
+        [(OkSpecExpr rewritten-array array-state)
+          (match (spec-rewrite-expr value templates array-state)
+            [(OkSpecExpr rewritten-value value-state)
+              (OkSpecExpr
+                (AstExprArrayPush rewritten-array rewritten-value)
+                value-state)]
+            [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
     [(AstExprStringRef text index)
       (match (spec-rewrite-expr text templates state)
         [(OkSpecExpr rewritten-text text-state)
@@ -1299,6 +1309,15 @@
                       rewritten-index
                       rewritten-value))]
                 [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprArrayPush array value)
+      (match (spec-substitute-values-expr array subs)
+        [(OkSpecSubExpr rewritten-array)
+          (match (spec-substitute-values-expr value subs)
+            [(OkSpecSubExpr rewritten-value)
+              (OkSpecSubExpr
+                (AstExprArrayPush rewritten-array rewritten-value))]
             [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
         [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
     [(AstExprStringRef text index)
@@ -1684,6 +1703,15 @@
                       rewritten-index
                       rewritten-value))]
                 [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprArrayPush array value)
+      (match (spec-substitute-types-expr array subs)
+        [(OkSpecSubExpr rewritten-array)
+          (match (spec-substitute-types-expr value subs)
+            [(OkSpecSubExpr rewritten-value)
+              (OkSpecSubExpr
+                (AstExprArrayPush rewritten-array rewritten-value))]
             [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
         [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
     [(AstExprStringRef text index)

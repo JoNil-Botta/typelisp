@@ -822,6 +822,22 @@ impl TypeChecker {
                     captured_sets,
                 );
             }
+            Expr::ArrayPush { expr, value } => {
+                Self::collect_lambda_captures(
+                    expr,
+                    outer_locals,
+                    local_bindings,
+                    captures,
+                    captured_sets,
+                );
+                Self::collect_lambda_captures(
+                    value,
+                    outer_locals,
+                    local_bindings,
+                    captures,
+                    captured_sets,
+                );
+            }
             Expr::While { cond, body } => {
                 Self::collect_lambda_captures(
                     cond,
@@ -2118,6 +2134,35 @@ impl TypeChecker {
                 )?;
                 Ok(Type::Unit)
             }
+            Expr::ArrayPush { expr, value } => {
+                let arr_ty = self.check_expr(expr)?;
+                let elem_ty = match arr_ty.strip_regions() {
+                    Type::DynArray(elem_ty) => (**elem_ty).clone(),
+                    _ => {
+                        return Err(TypeError::at(
+                            format!("array-push! requires dynamic array type, got {}", arr_ty),
+                            expr.span(),
+                        ));
+                    }
+                };
+                let val_ty = self.check_expr_with_expected_or_actual(value, &elem_ty)?;
+                if !self.type_compatible(&elem_ty, &val_ty) {
+                    return Err(TypeError::at(
+                        format!(
+                            "array-push! value type mismatch: array holds {}, got {}",
+                            elem_ty, val_ty
+                        ),
+                        value.span(),
+                    ));
+                }
+                self.ensure_region_value_can_flow_into(
+                    &arr_ty,
+                    &val_ty,
+                    value.span(),
+                    &format!("array of type {}", arr_ty),
+                )?;
+                Ok(Type::Unit)
+            }
             Expr::While { cond, body } => {
                 let cond_ty = self.check_expr(cond)?;
                 if cond_ty == Type::Never {
@@ -2411,7 +2456,7 @@ impl TypeChecker {
     ///   (direct, non-gather indexing only), and
     /// - local `let` bindings whose initializers obey the same rules.
     ///
-    /// Writes (`set!`, `array-set!`), function calls (side effects and
+    /// Writes (`set!`, `array-set!`, `array-push!`), function calls (side effects and
     /// varying-argument calls), nested `foreach`/`spmd-reduce`, varying control
     /// flow (`if`/`while`/`match`), sequencing, and aggregate constructors are
     /// rejected.
@@ -2463,6 +2508,13 @@ impl TypeChecker {
                 "`array-set!` is not allowed inside a spmd-reduce value expression; \
                  the value expression must be free of writes and other side effects \
                  (SPEC.md §5.16)"
+                    .to_string(),
+                span,
+            )),
+            Expr::ArrayPush { .. } => Err(TypeError::at(
+                "`array-push!` is not allowed inside a spmd-reduce value expression; \
+                 the value expression must be free of writes and other side effects \
+                 (SPEC.md Â§5.16)"
                     .to_string(),
                 span,
             )),
@@ -6189,6 +6241,30 @@ mod tests {
         assert!(check(src).is_ok());
     }
 
+    #[test]
+    fn test_typecheck_array_push_yields_unit() {
+        let src = "(define (f [a : (Array i64)] [v : i64]) : unit (array-push! a v))";
+        assert!(check(src).is_ok());
+    }
+
+    #[test]
+    fn test_typecheck_array_push_value_must_match_element() {
+        let src = "(define (f [a : (Array i64)]) : unit (array-push! a true))";
+        let err = check(src).unwrap_err();
+        assert!(err.msg.contains("value type mismatch"), "got: {}", err.msg);
+    }
+
+    #[test]
+    fn test_typecheck_array_push_requires_dynamic_array() {
+        let src = "(define (f [a : (Array i64 3)] [v : i64]) : unit (array-push! a v))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg.contains("array-push! requires dynamic array type"),
+            "got: {}",
+            err.msg
+        );
+    }
+
     // ------------------------------------------------------------------
     // Dynamic arrays of AGGREGATE elements (enum / struct / String).
     // An aggregate value is a pointer (8 bytes), so the element buffer holds
@@ -6838,6 +6914,20 @@ mod tests {
         assert!(
             err.msg
                 .contains("`array-set!` is not allowed inside a spmd-reduce"),
+            "got: {}",
+            err.msg
+        );
+    }
+
+    #[test]
+    fn test_typecheck_spmd_reduce_rejects_array_push_in_value() {
+        let src = "(define (f [xs : (Array i64)] [n : i64]) : i64 \
+                     (spmd-reduce sum ([i : i64 0 n]) 0 \
+                       (array-push! xs i)))";
+        let err = check(src).unwrap_err();
+        assert!(
+            err.msg
+                .contains("`array-push!` is not allowed inside a spmd-reduce"),
             "got: {}",
             err.msg
         );

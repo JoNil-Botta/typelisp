@@ -188,6 +188,7 @@
   (AstExprMakeArray AstType AstExpr)
   (AstExprArrayRef AstExpr AstExpr)
   (AstExprArraySet AstExpr AstExpr AstExpr)
+  (AstExprArrayPush AstExpr AstExpr)
   (AstExprStringRef AstExpr AstExpr)
   (AstExprWhile AstExpr AstExpr)
   (AstExprBegin AstExprList)
@@ -317,6 +318,7 @@
     [(AstExprMakeArray _ _) 13]
     [(AstExprArrayRef _ _) 14]
     [(AstExprArraySet _ _ _) 15]
+    [(AstExprArrayPush _ _) 41]
     [(AstExprStringRef _ _) 16]
     [(AstExprWhile _ _) 17]
     [(AstExprBegin _) 18]

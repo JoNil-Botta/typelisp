@@ -577,15 +577,18 @@
         function
         spans
         names)
-      (LowerState
-        next-var
-        next-label-id
-        next-label
-        IrInstrNil
-        (lower-block-list-append blocks (IrBlock current-label current-instrs))
-        function
-        spans
-        names)]))
+      (let
+        [block-instrs : CompilerIrInstrList
+          current-instrs]
+        (LowerState
+          next-var
+          next-label-id
+          next-label
+          IrInstrNil
+          (lower-block-list-append blocks (IrBlock current-label block-instrs))
+          function
+          spans
+          names))]))
 
 (define (lower-state-build-blocks [state : LowerState]) : CompilerIrBlockList
   (match state
@@ -2050,6 +2053,8 @@
       (lower-array-ref ctx state env type-env arr index)]
     [(AstExprArraySet arr index value)
       (lower-array-set ctx state env type-env arr index value)]
+    [(AstExprArrayPush arr value)
+      (lower-array-push ctx state env type-env arr value)]
     [(AstExprWithRegion _ body) (lower-with-arena ctx state env type-env body)]
     [(AstExprWithResource bindings body)
       (lower-with-resource ctx state env type-env bindings body)]
@@ -4239,6 +4244,285 @@
               "lower: array-set! requires a dynamic array"))])]
     [(ErrTcType message) (ErrLowerExpr (lower-diagnostic-at-expr arr message))]))
 
+;; Copy old dynamic-array elements into a freshly allocated buffer. The loop is
+;; emitted as explicit IR so `array-push!` works for runtime lengths.
+(define (lower-array-push-copy-loop
+  [state : LowerState]
+  [old-buf : CompilerIrValue]
+  [new-buf : CompilerIrValue]
+  [old-len : CompilerIrValue]
+  [elem-ty : AstType]) : LowerState
+  (match (lower-state-fresh-label state "array_push_copy_header")
+    [(LowerLabel header-label-state header-label)
+      (match (lower-state-fresh-label header-label-state "array_push_copy_body")
+        [(LowerLabel body-label-state body-label)
+          (match (lower-state-fresh-label body-label-state "array_push_copy_exit")
+            [(LowerLabel exit-label-state exit-label)
+              (match (lower-state-alloc-var exit-label-state)
+                [(LowerAlloc index-alloc index-var)
+                  (let
+                    [header-start : LowerState
+                      (lower-state-finish-block
+                        (lower-state-emit
+                          (lower-state-emit
+                            index-alloc
+                            (IrInstrMov
+                              index-var
+                              (IrValueI64 0)
+                              (AstTyI64)))
+                          (IrInstrJump header-label))
+                        header-label)]
+                    (match (lower-state-alloc-var header-start)
+                      [(LowerAlloc cond-alloc cond-var)
+                        (let
+                          [body-start : LowerState
+                            (lower-state-finish-block
+                              (lower-state-emit
+                                (lower-state-emit
+                                  cond-alloc
+                                  (IrInstrBinOp
+                                    cond-var
+                                    IrBinLt
+                                    (IrValueVar index-var)
+                                    old-len
+                                    (AstTyBool)))
+                                (IrInstrBranch
+                                  (IrValueVar cond-var)
+                                  body-label
+                                  exit-label))
+                              body-label)]
+                          (match (lower-emit-gep
+                            body-start
+                            old-buf
+                            (IrValueVar index-var)
+                            elem-ty)
+                            [(LowerExpr src-gep-state src-ptr _)
+                              (match (lower-emit-load
+                                src-gep-state
+                                src-ptr
+                                elem-ty)
+                                [(LowerExpr load-state elem-value _)
+                                  (match (lower-emit-gep
+                                    load-state
+                                    new-buf
+                                    (IrValueVar index-var)
+                                    elem-ty)
+                                    [(LowerExpr dst-gep-state dst-ptr _)
+                                      (match (lower-state-alloc-var
+                                        (lower-state-emit
+                                          dst-gep-state
+                                          (IrInstrStorePtr
+                                            dst-ptr
+                                            elem-value
+                                            elem-ty)))
+                                        [(LowerAlloc inc-alloc inc-var)
+                                          (lower-state-finish-block
+                                            (lower-state-emit
+                                              (lower-state-emit
+                                                (lower-state-emit
+                                                  inc-alloc
+                                                  (IrInstrBinOp
+                                                    inc-var
+                                                    IrBinAdd
+                                                    (IrValueVar index-var)
+                                                    (IrValueI64 1)
+                                                    (AstTyI64)))
+                                                (IrInstrMov
+                                                  index-var
+                                                  (IrValueVar inc-var)
+                                                  (AstTyI64)))
+                                              (IrInstrJump header-label))
+                                            exit-label)])])])]))]))])])])]))
+
+(define (lower-array-push-finish
+  [state : LowerState]
+  [arr-value : CompilerIrValue]
+  [old-buf : CompilerIrValue]
+  [old-len : CompilerIrValue]
+  [new-buf : CompilerIrValue]
+  [new-len : CompilerIrValue]
+  [elem-ty : AstType]
+  [value-ir : CompilerIrValue]) : LowerExpr
+  (match (lower-emit-gep
+    (lower-array-push-copy-loop state old-buf new-buf old-len elem-ty)
+    new-buf
+    old-len
+    elem-ty)
+    [(LowerExpr tail-gep-state tail-ptr _)
+      (LowerExpr
+        (lower-store-at-offset
+          (lower-store-at-offset
+            (lower-state-emit
+              tail-gep-state
+              (IrInstrStorePtr tail-ptr value-ir elem-ty))
+            arr-value
+            0
+            new-buf
+            (AstTyU64))
+          arr-value
+          8
+          new-len
+          (AstTyI64))
+        IrValueUnit
+        (AstTyUnit))]))
+
+(define (lower-array-push-alloc-buffer
+  [state : LowerState]
+  [arr-value : CompilerIrValue]
+  [old-buf : CompilerIrValue]
+  [old-len : CompilerIrValue]
+  [elem-size : i64]
+  [elem-ty : AstType]
+  [value-ir : CompilerIrValue]) : LowerExpr
+  (match (lower-emit-binop
+    state
+    IrBinAdd
+    old-len
+    (IrValueI64 1)
+    (AstTyI64))
+    [(LowerExpr len-state new-len _)
+      (match (lower-emit-binop
+        len-state
+        IrBinMul
+        new-len
+        (IrValueI64 elem-size)
+        (AstTyI64))
+        [(LowerExpr byte-state byte-count _)
+          (match (lower-state-alloc-var byte-state)
+            [(LowerAlloc buf-alloc buf-var)
+              (lower-array-push-finish
+                (lower-state-emit
+                  buf-alloc
+                  (IrInstrCall
+                    buf-var
+                    "tl_alloc"
+                    (IrValueCons byte-count IrValueNil)
+                    (AstTyU64)))
+                arr-value
+                old-buf
+                old-len
+                (IrValueVar buf-var)
+                new-len
+                elem-ty
+                value-ir)])])]))
+
+(define (lower-array-push-after-max-check
+  [state : LowerState]
+  [fail-label : String]
+  [alloc-label : String]
+  [arr-value : CompilerIrValue]
+  [old-buf : CompilerIrValue]
+  [old-len : CompilerIrValue]
+  [elem-size : i64]
+  [elem-ty : AstType]
+  [value-ir : CompilerIrValue]) : LowerExpr
+  (let
+    [fail-start : LowerState (lower-state-finish-block state fail-label)]
+    (let
+      [alloc-start : LowerState
+        (lower-state-finish-block
+          (lower-state-emit
+            (lower-oob-abort fail-start)
+            (IrInstrJump alloc-label))
+          alloc-label)]
+      (lower-array-push-alloc-buffer
+        alloc-start
+        arr-value
+        old-buf
+        old-len
+        elem-size
+        elem-ty
+        value-ir))))
+
+(define (lower-array-push-from-values
+  [ctx : TcContext]
+  [state : LowerState]
+  [arr-value : CompilerIrValue]
+  [elem-ty : AstType]
+  [value-ir : CompilerIrValue]) : LowerExpr
+  (match (lower-load-at-offset state arr-value 8 (AstTyI64))
+    [(LowerExpr len-state old-len _)
+      (match (lower-load-at-offset len-state arr-value 0 (AstTyU64))
+        [(LowerExpr buf-state old-buf _)
+          (let
+            [elem-size : i64 (lower-type-size ctx elem-ty)]
+            [max-old-len : i64
+              (if (= elem-size 0)
+                9223372036854775806
+                (- (/ 9223372036854775807 elem-size) 1))]
+            (match (lower-state-fresh-label buf-state "array_push_alloc")
+              [(LowerLabel alloc-label-state alloc-label)
+                (match (lower-state-fresh-label
+                  alloc-label-state
+                  "array_push_fail")
+                  [(LowerLabel fail-label-state fail-label)
+                    (match (lower-emit-binop
+                      fail-label-state
+                      IrBinLe
+                      old-len
+                      (IrValueI64 max-old-len)
+                      (AstTyBool))
+                      [(LowerExpr check-state within-max _)
+                        (lower-array-push-after-max-check
+                          (lower-state-emit
+                            check-state
+                            (IrInstrBranch
+                              within-max
+                              alloc-label
+                              fail-label))
+                          fail-label
+                          alloc-label
+                          arr-value
+                          old-buf
+                          old-len
+                          elem-size
+                          elem-ty
+                          value-ir)])])]))])]))
+
+;; `(array-push! arr value)` -> allocate a new element buffer in the active
+;; arena, copy old elements, append `value`, and update the fat `{ptr, len}`.
+(define (lower-array-push
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [arr : AstExpr]
+  [value : AstExpr]) : ResultLowerExpr
+  (match (tc-expr ctx type-env arr)
+    [(OkTcType arr-ty)
+      (match (tc-type-strip-region arr-ty)
+        [(AstTyDynArray elem-ty)
+          (let
+            [elem-ir-ty : AstType (tc-type-without-regions elem-ty)]
+            (match (lower-expr ctx state env type-env arr)
+              [(OkLowerExpr arr-lowered)
+                (match arr-lowered
+                  [(LowerExpr arr-state arr-value _)
+                    (match (lower-expr ctx arr-state env type-env value)
+                      [(OkLowerExpr value-lowered)
+                        (match value-lowered
+                          [(LowerExpr value-state value-ir _)
+                            (OkLowerExpr
+                              (lower-array-push-from-values
+                                ctx
+                                value-state
+                                arr-value
+                                elem-ir-ty
+                                value-ir))])]
+                      [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+              [(ErrLowerExpr message) (ErrLowerExpr message)]))]
+        [(AstTyArray _ _)
+          (ErrLowerExpr
+            (lower-diagnostic-at-expr
+              arr
+              "lower: fixed-array array-push! is not supported"))]
+        [_
+          (ErrLowerExpr
+            (lower-diagnostic-at-expr
+              arr
+              "lower: array-push! requires a dynamic array"))])]
+    [(ErrTcType message) (ErrLowerExpr (lower-diagnostic-at-expr arr message))]))
+
 (define (lower-args
   [ctx : TcContext]
   [state : LowerState]
@@ -5914,6 +6198,12 @@
 (define (put [a : (Array i64)] [i : i64] [v : i64]) : unit (array-set! a i v))
 (define (main) : i64 0)")
 
+;; `array-push!` lowers to checked arena reallocation, a runtime-length copy,
+;; a tail store, and in-place fat `{ptr, len}` updates.
+(define (compiler-lower-array-push-source) : String
+  "(define (grow [a : (Array i64)] [v : i64]) : unit (array-push! a v))
+(define (main) : i64 0)")
+
 ;; `make-array` lowers to checked byte-count math, a `tl_alloc` element buffer,
 ;; and a dynamic-array fat value. The fixture also immediately uses
 ;; `array-set!`, `array-ref`, and `array-length` so the generated IR exercises
@@ -7169,6 +7459,20 @@
             (> (lower-test-function-bounds-count functions "put") 0))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-array-push-shape-ok? [src : String]) : bool
+  (match (lower-compiler-source src)
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (> (lower-test-functions-call-count functions "tl_alloc") 0)
+            (and
+              (> (lower-test-functions-call-count functions "tl_oob_abort") 0)
+              (and
+                (> (lower-test-function-binop-count functions "grow") 0)
+                (> (lower-test-function-store-ptr-count functions "grow") 0))))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-make-array-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(OkCompilerLower program _)
@@ -7687,6 +7991,10 @@
         (set! ok false))
       (if (compiler-lower-array-access-shape-ok?
         (compiler-lower-array-access-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-array-push-shape-ok?
+        (compiler-lower-array-push-source))
         unit
         (set! ok false))
       (if (compiler-lower-make-array-shape-ok?

@@ -1333,6 +1333,8 @@
       (tc-source-expr-pair-policy-ok ctx array index)]
     [(AstExprArraySet array index value)
       (tc-source-expr-triple-policy-ok ctx array index value)]
+    [(AstExprArrayPush array value)
+      (tc-source-expr-pair-policy-ok ctx array value)]
     [(AstExprStringRef str index) (tc-source-expr-pair-policy-ok ctx str index)]
     [(AstExprWhile cond body) (tc-source-expr-pair-policy-ok ctx cond body)]
     [(AstExprBegin exprs) (tc-source-expr-list-policy-ok ctx exprs)]
@@ -3147,6 +3149,39 @@
                           (ErrTcSpmdExprInfo message)])])]
                 [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
         [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprArrayPush array value)
+      (match (tc-spmd-expr ctx env spmd-env array)
+        [(OkTcSpmdExprInfo array-info)
+          (match array-info
+            [(TcSpmdExprInfo array-ty array-class array-env)
+              (match (tc-spmd-expr ctx env array-env value)
+                [(OkTcSpmdExprInfo value-info)
+                  (match value-info
+                    [(TcSpmdExprInfo _ value-class value-env)
+                      (let
+                        [write-class : TcSpmdClass
+                          (tc-spmd-merge-class array-class value-class)]
+                        (match (tc-type-strip-region array-ty)
+                          [(AstTyDynArray elem-ty)
+                            (if (and
+                              (tc-spmd-varying? write-class)
+                              (not (tc-spmd-lane-type-supported? elem-ty)))
+                              (ErrTcSpmdExprInfo
+                                (string-append
+                                  "typecheck: foreach varying array lane type is not supported: "
+                                  (tc-type-render
+                                    (tc-type-strip-region elem-ty))))
+                              (tc-spmd-finish
+                                expr-ty
+                                TcSpmdUniform
+                                value-env))]
+                          [_
+                            (tc-spmd-finish
+                              expr-ty
+                              TcSpmdUniform
+                              value-env)]))])]
+                [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
     [(AstExprStringRef str index)
       (match (tc-spmd-expr ctx env spmd-env str)
         [(OkTcSpmdExprInfo str-info)
@@ -3530,6 +3565,10 @@
         (or
           (tc-expr-uses-free-name? index name bound)
           (tc-expr-uses-free-name? value name bound)))]
+    [(AstExprArrayPush array value)
+      (or
+        (tc-expr-uses-free-name? array name bound)
+        (tc-expr-uses-free-name? value name bound))]
     [(AstExprStringRef str index)
       (or
         (tc-expr-uses-free-name? str name bound)
@@ -4847,6 +4886,9 @@
     [(AstExprArraySet _ _ _)
       (ErrTcUnit
         "`array-set!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md §5.16)")]
+    [(AstExprArrayPush _ _)
+      (ErrTcUnit
+        "`array-push!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md §5.16)")]
     [(AstExprCall _ _)
       (ErrTcUnit
         "function calls are not allowed inside a spmd-reduce value expression; side-effecting builtins and user calls with varying arguments are deferred in the first slice (SPEC.md §5.16)")]
@@ -5185,6 +5227,29 @@
                   [_ (ErrTcType "typecheck: array-set! requires array type")])
                 (ErrTcType "typecheck: array index must be integer"))]
             [(ErrTcType message) (ErrTcType message)])]
+        [(ErrTcType message) (ErrTcType message)])]
+    [(AstExprArrayPush array value)
+      (match (tc-expr ctx env array)
+        [(OkTcType array-ty)
+          (match (tc-type-strip-region array-ty)
+            [(AstTyDynArray elem-ty)
+              (match (tc-expr ctx env value)
+                [(OkTcType value-ty)
+                  (match (tc-expect
+                    value-ty
+                    elem-ty
+                    "typecheck: array-push! value type mismatch")
+                    [(OkTcUnit)
+                      (match (tc-ensure-region-value-can-flow-into
+                        env
+                        array-ty
+                        value-ty
+                        "array")
+                        [(OkTcUnit) (OkTcType (AstTyUnit))]
+                        [(ErrTcUnit message) (ErrTcType message)])]
+                    [(ErrTcUnit message) (ErrTcType message)])]
+                [(ErrTcType message) (ErrTcType message)])]
+            [_ (ErrTcType "typecheck: array-push! requires dynamic array type")])]
         [(ErrTcType message) (ErrTcType message)])]
     [(AstExprStringRef str index)
       (match (tc-expr ctx env str)

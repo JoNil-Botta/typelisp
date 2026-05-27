@@ -380,6 +380,9 @@
 (define (compiler-parse-tag-expr-array-set) : i64
   241)
 
+(define (compiler-parse-tag-expr-array-push) : i64
+  262)
+
 (define (compiler-parse-tag-expr-string-ref) : i64
   242)
 
@@ -603,6 +606,9 @@
       (set!
         out
         (sym-i64-bind out "array-set!" (compiler-parse-tag-expr-array-set)))
+      (set!
+        out
+        (sym-i64-bind out "array-push!" (compiler-parse-tag-expr-array-push)))
       (set! out (sym-i64-bind out "match" (compiler-parse-tag-expr-match)))
       (set! out (sym-i64-bind out "foreach" (compiler-parse-tag-expr-foreach)))
       (set!
@@ -1551,6 +1557,18 @@
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed array-set!")]))
 
+(define (parse-ast-array-push [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSCons expr (SpSCons value (SpSNil _) _) _)
+      (match (parse-ast-expr dispatch expr)
+        [(OkAstExpr parsed-expr)
+          (match (parse-ast-expr dispatch value)
+            [(OkAstExpr parsed-value)
+              (OkAstExpr (AstExprArrayPush parsed-expr parsed-value))]
+            [(ErrAstExpr message) (ErrAstExpr message)])]
+        [(ErrAstExpr message) (ErrAstExpr message)])]
+    [_ (ErrAstExpr "parse: malformed array-push!")]))
+
 (define (parse-ast-borrow [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
     [(SpSCons place (SpSNil _) _)
@@ -2016,26 +2034,28 @@
                               (parse-ast-array-ref-like dispatch false rest)
                               (if (= tag (compiler-parse-tag-expr-array-set))
                                 (parse-ast-array-set dispatch rest)
-                                (if (= tag (compiler-parse-tag-expr-match))
-                                  (parse-ast-match dispatch rest)
-                                  (if (= tag (compiler-parse-tag-expr-foreach))
-                                    (parse-ast-foreach dispatch rest)
-                                    (if (=
-                                      tag
-                                      (compiler-parse-tag-expr-spmd-reduce))
-                                      (parse-ast-spmd-reduce dispatch rest)
+                                (if (= tag (compiler-parse-tag-expr-array-push))
+                                  (parse-ast-array-push dispatch rest)
+                                  (if (= tag (compiler-parse-tag-expr-match))
+                                    (parse-ast-match dispatch rest)
+                                    (if (= tag (compiler-parse-tag-expr-foreach))
+                                      (parse-ast-foreach dispatch rest)
                                       (if (=
                                         tag
-                                        (compiler-parse-tag-expr-struct-get))
-                                        (parse-ast-struct-get dispatch rest)
+                                        (compiler-parse-tag-expr-spmd-reduce))
+                                        (parse-ast-spmd-reduce dispatch rest)
                                         (if (=
                                           tag
-                                          (compiler-parse-tag-expr-comptime))
-                                          (parse-ast-comptime dispatch rest)
+                                          (compiler-parse-tag-expr-struct-get))
+                                          (parse-ast-struct-get dispatch rest)
                                           (if (=
                                             tag
-                                            (compiler-parse-tag-expr-type-literal))
-                                            (parse-ast-type-literal
+                                            (compiler-parse-tag-expr-comptime))
+                                            (parse-ast-comptime dispatch rest)
+                                            (if (=
+                                              tag
+                                              (compiler-parse-tag-expr-type-literal))
+                                              (parse-ast-type-literal
                                               dispatch
                                               rest)
                                             (if (=
@@ -2074,7 +2094,7 @@
                                                         (parse-ast-call
                                                           dispatch
                                                           head
-                                                          rest)))))))))))))))))))))))))))))
+                                                          rest))))))))))))))))))))))))))))))
 
 (define (parse-ast-list-expr
   [dispatch : SymI64Env]

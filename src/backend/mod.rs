@@ -17828,6 +17828,26 @@ mod tests {
     }
 
     #[test]
+    fn test_compile_array_push_allocates_copy_buffer_and_updates_fat() {
+        let asm = compile_ok(
+            "(define (f [a : (Array i64)] [v : i64]) : unit (array-push! a v))",
+        );
+
+        assert!(asm.contains("    call tl_alloc"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call tl_oob_abort"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_oob_abort:"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("$1152921504606846974"),
+            "push must check old_len before computing (old_len + 1) * 8:\n{}",
+            asm
+        );
+        assert!(asm.contains("imulq"), "asm:\n{}", asm);
+        assert!(asm.contains("$8"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
     fn test_compile_fixed_array_literal_ref_and_set() {
         let asm = compile_ok(
             "(define (f [i : i64]) : i64 \

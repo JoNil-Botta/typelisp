@@ -230,6 +230,10 @@ impl Specializer {
                 index: Box::new(self.rewrite_expr(index)?),
                 value: Box::new(self.rewrite_expr(value)?),
             }),
+            Expr::ArrayPush { expr: inner, value } => Ok(Expr::ArrayPush {
+                expr: Box::new(self.rewrite_expr(inner)?),
+                value: Box::new(self.rewrite_expr(value)?),
+            }),
             Expr::While { cond, body } => Ok(Expr::While {
                 cond: Box::new(self.rewrite_expr(cond)?),
                 body: Box::new(self.rewrite_expr(body)?),
@@ -691,6 +695,10 @@ fn substitute_comptime_params(
             index: Box::new(substitute_comptime_params(index, values, shadowed)?),
             value: Box::new(substitute_comptime_params(value, values, shadowed)?),
         }),
+        Expr::ArrayPush { expr: inner, value } => Ok(Expr::ArrayPush {
+            expr: Box::new(substitute_comptime_params(inner, values, shadowed)?),
+            value: Box::new(substitute_comptime_params(value, values, shadowed)?),
+        }),
         Expr::While { cond, body } => Ok(Expr::While {
             cond: Box::new(substitute_comptime_params(cond, values, shadowed)?),
             body: Box::new(substitute_comptime_params(body, values, shadowed)?),
@@ -923,6 +931,10 @@ fn substitute_type_params_with_shadow(
         } => Ok(Expr::ArraySet {
             expr: Box::new(go(inner)?),
             index: Box::new(go(index)?),
+            value: Box::new(go(value)?),
+        }),
+        Expr::ArrayPush { expr: inner, value } => Ok(Expr::ArrayPush {
+            expr: Box::new(go(inner)?),
             value: Box::new(go(value)?),
         }),
         Expr::While { cond, body } => Ok(Expr::While {

@@ -8129,7 +8129,7 @@ tl_windows_setup_instances:
                                 (IrValueCons
                                   (IrValueI64 0)
                                   (IrValueCons
-                                    (IrValueI64 3)
+                                    (IrValueI64 0)
                                     (IrValueCons (IrValueI64 0) IrValueNil)))
                                 (AstTyI64))
                               (IrInstrCons

@@ -30,6 +30,19 @@
   (IrUnNot)
   (IrUnBitNot))
 
+(defenum CompilerIrMaskBinOp
+  (IrMaskAnd)
+  (IrMaskOr))
+
+(defenum CompilerIrVectorReduceOp
+  (IrVectorReduceSum)
+  (IrVectorReduceMin)
+  (IrVectorReduceMax))
+
+(defenum CompilerIrMaskReduceOp
+  (IrMaskReduceAll)
+  (IrMaskReduceAny))
+
 (defenum CompilerIrValue
   (IrValueVar i64)
   (IrValueGlobal String)
@@ -66,6 +79,55 @@
   (IrInstrCast i64 CompilerIrValue AstType AstType)
   (IrInstrBinOp i64 CompilerIrBinOp CompilerIrValue CompilerIrValue AstType)
   (IrInstrUnOp i64 CompilerIrUnOp CompilerIrValue AstType)
+  (IrInstrLaneId i64 i64 AstType)
+  (IrInstrSplat i64 CompilerIrValue i64 AstType)
+  (IrInstrVectorBinOp
+    i64
+    CompilerIrBinOp
+    CompilerIrValue
+    CompilerIrValue
+    i64
+    AstType)
+  (IrInstrVectorReduce i64 CompilerIrVectorReduceOp CompilerIrValue i64 AstType)
+  (IrInstrVectorCompare
+    i64
+    CompilerIrBinOp
+    CompilerIrValue
+    CompilerIrValue
+    i64
+    AstType)
+  (IrInstrMaskBinOp i64 CompilerIrMaskBinOp CompilerIrValue CompilerIrValue i64)
+  (IrInstrMaskNot i64 CompilerIrValue i64)
+  (IrInstrMaskReduce i64 CompilerIrMaskReduceOp CompilerIrValue i64)
+  (IrInstrSelect
+    i64
+    CompilerIrValue
+    CompilerIrValue
+    CompilerIrValue
+    i64
+    AstType)
+  (IrInstrVectorLoad i64 CompilerIrValue CompilerIrValue i64 AstType)
+  (IrInstrVectorStore
+    CompilerIrValue
+    CompilerIrValue
+    CompilerIrValue
+    i64
+    AstType)
+  (IrInstrPredicatedStore
+    CompilerIrValue
+    CompilerIrValue
+    CompilerIrValue
+    CompilerIrValue
+    i64
+    AstType)
+  (IrInstrPredicatedLoad
+    i64
+    CompilerIrValue
+    CompilerIrValue
+    CompilerIrValue
+    i64
+    AstType)
+  (IrInstrTailMask i64 CompilerIrValue CompilerIrValue i64)
   (IrInstrCall i64 String CompilerIrValueList AstType)
   (IrInstrStore String CompilerIrValue AstType)
   (IrInstrJump String)
@@ -203,10 +265,24 @@
     [(IrInstrBinOp _ _ _ _ _) IrEffectPure]
     [(IrInstrUnOp _ _ _ _) IrEffectPure]
     [(IrInstrPhi _ _ _) IrEffectPure]
+    [(IrInstrLaneId _ _ _) IrEffectPure]
+    [(IrInstrSplat _ _ _ _) IrEffectPure]
+    [(IrInstrVectorBinOp _ _ _ _ _ _) IrEffectPure]
+    [(IrInstrVectorReduce _ _ _ _ _) IrEffectPure]
+    [(IrInstrVectorCompare _ _ _ _ _ _) IrEffectPure]
+    [(IrInstrMaskBinOp _ _ _ _ _) IrEffectPure]
+    [(IrInstrMaskNot _ _ _) IrEffectPure]
+    [(IrInstrMaskReduce _ _ _ _) IrEffectPure]
+    [(IrInstrSelect _ _ _ _ _ _) IrEffectPure]
+    [(IrInstrTailMask _ _ _ _) IrEffectPure]
     [(IrInstrLoad _ _ _) IrEffectMemoryRead]
+    [(IrInstrVectorLoad _ _ _ _ _) IrEffectMemoryRead]
+    [(IrInstrPredicatedLoad _ _ _ _ _ _) IrEffectMemoryRead]
     [(IrInstrAlloc _ _) IrEffectMemoryWrite]
     [(IrInstrStorePtr _ _ _) IrEffectMemoryWrite]
     [(IrInstrStore _ _ _) IrEffectMemoryWrite]
+    [(IrInstrVectorStore _ _ _ _ _) IrEffectMemoryWrite]
+    [(IrInstrPredicatedStore _ _ _ _ _ _) IrEffectMemoryWrite]
     [(IrInstrCall _ name _ _) (compiler-ir-direct-call-effect name)]
     [(IrInstrBoundsCheck _ _ _) IrEffectControlFlow]
     [(IrInstrJump _) IrEffectControlFlow]
@@ -369,6 +445,66 @@
         spans
         (compiler-source-spans-value-key function dst)
         span)]
+    [(IrInstrLaneId dst _ _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrSplat dst _ _ _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrVectorBinOp dst _ _ _ _ _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrVectorReduce dst _ _ _ _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrVectorCompare dst _ _ _ _ _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrMaskBinOp dst _ _ _ _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrMaskNot dst _ _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrMaskReduce dst _ _ _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrSelect dst _ _ _ _ _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrVectorLoad dst _ _ _ _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrPredicatedLoad dst _ _ _ _ _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrTailMask dst _ _ _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
     [(IrInstrCall dst _ _ _)
       (compiler-source-spans-insert-instr-entry
         spans
@@ -422,6 +558,54 @@
             instr-entries
             (compiler-source-spans-value-key function dst))]
         [(IrInstrUnOp dst _ _ _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrLaneId dst _ _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrSplat dst _ _ _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrVectorBinOp dst _ _ _ _ _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrVectorReduce dst _ _ _ _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrVectorCompare dst _ _ _ _ _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrMaskBinOp dst _ _ _ _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrMaskNot dst _ _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrMaskReduce dst _ _ _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrSelect dst _ _ _ _ _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrVectorLoad dst _ _ _ _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrPredicatedLoad dst _ _ _ _ _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrTailMask dst _ _ _)
           (compiler-source-spans-entry-list-lookup
             instr-entries
             (compiler-source-spans-value-key function dst))]
@@ -664,6 +848,111 @@
                                   (IrInstrReturn (IrSomeValue (IrValueI64 0)))
                                   IrEffectControlFlow)))))))))))))))))
 
+(define (compiler-ir-vector-mask-effects-ok?) : bool
+  (and
+    (compiler-ir-effect-is? (IrInstrLaneId 20 4 (AstTyI64)) IrEffectPure)
+    (and
+      (compiler-ir-effect-is?
+        (IrInstrSplat 21 (IrValueVar 0) 4 (AstTyI64))
+        IrEffectPure)
+      (and
+        (compiler-ir-effect-is?
+          (IrInstrVectorBinOp
+            22
+            (IrBinAdd)
+            (IrValueVar 20)
+            (IrValueVar 21)
+            4
+            (AstTyI64))
+          IrEffectPure)
+        (and
+          (compiler-ir-effect-is?
+            (IrInstrVectorReduce
+              23
+              (IrVectorReduceSum)
+              (IrValueVar 22)
+              4
+              (AstTyI64))
+            IrEffectPure)
+          (and
+            (compiler-ir-effect-is?
+              (IrInstrVectorCompare
+                24
+                (IrBinLt)
+                (IrValueVar 20)
+                (IrValueVar 21)
+                4
+                (AstTyI64))
+              IrEffectPure)
+            (and
+              (compiler-ir-effect-is?
+                (IrInstrMaskBinOp
+                  25
+                  (IrMaskAnd)
+                  (IrValueVar 24)
+                  (IrValueVar 24)
+                  4)
+                IrEffectPure)
+              (and
+                (compiler-ir-effect-is?
+                  (IrInstrMaskNot 26 (IrValueVar 25) 4)
+                  IrEffectPure)
+                (and
+                  (compiler-ir-effect-is?
+                    (IrInstrMaskReduce 27 (IrMaskReduceAny) (IrValueVar 26) 4)
+                    IrEffectPure)
+                  (and
+                    (compiler-ir-effect-is?
+                      (IrInstrSelect
+                        28
+                        (IrValueVar 24)
+                        (IrValueVar 20)
+                        (IrValueVar 21)
+                        4
+                        (AstTyI64))
+                      IrEffectPure)
+                    (and
+                      (compiler-ir-effect-is?
+                        (IrInstrTailMask 29 (IrValueVar 0) (IrValueVar 1) 4)
+                        IrEffectPure)
+                      (and
+                        (compiler-ir-effect-is?
+                          (IrInstrVectorLoad
+                            30
+                            (IrValueVar 2)
+                            (IrValueVar 0)
+                            4
+                            (AstTyI64))
+                          IrEffectMemoryRead)
+                        (and
+                          (compiler-ir-effect-is?
+                            (IrInstrPredicatedLoad
+                              31
+                              (IrValueVar 2)
+                              (IrValueVar 0)
+                              (IrValueVar 29)
+                              4
+                              (AstTyI64))
+                            IrEffectMemoryRead)
+                          (and
+                            (compiler-ir-effect-is?
+                              (IrInstrVectorStore
+                                (IrValueVar 2)
+                                (IrValueVar 0)
+                                (IrValueVar 22)
+                                4
+                                (AstTyI64))
+                              IrEffectMemoryWrite)
+                            (compiler-ir-effect-is?
+                              (IrInstrPredicatedStore
+                                (IrValueVar 2)
+                                (IrValueVar 0)
+                                (IrValueVar 22)
+                                (IrValueVar 29)
+                                4
+                                (AstTyI64))
+                              IrEffectMemoryWrite)))))))))))))))
+
 (define (compiler-ir-runtime-effects-ok?) : bool
   (and
     (compiler-ir-effect-eq?
@@ -720,9 +1009,11 @@
 
 (define (compiler-ir-effect-self-test) : i64
   (if (compiler-ir-instruction-effects-ok?)
-    (if (compiler-ir-runtime-effects-ok?)
-      (if (compiler-ir-effect-predicates-ok?)
-        42
+    (if (compiler-ir-vector-mask-effects-ok?)
+      (if (compiler-ir-runtime-effects-ok?)
+        (if (compiler-ir-effect-predicates-ok?)
+          42
+          1)
         1)
       1)
     1))

@@ -151,6 +151,8 @@ case|selfhost_compiler_backend|selfhost/compiler_backend.tl|assembly|skip|direct
 contains|_tl_compiler_backend_emit_source:
 contains|_tl_compiler_backend_emit_program_for_target:
 contains|_tl_compiler_backend_runtime_windows_alloc_functions:
+contains|_tl_compiler_backend_runtime_file_read_chunk_status_functions:
+contains|_tl_compiler_backend_runtime_windows_file_read_chunk_functions:
 contains|_tl_compiler_backend_self_test:
 contains|backend: too many call args
 not-contains|backend: Windows runtime helpers not yet implemented (#648)
@@ -563,7 +565,7 @@ contains|1.5
 end
 
 case|selfhost_lsp_frame|selfhost/lsp_frame.tl|assembly|skip|direct
-requires-stage0-symbol|file-open-status,append-file-status
+requires-stage0-symbol|file-read-chunk-status,append-file-status
 contains|_tl_lsp_frame_parse_content_length:
 contains|_tl_lsp_frame_read_message:
 contains|_tl_lsp_handle_message:
@@ -602,7 +604,7 @@ contains|reader: unterminated list (missing ')')
 end
 
 case|selfhost_repl|selfhost/repl.tl|assembly|exactly-one|direct
-requires-stage0-symbol|file-open-status,append-file-status
+requires-stage0-symbol|file-read-chunk-status,append-file-status
 contains|_tl_repl_loop:
 contains|_tl_repl_handle_input:
 contains|tl> 

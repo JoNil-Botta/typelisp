@@ -18,7 +18,7 @@
   17)
 
 (define doc-site-stdlib-manifest-size : i64
-  11)
+  12)
 
 (define (doc-site-module-source [module : DocSiteModule]) : String
   (match module
@@ -53,9 +53,13 @@
                         "stdlib-text-buf.html")
                       (DocSiteModuleCons
                         (DocSiteModule
-                          "stdlib/windows_sdk.tl"
-                          "stdlib-windows-sdk.html")
-                        DocSiteModuleNil))))))))))))
+                          "stdlib/windows_registry.tl"
+                          "stdlib-windows-registry.html")
+                        (DocSiteModuleCons
+                          (DocSiteModule
+                            "stdlib/windows_sdk.tl"
+                            "stdlib-windows-sdk.html")
+                          DocSiteModuleNil)))))))))))))
 
 (define (doc-site-module-list-count [modules : DocSiteModuleList]) : i64
   (match modules

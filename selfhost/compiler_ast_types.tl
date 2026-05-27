@@ -194,7 +194,15 @@
   ;; `(MutPtr U)` (#1054). Lowers to a pointer-sized zero; type is `T`.
   (AstExprPtrNull AstType)
   ;; Null check `(ptr-null? p)` on a raw pointer (#1054). Result is `bool`.
-  (AstExprPtrNullCheck AstExpr))
+  (AstExprPtrNullCheck AstExpr)
+  ;; Unsafe raw-pointer operations (#1055). The typechecker admits these only
+  ;; inside `(unsafe ...)`; lowering maps them to existing pointer IR.
+  (AstExprPtrRead AstExpr)
+  (AstExprPtrWrite AstExpr AstExpr)
+  (AstExprPtrOffset AstExpr AstExpr)
+  (AstExprPtrCast AstExpr AstType)
+  (AstExprPtrToInt AstExpr)
+  (AstExprIntToPtr AstExpr AstType))
 
 (defenum AstExprList
   (AstExprNil)
@@ -301,7 +309,13 @@
     [(AstExprTry _) 29]
     [(AstExprPtrNull _) 30]
     [(AstExprPtrNullCheck _) 31]
-    [(AstExprWithResource _ _) 33]))
+    [(AstExprWithResource _ _) 33]
+    [(AstExprPtrRead _) 34]
+    [(AstExprPtrWrite _ _) 35]
+    [(AstExprPtrOffset _ _) 36]
+    [(AstExprPtrCast _ _) 37]
+    [(AstExprPtrToInt _) 38]
+    [(AstExprIntToPtr _ _) 39]))
 
 (define (ast-expr-unspan [expr : AstExpr]) : AstExpr
   (match expr

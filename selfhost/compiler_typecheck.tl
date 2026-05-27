@@ -187,6 +187,20 @@
 (define (tc-return-type-name) : String
   "__tl_return_type")
 
+(define (tc-unsafe-marker-name) : String
+  " __tl_unsafe_context")
+
+(define (tc-enter-unsafe [env : TcTypeEnv]) : TcTypeEnv
+  (tc-bind env (tc-unsafe-marker-name) (AstTyUnit)))
+
+(define (tc-in-unsafe? [env : TcTypeEnv]) : bool
+  (match env
+    [(TcTypeNil) false]
+    [(TcTypeBind key _ rest)
+      (if (string-eq key (tc-unsafe-marker-name))
+        true
+        (tc-in-unsafe? rest))]))
+
 (define (tc-bind-return-type [env : TcTypeEnv] [ty : AstType]) : TcTypeEnv
   (tc-bind env (tc-return-type-name) ty))
 
@@ -438,7 +452,23 @@
                                               (tc-bind
                                                 (tc-bind
                                                   (tc-bind
-                                                    e19
+                                                    (tc-bind
+                                                      (tc-bind
+                                                        (tc-bind
+                                                          e19
+                                                          "file-read-chunk-status"
+                                                          (tc-fn2
+                                                            (AstTyI64)
+                                                            (AstTyI64)
+                                                            (AstTyI64)))
+                                                        "file-read-chunk-bytes"
+                                                        (tc-fn1
+                                                          (AstTyI64)
+                                                          (AstTyString)))
+                                                      "file-read-chunk-eof?"
+                                                      (tc-fn1
+                                                        (AstTyI64)
+                                                        (AstTyBool)))
                                                     "cpuid"
                                                     (tc-fn2
                                                       (AstTyI64)
@@ -1081,6 +1111,19 @@
     [(AstExprComptime inner) (tc-source-expr-policy-ok ctx inner)]
     [(AstExprTry inner) (tc-source-expr-policy-ok ctx inner)]
     [(AstExprPtrNullCheck inner) (tc-source-expr-policy-ok ctx inner)]
+    [(AstExprPtrRead ptr) (tc-source-expr-policy-ok ctx ptr)]
+    [(AstExprPtrWrite ptr value) (tc-source-expr-pair-policy-ok ctx ptr value)]
+    [(AstExprPtrOffset ptr offset)
+      (tc-source-expr-pair-policy-ok ctx ptr offset)]
+    [(AstExprPtrCast ptr ty)
+      (match (tc-source-expr-policy-ok ctx ptr)
+        [(OkTcUnit) (tc-source-type-policy-ok ctx ty)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprPtrToInt ptr) (tc-source-expr-policy-ok ctx ptr)]
+    [(AstExprIntToPtr value ty)
+      (match (tc-source-expr-policy-ok ctx value)
+        [(OkTcUnit) (tc-source-type-policy-ok ctx ty)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
     [_ OkTcUnit]))
 
 (define (tc-source-decl-policy-ok [ctx : TcContext] [decl : AstDecl]) : ResultTcUnit
@@ -1317,6 +1360,31 @@
     (match (tc-type-strip-region ty)
       [(AstTyChar) true]
       [_ false])))
+
+(define (tc-raw-pointer-type? [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyPtr _) true]
+    [(AstTyMutPtr _) true]
+    [_ false]))
+
+(define (tc-raw-pointer-elem [ty : AstType] [message : String]) : ResultTcType
+  (match (tc-type-strip-region ty)
+    [(AstTyPtr elem) (OkTcType elem)]
+    [(AstTyMutPtr elem) (OkTcType elem)]
+    [_ (ErrTcType message)]))
+
+(define (tc-mut-pointer-elem [ty : AstType] [message : String]) : ResultTcType
+  (match (tc-type-strip-region ty)
+    [(AstTyMutPtr elem) (OkTcType elem)]
+    [_ (ErrTcType message)]))
+
+(define (tc-require-unsafe [env : TcTypeEnv] [name : String]) : ResultTcUnit
+  (if (tc-in-unsafe? env)
+    OkTcUnit
+    (ErrTcUnit
+      (string-append
+        "typecheck: "
+        (string-append name " requires unsafe context")))))
 
 (define (tc-dyn-array-elem-supported? [ty : AstType]) : bool
   (if (tc-integer-type? ty)
@@ -1787,79 +1855,39 @@
         (ErrTcType "typecheck: bit-not expects integer"))]))
 
 (define (tc-region-arg-builtin-name? [name : String]) : bool
-  (if (string-eq name "print-string")
-    true
-    (if (string-eq name "print-str")
-      true
-      (if (string-eq name "print-error")
-        true
-        (if (string-eq name "string-length")
-          true
-          (if (string-eq name "length")
-            true
-            (if (string-eq name "string-eq")
-              true
-              (if (string-eq name "string=?")
-                true
-                (if (string-eq name "string->int")
-                  true
-                  (if (string-eq name "substring")
-                    true
-                    (if (string-eq name "string-slice")
-                      true
-                      (if (string-eq name "string-append")
-                        true
-                        (if (string-eq name "string-concat")
-                          true
-                          (if (string-eq name "read-file")
-                            true
-                            (if (string-eq name "read-file-status")
-                              true
-                              (if (string-eq name "write-file")
-                                true
-                                (if (string-eq name "write-file-status")
-                                  true
-                                  (if (string-eq name "append-file-status")
-                                    true
-                                    (if (string-eq name "file-exists?")
-                                      true
-                                      (if (string-eq name "file-exists-status")
-                                        true
-                                        (if (string-eq name "file-open-status")
-                                          true
-                                          (if (string-eq
-                                            name
-                                            "file-close-status")
-                                            true
-                                            (if (string-eq
-                                              name
-                                              "fs-mkdir-status")
-                                              true
-                                              (if (string-eq
-                                                name
-                                                "fs-remove-file-status")
-                                                true
-                                                (if (string-eq
-                                                  name
-                                                  "fs-remove-dir-status")
-                                                  true
-                                                  (if (string-eq
-                                                    name
-                                                    "fs-process-id")
-                                                    true
-                                                    (if (string-eq name "panic")
-                                                      true
-                                                      (if (string-eq
-                                                        name
-                                                        "error")
-                                                        true
-                                                        (if (string-eq
-                                                          name
-                                                          "env-var-exists?")
-                                                          true
-                                                          (string-eq
-                                                            name
-                                                            "env-var-value"))))))))))))))))))))))))))))))
+  (cond
+    [(string-eq name "print-string") true]
+    [(string-eq name "print-str") true]
+    [(string-eq name "print-error") true]
+    [(string-eq name "string-length") true]
+    [(string-eq name "length") true]
+    [(string-eq name "string-eq") true]
+    [(string-eq name "string=?") true]
+    [(string-eq name "string->int") true]
+    [(string-eq name "substring") true]
+    [(string-eq name "string-slice") true]
+    [(string-eq name "string-append") true]
+    [(string-eq name "string-concat") true]
+    [(string-eq name "read-file") true]
+    [(string-eq name "read-file-status") true]
+    [(string-eq name "write-file") true]
+    [(string-eq name "write-file-status") true]
+    [(string-eq name "append-file-status") true]
+    [(string-eq name "file-exists?") true]
+    [(string-eq name "file-exists-status") true]
+    [(string-eq name "file-open-status") true]
+    [(string-eq name "file-close-status") true]
+    [(string-eq name "file-read-chunk-status") true]
+    [(string-eq name "file-read-chunk-bytes") true]
+    [(string-eq name "file-read-chunk-eof?") true]
+    [(string-eq name "fs-mkdir-status") true]
+    [(string-eq name "fs-remove-file-status") true]
+    [(string-eq name "fs-remove-dir-status") true]
+    [(string-eq name "fs-process-id") true]
+    [(string-eq name "panic") true]
+    [(string-eq name "error") true]
+    [(string-eq name "env-var-exists?") true]
+    [else (string-eq name "env-var-value")]))
 
 (define (tc-default-builtin-unshadowed-scan? [env : TcTypeEnv] [name : String]) : bool
   (match env
@@ -2635,7 +2663,8 @@
                 [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
         [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
     [(AstExprBegin exprs) (tc-spmd-begin-list ctx env spmd-env exprs)]
-    [(AstExprUnsafe exprs) (tc-spmd-begin-list ctx env spmd-env exprs)]
+    [(AstExprUnsafe exprs)
+      (tc-spmd-begin-list ctx (tc-enter-unsafe env) spmd-env exprs)]
     [(AstExprSet name value)
       (match (tc-spmd-expr ctx env spmd-env value)
         [(OkTcSpmdExprInfo value-info)
@@ -2739,6 +2768,64 @@
     [(AstExprPtrNull _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
     [(AstExprPtrNullCheck inner)
       (match (tc-spmd-expr ctx env spmd-env inner)
+        [(OkTcSpmdExprInfo info)
+          (match info
+            [(TcSpmdExprInfo _ class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprPtrRead ptr)
+      (match (tc-spmd-expr ctx env spmd-env ptr)
+        [(OkTcSpmdExprInfo info)
+          (match info
+            [(TcSpmdExprInfo _ class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprPtrWrite ptr value)
+      (match (tc-spmd-expr ctx env spmd-env ptr)
+        [(OkTcSpmdExprInfo ptr-info)
+          (match ptr-info
+            [(TcSpmdExprInfo _ ptr-class ptr-env)
+              (match (tc-spmd-expr ctx env ptr-env value)
+                [(OkTcSpmdExprInfo value-info)
+                  (match value-info
+                    [(TcSpmdExprInfo _ value-class value-env)
+                      (tc-spmd-finish
+                        expr-ty
+                        (tc-spmd-merge-class ptr-class value-class)
+                        value-env)])]
+                [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprPtrOffset ptr offset)
+      (match (tc-spmd-expr ctx env spmd-env ptr)
+        [(OkTcSpmdExprInfo ptr-info)
+          (match ptr-info
+            [(TcSpmdExprInfo _ ptr-class ptr-env)
+              (match (tc-spmd-expr ctx env ptr-env offset)
+                [(OkTcSpmdExprInfo offset-info)
+                  (match offset-info
+                    [(TcSpmdExprInfo _ offset-class offset-env)
+                      (tc-spmd-finish
+                        expr-ty
+                        (tc-spmd-merge-class ptr-class offset-class)
+                        offset-env)])]
+                [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprPtrCast ptr _)
+      (match (tc-spmd-expr ctx env spmd-env ptr)
+        [(OkTcSpmdExprInfo info)
+          (match info
+            [(TcSpmdExprInfo _ class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprPtrToInt ptr)
+      (match (tc-spmd-expr ctx env spmd-env ptr)
+        [(OkTcSpmdExprInfo info)
+          (match info
+            [(TcSpmdExprInfo _ class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprIntToPtr value _)
+      (match (tc-spmd-expr ctx env spmd-env value)
         [(OkTcSpmdExprInfo info)
           (match info
             [(TcSpmdExprInfo _ class next-spmd-env)
@@ -2969,7 +3056,19 @@
     [(AstExprComptime inner) (tc-expr-uses-free-name? inner name bound)]
     [(AstExprTry inner) (tc-expr-uses-free-name? inner name bound)]
     [(AstExprPtrNull _) false]
-    [(AstExprPtrNullCheck inner) (tc-expr-uses-free-name? inner name bound)]))
+    [(AstExprPtrNullCheck inner) (tc-expr-uses-free-name? inner name bound)]
+    [(AstExprPtrRead ptr) (tc-expr-uses-free-name? ptr name bound)]
+    [(AstExprPtrWrite ptr value)
+      (or
+        (tc-expr-uses-free-name? ptr name bound)
+        (tc-expr-uses-free-name? value name bound))]
+    [(AstExprPtrOffset ptr offset)
+      (or
+        (tc-expr-uses-free-name? ptr name bound)
+        (tc-expr-uses-free-name? offset name bound))]
+    [(AstExprPtrCast ptr _) (tc-expr-uses-free-name? ptr name bound)]
+    [(AstExprPtrToInt ptr) (tc-expr-uses-free-name? ptr name bound)]
+    [(AstExprIntToPtr value _) (tc-expr-uses-free-name? value name bound)]))
 
 (define (tc-check-lambda-region-captures-scan
   [env : TcTypeEnv]
@@ -4067,6 +4166,120 @@
             [(OkTcUnit) (tc-spmd-value-let-bindings-pure-at rest in-index)]
             [(ErrTcUnit message) (ErrTcUnit message)])])]))
 
+(define (tc-ptr-read-expr [ctx : TcContext] [env : TcTypeEnv] [ptr : AstExpr]) : ResultTcType
+  (match (tc-require-unsafe env "ptr-read")
+    [(OkTcUnit)
+      (match (tc-expr ctx env ptr)
+        [(OkTcType ptr-ty)
+          (match (tc-raw-pointer-elem
+            (tc-resolve-type ctx ptr-ty)
+            "typecheck: ptr-read requires a raw pointer operand")
+            [(OkTcType elem) (OkTcType (tc-resolve-type ctx elem))]
+            [(ErrTcType message) (ErrTcType message)])]
+        [(ErrTcType message) (ErrTcType message)])]
+    [(ErrTcUnit message) (ErrTcType message)]))
+
+(define (tc-ptr-write-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [ptr : AstExpr]
+  [value : AstExpr]) : ResultTcType
+  (match (tc-require-unsafe env "ptr-write!")
+    [(OkTcUnit)
+      (match (tc-expr ctx env ptr)
+        [(OkTcType ptr-ty)
+          (match (tc-mut-pointer-elem
+            (tc-resolve-type ctx ptr-ty)
+            "typecheck: ptr-write! requires a MutPtr pointer operand")
+            [(OkTcType elem)
+              (match (tc-expr ctx env value)
+                [(OkTcType value-ty)
+                  (match (tc-expect
+                    value-ty
+                    (tc-resolve-type ctx elem)
+                    "typecheck: ptr-write! value type mismatch")
+                    [(OkTcUnit) (OkTcType (AstTyUnit))]
+                    [(ErrTcUnit message) (ErrTcType message)])]
+                [(ErrTcType message) (ErrTcType message)])]
+            [(ErrTcType message) (ErrTcType message)])]
+        [(ErrTcType message) (ErrTcType message)])]
+    [(ErrTcUnit message) (ErrTcType message)]))
+
+(define (tc-ptr-offset-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [ptr : AstExpr]
+  [offset : AstExpr]) : ResultTcType
+  (match (tc-require-unsafe env "ptr-offset")
+    [(OkTcUnit)
+      (match (tc-expr ctx env ptr)
+        [(OkTcType ptr-ty)
+          (let
+            [resolved-ptr : AstType (tc-resolve-type ctx ptr-ty)]
+            (match (tc-raw-pointer-elem
+              resolved-ptr
+              "typecheck: ptr-offset requires a raw pointer operand")
+              [(OkTcType _)
+                (match (tc-expr ctx env offset)
+                  [(OkTcType offset-ty)
+                    (if (tc-integer-type? offset-ty)
+                      (OkTcType resolved-ptr)
+                      (ErrTcType
+                        "typecheck: ptr-offset requires an integer offset"))]
+                  [(ErrTcType message) (ErrTcType message)])]
+              [(ErrTcType message) (ErrTcType message)]))]
+        [(ErrTcType message) (ErrTcType message)])]
+    [(ErrTcUnit message) (ErrTcType message)]))
+
+(define (tc-ptr-cast-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [ptr : AstExpr]
+  [target : AstType]) : ResultTcType
+  (match (tc-require-unsafe env "ptr-cast")
+    [(OkTcUnit)
+      (let
+        [resolved-target : AstType (tc-resolve-type ctx target)]
+        (if (tc-raw-pointer-type? resolved-target)
+          (match (tc-expr ctx env ptr)
+            [(OkTcType ptr-ty)
+              (if (tc-raw-pointer-type? (tc-resolve-type ctx ptr-ty))
+                (OkTcType resolved-target)
+                (ErrTcType "typecheck: ptr-cast requires a raw pointer operand"))]
+            [(ErrTcType message) (ErrTcType message)])
+          (ErrTcType "typecheck: ptr-cast target must be a raw pointer type")))]
+    [(ErrTcUnit message) (ErrTcType message)]))
+
+(define (tc-ptr-to-int-expr [ctx : TcContext] [env : TcTypeEnv] [ptr : AstExpr]) : ResultTcType
+  (match (tc-require-unsafe env "ptr->int")
+    [(OkTcUnit)
+      (match (tc-expr ctx env ptr)
+        [(OkTcType ptr-ty)
+          (if (tc-raw-pointer-type? (tc-resolve-type ctx ptr-ty))
+            (OkTcType (AstTyU64))
+            (ErrTcType "typecheck: ptr->int requires a raw pointer operand"))]
+        [(ErrTcType message) (ErrTcType message)])]
+    [(ErrTcUnit message) (ErrTcType message)]))
+
+(define (tc-int-to-ptr-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [value : AstExpr]
+  [target : AstType]) : ResultTcType
+  (match (tc-require-unsafe env "int->ptr")
+    [(OkTcUnit)
+      (let
+        [resolved-target : AstType (tc-resolve-type ctx target)]
+        (if (tc-raw-pointer-type? resolved-target)
+          (match (tc-expr ctx env value)
+            [(OkTcType value-ty)
+              (if (tc-integer-type? value-ty)
+                (OkTcType resolved-target)
+                (ErrTcType "typecheck: int->ptr requires an integer operand"))]
+            [(ErrTcType message) (ErrTcType message)])
+          (ErrTcType "typecheck: int->ptr target must be a raw pointer type")))]
+    [(ErrTcUnit message) (ErrTcType message)]))
+
 (define (tc-expr [ctx : TcContext] [env : TcTypeEnv] [expr : AstExpr]) : ResultTcType
   (match expr
     [(AstExprSpanned inner _) (tc-expr ctx env inner)]
@@ -4253,7 +4466,7 @@
     [(AstExprBegin exprs) (tc-begin-list ctx env exprs)]
     ;; `(unsafe ...)` types like `begin` in v1; the unsafe-context flag for
     ;; raw-pointer ops is added with their checks (#955).
-    [(AstExprUnsafe exprs) (tc-begin-list ctx env exprs)]
+    [(AstExprUnsafe exprs) (tc-begin-list ctx (tc-enter-unsafe env) exprs)]
     [(AstExprIf cond then-branch else-branch)
       (match (tc-expr ctx env cond)
         [(OkTcType cond-ty)
@@ -4476,6 +4689,12 @@
             [_
               (ErrTcType "typecheck: ptr-null? requires a raw pointer operand")])]
         [(ErrTcType message) (ErrTcType message)])]
+    [(AstExprPtrRead ptr) (tc-ptr-read-expr ctx env ptr)]
+    [(AstExprPtrWrite ptr value) (tc-ptr-write-expr ctx env ptr value)]
+    [(AstExprPtrOffset ptr offset) (tc-ptr-offset-expr ctx env ptr offset)]
+    [(AstExprPtrCast ptr target) (tc-ptr-cast-expr ctx env ptr target)]
+    [(AstExprPtrToInt ptr) (tc-ptr-to-int-expr ctx env ptr)]
+    [(AstExprIntToPtr value target) (tc-int-to-ptr-expr ctx env value target)]
     [_ (ErrTcType "typecheck: unsupported expression")]))
 
 (define (tc-summary-add-decl
@@ -5308,6 +5527,73 @@
             (AstTyPtr (AstTyRegion "r" (AstTyI64)))
             (AstTyPtr (AstTyI64))))))))
 
+(define (compiler-typecheck-raw-pointer-ops-source) : String
+  "(extern raw-make : (-> (MutPtr i64)))
+(define (main [n : u64]) : u64
+  (unsafe
+    (ptr-write! (raw-make) 41)
+    (ptr-read (raw-make))
+    (ptr->int (ptr-offset (ptr-cast (int->ptr n : (MutPtr i64)) : (Ptr i64)) 1))))")
+
+(define (compiler-typecheck-raw-pointer-cast-source) : String
+  "(define (main [n : u64]) : (Ptr u8)
+  (unsafe (ptr-cast (int->ptr n : (MutPtr i64)) : (Ptr u8))))")
+
+(define (compiler-typecheck-raw-pointer-safe-read-source) : String
+  "(define (main [p : (Ptr i64)]) : i64 (ptr-read p))")
+
+(define (compiler-typecheck-raw-pointer-safe-marker-shadow-source) : String
+  "(define (main [p : (Ptr i64)]) : i64
+  (let [__tl_unsafe_context : unit unit] (ptr-read p)))")
+
+(define (compiler-typecheck-raw-pointer-write-const-source) : String
+  "(define (main [p : (Ptr i64)]) : unit (unsafe (ptr-write! p 1)))")
+
+(define (compiler-typecheck-raw-pointer-write-mismatch-source) : String
+  "(define (main [p : (MutPtr i64)]) : unit (unsafe (ptr-write! p true)))")
+
+(define (compiler-typecheck-raw-pointer-offset-bad-source) : String
+  "(define (main [p : (Ptr i64)]) : (Ptr i64) (unsafe (ptr-offset p true)))")
+
+(define (compiler-typecheck-raw-pointer-cast-bad-target-source) : String
+  "(define (main [p : (Ptr i64)]) : i64 (unsafe (ptr-cast p : i64)))")
+
+(define (compiler-typecheck-raw-pointer-int-to-ptr-bad-source) : String
+  "(define (main [b : bool]) : (Ptr i64) (unsafe (int->ptr b : (Ptr i64))))")
+
+(define (compiler-typecheck-raw-pointer-op-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-raw-pointer-ops-source))
+    (and
+      (compiler-typecheck-ok? (compiler-typecheck-raw-pointer-cast-source))
+      (and
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-raw-pointer-safe-read-source)
+          "typecheck: ptr-read requires unsafe context")
+        (and
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-raw-pointer-safe-marker-shadow-source)
+            "typecheck: ptr-read requires unsafe context")
+          (and
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-raw-pointer-write-const-source)
+              "typecheck: ptr-write! requires a MutPtr pointer operand")
+            (and
+              (compiler-typecheck-error-ok?
+                (compiler-typecheck-raw-pointer-write-mismatch-source)
+                "typecheck: ptr-write! value type mismatch")
+              (and
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-raw-pointer-offset-bad-source)
+                  "typecheck: ptr-offset requires an integer offset")
+                (and
+                  (compiler-typecheck-error-ok?
+                    (compiler-typecheck-raw-pointer-cast-bad-target-source)
+                    "typecheck: ptr-cast target must be a raw pointer type")
+                  (compiler-typecheck-error-ok?
+                    (compiler-typecheck-raw-pointer-int-to-ptr-bad-source)
+                    "typecheck: int->ptr requires an integer operand"))))))))))
+
 (define (compiler-typecheck-raw-pointer-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-raw-pointer-source))
@@ -5718,46 +6004,76 @@
 ;; primitives accept, plus wrong-argument, wrong-arity, and result-type-mismatch
 ;; rejections. Migrated from src/typechecker.rs read-file/write-file coverage.
 (define (compiler-typecheck-io-builtin-tests-ok?) : bool
-  (and
-    (compiler-typecheck-ok? "(define (f [p : String]) : String (read-file p))")
-    (and
-      (compiler-typecheck-ok?
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-typecheck-ok?
+        "(define (f [p : String]) : String (read-file p))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
         "(define (f [p : String] [c : String]) : unit (write-file p c))")
-      (and
-        (compiler-typecheck-ok?
-          "(define (f [p : String] [c : String]) : i64 (append-file-status p c))")
-        (and
-          (compiler-typecheck-ok?
-            "(define (f [p : String]) : bool (file-exists? p))")
-          (and
-            (compiler-typecheck-ok?
-              "(define (f [p : String]) : i64 (file-open-status p 0))")
-            (and
-              (compiler-typecheck-ok?
-                "(define (f [h : i64]) : i64 (file-close-status h))")
-              (and
-                (compiler-typecheck-error-ok?
-                  "(define (f [c : String]) : unit (write-file 5 c))"
-                  "typecheck: argument type mismatch")
-                (and
-                  (compiler-typecheck-error-ok?
-                    "(define (f [p : String]) : unit (write-file p))"
-                    "typecheck: arity mismatch")
-                  (and
-                    (compiler-typecheck-error-ok?
-                      "(define (f [p : i64]) : String (read-file p))"
-                      "typecheck: argument type mismatch")
-                    (and
-                      (compiler-typecheck-error-ok?
-                        "(define (f [p : String]) : i64 (file-open-status p \"r\"))"
-                        "typecheck: argument type mismatch")
-                      (and
-                        (compiler-typecheck-error-ok?
-                          "(define (f) : i64 (file-close-status \"h\"))"
-                          "typecheck: argument type mismatch")
-                        (compiler-typecheck-error-ok?
-                          "(define (f [p : String] [c : String]) : i64 (write-file p c))"
-                          "typecheck: return type mismatch")))))))))))))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f [p : String] [c : String]) : i64 (append-file-status p c))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f [p : String]) : bool (file-exists? p))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f [p : String]) : i64 (file-open-status p 0))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f [h : i64]) : i64 (file-close-status h))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f [h : i64] [n : i64]) : i64 (file-read-chunk-status h n))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f [h : i64]) : String (file-read-chunk-bytes h))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f [h : i64]) : bool (file-read-chunk-eof? h))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f [c : String]) : unit (write-file 5 c))"
+        "typecheck: argument type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f [p : String]) : unit (write-file p))"
+        "typecheck: arity mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f [p : i64]) : String (read-file p))"
+        "typecheck: argument type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f [p : String]) : i64 (file-open-status p \"r\"))"
+        "typecheck: argument type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : i64 (file-close-status \"h\"))"
+        "typecheck: argument type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f [p : String] [c : String]) : i64 (write-file p c))"
+        "typecheck: return type mismatch")
+        unit
+        (set! ok false))
+      ok)))
 
 ;; Raw-pointer null construction / check (#1054).
 (define (compiler-typecheck-ptr-null-ok-source) : String
@@ -5850,6 +6166,9 @@
     (if (compiler-typecheck-unsafe-tests-ok?)
       unit
       (panic "typecheck: unsafe block tests failed"))
+    (if (compiler-typecheck-raw-pointer-op-tests-ok?)
+      unit
+      (panic "typecheck: raw pointer unsafe operation tests failed"))
     (if (compiler-typecheck-statement-tests-ok?)
       unit
       (panic "typecheck: statement/control-flow tests failed"))
@@ -5870,54 +6189,72 @@
       (panic "typecheck: array-builtin signature tests failed"))
     (match (typecheck-compiler-source (compiler-typecheck-smoke-source))
       [(OkCompilerTypecheck summary)
-        (if (and
-          (= (compiler-typecheck-summary-score summary) 121)
-          (and
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-unbound-source)
-              "typecheck: unbound name missing")
-            (and
-              (compiler-typecheck-error-ok?
-                (compiler-typecheck-bad-call-source)
-                "typecheck: argument type mismatch")
-              (and
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-branch-mismatch-source)
-                  "typecheck: if branches must match")
-                (and
-                  (compiler-typecheck-aggregate-tests-ok?)
-                  (and
-                    (compiler-typecheck-foreach-spmd-tests-ok?)
-                    (and
-                      (compiler-typecheck-nominal-tests-ok?)
-                      (and
-                        (compiler-typecheck-abstraction-policy-tests-ok?)
-                        (and
-                          (compiler-typecheck-region-tests-ok?)
-                          (and
-                            (compiler-typecheck-result-try-tests-ok?)
-                            (and
-                              (compiler-typecheck-raw-pointer-tests-ok?)
-                              (and
-                                (compiler-typecheck-reference-tests-ok?)
-                                (and
-                                  (compiler-typecheck-located-ok?)
-                                  (and
-                                    (compiler-typecheck-string-builtin-tests-ok?)
-                                    (and
-                                      (compiler-typecheck-lambda-tests-ok?)
-                                      (and
-                                        (compiler-typecheck-cast-tests-ok?)
-                                        (and
-                                          (compiler-typecheck-comptime-tests-ok?)
-                                          (and
-                                            (compiler-typecheck-io-builtin-tests-ok?)
-                                            (compiler-typecheck-layout-query-tests-ok?)))))))))))))))))))
-          42
-          (begin
-            (panic "typecheck: smoke score mismatch")
-            0))]
+        (if (= (compiler-typecheck-summary-score summary) 121)
+          unit
+          (panic "typecheck: smoke score mismatch"))]
       [(ErrCompilerTypecheck diag)
         (begin
           (panic (compiler-diagnostic-message diag))
-          0)])))
+          unit)])
+    (if (compiler-typecheck-error-ok?
+      (compiler-typecheck-unbound-source)
+      "typecheck: unbound name missing")
+      unit
+      (panic "typecheck: unbound-name diagnostic test failed"))
+    (if (compiler-typecheck-error-ok?
+      (compiler-typecheck-bad-call-source)
+      "typecheck: argument type mismatch")
+      unit
+      (panic "typecheck: bad-call diagnostic test failed"))
+    (if (compiler-typecheck-error-ok?
+      (compiler-typecheck-branch-mismatch-source)
+      "typecheck: if branches must match")
+      unit
+      (panic "typecheck: branch mismatch diagnostic test failed"))
+    (if (compiler-typecheck-aggregate-tests-ok?)
+      unit
+      (panic "typecheck: aggregate tests failed"))
+    (if (compiler-typecheck-foreach-spmd-tests-ok?)
+      unit
+      (panic "typecheck: foreach/spmd tests failed"))
+    (if (compiler-typecheck-nominal-tests-ok?)
+      unit
+      (panic "typecheck: nominal tests failed"))
+    (if (compiler-typecheck-abstraction-policy-tests-ok?)
+      unit
+      (panic "typecheck: abstraction policy tests failed"))
+    (if (compiler-typecheck-region-tests-ok?)
+      unit
+      (panic "typecheck: region tests failed"))
+    (if (compiler-typecheck-result-try-tests-ok?)
+      unit
+      (panic "typecheck: result try tests failed"))
+    (if (compiler-typecheck-raw-pointer-tests-ok?)
+      unit
+      (panic "typecheck: raw pointer type tests failed"))
+    (if (compiler-typecheck-reference-tests-ok?)
+      unit
+      (panic "typecheck: reference tests failed"))
+    (if (compiler-typecheck-located-ok?)
+      unit
+      (panic "typecheck: located diagnostic test failed"))
+    (if (compiler-typecheck-string-builtin-tests-ok?)
+      unit
+      (panic "typecheck: string builtin tests failed"))
+    (if (compiler-typecheck-lambda-tests-ok?)
+      unit
+      (panic "typecheck: lambda tests failed"))
+    (if (compiler-typecheck-cast-tests-ok?)
+      unit
+      (panic "typecheck: cast tests failed"))
+    (if (compiler-typecheck-comptime-tests-ok?)
+      unit
+      (panic "typecheck: comptime tests failed"))
+    (if (compiler-typecheck-io-builtin-tests-ok?)
+      unit
+      (panic "typecheck: io builtin tests failed"))
+    (if (compiler-typecheck-layout-query-tests-ok?)
+      42
+      (begin
+        (panic "typecheck: layout query tests failed")
+        0))))

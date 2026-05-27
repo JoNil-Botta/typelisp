@@ -25,6 +25,9 @@ const APPEND_FILE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_append_file_status";
 const FILE_EXISTS_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists_status";
 const FILE_OPEN_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_open_status";
 const FILE_CLOSE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_close_status";
+const FILE_READ_CHUNK_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_read_chunk_status";
+const FILE_READ_CHUNK_BYTES_RUNTIME_SYMBOL: &str = ".L_tl_file_read_chunk_bytes";
+const FILE_READ_CHUNK_EOF_RUNTIME_SYMBOL: &str = ".L_tl_file_read_chunk_eof";
 const FS_MKDIR_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_fs_mkdir_status";
 const FS_REMOVE_FILE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_fs_remove_file_status";
 const FS_REMOVE_DIR_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_fs_remove_dir_status";
@@ -34,6 +37,7 @@ const ENV_VAR_VALUE_RUNTIME_SYMBOL: &str = ".L_tl_env_var_value";
 const ENV_PATH_SEPARATOR_RUNTIME_SYMBOL: &str = ".L_tl_env_path_separator";
 const PROCESS_OUTPUT_RUNTIME_SYMBOL: &str = "tl_process_output";
 const WINDOWS_SETUP_INSTANCES_RUNTIME_SYMBOL: &str = "tl_windows_setup_instances";
+const WINDOWS_SDK_REGISTRY_INSTALL_RUNTIME_SYMBOL: &str = "tl_windows_sdk_registry_install";
 const READ_STDIN_LINE_RUNTIME_SYMBOL: &str = ".L_tl_read_stdin_line";
 const READ_STDIN_BYTES_RUNTIME_SYMBOL: &str = ".L_tl_read_stdin_bytes";
 const STDIN_EOF_RUNTIME_SYMBOL: &str = ".L_tl_stdin_eof";
@@ -51,7 +55,14 @@ const SYSV_FLOAT_ARG_REGS: [&str; 8] = [
 const WIN64_INTEGER_ARG_REGS: [&str; 4] = ["%rcx", "%rdx", "%r8", "%r9"];
 const WIN64_FLOAT_ARG_REGS: [&str; 4] = ["%xmm0", "%xmm1", "%xmm2", "%xmm3"];
 const LINUX_LINK_LIBS: [&str; 1] = ["-lc"];
-const WINDOWS_LINK_LIBS: [&str; 3] = ["msvcrt.lib", "legacy_stdio_definitions.lib", "advapi32.lib"];
+const WINDOWS_LINK_LIBS: [&str; 6] = [
+    "msvcrt.lib",
+    "legacy_stdio_definitions.lib",
+    "kernel32.lib",
+    "advapi32.lib",
+    "ole32.lib",
+    "oleaut32.lib",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendArch {
@@ -499,6 +510,11 @@ pub struct X86_64Backend {
     /// SetupConfiguration hook. Current targets return a structured unsupported
     /// result until the Windows COM enumerator lands.
     needs_windows_setup_instances_runtime: bool,
+    /// Whether the program references stdlib/windows_registry.tl's narrow
+    /// Windows SDK registry hook. Windows targets call advapi32 to read
+    /// KitsRoot10 and enumerate SDK version subkeys; other targets return a
+    /// structured unsupported result.
+    needs_windows_sdk_registry_install_runtime: bool,
     /// Whether the program references stdin helpers. The read helpers allocate
     /// heap Strings and update a backend-owned EOF flag; `stdin-eof?` reads that
     /// flag; `flush-stdout` is a target-specific stdout flush/no-op helper.
@@ -1790,7 +1806,7 @@ fn block_successors(block: &BasicBlock) -> Vec<Label> {
 }
 
 /// Eliminate SSA `Phi` nodes by converting them to copies in predecessor
-/// blocks (the classic "phi → moves in predecessors" lowering).
+/// blocks (the classic "phi ? moves in predecessors" lowering).
 ///
 /// A `Phi { dst, incoming: [(val, src_label), ..] }` at the head of a merge
 /// block selects `val` when control arrives from the predecessor associated
@@ -2022,6 +2038,7 @@ impl X86_64Backend {
             needs_env_path_separator_runtime: false,
             needs_process_output_runtime: false,
             needs_windows_setup_instances_runtime: false,
+            needs_windows_sdk_registry_install_runtime: false,
             needs_read_stdin_line_runtime: false,
             needs_read_stdin_bytes_runtime: false,
             needs_stdin_eof_runtime: false,
@@ -2097,6 +2114,8 @@ impl X86_64Backend {
         self.needs_process_output_runtime = Self::needs_process_output_runtime(program);
         self.needs_windows_setup_instances_runtime =
             Self::needs_windows_setup_instances_runtime(program);
+        self.needs_windows_sdk_registry_install_runtime =
+            Self::needs_windows_sdk_registry_install_runtime(program);
         self.needs_read_stdin_line_runtime = Self::needs_read_stdin_line_runtime(program);
         self.needs_read_stdin_bytes_runtime = Self::needs_read_stdin_bytes_runtime(program);
         self.needs_stdin_eof_runtime = Self::needs_stdin_eof_runtime(program);
@@ -2126,7 +2145,7 @@ impl X86_64Backend {
             || self.needs_write_file_runtime
             || self.needs_append_file_runtime
             || self.needs_file_exists_runtime
-            || (self.needs_file_handle_runtime && !runtime_policy.emits_windows_runtime_helpers)
+            || self.needs_file_handle_runtime
             || self.needs_cpuid_runtime
             || self.needs_fs_runtime
             || (self.needs_env_var_exists_runtime && runtime_policy.emits_windows_runtime_helpers)
@@ -2134,6 +2153,7 @@ impl X86_64Backend {
             || self.needs_env_path_separator_runtime
             || self.needs_process_output_runtime
             || self.needs_windows_setup_instances_runtime
+            || self.needs_windows_sdk_registry_install_runtime
             || self.needs_read_stdin_line_runtime
             || self.needs_read_stdin_bytes_runtime
             || self.needs_random_system_seed_runtime;
@@ -2228,6 +2248,9 @@ impl X86_64Backend {
         if self.needs_windows_setup_instances_runtime {
             self.generate_windows_setup_instances_runtime_data();
         }
+        if self.needs_windows_sdk_registry_install_runtime {
+            self.generate_windows_sdk_registry_install_runtime_data();
+        }
         if self.needs_random_system_seed_runtime {
             self.generate_random_system_seed_runtime_data();
         }
@@ -2273,6 +2296,11 @@ impl X86_64Backend {
                 || (self.needs_file_exists_runtime && symbol == FILE_EXISTS_STATUS_RUNTIME_SYMBOL)
                 || (self.needs_file_handle_runtime && symbol == FILE_OPEN_STATUS_RUNTIME_SYMBOL)
                 || (self.needs_file_handle_runtime && symbol == FILE_CLOSE_STATUS_RUNTIME_SYMBOL)
+                || (self.needs_file_handle_runtime
+                    && symbol == FILE_READ_CHUNK_STATUS_RUNTIME_SYMBOL)
+                || (self.needs_file_handle_runtime
+                    && symbol == FILE_READ_CHUNK_BYTES_RUNTIME_SYMBOL)
+                || (self.needs_file_handle_runtime && symbol == FILE_READ_CHUNK_EOF_RUNTIME_SYMBOL)
                 || (self.needs_cpuid_runtime && symbol == CPUID_RUNTIME_SYMBOL)
                 || (self.needs_xgetbv_runtime && symbol == XGETBV_RUNTIME_SYMBOL)
                 || (self.needs_fs_runtime && symbol == FS_MKDIR_STATUS_RUNTIME_SYMBOL)
@@ -2286,6 +2314,8 @@ impl X86_64Backend {
                 || (self.needs_process_output_runtime && symbol == PROCESS_OUTPUT_RUNTIME_SYMBOL)
                 || (self.needs_windows_setup_instances_runtime
                     && symbol == WINDOWS_SETUP_INSTANCES_RUNTIME_SYMBOL)
+                || (self.needs_windows_sdk_registry_install_runtime
+                    && symbol == WINDOWS_SDK_REGISTRY_INSTALL_RUNTIME_SYMBOL)
                 || (self.needs_read_stdin_line_runtime && symbol == READ_STDIN_LINE_RUNTIME_SYMBOL)
                 || (self.needs_read_stdin_bytes_runtime
                     && symbol == READ_STDIN_BYTES_RUNTIME_SYMBOL)
@@ -2397,6 +2427,9 @@ impl X86_64Backend {
         }
         if self.needs_windows_setup_instances_runtime {
             self.generate_windows_setup_instances_runtime_functions();
+        }
+        if self.needs_windows_sdk_registry_install_runtime {
+            self.generate_windows_sdk_registry_install_runtime_functions();
         }
         if self.needs_read_stdin_line_runtime {
             self.generate_read_stdin_line_runtime_functions();
@@ -2607,6 +2640,17 @@ impl X86_64Backend {
         if self.needs_random_system_seed_runtime {
             externs.insert("SystemFunction036");
         }
+        if self.needs_windows_sdk_registry_install_runtime {
+            for symbol in [
+                "RegCloseKey",
+                "RegEnumKeyExW",
+                "RegOpenKeyExW",
+                "RegQueryValueExW",
+                "WideCharToMultiByte",
+            ] {
+                externs.insert(symbol);
+            }
+        }
         if self.needs_process_output_runtime {
             for symbol in [
                 "_close",
@@ -2619,6 +2663,24 @@ impl X86_64Backend {
                 "fclose",
                 "fflush",
                 "tmpfile",
+            ] {
+                externs.insert(symbol);
+            }
+        }
+        if self.needs_windows_setup_instances_runtime
+            && self.target.runtime_policy().emits_windows_runtime_helpers
+        {
+            for symbol in [
+                "CoCreateInstance",
+                "CoInitializeEx",
+                "CoUninitialize",
+                "SafeArrayDestroy",
+                "SafeArrayGetElement",
+                "SafeArrayGetLBound",
+                "SafeArrayGetUBound",
+                "SysFreeString",
+                "SysStringLen",
+                "WideCharToMultiByte",
             ] {
                 externs.insert(symbol);
             }
@@ -3037,6 +3099,9 @@ impl X86_64Backend {
         [
             FILE_OPEN_STATUS_RUNTIME_SYMBOL,
             FILE_CLOSE_STATUS_RUNTIME_SYMBOL,
+            FILE_READ_CHUNK_STATUS_RUNTIME_SYMBOL,
+            FILE_READ_CHUNK_BYTES_RUNTIME_SYMBOL,
+            FILE_READ_CHUNK_EOF_RUNTIME_SYMBOL,
         ]
         .iter()
         .any(|symbol| Self::needs_private_call_runtime(program, symbol))
@@ -3079,6 +3144,10 @@ impl X86_64Backend {
 
     fn needs_windows_setup_instances_runtime(program: &Program) -> bool {
         Self::needs_named_runtime(program, WINDOWS_SETUP_INSTANCES_RUNTIME_SYMBOL)
+    }
+
+    fn needs_windows_sdk_registry_install_runtime(program: &Program) -> bool {
+        Self::needs_named_runtime(program, WINDOWS_SDK_REGISTRY_INSTALL_RUNTIME_SYMBOL)
     }
 
     fn needs_random_system_seed_runtime(program: &Program) -> bool {
@@ -3813,6 +3882,14 @@ impl X86_64Backend {
         out
     }
 
+    fn emit_utf16z_data(&mut self, label: &str, text: &str) {
+        self.emit(&format!("{}:", label));
+        for unit in text.encode_utf16() {
+            self.emit(&format!("    .word {}", unit));
+        }
+        self.emit("    .word 0");
+    }
+
     /// Emit the self-contained bump allocator `tl_alloc(size) -> ptr`.
     ///
     /// ABI (System V): the byte count arrives in `%rdi`, the returned pointer
@@ -4088,6 +4165,14 @@ impl X86_64Backend {
         self.emit("    .zero 8192");
         self.emit(".L_tl_file_handle_states:");
         self.emit("    .zero 8192");
+        self.emit(".L_tl_file_handle_eofs:");
+        self.emit("    .zero 8192");
+        self.emit(".L_tl_file_handle_last_ptrs:");
+        self.emit("    .zero 8192");
+        self.emit(".L_tl_file_handle_last_lens:");
+        self.emit("    .zero 8192");
+        self.emit(".L_tl_file_handle_last_eofs:");
+        self.emit("    .zero 8192");
         self.emit("");
     }
 
@@ -4146,12 +4231,77 @@ impl X86_64Backend {
     fn generate_windows_setup_instances_runtime_data(&mut self) {
         self.emit("    .section .rodata");
         self.emit(".L_tl_windows_setup_unsupported_msg:");
-        self.emit(
-            "    .ascii \"windows setup: SetupConfiguration enumeration is not implemented\"",
-        );
+        self.emit("    .ascii \"windows setup: SetupConfiguration is only supported on windows-x86_64 targets\"");
         self.emit(
             "    .set .L_tl_windows_setup_unsupported_msg_len, . - .L_tl_windows_setup_unsupported_msg",
         );
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.emit(".L_tl_windows_setup_unavailable_msg:");
+            self.emit("    .ascii \"windows setup: SetupConfiguration COM server is unavailable\"");
+            self.emit(
+                "    .set .L_tl_windows_setup_unavailable_msg_len, . - .L_tl_windows_setup_unavailable_msg",
+            );
+            self.emit(".L_tl_windows_setup_query_failed_msg:");
+            self.emit("    .ascii \"windows setup: SetupConfiguration query failed\"");
+            self.emit(
+                "    .set .L_tl_windows_setup_query_failed_msg_len, . - .L_tl_windows_setup_query_failed_msg",
+            );
+            self.emit("    .balign 8");
+            self.emit(".L_tl_windows_setup_clsid:");
+            self.emit("    .long 0x177f0c4a");
+            self.emit("    .short 0x1cd3");
+            self.emit("    .short 0x4de7");
+            self.emit("    .byte 0xa3, 0x2c, 0x71, 0xdb, 0xbb, 0x9f, 0xa3, 0x6d");
+            self.emit(".L_tl_windows_setup_iid_configuration2:");
+            self.emit("    .long 0x26aab78c");
+            self.emit("    .short 0x4a60");
+            self.emit("    .short 0x49d6");
+            self.emit("    .byte 0xaf, 0x3b, 0x3c, 0x35, 0xbc, 0x93, 0x36, 0x5d");
+            self.emit(".L_tl_windows_setup_iid_instance2:");
+            self.emit("    .long 0x89143c9a");
+            self.emit("    .short 0x05af");
+            self.emit("    .short 0x49b0");
+            self.emit("    .byte 0xb7, 0x17, 0x72, 0xe2, 0x18, 0xa2, 0x18, 0x5c");
+        }
+        self.emit("");
+    }
+
+    fn generate_windows_sdk_registry_install_runtime_data(&mut self) {
+        self.emit("    .section .rodata");
+        self.emit(".L_tl_windows_registry_unsupported_msg:");
+        self.emit("    .ascii \"windows registry: unsupported on non-Windows targets\"");
+        self.emit(
+            "    .set .L_tl_windows_registry_unsupported_msg_len, . - .L_tl_windows_registry_unsupported_msg",
+        );
+        self.emit(".L_tl_windows_sdk_registry_key_missing_msg:");
+        self.emit(
+            "    .ascii \"windows registry: Windows Kits Installed Roots key was not found\"",
+        );
+        self.emit(
+            "    .set .L_tl_windows_sdk_registry_key_missing_msg_len, . - .L_tl_windows_sdk_registry_key_missing_msg",
+        );
+        self.emit(".L_tl_windows_sdk_registry_root_missing_msg:");
+        self.emit("    .ascii \"windows registry: KitsRoot10 value was not found\"");
+        self.emit(
+            "    .set .L_tl_windows_sdk_registry_root_missing_msg_len, . - .L_tl_windows_sdk_registry_root_missing_msg",
+        );
+        self.emit(".L_tl_windows_sdk_registry_version_missing_msg:");
+        self.emit(
+            "    .ascii \"windows registry: Windows SDK registry contains no version subkeys\"",
+        );
+        self.emit(
+            "    .set .L_tl_windows_sdk_registry_version_missing_msg_len, . - .L_tl_windows_sdk_registry_version_missing_msg",
+        );
+        self.emit(".L_tl_windows_sdk_registry_query_failed_msg:");
+        self.emit("    .ascii \"windows registry: Windows SDK registry query failed\"");
+        self.emit(
+            "    .set .L_tl_windows_sdk_registry_query_failed_msg_len, . - .L_tl_windows_sdk_registry_query_failed_msg",
+        );
+        self.emit_utf16z_data(
+            ".L_tl_windows_sdk_registry_installed_roots_key",
+            "SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots",
+        );
+        self.emit_utf16z_data(".L_tl_windows_sdk_registry_kits_root10_value", "KitsRoot10");
         self.emit("");
     }
 
@@ -5180,6 +5330,9 @@ impl X86_64Backend {
 
         self.generate_file_open_status_runtime_function();
         self.generate_file_close_status_runtime_function();
+        self.generate_file_read_chunk_status_runtime_function();
+        self.generate_file_read_chunk_bytes_runtime_function();
+        self.generate_file_read_chunk_eof_runtime_function();
     }
 
     fn generate_file_open_status_runtime_function(&mut self) {
@@ -5247,6 +5400,14 @@ impl X86_64Backend {
         self.emit("    movq %r14, (%rcx,%rax,8)");
         self.emit("    leaq .L_tl_file_handle_states(%rip), %rcx");
         self.emit("    movq $1, (%rcx,%rax,8)");
+        self.emit("    leaq .L_tl_file_handle_eofs(%rip), %rcx");
+        self.emit("    movq $0, (%rcx,%rax,8)");
+        self.emit("    leaq .L_tl_file_handle_last_ptrs(%rip), %rcx");
+        self.emit("    movq $0, (%rcx,%rax,8)");
+        self.emit("    leaq .L_tl_file_handle_last_lens(%rip), %rcx");
+        self.emit("    movq $0, (%rcx,%rax,8)");
+        self.emit("    leaq .L_tl_file_handle_last_eofs(%rip), %rcx");
+        self.emit("    movq $0, (%rcx,%rax,8)");
         self.emit("    leaq 1(%rax), %rcx");
         self.emit("    movq %rcx, .L_tl_file_handle_next(%rip)");
         self.emit("    jmp .L_tl_file_open_status_return");
@@ -5306,6 +5467,147 @@ impl X86_64Backend {
         self.emit("");
     }
 
+    fn generate_file_read_chunk_status_runtime_function(&mut self) {
+        self.emit(&format!("{}:", FILE_READ_CHUNK_STATUS_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    push %r15");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq %rdi, %rbx");
+        self.emit("    movq %rsi, %r12");
+        self.emit("    cmpq $0, %r12");
+        self.emit("    jl .L_tl_file_read_chunk_status_invalid");
+        self.emit("    cmpq $1, %rbx");
+        self.emit("    jl .L_tl_file_read_chunk_status_unsupported");
+        self.emit("    cmpq $1024, %rbx");
+        self.emit("    jge .L_tl_file_read_chunk_status_unsupported");
+        self.emit("    leaq .L_tl_file_handle_states(%rip), %rcx");
+        self.emit("    movq (%rcx,%rbx,8), %rax");
+        self.emit("    cmpq $1, %rax");
+        self.emit("    jne .L_tl_file_read_chunk_status_unsupported");
+        self.emit("    leaq .L_tl_file_handle_modes(%rip), %rcx");
+        self.emit("    movq (%rcx,%rbx,8), %rax");
+        self.emit("    cmpq $0, %rax");
+        self.emit("    jne .L_tl_file_read_chunk_status_unsupported");
+        self.emit("    movq %r12, %rdi");
+        self.emit("    cmpq $0, %rdi");
+        self.emit("    jg .L_tl_file_read_chunk_status_alloc_ready");
+        self.emit("    movq $1, %rdi");
+        self.emit(".L_tl_file_read_chunk_status_alloc_ready:");
+        self.emit("    call tl_alloc");
+        self.emit("    movq %rax, %r14");
+        self.emit("    testq %r12, %r12");
+        self.emit("    jz .L_tl_file_read_chunk_status_zero");
+        self.emit("    leaq .L_tl_file_handle_fds(%rip), %rcx");
+        self.emit("    movq (%rcx,%rbx,8), %rdi");
+        self.emit("    movq %r14, %rsi");
+        self.emit("    movq %r12, %rdx");
+        self.emit("    xorq %rax, %rax");
+        self.emit("    syscall");
+        self.emit("    testq %rax, %rax");
+        self.emit("    js .L_tl_file_read_chunk_status_error_from_rax");
+        self.emit("    movq %rax, %r15");
+        self.emit("    leaq .L_tl_file_handle_last_ptrs(%rip), %rcx");
+        self.emit("    movq %r14, (%rcx,%rbx,8)");
+        self.emit("    leaq .L_tl_file_handle_last_lens(%rip), %rcx");
+        self.emit("    movq %r15, (%rcx,%rbx,8)");
+        self.emit("    testq %r15, %r15");
+        self.emit("    jz .L_tl_file_read_chunk_status_eof");
+        self.emit("    leaq .L_tl_file_handle_eofs(%rip), %rcx");
+        self.emit("    movq (%rcx,%rbx,8), %rax");
+        self.emit("    leaq .L_tl_file_handle_last_eofs(%rip), %rcx");
+        self.emit("    movq %rax, (%rcx,%rbx,8)");
+        self.emit("    xorq %rax, %rax");
+        self.emit("    jmp .L_tl_file_read_chunk_status_return");
+        self.emit(".L_tl_file_read_chunk_status_zero:");
+        self.emit("    leaq .L_tl_file_handle_last_ptrs(%rip), %rcx");
+        self.emit("    movq %r14, (%rcx,%rbx,8)");
+        self.emit("    leaq .L_tl_file_handle_last_lens(%rip), %rcx");
+        self.emit("    movq $0, (%rcx,%rbx,8)");
+        self.emit("    leaq .L_tl_file_handle_eofs(%rip), %rcx");
+        self.emit("    movq (%rcx,%rbx,8), %rax");
+        self.emit("    leaq .L_tl_file_handle_last_eofs(%rip), %rcx");
+        self.emit("    movq %rax, (%rcx,%rbx,8)");
+        self.emit("    xorq %rax, %rax");
+        self.emit("    jmp .L_tl_file_read_chunk_status_return");
+        self.emit(".L_tl_file_read_chunk_status_eof:");
+        self.emit("    leaq .L_tl_file_handle_eofs(%rip), %rcx");
+        self.emit("    movq $1, (%rcx,%rbx,8)");
+        self.emit("    leaq .L_tl_file_handle_last_eofs(%rip), %rcx");
+        self.emit("    movq $1, (%rcx,%rbx,8)");
+        self.emit("    xorq %rax, %rax");
+        self.emit("    jmp .L_tl_file_read_chunk_status_return");
+        self.emit(".L_tl_file_read_chunk_status_error_from_rax:");
+        self.emit("    negq %rax");
+        self.emit("    jmp .L_tl_file_read_chunk_status_return");
+        self.emit(".L_tl_file_read_chunk_status_invalid:");
+        self.emit("    movq $22, %rax");
+        self.emit("    jmp .L_tl_file_read_chunk_status_return");
+        self.emit(".L_tl_file_read_chunk_status_unsupported:");
+        self.emit("    movq $38, %rax");
+        self.emit(".L_tl_file_read_chunk_status_return:");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r15");
+        self.emit("    pop %r14");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_file_read_chunk_bytes_runtime_function(&mut self) {
+        self.emit(&format!("{}:", FILE_READ_CHUNK_BYTES_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq %rdi, %rbx");
+        self.emit("    xorq %r12, %r12");
+        self.emit("    xorq %r13, %r13");
+        self.emit("    cmpq $1, %rbx");
+        self.emit("    jl .L_tl_file_read_chunk_bytes_alloc");
+        self.emit("    cmpq $1024, %rbx");
+        self.emit("    jge .L_tl_file_read_chunk_bytes_alloc");
+        self.emit("    leaq .L_tl_file_handle_last_ptrs(%rip), %rcx");
+        self.emit("    movq (%rcx,%rbx,8), %r12");
+        self.emit("    leaq .L_tl_file_handle_last_lens(%rip), %rcx");
+        self.emit("    movq (%rcx,%rbx,8), %r13");
+        self.emit(".L_tl_file_read_chunk_bytes_alloc:");
+        self.emit("    movq $16, %rdi");
+        self.emit("    call tl_alloc");
+        self.emit("    movq %r12, 0(%rax)");
+        self.emit("    movq %r13, 8(%rax)");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_file_read_chunk_eof_runtime_function(&mut self) {
+        self.emit(&format!("{}:", FILE_READ_CHUNK_EOF_RUNTIME_SYMBOL));
+        self.emit("    movq $1, %rax");
+        self.emit("    cmpq $1, %rdi");
+        self.emit("    jl .L_tl_file_read_chunk_eof_return");
+        self.emit("    cmpq $1024, %rdi");
+        self.emit("    jge .L_tl_file_read_chunk_eof_return");
+        self.emit("    leaq .L_tl_file_handle_last_eofs(%rip), %rcx");
+        self.emit("    movq (%rcx,%rdi,8), %rax");
+        self.emit(".L_tl_file_read_chunk_eof_return:");
+        self.emit("    ret");
+        self.emit("");
+    }
+
     fn generate_windows_file_handle_runtime_functions(&mut self) {
         self.emit(&format!("{}:", FILE_OPEN_STATUS_RUNTIME_SYMBOL));
         self.emit("    movq $-38, %rax");
@@ -5313,6 +5615,31 @@ impl X86_64Backend {
         self.emit("");
         self.emit(&format!("{}:", FILE_CLOSE_STATUS_RUNTIME_SYMBOL));
         self.emit("    movq $38, %rax");
+        self.emit("    ret");
+        self.emit("");
+        self.emit(&format!("{}:", FILE_READ_CHUNK_STATUS_RUNTIME_SYMBOL));
+        self.emit("    movq $38, %rax");
+        self.emit("    ret");
+        self.emit("");
+        self.emit(&format!("{}:", FILE_READ_CHUNK_BYTES_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %r12");
+        self.emit("    sub $40, %rsp");
+        self.emit("    movq $1, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rax, %r12");
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %r12, 0(%rax)");
+        self.emit("    movq $0, 8(%rax)");
+        self.emit("    add $40, %rsp");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+        self.emit(&format!("{}:", FILE_READ_CHUNK_EOF_RUNTIME_SYMBOL));
+        self.emit("    movq $1, %rax");
         self.emit("    ret");
         self.emit("");
     }
@@ -6916,6 +7243,11 @@ impl X86_64Backend {
     fn generate_windows_setup_instances_runtime_functions(&mut self) {
         let arg0 = self.target.calling_convention().integer_arg_regs[0];
 
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.generate_windows_setup_instances_com_runtime_functions();
+            return;
+        }
+
         self.emit(&format!("{}:", WINDOWS_SETUP_INSTANCES_RUNTIME_SYMBOL));
         self.emit("    push %rbp");
         self.emit("    mov %rsp, %rbp");
@@ -6940,6 +7272,869 @@ impl X86_64Backend {
         self.emit("    pop %r13");
         self.emit("    pop %r12");
         self.emit("    mov %rbp, %rsp");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_windows_setup_instances_com_runtime_functions(&mut self) {
+        self.emit(&format!(
+            "    .globl {}",
+            WINDOWS_SETUP_INSTANCES_RUNTIME_SYMBOL
+        ));
+        self.emit(&format!("{}:", WINDOWS_SETUP_INSTANCES_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    push %r15");
+        self.emit("    sub $152, %rsp");
+        self.emit("    movq $0, -48(%rbp)");
+        self.emit("    movq $0, -56(%rbp)");
+        self.emit("    movq $0, -64(%rbp)");
+        self.emit("    movq $0, -72(%rbp)");
+        self.emit("    movq $0, -80(%rbp)");
+        self.emit("    movq $0, -88(%rbp)");
+        self.emit("    movq $0, -96(%rbp)");
+        self.emit("    movq $0, -104(%rbp)");
+        self.emit("    movq $0, -112(%rbp)");
+        self.emit("    movq $0, -120(%rbp)");
+        self.emit("    movq $0, -128(%rbp)");
+        self.emit("    movq $0, -136(%rbp)");
+        self.emit("    movq $0, -144(%rbp)");
+        self.emit("    movq $0, -152(%rbp)");
+        self.emit("    movq $0, -160(%rbp)");
+        self.emit("    movq $0, -168(%rbp)");
+        self.emit("    movq $0, -176(%rbp)");
+        self.emit("    movq $24, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq $0, 0(%rax)");
+        self.emit("    movq %rax, %r12");
+
+        self.emit("    xorq %rcx, %rcx");
+        self.emit("    xorq %rdx, %rdx");
+        self.emit_call("CoInitializeEx");
+        self.emit("    testl %eax, %eax");
+        self.emit("    jns .L_tl_windows_setup_coinitialized");
+        self.emit("    cmpl $-2147417850, %eax");
+        self.emit("    je .L_tl_windows_setup_after_coinit");
+        self.emit("    jmp .L_tl_windows_setup_query_failed");
+        self.emit(".L_tl_windows_setup_coinitialized:");
+        self.emit("    movq $1, -176(%rbp)");
+        self.emit(".L_tl_windows_setup_after_coinit:");
+
+        self.emit("    leaq .L_tl_windows_setup_clsid(%rip), %rcx");
+        self.emit("    xorq %rdx, %rdx");
+        self.emit("    movl $23, %r8d");
+        self.emit("    leaq .L_tl_windows_setup_iid_configuration2(%rip), %r9");
+        self.emit("    leaq -48(%rbp), %rax");
+        self.emit("    sub $48, %rsp");
+        self.emit("    movq %rax, 32(%rsp)");
+        self.emit("    call CoCreateInstance");
+        self.emit("    add $48, %rsp");
+        self.emit("    testl %eax, %eax");
+        self.emit("    js .L_tl_windows_setup_unavailable");
+
+        self.emit("    movq -48(%rbp), %rcx");
+        self.emit("    leaq -56(%rbp), %rdx");
+        self.emit("    movq (%rcx), %rax");
+        self.emit("    movq 48(%rax), %rax");
+        self.emit("    sub $32, %rsp");
+        self.emit("    call *%rax");
+        self.emit("    add $32, %rsp");
+        self.emit("    testl %eax, %eax");
+        self.emit("    js .L_tl_windows_setup_query_failed");
+
+        self.emit(".L_tl_windows_setup_next_instance:");
+        self.emit("    movq $0, -64(%rbp)");
+        self.emit("    movl $0, -128(%rbp)");
+        self.emit("    movq -56(%rbp), %rcx");
+        self.emit("    movl $1, %edx");
+        self.emit("    leaq -64(%rbp), %r8");
+        self.emit("    leaq -128(%rbp), %r9");
+        self.emit("    movq (%rcx), %rax");
+        self.emit("    movq 24(%rax), %rax");
+        self.emit("    sub $32, %rsp");
+        self.emit("    call *%rax");
+        self.emit("    add $32, %rsp");
+        self.emit("    testl %eax, %eax");
+        self.emit("    js .L_tl_windows_setup_query_failed");
+        self.emit("    cmpl $0, -128(%rbp)");
+        self.emit("    je .L_tl_windows_setup_success");
+
+        self.emit("    movq -64(%rbp), %rcx");
+        self.emit("    leaq .L_tl_windows_setup_iid_instance2(%rip), %rdx");
+        self.emit("    leaq -72(%rbp), %r8");
+        self.emit("    movq (%rcx), %rax");
+        self.emit("    movq 0(%rax), %rax");
+        self.emit("    sub $32, %rsp");
+        self.emit("    call *%rax");
+        self.emit("    add $32, %rsp");
+        self.emit("    testl %eax, %eax");
+        self.emit("    js .L_tl_windows_setup_query_failed");
+        self.emit("    movq -64(%rbp), %rcx");
+        self.emit_call(".L_tl_windows_setup_release_iface");
+        self.emit("    movq $0, -64(%rbp)");
+
+        self.emit("    movq -72(%rbp), %rcx");
+        self.emit("    leaq -96(%rbp), %rdx");
+        self.emit("    movq (%rcx), %rax");
+        self.emit("    movq 48(%rax), %rax");
+        self.emit("    sub $32, %rsp");
+        self.emit("    call *%rax");
+        self.emit("    add $32, %rsp");
+        self.emit("    testl %eax, %eax");
+        self.emit("    js .L_tl_windows_setup_query_failed");
+        self.emit("    movq -96(%rbp), %rcx");
+        self.emit_call(".L_tl_windows_setup_copy_bstr");
+        self.emit("    testq %rax, %rax");
+        self.emit("    jz .L_tl_windows_setup_query_failed");
+        self.emit("    movq %rax, -96(%rbp)");
+
+        self.emit("    movq -72(%rbp), %rcx");
+        self.emit("    leaq -104(%rbp), %rdx");
+        self.emit("    movq (%rcx), %rax");
+        self.emit("    movq 56(%rax), %rax");
+        self.emit("    sub $32, %rsp");
+        self.emit("    call *%rax");
+        self.emit("    add $32, %rsp");
+        self.emit("    testl %eax, %eax");
+        self.emit("    js .L_tl_windows_setup_query_failed");
+        self.emit("    movq -104(%rbp), %rcx");
+        self.emit_call(".L_tl_windows_setup_copy_bstr");
+        self.emit("    testq %rax, %rax");
+        self.emit("    jz .L_tl_windows_setup_query_failed");
+        self.emit("    movq %rax, -104(%rbp)");
+
+        self.emit("    movq -72(%rbp), %rcx");
+        self.emit("    xorq %rdx, %rdx");
+        self.emit("    leaq -112(%rbp), %r8");
+        self.emit("    movq (%rcx), %rax");
+        self.emit("    movq 64(%rax), %rax");
+        self.emit("    sub $32, %rsp");
+        self.emit("    call *%rax");
+        self.emit("    add $32, %rsp");
+        self.emit("    testl %eax, %eax");
+        self.emit("    js .L_tl_windows_setup_query_failed");
+        self.emit("    movq -112(%rbp), %rcx");
+        self.emit_call(".L_tl_windows_setup_copy_bstr");
+        self.emit("    testq %rax, %rax");
+        self.emit("    jz .L_tl_windows_setup_query_failed");
+        self.emit("    movq %rax, -112(%rbp)");
+
+        self.emit("    movq -72(%rbp), %rcx");
+        self.emit("    leaq -80(%rbp), %rdx");
+        self.emit("    movq (%rcx), %rax");
+        self.emit("    movq 104(%rax), %rax");
+        self.emit("    sub $32, %rsp");
+        self.emit("    call *%rax");
+        self.emit("    add $32, %rsp");
+        self.emit("    testl %eax, %eax");
+        self.emit("    js .L_tl_windows_setup_query_failed");
+        self.emit("    movq -80(%rbp), %rcx");
+        self.emit("    leaq -120(%rbp), %rdx");
+        self.emit("    movq (%rcx), %rax");
+        self.emit("    movq 24(%rax), %rax");
+        self.emit("    sub $32, %rsp");
+        self.emit("    call *%rax");
+        self.emit("    add $32, %rsp");
+        self.emit("    testl %eax, %eax");
+        self.emit("    js .L_tl_windows_setup_query_failed");
+        self.emit("    movq -120(%rbp), %rcx");
+        self.emit_call(".L_tl_windows_setup_copy_bstr");
+        self.emit("    testq %rax, %rax");
+        self.emit("    jz .L_tl_windows_setup_query_failed");
+        self.emit("    movq %rax, -120(%rbp)");
+        self.emit("    movq -80(%rbp), %rcx");
+        self.emit_call(".L_tl_windows_setup_release_iface");
+        self.emit("    movq $0, -80(%rbp)");
+
+        self.emit("    movq -72(%rbp), %rcx");
+        self.emit("    leaq -88(%rbp), %rdx");
+        self.emit("    movq (%rcx), %rax");
+        self.emit("    movq 96(%rax), %rax");
+        self.emit("    sub $32, %rsp");
+        self.emit("    call *%rax");
+        self.emit("    add $32, %rsp");
+        self.emit("    testl %eax, %eax");
+        self.emit("    js .L_tl_windows_setup_query_failed");
+        self.emit("    movq $24, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq $0, 0(%rax)");
+        self.emit("    movq %rax, %r15");
+        self.emit("    movq -88(%rbp), %rcx");
+        self.emit("    movl $1, %edx");
+        self.emit("    leaq -136(%rbp), %r8");
+        self.emit_call("SafeArrayGetLBound");
+        self.emit("    testl %eax, %eax");
+        self.emit("    js .L_tl_windows_setup_query_failed");
+        self.emit("    movq -88(%rbp), %rcx");
+        self.emit("    movl $1, %edx");
+        self.emit("    leaq -144(%rbp), %r8");
+        self.emit_call("SafeArrayGetUBound");
+        self.emit("    testl %eax, %eax");
+        self.emit("    js .L_tl_windows_setup_query_failed");
+        self.emit("    movslq -136(%rbp), %r13");
+        self.emit(".L_tl_windows_setup_package_loop:");
+        self.emit("    movslq -144(%rbp), %rax");
+        self.emit("    cmpq %rax, %r13");
+        self.emit("    jg .L_tl_windows_setup_packages_done");
+        self.emit("    movq $0, -152(%rbp)");
+        self.emit("    movq $0, -160(%rbp)");
+        self.emit("    movl %r13d, -136(%rbp)");
+        self.emit("    movq -88(%rbp), %rcx");
+        self.emit("    leaq -136(%rbp), %rdx");
+        self.emit("    leaq -152(%rbp), %r8");
+        self.emit_call("SafeArrayGetElement");
+        self.emit("    testl %eax, %eax");
+        self.emit("    js .L_tl_windows_setup_query_failed");
+        self.emit("    movq -152(%rbp), %rcx");
+        self.emit("    leaq -160(%rbp), %rdx");
+        self.emit("    movq (%rcx), %rax");
+        self.emit("    movq 24(%rax), %rax");
+        self.emit("    sub $32, %rsp");
+        self.emit("    call *%rax");
+        self.emit("    add $32, %rsp");
+        self.emit("    testl %eax, %eax");
+        self.emit("    js .L_tl_windows_setup_query_failed");
+        self.emit("    movq -160(%rbp), %rcx");
+        self.emit_call(".L_tl_windows_setup_copy_bstr");
+        self.emit("    testq %rax, %rax");
+        self.emit("    jz .L_tl_windows_setup_query_failed");
+        self.emit("    movq %rax, -160(%rbp)");
+        self.emit("    movq $24, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq $1, 0(%rax)");
+        self.emit("    movq -160(%rbp), %rdx");
+        self.emit("    movq %rdx, 8(%rax)");
+        self.emit("    movq %r15, 16(%rax)");
+        self.emit("    movq %rax, %r15");
+        self.emit("    movq -152(%rbp), %rcx");
+        self.emit_call(".L_tl_windows_setup_release_iface");
+        self.emit("    movq $0, -152(%rbp)");
+        self.emit("    incq %r13");
+        self.emit("    jmp .L_tl_windows_setup_package_loop");
+
+        self.emit(".L_tl_windows_setup_packages_done:");
+        self.emit("    movq -88(%rbp), %rcx");
+        self.emit_call("SafeArrayDestroy");
+        self.emit("    movq $0, -88(%rbp)");
+        self.emit("    movq $40, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq -96(%rbp), %rdx");
+        self.emit("    movq %rdx, 0(%rax)");
+        self.emit("    movq -104(%rbp), %rdx");
+        self.emit("    movq %rdx, 8(%rax)");
+        self.emit("    movq -112(%rbp), %rdx");
+        self.emit("    movq %rdx, 16(%rax)");
+        self.emit("    movq -120(%rbp), %rdx");
+        self.emit("    movq %rdx, 24(%rax)");
+        self.emit("    movq %r15, 32(%rax)");
+        self.emit("    movq %rax, %r14");
+        self.emit("    movq $24, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq $1, 0(%rax)");
+        self.emit("    movq %r14, 8(%rax)");
+        self.emit("    movq %r12, 16(%rax)");
+        self.emit("    movq %rax, %r12");
+        self.emit("    movq -72(%rbp), %rcx");
+        self.emit_call(".L_tl_windows_setup_release_iface");
+        self.emit("    movq $0, -72(%rbp)");
+        self.emit("    jmp .L_tl_windows_setup_next_instance");
+
+        self.emit(".L_tl_windows_setup_success:");
+        self.emit("    movq -56(%rbp), %rcx");
+        self.emit_call(".L_tl_windows_setup_release_iface");
+        self.emit("    movq $0, -56(%rbp)");
+        self.emit("    movq -48(%rbp), %rcx");
+        self.emit_call(".L_tl_windows_setup_release_iface");
+        self.emit("    movq $0, -48(%rbp)");
+        self.emit("    cmpq $0, -176(%rbp)");
+        self.emit("    je .L_tl_windows_setup_success_make_result");
+        self.emit_call("CoUninitialize");
+        self.emit("    movq $0, -176(%rbp)");
+        self.emit(".L_tl_windows_setup_success_make_result:");
+        self.emit("    movq %r12, %rcx");
+        self.emit_call(".L_tl_windows_setup_make_ok");
+        self.emit("    jmp .L_tl_windows_setup_epilogue");
+
+        self.emit(".L_tl_windows_setup_unavailable:");
+        self.emit("    movq $1, %r12");
+        self.emit("    leaq .L_tl_windows_setup_unavailable_msg(%rip), %r13");
+        self.emit("    movq $.L_tl_windows_setup_unavailable_msg_len, %r14");
+        self.emit("    jmp .L_tl_windows_setup_cleanup_error");
+        self.emit(".L_tl_windows_setup_query_failed:");
+        self.emit("    movq $2, %r12");
+        self.emit("    leaq .L_tl_windows_setup_query_failed_msg(%rip), %r13");
+        self.emit("    movq $.L_tl_windows_setup_query_failed_msg_len, %r14");
+        self.emit(".L_tl_windows_setup_cleanup_error:");
+        self.emit("    movq -152(%rbp), %rcx");
+        self.emit_call(".L_tl_windows_setup_release_iface");
+        self.emit("    movq -80(%rbp), %rcx");
+        self.emit_call(".L_tl_windows_setup_release_iface");
+        self.emit("    movq -72(%rbp), %rcx");
+        self.emit_call(".L_tl_windows_setup_release_iface");
+        self.emit("    movq -64(%rbp), %rcx");
+        self.emit_call(".L_tl_windows_setup_release_iface");
+        self.emit("    cmpq $0, -88(%rbp)");
+        self.emit("    je .L_tl_windows_setup_cleanup_interfaces");
+        self.emit("    movq -88(%rbp), %rcx");
+        self.emit_call("SafeArrayDestroy");
+        self.emit(".L_tl_windows_setup_cleanup_interfaces:");
+        self.emit("    movq -56(%rbp), %rcx");
+        self.emit_call(".L_tl_windows_setup_release_iface");
+        self.emit("    movq -48(%rbp), %rcx");
+        self.emit_call(".L_tl_windows_setup_release_iface");
+        self.emit("    cmpq $0, -176(%rbp)");
+        self.emit("    je .L_tl_windows_setup_make_error_result");
+        self.emit_call("CoUninitialize");
+        self.emit("    movq $0, -176(%rbp)");
+        self.emit(".L_tl_windows_setup_make_error_result:");
+        self.emit("    movq %r12, %rcx");
+        self.emit("    movq %r13, %rdx");
+        self.emit("    movq %r14, %r8");
+        self.emit_call(".L_tl_windows_setup_make_error");
+
+        self.emit(".L_tl_windows_setup_epilogue:");
+        self.emit("    add $152, %rsp");
+        self.emit("    pop %r15");
+        self.emit("    pop %r14");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+
+        self.generate_windows_setup_make_ok_runtime_function();
+        self.generate_windows_setup_make_error_runtime_function();
+        self.generate_windows_setup_empty_string_runtime_function();
+        self.generate_windows_setup_copy_bstr_runtime_function();
+        self.generate_windows_setup_release_iface_runtime_function();
+    }
+
+    fn generate_windows_setup_make_ok_runtime_function(&mut self) {
+        self.emit(".L_tl_windows_setup_make_ok:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq %rcx, %rbx");
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq $0, 0(%rax)");
+        self.emit("    movq %rbx, 8(%rax)");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_windows_setup_make_error_runtime_function(&mut self) {
+        self.emit(".L_tl_windows_setup_make_error:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    movq %rcx, %rbx");
+        self.emit("    movq %rdx, %r12");
+        self.emit("    movq %r8, %r13");
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %r12, 0(%rax)");
+        self.emit("    movq %r13, 8(%rax)");
+        self.emit("    movq %rax, %r14");
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rbx, 0(%rax)");
+        self.emit("    movq %r14, 8(%rax)");
+        self.emit("    movq %rax, %r14");
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq $1, 0(%rax)");
+        self.emit("    movq %r14, 8(%rax)");
+        self.emit("    pop %r14");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_windows_setup_empty_string_runtime_function(&mut self) {
+        self.emit(".L_tl_windows_setup_empty_string:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq $0, 0(%rax)");
+        self.emit("    movq $0, 8(%rax)");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_windows_setup_copy_bstr_runtime_function(&mut self) {
+        self.emit(".L_tl_windows_setup_copy_bstr:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    movq %rcx, %rbx");
+        self.emit("    testq %rbx, %rbx");
+        self.emit("    jz .L_tl_windows_setup_copy_bstr_empty");
+        self.emit("    movq %rbx, %rcx");
+        self.emit_call("SysStringLen");
+        self.emit("    movl %eax, %r12d");
+        self.emit("    testl %r12d, %r12d");
+        self.emit("    jz .L_tl_windows_setup_copy_bstr_free_empty");
+        self.emit("    movl $65001, %ecx");
+        self.emit("    xorq %rdx, %rdx");
+        self.emit("    movq %rbx, %r8");
+        self.emit("    movl %r12d, %r9d");
+        self.emit("    sub $64, %rsp");
+        self.emit("    movq $0, 32(%rsp)");
+        self.emit("    movq $0, 40(%rsp)");
+        self.emit("    movq $0, 48(%rsp)");
+        self.emit("    movq $0, 56(%rsp)");
+        self.emit("    call WideCharToMultiByte");
+        self.emit("    add $64, %rsp");
+        self.emit("    testl %eax, %eax");
+        self.emit("    jle .L_tl_windows_setup_copy_bstr_fail");
+        self.emit("    movslq %eax, %r13");
+        self.emit("    movq %r13, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rax, %r14");
+        self.emit("    movl $65001, %ecx");
+        self.emit("    xorq %rdx, %rdx");
+        self.emit("    movq %rbx, %r8");
+        self.emit("    movl %r12d, %r9d");
+        self.emit("    sub $64, %rsp");
+        self.emit("    movq %r14, 32(%rsp)");
+        self.emit("    movq %r13, 40(%rsp)");
+        self.emit("    movq $0, 48(%rsp)");
+        self.emit("    movq $0, 56(%rsp)");
+        self.emit("    call WideCharToMultiByte");
+        self.emit("    add $64, %rsp");
+        self.emit("    testl %eax, %eax");
+        self.emit("    jle .L_tl_windows_setup_copy_bstr_fail");
+        self.emit("    movq %rbx, %rcx");
+        self.emit_call("SysFreeString");
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %r14, 0(%rax)");
+        self.emit("    movq %r13, 8(%rax)");
+        self.emit("    jmp .L_tl_windows_setup_copy_bstr_done");
+        self.emit(".L_tl_windows_setup_copy_bstr_free_empty:");
+        self.emit("    movq %rbx, %rcx");
+        self.emit_call("SysFreeString");
+        self.emit(".L_tl_windows_setup_copy_bstr_empty:");
+        self.emit_call(".L_tl_windows_setup_empty_string");
+        self.emit("    jmp .L_tl_windows_setup_copy_bstr_done");
+        self.emit(".L_tl_windows_setup_copy_bstr_fail:");
+        self.emit("    movq %rbx, %rcx");
+        self.emit_call("SysFreeString");
+        self.emit("    xorq %rax, %rax");
+        self.emit(".L_tl_windows_setup_copy_bstr_done:");
+        self.emit("    pop %r14");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_windows_setup_release_iface_runtime_function(&mut self) {
+        self.emit(".L_tl_windows_setup_release_iface:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    testq %rcx, %rcx");
+        self.emit("    jz .L_tl_windows_setup_release_iface_done");
+        self.emit("    movq (%rcx), %rax");
+        self.emit("    movq 16(%rax), %rax");
+        self.emit("    sub $32, %rsp");
+        self.emit("    call *%rax");
+        self.emit("    add $32, %rsp");
+        self.emit(".L_tl_windows_setup_release_iface_done:");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_windows_sdk_registry_install_runtime_functions(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.generate_windows_sdk_registry_install_windows_runtime_function();
+        } else {
+            self.generate_windows_sdk_registry_install_unsupported_runtime_function();
+        }
+    }
+
+    fn generate_windows_sdk_registry_install_unsupported_runtime_function(&mut self) {
+        let arg0 = self.target.calling_convention().integer_arg_regs[0];
+
+        self.emit(&format!("{}:", WINDOWS_SDK_REGISTRY_INSTALL_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq $0, %r12");
+        self.emit("    leaq .L_tl_windows_registry_unsupported_msg(%rip), %r13");
+        self.emit("    movq $.L_tl_windows_registry_unsupported_msg_len, %r14");
+        self.emit(&format!("    movq $16, {}", arg0));
+        self.emit_call("tl_alloc");
+        self.emit("    movq %r13, 0(%rax)");
+        self.emit("    movq %r14, 8(%rax)");
+        self.emit("    movq %rax, %r13");
+        self.emit(&format!("    movq $16, {}", arg0));
+        self.emit_call("tl_alloc");
+        self.emit("    movq %r12, 0(%rax)");
+        self.emit("    movq %r13, 8(%rax)");
+        self.emit("    movq %rax, %r13");
+        self.emit(&format!("    movq $16, {}", arg0));
+        self.emit_call("tl_alloc");
+        self.emit("    movq $1, 0(%rax)");
+        self.emit("    movq %r13, 8(%rax)");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r14");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_windows_sdk_registry_install_windows_runtime_function(&mut self) {
+        self.emit(&format!("{}:", WINDOWS_SDK_REGISTRY_INSTALL_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    push %r15");
+        // Locals:
+        //   -48  HKEY handle
+        //   -56  DWORD byte/name length
+        //   -64  DWORD registry value type
+        //   -72  root UTF-16 buffer pointer
+        //   -96  RegEnumKeyExW name length
+        //   -104 best version WCHAR count
+        //   -112 current version WCHAR count
+        //   -704 current version buffer (260 WCHARs)
+        //   -1224 best version buffer (260 WCHARs)
+        self.emit("    sub $1192, %rsp");
+        self.emit("    xorq %rbx, %rbx");
+        self.emit("    movq $0, -48(%rbp)");
+        self.emit("    movq $0, -104(%rbp)");
+
+        // Open HKLM\SOFTWARE\Microsoft\Windows Kits\Installed Roots. Try the
+        // normal 64-bit view first, then the 32-bit registry view used by some
+        // Windows SDK installers.
+        self.emit("    movabsq $0xffffffff80000002, %rcx");
+        self.emit("    leaq .L_tl_windows_sdk_registry_installed_roots_key(%rip), %rdx");
+        self.emit("    xorq %r8, %r8");
+        self.emit("    movq $0x20019, %r9");
+        self.emit("    sub $48, %rsp");
+        self.emit("    leaq -48(%rbp), %rax");
+        self.emit("    movq %rax, 32(%rsp)");
+        self.emit("    call RegOpenKeyExW");
+        self.emit("    add $48, %rsp");
+        self.emit("    testl %eax, %eax");
+        self.emit("    jz .L_tl_windows_sdk_registry_opened");
+        self.emit("    movabsq $0xffffffff80000002, %rcx");
+        self.emit("    leaq .L_tl_windows_sdk_registry_installed_roots_key(%rip), %rdx");
+        self.emit("    xorq %r8, %r8");
+        self.emit("    movq $0x20219, %r9");
+        self.emit("    sub $48, %rsp");
+        self.emit("    leaq -48(%rbp), %rax");
+        self.emit("    movq %rax, 32(%rsp)");
+        self.emit("    call RegOpenKeyExW");
+        self.emit("    add $48, %rsp");
+        self.emit("    testl %eax, %eax");
+        self.emit("    jnz .L_tl_windows_sdk_registry_key_missing");
+        self.emit(".L_tl_windows_sdk_registry_opened:");
+        self.emit("    movq -48(%rbp), %rbx");
+
+        // Query the required byte count and type for KitsRoot10.
+        self.emit("    movq $0, -56(%rbp)");
+        self.emit("    movq $0, -64(%rbp)");
+        self.emit("    movq %rbx, %rcx");
+        self.emit("    leaq .L_tl_windows_sdk_registry_kits_root10_value(%rip), %rdx");
+        self.emit("    xorq %r8, %r8");
+        self.emit("    leaq -64(%rbp), %r9");
+        self.emit("    sub $48, %rsp");
+        self.emit("    movq $0, 32(%rsp)");
+        self.emit("    leaq -56(%rbp), %rax");
+        self.emit("    movq %rax, 40(%rsp)");
+        self.emit("    call RegQueryValueExW");
+        self.emit("    add $48, %rsp");
+        self.emit("    testl %eax, %eax");
+        self.emit("    jnz .L_tl_windows_sdk_registry_root_missing");
+        self.emit("    movl -64(%rbp), %eax");
+        self.emit("    cmpl $1, %eax");
+        self.emit("    je .L_tl_windows_sdk_registry_root_type_ok");
+        self.emit("    cmpl $2, %eax");
+        self.emit("    jne .L_tl_windows_sdk_registry_query_failed");
+        self.emit(".L_tl_windows_sdk_registry_root_type_ok:");
+        self.emit("    movl -56(%rbp), %r14d");
+        self.emit("    cmpq $2, %r14");
+        self.emit("    jl .L_tl_windows_sdk_registry_root_missing");
+        self.emit("    movq %r14, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rax, -72(%rbp)");
+
+        // Read KitsRoot10 into the allocated UTF-16 buffer.
+        self.emit("    movq %rbx, %rcx");
+        self.emit("    leaq .L_tl_windows_sdk_registry_kits_root10_value(%rip), %rdx");
+        self.emit("    xorq %r8, %r8");
+        self.emit("    leaq -64(%rbp), %r9");
+        self.emit("    sub $48, %rsp");
+        self.emit("    movq -72(%rbp), %rax");
+        self.emit("    movq %rax, 32(%rsp)");
+        self.emit("    leaq -56(%rbp), %rax");
+        self.emit("    movq %rax, 40(%rsp)");
+        self.emit("    call RegQueryValueExW");
+        self.emit("    add $48, %rsp");
+        self.emit("    testl %eax, %eax");
+        self.emit("    jnz .L_tl_windows_sdk_registry_query_failed");
+        self.emit("    movq -72(%rbp), %rcx");
+        self.emit("    movl -56(%rbp), %edx");
+        self.emit("    call .L_tl_windows_sdk_registry_wide_to_tl_string");
+        self.emit("    testq %rax, %rax");
+        self.emit("    jz .L_tl_windows_sdk_registry_query_failed");
+        self.emit("    movq %rax, %r12");
+
+        // Enumerate SDK version subkeys and keep the lexicographically largest
+        // version string. Windows 10/11 SDK version directories use fixed-width
+        // numeric segments, so this selects the newest installed SDK.
+        self.emit("    xorq %r15, %r15");
+        self.emit(".L_tl_windows_sdk_registry_enum_loop:");
+        self.emit("    movl $260, -96(%rbp)");
+        self.emit("    movq %rbx, %rcx");
+        self.emit("    movl %r15d, %edx");
+        self.emit("    leaq -704(%rbp), %r8");
+        self.emit("    leaq -96(%rbp), %r9");
+        self.emit("    sub $64, %rsp");
+        self.emit("    movq $0, 32(%rsp)");
+        self.emit("    movq $0, 40(%rsp)");
+        self.emit("    movq $0, 48(%rsp)");
+        self.emit("    movq $0, 56(%rsp)");
+        self.emit("    call RegEnumKeyExW");
+        self.emit("    add $64, %rsp");
+        self.emit("    testl %eax, %eax");
+        self.emit("    jz .L_tl_windows_sdk_registry_enum_item");
+        self.emit("    cmpl $259, %eax");
+        self.emit("    je .L_tl_windows_sdk_registry_enum_done");
+        self.emit("    jmp .L_tl_windows_sdk_registry_query_failed");
+        self.emit(".L_tl_windows_sdk_registry_enum_item:");
+        self.emit("    movl -96(%rbp), %eax");
+        self.emit("    testl %eax, %eax");
+        self.emit("    jle .L_tl_windows_sdk_registry_enum_next");
+        self.emit("    movq %rax, -112(%rbp)");
+        self.emit("    cmpq $0, -104(%rbp)");
+        self.emit("    je .L_tl_windows_sdk_registry_copy_best");
+        self.emit("    xorq %r10, %r10");
+        self.emit(".L_tl_windows_sdk_registry_compare_loop:");
+        self.emit("    cmpq -112(%rbp), %r10");
+        self.emit("    jge .L_tl_windows_sdk_registry_compare_prefix_done");
+        self.emit("    cmpq -104(%rbp), %r10");
+        self.emit("    jge .L_tl_windows_sdk_registry_compare_prefix_done");
+        self.emit("    movzwl -704(%rbp,%r10,2), %eax");
+        self.emit("    movzwl -1224(%rbp,%r10,2), %edx");
+        self.emit("    cmpl %edx, %eax");
+        self.emit("    ja .L_tl_windows_sdk_registry_copy_best");
+        self.emit("    jb .L_tl_windows_sdk_registry_enum_next");
+        self.emit("    incq %r10");
+        self.emit("    jmp .L_tl_windows_sdk_registry_compare_loop");
+        self.emit(".L_tl_windows_sdk_registry_compare_prefix_done:");
+        self.emit("    movq -112(%rbp), %rax");
+        self.emit("    cmpq -104(%rbp), %rax");
+        self.emit("    ja .L_tl_windows_sdk_registry_copy_best");
+        self.emit("    jmp .L_tl_windows_sdk_registry_enum_next");
+        self.emit(".L_tl_windows_sdk_registry_copy_best:");
+        self.emit("    movq -112(%rbp), %r11");
+        self.emit("    movq %r11, -104(%rbp)");
+        self.emit("    xorq %r10, %r10");
+        self.emit(".L_tl_windows_sdk_registry_copy_best_loop:");
+        self.emit("    cmpq %r11, %r10");
+        self.emit("    jge .L_tl_windows_sdk_registry_copy_best_done");
+        self.emit("    movw -704(%rbp,%r10,2), %ax");
+        self.emit("    movw %ax, -1224(%rbp,%r10,2)");
+        self.emit("    incq %r10");
+        self.emit("    jmp .L_tl_windows_sdk_registry_copy_best_loop");
+        self.emit(".L_tl_windows_sdk_registry_copy_best_done:");
+        self.emit("    movw $0, -1224(%rbp,%r11,2)");
+        self.emit(".L_tl_windows_sdk_registry_enum_next:");
+        self.emit("    incq %r15");
+        self.emit("    jmp .L_tl_windows_sdk_registry_enum_loop");
+        self.emit(".L_tl_windows_sdk_registry_enum_done:");
+        self.emit("    cmpq $0, -104(%rbp)");
+        self.emit("    je .L_tl_windows_sdk_registry_version_missing");
+        self.emit("    leaq -1224(%rbp), %rcx");
+        self.emit("    movq -104(%rbp), %rdx");
+        self.emit("    shlq $1, %rdx");
+        self.emit("    call .L_tl_windows_sdk_registry_wide_to_tl_string");
+        self.emit("    testq %rax, %rax");
+        self.emit("    jz .L_tl_windows_sdk_registry_query_failed");
+        self.emit("    movq %rax, %r13");
+        self.emit("    movq %rbx, %rcx");
+        self.emit_call("RegCloseKey");
+        self.emit("    xorq %rbx, %rbx");
+
+        // OkWindowsRegistrySdkInstall(WindowsRegistrySdkInstall(root, version)).
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %r12, 0(%rax)");
+        self.emit("    movq %r13, 8(%rax)");
+        self.emit("    movq %rax, %r12");
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq $0, 0(%rax)");
+        self.emit("    movq %r12, 8(%rax)");
+        self.emit("    jmp .L_tl_windows_sdk_registry_return");
+
+        self.emit(".L_tl_windows_sdk_registry_key_missing:");
+        self.emit("    movq $1, %r12");
+        self.emit("    leaq .L_tl_windows_sdk_registry_key_missing_msg(%rip), %r13");
+        self.emit("    movq $.L_tl_windows_sdk_registry_key_missing_msg_len, %r14");
+        self.emit("    jmp .L_tl_windows_sdk_registry_make_err");
+        self.emit(".L_tl_windows_sdk_registry_root_missing:");
+        self.emit("    movq $1, %r12");
+        self.emit("    leaq .L_tl_windows_sdk_registry_root_missing_msg(%rip), %r13");
+        self.emit("    movq $.L_tl_windows_sdk_registry_root_missing_msg_len, %r14");
+        self.emit("    jmp .L_tl_windows_sdk_registry_make_err");
+        self.emit(".L_tl_windows_sdk_registry_version_missing:");
+        self.emit("    movq $1, %r12");
+        self.emit("    leaq .L_tl_windows_sdk_registry_version_missing_msg(%rip), %r13");
+        self.emit("    movq $.L_tl_windows_sdk_registry_version_missing_msg_len, %r14");
+        self.emit("    jmp .L_tl_windows_sdk_registry_make_err");
+        self.emit(".L_tl_windows_sdk_registry_query_failed:");
+        self.emit("    movq $2, %r12");
+        self.emit("    leaq .L_tl_windows_sdk_registry_query_failed_msg(%rip), %r13");
+        self.emit("    movq $.L_tl_windows_sdk_registry_query_failed_msg_len, %r14");
+        self.emit("    jmp .L_tl_windows_sdk_registry_make_err");
+
+        // ErrWindowsRegistrySdkInstall(WindowsRegistry*(message)).
+        self.emit(".L_tl_windows_sdk_registry_make_err:");
+        self.emit("    testq %rbx, %rbx");
+        self.emit("    jz .L_tl_windows_sdk_registry_make_err_alloc");
+        self.emit("    movq %rbx, %rcx");
+        self.emit_call("RegCloseKey");
+        self.emit("    xorq %rbx, %rbx");
+        self.emit(".L_tl_windows_sdk_registry_make_err_alloc:");
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %r13, 0(%rax)");
+        self.emit("    movq %r14, 8(%rax)");
+        self.emit("    movq %rax, %r13");
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %r12, 0(%rax)");
+        self.emit("    movq %r13, 8(%rax)");
+        self.emit("    movq %rax, %r13");
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq $1, 0(%rax)");
+        self.emit("    movq %r13, 8(%rax)");
+
+        self.emit(".L_tl_windows_sdk_registry_return:");
+        self.emit("    add $1192, %rsp");
+        self.emit("    pop %r15");
+        self.emit("    pop %r14");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+
+        self.generate_windows_sdk_registry_wide_to_tl_string_runtime_function();
+    }
+
+    fn generate_windows_sdk_registry_wide_to_tl_string_runtime_function(&mut self) {
+        self.emit(".L_tl_windows_sdk_registry_wide_to_tl_string:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    push %r15");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq %rcx, %rbx");
+        self.emit("    movq %rdx, %r12");
+        self.emit("    testq %rbx, %rbx");
+        self.emit("    jz .L_tl_windows_sdk_registry_wide_error");
+        self.emit("    shrq $1, %r12");
+        self.emit("    cmpq $0, %r12");
+        self.emit("    je .L_tl_windows_sdk_registry_wide_empty");
+        self.emit("    movzwl -2(%rbx,%r12,2), %eax");
+        self.emit("    testw %ax, %ax");
+        self.emit("    jne .L_tl_windows_sdk_registry_wide_count_ready");
+        self.emit("    decq %r12");
+        self.emit(".L_tl_windows_sdk_registry_wide_count_ready:");
+        self.emit("    cmpq $0, %r12");
+        self.emit("    je .L_tl_windows_sdk_registry_wide_empty");
+        self.emit("    movl $65001, %ecx");
+        self.emit("    xorq %rdx, %rdx");
+        self.emit("    movq %rbx, %r8");
+        self.emit("    movl %r12d, %r9d");
+        self.emit("    sub $64, %rsp");
+        self.emit("    movq $0, 32(%rsp)");
+        self.emit("    movq $0, 40(%rsp)");
+        self.emit("    movq $0, 48(%rsp)");
+        self.emit("    movq $0, 56(%rsp)");
+        self.emit("    call WideCharToMultiByte");
+        self.emit("    add $64, %rsp");
+        self.emit("    testl %eax, %eax");
+        self.emit("    jle .L_tl_windows_sdk_registry_wide_error");
+        self.emit("    movslq %eax, %r13");
+        self.emit("    movq %r13, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rax, %r14");
+        self.emit("    movl $65001, %ecx");
+        self.emit("    xorq %rdx, %rdx");
+        self.emit("    movq %rbx, %r8");
+        self.emit("    movl %r12d, %r9d");
+        self.emit("    sub $64, %rsp");
+        self.emit("    movq %r14, 32(%rsp)");
+        self.emit("    movl %r13d, 40(%rsp)");
+        self.emit("    movq $0, 48(%rsp)");
+        self.emit("    movq $0, 56(%rsp)");
+        self.emit("    call WideCharToMultiByte");
+        self.emit("    add $64, %rsp");
+        self.emit("    testl %eax, %eax");
+        self.emit("    jle .L_tl_windows_sdk_registry_wide_error");
+        self.emit("    jmp .L_tl_windows_sdk_registry_wide_make_fat");
+        self.emit(".L_tl_windows_sdk_registry_wide_empty:");
+        self.emit("    xorq %r13, %r13");
+        self.emit("    xorq %r14, %r14");
+        self.emit(".L_tl_windows_sdk_registry_wide_make_fat:");
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %r14, 0(%rax)");
+        self.emit("    movq %r13, 8(%rax)");
+        self.emit("    jmp .L_tl_windows_sdk_registry_wide_return");
+        self.emit(".L_tl_windows_sdk_registry_wide_error:");
+        self.emit("    xorq %rax, %rax");
+        self.emit(".L_tl_windows_sdk_registry_wide_return:");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r15");
+        self.emit("    pop %r14");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
         self.emit("    pop %rbp");
         self.emit("    ret");
         self.emit("");
@@ -10165,6 +11360,12 @@ impl X86_64Backend {
             FILE_OPEN_STATUS_RUNTIME_SYMBOL.into()
         } else if name == FILE_CLOSE_STATUS_RUNTIME_SYMBOL && self.needs_file_handle_runtime {
             FILE_CLOSE_STATUS_RUNTIME_SYMBOL.into()
+        } else if name == FILE_READ_CHUNK_STATUS_RUNTIME_SYMBOL && self.needs_file_handle_runtime {
+            FILE_READ_CHUNK_STATUS_RUNTIME_SYMBOL.into()
+        } else if name == FILE_READ_CHUNK_BYTES_RUNTIME_SYMBOL && self.needs_file_handle_runtime {
+            FILE_READ_CHUNK_BYTES_RUNTIME_SYMBOL.into()
+        } else if name == FILE_READ_CHUNK_EOF_RUNTIME_SYMBOL && self.needs_file_handle_runtime {
+            FILE_READ_CHUNK_EOF_RUNTIME_SYMBOL.into()
         } else if name == CPUID_RUNTIME_SYMBOL && self.needs_cpuid_runtime {
             CPUID_RUNTIME_SYMBOL.into()
         } else if name == XGETBV_RUNTIME_SYMBOL && self.needs_xgetbv_runtime {
@@ -10190,6 +11391,10 @@ impl X86_64Backend {
             && self.needs_windows_setup_instances_runtime
         {
             WINDOWS_SETUP_INSTANCES_RUNTIME_SYMBOL.into()
+        } else if name == WINDOWS_SDK_REGISTRY_INSTALL_RUNTIME_SYMBOL
+            && self.needs_windows_sdk_registry_install_runtime
+        {
+            WINDOWS_SDK_REGISTRY_INSTALL_RUNTIME_SYMBOL.into()
         } else if name == READ_STDIN_LINE_RUNTIME_SYMBOL && self.needs_read_stdin_line_runtime {
             READ_STDIN_LINE_RUNTIME_SYMBOL.into()
         } else if name == READ_STDIN_BYTES_RUNTIME_SYMBOL && self.needs_read_stdin_bytes_runtime {
@@ -10499,7 +11704,14 @@ mod tests {
         assert_eq!(toolchain.dynamic_linker, None);
         assert_eq!(
             toolchain.libraries,
-            &["msvcrt.lib", "legacy_stdio_definitions.lib", "advapi32.lib"]
+            &[
+                "msvcrt.lib",
+                "legacy_stdio_definitions.lib",
+                "kernel32.lib",
+                "advapi32.lib",
+                "ole32.lib",
+                "oleaut32.lib"
+            ]
         );
     }
 
@@ -15326,7 +16538,94 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_windows_setup_instances_extern_emits_unsupported_runtime() {
+    fn test_compile_windows_sdk_registry_install_extern_emits_unsupported_runtime() {
+        let asm = compile_ok(
+            r#"
+            (extern tl_windows_sdk_registry_install : (-> i64))
+            (define (main) : i64 (tl_windows_sdk_registry_install))
+            "#,
+        );
+
+        assert!(
+            asm.contains("tl_windows_sdk_registry_install:"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("windows registry: unsupported on non-Windows targets"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("    .extern tl_windows_sdk_registry_install"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("_tl_tl_windows_sdk_registry_install"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_windows_target_windows_sdk_registry_install_emits_advapi_runtime() {
+        let asm = compile_ok_for_target(
+            r#"
+            (extern tl_windows_sdk_registry_install : (-> i64))
+            (define (main) : i64 (tl_windows_sdk_registry_install))
+            "#,
+            BackendTarget::windows_x86_64(),
+        );
+
+        assert!(
+            asm.contains("tl_windows_sdk_registry_install:"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("    .extern tl_windows_sdk_registry_install"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("_tl_tl_windows_sdk_registry_install"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(!asm.contains("    syscall"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        for symbol in [
+            "RegOpenKeyExW",
+            "RegQueryValueExW",
+            "RegEnumKeyExW",
+            "RegCloseKey",
+            "WideCharToMultiByte",
+        ] {
+            assert!(
+                asm.contains(&format!("    .extern {}", symbol)),
+                "missing extern {symbol}; asm:\n{}",
+                asm
+            );
+            assert!(
+                asm.contains(&format!("    call {}", symbol)),
+                "missing call {symbol}; asm:\n{}",
+                asm
+            );
+        }
+        for snippet in [
+            ".L_tl_windows_sdk_registry_installed_roots_key:",
+            ".L_tl_windows_sdk_registry_kits_root10_value:",
+            ".L_tl_windows_sdk_registry_wide_to_tl_string:",
+            "windows registry: Windows Kits Installed Roots key was not found",
+        ] {
+            assert!(asm.contains(snippet), "missing {snippet}; asm:\n{}", asm);
+        }
+    }
+
+    #[test]
+    fn test_compile_windows_setup_instances_extern_emits_non_windows_unsupported_runtime() {
         let asm = compile_ok(
             r#"
             (extern tl_windows_setup_instances : (-> i64))
@@ -15336,7 +16635,9 @@ mod tests {
 
         assert!(asm.contains("tl_windows_setup_instances:"), "asm:\n{}", asm);
         assert!(
-            asm.contains("windows setup: SetupConfiguration enumeration is not implemented"),
+            asm.contains(
+                "windows setup: SetupConfiguration is only supported on windows-x86_64 targets"
+            ),
             "asm:\n{}",
             asm
         );
@@ -15351,10 +16652,11 @@ mod tests {
             asm
         );
         assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        assert!(!asm.contains("CoCreateInstance"), "asm:\n{}", asm);
     }
 
     #[test]
-    fn test_windows_target_windows_setup_instances_extern_emits_unsupported_runtime() {
+    fn test_windows_target_windows_setup_instances_extern_emits_com_runtime() {
         let asm = compile_ok_for_target(
             r#"
             (extern tl_windows_setup_instances : (-> i64))
@@ -15365,7 +16667,12 @@ mod tests {
 
         assert!(asm.contains("tl_windows_setup_instances:"), "asm:\n{}", asm);
         assert!(
-            asm.contains("windows setup: SetupConfiguration enumeration is not implemented"),
+            asm.contains("windows setup: SetupConfiguration COM server is unavailable"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("windows setup: SetupConfiguration query failed"),
             "asm:\n{}",
             asm
         );
@@ -15381,6 +16688,33 @@ mod tests {
         );
         assert!(!asm.contains("    syscall"), "asm:\n{}", asm);
         assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        for symbol in [
+            "CoCreateInstance",
+            "CoInitializeEx",
+            "CoUninitialize",
+            "SafeArrayGetElement",
+            "SafeArrayGetLBound",
+            "SafeArrayGetUBound",
+            "SysFreeString",
+            "SysStringLen",
+            "WideCharToMultiByte",
+        ] {
+            assert!(
+                asm.contains(&format!("    .extern {}", symbol)),
+                "missing extern {symbol}; asm:\n{}",
+                asm
+            );
+        }
+        for snippet in [
+            "    call CoCreateInstance",
+            "    call SafeArrayGetElement",
+            "    call WideCharToMultiByte",
+            ".L_tl_windows_setup_copy_bstr:",
+            ".L_tl_windows_setup_make_ok:",
+            ".L_tl_windows_setup_release_iface:",
+        ] {
+            assert!(asm.contains(snippet), "missing {snippet}; asm:\n{}", asm);
+        }
     }
 
     #[test]
@@ -15609,7 +16943,11 @@ mod tests {
             r#"
             (define (main) : i64
               (let [handle : i64 (file-open-status "input.txt" 0)]
-                (+ handle (file-close-status handle))))
+                (+ handle
+                  (+ (file-read-chunk-status handle 4)
+                    (+ (string-length (file-read-chunk-bytes handle))
+                      (+ (if (file-read-chunk-eof? handle) 1 0)
+                         (file-close-status handle)))))))
             "#,
         );
 
@@ -15620,6 +16958,13 @@ mod tests {
             ".L_tl_file_handle_fds:",
             ".L_tl_file_handle_modes:",
             ".L_tl_file_handle_states:",
+            ".L_tl_file_handle_eofs:",
+            ".L_tl_file_handle_last_ptrs:",
+            ".L_tl_file_handle_last_lens:",
+            ".L_tl_file_handle_last_eofs:",
+            ".L_tl_file_read_chunk_status:",
+            ".L_tl_file_read_chunk_bytes:",
+            ".L_tl_file_read_chunk_eof:",
         ] {
             assert!(asm.contains(symbol), "asm:\n{}", asm);
         }
@@ -15630,6 +16975,21 @@ mod tests {
         );
         assert!(
             asm.contains("    call .L_tl_file_close_status"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("    call .L_tl_file_read_chunk_status"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("    call .L_tl_file_read_chunk_bytes"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("    call .L_tl_file_read_chunk_eof"),
             "asm:\n{}",
             asm
         );
@@ -15648,12 +17008,42 @@ mod tests {
             asm
         );
         assert!(
+            !asm.contains("_tl_.L_tl_file_read_chunk_status"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("_tl_.L_tl_file_read_chunk_bytes"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("_tl_.L_tl_file_read_chunk_eof"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
             !asm.contains("    .extern .L_tl_file_open_status"),
             "asm:\n{}",
             asm
         );
         assert!(
             !asm.contains("    .extern .L_tl_file_close_status"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("    .extern .L_tl_file_read_chunk_status"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("    .extern .L_tl_file_read_chunk_bytes"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("    .extern .L_tl_file_read_chunk_eof"),
             "asm:\n{}",
             asm
         );
@@ -15664,13 +17054,28 @@ mod tests {
         let asm = compile_ok_for_target(
             r#"
             (define (main) : i64
-              (+ (file-open-status "input.txt" 0) (file-close-status 1)))
+              (+ (file-open-status "input.txt" 0)
+                (+ (file-close-status 1)
+                  (+ (file-read-chunk-status 1 4)
+                    (+ (string-length (file-read-chunk-bytes 1))
+                       (if (file-read-chunk-eof? 1) 1 0))))))
             "#,
             BackendTarget::windows_x86_64(),
         );
 
         assert!(asm.contains(".L_tl_file_open_status:"), "asm:\n{}", asm);
         assert!(asm.contains(".L_tl_file_close_status:"), "asm:\n{}", asm);
+        assert!(
+            asm.contains(".L_tl_file_read_chunk_status:"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains(".L_tl_file_read_chunk_bytes:"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(asm.contains(".L_tl_file_read_chunk_eof:"), "asm:\n{}", asm);
         assert!(asm.contains("    movq $-38, %rax"), "asm:\n{}", asm);
         assert!(asm.contains("    movq $38, %rax"), "asm:\n{}", asm);
         assert!(
@@ -15693,6 +17098,21 @@ mod tests {
             "asm:\n{}",
             asm
         );
+        assert!(
+            !asm.contains("    .extern .L_tl_file_read_chunk_status"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("    .extern .L_tl_file_read_chunk_bytes"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("    .extern .L_tl_file_read_chunk_eof"),
+            "asm:\n{}",
+            asm
+        );
     }
 
     #[test]
@@ -15701,12 +17121,27 @@ mod tests {
             r#"
             (define (file-open-status [n : i64]) : i64 (+ n 1))
             (define (file-close-status) : i64 3)
-            (define (main) : i64 (+ (file-open-status 41) (file-close-status)))
+            (define (file-read-chunk-status [n : i64]) : i64 n)
+            (define (file-read-chunk-bytes) : i64 5)
+            (define (file-read-chunk-eof? [n : i64]) : i64 n)
+            (define (main) : i64
+              (+ (file-open-status 41)
+                (+ (file-close-status)
+                  (+ (file-read-chunk-status 7)
+                    (+ (file-read-chunk-bytes)
+                       (file-read-chunk-eof? 8))))))
             "#,
         );
 
         assert!(asm.contains("_tl_file_open_status:"), "asm:\n{}", asm);
         assert!(asm.contains("_tl_file_close_status:"), "asm:\n{}", asm);
+        assert!(asm.contains("_tl_file_read_chunk_status:"), "asm:\n{}", asm);
+        assert!(asm.contains("_tl_file_read_chunk_bytes:"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("_tl_file_read_chunk_eof_question:"),
+            "asm:\n{}",
+            asm
+        );
         assert!(
             asm.contains("    call _tl_file_open_status"),
             "asm:\n{}",
@@ -15717,8 +17152,28 @@ mod tests {
             "asm:\n{}",
             asm
         );
+        assert!(
+            asm.contains("    call _tl_file_read_chunk_status"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("    call _tl_file_read_chunk_bytes"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("    call _tl_file_read_chunk_eof_question"),
+            "asm:\n{}",
+            asm
+        );
         assert!(!asm.contains(".L_tl_file_open_status:"), "asm:\n{}", asm);
         assert!(!asm.contains(".L_tl_file_close_status:"), "asm:\n{}", asm);
+        assert!(
+            !asm.contains(".L_tl_file_read_chunk_status:"),
+            "asm:\n{}",
+            asm
+        );
     }
 
     #[test]

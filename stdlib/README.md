@@ -55,6 +55,8 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   plus conversion/iteration helpers `-from-array` / `-to-array` / `-extend` /
   `-reverse!` / `-sum` / `-contains?` (#1212). Import it with
   `(import "stdlib/vector.tl")`.
+- `windows_registry.tl`: narrow Windows Kits registry lookup used by SDK
+  discovery. Import it with `(import "stdlib/windows_registry.tl")`.
 - `windows_sdk.tl`: structured Windows SDK layout discovery helpers for future
   MSVC toolchain setup. Import it with `(import "stdlib/windows_sdk.tl")`.
 - `windows_setup.tl`: Visual Studio / Build Tools SetupConfiguration discovery
@@ -62,7 +64,7 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   `(import "stdlib/windows_setup.tl")`.
 - `msvc.tl`: MSVC tool discovery (`link.exe` + `PATH`/`LIB`/`INCLUDE` command
   environment) from a configured Developer Command Prompt; the newest-toolset
-  SetupConfiguration fallback is stubbed until #1015. Import it with
+  SetupConfiguration fallback is still wired separately by #855. Import it with
   `(import "stdlib/msvc.tl")`.
 
 ## Arena Allocation Policy
@@ -96,6 +98,7 @@ returned caller-owned values.
 | `try-file-exists?` | Returns `OkIoBool` for existing or expected missing paths; empty paths and hard probe failures return `ErrIoBool`. |
 | `try-append-file` | Appends through the recoverable runtime status helper. It preserves existing contents, creates missing files, does not allocate a concatenated temporary string, and uses best-effort host append semantics rather than truncating or rewriting the whole file. |
 | `file-open`, `file-close` | `file-open` returns `ResultIoFile` with an opaque runtime-managed `FileHandle` for `OpenRead`, `OpenWriteTruncate`, and `OpenWriteAppend`. The Linux runtime copies the path into active-arena storage for the host syscall and tracks handle state in a process-global table; Windows currently returns `IoUnsupported`. `file-close` releases a valid handle and returns `IoUnsupported` for invalid or already-closed handles. |
+| `file-read-chunk`, `file-read-bytes`, `file-read-eof?` | `file-read-chunk` reads up to the requested byte count from a read-mode `FileHandle` and returns `ResultIoRead` with active-arena `String` bytes plus the sticky EOF flag. Negative counts return `IoInvalidPath`; closed, invalid, write-only, and unsupported handles return `IoUnsupported`. The accessors are non-allocating field reads on `FileRead`. |
 | `read-file-or` | Convenience wrapper over `try-read-file`; returns the caller-provided `fallback` for every structured error. |
 | `append-file` | Panic-on-error convenience wrapper over `try-append-file`; preserves existing contents and creates missing files through host append mode. |
 | `file-nonempty?` | Convenience wrapper over `try-read-file`; allocates a temporary active-arena `String` through `read-file` only when the path exists. |
@@ -109,8 +112,9 @@ returned caller-owned values.
 | `random-*` helpers | Construct deterministic RNG state, draw/result aggregates, and weight-list cons nodes in the active arena. Draws are deterministic from caller-provided seeds and do not read host entropy. `random-system-seed` reads host entropy through the backend, normalizes the returned seed, and returns a `ResultSystemSeed` aggregate in the active arena; `random-from-system` constructs and returns a new `RandomState` aggregate in the active arena. |
 | `assert-*` helpers in `test.tl` | Non-allocating checks on success; failures call `panic` with the caller-provided message. |
 | `text-buf-*` helpers in `text_buf.tl` | Buffer chunks and rendered strings allocate in the active arena. Append helpers avoid concatenating the accumulated prefix until `text-buf-render`; `text-buf-clear`/`text-buf-reset` return a fresh empty immutable buffer value. |
-| `windows-sdk-*` helpers | SDK layout structs/errors allocate in the active arena. Environment discovery reads `WindowsSdkDir` / `WindowsSDKVersion`, constructs include/lib/bin path strings, and validates required directories with `try-file-exists?`. Registry probing currently returns a structured unavailable diagnostic until the narrow registry runtime primitive lands. |
-| `windows-setup-*` helpers | Construct and inspect Visual Studio setup metadata aggregates in the active arena. `windows-setup-instances` returns structured errors through the runtime hook on current targets; future successful enumeration results will allocate returned strings and list nodes in the active arena. |
+| `windows-registry-*` helpers | The SDK registry probe allocates returned root/version strings and result aggregates in the active arena. It reads only `HKLM\\SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots`, the `KitsRoot10` string value, and version subkeys; unsupported hosts and registry failures return structured errors. |
+| `windows-sdk-*` helpers | SDK layout structs/errors allocate in the active arena. Environment discovery reads `WindowsSdkDir` / `WindowsSDKVersion`, constructs include/lib/bin path strings, and validates required directories with `try-file-exists?`. Registry discovery uses the narrow `windows-registry-sdk-install` probe, then validates the same include/lib/bin layout before returning it. |
+| `windows-setup-*` helpers | Construct and inspect Visual Studio setup metadata aggregates in the active arena. `windows-setup-instances` returns structured unsupported/unavailable/query-failed errors when the runtime cannot enumerate SetupConfiguration. On Windows, successful enumeration allocates returned strings, package/component lists, and instance lists in the active arena. |
 
 The recoverable I/O API maps the runtime's integer status codes into the public
 `IoError` model. Common not-found, permission, invalid-path, interrupted, and
@@ -130,9 +134,10 @@ implementation lands incrementally:
 
 - **#1056** — implemented: opaque `FileHandle`, the `OpenMode` enum
   (`OpenRead`, `OpenWriteTruncate`, `OpenWriteAppend`), `file-open` returning
-  `ResultIoFile`, and `file-close`. v1 requires explicit close; there is no
-  implicit drop until #805.
-- **#1057** — `file-read-chunk` returning `ResultIoRead` / `FileRead` (a
+  `ResultIoFile`, and `file-close`. v1 requires explicit close; move-only
+  aggregate semantics are specified in `SPEC.md`, but implicit drop/close still
+  waits for scoped cleanup support.
+- **#1057** — implemented: `file-read-chunk` returning `ResultIoRead` / `FileRead` (a
   `String` payload plus a sticky EOF flag, mirroring `StdinRead`). Chunk bytes
   allocate in the active arena and stay `String`-typed until #807 adds a
   byte-slice split.

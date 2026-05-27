@@ -1892,9 +1892,10 @@ fn selfhost_test_planner_threads_opt_level_into_harness_compile() {
     }
 
     assert!(
-        opt_level_texts[0].contains(
-            "    addq %rbx, %rax\n    movq %rax, %r14\n    movq %r14, %rdi\n    call sink\n"
-        ),
+        opt_level_texts[0].contains("    movq $20, %rax\n")
+            && opt_level_texts[0].contains("    movq $22, %rax\n")
+            && opt_level_texts[0].contains("    addq %rbx, %rax\n")
+            && opt_level_texts[0].contains("    call sink\n"),
         "test opt-level 0 should leave lowered arithmetic in harness assembly:\n{}",
         opt_level_texts[0]
     );

@@ -60,6 +60,8 @@ Path exceptions:
 - **`benchmarks/**`** — comparison baselines may be C (and other languages); the
   benchmark harness exists to compare TypeLisp *against* clang-compiled C.
 - **`tools/vs-code-extension/**`** — editor-API client code.
+- **`scripts/fetch-stage0.ps1`** — Windows PowerShell bootstrap wrapper for
+  fetching the published stage0 compiler.
 
 Enforcement is staged (warn-then-enforce, like the lint gate
 [#1164](https://github.com/JoNil-Botta/typelisp/issues/1164)): the rule cannot
@@ -68,8 +70,8 @@ no-Rust cutover (#795, tracked under
 [#666](https://github.com/JoNil-Botta/typelisp/issues/666)); the C `cpuid` probe
 through [#1168](https://github.com/JoNil-Botta/typelisp/issues/1168). The
 `tests/public-tools/` Python runner was migrated by #1171. The
-`scripts/check-implementation-languages.sh` CI allowlist gate honors the two
-path exceptions, keeps the current Rust stage0 baselined, and fails on new
+`scripts/check-implementation-languages.sh` CI allowlist gate honors the path
+exceptions above, keeps the current Rust stage0 baselined, and fails on new
 unbaselined forbidden-language files.
 
 ## No Syntax Aliases Rule

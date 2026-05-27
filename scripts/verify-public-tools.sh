@@ -720,10 +720,102 @@ EOF
     assert_stderr_empty
     assert_contains "$out" "arg with spaces"
 
-    run_cmd selfhost-build-tool-package-rejected "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path typelisp.pkg
+    SELFHOST_PKG="$SELFHOST_PLANNER_DIR/pkg"
+    mkdir -p "$SELFHOST_PKG/src/nested/deeper" "$SELFHOST_PKG/vendor/math/src"
+    cat > "$SELFHOST_PKG/typelisp.pkg" <<'EOF'
+(package
+  (name "selfhost_pkg")
+  (version "0.1.0")
+  (entry "src/main.tl")
+  (dependencies
+    (math "vendor/math")))
+EOF
+    cat > "$SELFHOST_PKG/src/main.tl" <<'EOF'
+(import "pkg:math/src/lib.tl")
+(define (main) : i64 (add-one 41))
+EOF
+    cat > "$SELFHOST_PKG/vendor/math/src/lib.tl" <<'EOF'
+(define (add-one [x : i64]) : i64 (+ x 1))
+EOF
+    run_cmd selfhost-build-package "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --opt-level 0
+    assert_success
+    assert_stderr_empty
+    SELFHOST_PKG_ASM="$SELFHOST_PKG/target/typelisp/selfhost_pkg/selfhost_pkg.s"
+    [ -f "$SELFHOST_PKG_ASM" ] || fail "selfhost package build did not write assembly"
+    assert_contains "$out" "Generated: $SELFHOST_PKG_ASM"
+    assert_contains "$SELFHOST_PKG_ASM" "main:"
+    assert_contains "$SELFHOST_PKG_ASM" "add_one"
+
+    rm -rf "$SELFHOST_PKG/target"
+    run_cmd_cwd selfhost-build-package-discover "$SELFHOST_PKG/src/nested/deeper" "$SELFHOST_PLANNER_DIR/build-tool"
+    assert_success
+    assert_stderr_empty
+    [ -f "$SELFHOST_PKG_ASM" ] || fail "selfhost package discovery did not write assembly"
+    assert_contains "$out" "Generated:"
+
+    SELFHOST_BADPKG="$SELFHOST_PLANNER_DIR/badpkg"
+    mkdir -p "$SELFHOST_BADPKG/src" "$SELFHOST_BADPKG/vendor/math"
+    cat > "$SELFHOST_BADPKG/typelisp.pkg" <<'EOF'
+(package
+  (name "selfhost_parse_error")
+  (version "0.1.0")
+  (entry "src/main.tl")
+  (deps "not-yet"))
+EOF
+    run_cmd selfhost-build-package-parse-error "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_BADPKG/typelisp.pkg"
     assert_failure
     assert_stdout_empty
-    assert_contains "$err" "--manifest-path is handled by Rust typelisp build"
+    assert_contains "$err" "invalid package manifest"
+    assert_contains "$err" 'unknown manifest field `deps`'
+
+    cat > "$SELFHOST_BADPKG/typelisp.pkg" <<'EOF'
+(package
+  (name "selfhost_bad_pkg")
+  (version "0.1.0")
+  (entry "src/main.tl"))
+EOF
+    cat > "$SELFHOST_BADPKG/src/main.tl" <<'EOF'
+(import "pkg:math/src/lib.tl")
+(define (main) : i64 0)
+EOF
+    run_cmd selfhost-build-package-missing-alias "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_BADPKG/typelisp.pkg"
+    assert_failure
+    assert_stdout_empty
+    assert_contains "$err" "compiler-load: cannot read import"
+    assert_contains "$err" "pkg:math/src/lib.tl"
+
+    cat > "$SELFHOST_BADPKG/typelisp.pkg" <<'EOF'
+(package
+  (name "selfhost_missing_dep")
+  (version "0.1.0")
+  (entry "src/main.tl")
+  (dependencies
+    (math "vendor/math")))
+EOF
+    cat > "$SELFHOST_BADPKG/src/main.tl" <<'EOF'
+(import "pkg:math/src/missing.tl")
+(define (main) : i64 0)
+EOF
+    run_cmd selfhost-build-package-missing-dep "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_BADPKG/typelisp.pkg"
+    assert_failure
+    assert_stdout_empty
+    assert_contains "$err" "compiler-load: cannot read import"
+    assert_contains "$err" "vendor/math/src/missing.tl"
+
+    run_cmd selfhost-build-package-opt-duplicate "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --opt-level 1 --opt-level 2
+    assert_failure
+    assert_stdout_empty
+    assert_contains "$err" "build: --opt-level was provided more than once"
+
+    run_cmd selfhost-build-package-opt-invalid "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --opt-level 9
+    assert_failure
+    assert_stdout_empty
+    assert_contains "$err" "build: unknown opt level '9'; expected 0, 1, 2, or 3"
+
+    run_cmd selfhost-build-package-mode-staged "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --backend-mode avx2
+    assert_failure
+    assert_stdout_empty
+    assert_contains "$err" "build: --backend-mode avx2 requires the Rust build driver"
 
     run_cmd selfhost-run-tool-missing-target "$SELFHOST_PLANNER_DIR/run-tool" --direct "$PLANNER_SOURCE" --target
     assert_failure

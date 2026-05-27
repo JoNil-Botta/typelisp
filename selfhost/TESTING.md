@@ -148,11 +148,13 @@ removes the Rust-owned stage0 dependency.
 
 The current stage1 wrapper implements the source-file `compile`, `build`, `run`,
 `fmt`, and private `debug host-action` path directly enough for the Linux
-capability smoke and deterministic assembly gate. Seed-only public-tool
-exceptions remain:
-`doc`, `lint`, non-check `test`, package `build`, REPL/LSP, and full
-manifest/doc/integration gates still need either stage1-safe driver linking or
-dedicated wrapper routing before they can move off the seed compiler.
+capability smoke and deterministic assembly gate. Direct `selfhost/build.tl`
+package-build parity is covered by `scripts/verify-public-tools.sh`; top-level
+stage1 wrapper routing for package builds is still staged separately. Seed-only
+public-tool exceptions remain: `doc`, `lint`, non-check `test`, package build
+wrapper routing, REPL/LSP, and full manifest/doc/integration gates still need
+either stage1-safe driver linking or dedicated wrapper routing before they can
+move off the seed compiler.
 
 ### Staged backend primitives (#1114)
 

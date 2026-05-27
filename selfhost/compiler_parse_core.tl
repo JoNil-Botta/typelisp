@@ -146,14 +146,14 @@
     [_ false]))
 
 (define (compiler-parse-abstraction-policy-message) : String
-  "parse: TypeLisp does not support source-level generics or traits; use comptime-decl and comptime-generated concrete declarations instead (#893/#913/#483)")
+  "parse: TypeLisp does not support source-level generics or traits; use comptime-decl and comptime-generated concrete declarations instead (#893/#913/#970/#902)")
 
 (define (compiler-parse-generic-type-policy-message [name : String]) : String
   (string-append
     "parse: unknown type constructor "
     (string-append
       name
-      "; TypeLisp has no source-level generic type constructors; use comptime-decl and comptime-generated concrete declarations instead (#893/#913/#483)")))
+      "; TypeLisp has no source-level generic type constructors; use comptime-decl and comptime-generated concrete declarations instead (#893/#913/#970/#902)")))
 
 (define (compiler-parse-policy-form? [name : String]) : bool
   (if (string-eq name "defgeneric")

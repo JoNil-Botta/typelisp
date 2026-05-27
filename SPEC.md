@@ -382,7 +382,7 @@ Region-polymorphic functions (`(forall (r) ...)`) are deferred to a follow-up
 slice; every function type in v1 is region-agnostic and therefore cannot
 accept or produce region-tagged handles.
 
-### 3.10 Written reference types (syntax/model slice)
+### 3.10 Reference types and immutable borrow expressions (v1 design)
 
 The selfhost compiler accepts written lifetime-bearing reference type forms:
 
@@ -398,10 +398,152 @@ The selfhost compiler accepts written lifetime-bearing reference type forms:
 - The lifetime name is a bare identifier. It matches the current
   `(with-arena arena ...)` binder shape and the planned `(with-arena arena ...)`
   spelling.
-- This slice only defines syntax and type representation. Borrow expressions,
-  mutable exclusivity, returned-reference lifetime checks, and borrowed `str`
-  semantics are follow-up borrow-checker work. Source programs using reference
-  types are rejected before lowering until that work lands.
+- Immutable references are copyable pointer/provenance values. Copying an
+  immutable reference aliases the same immutable referent and does not move or
+  copy the referent.
+- Mutable reference expression syntax, mutable exclusivity, returned/stored
+  lifetime parameters, closure-capture details, non-lexical lifetimes, and
+  borrowed `str` semantics are follow-up borrow-checker work. Source programs
+  using reference types are rejected before lowering until the selfhost
+  borrow-checker slices land.
+
+Immutable borrow expressions are specified as:
+
+```lisp test=ignore name=immutable-borrow-expression-syntax reason="borrow expressions are specified before selfhost implementation"
+(& place)
+(& arena place)
+```
+
+- `(& place)` creates an immutable reference and lets the checker infer the
+  lifetime/arena name.
+- `(& arena place)` creates the same reference but requires the inferred
+  lifetime/arena name to be `arena`; otherwise the checker reports a type error.
+- Borrow expressions are explicit. There is no implicit conversion from `T` to
+  `(& arena T)` in v1.
+- The referent type is the place's value type. When the place type is an
+  arena-tagged wrapper `(in arena T)`, the reference type is `(& arena T)`, not
+  `(& arena (in arena T))`.
+
+**Borrowable places in lexical v1.** The checker accepts immutable borrows of
+places whose owner/provenance is statically known:
+
+- Local bindings and function parameters.
+- Aggregate field and element projections rooted in a borrowable place. In a
+  borrow expression, forms such as `(struct-get p field)`, `(tuple-ref t 0)`,
+  and `(array-ref items i)` are treated as projections, not by-value reads.
+- Arena-owned aggregate handles: `String`, dynamic-array, struct, enum, and
+  tuple handles allocated in the active arena. Handles with type `(in phase T)`
+  infer lifetime `phase`; untagged heap handles allocated in the default
+  program-lifetime arena infer the reserved lifetime name `program`.
+
+The checker rejects immutable borrows of arbitrary rvalues and temporaries whose
+owner cannot be named. Bind the value first if it should have a lexical owner.
+
+**Lifetime name selection.** For `(& place)`, the checker chooses the reference
+lifetime from the owner:
+
+- A local or parameter root named `x` gives references rooted in `x` the
+  lifetime name `x`.
+- A field, tuple element, fixed-array element, or dynamic-array element
+  projection inherits the lifetime name of its root place.
+- A region-tagged aggregate `(in phase T)` gives references to its owned storage
+  the lifetime name `phase`.
+- An untagged default-arena aggregate gives references to its owned storage the
+  reserved lifetime name `program`.
+
+For `(& name place)`, `name` must match the inferred lifetime. In function
+parameter types, lifetime names are signature-local binders for incoming
+references. Multiple parameters using the same name require the same caller
+lifetime. Returning or storing values tied to those names is deferred to #804.
+
+**Lexical v1 lifetime rule.** A borrow created in v1 lives until the end of the
+innermost lexical scope that contains the borrow expression. Lexical scopes are
+function/lambda bodies, `let` bodies, `with-arena` bodies, resource `with`
+bodies, and individual `match` arms; `begin` alone does not shorten the borrow.
+The checker does not shorten a borrow at last use. Non-lexical lifetimes are
+deferred to #810.
+
+While an immutable borrow is live, later move-only by-value moves, `set!`
+assignment to the borrowed place, and mutable borrows/mutations of the same
+place are rejected by the relevant move/borrow slices (#806/#1050). Multiple
+immutable borrows of the same place are allowed.
+
+**Invalid escapes in v1.** The checker rejects references that would outlive
+their owner or arena:
+
+- Returning a reference to a local, parameter stack slot, temporary, or scoped
+  arena unless a later #804 lifetime-parameter rule explicitly proves the return
+  is tied to an input or arena that outlives the call.
+- Assigning or storing a shorter-lived reference into a longer-lived local,
+  global, aggregate field, enum payload, tuple element, or array element.
+- Capturing a reference in a closure that may escape the reference's lexical
+  scope. Detailed closure borrow capture rules are deferred to #808.
+- Letting a reference to `(in inner T)` data escape the `with-arena inner`
+  body. Outer-arena references may be used inside inner arenas without gaining
+  the inner lifetime.
+
+Mutable reference creation and exclusivity are #806. Returned/stored lifetime
+parameters are #804. Closure capture detail is #808. Non-lexical lifetime
+shortening is #810.
+
+```lisp test=ignore name=borrow-local-param-ok reason="borrow expressions are specified before selfhost implementation"
+(define (takes-i64 [x : (& n i64)]) : i64
+  0)
+
+(define (borrow-param [n : i64]) : i64
+  (let [r (& n)]
+    (takes-i64 r)))
+```
+
+```lisp test=ignore name=borrow-field-element-ok reason="borrow expressions are specified before selfhost implementation"
+(defstruct Pair (left i64) (right i64))
+
+(define (takes-two [x : (& p i64)] [y : (& items i64)]) : i64
+  0)
+
+(define (borrow-places [p : Pair] [items : (Array i64)]) : i64
+  (let [left (& (struct-get p left))]
+    (let [first (& (array-ref items 0))]
+      (takes-two left first))))
+```
+
+```lisp test=ignore name=borrow-arena-owned-ok reason="borrow expressions are specified before selfhost implementation"
+(define (takes-string [s : (& phase String)]) : i64
+  0)
+
+(define (borrow-arena-owned) : i64
+  (with-arena phase
+    (let [s (int->string 42)]
+      (let [rs : (& phase String) (& phase s)]
+        (takes-string rs)))))
+```
+
+```lisp test=ignore name=borrow-reject-return-local reason="negative example for future immutable borrow checker"
+(define (bad-return-local [x : i64]) : (& x i64)
+  (& x))
+```
+
+```lisp test=ignore name=borrow-reject-temporary reason="negative example for future immutable borrow checker"
+(define (bad-temporary) : i64
+  (let [r (& (int->string 42))]
+    0))
+```
+
+```lisp test=ignore name=borrow-reject-arena-escape reason="negative example for future immutable borrow checker"
+(define (bad-arena-return) : (& phase String)
+  (with-arena phase
+    (let [s (int->string 42)]
+      (& phase s))))
+```
+
+```lisp test=ignore name=borrow-reject-closure-capture reason="negative example for future immutable borrow checker"
+(define (takes-captured [x : (& n i64)]) : i64
+  0)
+
+(define (bad-capture [n : i64]) : (-> i64)
+  (let [r (& n)]
+    (lambda () (takes-captured r))))
+```
 
 ---
 
@@ -916,7 +1058,7 @@ move-only values and as copies for copyable values:
   rejected.
 - Tuple, fixed-array, struct, and enum constructors. Constructor arguments are
   consumed by value unless their expression is copyable or explicitly borrowed
-  by a future reference form.
+  by a reference form once the relevant borrow-checker slice is implemented.
 - `array-set!` value arguments. A move-only element value would be consumed by
   the store, but v1 rejects arrays of move-only elements and stores of move-only
   elements until unique mutable access and element replacement cleanup are
@@ -930,8 +1072,9 @@ move-only values and as copies for copyable values:
 **Non-consuming use sites.** A non-consuming use may inspect a move-only value
 without moving it. In v1 these are limited to:
 
-- Future immutable borrow expressions and reference parameters once the borrow
-  syntax/provenance/escape slices land (#1033-#1035).
+- Immutable borrow expressions `(& place)` / `(& lifetime place)` and reference
+  parameters once the selfhost syntax/provenance/escape slices land
+  (#1033-#1035).
 - Compatibility inspection builtins whose current signatures are not yet
   reference-typed: `length`/`string-length`, `string-ref`/`char-at`,
   `string-eq`/`string=?`, `string->int`, `print-string`/`print-str`,
@@ -1937,13 +2080,15 @@ follow-ups through #1057 and #1058.
 ## 7. Memory model
 
 TypeLisp currently has syntax/type-model support for written reference types
-(`(& arena T)` and `(&mut arena T)`), but no source-level borrow expressions,
-implicit destructor, `drop`, `free`, or garbage-collector model. Section 4.6.2
-specifies move-only aggregate handle ownership for v1 source semantics, but the
-current Rust compiler may still accept aggregate copies until the selfhost move
-checker lands. The implementation uses pointer-sized handles for several
-aggregate values, but those handles are not checked references in the source
-language. Full ownership/borrowing work is a separate design track. The reserved
+(`(& arena T)` and `(&mut arena T)`) and SPEC-level immutable borrow expression
+rules (`(& place)` / `(& arena place)`), but the source-level borrow checker is
+not implemented yet. There is no implicit destructor, `drop`, `free`, or
+garbage-collector model. Section 4.6.2 specifies move-only aggregate handle
+ownership for v1 source semantics, but the current Rust compiler may still
+accept aggregate copies until the selfhost move checker lands. The
+implementation uses pointer-sized handles for several aggregate values, but
+those handles are not checked references in the source language. Full
+ownership/borrowing work is a separate design track. The reserved
 `(with ...)`
 form (§5.18) is explicit non-memory resource cleanup; it is not a general
 object destructor or heap reclamation mechanism. Raw pointers are the explicit
@@ -2696,6 +2841,7 @@ expr          ::= literal
                 | "(" "lambda" "(" param* ")" [":" type] expr ")"
                 | "(" "with-arena" ident expr+ ")"
                 | "(" "with" "(" resource-binding* ")" expr+ ")"
+                | borrow-expr                 ; specified, not implemented
                 | "(" "unsafe" expr+ ")"       ; specified, not implemented
                 | "(" "ptr-null" ":" ptr-type ")"      ; specified, not implemented
                 | "(" "ptr-null?" expr ")"             ; specified, not implemented
@@ -2711,6 +2857,13 @@ expr          ::= literal
                 | "(" "align-of" expr ")"
                 | "(" "offset-of" expr ident ")"
                 | "(" expr expr* ")"          ; function call
+
+borrow-expr   ::= "(" "&" borrow-place ")"
+                | "(" "&" ident borrow-place ")"
+borrow-place  ::= ident
+                | "(" "struct-get" borrow-place ident ")"
+                | "(" "tuple-ref" borrow-place integer ")"
+                | "(" "array-ref" borrow-place expr ")"
 
 binding       ::= "[" ident [":" type] expr "]"
 resource-binding ::= "[" ident expr expr "]"  ; name init cleanup-fn

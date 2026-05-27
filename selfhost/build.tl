@@ -540,9 +540,6 @@
 (define (build-cli-unknown-target [value : String]) : String
   (source-tool-cat3 "build: unknown target " value ""))
 
-(define (build-cli-unknown-mode [value : String]) : String
-  (source-tool-cat3 "build: unknown backend mode " value ""))
-
 (define (build-cli-unknown-opt-level [value : String]) : String
   (source-tool-cat3 "build: unknown opt level " value ""))
 
@@ -624,18 +621,20 @@
                 (ErrBuildCliConfig "build: --backend-mode requires a value")
                 (let
                   [value : String (arg (+ idx 1))]
-                  (if (source-tool-backend-mode-valid? value)
-                    (build-cli-parse-options
-                      (+ idx 2)
-                      count
-                      source
-                      has-source
-                      output
-                      has-output
-                      target
-                      stdlib-roots
-                      opt-level)
-                    (ErrBuildCliConfig (build-cli-unknown-mode value)))))
+                  (match (source-tool-backend-mode "build" value)
+                    [(OkSourceToolBackendMode)
+                      (build-cli-parse-options
+                        (+ idx 2)
+                        count
+                        source
+                        has-source
+                        output
+                        has-output
+                        target
+                        stdlib-roots
+                        opt-level)]
+                    [(ErrSourceToolBackendMode message)
+                      (ErrBuildCliConfig message)])))
               (if (string-eq current "--opt-level")
                 (if (>= (+ idx 1) count)
                   (ErrBuildCliConfig "build: --opt-level requires a value")

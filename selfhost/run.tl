@@ -198,9 +198,6 @@
 (define (run-cli-unknown-target [value : String]) : String
   (source-tool-cat3 "run: unknown target " value ""))
 
-(define (run-cli-unknown-mode [value : String]) : String
-  (source-tool-cat3 "run: unknown backend mode " value ""))
-
 (define (run-cli-unknown-opt-level [value : String]) : String
   (source-tool-cat3 "run: unknown opt level " value ""))
 
@@ -247,16 +244,17 @@
               (ErrRunCliConfig "run: --backend-mode requires a value")
               (let
                 [value : String (arg (+ idx 1))]
-                (if (source-tool-backend-mode-valid? value)
-                  (run-cli-parse-options
-                    (+ idx 2)
-                    count
-                    source
-                    target
-                    stdlib-roots
-                    runtime-args
-                    opt-level)
-                  (ErrRunCliConfig (run-cli-unknown-mode value)))))
+                (match (source-tool-backend-mode "run" value)
+                  [(OkSourceToolBackendMode)
+                    (run-cli-parse-options
+                      (+ idx 2)
+                      count
+                      source
+                      target
+                      stdlib-roots
+                      runtime-args
+                      opt-level)]
+                  [(ErrSourceToolBackendMode message) (ErrRunCliConfig message)])))
             (if (string-eq current "--opt-level")
               (if (>= (+ idx 1) count)
                 (ErrRunCliConfig "run: --opt-level requires a value")

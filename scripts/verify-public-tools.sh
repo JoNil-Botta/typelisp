@@ -699,7 +699,7 @@ if [ "$HOST_OS" = linux ]; then
     cat > "$PLANNER_SOURCE" <<'EOF'
 (define (main) : i64 23)
 EOF
-    run_cmd selfhost-build-tool "$SELFHOST_PLANNER_DIR/build-tool" --direct "$PLANNER_SOURCE" -o "$PLANNER_OUTPUT" --target linux-x86_64 --backend-mode avx2
+    run_cmd selfhost-build-tool "$SELFHOST_PLANNER_DIR/build-tool" --direct "$PLANNER_SOURCE" -o "$PLANNER_OUTPUT" --target linux-x86_64 --backend-mode scalar
     assert_success
     assert_stderr_empty
     assert_contains "$out" "Generated: $PLANNER_OUTPUT"
@@ -708,6 +708,11 @@ EOF
     assert_code 23
     assert_stderr_empty
 
+    run_cmd selfhost-build-tool-avx2-rejected "$SELFHOST_PLANNER_DIR/build-tool" --direct "$PLANNER_SOURCE" -o "$SELFHOST_PLANNER_DIR/with space/avx2 program" --target linux-x86_64 --backend-mode avx2
+    assert_failure
+    assert_stdout_empty
+    assert_contains "$err" "build: --backend-mode avx2 requires the Rust build driver until selfhost SIMD support (#1014)"
+
     PLANNER_RUN_SOURCE="$SELFHOST_PLANNER_DIR/with space/run file.tl"
     cat > "$PLANNER_RUN_SOURCE" <<'EOF'
 (define (main) : i64
@@ -715,10 +720,15 @@ EOF
     (print-string (arg 1))
     (if (string-eq (arg 2) "colon:arg") 13 2)))
 EOF
-    run_cmd selfhost-run-tool "$SELFHOST_PLANNER_DIR/run-tool" --direct "$PLANNER_RUN_SOURCE" --target linux-x86_64 --backend-mode avx512 --stdlib-root "$ROOT/stdlib" -- "arg with spaces" "colon:arg"
+    run_cmd selfhost-run-tool "$SELFHOST_PLANNER_DIR/run-tool" --direct "$PLANNER_RUN_SOURCE" --target linux-x86_64 --backend-mode scalar --stdlib-root "$ROOT/stdlib" -- "arg with spaces" "colon:arg"
     assert_code 13
     assert_stderr_empty
     assert_contains "$out" "arg with spaces"
+
+    run_cmd selfhost-run-tool-avx512-rejected "$SELFHOST_PLANNER_DIR/run-tool" --direct "$PLANNER_RUN_SOURCE" --target linux-x86_64 --backend-mode avx512 --stdlib-root "$ROOT/stdlib" -- "arg with spaces" "colon:arg"
+    assert_failure
+    assert_stdout_empty
+    assert_contains "$err" "run: --backend-mode avx512 requires the Rust run driver until selfhost SIMD support (#1014)"
 
     SELFHOST_PKG="$SELFHOST_PLANNER_DIR/pkg"
     mkdir -p "$SELFHOST_PKG/src/nested/deeper" "$SELFHOST_PKG/vendor/math/src"

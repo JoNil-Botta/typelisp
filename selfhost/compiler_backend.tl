@@ -1290,12 +1290,23 @@
   [function : String]
   [cond : CompilerIrValue]
   [true-label : String]
-  [false-label : String]) : ResultCompilerBackend
+  [false-label : String]
+  [fallthrough : CompilerBackendMaybeLabel]) : ResultCompilerBackend
   (match cond
     [(IrValueBool b)
       (if b
-        (OkCompilerBackend (compiler-backend-jump-label function true-label))
-        (OkCompilerBackend (compiler-backend-jump-label function false-label)))]
+        (OkCompilerBackend
+          (if (compiler-backend-jump-target-is-fallthrough?
+            true-label
+            fallthrough)
+            ""
+            (compiler-backend-jump-label function true-label)))
+        (OkCompilerBackend
+          (if (compiler-backend-jump-target-is-fallthrough?
+            false-label
+            fallthrough)
+            ""
+            (compiler-backend-jump-label function false-label))))]
     [_
       (match (compiler-backend-emit-load-value-with-plan
         assignments
@@ -1307,12 +1318,28 @@
               load
               (string-append
                 "    testq %rax, %rax\n"
-                (backend-cat5
-                  "    jne "
-                  (compiler-backend-asm-label function true-label)
-                  "\n    jmp "
-                  (compiler-backend-asm-label function false-label)
-                  "\n"))))]
+                (if (compiler-backend-jump-target-is-fallthrough?
+                  false-label
+                  fallthrough)
+                  (backend-cat4
+                    "    jne "
+                    (compiler-backend-asm-label function true-label)
+                    "\n"
+                    "")
+                  (if (compiler-backend-jump-target-is-fallthrough?
+                    true-label
+                    fallthrough)
+                    (backend-cat4
+                      "    je "
+                      (compiler-backend-asm-label function false-label)
+                      "\n"
+                      "")
+                    (backend-cat5
+                      "    jne "
+                      (compiler-backend-asm-label function true-label)
+                      "\n    jmp "
+                      (compiler-backend-asm-label function false-label)
+                      "\n"))))))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
 
 (define (compiler-backend-emit-bounds-check
@@ -2469,7 +2496,8 @@
           function
           cond
           true-label
-          false-label)
+          false-label
+          fallthrough)
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
@@ -10118,7 +10146,8 @@ tl_windows_setup_instances:
                       "peephole"
                       (IrValueVar 0)
                       "then"
-                      "else")
+                      "else"
+                      (CompilerBackendNoLabel))
                       [(OkCompilerBackend branch-asm)
                         (and
                           (compiler-backend-string-contains?
@@ -10170,7 +10199,9 @@ tl_windows_setup_instances:
     (compiler-backend-peephole-register-moves-ok?)
     (and
       (compiler-backend-peephole-asm-ok?)
-      (compiler-backend-fallthrough-jump-ok?))))
+      (and
+        (compiler-backend-fallthrough-jump-ok?)
+        (compiler-backend-branch-fallthrough-ok?)))))
 
 (define (compiler-backend-fallthrough-program) : CompilerIrProgram
   (IrProgram
@@ -10205,6 +10236,46 @@ tl_windows_setup_instances:
             asm
             "    jmp .Lmain_done\n")))]
     [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-branch-fallthrough-ok?) : bool
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-backend-peephole-assignments)]
+    (match (compiler-backend-emit-branch
+      assignments
+      "branch"
+      (IrValueVar 0)
+      "then"
+      "else"
+      (CompilerBackendSomeLabel "else"))
+      [(OkCompilerBackend false-fallthrough)
+        (match (compiler-backend-emit-branch
+          assignments
+          "branch"
+          (IrValueVar 0)
+          "then"
+          "else"
+          (CompilerBackendSomeLabel "then"))
+          [(OkCompilerBackend true-fallthrough)
+            (and
+              (compiler-backend-string-contains?
+                false-fallthrough
+                "    jne .Lbranch_then\n")
+              (and
+                (not
+                  (compiler-backend-string-contains?
+                    false-fallthrough
+                    "    jmp .Lbranch_else\n"))
+                (and
+                  (compiler-backend-string-contains?
+                    true-fallthrough
+                    "    je .Lbranch_else\n")
+                  (not
+                    (compiler-backend-string-contains?
+                      true-fallthrough
+                      "    jmp .Lbranch_then\n")))))]
+          [(ErrCompilerBackend _) false])]
+      [(ErrCompilerBackend _) false])))
 
 (define (compiler-backend-phi-same-home-assignments) : CompilerRegAssignmentList
   (CompilerRegAssignmentCons

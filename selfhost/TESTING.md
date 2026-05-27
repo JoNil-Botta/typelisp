@@ -155,16 +155,23 @@ the no-Rust gate skips it (only there — the Rust-built `Test` job still runs i
   `stdlib/tests/foo_api.tl|42|-|-|-|requires-stage0-symbol:tl_foo`.
 - `scripts/verify-inline-tests.sh`: add a directive comment near the top of the
   inline-test file: `;; requires-stage0-symbol: tl_foo`.
+- `scripts/verify-integration.sh`: add an optional seventh manifest field to
+  the native integration row, e.g.
+  `foo_runtime|tests/integration/foo_runtime.tl|42|-|-|-|requires-stage0-symbol:tl_foo`.
+  Use a comma-separated marker when one row may fail on any of several staged
+  symbols.
 
 A marked test is skipped **only** when its build fails and `<name>` appears in the
 build/typecheck output (the undefined-symbol signal); any other build failure
 still fails the gate, and unmarked tests are unaffected. Once the published
 stage0 provides the symbol the marked test builds and runs normally (with a
-"drop the marker" notice from `verify-stdlib.sh`).
+"drop the marker" notice from the manifest-based verifiers).
 
-Workflow: introduce the primitive + a marked test in one PR → merge → let #659
-republish `stage0-latest` → drop the `requires-stage0-symbol` marker in a
-follow-up.
+Workflow: introduce the primitive + marked stdlib, inline, or native integration
+coverage in one PR, merge, let #659 republish `stage0-latest`, then drop the
+`requires-stage0-symbol` marker after the marked row runs normally. Native
+integration coverage no longer needs to wait for a separate post-republish
+follow-up just because the manifest could not express the staged symbol.
 
 For new selfhost tests:
 

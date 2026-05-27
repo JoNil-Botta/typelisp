@@ -37,6 +37,7 @@ const ENV_VAR_VALUE_RUNTIME_SYMBOL: &str = ".L_tl_env_var_value";
 const ENV_PATH_SEPARATOR_RUNTIME_SYMBOL: &str = ".L_tl_env_path_separator";
 const PROCESS_OUTPUT_RUNTIME_SYMBOL: &str = "tl_process_output";
 const WINDOWS_SETUP_INSTANCES_RUNTIME_SYMBOL: &str = "tl_windows_setup_instances";
+const WINDOWS_SDK_REGISTRY_INSTALL_RUNTIME_SYMBOL: &str = "tl_windows_sdk_registry_install";
 const READ_STDIN_LINE_RUNTIME_SYMBOL: &str = ".L_tl_read_stdin_line";
 const READ_STDIN_BYTES_RUNTIME_SYMBOL: &str = ".L_tl_read_stdin_bytes";
 const STDIN_EOF_RUNTIME_SYMBOL: &str = ".L_tl_stdin_eof";
@@ -509,6 +510,11 @@ pub struct X86_64Backend {
     /// SetupConfiguration hook. Current targets return a structured unsupported
     /// result until the Windows COM enumerator lands.
     needs_windows_setup_instances_runtime: bool,
+    /// Whether the program references stdlib/windows_registry.tl's narrow
+    /// Windows SDK registry hook. Windows targets call advapi32 to read
+    /// KitsRoot10 and enumerate SDK version subkeys; other targets return a
+    /// structured unsupported result.
+    needs_windows_sdk_registry_install_runtime: bool,
     /// Whether the program references stdin helpers. The read helpers allocate
     /// heap Strings and update a backend-owned EOF flag; `stdin-eof?` reads that
     /// flag; `flush-stdout` is a target-specific stdout flush/no-op helper.
@@ -1800,7 +1806,7 @@ fn block_successors(block: &BasicBlock) -> Vec<Label> {
 }
 
 /// Eliminate SSA `Phi` nodes by converting them to copies in predecessor
-/// blocks (the classic "phi → moves in predecessors" lowering).
+/// blocks (the classic "phi ? moves in predecessors" lowering).
 ///
 /// A `Phi { dst, incoming: [(val, src_label), ..] }` at the head of a merge
 /// block selects `val` when control arrives from the predecessor associated
@@ -2032,6 +2038,7 @@ impl X86_64Backend {
             needs_env_path_separator_runtime: false,
             needs_process_output_runtime: false,
             needs_windows_setup_instances_runtime: false,
+            needs_windows_sdk_registry_install_runtime: false,
             needs_read_stdin_line_runtime: false,
             needs_read_stdin_bytes_runtime: false,
             needs_stdin_eof_runtime: false,
@@ -2107,6 +2114,8 @@ impl X86_64Backend {
         self.needs_process_output_runtime = Self::needs_process_output_runtime(program);
         self.needs_windows_setup_instances_runtime =
             Self::needs_windows_setup_instances_runtime(program);
+        self.needs_windows_sdk_registry_install_runtime =
+            Self::needs_windows_sdk_registry_install_runtime(program);
         self.needs_read_stdin_line_runtime = Self::needs_read_stdin_line_runtime(program);
         self.needs_read_stdin_bytes_runtime = Self::needs_read_stdin_bytes_runtime(program);
         self.needs_stdin_eof_runtime = Self::needs_stdin_eof_runtime(program);
@@ -2144,6 +2153,7 @@ impl X86_64Backend {
             || self.needs_env_path_separator_runtime
             || self.needs_process_output_runtime
             || self.needs_windows_setup_instances_runtime
+            || self.needs_windows_sdk_registry_install_runtime
             || self.needs_read_stdin_line_runtime
             || self.needs_read_stdin_bytes_runtime
             || self.needs_random_system_seed_runtime;
@@ -2238,6 +2248,9 @@ impl X86_64Backend {
         if self.needs_windows_setup_instances_runtime {
             self.generate_windows_setup_instances_runtime_data();
         }
+        if self.needs_windows_sdk_registry_install_runtime {
+            self.generate_windows_sdk_registry_install_runtime_data();
+        }
         if self.needs_random_system_seed_runtime {
             self.generate_random_system_seed_runtime_data();
         }
@@ -2301,6 +2314,8 @@ impl X86_64Backend {
                 || (self.needs_process_output_runtime && symbol == PROCESS_OUTPUT_RUNTIME_SYMBOL)
                 || (self.needs_windows_setup_instances_runtime
                     && symbol == WINDOWS_SETUP_INSTANCES_RUNTIME_SYMBOL)
+                || (self.needs_windows_sdk_registry_install_runtime
+                    && symbol == WINDOWS_SDK_REGISTRY_INSTALL_RUNTIME_SYMBOL)
                 || (self.needs_read_stdin_line_runtime && symbol == READ_STDIN_LINE_RUNTIME_SYMBOL)
                 || (self.needs_read_stdin_bytes_runtime
                     && symbol == READ_STDIN_BYTES_RUNTIME_SYMBOL)
@@ -2412,6 +2427,9 @@ impl X86_64Backend {
         }
         if self.needs_windows_setup_instances_runtime {
             self.generate_windows_setup_instances_runtime_functions();
+        }
+        if self.needs_windows_sdk_registry_install_runtime {
+            self.generate_windows_sdk_registry_install_runtime_functions();
         }
         if self.needs_read_stdin_line_runtime {
             self.generate_read_stdin_line_runtime_functions();
@@ -2621,6 +2639,17 @@ impl X86_64Backend {
         }
         if self.needs_random_system_seed_runtime {
             externs.insert("SystemFunction036");
+        }
+        if self.needs_windows_sdk_registry_install_runtime {
+            for symbol in [
+                "RegCloseKey",
+                "RegEnumKeyExW",
+                "RegOpenKeyExW",
+                "RegQueryValueExW",
+                "WideCharToMultiByte",
+            ] {
+                externs.insert(symbol);
+            }
         }
         if self.needs_process_output_runtime {
             for symbol in [
@@ -3115,6 +3144,10 @@ impl X86_64Backend {
 
     fn needs_windows_setup_instances_runtime(program: &Program) -> bool {
         Self::needs_named_runtime(program, WINDOWS_SETUP_INSTANCES_RUNTIME_SYMBOL)
+    }
+
+    fn needs_windows_sdk_registry_install_runtime(program: &Program) -> bool {
+        Self::needs_named_runtime(program, WINDOWS_SDK_REGISTRY_INSTALL_RUNTIME_SYMBOL)
     }
 
     fn needs_random_system_seed_runtime(program: &Program) -> bool {
@@ -3849,6 +3882,14 @@ impl X86_64Backend {
         out
     }
 
+    fn emit_utf16z_data(&mut self, label: &str, text: &str) {
+        self.emit(&format!("{}:", label));
+        for unit in text.encode_utf16() {
+            self.emit(&format!("    .word {}", unit));
+        }
+        self.emit("    .word 0");
+    }
+
     /// Emit the self-contained bump allocator `tl_alloc(size) -> ptr`.
     ///
     /// ABI (System V): the byte count arrives in `%rdi`, the returned pointer
@@ -4222,6 +4263,45 @@ impl X86_64Backend {
             self.emit("    .short 0x49b0");
             self.emit("    .byte 0xb7, 0x17, 0x72, 0xe2, 0x18, 0xa2, 0x18, 0x5c");
         }
+        self.emit("");
+    }
+
+    fn generate_windows_sdk_registry_install_runtime_data(&mut self) {
+        self.emit("    .section .rodata");
+        self.emit(".L_tl_windows_registry_unsupported_msg:");
+        self.emit("    .ascii \"windows registry: unsupported on non-Windows targets\"");
+        self.emit(
+            "    .set .L_tl_windows_registry_unsupported_msg_len, . - .L_tl_windows_registry_unsupported_msg",
+        );
+        self.emit(".L_tl_windows_sdk_registry_key_missing_msg:");
+        self.emit(
+            "    .ascii \"windows registry: Windows Kits Installed Roots key was not found\"",
+        );
+        self.emit(
+            "    .set .L_tl_windows_sdk_registry_key_missing_msg_len, . - .L_tl_windows_sdk_registry_key_missing_msg",
+        );
+        self.emit(".L_tl_windows_sdk_registry_root_missing_msg:");
+        self.emit("    .ascii \"windows registry: KitsRoot10 value was not found\"");
+        self.emit(
+            "    .set .L_tl_windows_sdk_registry_root_missing_msg_len, . - .L_tl_windows_sdk_registry_root_missing_msg",
+        );
+        self.emit(".L_tl_windows_sdk_registry_version_missing_msg:");
+        self.emit(
+            "    .ascii \"windows registry: Windows SDK registry contains no version subkeys\"",
+        );
+        self.emit(
+            "    .set .L_tl_windows_sdk_registry_version_missing_msg_len, . - .L_tl_windows_sdk_registry_version_missing_msg",
+        );
+        self.emit(".L_tl_windows_sdk_registry_query_failed_msg:");
+        self.emit("    .ascii \"windows registry: Windows SDK registry query failed\"");
+        self.emit(
+            "    .set .L_tl_windows_sdk_registry_query_failed_msg_len, . - .L_tl_windows_sdk_registry_query_failed_msg",
+        );
+        self.emit_utf16z_data(
+            ".L_tl_windows_sdk_registry_installed_roots_key",
+            "SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots",
+        );
+        self.emit_utf16z_data(".L_tl_windows_sdk_registry_kits_root10_value", "KitsRoot10");
         self.emit("");
     }
 
@@ -7690,6 +7770,376 @@ impl X86_64Backend {
         self.emit("");
     }
 
+    fn generate_windows_sdk_registry_install_runtime_functions(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.generate_windows_sdk_registry_install_windows_runtime_function();
+        } else {
+            self.generate_windows_sdk_registry_install_unsupported_runtime_function();
+        }
+    }
+
+    fn generate_windows_sdk_registry_install_unsupported_runtime_function(&mut self) {
+        let arg0 = self.target.calling_convention().integer_arg_regs[0];
+
+        self.emit(&format!("{}:", WINDOWS_SDK_REGISTRY_INSTALL_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq $0, %r12");
+        self.emit("    leaq .L_tl_windows_registry_unsupported_msg(%rip), %r13");
+        self.emit("    movq $.L_tl_windows_registry_unsupported_msg_len, %r14");
+        self.emit(&format!("    movq $16, {}", arg0));
+        self.emit_call("tl_alloc");
+        self.emit("    movq %r13, 0(%rax)");
+        self.emit("    movq %r14, 8(%rax)");
+        self.emit("    movq %rax, %r13");
+        self.emit(&format!("    movq $16, {}", arg0));
+        self.emit_call("tl_alloc");
+        self.emit("    movq %r12, 0(%rax)");
+        self.emit("    movq %r13, 8(%rax)");
+        self.emit("    movq %rax, %r13");
+        self.emit(&format!("    movq $16, {}", arg0));
+        self.emit_call("tl_alloc");
+        self.emit("    movq $1, 0(%rax)");
+        self.emit("    movq %r13, 8(%rax)");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r14");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    fn generate_windows_sdk_registry_install_windows_runtime_function(&mut self) {
+        self.emit(&format!("{}:", WINDOWS_SDK_REGISTRY_INSTALL_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    push %r15");
+        // Locals:
+        //   -48  HKEY handle
+        //   -56  DWORD byte/name length
+        //   -64  DWORD registry value type
+        //   -72  root UTF-16 buffer pointer
+        //   -96  RegEnumKeyExW name length
+        //   -104 best version WCHAR count
+        //   -112 current version WCHAR count
+        //   -704 current version buffer (260 WCHARs)
+        //   -1224 best version buffer (260 WCHARs)
+        self.emit("    sub $1192, %rsp");
+        self.emit("    xorq %rbx, %rbx");
+        self.emit("    movq $0, -48(%rbp)");
+        self.emit("    movq $0, -104(%rbp)");
+
+        // Open HKLM\SOFTWARE\Microsoft\Windows Kits\Installed Roots. Try the
+        // normal 64-bit view first, then the 32-bit registry view used by some
+        // Windows SDK installers.
+        self.emit("    movabsq $0xffffffff80000002, %rcx");
+        self.emit("    leaq .L_tl_windows_sdk_registry_installed_roots_key(%rip), %rdx");
+        self.emit("    xorq %r8, %r8");
+        self.emit("    movq $0x20019, %r9");
+        self.emit("    sub $48, %rsp");
+        self.emit("    leaq -48(%rbp), %rax");
+        self.emit("    movq %rax, 32(%rsp)");
+        self.emit("    call RegOpenKeyExW");
+        self.emit("    add $48, %rsp");
+        self.emit("    testl %eax, %eax");
+        self.emit("    jz .L_tl_windows_sdk_registry_opened");
+        self.emit("    movabsq $0xffffffff80000002, %rcx");
+        self.emit("    leaq .L_tl_windows_sdk_registry_installed_roots_key(%rip), %rdx");
+        self.emit("    xorq %r8, %r8");
+        self.emit("    movq $0x20219, %r9");
+        self.emit("    sub $48, %rsp");
+        self.emit("    leaq -48(%rbp), %rax");
+        self.emit("    movq %rax, 32(%rsp)");
+        self.emit("    call RegOpenKeyExW");
+        self.emit("    add $48, %rsp");
+        self.emit("    testl %eax, %eax");
+        self.emit("    jnz .L_tl_windows_sdk_registry_key_missing");
+        self.emit(".L_tl_windows_sdk_registry_opened:");
+        self.emit("    movq -48(%rbp), %rbx");
+
+        // Query the required byte count and type for KitsRoot10.
+        self.emit("    movq $0, -56(%rbp)");
+        self.emit("    movq $0, -64(%rbp)");
+        self.emit("    movq %rbx, %rcx");
+        self.emit("    leaq .L_tl_windows_sdk_registry_kits_root10_value(%rip), %rdx");
+        self.emit("    xorq %r8, %r8");
+        self.emit("    leaq -64(%rbp), %r9");
+        self.emit("    sub $48, %rsp");
+        self.emit("    movq $0, 32(%rsp)");
+        self.emit("    leaq -56(%rbp), %rax");
+        self.emit("    movq %rax, 40(%rsp)");
+        self.emit("    call RegQueryValueExW");
+        self.emit("    add $48, %rsp");
+        self.emit("    testl %eax, %eax");
+        self.emit("    jnz .L_tl_windows_sdk_registry_root_missing");
+        self.emit("    movl -64(%rbp), %eax");
+        self.emit("    cmpl $1, %eax");
+        self.emit("    je .L_tl_windows_sdk_registry_root_type_ok");
+        self.emit("    cmpl $2, %eax");
+        self.emit("    jne .L_tl_windows_sdk_registry_query_failed");
+        self.emit(".L_tl_windows_sdk_registry_root_type_ok:");
+        self.emit("    movl -56(%rbp), %r14d");
+        self.emit("    cmpq $2, %r14");
+        self.emit("    jl .L_tl_windows_sdk_registry_root_missing");
+        self.emit("    movq %r14, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rax, -72(%rbp)");
+
+        // Read KitsRoot10 into the allocated UTF-16 buffer.
+        self.emit("    movq %rbx, %rcx");
+        self.emit("    leaq .L_tl_windows_sdk_registry_kits_root10_value(%rip), %rdx");
+        self.emit("    xorq %r8, %r8");
+        self.emit("    leaq -64(%rbp), %r9");
+        self.emit("    sub $48, %rsp");
+        self.emit("    movq -72(%rbp), %rax");
+        self.emit("    movq %rax, 32(%rsp)");
+        self.emit("    leaq -56(%rbp), %rax");
+        self.emit("    movq %rax, 40(%rsp)");
+        self.emit("    call RegQueryValueExW");
+        self.emit("    add $48, %rsp");
+        self.emit("    testl %eax, %eax");
+        self.emit("    jnz .L_tl_windows_sdk_registry_query_failed");
+        self.emit("    movq -72(%rbp), %rcx");
+        self.emit("    movl -56(%rbp), %edx");
+        self.emit("    call .L_tl_windows_sdk_registry_wide_to_tl_string");
+        self.emit("    testq %rax, %rax");
+        self.emit("    jz .L_tl_windows_sdk_registry_query_failed");
+        self.emit("    movq %rax, %r12");
+
+        // Enumerate SDK version subkeys and keep the lexicographically largest
+        // version string. Windows 10/11 SDK version directories use fixed-width
+        // numeric segments, so this selects the newest installed SDK.
+        self.emit("    xorq %r15, %r15");
+        self.emit(".L_tl_windows_sdk_registry_enum_loop:");
+        self.emit("    movl $260, -96(%rbp)");
+        self.emit("    movq %rbx, %rcx");
+        self.emit("    movl %r15d, %edx");
+        self.emit("    leaq -704(%rbp), %r8");
+        self.emit("    leaq -96(%rbp), %r9");
+        self.emit("    sub $64, %rsp");
+        self.emit("    movq $0, 32(%rsp)");
+        self.emit("    movq $0, 40(%rsp)");
+        self.emit("    movq $0, 48(%rsp)");
+        self.emit("    movq $0, 56(%rsp)");
+        self.emit("    call RegEnumKeyExW");
+        self.emit("    add $64, %rsp");
+        self.emit("    testl %eax, %eax");
+        self.emit("    jz .L_tl_windows_sdk_registry_enum_item");
+        self.emit("    cmpl $259, %eax");
+        self.emit("    je .L_tl_windows_sdk_registry_enum_done");
+        self.emit("    jmp .L_tl_windows_sdk_registry_query_failed");
+        self.emit(".L_tl_windows_sdk_registry_enum_item:");
+        self.emit("    movl -96(%rbp), %eax");
+        self.emit("    testl %eax, %eax");
+        self.emit("    jle .L_tl_windows_sdk_registry_enum_next");
+        self.emit("    movq %rax, -112(%rbp)");
+        self.emit("    cmpq $0, -104(%rbp)");
+        self.emit("    je .L_tl_windows_sdk_registry_copy_best");
+        self.emit("    xorq %r10, %r10");
+        self.emit(".L_tl_windows_sdk_registry_compare_loop:");
+        self.emit("    cmpq -112(%rbp), %r10");
+        self.emit("    jge .L_tl_windows_sdk_registry_compare_prefix_done");
+        self.emit("    cmpq -104(%rbp), %r10");
+        self.emit("    jge .L_tl_windows_sdk_registry_compare_prefix_done");
+        self.emit("    movzwl -704(%rbp,%r10,2), %eax");
+        self.emit("    movzwl -1224(%rbp,%r10,2), %edx");
+        self.emit("    cmpl %edx, %eax");
+        self.emit("    ja .L_tl_windows_sdk_registry_copy_best");
+        self.emit("    jb .L_tl_windows_sdk_registry_enum_next");
+        self.emit("    incq %r10");
+        self.emit("    jmp .L_tl_windows_sdk_registry_compare_loop");
+        self.emit(".L_tl_windows_sdk_registry_compare_prefix_done:");
+        self.emit("    movq -112(%rbp), %rax");
+        self.emit("    cmpq -104(%rbp), %rax");
+        self.emit("    ja .L_tl_windows_sdk_registry_copy_best");
+        self.emit("    jmp .L_tl_windows_sdk_registry_enum_next");
+        self.emit(".L_tl_windows_sdk_registry_copy_best:");
+        self.emit("    movq -112(%rbp), %r11");
+        self.emit("    movq %r11, -104(%rbp)");
+        self.emit("    xorq %r10, %r10");
+        self.emit(".L_tl_windows_sdk_registry_copy_best_loop:");
+        self.emit("    cmpq %r11, %r10");
+        self.emit("    jge .L_tl_windows_sdk_registry_copy_best_done");
+        self.emit("    movw -704(%rbp,%r10,2), %ax");
+        self.emit("    movw %ax, -1224(%rbp,%r10,2)");
+        self.emit("    incq %r10");
+        self.emit("    jmp .L_tl_windows_sdk_registry_copy_best_loop");
+        self.emit(".L_tl_windows_sdk_registry_copy_best_done:");
+        self.emit("    movw $0, -1224(%rbp,%r11,2)");
+        self.emit(".L_tl_windows_sdk_registry_enum_next:");
+        self.emit("    incq %r15");
+        self.emit("    jmp .L_tl_windows_sdk_registry_enum_loop");
+        self.emit(".L_tl_windows_sdk_registry_enum_done:");
+        self.emit("    cmpq $0, -104(%rbp)");
+        self.emit("    je .L_tl_windows_sdk_registry_version_missing");
+        self.emit("    leaq -1224(%rbp), %rcx");
+        self.emit("    movq -104(%rbp), %rdx");
+        self.emit("    shlq $1, %rdx");
+        self.emit("    call .L_tl_windows_sdk_registry_wide_to_tl_string");
+        self.emit("    testq %rax, %rax");
+        self.emit("    jz .L_tl_windows_sdk_registry_query_failed");
+        self.emit("    movq %rax, %r13");
+        self.emit("    movq %rbx, %rcx");
+        self.emit_call("RegCloseKey");
+        self.emit("    xorq %rbx, %rbx");
+
+        // OkWindowsRegistrySdkInstall(WindowsRegistrySdkInstall(root, version)).
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %r12, 0(%rax)");
+        self.emit("    movq %r13, 8(%rax)");
+        self.emit("    movq %rax, %r12");
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq $0, 0(%rax)");
+        self.emit("    movq %r12, 8(%rax)");
+        self.emit("    jmp .L_tl_windows_sdk_registry_return");
+
+        self.emit(".L_tl_windows_sdk_registry_key_missing:");
+        self.emit("    movq $1, %r12");
+        self.emit("    leaq .L_tl_windows_sdk_registry_key_missing_msg(%rip), %r13");
+        self.emit("    movq $.L_tl_windows_sdk_registry_key_missing_msg_len, %r14");
+        self.emit("    jmp .L_tl_windows_sdk_registry_make_err");
+        self.emit(".L_tl_windows_sdk_registry_root_missing:");
+        self.emit("    movq $1, %r12");
+        self.emit("    leaq .L_tl_windows_sdk_registry_root_missing_msg(%rip), %r13");
+        self.emit("    movq $.L_tl_windows_sdk_registry_root_missing_msg_len, %r14");
+        self.emit("    jmp .L_tl_windows_sdk_registry_make_err");
+        self.emit(".L_tl_windows_sdk_registry_version_missing:");
+        self.emit("    movq $1, %r12");
+        self.emit("    leaq .L_tl_windows_sdk_registry_version_missing_msg(%rip), %r13");
+        self.emit("    movq $.L_tl_windows_sdk_registry_version_missing_msg_len, %r14");
+        self.emit("    jmp .L_tl_windows_sdk_registry_make_err");
+        self.emit(".L_tl_windows_sdk_registry_query_failed:");
+        self.emit("    movq $2, %r12");
+        self.emit("    leaq .L_tl_windows_sdk_registry_query_failed_msg(%rip), %r13");
+        self.emit("    movq $.L_tl_windows_sdk_registry_query_failed_msg_len, %r14");
+        self.emit("    jmp .L_tl_windows_sdk_registry_make_err");
+
+        // ErrWindowsRegistrySdkInstall(WindowsRegistry*(message)).
+        self.emit(".L_tl_windows_sdk_registry_make_err:");
+        self.emit("    testq %rbx, %rbx");
+        self.emit("    jz .L_tl_windows_sdk_registry_make_err_alloc");
+        self.emit("    movq %rbx, %rcx");
+        self.emit_call("RegCloseKey");
+        self.emit("    xorq %rbx, %rbx");
+        self.emit(".L_tl_windows_sdk_registry_make_err_alloc:");
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %r13, 0(%rax)");
+        self.emit("    movq %r14, 8(%rax)");
+        self.emit("    movq %rax, %r13");
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %r12, 0(%rax)");
+        self.emit("    movq %r13, 8(%rax)");
+        self.emit("    movq %rax, %r13");
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq $1, 0(%rax)");
+        self.emit("    movq %r13, 8(%rax)");
+
+        self.emit(".L_tl_windows_sdk_registry_return:");
+        self.emit("    add $1192, %rsp");
+        self.emit("    pop %r15");
+        self.emit("    pop %r14");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+
+        self.generate_windows_sdk_registry_wide_to_tl_string_runtime_function();
+    }
+
+    fn generate_windows_sdk_registry_wide_to_tl_string_runtime_function(&mut self) {
+        self.emit(".L_tl_windows_sdk_registry_wide_to_tl_string:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    push %r15");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq %rcx, %rbx");
+        self.emit("    movq %rdx, %r12");
+        self.emit("    testq %rbx, %rbx");
+        self.emit("    jz .L_tl_windows_sdk_registry_wide_error");
+        self.emit("    shrq $1, %r12");
+        self.emit("    cmpq $0, %r12");
+        self.emit("    je .L_tl_windows_sdk_registry_wide_empty");
+        self.emit("    movzwl -2(%rbx,%r12,2), %eax");
+        self.emit("    testw %ax, %ax");
+        self.emit("    jne .L_tl_windows_sdk_registry_wide_count_ready");
+        self.emit("    decq %r12");
+        self.emit(".L_tl_windows_sdk_registry_wide_count_ready:");
+        self.emit("    cmpq $0, %r12");
+        self.emit("    je .L_tl_windows_sdk_registry_wide_empty");
+        self.emit("    movl $65001, %ecx");
+        self.emit("    xorq %rdx, %rdx");
+        self.emit("    movq %rbx, %r8");
+        self.emit("    movl %r12d, %r9d");
+        self.emit("    sub $64, %rsp");
+        self.emit("    movq $0, 32(%rsp)");
+        self.emit("    movq $0, 40(%rsp)");
+        self.emit("    movq $0, 48(%rsp)");
+        self.emit("    movq $0, 56(%rsp)");
+        self.emit("    call WideCharToMultiByte");
+        self.emit("    add $64, %rsp");
+        self.emit("    testl %eax, %eax");
+        self.emit("    jle .L_tl_windows_sdk_registry_wide_error");
+        self.emit("    movslq %eax, %r13");
+        self.emit("    movq %r13, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rax, %r14");
+        self.emit("    movl $65001, %ecx");
+        self.emit("    xorq %rdx, %rdx");
+        self.emit("    movq %rbx, %r8");
+        self.emit("    movl %r12d, %r9d");
+        self.emit("    sub $64, %rsp");
+        self.emit("    movq %r14, 32(%rsp)");
+        self.emit("    movl %r13d, 40(%rsp)");
+        self.emit("    movq $0, 48(%rsp)");
+        self.emit("    movq $0, 56(%rsp)");
+        self.emit("    call WideCharToMultiByte");
+        self.emit("    add $64, %rsp");
+        self.emit("    testl %eax, %eax");
+        self.emit("    jle .L_tl_windows_sdk_registry_wide_error");
+        self.emit("    jmp .L_tl_windows_sdk_registry_wide_make_fat");
+        self.emit(".L_tl_windows_sdk_registry_wide_empty:");
+        self.emit("    xorq %r13, %r13");
+        self.emit("    xorq %r14, %r14");
+        self.emit(".L_tl_windows_sdk_registry_wide_make_fat:");
+        self.emit("    movq $16, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %r14, 0(%rax)");
+        self.emit("    movq %r13, 8(%rax)");
+        self.emit("    jmp .L_tl_windows_sdk_registry_wide_return");
+        self.emit(".L_tl_windows_sdk_registry_wide_error:");
+        self.emit("    xorq %rax, %rax");
+        self.emit(".L_tl_windows_sdk_registry_wide_return:");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r15");
+        self.emit("    pop %r14");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+    }
+
     fn generate_windows_process_close_temp_files_runtime_function(&mut self) {
         self.emit(".L_tl_process_close_temp_files:");
         self.emit("    sub $8, %rsp");
@@ -10941,6 +11391,10 @@ impl X86_64Backend {
             && self.needs_windows_setup_instances_runtime
         {
             WINDOWS_SETUP_INSTANCES_RUNTIME_SYMBOL.into()
+        } else if name == WINDOWS_SDK_REGISTRY_INSTALL_RUNTIME_SYMBOL
+            && self.needs_windows_sdk_registry_install_runtime
+        {
+            WINDOWS_SDK_REGISTRY_INSTALL_RUNTIME_SYMBOL.into()
         } else if name == READ_STDIN_LINE_RUNTIME_SYMBOL && self.needs_read_stdin_line_runtime {
             READ_STDIN_LINE_RUNTIME_SYMBOL.into()
         } else if name == READ_STDIN_BYTES_RUNTIME_SYMBOL && self.needs_read_stdin_bytes_runtime {
@@ -16078,6 +16532,93 @@ mod tests {
             ".L_tl_process_copy_c_string:",
             ".L_tl_process_read_fd_to_string:",
             ".L_tl_process_error_result:",
+        ] {
+            assert!(asm.contains(snippet), "missing {snippet}; asm:\n{}", asm);
+        }
+    }
+
+    #[test]
+    fn test_compile_windows_sdk_registry_install_extern_emits_unsupported_runtime() {
+        let asm = compile_ok(
+            r#"
+            (extern tl_windows_sdk_registry_install : (-> i64))
+            (define (main) : i64 (tl_windows_sdk_registry_install))
+            "#,
+        );
+
+        assert!(
+            asm.contains("tl_windows_sdk_registry_install:"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            asm.contains("windows registry: unsupported on non-Windows targets"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("    .extern tl_windows_sdk_registry_install"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("_tl_tl_windows_sdk_registry_install"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_windows_target_windows_sdk_registry_install_emits_advapi_runtime() {
+        let asm = compile_ok_for_target(
+            r#"
+            (extern tl_windows_sdk_registry_install : (-> i64))
+            (define (main) : i64 (tl_windows_sdk_registry_install))
+            "#,
+            BackendTarget::windows_x86_64(),
+        );
+
+        assert!(
+            asm.contains("tl_windows_sdk_registry_install:"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("    .extern tl_windows_sdk_registry_install"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(
+            !asm.contains("_tl_tl_windows_sdk_registry_install"),
+            "asm:\n{}",
+            asm
+        );
+        assert!(!asm.contains("    syscall"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        for symbol in [
+            "RegOpenKeyExW",
+            "RegQueryValueExW",
+            "RegEnumKeyExW",
+            "RegCloseKey",
+            "WideCharToMultiByte",
+        ] {
+            assert!(
+                asm.contains(&format!("    .extern {}", symbol)),
+                "missing extern {symbol}; asm:\n{}",
+                asm
+            );
+            assert!(
+                asm.contains(&format!("    call {}", symbol)),
+                "missing call {symbol}; asm:\n{}",
+                asm
+            );
+        }
+        for snippet in [
+            ".L_tl_windows_sdk_registry_installed_roots_key:",
+            ".L_tl_windows_sdk_registry_kits_root10_value:",
+            ".L_tl_windows_sdk_registry_wide_to_tl_string:",
+            "windows registry: Windows Kits Installed Roots key was not found",
         ] {
             assert!(asm.contains(snippet), "missing {snippet}; asm:\n{}", asm);
         }

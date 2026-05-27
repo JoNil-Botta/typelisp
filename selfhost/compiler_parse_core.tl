@@ -396,6 +396,24 @@
 (define (compiler-parse-tag-expr-with-resource) : i64
   255)
 
+(define (compiler-parse-tag-expr-ptr-read) : i64
+  256)
+
+(define (compiler-parse-tag-expr-ptr-write) : i64
+  257)
+
+(define (compiler-parse-tag-expr-ptr-offset) : i64
+  258)
+
+(define (compiler-parse-tag-expr-ptr-cast) : i64
+  259)
+
+(define (compiler-parse-tag-expr-ptr-to-int) : i64
+  260)
+
+(define (compiler-parse-tag-expr-int-to-ptr) : i64
+  261)
+
 (define (compiler-parse-tag-lit-true) : i64
   300)
 
@@ -587,6 +605,24 @@
       (set!
         out
         (sym-i64-bind out "ptr-null?" (compiler-parse-tag-expr-ptr-null-check)))
+      (set!
+        out
+        (sym-i64-bind out "ptr-read" (compiler-parse-tag-expr-ptr-read)))
+      (set!
+        out
+        (sym-i64-bind out "ptr-write!" (compiler-parse-tag-expr-ptr-write)))
+      (set!
+        out
+        (sym-i64-bind out "ptr-offset" (compiler-parse-tag-expr-ptr-offset)))
+      (set!
+        out
+        (sym-i64-bind out "ptr-cast" (compiler-parse-tag-expr-ptr-cast)))
+      (set!
+        out
+        (sym-i64-bind out "ptr->int" (compiler-parse-tag-expr-ptr-to-int)))
+      (set!
+        out
+        (sym-i64-bind out "int->ptr" (compiler-parse-tag-expr-int-to-ptr)))
       (set!
         out
         (sym-i64-bind out "with" (compiler-parse-tag-expr-with-resource)))
@@ -1519,6 +1555,65 @@
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: ptr-null? expects exactly one expression")]))
 
+(define (parse-ast-ptr-read [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSCons expr (SpSNil _) _)
+      (match (parse-ast-expr dispatch expr)
+        [(OkAstExpr parsed-expr) (OkAstExpr (AstExprPtrRead parsed-expr))]
+        [(ErrAstExpr message) (ErrAstExpr message)])]
+    [_ (ErrAstExpr "parse: ptr-read expects exactly one expression")]))
+
+(define (parse-ast-ptr-write [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSCons ptr (SpSCons value (SpSNil _) _) _)
+      (match (parse-ast-expr dispatch ptr)
+        [(OkAstExpr parsed-ptr)
+          (match (parse-ast-expr dispatch value)
+            [(OkAstExpr parsed-value)
+              (OkAstExpr (AstExprPtrWrite parsed-ptr parsed-value))]
+            [(ErrAstExpr message) (ErrAstExpr message)])]
+        [(ErrAstExpr message) (ErrAstExpr message)])]
+    [_ (ErrAstExpr "parse: ptr-write! expects exactly two expressions")]))
+
+(define (parse-ast-ptr-offset [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSCons ptr (SpSCons offset (SpSNil _) _) _)
+      (match (parse-ast-expr dispatch ptr)
+        [(OkAstExpr parsed-ptr)
+          (match (parse-ast-expr dispatch offset)
+            [(OkAstExpr parsed-offset)
+              (OkAstExpr (AstExprPtrOffset parsed-ptr parsed-offset))]
+            [(ErrAstExpr message) (ErrAstExpr message)])]
+        [(ErrAstExpr message) (ErrAstExpr message)])]
+    [_ (ErrAstExpr "parse: ptr-offset expects exactly two expressions")]))
+
+(define (parse-ast-ptr-cast-like
+  [dispatch : SymI64Env]
+  [is-int-to-ptr : bool]
+  [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSCons expr (SpSCons colon (SpSCons ty (SpSNil _) _) _) _)
+      (if (sexpr-colon? (spanned-sexpr-form colon))
+        (match (parse-ast-expr dispatch expr)
+          [(OkAstExpr parsed-expr)
+            (match (parse-ast-type dispatch (spanned-sexpr-form ty))
+              [(OkAstType parsed-ty)
+                (if is-int-to-ptr
+                  (OkAstExpr (AstExprIntToPtr parsed-expr parsed-ty))
+                  (OkAstExpr (AstExprPtrCast parsed-expr parsed-ty)))]
+              [(ErrAstType message) (ErrAstExpr message)])]
+          [(ErrAstExpr message) (ErrAstExpr message)])
+        (ErrAstExpr "parse: expected ':' in pointer cast"))]
+    [_ (ErrAstExpr "parse: pointer cast expects (form expr : pointer-type)")]))
+
+(define (parse-ast-ptr-to-int [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSCons expr (SpSNil _) _)
+      (match (parse-ast-expr dispatch expr)
+        [(OkAstExpr parsed-expr) (OkAstExpr (AstExprPtrToInt parsed-expr))]
+        [(ErrAstExpr message) (ErrAstExpr message)])]
+    [_ (ErrAstExpr "parse: ptr->int expects exactly one expression")]))
+
 (define (parse-ast-with-region [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
     [(SpSNil _)
@@ -1839,13 +1934,28 @@
     [(SpSSym op _)
       (let
         [tag : i64 (compiler-parse-dispatch-tag dispatch op)]
-        (if (= tag (compiler-parse-tag-expr-cond))
-          (parse-ast-cond dispatch rest)
-          (if (ast-unop-tag? tag)
-            (parse-ast-unary dispatch (ast-unop-from-tag tag) rest)
-            (if (ast-binop-tag? tag)
-              (parse-ast-binary dispatch (ast-binop-from-tag tag) rest)
-              (parse-ast-list-expr-tag dispatch tag head rest)))))]
+        (if (= tag (compiler-parse-tag-expr-ptr-read))
+          (parse-ast-ptr-read dispatch rest)
+          (if (= tag (compiler-parse-tag-expr-ptr-write))
+            (parse-ast-ptr-write dispatch rest)
+            (if (= tag (compiler-parse-tag-expr-ptr-offset))
+              (parse-ast-ptr-offset dispatch rest)
+              (if (= tag (compiler-parse-tag-expr-ptr-cast))
+                (parse-ast-ptr-cast-like dispatch false rest)
+                (if (= tag (compiler-parse-tag-expr-ptr-to-int))
+                  (parse-ast-ptr-to-int dispatch rest)
+                  (if (= tag (compiler-parse-tag-expr-int-to-ptr))
+                    (parse-ast-ptr-cast-like dispatch true rest)
+                    (if (= tag (compiler-parse-tag-expr-cond))
+                      (parse-ast-cond dispatch rest)
+                      (if (ast-unop-tag? tag)
+                        (parse-ast-unary dispatch (ast-unop-from-tag tag) rest)
+                        (if (ast-binop-tag? tag)
+                          (parse-ast-binary
+                            dispatch
+                            (ast-binop-from-tag tag)
+                            rest)
+                          (parse-ast-list-expr-tag dispatch tag head rest)))))))))))]
     [_ (parse-ast-call dispatch head rest)]))
 
 (define (parse-ast-expr [dispatch : SymI64Env] [s : SpannedSexpr]) : ResultAstExpr
@@ -2433,6 +2543,12 @@
 (define (compiler-parse-raw-pointer-source) : String
   "(extern raw-map : (-> (Ptr i64) (MutPtr (Ptr u8))))")
 
+(define (compiler-parse-raw-pointer-ops-source) : String
+  "(define (main [p : (MutPtr i64)] [n : u64]) : u64
+  (unsafe
+    (ptr-write! p (ptr-read p))
+    (ptr->int (ptr-cast (ptr-offset (int->ptr n : (MutPtr i64)) 1) : (Ptr i64)))))")
+
 (define (compiler-parse-raw-pointer-ok?) : bool
   (match (parse-ast-source (compiler-parse-raw-pointer-source))
     [(OkAstProgram (AstProgram decls))
@@ -2451,6 +2567,9 @@
               [_ false]))]
         [_ false])]
     [(ErrAstProgram _) false]))
+
+(define (compiler-parse-raw-pointer-ops-ok?) : bool
+  (compiler-parse-ok? (compiler-parse-raw-pointer-ops-source)))
 
 (define (compiler-parse-reference-source) : String
   "(define (use [s : (& r String)] [items : (&mut phase (Array i64))]) : unit unit)")
@@ -2686,9 +2805,21 @@
       (compiler-parse-error-ok?
         "(define (main [p : (MutPtr i64 i64)]) : unit unit)"
         "parse: MutPtr expects exactly one type")
-      (compiler-parse-error-ok?
-        "(define (main [p : (Ptr (Array))]) : unit unit)"
-        "parse: malformed array type"))))
+      (and
+        (compiler-parse-error-ok?
+          "(define (main [p : (Ptr (Array))]) : unit unit)"
+          "parse: malformed array type")
+        (and
+          (compiler-parse-error-ok?
+            "(define (main [p : (Ptr i64)]) : i64 (ptr-read))"
+            "parse: ptr-read expects exactly one expression")
+          (and
+            (compiler-parse-error-ok?
+              "(define (main [p : (MutPtr i64)]) : unit (ptr-write! p))"
+              "parse: ptr-write! expects exactly two expressions")
+            (compiler-parse-error-ok?
+              "(define (main [p : (Ptr i64)]) : (Ptr u8) (ptr-cast p (Ptr u8)))"
+              "parse: pointer cast expects (form expr : pointer-type)")))))))
 
 (define (compiler-parse-reference-error-tests-ok?) : bool
   (and
@@ -3177,8 +3308,10 @@
                                 (and
                                   (compiler-parse-raw-pointer-ok?)
                                   (and
-                                    (compiler-parse-reference-ok?)
-                                    (compiler-parse-resource-with-shape-ok?))))))))))))))))
+                                    (compiler-parse-raw-pointer-ops-ok?)
+                                    (and
+                                      (compiler-parse-reference-ok?)
+                                      (compiler-parse-resource-with-shape-ok?)))))))))))))))))
         (if (and
           (compiler-parse-error-tests-ok?)
           (and

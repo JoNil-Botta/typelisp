@@ -113,6 +113,7 @@ string.tl
 test.tl
 text_buf.tl
 vector.tl
+windows_registry.tl
 windows_sdk.tl
 windows_setup.tl
 EOF
@@ -148,8 +149,9 @@ stdlib/tests/vector_api.tl|42|-|-
 stdlib/tests/visual_studio_api.tl|42|-|-
 stdlib/tests/test_assert_success.tl|42|-|-
 stdlib/tests/test_assert_failure.tl|134|-|literal:stdlib test failure message
-stdlib/tests/windows_sdk_api.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,append-file-status
-stdlib/tests/msvc_api.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,append-file-status
+stdlib/tests/windows_registry_api.tl|42|-|-|-|requires-stage0-symbol:tl_windows_sdk_registry_install
+stdlib/tests/windows_sdk_api.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,append-file-status,tl_windows_sdk_registry_install
+stdlib/tests/msvc_api.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,append-file-status,tl_windows_sdk_registry_install
 EOF
 }
 

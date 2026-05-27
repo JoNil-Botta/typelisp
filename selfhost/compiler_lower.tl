@@ -844,19 +844,30 @@
             (+ src-offset chunk)
             (- size chunk))]))))
 
+(define (lower-raw-pointer-ir-type [ty : AstType]) : AstType
+  (match (tc-type-strip-region ty)
+    [(AstTyPtr _) (AstTyU64)]
+    [(AstTyMutPtr _) (AstTyU64)]
+    [_ ty]))
+
 (define (lower-cast-value
   [state : LowerState]
   [value : CompilerIrValue]
   [from-ty : AstType]
   [to-ty : AstType]) : LowerExpr
-  (if (tc-type-eq from-ty to-ty)
-    (LowerExpr state value to-ty)
-    (match (lower-state-alloc-var state)
-      [(LowerAlloc allocated var-id)
-        (LowerExpr
-          (lower-state-emit allocated (IrInstrCast var-id value from-ty to-ty))
-          (IrValueVar var-id)
-          to-ty)])))
+  (let
+    [ir-from-ty : AstType (lower-raw-pointer-ir-type from-ty)]
+    [ir-to-ty : AstType (lower-raw-pointer-ir-type to-ty)]
+    (if (or (tc-type-eq from-ty to-ty) (tc-type-eq ir-from-ty ir-to-ty))
+      (LowerExpr state value to-ty)
+      (match (lower-state-alloc-var state)
+        [(LowerAlloc allocated var-id)
+          (LowerExpr
+            (lower-state-emit
+              allocated
+              (IrInstrCast var-id value ir-from-ty ir-to-ty))
+            (IrValueVar var-id)
+            to-ty)]))))
 
 (define (lower-oob-abort [state : LowerState]) : LowerState
   (match (lower-state-alloc-var state)
@@ -1790,7 +1801,8 @@
           (lower-expr ctx binding-state body-env body-type-env body)]
         [(ErrLowerEnv message) (ErrLowerExpr message)])]
     [(AstExprBegin exprs) (lower-begin ctx state env type-env exprs)]
-    [(AstExprUnsafe exprs) (lower-begin ctx state env type-env exprs)]
+    [(AstExprUnsafe exprs)
+      (lower-begin ctx state env (tc-enter-unsafe type-env) exprs)]
     [(AstExprSet name value)
       (match (lower-expr ctx state env type-env value)
         [(OkLowerExpr lowered)
@@ -1908,7 +1920,13 @@
               " is compile-time only"))))]
     ;; `(ptr-null : T)` is a pointer-sized zero (pointer ABI size is 8);
     ;; `(ptr-null? p)` is `p == 0` producing a `bool`. No new IR/asm needed.
-    [(AstExprPtrNull _) (lower-materialize state (IrValueI64 0) expr-ty)]
+    [(AstExprPtrNull _)
+      (match (lower-materialize state (IrValueI64 0) (AstTyU64))
+        [(OkLowerExpr lowered)
+          (match lowered
+            [(LowerExpr null-state null-value _)
+              (OkLowerExpr (LowerExpr null-state null-value expr-ty))])]
+        [(ErrLowerExpr diag) (ErrLowerExpr diag)])]
     [(AstExprPtrNullCheck inner)
       (match (lower-expr ctx state env type-env inner)
         [(OkLowerExpr lowered)
@@ -1921,6 +1939,125 @@
                   inner-value
                   (IrValueI64 0)
                   (AstTyBool)))])]
+        [(ErrLowerExpr diag) (ErrLowerExpr diag)])]
+    [(AstExprPtrRead ptr)
+      (match (lower-expr ctx state env type-env ptr)
+        [(OkLowerExpr lowered)
+          (match lowered
+            [(LowerExpr ptr-state ptr-value _)
+              (match (lower-state-alloc-var ptr-state)
+                [(LowerAlloc allocated var-id)
+                  (OkLowerExpr
+                    (LowerExpr
+                      (lower-state-emit-at-expr
+                        allocated
+                        (IrInstrLoad var-id ptr-value expr-ty)
+                        origin)
+                      (IrValueVar var-id)
+                      expr-ty))])])]
+        [(ErrLowerExpr diag) (ErrLowerExpr diag)])]
+    [(AstExprPtrWrite ptr value)
+      (match (lower-expr ctx state env type-env ptr)
+        [(OkLowerExpr ptr-lowered)
+          (match ptr-lowered
+            [(LowerExpr ptr-state ptr-value ptr-ty)
+              (match (lower-state-alloc-var ptr-state)
+                [(LowerAlloc ptr-allocated ptr-var)
+                  (let
+                    [ptr-home-state : LowerState
+                      (lower-state-emit
+                        ptr-allocated
+                        (IrInstrMov
+                          ptr-var
+                          ptr-value
+                          (lower-raw-pointer-ir-type ptr-ty)))]
+                    (match (lower-expr ctx ptr-home-state env type-env value)
+                      [(OkLowerExpr value-lowered)
+                        (match value-lowered
+                          [(LowerExpr value-state value-ir value-ty)
+                            (OkLowerExpr
+                              (LowerExpr
+                                (lower-state-emit-at-expr
+                                  value-state
+                                  (IrInstrStorePtr
+                                    (IrValueVar ptr-var)
+                                    value-ir
+                                    value-ty)
+                                  origin)
+                                IrValueUnit
+                                expr-ty))])]
+                      [(ErrLowerExpr diag) (ErrLowerExpr diag)]))])])]
+        [(ErrLowerExpr diag) (ErrLowerExpr diag)])]
+    [(AstExprPtrOffset ptr offset)
+      (match (lower-expr ctx state env type-env ptr)
+        [(OkLowerExpr ptr-lowered)
+          (match ptr-lowered
+            [(LowerExpr ptr-state ptr-value ptr-ty)
+              (match (lower-expr ctx ptr-state env type-env offset)
+                [(OkLowerExpr offset-lowered)
+                  (match offset-lowered
+                    [(LowerExpr offset-state offset-value _)
+                      (match (tc-type-strip-region (tc-resolve-type ctx ptr-ty))
+                        [(AstTyPtr elem-ty)
+                          (match (lower-state-alloc-var offset-state)
+                            [(LowerAlloc allocated var-id)
+                              (OkLowerExpr
+                                (LowerExpr
+                                  (lower-state-emit-at-expr
+                                    allocated
+                                    (IrInstrGep
+                                      var-id
+                                      ptr-value
+                                      offset-value
+                                      elem-ty)
+                                    origin)
+                                  (IrValueVar var-id)
+                                  expr-ty))])]
+                        [(AstTyMutPtr elem-ty)
+                          (match (lower-state-alloc-var offset-state)
+                            [(LowerAlloc allocated var-id)
+                              (OkLowerExpr
+                                (LowerExpr
+                                  (lower-state-emit-at-expr
+                                    allocated
+                                    (IrInstrGep
+                                      var-id
+                                      ptr-value
+                                      offset-value
+                                      elem-ty)
+                                    origin)
+                                  (IrValueVar var-id)
+                                  expr-ty))])]
+                        [_
+                          (ErrLowerExpr
+                            (lower-diagnostic-at-expr
+                              origin
+                              "lower: ptr-offset requires raw pointer"))])])]
+                [(ErrLowerExpr diag) (ErrLowerExpr diag)])])]
+        [(ErrLowerExpr diag) (ErrLowerExpr diag)])]
+    [(AstExprPtrCast ptr _)
+      (match (lower-expr ctx state env type-env ptr)
+        [(OkLowerExpr lowered)
+          (match lowered
+            [(LowerExpr ptr-state ptr-value ptr-ty)
+              (OkLowerExpr
+                (lower-cast-value ptr-state ptr-value ptr-ty expr-ty))])]
+        [(ErrLowerExpr diag) (ErrLowerExpr diag)])]
+    [(AstExprPtrToInt ptr)
+      (match (lower-expr ctx state env type-env ptr)
+        [(OkLowerExpr lowered)
+          (match lowered
+            [(LowerExpr ptr-state ptr-value ptr-ty)
+              (OkLowerExpr
+                (lower-cast-value ptr-state ptr-value ptr-ty expr-ty))])]
+        [(ErrLowerExpr diag) (ErrLowerExpr diag)])]
+    [(AstExprIntToPtr value _)
+      (match (lower-expr ctx state env type-env value)
+        [(OkLowerExpr lowered)
+          (match lowered
+            [(LowerExpr value-state value-ir value-ty)
+              (OkLowerExpr
+                (lower-cast-value value-state value-ir value-ty expr-ty))])]
         [(ErrLowerExpr diag) (ErrLowerExpr diag)])]
     [_
       (ErrLowerExpr
@@ -5393,6 +5530,16 @@
             (+ (if (file-read-chunk-eof? handle) 1 0)
                (file-close-status handle))))))))")
 
+(define (compiler-lower-raw-pointer-ops-source) : String
+  "(extern raw-make : (-> (MutPtr i64)))
+(define (main [n : u64]) : u64
+  (let
+    [p : (MutPtr i64) (raw-make)]
+    (unsafe
+      (ptr-write! p 41)
+      (ptr-read p)
+      (ptr->int (ptr-offset (ptr-cast (int->ptr n : (MutPtr i64)) : (Ptr i64)) 2)))))")
+
 (define (compiler-lower-aggregate-source) : String
   "(defstruct Point (x i64) (y i64))
 (defenum Shape (Nothing) (Circle i64) (Pair Point))
@@ -6428,6 +6575,9 @@
     (compiler-lower-short-circuit-branch?
       (compiler-lower-or-short-circuit-source))))
 
+(define (compiler-lower-raw-pointer-ops-ok?) : bool
+  (compiler-lower-ok? (compiler-lower-raw-pointer-ops-source)))
+
 (define (compiler-lower-string-length-ok?) : bool
   (match (parse-ast-source (compiler-lower-string-length-source))
     [(OkAstProgram program)
@@ -6549,6 +6699,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-module-qualified-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-raw-pointer-ops-ok?)
         unit
         (set! ok false))
       ok)))

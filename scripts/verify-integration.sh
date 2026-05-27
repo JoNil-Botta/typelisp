@@ -6,8 +6,8 @@ set -eu
 # The runner builds each listed TypeLisp program to a native executable, runs it
 # outside the Rust test harness, and checks exit code, stdout, and stderr. Linux
 # uses the explicit compile -> as -> ld flow; Windows Git Bash/MSYS/Cygwin uses
-# typelisp build --target windows-x86_64 and PowerShell only to preserve native
-# Windows process exit codes larger than 255.
+# host-default typelisp build and PowerShell only to preserve native Windows
+# process exit codes larger than 255.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -646,7 +646,7 @@ run_windows_backend_fixtures() {
 
     echo "[windows-backend-runtime] emit -> assemble -> link -> run"
     run_fixture_with_retry "$COMPILER" run selfhost/compiler_backend_runtime_fixture.tl \
-        --target windows-x86_64 -- "$_runtime_asm" windows-x86_64
+        -- "$_runtime_asm" windows-x86_64
     for _snippet in \
         ".globl main" \
         ".globl tl_alloc" \
@@ -770,7 +770,7 @@ run_windows_backend_fixtures() {
     _driver_code="$_driver_dir/run.exit"
 
     echo "[windows-selfhost-compile-driver] build -> exercise"
-    build_with_retry "$COMPILER" build selfhost/compile.tl -o "$_driver_bin" --target windows-x86_64
+    build_with_retry "$COMPILER" build selfhost/compile.tl -o "$_driver_bin"
     if [ "$build_rc" -ne 0 ]; then
         echo "FAIL: windows-selfhost-compile-driver build failed (exit $build_rc)" >&2
         exit 1
@@ -876,7 +876,7 @@ EOF
 
     echo "[windows-driver-primitives] emit -> assemble -> link -> run"
     run_fixture_with_retry "$COMPILER" run selfhost/compiler_backend_runtime_fixture.tl \
-        --target windows-x86_64 -- "$_primitive_asm" windows-driver-primitives
+        -- "$_primitive_asm" windows-driver-primitives
     for _snippet in \
         ".globl main" \
         ".L_tl_arg_count:" \
@@ -986,7 +986,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
 
     echo "[$name] build -> run ($HOST_OS)"
     if [ "$HOST_OS" = windows ]; then
-        build_with_retry "$COMPILER" build "$work_src" -o "$bin.exe" --target windows-x86_64 \
+        build_with_retry "$COMPILER" build "$work_src" -o "$bin.exe" \
             > "$build_stdout" 2> "$build_stderr"
         if [ "$build_rc" -ne 0 ]; then
             if integration_should_skip_staged "$requires_symbol" "$build_stdout" "$build_stderr"; then

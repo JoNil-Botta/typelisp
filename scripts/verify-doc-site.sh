@@ -15,21 +15,19 @@ set -eu
 # deploying; #874 consumes it as the gate before the Pages publish step.
 #
 # Linux builds the native ELF site builder (GNU as/ld). Windows (Git Bash / MSYS
-# / Cygwin) builds a native windows-x86_64 program. Set TYPELISP_BIN to a
+# / Cygwin) builds a host-default native program. Set TYPELISP_BIN to a
 # prebuilt/staged compiler, otherwise a local `cargo build --release` is used.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 EXE=
-TARGET_ARGS=
 HOST_OS=linux
 case "$(uname -s)" in
     Linux*) HOST_OS=linux ;;
     MINGW* | MSYS* | CYGWIN*)
         HOST_OS=windows
         EXE=.exe
-        TARGET_ARGS="--target windows-x86_64"
         ;;
     *)
         echo "docs-site verification is unsupported on this host" >&2
@@ -96,7 +94,7 @@ if [ "$HOST_OS" = linux ]; then
         fail "selfhost/doc_site.tl did not build the site"
     fi
 else
-    if ! "$COMPILER" run selfhost/doc_site.tl $TARGET_ARGS -- "$SITE" >"$SITE/.build.out" 2>"$SITE/.build.err"; then
+    if ! "$COMPILER" run selfhost/doc_site.tl -- "$SITE" >"$SITE/.build.out" 2>"$SITE/.build.err"; then
         echo "site builder failed:" >&2
         sed 's/^/  /' "$SITE/.build.err" >&2 || true
         fail "selfhost/doc_site.tl did not build the site"
@@ -110,7 +108,7 @@ if [ "$HOST_OS" = linux ]; then
     compile_linux_binary doc-site-smoke selfhost/doc_site_smoke.tl "$SITE_SMOKE"
     "$SITE_SMOKE" >"$SITE/.smoke.out" 2>"$SITE/.smoke.err"
 else
-    "$COMPILER" run selfhost/doc_site_smoke.tl $TARGET_ARGS -- >"$SITE/.smoke.out" 2>"$SITE/.smoke.err"
+    "$COMPILER" run selfhost/doc_site_smoke.tl -- >"$SITE/.smoke.out" 2>"$SITE/.smoke.err"
 fi
 smoke_code=$?
 set -e

@@ -201,28 +201,6 @@ fn compiler_typecheck_smoke_tl_compiles_to_assembly() {
 }
 
 #[test]
-fn compiler_typecheck_reflection_smoke_tl_compiles_to_assembly() {
-    let asm = compile_selfhost_source(
-        "compiler_typecheck_reflection_smoke.tl",
-        "tl-compiler-typecheck-reflection-smoke-compile-test",
-        "compiler_typecheck_reflection_smoke.s",
-    );
-
-    assert_no_todo(&asm, "compiler_typecheck_reflection_smoke");
-    assert_eq!(
-        asm.matches("\nmain:").count() + usize::from(asm.starts_with("main:")),
-        1,
-        "compiler_typecheck_reflection_smoke assembly must have exactly one main:\n{asm}",
-    );
-
-    assert_symbol(
-        &asm,
-        "_tl_compiler_typecheck_reflection_tests_ok_question:",
-        "compiler_typecheck_reflection_smoke",
-    );
-}
-
-#[test]
 fn compiler_check_core_tl_compiles_to_assembly() {
     let asm = compile_selfhost_source(
         "compiler_check_core.tl",

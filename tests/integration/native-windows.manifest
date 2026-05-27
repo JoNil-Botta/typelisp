@@ -1,7 +1,8 @@
 # name|source|exit|stdout|args|deps[|extra]
 # Windows omits the with_arena_* Linux SysV fixtures; the runner validates that
 # those are the only integration sources missing from this manifest.
-# extra may be requires-stage0-symbol:<name>[,<name>...] for staged backend primitives.
+# extra may be requires-stage0-symbol:<name>[,<name>...] for staged backend
+# primitives or expected-stderr:<printf escapes> for native trap diagnostics.
 aggregate_globals|tests/integration/aggregate_globals.tl|42|-|-|-
 argv|tests/integration/argv.tl|7|alpha\n|alpha beta|-
 arithmetic|tests/integration/arithmetic.tl|47|-|-|-
@@ -14,6 +15,7 @@ tl_eval|selfhost/eval.tl|30|hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(
 comptime_scalar|tests/integration/comptime_scalar.tl|3|-|-|-
 cond|tests/integration/cond.tl|42|-|-|-
 control_flow|tests/integration/control_flow.tl|15|-|-|-
+div_zero_trap|tests/integration/div_zero_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
 enum_match|tests/integration/enum_match.tl|42|-|-|-
 enum_string_payload|tests/integration/enum_string_payload.tl|5|-|-|-
 f32_scalar|tests/integration/f32_scalar.tl|42|-|-|-
@@ -28,6 +30,8 @@ function_pointer_values|tests/integration/function_pointer_values.tl|42|-|-|-
 functions|tests/integration/functions.tl|32|-|-|-
 global_initializer|tests/integration/global_initializer.tl|120|-|-|-
 hello|tests/integration/hello.tl|42|-|-|-
+i16_min_div_neg1_trap|tests/integration/i16_min_div_neg1_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
+i16_min_rem_neg1_trap|tests/integration/i16_min_rem_neg1_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
 lambda_aggregate_returns|tests/integration/lambda_aggregate_returns.tl|42|-|-|-
 lambda_capture_aggregate|tests/integration/lambda_capture_aggregate.tl|42|-|-|-
 lambda_capture_fixed_array|tests/integration/lambda_capture_fixed_array.tl|42|-|-|-
@@ -40,6 +44,7 @@ lambda_lift|tests/integration/lambda_lift.tl|42|-|-|-
 lexer|tests/integration/lexer.tl|12|-|-|-
 many_args|tests/integration/many_args.tl|36|-|-|-
 maybe_result|tests/integration/maybe_result.tl|65|-|-|-
+min_div_neg1_trap|tests/integration/min_div_neg1_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
 modules_main|tests/integration/modules_main.tl|30|-|-|modules_helper.tl
 narrow_div_mod|tests/integration/narrow_div_mod.tl|30|-|-|-
 nested_eval|tests/integration/nested_eval.tl|7|-|-|-
@@ -51,7 +56,10 @@ print|tests/integration/print.tl|0|42\nfalse\n|-|-
 print_char|tests/integration/print_char.tl|0|A\n|-|-
 print_string|tests/integration/print_string.tl|0|hello\nworld\n|-|-
 register_scalar_homes|tests/integration/register_scalar_homes.tl|42|-|-|-
+rem_zero_trap|tests/integration/rem_zero_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
 short_circuit|tests/integration/short_circuit.tl|42|-|-|-
+shl_count_width_trap|tests/integration/shl_count_width_trap.tl|129|-|-|-|expected-stderr:tl: shift count out of range\n
+shl_neg_count_trap|tests/integration/shl_neg_count_trap.tl|129|-|-|-|expected-stderr:tl: shift count out of range\n
 spmd_foreach|tests/integration/spmd_foreach.tl|42|-|-|-
 spmd_reduce_scalar|tests/integration/spmd_reduce_scalar.tl|42|-|-|-
 stdlib_io|tests/integration/stdlib_io.tl|42|-|-|stdlib/io.tl|requires-stage0-symbol:file-read-chunk-status,append-file-status
@@ -70,8 +78,10 @@ text_buf|tests/integration/text_buf.tl|0|left-right\n|-|text_buf_core.tl
 tl_alloc|tests/integration/tl_alloc.tl|0|-|-|-
 tree|tests/integration/tree.tl|3|-|-|-
 tuple_values|tests/integration/tuple_values.tl|42|-|-|-
+u16_div_zero_trap|tests/integration/u16_div_zero_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
 unit_functions|tests/integration/unit_functions.tl|7|-|-|-
 unit_main|tests/integration/unit_main.tl|0|-|-|-
+valid_shift_counts|tests/integration/valid_shift_counts.tl|42|-|-|-
 compiler_parse_smoke|selfhost/compiler_parse_smoke.tl|42|-|-|compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl
 compiler_symbols_smoke|selfhost/compiler_symbols_smoke.tl|42|-|-|compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl
 compiler_typecheck_smoke|selfhost/compiler_typecheck_smoke.tl|42|-|-|compiler_typecheck.tl compiler_ctfe.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl

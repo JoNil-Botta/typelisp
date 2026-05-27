@@ -16,6 +16,8 @@ fn compile_selfhost_source(source_file: &str, work_name: &str, asm_file: &str) -
         .arg(&source_path)
         .arg("-o")
         .arg(&asm_path)
+        .arg("--stdlib-root")
+        .arg(manifest_dir.join("stdlib"))
         .output()
         .expect("run typelisp compile");
 
@@ -33,6 +35,14 @@ fn compile_selfhost_source(source_file: &str, work_name: &str, asm_file: &str) -
 }
 
 fn run_selfhost_source_expect_42(source_file: &str) {
+    if cfg!(target_os = "linux") {
+        run_selfhost_source_direct_linux_expect_42(source_file);
+    } else {
+        run_selfhost_source_public_run_expect_42(source_file);
+    }
+}
+
+fn run_selfhost_source_public_run_expect_42(source_file: &str) {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let source_path = manifest_dir.join("selfhost").join(source_file);
     let target = if cfg!(windows) {
@@ -54,6 +64,87 @@ fn run_selfhost_source_expect_42(source_file: &str) {
         output.status.code(),
         Some(42),
         "{} run step exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        source_file,
+        stdout,
+        stderr,
+    );
+}
+
+fn run_selfhost_source_direct_linux_expect_42(source_file: &str) {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source_path = manifest_dir.join("selfhost").join(source_file);
+    let safe_name = source_file
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+        .collect::<String>();
+    let work_dir = manifest_dir
+        .join("target")
+        .join("tl-compiler-backend-run-test")
+        .join(safe_name);
+    fs::create_dir_all(&work_dir).expect("create compiler backend run test work dir");
+    let asm_path = work_dir.join("program.s");
+    let obj_path = work_dir.join("program.o");
+    let bin_path = work_dir.join("program");
+
+    let compile = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("compile")
+        .arg(&source_path)
+        .arg("-o")
+        .arg(&asm_path)
+        .arg("--stdlib-root")
+        .arg(manifest_dir.join("stdlib"))
+        .output()
+        .expect("compile selfhost smoke source");
+    let compile_stdout = String::from_utf8_lossy(&compile.stdout);
+    let compile_stderr = String::from_utf8_lossy(&compile.stderr);
+    assert!(
+        compile.status.success(),
+        "{} compile step failed\nstdout:\n{}\nstderr:\n{}",
+        source_file,
+        compile_stdout,
+        compile_stderr,
+    );
+
+    let assemble = Command::new("as")
+        .arg(&asm_path)
+        .arg("-o")
+        .arg(&obj_path)
+        .output()
+        .expect("assemble selfhost smoke source");
+    assert!(
+        assemble.status.success(),
+        "{} assemble step failed\nstdout:\n{}\nstderr:\n{}",
+        source_file,
+        String::from_utf8_lossy(&assemble.stdout),
+        String::from_utf8_lossy(&assemble.stderr),
+    );
+
+    let link = Command::new("ld")
+        .arg(&obj_path)
+        .arg("-o")
+        .arg(&bin_path)
+        .arg("-dynamic-linker")
+        .arg("/lib64/ld-linux-x86-64.so.2")
+        .arg("-lc")
+        .output()
+        .expect("link selfhost smoke source");
+    assert!(
+        link.status.success(),
+        "{} link step failed\nstdout:\n{}\nstderr:\n{}",
+        source_file,
+        String::from_utf8_lossy(&link.stdout),
+        String::from_utf8_lossy(&link.stderr),
+    );
+
+    let output = Command::new(&bin_path)
+        .output()
+        .expect("run compiled selfhost smoke");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(42),
+        "{} compiled smoke exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
         source_file,
         stdout,
         stderr,

@@ -23,9 +23,11 @@ cd "$ROOT"
 
 EXE=
 TARGET_ARGS=
+HOST_OS=linux
 case "$(uname -s)" in
-    Linux*) ;;
+    Linux*) HOST_OS=linux ;;
     MINGW* | MSYS* | CYGWIN*)
+        HOST_OS=windows
         EXE=.exe
         TARGET_ARGS="--target windows-x86_64"
         ;;
@@ -55,16 +57,61 @@ fail() {
     exit 1
 }
 
+compile_linux_binary() {
+    _label=$1
+    _source=$2
+    _bin=$3
+    _asm="$_bin.s"
+    _obj="$_bin.o"
+    _out="$SITE/.$_label.compile.out"
+    _err="$SITE/.$_label.compile.err"
+
+    if ! "$COMPILER" compile "$_source" --stdlib-root "$ROOT/stdlib" -o "$_asm" >"$_out" 2>"$_err"; then
+        echo "$_label compile failed:" >&2
+        sed 's/^/  /' "$_err" >&2 || true
+        fail "$_source did not compile"
+    fi
+    if ! as "$_asm" -o "$_obj" >>"$_out" 2>>"$_err"; then
+        echo "$_label assemble failed:" >&2
+        sed 's/^/  /' "$_err" >&2 || true
+        fail "$_source did not assemble"
+    fi
+    if ! ld "$_obj" -o "$_bin" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
+        >>"$_out" 2>>"$_err"; then
+        echo "$_label link failed:" >&2
+        sed 's/^/  /' "$_err" >&2 || true
+        fail "$_source did not link"
+    fi
+}
+
 echo "[doc-site] building site via selfhost/doc_site.tl"
-if ! "$COMPILER" run selfhost/doc_site.tl $TARGET_ARGS -- "$SITE" >"$SITE/.build.out" 2>"$SITE/.build.err"; then
-    echo "site builder failed:" >&2
-    sed 's/^/  /' "$SITE/.build.err" >&2 || true
-    fail "selfhost/doc_site.tl did not build the site"
+if [ "$HOST_OS" = linux ]; then
+    command -v as >/dev/null 2>&1 || fail "missing assembler: as"
+    command -v ld >/dev/null 2>&1 || fail "missing linker: ld"
+    SITE_BUILDER="$SITE/.doc_site"
+    compile_linux_binary doc-site selfhost/doc_site.tl "$SITE_BUILDER"
+    if ! "$SITE_BUILDER" "$SITE" >"$SITE/.build.out" 2>"$SITE/.build.err"; then
+        echo "site builder failed:" >&2
+        sed 's/^/  /' "$SITE/.build.err" >&2 || true
+        fail "selfhost/doc_site.tl did not build the site"
+    fi
+else
+    if ! "$COMPILER" run selfhost/doc_site.tl $TARGET_ARGS -- "$SITE" >"$SITE/.build.out" 2>"$SITE/.build.err"; then
+        echo "site builder failed:" >&2
+        sed 's/^/  /' "$SITE/.build.err" >&2 || true
+        fail "selfhost/doc_site.tl did not build the site"
+    fi
 fi
 
 echo "[doc-site] running selfhost/doc_site_smoke.tl"
 set +e
-"$COMPILER" run selfhost/doc_site_smoke.tl $TARGET_ARGS -- >"$SITE/.smoke.out" 2>"$SITE/.smoke.err"
+if [ "$HOST_OS" = linux ]; then
+    SITE_SMOKE="$SITE/.doc_site_smoke"
+    compile_linux_binary doc-site-smoke selfhost/doc_site_smoke.tl "$SITE_SMOKE"
+    "$SITE_SMOKE" >"$SITE/.smoke.out" 2>"$SITE/.smoke.err"
+else
+    "$COMPILER" run selfhost/doc_site_smoke.tl $TARGET_ARGS -- >"$SITE/.smoke.out" 2>"$SITE/.smoke.err"
+fi
 smoke_code=$?
 set -e
 if [ "$smoke_code" -ne 42 ]; then

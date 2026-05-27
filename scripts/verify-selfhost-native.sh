@@ -173,6 +173,32 @@ assemble_link_run_asm() {
     run_binary_expect "$_label" "$_bin" "$_want" "$_stdout_spec" "$_stderr_spec"
 }
 
+compile_selfhost_binary() {
+    _label=$1
+    _source=$2
+    _bin=$3
+    _dir=$(dirname -- "$_bin")
+    mkdir -p "$_dir"
+    _asm="$_bin.s"
+    _obj="$_bin.o"
+    _out="$_bin.compile.stdout"
+    _err="$_bin.compile.stderr"
+
+    echo "[selfhost-native] compile $_source"
+    set +e
+    "$COMPILER" compile "$_source" --stdlib-root "$ROOT/stdlib" -o "$_asm" > "$_out" 2> "$_err"
+    _got=$?
+    set -e
+    if [ "$_got" -ne 0 ]; then
+        echo "FAIL: $_source compile exited $_got" >&2
+        if [ -s "$_out" ]; then sed 's/^/  stdout: /' "$_out" >&2; fi
+        if [ -s "$_err" ]; then sed 's/^/  stderr: /' "$_err" >&2; fi
+        exit 1
+    fi
+    assemble_link "$_label" "$_asm" "$_obj" "$_bin" 1
+    [ -x "$_bin" ] || fail "$_source compile/link did not write executable"
+}
+
 run_compiler_driver() {
     _driver=$1
     _label=$2
@@ -197,23 +223,7 @@ run_compiler_driver() {
 
 build_selfhost_compiler_driver() {
     _bin=$1
-    _dir=$(dirname -- "$_bin")
-    mkdir -p "$_dir"
-    _out="$_dir/build.stdout"
-    _err="$_dir/build.stderr"
-
-    echo "[selfhost-native] build compiler_driver.tl"
-    set +e
-    "$COMPILER" build selfhost/compiler_driver.tl -o "$_bin" > "$_out" 2> "$_err"
-    _got=$?
-    set -e
-    if [ "$_got" -ne 0 ]; then
-        echo "FAIL: compiler_driver.tl build exited $_got" >&2
-        if [ -s "$_out" ]; then sed 's/^/  stdout: /' "$_out" >&2; fi
-        if [ -s "$_err" ]; then sed 's/^/  stderr: /' "$_err" >&2; fi
-        exit 1
-    fi
-    [ -x "$_bin" ] || fail "compiler_driver build did not write executable"
+    compile_selfhost_binary compiler-driver selfhost/compiler_driver.tl "$_bin"
 }
 
 verify_compiler_driver_stack_args() {
@@ -387,12 +397,14 @@ EOF
 verify_emit_printed_program() {
     _dir="$WORKDIR/generated-emit"
     mkdir -p "$_dir"
+    _bin="$_dir/emit"
     _asm="$_dir/printed.s"
     _stderr="$_dir/emit.stderr"
 
+    compile_selfhost_binary emit-driver selfhost/emit.tl "$_bin"
     echo "[selfhost-native] emit.tl printed assembly"
     set +e
-    "$COMPILER" run selfhost/emit.tl > "$_asm" 2> "$_stderr"
+    "$_bin" > "$_asm" 2> "$_stderr"
     _got=$?
     set -e
     [ "$_got" -eq 0 ] || fail "emit.tl exited $_got"
@@ -404,12 +416,14 @@ verify_emit_printed_program() {
 verify_parse_printed_program() {
     _dir="$WORKDIR/generated-parse"
     mkdir -p "$_dir"
+    _bin="$_dir/parse"
     _asm="$_dir/printed.s"
     _stderr="$_dir/parse.stderr"
 
+    compile_selfhost_binary parse-driver selfhost/parse.tl "$_bin"
     echo "[selfhost-native] parse.tl printed assembly"
     set +e
-    "$COMPILER" run selfhost/parse.tl > "$_asm" 2> "$_stderr"
+    "$_bin" > "$_asm" 2> "$_stderr"
     _got=$?
     set -e
     [ "$_got" -eq 0 ] || fail "parse.tl exited $_got"

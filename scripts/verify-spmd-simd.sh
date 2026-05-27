@@ -54,6 +54,16 @@ fi
 # toolchain (clang/lld-link); Linux uses the default GNU pipeline.
 TARGET=""
 [ "$HOST_OS" = windows ] && TARGET="--target windows-x86_64"
+if [ "$HOST_OS" = linux ]; then
+    command -v as >/dev/null 2>&1 || {
+        echo "missing assembler: as" >&2
+        exit 1
+    }
+    command -v ld >/dev/null 2>&1 || {
+        echo "missing linker: ld" >&2
+        exit 1
+    }
+fi
 
 # Runnable SIMD ISAs on THIS host (CPUID feature bit + OS XSAVE), not host OS.
 SIMD_ISAS=$(sh "$ROOT/scripts/detect-simd-isa.sh" 2>/dev/null || true)
@@ -89,12 +99,39 @@ run_spmd_mode() {
     _prog=$1
     _mode=$2
     _tag=$(printf '%s' "$_prog" | sed 's#[/.]#_#g')
-    set +e
-    "$COMPILER" run "$_prog" $TARGET --backend-mode "$_mode" \
-        > "$WORKDIR/$_tag.$_mode.out" 2> "$WORKDIR/$_tag.$_mode.err"
-    mode_code=$?
-    set -e
+    mode_out="$WORKDIR/$_tag.$_mode.out"
     mode_err="$WORKDIR/$_tag.$_mode.err"
+    : > "$mode_out"
+    : > "$mode_err"
+
+    if [ "$HOST_OS" = linux ]; then
+        _asm="$WORKDIR/$_tag.$_mode.s"
+        _obj="$WORKDIR/$_tag.$_mode.o"
+        _bin="$WORKDIR/$_tag.$_mode"
+        if ! "$COMPILER" compile "$_prog" --backend-mode "$_mode" -o "$_asm" > "$mode_out" 2> "$mode_err"; then
+            mode_code=1
+            return
+        fi
+        if ! as "$_asm" -o "$_obj" >> "$mode_out" 2>> "$mode_err"; then
+            mode_code=1
+            return
+        fi
+        if ! ld "$_obj" -o "$_bin" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
+            >> "$mode_out" 2>> "$mode_err"; then
+            mode_code=1
+            return
+        fi
+        set +e
+        "$_bin" >> "$mode_out" 2>> "$mode_err"
+        mode_code=$?
+        set -e
+    else
+        set +e
+        "$COMPILER" run "$_prog" $TARGET --backend-mode "$_mode" \
+            > "$mode_out" 2> "$mode_err"
+        mode_code=$?
+        set -e
+    fi
 }
 
 while IFS= read -r prog; do

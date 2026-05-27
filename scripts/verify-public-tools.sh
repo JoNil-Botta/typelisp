@@ -173,6 +173,27 @@ assert_not_contains() {
     fi
 }
 
+build_linux_cli_tool() {
+    _case=$1
+    _source=$2
+    _output=$3
+    _asm="$_output.s"
+    _obj="$_output.o"
+
+    run_cmd "$_case-compile" "$COMPILER" compile "$_source" --stdlib-root "$ROOT/stdlib" -o "$_asm"
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "Generated:"
+    run_cmd "$_case-assemble" as "$_asm" -o "$_obj"
+    assert_success
+    assert_stdout_empty
+    assert_stderr_empty
+    run_cmd "$_case-link" ld "$_obj" -o "$_output" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc
+    assert_success
+    assert_stdout_empty
+    assert_stderr_empty
+}
+
 strip_expected_trailing_lf() {
     src=$1
     dst=$2
@@ -686,49 +707,48 @@ assert_contains "$out" "from-plan"
 if [ "$HOST_OS" = linux ]; then
     SELFHOST_PLANNER_DIR="$WORKDIR/selfhost-planners"
     mkdir -p "$SELFHOST_PLANNER_DIR/with space" "$SELFHOST_PLANNER_DIR/stdlib one"
-    run_cmd selfhost-build-planner-build "$COMPILER" build selfhost/build.tl -o "$SELFHOST_PLANNER_DIR/build-planner"
-    assert_success
-    assert_contains "$out" "Generated:"
-    run_cmd selfhost-run-planner-build "$COMPILER" build selfhost/run.tl -o "$SELFHOST_PLANNER_DIR/run-planner"
-    assert_success
-    assert_contains "$out" "Generated:"
+    command -v as >/dev/null 2>&1 || fail "missing assembler: as"
+    command -v ld >/dev/null 2>&1 || fail "missing linker: ld"
+    build_linux_cli_tool selfhost-build-tool selfhost/build.tl "$SELFHOST_PLANNER_DIR/build-tool"
+    build_linux_cli_tool selfhost-run-tool selfhost/run.tl "$SELFHOST_PLANNER_DIR/run-tool"
 
     PLANNER_SOURCE="$SELFHOST_PLANNER_DIR/with space/main file.tl"
     PLANNER_OUTPUT="$SELFHOST_PLANNER_DIR/with space/the program"
-    : > "$PLANNER_SOURCE"
-    run_cmd selfhost-build-plan "$SELFHOST_PLANNER_DIR/build-planner" "$PLANNER_SOURCE" -o "$PLANNER_OUTPUT" --target windows-x86_64 --backend-mode avx2 --stdlib-root "$SELFHOST_PLANNER_DIR/stdlib one" --stdlib-root "stdlib:two"
+    cat > "$PLANNER_SOURCE" <<'EOF'
+(define (main) : i64 23)
+EOF
+    run_cmd selfhost-build-tool "$SELFHOST_PLANNER_DIR/build-tool" --direct "$PLANNER_SOURCE" -o "$PLANNER_OUTPUT" --target linux-x86_64 --backend-mode avx2
     assert_success
     assert_stderr_empty
-    assert_contains "$out" "action build-source"
-    assert_contains "$out" "source $(host_netstring "$PLANNER_SOURCE")"
-    assert_contains "$out" "output $(host_netstring "$PLANNER_OUTPUT")"
-    assert_contains "$out" "target windows-x86_64"
-    assert_contains "$out" "backend-mode avx2"
-    assert_contains "$out" "stdlib-root $(host_netstring "$SELFHOST_PLANNER_DIR/stdlib one")"
-    assert_contains "$out" "stdlib-root $(host_netstring "stdlib:two")"
-
-    run_cmd selfhost-run-plan "$SELFHOST_PLANNER_DIR/run-planner" "$PLANNER_SOURCE" --target linux-x86_64 --backend-mode avx512 --stdlib-root "$SELFHOST_PLANNER_DIR/stdlib one" -- "arg with spaces" "colon:arg"
-    assert_success
+    assert_contains "$out" "Generated: $PLANNER_OUTPUT"
+    [ -f "$PLANNER_OUTPUT" ] || fail "selfhost build tool did not write executable"
+    run_cmd selfhost-build-tool-output "$PLANNER_OUTPUT"
+    assert_code 23
     assert_stderr_empty
-    assert_contains "$out" "action run-source"
-    assert_contains "$out" "source $(host_netstring "$PLANNER_SOURCE")"
-    assert_contains "$out" "target linux-x86_64"
-    assert_contains "$out" "backend-mode avx512"
-    assert_contains "$out" "stdlib-root $(host_netstring "$SELFHOST_PLANNER_DIR/stdlib one")"
-    assert_contains "$out" "runtime-arg $(host_netstring "arg with spaces")"
-    assert_contains "$out" "runtime-arg $(host_netstring "colon:arg")"
 
-    run_cmd selfhost-build-plan-package-rejected "$SELFHOST_PLANNER_DIR/build-planner" --manifest-path typelisp.pkg
+    PLANNER_RUN_SOURCE="$SELFHOST_PLANNER_DIR/with space/run file.tl"
+    cat > "$PLANNER_RUN_SOURCE" <<'EOF'
+(define (main) : i64
+  (begin
+    (print-string (arg 1))
+    (if (string-eq (arg 2) "colon:arg") 13 2)))
+EOF
+    run_cmd selfhost-run-tool "$SELFHOST_PLANNER_DIR/run-tool" --direct "$PLANNER_RUN_SOURCE" --target linux-x86_64 --backend-mode avx512 --stdlib-root "$ROOT/stdlib" -- "arg with spaces" "colon:arg"
+    assert_code 13
+    assert_stderr_empty
+    assert_contains "$out" "arg with spaces"
+
+    run_cmd selfhost-build-tool-package-rejected "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path typelisp.pkg
     assert_failure
     assert_stdout_empty
     assert_contains "$err" "--manifest-path is handled by Rust typelisp build"
 
-    run_cmd selfhost-run-plan-missing-target "$SELFHOST_PLANNER_DIR/run-planner" "$PLANNER_SOURCE" --target
+    run_cmd selfhost-run-tool-missing-target "$SELFHOST_PLANNER_DIR/run-tool" --direct "$PLANNER_SOURCE" --target
     assert_failure
     assert_stdout_empty
     assert_contains "$err" "run: --target requires a value"
 else
-    echo "[public-tools] skipping selfhost build/run planner executables on $HOST_OS"
+    echo "[public-tools] skipping selfhost build/run tool executables on $HOST_OS"
 fi
 
 echo "[public-tools] backend diagnostics"
@@ -1052,7 +1072,9 @@ EOF
         [ "$DOC_GRAPH_LOCAL_LINE" -lt "$DOC_GRAPH_STDLIB_LINE" ] ||
         fail "doc module graph did not preserve loader source order"
 
-    run_cmd doc-generate-html "$COMPILER" run selfhost/doc.tl -- --html "$WORKDIR/doc_source.tl" "$WORKDIR/doc_source.html"
+    DOC_TOOL="$WORKDIR/selfhost-doc-tool"
+    build_linux_cli_tool selfhost-doc-tool selfhost/doc.tl "$DOC_TOOL"
+    run_cmd doc-generate-html "$DOC_TOOL" --html "$WORKDIR/doc_source.tl" "$WORKDIR/doc_source.html"
     assert_success
     assert_stdout_empty
     assert_stderr_empty

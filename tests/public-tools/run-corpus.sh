@@ -601,13 +601,44 @@ build_selfhost_binary() {
     name=$1
     bin_path="$WORKDIR/typelisp-corpus-$name"
     src="$ROOT/selfhost/$name.tl"
-    set +e
-    "$COMPILER" build "$src" --stdlib-root "$ROOT/stdlib" -o "$bin_path" > "$WORKDIR/build-$name.out" 2> "$WORKDIR/build-$name.err"
-    code=$?
-    set -e
-    if [ "$code" -ne 0 ]; then
-        printf '  SKIP selfhost %s: build failed\n' "$name" >&2
-        return 1
+
+    if [ "$HOST_OS" = linux ]; then
+        command -v as >/dev/null 2>&1 || {
+            printf '  SKIP selfhost %s: missing assembler\n' "$name" >&2
+            return 1
+        }
+        command -v ld >/dev/null 2>&1 || {
+            printf '  SKIP selfhost %s: missing linker\n' "$name" >&2
+            return 1
+        }
+        asm="$bin_path.s"
+        obj="$bin_path.o"
+        set +e
+        "$COMPILER" compile "$src" --stdlib-root "$ROOT/stdlib" -o "$asm" > "$WORKDIR/build-$name.out" 2> "$WORKDIR/build-$name.err"
+        code=$?
+        set -e
+        if [ "$code" -ne 0 ]; then
+            printf '  SKIP selfhost %s: compile failed\n' "$name" >&2
+            return 1
+        fi
+        if ! as "$asm" -o "$obj" >> "$WORKDIR/build-$name.out" 2>> "$WORKDIR/build-$name.err"; then
+            printf '  SKIP selfhost %s: assemble failed\n' "$name" >&2
+            return 1
+        fi
+        if ! ld "$obj" -o "$bin_path" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
+            >> "$WORKDIR/build-$name.out" 2>> "$WORKDIR/build-$name.err"; then
+            printf '  SKIP selfhost %s: link failed\n' "$name" >&2
+            return 1
+        fi
+    else
+        set +e
+        "$COMPILER" build "$src" --stdlib-root "$ROOT/stdlib" -o "$bin_path" > "$WORKDIR/build-$name.out" 2> "$WORKDIR/build-$name.err"
+        code=$?
+        set -e
+        if [ "$code" -ne 0 ]; then
+            printf '  SKIP selfhost %s: build failed\n' "$name" >&2
+            return 1
+        fi
     fi
     printf '%s\n' "$bin_path"
 }

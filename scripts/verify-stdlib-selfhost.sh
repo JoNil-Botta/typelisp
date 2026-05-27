@@ -21,8 +21,6 @@ case "$COMPILER" in
     *.exe) ;;
     *) [ "$HOST_OS" = windows ] && COMPILER="$COMPILER.exe" ;;
 esac
-TARGET="$HOST_OS-x86_64"
-
 # Negative witnesses: the selfhost typechecker must REJECT these with the given
 # diagnostic substring (arena/region escape policy). Every other witness must be
 # accepted (parse + typecheck clean). Keep this list in sync with the
@@ -35,13 +33,13 @@ reject_diag() {
     esac
 }
 
-# Each witness is a separate `typelisp run selfhost/check.tl` invocation, and the
-# Windows build intermittently SEGFAULTs mid-compile (#1204). A segfault exits
-# non-zero with no diagnostic, which would otherwise look like "a positive
-# witness was rejected" or "a reject witness rejected without its diagnostic" and
-# spuriously fail this gate. Retry an UNEXPECTED outcome a few times: a transient
-# segfault clears on retry, while a genuine regression reproduces across every
-# attempt and still fails.
+# Each witness is a separate selfhost/check.tl binary invocation, and the Windows
+# build intermittently SEGFAULTs mid-compile (#1204). A segfault exits non-zero
+# with no diagnostic, which would otherwise look like "a positive witness was
+# rejected" or "a reject witness rejected without its diagnostic" and spuriously
+# fail this gate. Retry an UNEXPECTED outcome a few times: a transient segfault
+# clears on retry, while a genuine regression reproduces across every attempt and
+# still fails.
 # Default 6 (not 3): this gate makes ~23 separate check.tl invocations, so the
 # #1204 Windows segfault can exhaust 3 attempts on one of them (observed on PR
 # #1246); more headroom keeps the crash-only retry effective.
@@ -57,6 +55,41 @@ ATTEMPTS="${VERIFY_STDLIB_SELFHOST_ATTEMPTS:-6}"
 if [ "$HOST_OS" = windows ]; then
     echo "skipping stdlib selfhost-frontend witnesses on windows pending #1270 (check.tl selfhost-typechecker segfault)"
     exit 0
+fi
+
+command -v as >/dev/null 2>&1 || {
+    echo "missing assembler: as" >&2
+    exit 1
+}
+command -v ld >/dev/null 2>&1 || {
+    echo "missing linker: ld" >&2
+    exit 1
+}
+
+WORKDIR="$ROOT/target/stdlib-selfhost-verify"
+rm -rf "$WORKDIR"
+mkdir -p "$WORKDIR"
+CHECK_BIN="$WORKDIR/check"
+CHECK_ASM="$WORKDIR/check.s"
+CHECK_OBJ="$WORKDIR/check.o"
+CHECK_OUT="$WORKDIR/check.compile.out"
+CHECK_ERR="$WORKDIR/check.compile.err"
+
+if ! "$COMPILER" compile selfhost/check.tl --stdlib-root "$ROOT/stdlib" -o "$CHECK_ASM" >"$CHECK_OUT" 2>"$CHECK_ERR"; then
+    echo "FAIL: selfhost/check.tl compile failed" >&2
+    sed 's/^/  /' "$CHECK_ERR" >&2 || true
+    exit 1
+fi
+if ! as "$CHECK_ASM" -o "$CHECK_OBJ" >>"$CHECK_OUT" 2>>"$CHECK_ERR"; then
+    echo "FAIL: selfhost/check.tl assemble failed" >&2
+    sed 's/^/  /' "$CHECK_ERR" >&2 || true
+    exit 1
+fi
+if ! ld "$CHECK_OBJ" -o "$CHECK_BIN" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
+    >>"$CHECK_OUT" 2>>"$CHECK_ERR"; then
+    echo "FAIL: selfhost/check.tl link failed" >&2
+    sed 's/^/  /' "$CHECK_ERR" >&2 || true
+    exit 1
 fi
 
 # Sets the global `expected` to 1 when the (rc,out) pair matches the witness
@@ -79,7 +112,7 @@ for witness in stdlib/tests/*.tl; do
     attempt=0
     while [ "$attempt" -lt "$ATTEMPTS" ]; do
         attempt=$((attempt + 1))
-        if out="$("$COMPILER" run selfhost/check.tl --target "$TARGET" -- "$witness" --stdlib-root stdlib 2>&1)"; then
+        if out="$("$CHECK_BIN" "$witness" --stdlib-root stdlib 2>&1)"; then
             rc=0
         else
             rc=$?

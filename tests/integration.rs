@@ -668,13 +668,16 @@ fn spmd_foreach_avx2_runs_when_host_supports_avx2() {
         let work_path = work_dir.join("spmd_foreach.tl");
         fs::copy(&source_path, &work_path).expect("copy spmd_foreach.tl to work dir");
 
-        let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-            .arg("run")
-            .arg(&work_path)
-            .arg("--backend-mode")
-            .arg("avx2")
+        let bin_path = work_dir.join("spmd_foreach_avx2");
+        compile_source_to_binary_with_args(
+            &work_path,
+            &bin_path,
+            "AVX2 SPMD fixture",
+            &["--backend-mode", "avx2"],
+        );
+        let output = Command::new(&bin_path)
             .output()
-            .expect("run typelisp AVX2 SPMD fixture");
+            .expect("run AVX2 SPMD fixture");
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -717,13 +720,16 @@ fn spmd_reduce_avx2_runs_when_host_supports_avx2() {
         let work_path = work_dir.join("spmd_reduce_scalar.tl");
         fs::copy(&source_path, &work_path).expect("copy spmd_reduce_scalar.tl to work dir");
 
-        let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-            .arg("run")
-            .arg(&work_path)
-            .arg("--backend-mode")
-            .arg("avx2")
+        let bin_path = work_dir.join("spmd_reduce_avx2");
+        compile_source_to_binary_with_args(
+            &work_path,
+            &bin_path,
+            "AVX2 SPMD reduction fixture",
+            &["--backend-mode", "avx2"],
+        );
+        let output = Command::new(&bin_path)
             .output()
-            .expect("run typelisp AVX2 SPMD reduction fixture");
+            .expect("run AVX2 SPMD reduction fixture");
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -768,13 +774,16 @@ fn spmd_foreach_avx512_runs_when_host_supports_avx512() {
         let work_path = work_dir.join("spmd_foreach.tl");
         fs::copy(&source_path, &work_path).expect("copy spmd_foreach.tl to work dir");
 
-        let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-            .arg("run")
-            .arg(&work_path)
-            .arg("--backend-mode")
-            .arg("avx512")
+        let bin_path = work_dir.join("spmd_foreach_avx512");
+        compile_source_to_binary_with_args(
+            &work_path,
+            &bin_path,
+            "AVX-512 SPMD fixture",
+            &["--backend-mode", "avx512"],
+        );
+        let output = Command::new(&bin_path)
             .output()
-            .expect("run typelisp AVX-512 SPMD fixture");
+            .expect("run AVX-512 SPMD fixture");
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -4994,6 +5003,8 @@ fn selfhost_eval_reports_recoverable_errors() {
         &work_dir,
         &["read.tl", "lex.tl", "token.tl"],
     );
+    let driver_bin = work_dir.join("eval-driver");
+    compile_source_to_binary(&driver_path, &driver_bin, "eval.tl");
 
     for (name, source, expected_stderr) in [
         ("type_mismatch", r#"(+ "a" 1)"#, "type error: expected int"),
@@ -5004,10 +5015,7 @@ fn selfhost_eval_reports_recoverable_errors() {
             "eval: too few arguments in call",
         ),
     ] {
-        let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-            .arg("run")
-            .arg(&driver_path)
-            .arg("--")
+        let output = Command::new(&driver_bin)
             .arg(source)
             .output()
             .unwrap_or_else(|err| panic!("run selfhost eval error case {name}: {err}"));
@@ -5382,20 +5390,22 @@ fn copy_case_deps(manifest_dir: &Path, source_dir: &Path, work_dir: &Path, deps:
     }
 }
 
-fn compile_source_to_binary(source: &Path, bin_path: &Path, context: &str) {
+fn compile_source_to_binary_with_args(
+    source: &Path,
+    bin_path: &Path,
+    context: &str,
+    extra_args: &[&str],
+) {
     if let Some(parent) = bin_path.parent() {
         fs::create_dir_all(parent).expect("create binary output dir");
     }
     let asm_path = bin_path.with_extension("s");
     let obj_path = bin_path.with_extension("o");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .arg("compile")
-        .arg(source)
-        .arg("-o")
-        .arg(&asm_path)
-        .output()
-        .expect("run typelisp compile");
+    let mut compile = Command::new(env!("CARGO_BIN_EXE_typelisp"));
+    compile.arg("compile").arg(source).arg("-o").arg(&asm_path);
+    compile.args(extra_args);
+    let output = compile.output().expect("run typelisp compile");
     assert!(
         output.status.success(),
         "{} compile step failed\nstdout:\n{}\nstderr:\n{}",
@@ -5422,6 +5432,10 @@ fn compile_source_to_binary(source: &Path, bin_path: &Path, context: &str) {
         .status()
         .expect("run linker");
     assert!(status.success(), "{} linking failed", context);
+}
+
+fn compile_source_to_binary(source: &Path, bin_path: &Path, context: &str) {
+    compile_source_to_binary_with_args(source, bin_path, context, &[]);
 }
 
 fn run_case_explicit_build(case: &Case) {
@@ -5519,11 +5533,11 @@ fn run_case(case: &Case) {
     let source_dir = source_path.parent().expect("case source path has parent");
     copy_case_deps(&manifest_dir, source_dir, &work_dir, case.deps);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .arg("run")
-        .arg(&work_path)
+    let bin_path = work_path.with_extension("");
+    compile_source_to_binary(&work_path, &bin_path, case.name);
+    let output = Command::new(&bin_path)
         .output()
-        .expect("run typelisp");
+        .expect("run compiled typelisp case");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -5632,6 +5646,8 @@ fn source_file_build_respects_explicit_output_path() {
     let source = work_dir.join("main.tl");
     fs::write(&source, "(define (main) : i64 7)\n").expect("write source build output fixture");
     let bin_path = work_dir.join("nested").join("custom-app");
+    fs::create_dir_all(bin_path.parent().expect("custom output path has parent"))
+        .expect("create explicit output parent dir");
 
     let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
         .arg("build")

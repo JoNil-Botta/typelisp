@@ -1041,6 +1041,8 @@
       (CompilerBackendSomeAsm (backend-cat3 "    addq " imm ", %rax\n"))]
     [(IrBinSub)
       (CompilerBackendSomeAsm (backend-cat3 "    subq " imm ", %rax\n"))]
+    [(IrBinMul)
+      (CompilerBackendSomeAsm (backend-cat3 "    imulq " imm ", %rax\n"))]
     [(IrBinEq)
       (CompilerBackendSomeAsm
         (backend-cat3
@@ -1111,6 +1113,10 @@
       (CompilerBackendSomeAsm (backend-cat3 "    orq " imm ", %rax\n"))]
     [(IrBinBitXor)
       (CompilerBackendSomeAsm (backend-cat3 "    xorq " imm ", %rax\n"))]
+    [(IrBinShl)
+      (CompilerBackendSomeAsm (backend-cat3 "    shlq " imm ", %rax\n"))]
+    [(IrBinShr)
+      (CompilerBackendSomeAsm (backend-cat3 "    sarq " imm ", %rax\n"))]
     [_ (CompilerBackendNoAsm)]))
 
 (define (compiler-backend-unop-asm [op : CompilerIrUnOp]) : String
@@ -9931,39 +9937,77 @@ tl_windows_setup_instances:
           (CompilerRegVarTypeNil)
           assignments
           2
-          (IrBinLt)
+          (IrBinMul)
           (IrValueVar 0)
-          (IrValueI64 10)
+          (IrValueI64 3)
           (AstTyI64))
-          [(OkCompilerBackend cmp-asm)
-            (match (compiler-backend-emit-branch
+          [(OkCompilerBackend mul-asm)
+            (match (compiler-backend-emit-binop
+              (CompilerRegVarTypeNil)
               assignments
-              "peephole"
+              2
+              (IrBinShl)
               (IrValueVar 0)
-              "then"
-              "else")
-              [(OkCompilerBackend branch-asm)
-                (and
-                  (compiler-backend-string-contains?
-                    add-asm
-                    "    addq $5, %rax\n")
-                  (and
-                    (not
-                      (compiler-backend-string-contains?
-                        add-asm
-                        "    movq $5, %rbx\n"))
-                    (and
-                      (compiler-backend-string-contains?
-                        cmp-asm
-                        "    cmpq $10, %rax\n    setl %al\n")
-                      (and
-                        (compiler-backend-string-contains?
-                          branch-asm
-                          "    testq %rax, %rax\n    jne ")
-                        (not
+              (IrValueI64 2)
+              (AstTyI64))
+              [(OkCompilerBackend shl-asm)
+                (match (compiler-backend-emit-binop
+                  (CompilerRegVarTypeNil)
+                  assignments
+                  2
+                  (IrBinLt)
+                  (IrValueVar 0)
+                  (IrValueI64 10)
+                  (AstTyI64))
+                  [(OkCompilerBackend cmp-asm)
+                    (match (compiler-backend-emit-branch
+                      assignments
+                      "peephole"
+                      (IrValueVar 0)
+                      "then"
+                      "else")
+                      [(OkCompilerBackend branch-asm)
+                        (and
                           (compiler-backend-string-contains?
-                            branch-asm
-                            "    cmpq $0, %rax\n    jne "))))))]
+                            add-asm
+                            "    addq $5, %rax\n")
+                          (and
+                            (not
+                              (compiler-backend-string-contains?
+                                add-asm
+                                "    movq $5, %rbx\n"))
+                            (and
+                              (compiler-backend-string-contains?
+                                mul-asm
+                                "    imulq $3, %rax\n")
+                              (and
+                                (not
+                                  (compiler-backend-string-contains?
+                                    mul-asm
+                                    "    movq $3, %rbx\n"))
+                                (and
+                                  (compiler-backend-string-contains?
+                                    shl-asm
+                                    "    shlq $2, %rax\n")
+                                  (and
+                                    (not
+                                      (compiler-backend-string-contains?
+                                        shl-asm
+                                        "    movq $2, %rbx\n"))
+                                    (and
+                                      (compiler-backend-string-contains?
+                                        cmp-asm
+                                        "    cmpq $10, %rax\n    setl %al\n")
+                                      (and
+                                        (compiler-backend-string-contains?
+                                          branch-asm
+                                          "    testq %rax, %rax\n    jne ")
+                                        (not
+                                          (compiler-backend-string-contains?
+                                            branch-asm
+                                            "    cmpq $0, %rax\n    jne "))))))))))]
+                      [(ErrCompilerBackend _) false])]
+                  [(ErrCompilerBackend _) false])]
               [(ErrCompilerBackend _) false])]
           [(ErrCompilerBackend _) false])]
       [(ErrCompilerBackend _) false])))

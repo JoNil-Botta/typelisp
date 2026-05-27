@@ -375,11 +375,12 @@ used by CI, run
 `TYPELISP_BIN` is unset and prevents accidental Cargo fallback. On Linux, that
 wrapper uses the published compiler only as the bootstrap seed, checks the
 stage0-to-stage1 bootstrap, then runs deterministic assembly through the freshly
-bootstrapped stage1 compiler. Full public CLI gates still use the seed compiler
-until the selfhost compiler grows a no-Rust host-action wrapper. On Windows, the
-host-supported gates still run against the published stage0 compiler until
-native stage1 bootstrap/link support lands. The full
-stage2/stage3 fixpoint remains available through `scripts/check-bootstrap-fixpoint.sh`.
+bootstrapped stage1 compiler via a no-Rust CLI wrapper. That wrapper also smokes
+the stage1 `build`, `run`, and private `debug host-action` path on Linux. Full
+public CLI gates still use the seed compiler until every public-tool exception is
+ported to the wrapper. On Windows, the host-supported gates still run against the
+published stage0 compiler until native stage1 bootstrap/link support lands. The
+full stage2/stage3 fixpoint remains available through `scripts/check-bootstrap-fixpoint.sh`.
 
 Smaller runnable examples, including `calc.tl`, remain in [`examples/`](examples).
 

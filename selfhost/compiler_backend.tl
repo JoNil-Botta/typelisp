@@ -5609,9 +5609,21 @@ tl_print_err:
 tl_string_eq:
     cmpq %rcx, %rsi
     jne .L_tl_string_eq_false
-.L_tl_string_eq_loop:
-    testq %rsi, %rsi
+    movq %rsi, %r8
+    shrq $3, %r8
+    jz .L_tl_string_eq_tail
+.L_tl_string_eq_word_loop:
+    movq (%rdi), %rax
+    cmpq (%rdx), %rax
+    jne .L_tl_string_eq_false
+    addq $8, %rdi
+    addq $8, %rdx
+    decq %r8
+    jne .L_tl_string_eq_word_loop
+.L_tl_string_eq_tail:
+    andq $7, %rsi
     jz .L_tl_string_eq_true
+.L_tl_string_eq_tail_loop:
     movzbl (%rdi), %eax
     movzbl (%rdx), %r8d
     cmpb %r8b, %al
@@ -5619,7 +5631,7 @@ tl_string_eq:
     incq %rdi
     incq %rdx
     decq %rsi
-    jmp .L_tl_string_eq_loop
+    jne .L_tl_string_eq_tail_loop
 .L_tl_string_eq_true:
     movq $1, %rax
     ret
@@ -5666,9 +5678,21 @@ tl_string_to_int:
 tl_string_eq:
     cmpq %r9, %rdx
     jne .L_tl_string_eq_false
-.L_tl_string_eq_loop:
-    testq %rdx, %rdx
+    movq %rdx, %r10
+    shrq $3, %r10
+    jz .L_tl_string_eq_tail
+.L_tl_string_eq_word_loop:
+    movq (%rcx), %rax
+    cmpq (%r8), %rax
+    jne .L_tl_string_eq_false
+    addq $8, %rcx
+    addq $8, %r8
+    decq %r10
+    jne .L_tl_string_eq_word_loop
+.L_tl_string_eq_tail:
+    andq $7, %rdx
     jz .L_tl_string_eq_true
+.L_tl_string_eq_tail_loop:
     movzbl (%rcx), %eax
     movzbl (%r8), %r10d
     cmpb %r10b, %al
@@ -5676,7 +5700,7 @@ tl_string_eq:
     incq %rcx
     incq %r8
     decq %rdx
-    jmp .L_tl_string_eq_loop
+    jne .L_tl_string_eq_tail_loop
 .L_tl_string_eq_true:
     movq $1, %rax
     ret
@@ -7800,6 +7824,16 @@ tl_windows_setup_instances:
             (compiler-backend-string-contains? asm "tl_string_eq:\n")
             (compiler-backend-string-contains? asm ".globl tl_string_to_int\n")
             (compiler-backend-string-contains? asm "tl_string_to_int:\n"))]
+        [string-eq-word-path : bool
+          (backend-and4
+            (compiler-backend-string-contains?
+              asm
+              ".L_tl_string_eq_word_loop:\n")
+            (compiler-backend-string-contains? asm "    shrq $3, %r8\n")
+            (compiler-backend-string-contains? asm "    cmpq (%rdx), %rax\n")
+            (compiler-backend-string-contains?
+              asm
+              ".L_tl_string_eq_tail_loop:\n"))]
         [driver-labels : bool
           (backend-and8
             (compiler-backend-string-contains? asm ".globl tl_int_to_string\n")
@@ -7970,28 +8004,30 @@ tl_windows_setup_instances:
           (and
             string-labels
             (and
-              driver-labels
+              string-eq-word-path
               (and
-                file-labels
+                driver-labels
                 (and
-                  file-read-chunk-labels
+                  file-labels
                   (and
-                    stdio-labels
+                    file-read-chunk-labels
                     (and
-                      process-labels
+                      stdio-labels
                       (and
-                        no-externs
+                        process-labels
                         (and
-                          file-read-chunk-no-externs
+                          no-externs
                           (and
-                            random-labels
+                            file-read-chunk-no-externs
                             (and
-                              (compiler-backend-string-contains?
-                                asm
-                                "    call tl_alloc\n")
-                              (compiler-backend-string-contains?
-                                asm
-                                ".L_tl_stdin_eof_flag:\n")))))))))))))]
+                              random-labels
+                              (and
+                                (compiler-backend-string-contains?
+                                  asm
+                                  "    call tl_alloc\n")
+                                (compiler-backend-string-contains?
+                                  asm
+                                  ".L_tl_stdin_eof_flag:\n"))))))))))))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-windows-driver-runtime-source) : String

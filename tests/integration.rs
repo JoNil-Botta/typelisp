@@ -341,7 +341,7 @@ fn type_lisp_programs_compile_link_and_run() {
         Case {
             name: "string_eq",
             exit_code: 0,
-            stdout: "true\nfalse\nfalse\ntrue\n",
+            stdout: "true\ntrue\ntrue\nfalse\nfalse\ntrue\nfalse\n",
             deps: &[],
         },
         Case {
@@ -950,7 +950,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         Case {
             name: "string_eq",
             exit_code: 0,
-            stdout: "true\nfalse\nfalse\ntrue\n",
+            stdout: "true\ntrue\ntrue\nfalse\nfalse\ntrue\nfalse\n",
             deps: &[],
         },
         Case {
@@ -1634,6 +1634,12 @@ fn selfhost_backend_runtime_helpers_emit_assemble_link_and_run() {
         "\ntl_substring:\n",
         ".globl tl_string_concat\n",
         "\ntl_string_concat:\n",
+        ".globl tl_string_eq\n",
+        "\ntl_string_eq:\n",
+        ".L_tl_string_eq_word_loop:\n",
+        "    shrq $3, %r8\n",
+        "    cmpq (%rdx), %rax\n",
+        ".L_tl_string_eq_tail_loop:\n",
         "\n.L_tl_read_stdin_line:\n",
         "\n.L_tl_read_stdin_bytes:\n",
         "\n.L_tl_stdin_eof:\n",
@@ -1664,6 +1670,7 @@ fn selfhost_backend_runtime_helpers_emit_assemble_link_and_run() {
         ".extern tl_oob_abort\n",
         ".extern tl_substring\n",
         ".extern tl_string_concat\n",
+        ".extern tl_string_eq\n",
         ".extern .L_tl_read_stdin_line\n",
         ".extern .L_tl_read_stdin_bytes\n",
         ".extern .L_tl_stdin_eof\n",

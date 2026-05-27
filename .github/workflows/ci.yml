@@ -19,7 +19,7 @@ jobs:
   # explicitly documented Linux-only or Windows-blocked coverage, but CI should
   # keep both OS entries wired by default.
   no-rust-stage0:
-    name: No-Rust Stage1 Capability Verification (linux)
+    name: No-Rust Stage0 Verification (linux)
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:

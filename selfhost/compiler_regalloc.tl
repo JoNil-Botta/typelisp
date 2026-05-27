@@ -251,6 +251,10 @@
     [(IrInstrCast dst _ _ to-ty) (compiler-reg-var-type-insert types dst to-ty)]
     [(IrInstrBinOp dst _ _ _ ty) (compiler-reg-var-type-insert types dst ty)]
     [(IrInstrUnOp dst _ _ ty) (compiler-reg-var-type-insert types dst ty)]
+    [(IrInstrVectorReduce dst _ _ _ elem-ty)
+      (compiler-reg-var-type-insert types dst elem-ty)]
+    [(IrInstrMaskReduce dst _ _ _)
+      (compiler-reg-var-type-insert types dst (AstTyBool))]
     [(IrInstrCall dst _ _ ty) (compiler-reg-var-type-insert types dst ty)]
     [(IrInstrPhi dst _ ty) (compiler-reg-var-type-insert types dst ty)]
     [_ types]))
@@ -509,6 +513,16 @@
     [(IrInstrAddrOf dst src)
       (compiler-live-set-insert (compiler-live-set-insert set dst) src)]
     [(IrInstrGep dst _ _ _) (compiler-live-set-insert set dst)]
+    [(IrInstrLaneId dst _ _) (compiler-live-set-insert set dst)]
+    [(IrInstrSplat dst _ _ _) (compiler-live-set-insert set dst)]
+    [(IrInstrVectorBinOp dst _ _ _ _ _) (compiler-live-set-insert set dst)]
+    [(IrInstrVectorCompare dst _ _ _ _ _) (compiler-live-set-insert set dst)]
+    [(IrInstrMaskBinOp dst _ _ _ _) (compiler-live-set-insert set dst)]
+    [(IrInstrMaskNot dst _ _) (compiler-live-set-insert set dst)]
+    [(IrInstrSelect dst _ _ _ _ _) (compiler-live-set-insert set dst)]
+    [(IrInstrVectorLoad dst _ _ _ _) (compiler-live-set-insert set dst)]
+    [(IrInstrPredicatedLoad dst _ _ _ _ _) (compiler-live-set-insert set dst)]
+    [(IrInstrTailMask dst _ _ _) (compiler-live-set-insert set dst)]
     [_ set]))
 
 (define (compiler-reg-ineligible-instrs
@@ -1183,7 +1197,7 @@
     "overlap"
     IrParamNil
     (AstTyUnit)
-    7
+    8
     (IrBlockCons
       (IrBlock
         "entry"
@@ -1308,8 +1322,10 @@
                   (IrInstrCons
                     (IrInstrAddrOf 6 3)
                     (IrInstrCons
-                      (IrInstrReturn (IrSomeValue (IrValueVar 5)))
-                      IrInstrNil))))))))
+                      (IrInstrTailMask 7 (IrValueVar 5) (IrValueVar 5) 4)
+                      (IrInstrCons
+                        (IrInstrReturn (IrSomeValue (IrValueVar 5)))
+                        IrInstrNil)))))))))
       IrBlockNil)))
 
 (define (compiler-reg-move-chain-function) : CompilerIrFunction
@@ -1540,9 +1556,15 @@
                             (compiler-reg-unassigned? assignments 4)
                             (and
                               (compiler-reg-unassigned? assignments 6)
-                              (compiler-reg-location-register?
-                                (compiler-reg-assignment-lookup assignments 5)
-                                "%r12")))))))))))))]))
+                              (and
+                                (compiler-live-set-contains? ineligible 7)
+                                (and
+                                  (compiler-reg-unassigned? assignments 7)
+                                  (compiler-reg-location-register?
+                                    (compiler-reg-assignment-lookup
+                                      assignments
+                                      5)
+                                    "%r12")))))))))))))))]))
 
 (define (compiler-reg-same-location?
   [assignments : CompilerRegAssignmentList]

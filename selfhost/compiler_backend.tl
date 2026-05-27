@@ -169,6 +169,13 @@
     instr-diag
     (compiler-diagnostic-message diag)))
 
+(define (compiler-backend-vector-mask-unimplemented
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (ErrCompilerBackend
+    (compiler-diagnostic-with-message
+      instr-diag
+      "backend: vector/mask IR emission is not implemented")))
+
 (define (compiler-backend-round-up-16 [n : i64]) : i64
   (if (= n 0)
     0
@@ -2149,6 +2156,34 @@
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(IrInstrLaneId _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrSplat _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrVectorBinOp _ _ _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrVectorReduce _ _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrVectorCompare _ _ _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrMaskBinOp _ _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrMaskNot _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrMaskReduce _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrSelect _ _ _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrVectorLoad _ _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrVectorStore _ _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrPredicatedStore _ _ _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrPredicatedLoad _ _ _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrTailMask _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
       [(IrInstrCall dst name args ty)
         (let
           [param-types : AstTypeList
@@ -2758,6 +2793,60 @@
         length)]
     [(IrInstrCast _ src _ _)
       (compiler-backend-collect-value-string strings src)]
+    [(IrInstrSplat _ value _ _)
+      (compiler-backend-collect-value-string strings value)]
+    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
+      (compiler-backend-collect-value-string
+        (compiler-backend-collect-value-string strings lhs)
+        rhs)]
+    [(IrInstrVectorReduce _ _ src _ _)
+      (compiler-backend-collect-value-string strings src)]
+    [(IrInstrVectorCompare _ _ lhs rhs _ _)
+      (compiler-backend-collect-value-string
+        (compiler-backend-collect-value-string strings lhs)
+        rhs)]
+    [(IrInstrMaskBinOp _ _ lhs rhs _)
+      (compiler-backend-collect-value-string
+        (compiler-backend-collect-value-string strings lhs)
+        rhs)]
+    [(IrInstrMaskNot _ src _)
+      (compiler-backend-collect-value-string strings src)]
+    [(IrInstrMaskReduce _ _ src _)
+      (compiler-backend-collect-value-string strings src)]
+    [(IrInstrSelect _ mask on-true on-false _ _)
+      (compiler-backend-collect-value-string
+        (compiler-backend-collect-value-string
+          (compiler-backend-collect-value-string strings mask)
+          on-true)
+        on-false)]
+    [(IrInstrVectorLoad _ base index _ _)
+      (compiler-backend-collect-value-string
+        (compiler-backend-collect-value-string strings base)
+        index)]
+    [(IrInstrVectorStore base index value _ _)
+      (compiler-backend-collect-value-string
+        (compiler-backend-collect-value-string
+          (compiler-backend-collect-value-string strings base)
+          index)
+        value)]
+    [(IrInstrPredicatedStore base index value mask _ _)
+      (compiler-backend-collect-value-string
+        (compiler-backend-collect-value-string
+          (compiler-backend-collect-value-string
+            (compiler-backend-collect-value-string strings base)
+            index)
+          value)
+        mask)]
+    [(IrInstrPredicatedLoad _ base index mask _ _)
+      (compiler-backend-collect-value-string
+        (compiler-backend-collect-value-string
+          (compiler-backend-collect-value-string strings base)
+          index)
+        mask)]
+    [(IrInstrTailMask _ index length _)
+      (compiler-backend-collect-value-string
+        (compiler-backend-collect-value-string strings index)
+        length)]
     [_ strings]))
 
 (define (compiler-backend-collect-instr-list-strings
@@ -2875,6 +2964,59 @@
         (compiler-backend-collect-value-f64 floats index)
         length)]
     [(IrInstrCast _ src _ _) (compiler-backend-collect-value-f64 floats src)]
+    [(IrInstrSplat _ value _ _)
+      (compiler-backend-collect-value-f64 floats value)]
+    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
+      (compiler-backend-collect-value-f64
+        (compiler-backend-collect-value-f64 floats lhs)
+        rhs)]
+    [(IrInstrVectorReduce _ _ src _ _)
+      (compiler-backend-collect-value-f64 floats src)]
+    [(IrInstrVectorCompare _ _ lhs rhs _ _)
+      (compiler-backend-collect-value-f64
+        (compiler-backend-collect-value-f64 floats lhs)
+        rhs)]
+    [(IrInstrMaskBinOp _ _ lhs rhs _)
+      (compiler-backend-collect-value-f64
+        (compiler-backend-collect-value-f64 floats lhs)
+        rhs)]
+    [(IrInstrMaskNot _ src _) (compiler-backend-collect-value-f64 floats src)]
+    [(IrInstrMaskReduce _ _ src _)
+      (compiler-backend-collect-value-f64 floats src)]
+    [(IrInstrSelect _ mask on-true on-false _ _)
+      (compiler-backend-collect-value-f64
+        (compiler-backend-collect-value-f64
+          (compiler-backend-collect-value-f64 floats mask)
+          on-true)
+        on-false)]
+    [(IrInstrVectorLoad _ base index _ _)
+      (compiler-backend-collect-value-f64
+        (compiler-backend-collect-value-f64 floats base)
+        index)]
+    [(IrInstrVectorStore base index value _ _)
+      (compiler-backend-collect-value-f64
+        (compiler-backend-collect-value-f64
+          (compiler-backend-collect-value-f64 floats base)
+          index)
+        value)]
+    [(IrInstrPredicatedStore base index value mask _ _)
+      (compiler-backend-collect-value-f64
+        (compiler-backend-collect-value-f64
+          (compiler-backend-collect-value-f64
+            (compiler-backend-collect-value-f64 floats base)
+            index)
+          value)
+        mask)]
+    [(IrInstrPredicatedLoad _ base index mask _ _)
+      (compiler-backend-collect-value-f64
+        (compiler-backend-collect-value-f64
+          (compiler-backend-collect-value-f64 floats base)
+          index)
+        mask)]
+    [(IrInstrTailMask _ index length _)
+      (compiler-backend-collect-value-f64
+        (compiler-backend-collect-value-f64 floats index)
+        length)]
     [_ floats]))
 
 (define (compiler-backend-collect-instr-list-f64s
@@ -9153,11 +9295,17 @@ tl_windows_setup_instances:
         9)
       ;; #1044: an f64 unary op other than negation is rejected (mirrors the
       ;; f64-binary-op reject; only IrUnNeg has an f64 lowering).
-      (compiler-backend-instr-diagnostic-case-ok?
-        (IrInstrUnOp 2 (IrUnNot) (IrValueF64 "1.0") (AstTyF64))
-        "backend: unsupported f64 unary op"
-        40
-        11))))
+      (and
+        (compiler-backend-instr-diagnostic-case-ok?
+          (IrInstrUnOp 2 (IrUnNot) (IrValueF64 "1.0") (AstTyF64))
+          "backend: unsupported f64 unary op"
+          40
+          11)
+        (compiler-backend-instr-diagnostic-case-ok?
+          (IrInstrLaneId 3 4 (AstTyI64))
+          "backend: vector/mask IR emission is not implemented"
+          44
+          13)))))
 
 (define (compiler-backend-optimizer-rewrite-diagnostic-ok?) : bool
   (let

@@ -50,10 +50,8 @@ if [ ! -x "$COMPILER" ]; then
     exit 1
 fi
 
-# On Windows the SPMD variants are built+run through the native windows-x86_64
-# toolchain (clang/lld-link); Linux uses the default GNU pipeline.
-TARGET=""
-[ "$HOST_OS" = windows ] && TARGET="--target windows-x86_64"
+# Windows uses the host-default native toolchain (clang/lld-link); Linux uses
+# the default GNU pipeline.
 if [ "$HOST_OS" = linux ]; then
     command -v as >/dev/null 2>&1 || {
         echo "missing assembler: as" >&2
@@ -127,7 +125,7 @@ run_spmd_mode() {
         set -e
     else
         set +e
-        "$COMPILER" run "$_prog" $TARGET --backend-mode "$_mode" \
+        "$COMPILER" run "$_prog" --backend-mode "$_mode" \
             > "$mode_out" 2> "$mode_err"
         mode_code=$?
         set -e

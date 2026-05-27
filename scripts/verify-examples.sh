@@ -8,7 +8,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 # Linux verifies through the GNU `as`/`ld` pipeline; Windows (Git Bash / MSYS /
-# Cygwin on the CI runner) verifies through the native `windows-x86_64` toolchain
+# Cygwin on the CI runner) verifies through the host-default native toolchain
 # (`typelisp build` -> `clang`/`lld-link`), mirroring tests/windows_native.rs.
 HOST_OS=linux
 case "$(uname -s)" in
@@ -70,8 +70,8 @@ for source in "$ROOT/examples/"*.tl; do
     bin="$WORKDIR/$name"
 
     if [ "$HOST_OS" = windows ]; then
-        echo "[$name] building (windows-x86_64)"
-        "$COMPILER" build "$WORKDIR/$name.tl" -o "$bin.exe" --target windows-x86_64
+        echo "[$name] building (host default)"
+        "$COMPILER" build "$WORKDIR/$name.tl" -o "$bin.exe"
 
         echo "[$name] running -> expect exit $want"
         set +e

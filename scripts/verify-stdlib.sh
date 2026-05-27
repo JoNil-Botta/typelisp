@@ -8,7 +8,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 # Linux verifies through the GNU `as`/`ld` pipeline; Windows (Git Bash / MSYS /
-# Cygwin on the CI runner) verifies through the native `windows-x86_64` toolchain
+# Cygwin on the CI runner) verifies through the host-default native toolchain
 # (`typelisp build` -> `clang`/`lld-link`), mirroring tests/windows_native.rs.
 HOST_OS=linux
 case "$(uname -s)" in
@@ -36,7 +36,7 @@ fi
 # Build a fixture .tl to a runnable binary and run it (host-aware) with the
 # supplied stdin file, capturing the program exit code in `got` and writing
 # program stdout/stderr to <stem>.stdout / <stem>.stderr. Linux uses GNU as/ld;
-# Windows builds a native windows-x86_64 executable via clang/lld-link. Callers
+# Windows builds a native executable via clang/lld-link. Callers
 # pass the same <stem> they use for their .stdout/.stderr assertion paths.
 # Sets `build_status` (0 = built ok) and, on success, runs the binary setting
 # `got`. Build/link output is captured to <stem>.build.err. A build failure does
@@ -52,7 +52,7 @@ stdlib_build_run() {
     set +e
     if [ "$HOST_OS" = windows ]; then
         "$COMPILER" build "$_src" --stdlib-root "$ROOT/stdlib" -o "$_stem.exe" \
-            --target windows-x86_64 > "$_stem.build.out" 2> "$_stem.build.err"
+            > "$_stem.build.out" 2> "$_stem.build.err"
         build_status=$?
         if [ "$build_status" -eq 0 ]; then
             "$_stem.exe" < "$_stdin" > "$_stem.stdout" 2> "$_stem.stderr"

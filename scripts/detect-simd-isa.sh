@@ -46,7 +46,7 @@ case "$(uname -s)" in
             PROBE_TMP="${TMPDIR:-/tmp}/tl-simd-detect.tl"
             cp "$PROBE_SRC" "$PROBE_TMP"
             if ! "$COMPILER" build "$PROBE_TMP" -o "$PROBE_EXE" \
-                --target windows-x86_64 --stdlib-root "$ROOT/stdlib" >/dev/null 2>&1; then
+                --stdlib-root "$ROOT/stdlib" >/dev/null 2>&1; then
                 echo "detect-simd-isa: failed to build TypeLisp cpuid detector with '$COMPILER'" >&2
                 exit 1
             fi

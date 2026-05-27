@@ -517,11 +517,7 @@ cat > "$RUN_MATRIX/output_status.tl" <<'EOF'
     (print-string "hello")
     7))
 EOF
-if [ "$HOST_OS" = windows ]; then
-    run_cmd run-output-status "$COMPILER" run "$RUN_MATRIX/output_status.tl" --target windows-x86_64
-else
-    run_cmd run-output-status "$COMPILER" run "$RUN_MATRIX/output_status.tl"
-fi
+run_cmd run-output-status "$COMPILER" run "$RUN_MATRIX/output_status.tl"
 assert_code 7
 assert_stderr_empty
 assert_contains "$out" "hello"
@@ -531,22 +527,14 @@ cat > "$RUN_MATRIX/stdin.tl" <<'EOF'
   (print-string (read-stdin-line)))
 EOF
 printf 'hello from stdin\n' > "$RUN_MATRIX/stdin.in"
-if [ "$HOST_OS" = windows ]; then
-    run_stdin run-stdin "$RUN_MATRIX/stdin.in" "$COMPILER" run "$RUN_MATRIX/stdin.tl" --target windows-x86_64
-else
-    run_stdin run-stdin "$RUN_MATRIX/stdin.in" "$COMPILER" run "$RUN_MATRIX/stdin.tl"
-fi
+run_stdin run-stdin "$RUN_MATRIX/stdin.in" "$COMPILER" run "$RUN_MATRIX/stdin.tl"
 assert_success
 assert_stderr_empty
 assert_contains "$out" "hello from stdin"
 
 PATH_SEP=:
 [ "$HOST_OS" = windows ] && PATH_SEP=';'
-if [ "$HOST_OS" = windows ]; then
-    run_cmd run-env-fixture env -u TYPELISP_STDLIB_TEST_MISSING_854 TYPELISP_STDLIB_TEST_EMPTY= TYPELISP_STDLIB_TEST_VALUE=env-value-854 TYPELISP_STDLIB_TEST_PATH="one${PATH_SEP}two${PATH_SEP}three" "$COMPILER" run stdlib/tests/env_api.tl --stdlib-root "$ROOT/stdlib" --target windows-x86_64
-else
-    run_cmd run-env-fixture env -u TYPELISP_STDLIB_TEST_MISSING_854 TYPELISP_STDLIB_TEST_EMPTY= TYPELISP_STDLIB_TEST_VALUE=env-value-854 TYPELISP_STDLIB_TEST_PATH="one${PATH_SEP}two${PATH_SEP}three" "$COMPILER" run stdlib/tests/env_api.tl --stdlib-root "$ROOT/stdlib"
-fi
+run_cmd run-env-fixture env -u TYPELISP_STDLIB_TEST_MISSING_854 TYPELISP_STDLIB_TEST_EMPTY= TYPELISP_STDLIB_TEST_VALUE=env-value-854 TYPELISP_STDLIB_TEST_PATH="one${PATH_SEP}two${PATH_SEP}three" "$COMPILER" run stdlib/tests/env_api.tl --stdlib-root "$ROOT/stdlib"
 assert_code 42
 assert_stdout_empty
 assert_stderr_empty
@@ -559,11 +547,7 @@ SIMD_ISAS=$(sh "$ROOT/scripts/detect-simd-isa.sh" 2>/dev/null || true)
 run_backend_mode_exec() {
     # $1 = backend mode (avx2|avx512); $2 = required ISA token (avx2|avx512f)
     if printf '%s\n' "$SIMD_ISAS" | grep -qx "$2"; then
-        if [ "$HOST_OS" = windows ]; then
-            run_cmd "run-backend-$1" "$COMPILER" run "$CLI_MATRIX/main.tl" --backend-mode "$1" --target windows-x86_64 -- arg
-        else
-            run_cmd "run-backend-$1" "$COMPILER" run "$CLI_MATRIX/main.tl" --backend-mode "$1" -- arg
-        fi
+        run_cmd "run-backend-$1" "$COMPILER" run "$CLI_MATRIX/main.tl" --backend-mode "$1" -- arg
         assert_code 42
         assert_stdout_empty
         assert_stderr_empty
@@ -600,15 +584,13 @@ cat > "$SPMD_EXEC/spmd.tl" <<'TLEOF'
         (array-set! out j (+ (array-ref a j) (array-ref b j))))
       (bit-and (array-ref out 63) 255))))
 TLEOF
-spmd_exec_target=
-[ "$HOST_OS" = windows ] && spmd_exec_target="--target windows-x86_64"
 run_spmd_exec_mode() {
     # $1 = backend mode; $2 = required ISA token, or "-" to always run (scalar reference)
     if [ "$2" != "-" ] && ! printf '%s\n' "$SIMD_ISAS" | grep -qx "$2"; then
         echo "[public-tools] skipping spmd-exec --backend-mode $1 ($2 not available on this $HOST_OS host)"
         return
     fi
-    run_cmd "spmd-exec-$1" "$COMPILER" run "$SPMD_EXEC/spmd.tl" $spmd_exec_target --backend-mode "$1" -- arg
+    run_cmd "spmd-exec-$1" "$COMPILER" run "$SPMD_EXEC/spmd.tl" --backend-mode "$1" -- arg
     assert_code 190
     assert_stdout_empty
     assert_stderr_empty

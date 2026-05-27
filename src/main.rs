@@ -436,6 +436,13 @@ fn execute_selfhost_host_action_driver(
     args: &[String],
     command_name: &str,
 ) -> host_action::HostActionOutcome {
+    let mut driver_args = args.to_vec();
+    if command_name == "run" && !driver_args.is_empty() {
+        driver_args.insert(1, "--emit-host-plan".to_string());
+    } else {
+        driver_args.insert(0, "--emit-host-plan".to_string());
+    }
+
     let driver = find_selfhost_file(driver_relative).unwrap_or_else(|| {
         eprintln!(
             "Error: could not find {} in the repo or near the executable",
@@ -446,8 +453,8 @@ fn execute_selfhost_host_action_driver(
 
     let output = native_or_exit(native::run_source_file_in_temp_dir(
         &driver,
-        &LoadOptions::default(),
-        args,
+        &selfhost_driver_load_options(&driver),
+        &driver_args,
         native::host_target(),
     ));
 
@@ -482,6 +489,44 @@ fn execute_selfhost_host_action_driver(
     add_env_stdlib_root_to_plan(&mut plan);
 
     native_or_exit(host_action::execute_plan(&plan))
+}
+
+fn selfhost_driver_load_options(driver: &Path) -> LoadOptions {
+    let mut options = LoadOptions::default();
+    if let Some(repo_root) = driver.parent().and_then(|parent| parent.parent()) {
+        options.stdlib_roots.push(repo_root.join("stdlib"));
+    }
+    options
+}
+
+fn execute_selfhost_direct_driver(
+    driver_relative: &str,
+    args: &[String],
+) -> native::NativeRunOutput {
+    let driver = find_selfhost_file(driver_relative).unwrap_or_else(|| {
+        eprintln!(
+            "Error: could not find {} in the repo or near the executable",
+            driver_relative
+        );
+        std::process::exit(1);
+    });
+
+    native_or_exit(native::run_source_file_in_temp_dir(
+        &driver,
+        &selfhost_driver_load_options(&driver),
+        args,
+        native::host_target(),
+    ))
+}
+
+fn finish_selfhost_direct_output(output: native::NativeRunOutput) {
+    write_stream_or_exit(io::stdout(), &output.stdout, "stdout");
+    write_stream_or_exit(io::stderr(), &output.stderr, "stderr");
+    match output.status.code() {
+        Some(0) => {}
+        Some(code) => std::process::exit(code),
+        None => std::process::exit(1),
+    }
 }
 
 fn finish_host_action_outcome(outcome: host_action::HostActionOutcome) {
@@ -987,6 +1032,36 @@ fn build_should_use_selfhost_source_path(args: &[String]) -> bool {
     !build_args_have_manifest_path(args, 2) && build_args_have_source_file(args, 2)
 }
 
+fn source_args_need_host_action_bridge(args: &[String]) -> bool {
+    if !cfg!(target_os = "linux") {
+        return true;
+    }
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--" => break,
+            "--target" if i + 1 < args.len() => {
+                let target = args[i + 1].as_str();
+                if target == "windows-x86_64" || target == "windows_x86_64" {
+                    return true;
+                }
+                i += 2;
+            }
+            "--target" => break,
+            "--backend-mode" if i + 1 < args.len() => {
+                if args[i + 1] != "scalar" {
+                    return true;
+                }
+                i += 2;
+            }
+            "--backend-mode" => break,
+            _ => i += 1,
+        }
+    }
+    false
+}
+
 fn package_or_exit<T>(result: Result<T, PackageError>) -> T {
     match result {
         Ok(value) => value,
@@ -1190,9 +1265,17 @@ fn run_cli() {
         }
         "build" => {
             if build_should_use_selfhost_source_path(&args) {
-                let outcome =
-                    execute_selfhost_host_action_driver("selfhost/build.tl", &args[2..], "build");
-                finish_host_action_outcome(outcome);
+                if source_args_need_host_action_bridge(&args[2..]) {
+                    let outcome = execute_selfhost_host_action_driver(
+                        "selfhost/build.tl",
+                        &args[2..],
+                        "build",
+                    );
+                    finish_host_action_outcome(outcome);
+                } else {
+                    let output = execute_selfhost_direct_driver("selfhost/build.tl", &args[2..]);
+                    finish_selfhost_direct_output(output);
+                }
             } else {
                 match parse_build_options(&args, 2) {
                     BuildRequest::Source {
@@ -1243,8 +1326,14 @@ fn run_cli() {
                 print_usage();
                 std::process::exit(1);
             }
-            let outcome = execute_selfhost_host_action_driver("selfhost/run.tl", &args[2..], "run");
-            finish_host_action_outcome(outcome);
+            if source_args_need_host_action_bridge(&args[2..]) {
+                let outcome =
+                    execute_selfhost_host_action_driver("selfhost/run.tl", &args[2..], "run");
+                finish_host_action_outcome(outcome);
+            } else {
+                let output = execute_selfhost_direct_driver("selfhost/run.tl", &args[2..]);
+                finish_selfhost_direct_output(output);
+            }
         }
         "help" | "--help" | "-h" => {
             print_usage();

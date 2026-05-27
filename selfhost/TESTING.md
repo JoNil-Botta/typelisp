@@ -136,12 +136,13 @@ as the seed compiler. It installs failing `cargo` and `rustc` shims in `PATH` so
 the gate cannot silently fall back to Rust. On Linux it first runs
 the stage1-build path in `check-bootstrap-fixpoint.sh` with the seed compiler,
 then routes stage1 capability gates through `scripts/stage1-typelisp-wrapper.sh`.
-The wrapper gives the raw stage1 compiler the public `typelisp compile` shape
-and a no-Rust Linux host-action executor for source build/run and scratch
-assembly plans. Full public CLI gates still use the seed compiler until every
-public-tool exception is ported to the wrapper. On Windows it exports the seed
-compiler directly until native stage1 bootstrap/link support lands. The full
-stage2/stage3 fixpoint remains available through
+The wrapper gives the raw stage1 compiler the public `typelisp compile` shape,
+routes source-file `build`/`run` through the selfhost TypeLisp drivers on Linux,
+and keeps a no-Rust Linux executor for private scratch assembly plans. Full
+public CLI gates still use the seed compiler until every public-tool exception
+is ported to the wrapper. On Windows it exports the seed compiler directly until
+native stage1 bootstrap/link support lands. The full stage2/stage3 fixpoint
+remains available through
 `check-bootstrap-fixpoint.sh`. The scripts that still run `cargo build --release`
 when `TYPELISP_BIN` is unset keep that path as a local fallback only until #795
 removes the Rust-owned stage0 dependency.

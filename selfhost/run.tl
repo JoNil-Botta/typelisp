@@ -1,12 +1,24 @@
-;; run.tl - Selfhost source-file run host-action planner (#622).
+;; run.tl - Selfhost source-file run driver (#622, #1338).
 ;;
-;; Emits a private `typelisp-host-plan v1` run-source plan for Rust's
-;; `typelisp debug host-action` / future top-level run routing. Rust remains the
-;; process boundary; this driver only parses argv and emits the plan.
+;; Linux/scalar source-file runs execute directly through stdlib process/fs. A
+;; hidden `--emit-host-plan` mode preserves the private Rust host-action bridge
+;; for staged fallback paths.
 (import "host_plan.tl")
 
+(import "native_source.tl")
+
 (defenum RunPlanConfig
-  (RunPlanConfig String String String String String String))
+  (RunPlanConfig
+    String
+    String
+    String
+    String
+    String
+    String
+    CompilerLoadRootList
+    ProcessStringList
+    i64
+    bool))
 
 (defenum ResultRunPlanConfig
   (OkRunPlanConfig RunPlanConfig)
@@ -27,16 +39,32 @@
 (define (run-plan-append-runtime [runtime-lines : String] [value : String]) : String
   (string-append runtime-lines (host-plan-netline "runtime-arg" value)))
 
-(define (run-plan-runtime-args
+(define (run-plan-root-list-append
+  [roots : CompilerLoadRootList]
+  [root : String]) : CompilerLoadRootList
+  (native-source-root-list-append roots root))
+
+(define (run-plan-runtime-lines
   [idx : i64]
   [count : i64]
   [runtime-lines : String]) : String
   (if (>= idx count)
     runtime-lines
-    (run-plan-runtime-args
+    (run-plan-runtime-lines
       (+ idx 1)
       count
       (run-plan-append-runtime runtime-lines (arg idx)))))
+
+(define (run-plan-runtime-arg-list
+  [idx : i64]
+  [count : i64]
+  [runtime-args : ProcessStringList]) : ProcessStringList
+  (if (>= idx count)
+    runtime-args
+    (run-plan-runtime-arg-list
+      (+ idx 1)
+      count
+      (native-source-process-args-append runtime-args (arg idx)))))
 
 (define (run-plan-parse-options
   [idx : i64]
@@ -46,10 +74,24 @@
   [mode : String]
   [opt-level : String]
   [stdlib-lines : String]
-  [runtime-lines : String]) : ResultRunPlanConfig
+  [runtime-lines : String]
+  [stdlib-roots : CompilerLoadRootList]
+  [runtime-args : ProcessStringList]
+  [opt-level-value : i64]
+  [emit-host-plan : bool]) : ResultRunPlanConfig
   (if (>= idx count)
     (OkRunPlanConfig
-      (RunPlanConfig source target mode opt-level stdlib-lines runtime-lines))
+      (RunPlanConfig
+        source
+        target
+        mode
+        opt-level
+        stdlib-lines
+        runtime-lines
+        stdlib-roots
+        runtime-args
+        opt-level-value
+        emit-host-plan))
     (let
       [current : String (arg idx)]
       (if (string-eq current "--")
@@ -60,7 +102,11 @@
             mode
             opt-level
             stdlib-lines
-            (run-plan-runtime-args (+ idx 1) count runtime-lines)))
+            (run-plan-runtime-lines (+ idx 1) count runtime-lines)
+            stdlib-roots
+            (run-plan-runtime-arg-list (+ idx 1) count runtime-args)
+            opt-level-value
+            emit-host-plan))
         (if (string-eq current "--target")
           (if (>= (+ idx 1) count)
             (ErrRunPlanConfig "run: --target requires a value")
@@ -75,7 +121,11 @@
                   mode
                   opt-level
                   stdlib-lines
-                  runtime-lines)
+                  runtime-lines
+                  stdlib-roots
+                  runtime-args
+                  opt-level-value
+                  emit-host-plan)
                 (ErrRunPlanConfig (run-plan-unknown-target value)))))
           (if (string-eq current "--backend-mode")
             (if (>= (+ idx 1) count)
@@ -91,7 +141,11 @@
                     value
                     opt-level
                     stdlib-lines
-                    runtime-lines)
+                    runtime-lines
+                    stdlib-roots
+                    runtime-args
+                    opt-level-value
+                    emit-host-plan)
                   (ErrRunPlanConfig (run-plan-unknown-mode value)))))
             (if (string-eq current "--opt-level")
               (if (>= (+ idx 1) count)
@@ -107,7 +161,13 @@
                       mode
                       value
                       stdlib-lines
-                      runtime-lines)
+                      runtime-lines
+                      stdlib-roots
+                      runtime-args
+                      (match (compiler-optimize-parse-level value)
+                        [(OkCompilerOptimizeLevel parsed) parsed]
+                        [(ErrCompilerOptimizeLevel) opt-level-value])
+                      emit-host-plan)
                     (ErrRunPlanConfig (run-plan-unknown-opt-level value)))))
               (if (string-eq current "--stdlib-root")
                 (if (>= (+ idx 1) count)
@@ -120,15 +180,37 @@
                     mode
                     opt-level
                     (run-plan-append-stdlib stdlib-lines (arg (+ idx 1)))
-                    runtime-lines))
-                (OkRunPlanConfig
-                  (RunPlanConfig
+                    runtime-lines
+                    (run-plan-root-list-append stdlib-roots (arg (+ idx 1)))
+                    runtime-args
+                    opt-level-value
+                    emit-host-plan))
+                (if (string-eq current "--emit-host-plan")
+                  (run-plan-parse-options
+                    (+ idx 1)
+                    count
                     source
                     target
                     mode
                     opt-level
                     stdlib-lines
-                    (run-plan-runtime-args idx count runtime-lines)))))))))))
+                    runtime-lines
+                    stdlib-roots
+                    runtime-args
+                    opt-level-value
+                    true)
+                  (OkRunPlanConfig
+                    (RunPlanConfig
+                      source
+                      target
+                      mode
+                      opt-level
+                      stdlib-lines
+                      (run-plan-runtime-lines idx count runtime-lines)
+                      stdlib-roots
+                      (run-plan-runtime-arg-list idx count runtime-args)
+                      opt-level-value
+                      emit-host-plan)))))))))))
 
 (define (run-plan-config [count : i64]) : ResultRunPlanConfig
   (if (< count 2)
@@ -145,11 +227,25 @@
           "scalar"
           ""
           ""
-          "")))))
+          ""
+          CompilerLoadRootNil
+          (ProcessStringNil)
+          (compiler-optimize-default-level)
+          false)))))
 
 (define (run-plan-render [config : RunPlanConfig]) : String
   (match config
-    [(RunPlanConfig source target mode opt-level stdlib-lines runtime-lines)
+    [(RunPlanConfig
+        source
+        target
+        mode
+        opt-level
+        stdlib-lines
+        runtime-lines
+        _
+        _
+        _
+        _)
       (string-append
         (host-plan-header)
         (string-append
@@ -171,9 +267,29 @@
 (define (main) : i64
   (match (run-plan-config (arg-count))
     [(OkRunPlanConfig config)
-      (begin
-        (print-string (run-plan-render config))
-        0)]
+      (match config
+        [(RunPlanConfig
+            source
+            target
+            mode
+            _
+            _
+            _
+            stdlib-roots
+            runtime-args
+            opt-level-value
+            emit-host-plan)
+          (if emit-host-plan
+            (begin
+              (print-string (run-plan-render config))
+              0)
+            (native-source-run-command
+              source
+              target
+              mode
+              stdlib-roots
+              runtime-args
+              opt-level-value))])]
     [(ErrRunPlanConfig message)
       (begin
         (print-error message)

@@ -93,6 +93,7 @@ decision|selfhost/ast_types.tl|legacy AST type declarations only; imported by se
 case|selfhost_build|selfhost/build.tl|assembly|skip|direct
 contains|_tl_build_plan_config:
 contains|_tl_build_plan_render:
+contains|_tl_native_source_build_command:
 contains|_tl_host_plan_netline:
 contains|build: expected source path
 end
@@ -620,6 +621,7 @@ end
 case|selfhost_run|selfhost/run.tl|assembly|skip|direct
 contains|_tl_run_plan_config:
 contains|_tl_run_plan_render:
+contains|_tl_native_source_run_command:
 contains|run: expected source path
 end
 
@@ -673,3 +675,5 @@ case|selfhost_lint_driver_smoke|selfhost/lint_driver_smoke.tl|assembly|exactly-o
 contains|_tl_compiler_lint_driver_self_test:
 contains|_tl_selfhost_lint_source_with_roots:
 end
+
+decision|selfhost/native_source.tl|shared Linux source-file build/run command helpers; imported by selfhost/build.tl and selfhost/run.tl and exercised through those driver cases

@@ -16,6 +16,8 @@ fn compile_selfhost_source(source_file: &str, work_name: &str, asm_file: &str) -
         .arg(&source_path)
         .arg("-o")
         .arg(&asm_path)
+        .arg("--stdlib-root")
+        .arg(manifest_dir.join("stdlib"))
         .output()
         .expect("run typelisp compile");
 
@@ -45,6 +47,8 @@ fn run_selfhost_source_expect_42(source_file: &str) {
         .arg(&source_path)
         .arg("--target")
         .arg(target)
+        .arg("--stdlib-root")
+        .arg(manifest_dir.join("stdlib"))
         .output()
         .expect("run typelisp selfhost smoke");
 
@@ -494,8 +498,10 @@ fn build_and_run_planners_compile_to_assembly() {
     for sym in [
         "_tl_run_plan_config:",
         "_tl_run_plan_parse_options:",
-        "_tl_run_plan_runtime_args:",
+        "_tl_run_plan_runtime_lines:",
+        "_tl_run_plan_runtime_arg_list:",
         "_tl_run_plan_render:",
+        "_tl_native_source_run_command:",
         "_tl_host_plan_netline:",
     ] {
         assert_symbol(&run_asm, sym, "run planner");

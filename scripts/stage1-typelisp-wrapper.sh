@@ -6,10 +6,12 @@ set -eu
 #
 # TYPELISP_STAGE1_BIN must point at the stage1 compiler executable
 # (`selfhost/compile.tl` compiled to native code). The wrapper supplies the
-# public `typelisp compile` spelling and executes private host-action plans
+# public `typelisp compile` spelling, routes Linux source build/run through the
+# selfhost TypeLisp drivers, and executes private scratch host-action plans
 # without routing back through the Rust CLI.
 
 STAGE1_BIN=${TYPELISP_STAGE1_BIN:-}
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
 fail() {
     echo "$*" >&2
@@ -136,6 +138,17 @@ link_asm() {
     mkdir_parent "$bin"
     as "$asm" -o "$obj"
     ld "$obj" -o "$bin" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc
+}
+
+build_selfhost_tool() {
+    tool=$1
+    workdir=$2
+    asm="$workdir/$tool.s"
+    obj="$workdir/$tool.o"
+    bin="$workdir/$tool"
+    "$STAGE1_BIN" "$ROOT/selfhost/$tool.tl" -o "$asm" --stdlib-root "$ROOT/stdlib"
+    link_asm "$asm" "$obj" "$bin"
+    printf '%s\n' "$bin"
 }
 
 append_file_line() {
@@ -316,129 +329,16 @@ build_command() {
     workdir=${TMPDIR:-/tmp}/typelisp-stage1-build-$$
     rm -rf "$workdir"
     mkdir -p "$workdir"
-    roots="$workdir/stdlib.roots"
-    : > "$roots"
-
-    source=
-    output=
-    target=linux-x86_64
-    mode=scalar
-    opt_level=
-
-    while [ "$#" -gt 0 ]; do
-        case "$1" in
-            -o)
-                shift
-                [ "$#" -gt 0 ] || fail "build: -o requires a value"
-                output=$1
-                ;;
-            --stdlib-root)
-                shift
-                [ "$#" -gt 0 ] || fail "build: --stdlib-root requires a value"
-                append_file_line "$roots" "$1"
-                ;;
-            --target)
-                shift
-                [ "$#" -gt 0 ] || fail "build: --target requires a value"
-                target=$1
-                ;;
-            --backend-mode)
-                shift
-                [ "$#" -gt 0 ] || fail "build: --backend-mode requires a value"
-                mode=$1
-                ;;
-            --opt-level)
-                shift
-                [ "$#" -gt 0 ] || fail "build: --opt-level requires a value"
-                opt_level=$1
-                ;;
-            --manifest-path)
-                fail "build: --manifest-path is not supported by the stage1 wrapper yet"
-                ;;
-            -*)
-                fail "build: unknown flag $1"
-                ;;
-            *)
-                if [ -n "$source" ]; then
-                    fail "build: accepts only one source file"
-                fi
-                source=$1
-                ;;
-        esac
-        shift || break
-    done
-
-    [ -n "$source" ] || fail "build: expected source path"
-    bin=$(compile_source_to_exe "$source" "$output" "$target" "$mode" "$opt_level" "$roots" "$workdir")
-    echo "Generated: $bin"
+    tool=$(build_selfhost_tool build "$workdir")
+    "$tool" "$@"
 }
 
 run_command() {
-    [ "$#" -gt 0 ] || fail "run: expected source path"
-    case "$1" in
-        -*) fail "run: expected source path before flags" ;;
-    esac
-
-    source=$1
-    shift
     workdir=${TMPDIR:-/tmp}/typelisp-stage1-run-$$
     rm -rf "$workdir"
     mkdir -p "$workdir"
-    roots="$workdir/stdlib.roots"
-    runtime_args="$workdir/runtime.args"
-    : > "$roots"
-    : > "$runtime_args"
-
-    target=linux-x86_64
-    mode=scalar
-    opt_level=
-
-    while [ "$#" -gt 0 ]; do
-        case "$1" in
-            --)
-                shift
-                while [ "$#" -gt 0 ]; do
-                    append_file_line "$runtime_args" "$1"
-                    shift
-                done
-                break
-                ;;
-            --stdlib-root)
-                shift
-                [ "$#" -gt 0 ] || fail "run: --stdlib-root requires a value"
-                append_file_line "$roots" "$1"
-                ;;
-            --target)
-                shift
-                [ "$#" -gt 0 ] || fail "run: --target requires a value"
-                target=$1
-                ;;
-            --backend-mode)
-                shift
-                [ "$#" -gt 0 ] || fail "run: --backend-mode requires a value"
-                mode=$1
-                ;;
-            --opt-level)
-                shift
-                [ "$#" -gt 0 ] || fail "run: --opt-level requires a value"
-                opt_level=$1
-                ;;
-            -*)
-                fail "run: unknown flag $1"
-                ;;
-            *)
-                while [ "$#" -gt 0 ]; do
-                    append_file_line "$runtime_args" "$1"
-                    shift
-                done
-                break
-                ;;
-        esac
-        shift || break
-    done
-
-    bin=$(compile_source_to_exe "$source" "" "$target" "$mode" "$opt_level" "$roots" "$workdir")
-    run_executable_with_args "$bin" "$runtime_args"
+    tool=$(build_selfhost_tool run "$workdir")
+    "$tool" "$@"
 }
 
 debug_command() {

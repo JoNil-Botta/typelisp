@@ -696,7 +696,7 @@ if [ "$HOST_OS" = linux ]; then
     PLANNER_SOURCE="$SELFHOST_PLANNER_DIR/with space/main file.tl"
     PLANNER_OUTPUT="$SELFHOST_PLANNER_DIR/with space/the program"
     : > "$PLANNER_SOURCE"
-    run_cmd selfhost-build-plan "$SELFHOST_PLANNER_DIR/build-planner" "$PLANNER_SOURCE" -o "$PLANNER_OUTPUT" --target windows-x86_64 --backend-mode avx2 --stdlib-root "$SELFHOST_PLANNER_DIR/stdlib one" --stdlib-root "stdlib:two"
+    run_cmd selfhost-build-plan "$SELFHOST_PLANNER_DIR/build-planner" "$PLANNER_SOURCE" -o "$PLANNER_OUTPUT" --target windows-x86_64 --backend-mode avx2 --stdlib-root "$SELFHOST_PLANNER_DIR/stdlib one" --stdlib-root "stdlib:two" --emit-host-plan
     assert_success
     assert_stderr_empty
     assert_contains "$out" "action build-source"
@@ -707,7 +707,7 @@ if [ "$HOST_OS" = linux ]; then
     assert_contains "$out" "stdlib-root $(host_netstring "$SELFHOST_PLANNER_DIR/stdlib one")"
     assert_contains "$out" "stdlib-root $(host_netstring "stdlib:two")"
 
-    run_cmd selfhost-run-plan "$SELFHOST_PLANNER_DIR/run-planner" "$PLANNER_SOURCE" --target linux-x86_64 --backend-mode avx512 --stdlib-root "$SELFHOST_PLANNER_DIR/stdlib one" -- "arg with spaces" "colon:arg"
+    run_cmd selfhost-run-plan "$SELFHOST_PLANNER_DIR/run-planner" "$PLANNER_SOURCE" --emit-host-plan --target linux-x86_64 --backend-mode avx512 --stdlib-root "$SELFHOST_PLANNER_DIR/stdlib one" -- "arg with spaces" "colon:arg"
     assert_success
     assert_stderr_empty
     assert_contains "$out" "action run-source"

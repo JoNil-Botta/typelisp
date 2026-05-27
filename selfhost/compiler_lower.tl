@@ -1961,6 +1961,9 @@
         [(OkLowerExpr ptr-lowered)
           (match ptr-lowered
             [(LowerExpr ptr-state ptr-value ptr-ty)
+              ;; Preserve left-to-right evaluation: the value expression may
+              ;; lower to calls or other effects, so keep the pointer in its own
+              ;; raw pointer temp before lowering the value.
               (match (lower-state-alloc-var ptr-state)
                 [(LowerAlloc ptr-allocated ptr-var)
                   (let
@@ -5540,6 +5543,19 @@
       (ptr-read p)
       (ptr->int (ptr-offset (ptr-cast (int->ptr n : (MutPtr i64)) : (Ptr i64)) 2)))))")
 
+(define (compiler-lower-raw-pointer-direct-call-source) : String
+  "(extern raw-make : (-> (MutPtr i64)))
+(define (main) : unit
+  (unsafe
+    (ptr-write! (raw-make) 41)))")
+
+(define (compiler-lower-raw-pointer-call-value-source) : String
+  "(extern raw-make : (-> (MutPtr i64)))
+(extern raw-value : (-> i64))
+(define (main) : unit
+  (unsafe
+    (ptr-write! (raw-make) (raw-value))))")
+
 (define (compiler-lower-aggregate-source) : String
   "(defstruct Point (x i64) (y i64))
 (defenum Shape (Nothing) (Circle i64) (Pair Point))
@@ -5747,6 +5763,19 @@
         0)]
     [_ 0]))
 
+(define (lower-test-instr-store-ptr-count [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrStorePtr _ _ _) 1]
+    [_ 0]))
+
+(define (lower-test-instr-u64-mov-count [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrMov _ _ ty)
+      (match ty
+        [(AstTyU64) 1]
+        [_ 0])]
+    [_ 0]))
+
 (define (lower-test-instrs-phi-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
     [(IrInstrNil) 0]
@@ -5794,6 +5823,22 @@
       (+
         (lower-test-instr-call-count instr name)
         (lower-test-instrs-call-count rest name))]))
+
+(define (lower-test-instrs-store-ptr-count [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (lower-test-instr-store-ptr-count instr)
+        (lower-test-instrs-store-ptr-count rest))]))
+
+(define (lower-test-instrs-u64-mov-count [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (lower-test-instr-u64-mov-count instr)
+        (lower-test-instrs-u64-mov-count rest))]))
 
 (define (lower-test-blocks-phi-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -5856,6 +5901,26 @@
           (+
             (lower-test-instrs-call-count instrs name)
             (lower-test-blocks-call-count rest name))])]))
+
+(define (lower-test-blocks-store-ptr-count [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instrs-store-ptr-count instrs)
+            (lower-test-blocks-store-ptr-count rest))])]))
+
+(define (lower-test-blocks-u64-mov-count [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instrs-u64-mov-count instrs)
+            (lower-test-blocks-u64-mov-count rest))])]))
 
 ;; Phi count of the function named `name`, or -1 when no such function exists
 ;; (so a missing function fails both the `> 0` and `= 0` assertions below).
@@ -5930,6 +5995,30 @@
           (+
             (lower-test-blocks-call-count blocks name)
             (lower-test-functions-call-count rest name))])]))
+
+(define (lower-test-function-store-ptr-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]) : i64
+  (match funcs
+    [(IrFunctionNil) (- 0 1)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ blocks)
+          (if (string-eq fname name)
+            (lower-test-blocks-store-ptr-count blocks)
+            (lower-test-function-store-ptr-count rest name))])]))
+
+(define (lower-test-function-u64-mov-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]) : i64
+  (match funcs
+    [(IrFunctionNil) (- 0 1)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ blocks)
+          (if (string-eq fname name)
+            (lower-test-blocks-u64-mov-count blocks)
+            (lower-test-function-u64-mov-count rest name))])]))
 
 (define (lower-test-global-list-has-name?
   [globals : CompilerIrGlobalList]
@@ -6576,7 +6665,25 @@
       (compiler-lower-or-short-circuit-source))))
 
 (define (compiler-lower-raw-pointer-ops-ok?) : bool
-  (compiler-lower-ok? (compiler-lower-raw-pointer-ops-source)))
+  (and
+    (compiler-lower-ok? (compiler-lower-raw-pointer-ops-source))
+    (and
+      (compiler-lower-ok? (compiler-lower-raw-pointer-direct-call-source))
+      (compiler-lower-ok? (compiler-lower-raw-pointer-call-value-source)))))
+
+(define (compiler-lower-raw-pointer-call-value-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-raw-pointer-call-value-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (= (lower-test-functions-call-count functions "raw-make") 1)
+            (and
+              (= (lower-test-functions-call-count functions "raw-value") 1)
+              (and
+                (= (lower-test-function-store-ptr-count functions "main") 1)
+                (> (lower-test-function-u64-mov-count functions "main") 0))))])]
+    [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-string-length-ok?) : bool
   (match (parse-ast-source (compiler-lower-string-length-source))
@@ -6702,6 +6809,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-raw-pointer-ops-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-raw-pointer-call-value-shape-ok?)
         unit
         (set! ok false))
       ok)))

@@ -1652,6 +1652,10 @@
     [(string-eq name "file-read-chunk-status") true]
     [(string-eq name "file-read-chunk-bytes") true]
     [(string-eq name "file-read-chunk-eof?") true]
+    [(string-eq name "fs-mkdir-status") true]
+    [(string-eq name "fs-remove-file-status") true]
+    [(string-eq name "fs-remove-dir-status") true]
+    [(string-eq name "fs-process-id") true]
     [(string-eq name "panic") true]
     [(string-eq name "error") true]
     [else (string-eq name "print-error")]))
@@ -2960,6 +2964,55 @@
         result-ty
         origin)]))
 
+(define (lower-fs-path-status-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name : String]
+  [runtime-name : String]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons arg (AstExprNil))
+      (lower-one-string-runtime-call
+        ctx
+        state
+        env
+        type-env
+        arg
+        runtime-name
+        result-ty
+        (string-append (string-append "lower: " name) " requires String"))]
+    [_ (lower-direct-call ctx state env type-env name args result-ty origin)]))
+
+(define (lower-fs-process-id-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprNil)
+      (lower-runtime-call-values
+        state
+        ".L_tl_fs_process_id"
+        IrValueNil
+        result-ty)]
+    [_
+      (lower-direct-call
+        ctx
+        state
+        env
+        type-env
+        "fs-process-id"
+        args
+        result-ty
+        origin)]))
+
 (define (lower-file-open-status-call
   [ctx : TcContext]
   [state : LowerState]
@@ -3468,6 +3521,41 @@
         ".L_tl_file_read_chunk_eof"
         result-ty
         origin)]
+    [(string-eq name "fs-mkdir-status")
+      (lower-fs-path-status-call
+        ctx
+        state
+        env
+        type-env
+        name
+        ".L_tl_fs_mkdir_status"
+        args
+        result-ty
+        origin)]
+    [(string-eq name "fs-remove-file-status")
+      (lower-fs-path-status-call
+        ctx
+        state
+        env
+        type-env
+        name
+        ".L_tl_fs_remove_file_status"
+        args
+        result-ty
+        origin)]
+    [(string-eq name "fs-remove-dir-status")
+      (lower-fs-path-status-call
+        ctx
+        state
+        env
+        type-env
+        name
+        ".L_tl_fs_remove_dir_status"
+        args
+        result-ty
+        origin)]
+    [(string-eq name "fs-process-id")
+      (lower-fs-process-id-call ctx state env type-env args result-ty origin)]
     [(or (string-eq name "panic") (string-eq name "error"))
       (lower-message-runtime-call
         ctx
@@ -5877,6 +5965,13 @@
             (+ (if (file-read-chunk-eof? handle) 1 0)
                (file-close-status handle))))))))")
 
+(define (compiler-lower-fs-status-source) : String
+  "(define (main) : i64
+  (+ (fs-process-id)
+    (+ (fs-mkdir-status \"target/typelisp-fs\")
+      (+ (fs-remove-file-status \"target/typelisp-fs/artifact.o\")
+        (fs-remove-dir-status \"target/typelisp-fs\")))))")
+
 (define (compiler-lower-raw-pointer-ops-source) : String
   "(extern raw-make : (-> (MutPtr i64)))
 (define (main [n : u64]) : u64
@@ -6905,6 +7000,48 @@
               ok))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-fs-status-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-fs-status-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (=
+              (lower-test-functions-call-count
+                functions
+                ".L_tl_fs_mkdir_status")
+              1)
+            (and
+              (=
+                (lower-test-functions-call-count
+                  functions
+                  ".L_tl_fs_remove_file_status")
+                1)
+              (and
+                (=
+                  (lower-test-functions-call-count
+                    functions
+                    ".L_tl_fs_remove_dir_status")
+                  1)
+                (and
+                  (=
+                    (lower-test-functions-call-count
+                      functions
+                      ".L_tl_fs_process_id")
+                    1)
+                  (and
+                    (=
+                      (lower-test-functions-call-count
+                        functions
+                        "fs-mkdir-status")
+                      0)
+                    (=
+                      (lower-test-functions-call-count
+                        functions
+                        "fs-process-id")
+                      0))))))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-region-source) : String
   "(define (main) : i64
   (with-arena r
@@ -7162,6 +7299,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-stdio-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-fs-status-shape-ok?)
         unit
         (set! ok false))
       ok)))

@@ -101,7 +101,7 @@ no-Rust capability tier also runs the same manifest through
 symbol markers also accept the selfhost compiler's module-qualified
 `_tl_<module>_u2etl_colon_colonfoo` labels without changing the manifest list.
 Use `requires-stage0-mode|<reason>` only for a case that must remain seed-only
-for a named blocker such as the current #1361 stage1->stage2 resource limit.
+for a named blocker such as the current #1437 stage1->stage2 resource limit.
 
 Every top-level `selfhost/*.tl` file must appear as a manifest `case` or a
 `decision` line. This makes new modules and smoke drivers fail CI until they
